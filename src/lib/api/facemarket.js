@@ -254,6 +254,19 @@ export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   return http(`/v1/facemarket/admin/audit?${params.toString()}`);
 }
 
+export function adminListUsageReports({ status, limit = 100, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set('status', status);
+  if (cursor) params.set('cursor', cursor);
+  return http(`/v1/facemarket/admin/usage-reports?${params.toString()}`);
+}
+
+export function adminUpdateUsageReportStatus(reportId, status) {
+  return http(`/v1/facemarket/admin/usage-reports/${encodeURIComponent(reportId)}`, {
+    method: 'PATCH', body: { status },
+  });
+}
+
 // ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
 
 export function adminModelTestCuts(modelId) {

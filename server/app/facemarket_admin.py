@@ -11,6 +11,7 @@ import base64
 import time
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -566,6 +567,159 @@ async def admin_unsuspend_model(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id)
         result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+# ---------- 사용 기록 신고 ----------
+USAGE_REPORT_STATUSES = ("open", "closed")
+DEFAULT_USAGE_REPORT_LIMIT = 100
+
+
+class UsageReportStatusRequest(CamelModel):
+    status: Literal["open", "closed"]
+
+
+def validate_usage_report_status(status: str | None) -> str | None:
+    if status in (None, "", "all"):
+        return None
+    if status not in USAGE_REPORT_STATUSES:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+    return status
+
+
+LIST_USAGE_REPORTS_SQL = """
+select r.id::text as id, r.settlement_id::text as settlement_id,
+       r.model_id::text as model_id, r.reason, r.status, r.created_at,
+       st.payment_id, m.display_name as model_name
+from fm_usage_reports r
+join fm_settlements st on st.id = r.settlement_id
+left join fm_models m on m.id = r.model_id
+where (%(status)s::text is null or r.status = %(status)s)
+  and (%(cursor_created)s::timestamptz is null
+       or (r.created_at, r.id) < (%(cursor_created)s::timestamptz, %(cursor_id)s::uuid))
+order by r.created_at desc, r.id desc
+limit %(limit)s
+"""
+
+
+def decode_usage_report_cursor(cursor: str | None) -> tuple[datetime | None, str | None]:
+    if cursor is None:
+        return None, None
+    try:
+        raw = base64.b64decode(cursor, altchars=b"-_", validate=True).decode()
+        created_raw, report_id = raw.split("|", 1)
+        created = datetime.fromisoformat(created_raw)
+        if created.utcoffset() is None:
+            raise ValueError("timezone required")
+        return created, str(uuid.UUID(report_id))
+    except (ValueError, UnicodeError):
+        raise _err("invalid_cursor", "목록 위치 정보가 올바르지 않아요.") from None
+
+
+def _usage_report_row(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "settlementId": row["settlement_id"],
+        "paymentId": row["payment_id"],
+        "modelId": row["model_id"],
+        "modelName": row.get("model_name"),
+        "reason": row.get("reason"),
+        "status": row["status"],
+        "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+async def list_usage_reports(
+    conn, *, status: str | None, limit: int, cursor: str | None
+) -> dict:
+    normalized_status = validate_usage_report_status(status)
+    cursor_created, cursor_id = decode_usage_report_cursor(cursor)
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_USAGE_REPORTS_SQL, {
+            "status": normalized_status,
+            "cursor_created": cursor_created,
+            "cursor_id": cursor_id,
+            "limit": limit + 1,
+        })
+        rows = await cur.fetchall() or []
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(
+            f"{last['created_at'].isoformat()}|{last['id']}".encode()
+        ).decode()
+    return {"items": [_usage_report_row(row) for row in page], "nextCursor": next_cursor}
+
+
+async def update_usage_report_status(
+    conn, *, report_id: str, actor: str, status: str
+) -> dict:
+    try:
+        report_id = str(uuid.UUID(report_id))
+    except ValueError:
+        raise _err("invalid_report_id", "신고 번호가 올바르지 않아요.") from None
+    normalized_status = validate_usage_report_status(status)
+    if normalized_status is None:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select status from fm_usage_reports where id = %s for update",
+            (report_id,),
+        )
+        current = await cur.fetchone()
+        if current is None:
+            raise _err("not_found", "신고를 찾을 수 없어요.", status=404)
+        previous = current["status"]
+        if previous == normalized_status:
+            return {"id": report_id, "status": normalized_status}
+        await cur.execute(
+            "update fm_usage_reports set status = %s where id = %s",
+            (normalized_status, report_id),
+        )
+
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="usage_report.status.update",
+        target_type="usage_report",
+        target_id=report_id,
+        before={"status": previous},
+        after={"status": normalized_status},
+    )
+    return {"id": report_id, "status": normalized_status}
+
+
+@router.get("/usage-reports")
+async def admin_list_usage_reports(
+    request: Request,
+    status: str | None = Query(None),
+    limit: int = Query(DEFAULT_USAGE_REPORT_LIMIT, ge=1, le=MAX_LIST_LIMIT),
+    cursor: str | None = Query(None, max_length=256),
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        return JSONResponse(
+            await list_usage_reports(conn, status=status, limit=limit, cursor=cursor),
+            headers={"Cache-Control": "no-store"},
+        )
+
+
+@router.patch("/usage-reports/{report_id}")
+async def admin_update_usage_report_status(
+    request: Request,
+    report_id: str,
+    body: UsageReportStatusRequest,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        result = await update_usage_report_status(
+            conn, report_id=report_id, actor=user_id, status=body.status,
+        )
         await conn.commit()
     return JSONResponse(result)
 
