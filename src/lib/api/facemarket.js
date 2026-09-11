@@ -276,6 +276,13 @@ export function adminListUsers({ q, origin, limit = 50, cursor } = {}) {
   return http(`/v1/facemarket/admin/users?${params.toString()}`);
 }
 
+export function adminGrantCredits(userId, body, idempotencyKey) {
+  return http(`/v1/facemarket/admin/users/${encodeURIComponent(userId)}/credits/grants`, {
+    method: 'POST', body,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  });
+}
+
 export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (targetType) params.set('targetType', targetType);
