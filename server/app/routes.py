@@ -817,7 +817,7 @@ async def approve_refund(
       - `400 Bad Request`: 이미 처리되었거나 유효하지 않은 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         try:
             result = await repo.approve_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
@@ -852,7 +852,7 @@ async def reject_refund(
       - `400 Bad Request`: 이미 처리된 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         try:
             result = await repo.reject_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
