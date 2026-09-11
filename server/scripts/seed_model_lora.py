@@ -21,7 +21,7 @@
     ... --apply                                                                   # 실제 쓰기
 
 DB 는 server/.env 의 DATABASE_URL 을 따른다. 대상 DB 에 마이그레이션
-20260910100000_fm_model_loras.sql 이 먼저 적용돼 있어야 한다.
+20260911000100_fm_model_loras.sql 이 먼저 적용돼 있어야 한다.
 """
 import argparse
 import hashlib

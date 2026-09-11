@@ -83,7 +83,7 @@ def test_editor_worker_branches_on_image_count():
 def test_migration_adds_body_front_and_pins_bucket():
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[2]
-    sql = (root / "supabase" / "migrations" / "20260910000000_fm_model_assets_body_front.sql").read_text()
+    sql = (root / "supabase" / "migrations" / "20260911000000_fm_model_assets_body_front.sql").read_text()
     assert "'face_front', 'grid_sedcard', 'body_front'" in sql
     assert "view <> 'body_front' or bucket = 'face'" in sql
     assert "drop constraint if exists" in sql  # PG16-safe · 재실행 가능

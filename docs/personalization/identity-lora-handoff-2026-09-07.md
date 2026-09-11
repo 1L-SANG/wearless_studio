@@ -833,7 +833,7 @@ LoRA 얼굴을 덮으면 **더 좋아지지 않고 미세하게 나빠진다**. 
 ## 27. 전신 슬롯(MODEL FULL BODY) 을 REAL 등록자에게 열기 (2026-09-10)
 
 ### 27.A 코드 (커밋 아래)
-1. **마이그레이션** `20260910000000_fm_model_assets_body_front.sql` — `view` CHECK 에 `body_front` 추가
+1. **마이그레이션** `20260911000000_fm_model_assets_body_front.sql` — `view` CHECK 에 `body_front` 추가
    (additive · PG16-safe · drop-if-exists → add). PK `(model_id, view)` 유지.
    `body_front` 는 `bucket='face'` 강제 CHECK 도 함께 건다.
    ※ 지시가 인용한 `biometric_purge.py` 는 이 저장소에 없다. 대신 확인한 사실: 모델 자산의 쓰기·복사·삭제는
