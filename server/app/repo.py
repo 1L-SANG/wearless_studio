@@ -3054,6 +3054,31 @@ async def is_admin(conn: AsyncConnection, user_id: str) -> bool:
     return bool(row and row.get("role") == "admin")
 
 
+# ---------- 관리자 기기 게이트 (admin_guard 전용) ----------
+# 라우트가 쓰는 등록·목록·승인·회수 SQL 은 facemarket_admin_devices.py 에 산다. 여기 둘은
+# 모든 관리자 요청이 지나는 가드가 부르는 것이라 is_admin 옆에 둔다 — 테스트가 repo.is_admin
+# 을 monkeypatch 하듯 이 둘도 바꿔 끼울 수 있게.
+
+
+async def find_admin_device_by_hash(conn: AsyncConnection, token_hash: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, user_id::text as user_id, status, label, last_seen_at "
+            "from admin_devices where token_hash = %s",
+            (token_hash,),
+        )
+        return await cur.fetchone()
+
+
+async def touch_admin_device(conn: AsyncConnection, device_id: str) -> None:
+    """last_seen_at 갱신. 호출자 트랜잭션 안에서 돈다 — 읽기 라우트가 커밋을 안 하면
+    잃는데, 표시용 값이라 60초 뒤 다음 쓰기 요청에서 다시 찍히면 된다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update admin_devices set last_seen_at = now() where id = %s", (device_id,)
+        )
+
+
 async def grant_subscription(
     conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None,
     credits: int | None = None,
