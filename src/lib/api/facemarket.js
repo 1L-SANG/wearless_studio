@@ -402,11 +402,11 @@ export function cancelEnrollment(enrollmentId) {
 }
 
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = FACEMARKET_PRICING.perCut, validDays = 365,
+  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = FACEMARKET_PRICING.perCut,
 }) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',
-    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays },
+    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice },
   });
 }
 
@@ -453,6 +453,7 @@ export function listModelUsage(modelId) {
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
 //   { valid, status, allowedUse, forbiddenUse, unitPrice, validUntil, vcId, model:{ nameMasked, age } }
+//   validUntil은 영구 라이선스에서 null일 수 있어요.
 // 얼굴·digest·CI·생년월일·user_id·model_id 는 서버가 애초에 싣지 않는다(무인증 = 노출 시 영구 유출).
 // 해지가 즉시 반영돼야 하므로 캐시 금지(서버 Cache-Control: no-store + 요청 측 cache:'no-store').
 export async function verifyLicensePublic(licenseId) {

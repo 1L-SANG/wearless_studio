@@ -121,17 +121,21 @@ def test_retry_requires_holder_config_before_opening_pool(
         asyncio.run(retry.main(["--apply"]))
 
 
+@pytest.mark.parametrize("valid_until", [None, "2027-01-01"])
 def test_retry_apply_uses_shared_issue_and_finalizer_continues_and_prints_counts_only(
-    monkeypatch, capsys
+    monkeypatch, capsys, valid_until
 ):
     rows = [_row(1), _row(2), _row(3)]
     rows[0]["forbidden_use"] = ["속옷", "수영복"]
+    for row in rows:
+        row["license_valid_until"] = valid_until
     pool = _Pool(rows)
     issued = []
     finalized = []
 
     async def fake_issue(_app, **kwargs):
         assert kwargs["forbidden"] == []
+        assert kwargs["valid_until"] == valid_until
         issued.append(kwargs["license_id"])
         if kwargs["license_id"] == "license-2":
             raise FaceVcIssueError("vc_issue_delayed", status_code=503)

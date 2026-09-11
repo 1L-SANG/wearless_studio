@@ -29,7 +29,8 @@ test('the ten FAQ titles follow the approved list and omit the held protection c
   assert.ok(!APPLY_START_FAQ.some(({ q }) => q.includes('확실히 지켜지는')));
   const source = read('../../documents/facemarket_apply_faq.md').split('## 공개 FAQ')[1];
   const expectedCopy = [...source.matchAll(/\*\*Q\. (.+?)\*\*\n([\s\S]*?)(?=\n\n\*\*Q\.|$)/g)]
-    .map(([, q, a]) => ({ q, a: a.trim() }));
+    // 2026-09-11 영구 라이선스 지시서는 FAQ 정본의 기간 선택 안내를 대체해요.
+    .map(([, q, a]) => ({ q, a: a.trim().replace('조건과 유효기간을 정하고', '조건을 정하고') }));
   assert.deepEqual(APPLY_START_FAQ, expectedCopy);
 });
 test('public start is routed in LandingShell and links to the guarded application', () => {

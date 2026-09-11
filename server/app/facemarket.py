@@ -613,7 +613,7 @@ class LicenseCard(CamelModel):
     allowed_use: list[str]
     forbidden_use: list[str]
     unit_price: int
-    license_valid_until: datetime
+    license_valid_until: datetime | None
     status: str
     vc_id: str | None = None
     created_at: datetime
@@ -636,7 +636,6 @@ class CreateLicenseRequest(CamelModel):
     opt_lookbook_person_replace: bool = False
     opt_consent_version: str | None = None
     unit_price: int = Field(default=PLATFORM_UNIT_PRICE_KRW, ge=0, le=100_000_000)
-    valid_days: int = Field(default=365, ge=1, le=3650)
 
     @field_validator("unit_price", mode="before")
     @classmethod
@@ -1064,7 +1063,7 @@ async def create_license(
         enrollment_id = str(uuid.UUID(str(body.enrollment_id)))
     except (TypeError, ValueError):
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
-    valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
+    valid_until = None
     allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
     unit_price = body.unit_price
     # 선택 동의는 플래그 뒤에 숨긴다 — 법률 검토 전에는 모델에게 화면도 보이지 않고,
@@ -1402,7 +1401,7 @@ class PublicVerifyResult(CamelModel):
     allowed_use: list[str]
     forbidden_use: list[str]
     unit_price: int
-    valid_until: datetime
+    valid_until: datetime | None
     vc_id: str | None = None
     model: PublicVerifyModel
 
@@ -1419,7 +1418,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
 
     - **인증 없음 (capability URL)**: license_id(UUIDv4)가 능력 토큰. 얼굴·신원 원문은 한 톨도
       싣지 않으므로 무인증 노출이 성립한다(노출 목록은 위 하드룰 참조).
-    - **valid**: 실시간 판정 = `status=='active' AND license_valid_until > now`. DB status 가
+    - **valid**: 실시간 판정 = `status=='active' AND (license_valid_until IS NULL OR license_valid_until > now)`. DB status 가
       active 라도 기간이 지났으면 `status='expired'` + `valid=false` 로 내린다 — 두 필드가
       어긋나면(`status:'active', valid:false`) 스캔한 사람이 이유를 알 수 없다.
     - **에지 케이스**: `404 not_found`(비존재·잘못된 uuid — 존재 여부 노출 방지)
@@ -2058,12 +2057,13 @@ class FaceVcIssueError(RuntimeError):
 
 
 def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
-    # valid_until 은 절대시각(now + valid_days)이라, 어느 시간대로 자르느냐에 따라 날짜가
-    # 하루 갈린다. KST 로 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다.
-    # UTC 로 자르면 KST 오전에 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는
-    # 되돌릴 수 없는 크리덴셜 값이라, 표기만 어긋나도 분쟁의 근거가 된다).
-    # 만료 판정 자체는 `license_valid_until > now()` 라는 절대시각 비교라 영향 없다.
-    valid_str = _kst_date_str(valid_until)
+    # valid_until 은 절대시각이라, 어느 시간대로 자르느냐에 따라 날짜가 하루 갈린다. KST 로
+    # 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다. UTC 로 자르면 KST 오전에
+    # 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는 되돌릴 수 없는 크리덴셜 값이라,
+    # 표기만 어긋나도 분쟁의 근거가 된다). 만료 판정 자체는 절대시각 비교라 영향 없다.
+    # 2026-09-11 부터 새 라이선스는 유효기간이 없다(None). 외부 발급 스키마가 날짜 문자열 키를
+    # 기대할 수 있어 키는 유지하고 "9999-12-31" 을 넣는다. 화면은 "철회 시까지" 로 그린다.
+    valid_str = "9999-12-31" if valid_until is None else _kst_date_str(valid_until)
     return {
         "allowedUse": ", ".join(allowed),
         "forbiddenUse": "",

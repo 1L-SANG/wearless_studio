@@ -386,7 +386,7 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
             verify_url=verify_url,
             allowed_use=lic.get("allowed_use") or [],
             forbidden_use=[],
-            license_valid_until=str(lic.get("license_valid_until") or ""),
+            license_valid_until=str(lic.get("license_valid_until") or "9999-12-31"),
             source_asset_ids=[str(a) for a in (lic.get("asset_ids") or [])],
             # Settings 에 app_version 필드가 없다(review I3) — "0" 은 실제 버전처럼 읽혀서
             # 매니페스트에 영구히 박히면(이미 셀러 손에 들어간 파일은 재발급 불가) "0"이

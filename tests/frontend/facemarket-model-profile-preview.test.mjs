@@ -106,12 +106,12 @@ test('키·체형 문구는 실제 키를 구간보다 우선하고 있는 정�
   assert.equal(profilePhysiqueLine(null), '미정');
 });
 
-test('유효기간은 10년 이상이면 영구, 연 단위면 연수, 나머지는 일수로 표시한다', () => {
-  assert.equal(validityLabel(3650), '영구');
-  assert.equal(validityLabel(4000), '영구');
+test('기한이 없으면 철회 시까지, 숫자 기간은 연수와 일수로 표시한다', () => {
+  assert.equal(validityLabel(3650), '10년');
+  assert.equal(validityLabel(4000), '4000일');
   assert.equal(validityLabel(730), '2년');
   assert.equal(validityLabel(540), '540일');
-  assert.equal(validityLabel(null), '미정');
+  assert.equal(validityLabel(null), '철회 시까지');
 });
 
 test('테스트컷은 종류별 입력 순서를 보존하고 알 수 없는 종류는 노출하지 않는다', () => {
