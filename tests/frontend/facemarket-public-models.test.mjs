@@ -43,13 +43,13 @@ test('유효기간 라벨 — 1년·2년·90일·영구', () => {
   assert.equal(formatValidity(730), '2년');
   assert.equal(formatValidity(90), '90일');
   assert.equal(formatValidity(3650), '영구');
-  assert.equal(formatValidity(null), null);
+  assert.equal(formatValidity(null), '철회 시까지');
 });
 
 test('만료 시각은 "년 월 일까지"로, 잘못된 값은 null', () => {
   assert.equal(formatValidUntil('2027-09-07T12:00:00Z'), '2027년 9월 7일까지');
   assert.equal(formatValidUntil('nope'), null);
-  assert.equal(formatValidUntil(null), null);
+  assert.equal(formatValidUntil(null), '철회 시까지');
 });
 
 test('카드 보조 줄 — cm 가 있으면 cm, 없으면 키 구간, 체형은 한국어 라벨', () => {

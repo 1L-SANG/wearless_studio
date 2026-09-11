@@ -98,3 +98,11 @@ test('license expiration during confirmation reloads into the unavailable notice
   assert.equal(h.runtime.reads, 1);
   assert.ok(h.render().find(node => node.type === 'ErrorState'));
 });
+
+
+test('a permanent license keeps confirmation available and shows its withdrawal boundary', async t => {
+  const h = await harness(t, { ...active.profile, license: { allowedUse: [], validDays: null } });
+  const nodes = h.render();
+  assert.ok(nodes.some(node => node.type === 'dd' && node.props.children === '철회 시까지'));
+  assert.equal(nodes.find(node => node.type === 'Button' && node.props.variant === 'primary').props.disabled, false);
+});

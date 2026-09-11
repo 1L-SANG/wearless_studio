@@ -77,3 +77,51 @@ test('publisher uses the actual price launch date in both metadata and document 
     assert.match(readFileSync(join(f.root, `public/legal/${file}`), 'utf8'), effectiveCopy, file);
   }
 });
+
+test('checked-in public legal documents match the canonical publisher output', (t) => {
+  const f = fixture(t);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const generatedManifest = JSON.parse(
+    readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
+  );
+  for (const { slug } of generatedManifest) {
+    assert.equal(
+      readFileSync(join(source, `public/legal/${slug}.md`), 'utf8'),
+      readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8'),
+      `${slug} must be regenerated after its canonical source changes`,
+    );
+  }
+  assert.equal(
+    readFileSync(join(source, 'public/legal/manifest.json'), 'utf8'),
+    readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
+  );
+  assert.equal(
+    readFileSync(join(source, 'public/llms.txt'), 'utf8'),
+    readFileSync(join(f.root, 'public/llms.txt'), 'utf8'),
+  );
+});
+
+test('published model-license terms do not retain duration-based rights or refunds', (t) => {
+  const f = fixture(t);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const sellerTerms = readFileSync(join(f.root, 'public/legal/seller-license-terms.md'), 'utf8');
+  const refund = readFileSync(join(f.root, 'public/legal/refund.md'), 'utf8');
+  assert.doesNotMatch(sellerTerms, /착용컷의 라이선스는 명세의 유효기간 동안 존속/);
+  assert.doesNotMatch(sellerTerms, /회사의 귀책[^\n]*잔여 기간에 비례/);
+  assert.doesNotMatch(refund, /회사의 귀책[^\n]*잔여 기간에 비례/);
+  assert.match(sellerTerms, /기간 중 발행된 착용컷의 라이선스는 별도의 만료일 없이 존속/);
+  assert.doesNotMatch(sellerTerms, /모델의 철회나 제7조의 취소가 없는 한 존속/);
+  assert.match(sellerTerms, /모델이 철회해도 존속하며, 제7조에 따라 취소될 때 종료/);
+
+  const llms = readFileSync(join(f.root, 'public/llms.txt'), 'utf8');
+  assert.doesNotMatch(llms, /기발행 건은 기간 만료까지 존속/);
+  assert.match(llms, /기발행 건은 철회 후에도 존속/);
+
+  const answers = readFileSync(join(f.root, 'public/legal/answers.md'), 'utf8');
+  assert.doesNotMatch(answers, /허용 품목·제외 품목·기간/);
+  assert.match(answers, /허용 품목·제외 품목\)과 플랫폼 표준가/);
+});

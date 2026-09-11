@@ -25,7 +25,7 @@ test('조건표는 계약과 정산 기준을 한 곳에서 제공한다', async
   assert.equal(terms.formatKrw(25_000), '25,000원');
   assert.equal(terms.validityLabel(365), '365일');
   assert.equal(terms.validityLabel(730), '730일');
-  assert.equal(terms.validityLabel(null), '영구');
+  assert.equal(terms.validityLabel(null), '철회 시까지');
 });
 
 test('Digital DNA 여정은 다섯 단계와 현재 단계 설명을 제공한다', async () => {

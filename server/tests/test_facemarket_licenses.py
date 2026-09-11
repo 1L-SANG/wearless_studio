@@ -950,7 +950,6 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
         "allowedUse": ["일반 의류"],
         "forbiddenUse": ["속옷"],
         "unitPrice": 14900,
-        "validDays": 365,
     }
 
 

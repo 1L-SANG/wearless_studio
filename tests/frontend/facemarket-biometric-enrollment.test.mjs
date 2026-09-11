@@ -101,7 +101,7 @@ test('license toggles default on, block empty selection, and submit the remainin
     assert.equal(submit(tree).props.disabled, false);
     await submit(tree).props.onClick();
     assert.deepEqual(requests, [{
-      enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'], unitPrice: 14900, validDays: 365,
+      enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'], unitPrice: 14900,
     }]);
   } finally {
     await harness.close();
@@ -302,6 +302,7 @@ async function modelComponentHarness({
         if (id === '\0fm-test-router') return `
           export const Link = 'Link';
           export const useNavigate = () => ${access}.navigate;
+          export const useParams = () => ({ licenseId: 'license-1', publicationId: 'publication-1' });
           export const useLocation = () => ${access}.location || ({ state: null });
           export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
@@ -323,6 +324,7 @@ async function modelComponentHarness({
           export const createLicense = (...args) => api.createLicense(...args);
           export const revokeLicense = (...args) => api.revokeLicense(...args);
           export const verifyLicensePublic = (...args) => api.verifyLicensePublic(...args);
+          export const verifyPublicationPublic = (...args) => api.verifyPublicationPublic(...args);
           export const completeEnrollment = (...args) => api.completeEnrollment(...args);
           export const createEnrollment = (...args) => api.createEnrollment(...args);
           export const createIdentity = (...args) => api.createIdentity(...args);
@@ -1222,7 +1224,7 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
       [{
         id: 'license-1', modelId: 'model-1', status: 'active', faceImageUri: '/face',
         allowedUse: ['상의', '하의'], forbiddenUse: ['수영복·비키니'], unitPrice: 10_000,
-        licenseValidUntil: '2027-09-04T00:00:00Z', vcId: 'vc:test:1',
+        licenseValidUntil: null, vcId: 'vc:test:1',
       }],
       { monthCount: 0, monthAmount: 0, totalAmount: 0 },
     ],
@@ -1239,6 +1241,7 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
     assert.ok(findTree(dashboard, (node) => node.props?.children === '49,900원'));
     assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
     assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
+    assert.ok(findTree(dashboard, (node) => node.type === 'dd' && node.props.children === '철회 시까지'));
     assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
     assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/payout'));
     assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/model/withdraw'));
@@ -1337,7 +1340,7 @@ test('enrollment terms and routes cannot revive direct face licensing', () => {
   // 않게 진입점을 가르면서 facemarket 전용 모듈로 옮겼다(src/routes/modelSectionRoutes.jsx).
   const appSource = read('../../src/apps/facemarket/modelSectionRoutes.jsx');
 
-  assert.match(apiSource, /body:\s*\{ enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays \}/);
+  assert.match(apiSource, /body:\s*\{ enrollmentId, allowedUse, forbiddenUse, unitPrice \}/);
   assert.doesNotMatch(apiSource, /fd\.append\(['"]face['"]/);
   assert.doesNotMatch(apiSource, /fd\.append\(['"]profile_id['"]/);
   assert.match(uploadSource, /angles = ENROLLMENT_ANGLES/);
@@ -1628,7 +1631,7 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보�
         phase: 'ready',
         model: { id: 'm1', displayName: '김*나', status: 'verified' },
         summary: {
-          bodyType: 'slim', allowedUseCount: 2, unitPrice: 10_000, validityDays: 730,
+          bodyType: 'slim', allowedUseCount: 2, unitPrice: 10_000, validityDays: null, licenseValidUntil: null,
         },
       },
     ],
@@ -1637,6 +1640,7 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보�
   try {
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
+    assert.ok(findTree(tree, (node) => node.type === 'dd' && node.props.children === '철회 시까지'));
     assert.ok(findTree(tree, (node) => node.props?.children === '14,900원'));
     assert.ok(findTree(tree, (node) => node.props?.children === '49,900원'));
     for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
@@ -1706,7 +1710,7 @@ test('등록 완료 조건 조회 실패는 기본 가격과 영구 조건을 �
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.props?.children === '조건 요약을 불러오지 못했어요.'));
     assert.equal(findTree(tree, (node) => node.props?.children === '14,900원'), null);
-    assert.equal(findTree(tree, (node) => node.props?.children === '영구'), null);
+    assert.equal(findTree(tree, (node) => node.props?.children === '철회 시까지'), null);
   } finally {
     await harness.close();
   }
@@ -2187,4 +2191,40 @@ for (const failure of [
       }
     } finally { await harness.close(); }
   });
+}
+
+
+for (const [expiry, expected] of [[null, '철회 시까지'], ['2027-09-07T22:00:00Z', '2027. 9. 8.까지']]) {
+  test(`VC card preserves the license boundary: ${expiry}`, async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = { location: { origin: 'https://facemarket.example' } };
+    const license = { id: 'license-1', status: 'active', unitPrice: 14900, licenseValidUntil: expiry };
+    const h = await modelComponentHarness({
+      entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense',
+      initialStates: ['ready', 'cards', null, [license], null], api: {},
+    });
+    try {
+      const card = findTree(h.render(), node => node.type?.name === 'VcCard');
+      h.runtime.states = [];
+      h.runtime.stateCursor = 0;
+      const text = collectText(card.type(card.props));
+      assert.ok(text.includes(expected), text);
+      assert.ok(!text.includes('철회 시까지까지'));
+    } finally { globalThis.window = originalWindow; await h.close(); }
+  });
+
+  for (const screen of ['PublicVerify', 'PublicVerifyPublication']) {
+    test(`${screen} displays the license boundary without duplicate suffix: ${expiry}`, async () => {
+      const h = await modelComponentHarness({
+        entry: `/src/features/verify/${screen}.jsx`, exportName: screen,
+        initialStates: ['ok', { valid: true, status: 'active', validUntil: expiry, licenseValidUntil: expiry, allowedUse: [], imageHashPrefix: 'hash' }, null],
+        api: {},
+      });
+      try {
+        const text = collectText(h.render());
+        assert.ok(text.includes(expected), text);
+        assert.ok(!text.includes('철회 시까지까지'));
+      } finally { await h.close(); }
+    });
+  }
 }

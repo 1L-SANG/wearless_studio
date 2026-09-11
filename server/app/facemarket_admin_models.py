@@ -77,8 +77,8 @@ class ProfileLicenseView(CamelModel):
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
     unit_price: int
-    valid_until: datetime
-    valid_days: int
+    valid_until: datetime | None
+    valid_days: int | None
 
 
 class ModelProfileView(CamelModel):
@@ -214,7 +214,7 @@ async def _load_model_profiles(
     clauses = [
         "l.status = 'active'",
         "nullif(btrim(l.vc_id), '') is not null",
-        "l.license_valid_until > now()",
+        "(l.license_valid_until is null or l.license_valid_until > now())",
     ]
     params: tuple[str, ...] = ()
     if model_id is not None:
@@ -295,7 +295,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
                            and l.enrollment_id = m.current_enrollment_id
                            and l.status = 'active'
                            and nullif(btrim(l.vc_id), '') is not null
-                           and l.license_valid_until > now()
+                           and (l.license_valid_until is null or l.license_valid_until > now())
                       ) as has_active_license
                  from fm_models m
                  left join fm_biometric_enrollments e on e.id = m.current_enrollment_id
@@ -397,7 +397,7 @@ async def admin_model_test_cuts(
                                and l.enrollment_id = m.current_enrollment_id
                                and l.status = 'active'
                                and nullif(btrim(l.vc_id), '') is not null
-                               and l.license_valid_until > now()
+                               and (l.license_valid_until is null or l.license_valid_until > now())
                           )) as ready_to_send,
                           (m.status in ('pending', 'awaiting_confirm', 'reverification_required')
                            or (m.status = 'verified' and m.fullbody_image_url is null))
@@ -906,7 +906,7 @@ async def _ensure_active_license(conn, model_id: str) -> None:
                         and l.enrollment_id = m.current_enrollment_id
                         and l.status = 'active'
                         and nullif(btrim(l.vc_id), '') is not null
-                        and l.license_valid_until > now()
+                        and (l.license_valid_until is null or l.license_valid_until > now())
                    ) as license_ok""",
             (model_id,),
         )

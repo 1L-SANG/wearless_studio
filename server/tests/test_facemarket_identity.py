@@ -343,7 +343,7 @@ def _is_current_catalog_card(store, model):
         and enrollment["consent_version"] == facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
         and enrollment["match_policy_version"]
         and license_row["status"] == "active"
-        and license_row["license_valid_until"] > datetime.now(timezone.utc)
+        and (license_row["license_valid_until"] is None or license_row["license_valid_until"] > datetime.now(timezone.utc))
         and license_row["vc_id"] == enrollment["vc_id"]
         and front
         and front["storage_state"] == "approved"

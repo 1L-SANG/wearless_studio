@@ -13,7 +13,7 @@ export const LICENSE_ISSUE_FEE_KRW = 20_000;
 export const APPROVAL_MODE = 'auto';
 
 export function validityLabel(days) {
-  return days == null ? '영구' : `${days}일`;
+  return days == null ? '철회 시까지' : `${days}일`;
 }
 
 export function formatKrw(value) {

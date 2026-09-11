@@ -24,7 +24,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import QRCode from "qrcode";
 import {
     Button,
-    Chips,
     ErrorState,
     Icon,
     Toggle,
@@ -50,13 +49,6 @@ import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import s from "./ModelLicense.module.css";
 import { seoulDate, seoulYearMonth } from '@/lib/datetime.js';
 
-// 서버 enum 과 묶인 값이다 — 표시만 바꾸고 value 는 건드리지 않는다.
-const VALIDITY = [
-    { value: 90, label: "90일" },
-    { value: 365, label: "1년" },
-    { value: 730, label: "2년" },
-];
-
 const won = (n) => `₩${Number(n || 0).toLocaleString("ko-KR")}`;
 const fmtDate = (iso) => seoulDate(iso, iso);
 // PDF 카드 카피 — "유효 ~2027.06"
@@ -76,19 +68,14 @@ const CHAIN_LABEL = {
     failed: "기록 실패",
 };
 
-// 조건 3칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
+// 조건 2칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
 // 설명 문장은 랜딩 LicensingSection 의 카드 카피와 같은 눈금이다 — 없는 걸 약속하지 않는다.
 const TERM_STEPS = {
     allowed: { no: "01", note: "기본은 전부 켜져 있어요. 원하지 않는 것만 끄세요." },
-    // 단가·유효기간은 라벨 아래 설명을 둬 2열로 놓았을 때 줄을 맞춘다.
     // '지불하는' 이라고 쓰지 마라 — 지급(payout) 기능이 아직 없다. 랜딩이 네 라운드
     // 사실성 감사 끝에 "실제 지급 기능도 아직 준비 중입니다"로 못박은 것과 같은 눈금이어야
     // 하고, 여기는 플랫폼 표준가와 모델 몫을 설명하는 자리다.
     price: { no: "02", note: "라이선스 총액이에요. 이 중 70%가 내 몫으로 기록돼요. 실제 지급 기능은 아직 준비 중이에요." },
-    validity: {
-        no: "03",
-        note: "기간이 끝나면 이 라이선스로는 컷을 만들 수 없어요.",
-    },
 };
 
 const USE_DESCRIPTIONS = {
@@ -312,10 +299,14 @@ function VcCard({ license, onRevoked, push }) {
                             <div className={s.vcFigure}>
                                 <dt>유효기간</dt>
                                 <dd className={s.vcValid}>
-                                    ~{fmtYm(license.licenseValidUntil)}
-                                    <span className={s.vcDim}>
-                                        {fmtDate(license.licenseValidUntil)}까지
-                                    </span>
+                                    {license.licenseValidUntil ? (
+                                        <>
+                                            ~{fmtYm(license.licenseValidUntil)}
+                                            <span className={s.vcDim}>
+                                                {fmtDate(license.licenseValidUntil)}까지
+                                            </span>
+                                        </>
+                                    ) : '철회 시까지'}
                                 </dd>
                             </div>
                         </dl>
@@ -374,7 +365,6 @@ function VcCard({ license, onRevoked, push }) {
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
     const [allowed, setAllowed] = useState([...BRAND_USE_CATEGORIES]);
     const unitPrice = FACEMARKET_PRICING.perCut;
-    const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
     const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
 
@@ -400,7 +390,6 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                         enrollmentId,
                         allowedUse: allowed,
                         unitPrice: Number(unitPrice) || 0,
-                        validDays,
                     });
                     push("라이선스가 발급됐어요.", { icon: "check" });
                     onIssued(lic);
@@ -489,18 +478,6 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                         <p className={s.termNote}>
                             {`1건 ${unitPrice.toLocaleString('ko-KR')}원 · 월 이용권 ${FACEMARKET_PRICING.monthly.toLocaleString('ko-KR')}원(${FACEMARKET_PRICING.monthlyCap}건) · 내 몫 70%(${(unitPrice * 0.7).toLocaleString('ko-KR')}원)`}
                         </p>
-                    </section>
-                    <section className={s.term}>
-                        <span className={s.termNo}>
-                            {TERM_STEPS.validity.no}
-                        </span>
-                        <h3 className={s.termLabel}>유효기간</h3>
-                        <p className={s.termNote}>{TERM_STEPS.validity.note}</p>
-                        <Chips
-                            options={VALIDITY}
-                            value={validDays}
-                            onChange={(v) => v && setValidDays(v)}
-                        />
                     </section>
                 </div>
             </div>
@@ -758,7 +735,7 @@ export function ModelLicense() {
                             </h2>
                             <p className={s.emptyBody}>
                                 모델 등록을 마치면 허용 품목·건당
-                                표준가를 확인하고 유효기간을 정해 라이선스를 발급할 수
+                                표준가를 확인하고 라이선스를 발급할 수
                                 있어요.
                             </p>
                         </div>

@@ -36,14 +36,16 @@ def test_manifest_declares_ai_generated():
     assert m["claim_generator"].startswith("wearless-facemarket/")
 
 
-def test_manifest_carries_license_assertion():
-    m = c2pa_signer.build_manifest(**base_kwargs())
+@pytest.mark.parametrize("valid_until", ["9999-12-31", "2027-01-01"])
+def test_manifest_carries_license_assertion(valid_until):
+    m = c2pa_signer.build_manifest(**base_kwargs(license_valid_until=valid_until))
     custom = next(
         a["data"] for a in m["assertions"] if a["label"] == "kr.wearless.facemarket"
     )
     assert custom["licenseId"] == "22222222-2222-2222-2222-222222222222"
     assert custom["verifyUrl"].endswith("/verify/p/33333333-3333-3333-3333-333333333333")
     assert custom["forbiddenUse"] == []
+    assert custom["licenseValidUntil"] == valid_until
 
 
 @pytest.mark.parametrize("forbidden", sorted(c2pa_signer.FORBIDDEN_MANIFEST_KEYS))
