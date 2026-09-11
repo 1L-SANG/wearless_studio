@@ -1,1156 +1,356 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button, Icon } from '@/components/ui.jsx';
-import {
-  cancelEnrollment,
-  completeEnrollment,
-  createEnrollment,
-  createIdentity,
-  createLivenessSession,
-  deleteEnrollmentPhoto,
-  getFacemarketConfig,
-  getCurrentEnrollment,
-  getEnrollment,
-  listLicenses,
-  listMyModels,
-  submitPhysique,
-  uploadEnrollmentPhoto,
-  uploadProfileImage,
-} from '@/lib/api/facemarket.js';
-import { ModelFaceUpload } from './ModelFaceUpload.jsx';
-import {
-  ENROLLMENT_ANGLES,
-  initialRegistrationStep,
-  enrollmentReasonMessage,
-  nextEnrollmentStep,
-} from './biometricEnrollment.js';
-// 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
-// (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
-import {
-  bodyTypeLabel,
-  bodyTypeMatrix,
-  bodyTypeOptions,
-  heightBucketLabel,
-  heightBucketOptions,
-} from '../../lib/facemarketPhysique.js';
-import {
-  APPROVAL_MODE,
-  formatKrw,
-  validityLabel,
-} from '../facemarket-landing/facemarketTerms.js';
-import s from './ModelRegister.module.css';
+import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
+import { runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
+import { toUploadableImage } from '../../lib/imageTranscode.js';
 import { seoulDate } from '@/lib/datetime.js';
-import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
+import { enrollmentReasonMessage } from './biometricEnrollment.js';
+import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
+import { heading, renderCertificate, renderConditions, renderConsent, renderIdentity, renderPhotos } from './RegisterScreens.jsx';
+import s from './ModelRegister.module.css';
 
-const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
-const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
-  || `${CX_ORIGIN}/ent/esign/config/config.mid.json`;
-const DEVICE_KEY = 'wearless.fmDeviceId';
-const CONSENT_VERSION = '2026-08-v2';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
-
-let cxLoader;
-function loadCxWidget() {
-  if (window.OACX) return Promise.resolve();
-  if (cxLoader) return cxLoader;
-  const loaderScripts = [];
-  const addScript = (id, src) => new Promise((resolve, reject) => {
-    if (document.getElementById(id)) return resolve();
-    const element = document.createElement('script');
-    element.id = id;
-    element.src = src;
-    element.onload = resolve;
-    element.onerror = () => {
-      element.remove();
-      reject(new Error('인증 화면을 불러오지 못했어요.'));
-    };
-    loaderScripts.push(element);
-    document.head.appendChild(element);
-  });
-  const pending = new Promise((resolve, reject) => {
-    if (!document.getElementById('oacx-ux-css')) {
-      const link = document.createElement('link');
-      link.id = 'oacx-ux-css';
-      link.rel = 'stylesheet';
-      link.href = `${CX_ORIGIN}/ent/esign/oacx-ux.css`;
-      document.head.appendChild(link);
-    }
-    addScript('oacx-vendor', `${CX_ORIGIN}/ent/esign/oacx-vendor.js`)
-      .then(() => addScript('oacx-ux', `${CX_ORIGIN}/ent/esign/oacx-ux.js`))
-      .then(() => {
-        let tries = 0;
-        const timer = setInterval(() => {
-          if (window.OACX) {
-            clearInterval(timer);
-            resolve();
-          } else if (++tries > 50) {
-            clearInterval(timer);
-            reject(new Error('인증 화면이 아직 준비되지 않았어요.'));
-          }
-        }, 100);
-      })
-      .catch(reject);
-  });
-  cxLoader = pending.catch((error) => {
-    loaderScripts.forEach((element) => element.remove());
-    cxLoader = undefined;
-    throw error;
-  });
-  return cxLoader;
-}
-
+const DEVICE_KEY = 'wearless.fmDeviceId';
 function getDeviceId() {
-  let deviceId;
-  try { deviceId = localStorage.getItem(DEVICE_KEY); } catch { /* 저장소 차단 */ }
-  if (deviceId) return deviceId;
-  deviceId = crypto.randomUUID();
-  try { localStorage.setItem(DEVICE_KEY, deviceId); } catch { /* 메모리 값으로 계속 */ }
-  return deviceId;
+  try {
+    const current = localStorage.getItem(DEVICE_KEY);
+    if (current) return current;
+    const value = crypto.randomUUID(); localStorage.setItem(DEVICE_KEY, value); return value;
+  } catch { return crypto.randomUUID(); }
 }
-
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-// runIdentity(앞단 CI 게이트)·finishMatch(라이브니스 후 SFace 매치) 도중 던져지는 에러 중
-// 서버가 실제로 응답해 거절한 경우(err.status 존재 — httpAdapter/facemarket.js 가 실제 HTTP
-// 응답에만 status 를 싣는다)만 터미널로 다룬다. CX 위젯 로딩 실패·토큰 누락·네트워크 왕복
-// 실패(응답 자체를 못 받음)는 서버 쪽 등록 상태가 그대로이므로, 등록을 버리지 않고 같은
-// 단계를 안전하게 재시도할 수 있다.
-function isTransientIdentityError(error) {
-  return !(error && typeof error.status === 'number');
-}
-
-// 진행 레일 — 등록은 실제 순차 KYC 흐름이라 번호 마커가 의미를 갖는다(장식 아님).
-// 인라인 렌더(중첩 컴포넌트 아님)로 두어 테스트 하네스 트리에 그대로 펼쳐지게 한다.
-// optional — 체형·대표는 건너뛸 수 있다(PRD §13 4번). 레일이 그걸 말해 주지 않으면
-// 일곱 개가 전부 필수로 읽혀 시작 전에 이탈한다.
-const FLOW_STEPS = [
-  { key: 'consent', label: '동의' },
-  { key: 'identity', label: '신분증' },
-  { key: 'photos', label: '사진' },
-  { key: 'physique', label: '체형', optional: true },
-  { key: 'profile', label: '대표', optional: true },
-  { key: 'liveness', label: '라이브' },
-  { key: 'done', label: '완료' },
-];
-const RAIL_INDEX = {
-  consent: 0, identity: 1, identity_failed: 1, photos: 2, physique: 3,
-  profile: 4, liveness: 5, liveness_failed: 5, reidentify: 5, processing: 6, terms: 6,
-};
-function renderStepRail(step) {
-  const current = RAIL_INDEX[step];
-  if (current == null) return null;
-  return (
-    <ol className={s.rail} aria-label="등록 진행 단계">
-      {FLOW_STEPS.map((f, i) => {
-        const state = i < current ? 'done' : i === current ? 'active' : 'todo';
-        return (
-          <li
-            key={f.key}
-            className={`${s.railStep} ${s[`rail_${state}`]}`}
-            aria-current={state === 'active' ? 'step' : undefined}
-          >
-            {/* 번호는 Cormorant(라틴 전용 세리프)다 — 랜딩의 캐러셀 인덱스·라이선스
-                01~04 와 같은 자리이고, 이 사이트에서 '순서'를 뜻하는 표식이다.
-                끝난 단계는 숫자를 체크로 바꾼다: 번호는 '몇 번째'를, 체크는 '지났다'를
-                말하므로 같은 자리에 다른 뜻을 겹쳐 쓰지 않는다. */}
-            <span className={s.railNode}>
-              {state === 'done'
-                ? <Icon name="check" size={13} stroke={2.6} />
-                : String(i + 1).padStart(2, '0')}
-            </span>
-            <span className={s.railLabel}>{f.label}</span>
-            {/* 건너뛸 수 있는 단계는 그 사실이 레일에 있어야 한다 — 카드 안까지
-                들어가야 알 수 있으면 일곱 개가 전부 필수로 읽힌다. */}
-            {f.optional ? <span className={s.railOptional}>선택</span> : null}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
+const pause = (ms, signal) => new Promise((resolve, reject) => {
+  const abort = () => { clearTimeout(timer); reject(new Error('요청이 중단됐어요.')); };
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+  if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, { once: true });
+});
 
 export function ModelRegister() {
   const navigate = useNavigate();
   const { state: routeState } = useLocation();
-  const completionHandoff = routeState?.completionSummary || null;
-  const [step, setStep] = useState(() => initialRegistrationStep(completionHandoff));
-  const [enrollment, setEnrollment] = useState(null);
-  const [session, setSession] = useState(null);
+  const handoff = routeState?.completionSummary;
+  const [step, setStep] = useState(handoff?.modelId ? 'done' : 'loading');
+  const [enrollment, setEnrollment] = useState(handoff || null);
+  const [sub, setSub] = useState(1);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [consentAccepted, setConsentAccepted] = useState(false);
-  // 라이브니스 필요 여부 — 서버 /config 가 authoritative. false 면 라이브 단계를 건너뛰고
-  // 사진 → 완료로 직행(매칭 앵커는 신분증 초상). 조회 전 기본 true(보수적).
-  // 주의: 위 상태들 뒤에 둔다 — 테스트가 useState 를 위치(index)로 프리셋하므로 순서 보존.
-  const [livenessRequired, setLivenessRequired] = useState(true);
+  const [consents, setConsents] = useState([false, false, false]);
+  const [terms, setTerms] = useState(defaultRegisterTerms);
+  const [body, setBody] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [license, setLicense] = useState(null);
+  const [session, setSession] = useState(null);
+  const [previews, setPreviews] = useState({});
   const mounted = useRef(true);
-  const issuedLivenessEnrollmentRef = useRef(null);
-  // 신분증 초상(dlphotoimage HEX) — 앞단 identity 스텝에서 위젯 콜백으로 받아 라이브니스 후
-  // SFace 매치 때까지 메모리에서만 보관한다. local/session storage 금지·로그 금지.
-  const portraitRef = useRef(null);
-  // finishMatch 는 아래에서 정의되지만 그 위의 이펙트가 참조해야 한다(라이브니스 off 자동완료).
-  // dep-array forward-reference 를 피하려고 ref 로 최신 함수를 넘긴다.
-  const finishMatchRef = useRef(null);
+  const operation = useRef(null);
+  const previewUrls = useRef({});
+  const inFlight = useRef(false);
+
+  const showRecord = useCallback((record) => {
+    setEnrollment(record);
+    const screen = restoreRegisterScreen(record);
+    const consentCurrent = [record?.consentDocumentVersion, record?.termsConsentVersion, record?.overseasConsentVersion].every((version) => version === CONSENT_VERSION);
+    const needsConsent = record?.id && !['passed', 'review_pending'].includes(record.status) && !consentCurrent;
+    setStep(needsConsent ? '1' : screen.step); setSub(screen.sub);
+    setBody(record?.bodyType || null);
+    setTerms(record?.licenseTerms ? { allowedUse: record.licenseTerms.allowedUse, validDays: record.licenseTerms.validDays } : readRegisterDraft(record?.id));
+    setConsents([consentCurrent, consentCurrent, consentCurrent]);
+  }, []);
 
   const restore = useCallback(async () => {
-    setStep('loading');
-    setError('');
+    setError(''); setStep('loading');
     try {
-      const models = await listMyModels();
+      const [models, runtimeConfig] = await Promise.all([listMyModels(), getFacemarketConfig()]);
       if (!mounted.current) return;
-      if (models.some((model) => model.status === 'awaiting_confirm')) {
-        navigate('/model/confirm', { replace: true });
-        return;
-      }
+      setConfig(runtimeConfig);
+      if (models.some((model) => model.status === 'awaiting_confirm')) { navigate('/model/confirm', { replace: true }); return; }
+      const licenses = await listLicenses();
+      if (!mounted.current) return;
       try {
-        const current = await getCurrentEnrollment();
+        const record = await getCurrentEnrollment();
         if (!mounted.current) return;
-        setEnrollment(current);
-        setStep(nextEnrollmentStep(current));
+        showRecord(record);
+        const currentLicense = licenses.find((item) => item.id === record.licenseId || (item.modelId === record.modelId && item.status === 'active'));
+        if (['passed', 'review_pending'].includes(record.status) && currentLicense) {
+          setLicense(currentLicense); setTerms({ allowedUse: currentLicense.allowedUse, validDays: currentLicense.validDays });
+        }
       } catch (requestError) {
         if (requestError?.status !== 404) throw requestError;
-        if (!mounted.current) return;
-        const verified = models.find((model) => model.status === 'verified');
-        if (verified) {
-          setEnrollment({ modelId: verified.id, status: 'passed' });
-          setStep('done');
-        } else {
-          setStep('consent');
-        }
+        const currentLicense = licenses.find((item) => item.status === 'active' && models.some((model) => model.id === item.modelId));
+        if (currentLicense) {
+          setEnrollment({ modelId: currentLicense.modelId }); setLicense(currentLicense);
+          setTerms({ allowedUse: currentLicense.allowedUse, validDays: currentLicense.validDays }); setStep('done');
+        } else { setEnrollment(null); setConsents([false, false, false]); setStep('1'); }
       }
     } catch (requestError) {
-      if (!mounted.current) return;
-      setError(requestError?.message || '등록 상태를 불러오지 못했어요.');
-      setStep('error');
+      if (mounted.current) { setError(requestError.message || '등록 상태를 불러오지 못했어요.'); setStep('error'); }
     }
-  }, [navigate]);
+  }, [navigate, showRecord]);
 
   useEffect(() => {
     mounted.current = true;
-    if (!completionHandoff) restore();
+    restore();
     return () => {
-      mounted.current = false;
-      // 언마운트(라우트 이동·HMR·StrictMode 이중 마운트)로는 등록을 취소하지 않는다.
-      // 취소는 사용자가 명시적으로 할 때(abandonLiveness)만 한다 — 진행상황(신분증·사진) 보존.
-      // (dev HMR 이 리마운트할 때마다 라이브니스 세션 발급 등록이 조용히 취소되던 버그를 막는다.)
-      issuedLivenessEnrollmentRef.current = null;
+      mounted.current = false; operation.current?.abort();
+      Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {};
     };
-  }, [completionHandoff, restore]);
+  }, [restore]);
 
-  const photoApi = useMemo(() => enrollment ? ({
-    load: () => getEnrollment(enrollment.id),
-    upload: (photo) => uploadEnrollmentPhoto({ enrollmentId: enrollment.id, ...photo }),
-    remove: (angle) => deleteEnrollmentPhoto(enrollment.id, angle),
-  }) : null, [enrollment]);
+  useEffect(() => { if (enrollment?.id) saveRegisterDraft(enrollment.id, terms); }, [enrollment?.id, terms]);
+  useEffect(() => { if (typeof document !== 'undefined') document.querySelector?.('[data-registration] h1')?.focus?.({ preventScroll: true }); }, [step, sub]);
 
-  const restartEnrollment = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const models = await listMyModels();
-      if (!mounted.current) return;
-      if (models.some((model) => model.status === 'awaiting_confirm')) {
-        navigate('/model/confirm', { replace: true });
-        return;
+  // 새로고침 뒤에도 본인 사진은 인증된 비공개 경로로만 읽어요.
+  useEffect(() => {
+    if (step !== '2' || !enrollment?.id) return;
+    let active = true;
+    const controller = new AbortController();
+    (async () => {
+      for (const photo of enrollment.photos || []) {
+        const key = photoSlotKey(photo);
+        if (!SLOTS.some((slot) => slot.key === key) || previewUrls.current[key]) continue;
+        try {
+          const url = await fetchEnrollmentPhotoUrl(enrollment.id, photo.slot || photo.angle, { signal: controller.signal });
+          if (!active) { URL.revokeObjectURL(url); return; }
+          if (previewUrls.current[key]) { URL.revokeObjectURL(url); continue; }
+          previewUrls.current[key] = url; setPreviews({ ...previewUrls.current });
+        } catch { /* 사진을 저장했다는 표시와 바꾸기 동작은 유지해요. */ }
       }
-      setEnrollment(null);
-      setConsentAccepted(false);
-      setStep('consent');
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [enrollment?.id, enrollment?.photos, step]);
+
+  useEffect(() => {
+    if (step !== 'processing' || !enrollment?.id) return;
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 120000);
+    let active = true;
+    (async () => {
+      let failures = 0;
+      try {
+        while (!controller.signal.aborted) {
+          try {
+            const current = await getEnrollment(enrollment.id, { signal: controller.signal });
+            if (!active) return;
+            failures = 0; setEnrollment(current);
+            if (!['processing', 'asset_building'].includes(current.status)) {
+              const screen = restoreRegisterScreen(current); setStep(screen.step); setSub(screen.sub); return;
+            }
+          } catch (requestError) { if (++failures > 3 || controller.signal.aborted) throw requestError; }
+          await pause(2500, controller.signal);
+        }
+      } catch (requestError) {
+        if (active) { setError(controller.signal.aborted ? '처리가 예상보다 오래 걸리고 있어요. 다시 확인해 주세요.' : requestError.message); setStep('poll_error'); }
+      } finally { clearTimeout(deadline); }
+    })();
+    return () => { active = false; clearTimeout(deadline); controller.abort(); };
+  }, [step, enrollment?.id]);
+
+  const runIdentity = async (record = enrollment) => {
+    if (!record?.id || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(''); setStep('1b');
+    const controller = new AbortController(); operation.current = controller;
+    try {
+      const token = await runIdentityWidget({ signal: controller.signal });
+      if (!mounted.current || controller.signal.aborted) return;
+      const verified = await createIdentity(record.id, { token });
+      if (!mounted.current || controller.signal.aborted) return;
+      setEnrollment(verified); setStep('1c');
     } catch (requestError) {
-      if (mounted.current) setError(requestError?.message || '등록 상태를 불러오지 못했어요.');
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
+      if (mounted.current && !controller.signal.aborted) { setError(requestError.message || '본인 확인에 실패했어요.'); setStep('1d'); }
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
   const startEnrollment = async () => {
-    setBusy(true);
-    setError('');
+    if (!consents.every(Boolean) || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError('');
+    let created;
     try {
-      const created = await createEnrollment({
-        documentVersion: CONSENT_VERSION,
-        deviceId: getDeviceId(),
-      });
+      // 동의를 편집한 등록은 서버의 같은 활성 등록을 반환해요.
+      created = await createEnrollment({ documentVersion: CONSENT_VERSION, deviceId: getDeviceId() });
       if (!mounted.current) return;
       setEnrollment(created);
-      setStep(nextEnrollmentStep(created));
     } catch (requestError) {
       if (!mounted.current) return;
-      if (requestError?.code === 'model_confirmation_required') {
-        navigate('/model/confirm', { replace: true });
-        return;
-      }
-      setError(requestError?.message || '등록을 시작하지 못했어요.');
-    } finally {
-      if (mounted.current) setBusy(false);
+      if (requestError.code === 'model_confirmation_required') { navigate('/model/confirm', { replace: true }); return; }
+      setError(requestError.message || '등록을 시작하지 못했어요.');
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    if (created && mounted.current) {
+      if (created.status === 'identity_pending') await runIdentity(created);
+      else showRecord(created);
     }
   };
 
-  // 앞단 identity 스텝: CX 표준인증창(ENT_MID)으로 본인 명의 신원을 먼저 확인한다.
-  // 성공 token → createIdentity(등록 스코프 CI 게이트), 신분증 초상(dlphotoimage)은 ref 로만 보관.
-  // OACX(모바일 신분증) 위젯을 #oacxDiv 에 띄워 신분증 초상(dlphotoimage HEX)을 portraitRef 에
-  // 담고 인증 토큰을 돌려준다. runIdentity(앞단 CI 게이트)와 reCaptureIdentity(초상 재확보) 공용.
-  const runCxWidget = useCallback(async () => {
-    // 이전 시도(취소 포함)의 위젯 DOM 을 비워 재시도 시 깨끗한 창이 뜨게 한다.
-    const oacxHost = typeof document !== 'undefined' ? document.getElementById('oacxDiv') : null;
-    if (oacxHost) oacxHost.replaceChildren();
-    await loadCxWidget();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    return new Promise((resolve, reject) => {
-      const options = {
-        contentInfo: { signType: 'ENT_MID' },
-        compareCI: false,
-        isBirth: true,
-        // useConvertor:true 없이는 위젯이 RESULT 스텝에서 신분증 사진(dlphotoimage)을
-        // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처.
-        useConvertor: true,
-      };
-      window.OACX.LOAD_MODULE(CX_CONFIG_URL, options, (response) => {
-        try {
-          const parsed = typeof response === 'string' ? JSON.parse(response) : response;
-          const authToken = parsed?.token;
-          if (!authToken) throw new Error('본인 확인 정보를 받지 못했어요. 다시 시도해 주세요.');
-          if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
-          // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 ref(메모리)에만 담는다.
-          // 저장(local/session storage)·로그 금지 — 라이브니스 후 매치에만 서버로 전달한다.
-          portraitRef.current = parsed?.data?.dlphotoimage;
-          resolve(authToken);
-        } catch (requestError) {
-          reject(requestError);
-        }
-      });
-    });
-  }, []);
-
-  const runIdentity = useCallback(async () => {
-    const enrollmentId = enrollment?.id;
-    if (!enrollmentId) return;
-    setStep('identity');
-    setError('');
-    setBusy(true);
+  const changePhoto = async (slot, file) => {
+    if (inFlight.current || !enrollment?.id) return;
+    inFlight.current = true; setBusy(true); setError('');
     try {
-      const token = await runCxWidget();
-      await createIdentity(enrollmentId, { token });
+      const blob = await toUploadableImage(file);
+      const result = await uploadEnrollmentPhoto({ enrollmentId: enrollment.id, slot, fileBlob: blob, filename: blob.name || file.name });
       if (!mounted.current) return;
-      const current = await getEnrollment(enrollmentId);
-      if (!mounted.current) return;
-      setEnrollment(current);
-      setStep(nextEnrollmentStep(current));
-    } catch (requestError) {
-      if (!mounted.current) return;
-      if (isTransientIdentityError(requestError)) {
-        // 등록을 그대로 두고 신원 확인만 재시도한다 — 동의 재입력 없이.
-        setError(requestError?.message || '일시적인 오류가 발생했어요. 다시 시도해 주세요.');
-        setStep('identity_failed');
-        return;
-      }
-      // 서버가 실제로 신원을 거절(터미널) — 등록을 정리하고 처음부터 다시 시작.
-      portraitRef.current = null;
-      setEnrollment(null);
-      setError(requestError?.message || '본인 확인에 실패했어요. 다시 시도해 주세요.');
-      setStep('failed');
-      cancelEnrollment(enrollmentId).catch(() => {});
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  }, [enrollment?.id, runCxWidget]);
-
-  // 새로고침·복귀로 초상 ref(메모리)를 잃었을 때: 사진은 서버에 저장돼 있으므로 신분증만 다시
-  // 확인해 초상을 되찾고 라이브니스로 넘어간다(사진 재촬영 없음). 서버 identity 게이트를 다시
-  // 부르지 않는다 — CI 는 앞단에서 이미 확정됐고, 최종 매치(completeEnrollment)의 SFace 대조가
-  // 초상↔라이브 동일인 여부를 강제하므로 재확보한 초상이 남이면 거기서 걸러진다.
-  const reCaptureIdentity = useCallback(async () => {
-    const enrollmentId = enrollment?.id;
-    if (!enrollmentId) return;
-    setStep('reidentify');
-    setError('');
-    setBusy(true);
+      const url = URL.createObjectURL(blob);
+      if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
+      previewUrls.current[slot] = url; setPreviews({ ...previewUrls.current });
+      if (Array.isArray(result.photos)) setEnrollment(result);
+      else setEnrollment((current) => ({ ...current, photos: [...(current.photos || []).filter((photo) => photoSlotKey(photo) !== slot), { ...result, slot }] }));
+    } catch (requestError) { if (mounted.current) setError(requestError.message || '사진을 올리지 못했어요. 다시 시도해 주세요.'); }
+    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+  };
+  const removePhoto = async (slot) => {
+    if (inFlight.current || !enrollment?.id) return;
+    inFlight.current = true; setBusy(true); setError('');
     try {
-      await runCxWidget();
+      const stored = enrollment.photos.find((photo) => photoSlotKey(photo) === slot);
+      await deleteEnrollmentPhoto(enrollment.id, stored?.slot || stored?.angle || slot);
       if (!mounted.current) return;
-      setStep('liveness');
+      if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
+      delete previewUrls.current[slot]; setPreviews({ ...previewUrls.current });
+      setEnrollment((current) => ({ ...current, status: 'photos_pending', photos: current.photos.filter((photo) => photoSlotKey(photo) !== slot) }));
+    } catch (requestError) { if (mounted.current) setError(requestError.message || '사진을 지우지 못했어요.'); }
+    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+  };
+
+  const finishMatch = async (livenessSession = session) => {
+    if (!enrollment?.id || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError('');
+    const controller = new AbortController(); operation.current = controller;
+    const deadline = setTimeout(() => controller.abort(), 120000);
+    try {
+      const result = await completeEnrollment(enrollment.id, { sessionId: livenessSession?.sessionId }, { signal: controller.signal });
+      if (!mounted.current) return;
+      setEnrollment((current) => ({ ...current, ...result })); setSession(null);
+      const screen = restoreRegisterScreen(result); setStep(screen.step); setSub(screen.sub);
+      if (screen.step === 'failed') setError(enrollmentReasonMessage(result.reason));
     } catch (requestError) {
-      if (!mounted.current) return;
-      setError(requestError?.message || '본인 확인에 실패했어요. 다시 시도해 주세요.');
-      setStep('reidentify');
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  }, [enrollment?.id, runCxWidget]);
+      if (mounted.current) { setError(controller.signal.aborted ? '처리가 늦어지고 있어요. 다시 확인해 주세요.' : requestError.message); setStep('poll_error'); }
+    } finally { clearTimeout(deadline); inFlight.current = false; if (mounted.current) setBusy(false); }
+  };
 
   const finishPhotos = async () => {
+    if (!photoProgress(enrollment?.photos).complete || inFlight.current) return;
+    inFlight.current = true; setError(''); setBusy(true);
     try {
-      const current = await getEnrollment(enrollment.id);
-      setEnrollment(current);
-      // physique·profile 은 서버 상태가 없는 UI 전용 스텝 — 사진 완료 후 명시적으로 진입한다.
-      // (서버 상태는 이미 liveness_pending 이라 nextEnrollmentStep 은 liveness 를 반환한다.)
-      setStep('physique');
-    } catch (requestError) {
-      setError(requestError?.message || '사진 상태를 확인하지 못했어요.');
-    }
-  };
-
-  // physique 스텝(선택): 체형·키 메타데이터. 컷 파이프라인·상태머신을 게이팅하지 않는다 —
-  // 저장/건너뛰기 모두 profile 스텝으로 이어간다. 로컬 선택값(physiqueHeightBucket/BodyType)은
-  // 훅 순서 보존을 위해 컴포넌트 맨 끝에서 선언한다(아래 참고).
-  const submitPhysiqueStep = async () => {
-    if (!enrollment?.id) return;
-    setBusy(true);
-    setError('');
-    try {
-      const updated = await submitPhysique({
-        enrollmentId: enrollment.id,
-        heightBucket: physiqueHeightBucket,
-        bodyType: physiqueBodyType,
-      });
+      const settings = config || await getFacemarketConfig();
       if (!mounted.current) return;
-      setEnrollment(updated);
-      setStep('profile');
-    } catch (requestError) {
-      if (!mounted.current) return;
-      setError(requestError?.message || '체형 정보를 저장하지 못했어요.');
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  };
-
-  // profile 스텝(선택): 셀러 카탈로그 대표 이미지. 비게이팅 — 업로드/건너뛰기 모두 liveness 로.
-  // 고른 사진은 바로 올리지 않는다 — 먼저 보여주고 확인을 받는다. 예전엔 파일을 고르는
-  // 순간 업로드하고 다음 단계로 넘어가버려서, 잘못 고르면 되돌릴 방법이 아예 없었다.
-  const pickProfileImage = (file) => {
-    if (!file) return;
-    setError('');
-    setProfilePreview((previous) => {
-      if (previous?.url) URL.revokeObjectURL(previous.url);
-      return { file, url: URL.createObjectURL(file) };
-    });
-  };
-
-  const clearProfileImage = () => {
-    setProfilePreview((previous) => {
-      if (previous?.url) URL.revokeObjectURL(previous.url);
-      return null;
-    });
-  };
-
-  const submitProfileImage = async () => {
-    const file = profilePreview?.file;
-    if (!file || !enrollment?.id) return;
-    setBusy(true);
-    setError('');
-    try {
-      await uploadProfileImage({ enrollmentId: enrollment.id, fileBlob: file, filename: file.name });
-      if (!mounted.current) return;
-      clearProfileImage();
-      setStep('liveness');
-    } catch (requestError) {
-      if (!mounted.current) return;
-      setError(requestError?.message || '대표 이미지를 올리지 못했어요.');
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  };
-
-  const abandonLiveness = useCallback(async () => {
-    const enrollmentId = enrollment?.id;
-    if (mounted.current) {
-      setStep('cancelling');
-      setError('');
-      setSession(null);
-    }
-    if (enrollmentId) {
-      try {
-        await cancelEnrollment(enrollmentId);
-      } catch {
+      setConfig(settings);
+      if (settings.livenessRequired) {
+        const created = await createLivenessSession(enrollment.id, crypto.randomUUID());
         if (!mounted.current) return;
-        issuedLivenessEnrollmentRef.current = enrollmentId;
-        setError('현재 등록을 안전하게 취소하지 못했어요. 다시 시도해 주세요.');
-        setStep('cancel_failed');
-        return;
-      }
-    }
-    issuedLivenessEnrollmentRef.current = null;
-    if (!mounted.current) return;
-    setEnrollment(null);
-    setError(enrollmentReasonMessage('liveness_retry'));
-    setStep('failed');
-  }, [enrollment?.id]);
+        setSession(created); setStep('liveness');
+      } else { inFlight.current = false; await finishMatch(); }
+    } catch (requestError) { if (mounted.current) setError(requestError.message || '등록을 마치지 못했어요.'); }
+    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+  };
 
-  // 라이브니스가 에러/취소돼도 등록(신분증·사진)은 버리지 않고 라이브 인증만 다시 시도한다.
-  // AWS 위젯 에러는 콘솔에 안 남으므로 메시지를 화면에 띄워 원인을 보이게 한다(진행상황 보존).
-  const onLivenessError = useCallback((err) => {
-    if (!mounted.current) return;
-    const detail = err?.error?.message || err?.message || err?.state?.message
-      || (err && typeof err === 'object' ? JSON.stringify(err) : String(err ?? ''));
-    setSession(null); // 이 라이브니스 세션은 재사용 불가 — 재시도 시 새 세션을 발급한다.
-    setError(detail ? ('라이브 인증 오류: ' + String(detail).slice(0, 300)) : '라이브 인증이 중단됐어요.');
-    setStep('liveness_failed');
-  }, []);
-
-  useEffect(() => {
-    if (step !== 'liveness' || !enrollment?.id || session) return undefined;
-    // 새로고침·복귀로 초상 ref 를 잃었으면(사진은 서버에 저장됨) 라이브니스 세션을 만들기 전에
-    // 신분증만 다시 확인해 초상을 되찾는다 — 사진 재촬영 없이 이어서 진행한다.
-    if (!portraitRef.current) { setStep('reidentify'); return undefined; }
-    // 라이브니스 off — 세션/위젯 없이 신분증 초상 앵커로 바로 완료한다.
-    if (!livenessRequired) { finishMatchRef.current?.(); return undefined; }
-    let active = true;
-    createLivenessSession(enrollment.id, crypto.randomUUID())
-      .then((created) => {
-        // 이펙트가 정리됨(리렌더·스텝 이동) — 만든 세션만 버리고 등록은 그대로 둔다.
-        if (!active) return;
-        issuedLivenessEnrollmentRef.current = enrollment.id;
-        setSession(created);
-      })
-      .catch((sessionError) => {
-        // 세션 생성 실패(일시적)로 등록을 취소하지 않는다 — 라이브 인증만 다시 시도.
-        if (!active) return;
-        setError(sessionError?.message || '라이브 인증 세션을 시작하지 못했어요. 다시 시도해 주세요.');
-        setStep('liveness_failed');
-      });
-    return () => { active = false; };
-  }, [enrollment?.id, session, step, livenessRequired]);
-
-  useEffect(() => {
-    if (step !== 'processing' || !enrollment?.id) return undefined;
-    let active = true;
-    let requestController;
-    const deadline = Date.now() + 120000;
-    const stopForTimeout = () => {
-      if (!active) return;
-      active = false;
-      requestController?.abort();
-      setError('처리가 예상보다 오래 걸리고 있어요. 다시 확인해 주세요.');
-      setStep('poll_timeout');
-    };
-    const deadlineTimer = setTimeout(stopForTimeout, 120000);
-    (async () => {
-      let consecutiveFailures = 0;
-      while (active) {
-        if (Date.now() >= deadline) {
-          stopForTimeout();
-          return;
-        }
-        let current;
-        const controller = new AbortController();
-        requestController = controller;
-        try {
-          current = await getEnrollment(enrollment.id, { signal: controller.signal });
-          consecutiveFailures = 0;
-        } catch (requestError) {
-          if (!active) return;
-          consecutiveFailures += 1;
-          if (consecutiveFailures > 3) {
-            setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
-            setStep('poll_error');
-            return;
-          }
-          await wait(2500);
-          continue;
-        } finally {
-          if (requestController === controller) requestController = undefined;
-        }
-        if (!active) return;
-        setEnrollment(current);
-        const restoredStep = nextEnrollmentStep(current);
-        if (restoredStep !== 'processing') {
-          setStep(restoredStep);
-          if (restoredStep === 'failed') setError(enrollmentReasonMessage(current.reason));
-          return;
-        }
-        await wait(2500);
-      }
-    })();
-    return () => {
-      active = false;
-      clearTimeout(deadlineTimer);
-      requestController?.abort();
-    };
-  }, [enrollment?.id, step]);
-
-  // OACX 위젯은 #oacxDiv 에 Vue 앱을 마운트하며 그 노드를 갈아치우고, 자체 '취소'(class="popup-close",
-  // click→closeApp) 는 우리 콜백을 주지 않는다. 그래서 document 캡처 리스너로 popup-close 클릭을 잡아
-  // 취소로 처리하고 페이지를 새로고침한다(새로고침하면 identity_pending 이라 신분증 카드로 복귀).
-  useEffect(() => {
-    if (step !== 'identity' || !busy) return undefined;
-    if (typeof document === 'undefined') return undefined;
-    const onClick = (event) => {
-      const target = event.target;
-      if (target && target.closest && target.closest('.popup-close')) {
-        if (typeof window !== 'undefined') window.location.reload();
-      }
-    };
-    document.addEventListener('click', onClick, true);
-    return () => document.removeEventListener('click', onClick, true);
-  }, [step, busy]);
-
-  // 라이브니스 통과 후 최종 매치: 저장된 세션 + 앞단에서 담아 둔 신분증 초상(ref)으로 완료한다.
-  // token 은 전달하지 않는다 — CI 게이트는 앞단 identity 에서 이미 끝났다.
-  const finishMatch = useCallback(async () => {
-    const sessionId = session?.sessionId;
-    const enrollmentId = enrollment?.id;
-    // 라이브니스 off 면 세션이 없다 — enrollmentId·초상만 있으면 완료(신분증 초상 앵커).
-    if (!enrollmentId) return;
-    if (livenessRequired && !sessionId) return;
-    const idPhotoHex = portraitRef.current;
-    if (!idPhotoHex) {
-      // 초상 ref 유실(라이브니스 도중 새로고침 등) — 조용한 실패 금지. 등록·사진은 서버에 보존돼
-      // 있으니 취소하지 않고, 신분증만 다시 확인(reCaptureIdentity)해 초상을 되찾아 이어서 진행한다.
-      if (mounted.current) {
-        setError('본인 확인 정보가 만료됐어요. 신분증만 다시 확인하면 사진 그대로 이어서 진행돼요.');
-        setStep('reidentify');
-      }
-      return;
-    }
-    setError('');
-    try {
-      const decision = await completeEnrollment(enrollmentId, { sessionId, idPhotoHex });
-      // 매치에 쓴 초상은 즉시 폐기한다.
-      portraitRef.current = null;
-      issuedLivenessEnrollmentRef.current = null;
-      if (mounted.current) setSession(null);
-      if (!mounted.current) return;
-      setEnrollment((current) => ({ ...current, ...decision }));
-      setStep(nextEnrollmentStep(decision));
-      if (!decision.passed) setError(enrollmentReasonMessage(decision.reason));
-    } catch (requestError) {
-      if (!mounted.current) return;
-      if (isTransientIdentityError(requestError)) {
-        // 등록·세션·초상 ref 를 그대로 두고 매치만 재시도한다 — 라이브니스 재촬영 없이.
-        setError(requestError?.message || '일시적인 오류가 발생했어요. 다시 시도해 주세요.');
-        setStep('identity_failed');
-        return;
-      }
-      await abandonLiveness();
-    }
-  }, [abandonLiveness, enrollment?.id, session, livenessRequired]);
-  // 위 이펙트(라이브니스 off 자동완료)가 forward-reference 없이 최신 finishMatch 를 부르게 한다.
-  finishMatchRef.current = finishMatch;
-
-  // 마운트 시 라이브니스 필요 여부 조회. 실패해도 기본 true 유지(라이브 단계를 보수적으로 노출).
-  // 기존 이펙트 순서를 흩뜨리지 않도록 맨 마지막 useEffect 로 둔다.
-  useEffect(() => {
-    let active = true;
-    getFacemarketConfig()
-      .then((cfg) => { if (active) setLivenessRequired(cfg?.livenessRequired !== false); })
-      .catch(() => { /* 기본 true 유지 */ });
-    return () => { active = false; };
-  }, []);
-
-  // physique 스텝 로컬 선택값 — 서버 상태 없는 UI 전용(제출 시에만 서버로). 기존 테스트가
-  // useState 를 위치(index)로 프리셋하므로, 새 useState 는 반드시 컴포넌트 맨 끝(모든
-  // 기존 useState/useEffect 뒤)에 추가한다 — livenessRequired 위 주석과 같은 관례.
-  const [physiqueHeightBucket, setPhysiqueHeightBucket] = useState(null);
-  const [physiqueBodyType, setPhysiqueBodyType] = useState(null);
-  // OACX 가 성별을 안 주는 경우가 있어 모델 gender 가 NULL 로 남는다. 그러면 키 구간을
-  // 남녀 12개로 다 보여줘 라벨이 겹치고 뒤죽박죽이 된다. 성별 토글로 6개만 보이게 한다.
-  const [physiqueGender, setPhysiqueGender] = useState(null);
-  // 체형 사진이 아직 없는 값들(404) — 그 카드만 텍스트 칩으로 되돌린다. 사진을
-  // /models/physique/{gender}/{value}.webp 에 떨구면 코드 수정 없이 이미지로 바뀐다.
-  const [brokenBodyImages, setBrokenBodyImages] = useState([]);
-  // 대표 이미지 확인용 로컬 프리뷰 {file, url} — 확인을 눌러야 실제로 올라간다.
-  const [profilePreview, setProfilePreview] = useState(null);
-  // 완료 카드에 필요한 모델·조건. 기존 useState 인덱스를 쓰는 등록 테스트를 깨뜨리지 않도록
-  // 모든 기존 state 뒤에 둔다. 조회 실패 시 조건표 기본값으로 안전하게 표시한다.
-  const [completionDetails, setCompletionDetails] = useState(() => ({
-    phase: 'loading',
-    model: null,
-    summary: null,
-  }));
-
-  useEffect(() => {
-    if (step !== 'done') return undefined;
-    let active = true;
-    setCompletionDetails((details) => ({ ...details, phase: 'loading' }));
-    void (async () => {
+  const nextPhoto = async () => {
+    if (busy) return;
+    if (sub <= 3) { if (photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete) setSub(sub + 1); return; }
+    if (sub === 5) { await finishPhotos(); return; }
+    if (body || enrollment?.bodyType) {
+      setBusy(true); setError('');
       try {
-        const [models, licenses] = await Promise.all([listMyModels(), listLicenses()]);
-        if (!active) return;
-        if (models.some((model) => model.status === 'awaiting_confirm')) {
-          navigate('/model/confirm', { replace: true });
-          return;
+        const record = await submitPhysique({ enrollmentId: enrollment.id, bodyType: body });
+        if (!mounted.current) return;
+        setEnrollment(record); setSub(5);
+      } catch (requestError) { if (mounted.current) setError(requestError.message || '체형 정보를 저장하지 못했어요.'); }
+      finally { if (mounted.current) setBusy(false); }
+    } else setSub(5);
+  };
+
+  const issueCertificate = async () => {
+    if (!enrollment?.id || !terms.allowedUse.length || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(''); setStep('4b');
+    saveRegisterDraft(enrollment.id, terms);
+    const controller = new AbortController(); operation.current = controller;
+    const deadline = setTimeout(() => controller.abort(), 240000);
+    try {
+      while (!controller.signal.aborted) {
+        try {
+          const issued = await createLicense({ enrollmentId: enrollment.id, ...terms }, { signal: controller.signal });
+          if (!mounted.current || controller.signal.aborted) return;
+          setLicense(issued); setStep('done'); return;
+        } catch (requestError) {
+          if (requestError.code !== 'vc_issue_delayed' || controller.signal.aborted) throw requestError;
+          await pause(8000, controller.signal);
+          const current = await getEnrollment(enrollment.id, { signal: controller.signal });
+          if (!mounted.current) return;
+          setEnrollment(current);
+          if (['passed', 'review_pending'].includes(current.status)) {
+            const licenses = await listLicenses();
+            const issued = licenses.find((item) => item.id === current.licenseId);
+            if (issued) { if (mounted.current) { setLicense(issued); setStep('done'); } return; }
+          }
         }
-        const targetModelId = completionHandoff?.modelId || enrollment?.modelId || null;
-        const model = targetModelId
-          ? models.find((candidate) => candidate.id === targetModelId) || null
-          : models.find((candidate) => candidate.status === 'verified') || null;
-        const license = model
-          ? licenses.find((candidate) => candidate.modelId === model.id) || null
-          : null;
-        if (!model || !license) {
-          setCompletionDetails({ phase: 'error', model: null, summary: null });
-          return;
-        }
-        setCompletionDetails({
-          phase: 'ready',
-          model,
-          summary: {
-            gender: completionHandoff?.gender || enrollment?.gender || null,
-            heightBucket: completionHandoff?.heightBucket || enrollment?.heightBucket || null,
-            bodyType: completionHandoff?.bodyType || enrollment?.bodyType || null,
-            allowedUseCount: license.allowedUse?.length || 0,
-            unitPrice: license.unitPrice,
-            validityDays: license.validityDays,
-            licenseValidUntil: license.licenseValidUntil,
-          },
-        });
-      } catch {
-        if (active) setCompletionDetails({ phase: 'error', model: null, summary: null });
       }
-    })();
-    return () => { active = false; };
-  }, [completionHandoff, enrollment?.bodyType, enrollment?.gender, enrollment?.heightBucket, enrollment?.modelId, navigate, step]);
+    } catch (requestError) { if (mounted.current) { setError(controller.signal.aborted ? '발급 서버 응답이 늦어요. 잠시 뒤에 다시 시도해 주세요.' : requestError.message); setStep('4c'); } }
+    finally { clearTimeout(deadline); inFlight.current = false; if (mounted.current) setBusy(false); }
+  };
 
-  const genderForBuckets = enrollment?.gender || physiqueGender || null;
-  const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
-  // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
-  const bodyOptions = bodyTypeOptions(genderForBuckets);
-  // 여성은 볼륨×실루엣 매트릭스(행 단위 가로 스크롤). 없으면 위 칩 목록으로 떨어진다.
-  const bodyMatrix = bodyTypeMatrix(genderForBuckets);
-  const completionModel = completionDetails.model;
-  const completionSummary = completionDetails.summary;
-  const completionBody = bodyTypeLabel(completionSummary?.bodyType);
-  const completionHeight = heightBucketLabel(completionSummary?.heightBucket);
-  const completionBodyBand = [completionHeight, completionBody].filter(Boolean).join(' · ') || '선택 안 함';
-  const completionValidity = completionSummary?.validityDays != null
-    ? validityLabel(completionSummary.validityDays)
-    : completionSummary?.licenseValidUntil
-      ? `${seoulDate(completionSummary.licenseValidUntil)}까지`
-      : completionSummary ? validityLabel(null) : null;
+  const restart = async () => {
+    setBusy(true); setError('');
+    try {
+      const models = await listMyModels();
+      if (!mounted.current) return;
+      if (models.some((model) => model.status === 'awaiting_confirm')) { navigate('/model/confirm', { replace: true }); return; }
+      if (enrollment?.id && ['rejected', 'failed', 'expired'].includes(enrollment.status)) await cancelEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {}; setPreviews({});
+      setEnrollment(null); setLicense(null); setConsents([false, false, false]); setTerms(defaultRegisterTerms()); setBody(null); setSub(1); setStep('1');
+    } catch (requestError) { if (mounted.current) setError(requestError.message); }
+    finally { if (mounted.current) setBusy(false); }
+  };
 
-  if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
+  // 새로고침으로 돌아온 발급 요청도 같은 등록 ID로 이어가요.
+  useEffect(() => {
+    if (step === '4b' && enrollment?.id && !inFlight.current) issueCertificate();
+  }, [step, enrollment?.id]);
 
-  if (step === 'error') {
-    return (
-      <div className="wizard narrow"><div className="surface">
-        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
-        <Button variant="secondary" block onClick={restore}>다시 불러오기</Button>
-      </div></div>
-    );
+  const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness'].includes(step) ? 2 : Number(step[0]) || 1;
+  let content, next, previous;
+  if (step === '1') {
+    content = renderConsent(consents, setConsents);
+    next = { label: '동의하고 신분증 인증하기', action: startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
+  } else if (['1b', '1c'].includes(step)) {
+    content = renderIdentity(step, enrollment, busy, () => runIdentity(), () => { setConsents([false, false, false]); setStep('1'); });
+    next = { label: '다음 · 사진 18장', action: () => { setStep('2'); setSub(1); }, disabled: step === '1b', hint: step === '1b' ? '인증이 끝나면 버튼이 켜져요' : '본인확인이 끝났어요' };
+  } else if (step === '1d') {
+    content = <>{heading('신분증을 확인하지 못했어요', '다시 인증하면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>인증 서버가 남긴 사유</span><p>{error}</p></div><h2 className={s.sectionTitle}>자주 생기는 이유예요</h2><ol className={s.numbered}><li><strong>지원서 이름이 신분증과 달라요</strong><p>활동명이나 영문 표기로 적었다면 신분증에 적힌 대로 고쳐 주세요.</p></li><li><strong>인증 창을 중간에 닫았어요</strong><p>신분증 앱이 열린 뒤 끝까지 두면 자동으로 돌아와요.</p></li><li><strong>본인 명의의 신분증이 아니에요</strong><p>가족 명의 신분증으로는 등록할 수 없어요.</p></li></ol></>;
+    next = { label: '다시 인증하기', action: () => enrollment?.status === 'identity_pending' ? runIdentity() : restart() };
+    previous = { label: '지원서 고치기', action: () => navigate('/model/apply') };
+  } else if (step === '2') {
+    content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, body, setBody, setSub });
+    const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : sub === 4 || photoProgress(enrollment?.photos).complete;
+    next = { label: ['다음 · 상반신 5장', '다음 · 전신 5장', '다음 · 몸의 두께', '다음 · 확인', '다음 · 조건'][sub - 1], action: nextPhoto, disabled: !complete, hint: sub === 4 ? '고르지 않아도 다음으로 갈 수 있어요' : complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1c'); } };
+  } else if (step === '3') {
+    content = renderConditions(terms, setTerms);
+    next = { label: '다음 · 증서', action: () => setStep('4'), disabled: !terms.allowedUse.length };
+  } else if (step === '4') {
+    content = renderCertificate(enrollment);
+    next = { label: '증서 발급하기', action: issueCertificate, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };
+    previous = { label: '이전', action: () => setStep('3') };
+  } else if (step === '4b') {
+    content = <>{heading('증서를 발급하고 있어요', '보통 30초에서 1분쯤 걸려요. 첫 요청은 조금 더 걸릴 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫지 말아 주세요. 끝나면 이 화면이 저절로 넘어가요.</p></>;
+    next = { label: '발급 중이에요', disabled: true };
+  } else if (step === '4c') {
+    content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 그대로 저장돼 있어요. 다시 누르면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>발급 서버가 남긴 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용, {terms.validDays == null ? '영구' : terms.validDays === 365 ? '1년' : '2년'}</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>지금 닫아도 괜찮아요. 나중에 등록 화면으로 돌아오면 이 단계부터 다시 시작해요.</p></>;
+    next = { label: '다시 발급하기', action: issueCertificate }; previous = { label: '나중에 하기', action: () => navigate('/status') };
+  } else if (step === 'done') {
+    content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 {license.licenseValidUntil == null ? '철회하기 전까지 유효해요.' : `${seoulDate(license.licenseValidUntil)}까지 유효해요.`}</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
+  } else if (step === 'liveness') {
+    content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(5); }} onCancel={() => { setSession(null); setStep('2'); setSub(5); }} /></Suspense></>;
+  } else if (step === 'loading' || step === 'processing') {
+    content = <>{heading(step === 'loading' ? '등록 상태를 불러오고 있어요' : '등록을 마무리하고 있어요')}<p className={s.description} role="status"><span className={s.spinner} /> 잠시만 기다려 주세요.</p></>;
+  } else {
+    content = heading(step === 'failed' ? '등록을 이어갈 수 없어요' : '등록 상태를 확인하지 못했어요');
+    next = { label: step === 'failed' ? '다시 시작하기' : '다시 확인하기', action: step === 'failed' ? restart : restore };
   }
 
-  if (step === 'cancelling' || step === 'cancel_failed') {
-    return (
-      <div className="wizard narrow"><div className="surface">
-        <h1 className={s.stateTitle}>등록을 종료하고 있어요</h1>
-        <p className={error ? s.error : 'hint'} role={error ? 'alert' : undefined}>
-          {error || '사용한 라이브 인증 세션과 사진을 안전하게 정리하고 있어요.'}
-        </p>
-        {step === 'cancel_failed' && (
-          <Button variant="secondary" block onClick={abandonLiveness}>등록 취소 다시 시도</Button>
-        )}
-      </div></div>
-    );
-  }
-
-  if (step === 'poll_timeout' || step === 'poll_error') {
-    return (
-      <div className="wizard narrow"><div className="surface">
-        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
-        <Button variant="secondary" block onClick={restore}>다시 확인하기</Button>
-      </div></div>
-    );
-  }
-
-  if (step === 'done') {
-    return (
-      <div className={`wizard narrow ${s.centeredWizard}`}><div className={s.successWrap}>
-        <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>축하해요, 등록이 끝났어요</h1>
-        {completionDetails.phase === 'loading' ? (
-          <p className={s.completionSummaryState}>조건 요약을 불러오는 중…</p>
-        ) : completionDetails.phase === 'error' ? (
-          <p className={s.completionSummaryState} role="alert">조건 요약을 불러오지 못했어요.</p>
-        ) : <dl className={s.completionSummary}>
-          <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 얼굴 참조 자산'}</dd></div>
-          <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
-          <div><dt>허용 품목</dt><dd>{completionSummary.allowedUseCount}개</dd></div>
-          <div><dt>건당 가격</dt><dd>{formatKrw(FACEMARKET_PRICING.perCut)}</dd></div>
-          <div><dt>월정액</dt><dd>{formatKrw(FACEMARKET_PRICING.monthly)}</dd></div>
-          <div><dt>유효기간</dt><dd>{completionValidity}</dd></div>
-          <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
-        </dl>}
-        <p className={s.completionNotice}>우리가 사진을 확인한 뒤 테스트 컷을 보내드려요. 보통 1~2일 걸려요.</p>
-        <Button
-          variant="secondary"
-          block
-          disabled={busy}
-          onClick={restartEnrollment}
-        >
-          새 생체 등록 시작
-        </Button>
-        {error && <p className={s.error} role="alert">{error}</p>}
-        <Link to="/status" className={s.nextCard}>
-          마이페이지로 <Icon name="chevRight" size={18} />
-        </Link>
-      </div></div>
-    );
-  }
-
-  if (step === 'terms') {
-    return (
-      <div className={`wizard narrow ${s.centeredWizard}`}><div className={s.successWrap}>
-        <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>모델 정보 등록 완료</h1>
-        <p className={s.successLead}>마지막으로 얼굴 사용 조건을 정해 주세요.</p>
-        <Link to={`/model/license?step=terms&enrollment=${encodeURIComponent(enrollment.id)}`} className={s.nextCard}>
-          VC 발급 하러 가기 <Icon name="chevRight" size={18} />
-        </Link>
-      </div></div>
-    );
-  }
-
-  // 레일을 한 번만 계산한다 — 아래에서 "레일이 있는가"로 레이아웃을 가르기 때문에
-  // 렌더 중 두 번 부르면 두 판단이 어긋날 수 있다.
-  const rail = renderStepRail(step);
-
-  return (
-    <div className={`wizard ${s.flowWizard}`}>
-      <div className="page-head">
-        {/* <p> 가 아니라 <span> 이다. `.fm-theme .page-head p`(0,2,1)가 해시된 단일
-            클래스 .pageEyebrow(0,1,0)를 이겨서, <p> 로 두면 eyebrow 가 리드문과 같은
-            크기·굵기로 렌더돼 eyebrow→제목→리드 위계가 통째로 사라진다.
-            요소를 갈라 그 충돌을 아예 없앤다(ModelLicense.jsx 도 같은 이유로 span 이다). */}
-        <span className={s.pageEyebrow}>모델 등록</span>
-        <h1>모델 등록 진행 중</h1>
-        <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
-      </div>
-
-      {/* 레일은 본문 **위**에 가로로 눕는다. 세로 사이드 레일도 만들어 봤는데,
-          이 사이트의 리듬(랜딩이 전부 중앙 한 열)과 어긋나서 위저드만 다른 제품처럼
-          보였다. sticky 로 두어 단계 내용이 길어져도 현재 위치가 남는다 —
-          PRD §13 1번("7단계 진행 레일은 장식이 아니다")은 그렇게 지킨다.
-          'failed' 는 RAIL_INDEX 에 없어 rail 이 null 이고, 그때는 아무것도 안 그린다. */}
-      {rail}
-      <div className={s.flowBody}>
-
-      {step === 'consent' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={s.medallion}><Icon name="checkSquare" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 1 / 7</span></div>
-              <h2 className={s.stateTitle}>생체정보 처리 동의</h2>
-            </div>
-          </div>
-          <div className={s.purposeNotice}>
-            <div className={s.purposeNoticeHead}><Icon name="info" size={15} /> 이렇게 처리돼요</div>
-            <ul className={s.purposeList}>
-              <li>먼저 본인 명의 모바일 신분증으로 신원을 확인해요.</li>
-              <li>정면·45도·측면 얼굴 사진을 신분증 초상과 대조해 동일인인지 확인해요.</li>
-              <li>얼굴 대조는 미국 동부(us-east-1) 서버에서 처리돼요.</li>
-              <li>신분증에서 받은 얼굴(초상)은 대조에만 쓰고 저장하지 않아요.</li>
-              <li>모델의 체형·키(선택 입력)는 컷 생성 참고용으로 저장돼요.</li>
-            </ul>
-          </div>
-          <label className={s.consentCheck}>
-            <input type="checkbox" checked={consentAccepted} onChange={(event) => setConsentAccepted(event.target.checked)} />
-            생체정보 수집·이용과 국외 처리 내용을 확인하고 동의합니다.
-          </label>
-          <Button variant="primary" block disabled={!consentAccepted || busy} onClick={startEnrollment}>
-            {busy ? '등록 시작 중…' : '동의하고 본인 확인 시작'}
-          </Button>
-        </div>
-      )}
-
-      {step === 'identity' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={s.medallion}><Icon name="lock" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 2 / 7</span></div>
-              <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
-            </div>
-          </div>
-          <p className="hint">본인 명의 모바일 신분증으로 본인 확인을 먼저 해요. 확인한 뒤 얼굴 사진을 올려요.</p>
-          <div className={s.identityAction}>
-            <Button variant="primary" block onClick={runIdentity}>
-              {busy ? '인증 창 다시 열기' : '모바일 신분증으로 인증'}
-            </Button>
-          </div>
-          <p className={s.retryNote}>인증 창을 닫았거나 취소했다면 위 버튼으로 다시 열 수 있어요.</p>
-        </div>
-      )}
-
-      {(step === 'identity' || step === 'reidentify') && busy && (
-        <div className={s.authOverlay}>
-          <div className={s.authModal}>
-            <div id="oacxDiv" className={s.widget} />
-          </div>
-        </div>
-      )}
-
-      {step === 'reidentify' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={s.medallion}><Icon name="lock" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}>본인 확인만 다시</div>
-              <h2 className={s.stateTitle}>신분증만 다시 확인해요</h2>
-            </div>
-          </div>
-          <p className="hint">등록한 얼굴 사진은 그대로 저장돼 있어요. 보안을 위해 본인 확인만 다시 하면 라이브 얼굴 확인으로 바로 넘어가요.</p>
-          {error && <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>}
-          <div className={s.identityAction}>
-            <Button variant="primary" block onClick={reCaptureIdentity}>
-              {busy ? '인증 창 다시 열기' : '모바일 신분증으로 다시 확인'}
-            </Button>
-          </div>
-          <p className={s.retryNote}>사진은 다시 올리지 않아도 돼요. 본인 확인 후 바로 라이브 촬영이에요.</p>
-        </div>
-      )}
-
-      {step === 'identity_failed' && (
-        <div className="surface">
-          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
-          <Button variant="primary" block disabled={busy} onClick={session ? finishMatch : runIdentity}>다시 시도</Button>
-        </div>
-      )}
-
-      {step === 'photos' && photoApi && (
-        <ModelFaceUpload
-          embedded
-          photoApi={photoApi}
-          angles={ENROLLMENT_ANGLES}
-          nextLabel="다음 · 체형·키"
-          onDone={finishPhotos}
-        />
-      )}
-
-      {step === 'physique' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={s.medallion}><Icon name="person" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 4 / 7</span> · 선택</div>
-              <h2 className={s.stateTitle}>체형·키</h2>
-            </div>
-          </div>
-          <p className="hint">모델의 체형과 키를 알려주시면 컷 생성에 참고돼요. 원하지 않으면 건너뛸 수 있어요.</p>
-          {!enrollment?.gender && (
-            <div className={s.physiqueGroup}>
-              <div className={s.physiqueLabel}>성별</div>
-              <div className="chips">
-                {[{ value: 'male', label: '남성' }, { value: 'female', label: '여성' }].map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    className={`chip${physiqueGender === g.value ? ' on' : ''}`}
-                    disabled={busy}
-                    onClick={() => {
-                      setPhysiqueGender(g.value);
-                      setPhysiqueHeightBucket(null);
-                    }}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {heightOptions.length > 0 && (
-            <div className={s.physiqueGroup}>
-              <div className={s.physiqueLabel}>키</div>
-              <div className="chips">
-                {heightOptions.map((bucket) => (
-                  <button
-                    key={bucket.value}
-                    type="button"
-                    className={`chip${physiqueHeightBucket === bucket.value ? ' on' : ''}`}
-                    disabled={busy}
-                    onClick={() => setPhysiqueHeightBucket(
-                      physiqueHeightBucket === bucket.value ? null : bucket.value,
-                    )}
-                  >
-                    {bucket.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className={s.physiqueGroup}>
-            <div className={s.physiqueLabel}>체형</div>
-            {bodyMatrix ? (
-              // 행 하나가 볼륨 한 단계다. 행 안에서는 볼륨이 고정이라 실루엣 차이만 남아
-              // 비교가 쉬워지고, 행 제목이 카드의 볼륨 라벨을 대신한다.
-              bodyMatrix.map((row) => (
-                <div key={row.value} className={s.bodyRow}>
-                  <div className={s.bodyRowLabel}>{row.label}</div>
-                  <div className={s.bodyRowScroller}>
-                    {row.options.map((body) => (
-                      <button
-                        key={body.value}
-                        type="button"
-                        className={`chip${physiqueBodyType === body.value ? ' on' : ''} ${s.bodyCard}`}
-                        disabled={busy}
-                        onClick={() => setPhysiqueBodyType(
-                          physiqueBodyType === body.value ? null : body.value,
-                        )}
-                      >
-                        {!brokenBodyImages.includes(body.value) && (
-                          <img
-                            className={s.bodyCardImage}
-                            src={body.image}
-                            alt=""
-                            onError={() => setBrokenBodyImages((broken) => (
-                              broken.includes(body.value) ? broken : [...broken, body.value]
-                            ))}
-                          />
-                        )}
-                        {body.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
-            ) : (
-            <div className={`chips${bodyOptions.some((b) => b.image) ? ` ${s.bodyCards}` : ''}`}>
-              {bodyOptions.map((body) => {
-                const withPhoto = !!body.image && !brokenBodyImages.includes(body.value);
-                return (
-                  <button
-                    key={body.value}
-                    type="button"
-                    className={`chip${physiqueBodyType === body.value ? ' on' : ''}${withPhoto ? ` ${s.bodyCard}` : ''}`}
-                    disabled={busy}
-                    onClick={() => setPhysiqueBodyType(
-                      physiqueBodyType === body.value ? null : body.value,
-                    )}
-                  >
-                    {withPhoto && (
-                      <img
-                        className={s.bodyCardImage}
-                        src={body.image}
-                        alt=""
-                        onError={() => setBrokenBodyImages((broken) => (
-                          broken.includes(body.value) ? broken : [...broken, body.value]
-                        ))}
-                      />
-                    )}
-                    {body.label}
-                  </button>
-                );
-              })}
-            </div>
-            )}
-          </div>
-          <Button variant="primary" block disabled={busy} onClick={submitPhysiqueStep}>
-            {busy ? '저장 중…' : '저장하고 계속'}
-          </Button>
-          <Button variant="secondary" block disabled={busy} onClick={() => setStep('profile')}>
-            건너뛰기
-          </Button>
-          {/* 사진을 잘못 올렸으면 여기서 되돌아가 다시 올릴 수 있어야 한다. */}
-          <button type="button" className={s.backLink} disabled={busy}
-            onClick={() => setStep('photos')}>
-            이전 · 얼굴 사진
-          </button>
-        </div>
-      )}
-
-      {step === 'profile' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={s.medallion}><Icon name="image" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 5 / 7</span> · 선택</div>
-              <h2 className={s.stateTitle}>대표 이미지</h2>
-            </div>
-          </div>
-          <p className="hint">셀러 카탈로그 카드에 노출할 대표 이미지를 올려요. 원하지 않으면 건너뛸 수 있어요.</p>
-          {profilePreview ? (
-            <>
-              <img className={s.profilePreview} src={profilePreview.url} alt="선택한 대표 이미지" />
-              <Button variant="primary" block disabled={busy} onClick={submitProfileImage}>
-                {busy ? '업로드 중…' : '이 사진으로 할게요'}
-              </Button>
-              <Button variant="secondary" block disabled={busy} onClick={clearProfileImage}>
-                다시 고르기
-              </Button>
-            </>
-          ) : (
-            <>
-              <label className={s.uploadZone}>
-                <input
-                  type="file"
-                  accept="image/*"
-                  disabled={busy}
-                  className={s.uploadInput}
-                  onChange={(event) => { pickProfileImage(event.target.files?.[0]); event.target.value = ''; }}
-                />
-                <div className={s.uploadIcon}><Icon name="imagePlus" size={20} /></div>
-                <div className={s.uploadText}>대표 이미지 선택</div>
-                <div className={s.uploadHint}>JPG · PNG · WebP</div>
-              </label>
-              <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
-                {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 마치기')}
-              </Button>
-            </>
-          )}
-          {/* 선택 단계(체형·대표이미지)는 서버 상태를 바꾸지 않아 되돌아가도 안전하다. */}
-          <button type="button" className={s.backLink} disabled={busy}
-            onClick={() => { clearProfileImage(); setStep('physique'); }}>
-            이전 · 체형·키
-          </button>
-        </div>
-      )}
-
-      {step === 'liveness' && (
-        <div className={`surface ${s.livenessWrap}`}>
-          {!livenessRequired
-            ? '본인 확인을 마치고 있어요…'
-            : session ? (
-              <Suspense fallback="라이브 인증 화면을 불러오고 있어요…">
-                <FaceLivenessStep
-                  session={session}
-                  onAnalysisComplete={finishMatch}
-                  onCancel={onLivenessError}
-                  onError={onLivenessError}
-                />
-              </Suspense>
-            ) : '라이브 인증 세션을 준비하고 있어요…'}
-        </div>
-      )}
-
-      {step === 'liveness_failed' && (
-        <div className="surface">
-          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
-          <Button variant="primary" block onClick={() => { setError(''); setStep('liveness'); }}>
-            라이브 인증 다시 시도
-          </Button>
-          <p className={s.retryNote}>신분증 확인·얼굴 사진은 그대로 유지돼요. 라이브 인증만 다시 진행해요.</p>
-        </div>
-      )}
-
-      {step === 'processing' && (
-        <div className="surface">
-          <div className={s.stepHead}>
-            <div className={`${s.medallion} ${s.medallionSpin}`}><Icon name="loader" size={22} /></div>
-            <div>
-              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 7 / 7</span></div>
-              <h2 className={s.stateTitle}>모델 이미지를 준비하고 있어요</h2>
-            </div>
-          </div>
-          <p className="hint">이번 등록에만 쓰이는 비공개 이미지를 만들어요. 이 화면을 닫았다가 다시 열어도 이어서 진행돼요.</p>
-        </div>
-      )}
-
-      {step === 'failed' && (
-        <div className="surface">
-          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error || enrollmentReasonMessage(enrollment?.reason)}</p>
-          <Button variant="primary" block onClick={() => { setError(''); setConsentAccepted(false); setStep('consent'); }}>
-            새 등록으로 다시 시작
-          </Button>
-        </div>
-      )}
-
-      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify'].includes(step) && (
-        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
-      )}
-
-      </div>
+  return <div className={s.page} data-registration data-step={step}>
+    <div className={s.main}>
+      {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span>{index === 1 && step === '2' && <span className={s.subDots} aria-label={`사진 하위 ${sub}단계, 전체 5단계`}>{[1, 2, 3, 4, 5].map((n) => <i key={n} className={n === sub ? s.activeDot : n < sub ? s.pastDot : ''} />)}</span>}</li>)}</ol></nav>}
+      {error && !['1d', '4c'].includes(step) && <p className={s.error} role="alert">{error}</p>}
+      {content}
+      <div id="oacxDiv" />
     </div>
-  );
+    {next && <footer className={s.bottomBar}>{next.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}<button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button></div></div></footer>}
+  </div>;
 }
-
-export default ModelRegister;

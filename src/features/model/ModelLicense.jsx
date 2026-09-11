@@ -26,7 +26,6 @@ import {
     Button,
     Chips,
     ErrorState,
-    Field,
     Icon,
     Toggle,
     useToast,
@@ -48,13 +47,15 @@ import {
     enrollmentReasonMessage,
 } from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
+import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
+import { toggleRegisterCategory } from './registerSlots.js';
 import { seoulDate, seoulYearMonth } from '@/lib/datetime.js';
 
 // 서버 enum 과 묶인 값이다 — 표시만 바꾸고 value 는 건드리지 않는다.
 const VALIDITY = [
-    { value: 90, label: "90일" },
     { value: 365, label: "1년" },
     { value: 730, label: "2년" },
+    { value: "permanent", label: "영구" },
 ];
 
 const won = (n) => `₩${Number(n || 0).toLocaleString("ko-KR")}`;
@@ -373,8 +374,7 @@ function VcCard({ license, onRevoked, push }) {
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
     const [allowed, setAllowed] = useState([...BRAND_USE_CATEGORIES]);
-    const [unitPrice, setUnitPrice] = useState(10000);
-    const [validDays, setValidDays] = useState(365);
+    const [validDays, setValidDays] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
 
@@ -399,7 +399,6 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                     const lic = await createLicense({
                         enrollmentId,
                         allowedUse: allowed,
-                        unitPrice: Number(unitPrice) || 0,
                         validDays,
                     });
                     push("라이선스가 발급됐어요.", { icon: "check" });
@@ -431,7 +430,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
         <div className="surface">
             <div className={s.formHead}>
                 <span className={s.eyebrow}>발급 조건</span>
-                <h2 className={s.formTitle}>세 가지를 정하면 발급돼요</h2>
+                <h2 className={s.formTitle}>사용 조건을 확인하고 발급해요</h2>
                 {/* DESIGN.md:309 — '결속'·'자산' 은 화면에 쓰지 않는 개발자 언어라
                     '이번 등록에서 확인한 얼굴 이미지' 로 바꿨다(사실은 같다). */}
                 <p className={s.formLead}>
@@ -460,11 +459,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                             <div key={category} className={s.useOption}>
                                 <Toggle
                                     on={allowed.includes(category)}
-                                    onChange={(on) => setAllowed((current) =>
-                                        BRAND_USE_CATEGORIES.filter((value) =>
-                                            value === category ? on : current.includes(value)
-                                        )
-                                    )}
+                                    onChange={() => setAllowed((current) => toggleRegisterCategory(current, category))}
                                     label={category}
                                 />
                                 <div>
@@ -484,15 +479,9 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                 <div className={s.row2}>
                     <section className={s.term}>
                         <span className={s.termNo}>{TERM_STEPS.price.no}</span>
-                        <h3 className={s.termLabel}>건당 단가</h3>
-                        <p className={s.termNote}>{TERM_STEPS.price.note}</p>
-                        <Field
-                            type="number"
-                            min={0}
-                            step={1000}
-                            value={unitPrice}
-                            onChange={(e) => setUnitPrice(e.target.value)}
-                        />
+                        <h3 className={s.termLabel}>플랫폼 표준가</h3>
+                        <p className={s.termNote}>한 건 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 이용권 {formatKrw(MONTHLY_PASS_PRICE_KRW)}({MONTHLY_PASS_CUTS}건)이에요.</p>
+                        <p className={s.termNote}>셀러가 낸 금액의 {MODEL_SHARE * 100}%가 내 몫이에요. 지급은 아직 시작 전이에요.</p>
                     </section>
                     <section className={s.term}>
                         <span className={s.termNo}>
@@ -502,8 +491,8 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                         <p className={s.termNote}>{TERM_STEPS.validity.note}</p>
                         <Chips
                             options={VALIDITY}
-                            value={validDays}
-                            onChange={(v) => v && setValidDays(v)}
+                            value={validDays == null ? "permanent" : validDays}
+                            onChange={(value) => setValidDays(value === "permanent" ? null : value)}
                         />
                     </section>
                 </div>
@@ -761,8 +750,8 @@ export function ModelLicense() {
                                 아직 발급된 라이선스가 없어요
                             </h2>
                             <p className={s.emptyBody}>
-                                모델 등록을 마치면 허용 품목·건당
-                                단가·유효기간을 정하고 라이선스를 발급할 수
+                                모델 등록을 마치면 허용 품목과 유효기간을
+                                정하고 라이선스를 발급할 수
                                 있어요.
                             </p>
                         </div>

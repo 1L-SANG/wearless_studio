@@ -73,6 +73,8 @@ export function createEnrollment({ documentVersion, deviceId }) {
     method: 'POST',
     body: {
       biometricConsent: { accepted: true, documentVersion },
+      termsConsent: { accepted: true, documentVersion },
+      overseasConsent: { accepted: true, documentVersion },
       deviceId,
     },
   });
@@ -91,9 +93,9 @@ export function getEnrollment(id, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`, { signal });
 }
 
-export async function uploadEnrollmentPhoto({ enrollmentId, angle, fileBlob, filename }) {
+export async function uploadEnrollmentPhoto({ enrollmentId, slot, angle, fileBlob, filename }) {
   const form = new FormData();
-  form.append('angle', angle);
+  form.append('slot', slot || angle);
   form.append('photo', fileBlob, filename || 'face');
   return checkedJson(await _authFetch(
     `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos`,
@@ -325,13 +327,17 @@ export function createLivenessSession(enrollmentId, nonce) {
   });
 }
 
-// idPhotoHex: OACX RESULT-step 신분증 사진(data.dlphotoimage) — 위젯 콜백에서 받은 HEX
-// 그대로 전달(재인코딩 금지). 서버가 hex-decode+SFace 1:1 매치에 쓰고, 매칭 후 폐기한다.
-// token 은 더 이상 여기서 전달하지 않는다 — CI 게이트는 identity 단계(createIdentity)에서 끝난다.
-export function completeEnrollment(enrollmentId, { sessionId, idPhotoHex }) {
+// 기본 완료 경로에는 신분증 초상이 포함되지 않아요.
+export function completeEnrollment(enrollmentId, { sessionId } = {}, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
-    method: 'POST', body: { sessionId, idPhotoHex },
+    method: 'POST', body: sessionId ? { sessionId } : {}, signal,
   });
+}
+
+export async function fetchEnrollmentPhotoUrl(enrollmentId, slot, { signal } = {}) {
+  const res = await _authFetch(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos/${encodeURIComponent(slot)}`, { signal });
+  if (!res.ok) await checkedJson(res, '사진을 불러오지 못했어요.');
+  return URL.createObjectURL(await res.blob());
 }
 
 export function cancelEnrollment(enrollmentId) {
@@ -339,11 +345,11 @@ export function cancelEnrollment(enrollmentId) {
 }
 
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
-}) {
+  enrollmentId, allowedUse = [], forbiddenUse = [], validDays = null,
+}, { signal } = {}) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',
-    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays },
+    body: { enrollmentId, allowedUse, forbiddenUse, validDays }, signal,
   });
 }
 

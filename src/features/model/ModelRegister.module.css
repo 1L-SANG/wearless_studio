@@ -1,685 +1,184 @@
-/* 모델 온보딩 — Wearless 디자인 시스템(모노크롬 + 그림자, 보더 없음) 준수 */
-
-.eyebrow {
-  font-family: var(--font-display);
-  font-size: 12px;
-  letter-spacing: 0.2px;
-  color: var(--fg-2);
-  font-weight: 600;
-  margin-bottom: 18px;
-}
-
-/* ---- 3-step 미니 플로우 ---- */
-.steps {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0 26px;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  flex: 1;
-  min-width: 0;
-}
-.stepIcon {
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--r-pill);
-  background: var(--bg-2);
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-}
-.stepText {
-  min-width: 0;
-}
-.stepLabel {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg-1);
-  line-height: 1.25;
-}
-.stepDesc {
-  font-size: 12px;
-  color: var(--fg-2);
-  line-height: 1.3;
-  margin-top: 2px;
-}
-.stepArrow {
-  flex: none;
-  color: var(--fg-3);
-  margin: 0 2px;
-}
-
-/* ---- 목적별 고지(FaceMarket + 개인화 겸용 안내) ---- */
-.purposeNotice {
-  margin: 4px 0 20px;
-  padding: 15px 16px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-}
-.purposeNoticeHead {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--fg-1);
-  font-size: 13px;
-  font-weight: 600;
-}
-.purposeNoticeHead svg { flex: none; color: var(--fg-2); }
-.purposeList {
-  margin: 8px 0 0;
-  padding-left: 19px;
-  color: var(--fg-2);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.purposeList li { margin: 2px 0; }
-
-/* ---- 표준인증창(OACX) 컨테이너 — 카드 안에 그대로 인라인 렌더 ---- */
-/* 빈 상태에도 아래 버튼이 힌트에 붙지 않게 여백만, 폭 넘치면 가로 스크롤. */
-.widget { margin: 12px 0 20px; }
-.widget:not(:empty) { overflow-x: auto; border-radius: var(--r-5); }
-
-/* 힌트와 인증 버튼 사이 여백. */
-.identityAction { margin-top: 22px; }
-
-/* 인증 오버레이 — 전체화면 딤 + 가로·세로 정중앙(닫기 버튼·배경 클릭 없음).
-   취소 시엔 위젯 DOM 이 비고, 그걸 관측한 컴포넌트가 busy 를 풀어 오버레이가 사라진다. */
-.authOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.45);
-  overflow: auto;
-}
-.authModal {
-  background: #fff;
-  border-radius: var(--r-6);
-  box-shadow: var(--elev-lift);
-  padding: 14px;
-  max-width: min(840px, 96vw);
-  max-height: 92vh;
-  overflow: auto;
-}
-
-/* ---- 상태 메시지 ---- */
-.error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent-error);
-  font-size: 14px;
-  margin: 14px 0 0;
-}
-
-.privacy {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin-top: 18px;
-  padding: 13px 15px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-  color: var(--fg-2);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.privacy svg {
-  flex: none;
-  margin-top: 1px;
-}
-
-.consentCheck {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 18px 0;
-  color: var(--fg-1);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.consentCheck input { margin-top: 4px; }
-
-.livenessWrap {
-  min-height: 420px;
-  overflow: hidden;
-}
-
-.stateTitle {
-  margin: 0 0 8px;
-  color: var(--fg-1);
-  font-family: var(--font-display);
-  font-size: 20px;
-}
-
-/* ---- 성공 상태 ---- */
-.successWrap {
-  background: #fff;
-  border-radius: var(--r-6);
-  box-shadow: var(--elev-lift);
-  padding: 48px 40px 40px;
-  text-align: center;
-  margin-top: 12px;
-}
-/* 완료 카드는 내용이 짧아 화면 위쪽에 떠 있으면 허전하다 — 뷰포트 세로 중앙에 세운다.
-   min-height 는 헤더/하단 여백을 뺀 값이고, 카드가 더 길어지면 그냥 위에서부터 흐른다. */
-.centeredWizard {
-  min-height: calc(100vh - 220px);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-.centeredWizard .successWrap {
-  margin-top: 0;
-  width: 100%;
-}
-.successIcon {
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 20px;
-  border-radius: var(--r-pill);
-  background: var(--accent-success-ring);
-  color: var(--accent-success);
-  display: grid;
-  place-items: center;
-}
-.successTitle {
-  font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--fg-1);
-  letter-spacing: -0.2px;
-  margin: 0;
-}
-.successLead {
-  font-size: 16px;
-  color: var(--fg-2);
-  font-weight: 300;
-  margin: 10px 0 0;
-}
-.successLead b {
-  color: var(--fg-1);
-  font-weight: 500;
-}
-.completionSummary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  margin: 1.6rem 0 0;
-  border: 1px solid var(--fm-line, var(--ring));
-  border-radius: var(--fm-card-radius, var(--r-5));
-  background: rgba(237, 243, 248, 0.38);
-  text-align: left;
-}
-.completionSummary div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.8rem 0.9rem;
-  border-bottom: 1px solid var(--fm-line, var(--ring));
-}
-.completionSummary div:nth-last-child(-n + 2) { border-bottom: 0; }
-.completionSummary div:nth-child(odd) { border-right: 1px solid var(--fm-line, var(--ring)); }
-.completionSummary div:last-child { border-right: 0; }
-.completionSummary dt { color: var(--fm-muted, var(--fg-2)); font: 400 0.78rem/1.35 var(--font-body); }
-.completionSummary dd { margin: 0; color: var(--fm-ink, var(--fg-1)); font: 600 0.82rem/1.35 var(--font-body); text-align: right; }
-.completionNotice {
-  margin: 1.2rem 0 0;
-  color: var(--fm-muted, var(--fg-2));
-  font: 400 0.88rem/1.6 var(--font-body);
-  word-break: keep-all;
-}
-.completionSummaryState {
-  margin: 1.6rem 0 0;
-  padding: 1.2rem;
-  border: 1px solid var(--fm-line, var(--ring));
-  border-radius: var(--fm-card-radius, var(--r-5));
-  background: rgba(237, 243, 248, 0.38);
-  color: var(--fm-muted, var(--fg-2));
-  font: 400 0.86rem/1.5 var(--font-body);
-}
-@media (max-width: 35rem) {
-  .completionSummary { grid-template-columns: 1fr; }
-  .completionSummary div,
-  .completionSummary div:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--fm-line, var(--ring)); }
-  .completionSummary div:last-child { border-bottom: 0; }
-}
-.idPill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 18px;
-  padding: 7px 14px;
-  border-radius: var(--r-pill);
-  background: var(--bg-2);
-  color: var(--fg-2);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-}
-
-.nextCard {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  text-align: left;
-  margin-top: 30px;
-  padding: 18px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-  color: inherit;
-  text-decoration: none;
-  transition: background .15s;
-}
-.nextCard:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
-.nextCard > :last-child { margin-left: auto; color: var(--fg-3); flex: none; }
-.nextIcon {
-  flex: none;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--r-4);
-  background: #fff;
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-  box-shadow: var(--elev-card);
-}
-.nextTitle {
-  font-size: 14.5px;
-  font-weight: 500;
-  color: var(--fg-1);
-}
-.nextDesc {
-  font-size: 13px;
-  color: var(--fg-2);
-  line-height: 1.5;
-  margin-top: 3px;
-}
-
-/* ---- 진행 레일(6단계, 모노크롬) ---- */
-
-/* ---- 위저드 카드 내부(단계 헤더·체형 매트릭스·대표 이미지 업로드) ----
-   진행 레일을 가로로 다시 짜면서 블록을 통째로 교체했는데, 그때 이 규칙들이
-   같이 지워져 체형·대표 단계가 스타일 없이 렌더됐다. 원본(ad1bf48b)에서 되살린다.
-   아래 "단계 카드 내부" 블록이 이 중 일부를 다시 덮는다(그쪽이 나중이라 이긴다). */
-
-/* ---- 단계 헤더(메달리온 + eyebrow + 제목) ---- */
-.stepHead {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 20px;
-}
-
-.medallion {
-  flex: none;
-  width: 52px;
-  height: 52px;
-  border-radius: var(--r-pill);
-  background: var(--bg-2);
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-}
-
-.medallionSpin svg { animation: medSpin 1s linear infinite; }
-
-.stepEyebrow {
-  font-family: var(--font-display);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--fg-3);
-  margin-bottom: 4px;
-}
-
-.stepHead .stateTitle { margin: 0; }
-
-/* ---- 대표 이미지 업로드 존 ---- */
-.uploadZone {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin: 16px 0 8px;
-  padding: 26px 16px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-  cursor: pointer;
-  transition: background .15s;
-}
-
-.uploadZone:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
-
-.uploadInput {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.uploadIcon {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--r-pill);
-  background: #fff;
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-  box-shadow: var(--elev-card);
-  margin-bottom: 2px;
-}
-
-.uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
-
-.uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
-
-/* 올리기 전 확인용 프리뷰 — 카탈로그 카드와 같은 4:5 로 보여줘야 잘린 모습이 미리 보인다. */
-.profilePreview {
-  display: block;
-  width: 100%;
-  max-width: 260px;
-  margin: 0 auto 16px;
-  aspect-ratio: 4 / 5;
-  object-fit: cover;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-}
-
-/* 되돌아가기 — 주 동작(저장·건너뛰기)보다 약하게 둔다. */
-.backLink {
-  display: block;
-  margin: 14px auto 0;
-  padding: 6px 10px;
-  border: 0;
-  background: none;
-  color: var(--fg-2);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.backLink:disabled { opacity: .5; cursor: default; }
-
-/* ---- 체형·키(physique) 스텝 — 선택 칩은 전역 .chips/.chip(app.css)을 그대로 재사용,
-   여기선 그룹 간격/라벨만 더한다. ---- */
-.physiqueGroup {
-  margin: 16px 0 20px;
-}
-
-.physiqueGroup:last-of-type {
-  margin-bottom: 22px;
-}
-
-.physiqueLabel {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-2);
-  margin-bottom: 10px;
-}
-
-/* 체형 선택 — 사진이 있으면 칩이 세로형 카드가 된다(사진 위, 라벨 아래).
-   사진이 아직 없는 값은 그대로 기존 칩으로 남아 두 형태가 섞여도 깨지지 않는다. */
-.bodyCards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.bodyCard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  /* 전신 사진이라 좁으면 체형 차이(마름/보통/통통)가 구분되지 않는다 — 칩보다 넉넉히 준다. */
-  width: 106px;
-  height: auto;
-  padding: 8px 8px 10px;
-  border-radius: 12px;
-  line-height: 1.3;
-}
-
-/* 볼륨×실루엣 매트릭스 — 행 하나가 볼륨 한 단계다. 세로 그리드로 4열을 깔면 좁은 화면에서
-   카드가 80px로 쪼그라들어 체형 차이가 안 보인다. 행마다 가로 스크롤로 두면 카드 크기를
-   지킬 수 있고, 행 안에서는 볼륨이 같아 실루엣 차이만 비교된다. */
-.bodyRow {
-  margin-bottom: 14px;
-}
-
-.bodyRowLabel {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-1);
-  margin-bottom: 7px;
-}
-
-.bodyRowScroller {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
-  scroll-snap-type: x proximity;
-}
-
-.bodyRowScroller > * {
-  flex: 0 0 auto;
-  scroll-snap-align: start;
-}
-
-.bodyCardImage {
-  display: block;
-  width: 100%;
-  /* 기존 모델 자산(360×450)과 같은 4:5 — 생성·크롭 규격을 하나로 유지한다. */
-  aspect-ratio: 4 / 5;
-  object-fit: cover;
-  border-radius: 8px;
-  background: var(--bg-2);
-}
-
-.retryNote {
-  margin: 12px 0 0;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--fg-3);
-  line-height: 1.5;
-}
-
-/* ================= FaceMarket 랜딩 디자인 — 등록 진행 레일 =================
-   레일은 본문 위에 가로로 눕는다. 세로 사이드 레일도 만들어 봤지만 이 사이트의
-   리듬(랜딩이 전부 중앙 한 열)과 어긋나 위저드만 다른 제품처럼 보였다.
-
-   번호는 Cormorant 세리프다 — 랜딩의 캐러셀 인덱스(01 / 14)와 라이선스 발급 조건
-   01~04 가 쓰는 그 표식이고, 이 사이트에서 '순서'를 뜻한다. 등록은 실제 순차 KYC 라
-   번호가 정보를 실어 나른다(장식이 아니다).
-
-   sticky 로 두는 이유는 PRD §13 1번이다 — 사진 3장·체형 매트릭스처럼 단계 내용이
-   길어져도 현재 위치가 화면에서 사라지면 안 된다.
-   ============================================================================ */
-
-.flowWizard { --fm-wizard-max: 60rem; }
-
-.pageEyebrow {
-  /* <span> 이라 블록으로 세워야 아래 margin 이 먹는다(요소를 <p> 에서 바꾼 이유는
-     ModelRegister.jsx 의 주석 참고 — `.fm-theme .page-head p` 와의 특이도 충돌). */
-  display: block;
-  margin: 0 0 0.9rem;
-  color: var(--fm-muted, var(--fg-2));
-  font: 500 0.76rem/1 var(--font-body);
-  letter-spacing: 0.02em;   /* 한글이라 자간을 벌리지 않는다 — 랜딩 .eyebrow 와 같은 판단 */
-}
-
-.flowBody { min-width: 0; }
-
-/* 배경 띠도 sticky 도 쓰지 않는다. 띠를 깔면 본문 폭에 갇힌 네모 판이 떠서
-   페이지 위에 얹힌 다른 부품처럼 보이고(실측), 화면 폭까지 늘리면 이번엔 상단바와
-   두 겹으로 겹친다. 레일은 제목 아래 자기 자리에 조용히 눕는 편이 낫다 —
-   원래 디자인도 그랬고 사용자가 그걸 고른 이유이기도 하다.
-   PRD §13 1번("현재 위치가 늘 보여야 한다")은 카드 안 STEP n/7 표기가 함께 받는다. */
-.rail {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  list-style: none;
-  margin: 0 0 2rem;
-  padding: 0;
-}
-
-.railStep {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
-/* 단계 사이 실선 — 번호 줄의 세로 중앙에 걸린다. 지나온 구간만 잉크색이라
-   "여기까지 왔다"가 색이 아니라 길이로 읽힌다. */
-.railStep::before {
-  content: '';
-  position: absolute;
-  top: 0.62rem;
-  right: 50%;
-  width: 100%;
-  height: 1px;
-  background: var(--fm-line, var(--ring));
-}
-.railStep:first-child::before { display: none; }
-.rail_done::before,
-.rail_active::before { background: var(--fm-ink, var(--fg-1)); }
-
-.railNode {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  min-width: 1.25rem;
-  height: 1.25rem;
-  padding: 0 0.3rem;
-  border-radius: 999px;
-  background: rgba(248, 251, 253, 0.98);
-  color: var(--fm-muted, var(--fg-3));
-  font-family: var(--font-serif);
-  font-size: 0.95rem;
-  font-weight: 500;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;   /* 01↔07 폭이 흔들리지 않게 */
-  transition: color .18s;
-}
-/* 끝난 단계는 숫자 대신 체크다. 잉크 원으로 채워 지나온 구간의 실선과 이어 보인다. */
-.rail_done .railNode {
-  min-width: 1.25rem;
-  padding: 0;
-  background: var(--fm-ink, var(--fg-1));
-  color: #fff;
-}
-.rail_active .railNode { color: var(--fm-ink, var(--fg-1)); }
-
-.railLabel {
-  color: var(--fm-muted, var(--fg-3));
-  font: 500 0.8rem/1.3 var(--font-body);
-  text-align: center;
-}
-.rail_done .railLabel { color: var(--fm-muted, var(--fg-2)); }
-.rail_active .railLabel { color: var(--fm-ink, var(--fg-1)); font-weight: 600; }
-
-/* '선택' 은 건너뛸 수 있다는 사실을 레일에서 말한다. 활성 단계에서만 보인다 —
-   일곱 칸에 상시로 달면 잡음이고, 정작 그 단계에 섰을 때 필요한 정보다. */
-.railOptional {
-  display: none;
-  color: var(--fm-muted, var(--fg-3));
-  font: 500 0.68rem/1 var(--font-body);
-}
-.rail_active .railOptional { display: block; }
-
-/* 좁은 화면: 일곱 칸을 다 눕히면 320px 에서 한 칸이 45px 이라 라벨이 겹친다.
-   가로 스크롤 대신 라벨을 활성 단계만 남기고 접는다 — 번호와 실선은 그대로라
-   "몇 번째 / 얼마나 왔나"는 유지된다. */
-@media (max-width: 40rem) {
-  .rail { padding-top: 0.8rem; margin-bottom: 1.2rem; }
-  .railLabel { font-size: 0.7rem; }
-  .railStep:not(.rail_active) .railLabel,
-  .railStep:not(.rail_active) .railOptional {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-
-/* ================= FaceMarket 랜딩 디자인 — 단계 카드 내부 =================
-   위 규칙들은 셀러 스튜디오 토큰(--bg-2·--fg-2·--font-display)으로 짜여 있었다.
-   파일 끝에서 랜딩 토큰으로 덮는다 — 원본 규칙을 지우지 않고 남겨 둔 이유는,
-   이 모듈이 ai 도메인에서도(현재는 안 쓰지만) 재사용될 수 있고 무엇이 바뀌었는지
-   diff 로 보이는 편이 낫기 때문이다.
-   ============================================================================ */
-
-/* 안내 블록. 랜딩의 '확인할 수 있는 기록'(.record)이 쓰는 옅은 파랑과 같은 결로.
-   회색 블록은 "비활성"으로 읽히는데 이건 읽으라고 둔 내용이다. */
-.purposeNotice {
-  border-radius: 0.9rem;
-  background: rgba(45, 99, 255, 0.05);
-}
-.purposeNoticeHead { color: var(--fm-ink); font-family: var(--font-body); }
-.purposeNoticeHead svg { color: var(--fm-accent); }
-.purposeList { color: var(--fm-muted); font-family: var(--font-body); line-height: 1.7; }
-
-/* 메달리온 — 52px 회색 원은 이 디자인에서 과하다. 랜딩 카드가 아이콘을 배경 없이
-   그대로 놓는 결을 따르되, 단계 헤더의 시각 앵커라 얇은 테두리만 남긴다. */
-.medallion {
-  width: 2.6rem;
-  height: 2.6rem;
-  border: 1px solid var(--fm-line);
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--fm-ink);
-}
-
-/* 단계 eyebrow. 기본 자간은 **한글 기준**이다 — 이 자리에는 'STEP 1 / 7' 같은 라틴만
-   오는 게 아니라 '본인 확인만 다시'(순한글)와 'STEP 4 / 7 · 선택'(라틴+한글 혼합)도 온다.
-   0.22em 을 통째로 걸면 한글이 '본 인 확 인 만' 처럼 낱글자로 흩어진다(브라우저 실측).
-   넓은 자간은 라틴 조각에만 .stepEyebrowLatin 으로 따로 건다 — 랜딩 .eyebrow/.eyebrowLatin
-   과 같은 처방이고, 같은 실수를 여기서 한 번 더 했다. */
-.stepEyebrow {
-  font-family: var(--font-body);
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-transform: none;   /* 원본의 uppercase 를 끈다 — 한글엔 대문자가 없고 라틴은 이미 대문자다 */
-  color: var(--fm-muted);
-}
-.stepEyebrowLatin { letter-spacing: 0.22em; }
-
-/* 단계 제목 — 랜딩 카드 제목(.cardTitle)과 같은 눈금. --font-display(Cal Sans)는
-   한글이 없어 폴백으로 떨어지므로 본문 폰트(Pretendard)를 쓴다. */
-.stateTitle {
-  font-family: var(--font-body);
-  font-size: clamp(1.15rem, 2vw, 1.4rem);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fm-ink);
-}
-
-/* 완료·에러 화면의 흰 카드도 같은 재질로. */
-.successWrap {
-  border: 1px solid var(--fm-line);
-  border-radius: var(--fm-card-radius);
-  background: var(--fm-card-bg);
-  box-shadow: var(--fm-elev-card);
-}
+.page { min-height: calc(100dvh - var(--fm-header-h)); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.page *, .page *::before, .page *::after { box-sizing: border-box; }
+.page button, .page input { font: inherit; }
+.page button, .page a, .slot { touch-action: manipulation; }
+.page button { cursor: pointer; }
+.page button:disabled { cursor: default; }
+.page button:focus-visible, .page a:focus-visible, .page summary:focus-visible, .slot:focus-within { outline: 2px solid var(--link); outline-offset: 4px; }
+.page h1, .page h2, .page h3, .page p { margin: 0; }
+.page h1 { font-family: var(--font-body); font-size: 34px; line-height: 1.3; font-weight: 700; letter-spacing: -.02em; text-wrap: balance; }
+.page h2 { font-size: 18px; font-weight: 600; line-height: 1.5; }
+.page h3 { font-size: 16px; font-weight: 600; }
+.main { width: min(100%, 808px); margin: 0 auto; padding: 40px 24px 160px; min-width: 0; }
+.intro { margin-bottom: 32px; }
+.page .description { margin-top: 12px; color: var(--fm-muted); line-height: 1.7; text-wrap: pretty; }
+.progress { margin-bottom: 40px; }
+.progressMeta { display: flex; justify-content: space-between; font-size: 12px; color: var(--fm-muted); margin-bottom: 14px; }
+.steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0; list-style: none; }
+.steps li { min-width: 0; position: relative; font-size: 13px; color: var(--fg-2); }
+.stepBar { display: block; height: 3px; background: var(--bg-3); margin-bottom: 8px; }
+.steps .reached { color: var(--fg-1); }
+.reached .stepBar { background: var(--fg-1); }
+.steps [aria-current='step'] { font-weight: 600; }
+.subDots { display: flex; gap: 3px; margin-top: 6px; }
+.subDots i, .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--bg-3); }
+.subDots .activeDot { background: var(--fg-1); }
+.subDots .pastDot { background: var(--fg-2); }
+.textLink { border: 0; background: none; padding: 0; color: var(--fg-1); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.reassurance { padding: 0; margin: 0 0 20px; display: grid; gap: 12px; list-style: none; }
+.reassurance li { display: flex; align-items: baseline; gap: 12px; font-size: 14px; }
+.reassurance li > span { flex-shrink: 0; color: var(--link); }
+.withdrawal { border-bottom: 1px solid var(--ring-strong); margin-bottom: 24px; }
+.withdrawal summary { cursor: pointer; padding: 12px 0; font-size: 14px; }
+.numbered { padding-left: 24px; margin: 16px 0 24px; display: grid; gap: 20px; }
+.numbered li { padding-left: 8px; }
+.numbered p { color: var(--fm-muted); font-size: 14px; margin-top: 4px; }
+.consentList { display: grid; gap: 14px; }
+.consentCard { border: 1px solid var(--ring-strong); border-radius: 12px; padding: 18px; }
+.consentLabel { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; font-weight: 500; cursor: pointer; }
+.consentLabel input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--fg-1); margin-top: 3px; }
+.required { color: var(--fg-1); }
+.legalLinks { margin: 8px 0 0 28px; display: flex; flex-wrap: wrap; gap: 16px; }
+.legalSummary { margin: 10px 0 0 28px; font-size: 12px; color: var(--fm-muted); line-height: 1.6; }
+.legalSummary b { font-weight: 600; color: var(--fg-1); }
+.legalSummary .textLink { display: inline-block; margin-top: 8px; font-size: 12px; }
+.tag { display: inline-flex; border: 1px solid var(--ring-strong); border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.consentCard > .tag { margin: 0 0 8px 28px; }
+.consentDone, .identityResult { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; margin-bottom: 20px; }
+.consentDone > span { color: var(--accent-success); }
+.verifyCard { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 24px; border: 1px solid var(--ring-strong); border-radius: 16px; padding: 28px; }
+.verifySymbol { width: 110px; height: 110px; display: grid; place-items: center; border-radius: 12px; background: var(--bg-2); font-size: 32px; }
+.statusPill { display: inline-flex; border-radius: 99px; background: var(--bg-2); padding: 8px 12px; font-size: 13px; margin: 16px 0 !important; }
+.verifyCard .textLink { display: block; }
+.identityResult { border: 1px solid var(--ring-strong); border-radius: 12px; padding: 18px; margin-top: 20px; background: var(--bg-2); }
+.identityResult span { color: var(--fm-muted); }
+.mobileOnly { display: none; }
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--bg-3); border-top-color: var(--fg-1); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.reasonCard, .error { padding: 18px 20px; border: 1px solid var(--ring-strong); border-radius: 12px; margin-bottom: 28px !important; background: var(--bg-2); overflow-wrap: anywhere; }
+.reasonCard > span { font-size: 12px; color: var(--fm-muted); }
+.reasonCard p { margin-top: 6px; }
+.sectionTitle { margin-bottom: 16px !important; }
+.tips { border: 1px solid var(--ring-strong); border-radius: 12px; padding: 18px; margin-bottom: 24px; font-size: 14px; }
+.tips p { color: var(--fm-muted); margin-top: 6px; }
+.photoCounter { margin-bottom: 24px; }
+.photoCounter > div { display: flex; justify-content: space-between; font-size: 14px; }
+.photoCounter progress { display: block; width: 100%; height: 4px; border: 0; appearance: none; margin-top: 10px; accent-color: var(--fg-1); }
+.photoCounter progress::-webkit-progress-bar { background: var(--bg-3); border-radius: 99px; }
+.photoCounter progress::-webkit-progress-value { background: var(--fg-1); border-radius: 99px; }
+.photoCounter progress::-moz-progress-bar { background: var(--fg-1); }
+.groupHeading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.groupHeading > strong { margin-left: auto; font-size: 14px; }
+.photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.slotCard { position: relative; min-width: 0; }
+.slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--bg-3); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }
+.slot:hover { border-color: var(--fg-1); }
+.person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
+.slot > .person, .slot > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.fileInput { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+.slotBadge, .slotAction { position: absolute; top: 10px; font-size: 11px; padding: 3px 8px; background: var(--bg-1); color: var(--fg-1); border-radius: 99px; }
+.slotBadge { left: 10px; }
+.filled .slotBadge { color: var(--accent-success); }
+.slotAction { right: 10px; }
+.slotBottom { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; }
+.filled .slotBottom { right: 40px; }
+.caption { display: block; border-radius: 14px; background: var(--fg-1); color: var(--bg-1); font-size: 12px; font-weight: 600; padding: 5px 10px; max-width: 100%; }
+.slotHint { font-size: 11px; line-height: 1.5; color: var(--bg-1); background: var(--fg-1); border-radius: 8px; padding: 4px 8px; margin-top: 4px; }
+.tapLabel { display: none; font-size: 10px; font-weight: 400; margin-top: 2px; }
+.removePhoto { position: absolute; right: 4px; bottom: 4px; width: 36px; height: 36px; border-radius: 50%; background: var(--bg-1); color: var(--fg-1); font-size: 20px !important; line-height: 1; border: 1px solid var(--ring-strong); }
+.bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.bodyCard { position: relative; border: 1px solid var(--ring-strong); border-radius: 12px; background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
+.bodyCard.selected { border: 2px solid var(--fg-1); }
+.bodyArt { display: block; height: 180px; background: var(--bg-3); }
+.bodyName { display: block; padding: 10px 12px; font-size: 14px; }
+.bodyCheck { position: absolute; top: 8px; left: 8px; width: 23px; height: 23px; border-radius: 50%; background: var(--fg-1); color: var(--bg-1); font-size: 11px; line-height: 23px; text-align: center; }
+.bodyOptional { text-align: center; color: var(--fm-muted); font-size: 13px; margin-top: 16px !important; }
+.contactSheet { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px 10px; }
+.contactCard .slot { border-radius: 8px; }
+.contactCard .slotBadge { display: none; }
+.contactNumber { display: block; text-align: center; font-size: 12px; margin-top: 4px; }
+.contactEdit { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); background: var(--fg-1); color: var(--bg-1); border-radius: 99px; padding: 3px 8px; font-size: 11px; white-space: nowrap; }
+.summaryBody { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 28px; border-top: 1px solid var(--ring-strong); padding-top: 20px; font-size: 14px; }
+.categories { border: 1px solid var(--ring-strong); border-radius: 16px; overflow: hidden; }
+.categoryRow { display: grid; grid-template-columns: minmax(0, 1fr) 46px; column-gap: 20px; padding: 19px 20px; align-items: center; }
+.categoryRow + .categoryRow { border-top: 1px solid var(--ring-strong); }
+.categoryRow p { font-size: 14px; color: var(--fm-muted); margin-top: 4px; }
+.categoryNote { grid-column: 1 / -1; padding-top: 7px; }
+.switch { width: 46px; height: 28px; border-radius: 99px; background: var(--bg-3); padding: 4px; border: 0; }
+.switch span { display: block; width: 20px; height: 20px; background: var(--bg-1); border-radius: 50%; }
+.switch[aria-checked='true'] { background: var(--fg-1); }
+.switch[aria-checked='true'] span { transform: translateX(18px); }
+.validitySection { margin-top: 32px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.chip { height: 44px; min-width: 60px; padding: 0 18px; border: 1px solid var(--ring-strong); border-radius: 99px; background: var(--bg-1); }
+.chip.selected { color: var(--bg-1); background: var(--fg-1); border-color: var(--fg-1); }
+.priceCard { border: 1px solid var(--ring-strong); border-radius: 12px; background: var(--bg-2); padding: 20px; margin-top: 30px; }
+.priceCard p { margin-top: 10px; color: var(--fm-muted); font-size: 14px; }
+.priceCard strong { color: var(--fg-1); font-weight: 650; }
+.priceCard .textLink { display: inline-block; margin-top: 14px; }
+.recordTable { margin: 0; border-top: 1px solid var(--ring-strong); }
+.recordTable > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--ring-strong); }
+.recordTable dt { color: var(--fm-muted); font-size: 14px; }
+.recordTable dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
+.certificateNote { color: var(--fm-muted); font-size: 14px; margin: 22px 0 30px !important; }
+.issueList { list-style: none; margin: 0 0 24px; padding: 0; border-top: 1px solid var(--ring-strong); }
+.issueList li { display: flex; align-items: center; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--ring-strong); font-size: 14px; }
+.issueList li > span { width: 18px; text-align: center; }
+.issueList .dot { width: 7px; height: 7px; margin: 0 5px; }
+.page[data-step='done'] .main { display: grid; place-items: center; min-height: calc(100dvh - var(--fm-header-h)); padding: 24px; }
+.doneContent { display: flex; flex-direction: column; align-items: center; width: 100%; text-align: center; }
+.doneMark { width: 60px; height: 60px; flex: 0 0 60px; fill: none; stroke: var(--link); stroke-width: 2.5px; }
+.doneMark path { stroke-linecap: round; stroke-linejoin: round; }
+.doneContent h1 { margin-top: 26px; font-size: 34px; }
+.doneDescription { margin-top: 14px; font-size: 17px; line-height: 1.7; color: var(--fm-muted); }
+.doneCertificate { font-size: 13px; overflow-wrap: anywhere; }
+.doneButton { height: 52px; min-width: 150px; padding: 0 32px; margin-top: 32px; border-radius: 8px; background: var(--fg-1); color: var(--bg-1); font-size: 15px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.doneContent > .textLink { margin-top: 16px; font-size: 14px; }
+.bottomBar { position: fixed; z-index: 15; left: 0; right: 0; bottom: 0; background: var(--bg-1); padding-bottom: env(safe-area-inset-bottom); }
+.footerHint { max-width: 808px; margin: 0 auto !important; text-align: center; font-size: 13px; color: var(--fm-muted); padding: 9px 24px; }
+.footerActions { border-top: 1px solid var(--ring-strong); padding: 16px 24px; }
+.footerInner { max-width: 760px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.primary, .secondary { min-height: 56px; border-radius: 99px; padding: 12px 24px; font-size: 16px !important; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; }
+.primary { background: var(--fg-1); color: var(--bg-1); min-width: 240px; margin-left: auto; border: 1px solid var(--fg-1); }
+.primary:disabled { background: var(--fg-3); border-color: var(--fg-3); color: var(--bg-1); }
+.secondary { background: var(--bg-1); color: var(--fg-1); border: 1px solid var(--ring-strong); }
+@media (max-width: 700px) {
+  .main { padding: 24px 20px 160px; }
+  .page h1 { font-size: 26px; }
+  .intro { margin-bottom: 24px; }
+  .page .description { font-size: 15px; margin-top: 8px; }
+  .progress { margin-bottom: 28px; }
+  .desktopOnly { display: none; }
+  .mobileOnly { display: inline; }
+  .verifyCard { grid-template-columns: 1fr; padding: 20px; }
+  .verifySymbol { display: none; }
+  .identityResult { flex-direction: column; padding: 14px 16px; }
+  .reassurance { gap: 8px; margin-bottom: 14px; }
+  .consentList { gap: 10px; }
+  .consentCard { padding: 12px; }
+  .consentLabel { font-size: 14px; gap: 8px; }
+  .legalSummary, .legalLinks { margin-left: 26px; }
+  .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tips { padding: 14px; }
+  .groupHeading { gap: 7px; }
+  .groupHeading h2 { font-size: 17px; }
+  .slotAction { display: none; }
+  .slotBadge { top: 8px; left: 8px; font-size: 10px; padding: 3px 7px; }
+  .slotBottom { left: 7px; right: 7px; bottom: 7px; }
+  .caption { font-size: 11px; line-height: 1.4; padding: 5px 8px; border-radius: 11px; }
+  .tapLabel { display: block; }
+  .slotHint { font-size: 10px; padding: 3px 6px; }
+  .bodyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bodyArt { height: 160px; }
+  .contactSheet { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 8px; }
+  .contactEdit { font-size: 10px; padding: 2px 6px; bottom: 5px; }
+  .categoryRow { padding: 17px 16px; column-gap: 14px; }
+  .recordTable > div { grid-template-columns: 96px minmax(0, 1fr); }
+  .doneContent h1 { font-size: 28px; }
+  .doneDescription { font-size: 16px; }
+  .footerActions { padding: 16px 20px; }
+  .footerInner { gap: 10px; }
+  .primary { flex: 1; min-width: 0; padding: 12px 18px; }
+  .secondary { padding: 12px 16px; flex-shrink: 0; font-size: 14px !important; }
+}
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

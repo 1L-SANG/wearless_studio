@@ -62,5 +62,21 @@
     "version": "v1.0",
     "effectiveDate": "2026-09-07",
     "source": "06_facemarket_legal_faq_v1.md"
+  },
+  {
+    "slug": "biometric-consent",
+    "app": "facemarket",
+    "title": "얼굴 정보 수집·생성·이용 동의",
+    "version": "2026-09-v1",
+    "effectiveDate": "2026-09-11",
+    "source": "04_facemarket_biometric_consent_forms_v1.md"
+  },
+  {
+    "slug": "overseas-consent",
+    "app": "facemarket",
+    "title": "얼굴 정보의 국외 이전 동의",
+    "version": "2026-09-v1",
+    "effectiveDate": "2026-09-11",
+    "source": "04_facemarket_biometric_consent_forms_v1.md"
   }
 ]
