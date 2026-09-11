@@ -5,7 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { finalRejectReason, scoreRow } from '../../src/features/admin/enrollmentReviewMath.js';
+import {
+  finalRejectReason, imageFailureLabel, scoreRow,
+} from '../../src/features/admin/enrollmentReviewMath.js';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
@@ -249,4 +251,56 @@ test('AdminShell 내비게이션에 등록 심사가 있고 App.jsx 가 /review 
   const app = read('src/apps/admin/App.jsx');
   assert.ok(app.includes('AdminEnrollmentReview'), 'App.jsx 가 새 화면을 안 쓴다');
   assert.ok(app.includes('path="review"'), 'App.jsx 에 review 라우트가 없다');
+});
+
+// ── 기기 게이트(C4) · 실패 상태(I10) ────────────────────────────────────────────
+
+test('403(기기 미승인)을 "파기됨"으로 그리지 않는다 — 존재하는 증거를 없다고 믿게 만든다', () => {
+  assert.equal(imageFailureLabel(403, 'id_document'), '권한 없음 (기기 미승인)');
+  assert.equal(imageFailureLabel(404, 'id_document'), '볼 수 없음 (파기됨)');
+  assert.equal(imageFailureLabel(404, 'front'), '볼 수 없음 (없음)');
+  // 상태를 모르는 실패(네트워크 등)를 "파기"로 단정하면 안 된다.
+  assert.equal(imageFailureLabel(0, 'id_document'), '불러오지 못했어요');
+  assert.equal(imageFailureLabel(500, 'id_document'), '불러오지 못했어요');
+});
+
+test('EnrollmentImage 는 status 를 들고 실패 문구를 고른다(failed 불리언으로 뭉개지 않는다)', () => {
+  assert.ok(source.includes('imageFailureLabel(failedStatus, kind)'), '실패 문구가 status 를 안 본다');
+  assert.ok(!source.includes("' (파기됨)' : ''"), '파기됨을 kind 만으로 단정하던 옛 분기가 남아 있다');
+});
+
+test('ApplicationProfilePhoto 는 실패를 삼키지 않는다 — 스켈레톤이 영원히 돌면 안 된다', () => {
+  // 최종리뷰 I10: `.catch(() => {})` 는 실패 플래그를 안 세워 Skeleton 이 무한히 돈다.
+  // 기기 게이트가 enforce 인 프로덕션에서는 그게 기본 상태였다.
+  const start = source.indexOf('function ApplicationProfilePhoto(');
+  assert.ok(start > 0, 'ApplicationProfilePhoto 정의를 못 찾았다');
+  const body = source.slice(start, source.indexOf('function EnrollmentDetail(', start));
+  assert.ok(!/\.catch\(\(\) => \{\}\)/.test(body), '실패를 빈 catch 로 삼킨다');
+  assert.ok(/setFailedStatus\(e\?\.status \|\| 0\)/.test(body), '실패 상태를 기록하지 않는다');
+  assert.ok(body.includes('imageFailureLabel('), '실패 화면을 안 그린다');
+});
+
+test('_authFetch 가 X-Admin-Device 헤더를 싣는다 — 없으면 심사 화면의 모든 이미지가 403', () => {
+  const api = read('src/lib/api/facemarket.js');
+  assert.ok(
+    /import \{[^}]*DEVICE_HEADER[^}]*\} from '@\/lib\/adminDevice\.js'/.test(api),
+    'adminDevice 에서 DEVICE_HEADER 를 안 가져온다',
+  );
+  const start = api.indexOf('async function _authFetch(');
+  assert.ok(start > 0, '_authFetch 정의를 못 찾았다');
+  const body = api.slice(start, api.indexOf('async function _gatedImageUrl(', start));
+  assert.ok(/readDeviceToken\(\)/.test(body), '_authFetch 가 기기 토큰을 읽지 않는다');
+  assert.ok(/\[DEVICE_HEADER\]: deviceToken/.test(body), '_authFetch 가 기기 헤더를 안 싣는다');
+});
+
+test('게이트 이미지 fetch 는 status·code 를 에러에 싣고 device_* 403 이면 복구 이벤트를 쏜다', () => {
+  const api = read('src/lib/api/facemarket.js');
+  const start = api.indexOf('async function _gatedImageUrl(');
+  assert.ok(start > 0, '_gatedImageUrl 정의를 못 찾았다');
+  const body = api.slice(start, api.indexOf('async function checkedJson(', start));
+  assert.ok(/error\.status = res\.status;/.test(body), '호출부가 403/404 를 구분할 수 없다');
+  assert.ok(/DEVICE_REJECTED_EVENT/.test(body), '기기 거절 이벤트를 안 쏜다 — RequireDevice 가 복구를 못 한다');
+  // 두 이미지 라우트가 같은 헬퍼를 쓴다(지원서 사진도 프로덕션에서 같은 이유로 깨져 있었다).
+  assert.ok(/adminFetchApplicationPhotoUrl[\s\S]{0,200}_gatedImageUrl\(/.test(api));
+  assert.ok(/adminFetchGatedImageUrl[\s\S]{0,200}_gatedImageUrl\(/.test(api));
 });

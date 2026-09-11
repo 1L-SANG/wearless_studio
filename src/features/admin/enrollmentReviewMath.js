@@ -39,3 +39,13 @@ export function finalRejectReason(presetValue, freeText, presetLabel) {
   if (presetValue === 'other') return (freeText || '').trim();
   return presetLabel || '';
 }
+
+/* 이미지 fetch 실패를 심사자에게 어떻게 말할 것인가. 403(관리자 기기 미승인)을
+   "파기됨"으로 그리면 **존재하는 증거를 없다고 믿게 만든다** — 기기 게이트가 enforce 로
+   켜진 뒤 심사 화면의 모든 이미지가 실제로 그렇게 보였다(최종리뷰 C4). 상태 코드별로
+   문구를 가르고, 알 수 없는 실패는 "파기"라고 단정하지 않는다. */
+export function imageFailureLabel(status, kind) {
+  if (status === 403) return '권한 없음 (기기 미승인)';
+  if (status === 404) return kind === 'id_document' ? '볼 수 없음 (파기됨)' : '볼 수 없음 (없음)';
+  return '불러오지 못했어요';
+}

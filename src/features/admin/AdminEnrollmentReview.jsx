@@ -48,7 +48,7 @@ import {
   adminFetchGatedImageUrl, adminListEnrollments, adminRejectEnrollment,
 } from '@/lib/api/facemarket.js';
 import { seoulDateTime } from '@/lib/datetime.js';
-import { finalRejectReason, scoreRow } from './enrollmentReviewMath.js';
+import { finalRejectReason, imageFailureLabel, scoreRow } from './enrollmentReviewMath.js';
 
 const REVIEW_FILTERS = [
   { value: 'pending', label: '대기' },
@@ -128,23 +128,25 @@ function ScoreLine({ angle, scores, thresholds }) {
    다시 조립하지 않는다(fix round 1, minor). */
 function EnrollmentImage({ imagePath, kind, label }) {
   const [url, setUrl] = useState(null);
-  const [failed, setFailed] = useState(false);
+  // null = 아직 안 실패. 숫자/0 = 실패(HTTP status, 0 은 네트워크 등 status 미상).
+  const [failedStatus, setFailedStatus] = useState(null);
   useEffect(() => {
-    if (!imagePath) { setUrl(null); setFailed(true); return undefined; }
+    if (!imagePath) { setUrl(null); setFailedStatus(404); return undefined; }
     let alive = true;
     let objectUrl = null;
     setUrl(null);
-    setFailed(false);
+    setFailedStatus(null);
     adminFetchGatedImageUrl(imagePath)
       .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
-      .catch(() => { if (alive) setFailed(true); });
+      .catch((e) => { if (alive) setFailedStatus(e?.status || 0); });
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [imagePath]);
+  const failed = failedStatus !== null;
   return (
     <figure className="flex w-28 shrink-0 flex-col gap-1">
       {failed && (
         <div className="flex h-36 items-center justify-center rounded-md bg-muted px-1 text-center text-xs text-muted-foreground">
-          볼 수 없음{kind === 'id_document' ? ' (파기됨)' : ''}
+          {imageFailureLabel(failedStatus, kind)}
         </div>
       )}
       {!failed && !url && <Skeleton className="h-36 w-28" />}
@@ -163,22 +165,34 @@ function EnrollmentImage({ imagePath, kind, label }) {
    "정상적인 없음"으로 삼지 않는다. */
 function ApplicationProfilePhoto({ applicationId, hasPhoto }) {
   const [url, setUrl] = useState(null);
+  // 실패를 빈 catch 로 삼키면 아래 Skeleton 이 **영원히 돈다** — 바로 옆
+  // EnrollmentImage 의 주석이 하지 말라고 적어 둔 그 상태다(최종리뷰 I10). 기기 게이트가
+  // enforce 인 프로덕션에서는 이게 기본 상태였다.
+  const [failedStatus, setFailedStatus] = useState(null);
   useEffect(() => {
     if (!hasPhoto) return undefined;
     let alive = true;
     let objectUrl = null;
+    setUrl(null);
+    setFailedStatus(null);
     adminFetchApplicationPhotoUrl(applicationId, 'profile')
       .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
-      .catch(() => {});
+      .catch((e) => { if (alive) setFailedStatus(e?.status || 0); });
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [applicationId, hasPhoto]);
+  const failed = failedStatus !== null;
   return (
     <figure className="flex w-28 shrink-0 flex-col gap-1">
       {!hasPhoto && (
         <div className="flex h-36 items-center justify-center rounded-md bg-muted text-muted-foreground">—</div>
       )}
-      {hasPhoto && !url && <Skeleton className="h-36 w-28" />}
-      {hasPhoto && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
+      {hasPhoto && failed && (
+        <div className="flex h-36 items-center justify-center rounded-md bg-muted px-1 text-center text-xs text-muted-foreground">
+          {imageFailureLabel(failedStatus, 'application_profile')}
+        </div>
+      )}
+      {hasPhoto && !failed && !url && <Skeleton className="h-36 w-28" />}
+      {hasPhoto && !failed && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
       <figcaption className="text-center text-xs text-muted-foreground">지원서 프로필</figcaption>
     </figure>
   );

@@ -7,6 +7,7 @@
 import { FACEMARKET_PRICING } from '../facemarketPricing.js';
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
+import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const MOCK = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock';
@@ -21,10 +22,45 @@ async function _bearer() {
 
 async function _authFetch(path, opts = {}) {
   const token = await _bearer();
+  // 관리자 기기 토큰 — http()(httpAdapter.js)와 같은 규칙으로 싣는다. 이게 빠지면
+  // ADMIN_DEVICE_GATE=enforce 인 프로덕션에서 관리자 화면의 **모든 이미지 fetch 가 403** 이다
+  // (admin_guard.device_token_from 은 이 헤더만 본다). 심사 화면은 신분증을 한 장도 못 보고,
+  // 실패를 "파기됨"으로 오해하게 만든다(최종리뷰 C4). 스토리지가 오리진으로 갈라져 있어
+  // 관리자 문서 밖에서는 토큰 자체가 없으므로 무조건 싣는다(IS_ADMIN 을 보지 않는다).
+  const deviceToken = readDeviceToken();
   return fetch(`${BASE_URL}${path}`, {
     ...opts,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
+      ...(opts.headers || {}),
+    },
   });
+}
+
+/* 게이트 라우트에서 바이트를 받아 objectURL 로 만든다(<img src> 로는 못 건다 — 인증
+   헤더가 필요하다). 403(기기 게이트 거절)과 404(파기됨/없음)를 반드시 구분한다:
+   403 을 "파기됨"으로 그리면 심사자가 존재하는 증거를 없다고 믿는다(최종리뷰 C4).
+   기기 거절이면 http() 와 같은 이벤트를 쏴서 RequireDevice 가 복구 화면으로 넘긴다. */
+async function _gatedImageUrl(path, fallbackMessage) {
+  const res = await _authFetch(path);
+  if (!res.ok) {
+    let code;
+    try {
+      code = (await res.json())?.error?.code;
+    } catch { /* 비 JSON 응답 */ }
+    if (res.status === 403 && typeof code === 'string' && code.startsWith('device_')) {
+      try {
+        window.dispatchEvent(new CustomEvent(DEVICE_REJECTED_EVENT, { detail: { code } }));
+      } catch { /* 비브라우저 환경 */ }
+    }
+    const error = new Error(fallbackMessage);
+    error.status = res.status;
+    if (code) error.code = code;
+    throw error;
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 async function checkedJson(res, fallback = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.') {
@@ -229,12 +265,10 @@ export function adminResendEmail(applicationId) {
 // 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
 // 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
 export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profile') {
-  const res = await _authFetch(
+  return _gatedImageUrl(
     `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image?kind=${encodeURIComponent(kind)}`,
+    '사진을 불러오지 못했어요.',
   );
-  if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
 }
 
 // ── 관리자: 생체 등록 육안 심사(간편인증 review_pending) ────────────────────
@@ -272,10 +306,7 @@ export function adminRejectEnrollment(enrollmentId, reason) {
 // 캐시가 아니다 — 카드가 닫히면 호출자가 revokeObjectURL 로 즉시 해제해야 한다(생체
 // 이미지를 앱 상태에 오래 남기지 않는다).
 export async function adminFetchGatedImageUrl(path) {
-  const res = await _authFetch(path);
-  if (!res.ok) throw new Error('이미지를 불러오지 못했어요.');
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
+  return _gatedImageUrl(path, '이미지를 불러오지 못했어요.');
 }
 
 // ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
