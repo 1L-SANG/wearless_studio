@@ -15,23 +15,23 @@ KST = timezone(timedelta(hours=9))
 
 # ---------- VC 클레임 날짜 ----------
 
-def test_vc_date_is_the_korean_calendar_day_not_the_utc_one():
-    """KST 오전에 만료되는 라이선스는 UTC 로 자르면 하루 이른 날짜가 된다."""
+def test_vc_issue_time_preserves_the_instant_across_korean_calendar_boundary():
     # UTC 2027-09-07 23:00 == KST 2027-09-08 08:00
-    valid_until = datetime(2027, 9, 7, 23, 0, tzinfo=timezone.utc)
+    issued_at = datetime(2027, 9, 7, 23, 0, tzinfo=timezone.utc)
     claims = facemarket.build_face_vc_claims(
-        allowed=["a"], forbidden=["b"], unit_price=1000,
-        valid_until=valid_until, digest="d",
+        model_did="did:omn:model", license_id="44444444-4444-4444-4444-444444444444",
+        issued_at=issued_at, digest="d", consent_doc_version="v1.1",
     )
-    assert claims["licenseValidUntil"] == "2027-09-08"
+    assert claims["issuedAt"] == "2027-09-07T23:00:00Z"
 
 
-def test_vc_date_unchanged_when_utc_and_kst_agree():
-    valid_until = datetime(2027, 9, 7, 3, 0, tzinfo=timezone.utc)  # KST 12:00 같은 날
+def test_vc_issue_time_normalizes_stored_kst_timezone_to_utc():
+    issued_at = datetime(2027, 9, 7, 12, 0, tzinfo=KST)
     claims = facemarket.build_face_vc_claims(
-        allowed=[], forbidden=[], unit_price=0, valid_until=valid_until, digest="d",
+        model_did="did:omn:model", license_id="44444444-4444-4444-4444-444444444444",
+        issued_at=issued_at, digest="d", consent_doc_version="v1.1",
     )
-    assert claims["licenseValidUntil"] == "2027-09-07"
+    assert claims["issuedAt"] == "2027-09-07T03:00:00Z"
 
 
 def test_naive_datetime_is_read_as_utc_not_as_container_local():

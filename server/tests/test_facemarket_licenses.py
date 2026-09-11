@@ -92,6 +92,24 @@ def test_create_license_request_ignores_client_price_override():
     assert request.unit_price == 14900
 
 
+def test_issuance_locks_registration_before_creating_license(biometric_fm, make_token, holder_stub):
+    client, store, _r2 = biometric_fm
+    _seed_license_pending_enrollment(store)
+    response = client.post('/v1/facemarket/licenses',
+                           json=valid_license_body(ENROLLMENT_ID),
+                           headers=_auth(make_token))
+    assert response.status_code == 201, response.text
+    statements = store['sql']
+    lock_positions = [i for i, sql in enumerate(statements)
+                      if sql.startswith('select id from fm_biometric_enrollments')
+                      and 'for update' in sql]
+    assert lock_positions, 'photo reopening and issuance must share the registration row lock'
+    assert next(i for i, sql in enumerate(statements)
+                if sql.startswith('select pg_advisory_xact_lock')) < lock_positions[0]
+    assert lock_positions[0] < next(i for i, sql in enumerate(statements)
+                                   if sql.startswith('insert into fm_licenses'))
+
+
 def test_license_card_allows_missing_face_digest_during_reverification_cutover():
     card = LicenseCard.model_validate(
         {
@@ -359,7 +377,7 @@ def _assert_current_card_sql(sql):
     for required in (
         "e.id = m.current_enrollment_id",
         "l.enrollment_id = e.id",
-        "p.enrollment_id = e.id and p.angle = 'front'",
+        "p.enrollment_id = e.id",
         "m.status = 'verified'",
         "m.assets_status = 'ready'",
         "e.status = 'passed'",
@@ -411,6 +429,10 @@ class FakeCursor:
 
         if s.startswith("select pg_advisory_xact_lock"):
             self._result = {"?column?": None}
+        elif s.startswith("select id from fm_biometric_enrollments"):
+            enrollment_id, user_id = params
+            self._result = next(({'id': e['id']} for e in self.store['enrollments']
+                                 if e['id'] == enrollment_id and e['user_id'] == user_id), None)
         elif (
             "kind = 'personalization_purge'" in s
             and "status in ('pending', 'running')" in s
@@ -602,6 +624,9 @@ class FakeCursor:
                 self._result = {k: row[k] for k in _LICENSE_KEYS}
                 self._result["enrollment_id"] = row.get("enrollment_id")
                 self._result["face_image_key"] = row.get("face_image_key")
+                self._result["consent_doc_version"] = next(
+                    (e['consent_version'] for e in self.store['enrollments']
+                     if e['id'] == row.get('enrollment_id')), None)
             else:
                 self._result = None
         elif s.startswith("select") and "from fm_licenses l" in s and "l.enrollment_id" in s:
@@ -997,7 +1022,6 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
         "allowedUse": ["일반 의류"],
         "forbiddenUse": ["속옷"],
         "unitPrice": 14900,
-        "validDays": 365,
     }
 
 
@@ -1252,7 +1276,7 @@ def test_create_license_forces_standard_price_and_permanent_term(
     client, store, _ = biometric_fm
     enrollment_id = _seed_license_pending_enrollment(store)
     body = valid_license_body(enrollment_id)
-    body.pop("validDays")
+    body.pop("validDays", None)
     body["unitPrice"] = 7
     if term_case != "omitted":
         body["validDays"] = valid_days
@@ -1267,8 +1291,8 @@ def test_create_license_forces_standard_price_and_permanent_term(
     assert store["licenses"][0]["unit_price"] == 14900
     assert store["licenses"][0]["license_valid_until"] is None
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
-    assert issue_call["payload"]["claims"]["unitPrice"] == 14900
-    assert issue_call["payload"]["claims"]["licenseValidUntil"] is None
+    assert "unitPrice" not in issue_call["payload"]["claims"]
+    assert "licenseValidUntil" not in issue_call["payload"]["claims"]
 
 
 def test_reverification_vc_returns_model_to_pending_confirmation_gate(
@@ -1288,7 +1312,7 @@ def test_reverification_vc_returns_model_to_pending_confirmation_gate(
     assert store["models"][0]["status"] == "pending"
 
 
-def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
+def test_license_terms_are_normalized_for_storage_and_absent_from_holder_claims(
     biometric_fm, make_token, holder_stub
 ):
     client, store, _ = biometric_fm
@@ -1319,8 +1343,8 @@ def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
     assert response.json()["forbiddenUse"] == []
     assert store["licenses"][0]["forbidden_use"] == []
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
-    assert issue_call["payload"]["claims"]["allowedUse"] == "일반 의류, 액티브웨어"
-    assert issue_call["payload"]["claims"]["forbiddenUse"] == ""
+    assert "allowedUse" not in issue_call["payload"]["claims"]
+    assert "forbiddenUse" not in issue_call["payload"]["claims"]
 
 
 @pytest.mark.parametrize("field", ["forbidden_use", "forbiddenUse"])
@@ -1342,7 +1366,7 @@ def test_create_license_ignores_legacy_forbidden_use(
     assert response.json()["forbiddenUse"] == []
     assert store["licenses"][0]["forbidden_use"] == []
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
-    assert issue_call["payload"]["claims"]["forbiddenUse"] == ""
+    assert "forbiddenUse" not in issue_call["payload"]["claims"]
 
 
 def test_holder_failure_leaves_everything_non_active(
@@ -1395,10 +1419,10 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
         if c["path"].endswith("/issue-vc")
     ] == [f"fm-license:{license_id}", f"fm-license:{license_id}"]
     assert [
-        c["payload"]["claims"]["licenseValidUntil"]
+        c["payload"]["claims"]["issuedAt"]
         for c in holder_stub.calls
         if c["path"].endswith("/issue-vc")
-    ] == [None, None]
+    ] == [NOW.isoformat().replace("+00:00", "Z")] * 2
     assert store["licenses"][0]["license_valid_until"] is None
 
 
@@ -1885,7 +1909,7 @@ def test_conflict_reload_rejects_invalid_persisted_terms_before_enrollment_or_ho
     assert holder_stub.calls == []
 
 
-def test_conflict_reload_uses_persisted_terms_for_holder_claims(
+def test_conflict_reload_uses_persisted_evidence_for_holder_claims(
     biometric_fm, make_token, holder_stub
 ):
     client, store, _ = biometric_fm
@@ -1918,11 +1942,12 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{persisted['id']}"
     assert issue_call["payload"]["claims"] == {
-        "allowedUse": "액티브웨어",
-        "forbiddenUse": "",
-        "unitPrice": 14900,
-        "licenseValidUntil": None,
+        "modelDid": "did:dev:user-1",
+        "licenseId": persisted["id"],
+        "issuedAt": persisted["created_at"].isoformat().replace("+00:00", "Z"),
         "faceImageDigest": "sha256-persisted-digest",
+        "agreementVersion": "v1",
+        "consentDocVersion": facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,
     }
     assert store["licenses"][0]["license_valid_until"] is None
 

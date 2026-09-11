@@ -15,5 +15,9 @@ export function payoutAdminStatus(status) {
     scheduled: { label: '예정', variant: 'outline' },
     paid: { label: '지급 완료', variant: 'secondary' },
     held: { label: '보류', variant: 'destructive' },
+    processing: { label: '지급 처리 중', variant: 'outline' },
+    prepared: { label: '송금 전 확인', variant: 'outline' },
+    transfer_started: { label: '송금 진행 중', variant: 'outline' },
+    cancelled: { label: '송금 전 취소', variant: 'outline' },
   }[status] || { label: '예정', variant: 'outline' };
 }

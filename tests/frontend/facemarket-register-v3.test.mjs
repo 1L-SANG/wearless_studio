@@ -72,7 +72,7 @@ test('동의 안내와 필수 표시를 읽고 마우스, 키보드, 터치로 �
       info().props[event](); assert.equal(tooltip().props.hidden, false);
       info().props.onKeyDown({ key: 'Escape' }); assert.equal(tooltip().props.hidden, true);
     }
-    assert.ok(textOf(tooltip()).includes('이미 발행된 착용컷은 그 건의 기간이 끝날 때까지만 남아요.'));
+    assert.ok(textOf(tooltip()).includes('이미 발행된 착용컷은 철회 후에도 기존 이용 조건에 따라 남아요.'));
   } finally { await h.close(); }
 });
 

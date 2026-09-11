@@ -99,6 +99,30 @@ test('프론트 API는 내 정산 목록과 전체 합계 엔드포인트를 호
 
 import { loadEarningsHarness, findTree } from './helpers/mypageHarness.mjs';
 
+test('지급 완료는 실제 서울 지급일을 표시하고 추가 미지급액을 따로 보여줘요', async () => {
+  const h = await loadEarningsHarness();
+  const content = node => node == null ? '' : Array.isArray(node) ? node.map(content).join(' ') : typeof node === 'object' ? content(node.props?.children) : String(node);
+  try {
+    const data = { rows: [], loading: false, statements: { items: [{ periodMonth: '2026-08', amount: 16000, count: 2,
+      status: 'scheduled', unpaidAmount: 9000, unpaidCount: 1, scheduledFor: '2026-09-10',
+      confirmations: [{ id: 'paid-1', amount: 7000, count: 1, status: 'paid', paidAt: '2026-09-12T15:30:00Z' }] }] } };
+    const tree = h.module.MyPageEarnings({ data, month: '2026-08', onMonthChange() {} });
+    assert.match(content(tree), /2026-09-13/);
+    assert.match(content(tree), /7,000/); assert.match(content(tree), /9,000/);
+  } finally { await h.close(); }
+});
+
+test('이전 지급 기록은 지급일을 보존하고 미확인 차액을 추가 확인으로 구분해요', async () => {
+  const { payoutDisplayRows } = await import('../../src/features/model/mypage/payoutStatements.js');
+  const rows = payoutDisplayRows({ periodMonth: '2026-08', amount: 7000, count: 1, status: 'paid', legacyPaid: true,
+    unpaidAmount: 9000, unpaidCount: 1, paidAt: '2026-09-12T15:30:00Z', scheduledFor: '2026-09-10', confirmations: [] });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].displayDate, '2026-09-13');
+  assert.equal(rows[0].amount, 7000);
+  assert.equal(rows[1].amount, 9000);
+  assert.equal(rows[1].needsReconciliation, true);
+});
+
 test('옛 정산 페이지는 마이페이지 수익 위치로 이동해요', async () => {
   const harness = await loadEarningsHarness();
   try {

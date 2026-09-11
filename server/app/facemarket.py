@@ -41,6 +41,7 @@ from .auth import require_user
 from .db import get_conn
 from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
+from .facemarket_photos import preferred_photo_predicate
 from .models import CamelModel, ErrorResponse
 from .r2 import MIME_EXT
 
@@ -362,13 +363,13 @@ async def identity_verify(
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
                     "(assets_status = 'ready') as assets_ready, redo_count")
 
-_CURRENT_CARD_JOINS = """
+_CURRENT_CARD_JOINS = f"""
 join fm_biometric_enrollments e
   on e.id = m.current_enrollment_id and e.model_id = m.id
 join fm_licenses l
   on l.model_id = m.id and l.enrollment_id = e.id
 join fm_biometric_enrollment_photos p
-  on p.enrollment_id = e.id and p.angle = 'front'
+  on {preferred_photo_predicate('p', 'e.id')}
 """
 
 _CURRENT_CARD_ELIGIBILITY = """
@@ -744,8 +745,6 @@ class CreateLicenseRequest(CamelModel):
     opt_lookbook_person_replace: bool = False
     opt_consent_version: str | None = None
     unit_price: int = Field(default=PLATFORM_UNIT_PRICE_KRW, ge=0, le=100_000_000)
-    # 옛 클라이언트 호환용으로 검증 계약은 유지하지만, 생성 시 값은 무시한다.
-    valid_days: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("unit_price", mode="before")
     @classmethod
@@ -756,14 +755,6 @@ class CreateLicenseRequest(CamelModel):
 
 class UpdateLicenseTermsRequest(CamelModel):
     allowed_use: list[str] | None = None
-    valid_days: int | None = None
-
-    @field_validator("valid_days")
-    @classmethod
-    def valid_term_days(cls, value):
-        if value not in (None, 365, 730):
-            raise ValueError("validDays must be 365, 730, or null")
-        return value
 
 
 def _r2_face(request: Request):
@@ -833,7 +824,9 @@ async def _find_license_for_update(
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select {_LICENSE_CARD_COLS_L}, l.enrollment_id::text as enrollment_id,
-                      l.face_image_key
+                      l.face_image_key,
+                      (select consent_version from fm_biometric_enrollments
+                        where id = l.enrollment_id) as consent_doc_version
                 from fm_licenses l
                 join fm_models m on m.id = l.model_id
                 where l.id = %s and m.user_id = %s
@@ -847,7 +840,7 @@ async def _find_license_for_update(
 async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select e.id::text as enrollment_id, e.status as enrollment_status,
+            f"""select e.id::text as enrollment_id, e.status as enrollment_status,
                       e.match_policy_version, m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       p.r2_key as front_key, p.image_digest as front_digest,
@@ -861,7 +854,7 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
                  from fm_biometric_enrollments e
                  join fm_models m on m.id = e.model_id and m.user_id = e.user_id
                  left join fm_biometric_enrollment_photos p
-                   on p.enrollment_id = e.id and p.angle = 'front'
+                   on {preferred_photo_predicate('p', 'e.id')}
                  left join fm_model_assets fa
                    on fa.model_id = m.id and fa.view = 'face_front'
                  left join fm_model_assets ga
@@ -878,7 +871,7 @@ async def _load_activation_evidence_for_update(
 ) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select e.id::text as enrollment_id, e.status as enrollment_status,
+            f"""select e.id::text as enrollment_id, e.status as enrollment_status,
                       e.match_policy_version, e.body_type as enrollment_body_type,
                       m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
@@ -902,7 +895,7 @@ async def _load_activation_evidence_for_update(
                    on m.id = e.model_id and m.user_id = e.user_id
                  left join fm_cutover_batches b on b.id = m.reverification_batch_id
                  join fm_biometric_enrollment_photos p
-                   on p.enrollment_id = e.id and p.angle = 'front'
+                   on {preferred_photo_predicate('p', 'e.id')}
                  join fm_model_assets fa
                    on fa.model_id = m.id and fa.view = 'face_front'
                  join fm_model_assets ga
@@ -1167,6 +1160,8 @@ async def issue_and_activate_pending_face_vc(
             unit_price=int(locked["unit_price"]),
             valid_until=locked["license_valid_until"],
             digest=locked["face_image_digest"],
+            issued_at=locked["created_at"],
+            consent_doc_version=locked["consent_doc_version"],
         )
 
         @asynccontextmanager
@@ -1281,6 +1276,17 @@ async def create_license(
     row = None
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
+        await _reject_cutover_closed(conn)
+        # Photo reopening takes this same lock before checking for a license.
+        # Hold it until the pending license and vc_pending state commit together.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id from fm_biometric_enrollments "
+                "where id = %s and user_id = %s for update",
+                (enrollment_id, user_id),
+            )
+            if await cur.fetchone() is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
         existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
         if existing and existing["status"] == "active":
             return existing
@@ -1306,7 +1312,6 @@ async def create_license(
         model_id, key, digest = _checked_license_evidence(
             await _load_license_evidence(conn, user_id, enrollment_id)
         )
-        await _reject_cutover_closed(conn)
         if existing:
             row = existing
             license_id = existing["id"]
@@ -1450,7 +1455,7 @@ async def update_license_terms(
         license_id = str(uuid.UUID(str(license_id)))
     except (TypeError, ValueError):
         raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
-    changed = body.model_fields_set & {"allowed_use", "valid_days"}
+    changed = body.model_fields_set & {"allowed_use"}
     if not changed:
         raise _err("terms_required", "바꿀 사용 조건을 입력해 주세요.", status=400)
     if "allowed_use" in changed and body.allowed_use is None:
@@ -1471,12 +1476,6 @@ async def update_license_terms(
                     "invalid_use_category", "허용할 옷 종류를 하나 이상 선택해 주세요.", status=400
                 )
         valid_until = row.get("license_valid_until")
-        if "valid_days" in changed:
-            valid_until = (
-                None
-                if body.valid_days is None
-                else datetime.now(timezone.utc) + timedelta(days=body.valid_days)
-            )
         before = {
             "allowedUse": list(row.get("allowed_use") or []),
             "licenseValidUntil": (
@@ -1746,7 +1745,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
 
     - **인증 없음 (capability URL)**: license_id(UUIDv4)가 능력 토큰. 얼굴·신원 원문은 한 톨도
       싣지 않으므로 무인증 노출이 성립한다(노출 목록은 위 하드룰 참조).
-    - **valid**: 실시간 판정 = active 이고 유효기간이 없거나 아직 지나지 않음. DB status 가
+    - **valid**: 실시간 판정 = `status=='active' AND (license_valid_until IS NULL OR license_valid_until > now)`. DB status 가
       active 라도 기간이 지났으면 `status='expired'` + `valid=false` 로 내린다 — 두 필드가
       어긋나면(`status:'active', valid:false`) 스캔한 사람이 이유를 알 수 없다.
     - **에지 케이스**: `404 not_found`(비존재·잘못된 uuid — 존재 여부 노출 방지)
@@ -2516,24 +2515,34 @@ class FaceVcIssueError(RuntimeError):
         self.status_code = status_code
 
 
-def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
-    # valid_until 은 절대시각(now + valid_days)이라, 어느 시간대로 자르느냐에 따라 날짜가
-    # 하루 갈린다. KST 로 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다.
-    # UTC 로 자르면 KST 오전에 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는
-    # 되돌릴 수 없는 크리덴셜 값이라, 표기만 어긋나도 분쟁의 근거가 된다).
-    # 만료 판정은 절대시각 비교이고, null 은 영구 조건이라 만료시키지 않는다.
-    valid_str = _kst_date_str(valid_until) if valid_until is not None else None
+LICENSE_AGREEMENT_VERSION = "v1"
+
+
+def build_face_vc_claims(
+    *, model_did, license_id, issued_at, digest, consent_doc_version
+) -> dict:
+    """Sign stable enrollment evidence, never the license's editable usage terms."""
+    for value in (model_did, digest, consent_doc_version):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("immutable license evidence is required")
+    if not isinstance(issued_at, datetime):
+        raise ValueError("stored license creation time is required")
+    # created_at comes from the persisted license row. A wall-clock timestamp or
+    # current consent-version fallback would change the Holder idempotency digest.
+    created = issued_at if issued_at.tzinfo else issued_at.replace(tzinfo=timezone.utc)
     return {
-        "allowedUse": ", ".join(allowed),
-        "forbiddenUse": "",
-        "unitPrice": int(unit_price),
-        "licenseValidUntil": valid_str,
+        "modelDid": model_did,
+        "licenseId": str(uuid.UUID(str(license_id))),
+        "issuedAt": created.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "faceImageDigest": digest,
+        "agreementVersion": LICENSE_AGREEMENT_VERSION,
+        "consentDocVersion": consent_doc_version,
     }
 
 
 async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
-                        unit_price, valid_until, digest) -> FaceVcIssueResult:
+                        unit_price, valid_until, digest, issued_at,
+                        consent_doc_version) -> FaceVcIssueResult:
     base = getattr(app.state.settings, "opendid_holder_url", None)
     secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
     if not base or not base.strip() or not secret or not secret.strip():
@@ -2564,21 +2573,18 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
             if not isinstance(register_body, Mapping):
                 raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             user_did = register_body.get("userDid")
-            if user_did is not None and (
-                not isinstance(user_did, str) or not user_did.strip()
-            ):
-                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
-            if register_body.get("flowAComplete") is not True and not user_did:
+            if not isinstance(user_did, str) or not user_did.strip():
                 raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             issue = await checked_post(
                 client,
                 f"/holder/models/{model_id}/issue-vc",
                 {
-                    "plan": "facelicense",
+                    "plan": "facelicense-v2",
                     "idempotencyKey": f"fm-license:{license_id}",
                     "claims": build_face_vc_claims(
-                        allowed=allowed, forbidden=[], unit_price=unit_price,
-                        valid_until=valid_until, digest=digest,
+                        model_did=user_did, license_id=license_id,
+                        issued_at=issued_at, digest=digest,
+                        consent_doc_version=consent_doc_version,
                     ),
                 },
                 {200},
@@ -3183,7 +3189,8 @@ async def face_render_status(
                     "select 1 from fm_model_loras where model_id = %s and enabled "
                     "and status = 'ready' limit 1", (str(model_id),))
                 enabled = await cur.fetchone() is not None
-    # ready 는 **지금 등록된 파드의 /healthz(loaded)** 로만 판정한다. 예전에는 자동 켜기
+    # ready 는 **지금 등록된 파드의 /healthz(base_loaded)** 로만 판정한다(face_identity.healthz_ready —
+    # 베이스가 올라왔으면 준비. loaded 는 첫 렌더 뒤에야 true 라 준비 조건으로 못 쓴다). 예전에는 자동 켜기
     # 어댑터가 enabled 일 때만 봤는데, 자동 켜기를 꺼 두면(수동 파드 운영) 파드가 멀쩡히
     # 떠 있어도 영원히 "준비 중 (약 4분)"이 떴다(2026-09-11 개발 테스트에서 확인).
     ready = False

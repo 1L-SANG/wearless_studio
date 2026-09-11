@@ -343,7 +343,7 @@ def _is_current_catalog_card(store, model):
         and enrollment["consent_version"] == facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
         and enrollment["match_policy_version"]
         and license_row["status"] == "active"
-        and license_row["license_valid_until"] > datetime.now(timezone.utc)
+        and (license_row["license_valid_until"] is None or license_row["license_valid_until"] > datetime.now(timezone.utc))
         and license_row["vc_id"] == enrollment["vc_id"]
         and front
         and front["storage_state"] == "approved"
@@ -476,7 +476,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     for required in (
         "m.current_enrollment_id",
         "l.enrollment_id = e.id",
-        "p.enrollment_id = e.id and p.angle = 'front'",
+        "p.enrollment_id = e.id",
         "m.status = 'verified'",
         "m.assets_status = 'ready'",
         "e.status = 'passed'",

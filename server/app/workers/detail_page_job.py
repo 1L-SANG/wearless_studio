@@ -298,6 +298,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
             face_pass_outcome: dict = {}
+            # 이미지 → 그 이미지를 만든 호출의 face_pass 결과. generate/repair 는 한 dict(face_pass_outcome)에
+            # 적으므로 후보·재생성·보정이 있으면 마지막 호출이 앞선 결과를 덮어쓴다 — 원장의 face_pass 가
+            # 채택본이 아니라 마지막으로 그린 이미지의 것이 된다. 호출 직후 사본을 바이트 해시로 붙잡아 두고
+            # 저장 직전에 채택본의 것으로 되돌린다.
+            outcome_by_image: dict[str, dict] = {}
+
+            def _remember_outcome(data: bytes, source: dict | None = None) -> None:
+                outcome_by_image[hashlib.sha256(data).hexdigest()] = dict(
+                    face_pass_outcome if source is None else source)
+                face_pass_outcome.clear()
+
             if confirmed_packet is not None:
                 generate_kwargs = {
                     "confirmed_prompt_input": confirmed_packet.prompt_input,
@@ -318,7 +329,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     generate_kwargs["face_shape_profile"] = face_shape_profile
                 if real_identity_attached and face_identity_spec is not None:
                     generate_kwargs["face_identity_spec"] = face_identity_spec
-                    # 얼굴 패스 결과(applied / fallback:<reason>) — 자산 메타·이벤트용.
+                    # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>) — 자산 메타·이벤트용.
                     generate_kwargs["face_pass_outcome"] = face_pass_outcome
                     from ..agents import identity_source as _identity_source
 
@@ -340,6 +351,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 try:
                     img, mime = await cut_generator.generate(
                         generation_settings, gemini, b, product, images, **generate_kwargs)
+                    _remember_outcome(img)
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
                     log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
@@ -416,6 +428,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     try:
                         img, mime = await cut_generator.generate(
                             generation_settings, gemini, b, product, images, **generate_kwargs)
+                        _remember_outcome(img)
                     except Exception as e:
                         log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
@@ -427,6 +440,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             async def _generate_candidate():
                 candidate_img, candidate_mime = await cut_generator.generate(
                     generation_settings, gemini, b, product, images, **generate_kwargs)
+                _remember_outcome(candidate_img)
                 if plate is None:
                     return InlineImage(candidate_mime, candidate_img)
 
@@ -452,6 +466,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     candidate_attempt += 1
                     candidate_img, candidate_mime = await cut_generator.generate(
                         generation_settings, gemini, b, product, images, **generate_kwargs)
+                    _remember_outcome(candidate_img)
                 return InlineImage(candidate_mime, candidate_img)
 
             if confirmed_packet is not None:
@@ -528,6 +543,16 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                         repair_kwargs["confirmed_prompt_input"] = (
                                             confirmed_packet.prompt_input
                                         )
+                                    # 편집은 얼굴까지 다시 그린다 — 보정본에도 얼굴 패스를 건다(generate 와
+                                    # 같은 인자, 값이 있을 때만). 결과는 보정본 전용 dict 에 받는다.
+                                    repair_outcome: dict = {}
+                                    if "face_identity_spec" in generate_kwargs:
+                                        repair_kwargs.update(
+                                            face_identity_spec=generate_kwargs["face_identity_spec"],
+                                            face_pass_outcome=repair_outcome,
+                                            face_pass_url_provider=generate_kwargs.get(
+                                                "face_pass_url_provider"),
+                                        )
                                     repaired_img, repaired_mime = await cut_generator.repair(
                                         generation_settings,
                                         gemini,
@@ -536,6 +561,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                         chosen,
                                         **repair_kwargs,
                                     )
+                                    _remember_outcome(repaired_img, repair_outcome)
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(
                                         generation_settings,
@@ -546,6 +572,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                         **generate_kwargs,
                                         qc_corrections=instructions,
                                     )
+                                    _remember_outcome(repaired_img)
+                                # QC 는 얼굴 패스까지 끝난 최종본을 본다(repair/generate 가 그걸 돌려준다).
                                 repaired = InlineImage(repaired_mime, repaired_img)
                                 repaired_qc = await cut_output_qc.verdict(
                                     s,
@@ -591,6 +619,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
             img_sha256 = hashlib.sha256(img).hexdigest()
+            # 원장·자산 메타의 face_pass = **채택본**을 만든 호출의 결과(마지막 호출의 것이 아니라).
+            face_pass_outcome.clear()
+            face_pass_outcome.update(outcome_by_image.get(img_sha256, {}))
             async with app.state.pool.connection() as conn:
                 cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                     conn,
@@ -1243,6 +1274,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                 )
             hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
             fm_lora_spec = _face_identity.face_identity_from_lora_row(_lora)
+            # 동일인 검사 기준 = 승인된 face_front(real_model_images[0], 위에서 이미 읽은 바이트).
+            # 그리드(sedcard)는 여러 각도가 한 장이라 기준으로 쓰지 않는다. 이걸 안 붙이면 게이트가
+            # 신원을 보지 않는다(identity=None) — 2026-09-11 잡 6c270b84 에서 실제로 그랬다.
+            if fm_lora_spec is not None and real_model_images:
+                fm_lora_spec = await asyncio.to_thread(
+                    _face_identity.with_references, fm_lora_spec,
+                    [real_model_images[0].data], getattr(s, "fm_face_qc_dir", None),
+                )
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,

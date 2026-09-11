@@ -12,6 +12,7 @@ from psycopg.types.json import Json
 from .. import repo
 from ..agents.face_grid import compose_sedcard
 from ..agents.identity_source import compute_assets_source_hash
+from ..facemarket_photos import ASSET_SOURCE_SLOTS, resolve_photo_rows
 from ..facemarket_enrollment import (
     _MODEL_ASSET_FENCE_NAMESPACE,
     _drain_model_asset_cleanup,
@@ -23,11 +24,6 @@ from ._common import emit_job_event as _emit
 log = logging.getLogger("wearless.fm_model_asset_job")
 
 _ANGLES = ("front", "angle45", "side")
-_PHOTO_SOURCE_CHOICES = (
-    ("face01", "front"),
-    ("face03", "angle45"),
-    ("face05", "side"),
-)
 _OLD_ASSET_ANGLE = {"face_front": "front", "grid_sedcard": "side"}
 _CUTOVER_CODE = "facemarket_cutover_in_progress"
 _CUTOVER_MESSAGE = "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요."
@@ -47,15 +43,13 @@ async def _assert_account_open(conn, user_id: str) -> None:
 
 
 def _ordered_faces(rows: list[dict]) -> list[dict] | None:
-    by_angle = {row.get("angle"): row for row in rows}
-    source_slots = [
-        canonical if canonical in by_angle else legacy
-        for canonical, legacy in _PHOTO_SOURCE_CHOICES
-    ]
-    if not all(slot in by_angle for slot in source_slots):
+    faces = resolve_photo_rows(rows, ASSET_SOURCE_SLOTS)
+    if len(faces) != len(ASSET_SOURCE_SLOTS):
         return None
-    faces = [by_angle[angle] for angle in source_slots]
-    if any(face.get("storage_state") != "quarantine" for face in faces):
+    if any(
+        face.get("storage_state") not in ({"quarantine", "approved"} if face.get("photo_revision", 0) > 0 else {"quarantine"})
+        for face in faces
+    ):
         return None
     if any(face.get("status") != "asset_building" for face in faces):
         return None
@@ -138,6 +132,8 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
     payload = job.get("payload") or {}
     model_id = payload.get("modelId")
     enrollment_id = payload.get("enrollmentId")
+    photo_revision = payload.get("photoRevision", 0)
+    asset_namespace = f"{enrollment_id}/revision-{photo_revision}" if photo_revision else enrollment_id
     r2_face = getattr(app.state, "r2_face", None)
     settings = app.state.settings
     attempt_keys: list[str] = []
@@ -169,8 +165,10 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                             set assets_status='failed'
                             where id=%s and user_id=%s and current_enrollment_id=%s
                               and assets_status='building'
+                              and exists (select 1 from fm_biometric_enrollments e
+                                          where e.id=%s and e.photo_revision=%s and e.status='asset_building')
                             """,
-                            (model_id, user_id, enrollment_id),
+                            (model_id, user_id, enrollment_id, enrollment_id, photo_revision),
                         )
                         if enrollment_id:
                             await cur.execute(
@@ -180,8 +178,9 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                                     completed_at=now()
                                 where id=%s and model_id=%s and user_id=%s
                                   and status='asset_building'
+                                  and photo_revision=%s
                                 """,
-                                (reason, enrollment_id, model_id, user_id),
+                                (reason, enrollment_id, model_id, user_id, photo_revision),
                             )
                 await conn.commit()
         except Exception as exc:
@@ -398,7 +397,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     await _assert_account_open(conn, user_id)
                     await cur.execute(
                         """
-                        select e.status, e.match_policy_version, p.angle, p.r2_key,
+                        select e.status, e.match_policy_version, e.photo_revision, p.angle, p.r2_key,
                                p.mime_type, p.image_digest, p.storage_state
                         from fm_biometric_enrollment_photos p
                         join fm_biometric_enrollments e on e.id=p.enrollment_id
@@ -407,10 +406,11 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                           and e.status='asset_building'
                           and m.current_enrollment_id=e.id
                           and m.reverification_batch_id is null
+                          and e.photo_revision=%s
                         order by case p.angle
                           when 'front' then 0 when 'angle45' then 1 when 'side' then 2 end
                         """,
-                        (enrollment_id, model_id, user_id),
+                        (enrollment_id, model_id, user_id, photo_revision),
                     )
                     rows = await cur.fetchall()
                 await conn.commit()
@@ -423,7 +423,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                 originals: list[tuple[str, str, str]] = []
                 for face in faces:
                     ext = ext_for_mime(face.get("mime_type")) or "png"
-                    key = enrollment_original_key(model_id, enrollment_id, face["angle"], ext)
+                    key = enrollment_original_key(model_id, asset_namespace, face["angle"], ext)
                     attempt_keys.append(key)
                     await _register_cleanup(conn, enrollment_id, face["angle"], key)
                     await conn.commit()
@@ -444,7 +444,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                 registered = []
                 for view, data, mime in derived:
                     ext = ext_for_mime(mime) or "png"
-                    key = model_asset_key(model_id, enrollment_id, view, ext)
+                    key = model_asset_key(model_id, asset_namespace, view, ext)
                     attempt_keys.append(key)
                     await _register_cleanup(
                         conn,
@@ -473,7 +473,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     await _assert_account_open(conn, user_id)
                     await cur.execute(
                         """
-                        select status, match_policy_version
+                        select status, match_policy_version, photo_revision
                         from fm_biometric_enrollments
                         where id=%s and model_id=%s and user_id=%s and status='asset_building'
                         for update
@@ -481,7 +481,8 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         (enrollment_id, model_id, user_id),
                     )
                     enrollment = await cur.fetchone()
-                    if not enrollment or enrollment.get("match_policy_version") != evidence_version:
+                    if (not enrollment or enrollment.get("match_policy_version") != evidence_version
+                            or enrollment.get("photo_revision", 0) != photo_revision):
                         raise RuntimeError("enrollment_binding_lost")
                     await cur.execute(
                         """
@@ -536,7 +537,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                             """
                             update fm_biometric_enrollment_photos
                             set r2_key=%s, storage_state='approved', approved_at=now()
-                            where enrollment_id=%s and angle=%s and storage_state='quarantine'
+                            where enrollment_id=%s and angle=%s and storage_state in ('quarantine', 'approved')
                             """,
                             (new_key, enrollment_id, angle),
                         )

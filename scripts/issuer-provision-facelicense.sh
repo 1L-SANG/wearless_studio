@@ -16,11 +16,12 @@ PGC=${PG_CONTAINER:-postgre-opendid}
 PGUSER=${PG_USER:-${OPENDID_POSTGRES_USER:-}}
 PGDB=${PG_DB:-issuer}
 
-NS_ID_STR=${FL_NAMESPACE_ID:-kr.wearless.facelicense}
-NS_NAME=${FL_NAMESPACE_NAME:-FaceLicense}
-NS_REF=${FL_NAMESPACE_REF:-https://wearless.kr/schema/facelicense}
-VC_SCHEMA=${FL_VC_SCHEMA:-facelicense}
-VC_PLAN=${FL_VC_PLAN:-vcplanface0000000001}   # 정확히 20자 (varchar(20))
+# v1 signed credentials keep their original namespace/schema. Never rewrite them.
+NS_ID_STR=${FL_NAMESPACE_ID:-kr.wearless.facelicense.v2}
+NS_NAME=${FL_NAMESPACE_NAME:-FaceLicense v2}
+NS_REF=${FL_NAMESPACE_REF:-https://wearless.kr/schema/facelicense-v2}
+VC_SCHEMA=${FL_VC_SCHEMA:-facelicense-v2}
+VC_PLAN=${FL_VC_PLAN:-vcplanface0000000002}   # 정확히 20자 (varchar(20))
 
 [ -n "$PGUSER" ] || { echo "PG_USER=missing" >&2; exit 1; }
 
@@ -46,12 +47,12 @@ if [ -z "$NS_ID" ]; then
   curl -sf -X POST "$ADMIN/namespaces" -H 'Content-Type: application/json' -d "{
     \"namespace\": {\"id\":\"$NS_ID_STR\",\"name\":\"$NS_NAME\",\"ref\":\"$NS_REF\"},
     \"items\": [
-      {\"id\":\"allowed_use\",\"caption\":\"Allowed Use\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false},
-      {\"id\":\"forbidden_use\",\"caption\":\"Forbidden Use\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false},
-      {\"id\":\"unit_price\",\"caption\":\"Unit Price\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false},
-      {\"id\":\"license_valid_until\",\"caption\":\"License Valid Until\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false},
-      {\"id\":\"face_image_digest\",\"caption\":\"Face Image Digest\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false},
-      {\"id\":\"model_name\",\"caption\":\"Model Name\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":false}
+      {\"id\":\"model_did\",\"caption\":\"Model DID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
+      {\"id\":\"license_id\",\"caption\":\"License ID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
+      {\"id\":\"issued_at\",\"caption\":\"Issued At\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
+      {\"id\":\"face_image_digest\",\"caption\":\"Face Image Digest\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
+      {\"id\":\"agreement_version\",\"caption\":\"Agreement Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
+      {\"id\":\"consent_doc_version\",\"caption\":\"Consent Document Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true}
     ]
   }" >/dev/null
   NS_ID=$(q_issuer "SELECT id FROM namespace WHERE namespace_id = :'namespace_id';" -v "namespace_id=$NS_ID_STR")
@@ -71,7 +72,7 @@ if [ -z "$VS_ID" ]; then
     \"title\": \"WEARLESS Face License\",
     \"description\": \"WEARLESS model face-license VC for FaceMarket.\",
     \"language\": \"ko\",
-    \"version\": \"1.0\"
+    \"version\": \"2.0\"
   }" >/dev/null
   VS_ID=$(q_issuer "SELECT id FROM vc_schema WHERE vc_schema_id = :'vc_schema';" -v "vc_schema=$VC_SCHEMA")
   echo "    vc_schema id=$VS_ID"
@@ -95,7 +96,7 @@ if [ -z "$IP_ID" ]; then
     \"curve\": \"Secp256r1\",
     \"padding\": \"PKCS5\",
     \"initiateType\": \"issuer_init\",
-    \"tags\": [\"facelicense\"],
+    \"tags\": [\"facelicense-v2\"],
     \"zkpEnabled\": false
   }" >/dev/null
   IP_ID=$(q_issuer "SELECT id FROM issue_profile WHERE vc_plan_id = :'vc_plan';" -v "vc_plan=$VC_PLAN")
@@ -114,4 +115,4 @@ LVP=$(q_tas "SELECT count(*) FROM list_vc_plan WHERE vc_plan_id = :'vc_plan';" -
 [ "${LVP:-0}" -gt 0 ] || { echo "facelicense_plan=missing"; exit 1; }
 echo "facelicense_plan=present"
 echo "완료. plan=$VC_PLAN 로 FaceLicense VC 발급 가능."
-echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"facelicense\",\"claims\":{...}}"
+echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"facelicense-v2\",\"claims\":{...}}"

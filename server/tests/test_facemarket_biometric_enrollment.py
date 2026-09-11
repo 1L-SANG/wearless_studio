@@ -172,6 +172,12 @@ class FakeCursor:
             else:
                 self.conn.pool.failed_try_locks += 1
             self.result = {"locked": locked}
+        elif query.startswith("select pg_try_advisory_xact_lock"):
+            self.result = {"locked": True}
+        elif query.startswith("select view, r2_key from fm_model_assets where source_enrollment_id"):
+            self.many = []
+        elif query.startswith("delete from fm_model_assets where source_enrollment_id"):
+            self.result = None
         elif query.startswith("select pg_advisory_unlock"):
             if self.conn.store.unlock_started is not None:
                 self.conn.store.unlock_started.set()
@@ -181,6 +187,25 @@ class FakeCursor:
             lock_key = tuple(params)
             unlocked = self.conn.release_advisory_lock(lock_key)
             self.result = {"unlocked": unlocked}
+        elif query.startswith("select id::text as id, model_id::text as model_id, status, photo_revision"):
+            eid, uid = params
+            row = next((row for row in self.store.enrollments if row["id"] == eid and row["user_id"] == uid), None)
+            self.result = {**row, "photo_revision": row.get("photo_revision", 0)} if row else None
+        elif "as has_license" in query:
+            self.result = {"has_license": any(row.get("enrollment_id") == params[0] for row in self.store.licenses)}
+        elif "as identity_recorded" in query:
+            self.result = {"identity_recorded": any(row["model_id"] == params[0] and row["cx_tx_id"] == params[1] for row in self.store.identities)}
+        elif query.startswith("update fm_biometric_enrollments set status = %s, photo_revision"):
+            status, expires, eid, uid = params
+            row = next(row for row in self.store.enrollments if row["id"] == eid and row["user_id"] == uid)
+            row.update(status=status, expires_at=expires, photo_revision=row.get("photo_revision", 0) + 1, decision=None, reason=None, completed_at=None, liveness_session_digest=None, liveness_nonce_digest=None)
+        elif query.startswith("update fm_models set assets_status = 'none'"):
+            mid, uid, eid = params if len(params) == 3 else (params[0], None, params[1])
+            for row in self.store.models:
+                if row["id"] == mid and (uid is None or row["user_id"] == uid) and row.get("current_enrollment_id") == eid:
+                    row.update(assets_status="none", assets_source_hash=None)
+        elif query.startswith("select angle, qc_status, storage_state"):
+            self.many = [photo.copy() for photo in self.store.photos if photo["enrollment_id"] == params[0]]
         elif query.startswith("select count(*) filter"):
             user_id, device_digest = params
             matching = [
@@ -252,6 +277,7 @@ class FakeCursor:
                     # Task5: 바인딩때 승격할 키·체형 속성.
                     "height_bucket": row.get("height_bucket"),
                     "body_type": row.get("body_type"),
+                    "photo_revision": row.get("photo_revision", 0),
                 }
                 if row
                 else None
@@ -546,10 +572,10 @@ class FakeCursor:
                     "angle": photo["angle"],
                     "qc_status": photo["qc_status"],
                     "uploaded_at": photo["uploaded_at"],
+                    "storage_state": photo["storage_state"],
                 }
                 for photo in self.store.photos
                 if photo["enrollment_id"] == enrollment_id
-                and photo["storage_state"] in {"quarantine", "approved"}
             ]
         elif query.startswith("select angle, r2_key, mime_type"):
             enrollment_id = params[0]
@@ -561,11 +587,11 @@ class FakeCursor:
                         "angle": photo["angle"],
                         "r2_key": photo["r2_key"],
                         "mime_type": photo["mime_type"],
+                        "qc_status": photo["qc_status"],
+                        "storage_state": photo["storage_state"],
                     }
                     for photo in self.store.photos
                     if photo["enrollment_id"] == enrollment_id
-                    and photo["qc_status"] == "passed"
-                    and photo["storage_state"] == "quarantine"
                     and photo["angle"] in order
                 ],
                 key=lambda row: order[row["angle"]],
@@ -604,12 +630,11 @@ class FakeCursor:
                     item for item in self.store.photos
                     if item["enrollment_id"] == enrollment_id
                     and item["angle"] == angle
-                    and item["storage_state"] in {"quarantine", "approved"}
                 ),
                 None,
             )
             self.result = (
-                {"r2_key": photo["r2_key"], "mime_type": photo["mime_type"]}
+                {"r2_key": photo["r2_key"], "mime_type": photo["mime_type"], "storage_state": photo["storage_state"]}
                 if photo else None
             )
         elif query.startswith("select r2_key from fm_biometric_enrollment_photos"):
@@ -936,11 +961,12 @@ class FakeCursor:
                 None,
             )
             if enrollment:
+                unsigned = not any(row.get("enrollment_id") == enrollment_id for row in self.store.licenses)
                 photos = [
                     photo
                     for photo in self.store.photos
                     if photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] in {"quarantine", "delete_pending"}
+                    and (photo["storage_state"] in {"quarantine", "delete_pending"} or (unsigned and photo["storage_state"] == "approved"))
                 ]
                 self.many = (
                     [
@@ -949,17 +975,20 @@ class FakeCursor:
                             "angle": photo["angle"],
                             "r2_key": photo["r2_key"],
                             "storage_state": photo["storage_state"],
+                            "model_id": enrollment.get("model_id"),
+                            "unsigned": unsigned,
                         }
                         for photo in photos
                     ]
-                    or [{"status": enrollment["status"], "angle": None, "r2_key": None}]
+                    or [{"status": enrollment["status"], "angle": None, "r2_key": None, "model_id": enrollment.get("model_id"), "unsigned": unsigned}]
                 )
         elif "as remaining" in query and query.startswith("select"):
             enrollment_id = params[0]
+            unsigned = not any(row.get("enrollment_id") == enrollment_id for row in self.store.licenses)
             self.result = {
                 "remaining": sum(
                     photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] in {"quarantine", "delete_pending"}
+                    and (photo["storage_state"] in {"quarantine", "delete_pending"} or (unsigned and photo["storage_state"] == "approved"))
                     for photo in self.store.photos
                 )
                 + sum(
@@ -1273,6 +1302,7 @@ def _enrollment_db_view(row, *, model_gender=None):
         "id": row["id"],
         "model_id": row["model_id"],
         "status": row["status"],
+        "photo_revision": row.get("photo_revision", 0),
         "decision": row["decision"],
         "reason": row["reason"],
         "cooldown_until": row["cooldown_until"],
@@ -1667,10 +1697,10 @@ def test_mixed_legacy_rows_normalize_to_distinct_required_slots():
         {"angle": "angle45", "r2_key": "old-angle"},
         {"angle": "side", "r2_key": "old-side"},
     ]
-    normalized = facemarket_enrollment._normalize_photo_rows(
+    normalized = facemarket_enrollment.resolve_photo_rows(
         rows, ("face01", "face03", "face05")
     )
-    assert [row["angle"] for row in normalized] == ["face01", "face03", "face05"]
+    assert [row["angle"] for row in normalized] == ["face01", "angle45", "side"]
     assert normalized[0]["r2_key"] == "new-front"
 
 
@@ -2041,7 +2071,7 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
     ]
     assert enrollment_store.jobs == [{
         "kind": "fm_model_asset_build",
-        "payload": {"modelId": "model-1", "enrollmentId": enrollment_id},
+        "payload": {"modelId": "model-1", "enrollmentId": enrollment_id, "photoRevision": 0},
     }]
     stored = enrollment_store.enrollments[0]
     assert stored["status"] == "asset_building"
@@ -2834,6 +2864,7 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         "bodyType",
             "gender",
             "photoCount",
+            "photoRevision",
             "consentDocumentVersion",
             "licenseId",
             "licenseTerms",

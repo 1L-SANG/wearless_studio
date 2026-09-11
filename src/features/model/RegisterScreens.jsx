@@ -21,7 +21,7 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
         <div id="withdrawal-tooltip" className={s.withdrawalTooltip} role="tooltip" hidden={!withdrawalOpen} onMouseEnter={() => setWithdrawalOpen(true)}><ul>
           <li>새로운 사용이 그 자리에서 멈춰요. 사유는 필요 없고, 위약금도 없어요.</li>
           <li>얼굴 정보는 30일 안에 파기해요. 백업은 90일 안에 지워요. 끝나면 알려 드려요.</li>
-          <li>이미 발행된 착용컷은 그 건의 기간이 끝날 때까지만 남아요.</li>
+          <li>이미 발행된 착용컷은 철회 후에도 기존 이용 조건에 따라 남아요.</li>
         </ul></div>
       </div></li>
     </ul>

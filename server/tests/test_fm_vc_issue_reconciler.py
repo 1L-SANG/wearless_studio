@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app import facemarket, facemarket_notify
@@ -143,6 +144,8 @@ def test_shared_issue_function_activates_and_emails_on_same_locked_connection(mo
         "status": "pending", "vc_id": None, "enrollment_id": "enroll-1",
         "allowed_use": ["일반 의류"], "unit_price": 14900,
         "license_valid_until": None, "face_image_digest": "sha256-face",
+        "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+        "consent_doc_version": "2026-08-v1",
     }
     conn = _Connection(None)
     app = SimpleNamespace(state=SimpleNamespace(
@@ -157,6 +160,8 @@ def test_shared_issue_function_activates_and_emails_on_same_locked_connection(mo
         return locked
 
     async def fake_issue(_app, **kwargs):
+        assert kwargs["issued_at"] == datetime(2026, 9, 1, tzinfo=timezone.utc)
+        assert kwargs["consent_doc_version"] == "2026-08-v1"
         calls.append(("issue", kwargs["license_id"]))
         return FaceVcIssueResult("vc-1", "did:user-1")
 

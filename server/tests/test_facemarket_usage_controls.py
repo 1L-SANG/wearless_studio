@@ -294,7 +294,7 @@ def test_settlement_list_exposes_safe_labels_and_report_state(monkeypatch, keypa
     assert "userId" not in row and "email" not in row
 
 
-def test_terms_patch_changes_only_allowed_use_and_validity(monkeypatch, keypair, make_token):
+def test_terms_patch_changes_allowed_use_without_rewriting_historical_validity(monkeypatch, keypair, make_token):
     _app, client, store = _fixture(monkeypatch, keypair)
 
     response = client.patch(
@@ -306,7 +306,7 @@ def test_terms_patch_changes_only_allowed_use_and_validity(monkeypatch, keypair,
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["allowedUse"] == ["액티브웨어"]
-    assert body["licenseValidUntil"] == (NOW + timedelta(days=730)).isoformat().replace("+00:00", "Z")
+    assert body["licenseValidUntil"] == (NOW - timedelta(days=30) + timedelta(days=365)).isoformat().replace("+00:00", "Z")
     assert body["unitPrice"] == 10000
     assert body["updatedAt"] == (NOW + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
     assert len(store["term_changes"]) == 1
@@ -318,19 +318,33 @@ def test_terms_patch_changes_only_allowed_use_and_validity(monkeypatch, keypair,
     }
     assert change[2].obj == {
         "allowedUse": ["액티브웨어"],
-        "licenseValidUntil": (NOW + timedelta(days=730)).isoformat(),
+        "licenseValidUntil": (NOW - timedelta(days=30) + timedelta(days=365)).isoformat(),
     }
 
 
-def test_terms_patch_accepts_null_valid_days_as_permanent(monkeypatch, keypair, make_token):
+def test_terms_patch_does_not_offer_duration_changes(monkeypatch, keypair, make_token):
     _app, client, _store = _fixture(monkeypatch, keypair)
     response = client.patch(
         f"/v1/facemarket/licenses/{LICENSE_ID}/terms",
         json={"validDays": None},
         headers=_headers(make_token),
     )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "terms_required"
+
+
+def test_terms_patch_cannot_add_an_expiry_to_a_permanent_license(monkeypatch, keypair, make_token):
+    _app, client, store = _fixture(monkeypatch, keypair)
+    store["license"]["license_valid_until"] = None
+    response = client.patch(
+        f"/v1/facemarket/licenses/{LICENSE_ID}/terms",
+        json={"allowedUse": ["액티브웨어"], "validDays": 365},
+        headers=_headers(make_token),
+    )
     assert response.status_code == 200, response.text
+    assert response.json()["allowedUse"] == ["액티브웨어"]
     assert response.json()["licenseValidUntil"] is None
+    assert store["license"]["license_valid_until"] is None
 
 
 def test_permanent_profile_license_accepts_null_validity_fields():
@@ -349,7 +363,7 @@ def test_terms_patch_rejects_empty_invalid_and_foreign_requests(monkeypatch, key
     _app, client, _store = _fixture(monkeypatch, keypair)
     cases = [
         ({}, OWNER, 400),
-        ({"validDays": 90}, OWNER, 422),
+        ({"validDays": 90}, OWNER, 400),
         ({"allowedUse": ["성인물"]}, OWNER, 400),
         ({"allowedUse": None}, OWNER, 400),
         ({"allowedUse": []}, OWNER, 400),

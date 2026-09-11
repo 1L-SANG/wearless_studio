@@ -45,6 +45,7 @@ def test_months_merge_paid_and_choose_oldest_closed_scheduled(keypair, make_toke
     assert result["items"][0] == {
         "periodMonth": "2026-09", "amount": 0, "count": 0, "status": "scheduled",
         "scheduledFor": "2026-10-10", "paidAt": None, "open": True,
+        "unpaidAmount": 0, "unpaidCount": 0,
     }
     assert result["items"][2]["status"] == "paid"
     assert result["items"][2]["paidAt"] is not None
@@ -72,6 +73,7 @@ def test_seoul_month_boundaries_and_year_rollover():
 def test_live_aggregation_uses_seoul_months_and_saved_amounts():
     # 운영 SELECT를 SQLite로 실행해 조인과 월 경계를 함께 확인해요.
     sql = payout.MODEL_STATEMENTS_SQL
+    sql = sql.replace(payout._MODEL_HISTORY_SQL, "null")
     sql = sql.replace("date_trunc('month', st.created_at at time zone 'Asia/Seoul')::date", "seoul_month(st.created_at)")
     sql = sql.replace("%s", "?")
     conn = sqlite3.connect(":memory:")
@@ -80,11 +82,12 @@ def test_live_aggregation_uses_seoul_months_and_saved_amounts():
     conn.create_function("seoul_month", 1, lambda value: datetime.fromisoformat(value).astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-01"))
     conn.executescript("""
         create table fm_licenses(id text, model_id text);
-        create table fm_settlements(license_id text, created_at text, model_amount integer);
+        create table fm_settlements(license_id text, created_at text, model_amount integer, id text);
+        create table fm_payout_confirmation_entries(settlement_id text, released_at text);
         create table fm_payout_statements(model_id text, period_month text, amount integer, count integer,
                                          status text, scheduled_for text, paid_at text);
         insert into fm_licenses values ('own', 'm1'), ('other', 'm2');
-        insert into fm_settlements values
+        insert into fm_settlements(license_id, created_at, model_amount) values
             ('own', '2026-08-31T14:59:59+00:00', 7000),
             ('own', '2026-08-31T15:00:00+00:00', 8000),
             ('own', '2026-09-30T14:59:59+00:00', 9000),
@@ -101,11 +104,12 @@ def test_live_aggregation_uses_seoul_months_and_saved_amounts():
         conn.close()
 
 
-@pytest.mark.parametrize("status", ["paid", "held", "scheduled"])
+@pytest.mark.parametrize("status", ["held", "scheduled"])
 def test_admin_upserts_live_totals_and_audits(status, keypair, make_token, monkeypatch):
     freeze_month(monkeypatch)
     updated = row(status=status, paid_at=NOW if status == "paid" else None)
-    conn = Conn([{"id": MODEL_ID, "display_name": "모델"}, {"status": "held"}, {"amount": 7000, "count": 1}, updated, None])
+    conn = Conn([{"id": MODEL_ID, "display_name": "모델"}, {"status": "held"}, None, {"amount": 7000, "count": 1}, updated,
+                 {**updated, "model_id": MODEL_ID, "model_name": "모델"}])
     patch_db(monkeypatch, payout, conn)
     response = client_for(keypair).post(f"{ADMIN}/{MODEL_ID}/2026-08/status", json={"status": status, "note": "확인"}, headers=auth(make_token))
     assert response.status_code == 200
@@ -132,7 +136,7 @@ def test_admin_list_is_masked_and_empty_month_is_empty(keypair, make_token, monk
     assert result.json()["items"][0]["accountMasked"] == "***-****-0000"
     assert result.json()["items"][0]["bankName"] == "국민은행"
     assert "accountNumber" not in result.text and "account_number_enc" not in conn.executed[0][0]
-    assert client.get(ADMIN, params={"month": "2026-08"}, headers=auth(make_token)).json() == {"items": []}
+    assert client.get(ADMIN, params={"month": "2026-08"}, headers=auth(make_token)).json() == {"viewerId": "user-1", "items": []}
 
 
 @pytest.mark.parametrize("month", ["2026-13", "2026-8", "invalid", "2026-08-01"])
@@ -152,7 +156,7 @@ def test_status_requires_admin_existing_model_and_valid_status(keypair, make_tok
     assert client.post(path, json={"status": "paid"}).status_code == 401
     assert client.post(path, json={"status": "paid"}, headers=auth(make_token)).status_code == 403
     patch_db(monkeypatch, payout, conn)
-    assert client.post(path, json={"status": "paid"}, headers=auth(make_token)).status_code == 404
+    assert client.post(path, json={"status": "scheduled"}, headers=auth(make_token)).status_code == 404
     assert client.post(path, json={"status": "unknown"}, headers=auth(make_token)).status_code == 400
 
 

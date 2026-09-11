@@ -138,15 +138,16 @@ def test_missing_backend_is_backend_error(monkeypatch):
 
 
 @pytest.mark.parametrize("meta,expected", [
-    ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "gate_failed"),
-    ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "gate_failed"),
-    ({"tries": [{}], "reason": "no_face"}, "no_face"),
-    ({"tries": [{}], "reason": "yaw"}, "no_face"),
+    ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "fallback:gate_failed"),
+    ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "fallback:gate_failed"),
+    # 얼굴 없음·측면은 렌더 전에 내리는 설계상 건너뜀이다 — 폴백이 아니다(test_face_pass_skip_outcome).
+    ({"tries": [], "skipped_reason": "no_face", "reason": "no_face"}, "skipped:no_face"),
+    ({"tries": [], "skipped_reason": "yaw", "reason": "yaw"}, "skipped:yaw"),
 ])
-def test_gate_and_no_face_reasons(monkeypatch, meta, expected):
+def test_gate_and_skip_reasons(monkeypatch, meta, expected):
     res = fi.FacePassResult(b"ORIG", "image/png", False, meta)
     _, _, outcome = _apply(monkeypatch, result=res)
-    assert outcome == {"face_pass": f"fallback:{expected}"}
+    assert outcome == {"face_pass": expected}
 
 
 # ── 알림 ──

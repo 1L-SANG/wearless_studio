@@ -11,9 +11,8 @@ export function profilePhysiqueLine(profile) {
 }
 
 export function validityLabel(validDays) {
-  if (validDays === null) return '영구';
-  if (!Number.isFinite(validDays) || validDays <= 0) return '미정';
-  if (validDays >= 3650) return '영구';
+  if (!Number.isFinite(validDays)) return '철회 시까지';
+  if (validDays <= 0) return '미정';
   if (validDays % 365 === 0) return `${validDays / 365}년`;
   return `${validDays}일`;
 }

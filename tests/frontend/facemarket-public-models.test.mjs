@@ -43,13 +43,13 @@ test('유효기간 라벨 — 1년·2년·90일·영구', () => {
   assert.equal(formatValidity(730), '2년');
   assert.equal(formatValidity(90), '90일');
   assert.equal(formatValidity(3650), '영구');
-  assert.equal(formatValidity(null), '영구');
+  assert.equal(formatValidity(null), '철회 시까지');
 });
 
 test('만료 시각은 "년 월 일까지"로, 잘못된 값은 null', () => {
   assert.equal(formatValidUntil('2027-09-07T12:00:00Z'), '2027년 9월 7일까지');
   assert.equal(formatValidUntil('nope'), null);
-  assert.equal(formatValidUntil(null), '영구');
+  assert.equal(formatValidUntil(null), '철회 시까지');
 });
 
 test('카드 보조 줄 — cm 가 있으면 cm, 없으면 키 구간, 체형은 한국어 라벨', () => {
@@ -141,8 +141,8 @@ test('공개 목록 fetch — items 를 화면 모델로 바꾸고, 실패는 �
   await assert.rejects(() => fetchPublicModels({ fetchImpl: down }), /503/);
 });
 
-test('영구 조건을 저장한 공개 모델은 만료 미정 대신 영구로 표시해요', () => {
+test('영구 조건을 저장한 공개 모델은 만료 미정 대신 철회 시까지로 표시해요', () => {
   const model = toBrowseModel({...ITEM,license:{...ITEM.license,validDays:null,validUntil:null}});
-  assert.equal(model.license.validity, '영구');
-  assert.equal(model.license.validUntilText, '영구');
+  assert.equal(model.license.validity, '철회 시까지');
+  assert.equal(model.license.validUntilText, '철회 시까지');
 });

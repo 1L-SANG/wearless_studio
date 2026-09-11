@@ -16,9 +16,9 @@ import { bodyTypeLabel, heightBucketLabel } from '../../../lib/facemarketPhysiqu
 
 const GENDER_LABEL = Object.freeze({ male: '남성', female: '여성' });
 
-/** 유효기간(일)을 사람이 읽는 말로. 라이선스 폼 선택지(90일·1년·2년)와 '영구'(3650일 이상)를 덮는다. */
+/** 기한이 없으면 철회 시까지, 기존 라이선스는 저장된 일수를 사람이 읽는 말로 표시한다. */
 export function formatValidity(days) {
-  if (days === null) return '영구';
+  if (days == null) return '철회 시까지';
   const n = Number(days);
   if (!Number.isFinite(n) || n <= 0) return null;
   if (n >= 3650) return '영구';
@@ -28,7 +28,7 @@ export function formatValidity(days) {
 
 /** 만료 시각 → "2027년 9월 7일까지". 잘못된 값이면 null. */
 export function formatValidUntil(iso) {
-  if (iso === null) return '영구';
+  if (iso == null) return '철회 시까지';
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;

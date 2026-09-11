@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
+import { completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
 import { runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toUploadableImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
@@ -181,12 +181,26 @@ export function ModelRegister() {
     }
   };
 
+  const editableEnrollment = async () => {
+    if (enrollment?.status === 'license_pending') {
+      const reopened = await reopenEnrollmentPhotos(enrollment.id);
+      if (mounted.current) setEnrollment(reopened);
+      return reopened;
+    }
+    if (!['photos_pending', 'liveness_pending'].includes(enrollment?.status)) {
+      throw new Error('현재 등록 단계에서는 사진을 고칠 수 없어요.');
+    }
+    return enrollment;
+  };
+
   const changePhoto = async (slot, file) => {
     if (inFlight.current || !enrollment?.id) return;
     inFlight.current = true; setBusy(true); setError('');
     try {
       const blob = await toUploadableImage(file);
-      const result = await uploadEnrollmentPhoto({ enrollmentId: enrollment.id, slot, fileBlob: blob, filename: blob.name || file.name });
+      const editable = await editableEnrollment();
+      if (!mounted.current) return;
+      const result = await uploadEnrollmentPhoto({ enrollmentId: editable.id, slot, fileBlob: blob, filename: blob.name || file.name });
       if (!mounted.current) return;
       const url = URL.createObjectURL(blob);
       if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
@@ -200,8 +214,10 @@ export function ModelRegister() {
     if (inFlight.current || !enrollment?.id) return;
     inFlight.current = true; setBusy(true); setError('');
     try {
-      const stored = enrollment.photos.find((photo) => photoSlotKey(photo) === slot);
-      await deleteEnrollmentPhoto(enrollment.id, stored?.slot || stored?.angle || slot);
+      const editable = await editableEnrollment();
+      if (!mounted.current) return;
+      const stored = editable.photos.find((photo) => photoSlotKey(photo) === slot);
+      await deleteEnrollmentPhoto(editable.id, stored?.slot || stored?.angle || slot);
       if (!mounted.current) return;
       if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
       delete previewUrls.current[slot]; setPreviews({ ...previewUrls.current });
@@ -228,6 +244,7 @@ export function ModelRegister() {
 
   const finishPhotos = async () => {
     if (!photoProgress(enrollment?.photos).complete || inFlight.current) return;
+    if (enrollment.status === 'license_pending') { setStep('3'); return; }
     inFlight.current = true; setError(''); setBusy(true);
     try {
       const settings = config || await getFacemarketConfig();
@@ -302,7 +319,6 @@ export function ModelRegister() {
       const models = await listMyModels();
       if (!mounted.current) return;
       if (models.some((model) => model.status === 'awaiting_confirm')) { navigate('/model/confirm', { replace: true }); return; }
-      if (enrollment?.id && ['rejected', 'failed', 'expired'].includes(enrollment.status)) await cancelEnrollment(enrollment.id);
       if (!mounted.current) return;
       Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {}; setPreviews({});
       setEnrollment(null); setLicense(null); setConsents([false, false]); setTerms(defaultRegisterTerms()); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setBody(null); setSub(1); setStep('1');

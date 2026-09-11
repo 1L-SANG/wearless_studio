@@ -333,7 +333,7 @@ function Detail({ modelId, onChanged }) {
           {licenses.length === 0 && <p className="text-muted-foreground">없음</p>}
           {licenses.map((l) => (
             <div key={l.id} className="flex gap-3">
-              <span>{l.status}</span><span>{won(l.unitPrice)}</span><span>~{day(l.validUntil)}</span>
+              <span>{l.status}</span><span>{won(l.unitPrice)}</span><span>{l.validUntil ? `~${day(l.validUntil)}` : '철회 시까지'}</span>
             </div>
           ))}
         </section>

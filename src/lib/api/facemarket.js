@@ -282,6 +282,13 @@ export function adminListUsers({ q, origin, limit = 50, cursor } = {}) {
   return http(`/v1/facemarket/admin/users?${params.toString()}`);
 }
 
+export function adminGrantCredits(userId, body, idempotencyKey) {
+  return http(`/v1/facemarket/admin/users/${encodeURIComponent(userId)}/credits/grants`, {
+    method: 'POST', body,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  });
+}
+
 export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (targetType) params.set('targetType', targetType);
@@ -306,14 +313,28 @@ export function adminListPayoutStatements({ month }) {
   return http(`/v1/facemarket/admin/payout-statements?month=${encodeURIComponent(month)}`);
 }
 
-export function adminSetPayoutStatementStatus(modelId, periodMonth, status, note) {
+export function adminSetPayoutStatementStatus(modelId, periodMonth, status, note, expectedConfirmationId) {
   return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/status`, {
-    method: 'POST', body: note ? { status, note } : { status },
+    method: 'POST', body: { status, ...(note ? { note } : {}), ...(expectedConfirmationId ? { expectedConfirmationId } : {}) },
   });
 }
 
 export function adminRevealPayoutAccount(modelId) {
   return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/payout-account`);
+}
+
+export function adminConfirmPayoutStatement(modelId, periodMonth, confirmationId) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/confirm`, {
+    method: 'POST', body: { confirmationId },
+  });
+}
+
+export function adminAdvancePayoutConfirmation(confirmationId, action) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, { method: 'POST' });
+}
+
+export function adminRevealPayoutConfirmation(confirmationId) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/account`);
 }
 
 // ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
@@ -431,6 +452,10 @@ export function cancelEnrollment(enrollmentId) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/cancel`, { method: 'POST' });
 }
 
+export function reopenEnrollmentPhotos(enrollmentId) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/reopen-photos`, { method: 'POST' });
+}
+
 export function createLicense({
   enrollmentId, allowedUse = [], forbiddenUse = [],
 }, { signal } = {}) {
@@ -491,6 +516,7 @@ export function listModelUsage(modelId) {
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
 //   { valid, status, allowedUse, forbiddenUse, unitPrice, validUntil, vcId, model:{ nameMasked, age } }
+//   validUntil은 영구 라이선스에서 null일 수 있어요.
 // 얼굴·digest·CI·생년월일·user_id·model_id 는 서버가 애초에 싣지 않는다(무인증 = 노출 시 영구 유출).
 // 해지가 즉시 반영돼야 하므로 캐시 금지(서버 Cache-Control: no-store + 요청 측 cache:'no-store').
 export async function verifyLicensePublic(licenseId) {

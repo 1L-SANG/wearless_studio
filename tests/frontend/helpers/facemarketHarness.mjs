@@ -160,6 +160,7 @@ export async function modelComponentHarness({
           export const revokeLicense = (...args) => api.revokeLicense(...args);
           export const verifyLicensePublic = (...args) => api.verifyLicensePublic(...args);
           export const completeEnrollment = (...args) => api.completeEnrollment(...args);
+          export const reopenEnrollmentPhotos = (...args) => api.reopenEnrollmentPhotos(...args);
           export const createEnrollment = (...args) => api.createEnrollment(...args);
           export const createIdentity = (...args) => api.createIdentity(...args);
           export const createLivenessSession = (...args) => api.createLivenessSession(...args);

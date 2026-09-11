@@ -19,19 +19,17 @@ angle45/side)의 지문을 fm_models.assets_source_hash 에 새긴다. resolve_r
 쓰므로 정상 상태에서는 false-reject 가 나올 수 없다.
 """
 
+import asyncio
 import hashlib
 import logging
 import uuid
+
+from ..facemarket_photos import ASSET_SOURCE_SLOTS, resolve_photo_rows
 
 
 log = logging.getLogger("wearless.identity_source")
 
 _ANGLES = ("front", "angle45", "side")
-_PHOTO_SOURCE_CHOICES = (
-    ("face01", "front"),
-    ("face03", "angle45"),
-    ("face05", "side"),
-)
 
 
 def compute_assets_source_hash(faces: list[dict]) -> str:
@@ -126,16 +124,10 @@ async def resolve_real_model_assets(
             "where enrollment_id = %s",
             (enrollment_id,))
         photo_rows = await cur.fetchall()
-    by_angle = {row.get("angle"): row for row in photo_rows}
-    source_slots = [
-        canonical if canonical in by_angle else legacy
-        for canonical, legacy in _PHOTO_SOURCE_CHOICES
-    ]
-    if not all(slot in by_angle for slot in source_slots):
+    sources = resolve_photo_rows(photo_rows, ASSET_SOURCE_SLOTS)
+    if len(sources) != len(ASSET_SOURCE_SLOTS):
         return None
-    current_source_hash = compute_assets_source_hash(
-        [by_angle[angle] for angle in source_slots]
-    )
+    current_source_hash = compute_assets_source_hash(sources)
     if current_source_hash != str(state.get("assets_source_hash") or ""):
         # 관측 로그(PII 없음 — 사유 코드·model_id·enrollment_id 만, 해시/다이제스트
         # 값 자체는 남기지 않는다). 다른 REJECTED 사유와 같은 bare None 만 반환하면
@@ -181,6 +173,29 @@ async def resolve_real_model_assets(
             return None
         out.append(ref)
     return out
+
+
+async def reference_face_bytes(app, conn, model_id: str, license_row) -> list[bytes]:
+    """동일인 검사 기준 = 승인된 face_front 한 장(비공개 face 버킷). 핀이 안 맞거나 저장소가 없으면 [].
+
+    변형 컷처럼 실존 자산을 따로 안 읽는 경로가 쓴다. 새 컷·상세페이지는 이미 읽은 model_images[0] 를 그대로 쓴다.
+    """
+    if not isinstance(license_row, dict):
+        return []
+    enrollment_id = license_row.get("current_enrollment_id")
+    evidence_version = license_row.get("match_policy_version")
+    r2_face = getattr(app.state, "r2_face", None)
+    if not enrollment_id or not evidence_version or r2_face is None:
+        return []
+    refs = await resolve_real_model_assets(
+        conn, str(model_id), enrollment_id=str(enrollment_id), evidence_version=str(evidence_version))
+    if not refs:
+        return []
+    try:
+        return [await asyncio.to_thread(r2_face.get_bytes, refs[0]["key"])]
+    except Exception as exc:  # noqa: BLE001 — 기준을 못 읽으면 신원 검사 없이 간다(얼굴 패스 자체는 막지 않는다)
+        log.warning("reference face unavailable for %s: %r", model_id, exc)
+        return []
 
 
 async def resolve_enabled_lora(conn, model_id: str) -> dict | None:

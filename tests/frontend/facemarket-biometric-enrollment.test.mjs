@@ -837,9 +837,9 @@ test('라이선스 종료는 활동 관리의 확인 뒤 현재 라이선스를 
   } finally {await harness.close();}
 });
 
-test('영구로 바꾼 라이선스는 공개 증서에서도 영구라고 표시해요', async () => {
+test('영구 라이선스는 공개 증서에서 철회 시까지로 표시해요', async () => {
   const harness=await modelComponentHarness({entry:'/src/features/verify/PublicVerify.jsx',exportName:'PublicVerify',initialStates:['ok',{status:'active',valid:true,validUntil:null},null],api:{}});
-  try { assert.ok(findTree(harness.render(), node=>node.type==='dd'&&node.props.children==='영구')); }
+  try { assert.ok(findTree(harness.render(), node=>node.type==='dd'&&node.props.children==='철회 시까지')); }
   finally {await harness.close();}
 });
 
@@ -1042,4 +1042,40 @@ for (const failure of [
       }
     } finally { await harness.close(); }
   });
+}
+
+
+for (const [expiry, expected] of [[null, '철회 시까지'], ['2027-09-07T22:00:00Z', '2027. 9. 8.까지']]) {
+  test(`VC card preserves the license boundary: ${expiry}`, async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = { location: { origin: 'https://facemarket.example' } };
+    const license = { id: 'license-1', status: 'active', unitPrice: 14900, licenseValidUntil: expiry };
+    const h = await modelComponentHarness({
+      entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense',
+      initialStates: ['ready', 'cards', null, [license], null], api: {},
+    });
+    try {
+      const card = findTree(h.render(), node => node.type?.name === 'VcCard');
+      h.runtime.states = [];
+      h.runtime.stateCursor = 0;
+      const text = collectText(card.type(card.props));
+      assert.ok(text.includes(expected), text);
+      assert.ok(!text.includes('철회 시까지까지'));
+    } finally { globalThis.window = originalWindow; await h.close(); }
+  });
+
+  for (const screen of ['PublicVerify', 'PublicVerifyPublication']) {
+    test(`${screen} displays the license boundary without duplicate suffix: ${expiry}`, async () => {
+      const h = await modelComponentHarness({
+        entry: `/src/features/verify/${screen}.jsx`, exportName: screen,
+        initialStates: ['ok', { valid: true, status: 'active', validUntil: expiry, licenseValidUntil: expiry, allowedUse: [], imageHashPrefix: 'hash' }, null],
+        api: {},
+      });
+      try {
+        const text = collectText(h.render());
+        assert.ok(text.includes(expected), text);
+        assert.ok(!text.includes('철회 시까지까지'));
+      } finally { await h.close(); }
+    });
+  }
 }

@@ -109,7 +109,7 @@ export function PublicVerify() {
             </div>
             <div className={s.row}>
               <dt>유효기간</dt>
-              <dd>{data.validUntil === null ? '영구' : `${fmtDate(data.validUntil)}까지`}</dd>
+              <dd>{data.validUntil ? `${fmtDate(data.validUntil)}까지` : '철회 시까지'}</dd>
             </div>
             {data.vcId && (
               <div className={s.row}>

@@ -32,10 +32,10 @@ class HolderSignedIssueHttpTest {
     private static final String PATH = "/holder/models/" + MODEL + "/issue-vc";
     private static final String KEY = "fm-license:123e4567-e89b-12d3-a456-426614174000";
     private static final String BODY = """
-            {"plan":"facelicense","idempotencyKey":"%s","claims":{
-              "allowed_use":"allowed","forbidden_use":"forbidden","unit_price":7,
-              "license_valid_until":"2099-12-31","face_image_digest":"sha256:opaque",
-              "model_name":"model"}}
+            {"plan":"facelicense-v2","idempotencyKey":"%s","claims":{
+              "model_did":"did:omn:user","license_id":"123e4567-e89b-12d3-a456-426614174000",
+              "issued_at":"2026-09-11T00:00:00Z","face_image_digest":"sha256:opaque",
+              "agreement_version":"v1","consent_doc_version":"v1.1"}}
             """.formatted(KEY);
 
     @Test

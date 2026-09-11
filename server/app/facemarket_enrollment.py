@@ -26,6 +26,10 @@ from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_e
 from .config import Settings
 from .db import get_conn
 from .models import CamelModel
+from .facemarket_photos import (
+    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, canonical_photo_slot,
+    photo_slot_candidates, resolve_photo_rows,
+)
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
 from .r2 import enrollment_quarantine_key, ext_for_mime, sha256_sri
 
@@ -50,8 +54,6 @@ PHOTO_SLOTS = tuple(
 )
 REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
 ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + LEGACY_ANGLES
-LEGACY_SLOT_ALIASES = {"front": "face01", "angle45": "face03", "side": "face05"}
-ASSET_SOURCE_SLOTS = ("face01", "face03", "face05")
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
 START_LIVENESS_POLICY = {
@@ -235,6 +237,7 @@ class EnrollmentView(CamelModel):
     overseas_consent_version: str | None = None
     license_id: str | None = None
     license_terms: EnrollmentLicenseTerms | None = None
+    photo_revision: int = 0
 
 
 class PhysiqueBody(CamelModel):
@@ -264,19 +267,19 @@ def _required_photo_slots(settings: Settings) -> tuple[str, ...]:
     return required
 
 
-def _normalize_photo_rows(
-    rows: list[dict], required_slots: tuple[str, ...]
-) -> list[dict]:
-    normalized: dict[str, dict] = {}
-    for row in rows:
-        original = row.get("angle")
-        canonical = LEGACY_SLOT_ALIASES.get(original, original)
-        if canonical not in required_slots:
-            continue
-        candidate = {**row, "angle": canonical, "slot": canonical}
-        if canonical not in normalized or original == canonical:
-            normalized[canonical] = candidate
-    return [normalized[slot] for slot in required_slots if slot in normalized]
+async def _read_registration_photos(conn, enrollment_id: str) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select angle, qc_status, storage_state from fm_biometric_enrollment_photos "
+            "where enrollment_id = %s", (enrollment_id,),
+        )
+        return await cur.fetchall()
+
+
+def _ready_photo_rows(rows: list[dict], required_slots, *, allow_approved=True) -> list[dict]:
+    states = {"quarantine", "approved"} if allow_approved else {"quarantine"}
+    return [row for row in resolve_photo_rows(rows, required_slots)
+            if row.get("qc_status") == "passed" and row.get("storage_state") in states]
 
 
 async def _assert_account_open(conn, user_id: str) -> None:
@@ -339,7 +342,7 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
                    e.liveness_session_digest, e.height_bucket, e.body_type,
                    e.consent_version, e.terms_consent_version,
-                   e.overseas_consent_version, m.gender as model_gender,
+                   e.overseas_consent_version, e.photo_revision, m.gender as model_gender,
                    l.id::text as license_id, l.allowed_use as license_allowed_use,
                    l.license_valid_until
             from fm_biometric_enrollments e
@@ -702,7 +705,7 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
                    e.height_bucket, e.body_type, e.consent_version,
-                   e.terms_consent_version, e.overseas_consent_version,
+                   e.terms_consent_version, e.overseas_consent_version, e.photo_revision,
                    m.gender as model_gender, l.id::text as license_id,
                    l.allowed_use as license_allowed_use, l.license_valid_until
             from fm_biometric_enrollments e
@@ -723,16 +726,18 @@ async def _enrollment_view(conn, row: dict, settings: Settings) -> EnrollmentVie
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select p.angle, p.qc_status, p.uploaded_at
+            select p.angle, p.qc_status, p.uploaded_at, p.storage_state
             from fm_biometric_enrollment_photos p
             where p.enrollment_id = %s
-              and p.storage_state in ('quarantine', 'approved')
             order by case p.angle when 'front' then 1 when 'angle45' then 2 else 3 end
             """,
             (row["id"],),
         )
         photos = await cur.fetchall()
-        photos = [{**photo, "slot": photo["angle"]} for photo in photos]
+        photos = [
+            {**photo, "slot": canonical_photo_slot(photo["angle"])}
+            for photo in _ready_photo_rows(photos, settings.fm_photo_slots)
+        ]
     decision = row.get("decision")
     cooldown_until = row.get("cooldown_until")
     retryable = None
@@ -769,6 +774,7 @@ async def _enrollment_view(conn, row: dict, settings: Settings) -> EnrollmentVie
         overseas_consent_version=row.get("overseas_consent_version"),
         license_id=str(row["license_id"]) if row.get("license_id") else None,
         license_terms=license_terms,
+        photo_revision=row.get("photo_revision", 0),
     )
 
 
@@ -1063,17 +1069,13 @@ async def verify_enrollment_identity(
                 )
                 approw = await cur.fetchone()
                 if approw is not None:
-                    claim = (
-                        cx_identity.compare_identity_claim(
-                            trans,
-                            contract=contract,
-                            expected_name=approw["applicant_name"],
-                            expected_birthdate=approw["birthdate"],
-                        )
-                        if settings.fm_face_match_enabled
-                        else None
+                    claim = cx_identity.compare_identity_claim(
+                        trans,
+                        contract=contract,
+                        expected_name=approw["applicant_name"],
+                        expected_birthdate=approw["birthdate"],
                     )
-                    if claim is not None and not claim.matched:
+                    if not claim.matched:
                         new_count = approw["identity_mismatch_count"] + 1
                         # 실패 token 소비(attempt ledger, E8): 같은 token 재전송은 replay 로 차단.
                         await cur.execute(
@@ -1361,14 +1363,8 @@ async def upload_enrollment_photo(
                             """,
                             (enrollment_id, new_key),
                         )
-                        await cur.execute(
-                            "select angle from fm_biometric_enrollment_photos "
-                            "where enrollment_id = %s and qc_status = 'passed' "
-                            "and storage_state = 'quarantine'",
-                            (enrollment_id,),
-                        )
-                        uploaded = _normalize_photo_rows(
-                            await cur.fetchall(),
+                        uploaded = _ready_photo_rows(
+                            await _read_registration_photos(conn, enrollment_id),
                             _required_photo_slots(request.app.state.settings),
                         )
                         if len(uploaded) == len(_required_photo_slots(request.app.state.settings)):
@@ -1574,14 +1570,8 @@ async def start_enrollment_liveness(
                     "새 인증 세션으로 다시 시도해 주세요.",
                     status=409,
                 )
-            await cur.execute(
-                "select angle from fm_biometric_enrollment_photos "
-                "where enrollment_id = %s and qc_status = 'passed' "
-                "and storage_state = 'quarantine'",
-                (enrollment_id,),
-            )
             required_slots = _required_photo_slots(settings)
-            if len(_normalize_photo_rows(await cur.fetchall(), required_slots)) != len(required_slots):
+            if len(_ready_photo_rows(await _read_registration_photos(conn, enrollment_id), required_slots)) != len(required_slots):
                 raise _err(
                     "photos_required",
                     "정면, 45도, 측면 사진을 모두 등록해 주세요.",
@@ -1650,6 +1640,58 @@ async def start_enrollment_liveness(
     }
 
 
+@router.post("/enrollments/{enrollment_id}/reopen-photos", response_model=EnrollmentView)
+async def reopen_enrollment_photos(
+    request: Request, enrollment_id: str, user_id: str = Depends(require_user),
+):
+    """Reopen only unsigned photos, preserving previously verified identity.
+
+    License creation locks this same enrollment row before checking/inserting a
+    license. Do not lock a license here: issuance finalization locks it first.
+    """
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    settings = request.app.state.settings
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        await _reject_cutover_closed(conn)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id, model_id::text as model_id, status, photo_revision "
+                "from fm_biometric_enrollments where id = %s and user_id = %s for update",
+                (enrollment_id, user_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            retry = row["photo_revision"] > 0 and row["status"] in {"photos_pending", "liveness_pending"}
+            if row["status"] != "license_pending" and not retry:
+                raise _err("invalid_enrollment_state", "현재 등록 단계에서는 사진을 고칠 수 없어요.", status=409)
+            await cur.execute(
+                "select exists(select 1 from fm_licenses where enrollment_id = %s) as has_license",
+                (enrollment_id,),
+            )
+            if (await cur.fetchone())["has_license"]:
+                raise _err("license_already_started", "증서 발급을 시작해서 사진을 고칠 수 없어요.", status=409)
+            if not retry:
+                required = _required_photo_slots(settings)
+                ready = _ready_photo_rows(await _read_registration_photos(conn, enrollment_id), required)
+                status = "liveness_pending" if len(ready) == len(required) else "photos_pending"
+                await cur.execute(
+                    "update fm_biometric_enrollments set status = %s, photo_revision = photo_revision + 1, "
+                    "decision = null, reason = null, completed_at = null, expires_at = %s, "
+                    "liveness_session_digest = null, liveness_nonce_digest = null "
+                    "where id = %s and user_id = %s",
+                    (status, datetime.now(timezone.utc) + ENROLLMENT_TTL, enrollment_id, user_id),
+                )
+                await cur.execute(
+                    "update fm_models set assets_status = 'none', assets_source_hash = null "
+                    "where id = %s and user_id = %s and current_enrollment_id = %s",
+                    (row["model_id"], user_id, enrollment_id),
+                )
+        await conn.commit()
+        return await _enrollment_view(conn, await _load_owned_enrollment(conn, enrollment_id, user_id), settings)
+
+
 @router.get("/enrollments/{enrollment_id}/photos/{slot}")
 async def get_enrollment_photo(
     request: Request,
@@ -1660,20 +1702,21 @@ async def get_enrollment_photo(
     enrollment_id = _canonical_enrollment_id(enrollment_id)
     if slot not in ACCEPTED_PHOTO_SLOTS:
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
-    slot = LEGACY_SLOT_ALIASES.get(slot, slot)
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
         if await _load_owned_enrollment(conn, enrollment_id, user_id) is None:
             raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
+        photo = None
         async with conn.cursor() as cur:
-            await cur.execute(
-                "select r2_key, mime_type from fm_biometric_enrollment_photos "
-                "where enrollment_id = %s and angle = %s "
-                "and storage_state in ('quarantine', 'approved')",
-                (enrollment_id, slot),
-            )
-            photo = await cur.fetchone()
-    if photo is None:
+            for candidate in photo_slot_candidates(slot):
+                await cur.execute(
+                    "select r2_key, mime_type, storage_state from fm_biometric_enrollment_photos "
+                    "where enrollment_id = %s and angle = %s", (enrollment_id, candidate),
+                )
+                photo = await cur.fetchone()
+                if photo is not None:
+                    break
+    if photo is None or photo["storage_state"] not in {"quarantine", "approved"}:
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
     try:
         data = await asyncio.to_thread(_r2_face(request).get_bytes, photo["r2_key"])
@@ -1696,7 +1739,7 @@ async def delete_enrollment_photo(
     enrollment_id = _canonical_enrollment_id(enrollment_id)
     if angle not in ACCEPTED_PHOTO_SLOTS:
         raise _err("invalid_slot", "사진 슬롯을 확인해 주세요.")
-    angle = LEGACY_SLOT_ALIASES.get(angle, angle)
+    candidates = photo_slot_candidates(angle)
     r2 = _r2_face(request)
     try:
         async with get_conn(request) as conn:
@@ -1710,6 +1753,7 @@ async def delete_enrollment_photo(
                 await _assert_account_open(conn, user_id)
                 await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                 async with conn.cursor() as cur:
+                  for angle in candidates:
                     await cur.execute(
                         """
                         select r2_key, storage_state
@@ -1723,6 +1767,7 @@ async def delete_enrollment_photo(
                         if photo["storage_state"] not in {
                             "quarantine",
                             "delete_pending",
+                            "approved",
                         }:
                             raise _err(
                                 "invalid_enrollment_state",
@@ -1757,12 +1802,12 @@ async def delete_enrollment_photo(
                             (enrollment_id, user_id),
                         )
                 await conn.commit()
-                _, failed_count = await _drain_photo_cleanup_locked(
-                    conn,
-                    r2,
-                    enrollment_id=enrollment_id,
-                    angle=angle,
-                )
+                failed_count = 0
+                for angle in candidates:
+                    _, failures = await _drain_photo_cleanup_locked(
+                        conn, r2, enrollment_id=enrollment_id, angle=angle,
+                    )
+                    failed_count += failures
                 if failed_count:
                     raise _err(
                         "storage_unavailable",
@@ -1806,11 +1851,15 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            select e.status, p.angle, p.r2_key, p.storage_state
+                            select e.status, p.angle, p.r2_key, p.storage_state,
+                                   e.model_id::text as model_id,
+                                   not exists (select 1 from fm_licenses l where l.enrollment_id = e.id) as unsigned
                             from fm_biometric_enrollments e
                             left join fm_biometric_enrollment_photos p
                               on p.enrollment_id = e.id
-                             and p.storage_state in ('quarantine', 'delete_pending')
+                             and (p.storage_state in ('quarantine', 'delete_pending')
+                                  or (p.storage_state = 'approved' and not exists (
+                                      select 1 from fm_licenses l where l.enrollment_id = e.id)))
                             where e.id = %s
                               and e.status in ('failed', 'cancelled', 'expired')
                             for update of e
@@ -1820,6 +1869,37 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
                         rows = await cur.fetchall()
                         if not rows:
                             return False
+                        model_id = rows[0].get("model_id")
+                        if model_id and rows[0]["unsigned"]:
+                            # A cancelled worker can still be writing. Its session fence
+                            # must be free before detaching references or certifying deletion.
+                            await cur.execute(
+                                "select pg_try_advisory_xact_lock(%s, hashtext(%s)) as locked",
+                                (_MODEL_ASSET_FENCE_NAMESPACE, model_id.lower()),
+                            )
+                            if not (await cur.fetchone())["locked"]:
+                                return False
+                            await cur.execute(
+                                "select view, r2_key from fm_model_assets where source_enrollment_id = %s",
+                                (enrollment_id,),
+                            )
+                            for asset in await cur.fetchall():
+                                await cur.execute(
+                                    "insert into fm_biometric_enrollment_photo_cleanup "
+                                    "(enrollment_id, angle, r2_key, reason) values (%s, %s, %s, 'delete') "
+                                    "on conflict (enrollment_id, r2_key) do update set reason = 'delete'",
+                                    (enrollment_id, "face01", asset["r2_key"]),
+                                )
+                            await cur.execute(
+                                "delete from fm_model_assets where source_enrollment_id = %s",
+                                (enrollment_id,),
+                            )
+                            await cur.execute(
+                                "update fm_models set assets_status = 'none', assets_source_hash = null "
+                                "where id = %s and current_enrollment_id = %s "
+                                "and status in ('pending', 'reverification_required')",
+                                (model_id, enrollment_id),
+                            )
                         for row in rows:
                             if row.get("r2_key") is None:
                                 continue
@@ -1863,9 +1943,11 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
                         await cur.execute(
                             """
                             select (
-                                select count(*) from fm_biometric_enrollment_photos
-                                where enrollment_id = %s
-                                  and storage_state in ('quarantine', 'delete_pending')
+                                select count(*) from fm_biometric_enrollment_photos p
+                                where p.enrollment_id = %s
+                                  and (p.storage_state in ('quarantine', 'delete_pending')
+                                       or (p.storage_state = 'approved' and not exists (
+                                           select 1 from fm_licenses l where l.enrollment_id = p.enrollment_id)))
                             ) + (
                                 select count(*) from fm_biometric_enrollment_photo_cleanup
                                 where enrollment_id = %s
@@ -2127,7 +2209,7 @@ async def _initial_completion_checks(
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
                        e.identity_tx_digest, e.identity_contract_version,
-                       e.profile_image_r2_key, e.height_bucket, e.body_type
+                       e.profile_image_r2_key, e.height_bucket, e.body_type, e.photo_revision
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -2151,6 +2233,14 @@ async def _initial_completion_checks(
                     "본인확인을 먼저 완료해 주세요.",
                     status=409,
                 )
+            if row.get("photo_revision", 0) > 0:
+                await cur.execute(
+                    "select exists(select 1 from fm_identity_verifications "
+                    "where model_id = %s and cx_tx_id = %s and cx_tx_id_format = 'sha256-v1') as identity_recorded",
+                    (row["model_id"], row["identity_tx_digest"]),
+                )
+                if not (await cur.fetchone())["identity_recorded"]:
+                    raise _err("identity_recovery_required", "기존 본인확인 기록을 확인할 수 없어요.", status=409)
             if row.get("cooldown_until") and row["cooldown_until"] > datetime.now(timezone.utc):
                 raise _err("liveness_cooldown", "잠시 후 다시 시도해 주세요.", status=429)
             if row["expires_at"] <= datetime.now(timezone.utc):
@@ -2173,10 +2263,9 @@ async def _initial_completion_checks(
                 raise EnrollmentMappedError("liveness_retry")
             await cur.execute(
                 """
-                select angle, r2_key, mime_type
+                select angle, r2_key, mime_type, qc_status, storage_state
                 from fm_biometric_enrollment_photos
-                where enrollment_id = %s and qc_status = 'passed'
-                  and storage_state = 'quarantine'
+                where enrollment_id = %s
                   and angle = any(%s)
                 order by array_position(%s, angle)
                 """,
@@ -2187,7 +2276,10 @@ async def _initial_completion_checks(
                 ),
             )
             required_slots = _required_photo_slots(settings)
-            photos = _normalize_photo_rows(await cur.fetchall(), required_slots)
+            photos = _ready_photo_rows(
+                await cur.fetchall(), required_slots,
+                allow_approved=row.get("photo_revision", 0) > 0,
+            )
             if len(photos) != len(required_slots):
                 raise _err("photos_required", "필수 사진을 모두 등록해 주세요.", status=409)
             await cur.execute(
@@ -2354,6 +2446,9 @@ async def process_enrollment_completion(
                 model = await cur.fetchone()
                 if model and model["user_id"] != user_id:
                     raise EnrollmentMappedError("identity_recovery_required")
+                revalidating_photos = row.get("photo_revision", 0) > 0
+                if revalidating_photos and (not model or str(model["id"]) != str(row["model_id"])):
+                    raise EnrollmentMappedError("identity_recovery_required")
                 if model:
                     model_id = model["id"]
                 elif row.get("model_id"):
@@ -2377,6 +2472,7 @@ async def process_enrollment_completion(
                     )
                     model_id = (await cur.fetchone())["id"]
                 try:
+                  if not revalidating_photos:
                     await cur.execute(
                         """
                         insert into fm_identity_verifications
@@ -2459,7 +2555,8 @@ async def process_enrollment_completion(
                     """,
                     (
                         user_id,
-                        Json({"modelId": model_id, "enrollmentId": enrollment_id}),
+                        Json({"modelId": model_id, "enrollmentId": enrollment_id,
+                              "photoRevision": row.get("photo_revision", 0)}),
                     ),
                 )
             await conn.commit()

@@ -300,10 +300,14 @@ function VcCard({ license, onRevoked, push }) {
                             <div className={s.vcFigure}>
                                 <dt>유효기간</dt>
                                 <dd className={s.vcValid}>
-                                    ~{fmtYm(license.licenseValidUntil)}
-                                    <span className={s.vcDim}>
-                                        {fmtDate(license.licenseValidUntil)}까지
-                                    </span>
+                                    {license.licenseValidUntil ? (
+                                        <>
+                                            ~{fmtYm(license.licenseValidUntil)}
+                                            <span className={s.vcDim}>
+                                                {fmtDate(license.licenseValidUntil)}까지
+                                            </span>
+                                        </>
+                                    ) : '철회 시까지'}
                                 </dd>
                             </div>
                         </dl>
@@ -721,8 +725,8 @@ export function ModelLicense() {
                                 아직 발급된 라이선스가 없어요
                             </h2>
                             <p className={s.emptyBody}>
-                                모델 등록을 마치면 허용 품목을 정하고
-                                라이선스를 발급할 수
+                                모델 등록을 마치면 허용 품목·건당
+                                표준가를 확인하고 라이선스를 발급할 수
                                 있어요.
                             </p>
                         </div>

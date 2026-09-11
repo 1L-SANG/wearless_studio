@@ -68,6 +68,7 @@ from app.agents.face_identity_qwen import (
     RENDER_NEGATIVE,
     RENDER_STEPS,
     QwenLocalBackend,
+    load_base_pipeline,
 )
 
 log = logging.getLogger("face_render")
@@ -84,7 +85,11 @@ CPU_OFFLOAD = (os.getenv("FACE_RENDER_CPU_OFFLOAD", "false").lower() == "true")
 #: LoRA 를 GPU 에서 합친다 — 적재 214.7초 → 13.5초(실측은 face_identity_qwen.py 상단 주석).
 #: 기본 on. false 가 탈출구다(결과 픽셀을 예전과 똑같이 만들고 싶을 때).
 GPU_FUSE = (os.getenv("FACE_RENDER_GPU_FUSE", "true").lower() == "true")
-#: 프로세스 기동 때 미리 올려 둘 LoRA 키. 비우면 첫 요청이 로드 비용(수 분)을 문다.
+#: 기동 때 **베이스 모델**을 올려 둔다(기본 on). LoRA 는 요청마다 붙는다(GPU 합치기 ≈3초).
+#: 이게 없으면 캐시가 빈 새 파드는 첫 렌더가 끝나야 loaded=true 가 되고, 그동안 wait_for_backend·
+#: 준비 칩·autoscale 이 "아직 안 떴다"고 본다(2026-09-11 실측). false 는 개발용 탈출구.
+PRELOAD_BASE = (os.getenv("FACE_RENDER_PRELOAD_BASE", "true").lower() != "false")
+#: 프로세스 기동 때 미리 붙여 둘 LoRA 키. 비우면 첫 요청이 LoRA 를 붙인다.
 #: **캐시에 있는 키만** 의미가 있다(기동 시점에는 presigned URL 이 없다).
 PRELOAD_LORA = os.getenv("FACE_RENDER_PRELOAD_LORA") or None
 TOKEN = os.getenv("FACE_RENDER_TOKEN") or None
@@ -98,7 +103,8 @@ DOWNLOAD_TIMEOUT = 300.0
 
 #: GPU 는 하나다 — 렌더를 직렬화한다. 동시 요청은 대기(타임아웃은 호출자 몫).
 _RENDER_LOCK = threading.Lock()
-_state: dict = {"lora": None, "backend": None, "loaded_at": None, "renders": 0}
+#: base = LoRA 를 아직 안 붙인 베이스 파이프라인(기동 때 적재). backend 가 생기면 그 안으로 들어간다.
+_state: dict = {"lora": None, "backend": None, "base": None, "loaded_at": None, "renders": 0}
 
 
 class RenderRequest(BaseModel):
@@ -120,16 +126,28 @@ class RenderResponse(BaseModel):
     ms: int
 
 
+def _load_base() -> None:
+    """베이스 파이프라인을 올려 _state["base"] 에 둔다. 이 뒤로 /healthz base_loaded=true."""
+    t0 = time.perf_counter()
+    _state["base"] = load_base_pipeline(MODEL_ID, DEVICE, cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE)
+    log.info("base pipeline ready in %.1fs", time.perf_counter() - t0)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """기동 때 파이프라인을 미리 올린다 — 첫 컷이 로드 비용(수 분)을 물지 않게."""
+    """기동 때 베이스를 올린다 — 첫 컷이 베이스 적재(수 분)를 물지 않고, 준비 판정이 첫 렌더를 기다리지 않게."""
+    if PRELOAD_BASE:
+        try:
+            await asyncio.to_thread(_load_base)
+        except Exception:  # noqa: BLE001 — 미리 올리기 실패해도 서비스는 뜬다(첫 요청이 재시도)
+            log.exception("base preload failed")
+    else:
+        log.info("FACE_RENDER_PRELOAD_BASE=false — first request pays the base load")
     if PRELOAD_LORA:
         try:
             await asyncio.to_thread(_backend, PRELOAD_LORA)
-        except Exception:  # noqa: BLE001 — 미리 올리기 실패해도 서비스는 뜬다(첫 요청이 재시도)
+        except Exception:  # noqa: BLE001
             log.exception("preload failed for %s", PRELOAD_LORA)
-    else:
-        log.info("no FACE_RENDER_PRELOAD_LORA — first request pays the load")
     yield
 
 
@@ -245,10 +263,13 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
             torch.cuda.empty_cache()
         except Exception:  # noqa: BLE001 — 정리 실패는 로드 실패가 아니다
             log.warning("cuda cache clear failed", exc_info=True)
+    # 기동 때 올려 둔 베이스가 있으면 그 위에 LoRA 만 붙는다(≈3초). 없으면(교체 뒤) 베이스부터 다시.
     backend = QwenLocalBackend(_lora_file(lora_key, lora_url, lora_sha256), model_id=MODEL_ID,
-                               device=DEVICE, cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE)
+                               device=DEVICE, cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE,
+                               base_pipe=_state["base"])
+    _state["base"] = None       # 베이스는 backend 안으로 들어갔다(base_loaded 는 backend 로 이어진다)
     t0 = time.perf_counter()
-    backend.pipeline()          # 여기서 실제 로드가 일어난다(수 분)
+    backend.pipeline()          # 여기서 LoRA 를 붙인다(베이스가 없으면 베이스 적재까지 — 수 분)
     _state.update(backend=backend, lora=lora_key, loaded_at=time.time())
     log.info("pipeline ready lora=%s in %.1fs", lora_key, time.perf_counter() - t0)
     return backend
@@ -258,7 +279,10 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
 def healthz() -> dict:
     return {
         "ok": True,
+        # loaded = 이 LoRA 로 지금 렌더 가능. base_loaded = 베이스가 올라와 있어 어떤 LoRA 든 곧 붙일 수 있다.
+        # 준비 판정(wait_for_backend·준비 칩·autoscale)은 base_loaded 를 본다 — face_identity.healthz_ready.
         "loaded": _state["backend"] is not None,
+        "base_loaded": _state["base"] is not None or _state["backend"] is not None,
         "lora": _state["lora"],
         "renders": _state["renders"],
         "token_configured": bool(TOKEN) and len(TOKEN) >= MIN_TOKEN_LEN,
