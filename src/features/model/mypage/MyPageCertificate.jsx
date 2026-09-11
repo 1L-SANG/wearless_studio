@@ -37,7 +37,7 @@ export function MyPageCertificate({ license, model, revoked = false }) {
       <div><strong>{model?.displayName || '내 프로필'}</strong><small>{revoked || license.status === 'revoked' ? '철회된 증서' : '모델 본인에게 발급된 라이선스'}</small></div>
     </div>
     <p className={s.certificateMeta}>발급일 {certificateDate(license.createdAt)}</p>
-    <div className={s.certCode}><div>vc:{license.vcId}</div>
+    <div className={s.certCode}><div>{license.vcId}</div>
       <Link to={`/verify/${encodeURIComponent(license.id)}`}>확인 주소 /verify/{license.id}</Link>
     </div>
   </div>;
