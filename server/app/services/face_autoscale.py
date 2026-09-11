@@ -192,7 +192,6 @@ class RunpodAutoscaleAdapter:
         self._api_key = (getattr(settings, "face_runpod_api_key", None) or "").strip() or None
         self._client = client
         self._health_client = health_client
-        self._health_url = _health_url(getattr(settings, "face_identity_backend_url", None))
         #: 현재 파드 id 의 정본. 없으면 설정값(FACE_RUNPOD_POD_ID)으로 폴백한다.
         self._pod_store = pod_store
         self._created_this_cycle = False
@@ -265,8 +264,6 @@ class RunpodAutoscaleAdapter:
             log.info("face autoscale: 등록된 파드가 없다 — 수요가 생기면 새로 만든다")
             return None
         self._target = RunpodTarget(pod_id)
-        self._health_url = _health_url(
-            getattr(self._settings, "face_identity_backend_url", None) or pod_backend_url(pod_id))
         return self._target
 
     def forget_target(self) -> None:
@@ -276,37 +273,53 @@ class RunpodAutoscaleAdapter:
     async def describe(self, target: RunpodTarget) -> ServiceState:
         """desired 는 파드 API, running 은 렌더 서비스 /healthz 가 정본(위 상수 주석의 실측)."""
         pod = await asyncio.to_thread(self._get_sync, f"/pods/{target.pod_id}")
+        # 헬스 주소는 **지금 보는 그 파드**에서 계산한다. init 때 env 로 굳혀 두면 파드를
+        # 갈아탄 뒤에도 죽은 주소를 찔러 "안 떠 있다"가 영원히 이어진다.
+        health_url = self._health_url_for(target.pod_id)
         status = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
         # RunPod 은 대수 개념이 없다 — 켜라고 해 뒀거나(=1) 꺼 뒀거나(=0) 다.
         desired = 1 if status in _RUNNING or status in _PENDING else 0
-        served = await self.health_ok() if desired else False
+        served = await self.health_ok(health_url) if desired else False
         running = 1 if served else 0
-        # health_url 이 없으면 확인할 방법이 없다 → desiredStatus 를 그대로 믿는다(폴백).
-        if self._health_url is None:
+        # 확인할 주소가 없으면 desiredStatus 를 그대로 믿는다(폴백).
+        if health_url is None:
             running = desired
         pending = 1 if desired and not running else 0
         started = pod.get("lastStartedAt") or pod.get("startedAt")
         return ServiceState(desired=desired, running=running, pending=pending,
                             oldest_started_at=_parse_ts(started) if running else None)
 
-    async def health_ok(self) -> bool:
-        """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음)."""
-        if self._health_url is None:
+    def _health_url_for(self, pod_id: str | None) -> str | None:
+        """파드 id 가 있으면 **그 파드 주소**가 정본이다. env 는 파드가 없을 때만 쓴다.
+
+        워커도 같은 순서다(face_identity.resolve_backend: spec.backend_url → 설정값).
+        어댑터만 env 를 앞에 두면 파드를 갈아탄 뒤 헬스와 렌더가 서로 다른 파드를 보게 된다.
+        """
+        derived = pod_backend_url(pod_id)
+        return _health_url(derived or getattr(self._settings, "face_identity_backend_url", None))
+
+    async def health_ok(self, health_url: str | None = None) -> bool:
+        """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음).
+
+        주소를 안 주면 **지금 등록된 파드**에서 계산한다(라우트가 이렇게 부른다).
+        """
+        url = health_url or self._health_url_for(self._target.pod_id if self._target else None)
+        if url is None:
             return False
         try:
-            return await asyncio.to_thread(self._health_sync)
+            return await asyncio.to_thread(self._health_sync, url)
         except Exception as exc:  # noqa: BLE001 — 헬스 실패는 "안 떠 있다" 이지 에러가 아니다
             log.info("face render health probe failed: %r", exc)
             return False
 
-    def _health_sync(self) -> bool:
+    def _health_sync(self, url: str) -> bool:
         client = self._health_client
         if client is None:
             import httpx
 
             client = httpx.Client(timeout=HEALTH_TIMEOUT, headers={"User-Agent": USER_AGENT})
             self._health_client = client
-        res = client.get(self._health_url)
+        res = client.get(url)
         return res.status_code == 200 and bool(res.json().get("loaded"))
 
     async def set_desired(self, target: RunpodTarget | None, count: int) -> None:
@@ -390,8 +403,6 @@ class RunpodAutoscaleAdapter:
             if self._pod_store is not None:
                 await self._pod_store.set_active(pod_id, gpu_type)
             self._target = RunpodTarget(pod_id)
-            self._health_url = _health_url(
-                getattr(self._settings, "face_identity_backend_url", None) or pod_backend_url(pod_id))
             if replacing is not None and replacing.pod_id != pod_id:
                 await self._retire(replacing.pod_id)
             return

@@ -42,13 +42,22 @@ def test_bundle_is_reproducible(tmp_path):
 def test_ci_uploads_to_the_private_bucket_with_the_commit_sha():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "face_render_bundle.sh" in text
-    assert 's3://$R2_FACE_BUCKET/face_render/$GITHUB_SHA.tgz' in text
+    assert 'KEY="face_render/$GITHUB_SHA.tgz"' in text
+    assert 's3://$R2_FACE_BUCKET/$KEY' in text
+    # 올렸다는 응답만 믿지 않는다 — 실제로 그 키가 있는지 확인한다
+    assert "head-object" in text
     # 공개 URL 을 만들지 않는다(비공개 버킷 + presigned 만)
     assert "public" not in text.split("얼굴 렌더 코드 묶음 업로드")[1][:1200]
-    # 업로드 실패가 배포를 막지 않는다 — 대신 경고를 남긴다
     step = text.split("- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    # 배포는 막지 않되(continue-on-error) 실패는 **빨갛게** 보여야 한다 — 이전 판은 exit 0 이라
+    # 업로드가 0건인데도 초록불이었다.
     assert "continue-on-error: true" in step
-    assert "::warning::" in step
+    assert "::error::" in step and "exit 1" in step
+    # 엔드포인트·버킷은 SSM 이 아니라 매니페스트 평문이다(그래서 SSM 루프에 없어야 한다)
+    loop = step.split("for key in")[1].split("do")[0]
+    assert "R2_ENDPOINT" not in loop and "R2_FACE_BUCKET" not in loop
+    # 시크릿은 use1(us-east-1)에 있다 — 워크플로 기본 리전으로 읽으면 못 찾는다
+    assert "SSM_REGION: us-east-1" in step and '--region "$SSM_REGION"' in step
 
 
 def test_sync_script_is_marked_dev_only():

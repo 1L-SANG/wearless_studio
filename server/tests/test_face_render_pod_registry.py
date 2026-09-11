@@ -121,10 +121,54 @@ def test_discover_prefers_the_database_over_the_env_fallback():
     assert asyncio.run(c.discover()) is None
 
 
-def test_discover_points_health_at_the_active_pod():
-    a = _adapter(_Client(), _Store(active=NEW_POD), face_identity_backend_url=None)
+def test_health_address_comes_from_the_pod_not_the_env():
+    """★ env 가 DB 를 이기면, 파드를 갈아탄 뒤에도 죽은 주소를 찔러 '안 떠 있다'가 영원히 이어진다.
+    워커(face_identity.resolve_backend)도 DB 우선이라 순서를 맞춘다."""
+    dead = "https://dead-pod-8000.proxy.runpod.net/render"
+    a = _adapter(_Client(), _Store(active=NEW_POD), face_identity_backend_url=dead)
     asyncio.run(a.discover())
-    assert a._health_url == f"https://{NEW_POD}-8000.proxy.runpod.net/healthz"
+    assert a._health_url_for(NEW_POD) == f"https://{NEW_POD}-8000.proxy.runpod.net/healthz"
+    # 파드가 하나도 없을 때만 env 를 쓴다
+    assert a._health_url_for(None) == "https://dead-pod-8000.proxy.runpod.net/healthz"
+
+
+def test_describe_uses_the_current_pod_address_each_time():
+    """파드를 교체하면 **다음 describe** 가 새 주소를 찌른다(init 때 굳히지 않는다)."""
+    seen = []
+
+    class _Health:
+        def get(self, url):
+            seen.append(url)
+
+            class _R:
+                status_code = 200
+
+                def json(self):
+                    return {"loaded": True}
+            return _R()
+
+    client = _Client(pod_status="RUNNING")
+    a = RunpodAutoscaleAdapter(
+        make_settings(gemini_api_key="x", r2_bucket="b", face_autoscale="on",
+                      face_runpod_api_key="k", face_runpod_pod_id=OLD_POD,
+                      face_identity_backend_url="https://dead-pod-8000.proxy.runpod.net/render"),
+        client=client, pod_store=_Store(active=OLD_POD), health_client=_Health())
+    asyncio.run(a.describe(RunpodTarget(OLD_POD)))
+    asyncio.run(a.describe(RunpodTarget(NEW_POD)))
+    assert seen == [f"https://{OLD_POD}-8000.proxy.runpod.net/healthz",
+                    f"https://{NEW_POD}-8000.proxy.runpod.net/healthz"]
+
+
+def test_no_pod_anywhere_goes_to_create():
+    """DB 행도 env 파드 id 도 없으면 discover 는 None — set_desired(1) 이 새로 만든다."""
+    client = _Client()
+    store = _Store(active=None)
+    a = _adapter(client, store, face_runpod_pod_id=None, code_urls=[])
+    assert asyncio.run(a.discover()) is None
+    a.begin_cycle()
+    asyncio.run(a.set_desired(None, 1))
+    assert store.set_calls == [(NEW_POD, GPU_PRIORITY[0][0])]
+    assert client.posts == []
 
 
 # ── 재고 없음 → 생성 ──

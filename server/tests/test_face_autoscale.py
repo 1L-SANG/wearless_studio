@@ -169,12 +169,21 @@ def test_describe_running_comes_from_render_service_health():
     assert (state.desired, state.running, state.pending) == (1, 0, 1)   # 파이프라인 적재 중
 
 
-def test_describe_without_backend_url_falls_back_to_pod_api():
-    """URL 이 없으면 확인할 방법이 없다 — desiredStatus 를 그대로 믿되 헬스는 찌르지 않는다."""
+def test_describe_probes_the_pods_own_address_even_without_env_url():
+    """파드 id 가 있으면 그 주소가 정본이다 — env 가 없어도 헬스를 찌른다."""
     health = _FakeHealth()
     adapter, _ = _adapter(health=health, backend_url=None)
     state = asyncio.run(adapter.describe(RunpodTarget(POD)))
     assert (state.desired, state.running, state.pending) == (1, 1, 0)
+    assert health.calls == [f"https://{POD}-8000.proxy.runpod.net/healthz"]
+
+
+def test_health_falls_back_to_pod_api_only_without_any_address():
+    """파드도 env 도 없으면 확인할 방법이 없다 — desiredStatus 를 그대로 믿는다."""
+    health = _FakeHealth()
+    adapter, _ = _adapter(health=health, backend_url=None)
+    assert adapter._health_url_for(None) is None
+    assert asyncio.run(adapter.health_ok(None)) is False
     assert health.calls == []
 
 
