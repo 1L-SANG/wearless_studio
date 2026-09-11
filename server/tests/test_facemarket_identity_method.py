@@ -215,6 +215,22 @@ def test_create_mid_unchanged(enrollment_client_factory):
 
 # ── Task6: 본인확인 라우트의 계약 분기 ────────────────────────────────────────────────
 
+def _spy_parsers(monkeypatch):
+    """어느 파서가 실제로 불렸는지 기록한다. 픽스처를 비트는 방식으로는 한 방향밖에
+    못 막는다 — dig() 의 다중 키 폴백 때문에 두 파서의 수용 집합이 겹쳐서, 어떤 입력을
+    줘도 '항상 simple_auth' 버그는 통과한다(리뷰 라운드1 지적)."""
+    calls = []
+    for name in ("parse_oacx_biometric_evidence", "parse_simple_auth_evidence"):
+        original = getattr(cx_identity, name)
+
+        def wrapper(*args, _name=name, _original=original, **kwargs):
+            calls.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(cx_identity, name, wrapper)
+    return calls
+
+
 def _create_simple_auth_enrollment(client, store):
     """simple_auth 등록을 만들고 identity_pending 으로 밀어 넣는다.
 
@@ -247,6 +263,7 @@ def test_identity_uses_simple_auth_contract_for_simple_auth_method(
     )
     enrollment_id = _create_simple_auth_enrollment(client, store)
     captured = {}
+    calls = _spy_parsers(monkeypatch)
 
     async def fake_fetch(base_url, token):
         captured["called"] = True
@@ -260,6 +277,9 @@ def test_identity_uses_simple_auth_contract_for_simple_auth_method(
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "photos_pending"
     assert captured.get("called")
+    # 픽스처가 우연히 mid 파서로도 파싱 가능해도(dig() 다중 키 폴백 때문에 두 파서의
+    # 수용 집합이 겹친다) 실제로 불린 파서가 simple_auth 전용인지를 직접 못박는다.
+    assert calls == ["parse_simple_auth_evidence"]
     row = next(item for item in store.enrollments if item["id"] == enrollment_id)
     assert row["identity_contract_version"] == "simple-auth-v1"
     # 초상 없이도 CI·이름·생년월일만으로 게이트가 통과해야 한다.
@@ -275,6 +295,7 @@ def test_identity_blocked_when_simple_auth_contract_disabled(
         fm_oacx_simple_auth_contract="disabled",
     )
     enrollment_id = _create_simple_auth_enrollment(client, store)
+    calls = _spy_parsers(monkeypatch)
 
     async def fail_if_called(base_url, token):
         raise AssertionError("계약이 비활성화됐으면 fetch_trans 를 호출하면 안 된다")
@@ -289,6 +310,8 @@ def test_identity_blocked_when_simple_auth_contract_disabled(
     assert response.json()["error"]["code"] == "oacx_contract_unavailable"
     row = next(item for item in store.enrollments if item["id"] == enrollment_id)
     assert row["status"] == "identity_pending"
+    # 계약이 막히면 fetch_trans 뿐 아니라 파서도 아예 호출되지 않아야 한다.
+    assert calls == []
 
 
 def test_identity_uses_mid_contract_when_identity_method_is_mid(
@@ -308,6 +331,7 @@ def test_identity_uses_mid_contract_when_identity_method_is_mid(
     assert response.status_code == 201, response.text
     enrollment_id = response.json()["id"]
     assert store.enrollments[0]["status"] == "identity_pending"
+    calls = _spy_parsers(monkeypatch)
 
     async def fake_fetch(base_url, token):
         return {"ci": "CI-2", "nm": "김철수", "birth": "19900101", "txId": "t2"}
@@ -326,3 +350,6 @@ def test_identity_uses_mid_contract_when_identity_method_is_mid(
     # 이 행은 identity_method 컬럼 자체가 없는 마이그레이션-이전 모양이다(create_enrollment
     # 의 기본 INSERT 분기는 그 키를 안 채운다) — NULL 도 'mid' 로 취급됨을 같이 증명한다.
     assert "identity_method" not in row
+    # 픽스처가 우연히 simple_auth 파서로도 파싱 가능해도(dig() 다중 키 폴백 때문에
+    # utf8Nm/nm/name/userName 이 겹친다) 실제로 불린 파서가 mid 전용인지를 직접 못박는다.
+    assert calls == ["parse_oacx_biometric_evidence"]

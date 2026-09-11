@@ -909,6 +909,10 @@ async def verify_enrollment_identity(
     # 않는다 — 소유권의 단일 진실은 아래 for update 조회이고, 이건 계약 선택용 힌트일
     # 뿐이다(찾지 못하면 mid 로 진행하다 아래에서 정식으로 404 난다 — 오늘과 동일한
     # 순서: 존재하지 않는 enrollment 도 지금처럼 fetch_trans 를 먼저 태운다).
+    # 이 때문에 /identity 는 커넥션 풀 체크아웃을 한 번이 아니라 두 번 순차로 쓴다(이
+    # 블록에서 하나를 반납하고, fetch_trans 이후 아래에서 새로 하나를 연다) — 겹쳐 쥐지는
+    # 않으므로 기본 풀 크기에서는 무해하지만, 풀 크기 재산정 때 다시 발견하지 않도록
+    # 남겨 둔다.
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
