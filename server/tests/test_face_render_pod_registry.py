@@ -253,7 +253,14 @@ def test_new_pod_spec_carries_bootstrap_and_secret_token():
     body = client.creates[0]
     assert body["containerDiskInGb"] == POD_DISK_GB        # 볼륨 없음 — 가중치가 컨테이너 디스크에 온다
     assert set(body["ports"]) == {"8000/http", "22/tcp"}
-    assert "pre_start.sh" in body["dockerStartCmd"]        # bootstrap → start 를 잇는 훅
+    # ★ dockerStartCmd 는 **argv 배열**이다. 한 문자열로 보내면 RunPod 이 400
+    #   "got string, want array" 로 파드 생성을 거부한다(2026-09-11 실측, GPU 3종 전부).
+    #   예전 단정은 `"pre_start.sh" in <문자열>` 이라 문자열이어도 통과했다 — 그래서 못 잡았다.
+    cmd = body["dockerStartCmd"]
+    assert isinstance(cmd, list), f"argv 배열이어야 한다: {type(cmd).__name__}"
+    assert cmd[0] == "bash" and cmd[1] == "-c" and len(cmd) == 3
+    assert "pre_start.sh" in cmd[2]                        # bootstrap → start 를 잇는 훅
+    assert not cmd[2].startswith("bash -c")                # 본문에 셸 호출이 중첩되면 안 된다
     assert body["env"] == {"FACE_RENDER_TOKEN": POD_TOKEN_REF}
     assert "RUNPOD_SECRET" in POD_TOKEN_REF                # 토큰 값이 아니라 Secret 참조다
     assert "networkVolumeId" not in body
