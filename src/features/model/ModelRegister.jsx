@@ -762,7 +762,7 @@ export function ModelRegister() {
         ) : completionDetails.phase === 'error' ? (
           <p className={s.completionSummaryState} role="alert">조건 요약을 불러오지 못했어요.</p>
         ) : <dl className={s.completionSummary}>
-          <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 Digital DNA'}</dd></div>
+          <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 얼굴 참조 자산'}</dd></div>
           <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
           <div><dt>허용 품목</dt><dd>{completionSummary.allowedUseCount}개</dd></div>
           <div><dt>건당 가격</dt><dd>{formatKrw(FACEMARKET_PRICING.perCut)}</dd></div>
@@ -781,7 +781,7 @@ export function ModelRegister() {
         </Button>
         {error && <p className={s.error} role="alert">{error}</p>}
         <Link to="/status" className={s.nextCard}>
-          Digital DNA 관리 보기 <Icon name="chevRight" size={18} />
+          마이페이지로 <Icon name="chevRight" size={18} />
         </Link>
       </div></div>
     );

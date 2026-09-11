@@ -65,7 +65,7 @@ test('진행 중 등록·모델이 있으면 지원서 상태보다 등록 여�
   );
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, null, { application: { status: 'approved' } }),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 
@@ -91,7 +91,7 @@ test('검증된 모델은 자기 정보(등록 상태 페이지)로 보낸다', 
   // /model 허브는 /status 로 옮겨 갔다(StatusPage) — 직접 그리로 보낸다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, null),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 
@@ -111,7 +111,7 @@ test('모델 상태 네 가지를 전부 판정한다 — verified 만 내 모�
     const cta = registerCta({ id: 'm1', status }, null);
     assert.ok(cta.label, `${status} 에 문구가 없다`);
     assert.ok(cta.to.startsWith('/model') || cta.to === '/status', `${status} 의 경로가 이상하다: ${cta.to}`);
-    if (status === 'verified') assert.deepEqual(cta, { label: '내 모델 정보', to: '/status' });
+    if (status === 'verified') assert.deepEqual(cta, { label: '마이페이지', to: '/status' });
     else assert.deepEqual(cta, { label: '모델 등록하기', to: '/model/register' });
   }
 });
@@ -121,8 +121,9 @@ test('ModelHub 는 모델 상태 네 가지를 개발자 코드 노출 없이 �
     const journey = resolveHubJourney({
       ownedModel: { id: 'm1', status },
       applicationRequired: true,
+      license: { id: 'l1', modelId: 'm1', status: 'active' },
     });
-    if (status === 'verified') assert.equal(journey.mode, 'active');
+    if (['verified', 'suspended'].includes(status)) assert.equal(journey.mode, 'active');
     else {
       assert.equal(journey.mode, 'onboarding');
       assert.ok(journey.action?.label, `${status} 에 다음 행동이 없다`);
@@ -168,7 +169,7 @@ test('verified 와 진행 중 등록이 함께 오면 모델 정보가 이긴다
   // 뒤집히면(등록 먼저 보기) verified 모델이 등록 위저드로 끌려가므로 여기서 묶어 둔다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, { id: 'e1', status: 'photos_pending' }),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 

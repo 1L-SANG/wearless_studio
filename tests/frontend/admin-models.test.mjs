@@ -19,6 +19,13 @@ test('사유가 비면 정지 버튼이 비활성이다', () => {
   assert.ok(/disabled=\{[^}]*!reason\.trim\(\)/.test(source), '빈 사유로 정지가 눌린다');
 });
 
+test('본인 중단은 운영 정지로 전환할 수 있고 관리자 정지만 해제한다', () => {
+  const source = read('src/features/admin/AdminModels.jsx');
+  assert.ok(source.includes("model.suspensionSource === 'owner'"), '본인 중단 판정이 없다');
+  assert.ok(source.includes('운영 정지로 전환'), '본인 중단에서 관리자 정지로 바꾸는 버튼이 없다');
+  assert.ok(source.includes('adminSuspended'), '관리자 정지 전용 해제 분기가 없다');
+});
+
 test('상세는 라이선스·정산·생체등록을 모두 보여준다', () => {
   const source = read('src/features/admin/AdminModels.jsx');
   for (const label of ['라이선스', '정산', '생체등록']) {

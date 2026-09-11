@@ -9,103 +9,6 @@ async function loadPayoutData() {
   return import(payoutDataUrl);
 }
 
-function findTree(node, predicate) {
-  if (!node || typeof node !== 'object') return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findTree(child, predicate);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (predicate(node)) return node;
-  return findTree(node.props?.children, predicate);
-}
-
-async function payoutViewHarness(api = {}) {
-  const { createServer } = await import('vite');
-  const server = await createServer({
-    configFile: false,
-    logLevel: 'silent',
-    root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true },
-    ssr: { noExternal: true },
-    esbuild: { jsx: 'automatic' },
-    plugins: [{
-      name: 'facemarket-payout-test-harness',
-      enforce: 'pre',
-      resolveId(id) {
-        if (id === 'react/jsx-runtime' || id === 'react/jsx-dev-runtime') return '\0payout-jsx';
-        if (id === 'react') return '\0payout-react';
-        if (id === 'virtual:payout-runtime') return '\0payout-runtime';
-        if (id === 'react-router-dom') return '\0payout-router';
-        if (id === '@/features/auth/AuthProvider.jsx') return '\0payout-auth';
-        if (id === '@/components/ui.jsx') return '\0payout-ui';
-        if (id === '@/lib/api/facemarket.js') return '\0payout-api';
-        if (id.endsWith('LandingShell.jsx')) return '\0payout-shell';
-        if (id.endsWith('.module.css')) return '\0payout-css';
-        return null;
-      },
-      load(id) {
-        if (id === '\0payout-jsx') return 'export const jsx = (type, props) => ({ type, props }); export const jsxs = jsx; export const jsxDEV = jsx;';
-        if (id === '\0payout-runtime') return 'export const runtime = { api: {}, states: [], effects: [], index: 0 };';
-        if (id === '\0payout-react') return `
-          import { runtime } from 'virtual:payout-runtime';
-          export const useState = (initial) => {
-            const index = runtime.index++;
-            if (!(index in runtime.states)) runtime.states[index] = initial;
-            return [runtime.states[index], (value) => { runtime.states[index] = value; }];
-          };
-          export const useCallback = (callback) => callback;
-          export const useEffect = (effect) => { runtime.effects.push(effect); };
-        `;
-        if (id === '\0payout-router') return "export const Link = 'Link';";
-        if (id === '\0payout-auth') return 'export const useAuth = () => ({ session: {}, loading: false, openLogin() {} });';
-        if (id === '\0payout-ui') return "export const ErrorState = 'ErrorState'; export const Icon = 'Icon';";
-        if (id === '\0payout-api') return `
-          import { runtime } from 'virtual:payout-runtime';
-          export const listLicenses = async () => [];
-          export const listSettlements = () => runtime.api.listSettlements?.() ?? Promise.resolve([]);
-          export const getSettlementSummary = () => runtime.api.getSettlementSummary?.() ?? Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 });
-        `;
-        if (id === '\0payout-shell') return "export const LandingShell = 'LandingShell';";
-        if (id === '\0payout-css') return 'export default new Proxy({}, { get: (_, key) => key });';
-        return null;
-      },
-    }],
-  });
-  const { runtime } = await server.ssrLoadModule('virtual:payout-runtime');
-  runtime.api = api;
-  const module = await server.ssrLoadModule('/src/features/facemarket-landing/pages/PayoutPage.jsx');
-  return {
-    module, server,
-    async loadContent() {
-      const content = module.PayoutPage().props.children();
-      content.type();
-      runtime.effects[0]();
-      await new Promise((resolve) => setImmediate(resolve));
-      runtime.index = 0;
-      return content.type();
-    },
-  };
-}
-
-test('정산 화면은 최근 200건보다 큰 서버 전체 합계를 그대로 표시한다', async () => {
-  const { module, server } = await payoutViewHarness();
-  try {
-    const tree = module.PayoutView({
-      settlements: Array.from({ length: 200 }, (_, i) => ({ id: `s${i}`, modelAmount: 7000, createdAt: '2026-09-01T00:00:00Z' })),
-      settlementSummary: { monthCount: 201, monthAmount: 1407000, totalAmount: 1410000 },
-      now: new Date('2026-09-04T00:00:00Z'),
-    });
-    assert.ok(findTree(tree, (node) => node.props?.label === '이번 달' && node.props?.value === '201건'));
-    assert.ok(findTree(tree, (node) => node.type === 'small' && node.props?.children === '1,407,000원'));
-    assert.ok(findTree(tree, (node) => node.props?.label === '누적' && node.props?.value === '1,410,000원'));
-  } finally {
-    await server.close();
-  }
-});
-
 test('정산일 당일은 오늘을, 정산일이 지난 뒤에는 다음 달 10일을 안내한다', async () => {
   const { nextSettlement } = await loadPayoutData();
   assert.deepEqual(
@@ -193,72 +96,58 @@ test('프론트 API는 내 정산 목록과 전체 합계 엔드포인트를 호
   assert.match(source, /function listSettlements\(\)[\s\S]*?http\('\/v1\/facemarket\/settlements'\)/);
 });
 
-test('정산 화면은 준비 칩·세 숫자·빈 상태와 가변 열 표를 실제로 렌더한다', async () => {
-  const { module, server } = await payoutViewHarness();
+
+import { loadEarningsHarness, findTree } from './helpers/mypageHarness.mjs';
+
+test('옛 정산 페이지는 마이페이지 수익 위치로 이동해요', async () => {
+  const harness = await loadEarningsHarness();
   try {
-    assert.equal(typeof module.PayoutView, 'function');
-    const empty = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 }, settlements: [], licenses: [], now: new Date('2026-09-04T00:00:00Z') });
-    assert.ok(findTree(empty, (node) => node.props?.children === '지급 준비 중 · 기록은 쌓이고 있어요'));
-    assert.ok(findTree(empty, (node) => node.props?.children === '아직 쌓인 정산 기록이 없어요'));
-    assert.ok(findTree(empty, (node) => node.props?.label === '이번 달' && node.props?.value === '0건'));
-    assert.ok(findTree(empty, (node) => node.props?.label === '누적' && node.props?.value === '0원'));
-
-    const enriched = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 },
-      settlements: [{
-        id: 's1', createdAt: '2026-09-03T00:00:00Z', modelAmount: 7_000,
-        shopName: '오늘의 상점', productName: '린넨 셔츠', thumbnailUrl: '/shirt.webp',
-        licenseId: 'l1',
-      }],
-      licenses: [{ id: 'l1', status: 'active', licenseValidUntil: '2027-01-01T00:00:00Z' }],
-      now: new Date('2026-09-04T00:00:00Z'),
-    });
-    for (const label of ['날짜', '쇼핑몰', '품목', '썸네일', '내 몫', '상태']) {
-      assert.ok(findTree(enriched, (node) => node.type === 'th' && node.props?.children === label), label);
-    }
-    assert.equal(findTree(enriched, (node) => node.type === 'th' && node.props?.children === '증빙'), null);
-
-    const monthlyWithoutItem = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 },
-      settlements: [{
-        id: 'monthly', createdAt: '2026-09-03T00:00:00Z', modelAmount: 17_500,
-        billingType: 'monthly', periodStart: '2026-09-01T00:00:00Z', periodEnd: '2026-09-30T00:00:00Z',
-        licenseId: 'l1',
-      }],
-      licenses: [{ id: 'l1', status: 'active', licenseValidUntil: '2027-01-01T00:00:00Z' }],
-      now: new Date('2026-09-04T00:00:00Z'),
-    });
-    const dateCell = findTree(
-      monthlyWithoutItem,
-      (node) => node.type?.name === 'TableCell' && node.props?.column?.key === 'date',
-    );
-    const renderedDate = dateCell.type(dateCell.props);
-    assert.ok(findTree(renderedDate, (node) => node.props?.children === '월정액 · 2026.09.01~2026.09.30'));
-  } finally {
-    await server.close();
-  }
+    const { PayoutPage } = await harness.server.ssrLoadModule('/src/features/facemarket-landing/pages/PayoutPage.jsx');
+    const tree = PayoutPage();
+    assert.equal(tree.type, 'Navigate');
+    assert.equal(tree.props.to, '/status#earnings');
+    assert.equal(tree.props.replace, true);
+  } finally { await harness.close(); }
 });
 
-
-test('정산 페이지 로더는 최근 내역과 별도로 전체 합계를 조회해 화면에 전달한다', async () => {
-  const summary = { monthCount: 201, monthAmount: 1407000, totalAmount: 1410000 };
-  const harness = await payoutViewHarness({
-    listSettlements: async () => [{ id: 'recent', modelAmount: 7000 }],
-    getSettlementSummary: async () => summary,
-  });
+test('수익은 최근 200건보다 큰 서버 전체 합계를 그대로 표시해요', async () => {
+  const harness = await loadEarningsHarness();
   try {
-    const content = await harness.loadContent();
-    assert.equal(content.type, harness.module.PayoutView);
-    assert.deepEqual(content.props.settlementSummary, summary);
-  } finally { await harness.server.close(); }
+    const tree = harness.module.EarningsFigures({ summary: { monthCount: 201, monthAmount: 1407000, totalCount: 300, totalAmount: 2100000 } });
+    assert.ok(findTree(tree, node => node.props?.children === '1,407,000원'));
+    assert.ok(findTree(tree, node => Array.isArray(node.props?.children) && node.props.children.includes(300)));
+  } finally { await harness.close(); }
 });
 
-test('전체 합계 조회 실패 시 최근 내역을 합산하지 않고 재시도 오류를 표시한다', async () => {
-  const harness = await payoutViewHarness({
-    listSettlements: async () => [{ id: 'recent', modelAmount: 7000 }],
-    getSettlementSummary: async () => { throw new Error('summary unavailable'); },
-  });
+test('수익 조회 실패는 수익 영역에서만 재시도하고 실제 합계를 다시 불러와요', async () => {
+  let calls = 0;
+  const harness = await loadEarningsHarness({ getSettlementSummary: async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('offline');
+    return { monthCount: 0, monthAmount: 0, totalCount: 0, totalAmount: 0 };
+  } });
   try {
-    const content = await harness.loadContent();
-    assert.ok(findTree(content, (node) => node.type === 'ErrorState' && typeof node.props.onRetry === 'function'));
-    assert.equal(findTree(content, (node) => node.type === harness.module.PayoutView), null);
-  } finally { await harness.server.close(); }
+    let tree = await harness.load();
+    const retry = findTree(tree, node => node.type === 'button' && node.props.children === '다시 시도');
+    assert.ok(retry);
+    assert.equal(findTree(tree, node => node.type?.name === 'EarningsFigures'), null);
+    retry.props.onClick();
+    tree = await harness.load();
+    assert.equal(calls, 2);
+    assert.ok(findTree(tree, node => node.type?.name === 'EarningsFigures'));
+  } finally { await harness.close(); }
+});
+
+test('처음에는 사용 기록 5건을 보이고 전체 보기로 받은 기록을 펼쳐요', async () => {
+  const harness = await loadEarningsHarness({ listSettlements: async () => Array.from({length: 8}, (_, i) => ({
+    id: `s${i}`, paymentId: `p${i}`, createdAt: '2026-09-01T00:00:00Z', productName: `상품${i}`, sellerName: '상점', modelAmount: 10430, reported: i === 0,
+  })) });
+  try {
+    let tree = await harness.load();
+    assert.equal(findTree(tree, node => node.type === 'ul').props.children.length, 5);
+    assert.ok(findTree(tree, node => node.props?.children === '신고됨'));
+    findTree(tree, node => node.props?.children === '전체 보기').props.onClick();
+    tree = harness.render();
+    assert.equal(findTree(tree, node => node.type === 'ul').props.children.length, 8);
+  } finally { await harness.close(); }
 });

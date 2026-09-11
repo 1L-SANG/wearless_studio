@@ -299,6 +299,7 @@ class Settings:
     resend_api_key: str | None = None
     fm_application_from_email: str = "FaceMarket <noreply@wearless.kr>"
     fm_application_public_base: str = "https://facemarket.wearless.kr"
+    fm_usage_report_to_email: str | None = None
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
     fm_oacx_contract_mode: str = "disabled"
@@ -613,6 +614,7 @@ def load_settings() -> Settings:
         fm_application_public_base=(
             os.getenv("FM_APPLICATION_PUBLIC_BASE") or "https://facemarket.wearless.kr"
         ).rstrip("/"),
+        fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_liveness_enabled=(

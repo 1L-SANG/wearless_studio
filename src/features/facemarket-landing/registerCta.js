@@ -35,7 +35,7 @@ export function registerCta(
   { application = null, applicationRequired = true, scope = 'hub' } = {},
 ) {
   // 랜딩(상단바·히어로)은 신규 지원만 맡는다. 지원서가 한 번이라도 생겼거나 등록/모델이
-  // 있으면 다음 행동은 Digital DNA 관리 허브가 안내하므로 CTA 자체를 그리지 않는다.
+  // 있으면 다음 행동은 마이페이지가 안내하므로 CTA 자체를 그리지 않는다.
   // applicationRequired 는 운영 게이트일 뿐, 얼리버드 지원의 목적지는 항상 지원서다.
   if (scope === 'landing') {
     if (ownedModel || enrollment || application) return null;
@@ -43,7 +43,7 @@ export function registerCta(
   }
 
   if (ownedModel?.status === 'verified') {
-    return { label: '내 모델 정보', to: '/status' };
+    return { label: '마이페이지', to: '/status' };
   }
   if (ownedModel || enrollment) {
     return { label: REGISTER_LABEL, to: '/model/register' };

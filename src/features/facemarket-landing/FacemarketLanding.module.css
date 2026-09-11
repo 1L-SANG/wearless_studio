@@ -462,14 +462,14 @@
 .heroTitle {
   margin: 0;
   color: #07090c;
-  /* 2026-09-03 밤: 제목이 영문 한 줄("create your own digital DNA")로 확정되면서 원본
+  /* 2026-09-03 밤: 제목이 영문 한 줄("create your own online model")로 확정되면서 원본
      spotlight 의 세리프 디스플레이(Cormorant, 굵기 500)로 **복귀**(오너 "예전처럼 메인 폰트").
      낮에 Pretendard 로 바꿨던 건 한글 제목에 명조가 이상하다는 이유였고, 영문에는 해당 없음.
      크기는 원본(두 줄 3.9~5.8rem)보다 한 단계 낮춘 5rem 상한 — 27자 한 줄이 1280px 본문 폭
      안에 들어오는 값. 좁아져 접히면 balance 로 두 줄을 고르게 나눈다. Cormorant 는 라틴
      전용 자체 호스팅 가변 서체라 한글 폴백은 없어도 된다(제목이 영문). */
   /* 같은 날 밤 최종(오너 확정, 16종 비교의 10번): **Playfair Display 600**, 두 줄
-     ("create your own / digital DNA"), 둘째 줄만 이탤릭 500. 그날 거쳐 간 것 — Pretendard
+     ("create your own / online model"), 둘째 줄만 이탤릭 500. 그날 거쳐 간 것 — Pretendard
      (한글 제목 시절) → Cormorant(원본 세리프) → Cal Sans(--font-display) → 실화면 A/B
      (Playfair vs Instrument Serif) → Playfair. facemarket.html 이 Playfair 500/600 + 이탤릭을
      로드한다. 두 줄이라 크기 상한은 4rem — 원본(두 줄 5.8rem·행간 0.9)보다 낮게 잡아
@@ -587,7 +587,7 @@
   .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
   .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
   .kicker span { display: none; }
-  /* 폰: 27자 영문이 두 줄("create your own / digital DNA")로 접히는 크기. 원본 17vw 는
+  /* 폰: 27자 영문이 두 줄("create your own / online model")로 접히는 크기. 원본 17vw 는
      두 단어 제목 기준이라 세 줄로 갈라진다. */
   .heroTitle { font-size: clamp(2.4rem, 10vw, 3.2rem); }
   /* 폰은 히어로가 왼쪽 정렬이라 리드문도 왼쪽. 데스크탑의 center 가 그대로 오면 <br> 뒤

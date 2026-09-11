@@ -9,7 +9,7 @@ const DATE_PARTS = new Intl.DateTimeFormat('en-CA', {
 });
 
 const OPTIONAL_FIELDS = {
-  shop: ['shopName', 'mallName', 'storeName', 'merchantName'],
+  shop: ['sellerName', 'shopName', 'mallName', 'storeName', 'merchantName'],
   item: ['itemName', 'productName', 'productTitle', 'item'],
   thumbnail: ['thumbnailUrl', 'productThumbnailUrl', 'itemThumbnailUrl'],
 };
@@ -25,7 +25,7 @@ function seoulParts(value) {
 
 function compactDate(value) {
   const parts = seoulParts(value);
-  if (!parts) return '—';
+  if (!parts) return '확인 중';
   return `${parts.year}.${String(parts.month).padStart(2, '0')}.${String(parts.day).padStart(2, '0')}`;
 }
 
@@ -77,7 +77,7 @@ function settlementStatus(row, license, now) {
   // /licenses는 revoked 행을 의도적으로 제외한다. 목록 조회가 성공했는데 정산의 licenseId가
   // 보이지 않으면 과거 라이선스가 끝난 경우이므로, 알 수 없음이 아니라 만료로 표시한다.
   if (row?.licenseId && !license) return '만료';
-  return '—';
+  return '확인 중';
 }
 
 export function normalizeSettlementRow(row, licenses = [], now = new Date()) {

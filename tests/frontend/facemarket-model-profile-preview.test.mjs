@@ -111,7 +111,8 @@ test('유효기간은 10년 이상이면 영구, 연 단위면 연수, 나머지
   assert.equal(validityLabel(4000), '영구');
   assert.equal(validityLabel(730), '2년');
   assert.equal(validityLabel(540), '540일');
-  assert.equal(validityLabel(null), '미정');
+  assert.equal(validityLabel(null), '영구');
+  assert.equal(validityLabel(undefined), '미정');
 });
 
 test('테스트컷은 종류별 입력 순서를 보존하고 알 수 없는 종류는 노출하지 않는다', () => {

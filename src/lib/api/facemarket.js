@@ -348,8 +348,8 @@ export function createLicense({
 }
 
 // GET /v1/facemarket/licenses — 내 라이선스 목록. [{ id, faceImageUri, allowedUse, ... }].
-export function listLicenses() {
-  return http('/v1/facemarket/licenses');
+export function listLicenses({ includeRevoked = false } = {}) {
+  return http(`/v1/facemarket/licenses${includeRevoked ? '?includeRevoked=true' : ''}`);
 }
 
 // POST /v1/facemarket/licenses/{id}/revoke (소유자 스코프) — 라이선스를 해지한다.
@@ -451,4 +451,17 @@ export async function fetchLicenseFaceUrl(faceImageUri) {
   const res = await _authFetch(faceImageUri);
   if (!res.ok) throw new Error('얼굴 이미지를 불러오지 못했어요.');
   return URL.createObjectURL(await res.blob());
+}
+
+export function reportUsage(paymentId, reason) {
+  return http(`/v1/facemarket/settlements/${encodeURIComponent(paymentId)}/report`, { method: 'POST', body: { reason } });
+}
+export function updateLicenseTerms(licenseId, terms) {
+  return http(`/v1/facemarket/licenses/${encodeURIComponent(licenseId)}/terms`, { method: 'PATCH', body: terms });
+}
+export function pauseMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/pause`, { method: 'POST' });
+}
+export function resumeMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/resume`, { method: 'POST' });
 }

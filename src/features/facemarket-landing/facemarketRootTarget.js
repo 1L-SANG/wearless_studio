@@ -28,14 +28,14 @@ const MAX_LENGTH = 512;
 const ALLOWED_ROOTS = ['/model', '/status', '/payout', '/verify'];
 
 const LANDING_NAV = Object.freeze([
+  Object.freeze({ to: '/model/apply', label: '모델 지원', protected: false }),
   Object.freeze({ to: '/models', label: '모델 리스트', protected: false }),
-  Object.freeze({ to: '/status', label: 'Digital DNA 관리', protected: true }),
-  Object.freeze({ to: '/payout', label: '정산', protected: true }),
+  Object.freeze({ to: '/status', label: '마이페이지', protected: true }),
 ]);
 
 // 새 배열을 돌려 호출부가 정렬·추가해도 다음 렌더의 전역 메뉴 계약을 바꾸지 못하게 한다.
-export function landingNavItems() {
-  return LANDING_NAV.map((item) => ({ ...item }));
+export function landingNavItems({ verified = false } = {}) {
+  return LANDING_NAV.filter(item => !verified || item.to !== '/model/apply').map((item) => ({ ...item }));
 }
 
 // 보호 메뉴는 인증 부트스트랩 중에는 판정을 미루고, 세션이 없다고 확정된 뒤에만 로그인

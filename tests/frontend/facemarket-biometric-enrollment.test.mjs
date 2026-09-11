@@ -294,6 +294,7 @@ async function modelComponentHarness({
           export const Link = 'Link';
           export const useNavigate = () => ${access}.navigate;
           export const useLocation = () => ${access}.location || ({ state: null });
+          export const useParams = () => ({ licenseId: 'l1' });
           export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
         if (id === '\0fm-test-ui') return `
@@ -331,6 +332,10 @@ async function modelComponentHarness({
             api.getCurrentApplication ? api.getCurrentApplication(...args)
               : Promise.reject(Object.assign(new Error('no application'), { status: 404 }))
           );
+          export const updateLicenseTerms = (...args) => api.updateLicenseTerms(...args);
+          export const pauseMyModel = (...args) => api.pauseMyModel(...args);
+          export const resumeMyModel = (...args) => api.resumeMyModel(...args);
+          export const reportUsage = (...args) => api.reportUsage(...args);
           export const cancelApplication = (...args) => api.cancelApplication(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => (
@@ -1199,47 +1204,23 @@ test('ModelHub reaches ready using FaceMarket state when personalization is unav
   }
 });
 
-test('verified ModelHub shows the active dashboard even with zero settlements', async () => {
+test('활동 마이페이지는 라이선스가 유효할 때 수익과 조건 영역을 함께 열어요', async () => {
   const harness = await modelComponentHarness({
-    entry: '/src/features/model/ModelHub.jsx',
-    exportName: 'ModelHub',
-    initialStates: [
-      'ready',
-      { id: 'model-1', status: 'verified', displayName: '김*나', coverImageUrl: '/cover.webp' },
-      null,
-      null,
-      true,
-      [{
-        id: 'license-1', modelId: 'model-1', status: 'active', faceImageUri: '/face',
-        allowedUse: ['상의', '하의'], forbiddenUse: ['수영복·비키니'], unitPrice: 10_000,
-        licenseValidUntil: '2027-09-04T00:00:00Z', vcId: 'vc:test:1',
-      }],
-      { monthCount: 0, monthAmount: 0, totalAmount: 0 },
-    ],
-    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+    entry: '/src/features/model/ModelHub.jsx', exportName: 'ModelHub',
+    initialStates: ['ready', { id: 'm1', status: 'verified', displayName: '모델' }, null, null, true,
+      [{ id: 'l1', modelId: 'm1', status: 'active', allowedUse: ['일반 의류'] }]], api: {},
   });
   try {
-    const tree = harness.render();
-    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
-    assert.ok(active, 'verified 상태는 활동 중 대시보드를 선택해야 한다');
-    // 이 경량 JSX 하네스는 중첩 함수 컴포넌트를 React처럼 자동 실행하지 않으므로 실제 함수를
-    // 한 번 펼쳐 내부의 사용자 행동까지 검사한다. UI 스텁 자체를 검사하는 것은 아니다.
-    const dashboard = active.type(active.props);
-    assert.ok(findTree(dashboard, (node) => node.props?.children === '9,900원'));
-    assert.ok(findTree(dashboard, (node) => node.props?.children === '29,900원'));
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
-    assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
-    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/payout'));
-    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/model/withdraw'));
-    assert.equal(
-      findTree(dashboard, (node) => node.type === 'Button' && node.props?.children === '내 모델로 생성하기'),
-      null,
-      '활동 중 허브에 예전 중복 생성 버튼을 남기지 않는다',
-    );
-  } finally {
-    await harness.close();
-  }
+    const page = harness.render();
+    assert.equal(page.props.journey.mode, 'active');
+    const active = findTree(page.type(page.props), node => node.type?.name === 'ActiveDashboard');
+    assert.ok(active);
+    const tree = active.type(active.props);
+    assert.ok(findTree(tree, node => node.type?.name === 'MyPageEarnings'));
+    assert.ok(findTree(tree, node => node.type?.name === 'MyPageConditions'));
+    assert.ok(findTree(tree, node => node.type === 'button' && node.props.children === '그만두기'));
+    assert.equal(findTree(tree, node => node.type === 'Link' && node.props.to === '/model/withdraw'), null);
+  } finally { await harness.close(); }
 });
 
 test('ModelHub treats license API failure as unavailable instead of real zero/default terms', async () => {
@@ -1264,46 +1245,36 @@ test('ModelHub treats license API failure as unavailable instead of real zero/de
   }
 });
 
-test('ModelHub treats settlement summary failure as unavailable instead of zero earnings', async () => {
+test('지원 상태 로더는 수익 API를 호출하지 않아요', async () => {
+  let earningsCalls = 0;
   const harness = await modelComponentHarness({
-    entry: '/src/features/model/ModelHub.jsx',
-    exportName: 'ModelHub',
-    initialStates: [],
+    entry: '/src/features/model/ModelHub.jsx', exportName: 'ModelHub', initialStates: [],
     api: {
-      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
-      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
-      getSettlementSummary: async () => { throw Object.assign(new Error('summary unavailable'), { status: 500 }); },
+      listMyModels: async () => [],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), {status:404}); },
+      getCurrentApplication: async () => ({status:'under_review'}),
+      getSettlementSummary: async () => { earningsCalls += 1; throw new Error('offline'); },
     },
   });
   try {
-    harness.render();
-    harness.runtime.effects[0]();
-    await eventually(() => harness.runtime.states[0] !== 'loading', 'hub load should settle');
-    const tree = harness.render();
-    assert.ok(findTree(tree, (node) => node.type === 'ErrorState'));
-    assert.equal(findTree(tree, (node) => node.type?.name === 'ActiveDashboard'), null);
-  } finally {
-    await harness.close();
-  }
+    harness.render(); harness.runtime.effects[0]();
+    await eventually(() => harness.runtime.states[0] !== 'loading', '상태 조회 완료');
+    assert.equal(harness.runtime.states[0], 'ready');
+    assert.equal(earningsCalls, 0);
+    assert.equal(harness.render().props.journey.mode, 'onboarding');
+  } finally { await harness.close(); }
 });
 
-test('verified ModelHub without a license does not invent default rules', async () => {
+test('확정 모델도 라이선스가 없으면 활동 중이라고 표시하지 않아요', async () => {
   const harness = await modelComponentHarness({
-    entry: '/src/features/model/ModelHub.jsx',
-    exportName: 'ModelHub',
-    initialStates: ['ready', { id: 'model-1', status: 'verified', displayName: '김*나' }, null, null, true, [], { monthCount: 0, monthAmount: 0, totalAmount: 0 }],
-    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+    entry: '/src/features/model/ModelHub.jsx', exportName: 'ModelHub',
+    initialStates: ['ready', {id:'m1',status:'verified'}, null, null, true, []], api:{},
   });
   try {
     const tree = harness.render();
-    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
-    const dashboard = active.type(active.props);
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
-    assert.ok(findTree(dashboard, (node) => node.type === 'dd' && node.props?.children === '—'));
-  } finally {
-    await harness.close();
-  }
+    assert.equal(tree.props.journey.mode, 'onboarding');
+    assert.equal(tree.props.license, null);
+  } finally { await harness.close(); }
 });
 
 test('SlotCard renders a pose example image from the angle', () => {
@@ -1552,7 +1523,7 @@ test('user-facing copy says 본인/얼굴 확인, and the legal consent wording 
   // 법적 문구는 그대로 — 동의문 용어를 바꾸면 동의 버전 계약이 깨진다.
   assert.match(register, /생체정보 처리 동의/);
   // 허브는 법적 동의문을 복제하지 않고, 사람이 알아볼 진행 단계만 보여 준다.
-  assert.match(hubState, /본인확인·사진·조건·증서/);
+  assert.match(hubState, /모델 등록/);
 });
 
 
@@ -1598,7 +1569,7 @@ test('the terms screen sends the model on to VC issuance from a centered card', 
   assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
 });
 
-test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보여 준다', async () => {
+test('등록 완료 화면은 조건 요약과 마이페이지 경로를 보여 준다', async () => {
   const harness = await modelComponentHarness({
     initialStates: [
       'done',
@@ -1626,8 +1597,8 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보�
   try {
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(findTree(tree, (node) => node.props?.children === '9,900원'));
-    assert.ok(findTree(tree, (node) => node.props?.children === '29,900원'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '14,900원'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '49,900원'));
     for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
       assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
     }
@@ -1949,4 +1920,31 @@ test('leaving consent ignores a late confirmation-required enrollment response',
     assert.deepEqual(destinations, []);
     assert.equal(harness.runtime.updates.length, updatesBeforeResponse);
   } finally { await harness.close(); }
+});
+
+
+test('그만두기는 확인 뒤 현재 FaceMarket 라이선스를 해지하고 화면 상태를 갱신해요', async () => {
+  const requests = [], updates = [];
+  const harness = await modelComponentHarness({
+    entry:'/src/features/model/mypage/MyPage.jsx', exportName:'ActiveDashboard', initialStates:[],
+    api:{ revokeLicense:async id=>{requests.push(id);return {id,modelId:'m1',status:'revoked'};} },
+  });
+  const props={journey:{flag:'none'},model:{id:'m1',status:'verified'},license:{id:'l1',status:'active'},licenses:[],onLicenseChange:value=>updates.push(value)};
+  try {
+    let tree=harness.render(props);
+    findTree(tree,node=>node.type==='button'&&node.props.children==='그만두기').props.onClick();
+    assert.deepEqual(requests,[]);
+    tree=harness.render(props);
+    const dialog=findTree(tree,node=>node.type?.name==='MyPageDialog');
+    assert.ok(dialog);
+    await findTree(dialog,node=>node.type==='button'&&node.props.children==='라이선스 해지하기').props.onClick();
+    assert.deepEqual(requests,['l1']);
+    assert.equal(updates[0].status,'revoked');
+  } finally {await harness.close();}
+});
+
+test('영구로 바꾼 라이선스는 공개 증서에서도 영구라고 표시해요', async () => {
+  const harness=await modelComponentHarness({entry:'/src/features/verify/PublicVerify.jsx',exportName:'PublicVerify',initialStates:['ok',{status:'active',valid:true,validUntil:null},null],api:{}});
+  try { assert.ok(findTree(harness.render(), node=>node.type==='dd'&&node.props.children==='영구')); }
+  finally {await harness.close();}
 });
