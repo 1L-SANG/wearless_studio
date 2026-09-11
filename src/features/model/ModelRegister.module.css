@@ -139,6 +139,7 @@
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 
 .withdrawalInfo { position: relative; min-width: 0; }
+.keepTogether { white-space: nowrap; }
 .infoButton { display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; border: 0; background: none; color: var(--fg-1); padding: 4px; }
 .withdrawalTooltip { position: absolute; top: 100%; left: 0; z-index: 20; width: min(320px, 100%); padding: 16px; border: 1px solid var(--fm-line); border-radius: 12px; background: var(--bg-1); }
 .withdrawalTooltip ul { margin: 0; padding-left: 16px; }

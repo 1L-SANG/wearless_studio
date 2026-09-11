@@ -17,7 +17,7 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
       <li><span>✓</span><p>원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.</p></li>
       <li><span>✓</span><p>철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)</p></li>
       <li className={s.withdrawalRow}><span>✓</span><div className={s.withdrawalInfo} onMouseEnter={() => setWithdrawalOpen(true)} onMouseLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setWithdrawalOpen(false); }}>
-        <p>언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다{' '}<button type="button" className={s.infoButton} aria-label="그만두면 이렇게 돼요" aria-describedby="withdrawal-tooltip" onMouseEnter={() => setWithdrawalOpen(true)} onFocus={() => setWithdrawalOpen(true)} onBlur={() => setWithdrawalOpen(false)} onClick={() => setWithdrawalOpen(true)} onKeyDown={(event) => { if (event.key === 'Escape') setWithdrawalOpen(false); }}><Info size={18} aria-hidden="true" /></button></p>
+        <p>언제든지 모델 등록을 잠시 중지하거나 철회할 수 <span className={s.keepTogether}>있습니다 <button type="button" className={s.infoButton} aria-label="그만두면 이렇게 돼요" aria-describedby="withdrawal-tooltip" onMouseEnter={() => setWithdrawalOpen(true)} onFocus={() => setWithdrawalOpen(true)} onBlur={() => setWithdrawalOpen(false)} onClick={() => setWithdrawalOpen(true)} onKeyDown={(event) => { if (event.key === 'Escape') setWithdrawalOpen(false); }}><Info size={18} aria-hidden="true" /></button></span></p>
         <div id="withdrawal-tooltip" className={s.withdrawalTooltip} role="tooltip" hidden={!withdrawalOpen} onMouseEnter={() => setWithdrawalOpen(true)}><ul>
           <li>새로운 사용이 그 자리에서 멈춰요. 사유는 필요 없고, 위약금도 없어요.</li>
           <li>얼굴 정보는 30일 안에 파기해요. 백업은 90일 안에 지워요. 끝나면 알려 드려요.</li>
