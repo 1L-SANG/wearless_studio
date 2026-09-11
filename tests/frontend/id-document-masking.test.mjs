@@ -64,29 +64,29 @@ test('드래그·리사이즈 결과가 이미지 밖으로 나가거나 뒤집�
 // ── buildMaskedBlob: 마스킹의 핵심 계약 ─────────────────────────────
 // 캔버스 스텁은 tests/frontend/image-transcode.test.mjs 와 같은 패턴(진짜 DOM 없이
 // getContext/drawImage/fillRect/toBlob 을 흉내만 낸다).
+// sequence 는 drawImage/fillRect 호출을 "한 줄"에 순서대로 적재한다(따로 세는 배열 두 개가
+// 아니다). 리뷰에서 지적된 구멍: drawImage.length===1 && fillRect.length===1 는 두 호출이
+// 있었다는 것만 보장하고 **순서**는 보장하지 못한다 — fillRect 를 먼저 부르고 drawImage 로
+// 원본을 그 위에 덧그리면(마스킹이 원본에 덮여 사라짐, 주민등록번호가 그대로 살아남음)
+// 두 카운트 다 여전히 1 로 통과해 버린다. 아래 fillStyle 도 같은 sequence 에 적재해
+// "#111 로 칠하기 전에 값이 바뀌지 않았는가"까지 순서로 확인한다.
 function fakeCanvas() {
-  const calls = { drawImage: [], fillRect: [], fillStyle: null };
+  const sequence = [];
+  let fillStyle = null;
   return {
     width: 0,
     height: 0,
-    calls,
+    sequence,
     getContext: () => ({
-      drawImage: (...args) => calls.drawImage.push(args),
-      set fillStyle(value) { calls.fillStyle = value; },
-      get fillStyle() { return calls.fillStyle; },
-      fillRect: (...args) => calls.fillRect.push(args),
+      drawImage: (...args) => sequence.push({ op: 'drawImage', args }),
+      set fillStyle(value) { fillStyle = value; sequence.push({ op: 'fillStyle', value }); },
+      get fillStyle() { return fillStyle; },
+      fillRect: (...args) => sequence.push({ op: 'fillRect', args }),
     }),
     toBlob(resolve, type, quality) {
       // 실제 브라우저 캔버스라면 이 시점의 픽셀(=마스킹 이후)만 인코딩한다. 스텁은 그
-      // 시점의 호출 기록을 blob 안에 실어 테스트가 "무엇을 그린 뒤 뽑았는지" 확인하게 한다.
-      resolve({
-        __fakeBlob: true,
-        type,
-        quality,
-        drawImageCalls: calls.drawImage.length,
-        fillRectCalls: calls.fillRect.length,
-        fillStyle: calls.fillStyle,
-      });
+      // 시점까지의 전체 순서를 blob 안에 실어 테스트가 "무엇을 몇 번째로 했는지" 확인하게 한다.
+      resolve({ __fakeBlob: true, type, quality, sequence: [...sequence] });
     },
   };
 }
@@ -100,15 +100,32 @@ test('원본을 캔버스에 그린 뒤 마스킹 사각형으로 덮어쓰고, 
 
   const blob = await buildMaskedBlob({ canvas, image, mask });
 
-  assert.equal(canvas.calls.drawImage.length, 1, 'drawImage 는 정확히 한 번만 호출돼야 한다');
-  assert.deepEqual(canvas.calls.drawImage[0], [image, 0, 0, 400, 300]);
-  assert.equal(canvas.calls.fillRect.length, 1, 'fillRect(마스킹) 가 한 번은 반드시 일어나야 한다');
-  assert.deepEqual(canvas.calls.fillRect[0], [10, 20, 100, 40]);
-  assert.equal(canvas.calls.fillStyle, '#111');
+  const drawImageCalls = canvas.sequence.filter((c) => c.op === 'drawImage');
+  const fillRectCalls = canvas.sequence.filter((c) => c.op === 'fillRect');
+  assert.equal(drawImageCalls.length, 1, 'drawImage 는 정확히 한 번만 호출돼야 한다');
+  assert.deepEqual(drawImageCalls[0].args, [image, 0, 0, 400, 300]);
+  assert.equal(fillRectCalls.length, 1, 'fillRect(마스킹) 가 한 번은 반드시 일어나야 한다');
+  assert.deepEqual(fillRectCalls[0].args, [10, 20, 100, 40]);
+
+  // 핵심: drawImage 가 fillRect 보다 먼저 일어나야 한다. 순서가 뒤집히면(fillRect 먼저 →
+  // drawImage 가 마스킹을 덮어 원본을 되살림) 위 length/args 단언은 전부 그대로 통과하므로
+  // 인덱스 비교로만 잡을 수 있다.
+  const drawImageIndex = canvas.sequence.findIndex((c) => c.op === 'drawImage');
+  const fillRectIndex = canvas.sequence.findIndex((c) => c.op === 'fillRect');
+  assert.ok(
+    drawImageIndex < fillRectIndex,
+    `drawImage(${drawImageIndex}) 가 fillRect(${fillRectIndex}) 보다 먼저 일어나야 한다 — `
+    + '순서가 바뀌면 마스킹이 원본에 덮여 사라진다(주민등록번호가 그대로 남는다)',
+  );
+
+  const fillStyleCalls = canvas.sequence.filter((c) => c.op === 'fillStyle');
+  assert.ok(fillStyleCalls.some((c) => c.value === '#111'), 'fillStyle 이 #111 로 설정돼야 한다');
   // blob 자체는 원본 image 객체가 전혀 아니다 — 캔버스에서 새로 뽑아낸 결과물이다.
   assert.notEqual(blob, image);
   assert.equal(blob.__fakeBlob, true);
   assert.equal(blob.type, 'image/jpeg');
-  // fillRect(마스킹)가 blob 을 뽑기 전에 이미 반영돼 있었다는 증거.
-  assert.equal(blob.fillRectCalls, 1);
+  // blob 에 실린 순서 기록도 같은 결론(그린 뒤 채웠다)을 담고 있어야 한다.
+  const blobDrawIndex = blob.sequence.findIndex((c) => c.op === 'drawImage');
+  const blobFillIndex = blob.sequence.findIndex((c) => c.op === 'fillRect');
+  assert.ok(blobDrawIndex < blobFillIndex, 'blob 에 실린 기록도 그린 뒤 채운 순서여야 한다');
 });

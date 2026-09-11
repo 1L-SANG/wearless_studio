@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 // IdentityMethodStep.jsx·IdDocumentStep.jsx 는 이 레포에 DOM 렌더러가 없다는 제약 아래
 // 실제 동작(effect 실행, onClick 호출, async submit)까지 검증해야 한다. tests/frontend/
@@ -39,6 +40,8 @@ async function stepHarness({ entry, exportName = 'default', initialStates = [], 
     refs: initialRefs.map((current) => ({ current })),
     stateCursor: 0,
     refCursor: 0,
+    effectCursor: 0,
+    effectDeps: [],
   };
   globalThis[key] = runtime;
   const { createServer } = await import('vite');
@@ -80,7 +83,19 @@ async function stepHarness({ entry, exportName = 'default', initialStates = [], 
             if (!runtime.refs[index]) runtime.refs[index] = { current: initial };
             return runtime.refs[index];
           };
-          export const useEffect = (effect) => { runtime.effects.push(effect); };
+          // 실제 React 처럼 deps 를 얕은 비교로 본다(no deps → 항상 다시 돈다, deps 배열이면
+          // 이전 값과 Object.is 비교) — IdentityMethodStep 의 "메서드 하나면 정확히 한 번만
+          // onPick" 계약이 바로 이 스킵 로직에 의존하므로, 스킵을 안 하는 하네스로는 그
+          // 계약을 검증할 수 없다.
+          const unchanged = (previous, next) => previous && next && previous.length === next.length
+            && next.every((value, index) => Object.is(value, previous[index]));
+          export const useEffect = (effect, deps) => {
+            const index = runtime.effectCursor++;
+            const previous = runtime.effectDeps[index];
+            if (deps && unchanged(previous, deps)) return;
+            runtime.effectDeps[index] = deps;
+            runtime.effects.push(effect);
+          };
         `;
         if (id === '\0fm-id-test-jsx') return `
           export const Fragment = 'Fragment';
@@ -109,6 +124,7 @@ async function stepHarness({ entry, exportName = 'default', initialStates = [], 
     render(props = {}) {
       runtime.stateCursor = 0;
       runtime.refCursor = 0;
+      runtime.effectCursor = 0;
       runtime.effects = [];
       return module[exportName](props);
     },
@@ -153,6 +169,28 @@ test('메서드가 둘이면 선택 화면을 그리고 자동으로 고르지 �
   }
 });
 
+// 리뷰 IMPORTANT 2: methods·onPick 참조가 안정적이면(ModelRegister.jsx 가 IDENTITY_METHODS
+// 모듈 상수 + useCallback 으로 고정한 onPick 을 넘기는 실제 배포와 같다) 부모가 몇 번을
+// 리렌더해도(busy 토글 등 이 컴포넌트와 무관한 이유로) 이 컴포넌트의 effect 는 deps 가 그대로라
+// 다시 안 돈다 — 다시 안 돌면 onPick 도 다시 안 불린다. 반대로 IdentityMethodStep.jsx 의
+// useEffect 에서 deps 배열([methods, onPick])을 빼먹거나 잘못된 값으로 바꾸면(실제 React 는
+// deps 없는 effect 를 매 렌더 다시 돈다) 이 테스트가 picked.length > 1 로 잡아낸다.
+test('참조가 고정돼 있으면 여러 번 리렌더돼도 onPick 은 정확히 한 번만 불린다(중복 등록 생성 방지)', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    const picked = [];
+    const methods = ['mid']; // 같은 배열 참조 재사용 — IDENTITY_METHODS 는 모듈 상수라 항상 같은 참조다.
+    const onPick = (method) => picked.push(method); // 같은 함수 참조 재사용 — handleMethodPick(useCallback) 과 동등.
+    for (let i = 0; i < 4; i += 1) {
+      harness.render({ methods, onPick });
+      harness.runtime.effects.forEach((effect) => effect());
+    }
+    assert.deepEqual(picked, ['mid'], `onPick 은 정확히 한 번만 불려야 한다(실제로는 ${picked.length}번)`);
+  } finally {
+    await harness.close();
+  }
+});
+
 // ── (c) VITE_CX_AUTH_CONFIG_URL 이 없으면(=부모가 이유를 넘기면) 간편인증이 비활성화 ──
 
 test('simpleAuthUnavailableReason 이 있으면 간편인증 버튼이 비활성화되고 이유가 보인다', async () => {
@@ -188,22 +226,26 @@ test('simpleAuthUnavailableReason 이 없으면 간편인증 버튼이 활성화
 // 훅 호출 순서(IdDocumentStep.jsx 상단 주석과 동일해야 한다):
 //   useState: documentType, imageUrl, imageLoaded, maskRatio, maskedConfirmed, busy, localError
 //   useRef:   imageRef(0), canvasRef(1), dragRef(2)
+// sequence 는 drawImage/fillRect 를 하나의 시간순 배열에 적재한다(길이만 세는 배열 두 개가
+// 아니다) — drawImage.length===1 && fillRect.length===1 은 fillRect 를 먼저 부르고
+// drawImage 로 원본을 그 위에 덧그려도(마스킹이 사라짐) 똑같이 통과해 버린다. 아래
+// __maskedBlobMarker 소비 테스트는 이 sequence 로 "그린 뒤 채웠는가"까지 확인한다.
 function fakeCanvasElement() {
-  const calls = { drawImage: [], fillRect: [] };
+  const sequence = [];
   return {
     width: 0,
     height: 0,
-    calls,
+    sequence,
     getContext: () => ({
-      drawImage: (...args) => calls.drawImage.push(args),
+      drawImage: (...args) => sequence.push({ op: 'drawImage', args }),
       set fillStyle(_v) {},
-      fillRect: (...args) => calls.fillRect.push(args),
+      fillRect: (...args) => sequence.push({ op: 'fillRect', args }),
     }),
     toBlob(resolve, type) {
       // 이 blob 은 원본 File 이 절대 아니다 — 캔버스가 방금 그리고 채운 결과를 대신하는
       // 표식(__maskedBlobMarker)일 뿐이다. 아래 테스트는 uploadIdDocument 가 이 표식을
       // 받는지, 원본 File 객체를 받는지를 가른다.
-      resolve({ __maskedBlobMarker: true, type, drawImageCalls: calls.drawImage.length, fillRectCalls: calls.fillRect.length });
+      resolve({ __maskedBlobMarker: true, type, sequence: [...sequence] });
     },
   };
 }
@@ -255,8 +297,17 @@ test('제출하면 원본 File 이 아니라 캔버스에서 뽑은 마스킹된
     // 핵심 계약: 넘어간 file 은 캔버스 blob 이지 원본 File 객체가 아니다.
     assert.notEqual(call.file, originalFile, '원본 File 객체가 그대로 넘어가면 안 된다');
     assert.equal(call.file.__maskedBlobMarker, true, 'uploadIdDocument 는 캔버스에서 뽑은 blob 을 받아야 한다');
-    assert.equal(call.file.drawImageCalls, 1, '캔버스에 이미지를 한 번은 그렸어야 한다');
-    assert.equal(call.file.fillRectCalls, 1, '전송 전 마스킹 사각형을 실제로 채웠어야 한다');
+    const drawImageCalls = call.file.sequence.filter((c) => c.op === 'drawImage');
+    const fillRectCalls = call.file.sequence.filter((c) => c.op === 'fillRect');
+    assert.equal(drawImageCalls.length, 1, '캔버스에 이미지를 한 번은 그렸어야 한다');
+    assert.equal(fillRectCalls.length, 1, '전송 전 마스킹 사각형을 실제로 채웠어야 한다');
+    // 핵심: drawImage 가 fillRect 보다 먼저다 — 뒤집히면 마스킹이 원본 아래 깔려 사라진다.
+    const drawImageIndex = call.file.sequence.findIndex((c) => c.op === 'drawImage');
+    const fillRectIndex = call.file.sequence.findIndex((c) => c.op === 'fillRect');
+    assert.ok(
+      drawImageIndex < fillRectIndex,
+      `drawImage(${drawImageIndex}) 가 fillRect(${fillRectIndex}) 보다 먼저 일어나야 한다`,
+    );
     // 캔버스 크기는 화면 표시 크기가 아니라 원본 이미지의 실제 픽셀 크기를 따라간다.
     assert.equal(fakeCanvas.width, 800);
     assert.equal(fakeCanvas.height, 600);
@@ -310,4 +361,121 @@ test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드
   } finally {
     await harness.close();
   }
+});
+
+// ── ModelRegister.jsx 배선 잠금 (리뷰 IMPORTANT 3) ──────────────────────────
+// 이 파일은 JSX 를 포함해 plain node 로 직접 import 할 수 없다(이 레포는 JSX 트랜스폼 없이
+// `node --test` 를 돈다) — 그래서 아래는 이 레포의 기존 관례(예:
+// facemarket-biometric-enrollment.test.mjs 의 "createEnrollment carries identityMethod...",
+// identity-scope.test.mjs 의 "콘티보드가 범위를 실제로 쓴다")를 그대로 따라 readFileSync +
+// 정규식으로 소스를 직접 대조한다. 각 테스트가 정확히 어떤 회귀를 잡는지 주석에 적는다.
+const modelRegisterSource = readFileSync(
+  new URL('../../src/features/model/ModelRegister.jsx', import.meta.url), 'utf8',
+);
+
+test('runCxWidget 은 enrollment.identityMethod 로 ENT_MID/ENT_SIMPLE_AUTH·설정 URL을 가른다', () => {
+  // 잡는 회귀: isSimpleAuth 판정 조건이 바뀌거나 없어짐.
+  assert.match(modelRegisterSource, /const isSimpleAuth = enrollment\?\.identityMethod === 'simple_auth';/);
+  // 잡는 회귀: 간편인증 분기가 ENT_MID 로, 또는 반대로 바뀜(위젯이 카테고리를 강제하는
+  // 실측 제약이 깨진다).
+  assert.match(modelRegisterSource, /\{ contentInfo: \{ signType: 'ENT_SIMPLE_AUTH' \}, compareCI: false, isBirth: true \}/);
+  assert.match(modelRegisterSource, /contentInfo: \{ signType: 'ENT_MID' \},/);
+  // 잡는 회귀: mid 분기에서 useConvertor:true 가 빠짐(라이브니스 매치의 유일한 초상 출처가
+  // 사라져 신분증 사진을 못 받는다).
+  assert.match(modelRegisterSource, /useConvertor: true,/);
+  // 잡는 회귀: configUrl 삼항이 뒤집혀 간편인증이 mid 설정(v1.0 경로)을 타거나 그 반대.
+  assert.match(modelRegisterSource, /const configUrl = isSimpleAuth \? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;/);
+  // 잡는 회귀: 간편인증 분기에서 dlphotoimage 를 여전히 portraitRef 에 담아 버림(그 경로는
+  // 그 필드를 만들지 않는데도 담으면 undefined 가 들어가 이후 "초상 있음" 판정이 흔들린다).
+  assert.match(modelRegisterSource, /if \(!isSimpleAuth\) portraitRef\.current = parsed\?\.data\?\.dlphotoimage;/);
+});
+
+test('runCxWidget 은 간편인증인데 설정 URL이 없으면 빈 URL로 위젯을 열지 않고 즉시 에러를 던진다', () => {
+  // 잡는 회귀: 이 방어 가드가 삭제되면 재개 등록(신규 진입 게이트를 거치지 않는 경로)이
+  // OACX.LOAD_MODULE('', …) 을 그대로 호출해 알 수 없는 에러로 실패한다(리뷰 "ALSO").
+  assert.match(
+    modelRegisterSource,
+    /if \(isSimpleAuth && !CX_AUTH_CONFIG_URL\) \{\s*\n\s*throw new Error\(/,
+  );
+});
+
+test('라이브니스 세션 이펙트는 간편인증이면 portraitRef 없이도 reidentify 로 튕기지 않는다', () => {
+  // 잡는 회귀: `enrollment?.identityMethod !== 'simple_auth' &&` 조건이 빠지면, 간편인증
+  // 사용자는 portraitRef 가 원래부터 비어 있으므로 라이브니스 진입 직전에 매번
+  // reidentify 로 잘못 튕긴다(정상 경로가 막힘).
+  assert.match(
+    modelRegisterSource,
+    /if \(enrollment\?\.identityMethod !== 'simple_auth' && !portraitRef\.current\) \{\s*\n\s*setStep\('reidentify'\);/,
+  );
+  // 잡는 회귀: 이 이펙트의 deps 에서 identityMethod 가 빠지면(enrollment 가 바뀌어도 이
+  // 이펙트가 최신 값을 못 보고 스킵 로직 판단이 낡은 값 기준으로 굳어질 수 있다).
+  assert.match(
+    modelRegisterSource,
+    /\}, \[enrollment\?\.id, enrollment\?\.identityMethod, session, step, livenessRequired\]\);/,
+  );
+});
+
+test('finishMatch 는 간편인증이면 idPhotoHex 를 요구하지도, /complete 에 싣지도 않는다', () => {
+  // 잡는 회귀: isSimpleAuth 일 때도 portraitRef.current 를 그대로 idPhotoHex 로 쓰면(항상
+  // null/undefined) 매 완료 시도가 "본인 확인 정보가 만료됐어요" 로 reidentify 로 튕긴다.
+  assert.match(
+    modelRegisterSource,
+    /const isSimpleAuth = enrollment\?\.identityMethod === 'simple_auth';\s*\n\s*const idPhotoHex = isSimpleAuth \? undefined : portraitRef\.current;\s*\n\s*if \(!isSimpleAuth && !idPhotoHex\) \{/,
+  );
+  // 잡는 회귀: finishMatch 의 deps 에서 identityMethod 가 빠짐(useCallback 이 낡은 클로저를
+  // 계속 반환해 이 판정 자체가 최신 enrollment 를 못 본다).
+  assert.match(
+    modelRegisterSource,
+    /\}, \[abandonLiveness, enrollment\?\.id, enrollment\?\.identityMethod, session, livenessRequired\]\);/,
+  );
+});
+
+test('startEnrollment 은 mid 가 아닌 identityMethod 만 요청 바디에 싣는다(mid 는 오늘과 바이트 단위로 동일)', () => {
+  // 잡는 회귀: 이 스프레드 조건이 사라지거나 'mid' 조건이 빠지면, FM_IDENTITY_METHODS=mid
+  // 인 발표/롤백 배포에서도 요청 바디가 오늘과 달라진다(계약: 안 보내던 필드를 보내면 안
+  // 된다). 조건이 뒤집히면(정확히 mid 일 때만 보냄) simple_auth 요청에 필드가 아예
+  // 빠져 서버가 mid 로 오인한다.
+  assert.match(
+    modelRegisterSource,
+    /\.\.\.\(identityMethod && identityMethod !== 'mid' \? \{ identityMethod \} : \{\}\),/,
+  );
+});
+
+test('동의 버튼은 메서드가 둘 이상일 때만 선택 화면으로 가고, 하나면 곧장 시작한다', () => {
+  // 잡는 회귀: 이 라우팅 조건이 사라지면 단일 메서드(mid) 배포에서도 선택 화면을 거치게
+  // 되거나(불필요한 클릭 발생, 브리프가 명시적으로 금지), 반대로 메서드가 둘인데도 선택
+  // 화면을 안 거치고 곧장 시작해 버려 사용자가 방법을 고를 기회가 없어진다.
+  assert.match(
+    modelRegisterSource,
+    /onClick=\{IDENTITY_METHODS\.length > 1\s*\n\s*\? \(\) => setStep\('method'\)\s*\n\s*: \(\) => startEnrollment\(IDENTITY_METHODS\[0\]\)\}/,
+  );
+});
+
+test('IdentityMethodStep 의 onPick 은 매 렌더 새 인라인 함수가 아니라 고정된 콜백이다', () => {
+  // 잡는 회귀: onPick 이 다시 인라인 화살표(`(method) => startEnrollment(method)`)로
+  // 바뀌면, 참조가 매 렌더 달라져 IdentityMethodStep 의 자동선택 effect 가 부모 리렌더마다
+  // 다시 돌 수 있다(리뷰 IMPORTANT 2 — 중복 등록 생성 위험). handleMethodPick(useCallback,
+  // deps 없음)로 참조를 고정해 뒀는지 직접 확인한다.
+  assert.match(modelRegisterSource, /const handleMethodPick = useCallback\(\(method\) => startEnrollment\(method\), \[\]\);/);
+  assert.match(modelRegisterSource, /onPick=\{handleMethodPick\}/);
+  assert.doesNotMatch(modelRegisterSource, /onPick=\{\(method\) => startEnrollment\(method\)\}/);
+});
+
+test('신분증 업로드가 성공하면 부모 에러 배너를 지운다(재시도 성공 후 낡은 메시지가 다음 스텝에 남지 않게)', () => {
+  // 잡는 회귀(리뷰 IMPORTANT 1): IdDocumentStep 의 onError 가 부모 setError 를 채운 뒤,
+  // 재시도가 성공해도 finishIdDocument 가 setError('') 를 안 부르면 다음 스텝(예: identity)
+  // 에서 지난 실패 메시지가 그대로 떠 있는다(그 스텝은 하단 공용 배너 제외 목록에 없다).
+  const start = modelRegisterSource.indexOf('const finishIdDocument = async () => {');
+  assert.ok(start >= 0, 'finishIdDocument 정의를 찾을 수 없다');
+  const end = modelRegisterSource.indexOf('const finishPhotos = async () => {', start);
+  assert.ok(end > start, 'finishIdDocument 함수 끝(다음 함수 시작 전)을 찾을 수 없다');
+  const body = modelRegisterSource.slice(start, end);
+  assert.match(body, /setEnrollment\(current\);/);
+  assert.match(body, /setError\(''\);/);
+  assert.match(body, /setStep\(nextEnrollmentStep\(current\)\);/);
+  // 순서: setEnrollment → setError('') → setStep — setError 가 setStep 보다 먼저(또는 적어도
+  // 그 사이에) 있어야 다음 스텝이 그리기 전에 배너가 지워진다.
+  const errorIndex = body.indexOf("setError('');");
+  const setStepIndex = body.indexOf('setStep(nextEnrollmentStep(current));');
+  assert.ok(errorIndex < setStepIndex, "setError('') 가 setStep 보다 먼저 일어나야 한다");
 });

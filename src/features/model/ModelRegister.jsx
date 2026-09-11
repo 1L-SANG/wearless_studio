@@ -20,6 +20,7 @@ import {
 import { ModelFaceUpload } from './ModelFaceUpload.jsx';
 import IdentityMethodStep from './IdentityMethodStep.jsx';
 import IdDocumentStep from './IdDocumentStep.jsx';
+import { deriveSimpleAuthUnavailableReason, parseIdentityMethods } from './identityMethodConfig.js';
 import {
   ENROLLMENT_ANGLES,
   initialRegistrationStep,
@@ -51,15 +52,13 @@ const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
 // 버전이 다르다(v1.5). 이 값이 없는데 mid 설정으로 간편인증 위젯을 열면 v1.0 경로를 타서
 // 조용히 실패하므로, 없으면 아예 간편인증 버튼을 막는다(IdentityMethodStep 에 이유를 넘김).
 const CX_AUTH_CONFIG_URL = import.meta.env.VITE_CX_AUTH_CONFIG_URL || '';
-const SIMPLE_AUTH_UNAVAILABLE_REASON = CX_AUTH_CONFIG_URL
-  ? null
-  : '간편인증은 지금 설정되지 않았어요. 모바일 신분증으로 확인해 주세요.';
+// 파생 로직(삼항 방향 포함)은 identityMethodConfig.js 에 순수 함수로 뽑아 뒀다 — 이 파일은
+// JSX 를 포함해 plain node 테스트가 직접 import 할 수 없어서, 그 로직만 따로 값 단위로
+// 검증하려면 이렇게 갈라야 한다(리뷰 IMPORTANT 4).
+const SIMPLE_AUTH_UNAVAILABLE_REASON = deriveSimpleAuthUnavailableReason(CX_AUTH_CONFIG_URL);
 // 발표/롤백 모드(FM_IDENTITY_METHODS=mid)에서 이 배열 길이가 1 이면 IdentityMethodStep 이
 // 화면을 그리지 않고 즉시 그 방법으로 진행한다 — 값을 이 위저드가 소비하는 유일한 지점이다.
-const IDENTITY_METHODS = (import.meta.env.VITE_FM_IDENTITY_METHODS || 'mid')
-  .split(',')
-  .map((method) => method.trim())
-  .filter(Boolean);
+const IDENTITY_METHODS = parseIdentityMethods(import.meta.env.VITE_FM_IDENTITY_METHODS);
 const DEVICE_KEY = 'wearless.fmDeviceId';
 const CONSENT_VERSION = '2026-08-v2';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
@@ -310,17 +309,23 @@ export function ModelRegister() {
   // OACX(모바일 신분증) 위젯을 #oacxDiv 에 띄워 신분증 초상(dlphotoimage HEX)을 portraitRef 에
   // 담고 인증 토큰을 돌려준다. runIdentity(앞단 CI 게이트)와 reCaptureIdentity(초상 재확보) 공용.
   const runCxWidget = useCallback(async () => {
+    // ENT_MID(모바일 신분증)와 ENT_SIMPLE_AUTH(간편인증)는 한 위젯 호출을 공유할 수 없다
+    // (실측: ENT_MID 를 얹으면 위젯이 자체 카테고리 목록을 강제한다) — 그래서 설정 URL·옵션을
+    // 인증 수단별로 통째로 가른다. 간편인증은 설정 URL 이 v1.5 API 경로를 쓰므로
+    // CX_AUTH_CONFIG_URL 이 없는데 CX_CONFIG_URL(mid, v1.0)로 열면 조용히 실패한다 —
+    // 새로 시작하는 경우는 IdentityMethodStep 이 버튼 자체를 막아 이 지점에 안 온다. 다만
+    // 이미 simple_auth 로 시작해 이어서 진행 중인 등록은 그 게이트를 거치지 않고 바로 이
+    // 함수로 온다 — 이 빌드에 그 설정이 아예 빠져 있으면(재배포로 env 가 빠진 경우 등)
+    // 빈 문자열로 OACX.LOAD_MODULE('', …) 을 여는 대신 여기서 명확한 에러로 멈춘다.
+    const isSimpleAuth = enrollment?.identityMethod === 'simple_auth';
+    if (isSimpleAuth && !CX_AUTH_CONFIG_URL) {
+      throw new Error('간편인증 설정이 없어 인증 화면을 열 수 없어요. 잠시 후 다시 시도해 주세요.');
+    }
     // 이전 시도(취소 포함)의 위젯 DOM 을 비워 재시도 시 깨끗한 창이 뜨게 한다.
     const oacxHost = typeof document !== 'undefined' ? document.getElementById('oacxDiv') : null;
     if (oacxHost) oacxHost.replaceChildren();
     await loadCxWidget();
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    // ENT_MID(모바일 신분증)와 ENT_SIMPLE_AUTH(간편인증)는 한 위젯 호출을 공유할 수 없다
-    // (실측: ENT_MID 를 얹으면 위젯이 자체 카테고리 목록을 강제한다) — 그래서 설정 URL·옵션을
-    // 인증 수단별로 통째로 가른다. 간편인증은 설정 URL 이 v1.5 API 경로를 쓰므로
-    // CX_AUTH_CONFIG_URL 이 없는데 CX_CONFIG_URL(mid, v1.0)로 열면 조용히 실패한다 —
-    // 그 경우는 IdentityMethodStep 이 버튼 자체를 막아 이 지점에 아예 도달하지 않는다.
-    const isSimpleAuth = enrollment?.identityMethod === 'simple_auth';
     const options = isSimpleAuth
       ? { contentInfo: { signType: 'ENT_SIMPLE_AUTH' }, compareCI: false, isBirth: true }
       : {
@@ -417,6 +422,10 @@ export function ModelRegister() {
       const current = await getEnrollment(enrollment.id);
       if (!mounted.current) return;
       setEnrollment(current);
+      // 이전 시도에서 IdDocumentStep 의 onError 가 남겨 둔 부모 배너를 지운다 — 안 지우면
+      // 재시도가 성공해 다음 스텝(identity 등)으로 넘어가도 지난 실패 메시지가 그 화면에
+      // 그대로 떠 있는다(그 스텝은 하단 공용 배너 제외 목록에 없다).
+      setError('');
       setStep(nextEnrollmentStep(current));
     } catch (requestError) {
       if (!mounted.current) return;
@@ -755,6 +764,16 @@ export function ModelRegister() {
     return () => { active = false; };
   }, [completionHandoff, enrollment?.bodyType, enrollment?.gender, enrollment?.heightBucket, enrollment?.modelId, navigate, step]);
 
+  // IdentityMethodStep 은 methods.length===1 이면 onPick 을 effect 로 자동 호출한다 — 그게
+  // 그 컴포넌트의 계약 전부다. onPick 이 매 렌더 새 함수 참조면(예전엔 JSX 에서 인라인
+  // 화살표로 넘겼다) 그 effect 가 deps 변경으로 다시 돌아 startEnrollment 를 이미 진행
+  // 중인 요청 위에 한 번 더 부를 수 있다(중복 등록 생성). 오늘은 consent 버튼이
+  // methods.length>1 일 때만 'method' 스텝으로 가서 우연히 이 경로에 안 걸리지만, 컴포넌트
+  // 자체의 계약은 호출부 사정과 무관하게 지켜져야 한다 — 참조를 여기서 고정한다.
+  // startEnrollment 는 setState 함수·ref·모듈 상수만 닫아 두므로(렌더마다 바뀌는 상태를
+  // 직접 읽지 않으므로) deps 없이 고정해도 안전하다.
+  const handleMethodPick = useCallback((method) => startEnrollment(method), []);
+
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
   // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
@@ -917,7 +936,7 @@ export function ModelRegister() {
       {step === 'method' && (
         <IdentityMethodStep
           methods={IDENTITY_METHODS}
-          onPick={(method) => startEnrollment(method)}
+          onPick={handleMethodPick}
           simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON}
         />
       )}
