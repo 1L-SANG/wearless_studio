@@ -1,6 +1,7 @@
 """환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
+import pathlib
 from dataclasses import dataclass
 
 
@@ -475,6 +476,20 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     return v if v in allowed else default
 
 
+def _build_sha() -> str | None:
+    """이 이미지가 어느 커밋으로 빌드됐는가 — CI 가 배포 직전에 server/BUILD_SHA 에 쓴다.
+
+    얼굴 렌더 파드에 **서버와 같은 sha 의 코드 묶음**을 주기 위한 값이다(R2 키가 그 sha).
+    env(FACE_RENDER_CODE_VERSION)가 있으면 그게 우선 — 로컬·수동 실행에서 덮어쓰는 자리다.
+    파일이 없으면 None: 어댑터가 "코드 묶음 sha 가 없다"고 알린다(지어내지 않는다).
+    """
+    try:
+        text = (pathlib.Path(__file__).resolve().parents[1] / "BUILD_SHA").read_text()
+    except OSError:
+        return None
+    return text.strip() or None
+
+
 def _int_env(env: str, default: int) -> int:
     """보조 기능의 정수 설정 — 오타가 API 기동을 죽이면 안 되므로 기본값으로 폴백한다."""
     raw = (os.getenv(env) or "").strip()
@@ -712,7 +727,7 @@ def load_settings() -> Settings:
         face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
         face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
         face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
-        face_render_code_version=os.getenv("FACE_RENDER_CODE_VERSION") or None,
+        face_render_code_version=(os.getenv("FACE_RENDER_CODE_VERSION") or _build_sha()),
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"

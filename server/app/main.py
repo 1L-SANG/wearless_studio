@@ -112,6 +112,10 @@ def _validate_facemarket_vc_settings(settings: Settings) -> None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
     settings = settings or load_settings()
+    # 지금 도는 코드가 어느 커밋인가 — 얼굴 렌더 파드에 **같은 sha 의 코드 묶음**을 주는 근거다.
+    # 없으면 그 사실이 로그에 남아야 한다(조용히 빈 값으로 도는 것을 막는다).
+    logging.getLogger("wearless.api").info(
+        "code version=%s", settings.face_render_code_version or "unknown")
     job_kinds = configured_job_kinds()
     detail_worker_only = job_kinds == ("detail_page",)
 
@@ -233,6 +237,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     pod_store=FaceRenderPodStore(pool) if pool is not None else None,
                     code_url_provider=(
                         (lambda key: _face_r2.preview_url(key, expires=900))
+                        if _face_r2 is not None else None),
+                    # 내용 해시는 업로드 때 붙인 R2 메타에서 읽는다(키는 커밋 sha 라 내용과 다르다).
+                    code_head_provider=(
+                        (lambda key: (_face_r2.head(key) or {}).get("metadata"))
                         if _face_r2 is not None else None),
                 )
                 app.state.face_autoscaler = SamAutoscaler(

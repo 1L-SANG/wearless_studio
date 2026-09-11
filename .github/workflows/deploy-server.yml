@@ -38,8 +38,13 @@ on:
     workflow_dispatch: {} # 수동 배포 버튼
 
 concurrency:
-    group: deploy-server
-    cancel-in-progress: false # 배포 중첩 방지 (롤링 중 새 배포 대기)
+    # PR 실행과 main 배포가 같은 그룹을 쓰면, **대기 중인 배포가 새 PR 푸시에 취소된다**
+    # (2026-09-11 두 번 발생). PR 은 브랜치별로 묶어 최신 것만 남기고(cancel-in-progress),
+    # main 배포는 단독 그룹에서 앞 배포가 끝날 때까지 기다린다.
+    group: >-
+        deploy-server-${{ github.event_name == 'pull_request'
+        && format('pr-{0}', github.head_ref) || 'main' }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
     id-token: write # AWS OIDC assume-role
@@ -198,7 +203,7 @@ jobs:
             # 읽지 못하면 배포를 막지 않고 경고만 남긴다 — 그 경우 자동 생성된 파드는 코드를 받지
             # 못하고, 어댑터가 그 사실을 CRITICAL 로 알린다.
             - name: 얼굴 렌더 코드 묶음 업로드 (R2)
-              continue-on-error: true      # 배포는 계속하되, 실패하면 이 단계가 빨갛게 보인다
+              continue-on-error: true      # R2 문제로 API 배포를 막지는 않는다(단계는 빨갛게 보인다)
               env:
                   # R2_ENDPOINT·R2_FACE_BUCKET 은 **SSM 이 아니라 매니페스트 평문**이다
                   # (copilot/api/manifest.yml). 이전 판은 이 둘까지 SSM 에서 읽어 항상 빈 값이
@@ -227,21 +232,35 @@ jobs:
                   export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
                   export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
                   export AWS_DEFAULT_REGION=auto
-                  if ! aws s3 cp dist/face_render.tgz "s3://$R2_FACE_BUCKET/$KEY" \
-                       --endpoint-url "$R2_ENDPOINT" --only-show-errors; then
+                  # ★ OIDC 로 받은 AWS_SESSION_TOKEN 이 env 에 남아 있으면 R2 가 거부한다
+                  #   (PutObject … InvalidArgument: X-Amz-Security-Token). R2 호출에서만 지운다 —
+                  #   SSM 읽기는 그 토큰이 있어야 한다.
+                  r2() { env -u AWS_SESSION_TOKEN aws "$@" --endpoint-url "$R2_ENDPOINT"; }
+                  if ! r2 s3 cp dist/face_render.tgz "s3://$R2_FACE_BUCKET/$KEY" \
+                       --metadata "sha256=$SHA" --only-show-errors; then
                     echo "::error::R2 업로드 실패: $KEY"
                     exit 1
                   fi
-                  # 올렸다는 응답만 믿지 않는다 — 실제로 그 키가 있는지 확인한다.
-                  if ! aws s3api head-object --bucket "$R2_FACE_BUCKET" --key "$KEY" \
-                       --endpoint-url "$R2_ENDPOINT" > /dev/null; then
-                    echo "::error::업로드 후 객체를 찾지 못했습니다: $KEY"
+                  # 올렸다는 응답만 믿지 않는다 — 키가 실제로 있고 **내용 해시 메타**까지 맞는지 본다.
+                  # 서버는 키를 커밋 sha 로 찾고, 파드에 넘길 CODE_SHA256 은 이 메타에서 읽는다.
+                  GOT="$(r2 s3api head-object --bucket "$R2_FACE_BUCKET" --key "$KEY" \
+                         --query 'Metadata.sha256' --output text 2>/dev/null || true)"
+                  if [ "$GOT" != "$SHA" ]; then
+                    echo "::error::업로드 후 확인 실패: $KEY (metadata sha256=$GOT)"
                     exit 1
                   fi
                   echo "uploaded and verified $KEY"
 
             # API가 detail_page claim을 끊기 전에 desiredCount=0 서비스를 먼저 만든다.
             # 역순이면 첫 detail 잡이 아무도 claim하지 않는 배포 공백이 생긴다.
+            # 서버가 "지금 도는 코드가 어느 커밋인가"를 알아야 파드에 같은 sha 의 묶음을 준다.
+            # copilot 의 ${VAR} 보간에 기대지 않고 빌드 컨텍스트에 파일로 굽는다 — api·detail-worker
+            # 가 같은 컨텍스트(server/)를 쓰므로 한 번만 쓰면 둘 다 같은 값을 갖는다.
+            - name: 빌드 sha 굽기 (server/BUILD_SHA)
+              run: |
+                  printf '%s\n' "$GITHUB_SHA" > server/BUILD_SHA
+                  echo "BUILD_SHA=$GITHUB_SHA"
+
             - name: 상세 워커 배포 (Spot 0대)
               run: |
                   copilot svc deploy \

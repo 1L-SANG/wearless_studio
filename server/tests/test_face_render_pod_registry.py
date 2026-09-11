@@ -88,11 +88,13 @@ class _Store:
         self.retired.append(pod_id)
 
 
-CODE_SHA = "a" * 40
+#: 커밋 sha(=R2 키의 좌표)와 묶음 **내용** 해시는 다른 값이다.
+CODE_SHA = "a" * 40          # 커밋 sha — 키가 된다
+CONTENT_SHA = "b" * 64       # 묶음 내용 sha256 — 파드가 받은 파일을 대조하는 값
 CODE_URL = "https://acct.r2.cloudflarestorage.com/wearless-face/face_render/x.tgz?sig=zzz"
 
 
-def _adapter(client, store=None, *, code_urls=None, **over):
+def _adapter(client, store=None, *, code_urls=None, head_meta=..., **over):
     kw = {"gemini_api_key": "x", "r2_bucket": "b", "face_autoscale": "on",
           "face_runpod_api_key": "k", "face_runpod_pod_id": OLD_POD,
           "face_render_code_version": CODE_SHA}
@@ -102,8 +104,10 @@ def _adapter(client, store=None, *, code_urls=None, **over):
         def provider(key):
             code_urls.append(key)
             return CODE_URL
+    meta = {"sha256": CONTENT_SHA} if head_meta is ... else head_meta
+    head = (lambda key: meta) if code_urls is not None else None
     return RunpodAutoscaleAdapter(make_settings(**kw), client=client, pod_store=store,
-                                  code_url_provider=provider)
+                                  code_url_provider=provider, code_head_provider=head)
 
 
 # ── URL 유도 ──
@@ -280,7 +284,9 @@ def test_create_carries_a_fresh_code_url_and_sha():
     asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
     body_env = client.creates[0]["env"]
     assert body_env["CODE_TARBALL_URL"] == CODE_URL
-    assert body_env["CODE_SHA256"] == CODE_SHA
+    # 키는 커밋 sha, 검증값은 **묶음 내용 해시**다. 하나로 같이 쓰면 bootstrap 의 sha256 대조가
+    # 항상 틀려 파드가 매번 exit 78 로 죽는다(2026-09-11 운영에서 그랬다).
+    assert body_env["CODE_SHA256"] == CONTENT_SHA
     assert urls == [code_tarball_key(CODE_SHA)] * 2     # start 직전 + create 직전
 
 
@@ -403,3 +409,43 @@ def test_a_real_config_error_still_disables():
     a = _adapter(_Client(), _Store(active=None), face_runpod_api_key=None,
                  face_runpod_pod_id=None)
     assert asyncio.run(a.discover()) is None
+
+
+def test_code_key_is_the_commit_sha_and_verification_is_the_content_hash():
+    urls = []
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls)
+    a.begin_cycle()
+    asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    assert urls[0] == f"face_render/{CODE_SHA}.tgz"        # 좌표 = 커밋 sha
+    assert client.creates[0]["env"]["CODE_SHA256"] == CONTENT_SHA   # 검증값 = 내용 해시
+    assert CODE_SHA != CONTENT_SHA
+
+
+def test_missing_bundle_metadata_sends_no_code_env_and_alerts(caplog):
+    import logging
+
+    urls = []
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls, head_meta=None)
+    a.begin_cycle()
+    with caplog.at_level(logging.CRITICAL):
+        asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    env = client.creates[0]["env"]
+    assert "CODE_TARBALL_URL" not in env and "CODE_SHA256" not in env   # 지어내지 않는다
+    assert urls == []                                                   # URL 도 안 만든다
+    criticals = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert criticals and "코드 묶음" in criticals[0].getMessage()
+
+
+def test_code_alert_is_debounced(caplog):
+    import logging
+
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=[], head_meta={})
+    with caplog.at_level(logging.CRITICAL):
+        a.begin_cycle()
+        asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+        a.begin_cycle()
+        asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    assert len([r for r in caplog.records if r.levelno == logging.CRITICAL]) == 1
