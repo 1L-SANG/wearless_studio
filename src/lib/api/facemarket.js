@@ -264,6 +264,18 @@ export function adminRejectEnrollment(enrollmentId, reason) {
   });
 }
 
+// 신분증·등록 사진 스트림: 게이트 라우트라 <img src> 로 못 건다(adminFetchApplicationPhotoUrl
+// 과 같은 이유). 응답이 no-store 라 이 objectURL 도 캐시가 아니다 — 카드가 닫히면 호출자가
+// revokeObjectURL 로 즉시 해제해야 한다(생체 이미지를 앱 상태에 오래 남기지 않는다).
+export async function adminFetchEnrollmentImageUrl(enrollmentId, kind) {
+  const res = await _authFetch(
+    `/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/images/${encodeURIComponent(kind)}`,
+  );
+  if (!res.ok) throw new Error('이미지를 불러오지 못했어요.');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
 // 전부 서버가 admin_guard.require_admin 을 강제한다(비관리자는 403).
 
