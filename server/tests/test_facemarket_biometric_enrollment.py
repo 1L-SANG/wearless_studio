@@ -187,6 +187,9 @@ class FakeCursor:
         params = params or ()
         self.result = None
         self.many = []
+        # 라우트가 보는 값 — 상태 가드 UPDATE 는 rowcount 로 승패를 가른다(신분증 업로드의
+        # 보상 삭제가 그 위에 걸려 있다). 분기가 안 잡히면 0 이 남아 "졌다"로 읽힌다.
+        self.rowcount = 0
 
         if (
             "kind = 'personalization_purge'" in query
@@ -917,6 +920,31 @@ class FakeCursor:
             )
             if row["status"] == "liveness_pending":
                 row["status"] = "photos_pending"
+        elif query.startswith(
+            "update fm_biometric_enrollments set status = 'identity_pending', "
+            "id_document_r2_key"
+        ):
+            # 신분증 업로드 성공 전이(status 가드 포함) — 라우트는 rowcount 로 승패를 본다.
+            key, document_type, enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id
+                    and item["user_id"] == user_id
+                    and item["status"] == "id_capture_pending"
+                ),
+                None,
+            )
+            if row is not None:
+                row.update(
+                    status="identity_pending",
+                    id_document_r2_key=key,
+                    id_document_type=document_type,
+                    id_document_uploaded_at=self.store.now,
+                    id_document_purged_at=None,
+                )
+                self.rowcount = 1
         elif query.startswith("update fm_biometric_enrollments e set status = 'cancelled'"):
             enrollment_id, user_id = params
             row = next(
