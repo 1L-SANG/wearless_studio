@@ -14,9 +14,21 @@
    카드로 새어 들어가면 안 된다.
 
    이미지는 게이트 라우트(no-store, private)라 <img src> 로 못 건다 — 인증 fetch 로
-   받아 objectURL 을 만들고(adminFetchEnrollmentImageUrl), 카드가 닫히면(언마운트)
-   즉시 해제한다. 생체 이미지를 앱 상태에 오래 남기지 않고, 어디에도 로그로 남기지
-   않는다.
+   받아 objectURL 을 만들고(adminFetchGatedImageUrl), 카드가 닫히면(언마운트)
+   즉시 해제한다. 경로는 서버가 카드 응답에 실어 준 `images` 맵을 그대로 쓴다 —
+   프런트가 URL 을 다시 조립하지 않는다(fix round 1, minor: 재조립은 서버가 라우트
+   프리픽스를 바꿀 때 두 곳을 나란히 고쳐야 하는 드리프트 위험이다). 생체 이미지를
+   앱 상태에 오래 남기지 않고, 어디에도 로그로 남기지 않는다.
+
+   지원서 프로필 사진(제3의 독립 얼굴 사진 — 지원~등록 사이 인물 스왑을 잡는 단서)은
+   기존 관리자 지원서 사진 라우트(adminFetchApplicationPhotoUrl, Task6/facemarket_applications.py)
+   를 그대로 재사용한다 — 새 이미지 라우트를 만들지 않는다(fix round 1, SPEC GAP 2).
+
+   지원서 이름·생년월일이 신분증과 몇 번 어긋났는지(identityMismatchCount)도 카드에
+   낸다 — mid 전용이 아니다: 게이트는 identity_method 가 아니라
+   `fm_application_required and application_id` 뿐이라(facemarket_enrollment.py :1170
+   근처) simple_auth 등록도 이 카운터가 오른다(fix round 1, SPEC GAP 1 — 리뷰가 이
+   전제를 잘못 짚었던 것도 정정됨).
 
    승인·거절 직후 카드를 닫고 큐를 새로고침한다 — 신분증은 결정과 동시에 파기되므로
    다시 불러오면 404 다.
@@ -32,11 +44,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/admin-ui/table.jsx';
 import {
-  adminApproveEnrollment, adminEnrollmentCard, adminFetchEnrollmentImageUrl,
-  adminListEnrollments, adminRejectEnrollment,
+  adminApproveEnrollment, adminEnrollmentCard, adminFetchApplicationPhotoUrl,
+  adminFetchGatedImageUrl, adminListEnrollments, adminRejectEnrollment,
 } from '@/lib/api/facemarket.js';
 import { seoulDateTime } from '@/lib/datetime.js';
-import { scoreRow } from './enrollmentReviewMath.js';
+import { finalRejectReason, scoreRow } from './enrollmentReviewMath.js';
 
 const REVIEW_FILTERS = [
   { value: 'pending', label: '대기' },
@@ -110,20 +122,24 @@ function ScoreLine({ angle, scores, thresholds }) {
 
 /* 신분증·등록 사진 한 장. ApplicantPhoto(AdminApplications.jsx)와 같은 모양이지만, 승인·
    거절 직후 신분증이 파기되므로 404 를 "아직 로딩 중"이 아니라 "볼 수 없음"으로 분리해
-   보여준다 — 안 그러면 결정된 카드를 다시 열었을 때 스켈레톤이 영원히 돈다. */
-function EnrollmentImage({ enrollmentId, kind, label }) {
+   보여준다 — 안 그러면 결정된 카드를 다시 열었을 때 스켈레톤이 영원히 돈다.
+
+   imagePath 는 카드 응답의 `images[kind]` 를 그대로 받는다 — 이 컴포넌트가 URL 을
+   다시 조립하지 않는다(fix round 1, minor). */
+function EnrollmentImage({ imagePath, kind, label }) {
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    if (!imagePath) { setUrl(null); setFailed(true); return undefined; }
     let alive = true;
     let objectUrl = null;
     setUrl(null);
     setFailed(false);
-    adminFetchEnrollmentImageUrl(enrollmentId, kind)
+    adminFetchGatedImageUrl(imagePath)
       .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [enrollmentId, kind]);
+  }, [imagePath]);
   return (
     <figure className="flex w-28 shrink-0 flex-col gap-1">
       {failed && (
@@ -134,6 +150,40 @@ function EnrollmentImage({ enrollmentId, kind, label }) {
       {!failed && !url && <Skeleton className="h-36 w-28" />}
       {!failed && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt={`등록 ${label} 이미지`} />}
       <figcaption className="text-center text-xs text-muted-foreground">{label}</figcaption>
+    </figure>
+  );
+}
+
+/* 지원서 프로필 사진 — 신분증·등록 사진 3장과는 다른 시점에 찍힌 제3의 독립 얼굴
+   사진이다. 지원 시점과 등록 시점 사이 인물이 바뀌었는지(스왑) 심사자가 다른 두
+   세트와 눈으로 대조할 수 있게 낸다. 새 이미지 라우트를 만들지 않고 기존 관리자
+   지원서 사진 라우트(같은 admin_guard, 같은 private/no-store)를 그대로 재사용한다
+   (fix round 1, SPEC GAP 2). application_id 가 없거나(지원서 없이 등록) 사진이 없는
+   지원서(구버전)면 404 인데, 이건 "파기됨"이 아니라 "원래 없음"이라 다른 문구를 쓴다. */
+function ApplicationProfilePhoto({ applicationId }) {
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!applicationId) { setUrl(null); setFailed(true); return undefined; }
+    let alive = true;
+    let objectUrl = null;
+    setUrl(null);
+    setFailed(false);
+    adminFetchApplicationPhotoUrl(applicationId, 'profile')
+      .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [applicationId]);
+  return (
+    <figure className="flex w-28 shrink-0 flex-col gap-1">
+      {failed && (
+        <div className="flex h-36 items-center justify-center rounded-md bg-muted px-1 text-center text-xs text-muted-foreground">
+          지원서 사진 없음
+        </div>
+      )}
+      {!failed && !url && <Skeleton className="h-36 w-28" />}
+      {!failed && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
+      <figcaption className="text-center text-xs text-muted-foreground">지원서 프로필</figcaption>
     </figure>
   );
 }
@@ -184,7 +234,10 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
 
   const pending = card.reviewStatus === 'pending';
   const presetLabel = REJECT_REASON_PRESETS.find((r) => r.value === reasonPreset)?.label || '';
-  const finalReason = reasonPreset === 'other' ? reasonFreeText.trim() : presetLabel;
+  // finalRejectReason 이 trim 을 전담한다(enrollmentReviewMath.js) — 공백만 입력해도
+  // "   " 는 truthy 라 !finalReason 가드를 통과해 버리는 사고를 이 컴포넌트가 아니라
+  // 직접 테스트 가능한 순수 함수가 막는다(fix round 1, IMPORTANT).
+  const finalReason = finalRejectReason(reasonPreset, reasonFreeText, presetLabel);
 
   // 결정이 끝나면(성공이든 asset_build_error 든) 카드를 닫고 큐를 새로고침한다 — 신분증이
   // 파기돼 다시 불러오면 404 다. 409(다른 관리자가 먼저 처리)도 같은 처리 — 지금 보고
@@ -244,26 +297,44 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-5 text-sm">
         <section>
-          <h4 className="mb-2 text-xs font-medium text-muted-foreground">신분증·등록 사진</h4>
+          <h4 className="mb-2 text-xs font-medium text-muted-foreground">신분증·등록 사진·지원서 사진</h4>
           <div className="flex flex-wrap gap-3">
             {IMAGE_KINDS.map(({ kind, label }) => (
-              <EnrollmentImage key={kind} enrollmentId={card.id} kind={kind} label={label} />
+              <EnrollmentImage key={kind} imagePath={card.images?.[kind]} kind={kind} label={label} />
             ))}
+            {/* 지원서가 있고(application_id) 그 지원서에 프로필 사진이 실제로 있을 때만
+                (hasProfileImage) 슬롯을 낸다 — AdminApplications.jsx 의 hasProfileImage
+                게이트와 같은 관례: 무턱대고 fetch 를 걸어 404 를 받는 대신, 서버가 이미
+                아는 사실(그 지원서에 사진이 있는지)을 그대로 쓴다(fix round 1). */}
+            {card.applicationId && app?.hasProfileImage && (
+              <ApplicationProfilePhoto applicationId={card.applicationId} />
+            )}
           </div>
         </section>
 
         <section>
           <h4 className="mb-1 text-xs font-medium text-muted-foreground">지원서</h4>
           {app ? (
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
-              <div><dt className="text-xs text-muted-foreground">이름</dt><dd className="truncate">{app.applicantName || '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">생년월일</dt><dd className="truncate">{app.birthdate || '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">성별</dt><dd className="truncate">{app.gender === 'male' ? '남성' : app.gender === 'female' ? '여성' : '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">지역</dt><dd className="truncate">{app.region || '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">키</dt><dd className="truncate">{app.heightCm ? `${app.heightCm}cm` : '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">몸무게</dt><dd className="truncate">{app.weightKg != null ? `${app.weightKg}kg` : '-'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">전화</dt><dd className="truncate">{app.phone || '-'}</dd></div>
-            </dl>
+            <>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                <div><dt className="text-xs text-muted-foreground">이름</dt><dd className="truncate">{app.applicantName || '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">생년월일</dt><dd className="truncate">{app.birthdate || '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">성별</dt><dd className="truncate">{app.gender === 'male' ? '남성' : app.gender === 'female' ? '여성' : '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">지역</dt><dd className="truncate">{app.region || '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">키</dt><dd className="truncate">{app.heightCm ? `${app.heightCm}cm` : '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">몸무게</dt><dd className="truncate">{app.weightKg != null ? `${app.weightKg}kg` : '-'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">전화</dt><dd className="truncate">{app.phone || '-'}</dd></div>
+              </dl>
+              {/* identity_mismatch_count 는 identity_method 로 안 갈린다 — simple_auth
+                  등록도 지원서 이름·생년월일이 신분증과 이미 몇 번 어긋났는지 오른다
+                  (fix round 1, SPEC GAP 1). 0 이면 굳이 안 보여준다(0 회는 안심 신호가
+                  아니라 그냥 '아직 문제 없었다'라 강조할 정보가 아니다). */}
+              {app.identityMismatchCount > 0 && (
+                <p className="mt-2 text-xs text-destructive">
+                  지원서에 적은 이름·생년월일이 신분증과 {app.identityMismatchCount}회 일치하지 않았어요.
+                </p>
+              )}
+            </>
           ) : <p className="text-muted-foreground">연결된 지원서가 없어요.</p>}
         </section>
 

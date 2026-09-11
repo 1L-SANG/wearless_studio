@@ -265,12 +265,14 @@ export function adminRejectEnrollment(enrollmentId, reason) {
 }
 
 // 신분증·등록 사진 스트림: 게이트 라우트라 <img src> 로 못 건다(adminFetchApplicationPhotoUrl
-// 과 같은 이유). 응답이 no-store 라 이 objectURL 도 캐시가 아니다 — 카드가 닫히면 호출자가
-// revokeObjectURL 로 즉시 해제해야 한다(생체 이미지를 앱 상태에 오래 남기지 않는다).
-export async function adminFetchEnrollmentImageUrl(enrollmentId, kind) {
-  const res = await _authFetch(
-    `/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/images/${encodeURIComponent(kind)}`,
-  );
+// 과 같은 이유). 경로는 호출부가 카드 응답의 `images` 맵에서 그대로 받아 넘긴다 — 프런트가
+// `/v1/facemarket/admin/enrollments/{id}/images/{kind}` 를 다시 조립하면, 서버가 라우트
+// 프리픽스를 바꿀 때 두 곳을 나란히 고쳐야 한다(fix round 1, minor: 서버가 이미 만들어
+// 준 값을 프런트가 버리고 재조립하는 건 드리프트 위험). 응답이 no-store 라 이 objectURL 도
+// 캐시가 아니다 — 카드가 닫히면 호출자가 revokeObjectURL 로 즉시 해제해야 한다(생체
+// 이미지를 앱 상태에 오래 남기지 않는다).
+export async function adminFetchGatedImageUrl(path) {
+  const res = await _authFetch(path);
   if (!res.ok) throw new Error('이미지를 불러오지 못했어요.');
   const blob = await res.blob();
   return URL.createObjectURL(blob);

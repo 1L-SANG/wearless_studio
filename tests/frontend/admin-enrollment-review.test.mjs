@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { scoreRow } from '../../src/features/admin/enrollmentReviewMath.js';
+import { finalRejectReason, scoreRow } from '../../src/features/admin/enrollmentReviewMath.js';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
@@ -50,6 +50,15 @@ test('scoreRow: 점수가 없으면(그 각도에서 얼굴을 못 찾음) muted
   assert.equal(row.badge, undefined);
 });
 
+test('scoreRow: 기준값이 없으면(방어적 — 오늘 백엔드는 항상 세 각도를 채운다) NaN 대신 muted 로 낮춘다', () => {
+  // fix round 1, minor: thresholds 맵에 그 각도가 없으면 ratio = score/undefined = NaN 이
+  // 배지·배수 문구에 그대로 새어 나갈 뻔했다 — score 는 있는데 threshold 만 없는 경우도
+  // score 자체가 없는 경우(skipped)와 같은 안전한 muted 로 접는다.
+  const row = scoreRow('front', 0.31, null);
+  assert.equal(row.tone, 'muted');
+  assert.ok(!JSON.stringify(row).includes('NaN'), 'NaN 이 그대로 심사자 화면에 새어 나간다');
+});
+
 test('심사 카드는 muted(감지 안 됨) 상태를 danger 와 다른 배지 마크업으로 그린다', () => {
   // ScoreLine 이 row.tone === 'muted' 를 별도로 분기해 회색 안내 배지(label)를 쓰고,
   // ok/warn/danger 는 percent+baseline+ScoreBadge 로 그린다 — 두 분기가 실제로 다른
@@ -64,31 +73,55 @@ test('심사 카드는 muted(감지 안 됨) 상태를 danger 와 다른 배지 
 });
 
 // ── (b) 배지는 승인 버튼을 막지 않는다 — 마스킹 체크박스만 막는다 ────────────────────
+//
+// fix round 1: 이전 버전은 disabled 조건에 tone/badge/scoreRow/matchScore 라는 이름이
+// "없는지"만 봤다(부정 목록) — `const anyDanger = ...` 처럼 이름을 바꿔 배지 판정을
+// 숨기면 그대로 통과했다. 여기서는 disabled 표현식에 쓰인 식별자를 전부 뽑아 허용
+// 목록에만 있는지(긍정 형태) 확인한다 — 이름을 뭐라 지어도 허용 목록 밖이면 잡힌다.
 
-test('승인 버튼은 마스킹 체크박스로만 막힌다 — 점수 배지/톤으로 막으면 안 된다', () => {
+function disabledExprOf(buttonBlock) {
+  const m = /disabled=\{([^}]*)\}/.exec(buttonBlock);
+  return m ? m[1] : null;
+}
+
+function identifiersIn(expr) {
+  // `card.matchScores` 같은 멤버 접근도 하나의 단위로 잡는다 — `card` 만 허용해 두고
+  // `.matchScores` 접근을 못 보는 구멍을 막는다.
+  return Array.from(expr.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*/g)).map((m) => m[0]);
+}
+
+test('승인 버튼의 disabled 조건은 오직 maskOk·busy 로만 이루어진다(긍정 형태 검사)', () => {
   const approveIdx = source.indexOf('onClick={approve}');
   assert.ok(approveIdx !== -1, '승인 버튼(onClick={approve})을 못 찾았다');
-  const blockStart = source.lastIndexOf('<Button', approveIdx);
-  const blockEnd = source.indexOf('>', approveIdx);
-  const buttonBlock = source.slice(blockStart, blockEnd);
-  assert.ok(/disabled=\{[^}]*maskOk[^}]*\}/.test(buttonBlock), '승인 버튼이 maskOk 로 안 막힌다');
-  assert.ok(
-    !/disabled=\{[^}]*(tone|badge|scoreRow|matchScore)/i.test(buttonBlock),
-    `승인 버튼이 점수 배지/톤으로 막힌다(위조 신분증도 점수가 높을 수 있어 배지는 정보일 뿐이어야 한다): ${buttonBlock}`,
-  );
+  const buttonBlock = source.slice(source.lastIndexOf('<Button', approveIdx), source.indexOf('>', approveIdx));
+  const expr = disabledExprOf(buttonBlock);
+  assert.ok(expr, '승인 버튼에 disabled 조건이 없다');
+  const idents = identifiersIn(expr);
+  assert.ok(idents.length > 0, 'disabled 조건에서 식별자를 못 찾았다');
+  for (const id of idents) {
+    assert.ok(
+      id === 'maskOk' || id === 'busy',
+      `승인 버튼의 disabled 조건에 허용되지 않은 식별자가 있다(위조 신분증도 점수가 높을 수 있어 배지는 정보일 뿐이어야 한다): ${id} — 전체: ${expr}`,
+    );
+  }
+  assert.ok(idents.includes('maskOk'), '승인 버튼이 maskOk 를 안 쓴다');
 });
 
-test('거절 확정 버튼도 사유로만 막힌다 — 점수 배지로 막으면 안 된다', () => {
+test('거절 확정 버튼의 disabled 조건은 오직 finalReason·busy 로만 이루어진다(긍정 형태 검사)', () => {
   const rejectIdx = source.indexOf('onClick={reject}');
   assert.ok(rejectIdx !== -1, '거절 확정 버튼(onClick={reject})을 못 찾았다');
-  const blockStart = source.lastIndexOf('<Button', rejectIdx);
-  const blockEnd = source.indexOf('>', rejectIdx);
-  const buttonBlock = source.slice(blockStart, blockEnd);
-  assert.ok(/disabled=\{[^}]*finalReason[^}]*\}/.test(buttonBlock), '거절 버튼이 사유(finalReason)로 안 막힌다');
-  assert.ok(
-    !/disabled=\{[^}]*(tone|badge|scoreRow|matchScore)/i.test(buttonBlock),
-    `거절 버튼이 점수 배지/톤으로 막힌다: ${buttonBlock}`,
-  );
+  const buttonBlock = source.slice(source.lastIndexOf('<Button', rejectIdx), source.indexOf('>', rejectIdx));
+  const expr = disabledExprOf(buttonBlock);
+  assert.ok(expr, '거절 버튼에 disabled 조건이 없다');
+  const idents = identifiersIn(expr);
+  assert.ok(idents.length > 0, 'disabled 조건에서 식별자를 못 찾았다');
+  for (const id of idents) {
+    assert.ok(
+      id === 'finalReason' || id === 'busy',
+      `거절 버튼의 disabled 조건에 허용되지 않은 식별자가 있다: ${id} — 전체: ${expr}`,
+    );
+  }
+  assert.ok(idents.includes('finalReason'), '거절 버튼이 finalReason 을 안 쓴다');
 });
 
 test('마스킹 확인 문구가 실제로 화면에 있다', () => {
@@ -107,6 +140,15 @@ test('거절 사유 프리셋 5종(신분증-사진 불일치/판독 불가/마�
 test('기타 사유는 자유 입력(Textarea)을 받고, 빈 사유로는 거절할 수 없다', () => {
   assert.ok(source.includes('@/components/admin-ui/textarea.jsx'), '자유 입력에 Textarea 를 안 쓴다');
   assert.ok(/disabled=\{busy \|\| !finalReason\}/.test(source), '빈 사유로 거절 확정이 눌린다');
+});
+
+test('finalRejectReason: 기타 사유는 trim 한다 — 공백만 입력하면 빈 사유로 취급해야 한다', () => {
+  // fix round 1, IMPORTANT: !finalReason 가드는 소스 정규식이 아니라 이 함수의 실제
+  // 반환값으로 잠근다. trim() 이 빠지면 "   "(공백 3개)는 truthy 라 가드를 통과해,
+  // 빈 것이나 다름없는 사유가 그대로 누군가의 거절 기록에 남는다.
+  assert.equal(finalRejectReason('other', '   ', '기타'), '', '공백만 입력한 자유 사유가 trim 안 된 채로 통과한다');
+  assert.equal(finalRejectReason('other', '  진짜 사유  ', '기타'), '진짜 사유');
+  assert.equal(finalRejectReason('id_mismatch', '', '신분증-사진 불일치'), '신분증-사진 불일치');
 });
 
 // ── 결정 직후: 카드를 닫고 큐를 새로고침 ───────────────────────────────────────
@@ -133,12 +175,12 @@ test('승인 응답의 assetBuildError 를 성공과 다르게 알린다', () =>
 test('API 클라이언트 함수를 그대로 호출한다(신규 요청 코드를 새로 안 쓴다)', () => {
   for (const fn of [
     'adminListEnrollments', 'adminEnrollmentCard', 'adminApproveEnrollment',
-    'adminRejectEnrollment', 'adminFetchEnrollmentImageUrl',
+    'adminRejectEnrollment', 'adminFetchGatedImageUrl', 'adminFetchApplicationPhotoUrl',
   ]) {
     assert.ok(source.includes(fn), `호출이 없다: ${fn}`);
   }
   const api = read('src/lib/api/facemarket.js');
-  assert.ok(api.includes('export async function adminFetchEnrollmentImageUrl'), '이미지 fetch 클라이언트 함수가 없다');
+  assert.ok(api.includes('export async function adminFetchGatedImageUrl'), '이미지 fetch 클라이언트 함수가 없다');
 });
 
 test('이미지 4종(신분증/정면/45도/측면)을 다 그리고, objectURL 을 해제한다', () => {
@@ -146,6 +188,40 @@ test('이미지 4종(신분증/정면/45도/측면)을 다 그리고, objectURL 
     assert.ok(source.includes(`'${kind}'`), `이미지 종류 누락: ${kind}`);
   }
   assert.ok(source.includes('URL.revokeObjectURL'), 'objectURL 을 해제하지 않는다 — 생체 이미지가 새어 남는다');
+});
+
+test('이미지는 카드 응답의 images 맵을 그대로 쓴다 — enrollmentId+kind 를 다시 조립하지 않는다', () => {
+  // fix round 1, minor: 서버가 이미 만들어 준 경로(card.images[kind])를 버리고 프런트가
+  // `/v1/facemarket/admin/enrollments/{id}/images/{kind}` 를 다시 조립하면, 서버가 그
+  // 프리픽스를 바꿀 때 두 곳을 나란히 고쳐야 하는 드리프트 위험이 생긴다.
+  assert.ok(/imagePath=\{card\.images\?\.\[kind\]\}/.test(source), 'EnrollmentImage 가 card.images 를 안 쓴다');
+  assert.ok(
+    !/adminFetchGatedImageUrl\([^)]*enrollmentId/.test(source),
+    '이미지 fetch 가 여전히 enrollmentId 로 URL 을 재조립한다',
+  );
+});
+
+test('지원서 프로필 사진은 새 이미지 라우트를 만들지 않고 기존 관리자 지원서 사진 라우트를 재사용한다', () => {
+  // fix round 1, SPEC GAP 2: 프로필 사진은 지원~등록 사이 인물 스왑을 잡는 제3의
+  // 독립 얼굴 사진이다 — application_id 가 있을 때만 시도한다(지원서 없이 등록될 수
+  // 있다).
+  assert.ok(source.includes('function ApplicationProfilePhoto'), 'ApplicationProfilePhoto 컴포넌트가 없다');
+  assert.ok(
+    /adminFetchApplicationPhotoUrl\(applicationId,\s*'profile'\)/.test(source),
+    "kind='profile' 로 기존 지원서 사진 라우트를 안 부른다",
+  );
+  assert.ok(
+    /card\.applicationId\s*&&\s*app\?\.hasProfileImage\s*&&/.test(source),
+    'hasProfileImage 를 안 보고 무턱대고 프로필 사진 슬롯을 그리려 든다 — 사진 없는 지원서마다 헛된 요청+404 가 난다',
+  );
+});
+
+test('identityMismatchCount 를 카드에 낸다 — mid 전용이 아니라는 걸 잊지 않는다', () => {
+  // fix round 1, SPEC GAP 1(correction): 게이트는 identity_method 가 아니라
+  // fm_application_required + application_id 뿐이라 simple_auth 등록도 이 카운터가
+  // 오른다. 0 회는 강조할 신호가 아니라서 >0 일 때만 보여줘야 한다.
+  assert.ok(source.includes('identityMismatchCount'), 'identityMismatchCount 를 안 쓴다');
+  assert.ok(/\{app\.identityMismatchCount > 0 &&/.test(source), '0회여도 항상 보이면 신호가 무뎌진다 — >0 가드가 없다');
 });
 
 test('카드를 바꾸면 EnrollmentDetail 이 key 로 완전히 새로 마운트된다 — 마스킹 체크가 새어 들어가면 안 된다', () => {

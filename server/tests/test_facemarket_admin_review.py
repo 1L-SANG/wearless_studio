@@ -1051,6 +1051,59 @@ def test_review_card_includes_scores_and_application(admin_client):
     assert set(card["images"]) == {"id_document", "front", "angle45", "side"}
 
 
+def test_review_card_exposes_identity_mismatch_count_and_application_id(admin_client):
+    """fix round 1: identity_mismatch_count 는 identity_method 로 안 갈린다(게이트는
+    fm_application_required + application_id 뿐, facemarket_enrollment.py :1170 근처) —
+    simple_auth 등록도 지원서 이름·생년월일이 이미 몇 번 어긋났는지 심사자가 봐야 한다.
+    application_id 는 관리자 지원서 사진 라우트(GET /admin/applications/{id}/profile-image)
+    를 프런트가 직접 부르는 데 필요하다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        application={
+            "applicant_name": "홍길동", "birthdate": "1990-01-01",
+            "identity_mismatch_count": 2, "profile_image_r2_key": "private/fm-application/app-1/profile.jpg",
+        },
+    )
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["application"]["identityMismatchCount"] == 2
+    assert card["application"]["hasProfileImage"] is True
+    assert card["applicationId"] == store.latest_enrollment["application_id"]
+
+
+def test_review_card_has_profile_image_false_without_key(admin_client):
+    """fix round 1, SPEC GAP 2: profile_image_r2_key 가 없으면 hasProfileImage=False 로
+    낮춘다 — 프런트가 이 값으로 지원서 사진 fetch 를 걸지 결정한다(무턱대고 요청했다가
+    404 를 받는 대신, AdminApplications.jsx 의 hasProfileImage 게이트와 같은 관례)."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        application={"applicant_name": "홍길동", "birthdate": "1990-01-01"},
+    )
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["application"]["hasProfileImage"] is False
+
+
+def test_review_card_defaults_identity_mismatch_count_when_absent(admin_client):
+    """지원서 행에 identity_mismatch_count 가 없으면(구버전 행 등) 0 으로 낮춘다 — None 을
+    그대로 내보내면 프런트가 '몇 번 실패했는지' 를 못 그린다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        application={"applicant_name": "홍길동", "birthdate": "1990-01-01"},
+    )
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["application"]["identityMismatchCount"] == 0
+
+
+def test_review_card_application_id_is_null_without_application(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending", identity_method="simple_auth")
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["applicationId"] is None
+    assert card["application"] is None
+
+
 def test_image_route_is_no_store(admin_client):
     client, store = admin_client(is_admin=True)
     store.add_enrollment(status="review_pending", review_status="pending",

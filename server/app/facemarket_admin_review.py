@@ -95,6 +95,16 @@ class AdminReviewApplication(CamelModel):
     weight_kg: int | None = None
     phone: str | None = None
     categories: list[str] = []
+    # 지원서 이름·생년월일이 신분증과 몇 번 안 맞았는지(facemarket_enrollment.py 의
+    # 지원서 대조 블록, :1170 근처) — identity_method 로 갈리지 않는다: 게이트는
+    # settings.fm_application_required and application_id 로만 걸려 있어 simple_auth
+    # 등록도 이 카운터가 오른다. 이미 한두 번 어긋난 신원 주장은 사람 심사가 봐야 할
+    # 신호라 카드에 낸다(fix round 1).
+    identity_mismatch_count: int = 0
+    # 프런트가 지원서 프로필 사진을 무턱대고 요청했다가 404 를 "정상적인 없음"으로
+    # 다루지 않게 한다 — AdminApplications.jsx 의 hasProfileImage 게이트(ApplicantPhoto)
+    # 와 같은 관례: 있을 때만 fetch 를 건다(fix round 1).
+    has_profile_image: bool = False
 
 
 class AdminReviewQueueRow(CamelModel):
@@ -115,6 +125,11 @@ class AdminReviewCard(CamelModel):
     # Task7 이 이미 만든 구조를 그대로 통과시킨다 — 여기서 재가공하지 않는다.
     match_scores: dict | None = None
     application: AdminReviewApplication | None = None
+    # 지원서 사진(profile-image)을 화면에서 보여주려면 프런트가 기존 관리자 지원서
+    # 사진 라우트(GET /admin/applications/{id}/profile-image, facemarket_applications.py)
+    # 를 직접 부를 수 있어야 한다 — 새 이미지 라우트를 만들지 않고 그 라우트를 재사용한다
+    # (같은 admin_guard.require_admin, 같은 private/no-store). application 이 없으면 null.
+    application_id: str | None = None
     images: dict[str, str]
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -142,7 +157,8 @@ async def _load_application_summary(conn, application_id: str | None) -> AdminRe
     async with conn.cursor() as cur:
         await cur.execute(
             "select applicant_name, birthdate, region, gender, height_cm, weight_kg, "
-            "phone, categories from fm_model_applications where id = %s",
+            "phone, categories, identity_mismatch_count, profile_image_r2_key "
+            "from fm_model_applications where id = %s",
             (application_id,),
         )
         row = await cur.fetchone()
@@ -157,6 +173,8 @@ async def _load_application_summary(conn, application_id: str | None) -> AdminRe
         weight_kg=row.get("weight_kg"),
         phone=row.get("phone"),
         categories=list(row.get("categories") or []),
+        identity_mismatch_count=row.get("identity_mismatch_count") or 0,
+        has_profile_image=bool(row.get("profile_image_r2_key")),
     )
 
 
@@ -169,6 +187,7 @@ def _card_view(row: dict, application: AdminReviewApplication | None) -> AdminRe
         status=row["status"],
         match_scores=row.get("match_scores"),
         application=application,
+        application_id=row.get("application_id"),
         images=_image_urls(row["id"]),
         reviewed_by=row.get("reviewed_by"),
         reviewed_at=row.get("reviewed_at"),

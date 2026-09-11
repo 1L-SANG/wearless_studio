@@ -14,7 +14,9 @@
    빨간 배지로 뭉치면 관리자가 "위조 의심"과 "정면 검출기가 45도 사진을 못 읽었을
    뿐"을 구분할 수 없다. */
 export function scoreRow(angle, score, threshold) {
-  if (score == null) return { angle, label: '– 대조 안 됨', tone: 'muted' };
+  // threshold 도 없으면(오늘 백엔드는 항상 세 각도 전부 채우지만, 방어적으로) 비율을
+  // 못 구한다 — NaN%/NaN배를 심사자 화면에 내는 대신 muted 로 낮춘다(fix round 1, minor).
+  if (score == null || threshold == null) return { angle, label: '– 대조 안 됨', tone: 'muted' };
   const ratio = score / threshold;
   const tone = score < threshold ? 'danger' : ratio >= 2 ? 'ok' : 'warn';
   const badge = score < threshold ? '✗ 미달' : ratio >= 2 ? '✓ 통과' : '△ 아슬';
@@ -26,4 +28,14 @@ export function scoreRow(angle, score, threshold) {
     badge,
     tone,
   };
+}
+
+/* 거절 사유 확정값. 'other' 를 고르면 자유 입력을, 그 외엔 프리셋 라벨을 그대로 쓴다.
+   자유 입력은 반드시 trim 한다 — 안 하면 스페이스만 입력해도 "   " 는 truthy 라
+   !finalReason 가드(빈 사유 금지)를 통과해, 빈 것이나 다름없는 사유가 그대로 누군가의
+   거절 기록에 남는다(fix round 1, IMPORTANT). 컴포넌트의 disabled 조건이 이 함수의
+   반환값만 보게 해서, trim 여부를 소스텍스트 정규식이 아니라 실제 입력값으로 잠근다. */
+export function finalRejectReason(presetValue, freeText, presetLabel) {
+  if (presetValue === 'other') return (freeText || '').trim();
+  return presetLabel || '';
 }
