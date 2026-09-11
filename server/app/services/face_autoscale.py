@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -79,6 +80,8 @@ POD_TOKEN_REF = "{{ RUNPOD_SECRET_face_render_token }}"
 CODE_TARBALL_KEY_FMT = "face_render/{sha}.tgz"
 #: 코드 URL 만료. 파드가 켜지면서 한 번 받으면 끝이라 짧게 둔다.
 CODE_URL_EXPIRES_S = 900
+#: 코드 묶음이 없다는 알림의 디바운스 — 60초 주기마다 같은 말을 반복하지 않는다.
+CODE_ALERT_DEBOUNCE_SECONDS = 1800
 
 
 def code_tarball_key(sha: str) -> str:
@@ -185,7 +188,7 @@ class RunpodAutoscaleAdapter:
     """
 
     def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None,
-                 pod_store=None, code_url_provider=None):
+                 pod_store=None, code_url_provider=None, code_head_provider=None):
         self._settings = settings
         self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._pod_id = (getattr(settings, "face_runpod_pod_id", None) or "").strip() or None
@@ -198,6 +201,8 @@ class RunpodAutoscaleAdapter:
         #: 파드에 넣어 줄 코드 묶음(키, sha). 없으면 파드가 코드를 못 받는다 → 알림 대상.
         self._code_sha = (getattr(settings, "face_render_code_version", None) or "").strip() or None
         self._code_url_provider = code_url_provider
+        self._code_head_provider = code_head_provider
+        self._last_code_alert: float | None = None
         self._target: RunpodTarget | None = None
         self._now = lambda: datetime.now(timezone.utc)
 
@@ -365,19 +370,54 @@ class RunpodAutoscaleAdapter:
     def _code_env(self) -> dict[str, str]:
         """파드에 넣을 코드 전달 env. **호출 직전에** presigned 를 만든다(만료가 짧다).
 
+        ★ 키와 검증값은 서로 다른 것이다. 키는 **커밋 sha**(face_render/<sha>.tgz — 서버와 파드가
+        같은 코드를 쓰게 하는 좌표)이고, CODE_SHA256 은 **묶음 내용의 해시**(파드가 받은 파일이
+        그 파일인지 확인하는 값)다. 하나로 같이 쓰면 bootstrap 의 sha256 대조가 항상 틀려서
+        파드가 매번 exit 78 로 죽는다 — 실제로 그랬다.
+        내용 해시는 업로드 때 넣어 둔 R2 메타(sha256)에서 읽는다.
+
         URL 값은 로그·DB·이벤트 어디에도 남기지 않는다 — 여기서 만들어 곧장 RunPod 에만 준다.
         """
         if not self._code_sha or self._code_url_provider is None:
-            log.error("face autoscale: 코드 묶음 sha/공급자가 없다 — 파드가 코드를 못 받는다")
+            self._alert_code_missing("코드 묶음 sha/공급자가 없다")
+            return {}
+        key = code_tarball_key(self._code_sha)
+        content_sha = self._code_content_sha(key)
+        if not content_sha:
+            self._alert_code_missing(f"R2 에 코드 묶음이 없거나 메타가 없다 ({key})")
             return {}
         try:
-            url = self._code_url_provider(code_tarball_key(self._code_sha))
+            url = self._code_url_provider(key)
         except Exception as exc:  # noqa: BLE001
-            log.error("face autoscale: 코드 묶음 URL 발급 실패 (%s)", type(exc).__name__)
+            self._alert_code_missing(f"코드 묶음 URL 발급 실패 ({type(exc).__name__})")
             return {}
         if not url:
+            self._alert_code_missing("코드 묶음 URL 이 비었다")
             return {}
-        return {"CODE_TARBALL_URL": url, "CODE_SHA256": self._code_sha}
+        return {"CODE_TARBALL_URL": url, "CODE_SHA256": content_sha}
+
+    def _code_content_sha(self, key: str) -> str | None:
+        """업로드 때 붙여 둔 메타(sha256)를 읽는다. 객체·메타가 없으면 None."""
+        head = self._code_head_provider
+        if head is None:
+            return None
+        try:
+            meta = head(key) or {}
+        except Exception as exc:  # noqa: BLE001 — 없으면 코드 env 를 안 넣는다(지어내지 않는다)
+            log.info("face autoscale: 코드 묶음 head 실패 (%s)", type(exc).__name__)
+            return None
+        value = str(meta.get("sha256") or "").strip().lower()
+        return value or None
+
+    def _alert_code_missing(self, detail: str) -> None:
+        """코드를 못 주는 상황은 파드가 떠도 서비스가 안 뜬다는 뜻이라 CRITICAL(디바운스)."""
+        now = time.monotonic()
+        if (self._last_code_alert is not None
+                and now - self._last_code_alert < CODE_ALERT_DEBOUNCE_SECONDS):
+            return
+        self._last_code_alert = now
+        log.critical("face autoscale: %s — 새로 만드는 파드는 코드를 받지 못한다. "
+                     "배포의 '얼굴 렌더 코드 묶음 업로드' 단계를 확인하세요.", detail)
 
     def begin_cycle(self) -> None:
         """reconciler 한 주기의 시작 — 생성 1회 제한을 리셋한다."""

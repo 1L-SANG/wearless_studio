@@ -64,3 +64,83 @@ def test_sync_script_is_marked_dev_only():
     text = (ROOT / "server/scripts/face_render_sync.sh").read_text(encoding="utf-8")
     assert "개발·검증 전용" in text
     assert "CI 가 코드 묶음을 R2 에 올리고" in text
+
+
+# ── R2 호출은 OIDC 세션 토큰 없이 ──
+def test_r2_calls_drop_the_oidc_session_token():
+    """★ PutObject … InvalidArgument: X-Amz-Security-Token — OIDC 로 받은 AWS_SESSION_TOKEN 이
+    env 에 남아 있으면 R2 가 거부한다. SSM 읽기는 그 토큰이 있어야 하므로 **R2 호출만** 지운다."""
+    step = WORKFLOW.read_text(encoding="utf-8").split(
+        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    assert "env -u AWS_SESSION_TOKEN aws" in step
+    # ssm 읽기는 그대로(토큰 필요)
+    ssm_line = [ln for ln in step.splitlines() if "aws ssm get-parameter" in ln][0]
+    assert "env -u" not in ssm_line
+    # R2 를 부르는 줄은 전부 헬퍼를 거친다
+    for call in ("s3 cp", "s3api head-object"):
+        line = [ln for ln in step.splitlines() if call in ln][0]
+        assert line.strip().startswith("r2 ") or "r2 " in line, call
+
+
+def test_upload_attaches_the_content_hash_and_verifies_it():
+    """키는 커밋 sha 라 내용과 다르다 — 서버가 파드에 줄 검증값은 이 메타에서 읽는다."""
+    step = WORKFLOW.read_text(encoding="utf-8").split(
+        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    assert '--metadata "sha256=$SHA"' in step
+    assert "--query 'Metadata.sha256'" in step
+    assert 'if [ "$GOT" != "$SHA" ]' in step
+
+
+def test_upload_runs_before_the_ecs_deploy_and_never_blocks_it():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.index("얼굴 렌더 코드 묶음 업로드") < text.index("배포 (이미지 빌드→ECR→ECS 롤링)")
+    step = text.split("- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    assert "continue-on-error: true" in step
+
+
+# ── PR 실행이 대기 중 배포를 취소하지 않게 ──
+def test_pr_runs_and_main_deploys_use_separate_concurrency_groups():
+    """2026-09-11 두 번: 대기 중 main 배포가 새 PR 푸시에 취소됐다(같은 그룹 + 공유 취소 규칙)."""
+    import yaml
+
+    conc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["concurrency"]
+    group, cancel = conc["group"], conc["cancel-in-progress"]
+    assert "github.event_name == 'pull_request'" in group
+    assert "head_ref" in group and "'main'" in group     # PR 은 브랜치별, main 은 단독
+    assert cancel == "${{ github.event_name == 'pull_request' }}"
+
+
+# ── 서버가 자기 커밋 sha 를 안다 ──
+def test_ci_bakes_the_build_sha_before_deploying():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "server/BUILD_SHA" in text
+    assert text.index("server/BUILD_SHA") < text.index("배포 (이미지 빌드→ECR→ECS 롤링)")
+
+
+def test_build_sha_file_is_not_excluded_from_the_image():
+    ignore = (ROOT / "server/.dockerignore").read_text(encoding="utf-8").split("\n")
+    assert not any(line.strip() in {"BUILD_SHA", "/BUILD_SHA"} for line in ignore)
+    assert "COPY . ./" in (ROOT / "server/Dockerfile").read_text(encoding="utf-8")
+
+
+def test_config_reads_the_build_sha_file(tmp_path, monkeypatch):
+    """env 가 우선, 없으면 파일. 둘 다 없으면 None — 지어내지 않는다."""
+    from app import config
+
+    monkeypatch.delenv("FACE_RENDER_CODE_VERSION", raising=False)
+    build_sha = ROOT / "server/BUILD_SHA"
+    existed = build_sha.exists()
+    original = build_sha.read_text() if existed else None
+    try:
+        build_sha.write_text("deadbeef\n")
+        assert config._build_sha() == "deadbeef"
+        assert config.load_settings().face_render_code_version == "deadbeef"
+        monkeypatch.setenv("FACE_RENDER_CODE_VERSION", "from-env")
+        assert config.load_settings().face_render_code_version == "from-env"
+    finally:
+        if existed:
+            build_sha.write_text(original)
+        else:
+            build_sha.unlink(missing_ok=True)
+    monkeypatch.delenv("FACE_RENDER_CODE_VERSION", raising=False)
+    assert config._build_sha() is None

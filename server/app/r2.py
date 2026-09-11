@@ -162,7 +162,10 @@ class R2Client:
             if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
                 return None
             raise
-        return {"size": r["ContentLength"], "mime": r.get("ContentType")}
+        # metadata: 업로드 때 붙인 사용자 메타(x-amz-meta-*). 얼굴 렌더 코드 묶음은 여기에
+        # 내용 sha256 을 달아 두고, 파드에 넘길 검증값으로 읽는다(키는 커밋 sha 라 내용과 다르다).
+        return {"size": r["ContentLength"], "mime": r.get("ContentType"),
+                "metadata": r.get("Metadata") or {}}
 
     def put_bytes(self, key: str, data: bytes, mime: str, cache: str | None = None) -> None:
         """AI 생성 이미지 등 서버사이드 저장 (Gemini/OpenAI 응답 → R2).
