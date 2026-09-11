@@ -231,11 +231,16 @@ jobs:
                   KEY="face_render/$GITHUB_SHA.tgz"
                   export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
                   export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-                  export AWS_DEFAULT_REGION=auto
                   # ★ OIDC 로 받은 AWS_SESSION_TOKEN 이 env 에 남아 있으면 R2 가 거부한다
                   #   (PutObject … InvalidArgument: X-Amz-Security-Token). R2 호출에서만 지운다 —
                   #   SSM 읽기는 그 토큰이 있어야 한다.
-                  r2() { env -u AWS_SESSION_TOKEN aws "$@" --endpoint-url "$R2_ENDPOINT"; }
+                  # ★ 리전은 **AWS_REGION 까지** auto 로 덮어야 한다. 워크플로 env 의
+                  #   AWS_REGION(ap-northeast-2)이 CLI v2 우선순위에서 AWS_DEFAULT_REGION 을 이겨
+                  #   R2 호출이 InvalidRegionName 'ap-northeast-2' 로 죽었다(2026-09-11 run 34567423982).
+                  r2() {
+                    env -u AWS_SESSION_TOKEN AWS_REGION=auto AWS_DEFAULT_REGION=auto \
+                      aws "$@" --endpoint-url "$R2_ENDPOINT"
+                  }
                   if ! r2 s3 cp dist/face_render.tgz "s3://$R2_FACE_BUCKET/$KEY" \
                        --metadata "sha256=$SHA" --only-show-errors; then
                     echo "::error::R2 업로드 실패: $KEY"

@@ -72,7 +72,7 @@ def test_r2_calls_drop_the_oidc_session_token():
     env 에 남아 있으면 R2 가 거부한다. SSM 읽기는 그 토큰이 있어야 하므로 **R2 호출만** 지운다."""
     step = WORKFLOW.read_text(encoding="utf-8").split(
         "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
-    assert "env -u AWS_SESSION_TOKEN aws" in step
+    assert "env -u AWS_SESSION_TOKEN" in step
     # ssm 읽기는 그대로(토큰 필요)
     ssm_line = [ln for ln in step.splitlines() if "aws ssm get-parameter" in ln][0]
     assert "env -u" not in ssm_line
@@ -80,6 +80,22 @@ def test_r2_calls_drop_the_oidc_session_token():
     for call in ("s3 cp", "s3api head-object"):
         line = [ln for ln in step.splitlines() if call in ln][0]
         assert line.strip().startswith("r2 ") or "r2 " in line, call
+
+
+def test_r2_calls_force_the_auto_region():
+    """★ 워크플로 env 의 AWS_REGION(ap-northeast-2)이 AWS_DEFAULT_REGION 을 이긴다(CLI v2 우선순위).
+
+    AWS_DEFAULT_REGION=auto 만 두면 R2 호출이 InvalidRegionName 'ap-northeast-2' 로 죽는다
+    (2026-09-11 run 34567423982 실측). 헬퍼가 **두 변수 모두** auto 로 덮어야 한다.
+    """
+    step = WORKFLOW.read_text(encoding="utf-8").split(
+        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    helper = step.split("r2() {")[1].split("}")[0]
+    assert "AWS_REGION=auto" in helper
+    assert "AWS_DEFAULT_REGION=auto" in helper
+    assert "env -u AWS_SESSION_TOKEN" in helper
+    # 워크플로 기본 리전은 그대로 — SSM·ECR·copilot 이 그 값을 쓴다.
+    assert "AWS_REGION: ap-northeast-2" in WORKFLOW.read_text(encoding="utf-8")
 
 
 def test_upload_attaches_the_content_hash_and_verifies_it():
