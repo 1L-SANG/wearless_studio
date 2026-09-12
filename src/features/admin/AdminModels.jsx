@@ -18,6 +18,7 @@ import {
 } from '@/components/admin-ui/table.jsx';
 import { useToast } from '@/components/ui.jsx';
 import { seoulDateKey } from '@/lib/datetime.js';
+import { AdminSubmissionDetails } from './AdminSubmissionDetails.jsx';
 
 // fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 값 전부를 다뤄야 한다.
 // reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
@@ -264,6 +265,7 @@ function Detail({ modelId, onChanged }) {
   const [detailError, setDetailError] = useState(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const load = useCallback(() => {
     setData(null);
@@ -324,9 +326,11 @@ function Detail({ modelId, onChanged }) {
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">{model.displayName}</CardTitle>
           <Badge variant={STATUS_VARIANT[model.status]}>{statusLabel(model.status)}</Badge>
+          <Button variant="ghost" size="sm" className="ml-auto underline underline-offset-2" onClick={() => setDetailsOpen(true)}>상세히 보기</Button>
         </div>
         <CardDescription>{model.email || '연결된 계정 없음 (플랫폼 온보딩)'}</CardDescription>
       </CardHeader>
+      {detailsOpen && <AdminSubmissionDetails detail={data} onClose={() => setDetailsOpen(false)} />}
       <CardContent className="flex flex-col gap-5 text-sm">
         <section>
           <h4 className="mb-1 text-xs font-medium text-muted-foreground">라이선스 {licenses.length}건</h4>

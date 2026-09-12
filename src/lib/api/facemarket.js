@@ -228,9 +228,13 @@ export function adminResendEmail(applicationId) {
 // 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
 // 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
 export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profile') {
-  const res = await _authFetch(
+  return adminApplicationProfileImage(
     `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image?kind=${encodeURIComponent(kind)}`,
   );
+}
+
+export async function adminApplicationProfileImage(imageUri) {
+  const res = await _authFetch(imageUri);
   if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
   const blob = await res.blob();
   return URL.createObjectURL(blob);

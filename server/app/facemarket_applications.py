@@ -148,6 +148,8 @@ class AdminApplicationCard(CamelModel):
     # 최근 결정 메일 발송 상태(pending/sent/failed/None) — 대시보드 '미발송' 뱃지·재발송용(2A).
     last_email_status: str | None = None
     last_email_type: str | None = None
+    privacy_consent_version: str | None = None
+    privacy_consented_at: datetime | None = None
 
 
 class AdminRejectBody(CamelModel):
@@ -391,6 +393,8 @@ def _admin_card(row: dict) -> AdminApplicationCard:
         created_at=row["created_at"],
         last_email_status=row.get("last_email_status"),
         last_email_type=row.get("last_email_type"),
+        privacy_consent_version=row.get("privacy_consent_version"),
+        privacy_consented_at=row.get("privacy_consented_at"),
     )
 
 
@@ -399,7 +403,7 @@ _APPLICATION_COLUMNS = """
     birthdate, region, gender, height_cm, weight_kg, phone, experience_level, agency_contracted,
     categories, portfolio_url, sns_url, bio, profile_image_r2_key, photo_keys, attestations,
     identity_mismatch_count, reviewed_by::text as reviewed_by, reviewed_at, reject_reason,
-    created_at, updated_at
+    created_at, updated_at, privacy_consent_version, privacy_consented_at
 """
 
 
@@ -840,7 +844,8 @@ async def admin_list_applications(
                a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
                a.profile_image_r2_key, a.photo_keys, a.attestations, a.identity_mismatch_count,
                a.reviewed_by::text as reviewed_by, a.reviewed_at, a.reject_reason,
-               a.created_at, em.last_email_status, em.last_email_type
+               a.created_at, em.last_email_status, em.last_email_type,
+               a.privacy_consent_version, a.privacy_consented_at
         from fm_model_applications a
         left join lateral (
             -- 오래 pending 인 행은 '미발송'으로 본다. 원장은 pending 으로 넣고 발송 뒤 sent/failed 로

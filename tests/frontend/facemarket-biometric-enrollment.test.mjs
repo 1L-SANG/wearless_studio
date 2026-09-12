@@ -561,21 +561,21 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 
 // ── 문구: 사용자 화면에서 "생체 확인" 걷어내기 ───────────────────────────────
 
-test('등록 화면은 본인 확인 안내, 두 가지 필수 동의 링크, 국외 이전 안내 링크를 유지한다', async () => {
+test('등록 화면은 필수 동의 링크를 유지하고 국외 이전 안내 카드는 제거한다', async () => {
   const harness = await modelComponentHarness({ initialStates: ['1'], api: {} });
   try {
     const tree = harness.render();
     const text = collectText(tree);
     assert.ok(text.includes('먼저 본인인지 확인해요'));
-    for (const path of ['/terms', '/privacy', '/biometric-consent', '/overseas-transfer']) {
+    for (const path of ['/terms', '/privacy', '/biometric-consent']) {
       assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === path));
     }
     for (let i = 0; i < 2; i++) {
       assert.equal(findTree(tree, (node) => node.props?.id === `consent-${i}`).props.checked, false);
     }
-    assert.equal(findTree(tree, (node) => node.props?.id === 'consent-2'), null, '국외 이전은 체크박스가 아니라 안내');
-    {
-    }
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/overseas-transfer'), null);
+    assert.ok(!text.includes('안내 · 동의 아님'));
+    assert.equal(findTree(tree, (node) => node.props?.id === 'consent-2'), null);
     const hubState = read('../../src/features/model/modelHubState.js');
     assert.match(hubState, /label: '모델 등록'/);
     assert.match(hubState, /label: '프로필 이미지 확정'/);

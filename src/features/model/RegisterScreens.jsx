@@ -39,11 +39,6 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
         <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
         <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>{legalLink('/biometric-consent')}
       </div></div>
-      <div className={`${s.consentCard} ${s.noticeCard}`}><span className={s.tag}>안내 · 동의 아님</span><p className={s.consentLabel}><span>얼굴 정보는 착용컷을 만들기 위해 미국의 서버와 저장소, 이미지 생성 서비스로 전송돼요. 계약 이행을 위한 위탁이라 동의 대신 알려 드려요(개인정보 보호법 제28조의8 제1항 제3호).</span></p><div className={s.legalSummary}>
-        <p><b>받는 곳:</b> Amazon Web Services, Cloudflare, Google, OpenAI(미국)</p><p><b>언제:</b> 사진을 저장할 때, 착용컷을 만들 때</p>
-        <p><b>무엇:</b> 사진, 얼굴 특징정보, 얼굴 참조 자산</p><p><b>기간:</b> 저장은 라이선스 유지 동안, 생성은 최대 55일 뒤 삭제</p>
-        <p><b>거부:</b> 처리방침 제6조의 연락처로 알릴 수 있지만, 서버와 생성 엔진이 국외에 있어 등록은 진행할 수 없어요.</p>{legalLink('/overseas-transfer', '국외 이전 안내 전문 보기')}
-      </div></div>
     </div>
   </>;
 }
