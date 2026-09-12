@@ -29,6 +29,13 @@ test('review, approved and rejected fixtures expose the new profile values', asy
   }
 });
 
+test('mock application photo deletion makes the staged photo unavailable to submit', async () => {
+  const api = createFacemarketMock();
+  await api.stageApplicationPhoto({ kind: 'profile' });
+  await api.deleteStagedApplicationPhoto('profile');
+  await assert.rejects(api.submitApplication(MOCK_APPLICANT), { code: 'profile_photo_required' });
+});
+
 test('the API facade in explicit development mock mode completes the application without HTTP', async () => {
   const { createServer } = await import('vite');
   const server = await createServer({

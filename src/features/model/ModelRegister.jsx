@@ -334,13 +334,13 @@ export function ModelRegister() {
   const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness'].includes(step) ? 2 : Number(step[0]) || 1;
   let content, next, previous;
   if (step === '1') {
-    content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen);
+    content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen, busy);
     const identityPending = enrollment?.status === 'identity_pending' && [enrollment.consentDocumentVersion, enrollment.termsConsentVersion].every((version) => version === CONSENT_VERSION);
-    next = { label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? '신분증 인증하기' : '동의하고 신분증 인증하기', action: identityPending ? () => runIdentity() : startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
+    next = { label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? '신분증 인증하기' : '동의하고 신분증 인증하기', action: identityPending ? () => runIdentity() : startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '두 가지 필수 항목을 모두 확인했어요' : '두 가지 필수 항목에 동의해야 다음으로 갈 수 있어요' };
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });
     const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
-    next = { label: sub === 4 ? '확인 완료' : '이동', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    next = { label: sub === 4 ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
     previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === '3') {
     content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });

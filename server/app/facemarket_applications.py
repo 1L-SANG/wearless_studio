@@ -490,6 +490,40 @@ async def stage_application_photo(
     return {"staged": True, "kind": kind}
 
 
+@router.delete("/applications/photo-staging/{kind}", status_code=204)
+async def delete_application_photo_staging(
+    request: Request,
+    kind: str,
+    user_id: str = Depends(require_user),
+):
+    """화면에서 선택을 지우면 다른 탭도 그 임시 사진을 제출할 수 없게 한다.
+
+    DB 행을 먼저 지우고 커밋해야 제출과의 경쟁에서 소유권이 한쪽으로 확정된다. R2 삭제 실패로
+    남은 행 없는 객체는 기존 24시간 orphan sweep 과 계정 파기 접두사 스윕이 회수한다.
+    """
+    kind = (kind or "").strip().lower()
+    if kind not in PHOTO_KINDS:
+        raise _err("invalid_photo_kind", "사진 종류가 올바르지 않습니다.")
+    r2_key = None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "delete from fm_model_application_photo_staging "
+                "where user_id = %s and kind = %s returning r2_key",
+                (user_id, kind),
+            )
+            row = await cur.fetchone()
+            if row:
+                r2_key = row["r2_key"]
+        await conn.commit()
+    if r2_key:
+        try:
+            await asyncio.to_thread(_r2_face(request).delete, r2_key)
+        except Exception:
+            logger.warning("application staging photo object not deleted after user removal")
+    return Response(status_code=204)
+
+
 PII_RETENTION_DAYS = 30
 PURGED_NAME = "삭제된 지원자"
 PURGED_EMAIL = "purged@invalid"

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Icon, useToast } from '@/components/ui.jsx';
+import { FormInput } from '@/components/ui/FormInput.jsx';
+import { ImageUpload } from '@/components/ui/ImageUpload.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { getCurrentApplication, stageApplicationPhoto, submitApplication } from '@/lib/api/facemarket.js';
+import { deleteStagedApplicationPhoto, getCurrentApplication, stageApplicationPhoto, submitApplication } from '@/lib/api/facemarket.js';
 import { REVIEW_SLA_LABEL } from '../facemarket-landing/facemarketTerms.js';
 import { nextBirthdateSegments, backspaceBirthdateSegments, birthdateFromSegments, isAdultBirthdate } from './birthdateInput.js';
 import s from './ModelApply.module.css';
@@ -57,7 +59,7 @@ function formatPhone(input) {
 }
 const validInteger = (value, min, max) => /^\d+$/.test(String(value)) && Number(value) >= min && Number(value) <= max;
 
-function BirthdateInput({ value, onChange }) {
+export function BirthdateInput({ value, onChange }) {
   const [segments, setSegments] = useState(() => value ? value.split('-') : ['', '', '']);
   const inputs = useRef([]);
   const apply = (result) => {
@@ -69,24 +71,26 @@ function BirthdateInput({ value, onChange }) {
     <div className={s.birthdate}>
       {['년', '월', '일'].map((label, index) => (
         <div className={s.birthSegment} key={label}>
-          {index > 0 && <span className={s.birthSeparator} aria-hidden="true">.</span>}
-          <input ref={(el) => { inputs.current[index] = el; }} className={`${s.input} ${index === 0 ? s.birthYear : s.birthPart}`}
-            aria-label={`생년월일 ${label}`} required inputMode="numeric" autoComplete={['bday-year', 'bday-month', 'bday-day'][index]}
-            placeholder={index === 0 ? '2000' : '01'} value={segments[index]}
-            onChange={(event) => apply(nextBirthdateSegments(segments, index, event.target.value))}
-            onPaste={(event) => {
-              const text = event.clipboardData.getData('text');
-              if (text.replace(/\D/g, '').length === 8) {
-                event.preventDefault();
-                apply(nextBirthdateSegments(segments, index, text));
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Backspace' && !segments[index] && index > 0) {
-                event.preventDefault();
-                apply(backspaceBirthdateSegments(segments, index));
-              }
-            }} />
+          <label className={s.birthControl}>
+            <input ref={(el) => { inputs.current[index] = el; }} className={s.input}
+              aria-label={`생년월일 ${label}`} required inputMode="numeric" autoComplete="off"
+              maxLength={index === 0 ? 4 : 2} placeholder=" " value={segments[index]}
+              onChange={(event) => apply(nextBirthdateSegments(segments, index, event.target.value))}
+              onPaste={(event) => {
+                const text = event.clipboardData.getData('text');
+                if (text.replace(/\D/g, '').length === 8) {
+                  event.preventDefault();
+                  apply(nextBirthdateSegments(segments, index, text));
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Backspace' && !segments[index] && index > 0) {
+                  event.preventDefault();
+                  apply(backspaceBirthdateSegments(segments, index));
+                }
+              }} />
+            <span className={s.birthLabel}>{label}</span>
+          </label>
         </div>
       ))}
     </div>
@@ -106,7 +110,8 @@ export function ModelApply() {
   const [editing, setEditing] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  const fileInput = useRef(null);
+  const photoUrl = useRef(null);
+  const allAttestationsInput = useRef(null);
   const heading = useRef(null);
   const mounted = useRef(true);
   const submitting = useRef(false);
@@ -140,8 +145,8 @@ export function ModelApply() {
   }, [accountEmail, navigate, push]);
 
   useEffect(() => () => {
-    if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
-  }, [photo]);
+    if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+  }, []);
 
   useEffect(() => {
     if (phase === 'loading' || phase === 'submitting') return;
@@ -150,15 +155,18 @@ export function ModelApply() {
   }, [step, phase]);
 
   const set = useCallback((key, value) => setForm((current) => ({ ...current, [key]: value })), []);
-  const onPickPhoto = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const onPickPhoto = async (file) => {
     if (!file || uploading) return;
     setUploading(true);
     setError('');
     try {
       await stageApplicationPhoto({ kind: 'profile', fileBlob: file, filename: file.name });
-      if (mounted.current) setPhoto({ staged: true, previewUrl: URL.createObjectURL(file) });
+      if (mounted.current) {
+        const previewUrl = URL.createObjectURL(file);
+        if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+        photoUrl.current = previewUrl;
+        setPhoto({ staged: true, previewUrl, fileName: file.name });
+      }
     } catch (err) {
       if (mounted.current) setError(err.message || '사진을 올리지 못했어요. 다시 시도해주세요.');
     } finally {
@@ -176,8 +184,36 @@ export function ModelApply() {
     && (form.weightKg === '' || form.weightKg == null || validInteger(form.weightKg, 30, 200))
     && typeof form.agencyContracted === 'boolean' && !linkErrors.portfolioUrl && !linkErrors.snsUrl);
   const uncheckedCount = ATTESTATIONS.filter(({ key }) => !attest[key]).length;
+  const allAttestationsChecked = uncheckedCount === 0;
+  const someAttestationsChecked = uncheckedCount > 0 && uncheckedCount < ATTESTATIONS.length;
   const busy = phase === 'submitting';
   const canSubmit = basicValid && profileValid && uncheckedCount === 0;
+
+  useEffect(() => {
+    if (allAttestationsInput.current) allAttestationsInput.current.indeterminate = someAttestationsChecked;
+  }, [someAttestationsChecked, step]);
+
+  const setAllAttestations = (checked) => {
+    setAttest(Object.fromEntries(ATTESTATIONS.map(({ key }) => [key, checked])));
+  };
+
+  const removePhoto = async () => {
+    if (!photo?.staged || uploading) return;
+    setUploading(true);
+    setError('');
+    try {
+      await deleteStagedApplicationPhoto('profile');
+      if (mounted.current) {
+        if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+        photoUrl.current = null;
+        setPhoto(null);
+      }
+    } catch (err) {
+      if (mounted.current) setError(err.message || '사진을 지우지 못했어요. 다시 시도해주세요.');
+    } finally {
+      if (mounted.current) setUploading(false);
+    }
+  };
 
   const submit = async () => {
     if (!canSubmit || submitting.current) return;
@@ -269,9 +305,7 @@ export function ModelApply() {
         <p className={s.description}>{step === 3 ? '이름과 생년월일이 신분증과 같은지 한 번 더 봐주세요.' : <><span className={s.required}>*</span>표시는 필수 입력 항목입니다.</>}</p>
 
         {step === 1 && <div className={s.form}>
-          <label className={`${s.field} ${s.nameField}`}><span className={s.label}>이름<span className={s.required}>*</span></span>
-            <input className={s.input} autoComplete="name" required value={form.applicantName} onChange={(e) => set('applicantName', e.target.value)} />
-          </label>
+          <FormInput label="이름" required autoComplete="name" value={form.applicantName} onChange={(e) => set('applicantName', e.target.value)} />
           <fieldset className={s.field}><legend className={s.label}>성별<span className={s.required}>*</span></legend>
             <div className={s.pills}>{[{ value: 'female', label: '여성' }, { value: 'male', label: '남성' }].map(({ value, label }) => (
               <button key={value} type="button" className={`${s.pill} ${form.gender === value ? s.pillOn : ''}`} aria-pressed={form.gender === value} onClick={() => set('gender', value)}>{label}</button>
@@ -281,47 +315,48 @@ export function ModelApply() {
             <BirthdateInput value={form.birthdate} onChange={(value) => set('birthdate', value)} />
             <p className={s.hint}>만 19세 이상만 지원할 수 있어요.</p>
           </fieldset>
-          <label className={`${s.field} ${s.phoneField}`}><span className={s.label}>전화번호<span className={s.required}>*</span></span>
-            <input className={s.input} type="tel" required autoComplete="tel" placeholder="010-0000-0000" value={form.phone} onChange={(e) => set('phone', formatPhone(e.target.value))} />
-          </label>
-          <label className={`${s.field} ${s.emailField}`}><span className={s.label}>이메일<span className={s.required}>*</span></span>
-            <input className={s.input} type="email" required autoComplete="email" spellCheck={false} value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} aria-invalid={Boolean(contactEmail && !emailValid)} aria-describedby={contactEmail && !emailValid ? 'contact-email-error' : undefined} />
-            {contactEmail && !emailValid && <span id="contact-email-error" className={`${s.hint} ${s.error}`} role="alert">이메일을 254자 이내의 name@example.com 형식으로 입력해 주세요.</span>}
-          </label>
+          <FormInput label="전화번호" required type="tel" autoComplete="tel" placeholder="010-1234-5678" value={form.phone} onChange={(e) => set('phone', formatPhone(e.target.value))} />
+          <FormInput label="이메일" required type="email" autoComplete="email" spellCheck={false} value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} error={contactEmail && !emailValid ? '이메일을 254자 이내의 name@example.com 형식으로 입력해 주세요.' : ''} messageId="contact-email-error" />
         </div>}
 
         {step === 2 && <div className={s.form}>
+          <section aria-labelledby="application-photo-title" className={s.photoSection}>
+            <h2 id="application-photo-title" className={s.label}>프로필 사진<span className={s.required}>*</span></h2>
           <div className={s.upload}>
-            <div className={s.photoControl}>
-              <button type="button" className={s.photoSlot} disabled={uploading} onClick={() => fileInput.current?.click()} aria-label={photo ? '다른 사진으로 바꾸기' : '사진 올리기'}>
-                {photo?.previewUrl ? <img src={photo.previewUrl} alt="지원서 프로필 사진" /> : <>
-                  <svg className={s.silhouette} viewBox="0 0 120 140" aria-hidden="true"><ellipse cx="60" cy="48" rx="26" ry="32" /><path d="M16 134c4-28 22-42 44-42s40 14 44 42" /></svg>
-                  <span>{uploading ? '올리는 중' : '사진 올리기'}</span>
-                </>}
-              </button>
-              {photo && <button type="button" className={s.changePhoto} disabled={uploading} onClick={() => fileInput.current?.click()}>{uploading ? '올리는 중' : '다른 사진으로 바꾸기'}</button>}
-              <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onPickPhoto} />
-            </div>
-            <div className={s.photoGuidance}><h2 className={s.label}>프로필 이미지 업로드<span className={s.required}>*</span></h2>
+            <ImageUpload
+              className={s.applicationUploader}
+              previewUrl={photo?.previewUrl}
+              fileName={photo?.fileName}
+              accept="image/png,image/jpeg,image/webp"
+              uploading={uploading}
+              onSelect={onPickPhoto}
+              onRemove={removePhoto}
+              onReject={() => setError('JPG, PNG, WEBP 이미지 파일만 올릴 수 있어요.')}
+              alt="지원서 프로필 사진"
+            />
+            <div className={s.photoGuidance}>
               {PHOTO_GUIDANCE.map((text) => <p key={text}><Icon name="check" size={16} /><span>{text}</span></p>)}
             </div>
           </div>
-          <div className={s.measurements}>{[{ key: 'heightCm', label: '키', unit: 'cm', min: 100, max: 250 }, { key: 'weightKg', label: '몸무게', unit: 'kg', min: 30, max: 200 }].map(({ key, label, unit, min, max }) => (
-            <label key={key} className={s.field}><span className={s.label}>{label}{key === 'heightCm' && <span className={s.required}>*</span>}</span>
-              <span className={s.suffix}><input className={s.input} inputMode="numeric" maxLength={3} required={key === 'heightCm'} aria-invalid={Boolean(form[key] && !validInteger(form[key], min, max))} value={form[key] ?? ''} onChange={(e) => set(key, e.target.value.replace(/\D/g, '').slice(0, 3))} /><span>{unit}</span></span>
-            </label>
-          ))}</div>
-          <fieldset className={s.field}><legend className={s.label}>경력</legend><div className={s.pills}>{EXPERIENCE_OPTIONS.map(({ value, label }) => (
+          </section>
+          <div className={s.measurements}>{[
+            { key: 'heightCm', label: '키', unit: 'cm', min: 100, max: 250, help: '키는 100~250cm 사이의 숫자로 입력해 주세요.' },
+            { key: 'weightKg', label: '몸무게', unit: 'kg', min: 30, max: 200, help: '몸무게는 선택이며, 입력하면 30~200kg 사이의 숫자로 입력해 주세요.' },
+          ].map(({ key, label, unit, min, max, help }) => {
+            const invalid = Boolean(form[key] && !validInteger(form[key], min, max));
+            return <FormInput key={key} label={label} required={key === 'heightCm'} optional={key === 'weightKg'} unit={unit} className={s.measurementField}
+              inputMode="numeric" maxLength={3} value={form[key] ?? ''} onChange={(e) => set(key, e.target.value.replace(/\D/g, '').slice(0, 3))}
+              error={invalid ? help : ''} hint={`${min}~${max}${unit}`} messageId={`${key}-help`} />;
+          })}</div>
+          <fieldset className={s.field}><legend className={s.label}>경력<span className={s.optional}> 선택</span></legend><div className={s.pills}>{EXPERIENCE_OPTIONS.map(({ value, label }) => (
             <button key={value} type="button" className={`${s.pill} ${form.experienceLevel === value ? s.pillOn : ''}`} aria-pressed={form.experienceLevel === value} onClick={() => set('experienceLevel', form.experienceLevel === value ? '' : value)}>{label}</button>
           ))}</div></fieldset>
           <fieldset className={s.field}><legend className={s.label}>모델 에이전시에 속해본 경험이 있나요?<span className={s.required}>*</span></legend><div className={s.pills}>{[{ value: true, label: '예' }, { value: false, label: '아니오' }].map(({ value, label }) => (
             <button key={label} type="button" className={`${s.pill} ${form.agencyContracted === value ? s.pillOn : ''}`} aria-pressed={form.agencyContracted === value} onClick={() => set('agencyContracted', value)}>{label}</button>
           ))}</div></fieldset>
-          {[{ key: 'portfolioUrl', label: '포트폴리오 링크', placeholder: 'www.portfolio.com' }, { key: 'snsUrl', label: 'SNS 링크', placeholder: 'www.instagram.com/example' }].map(({ key, label, placeholder }) => (
-            <label key={key} className={`${s.field} ${s.linkField}`}><span className={s.label}>{label}</span>
-              <input className={s.input} inputMode="url" spellCheck={false} placeholder={placeholder} value={form[key]} onChange={(e) => set(key, e.target.value)} aria-invalid={Boolean(linkErrors[key])} aria-describedby={linkErrors[key] ? `${key}-error` : undefined} />
-              {linkErrors[key] && <span id={`${key}-error`} className={`${s.hint} ${s.error}`} role="alert">{linkErrors[key]}</span>}
-            </label>
+          {[{ key: 'portfolioUrl', label: '포트폴리오 링크', example: 'https://portfolio.com' }, { key: 'snsUrl', label: 'SNS 링크', example: 'https://instagram.com/계정' }].map(({ key, label, example }) => (
+            <FormInput key={key} label={label} optional placeholder={example} inputMode="url" spellCheck={false} value={form[key]} onChange={(e) => set(key, e.target.value)}
+              error={linkErrors[key]} messageId={`${key}-message`} />
           ))}
         </div>}
 
@@ -335,11 +370,17 @@ export function ModelApply() {
             </section>
           ))}
           <section className={s.summarySection}><div className={s.sectionHead}><h2>체크사항</h2></div>
-            <div className={s.attestations}>{ATTESTATIONS.map(({ key, text, detail }) => (
+            <div className={s.attestations}>
+              <label className={s.allAttestations}>
+                <input ref={allAttestationsInput} id="attest-all" type="checkbox" checked={allAttestationsChecked} aria-checked={someAttestationsChecked ? 'mixed' : allAttestationsChecked} disabled={busy} onChange={(e) => setAllAttestations(e.target.checked)} />
+                <span>전체 동의</span>
+              </label>
+              {ATTESTATIONS.map(({ key, text, detail }) => (
               <label key={key} className={s.attestation}><input type="checkbox" checked={attest[key]} disabled={busy} onChange={(e) => setAttest((current) => ({ ...current, [key]: e.target.checked }))} />
                 <span><span className={s.requiredWord}>(필수)</span>{key === 'privacyPolicy' ? <><a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>개인정보 처리 약관</a>에 대해 동의합니다.</> : text}{detail && <><br />{detail}</>}</span>
               </label>
-            ))}</div>
+              ))}
+            </div>
           </section>
         </>}
       </div>

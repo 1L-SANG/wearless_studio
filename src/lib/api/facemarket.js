@@ -165,6 +165,14 @@ export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filena
   ), '사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
+export async function deleteStagedApplicationPhoto(kind = 'profile') {
+  if (MOCK) return (await mockApi()).deleteStagedApplicationPhoto(kind);
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/applications/photo-staging/${encodeURIComponent(kind)}`,
+    { method: 'DELETE' },
+  ), '임시 사진을 지우지 못했어요. 잠시 후 다시 시도해 주세요.');
+}
+
 // 지원서 제출. 성공 시 검토 중(auto-approve 면 승인) ApplicationView 반환. 중복이면 409.
 export function submitApplication(body) {
   if (MOCK) return mockApi().then((api) => api.submitApplication(body));

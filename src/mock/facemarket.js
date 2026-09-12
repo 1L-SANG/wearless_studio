@@ -32,6 +32,10 @@ export function createFacemarketMock({ scenario = 'new', storage = null } = {}) 
   return {
     getCurrentApplication: async () => application ? structuredClone(application) : null,
     stageApplicationPhoto: async ({ kind }) => { staged = kind === 'profile'; return { staged, kind }; },
+    deleteStagedApplicationPhoto: async (kind = 'profile') => {
+      if (kind === 'profile') staged = false;
+      return null;
+    },
     submitApplication: async (body) => {
       if (application && ['under_review', 'approved'].includes(application.status)) throw fail(409, 'application_exists');
       if (!staged) throw fail(400, 'profile_photo_required');
