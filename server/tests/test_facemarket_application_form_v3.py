@@ -5,6 +5,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import sqlite3
@@ -34,6 +35,7 @@ def _payload(**overrides):
         "heightCm": 172,
         "weightKg": 62,
         "agencyContracted": False,
+        "profileStageId": hashlib.sha256(b"staged/profile.jpg").hexdigest(),
         "categories": ["fashion"],
         "attestations": {
             "adultAndTruthful": True,
@@ -220,6 +222,36 @@ def test_empty_categories_and_region_are_stored_with_weight(monkeypatch):
     assert result.weight_kg == 62
     assert "weight_kg" in conn.cursor_instance.insert_sql
     assert 62 in conn.cursor_instance.insert_params
+
+
+@pytest.mark.parametrize(
+    ("profile_stage_id", "status", "code"),
+    [
+        (None, 400, "profile_photo_refresh_required"),
+        ("0" * 64, 409, "profile_photo_changed"),
+    ],
+)
+def test_submit_rejects_a_missing_or_replaced_staged_photo(
+    monkeypatch, profile_stage_id, status, code
+):
+    conn = _Conn()
+
+    @contextlib.asynccontextmanager
+    async def fake_get_conn(_request):
+        yield conn
+
+    monkeypatch.setattr(applications, "get_conn", fake_get_conn)
+    payload = _payload(profileStageId=profile_stage_id)
+    body = applications.ApplicationSubmitBody.model_validate(payload)
+
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(applications.submit_application(
+            _request(r2_face=_R2()), body, user_id="user-1"
+        ))
+
+    assert caught.value.status_code == status
+    assert caught.value.detail["code"] == code
+    assert conn.cursor_instance.insert_sql == ""
 
 
 def test_admin_card_exposes_weight():

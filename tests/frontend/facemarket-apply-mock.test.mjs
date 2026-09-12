@@ -8,8 +8,8 @@ test('new mock visitors can upload and submit, then see the same application in 
   assert.equal(await api.getCurrentApplication(), null);
   const body = { ...MOCK_APPLICANT, weightKg: null, agencyContracted: true };
   await assert.rejects(api.submitApplication(body), { code: 'profile_photo_required' });
-  await api.stageApplicationPhoto({ kind: 'profile' });
-  const submitted = await api.submitApplication(body);
+  const staged = await api.stageApplicationPhoto({ kind: 'profile' });
+  const submitted = await api.submitApplication({ ...body, profileStageId: staged.stageId });
   assert.equal(submitted.status, 'under_review');
   assert.equal(submitted.weightKg, null);
   assert.equal(submitted.agencyContracted, true);
@@ -31,8 +31,8 @@ test('review, approved and rejected fixtures expose the new profile values', asy
 
 test('mock application photo deletion makes the staged photo unavailable to submit', async () => {
   const api = createFacemarketMock();
-  await api.stageApplicationPhoto({ kind: 'profile' });
-  await api.deleteStagedApplicationPhoto('profile');
+  const staged = await api.stageApplicationPhoto({ kind: 'profile' });
+  await api.deleteStagedApplicationPhoto('profile', staged.stageId);
   await assert.rejects(api.submitApplication(MOCK_APPLICANT), { code: 'profile_photo_required' });
 });
 
@@ -67,8 +67,8 @@ test('the API facade in explicit development mock mode completes the application
     assert.equal(await api.getCurrentEnrollment(), null);
     assert.deepEqual(await api.listLicenses(), []);
     assert.equal((await api.getSettlementSummary()).monthCount, 0);
-    await api.stageApplicationPhoto({ kind: 'profile', fileBlob: new Blob(['photo']), filename: 'profile.jpg' });
-    const app = await api.submitApplication(MOCK_APPLICANT);
+    const staged = await api.stageApplicationPhoto({ kind: 'profile', fileBlob: new Blob(['photo']), filename: 'profile.jpg' });
+    const app = await api.submitApplication({ ...MOCK_APPLICANT, profileStageId: staged.stageId });
     assert.equal(app.weightKg, 55);
     assert.equal((await api.getCurrentApplication()).status, 'under_review');
     await api.cancelApplication(app.id);

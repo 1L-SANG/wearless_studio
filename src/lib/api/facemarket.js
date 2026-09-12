@@ -165,10 +165,10 @@ export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filena
   ), '사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
-export async function deleteStagedApplicationPhoto(kind = 'profile') {
-  if (MOCK) return (await mockApi()).deleteStagedApplicationPhoto(kind);
+export async function deleteStagedApplicationPhoto(kind = 'profile', stageId) {
+  if (MOCK) return (await mockApi()).deleteStagedApplicationPhoto(kind, stageId);
   return checkedJson(await _authFetch(
-    `/v1/facemarket/applications/photo-staging/${encodeURIComponent(kind)}`,
+    `/v1/facemarket/applications/photo-staging/${encodeURIComponent(kind)}/${encodeURIComponent(stageId)}`,
     { method: 'DELETE' },
   ), '임시 사진을 지우지 못했어요. 잠시 후 다시 시도해 주세요.');
 }

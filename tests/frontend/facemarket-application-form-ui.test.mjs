@@ -35,6 +35,7 @@ const allAttestations = {
   reviewOnlyUse: true,
   privacyPolicy: true,
 };
+const PROFILE_STAGE_ID = 'a'.repeat(64);
 
 test('새 지원서의 생년월일은 예시 숫자나 브라우저 자동완성 없이 빈칸으로 시작한다', async () => {
   const harness = await modelComponentHarness({
@@ -59,7 +60,7 @@ test('지원 확인의 전체 동의는 다섯 필수 항목을 한 번에 선�
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx',
     exportName: 'ModelApply',
-    initialStates: ['ready', completeForm, { staged: true, previewUrl: 'blob:profile' }, {
+    initialStates: ['ready', completeForm, { staged: true, stageId: PROFILE_STAGE_ID, previewUrl: 'blob:profile' }, {
       ...allAttestations,
       privacyPolicy: false,
     }, 3, null, false, ''],
@@ -88,7 +89,7 @@ test('키와 몸무게 입력은 현재 숫자 범위와 선택 여부를 바로
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx',
     exportName: 'ModelApply',
-    initialStates: ['ready', { ...completeForm, heightCm: '99', weightKg: '201' }, { staged: true }, {}, 2, null, false, ''],
+    initialStates: ['ready', { ...completeForm, heightCm: '99', weightKg: '201' }, { staged: true, stageId: PROFILE_STAGE_ID }, {}, 2, null, false, ''],
     api: {},
   });
   try {
@@ -181,13 +182,14 @@ test('지원 사진을 바꾸거나 지우면 더는 쓰지 않는 미리보기 
     entry: '/src/features/model/ModelApply.jsx',
     exportName: 'ModelApply',
     initialStates: ['ready', completeForm, null, {}, 2, null, false, ''],
-    api: { stageApplicationPhoto: async () => ({ staged: true }), deleteStagedApplicationPhoto: async () => null },
+    api: { stageApplicationPhoto: async () => ({ staged: true, stageId: PROFILE_STAGE_ID }), deleteStagedApplicationPhoto: async () => null },
   });
   try {
     let tree = harness.render();
     await findTree(tree, (node) => node.type?.name === 'ImageUpload').props.onSelect({ name: 'first.jpg', type: 'image/jpeg' });
     tree = harness.render();
     assert.equal(findTree(tree, (node) => node.type?.name === 'ImageUpload').props.previewUrl, 'blob:application-1');
+    assert.equal(harness.runtime.states[2].stageId, PROFILE_STAGE_ID);
 
     await findTree(tree, (node) => node.type?.name === 'ImageUpload').props.onSelect({ name: 'second.jpg', type: 'image/jpeg' });
     tree = harness.render();
@@ -208,35 +210,61 @@ test('지원 사진 삭제는 서버 임시 사진 삭제가 끝난 뒤에만 �
   let finishDelete;
   const calls = [];
   const pendingDelete = new Promise((resolve) => { finishDelete = resolve; });
-  const originalPhoto = { staged: true, previewUrl: 'blob:profile', fileName: 'profile.jpg' };
+  const originalPhoto = { staged: true, stageId: PROFILE_STAGE_ID, previewUrl: 'blob:profile', fileName: 'profile.jpg' };
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx',
     exportName: 'ModelApply',
     initialStates: ['ready', completeForm, originalPhoto, {}, 2, null, false, ''],
-    api: { deleteStagedApplicationPhoto: async (kind) => { calls.push(kind); await pendingDelete; } },
+    api: { deleteStagedApplicationPhoto: async (...args) => { calls.push(args); await pendingDelete; } },
   });
   try {
     const remove = findTree(harness.render(), (node) => node.type?.name === 'ImageUpload').props.onRemove;
     const deleting = remove();
-    assert.deepEqual(harness.runtime.states[2], originalPhoto);
-    assert.deepEqual(calls, ['profile']);
+    assert.deepEqual(harness.runtime.states[2], { ...originalPhoto, staged: false });
+    assert.deepEqual(calls, [['profile', PROFILE_STAGE_ID]]);
     finishDelete();
     await deleting;
     assert.equal(harness.runtime.states[2], null);
   } finally { await harness.close(); }
 });
 
-test('서버 임시 사진 삭제가 실패하면 미리보기와 다음 재시도 기회를 유지한다', async () => {
-  const originalPhoto = { staged: true, previewUrl: 'blob:profile', fileName: 'profile.jpg' };
+test('서버 임시 사진 삭제 결과를 모르면 미리보기는 유지하되 제출을 잠근다', async () => {
+  const calls = [];
+  const originalPhoto = { staged: true, stageId: PROFILE_STAGE_ID, previewUrl: 'blob:profile', fileName: 'profile.jpg' };
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx',
     exportName: 'ModelApply',
     initialStates: ['ready', completeForm, originalPhoto, {}, 2, null, false, ''],
-    api: { deleteStagedApplicationPhoto: async () => { throw new Error('임시 사진을 지우지 못했어요.'); } },
+    api: { deleteStagedApplicationPhoto: async (...args) => { calls.push(args); throw new Error('Failed to fetch'); } },
   });
   try {
     await findTree(harness.render(), (node) => node.type?.name === 'ImageUpload').props.onRemove();
-    assert.deepEqual(harness.runtime.states[2], originalPhoto);
-    assert.match(harness.runtime.states[7], /지우지 못했어요/);
+    assert.deepEqual(calls, [['profile', PROFILE_STAGE_ID]]);
+    assert.deepEqual(harness.runtime.states[2], { ...originalPhoto, staged: false });
+    const tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+    assert.match(harness.runtime.states[7], /다시 올려/);
+  } finally { await harness.close(); }
+});
+
+test('제출 직전 다른 탭이 사진을 바꾸면 프로필 단계로 돌아가 재업로드를 요구한다', async () => {
+  const photo = { staged: true, stageId: PROFILE_STAGE_ID, previewUrl: 'blob:profile', fileName: 'profile.jpg' };
+  const error = Object.assign(new Error('프로필 사진이 다른 탭에서 바뀌었어요. 사진을 다시 올려 주세요.'), {
+    status: 409,
+    code: 'profile_photo_changed',
+  });
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx',
+    exportName: 'ModelApply',
+    initialStates: ['ready', completeForm, photo, allAttestations, 3, null, false, ''],
+    api: { submitApplication: async () => { throw error; } },
+  });
+  try {
+    await findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '지원 완료').props.onClick();
+    assert.equal(harness.runtime.states[4], 2);
+    assert.deepEqual(harness.runtime.states[2], { ...photo, staged: false });
+    const tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+    assert.match(harness.runtime.states[7], /다시 올려/);
   } finally { await harness.close(); }
 });

@@ -720,13 +720,14 @@ const applicationAttestations = {
   adultAndTruthful: true, photosAreMine: true, noAgencyContract: true,
   reviewOnlyUse: true, privacyPolicy: true,
 };
+const applicationPhoto = { staged: true, stageId: 'a'.repeat(64) };
 
 test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상태 보기로 이어진다', async () => {
   const navigations = [];
   const submissions = [];
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', { ...completeApplicationForm, portfolioUrl: 'www.portfolio.com', snsUrl: 'www.instagram.com/example' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 3, null, false, ''],
+    initialStates: ['ready', { ...completeApplicationForm, portfolioUrl: 'www.portfolio.com', snsUrl: 'www.instagram.com/example' }, { ...applicationPhoto, previewUrl: 'blob:profile' }, applicationAttestations, 3, null, false, ''],
     api: { submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; } },
   });
   harness.runtime.navigate = (...args) => navigations.push(args);
@@ -741,6 +742,7 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
       contactEmail: 'model@example.com', applicantName: '김하나', phone: '010-1234-5678',
       birthdate: '2000-01-01', gender: 'female', heightCm: 170, weightKg: 55,
       experienceLevel: 'beginner', agencyContracted: false, portfolioUrl: 'https://www.portfolio.com', snsUrl: 'https://www.instagram.com/example',
+      profileStageId: 'a'.repeat(64),
       attestations: applicationAttestations,
       privacyConsent: { accepted: true, documentVersion: '2026-09-v1' },
     });
@@ -756,7 +758,7 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
 test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은 다시 확인을 연다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 3, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, applicationAttestations, 3, null, false, ''], api: {},
   });
   try {
     let tree = harness.render();
@@ -777,7 +779,7 @@ test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은
 test('체크사항 하나가 비어 있으면 지원 완료가 잠기고 미동의 개수를 안내한다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, { ...applicationAttestations, privacyPolicy: false }, 3, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, { ...applicationAttestations, privacyPolicy: false }, 3, null, false, ''], api: {},
   });
   try {
     const tree = harness.render();
@@ -890,7 +892,7 @@ test('지원 프로필은 사진 업로드와 에이전시 답을 요구하며 �
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
     initialStates: ['ready', { ...completeApplicationForm, weightKg: '', experienceLevel: '', agencyContracted: null }, null, {}, 2, null, false, ''],
-    api: { stageApplicationPhoto: async (body) => { uploaded.push(body); } },
+    api: { stageApplicationPhoto: async (body) => { uploaded.push(body); return { staged: true, stageId: 'a'.repeat(64) }; } },
   });
   let preview;
   try {
@@ -972,7 +974,7 @@ for (const accountEmail of [null, 'google@example.com']) {
     const submissions = [];
     const harness = await modelComponentHarness({
       entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
+      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { ...applicationPhoto, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
       api: { submitApplication: async (body) => { submissions.push(body); return { status: 'under_review' }; } },
     });
     harness.runtime.session = { user: { email: accountEmail } };
@@ -1006,7 +1008,7 @@ for (const accountEmail of [null, 'google@example.com']) {
 test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알리고 수정 후 진행한다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 2, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, applicationAttestations, 2, null, false, ''], api: {},
   });
   try {
     for (const label of ['포트폴리오 링크', 'SNS 링크']) {
@@ -1036,7 +1038,7 @@ for (const failure of [
   test(`지원서 제출 실패(${failure.code || failure.status || 'network'})는 원인을 구분하고 작성 내용을 보존한다`, async () => {
     let attempts = 0;
     const form = { ...completeApplicationForm, portfolioUrl: 'https://example.com/portfolio' };
-    const photo = { staged: true, previewUrl: 'blob:profile' };
+    const photo = { ...applicationPhoto, previewUrl: 'blob:profile' };
     const harness = await modelComponentHarness({
       entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
       initialStates: ['ready', form, photo, applicationAttestations, 3, null, false, ''],

@@ -160,12 +160,13 @@ export function ModelApply() {
     setUploading(true);
     setError('');
     try {
-      await stageApplicationPhoto({ kind: 'profile', fileBlob: file, filename: file.name });
+      const stagedPhoto = await stageApplicationPhoto({ kind: 'profile', fileBlob: file, filename: file.name });
+      if (!stagedPhoto?.stageId) throw new Error('사진 저장 결과를 확인하지 못했어요. 다시 올려 주세요.');
       if (mounted.current) {
         const previewUrl = URL.createObjectURL(file);
         if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
         photoUrl.current = previewUrl;
-        setPhoto({ staged: true, previewUrl, fileName: file.name });
+        setPhoto({ staged: true, stageId: stagedPhoto.stageId, previewUrl, fileName: file.name });
       }
     } catch (err) {
       if (mounted.current) setError(err.message || '사진을 올리지 못했어요. 다시 시도해주세요.');
@@ -180,7 +181,7 @@ export function ModelApply() {
   const basicValid = Boolean(form.applicantName.trim() && ['female', 'male'].includes(form.gender)
     && isAdultBirthdate(form.birthdate) && /^[\d-]+$/.test(form.phone)
     && /^\d{9,13}$/.test(form.phone.replace(/-/g, '')) && emailValid);
-  const profileValid = Boolean(photo?.staged && !uploading && validInteger(form.heightCm, 100, 250)
+  const profileValid = Boolean(photo?.staged && photo?.stageId && !uploading && validInteger(form.heightCm, 100, 250)
     && (form.weightKg === '' || form.weightKg == null || validInteger(form.weightKg, 30, 200))
     && typeof form.agencyContracted === 'boolean' && !linkErrors.portfolioUrl && !linkErrors.snsUrl);
   const uncheckedCount = ATTESTATIONS.filter(({ key }) => !attest[key]).length;
@@ -198,18 +199,22 @@ export function ModelApply() {
   };
 
   const removePhoto = async () => {
-    if (!photo?.staged || uploading) return;
+    if (!photo?.stageId || uploading) return;
+    const stageId = photo.stageId;
     setUploading(true);
     setError('');
+    setPhoto((current) => current ? { ...current, staged: false } : current);
     try {
-      await deleteStagedApplicationPhoto('profile');
+      await deleteStagedApplicationPhoto('profile', stageId);
       if (mounted.current) {
         if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
         photoUrl.current = null;
         setPhoto(null);
       }
     } catch (err) {
-      if (mounted.current) setError(err.message || '사진을 지우지 못했어요. 다시 시도해주세요.');
+      if (mounted.current) setError(err.code === 'staging_changed'
+        ? err.message
+        : '사진 삭제 결과를 확인하지 못했어요. 사진을 다시 올려 주세요.');
     } finally {
       if (mounted.current) setUploading(false);
     }
@@ -233,13 +238,19 @@ export function ModelApply() {
         agencyContracted: form.agencyContracted,
         portfolioUrl: optionalLink(form.portfolioUrl),
         snsUrl: optionalLink(form.snsUrl),
+        profileStageId: photo.stageId,
         attestations: attest,
         privacyConsent: { accepted: true, documentVersion: PRIVACY_CONSENT_VERSION },
       });
       if (mounted.current) setPhase('complete');
     } catch (err) {
       if (mounted.current) {
-        if (err.status === 409) {
+        if (err.code === 'profile_photo_changed') {
+          setPhoto((current) => current ? { ...current, staged: false } : current);
+          setError(err.message || '프로필 사진을 다시 올려 주세요.');
+          setStep(2);
+          setEditing(2);
+        } else if (err.status === 409) {
           setError('이미 검토 중인 지원서가 있어요. 상태 화면에서 확인해 주세요.');
         } else if (err.status >= 400 && err.status < 500) {
           setError(err.message || '입력한 내용을 확인하고 다시 보내 주세요.');

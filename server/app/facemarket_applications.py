@@ -14,6 +14,7 @@ docs/designs/facemarket-application-renewal.md
 """
 
 import asyncio
+import hashlib
 import logging
 import uuid
 
@@ -75,6 +76,7 @@ class ApplicationSubmitBody(CamelModel):
     phone: str
     height_cm: int
     agency_contracted: bool
+    profile_stage_id: str | None = None
     region: str | None = None
     gender: str | None = None
     weight_kg: int | None = None
@@ -177,6 +179,11 @@ def _canonical_id(application_id: str) -> str:
 def _staging_key(user_id: str, kind: str, ext: str) -> str:
     # 종류별 1슬롯이지만 키에 uuid 를 넣어 교체 시 옛 오브젝트를 명시적으로 지운다.
     return f"private/fm-application/staging/{user_id}/{kind}-{uuid.uuid4().hex}.{ext}"
+
+
+def _staging_id(r2_key: str) -> str:
+    """R2 경로를 노출하지 않고 브라우저가 자신이 올린 임시 사진을 식별하게 한다."""
+    return hashlib.sha256(r2_key.encode("utf-8")).hexdigest()
 
 
 def _application_photo_key(application_id: str, kind: str, ext: str) -> str:
@@ -487,16 +494,17 @@ async def stage_application_photo(
             except Exception:
                 # 키에는 user_id 가 들어 있다(_staging_key) — 카운트/사실만 남긴다.
                 logger.warning("stale application staging photo not deleted")
-    return {"staged": True, "kind": kind}
+    return {"staged": True, "kind": kind, "stageId": _staging_id(new_key)}
 
 
-@router.delete("/applications/photo-staging/{kind}", status_code=204)
+@router.delete("/applications/photo-staging/{kind}/{stage_id}", status_code=204)
 async def delete_application_photo_staging(
     request: Request,
     kind: str,
+    stage_id: str,
     user_id: str = Depends(require_user),
 ):
-    """화면에서 선택을 지우면 다른 탭도 그 임시 사진을 제출할 수 없게 한다.
+    """브라우저가 올린 식별자와 현재 임시 사진이 같을 때만 선택을 지운다.
 
     DB 행을 먼저 지우고 커밋해야 제출과의 경쟁에서 소유권이 한쪽으로 확정된다. R2 삭제 실패로
     남은 행 없는 객체는 기존 24시간 orphan sweep 과 계정 파기 접두사 스윕이 회수한다.
@@ -504,17 +512,29 @@ async def delete_application_photo_staging(
     kind = (kind or "").strip().lower()
     if kind not in PHOTO_KINDS:
         raise _err("invalid_photo_kind", "사진 종류가 올바르지 않습니다.")
+    requested_id = (stage_id or "").strip().lower()
     r2_key = None
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "delete from fm_model_application_photo_staging "
-                "where user_id = %s and kind = %s returning r2_key",
+                "select r2_key from fm_model_application_photo_staging "
+                "where user_id = %s and kind = %s for update",
                 (user_id, kind),
             )
             row = await cur.fetchone()
             if row:
                 r2_key = row["r2_key"]
+                if _staging_id(r2_key) != requested_id:
+                    raise _err(
+                        "staging_changed",
+                        "다른 탭에서 사진이 바뀌었어요. 이 화면에서 사진을 다시 올려 주세요.",
+                        status=409,
+                    )
+                await cur.execute(
+                    "delete from fm_model_application_photo_staging "
+                    "where user_id = %s and kind = %s and r2_key = %s",
+                    (user_id, kind, r2_key),
+                )
         await conn.commit()
     if r2_key:
         try:
@@ -646,6 +666,12 @@ async def submit_application(
         if not body.attestations.get(key):
             raise _err("attestation_required", "제출 전 확인 항목에 모두 동의해 주세요.")
     attestations = {key: True for key in ATTESTATION_KEYS}
+    expected_profile_id = (body.profile_stage_id or "").strip().lower()
+    if not expected_profile_id:
+        raise _err(
+            "profile_photo_refresh_required",
+            "지원 화면이 업데이트됐어요. 새로고침한 뒤 사진을 다시 올려 주세요.",
+        )
 
     r2 = _r2_face(request)
     auto_approved = settings.fm_application_auto_approve
@@ -657,15 +683,21 @@ async def submit_application(
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
-            # 사진 4종 전부 필수(레퍼런스 정합). 종류별 원본 = 스테이징, 없으면 재지원 프리필
-            # (스펙 5): 최근 터미널(거절/취소) 지원서의 같은 종류 사진을 30일 내면 새 키로 복사한다 —
-            # 이전 지원서의 30일 익명화가 새 지원서 사진을 지우지 않게 수명을 분리한다.
+            # 필수 profile 은 이 브라우저가 올린 현재 스테이징 사진과 식별자가 같아야 한다.
+            # 선택 사진은 스테이징이 없으면 최근 터미널 지원서의 사진을 30일 안에서 복사한다.
             await cur.execute(
                 "select kind, r2_key, mime_type from fm_model_application_photo_staging "
                 "where user_id = %s for update",
                 (user_id,),
             )
             staged = {r["kind"]: r for r in await cur.fetchall()}
+            staged_profile = staged.get("profile")
+            if not staged_profile or _staging_id(staged_profile["r2_key"]) != expected_profile_id:
+                raise _err(
+                    "profile_photo_changed",
+                    "프로필 사진이 다른 탭에서 바뀌었어요. 사진을 다시 올려 주세요.",
+                    status=409,
+                )
             await cur.execute(
                 "select photo_keys, profile_image_r2_key from fm_model_applications "
                 "where user_id = %s and status in ('rejected', 'cancelled') "
