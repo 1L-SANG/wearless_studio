@@ -7,6 +7,7 @@
 
 import asyncio
 import hashlib
+from pathlib import Path
 import json
 import logging
 import uuid
@@ -29,6 +30,8 @@ from ..agents import (
     mannequin_series_qc,
     mannequin_untuck,
     mannequin_quality,
+    mannequin_photo_structure,
+    mannequin_specialist_qc,
 )
 from ..agents.mannequin_adjust import (
     ADJUST_PROMPT_VERSION,
@@ -44,6 +47,7 @@ from ..agents.prompts import (
     load_prompt_template,
     load_untuck_prompt_template,
     render_mannequin_prompt,
+    build_mirrored_source_block,
 )
 from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
@@ -244,7 +248,10 @@ def _build_manifest(
     lines = ["1. Base mannequin — the canvas to dress (keep it identical)"]
     i = 2
     for a in prod_assets:
-        lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'view of the garment')}")
+        slot = a.get("slot") or ""
+        label = (slot if slot.startswith("Front crop ") else
+                 _SLOT_LABEL.get(slot, "view of the garment"))
+        lines.append(f"{i}. {label}")
         i += 1
     if has_match:
         custom_guard = (
@@ -1448,6 +1455,21 @@ class MannequinQualityError(RuntimeError):
     """추가 한 장까지 검증하지 못한 품질 종료. 화면 자동 재시도 대상이 아니다."""
 
 
+async def _specialist_repair_request(res, product_refs, match_img, fit_profile, *, source_mirrored=False):
+    """서비스와 실험이 동일한 증거 및 보존 지시를 사용한다."""
+    repair_refs = await asyncio.to_thread(mannequin_photo_structure.prepare, list(product_refs or []))
+    images = [InlineImage(res.mime, res.image), *[ref.image for ref in repair_refs]] + ([match_img] if match_img else [])
+    prompt = Path(__file__).parents[2].joinpath("prompts/mannequin_targeted_repair_v1.txt").read_text()
+    prompt += "\nATTACHMENT ORDER:\nImage 1: current mannequin to edit.\n" + "\n".join(
+        f"Image {index}: MAIN product {ref.slot}" for index, ref in enumerate(repair_refs, 2))
+    if match_img:
+        prompt += f"\nImage {len(repair_refs) + 2}: separate matching garment; preserve its identity."
+    prompt += image_qc.build_declared_fit_block(fit_profile)
+    if source_mirrored is True:
+        prompt += "\n" + build_mirrored_source_block({"sourceMirrored": True})
+    return prompt, images
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -1463,6 +1485,38 @@ async def _run_candidate(
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
+    specialist_mode = getattr(s, "mannequin_specialist_qc", "off")
+    photo_structure = None
+    generation_refs = product_refs
+    generation_prods = prod_imgs
+    if specialist_mode in ("shadow", "enforce") and generation_path != "edit":
+        await _cancel_checkpoint(cancel_check)
+        try:
+            photo_structure = await mannequin_photo_structure.analyze(s, list(product_refs or []))
+            await _emit(pool, job_id, "step", {
+                "status": "photo_structure", "candidate": candidate, "mode": specialist_mode,
+                "assessment": photo_structure})
+            if specialist_mode == "enforce":
+                source_family = photo_structure.get("family")
+                expected_family = "one_piece" if clothing_type == "dress" else clothing_type
+                if (source_family not in (None, "unknown", expected_family)
+                        and {source_family, expected_family} != {"top", "outer"}):
+                    raise ValueError("Photo garment family conflicts with selected category")
+                generation_refs = await asyncio.to_thread(mannequin_photo_structure.prepare, list(product_refs or []))
+                generation_prods = [ref.image for ref in generation_refs]
+                image_manifest = _build_manifest([{"slot": ref.slot} for ref in generation_refs],
+                    match_img is not None, clothing_type, match_is_custom="2x2 contact sheet" in image_manifest)
+                if ref_imgs:
+                    image_manifest += "\n" + "\n".join(
+                        f"{len(generation_refs) + 2 + int(match_img is not None) + index}. STYLE REFERENCE, look only, not product construction."
+                        for index, _ref in enumerate(ref_imgs))
+            else:
+                photo_structure = None  # 관찰 모드는 생성 입력을 바꾸지 않는다.
+        except Exception as error:
+            await _emit(pool, job_id, "step", {"status": "photo_structure_failed", "candidate": candidate,
+                                               "error_type": type(error).__name__})
+            if specialist_mode == "enforce":
+                raise MannequinQualityError("source_structure_unavailable") from error
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
         images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
@@ -1479,12 +1533,13 @@ async def _run_candidate(
     else:
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
-        images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
+        images = [base_img, *generation_prods] + ([match_img] if match_img else []) + list(ref_imgs)
         # 캐노니컬 폴백이 매니페스트만 바꿔 **같은 템플릿을 다시 렌더**할 수 있도록 kwargs 로 둔다.
         ctx_kwargs = dict(
-            clothing_type=clothing_type, product_count=product_count,
+            clothing_type=clothing_type, product_count=len(generation_prods) if photo_structure is not None else product_count,
             base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
             adjusted_axes=adjusted_axes,
+            photo_structure=photo_structure,
         )
         ctx = mannequin.prompt_context(**ctx_kwargs)
         base_prompt = render_mannequin_prompt(
@@ -1542,6 +1597,26 @@ async def _run_candidate(
         return chosen
 
     async def finish(res, p2, series, scores, attempt, *, untuck=True):
+        async def inspect(current):
+            if specialist_mode not in ("shadow", "enforce"):
+                return None
+            await _cancel_checkpoint(cancel_check)
+            try:
+                report = await mannequin_specialist_qc.judge(
+                    s, list(product_refs or []), InlineImage(current.mime, current.image),
+                    clothing_type=clothing_type, fit_profile=fit_profile, match_image=match_img,
+                    source_mirrored=analysis.get("sourceMirrored") is True)
+                if report.get("image_hash") != hashlib.sha256(current.image).hexdigest():
+                    raise ValueError("Specialist assessment image mismatch")
+            except Exception as error:
+                report = {"complete": False, "verdict": "review", "roles": {},
+                          "image_hash": hashlib.sha256(current.image).hexdigest(),
+                          "error_type": type(error).__name__}
+            await _cancel_checkpoint(cancel_check)
+            await _emit(pool, job_id, "step", {"status": "specialist_qc", "candidate": candidate,
+                                               "mode": specialist_mode, "assessment": report})
+            return report
+
         needs_repair = (s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores)) or pants_gate(s, scores)
         if untuck and not needs_repair:
             res, scores = await _apply_checked_untuck_postpass(
@@ -1552,8 +1627,12 @@ async def _run_candidate(
                 fit_profile=fit_profile, eff_image_qc=eff_image_qc,
                 clothing_type=clothing_type, image_size=image_size,
                 cancel_check=cancel_check)
+        specialist = await inspect(res)
+        specialist_failed = specialist_mode == "enforce" and bool(mannequin_specialist_qc.blocking_issues(specialist))
+        if specialist_mode == "enforce" and not specialist_failed and not mannequin_specialist_qc.repair_accepted(specialist):
+            raise MannequinQualityError("specialist_review_unavailable")
         important = s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores)
-        if important or pants_gate(s, scores):
+        if important or pants_gate(s, scores) or specialist_failed:
             # 최종 1회는 재시도 루프 밖이다. 기존 결과의 디자인 오류를 물려받지 않도록
             # 원본 사진과 베이스에서 시작하되 선언된 모든 핏 축은 그대로 적용한다.
             repair_images = [base_img, *prod_imgs] + ([match_img] if match_img else [])
@@ -1563,7 +1642,7 @@ async def _run_candidate(
             ctx = mannequin.prompt_context(
                 clothing_type=clothing_type, product_count=product_count,
                 base_gender=base_gender, image_manifest=manifest, fit_profile=fit_profile,
-                adjusted_axes=adjusted_axes)
+                adjusted_axes=adjusted_axes, photo_structure=photo_structure)
             source_prompt = render_mannequin_prompt(
                 template, ctx, product, analysis, seller_canon=s.seller_text_canonicalize,
                 knowledge=s.retrieval_knowledge, material_policy="photo_evidence")
@@ -1571,6 +1650,19 @@ async def _run_candidate(
                 mannequin_quality.repair_feedback(item) for item in [*observed_scores, scores]
                 if mannequin_quality.blocking_issues(item) or pants_gate(s, item)))
             repair_prompt = "\n\n".join([*diagnostics, source_prompt])
+            if specialist_failed:
+                repair_prompt += "\nSOURCE-SUPPORTED CORRECTIONS:\n" + json.dumps(
+                    mannequin_specialist_qc.repair_instructions(specialist), ensure_ascii=False)
+            # 두 검사가 함께 문제를 발견하면 두 근거를 보존한 원본 기반 구제를 사용한다.
+            targeted_edit = specialist_failed and not important and not pants_gate(s, scores)
+            repair_model = model
+            if targeted_edit:
+                repair_prompt, repair_images = await _specialist_repair_request(
+                    res, product_refs, match_img, fit_profile,
+                    source_mirrored=analysis.get("sourceMirrored") is True)
+                repair_prompt += "\nSOURCE-SUPPORTED CORRECTIONS:\n" + json.dumps(
+                    mannequin_specialist_qc.repair_instructions(specialist), ensure_ascii=False)
+                repair_model = s.mannequin_specialist_repair_model
             await _emit(pool, job_id, "step", {
                 "status": "quality_repair", "candidate": candidate, "outcome": "started",
                 "policy": mannequin_quality.POLICY_VERSION, "extra_image_limit": 1,
@@ -1580,7 +1672,7 @@ async def _run_candidate(
             await _cancel_checkpoint(cancel_check)
             try:
                 repaired = await gemini.generate_content_image(
-                    model, repair_prompt, repair_images, image_size,
+                    repair_model, repair_prompt, repair_images, image_size,
                     aspect_ratio=s.mannequin_aspect_ratio)
             except Exception as error:
                 raise MannequinQualityError("final_generation_failed") from error
@@ -1588,6 +1680,9 @@ async def _run_candidate(
             canvas = qc.evaluate_canvas_alpha_qc(repaired.image)
             if any(r in canvas.reasons for r in ("decode_failed", "transparent_canvas")):
                 raise MannequinQualityError("final_canvas_rejected")
+            post_specialist = await inspect(repaired)
+            if specialist_mode == "enforce" and not mannequin_specialist_qc.repair_accepted(post_specialist):
+                raise MannequinQualityError("final_specialist_rejected")
             post_p2, base_fidelity = await _observe_generation_qc(
                 pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt + 1,
                 res=repaired, prod_imgs=prod_imgs, match_img=match_img,
@@ -1622,11 +1717,17 @@ async def _run_candidate(
             if final_decision(s, scores) == "retry":
                 raise MannequinQualityError("final_scores_rejected")
             res = repaired
+            scores = dict(scores or {})
             scores["quality_repair_used"] = True
+            scores["quality_repair_kind"] = "targeted_edit" if targeted_edit else "source_regeneration"
+            specialist = post_specialist
             await _emit(pool, job_id, "step", {
                 "status": "quality_repair", "candidate": candidate, "outcome": "accepted",
                 "image_hash": hashlib.sha256(res.image).hexdigest(),
             })
+        if specialist is not None:
+            scores = dict(scores or {})
+            scores["specialist_qc"] = {key: specialist.get(key) for key in ("version", "image_hash", "complete", "verdict")}
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=scores,
@@ -2207,11 +2308,13 @@ async def run_mannequin_job(app, job: dict) -> None:
 
         # 최종 구제는 부모 편집이 아니라 원본 기반 신규 생성이다. 다음 조정에서 부모
         # 깊이를 계산할 때도 실제 출고본의 계보·프롬프트를 사용한다(현재 후보는 A 한 장).
-        if (passed[0].get("qc_scores") or {}).get("quality_repair_used"):
+        repair_scores = passed[0].get("qc_scores") or {}
+        targeted_repair = repair_scores.get("quality_repair_kind") == "targeted_edit"
+        if repair_scores.get("quality_repair_used") and not targeted_repair:
             generation_path = "fresh"
         cut_generation_metadata = {
             "generationPath": generation_path,
-            "editDepth": (parent_edit_depth + 1) if generation_path == "edit" else 0,
+            "editDepth": (parent_edit_depth + 1 + int(targeted_repair)) if generation_path == "edit" else int(targeted_repair),
             "parentCutId": parent_cut_id if generation_path == "edit" else None,
             "profileCategory": fit_profile.get("category") if isinstance(fit_profile, dict) else None,
             "profileGender": fit_profile.get("gender") if isinstance(fit_profile, dict) else None,
