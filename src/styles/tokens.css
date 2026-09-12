@@ -88,6 +88,9 @@
   --cta-height: 44px;         /* min touch height */
   --cta-weight: 540;
   --cta-radius: var(--r-pill);
+  --cta-ink-hover: rgb(0 0 0);
+  --cta-sheen-light: rgb(255 255 255 / 25%);
+  --cta-sheen-inset: inset 0 2px 0 rgb(255 255 255 / 15%);
   --cta-transition: 150ms;
   --cta-focus-ring: 0 0 0 2px #fff, 0 0 0 4px var(--cta-bg);  /* double ring */
 

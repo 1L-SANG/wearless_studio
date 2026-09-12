@@ -62,6 +62,8 @@ test('동의 안내와 필수 표시를 읽고 마우스, 키보드, 터치로 �
     const text = textOf(tree);
     for (const sentence of ['필수 항목을 확인한 뒤 신분증 인증을 진행해요.', '원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.', '철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)', '언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다']) assert.ok(text.includes(sentence));
     assert.equal((text.match(/\(필수\)/g) || []).length, 2);
+    assert.ok(!text.includes('안내 · 동의 아님'));
+    assert.equal(findTree(tree, node => node.props?.to === '/overseas-transfer'), null);
     assert.equal(findTree(tree, node => node.type === 'details'), null);
     const info = () => findTree(h.render(), node => node.type === 'button' && node.props['aria-label'] === '그만두면 이렇게 돼요');
     const tooltip = () => findTree(h.render(), node => node.props?.role === 'tooltip');

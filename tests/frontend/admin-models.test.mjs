@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { findTree, modelComponentHarness } from './helpers/facemarketHarness.mjs';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
@@ -120,4 +121,47 @@ test('상세 패널은 실패해도 카드 틀을 그대로 그리고, 다시 �
   const errorBranch = source.slice(errStart, dataStart);
   assert.ok(/<Card>/.test(errorBranch), '에러 상태가 패널 틀(Card) 없이 그려진다');
   assert.ok(/onClick=\{load\}/.test(errorBranch), '에러 상태에 다시 시도가 없다');
+});
+
+test('모델 상세 상단에서 연결 지원서와 프로필을 공용 팝업에 전달해요', () => {
+  const source = read('src/features/admin/AdminModels.jsx');
+  assert.match(source, /상세히 보기/);
+  assert.match(source, /<AdminSubmissionDetails\b[^>]*detail=\{data\}/);
+});
+
+test('모델 팝업은 프로필, 라이선스, 동의 이력을 순서대로 모두 렌더해요', async () => {
+  const h = await modelComponentHarness({ initialStates: [], api: {},
+    entry: '/src/features/admin/AdminSubmissionDetails.jsx', exportName: 'AdminSubmissionDetails' });
+  const expand = node => !node || typeof node !== 'object' ? node : Array.isArray(node) ? node.map(expand)
+    : typeof node.type === 'function' ? expand(node.type(node.props))
+      : { ...node, props: { ...node.props, children: expand(node.props?.children) } };
+  const text = node => node == null || typeof node === 'boolean' ? '' : Array.isArray(node) ? node.map(text).join(' ')
+    : typeof node === 'object' ? text(node.props?.children) : String(node);
+  try {
+    const tree = expand(h.render({ onClose() {}, detail: {
+      application: { applicantName: '연결 지원자', birthdate: '2000-01-02' },
+      model: { id: 'PRIVATE-MODEL', displayName: '표시 모델', status: 'verified', gender: 'female', heightBucket: 'f_170_175', bodyType: 'regular' },
+      enrollment: { id: 'PRIVATE-ENROLLMENT', status: 'passed', photoCount: 18, bodyType: 'slim_upper' },
+      profile: { heightCm: 170.5, weightKg: 52.5, bustCm: 85, waistCm: 60, hipCm: 90,
+        bodyType: 'slim', bodyTypeCustom: '직접 적은 체형', gender: 'female', ageRange: '20s', skinTone: '밝은 피부',
+        hair: '직접 적은 머리', clothingSize: 'S', hairColor: 'brown', hairLength: 'long', eyeColor: 'brown' },
+      licenses: [{ id: 'PRIVATE-LICENSE', status: 'active', allowedUse: ['일반 패션'], validUntil: null,
+        createdAt: '2026-09-01T00:00:00Z', vcId: 'vc-public', optLocationCuts: true,
+        optLookbookPersonReplace: true, optConsentVersion: 'opt-v1', optConsentedAt: '2026-09-01T00:00:00Z' }],
+      consentEvents: [{ biometricVersion: 'bio-v1', termsVersion: 'terms-v1', overseasVersion: 'notice-v1', acceptedAt: '2026-09-01T00:00:00Z' }],
+    } }));
+    const rendered = text(tree);
+    for (const value of ['연결 지원자', '표시 모델', '18장', '85cm', '60cm', '90cm', '170.5cm', '52.5kg',
+      '직접 적은 체형', '밝은 피부', '직접 적은 머리', '20대', '170', '갈색', '긴 머리', '일반 패션', 'vc-public',
+      '로케이션', '룩북', '철회 시까지', 'bio-v1', 'terms-v1', 'notice-v1', 'opt-v1']) assert.ok(rendered.includes(value), value);
+    const positions = ['지원서', '등록·프로필', '라이선스 조건', '동의 기록'].map(label => rendered.indexOf(label));
+    assert.ok(positions.every((pos, i) => pos >= 0 && (i === 0 || positions[i - 1] < pos)));
+    assert.ok(!JSON.stringify(tree).includes('PRIVATE-'));
+    assert.ok(!rendered.includes('f_170_175'));
+    for (const [label, expected] of [['키 구간', '170–175cm'], ['등록한 체형', '마름 · 상체 볼륨']]) {
+      const row = findTree(tree, node => node.type === 'div' && Array.isArray(node.props.children)
+        && node.props.children[0]?.type === 'dt' && text(node.props.children[0]) === label);
+      assert.equal(text(row?.props.children[1]), expected);
+    }
+  } finally { await h.close(); }
 });

@@ -1,0 +1,18 @@
+.adminDialog { width: min(720px, calc(100vw - 32px)); max-width: 720px; max-height: calc(100dvh - 32px); margin: auto; padding: 0; border: 0; border-radius: var(--r-4); background: var(--bg-1); color: var(--fg-1); overflow: hidden; }
+.adminDialog::backdrop { background: var(--ink-overlay); }
+.adminCard { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
+.adminHeader { flex: 0 0 auto; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.adminBody { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.adminBody section + section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--ring-strong); }
+.adminBody h4 { margin: 0 0 16px; font-size: 15px; font-weight: 600; }
+.adminFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; font-size: 14px; }
+.adminFields + .adminFields { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--ring-strong); }
+.adminFields > div { min-width: 0; }
+.adminFields dt { margin-bottom: 4px; color: var(--fg-2); font-size: 12px; }
+.adminFields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.adminFullWidth { grid-column: 1 / -1; }
+.adminPhotos { display: flex; flex-wrap: wrap; gap: 12px; }
+.adminPhoto { width: 96px; margin: 0; }
+.adminPhoto img, .adminPhoto p { width: 96px; height: 128px; border-radius: var(--r-4); object-fit: cover; background: var(--bg-2); }
+.adminPhoto p { display: grid; place-items: center; padding: 8px; font-size: 12px; }
+.adminPhoto figcaption { margin-top: 4px; color: var(--fg-2); font-size: 12px; text-align: center; }
