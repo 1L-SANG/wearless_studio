@@ -2,9 +2,11 @@
 
 계약은 app/agents/face_identity.py 의 HttpFaceBackend.render 하나다:
 
-    POST /render  {control_png(b64), prompt, seed, steps, guidance_scale, negative_prompt, lora}
-               →  {image_png(b64)}
-    GET  /healthz  인증 없음. 파이프라인이 올라와 있는지·어떤 LoRA 가 물려 있는지.
+    POST /render   {control_png(b64), prompt, seed, steps, guidance_scale, negative_prompt, lora}
+                →  {image_png(b64)}
+    POST /upscale  {image_png(b64), scale} → {image_png(b64)}  — 얼굴 **크롭만** ESRGAN 으로 키운다.
+                가중치가 없으면 503 이고 호출자는 Lanczos 로 간다(컷은 그대로 나온다).
+    GET  /healthz  인증 없음. 파이프라인이 올라와 있는지·어떤 LoRA 가 물려 있는지·확대기·레시피 해시.
 
 렌더 자체는 app/agents/face_identity_qwen.QwenLocalBackend 를 그대로 쓴다 — 파드와 로컬이
 같은 코드를 돌아야 "HTTP 로 바꿨더니 그림이 달라졌다"가 생기지 않는다(C-3 바이트 비교의 근거).
@@ -63,6 +65,7 @@ from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel, Field
 
+import face_esrgan
 from app.agents.face_identity_qwen import (
     RENDER_GUIDANCE,
     RENDER_NEGATIVE,
@@ -101,10 +104,13 @@ CODE_VERSION = (os.getenv("FACE_RENDER_CODE_VERSION")
 ALLOWED_LORA_HOST_SUFFIX = ".r2.cloudflarestorage.com"
 DOWNLOAD_TIMEOUT = 300.0
 
+#: 얼굴 크롭 확대 입력 상한. 호출자는 1024² 미만의 크롭만 보낸다(그 이상은 축소라 확대기를 안 부른다).
+UPSCALE_MAX_SIDE = 1024
 #: GPU 는 하나다 — 렌더를 직렬화한다. 동시 요청은 대기(타임아웃은 호출자 몫).
 _RENDER_LOCK = threading.Lock()
 #: base = LoRA 를 아직 안 붙인 베이스 파이프라인(기동 때 적재). backend 가 생기면 그 안으로 들어간다.
-_state: dict = {"lora": None, "backend": None, "base": None, "loaded_at": None, "renders": 0}
+_state: dict = {"lora": None, "lora_sha256": None, "backend": None, "base": None,
+                "loaded_at": None, "renders": 0}
 
 
 class RenderRequest(BaseModel):
@@ -123,6 +129,19 @@ class RenderResponse(BaseModel):
     image_png: str
     seed: int
     lora: str | None
+    ms: int
+
+
+class UpscaleRequest(BaseModel):
+    """얼굴 **크롭만** 키운다 — 사진 전체는 호출자가 보내지 않는다(옷 픽셀을 바꾸지 않으려고)."""
+
+    image_png: str
+    scale: int = Field(default=2, ge=2, le=face_esrgan.NATIVE_SCALE)
+
+
+class UpscaleResponse(BaseModel):
+    image_png: str
+    scale: int
     ms: int
 
 
@@ -253,7 +272,7 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
         return _state["backend"]
     if _state["backend"] is not None:
         log.warning("swapping lora %s → %s (pipeline reload)", _state["lora"], lora_key)
-        _state.update(backend=None, lora=None, loaded_at=None)
+        _state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None)
         try:
             import gc
 
@@ -270,7 +289,8 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
     _state["base"] = None       # 베이스는 backend 안으로 들어갔다(base_loaded 는 backend 로 이어진다)
     t0 = time.perf_counter()
     backend.pipeline()          # 여기서 LoRA 를 붙인다(베이스가 없으면 베이스 적재까지 — 수 분)
-    _state.update(backend=backend, lora=lora_key, loaded_at=time.time())
+    # sha 는 레시피 해시에 들어간다(어떤 가중치로 도는 파드인지). 요청이 안 줬으면 None 그대로.
+    _state.update(backend=backend, lora=lora_key, lora_sha256=lora_sha256, loaded_at=time.time())
     log.info("pipeline ready lora=%s in %.1fs", lora_key, time.perf_counter() - t0)
     return backend
 
@@ -291,7 +311,57 @@ def healthz() -> dict:
         "gpu_fuse": GPU_FUSE,
         "code_version": CODE_VERSION,
         "cache_dir": CACHE_DIR,
+        # 얼굴 크롭 확대기. available=false 면 호출자가 Lanczos 로 간다(컷은 그대로 나온다).
+        "esrgan": face_esrgan.status(),
+        # 이 파드가 어떤 상수로 도는가 — 컷 메타의 face_recipe 와 맞춰 본다(agents/face_recipe.py).
+        "recipe": _recipe_id(),
     }
+
+
+def _recipe_id() -> str | None:
+    """레시피 해시. **관측용**이라 실패해도 파드는 계속 렌더한다(None 으로 비워 둔다).
+
+    face_recipe 는 합성 상수를 face_identity 에서 가져오고 그쪽은 cv2 를 임포트한다 —
+    파드 venv 에 없다고 렌더까지 못 하게 만들 이유가 없다.
+    """
+    try:
+        from app.agents import face_recipe
+
+        return face_recipe.recipe_id(face_recipe.recipe_fields(
+            model_id=MODEL_ID, lora_sha256=_state.get("lora_sha256"),
+            upscale_scope=(face_recipe.UPSCALE_SCOPE_FACE_CROP if face_esrgan.status()["available"]
+                           else face_recipe.UPSCALE_SCOPE_OFF)))
+    except Exception:  # noqa: BLE001
+        log.warning("recipe id unavailable", exc_info=True)
+        return None
+
+
+#: 확대도 GPU 를 쓴다 — 렌더와 같은 자물쇠로 직렬화한다(동시에 돌면 둘 다 느려지고 VRAM 이 튄다).
+@app.post("/upscale", response_model=UpscaleResponse)
+def upscale(req: UpscaleRequest, authorization: str | None = Header(default=None)) -> UpscaleResponse:
+    _authorize(authorization)
+    esr = face_esrgan.get(DEVICE)
+    if esr is None:
+        # 503 = "이 파드는 못 한다". 호출자는 다시 묻지 않고 Lanczos 로 간다.
+        raise HTTPException(503, f"esrgan unavailable ({face_esrgan.status()['reason']})")
+    try:
+        raw = base64.b64decode(req.image_png, validate=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, "image_png must be base64") from exc
+    with Image.open(BytesIO(raw)) as im:
+        im.load()
+        src = im.convert("RGB")
+    if max(src.size) > UPSCALE_MAX_SIDE:
+        raise HTTPException(400, f"image too large (max {UPSCALE_MAX_SIDE}px)")
+    t0 = time.perf_counter()
+    with _RENDER_LOCK:
+        out = esr(src, int(req.scale))
+    buf = BytesIO()
+    out.save(buf, "PNG")
+    ms = round((time.perf_counter() - t0) * 1000)
+    log.info("upscale %sx%s ×%s %sms", src.width, src.height, req.scale, ms)
+    return UpscaleResponse(image_png=base64.b64encode(buf.getvalue()).decode(),
+                           scale=int(req.scale), ms=ms)
 
 
 @app.post("/render", response_model=RenderResponse)

@@ -16,7 +16,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import {
-  getCurrentApplication, getCurrentEnrollment, getSettlementSummary, listMyModels,
+  getCurrentApplication, getCurrentEnrollment, getSettlementSummary, listLicenses, listMyModels,
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
@@ -122,21 +122,23 @@ export function LandingShell({ title, description, children, variant = 'landing'
           try { return await fn(); }
           catch (error) { if (error?.status === 404) return null; throw error; }
         };
-        const [models, enrollment, application] = await Promise.all([
+        const [models, licenses, enrollment, application] = await Promise.all([
           listMyModels(),
+          listLicenses({ includeRevoked: true }),
           optional(getCurrentEnrollment),
           optional(getCurrentApplication),
         ]);
         if (!alive) return;
         const ownedModel = models?.[0] || null;
-        const records = { ownedModel, enrollment, application };
+        const license = (licenses || []).find((item) => item.modelId === ownedModel?.id) || null;
+        const records = { ownedModel, enrollment, application, license };
         const pill = landingStatusPill(records);
         setCta(pill?.cta || registerCta(ownedModel, enrollment, { application, scope: 'landing' }));
         setStatusPill(pill);
         setCtaResolvedFor(userId);
         // 정산 응답을 기다리는 동안에도 상태와 다음 행동은 사용할 수 있다.
         // 실패를 0건으로 표시하지 않고 가운데 정보만 비운다.
-        if (ownedModel?.status === 'verified') {
+        if (pill?.tone === 'live') {
           try {
             const settlement = await getSettlementSummary();
             if (alive) setStatusPill(landingStatusPill({ ...records, settlement }));

@@ -32,7 +32,7 @@ export function isLandingCtaResolved(userId, resolvedFor) {
 export function registerCta(
   ownedModel,
   enrollment,
-  { application = null, applicationRequired = true, scope = 'hub' } = {},
+  { application = null, applicationRequired = true, license = null, scope = 'hub' } = {},
 ) {
   // 랜딩(상단바·히어로): 기록이 하나도 없는 방문자는 공개 지원 시작 페이지(/apply)로.
   // applicationRequired 는 운영 게이트일 뿐, 얼리버드 지원의 목적지는 항상 지원서다.
@@ -43,7 +43,17 @@ export function registerCta(
     return { label: APPLY_LABEL, to: '/apply' };
   }
 
-  if (ownedModel?.status === 'verified') {
+  if (ownedModel?.status === 'awaiting_confirm' || enrollment?.status === 'confirm_pending') {
+    return { label: '테스트컷 고르기', to: '/model/confirm' };
+  }
+  if (ownedModel?.status === 'verified' || ownedModel?.status === 'suspended') {
+    return { label: '마이페이지', to: '/status' };
+  }
+  if ((enrollment && !['cancelled', 'failed', 'passed'].includes(enrollment.status))
+    || ['pending', 'reverification_required'].includes(ownedModel?.status)) {
+    return { label: REGISTER_LABEL, to: '/model/register' };
+  }
+  if (['revoked', 'expired'].includes(license?.status)) {
     return { label: '마이페이지', to: '/status' };
   }
   if (ownedModel || enrollment) {

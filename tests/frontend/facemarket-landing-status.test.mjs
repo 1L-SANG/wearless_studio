@@ -19,14 +19,25 @@ const text = node => Array.isArray(node) ? node.map(text).join('')
   : node && typeof node === 'object' ? text(node.props?.children) : String(node ?? '');
 const byClass = (tree, name) => findTree(tree, node => node.props?.className?.split(' ').includes(name));
 const verified = { id: 'm1', status: 'verified' };
+const activeLicense = { id: 'l1', modelId: 'm1', status: 'active', licenseValidUntil: null };
 
 // These cases catch incorrect precedence, zero/failure conflation and route/copy drift.
 const cases = [
-  ['verified usage', { ownedModel: verified, settlement: { monthCount: 3 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '3건', after: ' 쓰였어요' }],
-  ['verified zero', { ownedModel: verified, settlement: { monthCount: 0 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '0건', after: '' }],
-  ['verified failed summary', { ownedModel: verified, settlement: null }, 'live', true, '공개 중', null],
-  ['verified missing count', { ownedModel: verified, settlement: {} }, 'live', true, '공개 중', null],
-  ['verified takes precedence', { ownedModel: verified, enrollment: { status: 'photos_pending' }, application: { status: 'rejected' } }, 'live', true, '공개 중', null],
+  ['verified usage', { ownedModel: verified, license: activeLicense, settlement: { monthCount: 3 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '3건', after: ' 쓰였어요' }],
+  ['verified zero', { ownedModel: verified, license: activeLicense, settlement: { monthCount: 0 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '0건', after: '' }],
+  ['verified failed summary', { ownedModel: verified, license: activeLicense, settlement: null }, 'live', true, '공개 중', null],
+  ['verified missing count', { ownedModel: verified, license: activeLicense, settlement: {} }, 'live', true, '공개 중', null],
+  ['verified legacy future license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2099-01-01T00:00:00Z' }, settlement: { monthCount: 1 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '1건', after: ' 쓰였어요' }],
+  ['verified takes precedence', { ownedModel: verified, license: activeLicense, enrollment: { status: 'photos_pending' }, application: { status: 'rejected' } }, 'live', true, '공개 중', null],
+  ['revoked license', { ownedModel: verified, license: { ...activeLicense, status: 'revoked' } }, 'rejected', false, '라이선스 종료', { before: '새로운 사용은 ', strong: '중단됐어요', after: '' }],
+  ['expired legacy license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2020-01-01T00:00:00Z' } }, 'rejected', false, '라이선스 종료', { before: '새로운 사용은 ', strong: '중단됐어요', after: '' }],
+  ['verified without license', { ownedModel: verified }, 'progress', false, '공개 준비 중', { before: '다음은 ', strong: '라이선스 확인', after: '' }],
+  ['owner paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'owner' }, license: activeLicense }, 'paused', false, '활동 일시 중지', { before: '지금은 ', strong: '새 요청을 받지 않아요', after: '' }],
+  ['admin paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'admin' }, license: activeLicense }, 'paused', false, '활동 일시 중지', { before: '', strong: '운영팀 확인이 필요해요', after: '' }],
+  ['awaiting test cuts', { ownedModel: { ...verified, status: 'awaiting_confirm' }, license: activeLicense }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
+  ['confirm pending enrollment', { ownedModel: { ...verified, status: 'pending' }, enrollment: { status: 'confirm_pending' } }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
+  ['re-registration overrides revoked history', { ownedModel: { ...verified, status: 'reverification_required' }, enrollment: { status: 'photos_pending', photos: [] }, license: { ...activeLicense, status: 'revoked' } }, 'progress', false, '등록 진행 중', { before: '다음은 ', strong: '사진 등록', after: '' }],
+  ['test-cut confirmation overrides revoked history', { ownedModel: { ...verified, status: 'awaiting_confirm' }, enrollment: { status: 'confirm_pending' }, license: { ...activeLicense, status: 'revoked' } }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
   ...[
     ['identity_pending', '본인확인'], ['photos_pending', '사진 등록'], ['liveness_pending', '본인확인 마무리'],
     ['processing', '모델 이미지 준비'], ['asset_building', '모델 이미지 준비'],
@@ -48,7 +59,9 @@ for (const [name, input, tone, pulse, title, detail] of cases) {
   test(`landing status: ${name}`, () => {
     const pill = landingStatusPill(input);
     assert.deepEqual({ tone: pill.tone, pulse: pill.pulse, title: pill.title, detail: pill.detail }, { tone, pulse, title, detail });
-    assert.deepEqual(pill.cta, registerCta(input.ownedModel, input.enrollment, { application: input.application, scope: 'landing' }));
+    assert.deepEqual(pill.cta, registerCta(input.ownedModel, input.enrollment, {
+      application: input.application, license: input.license, scope: 'landing',
+    }));
   });
 }
 for (const input of [{}, { application: { status: 'cancelled' } }, ...['cancelled', 'failed', 'passed'].map(status => ({ enrollment: { status } }))]) {
@@ -89,7 +102,7 @@ async function shellHarness(api = {}) {
   let harness;
   try {
     harness = await modelComponentHarness({ entry: '/src/features/facemarket-landing/LandingShell.jsx', exportName: 'LandingShell', initialStates: [], honorHookDependencies: true,
-      api: { listMyModels: async () => [], getCurrentEnrollment: async () => null, getCurrentApplication: async () => null, ...api } });
+      api: { listMyModels: async () => [], listLicenses: async () => [], getCurrentEnrollment: async () => null, getCurrentApplication: async () => null, ...api } });
   } catch (error) { globalThis.window = savedWindow; globalThis.document = savedDocument; throw error; }
   harness.runtime.session = { user: { id: 'u1' } };
   harness.runtime.location = { pathname: '/' };
@@ -113,6 +126,7 @@ for (const fails of [false, true]) {
     const order = [];
     const harness = await shellHarness({
       listMyModels: async () => { order.push('models'); return [verified]; },
+      listLicenses: async () => { order.push('licenses'); return [activeLicense]; },
       getCurrentEnrollment: async () => { order.push('enrollment'); return null; },
       getCurrentApplication: async () => { order.push('application'); return null; },
       getSettlementSummary: () => { order.push('summary'); return summary; },
@@ -120,7 +134,7 @@ for (const fails of [false, true]) {
     try {
       harness.commit();
       await eventually(() => { harness.commit(); return !!harness.view().statusPill; }, 'status must render while summary is pending');
-      assert.deepEqual(order, ['models', 'enrollment', 'application', 'summary']);
+      assert.deepEqual(order, ['models', 'licenses', 'enrollment', 'application', 'summary']);
       assert.equal(harness.view().statusPill.detail, null);
       settle(fails ? new Error('offline') : { monthCount: 3 });
       await new Promise(resolve => setImmediate(resolve));
@@ -158,6 +172,21 @@ test('LandingShell skips summary for ordinary records and anonymous visits', asy
     harness.commit();
     assert.equal(harness.view().ctaLabel, APPLY_LABEL);
     assert.equal(harness.view().statusPill, null);
+  } finally { await harness.close(); }
+});
+
+test('LandingShell prefers an active re-registration over revoked license history', async () => {
+  const harness = await shellHarness({
+    listMyModels: async () => [{ id: 'm1', status: 'reverification_required' }],
+    listLicenses: async () => [{ ...activeLicense, status: 'revoked' }],
+    getCurrentEnrollment: async () => ({ id: 'e2', modelId: 'm1', status: 'photos_pending', photos: [] }),
+  });
+  try {
+    harness.commit();
+    await eventually(() => { harness.commit(); return !!harness.view().statusPill; }, 're-registration pill');
+    assert.equal(harness.view().statusPill.title, '등록 진행 중');
+    assert.equal(harness.view().statusPill.detail.strong, '사진 등록');
+    assert.equal(harness.view().ctaLabel, '모델 등록하기');
   } finally { await harness.close(); }
 });
 

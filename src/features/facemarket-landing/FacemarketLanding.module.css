@@ -566,7 +566,8 @@
 .statusPill_live { --fm-status-color: var(--accent-success); }
 .statusPill_review { --fm-status-color: var(--fm-status-review); }
 .statusPill_rejected { --fm-status-color: var(--accent-error); }
-.statusPill_progress, .statusPill_approved { --fm-status-color: var(--fm-accent); }
+.statusPill_paused { --fm-status-color: var(--fm-status-review); }
+.statusPill_progress, .statusPill_approved, .statusPill_confirm { --fm-status-color: var(--fm-accent); }
 .statusPillState { display: inline-flex; align-items: center; gap: 12px; flex: none; font-weight: 700; }
 .statusPillDot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--fm-status-color); flex: none; }
 .statusPillPulse::after {

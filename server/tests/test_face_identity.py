@@ -202,19 +202,31 @@ def test_composite_color_shift_and_conditional_grain():
     assert meta_same["hf_std_result"] >= fi.GRAIN_MIN_RATIO * meta_same["hf_std_orig"]
 
 
-def _edge_crossing():
-    """타원이 크롭 상단 밖으로 나가는 계획(ZARA 컷2 와 같은 상황)."""
+def _edge_crossing(*, flush: bool = False):
+    """타원이 크롭 상단 밖으로 나가는 계획(ZARA 컷2 와 같은 상황).
+
+    flush=True 면 **크롭 상단이 사진 맨 위에 닿는다**(얼굴이 위쪽에 있어 y0 이 0 으로 clamp) —
+    그 변에는 이을 원본이 없어 페이드를 걸지 않는다(fade_sides).
+    """
     rng = np.random.default_rng(11)
-    orig = Image.fromarray(rng.integers(0, 256, size=(1600, 1200, 3), dtype=np.uint8))
-    plan = fi.plan_from_box(1200, 1600, (500.0, 20.0, 300.0, 400.0), yaw_proxy=0.02, eye_dist=140.0)
+    if flush:
+        orig = Image.fromarray(rng.integers(0, 256, size=(1600, 1200, 3), dtype=np.uint8))
+        plan = fi.plan_from_box(1200, 1600, (500.0, 20.0, 300.0, 400.0), yaw_proxy=0.02, eye_dist=140.0)
+    else:
+        orig = Image.fromarray(rng.integers(0, 256, size=(2000, 1200, 3), dtype=np.uint8))
+        plan = fi.plan_from_box(1200, 2000, (500.0, 500.0, 300.0, 400.0), yaw_proxy=0.02, eye_dist=140.0)
     return orig, plan
 
 
 def test_edge_fade_zeroes_alpha_on_crossing_side():
-    """EDGE_FADE_PX: 타원이 크롭을 벗어난 변에서 페더 알파는 1 이지만 합성 알파는 0 이어야 한다."""
+    """EDGE_FADE_PX: 타원이 크롭을 벗어난 변에서 페더 알파는 1 이지만 합성 알파는 0 이어야 한다.
+
+    단 **크롭 변이 사진 안쪽일 때**다 — 사진 가장자리에 붙은 변은 아래 테스트가 따로 본다.
+    """
     _, plan = _edge_crossing()
     left, top, right, bottom = fi.crossing_sides(plan)
     assert top and not (left or right or bottom), "E2 는 상단만 크롭을 벗어난다"
+    assert fi.at_photo_edge(plan) == (False, False, False, False), "이 계획은 사진 안쪽이다"
     feathered = np.asarray(fi.feather_mask(plan), np.float32) / 255.0
     assert feathered[0].max() > 0.9, "페더만으로는 상단에서 잘린다(= 사각 테두리 원인)"
     alpha = fi.composite_alpha(plan)
@@ -226,6 +238,25 @@ def test_edge_fade_zeroes_alpha_on_crossing_side():
     pa = fi.paste_alpha(plan)
     x0, y0, side = plan.crop
     assert pa[y0, x0 : x0 + side].max() == 0.0
+
+
+def test_edge_fade_is_skipped_where_the_crop_touches_the_photo_edge():
+    """사진 맨 위에 닿은 변은 페이드하지 않는다 — 이을 원본이 없는데 알파만 깎여 원본 머리가 되살아난다.
+
+    2026-09-11 잔머리 A/B: 상단 48px 띠가 세 컷 모두 정수리 머리 위에 있었고, 띠 안에서 원본이
+    최대 100% 로 섞였다. 페이드를 빼면 그 자리에서 생성 쪽이 온전히 들어간다(측정: 1.0 → 0.25~0.28).
+    """
+    _, plan = _edge_crossing(flush=True)
+    assert plan.crop[1] == 0
+    assert fi.crossing_sides(plan)[1] is True        # 타원은 여전히 크롭 위로 나간다
+    assert fi.at_photo_edge(plan)[1] is True
+    assert fi.fade_sides(plan)[1] is False
+
+    feathered = np.asarray(fi.feather_mask(plan), np.float32) / 255.0
+    alpha = fi.composite_alpha(plan)
+    assert np.array_equal(alpha, feathered), "그 변에서는 페더 그대로 — 깎는 것이 없다"
+    x0, y0, side = plan.crop
+    assert fi.paste_alpha(plan)[y0, x0 : x0 + side].max() == pytest.approx(1.0, abs=1e-3)
 
 
 def test_edge_fade_leaves_non_crossing_sides_untouched():
