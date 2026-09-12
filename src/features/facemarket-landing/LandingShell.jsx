@@ -16,11 +16,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import {
-  getCurrentApplication, getCurrentEnrollment, listMyModels,
+  getCurrentApplication, getCurrentEnrollment, getSettlementSummary, listMyModels,
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
 import { isLandingCtaResolved, registerCta } from './registerCta.js';
+import { landingStatusPill } from './landingStatus.js';
 import { FooterSection } from './sections/FooterSection.jsx';
 import s from './FacemarketLanding.module.css';
 
@@ -65,6 +66,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null, { scope: 'landing' }));
+  const [statusPill, setStatusPill] = useState(null);
   const [ctaResolvedFor, setCtaResolvedFor] = useState(null);
   const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
@@ -105,6 +107,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
   useEffect(() => {
     if (!userId) {
       setCta(registerCta(null, null, { scope: 'landing' }));
+      setStatusPill(null);
       setCtaResolvedFor('anonymous');
       return undefined;
     }
@@ -112,6 +115,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
     let alive = true;
     setCtaResolvedFor(null);
     setCta(null);
+    setStatusPill(null);
     void (async () => {
       try {
         const optional = async (fn) => {
@@ -124,7 +128,20 @@ export function LandingShell({ title, description, children, variant = 'landing'
           optional(getCurrentApplication),
         ]);
         if (!alive) return;
-        setCta(registerCta(models?.[0] || null, enrollment, { application, scope: 'landing' }));
+        const ownedModel = models?.[0] || null;
+        const records = { ownedModel, enrollment, application };
+        const pill = landingStatusPill(records);
+        setCta(pill?.cta || registerCta(ownedModel, enrollment, { application, scope: 'landing' }));
+        setStatusPill(pill);
+        setCtaResolvedFor(userId);
+        // 정산 응답을 기다리는 동안에도 상태와 다음 행동은 사용할 수 있다.
+        // 실패를 0건으로 표시하지 않고 가운데 정보만 비운다.
+        if (ownedModel?.status === 'verified') {
+          try {
+            const settlement = await getSettlementSummary();
+            if (alive) setStatusPill(landingStatusPill({ ...records, settlement }));
+          } catch { /* 상태와 CTA는 그대로 유지한다. */ }
+        }
       } catch {
         if (alive) setCta(null);
       } finally {
@@ -218,7 +235,11 @@ export function LandingShell({ title, description, children, variant = 'landing'
         </div>
       )}
       <LandingHeader onPrimary={variant !== 'apply' && primaryLabel ? onPrimary : undefined} primaryLabel={variant === 'apply' ? null : primaryLabel} />
-      <main>{children({ ctaLabel: primaryLabel, onPrimary: primaryLabel ? onPrimary : undefined })}</main>
+      <main>{children({
+        ctaLabel: primaryLabel,
+        onPrimary: primaryLabel ? onPrimary : undefined,
+        statusPill: ctaVisible ? statusPill : null,
+      })}</main>
       {variant !== 'apply' && <FooterSection />}
     </div>
   );

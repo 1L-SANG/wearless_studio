@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui.jsx';
 import { APPLY_LABEL } from '../registerCta.js';
 import s from '../FacemarketLanding.module.css';
 
-export function HeroSection({ onPrimary, primaryLabel }) {
+export function HeroSection({ onPrimary, primaryLabel, statusPill }) {
   const isApply = primaryLabel === APPLY_LABEL;
   return (
     <section aria-labelledby="fm-hero-title" className={s.hero}>
@@ -85,7 +85,28 @@ export function HeroSection({ onPrimary, primaryLabel }) {
           어수선했고 영문 대문자가 한글 카피와 결이 달랐다. 링은 신규 지원 상태에서만 —
           래퍼 span 을 쓰는 이유는 .heroCta 가 빛 스윕 때문에 overflow:hidden 이라 ::before
           링이 잘리기 때문. */}
-      {onPrimary ? (
+      {onPrimary && statusPill ? (
+        <button className={`${s.statusPill} ${s[`statusPill_${statusPill.tone}`]}`} onClick={onPrimary} type="button">
+          <span className={s.statusPillState}>
+            <span aria-hidden="true" className={`${s.statusPillDot} ${statusPill.pulse ? s.statusPillPulse : ''}`} />
+            {statusPill.title}
+          </span>
+          {statusPill.detail ? (
+            <>
+              <span aria-hidden="true" className={s.statusPillSeparator} />
+              <span className={s.statusPillDetail}>
+                {statusPill.detail.before}<b>{statusPill.detail.strong}</b>{statusPill.detail.after}
+              </span>
+            </>
+          ) : null}
+          <span className={s.statusPillCta}>
+            {statusPill.cta.label}
+            <span aria-hidden="true" className={s.statusPillArrow}>
+              <Icon name="arrowRight" size={14} stroke={2.4} />
+            </span>
+          </span>
+        </button>
+      ) : onPrimary ? (
         <div className={s.heroCtaRow}>
           <span className={isApply ? s.heroCtaRing : undefined}>
             <button className={s.heroCta} onClick={onPrimary} type="button">

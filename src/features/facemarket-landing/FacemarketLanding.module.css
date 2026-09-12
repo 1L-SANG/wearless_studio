@@ -531,6 +531,73 @@
   z-index: 1;
 }
 .heroCtaRow .heroCta { margin-top: 0; }
+
+/* A안 최종. 가운데 정보만 줄고 상태 이름과 행동은 항상 한 줄로 남는다. */
+.statusPill {
+  --fm-status-color: var(--fm-accent);
+  --fm-status-review: #b9851f;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 22px;
+  padding: 0 8px 0 18px;
+  position: relative;
+  z-index: 1;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  border: 1px solid var(--fm-line);
+  box-shadow: 0 1px 2px rgba(16, 21, 26, .05), 0 10px 30px -18px rgba(16, 21, 26, .25);
+  font: 500 15px/1 var(--font-body);
+  color: var(--fm-ink);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color .15s, box-shadow .15s;
+}
+.statusPill:hover {
+  border-color: color-mix(in srgb, var(--fm-ink) 28%, transparent);
+  box-shadow: 0 1px 2px rgba(16, 21, 26, .06), 0 14px 34px -16px rgba(16, 21, 26, .32);
+}
+.statusPill:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
+.statusPill_live { --fm-status-color: var(--accent-success); }
+.statusPill_review { --fm-status-color: var(--fm-status-review); }
+.statusPill_rejected { --fm-status-color: var(--accent-error); }
+.statusPill_progress, .statusPill_approved { --fm-status-color: var(--fm-accent); }
+.statusPillState { display: inline-flex; align-items: center; gap: 12px; flex: none; font-weight: 700; }
+.statusPillDot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--fm-status-color); flex: none; }
+.statusPillPulse::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fm-status-color);
+  opacity: .55;
+  animation: fmStatusPulse 1.8s cubic-bezier(.2, .7, .3, 1) infinite;
+}
+@keyframes fmStatusPulse {
+  0% { scale: .55; opacity: .7; }
+  80%, 100% { scale: 1.35; opacity: 0; }
+}
+.statusPillSeparator { flex: none; width: 1px; height: 16px; background: var(--fm-line); }
+.statusPillDetail { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: color-mix(in srgb, var(--fm-ink) 78%, transparent); }
+.statusPillDetail b { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--fm-ink); }
+.statusPillCta { display: inline-flex; align-items: center; flex: none; gap: 6px; height: 36px; padding: 0 6px 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; }
+.statusPillArrow { width: 26px; height: 26px; border-radius: 50%; background: var(--fm-ink); color: var(--bg-1); display: grid; place-items: center; transition: translate .15s; }
+.statusPill:hover .statusPillArrow { translate: 2px 0; }
+@media (prefers-reduced-motion: reduce) {
+  .statusPillPulse::after { animation: none; }
+  .statusPill, .statusPillArrow { transition: none; }
+  .statusPill:hover .statusPillArrow { translate: none; }
+}
+@media (max-width: 47.99rem) {
+  .statusPill { gap: 8px; padding-left: 12px; font-size: 13px; }
+  .statusPillState { gap: 8px; }
+  .statusPillCta { padding-left: 0; padding-right: 0; font-size: 12px; }
+}
 /* 혜택 캡션(2026-09-03 밤 오너 선택 D안) — 잉크색 문장, 정가는 회색 취소선, '무료'는 액센트
    배경의 작은 도장(살짝 기울임). 회색 캡션은 약관 문법이라 혜택이 목소리를 낮춘다는 지적. */
 .heroCaption {
