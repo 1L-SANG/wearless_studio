@@ -47,6 +47,17 @@ test('사진 어댑터는 슬롯과 파일을 함께 보내고 비공개 조회�
   }finally{globalThis.fetch=fetch;await h.close();}
 });
 
+test('지원 사진 삭제 어댑터는 사진 식별자를 인코딩해 인증된 DELETE를 보낸다', async () => {
+  const h = await apiHarness(); const originalFetch = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(null, { status: 204 }); };
+  try {
+    await h.api.deleteStagedApplicationPhoto('profile', 'stage/id');
+    assert.match(calls[0].url, /\/applications\/photo-staging\/profile\/stage%2Fid$/);
+    assert.equal(calls[0].options.method, 'DELETE');
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer local-test');
+  } finally { globalThis.fetch = originalFetch; await h.close(); }
+});
+
 test('본인확인 위젯은 사진 변환을 끄고 성공 토큰만 돌려줘요',async()=>{
   const h=await apiHarness();const saved={window:globalThis.window,document:globalThis.document,raf:globalThis.requestAnimationFrame};let options;
   globalThis.window={OACX:{LOAD_MODULE:(url,opts,callback)=>{options=opts;callback({token:'auth-token',data:{dlphotoimage:'must-not-return'}});}}};

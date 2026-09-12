@@ -60,7 +60,7 @@ test('동의 안내와 필수 표시를 읽고 마우스, 키보드, 터치로 �
   try {
     let tree = h.render();
     const text = textOf(tree);
-    for (const sentence of ['실명인증을 먼저 진행하고 본인임을 동의해야 이어나갈 수 있습니다.', '원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.', '철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)', '언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다']) assert.ok(text.includes(sentence));
+    for (const sentence of ['필수 항목을 확인한 뒤 신분증 인증을 진행해요.', '원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.', '철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)', '언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다']) assert.ok(text.includes(sentence));
     assert.equal((text.match(/\(필수\)/g) || []).length, 2);
     assert.equal(findTree(tree, node => node.type === 'details'), null);
     const info = () => findTree(h.render(), node => node.type === 'button' && node.props['aria-label'] === '그만두면 이렇게 돼요');
@@ -101,12 +101,12 @@ for (const [sub, encouragement] of [[1, null], [2, '거의 다 왔어요. 방금
     const h = await modelComponentHarness({ initialStates: ['2', baseEnrollment, sub], api: {} });
     try {
       const tree = h.render(), text = textOf(tree);
-      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '얼굴 이미지 업로드');
-      assert.ok(text.includes('digital DNA를 제작하기 위해선 여러 장의 사진이 필요해요. 아래 예시 이미지와 같은 사진을 동일하게 업로드해 주세요.'));
+      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '사진을 등록해요');
+      assert.ok(text.includes('모델 이미지를 만들려면 여러 방향의 사진이 필요해요. 각 카드의 예시와 같은 구도로 올려 주세요.'));
       assert.equal(findTree(tree, node => node.type === 'progress'), null);
       assert.doesNotMatch(text, /사진 18장|0 \/|전체 5단계|몸의 두께/);
       if (encouragement) assert.ok(text.includes(encouragement));
-      assert.equal(button(tree, '이동').props.disabled, true);
+      assert.equal(button(tree, '다음').props.disabled, true);
     } finally { await h.close(); }
   });
 }
@@ -120,7 +120,7 @@ test('확인 화면은 사진 그룹 세 행이며 각 고치기는 사진과 �
       assert.ok(textOf(tree).includes(`${label} ${sub === 1 ? 8 : 5}장`));
       findTree(tree, node => node.type === 'button' && node.props['aria-label'] === `${label} 사진 고치기`).props.onClick();
       assert.equal(h.runtime.states[2], sub);
-      await button(h.render(), '이동').props.onClick();
+      await button(h.render(), '다음').props.onClick();
       assert.equal(h.runtime.states[2], 4);
       assert.equal(h.runtime.states[1].photos.length, 18);
       assert.equal(h.runtime.states[11].face01, 'blob:face');
@@ -200,7 +200,7 @@ test('사진 그룹이 비어 있으면 다음 버튼이 잠겨요', async () =>
   const harness = await modelComponentHarness({ initialStates: ['2', { ...baseEnrollment, status: 'photos_pending' }], api: {} });
   try {
     const tree = harness.render();
-    assert.equal(button(tree, '이동')?.props.disabled, true);
+    assert.equal(button(tree, '다음')?.props.disabled, true);
   } finally { await harness.close(); }
 });
 
@@ -274,7 +274,7 @@ test('확인 화면에서 전신 고치기로 사진을 교체하고 확인으�
     assert.equal(calls[0].slot, 'full05'); assert.equal(calls[0].fileBlob, file);
     tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '18번 내 사진'));
-    await button(tree, '이동').props.onClick();
+    await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], 4);
     assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '18번 내 사진'));
     Object.values(harness.runtime.states[11]).forEach(URL.revokeObjectURL);
@@ -295,7 +295,7 @@ test('사진 삭제가 성공하면 다음 버튼이 잠기고 사진 개수가 
   try {
     await findTree(harness.render(), (node) => node.type === 'button' && node.props['aria-label'] === '1번 사진 지우기').props.onClick();
     assert.deepEqual(calls, [['enrollment-1', 'face01']]); assert.equal(harness.runtime.states[1].photos.length, 17);
-    assert.equal(button(harness.render(), '이동').props.disabled, true);
+    assert.equal(button(harness.render(), '다음').props.disabled, true);
   } finally { await harness.close(); }
 });
 
@@ -356,14 +356,14 @@ test('발급 직후 새 등록을 시작해도 동의를 다시 받아요', asyn
 
 test('동의를 누른 사이 테스트컷이 도착했으면 확정 화면으로 이동해요', async () => {
   const destinations = [];
-  const harness = await modelComponentHarness({ initialStates: ['1', null, 1, '', false, [true, true, true]], api: { createEnrollment: async () => { throw Object.assign(new Error('먼저 확정해 주세요'), { code: 'model_confirmation_required' }); } } });
+  const harness = await modelComponentHarness({ initialStates: ['1', null, 1, '', false, [true, true]], api: { createEnrollment: async () => { throw Object.assign(new Error('먼저 확정해 주세요'), { code: 'model_confirmation_required' }); } } });
   try { harness.runtime.navigate = (to) => destinations.push(to); await button(harness.render(), '동의하고 신분증 인증하기').props.onClick(); assert.deepEqual(destinations, ['/model/confirm']); }
   finally { await harness.close(); }
 });
 
 test('일시적인 인증 오류 뒤에는 등록을 취소하지 않고 다시 인증해요', async () => {
   let tries = 0;
-  const harness = await modelComponentHarness({ initialStates: ['1', baseEnrollment, 1, '', false, [true, true, true]], api: {
+  const harness = await modelComponentHarness({ initialStates: ['1', baseEnrollment, 1, '', false, [true, true]], api: {
     runIdentityWidget: async () => { if (++tries === 1) throw new Error('인증창이 닫혔어요'); return 'token'; },
     createIdentity: async () => ({ ...baseEnrollment, status: 'photos_pending' }),
     cancelEnrollment: () => assert.fail('등록을 취소하지 않아요'),

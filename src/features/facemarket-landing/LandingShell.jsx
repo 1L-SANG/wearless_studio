@@ -16,11 +16,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import {
-  getCurrentApplication, getCurrentEnrollment, listMyModels,
+  getCurrentApplication, getCurrentEnrollment, getSettlementSummary, listLicenses, listMyModels,
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
 import { isLandingCtaResolved, registerCta } from './registerCta.js';
+import { landingStatusPill } from './landingStatus.js';
 import { FooterSection } from './sections/FooterSection.jsx';
 import s from './FacemarketLanding.module.css';
 
@@ -65,6 +66,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null, { scope: 'landing' }));
+  const [statusPill, setStatusPill] = useState(null);
   const [ctaResolvedFor, setCtaResolvedFor] = useState(null);
   const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
@@ -105,6 +107,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
   useEffect(() => {
     if (!userId) {
       setCta(registerCta(null, null, { scope: 'landing' }));
+      setStatusPill(null);
       setCtaResolvedFor('anonymous');
       return undefined;
     }
@@ -112,19 +115,35 @@ export function LandingShell({ title, description, children, variant = 'landing'
     let alive = true;
     setCtaResolvedFor(null);
     setCta(null);
+    setStatusPill(null);
     void (async () => {
       try {
         const optional = async (fn) => {
           try { return await fn(); }
           catch (error) { if (error?.status === 404) return null; throw error; }
         };
-        const [models, enrollment, application] = await Promise.all([
+        const [models, licenses, enrollment, application] = await Promise.all([
           listMyModels(),
+          listLicenses({ includeRevoked: true }),
           optional(getCurrentEnrollment),
           optional(getCurrentApplication),
         ]);
         if (!alive) return;
-        setCta(registerCta(models?.[0] || null, enrollment, { application, scope: 'landing' }));
+        const ownedModel = models?.[0] || null;
+        const license = (licenses || []).find((item) => item.modelId === ownedModel?.id) || null;
+        const records = { ownedModel, enrollment, application, license };
+        const pill = landingStatusPill(records);
+        setCta(pill?.cta || registerCta(ownedModel, enrollment, { application, scope: 'landing' }));
+        setStatusPill(pill);
+        setCtaResolvedFor(userId);
+        // 정산 응답을 기다리는 동안에도 상태와 다음 행동은 사용할 수 있다.
+        // 실패를 0건으로 표시하지 않고 가운데 정보만 비운다.
+        if (pill?.tone === 'live') {
+          try {
+            const settlement = await getSettlementSummary();
+            if (alive) setStatusPill(landingStatusPill({ ...records, settlement }));
+          } catch { /* 상태와 CTA는 그대로 유지한다. */ }
+        }
       } catch {
         if (alive) setCta(null);
       } finally {
@@ -152,7 +171,10 @@ export function LandingShell({ title, description, children, variant = 'landing'
   // 눌린 사실은 라벨로만 돌려준다. disabled 는 쓰지 않는다 — LandingHeader.jsx 머리말과
   // 같은 이유로, 버튼을 잠그면 클릭이 아예 안 들어와 보류함 자체가 죽는다.
   const ctaResolved = isLandingCtaResolved(userId, ctaResolvedFor);
-  const primaryLabel = cta && ctaResolved
+  // 목적지가 지금 서 있는 화면이면(마이페이지에서 '마이페이지' 버튼) 버튼을 숨긴다 —
+  // 누르면 자기 자신으로 가는 버튼이라 아무 일도 안 일어난다.
+  const ctaVisible = Boolean(cta && ctaResolved && cta.to !== pathname);
+  const primaryLabel = ctaVisible
     ? (pendingPrimary ? '확인 중이에요…' : cta.label)
     : null;
 
@@ -215,7 +237,11 @@ export function LandingShell({ title, description, children, variant = 'landing'
         </div>
       )}
       <LandingHeader onPrimary={variant !== 'apply' && primaryLabel ? onPrimary : undefined} primaryLabel={variant === 'apply' ? null : primaryLabel} />
-      <main>{children({ ctaLabel: primaryLabel, onPrimary: primaryLabel ? onPrimary : undefined })}</main>
+      <main>{children({
+        ctaLabel: primaryLabel,
+        onPrimary: primaryLabel ? onPrimary : undefined,
+        statusPill: ctaVisible ? statusPill : null,
+      })}</main>
       {variant !== 'apply' && <FooterSection />}
     </div>
   );

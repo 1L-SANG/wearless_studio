@@ -204,6 +204,7 @@ export async function modelComponentHarness({
             api.getPublicationPreviewUrl ? api.getPublicationPreviewUrl(...args) : Promise.reject(new Error('no preview'))
           );
           export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
+          export const deleteStagedApplicationPhoto = (...args) => api.deleteStagedApplicationPhoto(...args);
           export const submitApplication = (...args) => api.submitApplication(...args);
           export const fetchLicenseFaceUrl = (...args) => (
             api.fetchLicenseFaceUrl ? api.fetchLicenseFaceUrl(...args) : Promise.reject(new Error('no face'))
