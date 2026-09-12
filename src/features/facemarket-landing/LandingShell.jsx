@@ -152,7 +152,10 @@ export function LandingShell({ title, description, children, variant = 'landing'
   // 눌린 사실은 라벨로만 돌려준다. disabled 는 쓰지 않는다 — LandingHeader.jsx 머리말과
   // 같은 이유로, 버튼을 잠그면 클릭이 아예 안 들어와 보류함 자체가 죽는다.
   const ctaResolved = isLandingCtaResolved(userId, ctaResolvedFor);
-  const primaryLabel = cta && ctaResolved
+  // 목적지가 지금 서 있는 화면이면(마이페이지에서 '마이페이지' 버튼) 버튼을 숨긴다 —
+  // 누르면 자기 자신으로 가는 버튼이라 아무 일도 안 일어난다.
+  const ctaVisible = Boolean(cta && ctaResolved && cta.to !== pathname);
+  const primaryLabel = ctaVisible
     ? (pendingPrimary ? '확인 중이에요…' : cta.label)
     : null;
 

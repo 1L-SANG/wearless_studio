@@ -13,21 +13,23 @@ test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', ()
   assert.deepEqual(registerCta(null, null, {}), { label: '얼리버드 지원하기', to: '/model/apply' });
 });
 
-test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버드 지원을 보여 준다', () => {
+test('랜딩 CTA — 기록이 없으면 공개 지원 시작으로, 기록이 있으면 허브와 같은 다음 행동 버튼', () => {
   const landing = (ownedModel, enrollment, application) => registerCta(
     ownedModel,
     enrollment,
-    { application, applicationRequired: false, scope: 'landing' },
+    { application, scope: 'landing' },
   );
 
   assert.deepEqual(landing(null, null, null), {
     label: '얼리버드 지원하기',
     to: '/apply',
   });
-  assert.equal(landing(null, null, { id: 'a1', status: 'under_review' }), null);
-  assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);
-  assert.equal(landing(null, { id: 'e1', status: 'photos_pending' }, null), null);
-  assert.equal(landing({ id: 'm1', status: 'verified' }, null, null), null);
+  // 2026-09-12 오너 지시: 로그인한 등록자에게도 첫 화면에 버튼을 남긴다. null 을 돌려주지 않는다.
+  assert.deepEqual(landing(null, null, { id: 'a1', status: 'under_review' }), { label: '지원 상태 보기', to: '/status' });
+  assert.deepEqual(landing(null, null, { id: 'a2', status: 'approved' }), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(landing(null, null, { id: 'a3', status: 'rejected' }), { label: '다시 지원하기', to: '/model/apply' });
+  assert.deepEqual(landing(null, { id: 'e1', status: 'photos_pending' }, null), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(landing({ id: 'm1', status: 'verified' }, null, null), { label: '마이페이지', to: '/status' });
 });
 
 test('익명 조회 완료는 뒤늦게 확인된 로그인 사용자의 CTA 조회 완료로 재사용하지 않는다', () => {
