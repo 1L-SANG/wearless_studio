@@ -665,6 +665,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                      "cut_type": b.get("cutType"),
                      **({"face_pass": face_pass_outcome["face_pass"]}
                         if face_pass_outcome.get("face_pass") else {}),
+                     # 레시피 해시 — "이 컷이 어떤 상수로 나왔나". GPU 가 다르면 같은 시드도
+                     # 다른 그림이라 픽셀로는 못 되짚는다(agents/face_recipe.py).
+                     **({"face_recipe": face_pass_outcome["face_recipe"]}
+                        if face_pass_outcome.get("face_recipe") else {}),
                  }},
                 has_face,
                 garment_qc,

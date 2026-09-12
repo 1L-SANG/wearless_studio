@@ -61,8 +61,9 @@ def test_run_face_pass_hands_references_to_evaluate_gate(monkeypatch):
     img = Image.new("RGB", (600, 800), (120, 110, 100))
     monkeypatch.setattr(fi, "_decode", lambda b: img)
     monkeypatch.setattr(fi, "prepare_image", lambda image, model_dir=None: (img, plan, {"skipped_reason": None, "pose_risk": False}))
-    monkeypatch.setattr(fi, "build_control", lambda original, plan: img)
-    monkeypatch.setattr(fi, "composite_with_meta", lambda original, generated, plan, feather=0.0: (img, {}))
+    monkeypatch.setattr(fi, "build_control", lambda original, plan, *, crop=None: img)
+    monkeypatch.setattr(fi, "composite_with_meta",
+                        lambda original, generated, plan, feather=0.0, crop=None: (img, {}))
     gates = []
 
     def fake_gate(plan, result, model_dir=None, *, references=None, color_ring_mean=None):

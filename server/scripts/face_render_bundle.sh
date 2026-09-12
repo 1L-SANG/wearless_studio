@@ -19,8 +19,12 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$STAGE/code/app/agents" "$STAGE/deploy"
-cp "$HERE/face_render_service.py" "$STAGE/code/"
-cp "$HERE/app/agents/face_identity_qwen.py" "$STAGE/code/app/agents/"
+# face_esrgan.py: 얼굴 크롭 확대기(torch·파드 전용이라 app/ 밖에 둔다).
+cp "$HERE/face_render_service.py" "$HERE/face_esrgan.py" "$STAGE/code/"
+# face_recipe + face_identity: /healthz 가 찍는 레시피 해시의 상수 출처. 같은 계산식이어야
+# 컷 메타(face_recipe)와 파드가 맞춰진다. face_identity 는 cv2·numpy·PIL 만 쓴다(파드 venv 에 있음).
+cp "$HERE/app/agents/face_identity_qwen.py" "$HERE/app/agents/face_identity.py" \
+   "$HERE/app/agents/face_recipe.py" "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/__init__.py"
 : > "$STAGE/code/app/agents/__init__.py"
 cp "$HERE/deploy/face_render/start.sh" "$HERE/deploy/face_render/pre_start.sh" \
