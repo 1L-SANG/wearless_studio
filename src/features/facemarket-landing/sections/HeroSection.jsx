@@ -91,14 +91,7 @@ export function HeroSection({ onPrimary, primaryLabel, statusPill }) {
             <span aria-hidden="true" className={`${s.statusPillDot} ${statusPill.pulse ? s.statusPillPulse : ''}`} />
             {statusPill.title}
           </span>
-          {statusPill.detail ? (
-            <>
-              <span aria-hidden="true" className={s.statusPillSeparator} />
-              <span className={s.statusPillDetail}>
-                {statusPill.detail.before}<b>{statusPill.detail.strong}</b>{statusPill.detail.after}
-              </span>
-            </>
-          ) : null}
+          <span aria-hidden="true" className={s.statusPillSeparator} />
           <span className={s.statusPillCta}>
             {statusPill.cta.label}
             <span aria-hidden="true" className={s.statusPillArrow}>

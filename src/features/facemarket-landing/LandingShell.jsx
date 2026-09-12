@@ -16,7 +16,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import {
-  getCurrentApplication, getCurrentEnrollment, getSettlementSummary, listLicenses, listMyModels,
+  getCurrentApplication, getCurrentEnrollment, listLicenses, listMyModels,
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
@@ -136,14 +136,6 @@ export function LandingShell({ title, description, children, variant = 'landing'
         setCta(pill?.cta || registerCta(ownedModel, enrollment, { application, scope: 'landing' }));
         setStatusPill(pill);
         setCtaResolvedFor(userId);
-        // 정산 응답을 기다리는 동안에도 상태와 다음 행동은 사용할 수 있다.
-        // 실패를 0건으로 표시하지 않고 가운데 정보만 비운다.
-        if (pill?.tone === 'live') {
-          try {
-            const settlement = await getSettlementSummary();
-            if (alive) setStatusPill(landingStatusPill({ ...records, settlement }));
-          } catch { /* 상태와 CTA는 그대로 유지한다. */ }
-        }
       } catch {
         if (alive) setCta(null);
       } finally {
@@ -177,6 +169,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
   const primaryLabel = ctaVisible
     ? (pendingPrimary ? '확인 중이에요…' : cta.label)
     : null;
+  const headerPrimaryLabel = variant === 'apply' || (ctaVisible && statusPill) ? null : primaryLabel;
 
   const onPrimary = () => {
     // 부트스트랩 중에는 session=null 이 '비로그인'이 아니라 '아직 모름'이다. 이때
@@ -236,7 +229,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
           </button>
         </div>
       )}
-      <LandingHeader onPrimary={variant !== 'apply' && primaryLabel ? onPrimary : undefined} primaryLabel={variant === 'apply' ? null : primaryLabel} />
+      <LandingHeader onPrimary={headerPrimaryLabel ? onPrimary : undefined} primaryLabel={headerPrimaryLabel} />
       <main>{children({
         ctaLabel: primaryLabel,
         onPrimary: primaryLabel ? onPrimary : undefined,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { registerCta, APPLY_LABEL } from '../../src/features/facemarket-landing/registerCta.js';
+import { APPLY_LABEL } from '../../src/features/facemarket-landing/registerCta.js';
 import { eventually, findTree, modelComponentHarness } from './helpers/facemarketHarness.mjs';
 
 registerHooks({
@@ -17,51 +17,41 @@ registerHooks({
 const { landingStatusPill } = await import('../../src/features/facemarket-landing/landingStatus.js');
 const text = node => Array.isArray(node) ? node.map(text).join('')
   : node && typeof node === 'object' ? text(node.props?.children) : String(node ?? '');
-const byClass = (tree, name) => findTree(tree, node => node.props?.className?.split(' ').includes(name));
+const byClass = (tree, name) => findTree(tree, node => typeof node.props?.className === 'string' && node.props.className.split(' ').includes(name));
 const verified = { id: 'm1', status: 'verified' };
 const activeLicense = { id: 'l1', modelId: 'm1', status: 'active', licenseValidUntil: null };
 
-// These cases catch incorrect precedence, zero/failure conflation and route/copy drift.
+// These cases catch incorrect precedence and keep every status on the My Page route.
 const cases = [
-  ['verified usage', { ownedModel: verified, license: activeLicense, settlement: { monthCount: 3 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '3건', after: ' 쓰였어요' }],
-  ['verified zero', { ownedModel: verified, license: activeLicense, settlement: { monthCount: 0 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '0건', after: '' }],
-  ['verified failed summary', { ownedModel: verified, license: activeLicense, settlement: null }, 'live', true, '공개 중', null],
-  ['verified missing count', { ownedModel: verified, license: activeLicense, settlement: {} }, 'live', true, '공개 중', null],
-  ['verified legacy future license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2099-01-01T00:00:00Z' }, settlement: { monthCount: 1 } }, 'live', true, '공개 중', { before: '이번 달 ', strong: '1건', after: ' 쓰였어요' }],
-  ['verified takes precedence', { ownedModel: verified, license: activeLicense, enrollment: { status: 'photos_pending' }, application: { status: 'rejected' } }, 'live', true, '공개 중', null],
-  ['revoked license', { ownedModel: verified, license: { ...activeLicense, status: 'revoked' } }, 'rejected', false, '라이선스 종료', { before: '새로운 사용은 ', strong: '중단됐어요', after: '' }],
-  ['expired legacy license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2020-01-01T00:00:00Z' } }, 'rejected', false, '라이선스 종료', { before: '새로운 사용은 ', strong: '중단됐어요', after: '' }],
-  ['verified without license', { ownedModel: verified }, 'progress', false, '공개 준비 중', { before: '다음은 ', strong: '라이선스 확인', after: '' }],
-  ['owner paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'owner' }, license: activeLicense }, 'paused', false, '활동 일시 중지', { before: '지금은 ', strong: '새 요청을 받지 않아요', after: '' }],
-  ['admin paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'admin' }, license: activeLicense }, 'paused', false, '활동 일시 중지', { before: '', strong: '운영팀 확인이 필요해요', after: '' }],
-  ['awaiting test cuts', { ownedModel: { ...verified, status: 'awaiting_confirm' }, license: activeLicense }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
-  ['confirm pending enrollment', { ownedModel: { ...verified, status: 'pending' }, enrollment: { status: 'confirm_pending' } }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
-  ['re-registration overrides revoked history', { ownedModel: { ...verified, status: 'reverification_required' }, enrollment: { status: 'photos_pending', photos: [] }, license: { ...activeLicense, status: 'revoked' } }, 'progress', false, '등록 진행 중', { before: '다음은 ', strong: '사진 등록', after: '' }],
-  ['test-cut confirmation overrides revoked history', { ownedModel: { ...verified, status: 'awaiting_confirm' }, enrollment: { status: 'confirm_pending' }, license: { ...activeLicense, status: 'revoked' } }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
+  ['verified', { ownedModel: verified, license: activeLicense }, 'live', true, '공개 중'],
+  ['verified legacy future license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2099-01-01T00:00:00Z' } }, 'live', true, '공개 중'],
+  ['verified takes precedence', { ownedModel: verified, license: activeLicense, enrollment: { status: 'photos_pending' }, application: { status: 'rejected' } }, 'live', true, '공개 중'],
+  ['revoked license', { ownedModel: verified, license: { ...activeLicense, status: 'revoked' } }, 'rejected', false, '라이선스 종료'],
+  ['expired legacy license', { ownedModel: verified, license: { ...activeLicense, licenseValidUntil: '2020-01-01T00:00:00Z' } }, 'rejected', false, '라이선스 종료'],
+  ['verified without license', { ownedModel: verified }, 'progress', false, '공개 준비 중'],
+  ['owner paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'owner' }, license: activeLicense }, 'paused', false, '활동 일시 중지'],
+  ['admin paused', { ownedModel: { ...verified, status: 'suspended', suspensionSource: 'admin' }, license: activeLicense }, 'paused', false, '활동 일시 중지'],
+  ['awaiting test cuts', { ownedModel: { ...verified, status: 'awaiting_confirm' }, license: activeLicense }, 'confirm', false, '테스트컷 확인'],
+  ['confirm pending enrollment', { ownedModel: { ...verified, status: 'pending' }, enrollment: { status: 'confirm_pending' } }, 'confirm', false, '테스트컷 확인'],
+  ['re-registration overrides revoked history', { ownedModel: { ...verified, status: 'reverification_required' }, enrollment: { status: 'photos_pending', photos: [] }, license: { ...activeLicense, status: 'revoked' } }, 'progress', false, '등록 진행 중'],
+  ['test-cut confirmation overrides revoked history', { ownedModel: { ...verified, status: 'awaiting_confirm' }, enrollment: { status: 'confirm_pending' }, license: { ...activeLicense, status: 'revoked' } }, 'confirm', false, '테스트컷 확인'],
   ...[
-    ['identity_pending', '본인확인'], ['photos_pending', '사진 등록'], ['liveness_pending', '본인확인 마무리'],
-    ['processing', '모델 이미지 준비'], ['asset_building', '모델 이미지 준비'],
-    ['license_pending', '사용 조건 정하기'], ['vc_pending', '사용 조건 정하기'],
-  ].map(([status, step]) => [status, { enrollment: { status, photos: [] }, application: { status: 'approved' } },
-    'progress', false, '등록 진행 중', { before: '다음은 ', strong: step, after: '' }]),
-  ['unknown enrollment step', { enrollment: { status: 'review_pending' } }, 'progress', false, '등록 진행 중', null],
-  ['pending model', { ownedModel: { status: 'pending' } }, 'progress', false, '등록 진행 중', { before: '다음은 ', strong: '모델 이미지 준비', after: '' }],
-  ['reverification model', { ownedModel: { status: 'reverification_required' }, enrollment: { status: 'failed' } }, 'progress', false, '등록 진행 중', { before: '다음은 ', strong: '모델 이미지 준비', after: '' }],
-  ['enrollment before pending model', { ownedModel: { status: 'pending' }, enrollment: { status: 'photos_pending' } }, 'progress', false, '등록 진행 중', { before: '다음은 ', strong: '사진 등록', after: '' }],
-  ['Seoul receipt rolls to next day', { application: { status: 'under_review', createdAt: '2026-09-11T15:05:00Z' } }, 'review', true, '검토 중', { before: '', strong: '9월 12일', after: ' 접수' }],
-  ['Seoul receipt before midnight', { application: { status: 'under_review', createdAt: '2026-09-11T14:59:00Z' } }, 'review', true, '검토 중', { before: '', strong: '9월 11일', after: ' 접수' }],
-  ['invalid receipt', { application: { status: 'under_review', createdAt: 'invalid' } }, 'review', true, '검토 중', null],
-  ['missing receipt', { application: { status: 'under_review' } }, 'review', true, '검토 중', null],
-  ['approved', { application: { status: 'approved' } }, 'approved', false, '승인됐어요', { before: '다음은 ', strong: '본인확인', after: '' }],
-  ['rejected', { application: { status: 'rejected' } }, 'rejected', false, '이번엔 어려워요', null],
+    'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+    'asset_building', 'license_pending', 'vc_pending',
+  ].map(status => [status, { enrollment: { status, photos: [] }, application: { status: 'approved' } },
+    'progress', false, '등록 진행 중']),
+  ['unknown enrollment step', { enrollment: { status: 'review_pending' } }, 'progress', false, '등록 진행 중'],
+  ['pending model', { ownedModel: { status: 'pending' } }, 'progress', false, '등록 진행 중'],
+  ['reverification model', { ownedModel: { status: 'reverification_required' }, enrollment: { status: 'failed' } }, 'progress', false, '등록 진행 중'],
+  ['enrollment before pending model', { ownedModel: { status: 'pending' }, enrollment: { status: 'photos_pending' } }, 'progress', false, '등록 진행 중'],
+  ['under review', { application: { status: 'under_review' } }, 'review', true, '검토 중'],
+  ['approved', { application: { status: 'approved' } }, 'approved', false, '승인됐어요'],
+  ['rejected', { application: { status: 'rejected' } }, 'rejected', false, '이번엔 어려워요'],
 ];
-for (const [name, input, tone, pulse, title, detail] of cases) {
+for (const [name, input, tone, pulse, title] of cases) {
   test(`landing status: ${name}`, () => {
     const pill = landingStatusPill(input);
-    assert.deepEqual({ tone: pill.tone, pulse: pill.pulse, title: pill.title, detail: pill.detail }, { tone, pulse, title, detail });
-    assert.deepEqual(pill.cta, registerCta(input.ownedModel, input.enrollment, {
-      application: input.application, license: input.license, scope: 'landing',
-    }));
+    assert.deepEqual(pill, { tone, pulse, title, cta: { label: '마이페이지', to: '/status' } });
   });
 }
 for (const input of [{}, { application: { status: 'cancelled' } }, ...['cancelled', 'failed', 'passed'].map(status => ({ enrollment: { status } }))]) {
@@ -77,9 +67,10 @@ test('Hero replaces the earlybird button, ring and caption with one clickable st
       const tree = harness.render({ statusPill, primaryLabel: APPLY_LABEL, onPrimary: () => { clicks += 1; } });
       const pill = byClass(tree, 'statusPill');
       assert.ok(pill);
-      assert.ok(text(pill).includes(statusPill.title));
-      assert.ok(text(pill).includes(statusPill.cta.label));
-      if (statusPill.detail) assert.ok(text(pill).includes(Object.values(statusPill.detail).join('')));
+      assert.equal(text(pill), `${statusPill.title}마이페이지`);
+      assert.equal(byClass(pill, 'statusPillDetail'), null);
+      assert.ok(byClass(pill, 'statusPillSeparator'));
+      assert.equal(Boolean(byClass(pill, 'statusPillPulse')), statusPill.pulse);
       for (const name of ['heroCta', 'heroCtaRing', 'heroCaption']) assert.equal(byClass(tree, name), null);
       assert.equal(pill.type, 'button');
       pill.props.onClick();
@@ -119,31 +110,30 @@ async function shellHarness(api = {}) {
   };
 }
 
-for (const fails of [false, true]) {
-  test(`LandingShell loads summary only after verified records and keeps pill on ${fails ? 'failure' : 'success'}`, async () => {
-    let settle;
-    const summary = new Promise((resolve, reject) => { settle = fails ? reject : resolve; });
-    const order = [];
+for (const [name, input, , , title] of cases.filter(([name]) => ['verified', 'photos_pending', 'under review', 'approved', 'rejected'].includes(name))) {
+  test(`LandingShell ${name} skips summary, hides the header CTA and navigates to My Page`, async () => {
+    let summaryCalls = 0;
     const harness = await shellHarness({
-      listMyModels: async () => { order.push('models'); return [verified]; },
-      listLicenses: async () => { order.push('licenses'); return [activeLicense]; },
-      getCurrentEnrollment: async () => { order.push('enrollment'); return null; },
-      getCurrentApplication: async () => { order.push('application'); return null; },
-      getSettlementSummary: () => { order.push('summary'); return summary; },
+      listMyModels: async () => input.ownedModel ? [input.ownedModel] : [],
+      listLicenses: async () => input.license ? [input.license] : [],
+      getCurrentEnrollment: async () => input.enrollment ?? null,
+      getCurrentApplication: async () => input.application ?? null,
+      getSettlementSummary: async () => { summaryCalls += 1; return { monthCount: 3 }; },
     });
     try {
       harness.commit();
-      await eventually(() => { harness.commit(); return !!harness.view().statusPill; }, 'status must render while summary is pending');
-      assert.deepEqual(order, ['models', 'licenses', 'enrollment', 'application', 'summary']);
-      assert.equal(harness.view().statusPill.detail, null);
-      settle(fails ? new Error('offline') : { monthCount: 3 });
-      await new Promise(resolve => setImmediate(resolve));
+      await eventually(() => { harness.commit(); return !!harness.view().statusPill; }, 'status pill');
       const tree = harness.commit();
-      assert.equal(harness.view().statusPill.title, '공개 중');
-      assert.equal(harness.view().statusPill.detail?.strong ?? null, fails ? null : '3건');
+      assert.equal(summaryCalls, 0);
+      assert.equal(harness.view().statusPill.title, title);
+      assert.equal(harness.view().ctaLabel, '마이페이지');
       const header = findTree(tree, node => node.type?.name === 'LandingHeader');
-      assert.equal(header.props.primaryLabel, '마이페이지');
+      assert.equal(header.props.primaryLabel, null);
+      assert.equal(header.props.onPrimary, undefined);
       assert.equal(header.props.statusPill, undefined);
+      const headerTree = header.type(header.props);
+      assert.equal(byClass(headerTree, 'headerCta'), null);
+      assert.ok(findTree(headerTree, node => node.props?.to === '/status'));
       const destinations = [];
       harness.runtime.navigate = to => destinations.push(to);
       harness.commit();
@@ -158,7 +148,7 @@ for (const fails of [false, true]) {
   });
 }
 
-test('LandingShell skips summary for ordinary records and anonymous visits', async () => {
+test('LandingShell restores the earlybird header CTA after sign-out without loading summary', async () => {
   let calls = 0;
   const harness = await shellHarness({ getCurrentApplication: async () => ({ status: 'approved' }), getSettlementSummary: async () => { calls += 1; return { monthCount: 0 }; } });
   try {
@@ -172,6 +162,16 @@ test('LandingShell skips summary for ordinary records and anonymous visits', asy
     harness.commit();
     assert.equal(harness.view().ctaLabel, APPLY_LABEL);
     assert.equal(harness.view().statusPill, null);
+    assert.equal(calls, 0);
+    const header = findTree(harness.commit(), node => node.type?.name === 'LandingHeader');
+    assert.equal(header.props.primaryLabel, APPLY_LABEL);
+    const button = byClass(header.type(header.props), 'headerCta');
+    assert.ok(button);
+    const destinations = [];
+    harness.runtime.navigate = to => destinations.push(to);
+    const currentHeader = findTree(harness.commit(), node => node.type?.name === 'LandingHeader');
+    byClass(currentHeader.type(currentHeader.props), 'headerCta').props.onClick();
+    assert.deepEqual(destinations, ['/apply']);
   } finally { await harness.close(); }
 });
 
@@ -185,8 +185,8 @@ test('LandingShell prefers an active re-registration over revoked license histor
     harness.commit();
     await eventually(() => { harness.commit(); return !!harness.view().statusPill; }, 're-registration pill');
     assert.equal(harness.view().statusPill.title, '등록 진행 중');
-    assert.equal(harness.view().statusPill.detail.strong, '사진 등록');
-    assert.equal(harness.view().ctaLabel, '모델 등록하기');
+    assert.deepEqual(harness.view().statusPill.cta, { label: '마이페이지', to: '/status' });
+    assert.equal(harness.view().ctaLabel, '마이페이지');
   } finally { await harness.close(); }
 });
 
@@ -215,6 +215,9 @@ for (const status of [null, 'cancelled']) {
       await eventually(() => { harness.commit(); return harness.view().ctaLabel === APPLY_LABEL; }, 'earlybird CTA');
       assert.equal(harness.view().statusPill, null);
       assert.equal(summaryCalls, 0);
+      const header = findTree(harness.commit(), node => node.type?.name === 'LandingHeader');
+      assert.equal(header.props.primaryLabel, APPLY_LABEL);
+      assert.ok(byClass(header.type(header.props), 'headerCta'));
       const destinations = [];
       harness.runtime.navigate = to => destinations.push(to);
       harness.commit();

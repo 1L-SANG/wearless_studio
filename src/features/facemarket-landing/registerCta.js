@@ -36,11 +36,15 @@ export function registerCta(
 ) {
   // 랜딩(상단바·히어로): 기록이 하나도 없는 방문자는 공개 지원 시작 페이지(/apply)로.
   // applicationRequired 는 운영 게이트일 뿐, 얼리버드 지원의 목적지는 항상 지원서다.
-  // 지원서·등록·모델이 있는 로그인 사용자는 CTA 를 비우지 않고(2026-09-12 오너 지시 — 첫 화면
-  // 한가운데가 버튼 없이 비면 등록자에게도 어색하다) 아래 허브와 같은 '다음 행동' 버튼을 준다.
+  // 기록이 있는 로그인 사용자는 마이페이지에서 다음 행동을 안내받는다.
+  // 취소한 지원서만 남은 사용자는 pill 없이 기존 얼리버드 지원 버튼을 유지한다.
   // 목적지가 지금 화면이면 LandingShell 이 버튼을 숨긴다.
-  if (scope === 'landing' && !ownedModel && !enrollment && !application) {
-    return { label: APPLY_LABEL, to: '/apply' };
+  if (scope === 'landing') {
+    if (!ownedModel && !enrollment && !application) return { label: APPLY_LABEL, to: '/apply' };
+    if (!ownedModel && !enrollment && application?.status === 'cancelled') {
+      return { label: APPLY_LABEL, to: '/model/apply' };
+    }
+    return { label: '마이페이지', to: '/status' };
   }
 
   if (ownedModel?.status === 'awaiting_confirm' || enrollment?.status === 'confirm_pending') {
