@@ -55,12 +55,15 @@ def _parse_json(text: str, provider: str) -> dict:
     return parsed
 
 
-def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict) -> dict:
+def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict,
+              reasoning_effort=None, image_detail=None, max_completion_tokens=None) -> dict:
     content = [{"type": "text", "text": prompt}]
     for im in images:
-        content.append({"type": "image_url",
-                        "image_url": {"url": f"data:{im.mime};base64,{_b64(im.data)}"}})
-    return {
+        image_url = {"url": f"data:{im.mime};base64,{_b64(im.data)}"}
+        if image_detail is not None:
+            image_url["detail"] = image_detail
+        content.append({"type": "image_url", "image_url": image_url})
+    body = {
         "model": model,
         "messages": [{"role": "user", "content": content}],
         "response_format": {
@@ -68,28 +71,41 @@ def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict) 
             "json_schema": {"name": "product_analysis", "strict": True, "schema": schema},
         },
     }
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
+    if max_completion_tokens is not None:
+        body["max_completion_tokens"] = max_completion_tokens
+    return body
 
 
-def _parse_gpt_response(res) -> dict:
+def _parse_gpt_response(res, metadata=None, requested_model=None) -> dict:
     data = _envelope_json(res, "OpenAI")
-    msg = ((data.get("choices") or [{}])[0].get("message") or {})
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    if metadata is not None:
+        metadata.update(requested_model=requested_model, returned_model=data.get("model"),
+                        usage=data.get("usage"), finish_reason=choice.get("finish_reason"))
+    if choice.get("finish_reason") not in (None, "stop") or msg.get("refusal"):
+        raise VisionError("OpenAI 응답이 완결되지 않았거나 요청이 거절됐어요.")
     return _parse_json(msg.get("content") or "", "OpenAI")
 
 
 async def _call_gpt(settings: Settings, model: str, prompt: str,
                     images: list[InlineImage], schema: dict, timeout: float,
-                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
+                    thinking_level: str | None = None, *, reasoning_effort=None,
+                    image_detail=None, max_completion_tokens=None, metadata=None) -> dict:
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
     if not settings.openai_api_key:
         raise VisionError("OPENAI_API_KEY 미설정")
-    body = await run_cpu_bound(_gpt_body, model, prompt, images, schema)
+    body = await run_cpu_bound(_gpt_body, model, prompt, images, schema,
+                               reasoning_effort, image_detail, max_completion_tokens)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _OPENAI_URL, json=body,
             headers={"Authorization": f"Bearer {settings.openai_api_key}"})
     if res.status_code != 200:
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
-    return await run_cpu_bound(_parse_gpt_response, res)
+    return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
 
 
 def _to_gemini_schema(node: dict) -> dict:

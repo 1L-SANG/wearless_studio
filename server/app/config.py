@@ -1,6 +1,7 @@
 """환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
+import math
 import pathlib
 from dataclasses import dataclass
 
@@ -46,6 +47,11 @@ class Settings:
     model_image_high: str = "gemini-3-pro-image"
     # 마네킹 생성과 사용자 조정 전용. 공유 image_high와 상세페이지 모델은 바꾸지 않는다.
     model_image_mannequin: str = "gpt-image-2.5-flare"
+    # 추가 전문 검사는 검증 후 명시적으로 켠다. 배포 manifest는 변경하지 않는다.
+    mannequin_specialist_qc: str = "off"  # off | shadow | enforce
+    mannequin_specialist_model: str = "gpt-6-astra"
+    mannequin_specialist_timeout_seconds: float = 120.0
+    mannequin_specialist_repair_model: str = "gpt-image-2.5-sunburst"
     # 시그니처 컷(상세페이지 첫 화면) 전용. gpt-image 계열은 gemini_image.py 가 OpenAI
     # images/edits 경로로 분기한다(:127) — 표기는 그 분기가 인식하는 그대로 둔다.
     model_image_signature: str = "gpt-image-2"
@@ -521,6 +527,14 @@ def _int_env(env: str, default: int) -> int:
         return default
 
 
+def _specialist_timeout() -> float:
+    try:
+        value = float(os.getenv("MANNEQUIN_SPECIALIST_TIMEOUT_SECONDS", "120"))
+    except ValueError:
+        return 120.0
+    return min(180.0, max(15.0, value)) if math.isfinite(value) else 120.0
+
+
 def _optional_float_env(env: str) -> float | None:
     raw = (os.getenv(env) or "").strip()
     return float(raw) if raw else None
@@ -583,6 +597,10 @@ def load_settings() -> Settings:
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
         model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare",
+        mannequin_specialist_qc=_flag("MANNEQUIN_SPECIALIST_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_specialist_model=(os.getenv("MANNEQUIN_SPECIALIST_MODEL") or "gpt-6-astra").strip() or "gpt-6-astra",
+        mannequin_specialist_timeout_seconds=_specialist_timeout(),
+        mannequin_specialist_repair_model=(os.getenv("MANNEQUIN_SPECIALIST_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),

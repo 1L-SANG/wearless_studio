@@ -42,7 +42,7 @@ def series(value):
 def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
                series_results=None, mode="enforce", has_match=True,
                pants_mode="off", ref_images=(), bust_pass="off", captures=None,
-               settings_overrides=None, candidate_kwargs=None):
+               settings_overrides=None, candidate_kwargs=None, analysis_override=None):
     pending = list(generated)
     captures = captures or SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
     captures.requests = []
@@ -104,7 +104,7 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
         base_img=InlineImage("image/png", b"base"), prod_imgs=[FRONT, DETAIL],
         match_img=MATCHING if has_match else None, product_count=2,
         template="${baseGender} ${clothingType} ${imageManifest}",
-        product={}, analysis={}, clothing_type="top", fit_profile=deepcopy(PROFILE),
+        product={}, analysis=analysis_override or {}, clothing_type="top", fit_profile=deepcopy(PROFILE),
         product_refs=[ProductReference("Front", "front", FRONT), ProductReference("Detail", "detail", DETAIL)],
         ref_imgs=ref_images,
         **(candidate_kwargs or {}),

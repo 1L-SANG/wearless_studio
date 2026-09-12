@@ -16,8 +16,13 @@ garment, even if its broad identity is recognizable. Correction is needed.
 critical: source-proven loss or alteration of a defining product feature, such as a
 missing or garbled visible logo, changed color family, garment type, or major pocket
 or closure structure. Other correct features never offset a critical defect.
-uncertain: the relevant feature cannot be checked from the supplied references or
-the candidate. Occlusion or an absent view is not evidence that a detail is missing.
+uncertain: visible evidence suggests a potentially important mismatch but the
+comparison cannot be resolved. An unseen back in a front mannequin view, an internal
+label hidden by normal wear, or another normally out-of-view region is outside the
+inspection scope, not an uncertain defect. If visible applicable features match,
+record none and describe that visible match. Uploaded back references explain the
+product; they do not require the front output to show the back. A feature specifically
+required to remain visible but incorrectly covered is still an observable defect.
 
 Axis guidance:
 - logo_graphic: exterior logos, text, embroidery and distinctive graphics. Missing,
