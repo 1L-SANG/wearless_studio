@@ -98,8 +98,20 @@ assert set(_HEIGHT_LABELS) == {b for buckets in HEIGHT_BUCKETS.values() for b in
 HAIR_LENGTHS: tuple[str, ...] = ("buzz", "short", "medium", "long")
 HAIR_COLORS: tuple[str, ...] = ("black", "dark_brown", "brown", "blonde", "gray", "other")
 HAIR_TEXTURES: tuple[str, ...] = ("straight", "wavy", "curly")
+#: 앞머리 — 길이·머릿결·색으로는 표현이 안 되는 축. 2026-09-13 운영 테스트컷에서 이게 없어서
+#: gpt-image 바탕이 **이마를 드러낸 짧은 머리**를 그렸고, 얼굴 패스가 타원 안만 v7(눈썹까지 오는
+#: 앞머리)로 바꾸면서 머리 실루엣이 어긋났다. 얼굴이 큰 클로즈업 3장에서는 타원 밖에 남은 원본
+#: 머리 끝이 **공중에 뜬 덩어리**로 보였다. 바탕을 처음부터 맞게 그리게 하는 것이 유일한 수습이다.
+HAIR_FRINGES: tuple[str, ...] = ("none", "side_swept", "brow", "eye")
 
 # 값 → (한국어 UI 라벨, 영문 프롬프트 문구). 문구가 빈 문자열이면 프롬프트에서 생략한다.
+#: 앞머리는 "머리" 를 꾸미는 형용사가 아니라 별도 절이다 — 길이·머릿결·색 뒤에 붙인다.
+_HAIR_FRINGE_LABELS: dict[str, tuple[str, str]] = {
+    "none": ("앞머리 없음(이마 노출)", "no fringe, with the forehead visible"),
+    "side_swept": ("옆으로 넘긴 앞머리", "a side-swept fringe"),
+    "brow": ("눈썹 길이 앞머리", "a straight fringe reaching the eyebrows"),
+    "eye": ("눈을 덮는 앞머리", "a long fringe covering the eyebrows and touching the eyes"),
+}
 _HAIR_LENGTH_LABELS: dict[str, tuple[str, str]] = {
     "buzz": ("삭발·스포츠", "buzzed"),
     "short": ("짧은 머리", "short"),
@@ -124,6 +136,7 @@ _HAIR_TEXTURE_LABELS: dict[str, tuple[str, str]] = {
 assert set(_HAIR_LENGTH_LABELS) == set(HAIR_LENGTHS), "_HAIR_LENGTH_LABELS keys must match HAIR_LENGTHS"
 assert set(_HAIR_COLOR_LABELS) == set(HAIR_COLORS), "_HAIR_COLOR_LABELS keys must match HAIR_COLORS"
 assert set(_HAIR_TEXTURE_LABELS) == set(HAIR_TEXTURES), "_HAIR_TEXTURE_LABELS keys must match HAIR_TEXTURES"
+assert set(_HAIR_FRINGE_LABELS) == set(HAIR_FRINGES), "_HAIR_FRINGE_LABELS keys must match HAIR_FRINGES"
 
 
 #: 얼굴형 — enum 2축. hair 와 같은 이유로 **LoRA 가 학습한 얼굴형**이지 등록자의 현재 얼굴이 아니다
@@ -222,12 +235,13 @@ def build_body_profile_block(profile: Mapping | None) -> str:
 
 
 def validate_hair(*, hair_length: str | None, hair_color: str | None,
-                  hair_texture: str | None) -> None:
+                  hair_texture: str | None, hair_fringe: str | None = None) -> None:
     """부분 입력 허용(각 축 독립). 위반 시 PhysiqueError('invalid_hair')."""
     for value, allowed, name in (
         (hair_length, HAIR_LENGTHS, "머리 길이"),
         (hair_color, HAIR_COLORS, "머리 색"),
         (hair_texture, HAIR_TEXTURES, "머릿결"),
+        (hair_fringe, HAIR_FRINGES, "앞머리"),
     ):
         if value is None:
             continue
@@ -254,11 +268,20 @@ def build_hair_block(profile: Mapping | None) -> str:
         value = profile.get(key)
         if isinstance(value, str) and value in labels and labels[value][1]:
             parts.append(labels[value][1])
-    if not parts:
+    fringe = profile.get("hairFringe")
+    fringe_en = _HAIR_FRINGE_LABELS[fringe][1] if isinstance(fringe, str) and fringe in _HAIR_FRINGE_LABELS else ""
+    if not parts and not fringe_en:
         return ""
+    if parts and fringe_en:
+        desc = ", ".join(parts) + " hair with " + fringe_en
+    elif parts:
+        desc = ", ".join(parts) + " hair"
+    else:
+        # 앞머리만 아는 경우도 낸다 — 헤어라인이 어긋나면 얼굴 패스가 유령 덩어리를 남긴다.
+        desc = "hair with " + fringe_en
     return (
         "SUBJECT HAIR (generated; owned by the registrant's trained likeness): the model has "
-        + ", ".join(parts) + " hair. Keep it consistent across cuts; it has no authority over the face."
+        + desc + ". Keep it consistent across cuts; it has no authority over the face."
     )
 
 

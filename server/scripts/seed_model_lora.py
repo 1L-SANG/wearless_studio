@@ -44,6 +44,7 @@ from app.config import load_settings  # noqa: E402
 from app.facemarket_physique import (  # noqa: E402
     FACE_SHAPES,
     HAIR_COLORS,
+    HAIR_FRINGES,
     HAIR_LENGTHS,
     HAIR_TEXTURES,
     JAW_LINES,
@@ -67,6 +68,8 @@ def main() -> int:
     ap.add_argument("--hair-length", choices=HAIR_LENGTHS)
     ap.add_argument("--hair-color", choices=HAIR_COLORS)
     ap.add_argument("--hair-texture", choices=HAIR_TEXTURES)
+    ap.add_argument("--hair-fringe", choices=HAIR_FRINGES,
+                    help="앞머리. 바탕 생성기가 헤어라인을 맞게 그리게 한다(없으면 예전과 동일)")
     ap.add_argument("--face-shape", choices=FACE_SHAPES)
     ap.add_argument("--jaw-line", choices=JAW_LINES)
     ap.add_argument("--trained-steps", type=int)
@@ -142,20 +145,21 @@ def main() -> int:
         cur.execute(
             """insert into fm_model_loras
                  (model_id, version, status, enabled, base_model, lora_r2_key, lora_sha256, bucket,
-                  trigger_token, hair_length, hair_color, hair_texture, face_shape, jaw_line,
+                  trigger_token, hair_length, hair_color, hair_texture, hair_fringe, face_shape, jaw_line,
                   trained_steps, source_enrollment_id, metrics)
-               values (%s, %s, 'ready', %s, %s, %s, %s, 'face', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               values (%s, %s, 'ready', %s, %s, %s, %s, 'face', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                on conflict (model_id, version) do update set
                  status = 'ready', enabled = excluded.enabled, base_model = excluded.base_model,
                  lora_r2_key = excluded.lora_r2_key, lora_sha256 = excluded.lora_sha256,
                  trigger_token = excluded.trigger_token,
                  hair_length = excluded.hair_length, hair_color = excluded.hair_color,
-                 hair_texture = excluded.hair_texture, face_shape = excluded.face_shape,
+                 hair_texture = excluded.hair_texture, hair_fringe = excluded.hair_fringe,
+                 face_shape = excluded.face_shape,
                  jaw_line = excluded.jaw_line, trained_steps = excluded.trained_steps,
                  source_enrollment_id = excluded.source_enrollment_id, metrics = excluded.metrics
                returning id::text as id""",
             (a.model_id, a.version, a.enable, a.base_model, key, sha256, a.trigger,
-             a.hair_length, a.hair_color, a.hair_texture, a.face_shape, a.jaw_line,
+             a.hair_length, a.hair_color, a.hair_texture, a.hair_fringe, a.face_shape, a.jaw_line,
              a.trained_steps, a.source_enrollment_id,
              Json(metrics) if metrics is not None else None),
         )

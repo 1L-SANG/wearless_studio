@@ -30,6 +30,11 @@ from ..facemarket_photos import ASSET_SOURCE_SLOTS, resolve_photo_rows
 log = logging.getLogger("wearless.identity_source")
 
 _ANGLES = ("front", "angle45", "side")
+#: fm_model_loras 에서 읽는 컬럼. hair_fringe 는 뒤늦게 추가돼서 옛 스키마용 목록을 따로 둔다.
+_LORA_COLUMNS = ("id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
+                 "hair_length, hair_color, hair_texture, hair_fringe, face_shape, jaw_line, trained_steps")
+_LORA_COLUMNS_LEGACY = ("id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
+                        "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps")
 
 
 def compute_assets_source_hash(faces: list[dict]) -> str:
@@ -210,19 +215,24 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
         uuid.UUID(str(model_id))
     except (TypeError, ValueError):
         return None
-    try:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
-                "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps "
-                "from fm_model_loras "
-                "where model_id = %s and enabled and status = 'ready' "
-                "limit 1",
-                (model_id,))
-            row = await cur.fetchone()
-    except Exception as exc:  # noqa: BLE001 — 테이블 부재·권한 등은 얼굴 패스만 끄고 컷은 계속 만든다
-        log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
-        return None
+    # hair_fringe 는 나중에 추가된 컬럼이다. 배포가 마이그레이션보다 먼저 나가면 이 컬럼이 없는데,
+    # 그걸 SELECT 하다 실패하면 **얼굴 패스가 통째로 꺼진다** — 없으면 그 컬럼만 빼고 다시 묻는다.
+    row = None
+    for columns in (_LORA_COLUMNS, _LORA_COLUMNS_LEGACY):
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"select {columns} from fm_model_loras "
+                    "where model_id = %s and enabled and status = 'ready' "
+                    "limit 1",
+                    (model_id,))
+                row = await cur.fetchone()
+            break
+        except Exception as exc:  # noqa: BLE001 — 테이블·컬럼 부재는 얼굴 패스만 끄고 컷은 계속 만든다
+            if columns is _LORA_COLUMNS_LEGACY:
+                log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
+                return None
+            log.info("fm_model_loras: hair_fringe 없음(마이그 전) — 옛 컬럼으로 다시 묻는다")
     if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
         return None
     row = dict(row)
@@ -269,6 +279,7 @@ def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:
     if not row:
         return None, None
     hair = {k: row.get(c) for k, c in (("hairLength", "hair_length"), ("hairColor", "hair_color"),
-                                       ("hairTexture", "hair_texture")) if row.get(c)}
+                                       ("hairTexture", "hair_texture"),
+                                       ("hairFringe", "hair_fringe")) if row.get(c)}
     face = {k: row.get(c) for k, c in (("faceShape", "face_shape"), ("jawLine", "jaw_line")) if row.get(c)}
     return (hair or None), (face or None)
