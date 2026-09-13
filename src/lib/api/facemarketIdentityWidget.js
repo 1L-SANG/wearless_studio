@@ -1,3 +1,5 @@
+import { mountOacxHost, OACX_HOST_ID } from './oacxHost.js';
+
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL || `${CX_ORIGIN}/ent/esign/config/config.mid.json`;
 // 간편인증(ENT_SIMPLE_AUTH) 전용 설정 URL — mid 설정(config.mid.json, v1.0 경로)과 API 경로
@@ -54,7 +56,9 @@ export async function runIdentityWidget({ identityMethod = 'mid', signal } = {})
   await loadCxWidget();
   if (signal?.aborted) throw new Error('인증이 중단됐어요.');
   await new Promise((resolve) => requestAnimationFrame(resolve));
-  document.getElementById('oacxDiv')?.replaceChildren();
+  // React 가 그린 빈 호스트 안에 #oacxDiv 를 새로 만들어 넣는다. React 가 #oacxDiv 를
+  // 직접 그리면 Vue 가 그 노드를 교체할 때 형제 앵커가 깨져 앱이 죽는다(oacxHost.js 참고).
+  mountOacxHost(document.getElementById(OACX_HOST_ID));
   return new Promise((resolve, reject) => {
     const finish = (error, token) => {
       clearTimeout(timer);
