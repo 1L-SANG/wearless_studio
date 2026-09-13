@@ -339,7 +339,7 @@ async def fetch_simple_auth_identity(base_url: str, token: str) -> dict: ...
 | --- | --- | --- |
 | 1 | `ENT_SIMPLE_AUTH` 결과에 `ci` 가 포함된다 | 라온 서면 답변 + 실거래 1회 |
 | 2 | 결과 취득이 `trans/{token}` 으로 된다 (아니면 `authen/result` / `parse_token`) | 실거래 1회. config.auth.json 은 `/oacx/api/v1.5/authen/request` + `/authen/status` 를 쓴다 |
-| 3 | `v1.5_enc` userInfo 복호화 규격 | 라온 문서 |
+| 3 | ~~`v1.5_enc` userInfo 복호화 규격~~ | **해당 없음(2026-09-13 정정)** — 우리 `config.mid.json` 은 `provider.version = v1.5.10.9`(`enc` 없음)라 위젯이 평문 경로를 탄다. 라온 `config.auth.json` 을 쓸 때만 해당. §14 참조 |
 | 4 | 우리 서비스용 auth config 발급 조건·과금 | 라온 협의 |
 
 **실측으로 이미 확인된 것**(2026-09-11):
