@@ -59,6 +59,8 @@ export function ModelRegister() {
   const operation = useRef(null);
   const previewUrls = useRef({});
   const inFlight = useRef(false);
+  // "이전"으로 취소한 등록 id — 그 등록의 늦은 응답을 무시하는 데 써요(backFromIdCapture·finishIdDocument).
+  const abandonedEnrollmentId = useRef(null);
 
   const showRecord = useCallback((record) => {
     setEnrollment(record);
@@ -225,6 +227,9 @@ export function ModelRegister() {
     try {
       const current = await getEnrollment(enrollment.id);
       if (!mounted.current) return;
+      // "이전"으로 이미 취소한 등록의 늦은 응답(업로드 중 되돌리기 → 409 → 재조회)이면 무시해요
+      // — 취소된 등록을 복원하면 방금 한 되돌리기가 '실패' 화면으로 뒤집혀요.
+      if (abandonedEnrollmentId.current === enrollment.id) return;
       setEnrollment(current);
       // 이전 시도에서 남은 부모 배너를 지워요 — 안 지우면 재시도가 성공해 다음 화면으로
       // 넘어가도 지난 실패 메시지가 그대로 떠 있어요.
@@ -264,6 +269,25 @@ export function ModelRegister() {
     } catch (requestError) {
       if (mounted.current) setError(requestError?.message || '등록을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.');
     } finally { if (mounted.current) setBusy(false); }
+  }, [enrollment?.id]);
+
+  // 신분증 촬영 화면의 "이전" — 수단을 잘못 골랐을 때의 되돌리기. 서버는 identity_method 를
+  // 등록 생성 때 박고 바꿔 주지 않아요(createEnrollment 는 활성 등록이 있으면 그걸 그대로
+  // 돌려줘요). 그래서 되돌리기 = 이 등록을 취소하고 수단 선택으로. 이 화면엔 아직 서버에 남은
+  // 게 없어(신분증은 제출 순간 올라가고 곧장 다음 상태로 가요) 확인 없이 바로 취소해요.
+  // 동의는 이미 한 것이라 유지하고, 수단이 하나뿐이면(선택 화면이 자동으로 다시 시작해 버려요)
+  // 동의 화면으로 가요.
+  const backFromIdCapture = useCallback(async () => {
+    if (!enrollment?.id || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError('');
+    try {
+      await cancelEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      abandonedEnrollmentId.current = enrollment.id;
+      setEnrollment(null); setSub(1); setStep(IDENTITY_METHODS.length > 1 ? 'method' : '1');
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '이전 단계로 돌아가지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   }, [enrollment?.id]);
 
   const editableEnrollment = async () => {
@@ -447,6 +471,7 @@ export function ModelRegister() {
         onStale={finishIdDocument}
         onError={(requestError) => setError(requestError?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.')}
       />}</>;
+    previous = { label: '이전', action: backFromIdCapture };
   } else if (step === 'review') {
     // 간편인증 경로에서 관리자가 신분증 사진을 육안으로 재확인하는 동안 머무는 화면.
     // 결과는 메일로 나가요(승인·거절·기한초과 3종).
@@ -486,6 +511,7 @@ export function ModelRegister() {
       {content}
       <div id="oacxDiv" />
     </div>
-    {next && <footer className={s.bottomBar}>{next.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}<button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button></div></div></footer>}
+    {/* 이전만 있는 화면(수단 선택·신분증 촬영)도 푸터를 그려요 — 다음 동작은 화면 안에 있어요. */}
+    {(next || previous) && <footer className={s.bottomBar}>{next?.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}{next && <button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button>}</div></div></footer>}
   </div>;
 }
