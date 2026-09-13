@@ -3,14 +3,14 @@
    (2) 제목 아래 CTA 재도입. 예전에 '문단+버튼을 끼우면 캐러셀이 밀려 메타 바가 잘린다'고
    내렸던 자리지만, 이번엔 문단 없이 버튼 하나이고 kicker 가 빠져 세로 예산이 상쇄된다 —
    부족분은 스테이지 1fr 의 하한+스크롤이 흡수한다(스크린샷 실측으로 확인).
-   리드문은 히어로 안에 있다(IntroSection 은 2026-09-03 내렸다).
+   리드문은 히어로 안에 있다.
 
    제목은 한글이라 Noto Serif KR(facemarket.html 로드)로 그린다 — .heroTitle 주석 참고. */
 import { Icon } from '@/components/ui.jsx';
 import { APPLY_LABEL } from '../registerCta.js';
 import s from '../FacemarketLanding.module.css';
 
-export function HeroSection({ onPrimary, primaryLabel }) {
+export function HeroSection({ onPrimary, primaryLabel, statusPill }) {
   const isApply = primaryLabel === APPLY_LABEL;
   return (
     <section aria-labelledby="fm-hero-title" className={s.hero}>
@@ -48,18 +48,18 @@ export function HeroSection({ onPrimary, primaryLabel }) {
       {/* 신뢰 pill 3개는 제목 위에 잠깐 있다가(2026-09-03 낮) 같은 날 저녁 오너 지시로
           캐러셀 아래 화살표 자리(GallerySection .trustPills)로 내려갔다 — 히어로는 다시
           제목 + 리드 + 버튼뿐이다. */}
-      {/* 2026-09-03 밤 오너 확정 제목 — 영문 한 줄, 소문자 그대로("create your own digital DNA").
+      {/* 2026-09-03 밤 오너 확정 제목 — 영문 한 줄, 소문자 그대로("create your own online model").
           앞선 한글 두 줄("내 얼굴로 만든 온라인 모델, / 내가 정한 조건에서만.")과 토스 원칙 카피
-          6안·공감 카피·'나만의' 카피는 전부 기각. digital DNA = 내 얼굴로 만든 온라인 모델이고,
+          6안·공감 카피·'나만의' 카피는 전부 기각. online model = 내 얼굴로 만든 온라인 모델이고,
           그 뜻풀이는 아래 리드문이 맡는다(제목만으로는 서비스가 안 보인다). */}
-      {/* 2026-09-03 밤 오너 확정 서체 = 16종 비교의 10번(Playfair Display 600 + 'digital DNA' 만
+      {/* 2026-09-03 밤 오너 확정 서체 = 16종 비교의 10번(Playfair Display 600 + 'online model' 만
           이탤릭 500), 두 줄로 못박음(<br>). 실화면 A/B(10 vs 11 Instrument Serif)는 끝났고
           빌드 스위치(VITE_FM_TITLE_STYLE)는 지웠다. 비교 시안은
           mockups/facemarket_title_styles_20260903.html. */}
       <h1 className={s.heroTitle} id="fm-hero-title" lang="en">
         create your own
         <br />
-        <em>digital DNA</em>
+        <em>online model</em>
       </h1>
       {/* 2026-09-03 히어로 축소(A안): 요소 6 → 4. 부제는 수익 한 줄만. 안전 기술 문장
           (C2PA·블록체인)은 GallerySection 의 신뢰 스트립으로 내려갔다 — 첫 3초에 읽을 정보가
@@ -85,7 +85,28 @@ export function HeroSection({ onPrimary, primaryLabel }) {
           어수선했고 영문 대문자가 한글 카피와 결이 달랐다. 링은 신규 지원 상태에서만 —
           래퍼 span 을 쓰는 이유는 .heroCta 가 빛 스윕 때문에 overflow:hidden 이라 ::before
           링이 잘리기 때문. */}
-      {onPrimary ? (
+      {onPrimary && statusPill ? (
+        <button className={`${s.statusPill} ${s[`statusPill_${statusPill.tone}`]}`} onClick={onPrimary} type="button">
+          <span className={s.statusPillState}>
+            <span aria-hidden="true" className={`${s.statusPillDot} ${statusPill.pulse ? s.statusPillPulse : ''}`} />
+            {statusPill.title}
+          </span>
+          {statusPill.detail ? (
+            <>
+              <span aria-hidden="true" className={s.statusPillSeparator} />
+              <span className={s.statusPillDetail}>
+                {statusPill.detail.before}<b>{statusPill.detail.strong}</b>{statusPill.detail.after}
+              </span>
+            </>
+          ) : null}
+          <span className={s.statusPillCta}>
+            {statusPill.cta.label}
+            <span aria-hidden="true" className={s.statusPillArrow}>
+              <Icon name="arrowRight" size={14} stroke={2.4} />
+            </span>
+          </span>
+        </button>
+      ) : onPrimary ? (
         <div className={s.heroCtaRow}>
           <span className={isApply ? s.heroCtaRing : undefined}>
             <button className={s.heroCta} onClick={onPrimary} type="button">

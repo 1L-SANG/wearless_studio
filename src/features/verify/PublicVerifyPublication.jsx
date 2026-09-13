@@ -103,12 +103,10 @@ export function PublicVerifyPublication() {
                 </dd>
               </div>
             )}
-            {data.licenseValidUntil && (
-              <div className={s.row}>
-                <dt>유효기간</dt>
-                <dd>{fmtDate(data.licenseValidUntil)}까지</dd>
-              </div>
-            )}
+            <div className={s.row}>
+              <dt>유효기간</dt>
+              <dd>{data.licenseValidUntil ? `${fmtDate(data.licenseValidUntil)}까지` : '철회 시까지'}</dd>
+            </div>
             <div className={s.row}>
               <dt>파일 지문</dt>
               <dd><code className={s.vcid}>{data.imageHashPrefix}…</code></dd>

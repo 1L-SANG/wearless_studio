@@ -112,7 +112,9 @@ def _apply(monkeypatch, *, ready=True, backend=object(), result=None):
 def test_applied_outcome(monkeypatch):
     ok = fi.FacePassResult(b"FACE", "image/png", True, {"tries": [{"gate": "ok"}]})
     image, _, outcome = _apply(monkeypatch, result=ok)
-    assert image == b"FACE" and outcome == {"face_pass": "applied"}
+    assert image == b"FACE" and outcome["face_pass"] == "applied"
+    # 채택된 컷에는 레시피 해시가 따라붙는다 — "이 컷이 어떤 상수로 나왔나"(agents/face_recipe.py)
+    assert len(outcome["face_recipe"]) == 12
 
 
 def test_pod_not_ready_falls_back_to_the_generated_face(monkeypatch):
@@ -138,15 +140,16 @@ def test_missing_backend_is_backend_error(monkeypatch):
 
 
 @pytest.mark.parametrize("meta,expected", [
-    ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "gate_failed"),
-    ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "gate_failed"),
-    ({"tries": [{}], "reason": "no_face"}, "no_face"),
-    ({"tries": [{}], "reason": "yaw"}, "no_face"),
+    ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "fallback:gate_failed"),
+    ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "fallback:gate_failed"),
+    # 얼굴 없음·측면은 렌더 전에 내리는 설계상 건너뜀이다 — 폴백이 아니다(test_face_pass_skip_outcome).
+    ({"tries": [], "skipped_reason": "no_face", "reason": "no_face"}, "skipped:no_face"),
+    ({"tries": [], "skipped_reason": "yaw", "reason": "yaw"}, "skipped:yaw"),
 ])
-def test_gate_and_no_face_reasons(monkeypatch, meta, expected):
+def test_gate_and_skip_reasons(monkeypatch, meta, expected):
     res = fi.FacePassResult(b"ORIG", "image/png", False, meta)
     _, _, outcome = _apply(monkeypatch, result=res)
-    assert outcome == {"face_pass": f"fallback:{expected}"}
+    assert outcome == {"face_pass": expected}
 
 
 # ── 알림 ──
@@ -279,7 +282,7 @@ def test_render_connection_error_clears_the_memo_and_retries(monkeypatch):
     outcome: dict = {}
     image, _ = asyncio.run(fi.apply_face_pass(
         _settings(), b"ORIG", "image/png", SPEC, outcome=outcome))
-    assert image == b"FACE" and outcome == {"face_pass": "applied"}
+    assert image == b"FACE" and outcome["face_pass"] == "applied"
     assert probes == [HEALTH]              # 기억을 버렸으니 다시 확인했다
     assert results == []                   # 렌더를 정확히 두 번 했다
 

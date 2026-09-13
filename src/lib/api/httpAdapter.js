@@ -35,13 +35,13 @@ const BROWSER_OFFLINE_MESSAGE = '인터넷 연결이 끊겼어요. 연결을 확
 
 const isBrowserOffline = () => globalThis.navigator?.onLine === false;
 
-function networkError(code, message, context, cause) {
+function networkError(code, message, context, cause, logError = true) {
   const offline = isBrowserOffline();
   const finalCode = offline ? 'browser_offline' : code;
   const finalMessage = offline ? BROWSER_OFFLINE_MESSAGE : message;
   // presigned URL·Bearer token은 로그에 남기지 않고, 단계·path·origin만 남겨
   // 브라우저가 모든 CORS/연결 실패를 같은 `Failed to fetch`로 숨겨도 구분한다.
-  console.error(`[network:${finalCode}]`, { ...context, online: !offline }, cause);
+  if (logError) console.error(`[network:${finalCode}]`, { ...context, online: !offline }, cause);
   const error = new Error(finalMessage);
   error.code = finalCode;
   error.cause = cause;
@@ -62,7 +62,7 @@ const absolutizeAssetUrls = rebaseAssetUrls;
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
   method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
-  requireAuth = true,
+  requireAuth = true, suppressErrorLog = false,
 } = {}) {
   let data;
   try {
@@ -73,6 +73,7 @@ export async function http(path, {
       '로그인 상태를 확인하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'auth_session', path, origin: browserOrigin() },
       cause,
+      !suppressErrorLog,
     );
   }
   // 다른 탭의 계정 변경은 React에 늦게 도착할 수 있다. 이 요청의 동의 당사자를
@@ -85,7 +86,7 @@ export async function http(path, {
   const token = data?.session?.access_token;
   if (!token && requireAuth) {
     // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
-    console.error(`API no-session ${path}`);
+    if (!suppressErrorLog) console.error(`API no-session ${path}`);
     throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
   }
   // requireAuth:false — 서버가 인증을 요구하지 않는 **공개 엔드포인트** 전용 탈출구.
@@ -104,6 +105,8 @@ export async function http(path, {
       'api_network',
       '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'api', method, path, origin: browserOrigin() },
+      undefined,
+      !suppressErrorLog,
     );
   }
 
@@ -132,6 +135,7 @@ export async function http(path, {
       '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'api', method, path, origin: browserOrigin() },
       cause,
+      !suppressErrorLog,
     );
   }
 
@@ -146,7 +150,7 @@ export async function http(path, {
       if (payload?.error?.code) code = payload.error.code;
       if (payload?.error?.meta) meta = payload.error.meta;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
-    console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
+    if (!suppressErrorLog) console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
     // 듣는 이벤트 하나로 모은다 — 열어 둔 탭에서 회수돼도 다음 요청에서 대기/회수 화면으로 간다.
     if (res.status === 403 && typeof code === 'string' && code.startsWith('device_')) {

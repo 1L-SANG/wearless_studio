@@ -266,11 +266,12 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
         )
 
         # create_enrollment 는 simple_auth 일 때 identity_method/status 를 INSERT 문
-        # 텍스트에 리터럴로 박는다(바인드 파라미터 개수를 오늘과 동일하게 6개로 유지하기
+        # 텍스트에 리터럴로 박는다(바인드 파라미터 개수를 mid 분기와 똑같이 유지하기
         # 위해서 — test_facemarket_biometric_enrollment.py 의 FakeCursor 는 그 INSERT 를
-        # params 6개로 고정 언패킹하고 status 를 'identity_pending' 으로 하드코딩해서,
-        # params 개수가 달라지면 회귀 스위트 전체가 ValueError 로 죽는다). 여기서만 그
-        # 리터럴을 인식해 올바른 상태로 행을 만들고, 그 외 SQL 은 원래 구현에 위임한다.
+        # 고정 개수로 언패킹하고 status 를 'identity_pending' 으로 하드코딩해서, 개수가
+        # 갈라지면 회귀 스위트 전체가 ValueError 로 죽는다). 여기서만 그 리터럴을 인식해
+        # 올바른 상태로 행을 만들고, 그 외 SQL 은 원래 구현에 위임한다.
+        # #285 가 동의 버전 두 컬럼(terms/overseas)을 더해 파라미터는 8개다.
         _original_execute = FakeCursor.execute
 
         async def _patched_execute(self, sql, params=None):
@@ -282,7 +283,7 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
             ):
                 (
                     user_id, model_id, device_digest, consent_version, expires_at,
-                    application_id,
+                    application_id, terms_consent_version, overseas_consent_version,
                 ) = params
                 existing = next(
                     (
@@ -318,6 +319,9 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                         "identity_tx_digest": None,
                         "identity_contract_version": None,
                         "application_id": application_id,
+                        "terms_consent_version": terms_consent_version,
+                        "overseas_consent_version": overseas_consent_version,
+                        "photo_revision": 0,
                     }
                     self.store.enrollments.append(row)
                     self.result = {"id": row["id"]}

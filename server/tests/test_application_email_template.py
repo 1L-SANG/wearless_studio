@@ -125,3 +125,55 @@ def test_send_passes_both_parts_to_resend(monkeypatch):
     assert captured["html"].strip().startswith("<")
     assert captured["text"].strip()
     assert captured["to"] == ["a@example.com"]
+
+
+def test_usage_report_email_without_api_key_never_opens_http_client(monkeypatch):
+    import asyncio
+    import types
+
+    def forbidden_client(**_kwargs):
+        raise AssertionError("API 키가 없는데 HTTP 클라이언트를 열었다")
+
+    monkeypatch.setattr(notify.httpx, "AsyncClient", forbidden_client)
+    settings = types.SimpleNamespace(
+        resend_api_key=None,
+        fm_application_from_email="FaceMarket <noreply@wearless.kr>",
+        fm_application_public_base=BASE,
+    )
+
+    result = asyncio.run(notify.send_usage_report_email(
+        settings,
+        to="ops@example.com",
+        payment_id="product:p1:20260911",
+        reason=None,
+    ))
+
+    assert result == (False, None, "not_configured")
+
+
+def test_usage_report_email_network_failure_returns_send_error(monkeypatch):
+    import asyncio
+    import types
+
+    class FailingClient:
+        async def __aenter__(self):
+            raise RuntimeError("offline")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(notify.httpx, "AsyncClient", lambda **_kwargs: FailingClient())
+    settings = types.SimpleNamespace(
+        resend_api_key="key",
+        fm_application_from_email="FaceMarket <noreply@wearless.kr>",
+        fm_application_public_base=BASE,
+    )
+
+    result = asyncio.run(notify.send_usage_report_email(
+        settings,
+        to="ops@example.com",
+        payment_id="product:p1:20260911",
+        reason="확인 필요",
+    ))
+
+    assert result == (False, None, "send_error")

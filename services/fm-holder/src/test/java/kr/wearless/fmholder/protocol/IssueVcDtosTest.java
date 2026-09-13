@@ -11,15 +11,15 @@ class IssueVcDtosTest {
     void bindsFaceLicenseSnakeCaseClaims() throws Exception {
         var json = """
                 {
-                  "plan": "facelicense",
+                  "plan": "facelicense-v2",
                   "idempotencyKey": "fm-license:123e4567-e89b-12d3-a456-426614174000",
                   "claims": {
-                    "allowed_use": "smoke",
-                    "forbidden_use": "resale",
-                    "unit_price": 0,
-                    "license_valid_until": "2099-12-31",
+                    "model_did": "did:omn:user",
+                    "license_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "issued_at": "2026-09-11T00:00:00Z",
                     "face_image_digest": "sha256:opaque",
-                    "model_name": "smoke"
+                    "agreement_version": "v1",
+                    "consent_doc_version": "v1.1"
                   }
                 }
                 """;
@@ -28,11 +28,11 @@ class IssueVcDtosTest {
 
         assertThat(req.idempotencyKey())
                 .isEqualTo("fm-license:123e4567-e89b-12d3-a456-426614174000");
-        assertThat(req.claims().allowedUse()).isEqualTo("smoke");
-        assertThat(req.claims().forbiddenUse()).isEqualTo("resale");
-        assertThat(req.claims().unitPrice()).isZero();
-        assertThat(req.claims().licenseValidUntil()).isEqualTo("2099-12-31");
+        assertThat(req.claims().modelDid()).isEqualTo("did:omn:user");
+        assertThat(req.claims().licenseId()).isEqualTo("123e4567-e89b-12d3-a456-426614174000");
+        assertThat(req.claims().issuedAt()).isEqualTo("2026-09-11T00:00:00Z");
         assertThat(req.claims().faceImageDigest()).isEqualTo("sha256:opaque");
-        assertThat(req.claims().modelName()).isEqualTo("smoke");
+        assertThat(req.claims().agreementVersion()).isEqualTo("v1");
+        assertThat(req.claims().consentDocVersion()).isEqualTo("v1.1");
     }
 }

@@ -64,7 +64,8 @@ async def main(argv=None) -> None:
                            l.forbidden_use,
                            l.unit_price,
                            l.license_valid_until,
-                           l.face_image_digest
+                           l.face_image_digest, l.created_at,
+                           e.consent_version as consent_doc_version
                       from fm_licenses l
                       join fm_models m on m.id = l.model_id
                       join fm_biometric_enrollments e on e.id = l.enrollment_id
@@ -96,6 +97,8 @@ async def main(argv=None) -> None:
                     unit_price=row["unit_price"],
                     valid_until=row["license_valid_until"],
                     digest=row["face_image_digest"],
+                    issued_at=row["created_at"],
+                    consent_doc_version=row["consent_doc_version"],
                 )
                 await finalize_issued_face_vc(
                     pool.connection,

@@ -55,7 +55,7 @@ case "$MODE" in
     BESU_RPC=${OPENDID_BESU_RPC_URL:-http://127.0.0.1:8545}
     CONTRACT_FILE=${OPENDID_BLOCKCHAIN_PROPERTIES:-$SOURCE/shells/Besu/blockchain.properties}
     HOLDER_JAR=${FM_HOLDER_JAR:-$ROOT/services/fm-holder/build/libs/fm-holder-0.1.0.jar}
-    PLAN=${FL_VC_PLAN:-vcplanface0000000001}
+    PLAN=${FL_VC_PLAN:-vcplanface0000000002}
     if [ -n "${JAVA_CMD:-}" ]; then
       JAVA=$JAVA_CMD
     elif [ -x /opt/homebrew/opt/openjdk@21/bin/java ]; then
@@ -305,7 +305,21 @@ register_status=$(printf '%s' "$register_res" | json_value status)
 [ "$register_status" = registered ] || die register_did_not_registered
 log lifecycle_register_did registered
 idempotency_uuid=$(python3 -c 'import uuid; print(uuid.uuid4())')
-claims="{\"plan\":\"facelicense\",\"idempotencyKey\":\"fm-license:$idempotency_uuid\",\"claims\":{\"allowed_use\":\"smoke\",\"forbidden_use\":\"resale\",\"unit_price\":0,\"license_valid_until\":\"2099-12-31\",\"face_image_digest\":\"sha256:opaque\",\"model_name\":\"smoke\"}}"
+model_did=$(printf '%s' "$register_res" | json_value userDid)
+[ -n "$model_did" ] || die register_did_missing_user_did
+claims=$(python3 - "$model_did" "$idempotency_uuid" <<'PY'
+import datetime, json, sys
+print(json.dumps({
+    "plan": "facelicense-v2", "idempotencyKey": "fm-license:" + sys.argv[2],
+    "claims": {
+        "modelDid": sys.argv[1], "licenseId": sys.argv[2],
+        "issuedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "faceImageDigest": "sha256:opaque", "agreementVersion": "v1",
+        "consentDocVersion": "smoke-fixture",
+    },
+}))
+PY
+)
 issue1=$(post_holder "/holder/models/$MODEL_ID/issue-vc" "$claims")
 vc1=$(printf '%s' "$issue1" | json_value vcId)
 [ -n "$vc1" ] || die issue_vc_missing_id

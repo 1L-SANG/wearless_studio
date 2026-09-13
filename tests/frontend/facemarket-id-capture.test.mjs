@@ -421,61 +421,49 @@ const modelRegisterSource = readFileSync(
   new URL('../../src/features/model/ModelRegister.jsx', import.meta.url), 'utf8',
 );
 
-test('runCxWidget 은 enrollment.identityMethod 로 ENT_MID/ENT_SIMPLE_AUTH·설정 URL을 가른다', () => {
+// #285/#287 이 위저드를 재구성하면서 OACX 위젯 호출은 ModelRegister.jsx 를 떠나
+// src/lib/api/facemarketIdentityWidget.js 로 옮겨 갔다(runCxWidget → runIdentityWidget).
+// 인증 수단 분기는 그 모듈에서 검증한다.
+const identityWidgetSource = readFileSync(
+  new URL('../../src/lib/api/facemarketIdentityWidget.js', import.meta.url), 'utf8',
+);
+
+test('runIdentityWidget 은 identityMethod 로 ENT_MID/ENT_SIMPLE_AUTH·설정 URL을 가른다', () => {
   // 잡는 회귀: isSimpleAuth 판정 조건이 바뀌거나 없어짐.
-  assert.match(modelRegisterSource, /const isSimpleAuth = enrollment\?\.identityMethod === 'simple_auth';/);
+  assert.match(identityWidgetSource, /const isSimpleAuth = identityMethod === 'simple_auth';/);
   // 잡는 회귀: 간편인증 분기가 ENT_MID 로, 또는 반대로 바뀜(위젯이 카테고리를 강제하는
   // 실측 제약이 깨진다).
-  assert.match(modelRegisterSource, /\{ contentInfo: \{ signType: 'ENT_SIMPLE_AUTH' \}, compareCI: false, isBirth: true \}/);
-  assert.match(modelRegisterSource, /contentInfo: \{ signType: 'ENT_MID' \},/);
-  // 잡는 회귀: mid 분기에서 useConvertor:true 가 빠짐(라이브니스 매치의 유일한 초상 출처가
-  // 사라져 신분증 사진을 못 받는다).
-  assert.match(modelRegisterSource, /useConvertor: true,/);
+  assert.match(identityWidgetSource, /\{ contentInfo: \{ signType: 'ENT_SIMPLE_AUTH' \}, compareCI: false, isBirth: true \}/);
+  assert.match(identityWidgetSource, /contentInfo: \{ signType: 'ENT_MID' \}/);
   // 잡는 회귀: configUrl 삼항이 뒤집혀 간편인증이 mid 설정(v1.0 경로)을 타거나 그 반대.
-  assert.match(modelRegisterSource, /const configUrl = isSimpleAuth \? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;/);
-  // 잡는 회귀: 간편인증 분기에서 dlphotoimage 를 여전히 portraitRef 에 담아 버림(그 경로는
-  // 그 필드를 만들지 않는데도 담으면 undefined 가 들어가 이후 "초상 있음" 판정이 흔들린다).
-  assert.match(modelRegisterSource, /if \(!isSimpleAuth\) portraitRef\.current = parsed\?\.data\?\.dlphotoimage;/);
-});
-
-test('runCxWidget 은 간편인증인데 설정 URL이 없으면 빈 URL로 위젯을 열지 않고 즉시 에러를 던진다', () => {
-  // 잡는 회귀: 이 방어 가드가 삭제되면 재개 등록(신규 진입 게이트를 거치지 않는 경로)이
-  // OACX.LOAD_MODULE('', …) 을 그대로 호출해 알 수 없는 에러로 실패한다(리뷰 "ALSO").
+  assert.match(identityWidgetSource, /const configUrl = isSimpleAuth \? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;/);
+  // 잡는 회귀: 등록 화면이 수단을 안 넘겨 늘 mid 위젯이 열림.
   assert.match(
     modelRegisterSource,
+    /runIdentityWidget\(\{ identityMethod: record\?\.identityMethod \|\| 'mid', signal: controller\.signal \}\)/,
+  );
+});
+
+test('runIdentityWidget 은 간편인증인데 설정 URL이 없으면 빈 URL로 위젯을 열지 않고 즉시 에러를 던진다', () => {
+  // 잡는 회귀: 이 방어 가드가 삭제되면 재개 등록(신규 진입 게이트를 거치지 않는 경로)이
+  // OACX.LOAD_MODULE('', …) 을 그대로 호출해 알 수 없는 에러로 실패한다.
+  assert.match(
+    identityWidgetSource,
     /if \(isSimpleAuth && !CX_AUTH_CONFIG_URL\) \{\s*\n\s*throw new Error\(/,
   );
 });
 
-test('라이브니스 세션 이펙트는 간편인증이면 portraitRef 없이도 reidentify 로 튕기지 않는다', () => {
-  // 잡는 회귀: `enrollment?.identityMethod !== 'simple_auth' &&` 조건이 빠지면, 간편인증
-  // 사용자는 portraitRef 가 원래부터 비어 있으므로 라이브니스 진입 직전에 매번
-  // reidentify 로 잘못 튕긴다(정상 경로가 막힘).
-  assert.match(
-    modelRegisterSource,
-    /if \(enrollment\?\.identityMethod !== 'simple_auth' && !portraitRef\.current\) \{\s*\n\s*setStep\('reidentify'\);/,
-  );
-  // 잡는 회귀: 이 이펙트의 deps 에서 identityMethod 가 빠지면(enrollment 가 바뀌어도 이
-  // 이펙트가 최신 값을 못 보고 스킵 로직 판단이 낡은 값 기준으로 굳어질 수 있다).
-  assert.match(
-    modelRegisterSource,
-    /\}, \[enrollment\?\.id, enrollment\?\.identityMethod, session, step, livenessRequired\]\);/,
-  );
-});
-
-test('finishMatch 는 간편인증이면 idPhotoHex 를 요구하지도, /complete 에 싣지도 않는다', () => {
-  // 잡는 회귀: isSimpleAuth 일 때도 portraitRef.current 를 그대로 idPhotoHex 로 쓰면(항상
-  // null/undefined) 매 완료 시도가 "본인 확인 정보가 만료됐어요" 로 reidentify 로 튕긴다.
-  assert.match(
-    modelRegisterSource,
-    /const isSimpleAuth = enrollment\?\.identityMethod === 'simple_auth';\s*\n\s*const idPhotoHex = isSimpleAuth \? undefined : portraitRef\.current;\s*\n\s*if \(!isSimpleAuth && !idPhotoHex\) \{/,
-  );
-  // 잡는 회귀: finishMatch 의 deps 에서 identityMethod 가 빠짐(useCallback 이 낡은 클로저를
-  // 계속 반환해 이 판정 자체가 최신 enrollment 를 못 본다).
-  assert.match(
-    modelRegisterSource,
-    /\}, \[abandonLiveness, enrollment\?\.id, enrollment\?\.identityMethod, session, livenessRequired\]\);/,
-  );
+// 삭제된 테스트 두 개(라이브니스 이펙트의 portraitRef 가드 · finishMatch 의 idPhotoHex 생략):
+// #285 가 클라이언트 쪽 신분증 초상 릴레이(portraitRef·idPhotoHex·reidentify 화면)를 통째로
+// 걷어냈다 — 얼굴 매칭이 FM_FACE_MATCH_ENABLED 로 기본 off 가 되면서 /complete 는 sessionId
+// 만 보낸다. 간편인증이 "초상 없이도 진행돼야 한다"는 원래 요구는 그래서 구조적으로 충족돼
+// 있다(양쪽 경로 다 초상을 안 쓴다). 그 사실 자체를 아래에서 잠근다.
+test('등록 화면은 신분증 초상(dlphotoimage)을 더 이상 클라에서 다루지 않는다', () => {
+  for (const source of [modelRegisterSource, identityWidgetSource]) {
+    assert.doesNotMatch(source, /dlphotoimage/);
+    assert.doesNotMatch(source, /portraitRef/);
+  }
+  assert.doesNotMatch(modelRegisterSource, /idPhotoHex/);
 });
 
 test('startEnrollment 은 mid 가 아닌 identityMethod 만 요청 바디에 싣는다(mid 는 오늘과 바이트 단위로 동일)', () => {
@@ -493,39 +481,46 @@ test('동의 버튼은 메서드가 둘 이상일 때만 선택 화면으로 가
   // 잡는 회귀: 이 라우팅 조건이 사라지면 단일 메서드(mid) 배포에서도 선택 화면을 거치게
   // 되거나(불필요한 클릭 발생, 브리프가 명시적으로 금지), 반대로 메서드가 둘인데도 선택
   // 화면을 안 거치고 곧장 시작해 버려 사용자가 방법을 고를 기회가 없어진다.
+  assert.match(modelRegisterSource, /const chooseMethod = IDENTITY_METHODS\.length > 1;/);
   assert.match(
     modelRegisterSource,
-    /onClick=\{IDENTITY_METHODS\.length > 1\s*\n\s*\? \(\) => setStep\('method'\)\s*\n\s*: \(\) => startEnrollment\(IDENTITY_METHODS\[0\]\)\}/,
+    /action: identityPending \? \(\) => runIdentity\(\) : chooseMethod \? \(\) => setStep\('method'\) : \(\) => startEnrollment\(IDENTITY_METHODS\[0\]\),/,
   );
 });
 
 test('IdentityMethodStep 의 onPick 은 매 렌더 새 인라인 함수가 아니라 고정된 콜백이다', () => {
-  // 잡는 회귀: onPick 이 다시 인라인 화살표(`(method) => startEnrollment(method)`)로
-  // 바뀌면, 참조가 매 렌더 달라져 IdentityMethodStep 의 자동선택 effect 가 부모 리렌더마다
-  // 다시 돌 수 있다(리뷰 IMPORTANT 2 — 중복 등록 생성 위험). handleMethodPick(useCallback,
-  // deps 없음)로 참조를 고정해 뒀는지 직접 확인한다.
-  assert.match(modelRegisterSource, /const handleMethodPick = useCallback\(\(method\) => startEnrollment\(method\), \[\]\);/);
+  // 잡는 회귀: onPick 이 인라인 화살표로 바뀌면 참조가 매 렌더 달라져 IdentityMethodStep 의
+  // 자동선택 effect 가 부모 리렌더마다 다시 돌 수 있다(중복 등록 생성 위험).
+  // 동시에: useCallback 으로 참조를 고정하면서 startEnrollment 자체를 클로저에 굳히면
+  // 첫 렌더의 consents(전부 false)를 영원히 보게 돼 '동의했는데 아무 일도 안 일어남'이 된다
+  // — 그래서 최신 함수는 ref 로 부른다.
+  assert.match(
+    modelRegisterSource,
+    /const handleMethodPick = useCallback\(\(method\) => startEnrollmentRef\.current\?\.\(method\), \[\]\);/,
+  );
+  assert.match(modelRegisterSource, /startEnrollmentRef\.current = startEnrollment;/);
   assert.match(modelRegisterSource, /onPick=\{handleMethodPick\}/);
   assert.doesNotMatch(modelRegisterSource, /onPick=\{\(method\) => startEnrollment\(method\)\}/);
 });
 
 test('신분증 업로드가 성공하면 부모 에러 배너를 지운다(재시도 성공 후 낡은 메시지가 다음 스텝에 남지 않게)', () => {
-  // 잡는 회귀(리뷰 IMPORTANT 1): IdDocumentStep 의 onError 가 부모 setError 를 채운 뒤,
-  // 재시도가 성공해도 finishIdDocument 가 setError('') 를 안 부르면 다음 스텝(예: identity)
-  // 에서 지난 실패 메시지가 그대로 떠 있는다(그 스텝은 하단 공용 배너 제외 목록에 없다).
+  // 잡는 회귀: IdDocumentStep 의 onError 가 부모 setError 를 채운 뒤, 재시도가 성공해도
+  // finishIdDocument 가 setError('') 를 안 부르면 다음 화면에서 지난 실패 메시지가 그대로
+  // 떠 있는다.
   const start = modelRegisterSource.indexOf('const finishIdDocument = async () => {');
   assert.ok(start >= 0, 'finishIdDocument 정의를 찾을 수 없다');
-  const end = modelRegisterSource.indexOf('const finishPhotos = async () => {', start);
-  assert.ok(end > start, 'finishIdDocument 함수 끝(다음 함수 시작 전)을 찾을 수 없다');
+  const end = modelRegisterSource.indexOf('const refreshReview = useCallback', start);
+  assert.ok(end > start, 'finishIdDocument 함수 끝(다음 정의 시작 전)을 찾을 수 없다');
   const body = modelRegisterSource.slice(start, end);
   assert.match(body, /setEnrollment\(current\);/);
   assert.match(body, /setError\(''\);/);
-  assert.match(body, /setStep\(nextEnrollmentStep\(current\)\);/);
-  // 순서: setEnrollment → setError('') → setStep — setError 가 setStep 보다 먼저(또는 적어도
-  // 그 사이에) 있어야 다음 스텝이 그리기 전에 배너가 지워진다.
-  const errorIndex = body.indexOf("setError('');");
-  const setStepIndex = body.indexOf('setStep(nextEnrollmentStep(current));');
-  assert.ok(errorIndex < setStepIndex, "setError('') 가 setStep 보다 먼저 일어나야 한다");
+  assert.match(body, /setStep\(screen\.step\);/);
+  // 순서: setEnrollment → setError('') → setStep — setError 가 setStep 보다 먼저여야
+  // 다음 화면이 그리기 전에 배너가 지워진다.
+  assert.ok(
+    body.indexOf("setError('');") < body.indexOf('setStep(screen.step);'),
+    "setError('') 가 setStep 보다 먼저 일어나야 한다",
+  );
 });
 
 // ── 심사 대기 화면의 통지·탈출구 (최종리뷰 I2 · I3) ───────────────────────────────
@@ -537,13 +532,20 @@ test('review 스텝은 수동 새로고침과 취소 탈출구를 준다', () =>
   // 허용한다 — 화면에만 길이 없었다).
   assert.match(modelRegisterSource, /const refreshReview = useCallback\(async \(\) => \{/);
   assert.match(modelRegisterSource, /const cancelReview = useCallback\(async \(\) => \{/);
-  const start = modelRegisterSource.indexOf("{step === 'review' && (");
-  assert.ok(start > 0, 'review 스텝 JSX 를 찾을 수 없다');
-  const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("{step === 'failed' && (", start));
-  assert.match(block, /onClick=\{refreshReview\}/, '새로고침 버튼이 없다');
-  assert.match(block, /onClick=\{cancelReview\}/, '취소 버튼이 없다');
+  const start = modelRegisterSource.indexOf("} else if (step === 'review') {");
+  assert.ok(start > 0, 'review 스텝 렌더 분기를 찾을 수 없다');
+  const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("} else if (step === '2') {", start));
+  assert.match(block, /action: refreshReview/, '새로고침 동작이 없다');
+  assert.match(block, /action: cancelReview/, '취소 동작이 없다');
   assert.match(block, /결과는 메일로 알려 드려요/, '메일 통지 약속 문구가 사라졌다');
-  assert.match(block, /\{REVIEW_DEADLINE_DAYS\}일이 지나면 자동으로 종료/, '심사 기한 안내가 없다');
+  assert.match(block, /\$\{REVIEW_DEADLINE_DAYS\}일이 지나면 자동으로 종료/, '심사 기한 안내가 없다');
+  // review_pending 을 '끝났다'로 해석하면 증서도 없이 축하 화면이 뜬다.
+  const slots = readFileSync(
+    new URL('../../src/features/model/registerSlots.js', import.meta.url), 'utf8',
+  );
+  assert.match(slots, /if \(status === 'review_pending'\) return \{ step: 'review', sub: 4 \};/);
+  assert.match(slots, /if \(status === 'id_capture_pending'\) return \{ step: 'id_capture', sub: 1 \};/);
+  assert.doesNotMatch(slots, /\['passed', 'review_pending'\]\.includes\(status\)/);
 });
 
 test('심사 기한 상수가 서버(REVIEW_DEADLINE_DAYS)와 같다', () => {
@@ -616,19 +618,24 @@ test('ModelRegister 는 IdDocumentStep 의 409 를 finishIdDocument 로 연결�
   assert.match(modelRegisterSource, /onStale=\{finishIdDocument\}/);
 });
 
-test('identity 스텝 문구가 실제로 열리는 위젯(mid/간편인증)에 맞춰 갈린다', () => {
-  // 잡는 회귀: 간편인증 사용자에게 "모바일 신분증으로 인증" 이라고 적힌 버튼을 주면,
-  // 눌렀을 때 열리는 PASS·카카오·네이버 창과 화면 설명이 정면으로 어긋난다.
+test('본인확인 문구가 실제로 열리는 위젯(mid/간편인증)에 맞춰 갈린다', () => {
+  // 잡는 회귀: 간편인증 사용자에게 "신분증 인증하기" 라고 적어 두면, 눌렀을 때 열리는
+  // PASS·카카오·네이버 창과 화면 설명이 정면으로 어긋난다. (#285 이후 본인확인 버튼은
+  // 동의 화면(step '1')의 하단 버튼 하나로 합쳐졌다 — 문구 분기는 그 라벨에 있다.)
   assert.match(
     modelRegisterSource,
     /const isSimpleAuthEnrollment = enrollment\?\.identityMethod === 'simple_auth';/,
   );
-  const start = modelRegisterSource.indexOf("{step === 'identity' && (");
-  assert.ok(start > 0);
-  const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("{(step === 'identity'", start));
-  assert.match(block, /isSimpleAuthEnrollment \? '간편인증 본인 확인' : '모바일 신분증 확인'/);
-  assert.match(block, /isSimpleAuthEnrollment \? '간편인증으로 확인' : '모바일 신분증으로 인증'/);
-  assert.match(block, /PASS·카카오·네이버/);
+  assert.match(
+    modelRegisterSource,
+    /const verb = isSimpleAuthEnrollment \? '간편인증' : '신분증 인증';/,
+  );
+  assert.match(modelRegisterSource, /identityPending \? `\$\{verb\}하기`/);
+  // 선택 화면의 간편인증 설명은 어떤 인증사가 열리는지 그대로 적는다.
+  const methodStep = readFileSync(
+    new URL('../../src/features/model/IdentityMethodStep.jsx', import.meta.url), 'utf8',
+  );
+  assert.match(methodStep, /PASS·카카오·네이버/);
 });
 
 test('간편인증 설정이 없으면 등록을 시작하기 전에 막는다(신분증 올린 뒤가 아니라)', () => {

@@ -765,12 +765,21 @@ def test_simulate_rate_limit_returns_429_without_chain_call(fmset, make_token):
 def summary_db(fmset, monkeypatch):
     """Run the aggregate SQL on SQLite, preserving joins, filters and grouping semantics."""
     import sqlite3
+    import re
 
     db = sqlite3.connect(':memory:', check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript('''
         create table fm_models (id text, user_id text, created_at text);
         create table fm_licenses (id text, model_id text, status text, created_at text);
+        create table jobs (id text, project_id text);
+        create table projects (id text, user_id text, title text);
+        create table products (project_id text, name text);
+        create table profiles (user_id text, display_name text);
+        create table fm_usage_reports (settlement_id text);
+        create table fm_publication_records (
+            id text, project_id text, model_id text, kind text, revoked_at text, r2_key text, created_at text
+        );
         create table fm_settlements (
             id text, payment_id text, license_id text, job_id text, model_ref text default '',
             total_amount integer default 0, model_amount integer, platform_amount integer default 0,
@@ -789,6 +798,10 @@ def summary_db(fmset, monkeypatch):
             pass
 
         async def execute(self, sql, params):
+            # SQLite에는 LATERAL이 없어 같은 SELECT를 상관 스칼라 서브쿼리로 실행해요.
+            lateral = re.search(r"left join lateral \((.*?)\) publication on true", sql, re.S)
+            if lateral:
+                sql = sql.replace(lateral.group(0), "").replace("publication.id::text", f"({lateral.group(1)})")
             params = tuple(
                 value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else value
                 for value in params
@@ -829,7 +842,10 @@ def test_summary_includes_more_than_200_and_all_owned_licenses(summary_db):
     ])
     response = client.get('/v1/facemarket/settlements/summary')
     assert response.status_code == 200, response.text
-    assert response.json() == {'monthCount': 201, 'monthAmount': 2096430, 'totalAmount': 2099430}
+    assert response.json() == {
+        'monthCount': 201, 'monthAmount': 2096430,
+        'totalCount': 202, 'totalAmount': 2099430,
+    }
 
 
 def test_summary_seoul_month_is_start_inclusive_end_exclusive(summary_db):
@@ -842,7 +858,9 @@ def test_summary_seoul_month_is_start_inclusive_end_exclusive(summary_db):
     ])
     response = client.get('/v1/facemarket/settlements/summary')
     assert response.status_code == 200, response.text
-    assert response.json() == {'monthCount': 2, 'monthAmount': 500, 'totalAmount': 1000}
+    assert response.json() == {
+        'monthCount': 2, 'monthAmount': 500, 'totalCount': 4, 'totalAmount': 1000,
+    }
 
 
 def test_summary_zero_without_owned_settlements(summary_db):
@@ -850,7 +868,9 @@ def test_summary_zero_without_owned_settlements(summary_db):
     db.execute("insert into fm_settlements (license_id, model_amount, created_at) values ('foreign', 7000, '2026-08-31T15:00:00+00:00')")
     response = client.get('/v1/facemarket/settlements/summary')
     assert response.status_code == 200, response.text
-    assert response.json() == {'monthCount': 0, 'monthAmount': 0, 'totalAmount': 0}
+    assert response.json() == {
+        'monthCount': 0, 'monthAmount': 0, 'totalCount': 0, 'totalAmount': 0,
+    }
 
 
 def test_summary_requires_authentication(fmset):
@@ -872,3 +892,42 @@ def test_recent_settlements_query_handles_joined_columns_and_keeps_owner_limit(s
     assert len(rows) == 200
     assert {row['licenseId'] for row in rows} == {'active'}
     assert all(row['modelAmount'] == 10430 for row in rows)
+
+
+def test_settlement_labels_and_report_flag_follow_safe_relations(summary_db):
+    client, db = summary_db
+    db.execute("insert into jobs (id, project_id) values ('job-1', 'project-1')")
+    db.execute(
+        "insert into projects (id, user_id, title) values ('project-1', 'seller-1', '프로젝트 제목')"
+    )
+    db.execute("insert into products (project_id, name) values ('project-1', '골지 니트')")
+    db.execute("insert into profiles (user_id, display_name) values ('seller-1', '라임 스토어')")
+    db.execute(
+        """insert into fm_settlements
+             (id, payment_id, license_id, job_id, model_amount, created_at)
+           values ('settlement-1', 'product:project-1:20260911', 'active', 'job-1', 7000,
+                   '2026-09-11T00:00:00+00:00')"""
+    )
+    db.execute("insert into fm_usage_reports (settlement_id) values ('settlement-1')")
+    db.executemany(
+        "insert into fm_publication_records values (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ('old', 'project-1', 'mine', 'long_png', None, 'signed-old', '2026-09-01'),
+            ('latest', 'project-1', 'mine', 'long_png', None, 'signed-new', '2026-09-02'),
+            ('foreign', 'project-1', 'other', 'long_png', None, 'signed-foreign', '2026-09-03'),
+            ('revoked', 'project-1', 'mine', 'long_png', '2026-09-04', 'signed-revoked', '2026-09-04'),
+            ('zip', 'project-1', 'mine', 'zip', None, 'signed-zip', '2026-09-05'),
+            ('unsigned', 'project-1', 'mine', 'long_png', None, None, '2026-09-06'),
+            ('different', 'another-project', 'mine', 'long_png', None, 'signed-other', '2026-09-07'),
+        ],
+    )
+
+    response = client.get('/v1/facemarket/settlements')
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]['paymentId'] == 'product:project-1:20260911'
+    assert response.json()[0]['productName'] == '골지 니트'
+    assert response.json()[0]['sellerName'] == '라임 스토어'
+    assert response.json()[0]['reported'] is True
+    assert response.json()[0]['publicationId'] == 'latest'
+    assert response.json()[0]['projectId'] == 'project-1'

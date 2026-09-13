@@ -58,6 +58,13 @@ def completion_check_columns() -> tuple[str, ...]:
     return _select_aliases(source[source.index("select e.id::text"):])
 
 
+# 컬럼 목록은 프로덕션 SQL 에서 뽑지만(손으로 적으면 "코드는 읽는데 SELECT 엔 없는" 컬럼을
+# 가짜 커서가 대신 채워 줘 프로덕션에서만 죽는다), 값의 기본형은 DB 스키마를 따라야 한다 —
+# photo_revision 은 `integer not null default 0` 이라 실서버에서 절대 NULL 이 아니다.
+# 여기서 None 을 주면 실서버엔 없는 NoneType 비교 오류가 테스트에서만 난다.
+COMPLETION_COLUMN_DEFAULTS = {"photo_revision": 0}
+
+
 NOW = datetime(2026, 8, 21, 6, 0, tzinfo=timezone.utc)
 DEVICE_ID = "device-id-with-at-least-32-characters"
 # D1: 초상은 trans 가 아니라 클라가 릴레이하는 OACX RESULT-step dlphotoimage(hex) 에서 온다.
@@ -91,6 +98,7 @@ class EnrollmentStore:
         self.cleanup = []
         self.identities = []
         self.jobs = []
+        self.consent_events = []
         self.advisory_lock_owners = {}
         self.terminal_cleanup_loads = 0
         self.now = NOW
@@ -207,6 +215,12 @@ class FakeCursor:
             else:
                 self.conn.pool.failed_try_locks += 1
             self.result = {"locked": locked}
+        elif query.startswith("select pg_try_advisory_xact_lock"):
+            self.result = {"locked": True}
+        elif query.startswith("select view, r2_key from fm_model_assets where source_enrollment_id"):
+            self.many = []
+        elif query.startswith("delete from fm_model_assets where source_enrollment_id"):
+            self.result = None
         elif query.startswith("select pg_advisory_unlock"):
             if self.conn.store.unlock_started is not None:
                 self.conn.store.unlock_started.set()
@@ -216,6 +230,25 @@ class FakeCursor:
             lock_key = tuple(params)
             unlocked = self.conn.release_advisory_lock(lock_key)
             self.result = {"unlocked": unlocked}
+        elif query.startswith("select id::text as id, model_id::text as model_id, status, photo_revision"):
+            eid, uid = params
+            row = next((row for row in self.store.enrollments if row["id"] == eid and row["user_id"] == uid), None)
+            self.result = {**row, "photo_revision": row.get("photo_revision", 0)} if row else None
+        elif "as has_license" in query:
+            self.result = {"has_license": any(row.get("enrollment_id") == params[0] for row in self.store.licenses)}
+        elif "as identity_recorded" in query:
+            self.result = {"identity_recorded": any(row["model_id"] == params[0] and row["cx_tx_id"] == params[1] for row in self.store.identities)}
+        elif query.startswith("update fm_biometric_enrollments set status = %s, photo_revision"):
+            status, expires, eid, uid = params
+            row = next(row for row in self.store.enrollments if row["id"] == eid and row["user_id"] == uid)
+            row.update(status=status, expires_at=expires, photo_revision=row.get("photo_revision", 0) + 1, decision=None, reason=None, completed_at=None, liveness_session_digest=None, liveness_nonce_digest=None)
+        elif query.startswith("update fm_models set assets_status = 'none'"):
+            mid, uid, eid = params if len(params) == 3 else (params[0], None, params[1])
+            for row in self.store.models:
+                if row["id"] == mid and (uid is None or row["user_id"] == uid) and row.get("current_enrollment_id") == eid:
+                    row.update(assets_status="none", assets_source_hash=None)
+        elif query.startswith("select angle, qc_status, storage_state"):
+            self.many = [photo.copy() for photo in self.store.photos if photo["enrollment_id"] == params[0]]
         elif query.startswith("select count(*) filter"):
             user_id, device_digest = params
             matching = [
@@ -270,7 +303,10 @@ class FakeCursor:
             # 손으로 적으면 "코드는 읽는데 SELECT 엔 없는" 컬럼을 이 가짜 커서가 대신
             # 채워 줘서, 프로덕션에서만 죽는 경로가 초록불로 통과한다(최종리뷰 C1).
             self.result = (
-                {column: row.get(column) for column in completion_check_columns()}
+                {
+                    column: row.get(column, COMPLETION_COLUMN_DEFAULTS.get(column))
+                    for column in completion_check_columns()
+                }
                 if row
                 else None
             )
@@ -328,7 +364,10 @@ class FakeCursor:
             }
         elif query.startswith("insert into fm_biometric_enrollments"):
             # 지원서 게이트(E5): insert 에 application_id 컬럼이 추가됐다(플래그 off 면 None).
-            user_id, model_id, device_digest, consent_version, expires_at, application_id = params
+            (
+                user_id, model_id, device_digest, consent_version, expires_at, application_id,
+                terms_consent_version, overseas_consent_version,
+            ) = params
             existing = next(
                 (
                     row
@@ -351,6 +390,8 @@ class FakeCursor:
                     "model_id": model_id,
                     "device_digest": device_digest,
                     "consent_version": consent_version,
+                    "terms_consent_version": terms_consent_version,
+                    "overseas_consent_version": overseas_consent_version,
                     # Task1 migration: 새 등록의 status DEFAULT 는 identity_pending.
                     "status": "identity_pending",
                     "decision": None,
@@ -444,6 +485,26 @@ class FakeCursor:
                 None,
             )
             self.result = {"id": row["id"]} if row else None
+        elif query.startswith("update fm_biometric_enrollments set consent_version"):
+            biometric, terms, overseas, enrollment_id, user_id = params
+            row = next(
+                item for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            row.update(
+                consent_version=biometric,
+                terms_consent_version=terms,
+                overseas_consent_version=overseas,
+            )
+        elif query.startswith("insert into fm_enrollment_consent_events"):
+            enrollment_id, user_id, biometric, terms, overseas = params
+            self.store.consent_events.append({
+                "enrollment_id": enrollment_id,
+                "user_id": user_id,
+                "biometric_version": biometric,
+                "terms_version": terms,
+                "overseas_version": overseas,
+            })
         elif (
             query.startswith("select e.id::text as id from fm_biometric_enrollments e")
             and "e.status = 'processing'" in query
@@ -568,29 +629,39 @@ class FakeCursor:
                     "angle": photo["angle"],
                     "qc_status": photo["qc_status"],
                     "uploaded_at": photo["uploaded_at"],
+                    "storage_state": photo["storage_state"],
                 }
                 for photo in self.store.photos
                 if photo["enrollment_id"] == enrollment_id
-                and photo["storage_state"] == "quarantine"
             ]
         elif query.startswith("select angle, r2_key, mime_type"):
             enrollment_id = params[0]
-            order = {"front": 0, "angle45": 1, "side": 2}
+            slots = params[1] if len(params) > 1 else ["front", "angle45", "side"]
+            order = {slot: index for index, slot in enumerate(slots)}
             self.many = sorted(
                 [
                     {
                         "angle": photo["angle"],
                         "r2_key": photo["r2_key"],
                         "mime_type": photo["mime_type"],
+                        "qc_status": photo["qc_status"],
+                        "storage_state": photo["storage_state"],
                     }
                     for photo in self.store.photos
                     if photo["enrollment_id"] == enrollment_id
-                    and photo["qc_status"] == "passed"
-                    and photo["storage_state"] == "quarantine"
                     and photo["angle"] in order
                 ],
                 key=lambda row: order[row["angle"]],
             )
+        elif query.startswith("select angle from fm_biometric_enrollment_photos"):
+            enrollment_id = params[0]
+            self.many = [
+                {"angle": photo["angle"]}
+                for photo in self.store.photos
+                if photo["enrollment_id"] == enrollment_id
+                and photo["qc_status"] == "passed"
+                and photo["storage_state"] == "quarantine"
+            ]
         elif query.startswith("select r2_key, storage_state"):
             enrollment_id, angle = params
             photo = next(
@@ -608,6 +679,20 @@ class FakeCursor:
                 }
                 if photo
                 else None
+            )
+        elif query.startswith("select r2_key, mime_type"):
+            enrollment_id, angle = params
+            photo = next(
+                (
+                    item for item in self.store.photos
+                    if item["enrollment_id"] == enrollment_id
+                    and item["angle"] == angle
+                ),
+                None,
+            )
+            self.result = (
+                {"r2_key": photo["r2_key"], "mime_type": photo["mime_type"], "storage_state": photo["storage_state"]}
+                if photo else None
             )
         elif query.startswith("select r2_key from fm_biometric_enrollment_photos"):
             enrollment_id, angle = params
@@ -984,11 +1069,12 @@ class FakeCursor:
                 None,
             )
             if enrollment:
+                unsigned = not any(row.get("enrollment_id") == enrollment_id for row in self.store.licenses)
                 photos = [
                     photo
                     for photo in self.store.photos
                     if photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] in {"quarantine", "delete_pending"}
+                    and (photo["storage_state"] in {"quarantine", "delete_pending"} or (unsigned and photo["storage_state"] == "approved"))
                 ]
                 self.many = (
                     [
@@ -997,10 +1083,12 @@ class FakeCursor:
                             "angle": photo["angle"],
                             "r2_key": photo["r2_key"],
                             "storage_state": photo["storage_state"],
+                            "model_id": enrollment.get("model_id"),
+                            "unsigned": unsigned,
                         }
                         for photo in photos
                     ]
-                    or [{"status": enrollment["status"], "angle": None, "r2_key": None}]
+                    or [{"status": enrollment["status"], "angle": None, "r2_key": None, "model_id": enrollment.get("model_id"), "unsigned": unsigned}]
                 )
         # --- Task9: cleanup_terminal_enrollment 이 부르는 purge_id_document 의 SELECT/UPDATE.
         # mid 경로는 id_document_r2_key 가 애초에 None 이라 이 UPDATE 가 타도 관측 가능한
@@ -1023,10 +1111,11 @@ class FakeCursor:
                 row["id_document_purged_at"] = NOW
         elif "as remaining" in query and query.startswith("select"):
             enrollment_id = params[0]
+            unsigned = not any(row.get("enrollment_id") == enrollment_id for row in self.store.licenses)
             self.result = {
                 "remaining": sum(
                     photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] in {"quarantine", "delete_pending"}
+                    and (photo["storage_state"] in {"quarantine", "delete_pending"} or (unsigned and photo["storage_state"] == "approved"))
                     for photo in self.store.photos
                 )
                 + sum(
@@ -1191,6 +1280,7 @@ class FakeConn:
             "cleanup",
             "identities",
             "jobs",
+            "consent_events",
         ):
             setattr(working, name, copy.deepcopy(getattr(self.store, name)))
         working.now = self.store.now
@@ -1212,7 +1302,10 @@ class FakeConn:
             self.cleanup_adds.clear()
             self.cleanup_deletes.clear()
             raise RuntimeError("commit unavailable")
-        for name in ("enrollments", "photos", "models", "licenses", "identities", "jobs"):
+        for name in (
+            "enrollments", "photos", "models", "licenses", "identities", "jobs",
+            "consent_events",
+        ):
             target = getattr(self.store, name)
             target[:] = copy.deepcopy(getattr(self.working, name))
         cleanup = {
@@ -1336,6 +1429,7 @@ def _enrollment_db_view(row, *, model_gender=None):
         "id": row["id"],
         "model_id": row["model_id"],
         "status": row["status"],
+        "photo_revision": row.get("photo_revision", 0),
         "decision": row["decision"],
         "reason": row["reason"],
         "cooldown_until": row["cooldown_until"],
@@ -1345,6 +1439,12 @@ def _enrollment_db_view(row, *, model_gender=None):
         "height_bucket": row.get("height_bucket"),
         "body_type": row.get("body_type"),
         "model_gender": model_gender,
+        "consent_version": row.get("consent_version"),
+        "terms_consent_version": row.get("terms_consent_version"),
+        "overseas_consent_version": row.get("overseas_consent_version"),
+        "license_id": None,
+        "license_allowed_use": None,
+        "license_valid_until": None,
     }
 
 
@@ -1388,6 +1488,10 @@ def enrollment_client(
         app_env="dev",
         facemarket_enabled=True,
         fm_biometric_enrollment_enabled=True,
+        fm_face_match_enabled=True,
+        fm_liveness_enabled=True,
+        fm_photo_slots=("face01", "face03", "face05"),
+        fm_required_slot_count=3,
         fm_oacx_contract_mode="dev-mock-v1",
         fm_liveness_browser_role_arn="arn:aws:iam::123456789012:role/test",
         fm_liveness_confidence_threshold=90.0,
@@ -1515,7 +1619,7 @@ def test_photos_require_identity_first(
     assert res.json()["error"]["code"] == "invalid_enrollment_state"
 
 
-def create_ready_enrollment(client, auth, store):
+def create_ready_enrollment(client, auth, store, *, slots=("front", "angle45", "side")):
     enrollment_id = create_enrollment(client, auth)
     store.enrollments[0]["status"] = "liveness_pending"
     store.photos.extend(
@@ -1530,17 +1634,19 @@ def create_ready_enrollment(client, auth, store):
             "storage_state": "quarantine",
             "uploaded_at": NOW,
         }
-        for angle in ("front", "angle45", "side")
+        for angle in slots
     )
     return enrollment_id
 
 
-def create_complete_ready_enrollment(client, auth, store, fake_r2, fake_rekognition):
-    enrollment_id = create_ready_enrollment(client, auth, store)
+def create_complete_ready_enrollment(
+    client, auth, store, fake_r2, fake_rekognition, *, slots=("front", "angle45", "side")
+):
+    enrollment_id = create_ready_enrollment(client, auth, store, slots=slots)
     store.enrollments[0]["liveness_session_digest"] = hashlib.sha256(
         fake_rekognition.session_id.encode()
     ).hexdigest()
-    for angle in ("front", "angle45", "side"):
+    for angle in slots:
         fake_r2.objects[f"private/{angle}.jpg"] = (f"{angle}-bytes".encode(), "image/jpeg")
     return enrollment_id
 
@@ -1676,7 +1782,167 @@ def test_config_reports_liveness_not_required(liveness_off_client):
     res = liveness_off_client.get("/v1/facemarket/config")
     assert res.status_code == 200, res.text
     # applicationRequired 는 기본 off(기존 즉시 등록). 지원서 게이트는 별도 플래그로 켠다.
-    assert res.json() == {"livenessRequired": False, "applicationRequired": False}
+    assert res.json() == {
+        "payoutBanks": [
+            {"code": "shinhan", "name": "신한은행"}, {"code": "kb", "name": "국민은행"},
+            {"code": "woori", "name": "우리은행"}, {"code": "hana", "name": "하나은행"},
+            {"code": "nh", "name": "NH농협은행"}, {"code": "ibk", "name": "IBK기업은행"},
+            {"code": "kakao", "name": "카카오뱅크"}, {"code": "toss", "name": "토스뱅크"},
+        ],
+        "photoSlots": [
+            *[f"face{i:02d}" for i in range(1, 9)],
+            *[f"torso{i:02d}" for i in range(1, 6)],
+            *[f"full{i:02d}" for i in range(1, 6)],
+        ],
+        "requiredSlotCount": 18,
+        "faceMatchEnabled": False,
+        "livenessRequired": False,
+        "applicationRequired": False,
+        "consentDocumentVersion": "2026-09-v1",
+    }
+
+
+def test_config_reports_valid_custom_slot_prefix(liveness_off_client):
+    settings = replace(
+        liveness_off_client.app.state.settings,
+        fm_photo_slots=("face01", "face03", "face05", "torso01", "full01"),
+        fm_required_slot_count=3,
+    )
+    liveness_off_client.app.state.settings = settings
+    response = liveness_off_client.get("/v1/facemarket/config")
+    assert response.status_code == 200
+    assert response.json()["photoSlots"] == [
+        "face01", "face03", "face05", "torso01", "full01"
+    ]
+    assert response.json()["requiredSlotCount"] == 3
+
+
+def test_mixed_legacy_rows_normalize_to_distinct_required_slots():
+    rows = [
+        {"angle": "front", "r2_key": "old-front"},
+        {"angle": "face01", "r2_key": "new-front"},
+        {"angle": "angle45", "r2_key": "old-angle"},
+        {"angle": "side", "r2_key": "old-side"},
+    ]
+    normalized = facemarket_enrollment.resolve_photo_rows(
+        rows, ("face01", "face03", "face05")
+    )
+    assert [row["angle"] for row in normalized] == ["face01", "angle45", "side"]
+    assert normalized[0]["r2_key"] == "new-front"
+
+
+def test_new_consent_version_requires_terms_consent_but_not_overseas(
+    enrollment_client, auth, enrollment_store
+):
+    response = enrollment_client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": DEVICE_ID,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-09-v1"},
+        },
+        headers=auth(),
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "consent_required"
+
+
+def test_existing_enrollment_records_explicit_new_reconsent(
+    enrollment_client, auth, enrollment_store
+):
+    eid = create_enrollment(enrollment_client, auth)
+    consent = {"accepted": True, "documentVersion": "2026-09-v1"}
+    response = enrollment_client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": DEVICE_ID,
+            "biometricConsent": consent,
+            "termsConsent": consent,
+        },
+        headers=auth(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["id"] == eid
+    assert response.json()["consentDocumentVersion"] == "2026-09-v1"
+    assert response.json()["termsConsentVersion"] == "2026-09-v1"
+    assert response.json()["overseasConsentVersion"] == "2026-09-v1"
+    assert len(enrollment_store.consent_events) == 1
+
+
+def test_owner_can_reload_private_enrollment_photo(
+    enrollment_client, auth, enrollment_store, fake_r2
+):
+    eid = create_enrollment(enrollment_client, auth)
+    key = "private/face01.jpg"
+    enrollment_store.photos.append({
+        "enrollment_id": eid, "angle": "face01", "r2_key": key,
+        "mime_type": "image/jpeg", "qc_status": "passed",
+        "storage_state": "quarantine", "uploaded_at": NOW,
+    })
+    fake_r2.objects[key] = (b"photo-bytes", "image/jpeg")
+
+    response = enrollment_client.get(
+        f"/v1/facemarket/enrollments/{eid}/photos/face01", headers=auth()
+    )
+    assert response.status_code == 200
+    assert response.content == b"photo-bytes"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_physique_accepts_new_body_type_without_height(
+    enrollment_client, auth, enrollment_store, completion_fakes
+):
+    eid = create_enrollment(enrollment_client, auth)
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/physique",
+        json={"bodyType": "delicate"},
+        headers=auth(),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["bodyType"] == "delicate"
+
+
+def test_eighteen_slots_upload_and_complete_without_face_matching(
+    liveness_off_client, auth, enrollment_store, fake_r2, completion_fakes
+):
+    eid = create_enrollment(liveness_off_client, auth)
+    slots = [
+        *[f"face{i:02d}" for i in range(1, 9)],
+        *[f"torso{i:02d}" for i in range(1, 6)],
+        *[f"full{i:02d}" for i in range(1, 6)],
+    ]
+    for slot in slots:
+        response = liveness_off_client.post(
+            f"/v1/facemarket/enrollments/{eid}/photos",
+            data={"slot": slot},
+            files={"photo": (f"{slot}.jpg", f"{slot}-bytes".encode(), "image/jpeg")},
+            headers=auth(),
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["slot"] == slot
+
+    assert enrollment_store.enrollments[0]["status"] == "liveness_pending"
+    response = liveness_off_client.post(
+        f"/v1/facemarket/enrollments/{eid}/complete", json={}, headers=auth()
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["passed"] is True
+    assert completion_fakes["face_qc"].calls == []
+
+
+def test_legacy_angle_upload_maps_to_new_slot(
+    liveness_off_client, auth, monkeypatch
+):
+    eid = create_enrollment(liveness_off_client, auth)
+    response = liveness_off_client.post(
+        f"/v1/facemarket/enrollments/{eid}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"front-bytes", "image/jpeg")},
+        headers=auth(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["slot"] == "face01"
+    assert response.json()["angle"] == "front"
 
 
 def test_liveness_session_rejected_when_disabled(
@@ -1692,11 +1958,12 @@ def test_liveness_session_rejected_when_disabled(
     assert res.json()["error"]["code"] == "liveness_disabled"
 
 
-def test_complete_without_liveness_matches_photos_against_portrait(
+def test_complete_without_liveness_skips_face_matching_by_default(
     liveness_off_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
 ):
     eid = create_complete_ready_enrollment(
-        liveness_off_client, auth, enrollment_store, fake_r2, fake_rekognition
+        liveness_off_client, auth, enrollment_store, fake_r2, fake_rekognition,
+        slots=facemarket_enrollment.PHOTO_SLOTS,
     )
     # 세션 없이 완료 — 신분증 초상 앵커.
     res = liveness_off_client.post(
@@ -1709,11 +1976,7 @@ def test_complete_without_liveness_matches_photos_against_portrait(
     # AWS Rekognition 호출 0.
     assert fake_rekognition.calls == []
     assert fake_rekognition.result_calls == []
-    # 매칭은 업로드 사진 ↔ 신분증 초상("id") — 라이브 프레임("live")·id↔live 페어 없음.
-    pairs = completion_fakes["face_qc"].calls
-    assert pairs, "매칭 호출이 있어야 한다"
-    assert all(candidate == "id" for _ref, candidate in pairs), pairs
-    assert all(ref != "live" and candidate != "live" for ref, candidate in pairs), pairs
+    assert completion_fakes["face_qc"].calls == []
 
 
 def test_complete_binds_using_stored_identity_without_token(
@@ -1935,7 +2198,7 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
     ]
     assert enrollment_store.jobs == [{
         "kind": "fm_model_asset_build",
-        "payload": {"modelId": "model-1", "enrollmentId": enrollment_id},
+        "payload": {"modelId": "model-1", "enrollmentId": enrollment_id, "photoRevision": 0},
     }]
     stored = enrollment_store.enrollments[0]
     assert stored["status"] == "asset_building"
@@ -2508,7 +2771,7 @@ def test_create_enrollment_records_consent_without_oacx_token(
     assert response.status_code == 201
     # 신분증-먼저 재배치(Task1 DEFAULT): 새 등록은 identity_pending 부터 시작한다.
     assert response.json()["status"] == "identity_pending"
-    assert response.json()["requiredAngles"] == ["front", "angle45", "side"]
+    assert response.json()["requiredAngles"] == ["face01", "face03", "face05"]
     assert "token" not in response.text
     assert "r2Key" not in response.text
     assert DEVICE_ID not in enrollment_store.serialized()
@@ -2730,6 +2993,13 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         # Task5: 인증 수단 분기 + 심사 상태.
         "identityMethod",
         "reviewStatus",
+        "photoCount",
+        "photoRevision",
+        "consentDocumentVersion",
+        "licenseId",
+        "licenseTerms",
+        "termsConsentVersion",
+        "overseasConsentVersion",
     }
     assert "digest" not in status.text.lower()
     assert "r2" not in status.text.lower()
@@ -2811,7 +3081,7 @@ def test_upload_passed_photo_uses_quarantine_prefix(
     assert response.json()["angle"] == "angle45"
     assert response.json()["qcStatus"] == "passed"
     assert fake_r2.puts[0][0].startswith(
-        f"facemarket/enrollments/{enrollment_id}/quarantine/angle45/"
+        f"facemarket/enrollments/{enrollment_id}/quarantine/face03/"
     )
     assert fake_r2.puts[0][0].endswith(".jpg")
     assert "quarantine" not in response.text
@@ -2832,7 +3102,7 @@ def test_upload_canonicalizes_uppercase_enrollment_uuid(
 
     assert response.status_code == 201, response.text
     assert fake_r2.puts[0][0].startswith(
-        f"facemarket/enrollments/{enrollment_id}/quarantine/front/"
+        f"facemarket/enrollments/{enrollment_id}/quarantine/face01/"
     )
 
 
@@ -2958,7 +3228,7 @@ def test_blocking_qc_rejects_with_all_blocking_reasons(
     assert fake_r2.puts == []
 
 
-def test_three_passed_angles_transition_to_liveness_pending(
+def test_three_legacy_angles_complete_custom_three_slot_configuration(
     enrollment_client, auth, monkeypatch
 ):
     stub_qc(monkeypatch)
@@ -2977,9 +3247,9 @@ def test_three_passed_angles_transition_to_liveness_pending(
     )
     assert status.json()["status"] == "liveness_pending"
     assert [photo["angle"] for photo in status.json()["photos"]] == [
-        "front",
-        "angle45",
-        "side",
+        "face01",
+        "face03",
+        "face05",
     ]
 
 
@@ -3049,7 +3319,7 @@ def test_pre_session_liveness_photo_delete_returns_to_photos_pending(
 ):
     stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
-    for angle in ("front", "angle45", "side"):
+    for angle in facemarket_enrollment.PHOTO_SLOTS:
         enrollment_client.post(
             f"/v1/facemarket/enrollments/{enrollment_id}/photos",
             data={"angle": angle},

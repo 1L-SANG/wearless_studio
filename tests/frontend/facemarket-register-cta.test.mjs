@@ -13,21 +13,25 @@ test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', ()
   assert.deepEqual(registerCta(null, null, {}), { label: '얼리버드 지원하기', to: '/model/apply' });
 });
 
-test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버드 지원을 보여 준다', () => {
+test('랜딩 CTA — 기록이 없으면 공개 지원 시작으로, 기록이 있으면 허브와 같은 다음 행동 버튼', () => {
   const landing = (ownedModel, enrollment, application) => registerCta(
     ownedModel,
     enrollment,
-    { application, applicationRequired: false, scope: 'landing' },
+    { application, scope: 'landing' },
   );
 
   assert.deepEqual(landing(null, null, null), {
     label: '얼리버드 지원하기',
     to: '/apply',
   });
-  assert.equal(landing(null, null, { id: 'a1', status: 'under_review' }), null);
-  assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);
-  assert.equal(landing(null, { id: 'e1', status: 'photos_pending' }, null), null);
-  assert.equal(landing({ id: 'm1', status: 'verified' }, null, null), null);
+  // 2026-09-12 오너 지시: 로그인한 등록자에게도 첫 화면에 버튼을 남긴다. null 을 돌려주지 않는다.
+  assert.deepEqual(landing(null, null, { id: 'a1', status: 'under_review' }), { label: '지원 상태 보기', to: '/status' });
+  assert.deepEqual(landing(null, null, { id: 'a2', status: 'approved' }), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(landing(null, null, { id: 'a3', status: 'rejected' }), { label: '다시 지원하기', to: '/model/apply' });
+  assert.deepEqual(landing(null, { id: 'e1', status: 'photos_pending' }, null), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(landing({ id: 'm1', status: 'verified' }, null, null), { label: '마이페이지', to: '/status' });
+  assert.deepEqual(landing({ id: 'm1', status: 'suspended' }, null, null), { label: '마이페이지', to: '/status' });
+  assert.deepEqual(landing({ id: 'm1', status: 'awaiting_confirm' }, null, null), { label: '테스트컷 고르기', to: '/model/confirm' });
 });
 
 test('익명 조회 완료는 뒤늦게 확인된 로그인 사용자의 CTA 조회 완료로 재사용하지 않는다', () => {
@@ -65,7 +69,7 @@ test('진행 중 등록·모델이 있으면 지원서 상태보다 등록 여�
   );
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, null, { application: { status: 'approved' } }),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 
@@ -91,7 +95,7 @@ test('검증된 모델은 자기 정보(등록 상태 페이지)로 보낸다', 
   // /model 허브는 /status 로 옮겨 갔다(StatusPage) — 직접 그리로 보낸다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, null),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 
@@ -104,25 +108,31 @@ test('검증된 모델은 자기 정보(등록 상태 페이지)로 보낸다', 
    전부 등록 경로로 보낸다는 판정은 여기서 못 박아 둔다.
    ───────────────────────────────────────────────────────────── */
 
-const MODEL_STATUSES = ['pending', 'verified', 'suspended', 'reverification_required'];
+const MODEL_STATUSES = ['pending', 'awaiting_confirm', 'verified', 'suspended', 'reverification_required'];
 
-test('모델 상태 네 가지를 전부 판정한다 — verified 만 내 모델 정보로 간다', () => {
+test('모델 상태 다섯 가지를 전부 실제 다음 행동으로 판정한다', () => {
   for (const status of MODEL_STATUSES) {
     const cta = registerCta({ id: 'm1', status }, null);
     assert.ok(cta.label, `${status} 에 문구가 없다`);
     assert.ok(cta.to.startsWith('/model') || cta.to === '/status', `${status} 의 경로가 이상하다: ${cta.to}`);
-    if (status === 'verified') assert.deepEqual(cta, { label: '내 모델 정보', to: '/status' });
+    if (status === 'awaiting_confirm') assert.deepEqual(cta, { label: '테스트컷 고르기', to: '/model/confirm' });
+    else if (['verified', 'suspended'].includes(status)) assert.deepEqual(cta, { label: '마이페이지', to: '/status' });
     else assert.deepEqual(cta, { label: '모델 등록하기', to: '/model/register' });
   }
 });
 
-test('ModelHub 는 모델 상태 네 가지를 개발자 코드 노출 없이 안전한 단계로 보낸다', () => {
+test('ModelHub 는 모델 상태 다섯 가지를 개발자 코드 노출 없이 안전한 단계로 보낸다', () => {
   for (const status of MODEL_STATUSES) {
     const journey = resolveHubJourney({
       ownedModel: { id: 'm1', status },
       applicationRequired: true,
+      license: { id: 'l1', modelId: 'm1', status: 'active' },
     });
-    if (status === 'verified') assert.equal(journey.mode, 'active');
+    if (['verified', 'suspended'].includes(status)) assert.equal(journey.mode, 'active');
+    else if (status === 'awaiting_confirm') {
+      assert.equal(journey.mode, 'review');
+      assert.deepEqual(journey.action, { label: '테스트컷 고르기', kind: 'route', to: '/model/confirm' });
+    }
     else {
       assert.equal(journey.mode, 'onboarding');
       assert.ok(journey.action?.label, `${status} 에 다음 행동이 없다`);
@@ -163,12 +173,23 @@ test('재등록 중이어도 같은 문구다', () => {
   );
 });
 
+test('재등록 중에는 이전 revoked 라이선스보다 현재 등록 행동이 우선이다', () => {
+  assert.deepEqual(
+    registerCta(
+      { id: 'm1', status: 'reverification_required' },
+      { id: 'e1', status: 'photos_pending' },
+      { license: { id: 'old-license', modelId: 'm1', status: 'revoked' } },
+    ),
+    { label: '모델 등록하기', to: '/model/register' },
+  );
+});
+
 test('verified 와 진행 중 등록이 함께 오면 모델 정보가 이긴다 (서버상 도달 불가, 우선순위만 고정)', () => {
   // 위 강등 때문에 런타임에는 안 나오는 조합이다. 그래도 registerCta 의 분기 순서가
   // 뒤집히면(등록 먼저 보기) verified 모델이 등록 위저드로 끌려가므로 여기서 묶어 둔다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, { id: 'e1', status: 'photos_pending' }),
-    { label: '내 모델 정보', to: '/status' },
+    { label: '마이페이지', to: '/status' },
   );
 });
 

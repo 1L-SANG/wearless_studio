@@ -62,10 +62,18 @@ test('publisher uses the actual price launch date in both metadata and document 
   assert.ok(manifest.length > 0);
   // 문서별 개정(DOC_REVISIONS)만 다른 값을 갖는다 — 한 문서를 고쳤다고 나머지 7종의
   // 시행일까지 미래로 밀면 그건 거짓말이 된다.
-  const revised = { 'privacy-model': { version: 'v1.2', effectiveDate: '2026-09-12' } };
+  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(2026-09-v1)을 따른다.
+  const revised = {
+    'privacy-model': { version: 'v1.2', effectiveDate: '2026-09-12' },
+    'biometric-consent': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
+    'overseas-transfer': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
+  };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };
     assert.deepEqual({ version, effectiveDate }, expected, slug);
+  }
+  for (const slug of ['biometric-consent', 'overseas-transfer']) {
+    assert.ok(manifest.some((item) => item.slug === slug), `${slug} 항목이 manifest 에 있어야 한다`);
   }
 
   const agreement = readFileSync(join(f.root, 'public/legal/license-agreement.md'), 'utf8');
@@ -87,26 +95,38 @@ test('publisher uses the actual price launch date in both metadata and document 
 // public/legal/privacy-model.md 를 안 고쳐서, **게시된 처리방침이 "신분증 원본 이미지를
 // 저장하지 않는다"고 계속 말하는 상태**로 출시될 뻔했다. 퍼블리셔가 있는데 안 돌린 것이
 // 원인이라 — 커밋된 공개본이 "지금 정본으로 다시 찍은 결과"와 바이트 단위로 같은지 본다.
-test('committed public/legal matches a fresh publish from documents/legal', (t) => {
+test('checked-in generated legal documents match the canonical publisher output', (t) => {
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const fresh = JSON.parse(readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'));
-  const committedManifest = join(source, 'public/legal/manifest.json');
-  assert.equal(
+
+  const generatedManifest = JSON.parse(
     readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
-    readFileSync(committedManifest, 'utf8'),
-    'public/legal/manifest.json 이 정본과 어긋난다 — `python3 tools/legal_publish.py` 를 돌리고 커밋하세요',
   );
-  for (const { slug, source: sourceFile } of fresh) {
+  for (const { slug, source: sourceFile } of generatedManifest) {
+    // These two wizard documents are manually maintained public inputs, not
+    // outputs of legal_publish.py. The manifest intentionally includes both.
+    if (slug === 'biometric-consent' || slug === 'overseas-transfer') {
+      assert.ok(existsSync(join(source, `public/legal/${slug}.md`)), slug);
+      continue;
+    }
     assert.equal(
-      readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8'),
       readFileSync(join(source, `public/legal/${slug}.md`), 'utf8'),
+      readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8'),
       `public/legal/${slug}.md 가 정본(documents/legal/${sourceFile})과 어긋난다 — `
       + '정본만 고치고 공개본을 안 고치면 사용자가 읽는 문서는 옛 내용 그대로다. '
       + '`python3 tools/legal_publish.py` 를 돌리고 커밋하세요',
     );
   }
+  assert.equal(
+    readFileSync(join(source, 'public/legal/manifest.json'), 'utf8'),
+    readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
+    'public/legal/manifest.json 이 정본과 어긋난다 — `python3 tools/legal_publish.py` 를 돌리고 커밋하세요',
+  );
+  assert.equal(
+    readFileSync(join(source, 'public/llms.txt'), 'utf8'),
+    readFileSync(join(f.root, 'public/llms.txt'), 'utf8'),
+  );
 });
 
 test('간편인증 경로의 신분증 촬영본 고지가 **게시본**에 실제로 들어 있다', () => {
@@ -120,4 +140,27 @@ test('간편인증 경로의 신분증 촬영본 고지가 **게시본**에 실�
     /본인확인은 본인확인기관과 모바일 신분증 검증 서비스를 통해 이루어지며, 회사는 \*\*신분증 원본 이미지를 저장하지 않고\*\*/,
     '옛 문장("신분증 원본 이미지를 저장하지 않고")이 게시본에 그대로 남아 있다',
   );
+});
+
+test('published model-license terms do not retain duration-based rights or refunds', (t) => {
+  const f = fixture(t);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const sellerTerms = readFileSync(join(f.root, 'public/legal/seller-license-terms.md'), 'utf8');
+  const refund = readFileSync(join(f.root, 'public/legal/refund.md'), 'utf8');
+  assert.doesNotMatch(sellerTerms, /착용컷의 라이선스는 명세의 유효기간 동안 존속/);
+  assert.doesNotMatch(sellerTerms, /회사의 귀책[^\n]*잔여 기간에 비례/);
+  assert.doesNotMatch(refund, /회사의 귀책[^\n]*잔여 기간에 비례/);
+  assert.match(sellerTerms, /기간 중 발행된 착용컷의 라이선스는 별도의 만료일 없이 존속/);
+  assert.doesNotMatch(sellerTerms, /모델의 철회나 제7조의 취소가 없는 한 존속/);
+  assert.match(sellerTerms, /모델이 철회해도 존속하며, 제7조에 따라 취소될 때 종료/);
+
+  const llms = readFileSync(join(f.root, 'public/llms.txt'), 'utf8');
+  assert.doesNotMatch(llms, /기발행 건은 기간 만료까지 존속/);
+  assert.match(llms, /기발행 건은 철회 후에도 존속/);
+
+  const answers = readFileSync(join(f.root, 'public/legal/answers.md'), 'utf8');
+  assert.doesNotMatch(answers, /허용 품목·제외 품목·기간/);
+  assert.match(answers, /허용 품목·제외 품목\)과 플랫폼 표준가/);
 });

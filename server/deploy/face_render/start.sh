@@ -17,8 +17,11 @@ set -euo pipefail
 ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
 export HF_HOME="${HF_HOME:-$ROOT/hf}"
 export FACE_RENDER_CACHE_DIR="${FACE_RENDER_CACHE_DIR:-$ROOT/loras}"
+# 얼굴 크롭 확대기 가중치(bootstrap 이 받아 sha256 을 맞춰 둔다). 없으면 /upscale 이 503 →
+# 호출자가 Lanczos 로 간다. FACE_RENDER_ROOT 를 옮겨도 따라가게 여기서 정해 준다.
+export FACE_RENDER_ESRGAN_WEIGHTS="${FACE_RENDER_ESRGAN_WEIGHTS:-$ROOT/weights/RealESRGAN_x4plus.pth}"
 PORT="${FACE_RENDER_PORT:-8000}"
-mkdir -p "$ROOT"/{hf,loras,logs}
+mkdir -p "$ROOT"/{hf,loras,logs,weights}
 LOG="$ROOT/logs/service-$(date -u +%Y%m%dT%H%M%SZ).log"
 
 # 토큰은 **파드 env 하나뿐**이다(운영: {{ RUNPOD_SECRET_face_render_token }}).

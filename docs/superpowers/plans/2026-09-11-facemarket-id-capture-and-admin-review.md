@@ -37,7 +37,7 @@
 
 | 파일 | 책임 |
 | --- | --- |
-| `supabase/migrations/20260911140000_facemarket_id_capture_review.sql` | 상태 enum 확장, 인증수단·신분증·심사 컬럼 추가, partial unique index 재생성 |
+| `supabase/migrations/20260912000000_facemarket_id_capture_review.sql` | 상태 enum 확장, 인증수단·신분증·심사 컬럼 추가, partial unique index 재생성 |
 | `server/app/facemarket_id_document.py` | 신분증 촬영본 수용·검증·얼굴 크롭·파기. 업로드 라우트와 파기 헬퍼가 여기 산다 |
 | `server/app/facemarket_admin_review.py` | 관리자 심사 API 5종(목록·카드·이미지·승인·거절) |
 | `server/tests/test_facemarket_id_capture_migration.py` | 마이그레이션 SQL 검증 |
@@ -69,7 +69,7 @@
 ## Task 1: 마이그레이션 — 상태·컬럼·인덱스
 
 **Files:**
-- Create: `supabase/migrations/20260911140000_facemarket_id_capture_review.sql`
+- Create: `supabase/migrations/20260912000000_facemarket_id_capture_review.sql`
 - Test: `server/tests/test_facemarket_id_capture_migration.py`
 
 **Interfaces:**
@@ -84,7 +84,7 @@
 from pathlib import Path
 
 MIGRATION = Path(__file__).resolve().parents[2] / (
-    "supabase/migrations/20260911140000_facemarket_id_capture_review.sql"
+    "supabase/migrations/20260912000000_facemarket_id_capture_review.sql"
 )
 
 
@@ -144,7 +144,7 @@ Expected: FAIL — `FileNotFoundError` (마이그레이션 파일 없음)
 
 - [ ] **Step 3: 마이그레이션 작성**
 
-`supabase/migrations/20260911140000_facemarket_id_capture_review.sql`:
+`supabase/migrations/20260912000000_facemarket_id_capture_review.sql`:
 
 ```sql
 -- FaceMarket 간편인증 경로: 신분증 촬영 수용 + 관리자 육안 심사.
@@ -199,7 +199,7 @@ Expected: PASS (6 passed)
 
 ```bash
 cd ~/devs/wearless_studio-id-capture
-git add supabase/migrations/20260911140000_facemarket_id_capture_review.sql server/tests/test_facemarket_id_capture_migration.py
+git add supabase/migrations/20260912000000_facemarket_id_capture_review.sql server/tests/test_facemarket_id_capture_migration.py
 git commit -m "$(cat <<'EOF'
 feat(facemarket): 신분증 촬영·관리자 심사용 상태와 컬럼 추가
 

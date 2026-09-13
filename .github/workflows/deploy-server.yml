@@ -182,6 +182,16 @@ jobs:
                   github-token: ${{ github.token }}
 
 
+            # --include-all 이 필요한 이유: 마이그레이션 파일 이름의 타임스탬프는 **브랜치를 딴
+            # 시각**이고 운영에 적용되는 순서는 **머지된 순서**다. 브랜치 여러 개를 동시에 굴리면
+            # 나중에 머지된 브랜치의 파일이 이미 적용된 것보다 앞선 타임스탬프를 갖는 일이 항상
+            # 생긴다. supabase CLI 는 그걸 기본값으로 거부하고 배포 전체를 세운다:
+            #   Found local migration files to be inserted before the last migration on remote
+            #   Rerun the command with --include-all flag to apply these migrations
+            # 2026-09-11 #280(등록 위저드) 배포가 이걸로 죽었고, 마이그레이션 단계가 이미지
+            # 빌드보다 앞이라 **서버가 통째로 옛 코드에 머물렀다** — 프론트는 Vercel 로 이미
+            # 나가 있어서 UI 는 새 화면, API 는 404 인 상태가 하루 가까이 방치됐다.
+            # 순서가 아니라 적용 여부가 정본이므로 밀린 것을 전부 적용한다.
             - name: DB 마이그레이션 적용 (prod)
               env:
                   SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -191,7 +201,7 @@ jobs:
                     echo "::error::새 job kind 가 DB 제약에 없어 해당 기능이 조용히 죽습니다."
                     exit 1
                   fi
-                  supabase db push --db-url "$SUPABASE_DB_URL"
+                  supabase db push --include-all --db-url "$SUPABASE_DB_URL"
 
             # 얼굴 렌더 파드용 코드 묶음을 R2 에 올린다(키 = face_render/<git sha>.tgz).
             #

@@ -114,7 +114,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 <div className="lic-foot">
                   <div className="lic-foot-info">
                     <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 상세페이지 1건당</em></div>
-                    {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
+                    <div className="lic-valid">{data.validUntil ? `${_fmtDate(data.validUntil)}까지` : '철회 시까지'}</div>
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
                   {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}

@@ -4,7 +4,6 @@
    verifyIdentity: CX 표준인증창(ENT_MID) 성공 token만 백엔드로 — 원문 신원은
    서버가 CX trans 에서 직접 받는다(클라→서버 PII 신뢰 금지).
    ============================================================= */
-import { FACEMARKET_PRICING } from '../facemarketPricing.js';
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
 // 상대 경로다(‘@/’ 아님): tests/frontend 의 몇몇 vite 하네스가 configFile:false 로 돌아
@@ -111,7 +110,7 @@ export function warmFaceRender(modelId) {
   if (MOCK || !modelId) return Promise.resolve(null);
   return http('/v1/facemarket/face-render/warm', {
     method: 'POST',
-    body: JSON.stringify({ modelId }),
+    body: { modelId },
   }).catch(() => null);
 }
 
@@ -136,6 +135,7 @@ export function createEnrollment({ documentVersion, deviceId, identityMethod }) 
     method: 'POST',
     body: {
       biometricConsent: { accepted: true, documentVersion },
+      termsConsent: { accepted: true, documentVersion },
       deviceId,
       ...(identityMethod ? { identityMethod } : {}),
     },
@@ -171,9 +171,9 @@ export function getEnrollment(id, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`, { signal });
 }
 
-export async function uploadEnrollmentPhoto({ enrollmentId, angle, fileBlob, filename }) {
+export async function uploadEnrollmentPhoto({ enrollmentId, slot, angle, fileBlob, filename }) {
   const form = new FormData();
-  form.append('angle', angle);
+  form.append('slot', slot || angle);
   form.append('photo', fileBlob, filename || 'face');
   return checkedJson(await _authFetch(
     `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos`,
@@ -211,6 +211,14 @@ export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filena
     '/v1/facemarket/applications/photo-staging',
     { method: 'POST', body: form },
   ), '사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+}
+
+export async function deleteStagedApplicationPhoto(kind = 'profile', stageId) {
+  if (MOCK) return (await mockApi()).deleteStagedApplicationPhoto(kind, stageId);
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/applications/photo-staging/${encodeURIComponent(kind)}/${encodeURIComponent(stageId)}`,
+    { method: 'DELETE' },
+  ), '임시 사진을 지우지 못했어요. 잠시 후 다시 시도해 주세요.');
 }
 
 // 지원서 제출. 성공 시 검토 중(auto-approve 면 승인) ApplicationView 반환. 중복이면 409.
@@ -312,6 +320,13 @@ export async function adminFetchGatedImageUrl(path) {
   return _gatedImageUrl(path, '이미지를 불러오지 못했어요.');
 }
 
+/* 지원서 사진 URI 를 카드 응답에서 그대로 받아 쓰는 경로(AdminSubmissionDetails).
+   403(기기 게이트 거절)과 404(파기됨)를 반드시 구분해야 하므로 _gatedImageUrl 에 위임한다 —
+   `if (!res.ok) throw` 로 뭉개면 심사자가 403 을 "파기됨"으로 읽는다(최종리뷰 C4). */
+export async function adminApplicationProfileImage(imageUri) {
+  return _gatedImageUrl(imageUri, '사진을 불러오지 못했어요.');
+}
+
 // ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
 // 전부 서버가 admin_guard.require_admin 을 강제한다(비관리자는 403).
 
@@ -366,11 +381,59 @@ export function adminListUsers({ q, origin, limit = 50, cursor } = {}) {
   return http(`/v1/facemarket/admin/users?${params.toString()}`);
 }
 
+export function adminGrantCredits(userId, body, idempotencyKey) {
+  return http(`/v1/facemarket/admin/users/${encodeURIComponent(userId)}/credits/grants`, {
+    method: 'POST', body,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  });
+}
+
 export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (targetType) params.set('targetType', targetType);
   if (targetId) params.set('targetId', targetId);
   return http(`/v1/facemarket/admin/audit?${params.toString()}`);
+}
+
+export function adminListUsageReports({ status, limit = 100, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set('status', status);
+  if (cursor) params.set('cursor', cursor);
+  return http(`/v1/facemarket/admin/usage-reports?${params.toString()}`);
+}
+
+export function adminUpdateUsageReportStatus(reportId, status) {
+  return http(`/v1/facemarket/admin/usage-reports/${encodeURIComponent(reportId)}`, {
+    method: 'PATCH', body: { status },
+  });
+}
+
+export function adminListPayoutStatements({ month }) {
+  return http(`/v1/facemarket/admin/payout-statements?month=${encodeURIComponent(month)}`);
+}
+
+export function adminSetPayoutStatementStatus(modelId, periodMonth, status, note, expectedConfirmationId) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/status`, {
+    method: 'POST', body: { status, ...(note ? { note } : {}), ...(expectedConfirmationId ? { expectedConfirmationId } : {}) },
+  });
+}
+
+export function adminRevealPayoutAccount(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/payout-account`);
+}
+
+export function adminConfirmPayoutStatement(modelId, periodMonth, confirmationId) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/confirm`, {
+    method: 'POST', body: { confirmationId },
+  });
+}
+
+export function adminAdvancePayoutConfirmation(confirmationId, action) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, { method: 'POST' });
+}
+
+export function adminRevealPayoutConfirmation(confirmationId) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/account`);
 }
 
 // ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
@@ -471,32 +534,40 @@ export function createLivenessSession(enrollmentId, nonce) {
   });
 }
 
-// idPhotoHex: OACX RESULT-step 신분증 사진(data.dlphotoimage) — 위젯 콜백에서 받은 HEX
-// 그대로 전달(재인코딩 금지). 서버가 hex-decode+SFace 1:1 매치에 쓰고, 매칭 후 폐기한다.
-// token 은 더 이상 여기서 전달하지 않는다 — CI 게이트는 identity 단계(createIdentity)에서 끝난다.
-export function completeEnrollment(enrollmentId, { sessionId, idPhotoHex }) {
+// 기본 완료 경로에는 신분증 초상이 포함되지 않아요.
+export function completeEnrollment(enrollmentId, { sessionId } = {}, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
-    method: 'POST', body: { sessionId, idPhotoHex },
+    method: 'POST', body: sessionId ? { sessionId } : {}, signal,
   });
+}
+
+export async function fetchEnrollmentPhotoUrl(enrollmentId, slot, { signal } = {}) {
+  const res = await _authFetch(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos/${encodeURIComponent(slot)}`, { signal });
+  if (!res.ok) await checkedJson(res, '사진을 불러오지 못했어요.');
+  return URL.createObjectURL(await res.blob());
 }
 
 export function cancelEnrollment(enrollmentId) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/cancel`, { method: 'POST' });
 }
 
+export function reopenEnrollmentPhotos(enrollmentId) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/reopen-photos`, { method: 'POST' });
+}
+
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = FACEMARKET_PRICING.perCut, validDays = 365,
-}) {
+  enrollmentId, allowedUse = [], forbiddenUse = [],
+}, { signal } = {}) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',
-    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays },
+    body: { enrollmentId, allowedUse, forbiddenUse }, signal,
   });
 }
 
 // GET /v1/facemarket/licenses — 내 라이선스 목록. [{ id, faceImageUri, allowedUse, ... }].
-export function listLicenses() {
+export function listLicenses({ includeRevoked = false } = {}) {
   if (MOCK) return Promise.resolve([]);
-  return http('/v1/facemarket/licenses');
+  return http(`/v1/facemarket/licenses${includeRevoked ? '?includeRevoked=true' : ''}`);
 }
 
 // POST /v1/facemarket/licenses/{id}/revoke (소유자 스코프) — 라이선스를 해지한다.
@@ -525,6 +596,14 @@ export function getSettlementSummary() {
   return http('/v1/facemarket/settlements/summary');
 }
 
+export function getPayoutStatements() {
+  return http('/v1/facemarket/payout-statements');
+}
+
+export function getPublicationPreviewUrl(publicationId) {
+  return http(`/v1/facemarket/model/publications/${encodeURIComponent(publicationId)}/preview-url`, { suppressErrorLog: true });
+}
+
 // GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
 // → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
 // 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).
@@ -536,6 +615,7 @@ export function listModelUsage(modelId) {
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
 //   { valid, status, allowedUse, forbiddenUse, unitPrice, validUntil, vcId, model:{ nameMasked, age } }
+//   validUntil은 영구 라이선스에서 null일 수 있어요.
 // 얼굴·digest·CI·생년월일·user_id·model_id 는 서버가 애초에 싣지 않는다(무인증 = 노출 시 영구 유출).
 // 해지가 즉시 반영돼야 하므로 캐시 금지(서버 Cache-Control: no-store + 요청 측 cache:'no-store').
 export async function verifyLicensePublic(licenseId) {
@@ -600,4 +680,17 @@ export async function fetchLicenseFaceUrl(faceImageUri) {
   const res = await _authFetch(faceImageUri);
   if (!res.ok) throw new Error('얼굴 이미지를 불러오지 못했어요.');
   return URL.createObjectURL(await res.blob());
+}
+
+export function reportUsage(paymentId, reason) {
+  return http(`/v1/facemarket/settlements/${encodeURIComponent(paymentId)}/report`, { method: 'POST', body: { reason } });
+}
+export function updateLicenseTerms(licenseId, terms) {
+  return http(`/v1/facemarket/licenses/${encodeURIComponent(licenseId)}/terms`, { method: 'PATCH', body: terms });
+}
+export function pauseMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/pause`, { method: 'POST' });
+}
+export function resumeMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/resume`, { method: 'POST' });
 }

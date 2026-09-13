@@ -20,6 +20,7 @@ import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/admin-ui/card.jsx';
 import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
 import { Textarea } from '@/components/admin-ui/textarea.jsx';
+import { AdminSubmissionDetails } from './AdminSubmissionDetails.jsx';
 import {
   adminApproveApplication, adminFetchApplicationPhotoUrl,
   adminListApplications, adminRejectApplication, adminResendEmail,
@@ -82,7 +83,7 @@ function ApplicantPhotos({ app }) {
   );
 }
 
-function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
+function ApplicationCard({ app, onApprove, onReject, onResend, onDetail, busy }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const pending = app.status === 'under_review';
@@ -96,6 +97,7 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
         <div className="mb-3 flex items-center gap-2.5">
           <CardTitle className="text-base">{app.applicantName}</CardTitle>
           <Badge variant={STATUS_BADGE_VARIANT[app.status] || 'secondary'}>{STATUS_LABEL[app.status] || app.status}</Badge>
+          <Button variant="ghost" size="sm" className="ml-auto underline underline-offset-2" onClick={() => onDetail(app)}>상세히 보기</Button>
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
           <div><dt className="text-xs text-muted-foreground">이메일</dt><dd className="truncate">{app.contactEmail}</dd></div>
@@ -167,6 +169,7 @@ export function AdminApplications() {
   const [filter, setFilter] = useState(searchParams.get('status') || 'under_review');
   const [apps, setApps] = useState([]);
   const [busyId, setBusyId] = useState(null);
+  const [selectedApplication, setSelectedApplication] = useState(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -269,11 +272,12 @@ export function AdminApplications() {
           {apps.map((app) => (
             <li key={app.id}>
               <ApplicationCard app={app} onApprove={approve} onReject={reject}
-                onResend={resend} busy={busyId === app.id} />
+                onResend={resend} onDetail={setSelectedApplication} busy={busyId === app.id} />
             </li>
           ))}
         </ul>
       )}
+      {selectedApplication && <AdminSubmissionDetails application={selectedApplication} onClose={() => setSelectedApplication(null)} />}
     </div>
   );
 }

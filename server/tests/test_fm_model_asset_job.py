@@ -66,7 +66,8 @@ class _Cur:
             lock_key = tuple(params)
             self._last = {"unlocked": self.conn.release_advisory_lock(lock_key)}
         elif "from fm_biometric_enrollment_photos" in s and "join fm_biometric_enrollments" in s:
-            self._last = self.store.enrollment_rows if self.store.initial_binding else []
+            rows = self.store.enrollment_rows if self.store.initial_binding else []
+            self._last = [row for row in rows if "e.photo_revision=%s" not in s or row.get("photo_revision", 0) == params[-1]]
         elif "from fm_models m join personalization_profiles" in s:
             self._last = {"status": "verified", "profile_id": "prof-1"}
         elif "from personalization_face_photos" in s:
@@ -75,7 +76,7 @@ class _Cur:
             self._last = {"id": "job-1"} if self.store.next_lease_ok() else None
         elif "from fm_biometric_enrollments" in s and "for update" in s:
             self._last = (
-                {"status": "asset_building", "match_policy_version": "policy-v1"}
+                {"status": "asset_building", "match_policy_version": "policy-v1", "photo_revision": self.store.enrollment_rows[0].get("photo_revision", 0)}
                 if self.store.final_binding
                 else None
             )
@@ -108,13 +109,15 @@ class _Cur:
             self.store.ready_updates += 1
             self._last = None
         elif s.startswith("update fm_models") and "assets_status='failed'" in s:
-            self.store.failed_updates += 1
+            if "photo_revision=%s" not in s or params[-1] == self.store.enrollment_rows[0].get("photo_revision", 0):
+                self.store.failed_updates += 1
             self._last = None
         elif s.startswith("update fm_models") and "set assets_status='building'" in s:
             self.store.building_updates += 1
             self._last = None
         elif s.startswith("update fm_biometric_enrollments") and "status='failed'" in s:
-            self.store.enrollment_failed_updates += 1
+            if "photo_revision=%s" not in s or params[-1] == self.store.enrollment_rows[0].get("photo_revision", 0):
+                self.store.enrollment_failed_updates += 1
             self._last = None
         elif s.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
             self.store.cleanup_refs.append({"angle": params[1], "key": params[2], "reason": "delete"})
@@ -380,6 +383,27 @@ def test_asset_build_reads_only_enrollment_photos_and_promotes_in_contract_order
         f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/originals/angle45.png",
         f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/originals/side.png",
     ]
+
+
+def test_photo_revalidation_builds_from_unchanged_approved_sources():
+    app, _log, face_r2, store = build_worker_fixture()
+    for row in store.enrollment_rows:
+        row.update(storage_state="approved", photo_revision=1)
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID, "photoRevision": 1})))
+    assert store.ready_updates == 1
+    assert store.failed_updates == 0
+    assert len(face_r2.copies) == 3
+    assert all("/revision-1/" in call.destination for call in face_r2.copies)
+
+
+def test_old_photo_revision_job_cannot_write_or_fail_the_current_registration():
+    app, _log, face_r2, store = build_worker_fixture()
+    for row in store.enrollment_rows:
+        row["photo_revision"] = 2
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID, "photoRevision": 1})))
+    assert face_r2.copies == []
+    assert face_r2.puts == []
+    assert store.ready_updates == store.failed_updates == store.enrollment_failed_updates == 0
 
 
 def test_asset_swap_is_bound_to_current_enrollment_and_version():

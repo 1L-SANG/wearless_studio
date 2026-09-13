@@ -55,7 +55,7 @@ public final class IssueVcDtos {
     public record ProfileInfo(String id, String issuerNonce) {}
 
     // ── POST /holder/models/{id}/issue-vc 요청 본문 (선택) ────────────────
-    // 본문 없음/plan 생략 → MDL(기존 동작). plan="facelicense" → FaceLicense VC + claims 를
+    // 본문 없음/plan 생략 → MDL(기존 동작). plan="facelicense-v2" → FaceLicense VC + claims 를
     // Issuer user(userInfo)로 upsert 해 credentialSubject 에 실린다(값은 서버측 user.data 에서 유래).
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record IssueRequest(String plan, Claims claims, String idempotencyKey) {
@@ -64,13 +64,13 @@ public final class IssueVcDtos {
         }
     }
 
-    /** FaceLicense claim 입력. namespace kr.wearless.facelicense 의 6개 claim 에 매핑된다. */
+    /** Immutable evidence for the versioned kr.wearless.facelicense.v2 schema. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Claims(
-            @JsonAlias("allowed_use") String allowedUse,
-            @JsonAlias("forbidden_use") String forbiddenUse,
-            @JsonAlias("unit_price") Integer unitPrice,
-            @JsonAlias("license_valid_until") String licenseValidUntil,
+            @JsonAlias("model_did") String modelDid,
+            @JsonAlias("license_id") String licenseId,
+            @JsonAlias("issued_at") String issuedAt,
             @JsonAlias("face_image_digest") String faceImageDigest,
-            @JsonAlias("model_name") String modelName) {}
+            @JsonAlias("agreement_version") String agreementVersion,
+            @JsonAlias("consent_doc_version") String consentDocVersion) {}
 }

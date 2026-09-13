@@ -11,22 +11,14 @@ export const FACEMARKET_PRICING = Object.freeze({
   monthlyCap: 10,
   overage: 7900,
 });
-
-const won = (n) => `${Number(n).toLocaleString('ko-KR')}원`;
-
-/** 조각으로 나눠 준다 — 화면이 금액만 굵게 잡고 라벨·구분자는 흐리게 두기 위해서. */
+const won = n => `${Number(n).toLocaleString('ko-KR')}원`;
 export function pricingParts(p = FACEMARKET_PRICING) {
-  return {
-    label: '가격',
-    perCut: `1건 ${won(p.perCut)}`,
-    monthly: `월정액 ${won(p.monthly)}`,
-    cap: `${p.monthlyCap}건 제한`,
-  };
+  return { label: '가격', perCut: `1건 ${won(p.perCut)}`, monthly: `월 이용권 ${won(p.monthly)}`, cap: `월 ${p.monthlyCap}건`, overage: `초과 건당 ${won(p.overage)}` };
 }
 
 /** 값만 한 줄로. "1건 14,900원 / 월정액 49,900원 (10건 제한)"
     라벨('가격')은 붙이지 않는다 — 정의 목록(dt)처럼 라벨이 이미 있는 자리에서 두 번 나오면 안 된다. */
 export function pricingLine(p = FACEMARKET_PRICING) {
   const parts = pricingParts(p);
-  return `${parts.perCut} / ${parts.monthly} (${parts.cap})`;
+  return `${parts.perCut} · ${parts.monthly} (${parts.cap}, ${parts.overage})`;
 }

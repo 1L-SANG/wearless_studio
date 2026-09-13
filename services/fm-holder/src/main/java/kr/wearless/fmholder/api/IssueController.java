@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
  * Flow B(issue-vc) — 모델 홀더에게 실 VC 를 발급. Python 백엔드가 호출한다.
  * 전제: Flow A 완주(POST /register-did). 미완주면 register-did 를 먼저 실행한다.
  *
- * <p>선택 본문 {@code {"plan":"facelicense"|"mdl","claims":{...}}}:
- * 본문 없음/plan 생략 → MDL(기존 동작, 백워드 호환). plan="facelicense" → FaceLicense 커스텀 VC.
+ * <p>선택 본문 {@code {"plan":"facelicense-v2"|"mdl","claims":{...}}}:
+ * 본문 없음/plan 생략 → MDL(기존 동작, 백워드 호환). plan="facelicense-v2" → FaceLicense 커스텀 VC.
  */
 @RestController
 @RequestMapping("/holder")
@@ -35,7 +35,7 @@ public class IssueController {
 
     /**
      * 7스텝 issue-vc 실행 → 복호된 실 VC 반환 {@code { vcId, issuer, txId, vc, status, note, userDid }}.
-     * @param body 선택. 생략 시 MDL. plan="facelicense" + claims 시 FaceLicense VC.
+     * @param body 선택. 생략 시 MDL. plan="facelicense-v2" + claims 시 FaceLicense VC.
      */
     @PostMapping("/models/{modelId}/issue-vc")
     public IssueVcService.IssueResult issueVc(@PathVariable String modelId,
@@ -59,6 +59,6 @@ public class IssueController {
     private static boolean isFaceLicense(IssueVcDtos.IssueRequest body) {
         return body != null
                 && body.plan() != null
-                && "facelicense".equals(body.plan().trim().toLowerCase(Locale.ROOT));
+                && "facelicense-v2".equals(body.plan().trim().toLowerCase(Locale.ROOT));
     }
 }

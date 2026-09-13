@@ -360,7 +360,13 @@ class RunpodAutoscaleAdapter:
             client = httpx.Client(timeout=HEALTH_TIMEOUT, headers={"User-Agent": USER_AGENT})
             self._health_client = client
         res = client.get(url)
-        return res.status_code == 200 and bool(res.json().get("loaded"))
+        if res.status_code != 200:
+            return False
+        # 준비 = 베이스가 올라옴(base_loaded). 워커의 wait_for_backend 와 같은 규칙이어야 한다 —
+        # 갈리면 워커는 렌더하는데 여기서는 "안 떴다"고 보고 파드를 새로 만든다.
+        from app.agents.face_identity import healthz_ready
+
+        return healthz_ready(res.json())
 
     async def set_desired(self, target: RunpodTarget | None, count: int) -> None:
         """0 이면 stop(terminate 아님 — 같은 호스트에 자리가 남아 있으면 stop→start 가 제일 빠르다).

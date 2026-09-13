@@ -68,8 +68,7 @@
 }
 .notice svg { flex: none; margin-top: 0.12rem; color: var(--fm-accent); }
 
-/* 조건 3칸 — 랜딩 .record 의 번호 붙은 스텝과 같은 형태. 서버 enum 과 묶인 값(품목·
-   유효기간)은 그대로 두고 번호와 설명만 얹었다. */
+/* 조건 2칸 — 랜딩 .record 의 번호 붙은 스텝과 같은 형태. */
 .terms { display: grid; gap: 1.6rem; }
 .term { display: grid; gap: 0.45rem; align-content: start; }
 .termNo {
@@ -110,14 +109,6 @@
   outline-offset: 1px;
   border-color: transparent;
 }
-
-.row2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.6rem;
-  align-items: start;
-}
-@media (max-width: 34rem) { .row2 { grid-template-columns: 1fr; } }
 
 .submit { margin-top: 2rem; }
 

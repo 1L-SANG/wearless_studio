@@ -166,10 +166,22 @@ test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', (
   assert.match(read('src/components/CompanyInfoRows.jsx'), /@\/lib\/companyInfo\.js/);
 });
 
-test('FaceMarket 모델 레이아웃은 얇은 법무 푸터를 함께 렌더한다', () => {
-  const layout = read('src/features/facemarket-shell/FacemarketModelLayout.jsx');
-  assert.match(layout, /FooterSection/);
-  assert.match(layout, /<FooterSection compact\s*\/>/);
+test('FaceMarket 모델 레이아웃은 지원서 외 화면에 법적 링크와 회사 정보가 있는 푸터를 렌더한다', async () => {
+  const { FacemarketModelLayout } = await load('src/features/facemarket-shell/FacemarketModelLayout.jsx');
+  const { FooterSection } = await load('src/features/facemarket-landing/sections/FooterSection.jsx');
+  let footer;
+  function CaptureFooter() {
+    const layout = FacemarketModelLayout();
+    footer = layout.props.children.at(-1)?.props?.children;
+    return footer || null;
+  }
+  const html = render(React.createElement(CaptureFooter), '/model/register');
+  assert.equal(footer.type, FooterSection);
+  assert.equal(footer.props.compact, true);
+  assert.ok(hrefs(html).includes('/license-agreement'));
+  assert.ok(hrefs(html).includes('/model-info'));
+  assert.match(html, /사업자등록번호/);
+  assert.equal(render(React.createElement(CaptureFooter), '/model/apply'), '');
 });
 
 test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 약관과 환불 정책으로 연결한다', async () => {

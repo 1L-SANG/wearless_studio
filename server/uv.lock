@@ -2840,6 +2840,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
     { name = "c2pa-python" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
@@ -2872,6 +2873,7 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
     { name = "c2pa-python", specifier = ">=0.37.8" },
+    { name = "cryptography", specifier = ">=48" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "numpy", specifier = ">=1.26" },

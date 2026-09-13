@@ -14,6 +14,7 @@ CUTOVER = (APP / "facemarket_cutover.py").read_text()
 ADMIN = (APP / "facemarket_admin.py").read_text()
 ADMIN_MODELS = (APP / "facemarket_admin_models.py").read_text()
 ADMIN_DEVICES = (APP / "facemarket_admin_devices.py").read_text() if (APP / "facemarket_admin_devices.py").exists() else ""
+PAYOUT = (APP / "facemarket_payout.py").read_text()
 
 
 def test_no_module_calls_repo_is_admin_directly():
@@ -25,6 +26,7 @@ def test_no_module_calls_repo_is_admin_directly():
         ("facemarket_cutover.py", CUTOVER),
         ("facemarket_admin.py", ADMIN),
         ("facemarket_admin_models.py", ADMIN_MODELS),
+        ("facemarket_payout.py", PAYOUT),
     ]
     if ADMIN_DEVICES:
         cases.append(("facemarket_admin_devices.py", ADMIN_DEVICES))
@@ -114,6 +116,7 @@ def test_every_require_admin_call_passes_the_request():
         ("facemarket_applications.py", APPLICATIONS), ("routes.py", ROUTES),
         ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
         ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_admin_devices.py", ADMIN_DEVICES),
+        ("facemarket_payout.py", PAYOUT),
     ):
         for m in pattern.finditer(source):
             args = [a.strip() for a in m.group(1).split(",")]
@@ -130,6 +133,7 @@ def test_identity_only_guard_is_used_by_exactly_the_two_device_bootstrap_routes(
         ("facemarket_applications.py", APPLICATIONS), ("routes.py", ROUTES),
         ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
         ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_cutover.py", CUTOVER),
+        ("facemarket_payout.py", PAYOUT),
     ):
         assert "require_admin_identity(" not in source, f"{name} 가 기기 면제 가드를 쓴다"
     if ADMIN_DEVICES:

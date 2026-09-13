@@ -157,9 +157,15 @@ COLOR_RING_PX = 8
 #: **벗어난 변에만** 건다(crossing_sides) — 4변 일괄로 걸면 좌·우에서 페더 가우시안 꼬리(σ=0.12×얼굴폭≈40px)를
 #: 깎아 E2 가 없앤 측면 헤어 경계 문제를 되살린다. 결과적으로 상단 변에서만 일하지만 모든 컷에 적용된다
 #: (= 프로덕션 컷도 같은 이음선을 갖고 있었다).
+#: ★ 단, **크롭 변이 사진 가장자리에 붙어 있으면 그 변은 페이드하지 않는다**(2026-09-11). 그 변 너머에는
+#: 원본이 없어서 이을 이음매 자체가 없다. 그런데도 페이드를 걸면 타원 깊숙한 곳의 알파만 깎여 원본 머리와
+#: 생성 머리가 48px 띠에서 섞인다 — 정수리 잔머리로 보이던 것이 그것이다(ab_hair 실험: 세 컷 모두 상단 띠가
+#: 머리 위에 있었다). 판정은 fade_sides().
 EDGE_FADE_PX = 48
 #: 페이드 맨 앞 이 픽셀은 정확히 0(축소 보간이 경계를 되살리지 않게)
 EDGE_FADE_HARD_PX = 3
+#: 얼굴 크롭 확대 상한 — RealESRGAN x4plus 가 4배까지만 낸다. k = ceil(1024/side) 를 여기서 자른다.
+CROP_UPSCALE_MAX = 4
 
 _YUNET = "face_detection_yunet_2023mar.onnx"
 _SFACE = "face_recognition_sface_2021dec.onnx"
@@ -519,9 +525,36 @@ def plan_face_pass(image_bytes: bytes, model_dir: str | None = None) -> FacePlan
     return plan_from_image(_decode(image_bytes), model_dir)
 
 
-def crop_1024(image: Image.Image, plan: FacePlan) -> Image.Image:
+def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None) -> tuple[Image.Image, dict]:
+    """크롭 → 1024². upscaler 를 주면 **그 크롭만** 그것으로 키운다(사진 전체는 건드리지 않는다).
+
+    왜 크롭만인가(2026-09-11 실측, 스튜디오 3컷 × v6-1500):
+      · 화면 전체 ESRGAN ×2 는 옷 픽셀을 바꿨다 — G 대 H 옷 영역 |Δ| 평균 3.9~6.4(p99 43). 상품 사진을
+        우리가 다시 그리는 셈이라 쓰지 않는다.
+      · 크롭만 키우면 타원 밖 알파가 0 이라 옷 픽셀은 원본과 **바이트 동일**하고, 얼굴 고주파는 올라간다
+        (컷1 결과 hf_std 1.52 → 5.76).
+    확대기가 없거나 실패하면 지금 동작(Lanczos) 그대로다 — 확대기 때문에 얼굴 패스가 멈춰선 안 된다.
+    side ≥ 1024 는 축소라 확대기를 부르지 않는다.
+    """
     x0, y0, side = plan.crop
-    return image.convert("RGB").crop((x0, y0, x0 + side, y0 + side)).resize((CROP, CROP), Image.LANCZOS)
+    box = image.convert("RGB").crop((x0, y0, x0 + side, y0 + side))
+    meta = {"applied": False, "method": "lanczos", "k": 1, "side": int(side)}
+    if upscaler is not None and side < CROP:
+        k = min(CROP_UPSCALE_MAX, math.ceil(CROP / side))
+        up = None
+        try:
+            up = upscaler(box, k)
+        except Exception as exc:  # noqa: BLE001 — 확대 실패는 폴백으로 흡수한다
+            meta["error"] = type(exc).__name__
+            log.warning("face_identity crop upscaler failed (%s); falling back to Lanczos", type(exc).__name__)
+        if up is not None:
+            box = up
+            meta.update({"applied": True, "method": "esrgan", "k": int(k)})
+    return box.resize((CROP, CROP), Image.LANCZOS), meta
+
+
+def crop_1024(image: Image.Image, plan: FacePlan, *, upscaler=None) -> Image.Image:
+    return crop_1024_with_meta(image, plan, upscaler=upscaler)[0]
 
 
 def ellipse_box(plan: FacePlan, ellipse: tuple[float, float, float, float] | None = None) -> list[float]:
@@ -606,16 +639,32 @@ def crossing_sides(plan: FacePlan, ellipse: tuple[float, float, float, float] | 
     return (x0 < 0, y0 < 0, x1 > CROP, y1 > CROP)
 
 
+def at_photo_edge(plan: FacePlan) -> tuple[bool, bool, bool, bool]:
+    """크롭 변이 사진 가장자리에 붙어 있는가 (좌, 상, 우, 하). plan_from_box 의 clamp 가 만든 상태다."""
+    x0, y0, side = plan.crop
+    return (x0 <= 0, y0 <= 0, x0 + side >= plan.width, y0 + side >= plan.height)
+
+
+def fade_sides(plan: FacePlan, ellipse: tuple[float, float, float, float] | None = None) -> tuple[bool, bool, bool, bool]:
+    """가장자리 페이드를 걸 변 = 타원이 크롭 밖으로 나갔고 **그 변이 사진 안쪽**인 변.
+
+    사진 가장자리에 붙은 변에는 걸지 않는다 — 그 너머에 원본이 없어 이을 이음매가 없고, 페이드는
+    타원 깊숙한 곳의 알파만 깎아 원본 머리를 생성 머리 위로 되살린다(EDGE_FADE_PX 주석 참고).
+    """
+    return tuple(bool(cross and not edge)
+                 for cross, edge in zip(crossing_sides(plan, ellipse), at_photo_edge(plan)))
+
+
 def composite_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
                     edge_fade_px: int = EDGE_FADE_PX,
                     ellipse: tuple[float, float, float, float] | None = None,
                     feather_bottom: float | None = None) -> np.ndarray:
-    """합성용 1024² 알파 = 페더 마스크 × (타원이 벗어난 변에만 걸리는) 크롭 경계 페이드.
+    """합성용 1024² 알파 = 페더 마스크 × (타원이 벗어났고 사진 안쪽인 변에만 걸리는) 크롭 경계 페이드.
 
     학습 control(binary_mask) 경로와 분리돼 있다 — control 은 정본이라 건드리지 않는다.
     """
     a = np.asarray(feather_mask(plan, feather, ellipse, feather_bottom=feather_bottom), np.float32) / 255.0
-    return a * _edge_fade(int(edge_fade_px), crossing_sides(plan, ellipse))
+    return a * _edge_fade(int(edge_fade_px), fade_sides(plan, ellipse))
 
 
 def binary_mask(plan: FacePlan) -> Image.Image:
@@ -623,9 +672,13 @@ def binary_mask(plan: FacePlan) -> Image.Image:
     return feather_mask(plan, FEATHER_FRAC).point(lambda v: 255 if v > 127 else 0)
 
 
-def build_control(image: Image.Image, plan: FacePlan) -> Image.Image:
-    """학습 control 과 동일: 크롭 1024² 의 타원 안을 radius 0.5·얼굴폭 가우시안 블러로 채움."""
-    up = crop_1024(image, plan)
+def build_control(image: Image.Image, plan: FacePlan, *, crop: Image.Image | None = None) -> Image.Image:
+    """학습 control 과 동일: 크롭 1024² 의 타원 안을 radius 0.5·얼굴폭 가우시안 블러로 채움.
+
+    crop 을 주면 그 1024² 를 쓴다(호출자가 확대기로 이미 만든 것) — control 과 합성 바탕이 **같은
+    픽셀**이어야 링 색 보정이 제 값을 낸다.
+    """
+    up = crop if crop is not None else crop_1024(image, plan)
     blurred = up.filter(ImageFilter.GaussianBlur(max(2, int(plan.face_box_crop[2] * CONTROL_BLUR_FRAC))))
     return Image.composite(blurred, up, binary_mask(plan))
 
@@ -698,6 +751,7 @@ def composite_with_meta(
     feather: float = FEATHER_FRAC,
     grain: bool | None = None,
     feather_bottom: float | None = None,
+    crop: Image.Image | None = None,
 ) -> tuple[Image.Image, dict]:
     """생성 1024² 크롭의 타원 영역을 원본에 되붙인다. 마스크 밖 픽셀은 원본과 100% 동일.
 
@@ -706,7 +760,8 @@ def composite_with_meta(
     grain=None 이면 조건부, True/False 는 강제.
     """
     orig = original.convert("RGB")
-    up = np.asarray(crop_1024(orig, plan), np.float32)
+    # crop 은 호출자가 확대기로 만든 1024² 바탕. 없으면 지금까지처럼 여기서 만든다.
+    up = np.asarray(crop if crop is not None else crop_1024(orig, plan), np.float32)
     gen = generated_1024.convert("RGB")
     if gen.size != (CROP, CROP):
         gen = gen.resize((CROP, CROP), Image.LANCZOS)
@@ -759,9 +814,10 @@ def composite(
     feather: float = FEATHER_FRAC,
     grain: bool | None = None,
     feather_bottom: float | None = None,
+    crop: Image.Image | None = None,
 ) -> Image.Image:
     return composite_with_meta(original, generated_1024, plan, feather=feather, grain=grain,
-                               feather_bottom=feather_bottom)[0]
+                               feather_bottom=feather_bottom, crop=crop)[0]
 
 
 # ---------------------------------------------------------------- 게이트
@@ -855,6 +911,14 @@ class FaceBackend(Protocol):
     def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image: ...
 
 
+def backend_upscaler(backend, enabled: bool = True):
+    """백엔드가 얼굴 크롭 확대를 해 주면 그 호출자를, 아니면 None. 옛 백엔드(메서드 없음)도 그냥 None 이다."""
+    if not enabled:
+        return None
+    fn = getattr(backend, "upscale", None)
+    return fn if callable(fn) else None
+
+
 class NullBackend:
     """control 을 그대로 돌려준다(테스트·배선 검증용)."""
 
@@ -864,7 +928,7 @@ class NullBackend:
 
 class HttpFaceBackend:
     """원격 GPU 렌더 서비스. POST {control_png, prompt, seed, steps, guidance_scale, lora,
-    lora_url, lora_sha256} → {image_png}.
+    lora_url, lora_sha256} → {image_png}. 얼굴 크롭 확대는 POST /upscale (없는 파드면 None → Lanczos).
 
     가중치는 **요청마다 presigned GET** 으로 넘긴다 — 파드에 R2 자격증명을 두지 않기 위해서다.
     `lora` 는 서비스 쪽 캐시 식별자라 두 번째 요청부터는 URL 을 쓰지 않는다(캐시 히트).
@@ -882,6 +946,8 @@ class HttpFaceBackend:
         self.url_provider = url_provider
         self.expected_version = expected_version
         self._version_checked = False
+        #: 파드가 /upscale 을 모르면(옛 코드) 한 번 겪고 그 뒤로는 묻지 않는다.
+        self._upscale_supported = True
 
     def check_version(self) -> None:
         """파드에 올라간 코드가 기대 버전인가 — **경고만** 한다(컷을 막지 않는다).
@@ -902,6 +968,39 @@ class HttpFaceBackend:
             log.warning("face_identity: render service code_version=%s but expected %s "
                         "— 볼륨의 코드가 오래됐을 수 있다(scripts/face_render_sync.sh)",
                         got, self.expected_version)
+
+    def _base(self) -> str:
+        base = self.url.rstrip("/")
+        return base[: -len("/render")] if base.endswith("/render") else base
+
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image | None:
+        """얼굴 **크롭만** 파드에서 ESRGAN 으로 키운다. 못 하면 None → 호출자가 Lanczos 로 간다.
+
+        파드가 이 경로를 모르거나(404) 가중치가 없으면(503) 다시 묻지 않는다. 실패가 컷을 막지 않는다.
+        """
+        if not self._upscale_supported:
+            return None
+        import httpx
+
+        buf = BytesIO()
+        image.convert("RGB").save(buf, "PNG")
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        try:
+            res = httpx.post(f"{self._base()}/upscale",
+                             json={"image_png": base64.b64encode(buf.getvalue()).decode(), "scale": int(scale)},
+                             headers=headers, timeout=self.timeout)
+            if res.status_code in (404, 405, 501, 503):
+                self._upscale_supported = False
+                log.info("face_identity: 파드에 /upscale 이 없다(status=%s) — Lanczos 로 간다", res.status_code)
+                return None
+            res.raise_for_status()
+            data = base64.b64decode(res.json()["image_png"])
+        except Exception as exc:  # noqa: BLE001 — 확대 실패는 폴백으로 흡수한다
+            log.warning("face_identity: crop upscale 실패(%s) — Lanczos 로 간다", type(exc).__name__)
+            return None
+        with Image.open(BytesIO(data)) as im:
+            im.load()
+            return im.convert("RGB")
 
     def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image:
         import httpx
@@ -956,6 +1055,7 @@ def run_face_pass(
     model_dir: str | None = None,
     mime: str = "image/png",
     references=None,
+    crop_upscale: bool = True,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -975,7 +1075,11 @@ def run_face_pass(
         meta.update(plan.to_meta())
         prompt = build_prompt(plan, expression, token=token)
         meta["prompt"] = prompt
-        control = build_control(original, plan)
+        # 크롭은 **한 번만** 만든다 — control 과 합성 바탕이 같은 픽셀이어야 한다(확대기를 쓰면 특히).
+        crop, umeta = crop_1024_with_meta(original, plan,
+                                          upscaler=backend_upscaler(backend, crop_upscale))
+        meta["crop_upscale"] = umeta
+        control = build_control(original, plan, crop=crop)
         streak_reason, streak = None, 0
         for seed in seeds:
             if streak >= GATE_SAME_REASON_STOP:
@@ -986,7 +1090,7 @@ def run_face_pass(
             meta["attempts"] += 1
             t1 = time.perf_counter()
             generated = backend.render(control, prompt, int(seed))
-            result, cmeta = composite_with_meta(original, generated, plan, feather=feather)
+            result, cmeta = composite_with_meta(original, generated, plan, feather=feather, crop=crop)
             gate = evaluate_gate(plan, result, model_dir, references=references,
                                  color_ring_mean=cmeta.get("color_shift"))
             meta["tries"].append({
@@ -1044,6 +1148,10 @@ class FaceIdentitySpec:
     #: 이 잡이 쓸 렌더 서비스 URL. DB 의 현재 파드에서 유도된 값이고, 없으면 설정값을 쓴다
     #: (파드는 재고 때문에 바뀔 수 있어 매니페스트 값만으로는 못 따라간다).
     backend_url: str | None = None
+    #: 동일인 검사 기준 — 승인된 기준 사진(face_front)의 SFace 임베딩들. None 이면 게이트가 신원을
+    #: 보지 않는다(identity=None). 워커가 with_references 로 채운다 — 이게 빠지면 얼굴이 바뀌었는지
+    #: 기하·색만 보고 통과시킨다(2026-09-11 잡 6c270b84: applied 3컷 전부 identity=None).
+    references: tuple[tuple[float, ...], ...] | None = None
 
 
 def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
@@ -1066,6 +1174,31 @@ def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
         str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN,
         sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None,
         backend_url=str(backend).strip() if isinstance(backend, str) and backend.strip() else None)
+
+
+def reference_embeddings(images, model_dir: str | None = None) -> tuple[tuple[float, ...], ...]:
+    """승인된 기준 사진 바이트들 → SFace 임베딩 튜플. 디코드 실패·얼굴 미검출 사진은 건너뛴다(경고만).
+
+    값은 float 튜플이다 — spec 은 frozen dataclass 라 해시 가능한 값만 둔다. 게이트는 np.asarray 로 되돌린다.
+    """
+    out: list[tuple[float, ...]] = []
+    for index, data in enumerate(images):
+        try:
+            image = _decode(data)
+            det = detect_face(image, model_dir)
+            if det is None:
+                log.warning("face_identity: reference %d has no detectable face — skipped", index)
+                continue
+            out.append(tuple(float(v) for v in face_embedding(image, det, model_dir)))
+        except Exception as exc:  # noqa: BLE001 — 기준 한 장이 깨져도 얼굴 패스 자체는 막지 않는다
+            log.warning("face_identity: reference %d unusable (%s) — skipped", index, type(exc).__name__)
+    return tuple(out)
+
+
+def with_references(spec: FaceIdentitySpec, images, model_dir: str | None = None) -> FaceIdentitySpec:
+    """spec 에 기준 임베딩을 붙인 사본. 쓸 수 있는 기준이 하나도 없으면 references=None 그대로."""
+    refs = reference_embeddings(images, model_dir)
+    return replace(spec, references=refs) if refs else spec
 
 
 def resolve_lora_file(spec: FaceIdentitySpec, base: str | None) -> str:
@@ -1167,8 +1300,22 @@ def _health_url_from(spec: FaceIdentitySpec, settings) -> str | None:
     return f"{base}/healthz"
 
 
+def healthz_ready(payload: dict) -> bool:
+    """렌더 서비스 /healthz 본문 → 준비됐는가. **베이스 모델이 올라와 있으면** 준비다(base_loaded).
+
+    loaded 는 "이 LoRA 를 붙여 지금 렌더 가능"이라 캐시가 빈 새 파드에서는 첫 렌더가 끝나야 true 다 —
+    그걸 준비 조건으로 쓰면 첫 컷이 영원히 기다린다(2026-09-11 실측). base_loaded 를 아직 안 주는
+    예전 묶음의 파드는 loaded 로 본다.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "base_loaded" in payload:
+        return bool(payload.get("base_loaded"))
+    return bool(payload.get("loaded"))
+
+
 def _probe_ready(url: str, timeout: float = 5.0) -> bool:
-    """파드가 렌더할 준비가 됐는가. 연결 거부·503·loaded=false 는 전부 '아직'."""
+    """파드가 렌더할 준비가 됐는가. 연결 거부·503·base_loaded=false 는 전부 '아직'(healthz_ready)."""
     import httpx
 
     try:
@@ -1178,7 +1325,7 @@ def _probe_ready(url: str, timeout: float = 5.0) -> bool:
     if res.status_code != 200:
         return False
     try:
-        return bool(res.json().get("loaded"))
+        return healthz_ready(res.json())
     except Exception:  # noqa: BLE001
         return False
 
@@ -1259,12 +1406,25 @@ def _note_fallback(reason: str) -> None:
         FALLBACK_ALERT_WINDOW_SECONDS // 60, len(recent))
 
 
+#: 설계상 건너뜀 — prepare_image 가 렌더 전에 내리는 판정(얼굴 없음·너무 작음·측면). 그림의 성질이지
+#: 파드 장애가 아니다. 렌더를 부르지 않았으니 tries 는 비어 있다 — "렌더 자체 실패"와 같은 모양이라
+#: 이 목록으로 구분한다(2026-09-11 잡 6c270b84 옆모습 컷: yaw 를 backend_error 로 적고 재실행까지 했다).
+SKIP_REASONS = ("no_face", "too_small", "yaw")
+
+
+def skipped_reason(result: FacePassResult) -> str | None:
+    """설계상 건너뜀이면 그 사유, 아니면 None."""
+    if result.applied:
+        return None
+    reason = str(result.meta.get("skipped_reason") or result.meta.get("reason") or "")
+    return reason if reason in SKIP_REASONS else None
+
+
 def _outcome_reason(result: FacePassResult) -> str:
     """폴백 사유를 메타에서 읽는다 — 셀러 화면이 아니라 우리가 보는 기록용."""
-    reason = str(result.meta.get("reason") or "")
-    if reason in ("no_face", "yaw"):
-        return "no_face"
-    return "gate_failed"
+    if result.meta.get("tries"):
+        return "gate_failed"
+    return "backend_error"
 
 
 async def apply_face_pass(
@@ -1283,12 +1443,25 @@ async def apply_face_pass(
     가끔 쓰는 셀러에게는 그게 사실상 항상이다. 그래서 렌더 전에 파드를 기다리고(최대
     FACE_PASS_WAIT_SECONDS), 그 사이 파드가 바뀌면 새 주소로 간다(url_provider).
 
-    outcome 이 오면 결과를 적는다: "applied" 또는 "fallback:<reason>"
-    (pod_not_ready · backend_error · gate_failed · no_face).
+    outcome 이 오면 결과를 적는다:
+      "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다)
+      · "fallback:<reason>"(pod_not_ready · backend_error · gate_failed).
     """
     def _record(value: str) -> None:
         if outcome is not None:
             outcome["face_pass"] = value
+
+    def _record_recipe(meta: dict | None = None) -> None:
+        """이 컷이 어떤 레시피로 나왔나. 픽셀로는 못 되짚으므로(GPU 마다 다름) 상수 해시를 남긴다."""
+        if outcome is None:
+            return
+        from . import face_recipe
+
+        scope = (face_recipe.UPSCALE_SCOPE_FACE_CROP
+                 if (meta or {}).get("crop_upscale", {}).get("applied")
+                 else face_recipe.UPSCALE_SCOPE_OFF)
+        outcome["face_recipe"] = face_recipe.recipe_id(
+            face_recipe.recipe_fields(lora_sha256=spec.sha256, upscale_scope=scope))
 
     def _run(live_spec: FaceIdentitySpec):
         backend = resolve_backend(settings, live_spec)
@@ -1299,6 +1472,8 @@ async def apply_face_pass(
             token=live_spec.token,
             model_dir=getattr(settings, "fm_face_qc_dir", None),
             mime=mime,
+            references=live_spec.references,      # 없으면 None — 게이트가 신원을 보지 않는다
+            crop_upscale=bool(getattr(settings, "face_crop_upscale", True)),
         )
 
     render_url = await wait_for_backend(settings, spec, url_provider)
@@ -1317,6 +1492,13 @@ async def apply_face_pass(
     result = await task
     log.info("face_identity applied=%s meta=%s", result.applied, _meta_for_log(result.meta))
 
+    skipped = skipped_reason(result)
+    if skipped is not None:
+        # 렌더 전에 그림을 보고 내린 판정이다 — 파드 기억을 지우지도, 다시 돌리지도, 알리지도 않는다.
+        # 같은 그림을 다시 돌려도 같은 답이고, 재대기는 컷마다 파드 확인 한 번을 더 낭비한다.
+        _record(f"skipped:{skipped}")
+        return result.image, result.mime
+
     if not result.applied and not result.meta.get("tries"):
         # 렌더 자체가 안 됐다(연결 오류·파드 재시작). 떠 있다는 기억을 버리고 한 번만 더 기다린다 —
         # 그 기억이 남아 있으면 파드가 죽은 10분 동안 모든 컷이 확인도 없이 폴백한다.
@@ -1331,8 +1513,9 @@ async def apply_face_pass(
 
     if result.applied:
         _record("applied")
+        _record_recipe(result.meta)      # 채택된 컷에만 — 폴백 컷은 얼굴 패스 산물이 아니다
     else:
-        reason = _outcome_reason(result) if result.meta.get("tries") else "backend_error"
+        reason = _outcome_reason(result)
         _record(f"fallback:{reason}")
         _note_fallback(reason)
     return result.image, result.mime

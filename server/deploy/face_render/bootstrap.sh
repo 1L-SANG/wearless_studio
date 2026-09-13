@@ -82,7 +82,35 @@ else
   say "가중치 있음 — 건너뜀"
 fi
 t2=$(date +%s); say "weights $((t2-t1))s"
-say "총 $((t2-t0))s"
+
+# ── 얼굴 크롭 확대기 가중치(RealESRGAN x4plus) ─────────────────────────────
+# 얼굴 1024² 크롭만 키우는 데 쓴다(사진 전체는 건드리지 않는다 — 옷 픽셀이 바뀐다).
+# ★ 없어도 서비스는 뜬다. 그때는 /upscale 이 503 을 돌려주고 호출자가 Lanczos 로 간다 —
+#   그래서 여기서 실패해도 exit 하지 않는다(확대기는 마감 개선이지 필수 경로가 아니다).
+ESRGAN_URL="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+ESRGAN_SHA256="4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+ESRGAN_PATH="$ROOT/weights/RealESRGAN_x4plus.pth"
+mkdir -p "$ROOT/weights"
+if [ "$(sha256sum "$ESRGAN_PATH" 2>/dev/null | cut -d' ' -f1)" = "$ESRGAN_SHA256" ]; then
+  say "esrgan 가중치 있음 — 건너뜀"
+else
+  say "esrgan 가중치 내려받기"
+  if curl -fsSL --max-time 300 -o "$ESRGAN_PATH.part" "$ESRGAN_URL"; then
+    got="$(sha256sum "$ESRGAN_PATH.part" | cut -d' ' -f1)"
+    if [ "$got" = "$ESRGAN_SHA256" ]; then
+      mv -f "$ESRGAN_PATH.part" "$ESRGAN_PATH"
+      say "esrgan 가중치 설치 완료($ESRGAN_SHA256)"
+    else
+      rm -f "$ESRGAN_PATH.part"
+      say "esrgan sha256 불일치 — 버린다(확대 없이 간다)"
+    fi
+  else
+    rm -f "$ESRGAN_PATH.part"
+    say "esrgan 내려받기 실패 — 확대 없이 간다"
+  fi
+fi
+t3=$(date +%s); say "esrgan $((t3-t2))s"
+say "총 $((t3-t0))s"
 
 # MEASURE (2026-09-11, H100 80GB SECURE · 224 vCPU · 컨테이너 디스크 100GB):
 #   venv+pip        20초

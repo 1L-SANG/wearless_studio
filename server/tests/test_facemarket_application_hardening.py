@@ -5,6 +5,8 @@
 얼굴 사진이 영구 잔존하거나(파기 영수증이 거짓이 된다), 이벤트 루프가 멈춘다.
 """
 import re
+import json
+import subprocess
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
@@ -229,23 +231,24 @@ def test_document_host_guard_normalizes_the_html_path_and_keeps_the_query():
 
 
 def test_hub_separates_blocked_from_no_application():
-    """차단된 사용자가 재지원해 under_review 가 되는 순간 '등록 이어가기'가 다시 떠서 가드에
-    막히는 왕복이 남았다. 차단 판정과 '지원서 없음' 판정은 분리해야 한다.
-
-    2026-09-04 허브 개편(타임라인)으로 문자열 판정(`const blocked = …`)이 사라지고 같은 규칙이
-    modelHubState.resolveHubJourney 의 **분기 순서**로 옮겨졌다. 왕복이 막히는 근거는 그 순서가
-    라우트 가드(modelSectionRoutes.RequireApprovedApplication)의 면제 목록과 일치한다는 것이다:
-    '등록 이어가기/시작하기'는 ① 진행 중 등록이 있거나 ② 모델이 pending·reverification_required
-    이거나 ③ 지원서가 approved 이거나 ④ 게이트가 꺼져 있을 때만 나오고, 그 넷은 전부 가드 면제다.
-    그 밖(예: 차단 상태에서 재지원해 under_review)은 지원서 분기로 떨어져 '지원 취소'를 준다.
-    행위 검증은 tests/frontend/facemarket-model-hub.test.mjs 가 표로 덮는다."""
-    # 진행 중 등록·레거시 모델 상태에서만 등록 경로를 준다(가드 면제 집합과 동일).
-    assert "if (enrollment) {" in HUB_STATE_JS
-    assert "['pending', 'reverification_required'].includes(ownedModel.status)" in HUB_STATE_JS
-    # 지원서 분기는 그 뒤에 오고, under_review 는 등록이 아니라 취소를 준다.
-    assert "return applicationJourney(application, applicationRequired);" in HUB_STATE_JS
-    assert "if (application?.status === 'under_review') {" in HUB_STATE_JS
-    assert "'지원 취소'" in HUB_STATE_JS
+    """재지원 검토 중인 정지 모델은 등록 화면을 왕복하지 않고 지원 검토를 봐요."""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", """
+        import { resolveHubJourney } from './src/features/model/modelHubState.js';
+        const journey = resolveHubJourney({
+          ownedModel: { id: 'm1', status: 'suspended' },
+          application: { status: 'under_review' },
+          applicationRequired: true,
+        });
+        console.log(JSON.stringify({mode:journey.mode, step:journey.step, action:journey.action}));
+        """],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True, capture_output=True, text=True,
+    )
+    assert json.loads(result.stdout) == {
+        "mode": "onboarding", "step": 0,
+        "action": {"label": "지원 취소", "kind": "cancel"},
+    }
     # 가드 면제 목록이 위 전제와 어긋나면 왕복이 되살아난다.
     routes_js = (
         Path(__file__).resolve().parents[2] / "src" / "apps" / "facemarket" / "modelSectionRoutes.jsx"

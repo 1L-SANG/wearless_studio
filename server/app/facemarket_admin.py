@@ -11,15 +11,18 @@ import base64
 import time
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
-from . import admin_guard
+from . import admin_guard, repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_admin_devices import revoke_devices_for_user
 from .models import CamelModel
+from .routes import _credit_error
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
 
@@ -248,7 +251,8 @@ def validate_model_status(status: str | None) -> str | None:
 
 
 LIST_MODELS_SQL = """
-select m.id::text as id, m.display_name, m.status, m.created_at,
+select m.id::text as id, m.display_name, m.status, m.suspension_source,
+       m.suspended_at, m.created_at,
        u.email as email,
        ap.contact_email as application_contact_email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
@@ -288,6 +292,8 @@ def _model_row(row: dict) -> dict:
         "id": row["id"],
         "displayName": row["display_name"],
         "status": row["status"],
+        "suspensionSource": row.get("suspension_source"),
+        "suspendedAt": row["suspended_at"].isoformat() if row.get("suspended_at") else None,
         "email": row.get("email"),
         # auth 이메일이 없을 때 화면이 보여줄 폴백(지원서 이메일) — 어디서 왔는지 구분할 수
         # 있게 별도 키로 내려준다. DETAIL_MODEL_SQL 에는 이 컬럼이 없어 .get() 이 None 을
@@ -314,7 +320,8 @@ async def list_models(conn, *, q: str | None, status: str | None, limit: int) ->
 # (select count(*) from fm_licenses l where ...) 안에 있어서, split("where")[0] 은 본문
 # where 가 아니라 서브쿼리 중간에서 잘린다. 전문을 따로 적는다.
 DETAIL_MODEL_SQL = """
-select m.id::text as id, m.display_name, m.status, m.created_at,
+select m.id::text as id, m.display_name, m.status, m.suspension_source,
+       m.suspended_at, m.created_at, m.gender, m.height_bucket, m.body_type,
        u.email as email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
        (select max(s.created_at) from fm_settlements s
@@ -326,8 +333,13 @@ where m.id = %(model_id)s
 """
 
 DETAIL_LICENSES_SQL = """
-select id::text as id, status, unit_price, license_valid_until, vc_id
-from fm_licenses where model_id = %(model_id)s order by created_at desc
+select l.id::text as id, l.status, l.unit_price, l.license_valid_until, l.vc_id,
+       l.allowed_use, l.created_at,
+       coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false) as opt_location_cuts,
+       coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false) as opt_lookbook_person_replace,
+       to_jsonb(l) ->> 'opt_consent_version' as opt_consent_version,
+       to_jsonb(l) ->> 'opt_consented_at' as opt_consented_at
+from fm_licenses l where l.model_id = %(model_id)s order by l.created_at desc
 """
 
 DETAIL_SETTLEMENTS_SQL = """
@@ -337,10 +349,88 @@ where l.model_id = %(model_id)s order by s.created_at desc limit 10
 """
 
 DETAIL_ENROLLMENT_SQL = """
-select id::text as id, status, completed_at
-from fm_biometric_enrollments where model_id = %(model_id)s
-order by created_at desc limit 1
+select e.id::text as id, e.status, e.completed_at, e.body_type, e.height_bucket,
+       (select count(distinct p.angle) from fm_biometric_enrollment_photos p
+        where p.enrollment_id = e.id and p.storage_state <> 'delete_pending') as photo_count
+from fm_biometric_enrollments e where e.model_id = %(model_id)s
+order by e.created_at desc limit 1
 """
+
+DETAIL_APPLICATION_SQL = """
+select a.id::text as id, a.status, a.contact_email, a.applicant_name, a.birthdate,
+       a.region, a.gender, a.height_cm, a.weight_kg, a.phone, a.experience_level,
+       a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
+       a.profile_image_r2_key, a.photo_keys, a.attestations, a.identity_mismatch_count,
+       a.reviewed_at, a.reject_reason, a.created_at,
+       a.privacy_consent_version, a.privacy_consented_at
+from fm_models m join fm_model_applications a on a.id = coalesce(
+    (select e.application_id from fm_biometric_enrollments e
+     where e.model_id = m.id and e.application_id is not null
+     order by (e.id = m.current_enrollment_id) desc nulls last, e.created_at desc limit 1),
+    (select ap.id from fm_model_applications ap where ap.user_id = m.user_id
+     order by ap.created_at desc limit 1)
+)
+where m.id = %(model_id)s
+"""
+
+DETAIL_PROFILE_SQL = """
+select p.height_cm, p.weight_kg, p.body_type, p.body_type_custom, p.gender, p.age_range,
+       p.skin_tone, p.hair, p.clothing_size, p.bust_cm, p.waist_cm, p.hip_cm,
+       p.hair_color, p.hair_length, p.eye_color
+from personalization_profiles p join fm_models m on p.user_id = m.user_id
+where m.id = %(model_id)s and p.status <> 'purged'
+order by p.created_at desc limit 1
+"""
+
+DETAIL_CONSENTS_SQL = """
+select coalesce(c.biometric_version, e.consent_version) as biometric_version,
+       coalesce(c.terms_version, e.terms_consent_version) as terms_version,
+       coalesce(c.overseas_version, e.overseas_consent_version) as overseas_version,
+       coalesce(c.accepted_at, e.consented_at) as accepted_at
+from fm_biometric_enrollments e
+left join fm_enrollment_consent_events c on c.enrollment_id = e.id
+where e.model_id = %(model_id)s
+order by accepted_at desc
+"""
+
+
+def _detail_application(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    from .facemarket_applications import ATTESTATION_KEYS, _application_view
+
+    # 기존 게이트 주소만 전달한다. 지원서/계정 ID와 저장소 키를 새 응답 필드로 공개하지 않는다.
+    view = _application_view(row).model_dump(mode="json", by_alias=True, exclude={"id"})
+    view["photoUris"] = {
+        kind: f"/v1/facemarket/admin/applications/{row['id']}/profile-image?kind={kind}"
+        for kind in view["photoKinds"]
+    }
+    view["attestations"] = {
+        key: value for key, value in (row.get("attestations") or {}).items()
+        if key in ATTESTATION_KEYS and isinstance(value, bool)
+    }
+    view["privacyConsentVersion"] = row.get("privacy_consent_version")
+    view["privacyConsentedAt"] = _detail_time(row.get("privacy_consented_at"))
+    return view
+
+
+def _detail_time(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _detail_profile(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    numbers = {"heightCm": "height_cm", "weightKg": "weight_kg", "bustCm": "bust_cm",
+               "waistCm": "waist_cm", "hipCm": "hip_cm"}
+    labels = {"bodyType": "body_type", "bodyTypeCustom": "body_type_custom", "gender": "gender",
+              "ageRange": "age_range", "skinTone": "skin_tone", "hair": "hair",
+              "clothingSize": "clothing_size", "hairColor": "hair_color",
+              "hairLength": "hair_length", "eyeColor": "eye_color"}
+    return {
+        **{key: float(row[column]) if row.get(column) is not None else None for key, column in numbers.items()},
+        **{key: row.get(column) for key, column in labels.items()},
+    }
 
 
 async def model_detail(conn, *, model_id: str) -> dict:
@@ -356,14 +446,34 @@ async def model_detail(conn, *, model_id: str) -> dict:
         settlements = await cur.fetchall() or []
         await cur.execute(DETAIL_ENROLLMENT_SQL, params)
         enrollment = await cur.fetchone()
+        await cur.execute(DETAIL_APPLICATION_SQL, params)
+        application = await cur.fetchone()
+        await cur.execute(DETAIL_PROFILE_SQL, params)
+        profile = await cur.fetchone()
+        await cur.execute(DETAIL_CONSENTS_SQL, params)
+        consents = await cur.fetchall() or []
 
     return {
-        "model": _model_row(model),
+        "model": {**_model_row(model), "gender": model.get("gender"),
+                  "heightBucket": model.get("height_bucket"), "bodyType": model.get("body_type")},
+        "application": _detail_application(application),
+        "profile": _detail_profile(profile),
+        "consentEvents": [
+            {"biometricVersion": row.get("biometric_version"), "termsVersion": row.get("terms_version"),
+             "overseasVersion": row.get("overseas_version"), "acceptedAt": _detail_time(row.get("accepted_at"))}
+            for row in consents
+        ],
         "licenses": [
             {
                 "id": r["id"], "status": r["status"], "unitPrice": r["unit_price"],
                 "validUntil": r["license_valid_until"].isoformat() if r.get("license_valid_until") else None,
                 "vcId": r.get("vc_id"),
+                "allowedUse": list(r.get("allowed_use") or []),
+                "createdAt": _detail_time(r.get("created_at")),
+                "optLocationCuts": bool(r.get("opt_location_cuts")),
+                "optLookbookPersonReplace": bool(r.get("opt_lookbook_person_replace")),
+                "optConsentVersion": r.get("opt_consent_version"),
+                "optConsentedAt": _detail_time(r.get("opt_consented_at")),
             }
             for r in licenses
         ],
@@ -379,6 +489,9 @@ async def model_detail(conn, *, model_id: str) -> dict:
             {
                 "id": enrollment["id"], "status": enrollment["status"],
                 "completedAt": enrollment["completed_at"].isoformat() if enrollment.get("completed_at") else None,
+                "photoCount": enrollment.get("photo_count", 0),
+                "bodyType": enrollment.get("body_type"),
+                "heightBucket": enrollment.get("height_bucket"),
             }
             if enrollment else None
         ),
@@ -412,12 +525,14 @@ class SuspendRequest(CamelModel):
     reason: str
 
 
-async def _model_status(cur, model_id: str) -> str:
-    await cur.execute("select status from fm_models where id = %s", (model_id,))
+async def _model_state(cur, model_id: str) -> dict:
+    await cur.execute(
+        "select status, suspension_source, suspended_at from fm_models where id = %s", (model_id,)
+    )
     row = await cur.fetchone()
     if row is None:
         raise _err("not_found", "모델을 찾을 수 없어요.", status=404)
-    return row["status"]
+    return row
 
 
 async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict:
@@ -425,21 +540,40 @@ async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict
     if not note:
         raise _err("reason_required", "정지 사유를 입력해 주세요.")
     async with conn.cursor() as cur:
-        previous = await _model_status(cur, model_id)
-        # 이미 정지된 모델을 또 정지시키면 이번 read 의 previous 가 'suspended' 가 되어,
-        # 감사 원장에 남을 before.status 가 진짜 이전 상태(예: verified)를 덮어써 버린다.
-        # 그러면 해제할 때 복원할 값 자체가 사라진다 — 여기서 미리 막는다.
-        if previous == "suspended":
+        state = await _model_state(cur, model_id)
+        previous = state["status"]
+        # 관리자 정지는 중복 적용하지 않는다. 다만 본인이 활동을 멈춘 상태라면 운영 정지로
+        # 승격하고, 원래 본인 중단 시각과 출처를 감사 원장에 보존해 해제 때 되돌린다.
+        owner_pause = previous == "suspended" and state.get("suspension_source") == "owner"
+        if previous == "suspended" and not owner_pause:
             raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
         # 가드 UPDATE — where 에 방금 읽은 이전 상태를 그대로 건다(admin_approve_application
         # 과 같은 낙관적 동시성 모양). 그 사이 다른 요청이 상태를 바꿨으면(동시 정지) 0-row 가
         # 되어 충돌로 걸린다. 안 걸면 두 요청 다 "성공"한 것처럼 보이면서 감사 원장의 before
         # 중 하나는 거짓이 되고, 그 거짓 값이 나중에 해제가 복원할 상태가 되어 버린다.
-        await cur.execute(
-            "update fm_models set status = 'suspended', updated_at = now() "
-            "where id = %s and status = %s returning 1",
-            (model_id, previous),
-        )
+        if owner_pause:
+            await cur.execute(
+                "update fm_models set suspension_source = 'admin', suspended_at = now(), "
+                "updated_at = now() where id = %s and status = 'suspended' "
+                "and suspension_source = 'owner' returning 1",
+                (model_id,),
+            )
+            paused_at = state.get("suspended_at")
+            before = {
+                "status": "suspended",
+                "suspensionSource": "owner",
+                "suspendedAt": (
+                    paused_at.isoformat() if hasattr(paused_at, "isoformat") else paused_at
+                ),
+            }
+        else:
+            await cur.execute(
+                "update fm_models set status = 'suspended', suspension_source = 'admin', "
+                "suspended_at = now(), updated_at = now() "
+                "where id = %s and status = %s returning 1",
+                (model_id, previous),
+            )
+            before = {"status": previous}
         if await cur.fetchone() is None:
             raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
     await admin_guard.write_audit(
@@ -448,8 +582,8 @@ async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict
         action="model.suspend",
         target_type="model",
         target_id=model_id,
-        before={"status": previous},
-        after={"status": "suspended"},
+        before=before,
+        after={"status": "suspended", "suspensionSource": "admin"},
         note=note,
     )
     return {"id": model_id, "status": "suspended"}
@@ -463,31 +597,52 @@ async def unsuspend_model(conn, *, model_id: str, actor: str) -> dict:
     정지 직전 값만 복원한다. 기록이 없으면(콘솔 밖에서 정지된 경우) pending 으로 내린다.
     """
     async with conn.cursor() as cur:
-        current = await _model_status(cur, model_id)
+        state = await _model_state(cur, model_id)
+        current = state["status"]
         if current != "suspended":
             raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
+        if state.get("suspension_source") == "owner":
+            raise _err(
+                "not_admin_suspended", "본인이 일시 중단한 모델은 관리자 정지 해제 대상이 아니에요.",
+                status=409,
+            )
         await cur.execute(
-            "select before->>'status' as prev from admin_audit_log "
+            "select before->>'status' as prev, "
+            "before->>'suspensionSource' as prev_source, "
+            "before->>'suspendedAt' as prev_suspended_at from admin_audit_log "
             "where action = 'model.suspend' and target_type = 'model' and target_id = %s "
             "order by created_at desc limit 1",
             (model_id,),
         )
         row = await cur.fetchone()
         restored = (row or {}).get("prev")
+        restore_owner_pause = (
+            restored == "suspended" and (row or {}).get("prev_source") == "owner"
+        )
         # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이
         # 터진다. reverification_required 도 정지 직전 값일 수 있다(생체 재검증 대기 중
         # 정지된 모델) — 원장에 있던 값을 그대로 되돌리는 것뿐이라 verified 창조 금지 규칙에
         # 걸리지 않는다.
-        if restored not in RESTORABLE_MODEL_STATUSES:
+        if not restore_owner_pause and restored not in RESTORABLE_MODEL_STATUSES:
             restored = "pending"
         # 가드 UPDATE — suspend 와 같은 이유다. 방금 확인한 'suspended' 를 where 에 다시
         # 건다: 그 사이 다른 요청이 먼저 해제했으면(동시 해제) 0-row 로 걸려 조용한 이중
         # 성공을 막는다.
-        await cur.execute(
-            "update fm_models set status = %s, updated_at = now() "
-            "where id = %s and status = 'suspended' returning 1",
-            (restored, model_id),
-        )
+        if restore_owner_pause:
+            await cur.execute(
+                "update fm_models set status = 'suspended', suspension_source = 'owner', "
+                "suspended_at = %s::timestamptz, updated_at = now() "
+                "where id = %s and status = 'suspended' and suspension_source = 'admin' "
+                "returning 1",
+                ((row or {}).get("prev_suspended_at"), model_id),
+            )
+        else:
+            await cur.execute(
+                "update fm_models set status = %s, suspension_source = null, "
+                "suspended_at = null, updated_at = now() "
+                "where id = %s and status = 'suspended' returning 1",
+                (restored, model_id),
+            )
         if await cur.fetchone() is None:
             raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
     await admin_guard.write_audit(
@@ -521,6 +676,159 @@ async def admin_unsuspend_model(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id, request)
         result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+# ---------- 사용 기록 신고 ----------
+USAGE_REPORT_STATUSES = ("open", "closed")
+DEFAULT_USAGE_REPORT_LIMIT = 100
+
+
+class UsageReportStatusRequest(CamelModel):
+    status: Literal["open", "closed"]
+
+
+def validate_usage_report_status(status: str | None) -> str | None:
+    if status in (None, "", "all"):
+        return None
+    if status not in USAGE_REPORT_STATUSES:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+    return status
+
+
+LIST_USAGE_REPORTS_SQL = """
+select r.id::text as id, r.settlement_id::text as settlement_id,
+       r.model_id::text as model_id, r.reason, r.status, r.created_at,
+       st.payment_id, m.display_name as model_name
+from fm_usage_reports r
+join fm_settlements st on st.id = r.settlement_id
+left join fm_models m on m.id = r.model_id
+where (%(status)s::text is null or r.status = %(status)s)
+  and (%(cursor_created)s::timestamptz is null
+       or (r.created_at, r.id) < (%(cursor_created)s::timestamptz, %(cursor_id)s::uuid))
+order by r.created_at desc, r.id desc
+limit %(limit)s
+"""
+
+
+def decode_usage_report_cursor(cursor: str | None) -> tuple[datetime | None, str | None]:
+    if cursor is None:
+        return None, None
+    try:
+        raw = base64.b64decode(cursor, altchars=b"-_", validate=True).decode()
+        created_raw, report_id = raw.split("|", 1)
+        created = datetime.fromisoformat(created_raw)
+        if created.utcoffset() is None:
+            raise ValueError("timezone required")
+        return created, str(uuid.UUID(report_id))
+    except (ValueError, UnicodeError):
+        raise _err("invalid_cursor", "목록 위치 정보가 올바르지 않아요.") from None
+
+
+def _usage_report_row(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "settlementId": row["settlement_id"],
+        "paymentId": row["payment_id"],
+        "modelId": row["model_id"],
+        "modelName": row.get("model_name"),
+        "reason": row.get("reason"),
+        "status": row["status"],
+        "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+async def list_usage_reports(
+    conn, *, status: str | None, limit: int, cursor: str | None
+) -> dict:
+    normalized_status = validate_usage_report_status(status)
+    cursor_created, cursor_id = decode_usage_report_cursor(cursor)
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_USAGE_REPORTS_SQL, {
+            "status": normalized_status,
+            "cursor_created": cursor_created,
+            "cursor_id": cursor_id,
+            "limit": limit + 1,
+        })
+        rows = await cur.fetchall() or []
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(
+            f"{last['created_at'].isoformat()}|{last['id']}".encode()
+        ).decode()
+    return {"items": [_usage_report_row(row) for row in page], "nextCursor": next_cursor}
+
+
+async def update_usage_report_status(
+    conn, *, report_id: str, actor: str, status: str
+) -> dict:
+    try:
+        report_id = str(uuid.UUID(report_id))
+    except ValueError:
+        raise _err("invalid_report_id", "신고 번호가 올바르지 않아요.") from None
+    normalized_status = validate_usage_report_status(status)
+    if normalized_status is None:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select status from fm_usage_reports where id = %s for update",
+            (report_id,),
+        )
+        current = await cur.fetchone()
+        if current is None:
+            raise _err("not_found", "신고를 찾을 수 없어요.", status=404)
+        previous = current["status"]
+        if previous == normalized_status:
+            return {"id": report_id, "status": normalized_status}
+        await cur.execute(
+            "update fm_usage_reports set status = %s where id = %s",
+            (normalized_status, report_id),
+        )
+
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="usage_report.status.update",
+        target_type="usage_report",
+        target_id=report_id,
+        before={"status": previous},
+        after={"status": normalized_status},
+    )
+    return {"id": report_id, "status": normalized_status}
+
+
+@router.get("/usage-reports")
+async def admin_list_usage_reports(
+    request: Request,
+    status: str | None = Query(None),
+    limit: int = Query(DEFAULT_USAGE_REPORT_LIMIT, ge=1, le=MAX_LIST_LIMIT),
+    cursor: str | None = Query(None, max_length=256),
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        return JSONResponse(
+            await list_usage_reports(conn, status=status, limit=limit, cursor=cursor),
+            headers={"Cache-Control": "no-store"},
+        )
+
+
+@router.patch("/usage-reports/{report_id}")
+async def admin_update_usage_report_status(
+    request: Request,
+    report_id: str,
+    body: UsageReportStatusRequest,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        result = await update_usage_report_status(
+            conn, report_id=report_id, actor=user_id, status=body.status,
+        )
         await conn.commit()
     return JSONResponse(result)
 
@@ -832,6 +1140,81 @@ async def admin_list_users(
         )
         await conn.commit()
     return JSONResponse(result)
+
+
+class CreditGrantRequest(BaseModel):
+    plan_code: str = Field(min_length=1)
+    payer_name: str = Field(min_length=1)
+    amount_krw: int = Field(ge=0, strict=True)
+    paid_at: str
+    note: str | None = None
+
+    @field_validator("payer_name")
+    @classmethod
+    def validate_payer_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("입금자명을 입력해 주세요.")
+        return value
+
+    @field_validator("paid_at")
+    @classmethod
+    def validate_paid_at(cls, value: str) -> str:
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError("입금일은 ISO 날짜 또는 일시로 입력해 주세요.")
+        return value
+
+
+class CreditGrantResponse(CamelModel):
+    credit_source_id: str
+    payment_id: str | None = None
+    credits: int
+    available: int
+    idempotent: bool | None = None
+
+
+@router.post(
+    "/users/{user_id}/credits/grants",
+    response_model=CreditGrantResponse,
+    response_model_exclude_unset=True,
+)
+async def admin_grant_credits(
+    request: Request,
+    user_id: uuid.UUID,
+    body: CreditGrantRequest,
+    actor_user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, actor_user_id, request)
+        target_user_id = str(user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select p.user_id::text as user_id "
+                "from profiles p join auth.users u on u.id = p.user_id "
+                "where p.user_id = %s",
+                (target_user_id,),
+            )
+            if await cur.fetchone() is None:
+                raise _err("user_not_found", "사용자를 찾을 수 없어요.", 404)
+        try:
+            # repo가 대상 사용자 스코프를 붙인다. 다른 지급 경로와 키를 분리한다.
+            scoped_key = f"admin-grant:{idempotency_key}" if idempotency_key else None
+            result = await repo.purchase_topup(
+                conn, user_id=target_user_id, plan_code=body.plan_code,
+                idempotency_key=scoped_key, provider="bank_transfer",
+                provider_ref=f"{body.payer_name}/{body.paid_at}",
+                metadata={"granted_by": actor_user_id, "payer_name": body.payer_name,
+                          "amount_krw": body.amount_krw, "paid_at": body.paid_at,
+                          "note": body.note},
+            )
+        except repo.CreditError as e:
+            if e.code == "unknown_plan":
+                raise _credit_error(repo.CreditError(e.code, e.message, 400))
+            raise _credit_error(e)
+        await conn.commit()
+    return result
 
 
 @router.get("/audit")

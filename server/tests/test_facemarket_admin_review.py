@@ -19,7 +19,10 @@ import pytest
 from app import facemarket_enrollment, facemarket_id_document
 from app.agents.face_qc import QcFailed
 
-ANGLES = facemarket_enrollment.ANGLES
+# #285 가 사진 슬롯을 3각도 → 18장으로 넓히면서 이 상수를 LEGACY_ANGLES 로 개명했다.
+# 이 파일은 세 각도(레거시 행)만 심는 지름길을 쓰므로 그 이름을 따라간다 —
+# resolve_photo_rows 가 face01/face03/face05 요구를 front/angle45/side 행으로 채워 준다.
+ANGLES = facemarket_enrollment.LEGACY_ANGLES
 PORTRAIT_HEX = (b"\xff\xd8\xff" + b"portrait-bytes").hex()
 
 
@@ -175,6 +178,12 @@ def _setup(
         fm_liveness_enabled=False,
         fm_retouched_live_threshold=0.15,
         fm_side_live_threshold=0.10,
+        # #285 이후 얼굴 매칭은 기본 off 다 — advisory 점수가 이 파일의 검증 대상이므로 켠다.
+        fm_face_match_enabled=True,
+        # 같은 PR 이 필수 사진을 18장으로 늘렸다. 이 파일은 /complete 하나만 보므로
+        # 자산 소스 3슬롯만 요구하게 좁히고, 레거시 3각도 행으로 그 3슬롯을 채운다.
+        fm_photo_slots=("face01", "face03", "face05"),
+        fm_required_slot_count=3,
     )
     overrides.update(settings_overrides)
     client, store, settings = enrollment_client_factory(**overrides)

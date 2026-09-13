@@ -123,7 +123,7 @@ class FakeCursor:
                     )
                     and candidate.get("license_status") == "active"
                     and candidate.get("vc_id")
-                    and candidate.get("license_valid_until") > NOW
+                    and (candidate.get("license_valid_until") is None or candidate["license_valid_until"] > NOW)
                 ]
                 self.many = sorted(
                     eligible, key=lambda item: item["confirmed_at"], reverse=True
@@ -152,7 +152,7 @@ class FakeCursor:
                 "ready_to_send": (
                     self.store["enrollment"]["status"] == "passed"
                     and self.store["license_active"]
-                    and self.store["license"]["license_valid_until"] > NOW
+                    and (self.store["license"]["license_valid_until"] is None or self.store["license"]["license_valid_until"] > NOW)
                 ),
                 "sendable": (
                     model["status"] in {"pending", "awaiting_confirm", "reverification_required"}
@@ -179,7 +179,7 @@ class FakeCursor:
                     "fullbody_image_url": model.get("fullbody_image_url"),
                     "has_active_license": (
                         self.store["license_active"]
-                        and self.store["license"]["license_valid_until"] > NOW
+                        and (self.store["license"]["license_valid_until"] is None or self.store["license"]["license_valid_until"] > NOW)
                     ),
                 }
         elif (
@@ -253,7 +253,7 @@ class FakeCursor:
                 "license_ok": (
                     model["id"] == params[0]
                     and self.store["license_active"]
-                    and self.store["license"]["license_valid_until"] > NOW
+                    and (self.store["license"]["license_valid_until"] is None or self.store["license"]["license_valid_until"] > NOW)
                 )
             }
         elif query.startswith("update fm_models set status = 'awaiting_confirm'"):
@@ -989,7 +989,8 @@ def test_model_confirm_deletes_both_public_images_when_commit_fails(test_cut_api
     assert all(cut["approved"] is None for cut in store["cuts"])
 
 
-def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
+@pytest.mark.parametrize("valid_until, valid_days", [(None, None), (LICENSE_VALID_UNTIL, 365)])
+def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api, valid_until, valid_days):
     client, store, _face_r2, _public_r2, _make_token = test_cut_api
     eligible = {
         "id": MODEL_ID,
@@ -1001,8 +1002,8 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "allowed_use": ["상의", "아우터"],
         "forbidden_use": ["속옷", "수영복"],
         "unit_price": 14900,
-        "license_valid_until": LICENSE_VALID_UNTIL,
-        "license_valid_days": 365,
+        "license_valid_until": valid_until,
+        "license_valid_days": valid_days,
         "status": "verified",
         "confirmed_at": NOW,
         "cover_image_url": f"facemarket/catalog/models/{MODEL_ID}/covers/closeup.webp",
@@ -1045,8 +1046,8 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
             "allowedUse": ["상의", "아우터"],
             "forbiddenUse": [],
             "unitPrice": 14900,
-            "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
-            "validDays": 365,
+            "validUntil": valid_until.isoformat().replace("+00:00", "Z") if valid_until else None,
+            "validDays": valid_days,
         },
         "closeupImageUrl": f"https://assets.example/{eligible['cover_image_url']}",
         "fullbodyImageUrl": f"https://assets.example/{eligible['fullbody_image_url']}",

@@ -60,9 +60,9 @@ public class IssueVcService {
     private static final String MDL_NS = "org.iso.18013.5.1";
     // FaceLicense(선택과제1 커스텀 VC) — scripts/issuer-provision-facelicense.sh 로 프로비저닝.
     // vc_plan_id 컬럼 = varchar(20) → plan 은 정확히 20자.
-    private static final String FL_PLAN = "vcplanface0000000001";
-    private static final String FL_SCHEMA = "facelicense";
-    private static final String FL_NS = "kr.wearless.facelicense";
+    private static final String FL_PLAN = "vcplanface0000000002";
+    private static final String FL_SCHEMA = "facelicense-v2";
+    private static final String FL_NS = "kr.wearless.facelicense.v2";
 
     private static final String ISSUER_DID = "did:omn:issuer";
     private static final String CAS_DID = "did:omn:cas";
@@ -117,6 +117,9 @@ public class IssueVcService {
         String walletDid = wallets.readDid(modelId);
         String userDid = wallets.readUserDid(modelId);
         String walletId = wallets.walletId(modelId);
+        if (FL_SCHEMA.equals(plan.vcSchemaId()) && !request.claims().modelDid().equals(userDid)) {
+            throw new IllegalArgumentException("modelDid does not match the registered wallet");
+        }
 
         // 발급 전 모델별 Issuer user upsert(멱등). ISSUER_INIT 플랜은 발급 시 (pii, vcSchemaId)로 user 를
         // 조회해 credentialSubject 를 채운다 → 임의 모델도 수동 프로비저닝 없이 동작. pii = TAS user.pii.
@@ -227,22 +230,28 @@ public class IssueVcService {
         String plan = (request == null || request.plan() == null) ? "mdl"
                 : request.plan().trim().toLowerCase();
 
-        if ("facelicense".equals(plan)) {
+        if (FL_SCHEMA.equals(plan)) {
             IssueVcDtos.Claims c = request.claims();
             if (c == null) {
-                throw new IllegalArgumentException("plan=facelicense requires a claims object");
+                throw new IllegalArgumentException("plan=facelicense-v2 requires a claims object");
             }
             Map<String, String> ui = new LinkedHashMap<>();
-            putClaim(ui, FL_NS + ".allowed_use", c.allowedUse());
-            putClaim(ui, FL_NS + ".forbidden_use", c.forbiddenUse());
-            putClaim(ui, FL_NS + ".unit_price", c.unitPrice() == null ? null : String.valueOf(c.unitPrice()));
-            putClaim(ui, FL_NS + ".license_valid_until", c.licenseValidUntil());
+            putClaim(ui, FL_NS + ".model_did", c.modelDid());
+            putClaim(ui, FL_NS + ".license_id", c.licenseId());
+            putClaim(ui, FL_NS + ".issued_at", c.issuedAt());
             putClaim(ui, FL_NS + ".face_image_digest", c.faceImageDigest());
-            putClaim(ui, FL_NS + ".model_name", c.modelName());
-            return new ResolvedPlan(FL_PLAN, FL_SCHEMA, ui, "FaceLicense");
+            putClaim(ui, FL_NS + ".agreement_version", c.agreementVersion());
+            putClaim(ui, FL_NS + ".consent_doc_version", c.consentDocVersion());
+            java.time.Instant.parse(c.issuedAt());
+            String licenseId = java.util.UUID.fromString(c.licenseId()).toString();
+            if (!licenseId.equals(c.licenseId())
+                    || !("fm-license:" + licenseId).equals(request.idempotencyKey())) {
+                throw new IllegalArgumentException("licenseId does not match the idempotency key");
+            }
+            return new ResolvedPlan(FL_PLAN, FL_SCHEMA, ui, "FaceLicense v2");
         }
         if (!"mdl".equals(plan)) {
-            throw new IllegalArgumentException("unknown plan '" + plan + "' (expected 'mdl' or 'facelicense')");
+            throw new IllegalArgumentException("unknown plan (expected mdl or facelicense-v2)");
         }
         // MDL — 기존 동작(데모 placeholder claim). Issuer user 는 이 값으로 멱등 upsert.
         Map<String, String> ui = new LinkedHashMap<>();
@@ -253,7 +262,10 @@ public class IssueVcService {
     }
 
     private static void putClaim(Map<String, String> map, String key, String value) {
-        if (value != null) map.put(key, value);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("immutable FaceLicense claim is required: " + key);
+        }
+        map.put(key, value);
     }
 
     /**
