@@ -509,7 +509,10 @@ export function ModelRegister() {
       {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span></li>)}</ol></nav>}
       {error && step !== '4c' && <p className={s.error} role="alert">{error}</p>}
       {content}
-      <div id="oacxDiv" />
+      {/* 위젯이 붙을 빈 호스트. React 는 이 안을 절대 안 본다 — #oacxDiv 는
+          facemarketIdentityWidget 이 직접 만들어 넣는다(oacxHost.js 참고).
+          React 가 #oacxDiv 를 그리면 Vue 가 그걸 교체할 때 형제 앵커가 깨져 앱이 죽는다. */}
+      <div id="oacxHost" />
     </div>
     {/* 이전만 있는 화면(수단 선택·신분증 촬영)도 푸터를 그려요 — 다음 동작은 화면 안에 있어요. */}
     {(next || previous) && <footer className={s.bottomBar}>{next?.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}{next && <button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button>}</div></div></footer>}
