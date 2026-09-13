@@ -175,11 +175,71 @@ async def resolve_real_model_assets(
     return out
 
 
+#: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — 18슬롯 등록의 face01~face08.
+IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = tuple(f"face{i:02d}" for i in range(1, 9))
+#: 옛 3장 등록에서 기준으로 쓰지 않는 각도. resolve_photo_rows 는 side 를 face05 자리로 올려 주는데,
+#: 옆얼굴은 SFace(정면 임베딩)에서 같은 사람이라도 점수가 낮게 나와 중앙값을 통째로 끌어내린다.
+#: 18슬롯 등록의 face05 는 그대로 쓴다 — 여기서 거르는 건 **옛 별칭 행**뿐이다.
+_LEGACY_SLOTS_NOT_A_REFERENCE = ("side",)
+#: 기준 사진으로 쓸 수 있는 저장 상태. 승인 전(quarantine)도 기준으로는 유효하다 — 게이트는
+#: "같은 사람인가"만 보고, 공개 자산 승인과는 다른 판단이다.
+_REFERENCE_STORAGE_STATES = ("quarantine", "approved")
+
+
+async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8) -> list[bytes]:
+    """동일인 검사 기준셋 = 등록 얼굴 사진 **여러 장**(face01~face08 중 있는 것).
+
+    왜 여러 장인가(2026-09-13 실측): 기준을 승인 자산 face_front **한 장**으로 쓰면 그 한 장의
+    촬영 조건이 곧 기준이 된다. 같은 사람인데도
+      · 등록 face_front(9/2) vs 실제 사진(9/11) 중앙 0.586~0.665
+      · 테스트컷 vs face_front 0.51~0.60 인데 vs 9/11 기준셋은 0.70~0.77
+    로 갈렸다 — 얼굴이 아니라 **조명·카메라가 다른 날** 이 점수를 갈랐다. 여러 장의 중앙값을 쓰면
+    한 장의 촬영 조건이 문턱을 대신 정하는 일이 없어진다(identity_score 가 중앙값을 쓴다).
+
+    읽을 수 없으면 [] — 호출자는 그때 기존 한 장 경로로 폴백한다. 기준이 없으면 게이트가
+    신원을 보지 않는다(identity=None). 얼굴 패스 자체는 어떤 경우에도 막지 않는다.
+    """
+    r2_face = getattr(app.state, "r2_face", None)
+    if r2_face is None:
+        return []
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return []
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select p.angle, p.r2_key, p.qc_status, p.storage_state "
+                "from fm_biometric_enrollment_photos p "
+                "join fm_models m on m.current_enrollment_id = p.enrollment_id "
+                "where m.id = %s", (model_id,))
+            rows = await cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — 기준을 못 읽으면 폴백한다(컷을 막지 않는다)
+        log.warning("enrollment reference photos lookup failed for %s: %r", model_id, exc)
+        return []
+    usable = [r for r in resolve_photo_rows(rows, IDENTITY_REFERENCE_SLOTS)
+              if r.get("angle") not in _LEGACY_SLOTS_NOT_A_REFERENCE
+              and r.get("qc_status") == "passed"
+              and r.get("storage_state") in _REFERENCE_STORAGE_STATES
+              and str(r.get("r2_key") or "").strip()]
+    out: list[bytes] = []
+    for row in usable[:limit]:
+        try:
+            out.append(await asyncio.to_thread(r2_face.get_bytes, row["r2_key"]))
+        except Exception as exc:  # noqa: BLE001 — 한 장이 없어도 나머지로 간다
+            log.info("reference photo unavailable (%s) — skipped", type(exc).__name__)
+    log.info("identity reference photos for %s: %d/%d usable", model_id, len(out), len(usable))
+    return out
+
+
 async def reference_face_bytes(app, conn, model_id: str, license_row) -> list[bytes]:
-    """동일인 검사 기준 = 승인된 face_front 한 장(비공개 face 버킷). 핀이 안 맞거나 저장소가 없으면 [].
+    """동일인 검사 기준. 등록 얼굴 사진 여러 장이 우선이고, 없으면 승인된 face_front 한 장.
 
     변형 컷처럼 실존 자산을 따로 안 읽는 경로가 쓴다. 새 컷·상세페이지는 이미 읽은 model_images[0] 를 그대로 쓴다.
     """
+    photos = await enrollment_reference_faces(app, conn, model_id)
+    if photos:
+        return photos
     if not isinstance(license_row, dict):
         return []
     enrollment_id = license_row.get("current_enrollment_id")
