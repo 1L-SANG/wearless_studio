@@ -424,3 +424,21 @@ async def fetch_simple_auth_identity(base_url: str, token: str) -> dict: ...
 | 3 | **계약** — 이 테넌트는 라온 데모다. 발급 CI·과금이 라온 앞으로 간다 | 라온 협의 |
 
 1·2는 실거래 한 번으로 같이 풀린다. **3은 기술로 풀리지 않는다** — 위젯이 뜬다는 사실이 이 문제를 없애 주지는 않는다.
+
+
+### 14.3 실거래 검증 완료 (2026-09-13)
+
+`config.mid.json` + `ENT_SIMPLE_AUTH` 로 **토스(`cotoss`) 간편인증을 끝까지 통과**시켰다. 결과: `oacxCode: OACX_SUCCESS`, `resultCode: 200`, `data.success.status: COMPLETED`, Toss CA 서명 포함.
+
+**§14.2 의 미확인 1·2번이 해소됐다:**
+
+| # | 결과 |
+| --- | --- |
+| 1 | 실거래 **승인됨** — 라온 데모 테넌트가 토스에 가맹돼 있다. (PASS·카카오·네이버는 미확인) |
+| 2 | 콜백 페이로드에 `ci`·`name`·`birthday`·`phone`·`pid`·`provider` 존재. **CI 확보 가능** |
+
+**중요 — 생년월일 키는 `birth` 가 아니라 `birthday` 다.** 계획 단계에서 `birth_path=("birth",)` 로 잡고 `birthdate`·`birthday` 를 폴백에 넣어 둔 게 맞아떨어졌다. 폴백이 없었으면 `identity_birth_unavailable` 로 전부 실패했을 것이다. 이 스키마는 `test_parses_real_simple_auth_response_shape` 로 고정했다.
+
+**파서 실측 결과**(합성값): `ci` → bytearray(wipe 계약 유지), `birth` → `20040722`, 이름 → 마스킹, 성년 게이트가 YYYYMMDD 에서 정상 동작(미성년 `minor_blocked`).
+
+**남은 것은 계약 하나뿐이다(§14.2 3번).** 기술적으로는 지금 켜도 돌아간다 — 다만 발급되는 CI 와 과금이 라온 앞으로 간다.

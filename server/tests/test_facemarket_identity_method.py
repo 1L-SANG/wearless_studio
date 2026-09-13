@@ -370,3 +370,41 @@ def test_accepts_new_and_previous_consent_versions():
     # ·라이선스 얼굴·썸네일에서 전부 빠진다(최종리뷰 C2). 동의 **문구**가 실제로 바뀌어
     # 함께 나가는 배포에서만 올린다 — 그때 이 단언도 같이 올린다.
     assert BIOMETRIC_CONSENT_VERSION == "2026-08-v2"
+
+
+# --- 실거래로 확인된 간편인증 응답 스키마 (2026-09-13) ---
+# 라온 데모 테넌트 + config.mid.json + ENT_SIMPLE_AUTH 로 토스 인증을 실제로 통과시켜
+# 콜백 페이로드의 필드 이름을 확인했다(값은 전부 합성으로 대체). 계획 단계에서는
+# 미검증 가정이었고, 특히 생년월일 키가 `birth` 가 아니라 **`birthday`** 였다 —
+# 파서의 폴백 목록이 그걸 잡아주는지가 이 테스트의 요지다.
+_REAL_SIMPLE_AUTH_SHAPE = {
+    "ci": "SYNTHETIC-CI-VALUE",
+    "name": "홍길동",
+    "birthday": "20040722",   # ← `birth` 도 `birthdate` 도 아니다
+    "phone": "01000000000",
+    "pid": "cotoss",
+    "provider": "cotoss",
+}
+
+
+def test_parses_real_simple_auth_response_shape():
+    settings = make_settings(fm_oacx_simple_auth_contract="simple-auth-v1")
+    contract = cx_identity.get_oacx_biometric_contract(settings, method="simple_auth")
+    evidence = cx_identity.parse_simple_auth_evidence(
+        dict(_REAL_SIMPLE_AUTH_SHAPE), contract=contract
+    )
+    assert bytes(evidence.ci) == b"SYNTHETIC-CI-VALUE"
+    assert isinstance(evidence.ci, bytearray)   # wipe_bytearray 계약
+    assert evidence.birth == "20040722"
+    assert evidence.name_masked == "홍*동"
+    assert evidence.contract_version == "simple-auth-v1"
+
+
+def test_real_shape_minor_gate_uses_yyyymmdd():
+    """실거래 포맷(YYYYMMDD)에서도 성년 게이트가 동작한다."""
+    settings = make_settings(fm_oacx_simple_auth_contract="simple-auth-v1")
+    contract = cx_identity.get_oacx_biometric_contract(settings, method="simple_auth")
+    minor = dict(_REAL_SIMPLE_AUTH_SHAPE, birthday="20100101")
+    with pytest.raises(cx_identity.OacxBiometricError) as exc:
+        cx_identity.parse_simple_auth_evidence(minor, contract=contract)
+    assert exc.value.reason == "minor_blocked"
