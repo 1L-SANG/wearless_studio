@@ -54,5 +54,32 @@ R4="$WORK/r4"; mkdir -p "$R4"; cp "$WORK/fetch.sh" "$R4/"
 out=$(bash "$WORK/run.sh" "$R4" 2>&1)
 if echo "$out" | grep -q "CODE_TARBALL_URL 없음"; then ok "URL 없으면 기존 코드로 진행"; else ng "URL 없음 경로 실패: $out"; fi
 
+# ── 2026-09-13 파드 r5lk3ysffgayyk 회귀: 캐시 위치와 xet ──
+# 베이스 이미지가 HF_HOME=/workspace/... 를 박아 둔다. `:-` 로 두면 53.8GiB 가중치가 MooseFS
+# 볼륨(20GB)으로 가서 Errno 122 로 죽는다. bootstrap·start 둘 다 덮어써야 한다 —
+# 한쪽만 고치면 서비스가 다른 캐시를 보고 처음부터 다시 받는다.
+BS="$HERE/server/deploy/face_render/bootstrap.sh"
+ST="$HERE/server/deploy/face_render/start.sh"
+for f in "$BS" "$ST"; do
+  name="$(basename "$f")"
+  grep -q 'export HF_HOME="$ROOT/hf"' "$f" \
+    && ok "$name 이 HF_HOME 을 로컬 디스크로 덮어쓴다" \
+    || ng "$name 이 이미지의 HF_HOME(/workspace)을 그대로 쓴다"
+  grep -q 'HF_HOME="${HF_HOME:-' "$f" \
+    && ng "$name 에 아직 :- 폴백이 남아 있다" \
+    || ok "$name 에 HF_HOME :- 폴백이 없다"
+  grep -q 'export HF_HUB_DISABLE_XET=1' "$f" \
+    && ok "$name 이 xet 전송을 끈다(54GB 114초 실측)" \
+    || ng "$name 에 HF_HUB_DISABLE_XET 가 없다"
+done
+# 버전 고정 — 무고정이면 아무 날에나 조합이 바뀐다
+for pkg in diffusers transformers huggingface_hub safetensors opencv-python-headless; do
+  grep -q "\"$pkg==" "$BS" && ok "$pkg 버전이 고정돼 있다" || ng "$pkg 가 고정되지 않았다"
+done
+# hub 1.x 에는 이 extra 가 없다 — 요청하면 설치 경고만 남고 조용히 무시된다(주석은 봐도 된다)
+grep -q 'huggingface_hub\[' "$BS" \
+  && ng "hub 1.x 에 없는 extra 를 아직 요청한다" \
+  || ok "없는 extra(cli,hf_transfer)를 요청하지 않는다"
+
 echo "1..$((PASS+FAIL))"
 [ "$FAIL" -eq 0 ]

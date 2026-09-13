@@ -31,9 +31,22 @@ BOOT="$ROOT/logs/boot.log"
 if [ -z "$BOOTSTRAP" ]; then
   echo "pre_start: bootstrap.sh 를 못 찾았다(ROOT=$ROOT, SELF_DIR=$SELF_DIR)" >> "$BOOT"
 fi
+# ★ bootstrap 이 죽으면 start.sh 로 넘어가지 않는다(그게 맞다 — 가중치 없이 띄울 이유가 없다).
+#   문제는 **그 사실이 아무 데도 안 남던 것**이다: 2026-09-13 파드는 34분 동안 desiredStatus=RUNNING
+#   인 채로 uvicorn 이 없었고, boot.log 마지막 줄은 "가중치 내려받기" 였다. 종료 코드와 로그 꼬리를
+#   남겨 다음 사람이 ssh 없이 원인을 본다.
 nohup bash -c "
-  set -e
-  if [ -n '$BOOTSTRAP' ]; then '$BOOTSTRAP' >> '$BOOT' 2>&1; fi
+  if [ -n '$BOOTSTRAP' ]; then
+    # ★ \$? 는 \`if ! cmd\` 안에서 0 으로 리셋된다 — 따로 받는다.
+    '$BOOTSTRAP' >> '$BOOT' 2>&1
+    code=\$?
+    if [ \$code -ne 0 ]; then
+      tail -n 8 '$BOOT' | sed 's/^/pre_start:   /' > '$BOOT.tail'
+      echo \"pre_start: bootstrap 실패(exit \$code) — 서비스를 띄우지 않는다\" >> '$BOOT'
+      cat '$BOOT.tail' >> '$BOOT'; rm -f '$BOOT.tail'
+      exit \$code
+    fi
+  fi
   if [ -x '$ROOT/start.sh' ]; then exec '$ROOT/start.sh' >> '$BOOT' 2>&1; fi
   echo 'pre_start: start.sh 없음 — 서비스는 뜨지 않는다' >> '$BOOT'
 " >/dev/null 2>&1 &

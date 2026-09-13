@@ -54,6 +54,32 @@ grep -q "bootstrap.sh 를 못 찾았다" "$ROOT2/logs/boot.log" \
   && ok "bootstrap 을 못 찾으면 사유가 로그에 남는다" \
   || ng "못 찾은 사유가 없다: $(cat "$ROOT2/logs/boot.log" 2>/dev/null)"
 
+# bootstrap 이 실패하면 — start 로 넘어가지 않고, 종료 코드와 로그 꼬리를 남긴다.
+# (2026-09-13: 가중치 다운로드가 죽었는데 boot.log 마지막 줄이 "가중치 내려받기" 라 34분을 태웠다)
+ROOT4="$WORK/root4/face_render"; mkdir -p "$ROOT4"
+cat > "$ROOT4/bootstrap.sh" <<'B'
+#!/usr/bin/env bash
+echo "bootstrap: 가중치 내려받기"
+echo "RuntimeError: File reconstruction error" >&2
+exit 42
+B
+cat > "$ROOT4/start.sh" <<'S'
+#!/usr/bin/env bash
+echo "START_RAN" >> "$(dirname "$0")/order.txt"
+S
+chmod +x "$ROOT4/bootstrap.sh" "$ROOT4/start.sh"
+FACE_RENDER_ROOT="$ROOT4" "$WORK/elsewhere/pre_start.sh"
+sleep 1
+[ -f "$ROOT4/order.txt" ] \
+  && ng "bootstrap 이 죽었는데 start.sh 로 넘어갔다" \
+  || ok "bootstrap 실패면 서비스를 띄우지 않는다"
+grep -q "bootstrap 실패(exit 42)" "$ROOT4/logs/boot.log" \
+  && ok "실패 종료 코드가 부팅 로그에 남는다" \
+  || ng "종료 코드가 없다: $(cat "$ROOT4/logs/boot.log" 2>/dev/null)"
+grep -q "pre_start:   " "$ROOT4/logs/boot.log" \
+  && ok "실패 직전 로그 꼬리가 함께 남는다(ssh 없이 원인을 본다)" \
+  || ng "로그 꼬리가 없다"
+
 # start.sh: venv 가 없으면 시스템 python 으로 떨어지지 않고 종료한다
 START="$HERE/server/deploy/face_render/start.sh"
 ROOT3="$WORK/root3/face_render"; mkdir -p "$ROOT3/code"

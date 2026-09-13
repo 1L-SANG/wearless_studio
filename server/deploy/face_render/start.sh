@@ -15,7 +15,13 @@ set -euo pipefail
 
 # 볼륨 없음(2026-09-10 실측) — 컨테이너 디스크. bootstrap.sh 가 같은 경로를 만든다.
 ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
-export HF_HOME="${HF_HOME:-$ROOT/hf}"
+# ★ bootstrap.sh 와 **같은 이유로 덮어쓴다**(`:-` 아님). 베이스 이미지가 HF_HOME 을
+#   /workspace/.cache/huggingface/ 로 박아 두는데 그건 MooseFS 볼륨(20GB)이라 가중치가 안 들어간다.
+#   bootstrap 만 고치면 서비스가 **다른 캐시**를 보고 처음부터 다시 받으려다 죽는다 —
+#   2026-09-13: base preload 가 `OSError: [Errno 122] Disk quota exceeded` 로 실패해 포트는 열렸는데
+#   base_loaded=false 인 채로 떠 있었다.
+export HF_HOME="$ROOT/hf"
+export HF_HUB_DISABLE_XET=1
 export FACE_RENDER_CACHE_DIR="${FACE_RENDER_CACHE_DIR:-$ROOT/loras}"
 # 얼굴 크롭 확대기 가중치(bootstrap 이 받아 sha256 을 맞춰 둔다). 없으면 /upscale 이 503 →
 # 호출자가 Lanczos 로 간다. FACE_RENDER_ROOT 를 옮겨도 따라가게 여기서 정해 준다.
