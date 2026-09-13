@@ -60,15 +60,20 @@ test('publisher uses the actual price launch date in both metadata and document 
 
   const manifest = JSON.parse(readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'));
   assert.ok(manifest.length > 0);
-  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(2026-09-v1)을 따르므로 발행 버전 검사에서 뺀다.
-  const consentSlugs = new Set(['biometric-consent', 'overseas-transfer']);
-  assert.ok(manifest.filter(({ slug }) => !consentSlugs.has(slug)).every(({ version, effectiveDate }) => (
-    version === 'v1.1' && effectiveDate === '2026-09-11'
-  )));
-  for (const slug of consentSlugs) {
-    const entry = manifest.find((item) => item.slug === slug);
-    assert.ok(entry, `${slug} 항목이 manifest 에 있어야 한다`);
-    assert.equal(entry.version, '2026-09-v1');
+  // 문서별 개정(DOC_REVISIONS)만 다른 값을 갖는다 — 한 문서를 고쳤다고 나머지 7종의
+  // 시행일까지 미래로 밀면 그건 거짓말이 된다.
+  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(2026-09-v1)을 따른다.
+  const revised = {
+    'privacy-model': { version: 'v1.2', effectiveDate: '2026-09-12' },
+    'biometric-consent': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
+    'overseas-transfer': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
+  };
+  for (const { slug, version, effectiveDate } of manifest) {
+    const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };
+    assert.deepEqual({ version, effectiveDate }, expected, slug);
+  }
+  for (const slug of ['biometric-consent', 'overseas-transfer']) {
+    assert.ok(manifest.some((item) => item.slug === slug), `${slug} 항목이 manifest 에 있어야 한다`);
   }
 
   const agreement = readFileSync(join(f.root, 'public/legal/license-agreement.md'), 'utf8');
@@ -85,6 +90,11 @@ test('publisher uses the actual price launch date in both metadata and document 
   }
 });
 
+// ── 공개본이 정본(documents/legal)과 갈라지지 않았는가 ─────────────────────────
+// 최종리뷰 I1: Task13 이 정본(documents/legal/03_…)만 고치고 실제로 /privacy 로 서빙되는
+// public/legal/privacy-model.md 를 안 고쳐서, **게시된 처리방침이 "신분증 원본 이미지를
+// 저장하지 않는다"고 계속 말하는 상태**로 출시될 뻔했다. 퍼블리셔가 있는데 안 돌린 것이
+// 원인이라 — 커밋된 공개본이 "지금 정본으로 다시 찍은 결과"와 바이트 단위로 같은지 본다.
 test('checked-in generated legal documents match the canonical publisher output', (t) => {
   const f = fixture(t);
   const result = f.run();
@@ -93,7 +103,7 @@ test('checked-in generated legal documents match the canonical publisher output'
   const generatedManifest = JSON.parse(
     readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
   );
-  for (const { slug } of generatedManifest) {
+  for (const { slug, source: sourceFile } of generatedManifest) {
     // These two wizard documents are manually maintained public inputs, not
     // outputs of legal_publish.py. The manifest intentionally includes both.
     if (slug === 'biometric-consent' || slug === 'overseas-transfer') {
@@ -103,16 +113,32 @@ test('checked-in generated legal documents match the canonical publisher output'
     assert.equal(
       readFileSync(join(source, `public/legal/${slug}.md`), 'utf8'),
       readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8'),
-      `${slug} must be regenerated after its canonical source changes`,
+      `public/legal/${slug}.md 가 정본(documents/legal/${sourceFile})과 어긋난다 — `
+      + '정본만 고치고 공개본을 안 고치면 사용자가 읽는 문서는 옛 내용 그대로다. '
+      + '`python3 tools/legal_publish.py` 를 돌리고 커밋하세요',
     );
   }
   assert.equal(
     readFileSync(join(source, 'public/legal/manifest.json'), 'utf8'),
     readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
+    'public/legal/manifest.json 이 정본과 어긋난다 — `python3 tools/legal_publish.py` 를 돌리고 커밋하세요',
   );
   assert.equal(
     readFileSync(join(source, 'public/llms.txt'), 'utf8'),
     readFileSync(join(f.root, 'public/llms.txt'), 'utf8'),
+  );
+});
+
+test('간편인증 경로의 신분증 촬영본 고지가 **게시본**에 실제로 들어 있다', () => {
+  // 위 테스트는 "정본과 같은가"만 본다 — 정본에서 문구가 통째로 빠지면 둘 다 조용히
+  // 같아진다. 이 고지는 스펙 §7.1 이 출시 전제로 못박은 것이라 게시본에서 직접 확인한다.
+  const published = readFileSync(join(source, 'public/legal/privacy-model.md'), 'utf8');
+  assert.match(published, /간편인증 경로/, '게시된 처리방침에 간편인증 경로 고지가 없다');
+  assert.match(published, /7일/, '보관 상한(7일) 고지가 없다');
+  assert.doesNotMatch(
+    published,
+    /본인확인은 본인확인기관과 모바일 신분증 검증 서비스를 통해 이루어지며, 회사는 \*\*신분증 원본 이미지를 저장하지 않고\*\*/,
+    '옛 문장("신분증 원본 이미지를 저장하지 않고")이 게시본에 그대로 남아 있다',
   );
 });
 

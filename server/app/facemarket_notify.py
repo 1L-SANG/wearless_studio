@@ -133,6 +133,68 @@ def _email_content(
             "이 메일은 발신 전용이에요."
         )
         return subject, html, text
+    if email_type == "enrollment_review_approved":
+        # 간편인증 경로 육안 심사 승인. 지원서 승인(approved)과 다른 단계다 — 이 시점엔
+        # 이미 사진까지 다 냈고, 모델 이미지 생성만 남았다.
+        subject = "[FaceMarket] 본인 확인이 완료됐어요"
+        html = _shell(
+            public_base=public_base,
+            heading="본인 확인이 완료됐어요",
+            body_html="제출하신 신분증과 얼굴 사진 확인이 끝났어요. 이제 모델 이미지를 "
+                      "만들고 있어요 — 준비되면 다시 알려 드릴게요.",
+            cta=("등록 상태 보기", hub),
+            footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
+        )
+        text = (
+            "본인 확인이 완료됐어요.\n\n"
+            "제출하신 신분증과 얼굴 사진 확인이 끝났어요. 이제 모델 이미지를 만들고 있어요.\n"
+            f"{hub}\n\n"
+            "이 메일은 발신 전용이에요."
+        )
+        return subject, html, text
+    if email_type == "enrollment_review_rejected":
+        subject = "[FaceMarket] 본인 확인이 완료되지 않았어요"
+        reason_html = (
+            f'<div style="margin-top:14px;padding:12px 14px;background:{PAGE};'
+            f'border-radius:8px;color:{INK};">사유: {_escape(reject_reason)}</div>'
+            if reject_reason else ""
+        )
+        html = _shell(
+            public_base=public_base,
+            heading="본인 확인이 완료되지 않았어요",
+            body_html="제출하신 신분증과 얼굴 사진으로는 본인 확인을 마치지 못했어요. "
+                      "아래에서 다시 시도할 수 있어요." + reason_html,
+            cta=("다시 시도하기", hub),
+            footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
+        )
+        reason_text = f"사유: {reject_reason}\n\n" if reject_reason else ""
+        text = (
+            "제출하신 신분증과 얼굴 사진으로는 본인 확인을 마치지 못했어요.\n\n"
+            f"{reason_text}"
+            "아래에서 다시 시도할 수 있어요.\n"
+            f"{hub}\n\n"
+            "이 메일은 발신 전용이에요."
+        )
+        return subject, html, text
+    if email_type == "enrollment_review_timeout":
+        # 심사 기한(5일)을 넘겨 자동 종료. 신분증 촬영본은 7일 배치 스윕이 지우므로 그 전에
+        # 끝내야 하고, 그대로 두면 이 사용자의 단일 활성 등록 슬롯이 영구히 묶인다.
+        subject = "[FaceMarket] 본인 확인이 기한 내에 끝나지 않았어요"
+        html = _shell(
+            public_base=public_base,
+            heading="본인 확인이 기한 내에 끝나지 않았어요",
+            body_html="확인에 시간이 너무 오래 걸려 이번 등록은 자동으로 종료됐어요. "
+                      "불편을 드려 죄송해요 — 아래에서 바로 다시 시작할 수 있어요.",
+            cta=("다시 등록하기", hub),
+            footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
+        )
+        text = (
+            "확인에 시간이 너무 오래 걸려 이번 등록은 자동으로 종료됐어요.\n\n"
+            "아래에서 바로 다시 시작할 수 있어요.\n"
+            f"{hub}\n\n"
+            "이 메일은 발신 전용이에요."
+        )
+        return subject, html, text
     if email_type == "auto_rejected":
         # 신분증 대조 3회 불일치 자동 거절(스펙 7·10). 관리자 거절과 구분되는 별도 메일.
         subject = "[FaceMarket] 신분증 정보 불일치로 지원이 거절됐어요"

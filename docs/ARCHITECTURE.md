@@ -532,9 +532,14 @@ graph TB
   end
 
   subgraph Identity["③ 본인확인 (cx_identity)"]
-    C1["OACX 표준인증창 ENT_MID<br/>프론트는 token만 전송"] --> C2["서버발 trans/{token} 호출"]
+    C1["경로 mid(기본, FM_IDENTITY_METHODS)<br/>OACX 표준인증창 ENT_MID<br/>프론트는 token만 전송"] --> C2["서버발 trans/{token} 호출"]
     C2 --> C3["ci_hash = HMAC-SHA256(ci, pepper)<br/>원문 CI 미저장"]
     C2 --> C4["cx_tx_id UNIQUE → 리플레이 차단"]
+
+    S1["경로 S(기본 off)<br/>간편인증 ENT_SIMPLE_AUTH<br/>모바일 신분증 없는 이용자용"] --> S2["신분증 촬영·마스킹은 브라우저에서<br/>캔버스에 픽셀 덮어씀, 원본 미전송"]
+    S2 --> S3["SFace 매칭은 advisory만<br/>서버는 마스킹 여부를 검증할 수 없음"]
+    S3 --> S4["review_pending<br/>관리자 육안 심사(마스킹 확인·3사진·CI 대조)"]
+    S4 -->|"승인/거절 커밋 직후"| S5["R2 즉시 파기 + id_document_purged_at<br/>배치 스윕 백스톱 7일"]
   end
 
   subgraph VC["④ OpenDID VC (holder_client → opendid)"]
@@ -709,6 +714,9 @@ graph LR
 | | `PERSONALIZATION_ENABLED` | `true` |
 | | `FM_BIOMETRIC_ENROLLMENT_ENABLED` | `true` |
 | | `FM_PROVENANCE_ENABLED` | `true` |
+| | `FM_IDENTITY_METHODS` | `mid` (간편인증 경로 off — 이 값 하나로 신규 경로 전체 롤백) |
+| | `FM_ENROLLMENT_REVIEW` | `simple_auth_only` (mid 경로는 관리자 육안 심사 대상 아님) |
+| | `FM_OACX_SIMPLE_AUTH_CONTRACT` | `disabled` (간편인증 응답 계약 미확정) |
 | **QC** | `IMAGE_QC` / `MANNEQUIN_AXIS_QC` / `MANNEQUIN_BASE_FIDELITY_QC` / `MANNEQUIN_PANTS_QC` | `enforce` |
 | | `MANNEQUIN_QC_ENABLED` | `false` (shadow) |
 | | `GARMENT_QC_MODE` | `off` |

@@ -50,6 +50,10 @@ test('the API facade in explicit development mock mode completes the application
       resolveId(id) {
         if (id === '@/lib/api/httpAdapter.js') return '\0no-live-http';
         if (id === '@/lib/supabase.js') return '\0no-live-auth';
+        // configFile:false 라 vite 의 '@' 별칭이 없다 — 위 두 스텁 외의 '@/' 임포트는
+        // 여기서 직접 경로로 풀어 준다(안 그러면 facemarket.js 가 새 모듈을 하나
+        // 가져오는 순간 이 테스트가 "모듈을 찾을 수 없음"으로 깨진다).
+        if (id.startsWith('@/')) return new URL('../../src/' + id.slice(2), import.meta.url).pathname;
         return null;
       },
       load(id) {

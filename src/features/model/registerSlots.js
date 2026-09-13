@@ -53,6 +53,11 @@ export function toggleRegisterCategory(allowed, category) {
 export function restoreRegisterScreen(enrollment) {
   const status = enrollment?.status;
   if (!status) return { step: '1', sub: 1 };
+  // 간편인증(simple_auth) 경로 전용 두 상태. id_capture_pending 은 본인확인 전에 신분증을
+  // 찍어 올리는 단계이고, review_pending 은 완료 직전 관리자 육안 심사를 기다리는 단계다
+  // — 둘 다 '끝났다'(done)로 보내면 사용자는 증서도 없이 축하 화면을 보게 된다.
+  if (status === 'id_capture_pending') return { step: 'id_capture', sub: 1 };
+  if (status === 'review_pending') return { step: 'review', sub: 4 };
   if (status === 'identity_pending') return { step: '1', sub: 1 };
   if (status === 'photos_pending' || status === 'liveness_pending') {
     const index = PHOTO_GROUPS.findIndex((group) => !photoProgress(enrollment.photos, group.id).complete);
@@ -60,7 +65,7 @@ export function restoreRegisterScreen(enrollment) {
   }
   if (status === 'license_pending') return { step: '3', sub: 4 };
   if (status === 'vc_pending') return { step: '4b', sub: 4 };
-  if (['passed', 'review_pending'].includes(status)) return { step: 'done', sub: 4 };
+  if (status === 'passed') return { step: 'done', sub: 4 };
   if (['processing', 'asset_building'].includes(status)) return { step: 'processing', sub: 4 };
   return { step: 'failed', sub: 1 };
 }

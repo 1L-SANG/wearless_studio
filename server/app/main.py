@@ -577,6 +577,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .facemarket_enrollment import router as biometric_enrollment_router
 
             app.include_router(biometric_enrollment_router)
+            # 간편인증(신분증 촬영) 경로의 관리자 육안 심사 큐 — 생체등록 스택이 켜져 있을
+            # 때만 의미가 있다(review_pending 은 그 스택의 상태다).
+            from .facemarket_admin_review import router as admin_review_router
+
+            app.include_router(admin_review_router)
         if settings.fm_provenance_enabled:
             from .facemarket_provenance import router as provenance_router
             from .services.c2pa_signer import C2paSigner

@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity, repo
+from . import cx_identity, facemarket_id_document, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
 from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_email
@@ -31,11 +31,18 @@ from .facemarket_photos import (
     photo_slot_candidates, resolve_photo_rows,
 )
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
-from .r2 import enrollment_quarantine_key, ext_for_mime, sha256_sri
+from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_mime, sha256_sri
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
+# ⚠️ 이 상수를 올리면 **라이브 카탈로그에서 기존 모델이 전부 빠진다.**
+# `facemarket.py` 의 `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 이 값을
+# 그대로 바인딩한다(모델 목록·라이선스 얼굴·썸네일) — 이미 passed 인 등록은 옛 버전
+# 문자열을 들고 있고 백필 마이그레이션은 없다. `facemarket_cutover.py` 의 legacy 스코프도
+# 같은 값으로 뒤집힌다. 그래서 **동의 화면 문구가 실제로 바뀌어 함께 나가는 배포에서만**
+# 올린다. 2026-09-v1 은 등록 위저드의 동의·안내 공개본(public/legal/biometric-consent,
+# overseas-transfer)이 함께 나가면서 올렸다(#285/#287).
 BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
 # 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
 # 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
@@ -44,6 +51,12 @@ OVERSEAS_NOTICE_VERSION = "2026-09-v1"
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
 ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
+# 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
+# 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
+# 7일 뒤 배치 스윕이 DB 와 무관하게 지운다** — 그 둘이 합쳐지면 7일 뒤엔 심사가 불가능해진
+# 행이 그 사용자의 단일 활성 등록 슬롯을 영구히 점유한다(최종리뷰 I3). 7일보다 짧은 전용
+# 기한을 둬서 증거가 살아 있는 동안 심사가 끝나게 하고, 넘기면 실패로 닫고 통지한다.
+REVIEW_DEADLINE_DAYS = 5
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 LEGACY_ANGLES = ("front", "angle45", "side")
@@ -182,6 +195,8 @@ class BiometricConsent(CamelModel):
 class CreateEnrollmentBody(CamelModel):
     device_id: str
     biometric_consent: BiometricConsent
+    # 'mid' = OACX 모바일 신분증(기존), 'simple_auth' = 간편인증 + 신분증 촬영.
+    identity_method: str = "mid"
     terms_consent: BiometricConsent | None = None
     overseas_consent: BiometricConsent | None = None
 
@@ -231,6 +246,8 @@ class EnrollmentView(CamelModel):
     height_bucket: str | None = None
     body_type: str | None = None
     gender: str | None = None
+    identity_method: str = "mid"
+    review_status: str | None = None
     photo_count: int = 0
     consent_document_version: str | None = None
     terms_consent_version: str | None = None
@@ -320,6 +337,184 @@ def match_threshold_for_angle(settings: Settings, angle: str) -> float | None:
     return settings.fm_retouched_live_threshold
 
 
+def review_required(settings: Settings, method: str) -> bool:
+    """완료 시 관리자 심사(`review_pending`)로 멈춰야 하는지.
+
+    "off" 는 아무도 심사 안 함(오늘의 mid-only 기본), "all" 은 인증 수단과 무관하게 전부
+    심사(신중한 롤아웃용 — mid 도 걸린다. mid 의 매칭 자체는 여전히 enforce 라 임계 미달은
+    이 함수까지 오지 못하고 먼저 face_match_failed 로 실패한다), 기본값 "simple_auth_only" 는
+    간편인증만 심사한다(위조 가능한 앵커라 기계가 진위를 못 가리므로).
+    """
+    mode = settings.fm_enrollment_review
+    if mode == "off":
+        return False
+    if mode == "all":
+        return True
+    return method == "simple_auth"
+
+
+async def bind_model_and_enqueue_asset_build(
+    cur,
+    *,
+    user_id: str,
+    enrollment_id: str,
+    row: dict,
+    match_snapshot: dict,
+    method: str,
+    identity_contract_version: str | None,
+    liveness_provider_version: str,
+    match_policy_version: str,
+) -> str:
+    """모델 바인딩(생성/재사용) + 신원증거 기록 + 자산빌드 잡 큐잉.
+
+    Task8: 관리자 승인 후 재개(`facemarket_admin_review.approve_enrollment`)가
+    `process_enrollment_completion` 의 이 tail 을 그대로 재사용한다 — 심사가 필요 없던
+    성공 경로와 심사 승인 후 재개 경로가 SQL 문 하나까지 동일해야 두 경로가 갈라져
+    드리프트하는 일이 없다. 호출자가 이미 `where id = %s and status = 'processing' for
+    update` 로 행을 잠근 뒤 불러야 한다(둘 다 이 전제를 지킨다).
+
+    `liveness_provider_version` 은 정상 경로에선 `liveness.provider_version`(또는
+    "disabled"), 재개 경로에선 원래 라이브니스 프레임이 이미 사라졌으므로 항상
+    "disabled_resume" 을 넘긴다(리뷰 대상은 늘 `fm_liveness_enabled=False` 조합이라
+    실질적 정보 손실은 없다 — Task7 참조).
+    """
+    ci_hash = row["identity_ci_hash"]
+    identity_tx_digest = row["identity_tx_digest"]
+    identity_name_masked = row["identity_name_masked"]
+    identity_birth_year = row["identity_birth_year"]
+
+    await cur.execute(
+        "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
+        (ci_hash,),
+    )
+    model = await cur.fetchone()
+    if model and model["user_id"] != user_id:
+        raise EnrollmentMappedError("identity_recovery_required")
+    # #285(사진 재검증): 이미 모델이 있는 등록이 사진만 다시 올린 경우다 — 그때는 같은
+    # 모델로만 재바인딩할 수 있다(다른 모델로 갈아타면 남의 얼굴이 승격된다).
+    revalidating_photos = row.get("photo_revision", 0) > 0
+    if revalidating_photos and (not model or str(model["id"]) != str(row["model_id"])):
+        raise EnrollmentMappedError("identity_recovery_required")
+    if model:
+        model_id = model["id"]
+    elif row.get("model_id"):
+        model_id = row["model_id"]
+        await cur.execute(
+            """
+            update fm_models
+            set ci_hash = %s, display_name = %s, user_id = %s
+            where id = %s
+            """,
+            (ci_hash, identity_name_masked, user_id, model_id),
+        )
+    else:
+        await cur.execute(
+            """
+            insert into fm_models (user_id, display_name, status, ci_hash)
+            values (%s, %s, 'pending', %s)
+            returning id::text as id
+            """,
+            (user_id, identity_name_masked, ci_hash),
+        )
+        model_id = (await cur.fetchone())["id"]
+    try:
+        # 재검증 회차는 같은 cx_tx_id 를 다시 넣으면 유니크 위반이라 건너뛴다(#285).
+        if not revalidating_photos:
+            await cur.execute(
+                """
+                insert into fm_identity_verifications
+                    (model_id, cx_tx_id, cx_tx_id_format, fields)
+                values (%s, %s, 'sha256-v1', %s)
+                """,
+                (
+                    model_id,
+                    identity_tx_digest,
+                    Json({
+                        "nameMasked": identity_name_masked,
+                        "birthYear": identity_birth_year,
+                        "biometric": True,
+                    }),
+                ),
+            )
+    except UniqueViolation:
+        raise EnrollmentMappedError("identity_replay")
+    await cur.execute(
+        """
+        update fm_models
+        set assets_status = 'building', current_enrollment_id = %s
+        where id = %s
+        """,
+        (enrollment_id, model_id),
+    )
+    # Task4: 등록 중 올린 대표이미지가 있으면 바인딩 시 모델 커버로 승격한다.
+    # cover_image_url 은 기존 관례상 별도 URL 변환 없이 그대로 읽히므로(facemarket.py
+    # _MODEL_CARD_COLS 참조) R2 키를 그대로 저장한다 — 노출 URL화는 범위 밖.
+    if row.get("profile_image_r2_key"):
+        await cur.execute(
+            "update fm_models set cover_image_url = %s where id = %s",
+            (row["profile_image_r2_key"], model_id),
+        )
+    # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
+    # 모델로 승격한다. gender는 identity(OACX)에서 설정되지만, CX가 성별을 안 주면
+    # NULL로 남으므로 — 모델이 고른 키 구간 접두사(m_/f_)에서 유도해 채운다(coalesce).
+    if row.get("height_bucket") or row.get("body_type"):
+        from .facemarket_physique import bucket_gender
+
+        await cur.execute(
+            "update fm_models set height_bucket = coalesce(%s, height_bucket), "
+            "body_type = coalesce(%s, body_type), "
+            "gender = coalesce(gender, %s) where id = %s",
+            (
+                row.get("height_bucket"),
+                row.get("body_type"),
+                bucket_gender(row.get("height_bucket")),
+                model_id,
+            ),
+        )
+    await cur.execute(
+        """
+        update fm_biometric_enrollments
+        set model_id = %s, status = 'asset_building', decision = 'passed',
+            reason = null, completed_at = now(), oacx_tx_digest = %s,
+            match_policy_version = %s,
+            provider_versions = provider_versions || %s::jsonb
+        where id = %s
+        """,
+        (
+            model_id,
+            identity_tx_digest,
+            match_policy_version,
+            Json({
+                "faceLiveness": liveness_provider_version,
+                "oacx": identity_contract_version,
+                "faceMatch": "sface-one-to-one",
+            }),
+            enrollment_id,
+        ),
+    )
+    if method == "simple_auth":
+        # 심사가 필요 없는 간편인증 성공 경로(예: fm_enrollment_review=off)도
+        # advisory 점수를 감사 기록으로 남긴다 — mid 경로는 이 문장을 안 타서
+        # 기존 회귀 스위트가 고정해 둔 asset_building UPDATE 파라미터 수는
+        # 그대로다.
+        await cur.execute(
+            "update fm_biometric_enrollments set match_scores = %s where id = %s",
+            (Json(match_snapshot), enrollment_id),
+        )
+    await cur.execute(
+        """
+        insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+        values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
+        """,
+        (
+            user_id,
+            Json({"modelId": model_id, "enrollmentId": enrollment_id,
+                  "photoRevision": row.get("photo_revision", 0)}),
+        ),
+    )
+    return model_id
+
+
 def _prewarm_opendid(request: Request) -> None:
     """VC 발급이 사실상 확정된 지점에서 holder(opendid)를 미리 깨운다.
 
@@ -341,6 +536,7 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
                    e.liveness_session_digest, e.height_bucket, e.body_type,
+                   e.identity_method, e.review_status,
                    e.consent_version, e.terms_consent_version,
                    e.overseas_consent_version, e.photo_revision, m.gender as model_gender,
                    l.id::text as license_id, l.allowed_use as license_allowed_use,
@@ -704,15 +900,16 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
-                   e.height_bucket, e.body_type, e.consent_version,
-                   e.terms_consent_version, e.overseas_consent_version, e.photo_revision,
-                   m.gender as model_gender, l.id::text as license_id,
+                   e.height_bucket, e.body_type, e.identity_method, e.review_status,
+                   e.consent_version, e.terms_consent_version, e.overseas_consent_version,
+                   e.photo_revision, m.gender as model_gender, l.id::text as license_id,
                    l.allowed_use as license_allowed_use, l.license_valid_until
             from fm_biometric_enrollments e
             left join fm_models m on m.id = e.model_id
             left join fm_licenses l on l.enrollment_id = e.id
             where e.user_id = %s and e.status in (
-                'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                'id_capture_pending', 'identity_pending', 'photos_pending',
+                'review_pending', 'liveness_pending', 'processing',
                 'asset_building', 'license_pending', 'vc_pending'
             )
             order by e.created_at desc limit 1
@@ -768,6 +965,8 @@ async def _enrollment_view(conn, row: dict, settings: Settings) -> EnrollmentVie
         height_bucket=row.get("height_bucket"),
         body_type=row.get("body_type"),
         gender=row.get("model_gender"),
+        identity_method=row.get("identity_method") or "mid",
+        review_status=row.get("review_status"),
         photo_count=len(photos),
         consent_document_version=row.get("consent_version"),
         terms_consent_version=row.get("terms_consent_version"),
@@ -827,6 +1026,17 @@ async def create_enrollment(
     overseas_version = (
         body.overseas_consent.document_version if body.overseas_consent else OVERSEAS_NOTICE_VERSION
     )
+    # Task5: 인증 수단 분기. 'mid' = OACX 모바일 신분증(기존), 'simple_auth' = 간편인증 +
+    # 신분증 촬영. 플래그에 없는 수단은 서버가 막는다 — 프론트가 낡아도 서버가 진실이다.
+    # /id-document 라우트와 같은 에러 코드·상태코드를 쓴다(두 진입점이 합의한다).
+    method = (body.identity_method or "mid").strip()
+    if method not in settings.fm_identity_methods:
+        raise _err(
+            "identity_method_unavailable",
+            "지금은 이 방식으로 등록할 수 없어요.",
+            status=409,
+        )
+    initial_status = "id_capture_pending" if method == "simple_auth" else "identity_pending"
     device_digest = hashlib.sha256(device_id.encode()).hexdigest()
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
@@ -917,34 +1127,64 @@ async def create_enrollment(
                     """,
                     (model_id,),
                 )
+            # mid 는 identity_method/status 컬럼을 안 건드린다 — DB 기본값('mid'/
+            # 'identity_pending')이 그대로 적용되어 SQL 텍스트가 오늘의 mid 경로와 컬럼
+            # 목록까지 동일하다(기존 mid 경로 불변이 최우선 순위). simple_auth 만 두 컬럼을
+            # 리터럴로 명시한다(값이 화이트리스트를 통과한 코드 상수라 바인드 파라미터일
+            # 필요가 없다). 동의 버전 두 컬럼(terms/overseas)은 #285 가 더한 것으로 두 분기
+            # 모두 같은 자리에 싣는다 — 바인드 파라미터 개수가 갈라지면 안 된다.
+            # on conflict 의 where 절은 fm_biometric_active_per_user 부분 유니크 인덱스
+            # (Task1 마이그레이션)의 arbiter 추론 대상이다 — 인덱스 predicate 와 정확히
+            # 맞춘다(순서까지). 짧은 7-state 부분집합도 PG 추론상 동작은 하지만("암시"
+            # 관계로 arbiter 는 잡힌다 — 로컬 Postgres 로 실측 확인함), 사람이 눈으로 diff
+            # 하기 쉽게, 그리고 이후 드리프트를 막기 위해 인덱스와 텍스트를 일치시킨다.
+            if method == "simple_auth":
+                insert_sql = f"""
+                    insert into fm_biometric_enrollments
+                        (user_id, model_id, device_digest, consent_version, expires_at,
+                         application_id, terms_consent_version, overseas_consent_version,
+                         identity_method, status)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, '{method}', '{initial_status}')
+                    on conflict (user_id) where status in (
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending'
+                    ) do nothing
+                    returning id::text as id
+                    """
+            else:
+                insert_sql = """
+                    insert into fm_biometric_enrollments
+                        (user_id, model_id, device_digest, consent_version, expires_at, application_id,
+                         terms_consent_version, overseas_consent_version)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (user_id) where status in (
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending'
+                    ) do nothing
+                    returning id::text as id
+                    """
             await cur.execute(
-                """
-                insert into fm_biometric_enrollments
-                    (user_id, model_id, device_digest, consent_version, expires_at, application_id,
-                     terms_consent_version, overseas_consent_version)
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (user_id) where status in (
-                    'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
-                    'asset_building', 'license_pending', 'vc_pending'
-                ) do nothing
-                returning id::text as id
-                """,
-                (
-                    user_id, model_id, device_digest, consent.document_version, expires_at,
-                    application_id,
-                    body.terms_consent.document_version if body.terms_consent else None,
-                    overseas_version,
-                ),
+                insert_sql,
+                (user_id, model_id, device_digest, consent.document_version, expires_at,
+                 application_id,
+                 body.terms_consent.document_version if body.terms_consent else None,
+                 overseas_version),
             )
             inserted = await cur.fetchone()
             if inserted:
                 enrollment_id = inserted["id"]
             else:
+                # 활성 상태 집합은 fm_biometric_active_per_user 인덱스(Task1 마이그레이션)와
+                # 맞춘다 — id_capture_pending/review_pending 을 빠뜨리면 그 상태로 활성인
+                # simple_auth 등록의 재조회가 여기서 None 을 내 500 으로 죽는다.
                 await cur.execute(
                     """
                     select id::text as id from fm_biometric_enrollments
                     where user_id = %s and status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending'
                     ) order by created_at desc limit 1
                     """,
@@ -994,11 +1234,38 @@ async def verify_enrollment_identity(
         raise _err("token_required", "인증 토큰이 없습니다.")
     settings: Settings = request.app.state.settings
     token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
-    contract = cx_identity.get_oacx_biometric_contract(settings)
+    # 계약은 클라가 아니라 이 등록에 저장된 identity_method 로 고른다 — 클라가 토큰에
+    # 태울 파서를 스스로 고르지 못하게 한다. fetch_trans(제공자 네트워크 호출) 앞에서,
+    # 락 없이 가볍게 읽는다: 아래 소유·상태 검사(for update)는 fetch_trans *뒤에* 있어서
+    # 거기 얹으면 네트워크 왕복 동안 행 잠금을 쥐게 된다. 여기서 못 찾아도 에러 내지
+    # 않는다 — 소유권의 단일 진실은 아래 for update 조회이고, 이건 계약 선택용 힌트일
+    # 뿐이다(찾지 못하면 mid 로 진행하다 아래에서 정식으로 404 난다 — 오늘과 동일한
+    # 순서: 존재하지 않는 enrollment 도 지금처럼 fetch_trans 를 먼저 태운다).
+    # 이 때문에 /identity 는 커넥션 풀 체크아웃을 한 번이 아니라 두 번 순차로 쓴다(이
+    # 블록에서 하나를 반납하고, fetch_trans 이후 아래에서 새로 하나를 연다) — 겹쳐 쥐지는
+    # 않으므로 기본 풀 크기에서는 무해하지만, 풀 크기 재산정 때 다시 발견하지 않도록
+    # 남겨 둔다.
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select identity_method from fm_biometric_enrollments "
+                "where id = %s and user_id = %s",
+                (enrollment_id, user_id),
+            )
+            method_row = await cur.fetchone()
+    # NULL(마이그레이션 이전 행) 도 'mid' 로 취급한다.
+    method = (method_row or {}).get("identity_method") or "mid"
+    try:
+        contract = cx_identity.get_oacx_biometric_contract(settings, method=method)
+    except cx_identity.OacxBiometricError as exc:
+        raise _err(exc.reason, "본인확인을 지금 진행할 수 없어요.")
     try:
         # CI·이름·생년월일은 trans/{token}(서버발 조회)에서만 온다 — 서버검증 완료.
         trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
-        evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
+        if method == "simple_auth":
+            evidence = cx_identity.parse_simple_auth_evidence(trans, contract=contract)
+        else:
+            evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
     except cx_identity.OacxBiometricError as exc:
         raise _err(exc.reason, "본인확인에 실패했어요. 다시 시도해 주세요.")
     except cx_identity.CxIdentityError:
@@ -1416,6 +1683,108 @@ async def upload_enrollment_photo(
             qc_status="passed",
             uploaded_at=uploaded_at,
         )
+    finally:
+        data = b""
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/id-document",
+    response_model=EnrollmentView,
+    status_code=201,
+)
+async def upload_id_document(
+    request: Request,
+    enrollment_id: str,
+    file: UploadFile = File(...),
+    document_type: str = Form(..., alias="documentType"),
+    masked_confirmed: bool = Form(..., alias="maskedConfirmed"),
+    user_id: str = Depends(require_user),
+):
+    """간편인증(simple_auth) 경로 전용 — 사용자가 촬영한 신분증 업로드.
+
+    OACX 초상(dlphotoimage)이 없는 이 경로에서는 신분증 사진 속 얼굴이 SFace 앵커를
+    대신한다. 저장 대상은 마스킹 전체본(관리자 육안 심사용)이고, crop_id_face 는 얼굴이
+    검출 가능한지 확인하는 게이트로만 쓴다 — 크롭 자체는 여기서 저장하지 않는다.
+    """
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    settings: Settings = request.app.state.settings
+    if "simple_auth" not in settings.fm_identity_methods:
+        raise _err(
+            "identity_method_unavailable", "지금은 이 방식으로 등록할 수 없어요.", status=409
+        )
+    if document_type not in facemarket_id_document.ID_DOCUMENT_TYPES:
+        raise _err("invalid_document_type", "신분증 종류를 확인해 주세요.")
+    if not masked_confirmed:
+        raise _err("masking_required", "주민등록번호 뒷자리를 가린 뒤 올려 주세요.")
+    mime = (file.content_type or "").lower()
+    if mime not in facemarket_id_document.ALLOWED_ID_MIME:
+        raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+    data = await file.read()
+    try:
+        if not data:
+            raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
+        if len(data) > facemarket_id_document.MAX_ID_BYTES:
+            raise _err("file_too_large", "이미지는 12MB 이하만 가능합니다.", status=413)
+        # 얼굴이 안 잡히면 심사할 대상이 없다 — 저장하지 말고 재촬영을 요구한다.
+        # crop_id_face 는 settings 가 keyword-only 라 to_thread 에도 키워드로 넘긴다.
+        try:
+            await asyncio.to_thread(
+                facemarket_id_document.crop_id_face, data, settings=settings
+            )
+        except facemarket_id_document.IdDocumentError as exc:
+            raise _err(exc.reason, "신분증 얼굴이 보이게 다시 찍어 주세요.")
+        except QcFailed:
+            raise _err(
+                "qc_unavailable",
+                "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                status=503,
+            )
+        # 업로드 시도마다 새 키를 쓴다. 고정 키를 쓰면 동시/재시도 제출이 같은 객체를
+        # 공유해, 늦게 실패한 요청의 rowcount==0 정리(delete)가 먼저 커밋된 요청의
+        # 객체를 지워 버린다(리뷰 finding) — enrollment_quarantine_key 와 같은 이유다.
+        key = enrollment_id_document_key(enrollment_id, "jpg", version=uuid.uuid4().hex)
+        r2 = _r2_face(request)
+        async with get_conn(request) as conn:
+            await _assert_account_open(conn, user_id)
+            try:
+                await asyncio.to_thread(r2.put_bytes, key, data, mime)
+            except Exception as exc:
+                logger.warning(
+                    "facemarket_enrollment_id_document_store_failed",
+                    extra={
+                        "enrollment_id": enrollment_id,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                raise _err(
+                    "storage_unavailable",
+                    "얼굴 저장소를 사용할 수 없습니다.",
+                    status=503,
+                )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollments
+                    set status = 'identity_pending',
+                        id_document_r2_key = %s, id_document_type = %s,
+                        id_document_uploaded_at = now(), id_document_purged_at = null
+                    where id = %s and user_id = %s and status = 'id_capture_pending'
+                    """,
+                    (key, document_type, enrollment_id, user_id),
+                )
+                if cur.rowcount == 0:
+                    # 이미 지나간 단계이거나 남의 등록 — 방금 올린 객체를 되돌린다.
+                    await asyncio.to_thread(r2.delete, key)
+                    raise _err(
+                        "invalid_enrollment_state",
+                        "신분증을 올릴 수 있는 단계가 아니에요.",
+                        status=409,
+                    )
+            await conn.commit()
+            row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+            return await _enrollment_view(conn, row, settings)
     finally:
         data = b""
 
@@ -1933,6 +2302,29 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
                     )
                     return False
 
+                # Task9: 신분증 촬영본 파기 안전망 3겹 중 2번째 겹 — 취소(cancel_enrollment)·
+                # 실패(_fail_enrollment)·만료(EnrollmentExpiredError 즉시 호출 + 이 함수를
+                # 재방문하는 sweep_terminal_enrollments 의 candidates 재조회)가 전부 이
+                # 함수를 거치므로 여기 한 곳에 걸면 세 경로를 동시에 커버한다(1번째 겹은
+                # admin approve/reject 의 즉시 파기, 3번째 겹은 dispatcher.py 의 7일 스윕).
+                # mid 경로는
+                # id_document_r2_key 가 애초에 null 이라 delete 를 안 타는 무해한 no-op —
+                # id_document_purged_at 은 API 응답(EnrollmentView)에 노출되지 않는 내부
+                # 감사 컬럼이라 mid 의 관측 가능한 photo cleanup·expiry 동작은 그대로다.
+                # 실패해도 사진 정리(remaining 카운트)는 계속 진행한다 — 7일 배치 스윕이 상한.
+                try:
+                    await facemarket_id_document.purge_id_document(r2, conn, enrollment_id)
+                    await conn.commit()
+                except Exception as exc:
+                    await conn.rollback()
+                    logger.warning(
+                        "facemarket_enrollment_id_document_purge_failed",
+                        extra={
+                            "enrollment_id": enrollment_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+
                 deleted_count, failed_count = await _drain_photo_cleanup_locked(
                     conn,
                     r2,
@@ -1997,6 +2389,68 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
         return False
 
 
+class _AppRequest:
+    """`app` 만 들고 `request` 처럼 구는 얇은 대역.
+
+    `_dispatch_decision_email`/`get_conn` 은 `request.app.state` 밖을 보지 않는다. 스윕은
+    요청 컨텍스트가 없으므로 그 한 가지만 채워 같은 메일 경로(발송 원장 포함)를 그대로
+    재사용한다 — 통지 경로를 두 벌 만들면 한쪽만 고쳐지는 날이 온다."""
+
+    __slots__ = ("app",)
+
+    def __init__(self, app):
+        self.app = app
+
+
+async def notify_enrollment_decision(
+    app, *, enrollment_id: str, email_type: str, reject_reason: str | None = None
+) -> bool:
+    """등록 심사 결과를 지원서 연락처로 메일 통지한다(best-effort).
+
+    심사 대기 화면이 "결과는 메일로 알려 드려요" 라고 약속하는데 실제로는 아무것도 보내지
+    않았다 — 그 화면은 폴링도 하지 않으므로 사용자에게 **어떤 통지 경로도 없었다**
+    (최종리뷰 I2). 연락처는 지원서에만 있으므로 지원서가 없으면(fm_application_required
+    off) 보낼 곳이 없다 — 조용히 건너뛰되 그 사실을 로그로 남긴다.
+
+    반환값: 실제로 발송을 시도했으면 True. 결정 자체는 이미 커밋됐으므로 절대 예외를
+    올리지 않는다(지원서 승인·거절 메일과 같은 규율).
+    """
+    try:
+        request = _AppRequest(app)
+        async with get_conn(request) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    select a.id::text as application_id, a.contact_email as contact_email
+                    from fm_biometric_enrollments e
+                    join fm_model_applications a on a.id = e.application_id
+                    where e.id = %s
+                    """,
+                    (enrollment_id,),
+                )
+                row = await cur.fetchone()
+        if not row or not row.get("contact_email"):
+            logger.info(
+                "enrollment_decision_email_skipped enrollment=%s type=%s reason=no_contact",
+                enrollment_id, email_type,
+            )
+            return False
+        await _dispatch_decision_email(
+            request,
+            application_id=row["application_id"],
+            to=row["contact_email"],
+            email_type=email_type,
+            reject_reason=reject_reason,
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "enrollment_decision_email_failed enrollment=%s type=%s",
+            enrollment_id, email_type, exc_info=True,
+        )
+        return False
+
+
 async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
     pool = getattr(app.state, "pool", None)
     if pool is None:
@@ -2010,7 +2464,16 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     with due as (
                         select id from fm_biometric_enrollments
                         where expires_at <= now()
-                          and status in ('identity_pending', 'photos_pending', 'liveness_pending', 'processing')
+                          -- Task5: id_capture_pending(신분증 촬영 대기)은 나머지와 같은 본인인증
+                          -- 진행 단계라 같은 24h TTL 로 만료시킨다. review_pending 은 일부러
+                          -- 뺀다 — 그건 사람 심사원을 기다리는 단계라, 같은 24h 로 자동만료시키면
+                          -- 심사가 밀린 정상 지원자가 자동 탈락한다. 대신 심사 액션(승인/반려,
+                          -- Task7/8 소관)이 명시적으로 빠져나가게 한다 — review_pending 이 무기한
+                          -- 방치될 위험은 심사팀 SLA/전용 타임아웃으로 다뤄야 할 별개 과제다.
+                          and status in (
+                            'id_capture_pending', 'identity_pending', 'photos_pending',
+                            'liveness_pending', 'processing'
+                          )
                         order by expires_at
                         for update skip locked
                         limit %s
@@ -2025,6 +2488,40 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                 )
                 await cur.fetchall()
             await conn.commit()
+
+        # 심사 기한(REVIEW_DEADLINE_DAYS) 초과분을 닫는다. 위 만료 스윕이 review_pending 을
+        # 일부러 빼 두는 건 "심사가 밀렸다고 정상 지원자를 24시간 만에 탈락시키지 않는다"는
+        # 뜻이지 "영원히 기다린다"는 뜻이 아니다 — 신분증 촬영본은 7일이면 배치 스윕이
+        # 지우므로 그 뒤엔 심사 자체가 불가능하고, 행은 사용자의 단일 활성 슬롯을 계속
+        # 점유한다(최종리뷰 I3). review_status 도 비워 관리자 대기 큐에서 내린다.
+        # 아래 정리 쿼리가 같은 tick 에 이 행들을 집어 사진·신분증을 파기한다.
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    with due as (
+                        select id from fm_biometric_enrollments
+                        where status = 'review_pending' and review_status = 'pending'
+                          and created_at <= now() - interval '{REVIEW_DEADLINE_DAYS} days'
+                        order by created_at
+                        for update skip locked
+                        limit %s
+                    )
+                    update fm_biometric_enrollments e
+                    set status='failed', decision='failed', reason='review_timeout',
+                        review_status=null, completed_at=now()
+                    from due where e.id=due.id
+                    returning e.id::text as id
+                    """,
+                    (limit,),
+                )
+                timed_out = await cur.fetchall()
+            await conn.commit()
+        for row in timed_out:
+            logger.warning("enrollment_review_timed_out enrollment=%s", row["id"])
+            await notify_enrollment_decision(
+                app, enrollment_id=row["id"], email_type="enrollment_review_timeout"
+            )
 
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -2099,12 +2596,25 @@ def _decision_body(decision: EnrollmentDecision) -> dict:
     return body
 
 
-def _assert_match(score: float, threshold: float) -> None:
+def _coerce_match_score(score) -> float | None:
+    """score 를 유한한 float 로 정규화한다. 변환 불가·비유한이면 None(사실상 최저점)."""
     try:
         value = float(score)
     except (TypeError, ValueError):
-        raise EnrollmentMappedError("face_match_failed") from None
-    if not math.isfinite(value) or value < threshold:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _is_below_threshold(score, threshold: float) -> bool:
+    """미달 판정의 단일 정의 — `_assert_match`(경로 M, enforce)와 매칭 루프의 advisory
+    기록(경로 S)이 같은 기준으로 "미달"을 판정하게 한다. 여기가 갈라지면 mid 의 enforce
+    임계와 simple_auth 의 belowThreshold 기록이 조용히 어긋난다."""
+    value = _coerce_match_score(score)
+    return value is None or value < threshold
+
+
+def _assert_match(score: float, threshold: float) -> None:
+    if _is_below_threshold(score, threshold):
         raise EnrollmentMappedError("face_match_failed")
 
 
@@ -2209,7 +2719,15 @@ async def _initial_completion_checks(
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
                        e.identity_tx_digest, e.identity_contract_version,
-                       e.profile_image_r2_key, e.height_bucket, e.body_type, e.photo_revision
+                       e.profile_image_r2_key, e.height_bucket, e.body_type,
+                       e.photo_revision,
+                       -- 경로 분기(mid/simple_auth)와 간편인증 앵커의 출처. dict_row 라
+                       -- 여기 없는 컬럼은 row 에 아예 없다 — process_enrollment_completion
+                       -- 이 row.get("identity_method") 로 읽는 값이 항상 None 이 되어
+                       -- 간편인증 완료 경로 전체가 mid 로 오폴백한다(최종리뷰 C1).
+                       -- 컬럼 추가·삭제는 test_completion_select_projects_every_column_read
+                       -- 가 잡는다(읽는 쪽 소스를 스캔해 이 select 목록과 대조).
+                       e.identity_method, e.id_document_r2_key
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -2305,6 +2823,7 @@ async def process_enrollment_completion(
     settings = request.app.state.settings
     liveness = None
     portrait: bytearray | None = None
+    id_document_buffer: bytearray | None = None
     photo_buffers: list[bytearray] = []
     processing_started = False
     try:
@@ -2326,15 +2845,51 @@ async def process_enrollment_completion(
             except BiometricProviderError as exc:
                 raise EnrollmentMappedError(exc.reason) from None
 
+        method = row.get("identity_method") or "mid"
+        # 얼굴 매칭이 꺼져 있으면(main 기본값) 점수가 없다 — 심사 카드에 "매칭 안 함"을
+        # 명시적으로 남긴다. 빈 dict 를 넘겨 놓고 나중에 KeyError 로 터지게 두지 않는다.
+        match_snapshot: dict = {
+            "policyVersion": settings.fm_match_policy_version,
+            "anchor": "id_document_crop" if method == "simple_auth" else "oacx_portrait",
+            "faceMatch": "disabled",
+        }
         if settings.fm_face_match_enabled:
           try:
-            # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
-            # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
-            contract = cx_identity.get_oacx_biometric_contract(settings)
-            # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
-            # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
-            # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
-            portrait = cx_identity.parse_oacx_portrait_hex(id_photo_hex, contract=contract)
+            if method == "simple_auth":
+                # 경로 S(간편인증): OACX 는 초상(dlphotoimage)을 안 준다 — 앵커는 사용자가
+                # 업로드한 마스킹 신분증 사진에서 얼굴만 잘라낸 바이트다. 이 앵커는 사용자
+                # 본인이 촬영한 것이라 위조 가능 — 아래 매칭 루프는 advisory 로 돈다(enforce
+                # 아님, WHY 는 매칭 루프 주석 참조).
+                key = row.get("id_document_r2_key")
+                if not key:
+                    raise EnrollmentMappedError("id_portrait_unavailable")
+                r2_document = _r2_face(request)
+                id_document_buffer = bytearray(
+                    await asyncio.to_thread(r2_document.get_bytes, key)
+                )
+                try:
+                    portrait = await asyncio.to_thread(
+                        facemarket_id_document.crop_id_face,
+                        id_document_buffer,
+                        settings=settings,
+                    )
+                except facemarket_id_document.IdDocumentError as exc:
+                    raise EnrollmentMappedError(exc.reason) from None
+                except QcFailed:
+                    # (MINOR7) crop_id_face 내부 load_face_qc/detect_largest_face 가 인프라
+                    # 문제로 실패하면(가중치 부재 등) IdDocumentError 가 아니라 맨 QcFailed 를
+                    # 던진다 — 아래 일반 except Exception 이 삼키면 on-call 이
+                    # id_portrait_unavailable(재촬영 문제)로 오인한다. 사용자 재시도
+                    # 가능성(RETRYABLE_REASONS)은 둘 다 같지만 사유는 정확해야 한다.
+                    raise EnrollmentMappedError("qc_unavailable") from None
+            else:
+                # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
+                # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
+                contract = cx_identity.get_oacx_biometric_contract(settings)
+                # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
+                # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
+                # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
+                portrait = cx_identity.parse_oacx_portrait_hex(id_photo_hex, contract=contract)
           except EnrollmentMappedError:
               raise
           except cx_identity.OacxBiometricError as exc:
@@ -2373,25 +2928,70 @@ async def process_enrollment_completion(
             # 업로드 사진 ↔ 앵커: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
             # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
             # 잡히는 사진만 매칭해 "모델 사진 = 검증된 본인"을 확인하고, 검출 불가한 각도
-            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다. 검출된 사진은 모두 매칭돼야 하고,
-            # 최소 1장은 매칭돼야 한다(스왑 방지).
+            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다.
+            #
+            # 경로 M(mid): 앵커가 정부 서명 VC 초상이다 — 임계 미달은 "본인이 아니다"라는
+            # 신뢰할 수 있는 신호라 지금처럼 즉시 차단한다(enforce). 검출된 사진은 모두
+            # 매칭돼야 하고 최소 1장은 매칭돼야 한다(스왑 방지). **불변**.
+            # 경로 S(simple_auth): 앵커가 사용자가 손에 들고 촬영한 신분증이다 — 위조 가능해서
+            # 점수가 높아도 진짜라는 보장이 안 되고, 촬영 각도·조명·코팅 반사 때문에 낮아도
+            # 본인이 아니라는 보장이 안 된다. 기계가 어느 방향으로도 신뢰 판정을 못 내리므로
+            # 점수는 기록만 하고(advisory) 사람이 심사한다. 예외: 세 각도 전부 얼굴 미검출이면
+            # 심사할 근거 자체가 없으므로 그때는 막는다(재촬영 유도).
+            advisory = method == "simple_auth"
+            scores: dict[str, float] = {}
+            below: list[str] = []
+            skipped: list[str] = []
             matched_any = False
             for _angle, buffer in photo_items:
                 try:
                     score = qc.one_to_one_similarity(buffer, match_anchor)
                 except QcFailed as exc:
                     if exc.reason == "no_face_detected":
-                        continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
+                        skipped.append(_angle)  # 정면 검출기가 못 잡는 각도 — 매칭 대상 아님
+                        continue
+                    # (MINOR4) reason 이 "no_face_detected" 가 아닌 QcFailed(예:
+                    # embedding_invalid)는 advisory 라도 완료 전체를 중단시킨다 — 브리프의
+                    # 차단 예외("세 각도 전부 미검출")보다 넓지만, mid 의 기존 동작과 같은
+                    # 선이라 의도적으로 바꾸지 않는다. 다음 사람이 놓친 게 아니라 알고
+                    # 있다는 것만 남긴다.
                     raise
                 threshold = match_threshold_for_angle(settings, _angle)
                 logger.info(
-                    "fm_match_photo_live angle=%s score=%s threshold=%.4f",
-                    _angle, score, threshold,
+                    "fm_match_photo_anchor angle=%s score=%s threshold=%.4f advisory=%s",
+                    _angle, score, threshold, advisory,
                 )
-                _assert_match(score, threshold)
-                matched_any = True
-            if not matched_any:
+                if _is_below_threshold(score, threshold):
+                    below.append(_angle)
+                    if not advisory:
+                        _assert_match(score, threshold)
+                else:
+                    matched_any = True
+                numeric_score = _coerce_match_score(score)
+                if numeric_score is not None:
+                    scores[_angle] = numeric_score
+            if not advisory and not matched_any:
                 raise EnrollmentMappedError("face_match_failed")
+            if advisory and not scores:
+                # 세 각도 전부 얼굴 미검출(혹은 무효 점수) = 심사할 근거가 없다.
+                raise EnrollmentMappedError("face_match_failed")
+            match_snapshot = {
+                # raw 코사인을 그대로 저장한다. 백분율 변환은 표시층에서만 한다 — 임계
+                # 재캘리브·사후 분석이 원본을 요구하고, 표시 형식이 바뀐다고 저장 값이
+                # 흔들리면 안 된다.
+                "policyVersion": settings.fm_match_policy_version,
+                "anchor": "id_document_crop" if advisory else "oacx_portrait",
+                # 실제로 매칭을 시도한 각도만 적는다 — 슬롯 구성이 3각도에서 18장으로
+                # 바뀌었으므로(main) 상수 목록을 박아 두면 스냅샷이 거짓이 된다.
+                "thresholds": {
+                    angle: match_threshold_for_angle(settings, angle)
+                    for angle, _ in photo_items
+                },
+                "scores": scores,
+                "belowThreshold": below,
+                "skipped": skipped,
+                "computedAt": datetime.now(timezone.utc).isoformat(),
+            }
           except EnrollmentMappedError:
               raise
           except QcFailed as exc:
@@ -2400,12 +3000,10 @@ async def process_enrollment_completion(
           except Exception:
               raise EnrollmentMappedError("qc_unavailable") from None
 
-        # Task3: 바인딩 증거는 앞단 /identity 가 fm_biometric_enrollments 에 저장한 값을 읽는다.
-        # CI 는 재계산할 원본 token 이 없다 — 저장된 HMAC(identity_ci_hash)을 그대로 쓴다.
-        ci_hash = row["identity_ci_hash"]
-        identity_tx_digest = row["identity_tx_digest"]
-        identity_name_masked = row["identity_name_masked"]
-        identity_birth_year = row["identity_birth_year"]
+        match_required_review = review_required(settings, method)
+
+        # Task3: 바인딩 증거(ci_hash 등)는 앞단 /identity 가 fm_biometric_enrollments 에 저장한
+        # 값을 읽는다 — bind_model_and_enqueue_asset_build 가 row 에서 직접 꺼내 쓴다.
         identity_contract_version = row["identity_contract_version"]
         async with get_conn(request) as conn:
             await _assert_account_open(conn, user_id)
@@ -2439,125 +3037,32 @@ async def process_enrollment_completion(
                         "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
                         status=409,
                     )
-                await cur.execute(
-                    "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
-                    (ci_hash,),
-                )
-                model = await cur.fetchone()
-                if model and model["user_id"] != user_id:
-                    raise EnrollmentMappedError("identity_recovery_required")
-                revalidating_photos = row.get("photo_revision", 0) > 0
-                if revalidating_photos and (not model or str(model["id"]) != str(row["model_id"])):
-                    raise EnrollmentMappedError("identity_recovery_required")
-                if model:
-                    model_id = model["id"]
-                elif row.get("model_id"):
-                    model_id = row["model_id"]
+                if match_required_review:
+                    # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
+                    # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
                     await cur.execute(
                         """
-                        update fm_models
-                        set ci_hash = %s, display_name = %s, user_id = %s
-                        where id = %s
+                        update fm_biometric_enrollments
+                        set status = 'review_pending', review_status = 'pending',
+                            match_scores = %s
+                        where id = %s and status = 'processing'
                         """,
-                        (ci_hash, identity_name_masked, user_id, model_id),
+                        (Json(match_snapshot), enrollment_id),
                     )
-                else:
-                    await cur.execute(
-                        """
-                        insert into fm_models (user_id, display_name, status, ci_hash)
-                        values (%s, %s, 'pending', %s)
-                        returning id::text as id
-                        """,
-                        (user_id, identity_name_masked, ci_hash),
-                    )
-                    model_id = (await cur.fetchone())["id"]
-                try:
-                  if not revalidating_photos:
-                    await cur.execute(
-                        """
-                        insert into fm_identity_verifications
-                            (model_id, cx_tx_id, cx_tx_id_format, fields)
-                        values (%s, %s, 'sha256-v1', %s)
-                        """,
-                        (
-                            model_id,
-                            identity_tx_digest,
-                            Json({
-                                "nameMasked": identity_name_masked,
-                                "birthYear": identity_birth_year,
-                                "biometric": True,
-                            }),
-                        ),
-                    )
-                except UniqueViolation:
-                    raise EnrollmentMappedError("identity_replay")
-                await cur.execute(
-                    """
-                    update fm_models
-                    set assets_status = 'building', current_enrollment_id = %s
-                    where id = %s
-                    """,
-                    (enrollment_id, model_id),
-                )
-                # Task4: 등록 중 올린 대표이미지가 있으면 바인딩 시 모델 커버로 승격한다.
-                # cover_image_url 은 기존 관례상 별도 URL 변환 없이 그대로 읽히므로(facemarket.py
-                # _MODEL_CARD_COLS 참조) R2 키를 그대로 저장한다 — 노출 URL화는 범위 밖.
-                if row.get("profile_image_r2_key"):
-                    await cur.execute(
-                        "update fm_models set cover_image_url = %s where id = %s",
-                        (row["profile_image_r2_key"], model_id),
-                    )
-                # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
-                # 모델로 승격한다. gender는 identity(OACX)에서 설정되지만, CX가 성별을 안 주면
-                # NULL로 남으므로 — 모델이 고른 키 구간 접두사(m_/f_)에서 유도해 채운다(coalesce).
-                if row.get("height_bucket") or row.get("body_type"):
-                    from .facemarket_physique import bucket_gender
-
-                    await cur.execute(
-                        "update fm_models set height_bucket = coalesce(%s, height_bucket), "
-                        "body_type = coalesce(%s, body_type), "
-                        "gender = coalesce(gender, %s) where id = %s",
-                        (
-                            row.get("height_bucket"),
-                            row.get("body_type"),
-                            bucket_gender(row.get("height_bucket")),
-                            model_id,
-                        ),
-                    )
-                await cur.execute(
-                    """
-                    update fm_biometric_enrollments
-                    set model_id = %s, status = 'asset_building', decision = 'passed',
-                        reason = null, completed_at = now(), oacx_tx_digest = %s,
-                        match_policy_version = %s,
-                        provider_versions = provider_versions || %s::jsonb
-                    where id = %s
-                    """,
-                    (
-                        model_id,
-                        identity_tx_digest,
-                        settings.fm_match_policy_version,
-                        Json({
-                            "faceLiveness": (
-                                liveness.provider_version
-                                if liveness is not None else "disabled"
-                            ),
-                            "oacx": identity_contract_version,
-                            "faceMatch": "sface-one-to-one",
-                        }),
-                        enrollment_id,
+                    await conn.commit()
+                    return EnrollmentDecision(False, False, None, "review_pending")
+                model_id = await bind_model_and_enqueue_asset_build(
+                    cur,
+                    user_id=user_id,
+                    enrollment_id=enrollment_id,
+                    row=row,
+                    match_snapshot=match_snapshot,
+                    method=method,
+                    identity_contract_version=identity_contract_version,
+                    liveness_provider_version=(
+                        liveness.provider_version if liveness is not None else "disabled"
                     ),
-                )
-                await cur.execute(
-                    """
-                    insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
-                    values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
-                    """,
-                    (
-                        user_id,
-                        Json({"modelId": model_id, "enrollmentId": enrollment_id,
-                              "photoRevision": row.get("photo_revision", 0)}),
-                    ),
+                    match_policy_version=settings.fm_match_policy_version,
                 )
             await conn.commit()
         return EnrollmentDecision(True, False, None, "asset_building", model_id)
@@ -2576,6 +3081,8 @@ async def process_enrollment_completion(
         # Task3: 원시 CI(evidence.ci)는 앞단 /identity 가 이미 폐기했다 — 여기서 다룰 게 없다.
         if portrait is not None:
             cx_identity.wipe_bytearray(portrait)
+        if id_document_buffer is not None:
+            cx_identity.wipe_bytearray(id_document_buffer)
         if liveness is not None:
             cx_identity.wipe_bytearray(liveness.reference_image)
         for buffer in photo_buffers:
@@ -2652,9 +3159,14 @@ async def cancel_enrollment(
                 await cur.execute(
                     """
                     update fm_biometric_enrollments e
-                    set status = 'cancelled', completed_at = coalesce(completed_at, now())
+                    set status = 'cancelled', completed_at = coalesce(completed_at, now()),
+                        -- 취소한 등록이 관리자 대기 큐에 영원히 남지 않게 한다(최종리뷰 I5).
+                        -- 이미 승인/거절된 행의 결정 기록은 지우지 않는다 — 'pending' 일 때만 비운다.
+                        review_status = case when e.review_status = 'pending'
+                                             then null else e.review_status end
                     where e.id = %s and e.user_id = %s and e.status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending', 'cancelled'
                     )
                     returning e.id::text as id

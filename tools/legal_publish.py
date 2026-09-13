@@ -8,8 +8,18 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC, OUT = ROOT / "documents/legal", ROOT / "public/legal"
 OUT.mkdir(parents=True, exist_ok=True)
 EFFECTIVE_DATE = "2026-09-11"
-year, month, day = (int(part) for part in EFFECTIVE_DATE.split("-"))
-EFFECTIVE = f"{year}년 {month}월 {day}일"
+def _korean_date(iso: str) -> str:
+    year, month, day = (int(part) for part in iso.split("-"))
+    return f"{year}년 {month}월 {day}일"
+EFFECTIVE = _korean_date(EFFECTIVE_DATE)
+# 문서별 개정. 한 문서만 개정하는데 전체 시행일을 밀면 나머지 7종의 시행일까지 거짓이 된다.
+# 여기 적은 값이 manifest 의 version/effectiveDate 와 그 문서 본문의 [시행일] 치환을 함께 정한다.
+# (slug → (version, ISO date))
+DOC_REVISIONS = {
+    # 간편인증 경로의 신분증 촬영본 수집·보유·파기 고지 추가(§2 수집항목 표 · §5 고유식별정보).
+    "privacy-model": ("v1.2", "2026-09-12"),
+}
+DEFAULT_VERSION = "v1.1"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
 CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
           addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
@@ -118,11 +128,15 @@ def broken_bold(text):
 def publish():
     manifest, leftovers = [], {}
     for fn, slug, app, title in DOCS:
+        version, iso_date = DOC_REVISIONS.get(slug, (DEFAULT_VERSION, EFFECTIVE_DATE))
+        effective = _korean_date(iso_date)
         text = (SRC / fn).read_text()
         lines = drop_sections(strip_head_block(text.splitlines()))
         text = "\n".join(lines)
         text = drop_revision_notes(text)
-        for pat, rep in SUBS: text = re.sub(pat, rep, text)
+        for pat, rep in SUBS:
+            # 시행일 치환만 문서별 값을 쓴다(나머지 치환은 회사 정보라 문서 공통).
+            text = re.sub(pat, effective if rep == EFFECTIVE else rep, text)
         text = rewrite_links(text, app)
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         text = re.sub(r"(?m)^---\s*\n(---\s*\n)+", "---\n", text)
@@ -132,7 +146,8 @@ def publish():
         bold = broken_bold(text)
         if bold: leftovers[slug] = leftovers.get(slug, []) + [f"굵게 미인식 {b}" for b in bold]
         (OUT / f"{slug}.md").write_text(text)
-        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": EFFECTIVE_DATE, "source": fn})
+        manifest.append({"slug": slug, "app": app, "title": title, "version": version,
+                         "effectiveDate": iso_date, "source": fn})
     # 등록 위저드 동의·안내 문서(04 동의서에서 손으로 뽑아 둔 공개본)는 DOCS 로 생성하지 않으므로
     # 여기서 항목을 유지한다. 빠뜨리면 /biometric-consent, /overseas-transfer 화면이 manifest 를 못 찾는다.
     manifest += CONSENT_DOCUMENTS

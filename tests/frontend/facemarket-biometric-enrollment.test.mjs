@@ -220,6 +220,14 @@ test('nextEnrollmentStep maps identity_pending to identity', () => {
   assert.equal(nextEnrollmentStep({ status: 'identity_pending' }), 'identity');
 });
 
+// 간편인증(simple_auth) 경로 신규 상태 — Task5/7 이 백엔드에 추가한 두 상태를 위저드
+// 스텝으로 매핑한다. id_capture_pending(신분증 촬영 대기)은 mid 경로에는 없는 진입점,
+// review_pending(관리자 육안 심사 대기)은 완료 직전에 사람이 끼어드는 종착 대기 상태다.
+test('nextEnrollmentStep maps id_capture_pending to id_capture, review_pending to review', () => {
+  assert.equal(nextEnrollmentStep({ status: 'id_capture_pending' }), 'id_capture');
+  assert.equal(nextEnrollmentStep({ status: 'review_pending' }), 'review');
+});
+
 test('ENROLLMENT_ANGLES carry pose example images', () => {
   for (const a of ENROLLMENT_ANGLES) assert.ok(a.exampleImage, a.value);
 });
@@ -234,6 +242,74 @@ test('uploadProfileImage mirrors multipart pattern', () => {
   const apiSrc = read('../../src/lib/api/facemarket.js');
   assert.match(apiSrc, /uploadProfileImage\(\{\s*enrollmentId,\s*fileBlob,\s*filename\s*\}\)/);
   assert.match(apiSrc, /profile-image/);
+});
+
+// 간편인증(simple_auth) 경로 신규 클라이언트 — Task10 fix round 1.
+// uploadProfileImage 와 같은 멀티파트 패턴을 따르는지, id-document 경로가 맞는지 확인.
+test('uploadIdDocument multiparts file+documentType+maskedConfirmed to the id-document route', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed\s*\}\)/);
+  assert.match(apiSrc, /form\.append\('file',\s*file/);
+  assert.match(apiSrc, /form\.append\('documentType',\s*documentType\)/);
+  assert.match(apiSrc, /form\.append\('maskedConfirmed'/);
+  assert.match(apiSrc, /enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/id-document/);
+});
+
+test('createEnrollment carries identityMethod through to the request body', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /createEnrollment\(\{\s*documentVersion,\s*deviceId,\s*identityMethod\s*\}\)/);
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function createEnrollment'),
+    apiSrc.indexOf('export async function uploadIdDocument'),
+  );
+  assert.match(fnSrc, /identityMethod/);
+});
+
+// 서버 라우트(facemarket_admin_review.py list_review_queue)는 review 를
+// `Query(..., ...)` — 기본값 없는 **필수** 파라미터로 선언한다. adminListApplications 의
+// 옵션-쿼리 패턴(있으면만 붙임)을 그대로 베끼면 인자 없이 부르는 순간 서버가 422 를 준다.
+// 이 테스트는 그 회귀(다시 조건부 가드로 되돌아가는 것)를 정확히 잡는다.
+test('adminListEnrollments always puts review in the querystring (server route requires it)', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminListEnrollments'),
+    apiSrc.indexOf('export function adminEnrollmentCard'),
+  );
+  assert.match(fnSrc, /admin\/enrollments\?review=\$\{encodeURIComponent\(review\)\}/);
+  assert.ok(!fnSrc.includes('review ? `'), 'review 가 조건부(있을 때만)로 되돌아갔다 — 서버는 review 를 필수로 요구한다');
+});
+
+test('adminEnrollmentCard hits the admin enrollment {id} route', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /adminEnrollmentCard\(enrollmentId\)/);
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminEnrollmentCard'),
+    apiSrc.indexOf('export function adminApproveEnrollment'),
+  );
+  assert.match(fnSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}`\)/);
+});
+
+test('adminApproveEnrollment/adminRejectEnrollment hit approve/reject, reject sends a reason', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  const approveSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminApproveEnrollment'),
+    apiSrc.indexOf('export function adminRejectEnrollment'),
+  );
+  assert.match(approveSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/approve/);
+  const rejectSrc = apiSrc.slice(apiSrc.indexOf('export function adminRejectEnrollment'));
+  assert.match(rejectSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/reject/);
+  assert.match(rejectSrc, /body:\s*\{\s*reason\s*\}/);
+});
+
+test('identity step runs OACX widget at the FRONT and calls createIdentity with token', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /createIdentity\(/);
+  // #285 이후 /complete 는 sessionId 만 보낸다 — 얼굴 매칭이 기본 off(FM_FACE_MATCH_ENABLED)
+  // 라 신분증 초상(idPhotoHex)을 클라가 릴레이할 이유가 사라졌다. 이 단언은 "token 도
+  // idPhotoHex 도 싣지 않는다"로 남는다(클라→서버 PII 신뢰 금지라는 원래 취지 그대로).
+  assert.match(reg, /completeEnrollment\(\s*[^,]+,\s*\{\s*sessionId[^}]*\}\s*,/);
+  assert.doesNotMatch(reg, /completeEnrollment\([^)]*token/);
+  assert.doesNotMatch(reg, /idPhotoHex/);
 });
 
 test('portrait is held in a ref, never stored/logged', () => {

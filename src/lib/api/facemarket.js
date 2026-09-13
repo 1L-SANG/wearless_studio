@@ -6,7 +6,10 @@
    ============================================================= */
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
-import { DEVICE_HEADER, readDeviceToken } from '../adminDevice.js';
+// 상대 경로다(‘@/’ 아님): tests/frontend 의 몇몇 vite 하네스가 configFile:false 로 돌아
+// '@' 별칭이 없다 — 그 하네스들은 httpAdapter·supabase 만 스텁으로 가로채므로, 여기서
+// '@/' 를 쓰면 새 모듈 하나 때문에 통째로 깨진다(같은 파일의 facemarketPricing 선례).
+import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '../adminDevice.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const MOCK = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock';
@@ -21,6 +24,11 @@ async function _bearer() {
 
 async function _authFetch(path, opts = {}) {
   const token = await _bearer();
+  // 관리자 기기 토큰 — http()(httpAdapter.js)와 같은 규칙으로 싣는다. 이게 빠지면
+  // ADMIN_DEVICE_GATE=enforce 인 프로덕션에서 관리자 화면의 **모든 이미지 fetch 가 403** 이다
+  // (admin_guard.device_token_from 은 이 헤더만 본다). 심사 화면은 신분증을 한 장도 못 보고,
+  // 실패를 "파기됨"으로 오해하게 만든다(최종리뷰 C4). 스토리지가 오리진으로 갈라져 있어
+  // 관리자 문서 밖에서는 토큰 자체가 없으므로 무조건 싣는다(IS_ADMIN 을 보지 않는다).
   const deviceToken = readDeviceToken();
   return fetch(`${BASE_URL}${path}`, {
     ...opts,
@@ -30,6 +38,31 @@ async function _authFetch(path, opts = {}) {
       ...(opts.headers || {}),
     },
   });
+}
+
+/* 게이트 라우트에서 바이트를 받아 objectURL 로 만든다(<img src> 로는 못 건다 — 인증
+   헤더가 필요하다). 403(기기 게이트 거절)과 404(파기됨/없음)를 반드시 구분한다:
+   403 을 "파기됨"으로 그리면 심사자가 존재하는 증거를 없다고 믿는다(최종리뷰 C4).
+   기기 거절이면 http() 와 같은 이벤트를 쏴서 RequireDevice 가 복구 화면으로 넘긴다. */
+async function _gatedImageUrl(path, fallbackMessage) {
+  const res = await _authFetch(path);
+  if (!res.ok) {
+    let code;
+    try {
+      code = (await res.json())?.error?.code;
+    } catch { /* 비 JSON 응답 */ }
+    if (res.status === 403 && typeof code === 'string' && code.startsWith('device_')) {
+      try {
+        window.dispatchEvent(new CustomEvent(DEVICE_REJECTED_EVENT, { detail: { code } }));
+      } catch { /* 비브라우저 환경 */ }
+    }
+    const error = new Error(fallbackMessage);
+    error.status = res.status;
+    if (code) error.code = code;
+    throw error;
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 async function checkedJson(res, fallback = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.') {
@@ -97,15 +130,30 @@ export function listMyModels() {
   return http('/v1/facemarket/models/me');
 }
 
-export function createEnrollment({ documentVersion, deviceId }) {
+export function createEnrollment({ documentVersion, deviceId, identityMethod }) {
   return http('/v1/facemarket/enrollments', {
     method: 'POST',
     body: {
       biometricConsent: { accepted: true, documentVersion },
       termsConsent: { accepted: true, documentVersion },
       deviceId,
+      ...(identityMethod ? { identityMethod } : {}),
     },
   });
+}
+
+// POST /v1/facemarket/enrollments/{id}/id-document — 간편인증(simple_auth) 경로 전용.
+// 사용자가 촬영한 신분증 전체본(마스킹 확인 완료) 업로드. 성공 시 identity_pending 전이.
+// documentType: v1 은 rrc(주민등록증)만. 얼굴 업로드(uploadEnrollmentPhoto)와 같은 멀티파트 패턴.
+export async function uploadIdDocument(enrollmentId, { file, documentType, maskedConfirmed }) {
+  const form = new FormData();
+  form.append('file', file, file?.name || 'id-document');
+  form.append('documentType', documentType);
+  form.append('maskedConfirmed', maskedConfirmed ? 'true' : 'false');
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/id-document`,
+    { method: 'POST', body: form },
+  ), '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
 // 등록 위저드 런타임 설정(라이브니스 필요 여부 등) — 서버 authoritative.
@@ -228,16 +276,55 @@ export function adminResendEmail(applicationId) {
 // 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
 // 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
 export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profile') {
-  return adminApplicationProfileImage(
+  return _gatedImageUrl(
     `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image?kind=${encodeURIComponent(kind)}`,
+    '사진을 불러오지 못했어요.',
   );
 }
 
+// ── 관리자: 생체 등록 육안 심사(간편인증 review_pending) ────────────────────
+// 전부 서버가 admin_guard.require_admin(기기 게이트 포함)을 강제한다.
+
+// review 는 서버(`facemarket_admin_review.py` list_review_queue)에서 `Query(..., ...)` —
+// 기본값 없는 필수 파라미터라 adminListApplications 의 옵션-쿼리 패턴(있으면만 붙임)을
+// 그대로 베끼면 인자 없이 부르는 순간 422 가 난다. 항상 붙인다 — 호출부가 값을 빠뜨리면
+// 여기서 조용히 숨기지 말고 그 즉시 드러나야 한다.
+export function adminListEnrollments(review) {
+  return http(`/v1/facemarket/admin/enrollments?review=${encodeURIComponent(review)}`);
+}
+
+export function adminEnrollmentCard(enrollmentId) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}`);
+}
+
+export function adminApproveEnrollment(enrollmentId) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function adminRejectEnrollment(enrollmentId, reason) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/reject`, {
+    method: 'POST', body: { reason },
+  });
+}
+
+// 신분증·등록 사진 스트림: 게이트 라우트라 <img src> 로 못 건다(adminFetchApplicationPhotoUrl
+// 과 같은 이유). 경로는 호출부가 카드 응답의 `images` 맵에서 그대로 받아 넘긴다 — 프런트가
+// `/v1/facemarket/admin/enrollments/{id}/images/{kind}` 를 다시 조립하면, 서버가 라우트
+// 프리픽스를 바꿀 때 두 곳을 나란히 고쳐야 한다(fix round 1, minor: 서버가 이미 만들어
+// 준 값을 프런트가 버리고 재조립하는 건 드리프트 위험). 응답이 no-store 라 이 objectURL 도
+// 캐시가 아니다 — 카드가 닫히면 호출자가 revokeObjectURL 로 즉시 해제해야 한다(생체
+// 이미지를 앱 상태에 오래 남기지 않는다).
+export async function adminFetchGatedImageUrl(path) {
+  return _gatedImageUrl(path, '이미지를 불러오지 못했어요.');
+}
+
+/* 지원서 사진 URI 를 카드 응답에서 그대로 받아 쓰는 경로(AdminSubmissionDetails).
+   403(기기 게이트 거절)과 404(파기됨)를 반드시 구분해야 하므로 _gatedImageUrl 에 위임한다 —
+   `if (!res.ok) throw` 로 뭉개면 심사자가 403 을 "파기됨"으로 읽는다(최종리뷰 C4). */
 export async function adminApplicationProfileImage(imageUri) {
-  const res = await _authFetch(imageUri);
-  if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
+  return _gatedImageUrl(imageUri, '사진을 불러오지 못했어요.');
 }
 
 // ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
