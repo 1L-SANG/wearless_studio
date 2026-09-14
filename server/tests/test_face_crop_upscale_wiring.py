@@ -164,8 +164,8 @@ def test_the_face_pass_still_produces_a_cut_when_the_pod_cannot_upscale(monkeypa
     buf = BytesIO()
     Image.new("RGB", (1024, 1536), (120, 120, 120)).save(buf, "PNG")
     with mock.patch.object(fi, "prepare_image",
-                           lambda image, model_dir=None: (image.convert("RGB"), plan,
-                                                          {"skipped_reason": None, "pose_risk": False})):
+                           lambda image, model_dir=None, **kw: (image.convert("RGB"), plan,
+                                                                {"skipped_reason": None, "pose_risk": False})):
         res = fi.run_face_pass(buf.getvalue(), Backend(), seeds=(42,))
     assert res.meta["crop_upscale"]["method"] == "lanczos"
     assert res.meta["crop_upscale"]["error"] == "RuntimeError"

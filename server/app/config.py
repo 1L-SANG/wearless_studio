@@ -442,6 +442,9 @@ class Settings:
     #: 기본 on. false 가 탈출구다(결과를 예전 Lanczos 경로와 똑같이 만들고 싶을 때).
     #: 파드가 /upscale 을 모르거나 가중치가 없으면 이 값과 무관하게 Lanczos 로 폴백한다.
     face_crop_upscale: bool = True
+    #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
+    #: 기본 on. false 가 탈출구다 — 끄면 막힌 컷에서 정수리가 크롭 경계에 걸린다(2026-09-13 실측).
+    face_crop_pad: bool = True
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -801,6 +804,7 @@ def load_settings() -> Settings:
         face_render_code_version=(os.getenv("FACE_RENDER_CODE_VERSION") or _build_sha()),
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
+        face_crop_pad=(os.getenv("FACE_CROP_PAD", "true").lower() != "false"),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

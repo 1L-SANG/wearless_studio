@@ -468,20 +468,88 @@ def plan_from_image(image: Image.Image, model_dir: str | None = None) -> FacePla
                          expression=expression, expression_metrics=metrics)
 
 
-def prepare_image(image: Image.Image, model_dir: str | None = None) -> tuple[Image.Image, FacePlan | None, dict]:
-    """(확대된 이미지, 계획, 메타). 작은 얼굴은 auto_upscale 로 키운 뒤 그 이미지에서 다시 계획한다.
+def crop_pad_for(width: int, height: int, box) -> tuple[int, int, int, int]:
+    """3×얼굴폭 정사각형이 사진 안에 들어가게 하려면 각 변에 얼마나 덧대야 하나 (좌, 상, 우, 하).
+
+    안 덧대도 되면 (0,0,0,0) — 그 경우 이 모듈의 모든 값이 예전과 바이트 동일하다.
+    """
+    bx, by, bw, bh = (float(v) for v in box)
+    side = 3.0 * bw
+    if side <= width and side <= height:
+        # 크롭이 사진 안에 들어간다 — plan_from_box 의 clamp 는 위치만 밀 뿐 **크기를 깎지 않는다**.
+        # 이 경우는 손대지 않는다(그래야 막히지 않는 컷이 예전과 바이트 동일하다).
+        return (0, 0, 0, 0)
+    cx, cy = bx + bw / 2, by + bh / 2
+    return (max(0, math.ceil(side / 2 - cx)), max(0, math.ceil(side / 2 - cy)),
+            max(0, math.ceil(cx + side / 2 - width)), max(0, math.ceil(cy + side / 2 - height)))
+
+
+def pad_edges(image: Image.Image, pad: tuple[int, int, int, int]) -> Image.Image:
+    """가장자리 픽셀을 늘려 덧댄다(복제). 새 색을 지어내지 않아 생성기가 배경을 이어 그리기 쉽다."""
+    left, top, right, bottom = pad
+    if not any(pad):
+        return image
+    rgb = image.convert("RGB")
+    arr = np.asarray(rgb, np.uint8)
+    return Image.fromarray(np.pad(arr, ((top, bottom), (left, right), (0, 0)), mode="edge"))
+
+
+def shift_detection(det: FaceDetection, dx: int, dy: int) -> FaceDetection:
+    """검출 결과를 (dx, dy) 만큼 옮긴다 — 박스 **와 랜드마크 둘 다**.
+
+    ★ 박스만 옮기면 estimate_expression 이 엉뚱한 곳을 본다. 표정 추정은 YuNet 5점 중 입꼬리 두
+    점으로 입술 영역을 잡으므로, 좌·상 패딩이 있는 컷에서 랜드마크가 그대로면 입술 마스크가
+    패딩만큼 왼쪽·위로 밀린 자리를 읽는다(2026-09-13 리뷰에서 잡힘).
+    """
+    if not dx and not dy:
+        return det
+    bx, by, bw, bh = det.box
+    return replace(det, box=(bx + dx, by + dy, bw, bh),
+                   landmarks=tuple((x + dx, y + dy) for x, y in det.landmarks))
+
+
+def unpad_edges(image: Image.Image, pad) -> Image.Image:
+    """pad_edges 를 되돌린다. 덧댄 픽셀이 결과에 남지 않게 하는 유일한 자리다."""
+    left, top, right, bottom = (int(v) for v in (pad or (0, 0, 0, 0)))
+    if not (left or top or right or bottom):
+        return image
+    return image.crop((left, top, image.width - right, image.height - bottom))
+
+
+def prepare_image(image: Image.Image, model_dir: str | None = None, *,
+                  pad_crop: bool = True) -> tuple[Image.Image, FacePlan | None, dict]:
+    """(확대·패딩된 이미지, 계획, 메타). 작은 얼굴은 auto_upscale 로 키운 뒤 그 이미지에서 다시 계획한다.
 
     메타의 skipped_reason: no_face · too_small(6배로도 120px 미만) · yaw(> YAW_APPLY_MAX). None 이면 적용 대상.
     pose_risk 는 0.25 < yaw ≤ 0.45 구간 표시(적용은 한다).
+
+    ★ 크롭 패딩(pad_crop, 2026-09-13): 3×얼굴폭이 사진 폭·높이에 막히면 가장자리 복제로 덧대고
+    그 위에서 계획한다. 안 덧대면 plan_from_box 의 `side = min(3·bw, W, H)` 가 크롭을 깎고, 그러면
+    타원이 크롭 밖으로 크게 나가 정수리가 크롭 경계에 걸린다 — 생성 머리가 잘리고 타원 밖에 남은
+    원본 머리 끝이 **공중에 뜬 덩어리**로 보인다(2026-09-13 운영 테스트컷 8장 중 3장).
+    막히지 않는 컷은 pad=(0,0,0,0) 이라 계획도 결과도 예전과 바이트 동일하다.
+    덧댄 영역은 run_face_pass 가 합성 뒤 잘라내 **결과에 남지 않는다**. meta["crop_pad"] 가 그 양이다.
     """
-    meta: dict = {"skipped_reason": None, "pose_risk": False}
+    meta: dict = {"skipped_reason": None, "pose_risk": False, "crop_pad": (0, 0, 0, 0)}
     det = detect_face(image, model_dir)
     if det is None:
         meta["skipped_reason"] = "no_face"
         return image, None, meta
     image, umeta = auto_upscale(image, det.box[2])
     meta.update(umeta)
-    plan = plan_from_image(image, model_dir) if umeta["upscale_applied"] else plan_from_box(
+    if umeta["upscale_applied"]:
+        # 확대본에서 다시 잡는다 — det.box 는 확대 전 좌표다. 못 잡으면 예전처럼 no_face.
+        det = detect_face(image, model_dir)
+        if det is None:
+            meta["skipped_reason"] = "no_face"
+            return image, None, meta
+    if pad_crop:
+        pad = crop_pad_for(image.size[0], image.size[1], det.box)
+        if any(pad):
+            image = pad_edges(image, pad)
+            meta["crop_pad"] = pad
+            det = shift_detection(det, pad[0], pad[1])
+    plan = plan_from_box(
         image.size[0], image.size[1], det.box, yaw_proxy=det.yaw_proxy, eye_dist=det.eye_dist,
         **dict(zip(("expression", "expression_metrics"), estimate_expression(image, det))))
     if plan is None:
@@ -1077,6 +1145,7 @@ def run_face_pass(
     mime: str = "image/png",
     references=None,
     crop_upscale: bool = True,
+    crop_pad: bool = True,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -1086,7 +1155,7 @@ def run_face_pass(
     meta: dict = {"applied": False, "fallback": True, "attempts": 0, "seed": None, "tries": []}
     try:
         decoded = _decode(image_bytes)
-        original, plan, pmeta = prepare_image(decoded, model_dir)
+        original, plan, pmeta = prepare_image(decoded, model_dir, pad_crop=crop_pad)
         meta.update(pmeta)
         if plan is None or pmeta["skipped_reason"]:
             meta["reason"] = pmeta["skipped_reason"] or "no_face"
@@ -1139,7 +1208,8 @@ def run_face_pass(
                     "reason": "ok",
                 })
                 buf = BytesIO()
-                result.save(buf, "PNG")
+                # 덧댄 영역은 결과에 남기지 않는다 — 잘라서 원래 크기로 되돌린다.
+                unpad_edges(result, meta.get("crop_pad")).save(buf, "PNG")
                 return FacePassResult(buf.getvalue(), "image/png", True, meta)
         meta["reason"] = "gate_failed"
         meta["stopped_early"] = False
@@ -1481,8 +1551,9 @@ async def apply_face_pass(
         scope = (face_recipe.UPSCALE_SCOPE_FACE_CROP
                  if (meta or {}).get("crop_upscale", {}).get("applied")
                  else face_recipe.UPSCALE_SCOPE_OFF)
-        outcome["face_recipe"] = face_recipe.recipe_id(
-            face_recipe.recipe_fields(lora_sha256=spec.sha256, upscale_scope=scope))
+        outcome["face_recipe"] = face_recipe.recipe_id(face_recipe.recipe_fields(
+            lora_sha256=spec.sha256, upscale_scope=scope,
+            crop_pad=bool(getattr(settings, "face_crop_pad", True))))
 
     def _run(live_spec: FaceIdentitySpec):
         backend = resolve_backend(settings, live_spec)
@@ -1495,6 +1566,7 @@ async def apply_face_pass(
             mime=mime,
             references=live_spec.references,      # 없으면 None — 게이트가 신원을 보지 않는다
             crop_upscale=bool(getattr(settings, "face_crop_upscale", True)),
+            crop_pad=bool(getattr(settings, "face_crop_pad", True)),
         )
 
     render_url = await wait_for_backend(settings, spec, url_provider)
@@ -1601,6 +1673,9 @@ __all__ = [
     "plan_from_box",
     "plan_from_image",
     "prepare_image",
+    "crop_pad_for",
+    "pad_edges",
+    "unpad_edges",
     "resolve_backend",
     "resolve_lora_file",
     "run_face_pass",
