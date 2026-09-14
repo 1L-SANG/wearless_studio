@@ -71,6 +71,15 @@ async def run_editor_image_job(app, job: dict) -> None:
     settle_key = f"credit:job:{job_id}:settle"
     payload = job.get("payload") or {}
     mode = payload.get("mode")
+    # holder(opendid)는 scale-to-zero 다. 실존 모델 잡은 verify_license 로 반드시 holder 를
+    # 부르므로, 커넥션을 잡기 **전에** 깨우고 콜드스타트(~2분)를 여기서 흡수한다. 못 깨워도
+    # 진행은 한다 — 게이트가 fail-closed 로 막고 그 실패가 잡 실패로 남는다.
+    if facemarket.is_real_model_id(
+        (payload.get("_facemarket") or {}).get("modelId")
+        if isinstance(payload.get("_facemarket"), dict) else None
+    ):
+        await facemarket.wait_for_holder(app)
+
     example_warnings: list[dict] = []
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
