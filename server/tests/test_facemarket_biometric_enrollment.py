@@ -1897,6 +1897,8 @@ def test_a_previous_consent_version_is_still_accepted_while_deploys_are_skewed(
         headers=auth(),
     )
     assert response.status_code == 201, response.text
+    # **본 적 없는 버전을 기록하면 안 된다** — 기록은 클라이언트가 보여 준 문서의 버전이다.
+    assert enrollment_store.enrollments[-1]["consent_version"] == previous
 
 
 def test_existing_enrollment_records_explicit_new_reconsent(
