@@ -23,9 +23,9 @@ def _row(angle, key=None, qc="passed", state="quarantine", size=1234):
 
 
 # ── 레이아웃 ────────────────────────────────────────────────────────────────
-def test_the_layout_is_twelve_training_and_four_reference():
+def test_the_layout_is_twelve_training_and_three_reference():
     groups = [group for group, _slot in ex.EXPORTS]
-    assert groups.count("train") == 12 and groups.count("refset") == 4
+    assert groups.count("train") == 12 and groups.count("refset") == 3
     # 측면은 학습에 안 쓴다 — 공개 자산용 한 장이다
     assert "sh_side" not in [slot for _group, slot in ex.EXPORTS]
 
@@ -34,7 +34,8 @@ def test_file_names_come_from_the_server_constant():
     names = {slot: fp.export_name(slot) for _group, slot in ex.EXPORTS}
     assert names["sl_34"] == "해가왼쪽__3:4_무표정"
     assert names["bl_front"] == "해등지고__정면_무표정"
-    assert names["sh_chin_down"] == "그늘__턱_살짝_내리기"
+    assert names["sh_front2"] == "그늘__정면_무표정_2"
+    assert "sh_chin_down" not in names, "턱 컷은 기준셋에서 뺐다(기준끼리 0.664)"
     assert len(set(names.values())) == len(names), "이름이 겹치면 파일이 덮인다"
 
 
@@ -101,7 +102,7 @@ def test_a_partial_set_is_refused_unless_asked(monkeypatch, tmp_path, capsys):
 
 
 def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, capsys):
-    """--apply 경로 전체 — 디렉터리 두 개, 파일 16장, 이름은 <조명>__<컷>.png."""
+    """--apply 경로 전체 — 디렉터리 두 개, 파일 15장, 이름은 <조명>__<컷>.png."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example:5432/x")
     monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
         database_url="", r2_face_bucket="face", r2_bucket="main"))
@@ -126,11 +127,11 @@ def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, caps
 
     train = sorted(path.name for path in (out / "train").iterdir())
     refset = sorted(path.name for path in (out / "refset").iterdir())
-    assert len(train) == 12 and len(refset) == 4
+    assert len(train) == 12 and len(refset) == 3
     assert "해가왼쪽__3:4_무표정.png" in train
     assert refset == sorted(f"{fp.export_name(slot)}.png" for slot in fp.REFSET_SLOTS)
     assert sorted(path.name for path in out.iterdir()) == ["refset", "train"]
-    assert len(r2.reads) == 16
+    assert len(r2.reads) == 15
     # 키는 여전히 출력에 안 나온다
     assert "facemarket/enrollments/" not in capsys.readouterr().out
 

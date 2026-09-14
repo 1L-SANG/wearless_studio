@@ -1,11 +1,11 @@
-"""등록 사진 17칸 → LoRA 학습셋(v7_dataset 레이아웃)으로 내보낸다. **읽기 전용.**
+"""등록 사진 16칸 → LoRA 학습셋(v7_dataset 레이아웃)으로 내보낸다. **읽기 전용.**
 
-17칸 스펙(2026-09-14)은 등록 사진을 그대로 학습 촬영으로 받는다. 그래서 등록이 끝나면
+16칸 스펙(2026-09-14)은 등록 사진을 그대로 학습 촬영으로 받는다. 그래서 등록이 끝나면
 그 사진들이 곧 학습셋이다 — 이 스크립트가 그 둘을 잇는다.
 
     out_dir/
       train/<조명>__<컷>.png     × 12   (조명 4 × 컷 3)
-      refset/그늘__<기준>.png    ×  4   (학습 제외 · 채점용)
+      refset/그늘__<기준>.png    ×  3   (학습 제외 · 채점용)
 
 파일 이름은 서버와 같은 상수에서 나온다(app/facemarket_photos.export_name) — 학습 캡션이
 붙는 자리라 이름이 갈라지면 조명 라벨이 통째로 어긋난다.
@@ -136,7 +136,7 @@ def normalize_png(data: bytes, destination: pathlib.Path) -> tuple[int, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="등록 사진 17칸 → LoRA 학습셋")
+    ap = argparse.ArgumentParser(description="등록 사진 16칸 → LoRA 학습셋")
     ap.add_argument("enrollment_id")
     ap.add_argument("out_dir")
     ap.add_argument("--apply", action="store_true", help="없으면 세어 보기만 하고 파일을 안 쓴다")
