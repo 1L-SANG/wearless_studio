@@ -27,6 +27,12 @@ import {
 } from './idDocumentMasking.js';
 import s from './ModelRegister.module.css';
 
+// 서버가 받는 형식과 같은 집합이어야 한다(facemarket_id_document.ALLOWED_ID_MIME).
+// image/* 로 열어두면 맥 사진앱 기본인 HEIC 까지 통과하는데, 브라우저는 HEIC 를 <img> 로
+// 못 그린다 — 미리보기가 깨진 채 아무 안내 없이 제출 버튼만 잠긴다(2026-09-14 프로덕션).
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ACCEPT_ATTR = ACCEPTED_IMAGE_TYPES.join(',');
+
 export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onStale }) {
   const [documentType, setDocumentType] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
@@ -61,6 +67,12 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
 
   const pickFile = useCallback((file) => {
     if (!file) return;
+    // accept 는 브라우저마다 무시될 수 있고 드래그드롭도 뚫린다 — 여기서 한 번 더 막는다.
+    // 서버까지 갔다 415 로 돌아오는 것보다 고른 즉시 알려주는 편이 낫다.
+    if (file.type && !ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      setLocalError('JPG · PNG · WebP 만 올릴 수 있어요. 아이폰 사진(HEIC)이면 JPG 로 바꿔 주세요.');
+      return;
+    }
     setLocalError('');
     setImageLoaded(false);
     // file 은 여기서 object URL 을 만드는 데만 쓰이고 이 함수를 벗어나지 않는다 — 어떤
@@ -195,7 +207,7 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
         <label className={s.uploadZone}>
           <input
             type="file"
-            accept="image/*"
+            accept={ACCEPT_ATTR}
             capture="environment"
             disabled={!documentType || busy}
             className={s.uploadInput}
@@ -214,6 +226,11 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
               alt="촬영한 신분증"
               className={s.idPreviewImage}
               onLoad={() => setImageLoaded(true)}
+              // 로드 실패를 삼키면 사용자는 깨진 띠만 보고 제출 버튼이 왜 잠겼는지 모른다.
+              onError={() => {
+                setImageLoaded(false);
+                setLocalError('이 사진은 화면에 표시할 수 없어요. JPG 나 PNG 로 다시 올려 주세요.');
+              }}
             />
             {maskRatio && (
               <div

@@ -404,7 +404,9 @@ test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드
     rrcChip.props.onClick();
     const fileInput = findTree(tree, (node) => node.type === 'input' && node.props.type === 'file');
     assert.ok(fileInput, '파일 입력이 있어야 한다');
-    assert.equal(fileInput.props.accept, 'image/*');
+    // image/* 는 브라우저가 못 그리는 HEIC 까지 통과시켰다(2026-09-14 프로덕션 버그).
+    // 서버 ALLOWED_ID_MIME 과 같은 집합만 건다.
+    assert.equal(fileInput.props.accept, 'image/jpeg,image/png,image/webp');
     assert.equal(fileInput.props.capture, 'environment');
   } finally {
     await harness.close();
