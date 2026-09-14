@@ -57,6 +57,7 @@ import os
 import pathlib
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from io import BytesIO
 from urllib.parse import urlparse
@@ -108,9 +109,22 @@ DOWNLOAD_TIMEOUT = 300.0
 UPSCALE_MAX_SIDE = 1024
 #: GPU 는 하나다 — 렌더를 직렬화한다. 동시 요청은 대기(타임아웃은 호출자 몫).
 _RENDER_LOCK = threading.Lock()
+#: LoRA 교체(파이프라인 재적재)를 직렬화한다. 렌더 자물쇠와 **중첩되지 않는다** —
+#: 교체는 _backend() 안에서 끝나고 렌더는 그 뒤에 _RENDER_LOCK 을 잡는다.
+_SWAP_LOCK = threading.RLock()
+#: LoRA 키별 다운로드 자물쇠. 캐시가 빈 상태에서 동시 요청이 오면 **하나만 받고** 나머지는 그 파일을 쓴다.
+_LORA_LOCKS: dict[str, threading.Lock] = {}
+_LORA_LOCKS_GUARD = threading.Lock()
+def initial_state() -> dict:
+    """빈 상태. **키를 여기 한 곳에서만 정한다** — 테스트가 손으로 다시 적으면 키가 갈라져
+    healthz 가 KeyError 로 죽는다(실제로 그랬다)."""
+    return {"lora": None, "lora_sha256": None, "backend": None, "base": None,
+            "loaded_at": None, "renders": 0, "swapping": None, "last_error": None}
+
+
 #: base = LoRA 를 아직 안 붙인 베이스 파이프라인(기동 때 적재). backend 가 생기면 그 안으로 들어간다.
-_state: dict = {"lora": None, "lora_sha256": None, "backend": None, "base": None,
-                "loaded_at": None, "renders": 0}
+#: swapping = 지금 바꿔 끼우는 중인 키(관측용), last_error = 마지막 교체 실패 사유(관측용).
+_state: dict = initial_state()
 
 
 class RenderRequest(BaseModel):
@@ -152,9 +166,20 @@ def _load_base() -> None:
     log.info("base pipeline ready in %.1fs", time.perf_counter() - t0)
 
 
+def _sweep_partials() -> None:
+    """받다 만 임시 파일을 치운다. 이름이 요청마다 달라져서(uuid) 죽은 다운로드가 그냥 쌓인다."""
+    try:
+        for stale in pathlib.Path(CACHE_DIR).glob("*.part"):
+            stale.unlink(missing_ok=True)
+            log.info("removed stale partial %s", stale.name)
+    except OSError:
+        log.warning("could not sweep partial downloads", exc_info=True)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """기동 때 베이스를 올린다 — 첫 컷이 베이스 적재(수 분)를 물지 않고, 준비 판정이 첫 렌더를 기다리지 않게."""
+    _sweep_partials()
     if PRELOAD_BASE:
         try:
             await asyncio.to_thread(_load_base)
@@ -213,17 +238,44 @@ def _check_url(url: str) -> None:
         raise HTTPException(400, f"lora_url host not allowed (expected *{ALLOWED_LORA_HOST_SUFFIX})")
 
 
+def _cached(path: str) -> bool:
+    return os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def _lora_lock(key: str) -> threading.Lock:
+    with _LORA_LOCKS_GUARD:
+        lock = _LORA_LOCKS.get(key)
+        if lock is None:
+            lock = _LORA_LOCKS[key] = threading.Lock()
+        return lock
+
+
 def _lora_file(key: str, url: str | None = None, sha256: str | None = None) -> str:
-    """캐시 우선. 미스면 presigned URL 로 받아 sha256 을 대조한 뒤에만 캐시에 남긴다."""
+    """캐시 우선. 미스면 presigned URL 로 받아 sha256 을 대조한 뒤에만 캐시에 남긴다.
+
+    ★ 키별 자물쇠 + 요청별 고유 임시 파일. 예전에는 캐시 미스 동시 요청이 **같은** `<path>.part`
+      에 동시에 썼다: 내용이 섞여 sha 가 안 맞고(HTTP 400 "lora sha256 mismatch"), 한쪽의
+      _unlink 가 다른 쪽이 os.replace 할 파일을 지워 500 이 났다.
+      2026-09-14 20:33 셀러 잡 3ed6970e 의 얼굴컷 8장이 그렇게 400×2 · 500×2 로 죽었다
+      (fm_model_loras.lora_sha256 과 R2 파일 sha 는 같았다 — 파일이 아니라 경합이었다).
+    """
     path = _cache_path(key)
-    if os.path.exists(path) and os.path.getsize(path) > 0:
+    if _cached(path):
         return path
     if not url:
         raise HTTPException(400, "lora not cached and no lora_url given")
     _check_url(url)
     import httpx
 
-    tmp = f"{path}.part"
+    with _lora_lock(key):
+        # 기다리는 동안 먼저 들어온 요청이 받아 놨을 수 있다 — 그러면 그걸 쓴다(다운로드는 키당 1회).
+        if _cached(path):
+            return path
+        return _download_lora(path, key, url, sha256, httpx)
+
+
+def _download_lora(path: str, key: str, url: str, sha256: str | None, httpx) -> str:
+    tmp = f"{path}.{uuid.uuid4().hex}.part"     # 요청마다 다른 이름 — 남의 임시 파일을 건드리지 않는다
     t0 = time.perf_counter()
     try:
         with httpx.stream("GET", url, timeout=DOWNLOAD_TIMEOUT, follow_redirects=False) as res:
@@ -263,36 +315,91 @@ def _unlink(path: str) -> None:
         pass
 
 
+def _free_cuda() -> None:
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 — 정리 실패는 로드 실패가 아니다
+        log.warning("cuda cache clear failed", exc_info=True)
+
+
+def _recover_after_failed_swap(previous: QwenLocalBackend | None, prev: dict) -> None:
+    """교체가 깨졌을 때 **준비 상태를 반드시 되돌린다**.
+
+    왜 중요한가: 준비 판정(healthz_ready)은 base_loaded 를 본다. 예전에는 교체가 실패하면
+    backend 도 base 도 None 으로 남아 base_loaded=false 가 영구가 됐고, 클라이언트는 렌더를
+    보내지 못한 채 상한까지 기다리다 "파드가 600초 안에 뜨지 않았다" 로 끝났다(2026-09-14).
+    """
+    _state["base"] = None      # LoRA 가 절반쯤 융합됐을 수 있다 — 그 베이스는 재사용하지 않는다
+    if previous is not None:
+        _state.update(backend=previous, lora=prev["lora"], lora_sha256=prev["lora_sha256"],
+                      loaded_at=prev["loaded_at"])
+        log.warning("swap failed — 이전 LoRA(%s)로 계속 렌더한다", prev["lora"])
+        return
+    _free_cuda()
+    try:
+        _load_base()           # 되돌릴 backend 가 없다 — 최소한 base 는 다시 올려 둔다
+    except Exception:  # noqa: BLE001
+        log.exception("swap 실패 뒤 base 재적재도 실패했다 — healthz.last_error 를 보라")
+
+
 def _backend(lora_key: str | None, lora_url: str | None = None,
              lora_sha256: str | None = None) -> QwenLocalBackend:
-    """이 키의 백엔드. 다른 키가 오면 기존 파이프라인을 버린다(A40 에 둘은 안 올라간다)."""
+    """이 키의 백엔드. 다른 키가 오면 기존 파이프라인을 버린다(A40 에 둘은 안 올라간다).
+
+    ★ 교체는 **전역으로 직렬화**하고, 기존 backend 는 **새 LoRA 파일을 확보·검증한 뒤에만** 버린다.
+      예전 순서(먼저 버리고 그 다음 다운로드)는 다운로드가 400/502 로 깨지면 backend 도 base 도
+      없는 상태를 남겼다 — 그 파드는 healthz base_loaded=false 로 영구히 굳었다.
+    """
     if lora_key is None:
         raise HTTPException(400, "lora key required")
     if _state["lora"] == lora_key and _state["backend"] is not None:
         return _state["backend"]
-    if _state["backend"] is not None:
-        log.warning("swapping lora %s → %s (pipeline reload)", _state["lora"], lora_key)
-        _state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None)
+    with _SWAP_LOCK:
+        # 자물쇠를 기다리는 동안 다른 요청이 이미 이 키로 바꿔 놨을 수 있다.
+        if _state["lora"] == lora_key and _state["backend"] is not None:
+            return _state["backend"]
+        _state["swapping"] = lora_key
         try:
-            import gc
+            # ① 파일 먼저. 여기서 실패하면 지금 돌고 있는 backend 가 **그대로 산다**.
+            try:
+                lora_path = _lora_file(lora_key, lora_url, lora_sha256)
+            except HTTPException as exc:
+                _state["last_error"] = f"lora fetch failed: {exc.status_code} {exc.detail}"
+                raise
 
-            import torch
+            previous = _state["backend"]
+            prev = {k: _state[k] for k in ("lora", "lora_sha256", "loaded_at")}
+            if previous is not None:
+                log.warning("swapping lora %s → %s (pipeline reload)", prev["lora"], lora_key)
+                _state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None)
+                _free_cuda()
 
-            gc.collect()
-            torch.cuda.empty_cache()
-        except Exception:  # noqa: BLE001 — 정리 실패는 로드 실패가 아니다
-            log.warning("cuda cache clear failed", exc_info=True)
-    # 기동 때 올려 둔 베이스가 있으면 그 위에 LoRA 만 붙는다(≈3초). 없으면(교체 뒤) 베이스부터 다시.
-    backend = QwenLocalBackend(_lora_file(lora_key, lora_url, lora_sha256), model_id=MODEL_ID,
-                               device=DEVICE, cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE,
-                               base_pipe=_state["base"])
-    _state["base"] = None       # 베이스는 backend 안으로 들어갔다(base_loaded 는 backend 로 이어진다)
-    t0 = time.perf_counter()
-    backend.pipeline()          # 여기서 LoRA 를 붙인다(베이스가 없으면 베이스 적재까지 — 수 분)
-    # sha 는 레시피 해시에 들어간다(어떤 가중치로 도는 파드인지). 요청이 안 줬으면 None 그대로.
-    _state.update(backend=backend, lora=lora_key, lora_sha256=lora_sha256, loaded_at=time.time())
-    log.info("pipeline ready lora=%s in %.1fs", lora_key, time.perf_counter() - t0)
-    return backend
+            # ② 기동 때 올려 둔 베이스가 있으면 그 위에 LoRA 만 붙는다(≈3초). 없으면 베이스부터 다시.
+            t0 = time.perf_counter()
+            try:
+                backend = QwenLocalBackend(lora_path, model_id=MODEL_ID, device=DEVICE,
+                                           cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE,
+                                           base_pipe=_state["base"])
+                _state["base"] = None   # 베이스는 backend 안으로 들어갔다
+                backend.pipeline()      # 여기서 LoRA 를 붙인다(베이스가 없으면 베이스 적재까지 — 수 분)
+            except Exception as exc:  # noqa: BLE001
+                _state["last_error"] = f"pipeline load failed: {type(exc).__name__}"
+                log.exception("pipeline load failed for %s", lora_key)
+                _recover_after_failed_swap(previous, prev)
+                raise HTTPException(503, f"pipeline load failed: {type(exc).__name__}") from exc
+
+            # sha 는 레시피 해시에 들어간다(어떤 가중치로 도는 파드인지). 요청이 안 줬으면 None 그대로.
+            _state.update(backend=backend, lora=lora_key, lora_sha256=lora_sha256,
+                          loaded_at=time.time(), last_error=None)
+            log.info("pipeline ready lora=%s in %.1fs", lora_key, time.perf_counter() - t0)
+            return backend
+        finally:
+            _state["swapping"] = None
 
 
 @app.get("/healthz")
@@ -304,6 +411,10 @@ def healthz() -> dict:
         "loaded": _state["backend"] is not None,
         "base_loaded": _state["base"] is not None or _state["backend"] is not None,
         "lora": _state["lora"],
+        # 교체 중이면 그 키. 교체는 직렬화돼 있어 이 동안 온 렌더는 대기한다(실패가 아니다).
+        "swapping": _state["swapping"],
+        # 마지막 교체 실패 사유. 성공하면 지워진다 — 파드가 왜 옛 LoRA 로 도는지 여기서 보인다.
+        "last_error": _state["last_error"],
         "renders": _state["renders"],
         "token_configured": bool(TOKEN) and len(TOKEN) >= MIN_TOKEN_LEN,
         "model_id": MODEL_ID,
