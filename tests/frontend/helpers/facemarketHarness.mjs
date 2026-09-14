@@ -141,7 +141,7 @@ export async function modelComponentHarness({
           export const useParams = () => ({ licenseId: 'l1' });
           export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
-        if (id === '\0fm-test-auth') return `export const useAuth = () => ({ session: ${access}.session === undefined ? { user: { email: 'model@example.com' } } : ${access}.session, loading: false, openLogin: ${access}.openLogin || (() => {}) });`;
+        if (id === '\0fm-test-auth') return `export const useAuth = () => ({ session: ${access}.session === undefined ? { user: { email: 'model@example.com' } } : ${access}.session, loading: ${access}.loading ?? false, openLogin: ${access}.openLogin || (() => {}) });`;
         if (id === '\0fm-test-ui') return `
           export const Button = 'Button';
           export const ErrorState = 'ErrorState';
