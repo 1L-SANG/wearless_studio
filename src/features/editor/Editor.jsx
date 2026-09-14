@@ -2306,10 +2306,7 @@ export function Editor() {
     }
     // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
     dropLoadingTile(group, loadingId);
-    // holder_starting 은 고장이 아니라 "켜는 중"이다(라이선스 확인 서비스는 scale-to-zero).
-    // x 아이콘으로 띄우면 셀러가 포기한다 — 1~2분 뒤 같은 버튼이 그대로 된다.
-    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.',
-      { icon: e?.code === 'holder_starting' ? 'sparkles' : 'x' });
+    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
     return false;
   };
   const saveBrandUseCategory = async (value) => {

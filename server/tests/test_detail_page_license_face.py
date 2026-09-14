@@ -497,9 +497,11 @@ def test_holder_outage_at_worker_time_fails_before_face_read(monkeypatch):
 
     assert captured.get("calls") is None
     assert captured["failure"]["reserved"] == 1
-    # holder 가 못 닿으면 "켜는 중" 으로 남긴다 — 프런트가 재시도 안내를 띄우는 근거다.
+    # 셀러에게는 **일반 실패**로 보인다 — 라이선스 확인 서비스가 켜지는 중이라는 건 우리 인프라
+    # 사정이지 셀러가 알아야 할 일이 아니다(2026-09-14 제품 결정). 사유는 로그에만 남는다.
     # 실패한다는 사실·얼굴을 안 읽는다는 사실은 그대로다(fail-closed 불변).
-    assert captured["failure"]["code"] == "holder_starting"
+    assert captured["failure"]["code"] == "generation_failed"
+    assert "라이선스" not in captured["failure"]["message"]
     assert app.state.r2_face.gets == []
 
 

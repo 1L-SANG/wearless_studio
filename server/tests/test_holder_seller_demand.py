@@ -384,7 +384,7 @@ def _route_body(name):
     return text[start:end if end > 0 else len(text)]
 
 
-def test_both_routes_record_demand_before_they_verify():
+def test_both_routes_record_demand_before_they_gate():
     """깨우기만으로는 모자란다 — reconciler 가 running 이 되는 순간 DB 수요를 보고 0 으로 내린다.
 
     운영 패턴: 03:35 prewarm → 03:37 down. 워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔
@@ -392,7 +392,21 @@ def test_both_routes_record_demand_before_they_verify():
     """
     for name in ("generate_editor_image", "generate_detail_page"):
         body = _route_body(name)
-        assert body.index("facemarket.note_holder_demand(") < body.index("facemarket.verify_license("), name
+        assert body.index("facemarket.note_holder_demand(") < body.index("facemarket.verify_license_local("), name
+
+
+def test_no_route_calls_the_holder_on_the_seller_path():
+    """셀러 요청 경로에서 holder 를 부르면 콜드스타트(~2분)가 그대로 화면 시간이 된다.
+
+    라우트는 DB 게이트(verify_license_local)만 하고, VC 확인은 잡이 한다(fail-closed 유지).
+    """
+    import pathlib
+
+    from app import routes
+
+    text = pathlib.Path(routes.__file__).read_text(encoding="utf-8")
+    assert "await facemarket.verify_license(" not in text
+    assert text.count("facemarket.verify_license_local(") == 3
 
 
 def test_no_route_grabs_a_second_connection_while_holding_one():
