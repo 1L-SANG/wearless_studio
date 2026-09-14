@@ -306,3 +306,28 @@ test('게이트 이미지 fetch 는 status·code 를 에러에 싣고 device_* 4
   assert.ok(/adminFetchApplicationPhotoUrl[\s\S]{0,200}_gatedImageUrl\(/.test(api));
   assert.ok(/adminFetchGatedImageUrl[\s\S]{0,200}_gatedImageUrl\(/.test(api));
 });
+
+// ── Task9: mask_mode 배지 + 인증된 신원을 카드 사진 옆에 ─────────────────────────
+
+test('수동 마스킹 건에 배지가 붙는다', () => {
+  assert.match(source, /maskMode/, '기하 검증을 못 거친 건을 구분해야 한다');
+  assert.match(source, /수동 마스킹/);
+});
+
+test('인증된 신원이 카드 사진 옆에 온다', () => {
+  assert.match(source, /idDocumentWithIdentity|identityBeside/, '대조가 한눈에 되게 붙여 놔야 한다');
+});
+
+test('배지는 maskMode 가 auto 가 아닐 때만 뜬다 — auto 는 서버가 이미 확인했다는 뜻이다', () => {
+  // fix: null(검사 자체가 안 돎)도 auto 가 아니므로 배지가 떠야 한다 — "확인 안 됨" 을
+  // "확인해 통과함" 처럼 조용히 넘기면 안 된다는 브리핑의 요구를 긍정 형태로 잠근다.
+  assert.match(source, /card\.maskMode\s*!==\s*['"]auto['"]/, "배지 조건이 maskMode !== 'auto' 가 아니다");
+});
+
+test('신원 블록이 인증된 이름·출생연도를 둘 다 낸다(지원서 자기신고가 아니라 캐리어 증명 값)', () => {
+  const idx = source.indexOf('idDocumentWithIdentity = (');
+  assert.ok(idx !== -1, 'idDocumentWithIdentity 블록을 못 찾았다');
+  const block = source.slice(idx, source.indexOf('return (', idx));
+  assert.ok(/card\.identityNameMasked/.test(block), '인증된 이름(identityNameMasked)을 안 쓴다');
+  assert.ok(/card\.identityBirthYear/.test(block), '인증된 출생연도(identityBirthYear)를 안 쓴다');
+});

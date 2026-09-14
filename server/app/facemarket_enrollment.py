@@ -1757,6 +1757,12 @@ async def upload_id_document(
         # 있는 동기 작업이라(2026-08-26 ALB 37초 장애 선례) crop_id_face 와 같은 방식으로
         # to_thread 에 위임한다. 판정은 enforce 여부와 무관하게 항상 로그로 남긴다 —
         # 임계 캘리브 근거가 그 로그뿐이다(off 는 예외 — 검사 자체를 안 하니 남길 것도 없다).
+        #
+        # mask_mode 는 이 판정을 그대로 영속화한다(Task9) — 클라이언트가 선언하는 값이
+        # 아니다: 클라는 어느 경로를 탔는지 거짓말할 수 있지만 서버의 기하 판정은 그럴 수
+        # 없다. off 라 판정 자체가 없으면 None(NULL) 을 그대로 둔다 — 'auto'는 검사 안
+        # 한 걸 통과로, 'manual'은 통과 못 한 걸로 거짓 기록하는 셈이라 둘 다 안 된다.
+        mask_mode: str | None = None
         if settings.fm_id_mask_verify != "off":
             mask_applied, mask_metrics = await asyncio.to_thread(
                 facemarket_id_mask_verify.mask_is_applied, data
@@ -1770,6 +1776,7 @@ async def upload_id_document(
                     **mask_metrics,
                 },
             )
+            mask_mode = "auto" if mask_applied else "manual"
             if settings.fm_id_mask_verify == "enforce" and not mask_applied:
                 raise _err(
                     "id_mask_not_applied",
@@ -1816,11 +1823,12 @@ async def upload_id_document(
                     update fm_biometric_enrollments
                     set status = 'photos_pending',
                         id_document_r2_key = %s, id_document_type = %s,
-                        id_document_uploaded_at = now(), id_document_purged_at = null
+                        id_document_uploaded_at = now(), id_document_purged_at = null,
+                        mask_mode = %s
                     where id = %s and user_id = %s and status = 'id_capture_pending'
                       and identity_ci_hash is not null
                     """,
-                    (key, document_type, enrollment_id, user_id),
+                    (key, document_type, mask_mode, enrollment_id, user_id),
                 )
                 if cur.rowcount == 0:
                     # 이미 지나간 단계이거나 남의 등록이거나(오늘과 동일), 위 불변조건이

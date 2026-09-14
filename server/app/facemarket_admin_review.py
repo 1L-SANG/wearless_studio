@@ -61,6 +61,7 @@ ENROLLMENT_CARD_COLUMNS = """
     id::text as id, user_id::text as user_id, model_id::text as model_id,
     identity_method, review_status, status, match_scores,
     application_id::text as application_id,
+    identity_name_masked, identity_birth_year, mask_mode,
     reviewed_by::text as reviewed_by, reviewed_at, review_reason, created_at
 """
 
@@ -139,6 +140,17 @@ class AdminReviewCard(CamelModel):
     # 를 직접 부를 수 있어야 한다 — 새 이미지 라우트를 만들지 않고 그 라우트를 재사용한다
     # (같은 admin_guard.require_admin, 같은 private/no-store). application 이 없으면 null.
     application_id: str | None = None
+    # 캐리어가 증명한 신원(Task6) — 지원서 자기신고(application.applicantName/birthdate)
+    # 와 다르다: 이 값은 위조할 수 없는 본인확인 결과다. "이 카드가 방금 인증된 그
+    # 사람 것인가"라는 심사 질문에 필요한 건 자기신고가 아니라 이 값이라 카드 사진
+    # 옆에 나란히 낸다(Task9). 개인정보 최소화로 이미 이름은 마스킹, 생일은 연도만이다.
+    identity_name_masked: str | None = None
+    identity_birth_year: str | None = None
+    # 신분증 마스킹 기하 검증(facemarket_id_mask_verify)의 판정. 'auto' 는 서버가 마스킹
+    # 위치를 확인함, 'manual'/None 은 확인하지 못했거나(shadow 라 업로드 자체는 막지
+    # 않음) 애초에 검사가 안 돌았음(FM_ID_MASK_VERIFY=off, 또는 이 컬럼이 생기기 전 행) —
+    # 어느 쪽이든 "확인됨"이 아니므로 프런트는 이 둘을 하나로 묶어 배지를 낸다(Task9).
+    mask_mode: str | None = None
     images: dict[str, str]
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -197,6 +209,9 @@ def _card_view(row: dict, application: AdminReviewApplication | None) -> AdminRe
         match_scores=row.get("match_scores"),
         application=application,
         application_id=row.get("application_id"),
+        identity_name_masked=row.get("identity_name_masked"),
+        identity_birth_year=row.get("identity_birth_year"),
+        mask_mode=row.get("mask_mode"),
         images=_image_urls(row["id"]),
         reviewed_by=row.get("reviewed_by"),
         reviewed_at=row.get("reviewed_at"),

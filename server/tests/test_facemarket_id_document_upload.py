@@ -441,3 +441,56 @@ def test_off_skips_the_check_entirely(id_capture, monkeypatch):
     assert not any(
         r.getMessage() == "facemarket_id_mask_verify_verdict" for r in records
     ), "off 인데 판정 로그가 남았다"
+
+
+# ── Task9: mask_mode 영속화 ──────────────────────────────────────────────────────────
+#
+# 검증 자체(mask_is_applied)의 판정을 그대로 옮겨 적는 것뿐이지만, 옮겨 적는 과정에서
+# off 를 'auto'/'manual' 어느 쪽으로도 잘못 채우거나, enforce 의 거부 경로에서 판정 없이
+# 저장해버리는 실수가 나기 쉽다 — 그 세 갈래(auto/manual/None)를 각각 관찰 가능한
+# row 상태로 고정한다.
+
+
+def test_shadow_pass_records_auto(id_capture):
+    """기하 검증을 통과하면(마스킹된 카드) 'auto' 를 남긴다 — 사람이 아니라 서버 검증이
+    통과시켰다는 뜻이라 심사자가 더 볼 필요가 없다는 신호다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="shadow")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=True))
+
+    assert response.status_code == 201, response.text
+    assert _row(store, enrollment_id)["mask_mode"] == "auto"
+
+
+def test_shadow_fail_records_manual(id_capture):
+    """기하 검증을 통과하지 못하면(마스킹 안 된 카드) 'manual' 을 남긴다 — shadow 라
+    업로드 자체는 막지 않지만, 이 값이 있어야 심사자가 이 건을 더 꼼꼼히 봐야 한다는
+    걸 안다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="shadow")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 201, response.text
+    assert _row(store, enrollment_id)["mask_mode"] == "manual"
+
+
+def test_enforce_pass_records_auto(id_capture):
+    """enforce 에서도(거부 경로가 아니라 통과 경로) 판정은 그대로 'auto' 로 남는다 —
+    enforce 여부는 업로드를 막을지 말지를 정할 뿐, 기록하는 값 자체를 바꾸지 않는다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="enforce")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=True))
+
+    assert response.status_code == 201, response.text
+    assert _row(store, enrollment_id)["mask_mode"] == "auto"
+
+
+def test_off_leaves_mask_mode_null(id_capture):
+    """off 는 검사 자체를 안 하므로 판정이 없다 — 'auto'(검사 안 한 걸 통과로) 도
+    'manual'(통과 못 한 걸로) 도 거짓 기록이라 NULL 로 남겨야 한다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="off")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 201, response.text
+    assert _row(store, enrollment_id)["mask_mode"] is None

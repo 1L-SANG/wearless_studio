@@ -59,6 +59,12 @@ const REVIEW_LABEL = { pending: '대기', approved: '승인됨', rejected: '거�
 
 const IDENTITY_METHOD_LABEL = { mid: '표준인증', simple_auth: '간편인증' };
 
+// 신분증 마스킹 기하 검증(facemarket_id_mask_verify)이 'auto' 로 통과시키지 못한
+// 건(검사에 걸림 = 'manual', 검사가 아예 안 돎 = null 둘 다) 표시. 검사가 안 돈
+// 경우를 조용히 "정상"으로 보이게 두면 안 되므로 'auto' 가 아닌 전부를 배지로
+// 낸다(Task9) — 아무 것도 안 보이는 것보다 과하게 눈에 띄는 쪽이 안전하다.
+const MASK_MODE_LABEL = '수동 마스킹';
+
 // facemarket_admin_review.py 의 PHOTO_ANGLES 와 순서를 맞춘다.
 const ANGLES = ['front', 'angle45', 'side'];
 const ANGLE_LABEL = { front: '정면', angle45: '45도', side: '측면' };
@@ -293,6 +299,25 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
   const app = card.application;
   const anchor = card.matchScores?.anchor;
 
+  // 카드 사진과 인증된 신원(캐리어가 증명한 이름·생년, Task6)을 나란히 붙인다 —
+  // 심사자가 "이 카드가 방금 인증된 그 사람 것인가"를 판단하는 게 이 화면의
+  // 유일한 목적이라, 대조 대상 두 가지를 눈을 옮기지 않고 한 번에 봐야 한다.
+  // 지원서 자기신고(아래 '지원서' 섹션의 applicantName/birthdate)와 다르다 — 저건
+  // 위조될 수 있고, 이건 위조될 수 없는 본인확인 결과다.
+  const idDocumentWithIdentity = (
+    <div className="flex items-end gap-2">
+      <EnrollmentImage
+        imagePath={card.images?.id_document}
+        kind="id_document"
+        label="신분증 (마스킹 전체본)"
+      />
+      <dl className="text-xs leading-relaxed">
+        <div><dt className="text-muted-foreground">인증된 이름</dt><dd>{card.identityNameMasked || '-'}</dd></div>
+        <div><dt className="text-muted-foreground">인증된 출생연도</dt><dd>{card.identityBirthYear || '-'}</dd></div>
+      </dl>
+    </div>
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -302,6 +327,14 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
           <Badge variant={pending ? 'secondary' : card.reviewStatus === 'rejected' ? 'destructive' : 'default'}>
             {REVIEW_LABEL[card.reviewStatus] || card.reviewStatus}
           </Badge>
+          {/* mask_mode 가 'auto' 가 아니면(기하 검증을 통과 못 했거나, 검사 자체가
+              안 돎) 눈에 띄게 낸다 — 서버가 확인해 주지 못한 건이니 심사자가 신분증
+              사진을 볼 때 더 꼼꼼히 봐야 한다는 신호다. */}
+          {card.maskMode !== 'auto' && (
+            <Badge variant="outline" className="border-amber-600/40 bg-amber-50 text-amber-700">
+              {MASK_MODE_LABEL}
+            </Badge>
+          )}
         </div>
         <CardDescription>{seoulDateTime(card.createdAt)} 제출</CardDescription>
       </CardHeader>
@@ -309,7 +342,8 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
         <section>
           <h4 className="mb-2 text-xs font-medium text-muted-foreground">신분증·등록 사진·지원서 사진</h4>
           <div className="flex flex-wrap gap-3">
-            {IMAGE_KINDS.map(({ kind, label }) => (
+            {idDocumentWithIdentity}
+            {IMAGE_KINDS.filter(({ kind }) => kind !== 'id_document').map(({ kind, label }) => (
               <EnrollmentImage key={kind} imagePath={card.images?.[kind]} kind={kind} label={label} />
             ))}
             {/* 지원서가 있으면(application_id) 슬롯을 낸다 — AdminApplications.jsx 의

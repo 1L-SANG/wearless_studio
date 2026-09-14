@@ -388,7 +388,7 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                 and "id_document_r2_key" in query
                 and "identity_ci_hash is not null" in query
             ):
-                key, document_type, enrollment_id, user_id = params
+                key, document_type, mask_mode, enrollment_id, user_id = params
                 row = next(
                     (
                         item
@@ -410,6 +410,7 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                         id_document_type=document_type,
                         id_document_uploaded_at=self.store.now,
                         id_document_purged_at=None,
+                        mask_mode=mask_mode,
                     )
                     self.rowcount = 1
                 return
