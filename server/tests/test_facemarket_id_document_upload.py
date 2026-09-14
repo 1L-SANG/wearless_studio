@@ -14,14 +14,34 @@
   - rowcount == 0 → 방금 올린 객체를 되돌리는 보상 삭제 + 409
   - put_bytes 실패 → 503
   - 정상 경로의 상태 전이(id_capture_pending → identity_pending)와 저장 컬럼
+  - 마스킹 기하 검증(FM_ID_MASK_VERIFY) — enforce 는 미검출을 422 로 거부하고 아무것도
+    저장하지 않는다, shadow(기본)는 같은 업로드를 통과시킨다. 순수 함수 테스트만으로는
+    이 검사가 라우트에 실제로 배선됐는지(혹은 잘못된 자리에 배선됐는지) 알 수 없다.
 """
 
+import cv2
+import numpy as np
 import pytest
 
 from app import facemarket_enrollment, facemarket_id_document
 from app.agents.face_qc import QcFailed
+from app.facemarket_id_mask_verify import RRN_REGION
 
 JPEG = b"\xff\xd8\xff" + b"id-card-bytes"
+
+
+def _id_card_bytes(masked: bool) -> bytes:
+    """가이드를 채운 카드 한 장 — test_facemarket_id_mask_verify.py 의 `_card()` 와 동일한
+    구성. masked=True 면 RRN_REGION 자리를 단색으로 덮는다."""
+    img = np.full((540, 856, 3), 200, np.uint8)
+    img[::7, :] = 120
+    if masked:
+        x = int(RRN_REGION["xr"] * 856); y = int(RRN_REGION["yr"] * 540)
+        w = int(RRN_REGION["wr"] * 856); h = int(RRN_REGION["hr"] * 540)
+        img[y:y + h, x:x + w] = 17
+    ok, buf = cv2.imencode(".jpg", img)
+    assert ok
+    return buf.tobytes()
 
 
 @pytest.fixture()
@@ -246,3 +266,53 @@ def test_other_users_enrollment_is_not_writable(id_capture):
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "invalid_enrollment_state"
     assert _row(store, enrollment_id).get("id_document_r2_key") is None
+
+
+# ── 마스킹 기하 검증(FM_ID_MASK_VERIFY) ──────────────────────────────────────────────
+#
+# 순수 함수(mask_is_applied)는 test_facemarket_id_mask_verify.py 가 이미 잡는다. 여기서
+# 확인할 건 그 함수가 이 라우트에 실제로, 얼굴 크롭 게이트 뒤·R2 put_bytes 앞에
+# 배선됐는가다 — 잘못된 파일에 배선하거나 아예 안 배선해도 순수 함수 테스트는 계속
+# 초록불이다.
+
+
+def test_enforce_rejects_unmasked_upload_and_stores_nothing(id_capture):
+    """enforce 에서 주민번호 자리가 안 덮인 사진은 422 로 거부되고 아무것도 저장하지
+    않는다 — R2 put_bytes 보다 먼저 걸려야 고아 신분증 객체가 안 남는다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="enforce")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "id_mask_not_applied"
+    assert client.app.state.r2_face.puts == [], "거부했는데 바이트가 저장됐다"
+    assert _row(store, enrollment_id)["status"] == "id_capture_pending"
+
+
+def test_shadow_lets_the_same_unmasked_upload_through(id_capture):
+    """shadow(기본값)는 판정을 로그로만 남기고 절대 거부하지 않는다 — 임계가 캘리브
+    전이라 아직 실사용자를 막을 근거가 없다."""
+    client, store, _settings, enrollment_id = id_capture(fm_id_mask_verify="shadow")
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "identity_pending"
+    row = _row(store, enrollment_id)
+    assert row["status"] == "identity_pending"
+    assert client.app.state.r2_face.puts, "정상 경로인데 저장이 안 됐다"
+
+
+def test_off_skips_the_check_entirely(id_capture, monkeypatch):
+    """off 면 mask_is_applied 자체를 호출하지 않는다 — 검사 대상 사진이 뭐든(마스킹
+    함수가 터지더라도) 업로드는 영향받지 않는다."""
+    client, _store, _settings, enrollment_id = id_capture(fm_id_mask_verify="off")
+
+    def boom(_data):
+        raise AssertionError("off 인데 mask_is_applied 가 호출됐다")
+
+    monkeypatch.setattr(facemarket_enrollment.facemarket_id_mask_verify, "mask_is_applied", boom)
+
+    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 201, response.text

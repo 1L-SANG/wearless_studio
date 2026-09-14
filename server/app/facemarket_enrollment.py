@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity, facemarket_id_document, repo
+from . import cx_identity, facemarket_id_document, facemarket_id_mask_verify, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
 from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_email
@@ -1741,6 +1741,30 @@ async def upload_id_document(
                 "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 status=503,
             )
+        # 신분증 마스킹 기하 검증(shadow). 얼굴 게이트를 통과했고 아직 아무것도 저장하지
+        # 않은 시점 — off 면 검사 자체를 건너뛴다. cv2.imdecode 는 이벤트 루프를 얼릴 수
+        # 있는 동기 작업이라(2026-08-26 ALB 37초 장애 선례) crop_id_face 와 같은 방식으로
+        # to_thread 에 위임한다. 판정은 enforce 여부와 무관하게 항상 로그로 남긴다 —
+        # 임계 캘리브 근거가 그 로그뿐이다(off 는 예외 — 검사 자체를 안 하니 남길 것도 없다).
+        if settings.fm_id_mask_verify != "off":
+            mask_applied, mask_metrics = await asyncio.to_thread(
+                facemarket_id_mask_verify.mask_is_applied, data
+            )
+            logger.info(
+                "facemarket_id_mask_verify_verdict",
+                extra={
+                    "enrollment_id": enrollment_id,
+                    "fm_id_mask_verify": settings.fm_id_mask_verify,
+                    "mask_applied": mask_applied,
+                    **mask_metrics,
+                },
+            )
+            if settings.fm_id_mask_verify == "enforce" and not mask_applied:
+                raise _err(
+                    "id_mask_not_applied",
+                    "주민등록번호가 가려졌는지 확인해 주세요.",
+                    status=422,
+                )
         # 업로드 시도마다 새 키를 쓴다. 고정 키를 쓰면 동시/재시도 제출이 같은 객체를
         # 공유해, 늦게 실패한 요청의 rowcount==0 정리(delete)가 먼저 커밋된 요청의
         # 객체를 지워 버린다(리뷰 finding) — enrollment_quarantine_key 와 같은 이유다.
