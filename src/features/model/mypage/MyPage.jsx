@@ -36,7 +36,7 @@ export function MyPage({ journey, application, enrollment, model, license, onAct
     progressDescription = '지원서를 검토중이에요. 24시간 이내 결과를 전달해드릴게요.';
   } else {
     title = resuming ? '등록을 이어서 해요' : '승인됐어요. 이제 등록을 시작해요';
-    description = resuming ? (savedPhotos ? '지난번에 사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : '본인확인, 사진, 조건, 증서 4단계예요. 10분이면 끝나요. 승인 메일의 링크를 눌러도 이 화면으로 와요.';
+    description = resuming ? (savedPhotos ? '지난번에 사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : '본인확인, 사진, 조건, 증서 4단계예요. 사진은 맑은 날 야외에서 30~40분, 나머지는 10분이면 끝나요. 승인 메일의 링크를 눌러도 이 화면으로 와요.';
     progressDescription = resuming ? (savedPhotos ? '사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : '얼굴 구현을 위한 이미지들과, 라이선스 증서에 대한 설정이 필요해요.';
   }
   return <div className={s.page}>

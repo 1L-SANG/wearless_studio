@@ -62,11 +62,13 @@ test('publisher uses the actual price launch date in both metadata and document 
   assert.ok(manifest.length > 0);
   // 문서별 개정(DOC_REVISIONS)만 다른 값을 갖는다 — 한 문서를 고쳤다고 나머지 7종의
   // 시행일까지 미래로 밀면 그건 거짓말이 된다.
-  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(2026-09-v1)을 따른다.
+  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(BIOMETRIC_CONSENT_VERSION)을 따른다.
+  // 2026-09-v2 · privacy-model v1.3: 등록 사진이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로
+  // 바뀌면서 세 문서의 수집 항목 문구가 같이 바뀌었다(#298).
   const revised = {
-    'privacy-model': { version: 'v1.2', effectiveDate: '2026-09-12' },
-    'biometric-consent': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
-    'overseas-transfer': { version: '2026-09-v1', effectiveDate: '2026-09-11' },
+    'privacy-model': { version: 'v1.3', effectiveDate: '2026-09-14' },
+    'biometric-consent': { version: '2026-09-v2', effectiveDate: '2026-09-14' },
+    'overseas-transfer': { version: '2026-09-v2', effectiveDate: '2026-09-14' },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };

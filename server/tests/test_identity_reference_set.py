@@ -15,6 +15,7 @@ import pytest
 
 from app.agents import face_identity as fi
 from app.agents import identity_source
+from app import facemarket_photos as fp
 
 
 # ── 기준셋 로딩 ──────────────────────────────────────────────────────────────
@@ -92,17 +93,30 @@ class _Det:
         self.yaw_proxy = yaw
 
 
-def test_only_the_frontal_slots_are_used():
-    """face03(3/4)·face05(옆)·face04/06 은 기준이 아니다 — SFace 가 정면 임베딩이라서."""
+def test_the_reference_set_is_the_three_shade_photos():
+    """16칸 스펙의 기준 3장 — 전부 그늘·같은 자리, 같은 턱 각도. 학습 12장·측면은 기준이 아니다.
+
+    턱을 내린 컷은 일부러 뺐다 — 같은 사람인데 시선 컷과 SFace 0.664 로 최저선 0.70 을 깬다
+    (2026-09-11 v7 인테이크 실측).
+    """
+    rows = [_photo(slot) for slot in fp.PHOTO_SLOTS]
+    out, r2 = _load(rows)
+    assert r2.reads == ["k/sh_front2.jpg", "k/sh_gaze_left.jpg", "k/sh_gaze_right.jpg"]
+    assert len(out) == 3
+    assert identity_source.IDENTITY_REFERENCE_SLOTS == fp.REFSET_SLOTS
+    assert "sh_chin_down" not in fp.PHOTO_SLOTS
+
+
+def test_an_18_slot_enrollment_falls_back_to_the_old_frontal_slots():
+    """16칸 이전 등록엔 sh_* 가 없다 — 옛 정면 4칸으로 내려간다(기준을 잃지 않는다)."""
     rows = [_photo(f"face{i:02d}") for i in range(1, 9)]
     out, r2 = _load(rows)
     assert r2.reads == ["k/face01.jpg", "k/face02.jpg", "k/face07.jpg", "k/face08.jpg"]
     assert len(out) == 4
-    assert identity_source.IDENTITY_REFERENCE_SLOTS == ("face01", "face02", "face07", "face08")
 
 
 def test_legacy_three_photo_enrollment_uses_front_only():
-    """옛 등록은 front→face01 만 남는다. angle45(→face03)·side(→face05)는 목록에 없다.
+    """옛 등록은 front→face01→sh_front 사슬을 타고 front 한 장만 남는다. angle45·side 는 목록 밖.
 
     실측: front+angle45 중앙값이면 테스트컷이 0.435~0.514 로 떨어져 0.45 에서 2장이 탈락했다.
     front 1장만 쓰면 0.51~0.60 이다.
@@ -112,12 +126,29 @@ def test_legacy_three_photo_enrollment_uses_front_only():
     assert len(out) == 1
 
 
+def test_an_in_progress_16_slot_enrollment_uses_what_it_already_has():
+    """기준 3장을 찍기 전이라도 sh_front 가 있으면 그걸 쓴다(face01 후보 사슬)."""
+    out, r2 = _load([_photo("sh_front"), _photo("sh_smile"), _photo("sh_34"), _photo("sh_side")])
+    assert r2.reads == ["k/sh_front.jpg"]
+    assert len(out) == 1
+
+
 def test_a_turned_photo_in_a_frontal_slot_is_dropped():
     """슬롯 이름만 믿지 않는다 — 촬영 실수로 정면 슬롯에 각도 사진이 오면 yaw 로 뺀다."""
-    rows = [_photo("face01"), _photo("face02"), _photo("face07")]
-    out, r2 = _load(rows, yaw={"k/face01.jpg": 0.04, "k/face02.jpg": 0.41, "k/face07.jpg": 0.12})
+    rows = [_photo(s) for s in ("sh_front2", "sh_gaze_left", "sh_gaze_right")]
+    out, r2 = _load(rows, yaw={"k/sh_front2.jpg": 0.04, "k/sh_gaze_left.jpg": 0.41,
+                               "k/sh_gaze_right.jpg": 0.12})
     assert len(r2.reads) == 3, "읽어 봐야 각도를 잴 수 있다"
     assert len(out) == 2, "0.41 짜리 한 장이 빠진다"
+
+
+def test_when_every_reference_photo_is_turned_the_next_tier_is_tried():
+    """기준 3장이 전부 돌아가 있으면 0장이다 — 거기서 멈추지 않고 옛 슬롯을 본다."""
+    rows = [_photo("sh_front2"), _photo("sh_gaze_left"), _photo("face02")]
+    out, r2 = _load(rows, yaw={"k/sh_front2.jpg": 0.51, "k/sh_gaze_left.jpg": 0.48,
+                               "k/face02.jpg": 0.03})
+    assert r2.reads == ["k/sh_front2.jpg", "k/sh_gaze_left.jpg", "k/face02.jpg"]
+    assert len(out) == 1
 
 
 def test_when_yaw_cannot_be_measured_the_photo_is_kept():
@@ -166,8 +197,8 @@ def test_a_bad_model_id_is_refused_before_the_query():
 
 
 def test_no_frontal_reference_falls_back_to_the_single_asset():
-    """정면 기준이 0장이면 [] — 호출자가 예전 face_front 한 장 경로로 간다."""
-    out, r2 = _load([_photo("angle45"), _photo("side"), _photo("face03")])
+    """두 단계 다 0장이면 [] — 호출자가 예전 face_front 한 장 경로로 간다."""
+    out, r2 = _load([_photo("angle45"), _photo("side"), _photo("face03"), _photo("sh_34")])
     assert out == [] and r2.reads == []
 
 

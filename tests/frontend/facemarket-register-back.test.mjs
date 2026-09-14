@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findTree, modelComponentHarness } from './helpers/facemarketHarness.mjs';
+import { CONSENT_VERSION } from '../../src/features/model/registerSlots.js';
 
 // 등록 위저드의 "이전" — 신분증 촬영(id_capture) 화면과 수단 선택(method) 화면.
 // 잡는 회귀: 이 두 화면은 `next` 가 없어서 푸터 자체가 안 그려졌고, 사용자는 수단을 잘못
@@ -11,7 +12,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 const button = (tree, label) => findTree(tree, (node) => node.type === 'button' && node.props.children === label);
 const idCaptureRecord = () => ({
   id: 'enrollment-1', status: 'id_capture_pending', identityMethod: 'simple_auth', photos: [],
-  consentDocumentVersion: '2026-09-v1', termsConsentVersion: '2026-09-v1', overseasConsentVersion: '2026-09-v1',
+  consentDocumentVersion: CONSENT_VERSION, termsConsentVersion: CONSENT_VERSION, overseasConsentVersion: CONSENT_VERSION,
 });
 // states: 0 step · 1 enrollment · 2 sub · 3 error · 4 busy · 5 consents (ModelRegister 의 useState 순서)
 const idCaptureStates = () => ['id_capture', idCaptureRecord(), 1, '', false, [true, true]];

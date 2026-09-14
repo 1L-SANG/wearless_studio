@@ -90,7 +90,8 @@ def test_opendid_demand_counts_only_fresh_pending_enrollments():
     신선도 창이 없으면 그 행 하나가 holder 를 영구히 1대로 붙든다."""
     captured = _capture_demand_sql()
     assert "make_interval" in captured["sql"]
-    assert captured["params"] == (repo_mod.OPENDID_PENDING_ACTIVE_HOURS,)
+    # 뒤 두 값은 셀러 사용 수요(실존 모델 잡)의 kind 목록이다 — 신선도 창은 첫 번째다.
+    assert captured["params"][0] == repo_mod.OPENDID_PENDING_ACTIVE_HOURS
 
 
 def test_opendid_demand_treats_pre_holder_stages_as_recent_activity():

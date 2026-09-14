@@ -934,7 +934,7 @@ test('review 스텝은 수동 새로고침과 취소 탈출구를 준다', () =>
   const slots = readFileSync(
     new URL('../../src/features/model/registerSlots.js', import.meta.url), 'utf8',
   );
-  assert.match(slots, /if \(status === 'review_pending'\) return \{ step: 'review', sub: 4 \};/);
+  assert.match(slots, /if \(status === 'review_pending'\) return \{ step: 'review', sub: PHOTO_REVIEW_SUB \};/);
   assert.match(slots, /if \(status === 'id_capture_pending'\) return \{ step: 'id_capture', sub: 1 \};/);
   assert.doesNotMatch(slots, /\['passed', 'review_pending'\]\.includes\(status\)/);
 });

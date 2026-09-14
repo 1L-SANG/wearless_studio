@@ -39,6 +39,7 @@ from .facemarket_enrollment import (
     notify_enrollment_decision,
 )
 from .facemarket_id_document import purge_id_document
+from .facemarket_photos import photo_slot_candidates
 from .models import CamelModel
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin review
 
 REVIEW_STATUSES = ("pending", "approved", "rejected")
 # 화이트리스트 — 절대 클라이언트 문자열을 그대로 R2 키에 꽂지 않는다.
+# 심사 화면의 이름은 그대로 둔다(정면·45도·측면). 실제 행 이름은 등록 회차마다 다르므로
+# photo_slot_candidates 로 풀어 쓴다 — 16칸 스펙은 sh_front·sh_34·sh_side 다.
 PHOTO_ANGLES = ("front", "angle45", "side")
 IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES
 
@@ -317,12 +320,14 @@ async def get_review_image(
                 key = found.get("id_document_r2_key") if found else None
                 mime_hint = None
             else:
+                candidates = list(photo_slot_candidates(kind))
                 await cur.execute(
                     "select p.r2_key, p.mime_type from fm_biometric_enrollment_photos p "
                     "join fm_biometric_enrollments e on e.id = p.enrollment_id "
-                    "where p.enrollment_id = %s and p.angle = %s "
-                    "and e.review_status is not null",
-                    (enrollment_id, kind),
+                    "where p.enrollment_id = %s and p.angle = any(%s) "
+                    "and e.review_status is not null "
+                    "order by array_position(%s, p.angle) limit 1",
+                    (enrollment_id, candidates, candidates),
                 )
                 found = await cur.fetchone()
                 key = found.get("r2_key") if found else None

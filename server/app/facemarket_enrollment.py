@@ -27,8 +27,11 @@ from .config import Settings
 from .db import get_conn
 from .models import CamelModel
 from .facemarket_photos import (
-    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, canonical_photo_slot,
+    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, REFSET_SLOTS, canonical_photo_slot,
     photo_slot_candidates, resolve_photo_rows,
+)
+from .facemarket_photo_check import (
+    PhotoCheckUnavailable, check_enrollment_photo, judge_refset, reject_message,
 )
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
 from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_mime, sha256_sri
@@ -36,20 +39,26 @@ from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_m
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
-# ⚠️ 이 상수를 올리면 **라이브 카탈로그에서 기존 모델이 전부 빠진다.**
-# `facemarket.py` 의 `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 이 값을
-# 그대로 바인딩한다(모델 목록·라이선스 얼굴·썸네일) — 이미 passed 인 등록은 옛 버전
-# 문자열을 들고 있고 백필 마이그레이션은 없다. `facemarket_cutover.py` 의 legacy 스코프도
-# 같은 값으로 뒤집힌다. 그래서 **동의 화면 문구가 실제로 바뀌어 함께 나가는 배포에서만**
-# 올린다. 2026-09-v1 은 등록 위저드의 동의·안내 공개본(public/legal/biometric-consent,
-# overseas-transfer)이 함께 나가면서 올렸다(#285/#287).
-BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
+# 새 등록이 **기록**하는 동의 문서 버전. 동의 화면 문구가 실제로 바뀌는 배포에서만 올린다.
+# 2026-09-v1 은 등록 위저드의 동의·안내 공개본이 함께 나가면서 올렸다(#285/#287).
+# 2026-09-v2 는 수집 항목이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌면서 올렸다
+# (#298). 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
+BIOMETRIC_CONSENT_VERSION = "2026-09-v2"
+# ⚠️ **판정에는 이 목록을 쓴다(단일 상수를 바인딩하지 마라).**
+# 옛 버전에 동의하고 이미 passed 인 등록은 그 문자열을 그대로 들고 있고 백필 마이그레이션은
+# 없다. 카탈로그 자격(`facemarket.py` `_CURRENT_CARD_ELIGIBILITY`)·cutover legacy 스코프가
+# 단일 상수를 바인딩하던 시절에는, 이 상수를 올리는 순간 **라이브 카탈로그가 비고** 기존
+# 모델이 cutover 파기 대상으로 분류됐다. 그래서 그 자리들은 전부 `= any(%s)` 로 바꿨다.
+# 새 버전을 추가할 때 옛 버전을 지우면 그 순간 같은 사고가 난다.
+ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2")
 # 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
 # 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
-OVERSEAS_NOTICE_VERSION = "2026-09-v1"
+# 이 안내 본문도 #298 에서 이전 항목이 바뀌었다("얼굴·전신 사진" → "얼굴 사진") — 게시본이
+# 바뀌었으면 기록되는 버전도 같이 올린다. 이 값은 기록·표시 전용이라 자격 판정에 쓰이지 않는다.
+OVERSEAS_NOTICE_VERSION = "2026-09-v2"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
+ACCEPTED_CONSENT_VERSIONS = ("2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
 # 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
 # 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
@@ -60,13 +69,11 @@ REVIEW_DEADLINE_DAYS = 5
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 LEGACY_ANGLES = ("front", "angle45", "side")
-PHOTO_SLOTS = tuple(
-    [f"face{i:02d}" for i in range(1, 9)]
-    + [f"torso{i:02d}" for i in range(1, 6)]
-    + [f"full{i:02d}" for i in range(1, 6)]
-)
 REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
-ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + LEGACY_ANGLES
+# 업로드가 받아 주는 이름 = 정식 16칸 + 그 16칸으로 **올려 줄 수 있는** 옛 이름뿐이다
+# (face01/face03/face05 · front/angle45/side). 새 스펙에 자리가 없는 옛 이름(face02·torso*·full* …)은
+# 여기서 invalid_slot 으로 막힌다 — 이미 올라간 행은 남아 있고(파기가 쓸어 담는다) 완료 판정에서만 빠진다.
+ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + tuple(LEGACY_SLOT_ALIASES)
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
 START_LIVENESS_POLICY = {
@@ -260,6 +267,44 @@ class EnrollmentView(CamelModel):
 class PhysiqueBody(CamelModel):
     height_bucket: str | None = None
     body_type: str | None = None
+
+
+def refset_agreement(settings: Settings, photo_items) -> dict:
+    """기준 3장이 서로 같은 사람·같은 조건으로 찍혔는가. **기록만 하고 아무것도 막지 않는다.**
+
+    v6_refset_check.py 와 같은 규칙(중앙값 0.80 · 최저쌍 0.70)이지만, 등록이 이 촬영으로
+    처음 들어오는 중이라 그 문턱이 실사용자 분포에 맞는지 아직 모른다. 차단 여부는 첫 실데이터를
+    보고 정한다 — 그때 되짚을 수 있게 숫자를 남긴다.
+
+    `fm_face_match_enabled`(본인확인 매칭)와 무관하게 돈다. 가중치가 없거나 한 쌍도 못 재면
+    상태만 남기고 넘어간다 — 완료를 막는 경로가 절대 되면 안 된다.
+    """
+    refs = [buffer for slot, buffer in photo_items
+            if canonical_photo_slot(slot) in REFSET_SLOTS]
+    if len(refs) < 2:
+        return {"status": "absent", "photos": len(refs)}
+    try:
+        qc = load_face_qc(settings, required=True)
+    except Exception as exc:  # noqa: BLE001 — 가중치 부재 등. 기록만 남기고 완료는 그대로 간다
+        return {"status": "unavailable", "photos": len(refs), "error": type(exc).__name__}
+    scores: list[float] = []
+    unscored = 0
+    for first in range(len(refs)):
+        for second in range(first + 1, len(refs)):
+            try:
+                score = qc.one_to_one_similarity(refs[first], refs[second])
+            except Exception:  # noqa: BLE001 — 한 쌍이 안 나와도 나머지로 본다
+                unscored += 1
+                continue
+            if score is None:
+                unscored += 1
+            else:
+                scores.append(float(score))
+    summary = judge_refset(scores)
+    summary["photos"] = len(refs)
+    if unscored:
+        summary["unscored"] = unscored
+    return summary
 
 
 def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
@@ -1481,6 +1526,26 @@ async def upload_enrollment_photo(
             raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
         if len(data) > MAX_FACE_BYTES:
             raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+        # 촬영 스펙 검사 — 등록 사진이 곧 학습셋이라 **항상** 본다(fm_face_match_enabled 와 무관).
+        # 여기서 막지 않으면 사용자는 촬영 자리를 떠난 뒤에야 못 쓰는 사진임을 알게 된다.
+        try:
+            shot_reason, shot = await asyncio.to_thread(
+                check_enrollment_photo, data, angle,
+                model_dir=request.app.state.settings.fm_face_qc_dir,
+            )
+        except PhotoCheckUnavailable:
+            raise _err(
+                "qc_unavailable",
+                "사진 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                status=503,
+            )
+        if shot_reason:
+            logger.info(
+                "facemarket_enrollment_photo_rejected",
+                extra={"enrollment_id": enrollment_id, "angle": angle,
+                       "reason": shot_reason, **shot},
+            )
+            raise _err("photo_framing", reject_message(shot_reason), reasons=[shot_reason])
         qc = None
         if request.app.state.settings.fm_face_match_enabled:
             try:
@@ -2862,8 +2927,8 @@ async def _initial_completion_checks(
                 """,
                 (
                     enrollment_id,
-                    list(PHOTO_SLOTS + LEGACY_ANGLES),
-                    list(PHOTO_SLOTS + LEGACY_ANGLES),
+                    list(ACCEPTED_PHOTO_SLOTS),
+                    list(ACCEPTED_PHOTO_SLOTS),
                 ),
             )
             required_slots = _required_photo_slots(settings)
@@ -2979,6 +3044,10 @@ async def process_enrollment_completion(
                 raise EnrollmentMappedError("id_portrait_unavailable") from None
             photo_items.append((photo["angle"], buffer))
             photo_buffers.append(buffer)  # 아래 finally 에서 일괄 wipe
+
+        # 기준 3장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
+        refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
+        logger.info("fm_refset_agreement enrollment=%s %s", enrollment_id, refset)
 
         if settings.fm_face_match_enabled:
           try:
@@ -3110,6 +3179,13 @@ async def process_enrollment_completion(
                         "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
                         status=409,
                     )
+                # 기준 3장 합의도를 남긴다. 통과/실패 어느 쪽으로도 쓰이지 않는다 — 문턱이
+                # 실사용자 분포에 맞는지 보려는 기록이다(차단 여부는 그다음에 정한다).
+                await cur.execute(
+                    "update fm_biometric_enrollments "
+                    "set provider_versions = provider_versions || %s::jsonb where id = %s",
+                    (Json({"refset": refset}), enrollment_id),
+                )
                 if match_required_review:
                     # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
                     # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
@@ -3290,6 +3366,13 @@ def validate_biometric_settings(settings: Settings) -> None:
             raise RuntimeError("FM_LIVENESS_CONFIDENCE_THRESHOLD is required")
     if not settings.fm_ci_pepper or not settings.fm_ci_pepper.strip():
         raise RuntimeError("FM_CI_PEPPER is required for biometric enrollment")
+    # 촬영 스펙 검사(facemarket_photo_check)는 fm_face_match_enabled 와 무관하게 **항상** 돈다.
+    # YuNet 가중치가 없으면 사진 업로드가 전부 503 이라 등록이 통째로 막힌다 — 그런 배포가
+    # 조용히 나가지 않게 부팅에서 막는다(가중치는 Dockerfile 이 빌드 때 받는다).
+    if not os.path.exists(weight_paths(settings)[0]):
+        raise RuntimeError(
+            "YuNet face detector weight file is required for biometric enrollment"
+        )
     required = []
     bounded_thresholds = []
     if settings.fm_liveness_enabled:

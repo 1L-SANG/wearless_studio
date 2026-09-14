@@ -39,7 +39,7 @@ from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
-from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
+from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
 from .models import CamelModel, ErrorResponse
@@ -127,12 +127,137 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
+#: holder 콜드스타트(4 JVM)를 워커가 기다려 주는 상한. 실측 ~2분이라 여유를 뒀다.
+#: 라우트(셀러 대기 화면)는 기다리지 않는다 — 코드 holder_starting 으로 즉시 돌려주고 재시도시킨다.
+HOLDER_COLD_START_WAIT_SECONDS = 180
+HOLDER_READY_POLL_SECONDS = 5.0
+#: `/holder/health` — copilot/opendid/manifest.yml 의 컨테이너 healthcheck 와 같은 경로.
+_HOLDER_HEALTH_PATH = "/holder/health"
+_HOLDER_HEALTH_TIMEOUT = 3.0
+
+
 def _wake_opendid(app) -> None:
     """holder(opendid)가 필요해졌다 — scale-to-zero 로 0대면 지금 깨운다(reconciler 60초 대기 스킵).
     autoscaler 는 off 여도 state 에 올라 있고 prewarm_soon 은 즉시 return 하므로 분기 없이 부른다."""
     autoscaler = getattr(app.state, "opendid_autoscaler", None)
     if autoscaler is not None:
         autoscaler.prewarm_soon()
+
+
+#: 앞단이 "아직 못 붙었다"고 답하는 상태들. 홀더 부팅 중이면 ALB 가 이걸 낸다.
+_HOLDER_STARTING_STATUSES = frozenset({502, 503, 504})
+
+
+def _holder_starting(app) -> HTTPException:
+    """holder 에 못 닿았다 — 깨운 뒤 "켜는 중" 으로 돌려준다.
+
+    **VC 검증을 건너뛰는 폴백은 없다(fail-closed).** 다만 사용자에게는 "사용할 수 없습니다"가
+    아니라 "켜는 중이니 곧 다시" 라고 말해야 한다 — 실제로 1~2분이면 켜지고, 그 문구 차이가
+    셀러가 포기하느냐 다시 누르느냐를 가른다(2026-09-14 운영 장애).
+    """
+    _wake_opendid(app)
+    return _err(
+        "holder_starting",
+        "라이선스 확인 서비스를 켜는 중이에요. 1~2분 뒤 다시 시도해 주세요.",
+        status=503,
+    )
+
+
+async def note_holder_demand(app, *, user_id: str, model_id: str, conn=None) -> None:
+    """REAL 모델 요청이 왔다 — holder 수요를 **즉시 커밋**하고 깨운다.
+
+    왜 즉시 커밋인가: 호출자의 트랜잭션에 얹어 두기만 하면 바로 뒤 verify_license 가 503 으로
+    올라갈 때 같이 롤백된다. 기록이 필요한 경우가 바로 그 경우다.
+
+    왜 깨우는 것만으로 부족한가(운영 03:35 prewarm → 03:37 down 패턴): reconciler 는 켜지는
+    중(running==0)엔 그대로 두지만, running 이 되는 순간 **DB 수요가 없으면 0 으로 내린다**.
+    워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔 경우)는 깨움 → 부팅 → 즉시 종료가 반복돼
+    재시도가 계속 실패한다. 그래서 깨우기 전에 수요를 먼저 남긴다.
+
+    `conn` 을 주면 **그 커넥션에** 쓰고 커밋한다. 이미 커넥션을 쥔 호출자(generate_detail_page)가
+    풀에서 하나를 더 잡으면, 동시 요청이 풀 크기만큼 올 때 서로의 두 번째 커넥션을 기다린다
+    (2026-09-08 풀 고갈 계열). 커넥션을 아직 안 잡은 호출자는 `conn` 없이 부르면 된다.
+    호출 지점까지 쓰기가 없어야 한다 — 지금 두 호출자 모두 읽기만 했다.
+
+    실패해도 요청 흐름을 막지 않는다 — 부가 신호다.
+    """
+    try:
+        if conn is not None:
+            async with conn.cursor() as cur:
+                await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
+            await conn.commit()
+        else:
+            pool = getattr(app.state, "pool", None)
+            if pool is not None:
+                async with pool.connection() as owned:
+                    async with owned.cursor() as cur:
+                        await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
+                    await owned.commit()
+    except Exception:  # noqa: BLE001 — 신호 기록 실패가 생성 요청을 막으면 안 된다
+        logger.info("holder_demand_note_skipped")
+    _wake_opendid(app)
+
+
+async def holder_ready(app, *, timeout: float = _HOLDER_HEALTH_TIMEOUT) -> bool:
+    """holder 가 지금 응답하는가. 서명 없는 GET /holder/health 한 방(컨테이너 healthcheck 와 같은 경로)."""
+    base = getattr(app.state.settings, "opendid_holder_url", None)
+    if not base or not str(base).strip():
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{str(base).rstrip('/')}{_HOLDER_HEALTH_PATH}")
+    except Exception:  # noqa: BLE001 — 부팅 중엔 연결 자체가 안 된다
+        return False
+    return response.status_code < 500
+
+
+async def wait_for_holder(
+    app,
+    *,
+    max_wait_seconds: float = HOLDER_COLD_START_WAIT_SECONDS,
+    poll_seconds: float = HOLDER_READY_POLL_SECONDS,
+    sleep=None,
+    monotonic=None,
+) -> bool:
+    """워커 전용 — holder 콜드스타트를 기다려 준다. 기다릴 필요가 없으면 즉시 True.
+
+    왜 워커만 기다리는가: 셀러가 보고 있는 라우트에서 3분을 붙들면 그건 장애와 구분되지 않는다.
+    잡은 이미 비동기라 2분 더 기다리는 편이 "실패" 보다 낫다 — 실패하면 셀러가 처음부터 다시 한다.
+
+    **DB 연결을 잡은 채로 부르지 마라.** 최대 3분을 자므로 풀이 마른다(2026-09-08 사고 참조).
+    호출자는 커넥션 블록 **밖**, 페이로드만 보고 판정해서 부른다.
+    """
+    settings = app.state.settings
+    # ★ 이 값은 "off"/"on" **문자열**이다(SamAutoscaleAdapter 와 같은 판정). bool() 로 보면
+    #   "off" 도 참이라 상시 가동 환경에서 3분을 헛되이 기다리게 된다.
+    if getattr(settings, "opendid_autoscale", "off") != "on":
+        # 홀더가 상시 가동이면 못 닿는 건 **진짜 장애**다 — 3분을 기다려 봐야 달라지지 않고,
+        # 잡만 늦게 실패한다. 기다리는 이유는 오직 scale-to-zero 콜드스타트뿐이다.
+        return True
+    if not bool(getattr(settings, "fm_vc_required", False)):
+        return True                      # VC 가 필수가 아니면 홀더가 없어도 컷은 나간다
+    base = getattr(settings, "opendid_holder_url", None)
+    secret = getattr(settings, "opendid_holder_hmac_secret", None)
+    if not base or not str(base).strip() or not secret or not str(secret).strip():
+        return True                      # 미설정 — 기다릴 대상이 없다(게이트가 503 으로 막는다)
+    sleep = sleep or asyncio.sleep
+    monotonic = monotonic or time.monotonic
+    _wake_opendid(app)
+    deadline = monotonic() + float(max_wait_seconds)
+    attempt = 0
+    while True:
+        if await holder_ready(app):
+            if attempt:
+                logger.info("holder_ready_after_wait attempts=%d", attempt)
+            return True
+        attempt += 1
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            logger.warning("holder_wait_timeout attempts=%d", attempt)
+            return False
+        _wake_opendid(app)               # reconciler 가 0 으로 되돌렸어도 다시 민다
+        # 남은 시간보다 오래 자지 않는다 — 상한을 넘겨 자면 "최대 N초" 가 거짓이 된다.
+        await sleep(min(float(poll_seconds), remaining))
 
 
 async def _fetch_trans(base_url: str, token: str) -> dict:
@@ -377,7 +502,8 @@ m.status = 'verified'
 and m.assets_status = 'ready'
 and e.status = 'passed'
 and e.decision = 'passed'
-and e.consent_version = %s
+/* 옛 동의 버전으로 이미 passed 인 모델도 계속 잡혀야 한다(단일 바인딩 금지 — 상수 주석 참조) */
+and e.consent_version = any(%s)
 and nullif(btrim(e.match_policy_version), '') is not null
 and l.status = 'active'
 and (l.license_valid_until is null or l.license_valid_until > now())
@@ -490,7 +616,7 @@ async def list_models(
                     {_CURRENT_CARD_JOINS}
                     where {_CURRENT_CARD_ELIGIBILITY}
                     order by m.created_at desc limit 200""",
-                (BIOMETRIC_CONSENT_VERSION,),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS),),
             )
             rows = await cur.fetchall()
     for row in rows:
@@ -1640,7 +1766,7 @@ async def get_license_face(
                     where {_CURRENT_CARD_ELIGIBILITY}
                       and l.id = %s and m.user_id = %s
                     limit 1""",
-                (BIOMETRIC_CONSENT_VERSION, license_id, user_id),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS), license_id, user_id),
             )
             row = await cur.fetchone()
 
@@ -1684,7 +1810,7 @@ async def get_model_thumbnail(
                     where {_CURRENT_CARD_ELIGIBILITY}
                       and m.id = %s
                     limit 1""",
-                (BIOMETRIC_CONSENT_VERSION, model_id),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS), model_id),
             )
             row = await cur.fetchone()
     if not row:
@@ -2930,11 +3056,12 @@ async def verify_license(
             )
     except Exception:
         logger.warning("holder_vc_verify_unreachable")
-        raise _err(
-            "holder_unavailable",
-            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
-            status=503,
-        )
+        raise _holder_starting(app)
+    if response.status_code in _HOLDER_STARTING_STATUSES:
+        # 502·503·504 = 앞단(ALB)이 붙을 대상을 못 찾거나 부팅 중이다. 홀더가 살아 있는데
+        # 답을 못 낸 것과 구분되지 않으므로 같은 취급 — 어느 쪽이든 다시 시도해야 한다.
+        logger.warning("holder_vc_verify_starting status=%s", response.status_code)
+        raise _holder_starting(app)
     if response.status_code != 200:
         raise _err(
             "holder_unavailable",
@@ -3107,11 +3234,16 @@ FACE_WARM_PING_WINDOW_SECONDS = 60
 )
 async def warm_face_render(request: Request, response: Response,
                            user_id: str = Depends(require_user)):
-    """셀러가 FaceMarket 모델을 고른 순간 = 곧 얼굴 렌더가 필요하다는 신호.
+    """셀러가 FaceMarket 모델을 고른 순간 = 곧 얼굴 렌더와 라이선스 확인이 필요하다는 신호.
 
-    reconciler 가 이 핑을 수요로 읽어 파드를 미리 켠다(콜드스타트를 첫 컷 앞에서 빼기 위한 것).
-    **켜진 LoRA 가 있는 실존 모델**일 때만 기록한다 — 그렇지 않으면 얼굴 패스가 걸리지 않아
-    파드를 켤 이유가 없다. 조건 밖이면 204 로 조용히 무시한다(프런트 흐름에 영향 0).
+    **신호가 둘이고 대상이 다르다.**
+      · 얼굴 렌더 파드(GPU): **켜진 LoRA 가 있는 실존 모델**만. 그렇지 않으면 얼굴 패스가
+        걸리지 않아 파드를 켤 이유가 없다(fm_face_warm_pings).
+      · holder(opendid): **모든 실존 모델**. LoRA 와 무관하게 컷을 만들 때마다 verify_license 가
+        `/holder/vc/verify` 를 부른다 — 이 신호가 없어서 2026-09-14 에 holder 가 0대로 내려가고
+        모든 셀러의 실존 모델 사용이 503 으로 막혔다(fm_holder_warm_pings + prewarm).
+
+    조건 밖이면 204 로 조용히 무시한다(프런트 흐름에 영향 0).
     """
     settings = request.app.state.settings
     if not getattr(settings, "facemarket_enabled", False):
@@ -3135,25 +3267,55 @@ async def warm_face_render(request: Request, response: Response,
         return Response(status_code=204)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
+            # ① holder — 실존(verified) 모델이면 LoRA 와 무관하게 신호를 남기고 깨운다.
+            await cur.execute(
+                "select 1 from fm_models where id = %s and status = 'verified' limit 1",
+                (model_id,))
+            is_verified_real = await cur.fetchone() is not None
+            if is_verified_real:
+                _wake_opendid(request.app)
+                await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
+            # ② 얼굴 렌더 파드 — 켜진 LoRA 가 있는 모델만(동작을 바꾸지 않는다).
             await cur.execute("select to_regclass('public.fm_face_warm_pings') as t")
             if not (await cur.fetchone() or {}).get("t"):
+                await conn.commit()
                 return Response(status_code=204)       # 마이그 미적용 — 조용히 무시
             await cur.execute(
                 "select 1 from fm_model_loras where model_id = %s and enabled and status = 'ready' "
                 "limit 1", (model_id,))
             if await cur.fetchone() is None:
+                await conn.commit()
                 return Response(status_code=204)       # 얼굴 패스가 걸릴 모델이 아니다
             await cur.execute(
                 "select 1 from fm_face_warm_pings where seller_id = %s "
                 "and pinged_at > now() - make_interval(secs => %s) limit 1",
                 (user_id, FACE_WARM_PING_WINDOW_SECONDS))
-            if await cur.fetchone() is not None:
-                return Response(status_code=204)       # 60초 안 중복
-            await cur.execute(
-                "insert into fm_face_warm_pings (seller_id, model_id) values (%s, %s)",
-                (user_id, model_id))
+            if await cur.fetchone() is None:                # 60초 안 중복이면 건너뛴다
+                await cur.execute(
+                    "insert into fm_face_warm_pings (seller_id, model_id) values (%s, %s)",
+                    (user_id, model_id))
         await conn.commit()
     return Response(status_code=204)
+
+
+async def _record_holder_warm_ping(cur, *, user_id: str, model_id: str) -> None:
+    """holder 수요 신호 한 줄. 테이블이 없으면(마이그 미적용) 조용히 넘어간다.
+
+    같은 셀러의 연타는 창 안에서 한 줄만 남긴다 — 수요 판정은 `max(pinged_at)` 만 보므로
+    행이 많아 봐야 쓸모가 없고 보관만 늘어난다(fm_face_warm_pings 와 같은 규칙).
+    """
+    await cur.execute("select to_regclass('public.fm_holder_warm_pings') as t")
+    if not (await cur.fetchone() or {}).get("t"):
+        return
+    await cur.execute(
+        "select 1 from fm_holder_warm_pings where seller_id = %s "
+        "and pinged_at > now() - make_interval(secs => %s) limit 1",
+        (user_id, FACE_WARM_PING_WINDOW_SECONDS))
+    if await cur.fetchone() is not None:
+        return
+    await cur.execute(
+        "insert into fm_holder_warm_pings (seller_id, model_id) values (%s, %s)",
+        (user_id, model_id))
 
 
 @router.get(

@@ -32,7 +32,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   const { pathname, search } = useLocation();
   const [modelState, setModelState] = useState(null);
   const userId = session?.user?.id;
-  const nav = landingNavItems({ verified: Boolean(userId && modelState?.userId === userId && modelState.verified) });
+  // 로그인 사용자는 조회가 끝나 미등록으로 확인된 뒤에만 지원 메뉴를 본다.
+  const hideApplication = Boolean(loading || (userId && (modelState?.userId !== userId || modelState.verified)));
+  const nav = landingNavItems({ verified: hideApplication });
   useEffect(() => {
     if (!userId) { setModelState(null); return undefined; }
     let alive = true;

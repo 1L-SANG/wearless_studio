@@ -388,20 +388,25 @@ def test_mid_identity_success_still_goes_to_photos(enrollment_client_factory, mo
 
 def test_accepts_new_and_previous_consent_versions():
     from app.facemarket_enrollment import (
+        ACCEPTED_BIOMETRIC_CONSENT_VERSIONS,
         ACCEPTED_CONSENT_VERSIONS,
         BIOMETRIC_CONSENT_VERSION,
     )
 
-    # 진행 중인 등록을 깨지 않는다 — 옛 두 버전도 계속 수락한다.
+    # 진행 중인 등록을 깨지 않는다 — 옛 버전도 계속 수락한다(요청 검증).
     assert "2026-08-v2" in ACCEPTED_CONSENT_VERSIONS
     assert "2026-09-v1" in ACCEPTED_CONSENT_VERSIONS
-    # 현재 버전은 2026-09-v1 이다. #285/#287 이 등록 위저드의 동의·안내 공개본
-    # (public/legal/biometric-consent · overseas-transfer)을 실제로 내보내면서 올렸다.
-    # 이 상수를 올리면 `_CURRENT_CARD_ELIGIBILITY`(facemarket.py)가 그 값을 그대로
-    # 바인딩하므로 옛 문자열을 들고 있는 기존 모델이 라이브 카탈로그·라이선스 얼굴·
-    # 썸네일에서 전부 빠진다(최종리뷰 C2) — 동의 **문구**가 실제로 바뀌어 함께 나가는
-    # 배포에서만 올린다. 그때 이 단언도 같이 올린다.
-    assert BIOMETRIC_CONSENT_VERSION == "2026-09-v1"
+    assert BIOMETRIC_CONSENT_VERSION in ACCEPTED_CONSENT_VERSIONS
+    # 현재 버전은 2026-09-v2 다. #298 이 동의서의 수집 항목("얼굴 8·상반신 5·전신 5" →
+    # "얼굴 16장")을 바꾸면서 올렸다 — 같은 버전 문자열에 다른 본문을 게시하면 누가 어느
+    # 본문에 동의했는지 증명할 수 없다.
+    assert BIOMETRIC_CONSENT_VERSION == "2026-09-v2"
+    # 자격 판정은 이 목록을 쓴다. 예전에는 위 상수를 그대로 바인딩해서, 올리는 순간 옛
+    # 문자열을 들고 있는 기존 모델이 라이브 카탈로그·라이선스 얼굴·썸네일에서 전부 빠졌다
+    # (최종리뷰 C2, 2026-08-29 실사고). #298 에서 `= any(%s)` 로 바꿔 그 대가를 없앴다 —
+    # **옛 값을 목록에서 빼면 그 사고가 그대로 돌아온다.**
+    assert "2026-09-v1" in ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
+    assert BIOMETRIC_CONSENT_VERSION in ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 
 
 # --- 실거래로 확인된 간편인증 응답 스키마 (2026-09-13) ---
