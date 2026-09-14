@@ -22,6 +22,7 @@ test('FaceMarket landing routes stay put', () => {
   for (const pathname of ['/apply', '/models', '/status', '/license', '/payout', '/register', '/model-info', '/licensing']) {
     assert.equal(host.domainRouteRedirect(pathname, true), null, pathname);
   }
+  assert.equal(host.domainRouteRedirect('/biometric-consent', true), null);
 });
 
 test('shared and domain-owned routes stay on their current host', () => {

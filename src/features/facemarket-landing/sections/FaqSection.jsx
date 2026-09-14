@@ -1,72 +1,55 @@
-/* =============================================================
-   FAQ — 홈('/')의 맨 아래. 서비스 설명(HowItWorksSection)이 못 담은 예외를 답한다.
-
-   ⚠️ HowItWorksSection 과 같은 경고가 걸린다: 지원·검토 절차는 **아직 코드에 없다**.
-   기능 플래그를 켤 때 그쪽 머리말의 목록(CTA·/register 문구)과 함께 손봐라.
-
-   <details>/<summary> 를 쓴다 — 열고 닫기·키보드·스크린리더가 브라우저 기본으로 되고,
-   JS 상태가 없어 첫 페인트에 이미 접혀 있다. 직접 만든 아코디언으로 바꾸지 마라.
-
-   답변에 없는 숫자를 만들지 않는다. 여기 나오는 값은 전부 기획서에 적힌 것이다 —
-   재시도 3회, 보관 30일, 프로필 사진 30일. 검토 기간(며칠 걸리는지)은 정해진 바가 없어
-   적지 않았다. 물어보는 사람이 가장 많을 질문이지만, 지키지 못할 기간을 적는 것보다
-   비워 두는 쪽이 낫다.
-   ============================================================= */
+import { Link } from 'react-router-dom';
+import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
+import {
+  LICENSE_ISSUE_FEE_KRW,
+  MIN_PAYOUT_KRW,
+  MODEL_SHARE,
+  SETTLEMENT_DAY,
+  formatKrw,
+} from '../facemarketTerms.js';
 import s from '../FacemarketLanding.module.css';
 
-const ITEMS = [
-  {
-    q: '바로 모델 등록을 시작할 수 있나요?',
-    a: '아니요. 지원서를 먼저 내고 검토를 거쳐야 얼굴 등록으로 넘어갑니다. 검토 중에는 지원서를 하나만 낼 수 있어요.',
-  },
-  {
-    q: '지원서에는 무엇을 적나요?',
-    a: '이름·생년월일·지역·성별·키, 에이전시 계약 여부, 활동하고 싶은 카테고리, 포트폴리오와 SNS 링크, 자기소개, 그리고 프로필 사진 한 장입니다.',
-  },
-  {
-    q: '결과는 어디서 확인하나요?',
-    a: '지원서에 적은 메일로 알려 드리고, FaceMarket 안에서도 현재 상태를 항상 볼 수 있습니다. 메일이 도착하지 않아도 화면에서 결과를 확인할 수 있어요.',
-  },
-  {
-    q: '거절되면 다시 지원할 수 있나요?',
-    a: '네. 거절 사유를 함께 보여 드리고, 다시 지원할 때는 지난번에 쓴 내용을 불러와 채워 둡니다. 프로필 사진도 거절 후 30일 안에는 그대로 다시 쓸 수 있어요.',
-  },
-  {
-    q: '신분증 정보가 지원서와 다르면 어떻게 되나요?',
-    a: '이름이나 생년월일이 신분증과 다르면 확인에 실패합니다. 세 번까지 다시 시도할 수 있고, 세 번 모두 실패하면 지원서는 정보 불일치로 정리됩니다. 잘못 적은 값을 고쳐 다시 지원하면 됩니다.',
-  },
-  {
-    q: '등록을 하다가 멈추면 처음부터 다시 해야 하나요?',
-    a: '지원 승인은 그대로 남습니다. 등록 절차만 다시 시작해서 이어가면 되고, 지원서를 새로 낼 필요는 없어요.',
-  },
-  {
-    q: '가슴·허리·엉덩이 사이즈나 헤어·눈 색상도 꼭 적어야 하나요?',
-    a: '선택입니다. 적지 않아도 등록과 사진 촬영은 그대로 진행됩니다.',
-  },
-  {
-    // 보관 규칙은 기획서 §11 그대로다. '삭제'와 '익명화'를 뭉뚱그리지 않는다 —
-    // 사진은 지우고 개인정보는 익명화라, 둘은 다른 처리다.
-    q: '지원서에 낸 개인정보는 얼마나 보관하나요?',
-    a: '거절되거나 지원을 취소하면 30일 동안만 둡니다(다시 지원할 때 불러오기 위해서예요). 30일이 지나면 개인정보는 알아볼 수 없게 바꾸고 프로필 사진은 지웁니다. 승인된 모델의 지원 정보는 활동에 필요한 만큼 두되, 계정을 지우거나 라이선스를 해지하면 사진과 함께 삭제합니다.',
-  },
-];
+const sharePercent = MODEL_SHARE * 100;
+const perCutShare = FACEMARKET_PRICING.perCut * MODEL_SHARE;
 
 export function FaqSection() {
   return (
-    <section className={s.section} id="faq">
-      <p className={s.eyebrow}>자주 묻는 질문</p>
-      <h2 className={s.sectionTitle}>먼저 궁금할 것들</h2>
+    <section aria-labelledby="fm-faq-title" className={s.faqSection} id="faq">
+      <div className={s.faqHead}>
+        <h2 id="fm-faq-title">궁금한 것들</h2>
+        <p>
+          여기 없는 질문은 지원 페이지의 자주 묻는 질문에 더 있어요. 계약 조건은{' '}
+          <Link to="/license-agreement">초상 라이선스 계약서</Link>와{' '}
+          <Link to="/biometric-consent">동의서</Link> 원문에서 그대로 읽을 수 있어요.
+        </p>
+      </div>
 
-      <ul className={s.faqList}>
-        {ITEMS.map((item) => (
-          <li key={item.q}>
-            <details className={s.faqItem}>
-              <summary className={s.faqQuestion}>{item.q}</summary>
-              <p className={s.faqAnswer}>{item.a}</p>
-            </details>
-          </li>
-        ))}
-      </ul>
+      <div className={s.faqGrid}>
+        <article className={s.faqEntry}>
+          <h3>제가 돈 쓰는 부분은 없나요?</h3>
+          <p className={s.faqAnswerText}><strong>없어요.</strong> 지원과 등록은 무료이고, 증서 발급료 {formatKrw(LICENSE_ISSUE_FEE_KRW)}도 지금은 무료예요. 화면에 보이는 {formatKrw(FACEMARKET_PRICING.perCut)}과 {formatKrw(FACEMARKET_PRICING.monthly)}은 셀러가 내는 금액이에요.</p>
+        </article>
+        <article className={s.faqEntry}>
+          <h3>얼마를, 언제 받나요?</h3>
+          <p className={s.faqAnswerText}>셀러가 낸 금액의 <strong>{sharePercent}%</strong>예요. 한 건이면 {formatKrw(perCutShare)}이고, 쌓인 몫이 {formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 {SETTLEMENT_DAY}일에 등록한 계좌로 보내드려요.</p>
+        </article>
+        <article className={s.faqEntry}>
+          <h3>모델 경력이 없어도 되나요?</h3>
+          <p className={s.faqAnswerText}>네. 경력, 포트폴리오, SNS 는 선택이에요. 만 19세 이상이고, 소속 에이전시가 없고, 본인이 직접 지원하면 돼요.</p>
+        </article>
+        <article className={s.faqEntry}>
+          <h3>내 얼굴은 어디에 쓰이나요?</h3>
+          <p className={s.faqAnswerText}>스튜디오 배경의 의류 착용컷과 그 상품의 상세페이지에만요. 광고, 인쇄물, 영상, 다른 사람과의 합성에는 쓰이지 않아요.</p>
+        </article>
+        <article className={s.faqEntry}>
+          <h3>등록할 때 무엇이 필요한가요?</h3>
+          <p className={s.faqAnswerText}>정부 모바일 신분증으로 본인확인을 하고, 정면, 45도, 측면 사진을 한 장씩 올려요. 신분증 얼굴은 대조한 뒤 바로 지워요.</p>
+        </article>
+        <article className={s.faqEntry}>
+          <h3>조건은 나중에 바꿀 수 있나요?</h3>
+          <p className={s.faqAnswerText}>마이페이지에서 언제든요. 바뀐 조건은 그다음 사용 건부터 적용되고, 이미 만들어진 건은 그대로예요.</p>
+        </article>
+      </div>
     </section>
   );
 }

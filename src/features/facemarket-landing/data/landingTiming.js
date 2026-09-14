@@ -1,0 +1,3 @@
+export const APPLY_TIME_MINUTES = 3;
+export const REGISTRATION_TIME_MINUTES = 10;
+export const FACE_WITHDRAWAL_PURGE_DAYS = 30;
