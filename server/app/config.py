@@ -438,6 +438,10 @@ class Settings:
     #: 얼굴 패스 전에 파드가 깨어나길 기다리는 최대 시간(초). 0 이면 기다리지 않는다.
     #: 실측 콜드스타트 ≈2분 + reconciler 주기 60초 → 기본 300.
     face_pass_wait_seconds: int = 300
+    #: 실존 모델(LoRA) 컷의 대기 상한(초). 이 컷은 못 기다리면 **원본을 못 내보낸다** — 셀러가
+    #: 산 것은 그 사람의 얼굴이지 gpt-image 가 그린 얼굴이 아니다. 그래서 일반 대기보다 길게 둔다.
+    #: 600 의 근거: 새 호스트 콜드스타트 실측 549초(가중치 내려받기 포함).
+    face_pass_real_wait_seconds: int = 600
     #: 얼굴 **크롭만** 파드 ESRGAN 으로 키운다(사진 전체는 안 한다 — 옷 픽셀이 바뀐다).
     #: 기본 on. false 가 탈출구다(결과를 예전 Lanczos 경로와 똑같이 만들고 싶을 때).
     #: 파드가 /upscale 을 모르거나 가중치가 없으면 이 값과 무관하게 Lanczos 로 폴백한다.
@@ -803,6 +807,7 @@ def load_settings() -> Settings:
         face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
         face_render_code_version=(os.getenv("FACE_RENDER_CODE_VERSION") or _build_sha()),
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
+        face_pass_real_wait_seconds=_int_env("FACE_PASS_REAL_WAIT_SECONDS", 600),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
         face_crop_pad=(os.getenv("FACE_CROP_PAD", "true").lower() != "false"),
         fm_provenance_enabled=(

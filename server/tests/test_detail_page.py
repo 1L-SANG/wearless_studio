@@ -262,7 +262,7 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(*args, **kwargs):
+    def fake_verify(*args, **kwargs):
         return None
 
     async def fake_lock(conn, project_id, license_id):
@@ -285,7 +285,7 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.repo, "get_product", fake_product)
@@ -335,7 +335,7 @@ def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(*args, **kwargs):
+    def fake_verify(*args, **kwargs):
         return None
 
     async def fake_editor(conn, project_id):
@@ -358,7 +358,7 @@ def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.repo, "get_product", fake_product)
@@ -402,7 +402,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
         assert analysis["selected_model_id"] == MODEL_ID
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(app, row, **kwargs):
+    def fake_verify(app, row, **kwargs):
         assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
         events.append("verified")
 
@@ -431,7 +431,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
@@ -485,7 +485,7 @@ def test_detail_denial_precedes_cache_job_and_credit(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def deny(*args, **kwargs):
+    def deny(*args, **kwargs):
         raise routes.HTTPException(
             status_code=409,
             detail={"code": "license_revoked", "message": "blocked"},
@@ -499,7 +499,7 @@ def test_detail_denial_precedes_cache_job_and_credit(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", deny)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", deny)
     monkeypatch.setattr(routes.repo, "get_editor_blocks",
                         lambda *args: counted("cache", []))
     monkeypatch.setattr(routes.repo, "create_job",
@@ -538,7 +538,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(*args, **kwargs):
+    def fake_verify(*args, **kwargs):
         return None
 
     async def fake_lock(conn, project_id, license_id):
@@ -563,7 +563,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
@@ -602,7 +602,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(*args, **kwargs):
+    def fake_verify(*args, **kwargs):
         events.append("verified")
 
     async def fake_lock(conn, project_id, license_id):
@@ -620,7 +620,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.repo, "get_account", fake_account)

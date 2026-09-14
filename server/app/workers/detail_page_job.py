@@ -26,6 +26,7 @@ from ..agents import (
     cut_generator,
     cut_output_qc,
     cut_plan,
+    face_identity,
     feature_copy,
     image_qc,
     mannequin,
@@ -355,6 +356,15 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
                     log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
+                    await _emit(app.state.pool, job_id, "step",
+                                {"blockId": b.get("id"), "status": "cut_failed"})
+                    return None
+                except face_identity.FacePassUnavailable as e:
+                    # 얼굴 파드가 상한(FACE_PASS_REAL_WAIT_SECONDS)까지 안 떴다. **원본으로는 못 낸다** —
+                    # 셀러가 산 것은 그 사람 얼굴이다. 재시도해도 같은 자리라 그 컷을 비운다(미차감):
+                    # 한 번 더 돌리면 Gemini 호출만 또 태우고 같은 상한을 다시 기다린다.
+                    log.warning("AG-06 cut face pass unavailable for job %s block %s: %r",
+                                job_id, b.get("id"), e)
                     await _emit(app.state.pool, job_id, "step",
                                 {"blockId": b.get("id"), "status": "cut_failed"})
                     return None
@@ -881,6 +891,10 @@ def _fallback_product_name(product: dict, analysis: dict) -> str:
         return suggested
     category = analysis.get("subCategory") or product.get("clothing_type") or product.get("clothingType")
     return _CATEGORY_NAMES.get(category, "데일리 웨어")
+
+
+#: 셀러에게 그대로 보여 주면 안 되는 내부 사정(editor_image_job 과 같은 목록).
+_INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
 
 
 async def run_detail_page_job(app, job: dict) -> None:
@@ -1940,6 +1954,11 @@ async def run_detail_page_job(app, job: dict) -> None:
         fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None
         fm_message = fm_detail.get("message") if isinstance(fm_detail, dict) else None
+        if fm_code in _INTERNAL_FAILURE_CODES:
+            # 라이선스 확인 서비스가 켜지는 중이라는 건 우리 인프라 사정이다 — 셀러 화면에는
+            # 일반 실패로 보이고 사유는 로그에만 남는다(2026-09-14 제품 결정).
+            log.warning("detail_page internal failure hidden from seller: %s", fm_code)
+            fm_code = fm_message = None
         is_space_set_error = isinstance(e, space_set_assets.SpaceSetBindingError)
         await _fail(
             (

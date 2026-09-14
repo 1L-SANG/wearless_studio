@@ -57,6 +57,19 @@ def _parse_source_asset_id(src: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+#: 셀러에게 그대로 보여 주면 안 되는 내부 사정. 라이선스 확인 서비스가 켜지는 중이라는 건
+#: 우리 인프라 사정이지 셀러가 알아야 할 일이 아니다(2026-09-14 제품 결정) — 로그에는 남는다.
+_INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
+_GENERIC_FAILURE = ("generation_failed", "이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.")
+
+
+def _seller_facing_failure(code: str, message: str) -> tuple[str, str]:
+    if code in _INTERNAL_FAILURE_CODES:
+        log.warning("editor_image internal failure hidden from seller: %s", code)
+        return _GENERIC_FAILURE
+    return code, message
+
+
 async def run_editor_image_job(app, job: dict) -> None:
     s = app.state.settings
     # 에디터 컷만 별도 모델로 보낼 수 있게, 이 워커 안에서만 불변 Settings 복사본의 image_high 를
@@ -968,4 +981,5 @@ async def run_editor_image_job(app, job: dict) -> None:
             if isinstance(detail, dict)
             else "이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요."
         )
+        code, message = _seller_facing_failure(code, message)
         await _fail(message, {"error": str(e)[:300]}, code=code)

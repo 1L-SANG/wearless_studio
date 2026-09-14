@@ -441,7 +441,9 @@ def test_virtual_worn_selection_ignores_stale_facemarket_license(
         ("missing_snapshot", "model_unavailable"),
         ("mismatched_snapshot", "model_unavailable"),
         ("revoked", "license_revoked"),
-        ("holder", "holder_unavailable"),
+        # 홀더 사정(켜는 중·미도달)은 셀러에게 일반 실패로 나간다 — 사유는 로그에만 남는다
+        # (2026-09-14 제품 결정). 환불·정산 미실행 계약은 그대로다.
+        ("holder", "generation_failed"),
         ("stale_evidence", "model_enrollment_unavailable"),
         ("missing_refs", "model_assets_unavailable"),
         ("r2_failure", "model_assets_unavailable"),
