@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import {
   ID_DOCUMENT_TYPES,
   buildMaskedBlob,
+  burnGuideMask,
   clampMaskRatio,
   containContentRect,
   defaultMaskRatio,
   elementRatioToImagePixels,
   maskRatioToPixels,
 } from '../../src/features/model/idDocumentMasking.js';
+import { rrnRectInFrame } from '../../src/features/model/idCardGeometry.js';
 
 // 이 파일이 지키는 것: 신분증 사진의 주민등록번호는 서버가 마스킹 여부를 검증할 수
 // 없으므로 클라이언트가 전송 전에 실제로 픽셀을 덮어써야 한다(buildMaskedBlob). 원본
@@ -219,4 +221,46 @@ test('엘리먼트 박스를 잴 수 없으면 자연 격자 기준으로 되돌
     elementRatioToImagePixels(ratio, { width: 0, height: 0 }, { width: 900, height: 600 }),
     maskRatioToPixels(ratio, 900, 600),
   );
+});
+
+test('burnGuideMask: 규격 좌표 자리에 덮고, 그린 뒤에 덮는다', async () => {
+  const calls = [];
+  const ctx = {
+    drawImage: (...args) => calls.push({ op: 'drawImage', args }),
+    fillRect: (...args) => calls.push({ op: 'fillRect', args }),
+    set fillStyle(v) { calls.push({ op: 'fillStyle', value: v }); },
+    get fillStyle() { return '#111'; },
+  };
+  const canvas = { width: 0, height: 0, getContext: () => ctx, toBlob: (cb) => cb({ type: 'image/jpeg' }) };
+
+  const blob = await burnGuideMask(canvas, { nodeName: 'VIDEO' }, 1920, 1080);
+  assert.equal(blob.type, 'image/jpeg');
+
+  const ops = calls.filter((c) => c.op === 'drawImage' || c.op === 'fillRect').map((c) => c.op);
+  assert.deepEqual(ops, ['drawImage', 'fillRect'],
+    'fillRect 가 drawImage 보다 먼저면 원본이 마스크 위에 다시 그려져 주민번호가 살아난다');
+
+  const expected = rrnRectInFrame(1920, 1080);
+  const [x, y, w, h] = calls.find((c) => c.op === 'fillRect').args;
+  assert.deepEqual({ x, y, w, h }, expected, '규격 좌표와 어긋나면 번호가 안 가려진다');
+});
+
+test('burnGuideMask: 마스크 좌표 골든값 — 규격에서 직접 계산한 절대 픽셀', async () => {
+  // 다른 테스트들은 전부 rrnRectInFrame 을 양변에 써서 순환이다 — 상수가 틀리거나
+  // 축이 뒤바뀌어도 통과한다. 이 단언만은 규격(85.6 x 53.98mm, fill 0.86)에서
+  // 손으로 계산한 절대 좌표를 박아, 좌표가 조용히 어긋나면 여기서 깨지게 한다.
+  // 1920x1080 에서 가이드 = {x:224, y:76, w:1473, h:929}.
+  const calls = [];
+  const ctx = {
+    drawImage: () => calls.push({ op: 'drawImage' }),
+    fillRect: (...args) => calls.push({ op: 'fillRect', args }),
+    set fillStyle(v) {},
+    get fillStyle() { return '#111'; },
+  };
+  const canvas = { width: 0, height: 0, getContext: () => ctx, toBlob: (cb) => cb({ type: 'image/jpeg' }) };
+
+  await burnGuideMask(canvas, { nodeName: 'VIDEO' }, 1920, 1080);
+
+  const [x, y, w, h] = calls.find((c) => c.op === 'fillRect').args;
+  assert.deepEqual({ x, y, w, h }, { x: 312, y: 615, w: 913, h: 130 });
 });
