@@ -947,6 +947,7 @@ async def _observe_generation_qc(
                 s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
                 fit_profile=fit_profile,
                 match_image=_pants_qc_ref(s, match_img, clothing_type),
+                main_product_category=clothing_type,
                 **pair_kwargs)
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "attempt": attempt, "status": "image_qc",
@@ -1217,7 +1218,8 @@ async def _apply_checked_untuck_postpass(
                 fit_profile=fit_profile,
                 match_image=_pants_qc_ref(s, match_img, clothing_type),
                 before_image=InlineImage(before.mime, before.image), edit_goal=edit_goal,
-                source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+                source_mirrored=source_mirrored, match_is_custom=match_is_custom,
+                main_product_category=clothing_type)
         except Exception as error:
             return await keep_before("main_qc_failed", error)
         await _emit(pool, job_id, "step", {
@@ -1426,7 +1428,8 @@ async def _apply_edits(
             before_image=InlineImage(pre_res.mime, pre_res.image),
             edit_goal=("Apply only the confirmed edit or declared fit-axis correction; preserve "
                        "source-backed color, material, construction, body, pose and matching garment."),
-            source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+            source_mirrored=source_mirrored, match_is_custom=match_is_custom,
+            main_product_category=clothing_type)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescored", "imageQc": post_p2})
@@ -1517,7 +1520,8 @@ async def _rollback_edits(
         mid_p2 = await image_qc.verdict(
             s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True,
             fit_profile=fit_profile,
-            match_image=_pants_qc_ref(s, match_img, clothing_type))
+            match_image=_pants_qc_ref(s, match_img, clothing_type),
+            main_product_category=clothing_type)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_post_axis", "imageQc": mid_p2})
@@ -1932,6 +1936,11 @@ async def _run_candidate(
             before_image=parent_cut_img if generation_path == "edit" else None,
             edit_goal=adjustment_goal, source_mirrored=source_mirrored,
             match_is_custom=match_is_custom)
+        if eff_image_qc == "enforce" and image_qc.role_policy_conflict(p2, clothing_type, fit_profile):
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "qc_role_conflict",
+                "outcome": "stopped_before_repair"})
+            raise MannequinQualityError("qc_role_policy_conflict")
         # 사전 게이트 후보도 이 이미지의 확정 베이스 결함을 보존해야 한다.
         # 나중 생성이 실패해 루프 밖에서 복원해도 검사 누락으로 합격시키지 않는다.
         bf_axes = base_fidelity_retry_axes(s, base_fidelity)

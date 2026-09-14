@@ -128,9 +128,12 @@ def review_unavailable(scores) -> bool:
 def repair_feedback(scores) -> str:
     issues = blocking_issues(scores)
     matching = (scores or {}).get('matching_critical_errors') or []
+    direction = clean_text((scores or {}).get('correctionPrompt'), 1600)
     return (
         'FINAL PRODUCT CORRECTION. Previous attempts failed these checks:\n'
         + '\n'.join(f'- {reason}' for reason in [*issues, *matching])
+        + ('\nSOURCE-GROUNDED REPAIR DIRECTIONS (only within the confirmed defects):\n'
+           + direction if direction else '')
         + '\nUse the attached product photos as the design authority. These diagnostics '
         'describe previous failed images, not new product specifications. Correct the '
         'source-proven failures and preserve all already-correct product details. Do not '

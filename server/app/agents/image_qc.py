@@ -37,9 +37,14 @@ MATCHING_KEYS = ("matching_fidelity",)
 _SCORE_MATCHING_PROMPT_FILE = os.path.join(
     _SERVER_DIR, "prompts", "image_qc_scores_matching_v1.txt")
 _PAIRED_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_edit_pair_v1.txt")
+_TOP_ROLE_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_main_top_v1.txt")
+_BOTTOM_ROLE_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_main_bottom_v1.txt")
+_SCORED_CORRECTION_LIMIT = 1600
+_EDIT_GOAL_LIMIT = 4000
 
 
-def qc_schema(*, scored: bool = False, matching: bool = False, paired: bool = False) -> dict:
+def qc_schema(*, scored: bool = False, matching: bool = False, paired: bool = False,
+              visibility_required: bool = False) -> dict:
     """동일성 판정 스키마. scored=True 면 4축 점수 + critical_errors 를 얹는다.
 
     **기본값은 반드시 3필드로 유지한다.** 이 스키마를 `scene_verdict`(장소 일치)와
@@ -62,6 +67,9 @@ def qc_schema(*, scored: bool = False, matching: bool = False, paired: bool = Fa
             props[key] = {"type": ["integer", "null"]}
         props["critical_errors"] = {"type": "array", "items": {"type": "string"}}
         props["product_risks"] = mannequin_quality.risk_schema()
+        if visibility_required:
+            props["bottom_waistband_visible"] = {"type": "string", "enum": ["visible", "covered", "uncertain"]}
+            props["bottom_visibility_evidence"] = {"type": "string"}
         if matching:
             for key in MATCHING_KEYS:
                 props[key] = {"type": ["integer", "null"]}
@@ -79,6 +87,41 @@ def qc_schema(*, scored: bool = False, matching: bool = False, paired: bool = Fa
         "required": list(props),
         "properties": props,
     }
+
+
+def _main_category(category, fit_profile=None):
+    if category is None and isinstance(fit_profile, dict):
+        category = fit_profile.get("category")
+    if category in ("pants", "skirt"):
+        return "bottom"
+    return category if category in ("top", "outer", "bottom", "dress") else None
+
+
+def _matching_top_length_observable(fit_profile):
+    from .fit_axes import AXIS_OBSERVABLES
+    matching = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
+    if not isinstance(matching, dict) or matching.get("fitCategory") != "top":
+        return None
+    axes = matching.get("axes")
+    value = axes.get("length") if isinstance(axes, dict) else None
+    return AXIS_OBSERVABLES.get(("top", "length", value)) if isinstance(value, str) else None
+
+
+def bottom_visibility_required(category, fit_profile=None):
+    matching = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
+    axes = matching.get("axes") if isinstance(matching, dict) else None
+    value = axes.get("length") if isinstance(axes, dict) else None
+    permits_coverage = bool(_matching_top_length_observable(fit_profile)) and value in (
+        "semi_crop", "basic", "semi_long", "long")
+    return _main_category(category, fit_profile) == "bottom" and not permits_coverage
+
+
+def role_policy_conflict(result, category, fit_profile=None):
+    """정해진 상의 전용 실패 코드가 하의 편집 권한을 주지 못하게 한다."""
+    if _main_category(category, fit_profile) != "bottom" or not isinstance(result, dict):
+        return False
+    return any(clean_text(code, 200).lower().rstrip(".") == "top tucked into the bottom"
+               for code in result.get("critical_errors") or [])
 
 
 def build_declared_fit_block(fit_profile: dict | None) -> str:
@@ -101,6 +144,9 @@ def build_declared_fit_block(fit_profile: dict | None) -> str:
         observable = AXIS_OBSERVABLES.get((category, axis, value))
         if observable:
             lines.append(f"- {axis}: {observable}")
+    matching_length = _matching_top_length_observable(fit_profile)
+    if matching_length:
+        lines.append(f"- MATCHING TOP length (coordination garment, NOT the main product): {matching_length}")
     if not lines:
         return ""
     return (
@@ -118,14 +164,40 @@ def build_prompt(
     product_count: int, *, scored: bool = False, fit_profile: dict | None = None,
     matching: bool = False, paired: bool = False, edit_goal: str | None = None,
     source_mirrored: bool = False, match_is_custom: bool = False,
+    main_product_category: str | None = None,
 ) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
     prompt = template.replace("${productCount}", str(max(1, product_count)))
     if scored:
+        category = _main_category(main_product_category, fit_profile)
+        role_files = ([_TOP_ROLE_PROMPT_FILE] if category in ("top", "outer") else
+                      [_BOTTOM_ROLE_PROMPT_FILE] if category == "bottom" else
+                      [] if category == "dress" else [_BOTTOM_ROLE_PROMPT_FILE, _TOP_ROLE_PROMPT_FILE])
+        role_rules = []
+        for path in role_files:
+            with open(path, encoding="utf-8") as f:
+                role_rules.append(f.read())
+        if category:
+            prompt += (f"\nMAIN PRODUCT CATEGORY: {category}. The initial product photographs "
+                       "show this main garment. Apply product_risks to this garment only; "
+                       "do not transfer a coordination garment's styling rule to it.\n")
+        if bottom_visibility_required(category, fit_profile):
+            prompt += ("\nREQUIRED BOTTOM OBSERVATION: first inspect the waistband area in the final full image. "
+                       "Return bottom_waistband_visible as visible, covered, or uncertain and "
+                       "bottom_visibility_evidence describing the actual waistband fabric band, "
+                       "its top edge, and its lower seam into the trouser/skirt body. "
+                       "A shirt hem is NOT the waistband. Pleats or the fly below a shirt are not "
+                       "evidence that the band is visible. If the matching shirt covers the band, "
+                       "return covered even when the visible lower trousers look correct. "
+                       "Do not infer visibility from source photos or from your overall pass judgment.\n")
         # 스키마만 바꾸면 근거 없는 숫자가 나온다 — 채점 기준을 프롬프트로 준다.
         with open(_SCORE_PROMPT_FILE, encoding="utf-8") as f:
-            prompt = f"{prompt}\n{f.read()}"
+            scoring = f.read().replace("${roleSpecificRules}", "\n".join(role_rules))
+            scoring = scoring.replace("${tuckCriticalError}",
+                "the top or outerwear product tucked into the bottom; "
+                if category in (None, "top", "outer") else "")
+            prompt = f"{prompt}\n{scoring}"
         # 매칭 하의 블록은 **scored 위에만** 얹는다. 매칭 없는 경로(scene·best_of·매칭無
         # 마네킹)는 이 토큰이 새면 안 되므로 matching 게이트 안에서만 붙인다.
         if matching:
@@ -143,7 +215,7 @@ def build_prompt(
             prompt = f"{prompt}\n{f.read()}"
         if paired:
             with open(_PAIRED_PROMPT_FILE, encoding="utf-8") as f:
-                pair = f.read().replace("${editGoal}", clean_text(edit_goal, 800))
+                pair = f.read().replace("${editGoal}", clean_text(edit_goal, _EDIT_GOAL_LIMIT))
             before_index = product_count + int(matching) + 1
             after_index = before_index + 1
             pair = pair.replace("${beforeIndex}", str(before_index))
@@ -166,6 +238,8 @@ def _score(value) -> int | None:
 
 def validate(
     raw: dict, *, scored: bool = False, matching: bool = False, paired: bool = False,
+    visibility_required: bool = False,
+    main_product_category: str | None = None,
 ) -> dict:
     """verdict∈enum(밖이면 pass), mismatches 정리, correctionPrompt 정리(retry일 때만 의미).
 
@@ -178,7 +252,7 @@ def validate(
     raw = raw or {}
     verdict = raw.get("verdict") if raw.get("verdict") in VERDICTS else "pass"
     mismatches = [m for m in (clean_text(x, 200) for x in (raw.get("mismatches") or [])) if m]
-    correction = clean_text(raw.get("correctionPrompt"), 500) or None
+    correction = clean_text(raw.get("correctionPrompt"), _SCORED_CORRECTION_LIMIT if scored else 500) or None
     if verdict == "pass":
         out = {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
     else:
@@ -209,12 +283,36 @@ def validate(
                     clean_text(item, 200) for item in reasons
                 ) if reason
             ] if isinstance(reasons, list) else ["paired assessment incomplete"]
+        if visibility_required:
+            state = raw.get("bottom_waistband_visible")
+            evidence = clean_text(raw.get("bottom_visibility_evidence"), 500)
+            state = state if state in ("visible", "covered", "uncertain") and evidence else "uncertain"
+            out.update(bottom_waistband_visible=state, bottom_visibility_evidence=evidence)
+            if state == "covered":
+                reason = "Required bottom waistband is covered by the matching top: " + evidence
+                risks = out.get("product_risks")
+                if isinstance(risks, dict) and isinstance(risks.get("fit"), dict):
+                    if risks["fit"]["severity"] not in ("major", "critical"):
+                        risks["fit"] = {"severity": "major", "evidence": reason}
+                else:
+                    out["critical_errors"].append("required bottom waistband covered")
+                out["verdict"] = "retry"
+                out["mismatches"].append(reason)
+            if paired and state != "visible":
+                out["protected_regions_unchanged"] = False
+                out["regression_reasons"].append("required bottom waistband visibility is " + state)
+        if mannequin_quality.blocking_issues(out) or out.get("matching_critical_errors"):
+            out["correctionPrompt"] = correction
+        if role_policy_conflict(out, main_product_category):
+            out["role_policy_conflict"] = True
     return out
 
 
 def edit_accepted(result: dict | None) -> bool:
     """편집 목표 해결과 비수정 영역 보존을 모두 확인한 경우만 채택한다."""
     if not isinstance(result, dict):
+        return False
+    if result.get("role_policy_conflict") is True:
         return False
     if result.get("target_resolved") is not True:
         return False
@@ -235,6 +333,7 @@ async def verdict(
     match_image: InlineImage | None = None,
     before_image: InlineImage | None = None, edit_goal: str | None = None,
     source_mirrored: bool = False, match_is_custom: bool = False,
+    main_product_category: str | None = None,
 ) -> dict:
     """상품사진들 (+ 매칭 하의) + 생성이미지(맨 뒤)를 vision LLM에 넣어 동일성 판정.
 
@@ -246,8 +345,9 @@ async def verdict(
     실패 시 VisionError.
     """
     matching = match_image is not None
-    paired = before_image is not None or bool(clean_text(edit_goal, 800))
-    if paired and (before_image is None or not clean_text(edit_goal, 800)):
+    visibility_required = scored and bottom_visibility_required(main_product_category, fit_profile)
+    paired = before_image is not None or bool(clean_text(edit_goal, _EDIT_GOAL_LIMIT))
+    if paired and (before_image is None or not clean_text(edit_goal, _EDIT_GOAL_LIMIT)):
         raise ValueError("paired image QC requires before_image and edit_goal")
     images = (
         [*product_images] + ([match_image] if matching else [])
@@ -256,13 +356,15 @@ async def verdict(
     prompt = build_prompt(
         len(product_images), scored=scored, fit_profile=fit_profile, matching=matching,
         paired=paired, edit_goal=edit_goal, source_mirrored=source_mirrored,
-        match_is_custom=match_is_custom)
+        match_is_custom=match_is_custom, main_product_category=main_product_category)
     complete_kwargs = {"require_complete_envelope": True} if scored or paired else {}
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images,
-        qc_schema(scored=scored, matching=matching, paired=paired),
+        qc_schema(scored=scored, matching=matching, paired=paired, visibility_required=visibility_required),
         **complete_kwargs)
-    result = validate(raw, scored=scored, matching=matching, paired=paired)
+    result = validate(raw, scored=scored, matching=matching, paired=paired,
+                      visibility_required=visibility_required,
+                      main_product_category=_main_category(main_product_category, fit_profile))
     if scored:
         # 새 필드가 불완전해도 이미 확인된 치명 오류·매칭 오류·점수를 버리지 않는다.
         # 미판정은 호출측에서 통과와 구분하며, 마지막 구제 생성은 완전한 판정을 요구한다.

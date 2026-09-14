@@ -1,0 +1,11 @@
+BOTTOM PRODUCT VISIBILITY. Apply only when the main product is a bottom garment.
+The bottom's waistband and photographed front construction must remain visible unless an
+explicit declared matching-top length requires coverage. A matching top is a coordination item,
+not the main product. It may be short or tucked to keep the bottom visible.
+Do not untuck or lengthen the matching top merely because its hem ends at the waistband.
+Do not mark a coordination top's tuck as a defect in the bottom product's fit or construction.
+If a matching top hides required waistband, closure or front-pleat evidence, record a major fit
+issue with the visible location and request restoring visibility, not hiding more of the bottom.
+For paired edits, a newly hidden required waistband means protected_regions_unchanged is false,
+even if the proposed edit goal itself was achieved. Never approve a repair that contradicts
+this main-product visibility rule. Normal body contact and natural folds are not missing design.

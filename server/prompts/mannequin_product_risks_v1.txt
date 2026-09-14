@@ -52,3 +52,21 @@ belong in the existing technical scores and critical_errors. Keep critical_error
 consistent with this rubric; it contains only actual critical defects, not minor
 differences, uncertainty, or a count of concerns. Put a concise source-grounded repair
 instruction for major/critical findings in correctionPrompt and set verdict=retry.
+
+REPAIR DIRECTION QUALITY. For each confirmed major/critical issue, specify the affected
+garment role and visible region, the source observation, the actual output difference,
+and the smallest corrective action with protected neighboring features. Use garment
+landmarks such as placket, seam junction, cuff edge and hem, not invented body measurements.
+Do not merely say "improve fidelity", "restore texture" or "fix pattern". Keep the complete
+correctionPrompt within 1600 characters, prioritizing confirmed defining errors.
+
+For a pattern, inspect uninterrupted body and sleeve panels for line continuity, spacing,
+line widths and crossings. Lines may bend at real folds or end at actual seams/occlusions;
+unexplained gaps on visible continuous cloth are not cured just because a grid is present.
+For material, compare visible stitch/loop/weave structure and surface response, not just
+the broad garment class. Replacing visible fine rows with diffuse fuzzy or directional
+pile-like shading can change identity even if it still looks like a sweatshirt or trousers.
+Do not infer fiber composition, and account for lighting and unequal pixel scale.
+For readable lettering, transcribe source and generated text separately and identify the
+specific differing characters. If a character cannot actually be resolved, mark uncertainty
+rather than inventing a confident misspelling and authorizing a repair from it.
