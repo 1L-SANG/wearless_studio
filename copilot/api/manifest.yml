@@ -285,6 +285,14 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 관리자 육안 심사 범위. simple_auth_only = 촬영 신분증 경로만 사람이 본다(mid 경로는 무관).
   # 심사가 병목이 되면 off 로 즉시 해제할 수 있다(off | simple_auth_only | all).
   FM_ENROLLMENT_REVIEW: "simple_auth_only"
+  # 신분증 마스킹 기하 검증(simple_auth 경로 전용, mid 는 무관). off=검사 안 함 /
+  # shadow=판정만 기록(업로드는 막지 않음) / enforce=미달 시 거부.
+  # MAX_STDDEV/MAX_MEAN(facemarket_id_mask_verify.py)은 캘리브 전 잠정값이라 shadow 로
+  # 시작한다 — v1 에서 SFace 임계를 캘리브 없이 enforce 로 넣었다가 정상 사용자가
+  # 오탈락한 선례가 있다(같은 실수 반복 금지). enforce 로 올리기 전에 로그
+  # facemarket_id_mask_verify_verdict 의 mask_applied/mean/stddev 분포를 충분히 관측해
+  # 임계를 재산정할 것 — 관측 없이 올리지 않는다.
+  FM_ID_MASK_VERIFY: "shadow"
   # 간편인증 계약. 2026-09-13 실거래로 스키마 확정 후 활성화(스펙 §14.3):
   #  (1) ci 포함 — 확인 (2) trans/{token} 로 취득 — 확인(라온 간편인증 샘플도 동일)
   #  (3) v1.5_enc 복호화 — 해당 없음(우리 config 는 enc 아님, 평문 경로)
