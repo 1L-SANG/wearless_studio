@@ -740,7 +740,11 @@ def test_initial_scope_query_classifies_complete_provenance_without_status_or_ex
     assert "not exists" in query
     assert "e.status = 'passed'" in query
     assert "e.decision = 'passed'" in query
-    assert "e.consent_version = %s" in query
+    # 옛 동의 버전으로 이미 passed 인 모델을 legacy(=파기 대상)로 분류하면 안 된다.
+    assert "e.consent_version = any(%s)" in query
+    # 정면 사진 이름도 회차마다 다르다 — 'front' 하나로 못박으면 새 스펙 모델이 legacy 가 된다.
+    # 카탈로그 자격과 같은 후보 사슬(sh_front → face01 → front)을 써야 한다.
+    assert "'sh_front'" in query and "earlier_photo" in query
     assert "m.assets_status = 'ready'" in query
     assert "l.enrollment_id = e.id" in query
     assert "l.vc_id = e.vc_id" in query

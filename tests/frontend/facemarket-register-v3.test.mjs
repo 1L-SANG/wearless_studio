@@ -1,16 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 const module = await import('../../src/features/model/registerSlots.js').catch(() => ({}));
 
-test('17장의 서로 다른 슬롯이 있어야 확인 단계를 마칠 수 있어요', () => {
+test('동의 문서 버전이 서버 상수와 같다', () => {
+  // 화면이 보여 준 동의문의 버전이 곧 서버가 기록하는 값이다. 둘이 갈라지면 서버가
+  // stale_consent_version 으로 등록을 막거나(프론트가 낡음), 실제로 보여 준 적 없는
+  // 버전이 동의 이벤트 테이블에 남는다(서버가 낡음) — 어느 쪽도 증거가 안 된다.
+  const server = readFileSync(
+    new URL('../../server/app/facemarket_enrollment.py', import.meta.url), 'utf8',
+  );
+  const shipped = /BIOMETRIC_CONSENT_VERSION = "([^"]+)"/.exec(server)?.[1];
+  assert.ok(shipped, '서버 상수를 못 찾았다');
+  assert.equal(module.CONSENT_VERSION, shipped);
+  // 게시본 manifest 도 같은 값이어야 한다 — 사용자가 실제로 읽는 문서다.
+  const manifest = JSON.parse(readFileSync(
+    new URL('../../public/legal/manifest.json', import.meta.url), 'utf8',
+  ));
+  const consent = manifest.find((item) => item.slug === 'biometric-consent');
+  assert.equal(consent.version, shipped, '게시된 동의서 버전이 기록되는 값과 다르다');
+});
+
+test('16장의 서로 다른 슬롯이 있어야 확인 단계를 마칠 수 있어요', () => {
   assert.equal(typeof module.photoProgress, 'function');
   const photos = module.SLOTS.map((slot) => ({ slot: slot.key }));
-  assert.equal(photos.length, 17);
+  assert.equal(photos.length, 16);
   assert.equal(module.photoProgress(photos).complete, true);
   // 같은 칸을 두 번 올려도 채워지지 않는다
-  assert.equal(module.photoProgress([...photos.slice(0, 16), photos[0]]).complete, false);
-  assert.equal(module.photoProgress(photos.slice(0, 8), 'sh').complete, true);
-  assert.equal(module.photoProgress(photos.slice(0, 10), 'sl').complete, false);
+  assert.equal(module.photoProgress([...photos.slice(0, 15), photos[0]]).complete, false);
+  assert.equal(module.photoProgress(photos.slice(0, 7), 'sh').complete, true);
+  assert.equal(module.photoProgress(photos.slice(0, 9), 'sl').complete, false);
 });
 
 test('구형 사진 각도는 해당 슬롯 한 칸으로만 복원해요', () => {
@@ -54,7 +73,7 @@ test('복원은 동의와 사진, 발급 대기와 완료 상태를 구분해요
 
 import { findTree, modelComponentHarness, eventually } from './helpers/facemarketHarness.mjs';
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-const baseEnrollment = { consentDocumentVersion:'2026-09-v1', termsConsentVersion:'2026-09-v1', overseasConsentVersion:'2026-09-v1', id: 'enrollment-1', modelId: 'model-1', status: 'identity_pending', photos: [] };
+const baseEnrollment = { consentDocumentVersion:module.CONSENT_VERSION, termsConsentVersion:module.CONSENT_VERSION, overseasConsentVersion:module.CONSENT_VERSION, id: 'enrollment-1', modelId: 'model-1', status: 'identity_pending', photos: [] };
 const button = (tree, label) => findTree(tree, (node) => node.type === 'button' && node.props.children === label);
 const commit = (harness) => { const tree = harness.render(); harness.runtime.effects.forEach((effect) => effect()); return tree; };
 const textOf = (node) => node == null || typeof node === 'boolean' ? '' : typeof node !== 'object' ? String(node) : Array.isArray(node) ? node.map(textOf).join('') : textOf(node.props?.children);
@@ -197,7 +216,7 @@ test('두 개 동의를 모두 받아야 인증을 시작하며 신분증 사진
     }
     assert.equal(start().props.disabled, false);
     await start().props.onClick();
-    assert.equal(requests[0].documentVersion, '2026-09-v1');
+    assert.equal(requests[0].documentVersion, module.CONSENT_VERSION);
     assert.deepEqual(requests[1], { id: 'enrollment-1', token: 'token-1' });
     assert.equal(harness.runtime.states[0], '2');
   } finally { await harness.close(); }
@@ -275,15 +294,15 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
     findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === '역광 사진 고치기').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_GROUPS.length, '역광은 마지막 조명 화면이다');
     let tree = harness.render();
-    const input = findTree(tree, (node) => node.type === 'input' && node.props['aria-label']?.startsWith('17번'));
+    const input = findTree(tree, (node) => node.type === 'input' && node.props['aria-label']?.startsWith('16번'));
     input.props.onChange({ target: { files: [file], value: '' } });
     await eventually(() => calls.length === 1); await flush();
     assert.equal(calls[0].slot, 'bl_34'); assert.equal(calls[0].fileBlob, file);
     tree = harness.render();
-    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '17번 내 사진'));
+    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '16번 내 사진'));
     await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_REVIEW_SUB);
-    assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '17번 내 사진'));
+    assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '16번 내 사진'));
     Object.values(harness.runtime.states[11]).forEach(URL.revokeObjectURL);
   } finally { await harness.close(); }
 });

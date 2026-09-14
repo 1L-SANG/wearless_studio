@@ -2,28 +2,28 @@ import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 
 // 사진 캡션은 이 목록에서 고쳐요.
 //
-// 순서·문구는 촬영 가이드('얼굴 촬영 16컷')와 같아요 — 번호대로 찍으면 그대로 채워져요.
+// 순서·문구는 촬영 가이드를 따라요 — 번호대로 찍으면 그대로 채워져요.
 // 슬롯 키는 서버(`server/app/facemarket_photos.py` PHOTO_SLOTS)와 **같은 이름**이에요.
-// 조명 4가지(그늘·해가 왼쪽·해가 오른쪽·역광) × 컷 3장 = 학습 12장, 그늘에서 기준 4장,
-// 그리고 공개 프로필에만 쓰는 측면 1장 = 17장.
+// 조명 4가지(그늘·해가 왼쪽·해가 오른쪽·역광) × 컷 3장 = 학습 12장, 그늘에서 기준 3장,
+// 그리고 공개 프로필에만 쓰는 측면 1장 = 16장.
+// 기준에서 '턱 살짝 내리기'는 뺐어요 — 기준끼리의 얼굴 점수가 기준선 아래로 떨어져요.
 export const SLOTS = Object.freeze([
   { n: 1, key: 'sh_front', group: 'sh', title: '정면 · 무표정', hint: '카메라를 똑바로, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
   { n: 2, key: 'sh_smile', group: 'sh', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
   { n: 3, key: 'sh_34', group: 'sh', title: '3/4 · 무표정', hint: '고개를 한쪽으로 30~40도. 끝까지 같은 쪽으로, 먼 쪽 눈이 꼭 보이게', framing: 'face', angle: 'left45' },
   { n: 4, key: 'sh_front2', group: 'sh', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
-  { n: 5, key: 'sh_chin_down', group: 'sh', title: '정면 · 턱 살짝 내리기', hint: '얼굴은 정면, 턱만 조금 당기기', framing: 'face', angle: 'down' },
-  { n: 6, key: 'sh_gaze_left', group: 'sh', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
-  { n: 7, key: 'sh_gaze_right', group: 'sh', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
-  { n: 8, key: 'sh_side', group: 'sh', title: '측면', hint: '고개를 끝까지 돌려 옆모습. 이 한 장만 학습이 아니라 공개 프로필에 써요', framing: 'face', angle: 'left' },
-  { n: 9, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
-  { n: 10, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 11, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 12, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '카메라를 똑바로', framing: 'face', angle: 'front' },
-  { n: 13, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 14, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 15, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '플래시 끄고, 얼굴이 까맣게 나오면 다시', framing: 'face', angle: 'front' },
-  { n: 16, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 17, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 5, key: 'sh_gaze_left', group: 'sh', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
+  { n: 6, key: 'sh_gaze_right', group: 'sh', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
+  { n: 7, key: 'sh_side', group: 'sh', title: '측면', hint: '고개를 끝까지 돌려 옆모습. 이 한 장만 학습이 아니라 공개 프로필에 써요', framing: 'face', angle: 'left' },
+  { n: 8, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
+  { n: 9, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 10, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 11, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '카메라를 똑바로', framing: 'face', angle: 'front' },
+  { n: 12, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 13, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 14, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '플래시 끄고, 얼굴이 까맣게 나오면 다시', framing: 'face', angle: 'front' },
+  { n: 15, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 16, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
 ].map((slot) => Object.freeze(slot)));
 
 // 조명별로 한 화면씩. `sun` 은 위에서 본 그림(RegisterIllustration.SunDiagram)이 쓰는 값이에요.
@@ -43,7 +43,7 @@ export const SHOOT_RULES = Object.freeze([
   { title: '한 사진에 한 사람만', body: '뒤에 다른 얼굴이 크게 걸리면 반려돼요.' },
   { title: '뒷카메라 1배, 기본 설정 그대로', body: '인물사진 모드 · 뷰티 필터 · 0.5배 광각은 쓰지 마세요.' },
   { title: '같은 날, 지금 머리 그대로', body: '머리 모양까지 배워요. 중간에 바꾸면 섞여요.' },
-  { title: '기준 4장(4~7번)은 전부 그늘 같은 자리', body: '조명이 섞이면 기준 사진끼리 점수가 떨어져 기준으로 못 써요.' },
+  { title: '기준 3장(4~6번)은 전부 그늘 같은 자리', body: '조명이 섞이면 기준 사진끼리 점수가 떨어져 기준으로 못 써요.' },
 ]);
 
 export const REGISTER_BODIES = Object.freeze([
@@ -52,7 +52,7 @@ export const REGISTER_BODIES = Object.freeze([
   { value: 'regular', label: '보통', width: 1.06 },
   { value: 'plump', label: '통통', width: 1.25 },
 ]);
-export const CONSENT_VERSION = '2026-09-v1';
+export const CONSENT_VERSION = '2026-09-v2';
 // 옛 등록(3각도 · 18칸)이 돌려주는 이름 → 지금 슬롯. 서버 facemarket_photos.SLOT_CANDIDATES 와 같아요.
 export const LEGACY_PHOTO_SLOTS = Object.freeze({
   front: 'sh_front', angle45: 'sh_34', side: 'sh_side',

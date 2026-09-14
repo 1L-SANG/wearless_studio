@@ -93,18 +93,22 @@ class _Det:
         self.yaw_proxy = yaw
 
 
-def test_the_reference_set_is_the_four_shade_photos():
-    """17칸 스펙의 기준 4장 — 전부 그늘·같은 자리. 학습 12장·측면은 기준이 아니다."""
+def test_the_reference_set_is_the_three_shade_photos():
+    """16칸 스펙의 기준 3장 — 전부 그늘·같은 자리, 같은 턱 각도. 학습 12장·측면은 기준이 아니다.
+
+    턱을 내린 컷은 일부러 뺐다 — 같은 사람인데 시선 컷과 SFace 0.664 로 최저선 0.70 을 깬다
+    (2026-09-11 v7 인테이크 실측).
+    """
     rows = [_photo(slot) for slot in fp.PHOTO_SLOTS]
     out, r2 = _load(rows)
-    assert r2.reads == ["k/sh_front2.jpg", "k/sh_chin_down.jpg",
-                        "k/sh_gaze_left.jpg", "k/sh_gaze_right.jpg"]
-    assert len(out) == 4
+    assert r2.reads == ["k/sh_front2.jpg", "k/sh_gaze_left.jpg", "k/sh_gaze_right.jpg"]
+    assert len(out) == 3
     assert identity_source.IDENTITY_REFERENCE_SLOTS == fp.REFSET_SLOTS
+    assert "sh_chin_down" not in fp.PHOTO_SLOTS
 
 
 def test_an_18_slot_enrollment_falls_back_to_the_old_frontal_slots():
-    """17칸 이전 등록엔 sh_* 가 없다 — 옛 정면 4칸으로 내려간다(기준을 잃지 않는다)."""
+    """16칸 이전 등록엔 sh_* 가 없다 — 옛 정면 4칸으로 내려간다(기준을 잃지 않는다)."""
     rows = [_photo(f"face{i:02d}") for i in range(1, 9)]
     out, r2 = _load(rows)
     assert r2.reads == ["k/face01.jpg", "k/face02.jpg", "k/face07.jpg", "k/face08.jpg"]
@@ -122,8 +126,8 @@ def test_legacy_three_photo_enrollment_uses_front_only():
     assert len(out) == 1
 
 
-def test_an_in_progress_17_slot_enrollment_uses_what_it_already_has():
-    """기준 4장을 찍기 전이라도 sh_front 가 있으면 그걸 쓴다(face01 후보 사슬)."""
+def test_an_in_progress_16_slot_enrollment_uses_what_it_already_has():
+    """기준 3장을 찍기 전이라도 sh_front 가 있으면 그걸 쓴다(face01 후보 사슬)."""
     out, r2 = _load([_photo("sh_front"), _photo("sh_smile"), _photo("sh_34"), _photo("sh_side")])
     assert r2.reads == ["k/sh_front.jpg"]
     assert len(out) == 1
@@ -131,15 +135,15 @@ def test_an_in_progress_17_slot_enrollment_uses_what_it_already_has():
 
 def test_a_turned_photo_in_a_frontal_slot_is_dropped():
     """슬롯 이름만 믿지 않는다 — 촬영 실수로 정면 슬롯에 각도 사진이 오면 yaw 로 뺀다."""
-    rows = [_photo(s) for s in ("sh_front2", "sh_chin_down", "sh_gaze_left")]
-    out, r2 = _load(rows, yaw={"k/sh_front2.jpg": 0.04, "k/sh_chin_down.jpg": 0.41,
-                               "k/sh_gaze_left.jpg": 0.12})
+    rows = [_photo(s) for s in ("sh_front2", "sh_gaze_left", "sh_gaze_right")]
+    out, r2 = _load(rows, yaw={"k/sh_front2.jpg": 0.04, "k/sh_gaze_left.jpg": 0.41,
+                               "k/sh_gaze_right.jpg": 0.12})
     assert len(r2.reads) == 3, "읽어 봐야 각도를 잴 수 있다"
     assert len(out) == 2, "0.41 짜리 한 장이 빠진다"
 
 
 def test_when_every_reference_photo_is_turned_the_next_tier_is_tried():
-    """기준 4장이 전부 돌아가 있으면 0장이다 — 거기서 멈추지 않고 옛 슬롯을 본다."""
+    """기준 3장이 전부 돌아가 있으면 0장이다 — 거기서 멈추지 않고 옛 슬롯을 본다."""
     rows = [_photo("sh_front2"), _photo("sh_gaze_left"), _photo("face02")]
     out, r2 = _load(rows, yaw={"k/sh_front2.jpg": 0.51, "k/sh_gaze_left.jpg": 0.48,
                                "k/face02.jpg": 0.03})

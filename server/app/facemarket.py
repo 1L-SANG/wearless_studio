@@ -39,7 +39,7 @@ from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
-from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
+from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
 from .models import CamelModel, ErrorResponse
@@ -377,7 +377,8 @@ m.status = 'verified'
 and m.assets_status = 'ready'
 and e.status = 'passed'
 and e.decision = 'passed'
-and e.consent_version = %s
+/* 옛 동의 버전으로 이미 passed 인 모델도 계속 잡혀야 한다(단일 바인딩 금지 — 상수 주석 참조) */
+and e.consent_version = any(%s)
 and nullif(btrim(e.match_policy_version), '') is not null
 and l.status = 'active'
 and (l.license_valid_until is null or l.license_valid_until > now())
@@ -490,7 +491,7 @@ async def list_models(
                     {_CURRENT_CARD_JOINS}
                     where {_CURRENT_CARD_ELIGIBILITY}
                     order by m.created_at desc limit 200""",
-                (BIOMETRIC_CONSENT_VERSION,),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS),),
             )
             rows = await cur.fetchall()
     for row in rows:
@@ -1640,7 +1641,7 @@ async def get_license_face(
                     where {_CURRENT_CARD_ELIGIBILITY}
                       and l.id = %s and m.user_id = %s
                     limit 1""",
-                (BIOMETRIC_CONSENT_VERSION, license_id, user_id),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS), license_id, user_id),
             )
             row = await cur.fetchone()
 
@@ -1684,7 +1685,7 @@ async def get_model_thumbnail(
                     where {_CURRENT_CARD_ELIGIBILITY}
                       and m.id = %s
                     limit 1""",
-                (BIOMETRIC_CONSENT_VERSION, model_id),
+                (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS), model_id),
             )
             row = await cur.fetchone()
     if not row:

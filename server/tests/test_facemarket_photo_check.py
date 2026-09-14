@@ -1,4 +1,4 @@
-"""등록 사진 업로드 검사 — v7 학습에 실제로 쓴 16장이 한 장도 안 걸려야 한다.
+"""등록 사진 업로드 검사 — v7 학습에 실제로 쓴 15장이 한 장도 안 걸려야 한다.
 
 사진 자체는 생체정보라 저장소에 둘 수 없다. 대신 인테이크가 잰 **숫자**를 픽스처로 고정한다
 (~/Downloads/lora_runs/v7_intake/manifest_draft.tsv, 원본 6048×8064). 이 16장이 v7 LoRA 를 만든
@@ -18,6 +18,7 @@ V7_HEIGHT = 8064
 FRONT_SCALE = 4000 / V7_HEIGHT
 
 #: (슬롯, face_w, eye_ratio, yaw_proxy, n_faces) — manifest_draft.tsv 그대로.
+#: 턱_살짝_내리기(REF_02)는 기준셋에서 뺐으므로 여기도 없다 — 기준끼리 SFace 0.664 로 최저선을 깬다.
 #: 3/4 두 장은 n_faces=2 지만 작은 쪽이 최대 얼굴의 25% 미만이라 n_big=1 로 통과했다.
 V7_ROWS = (
     ("sh_front",      1825.4, 0.1422, 0.033, 1),
@@ -33,7 +34,6 @@ V7_ROWS = (
     ("bl_smile",      1729.3, 0.1383, 0.018, 1),
     ("bl_34",         1511.3, 0.1060, 0.272, 1),
     ("sh_front2",     1773.0, 0.1360, 0.045, 1),
-    ("sh_chin_down",  1649.3, 0.1315, 0.076, 1),
     ("sh_gaze_left",  1774.0, 0.1318, 0.091, 1),
     ("sh_gaze_right", 1794.6, 0.1371, 0.013, 1),
 )
@@ -50,7 +50,7 @@ def _metrics(row, scale=1.0):
 
 
 def test_the_fixture_covers_every_slot_but_the_side_one():
-    """측면 한 장은 학습에 안 써서 인테이크 매니페스트에 없다 — 나머지 16칸은 전부 여기 있다."""
+    """측면 한 장은 학습에 안 써서 인테이크 매니페스트에 없다 — 나머지 15칸은 전부 여기 있다."""
     from app import facemarket_photos as fp
 
     # 순서는 다르다 — 매니페스트는 조명×컷 순, PHOTO_SLOTS 는 촬영 순서다.
@@ -59,6 +59,7 @@ def test_the_fixture_covers_every_slot_but_the_side_one():
 
 @pytest.mark.parametrize("scale,label", [(1.0, "원본"), (FRONT_SCALE, "프론트 4000px 축소")])
 def test_every_v7_training_photo_passes(scale, label):
+    assert len(V7_ROWS) == 15
     for row in V7_ROWS:
         reason = check.judge_photo(row[0], _metrics(row, scale))
         assert reason is None, f"{label}: {row[0]} 가 {reason} 로 막혔다 (face_w={row[1] * scale:.0f})"
@@ -228,10 +229,10 @@ def test_the_refset_rule_matches_v6_refset_check():
 
 
 @pytest.mark.parametrize("scores,status", [
-    ([0.86, 0.84, 0.83, 0.81, 0.80, 0.75], "ok"),
-    ([0.86, 0.84, 0.83, 0.81, 0.80, 0.69], "weak"),      # 한 쌍이 최저선 아래
-    ([0.79, 0.78, 0.77, 0.76, 0.75, 0.74], "weak"),      # 중앙값이 낮다
-    ([0.9, 0.9], "insufficient"),                        # 표본이 모자란다
+    ([0.86, 0.84, 0.80], "ok"),                          # 기준 3장 = 3쌍
+    ([0.86, 0.84, 0.69], "weak"),                        # 한 쌍이 최저선 아래
+    ([0.79, 0.78, 0.77], "weak"),                        # 중앙값이 낮다
+    ([0.9, 0.9], "insufficient"),                        # 한 쌍을 못 재면 판정하지 않는다
 ])
 def test_the_refset_summary_is_a_record_not_a_gate(scores, status):
     summary = check.judge_refset(scores)
@@ -241,10 +242,16 @@ def test_the_refset_summary_is_a_record_not_a_gate(scores, status):
 
 
 def test_the_refset_summary_keeps_the_numbers():
-    summary = check.judge_refset([0.9, 0.8, 0.7, 0.6])
-    assert summary["pairs"] == 4
-    assert summary["median"] == pytest.approx(0.75)
-    assert summary["min"] == pytest.approx(0.6)
+    summary = check.judge_refset([0.9, 0.8, 0.7])
+    assert summary["pairs"] == 3
+    assert summary["median"] == pytest.approx(0.8)
+    assert summary["min"] == pytest.approx(0.7)
+
+
+def test_the_v7_reference_set_of_three_passes():
+    """2026-09-11 v7 인테이크 실측: 3장이면 평균 0.841·최저 0.788, 4장(턱 포함)이면 최저 0.664."""
+    assert check.judge_refset([0.847, 0.847, 0.788])["status"] == "ok"
+    assert check.judge_refset([0.847, 0.788, 0.664])["status"] == "weak", "턱을 섞으면 깨진다"
 
 
 def test_unscored_pairs_are_dropped_not_counted_as_zero():

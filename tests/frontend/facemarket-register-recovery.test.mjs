@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { modelComponentHarness, findTree, eventually } from './helpers/facemarketHarness.mjs';
-import { SLOTS } from '../../src/features/model/registerSlots.js';
+import { CONSENT_VERSION, SLOTS } from '../../src/features/model/registerSlots.js';
 
 const record = {
   id: 'enrollment-recovery', modelId: 'model-1', status: 'license_pending',
-  consentDocumentVersion: '2026-09-v1', termsConsentVersion: '2026-09-v1',
+  consentDocumentVersion: CONSENT_VERSION, termsConsentVersion: CONSENT_VERSION,
   photos: SLOTS.map(slot => ({ slot: slot.key })),
 };
 const button = (tree, label) => findTree(tree, node => node.type === 'button' && node.props.children === label);

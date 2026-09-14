@@ -1,6 +1,6 @@
 """등록 사진 업로드 즉시 검사 — 촬영 스펙을 지켰는가.
 
-17칸 스펙(2026-09-14)은 등록 사진을 **그대로 LoRA 학습셋으로 쓴다**. 그래서 학습 인테이크
+16칸 스펙(2026-09-14)은 등록 사진을 **그대로 LoRA 학습셋으로 쓴다**. 그래서 학습 인테이크
 (`v6_intake.py`)가 촬영본을 거르던 판정을 업로드 시점으로 당겨 왔다 — 나중에 학습 단계에서
 "이 사진은 못 쓴다" 를 알게 되면 사용자는 이미 촬영 자리를 떠난 뒤다.
 
@@ -51,7 +51,7 @@ MESSAGES: dict[str, str] = {
 }
 
 
-#: 기준 4장끼리의 SFace 합의 눈금 — v6_refset_check.py 규칙(중앙값 0.80 · 최저쌍 0.70).
+#: 기준 3장끼리의 SFace 합의 눈금 — v6_refset_check.py 규칙(중앙값 0.80 · 최저쌍 0.70).
 #: **막지 않는다.** 등록이 이 촬영으로 처음 들어오는 중이라 문턱이 실데이터에 맞는지 아직 모른다.
 #: 기록만 모아 두고, 차단 여부는 첫 실데이터를 보고 정한다.
 REFSET_MEDIAN_MIN = 0.80
@@ -61,7 +61,7 @@ REFSET_PAIR_MIN = 0.70
 def judge_refset(scores) -> dict:
     """기준 사진끼리의 점수 → 요약. 순수 함수이고, 아무것도 막지 않는다."""
     values = sorted(float(v) for v in scores if v is not None)
-    if len(values) < 3:  # 4장이면 6쌍 — 3쌍도 못 재면 판정할 표본이 아니다
+    if len(values) < 3:  # 기준 3장이면 3쌍 — 한 쌍이라도 못 재면 판정할 표본이 아니다
         return {"status": "insufficient", "pairs": len(values)}
     middle = len(values) // 2
     median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2

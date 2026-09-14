@@ -39,20 +39,26 @@ from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_m
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
-# ⚠️ 이 상수를 올리면 **라이브 카탈로그에서 기존 모델이 전부 빠진다.**
-# `facemarket.py` 의 `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 이 값을
-# 그대로 바인딩한다(모델 목록·라이선스 얼굴·썸네일) — 이미 passed 인 등록은 옛 버전
-# 문자열을 들고 있고 백필 마이그레이션은 없다. `facemarket_cutover.py` 의 legacy 스코프도
-# 같은 값으로 뒤집힌다. 그래서 **동의 화면 문구가 실제로 바뀌어 함께 나가는 배포에서만**
-# 올린다. 2026-09-v1 은 등록 위저드의 동의·안내 공개본(public/legal/biometric-consent,
-# overseas-transfer)이 함께 나가면서 올렸다(#285/#287).
-BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
+# 새 등록이 **기록**하는 동의 문서 버전. 동의 화면 문구가 실제로 바뀌는 배포에서만 올린다.
+# 2026-09-v1 은 등록 위저드의 동의·안내 공개본이 함께 나가면서 올렸다(#285/#287).
+# 2026-09-v2 는 수집 항목이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌면서 올렸다
+# (#298). 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
+BIOMETRIC_CONSENT_VERSION = "2026-09-v2"
+# ⚠️ **판정에는 이 목록을 쓴다(단일 상수를 바인딩하지 마라).**
+# 옛 버전에 동의하고 이미 passed 인 등록은 그 문자열을 그대로 들고 있고 백필 마이그레이션은
+# 없다. 카탈로그 자격(`facemarket.py` `_CURRENT_CARD_ELIGIBILITY`)·cutover legacy 스코프가
+# 단일 상수를 바인딩하던 시절에는, 이 상수를 올리는 순간 **라이브 카탈로그가 비고** 기존
+# 모델이 cutover 파기 대상으로 분류됐다. 그래서 그 자리들은 전부 `= any(%s)` 로 바꿨다.
+# 새 버전을 추가할 때 옛 버전을 지우면 그 순간 같은 사고가 난다.
+ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2")
 # 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
 # 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
-OVERSEAS_NOTICE_VERSION = "2026-09-v1"
+# 이 안내 본문도 #298 에서 이전 항목이 바뀌었다("얼굴·전신 사진" → "얼굴 사진") — 게시본이
+# 바뀌었으면 기록되는 버전도 같이 올린다. 이 값은 기록·표시 전용이라 자격 판정에 쓰이지 않는다.
+OVERSEAS_NOTICE_VERSION = "2026-09-v2"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
+ACCEPTED_CONSENT_VERSIONS = ("2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
 # 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
 # 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
@@ -64,7 +70,7 @@ _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 LEGACY_ANGLES = ("front", "angle45", "side")
 REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
-# 업로드가 받아 주는 이름 = 정식 17칸 + 그 17칸으로 **올려 줄 수 있는** 옛 이름뿐이다
+# 업로드가 받아 주는 이름 = 정식 16칸 + 그 16칸으로 **올려 줄 수 있는** 옛 이름뿐이다
 # (face01/face03/face05 · front/angle45/side). 새 스펙에 자리가 없는 옛 이름(face02·torso*·full* …)은
 # 여기서 invalid_slot 으로 막힌다 — 이미 올라간 행은 남아 있고(파기가 쓸어 담는다) 완료 판정에서만 빠진다.
 ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + tuple(LEGACY_SLOT_ALIASES)
@@ -264,7 +270,7 @@ class PhysiqueBody(CamelModel):
 
 
 def refset_agreement(settings: Settings, photo_items) -> dict:
-    """기준 4장이 서로 같은 사람·같은 조건으로 찍혔는가. **기록만 하고 아무것도 막지 않는다.**
+    """기준 3장이 서로 같은 사람·같은 조건으로 찍혔는가. **기록만 하고 아무것도 막지 않는다.**
 
     v6_refset_check.py 와 같은 규칙(중앙값 0.80 · 최저쌍 0.70)이지만, 등록이 이 촬영으로
     처음 들어오는 중이라 그 문턱이 실사용자 분포에 맞는지 아직 모른다. 차단 여부는 첫 실데이터를
@@ -2966,7 +2972,7 @@ async def process_enrollment_completion(
             photo_items.append((photo["angle"], buffer))
             photo_buffers.append(buffer)  # 아래 finally 에서 일괄 wipe
 
-        # 기준 4장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
+        # 기준 3장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
         refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
         logger.info("fm_refset_agreement enrollment=%s %s", enrollment_id, refset)
 
@@ -3100,7 +3106,7 @@ async def process_enrollment_completion(
                         "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
                         status=409,
                     )
-                # 기준 4장 합의도를 남긴다. 통과/실패 어느 쪽으로도 쓰이지 않는다 — 문턱이
+                # 기준 3장 합의도를 남긴다. 통과/실패 어느 쪽으로도 쓰이지 않는다 — 문턱이
                 # 실사용자 분포에 맞는지 보려는 기록이다(차단 여부는 그다음에 정한다).
                 await cur.execute(
                     "update fm_biometric_enrollments "

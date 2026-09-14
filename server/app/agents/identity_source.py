@@ -176,9 +176,10 @@ async def resolve_real_model_assets(
 
 
 #: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — **정면 계열만**, 그리고 **한 조명 한 자리**.
-#: 17칸 스펙(2026-09-14)의 기준 4장이 그대로 이 자리다: 그늘에서 정면 무표정 2 · 턱 살짝 내리기 ·
-#: 시선만 왼쪽 · 시선만 오른쪽. 조명이 섞이면 기준끼리의 점수부터 무너진다(v6_refset_check 규칙:
-#: 중앙값 0.80 · 최저쌍 0.70).
+#: 16칸 스펙(2026-09-14)의 기준 3장이 그대로 이 자리다: 그늘에서 정면 무표정 2 · 시선만 왼쪽 ·
+#: 시선만 오른쪽. 조명이 섞이면 기준끼리의 점수부터 무너진다(v6_refset_check 규칙: 중앙값 0.80 ·
+#: 최저쌍 0.70). 턱을 내린 컷은 **일부러 뺐다** — 같은 사람인데 시선 컷과 0.664 로 최저선을 깬다
+#: (2026-09-11 v7 인테이크 실측: 3장이면 평균 0.841·최저 0.788 로 통과).
 #:
 #: 왜 정면만인가(2026-09-13 실측, prod 테스트컷 8장 · YuNet+SFace):
 #:     기준                         테스트컷 점수
@@ -191,7 +192,7 @@ async def resolve_real_model_assets(
 #: SFace 임베딩이 정면 기준이라 각도 사진은 같은 사람이라도 점수가 내려간다. 기준에 섞으면
 #: 중앙값이 내려가 **같은 사람을 떨어뜨린다** — 문턱을 내리는 것보다 기준을 맞추는 게 먼저다.
 IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = REFSET_SLOTS
-#: 17칸 이전 등록(18칸 · 옛 3장)의 기준. face01 은 SLOT_CANDIDATES 를 타고 sh_front → face01 →
+#: 16칸 이전 등록(18칸 · 옛 3장)의 기준. face01 은 SLOT_CANDIDATES 를 타고 sh_front → face01 →
 #: front 순으로 내려가므로 옛 3장 등록도 front 한 장이 잡힌다(angle45·side 는 목록에 없다).
 LEGACY_IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = ("face01", "face02", "face07", "face08")
 #: 앞 단계가 0장이면 다음 단계로 간다. 둘 다 0장이면 호출자가 승인 face_front 한 장으로 폴백한다.
@@ -216,7 +217,7 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
     슬롯 이름만 믿지 않는다 — 정면 슬롯에 각도 사진이 올라온 촬영 실수를 대비해 사진마다 YuNet
     yaw_proxy 를 재서 YAW_FRONT_MAX 이상이면 뺀다.
 
-    단계는 둘이다(IDENTITY_REFERENCE_SLOT_TIERS): 17칸 기준 4장 → 0장이면 옛 슬롯(face01·02·
+    단계는 둘이다(IDENTITY_REFERENCE_SLOT_TIERS): 16칸 기준 3장 → 0장이면 옛 슬롯(face01·02·
     07·08, 옛 3장 등록은 front 한 장). 그마저 0장이면 [] — 호출자가 기존 face_front 한 장 경로로
     폴백한다. 기준이 아예 없으면 게이트가 신원을 보지 않는다(identity=None). 얼굴 패스 자체는
     어떤 경우에도 막지 않는다.

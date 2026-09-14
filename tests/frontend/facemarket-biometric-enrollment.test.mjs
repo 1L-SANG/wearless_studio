@@ -32,6 +32,7 @@ const {
   initialRegistrationStep,
   nextEnrollmentStep,
 } = await import('../../src/features/model/biometricEnrollment.js');
+const { CONSENT_VERSION } = await import('../../src/features/model/registerSlots.js');
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
@@ -152,7 +153,7 @@ test('reissuing from completed registration requires two fresh consents before a
     }
     await submit().props.onClick();
     assert.equal(created.length, 1);
-    assert.equal(created[0].documentVersion, '2026-09-v1');
+    assert.equal(created[0].documentVersion, CONSENT_VERSION);
     assert.equal(created[0].enrollmentId, undefined);
     assert.equal(harness.runtime.states[0], '2');
     assert.equal(harness.runtime.states[1].id, 'new-enrollment');

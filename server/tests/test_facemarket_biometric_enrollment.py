@@ -1825,11 +1825,12 @@ def test_config_reports_liveness_not_required(liveness_off_client):
             {"code": "kakao", "name": "카카오뱅크"}, {"code": "toss", "name": "토스뱅크"},
         ],
         "photoSlots": list(facemarket_photos.PHOTO_SLOTS),
-        "requiredSlotCount": 17,
+        "requiredSlotCount": 16,
         "faceMatchEnabled": False,
         "livenessRequired": False,
         "applicationRequired": False,
-        "consentDocumentVersion": "2026-09-v1",
+        # 프론트가 이 값으로 동의 화면을 띄우고 그대로 돌려보낸다 — **현재 버전**이어야 한다.
+        "consentDocumentVersion": facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,
     }
 
 
@@ -1869,7 +1870,7 @@ def test_new_consent_version_requires_terms_consent_but_not_overseas(
         "/v1/facemarket/enrollments",
         json={
             "deviceId": DEVICE_ID,
-            "biometricConsent": {"accepted": True, "documentVersion": "2026-09-v1"},
+            "biometricConsent": {"accepted": True, "documentVersion": facemarket_enrollment.BIOMETRIC_CONSENT_VERSION},
         },
         headers=auth(),
     )
@@ -1877,11 +1878,33 @@ def test_new_consent_version_requires_terms_consent_but_not_overseas(
     assert response.json()["error"]["code"] == "consent_required"
 
 
+def test_a_previous_consent_version_is_still_accepted_while_deploys_are_skewed(
+    enrollment_client, auth, enrollment_store
+):
+    """프론트(Vercel)와 백엔드(CI) 배포 시점이 어긋나는 동안 옛 동의문으로도 등록이 시작된다.
+
+    그때는 terms 를 함께 요구하지 않는다 — 옛 화면은 그 필드를 보내지 않는다.
+    """
+    previous = "2026-09-v1"
+    assert previous in facemarket_enrollment.ACCEPTED_CONSENT_VERSIONS
+    assert previous != facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
+    response = enrollment_client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": DEVICE_ID,
+            "biometricConsent": {"accepted": True, "documentVersion": previous},
+        },
+        headers=auth(),
+    )
+    assert response.status_code == 201, response.text
+
+
 def test_existing_enrollment_records_explicit_new_reconsent(
     enrollment_client, auth, enrollment_store
 ):
     eid = create_enrollment(enrollment_client, auth)
-    consent = {"accepted": True, "documentVersion": "2026-09-v1"}
+    current = facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
+    consent = {"accepted": True, "documentVersion": current}
     response = enrollment_client.post(
         "/v1/facemarket/enrollments",
         json={
@@ -1893,10 +1916,12 @@ def test_existing_enrollment_records_explicit_new_reconsent(
     )
     assert response.status_code == 201, response.text
     assert response.json()["id"] == eid
-    assert response.json()["consentDocumentVersion"] == "2026-09-v1"
-    assert response.json()["termsConsentVersion"] == "2026-09-v1"
-    assert response.json()["overseasConsentVersion"] == "2026-09-v1"
+    assert response.json()["consentDocumentVersion"] == current
+    assert response.json()["termsConsentVersion"] == current
+    assert response.json()["overseasConsentVersion"] == facemarket_enrollment.OVERSEAS_NOTICE_VERSION
+    # 동의 이벤트 테이블에 **새 값**이 기록돼야 한다 — 누가 어느 본문에 동의했는지의 증거다.
     assert len(enrollment_store.consent_events) == 1
+    assert enrollment_store.consent_events[0]["biometric_version"] == current
 
 
 def test_owner_can_reload_private_enrollment_photo(
@@ -3151,16 +3176,16 @@ def _refset_items(*slots):
     return [(slot, bytearray(slot.encode())) for slot in slots]
 
 
-def test_refset_agreement_scores_every_pair_of_the_four(monkeypatch):
+def test_refset_agreement_scores_every_pair_of_the_three(monkeypatch):
     qc = _FakeQc()
     monkeypatch.setattr(facemarket_enrollment, "load_face_qc", lambda settings, required: qc)
     items = _refset_items(*facemarket_photos.REFSET_SLOTS, "sh_front", "sh_side")
 
     summary = facemarket_enrollment.refset_agreement(object(), items)
 
-    assert len(qc.pairs) == 6, "4장 → 6쌍. 학습컷·측면은 기준이 아니다"
-    assert summary == {"status": "ok", "pairs": 6, "median": 0.85, "min": 0.85,
-                       "rule": "median>=0.8 and min>=0.7", "photos": 4}
+    assert len(qc.pairs) == 3, "3장 → 3쌍. 학습컷·측면은 기준이 아니다"
+    assert summary == {"status": "ok", "pairs": 3, "median": 0.85, "min": 0.85,
+                       "rule": "median>=0.8 and min>=0.7", "photos": 3}
 
 
 def test_refset_agreement_records_a_weak_set_without_blocking(monkeypatch):
@@ -3181,18 +3206,20 @@ def test_refset_agreement_never_raises_when_the_detector_is_missing(monkeypatch)
     monkeypatch.setattr(facemarket_enrollment, "load_face_qc", boom)
     summary = facemarket_enrollment.refset_agreement(
         object(), _refset_items(*facemarket_photos.REFSET_SLOTS))
-    assert summary == {"status": "unavailable", "photos": 4, "error": "FileNotFoundError"}
+    assert summary == {"status": "unavailable", "photos": 3, "error": "FileNotFoundError"}
 
 
 def test_refset_agreement_survives_a_pair_that_cannot_be_scored(monkeypatch):
-    bad = tuple(sorted(("sh_chin_down", "sh_gaze_right")))
+    """3쌍 중 하나를 못 재면 표본이 모자라다 — 0 으로 세지 않고 판정을 보류한다."""
+    bad = tuple(sorted(("sh_front2", "sh_gaze_right")))
     monkeypatch.setattr(facemarket_enrollment, "load_face_qc",
                         lambda settings, required: _FakeQc(raise_on={bad}))
 
     summary = facemarket_enrollment.refset_agreement(
         object(), _refset_items(*facemarket_photos.REFSET_SLOTS))
 
-    assert summary["pairs"] == 5 and summary["unscored"] == 1 and summary["status"] == "ok"
+    assert summary["pairs"] == 2 and summary["unscored"] == 1
+    assert summary["status"] == "insufficient"
 
 
 def test_refset_agreement_on_a_legacy_enrollment_has_nothing_to_compare(monkeypatch):

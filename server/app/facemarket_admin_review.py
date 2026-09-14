@@ -48,7 +48,7 @@ router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin review
 REVIEW_STATUSES = ("pending", "approved", "rejected")
 # 화이트리스트 — 절대 클라이언트 문자열을 그대로 R2 키에 꽂지 않는다.
 # 심사 화면의 이름은 그대로 둔다(정면·45도·측면). 실제 행 이름은 등록 회차마다 다르므로
-# photo_slot_candidates 로 풀어 쓴다 — 17칸 스펙은 sh_front·sh_34·sh_side 다.
+# photo_slot_candidates 로 풀어 쓴다 — 16칸 스펙은 sh_front·sh_34·sh_side 다.
 PHOTO_ANGLES = ("front", "angle45", "side")
 IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES
 
