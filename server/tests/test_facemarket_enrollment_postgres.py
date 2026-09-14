@@ -106,7 +106,7 @@ def pg_registration(monkeypatch):
         storage.objects[destination] = storage.objects[source]
     storage.copy = copy_photo
     for slot in enrollment.PHOTO_SLOTS:
-        state = "approved" if slot in {"face01", "face03", "face05"} else "quarantine"
+        state = "approved" if slot in enrollment.ASSET_SOURCE_SLOTS else "quarantine"
         admin.execute("insert into fm_biometric_enrollment_photos(enrollment_id,angle,r2_key,image_digest,mime_type,storage_state) values(%s,%s,%s,%s,'image/jpeg',%s)", (EID, slot, f"private/{slot}.jpg", f"hash-{slot}", state))
         storage.objects[f"private/{slot}.jpg"] = (image_bytes, "image/jpeg")
     for view in ("face_front", "grid_sedcard"):
@@ -137,8 +137,8 @@ def test_real_postgres_reopen_upload_complete_reuses_identity(pg_registration):
     async def scenario():
         opened = await enrollment.reopen_enrollment_photos(request, EID, UID)
         assert opened.photo_revision == 1
-        image = UploadFile(io.BytesIO(storage.objects["private/face01.jpg"][0]), filename="new.jpg", headers=Headers({"content-type": "image/jpeg"}))
-        await enrollment.upload_enrollment_photo(request, EID, angle=None, slot="face01", photo=image, user_id=UID)
+        image = UploadFile(io.BytesIO(storage.objects["private/sh_front.jpg"][0]), filename="new.jpg", headers=Headers({"content-type": "image/jpeg"}))
+        await enrollment.upload_enrollment_photo(request, EID, angle=None, slot="sh_front", photo=image, user_id=UID)
         result = await enrollment.process_enrollment_completion(request, enrollment_id=EID, user_id=UID, session_id=None)
         assert result.status == "asset_building"
         assert db.execute("select count(*) as n from fm_biometric_enrollment_photos where storage_state='approved'").fetchone()["n"] == 2
@@ -179,7 +179,7 @@ def test_terminal_cleanup_preserves_issuance_evidence_but_cleans_other_quarantin
     assert db.execute("select count(*) as n from fm_model_assets").fetchone()["n"] == 2
     assert db.execute("select count(*) as n from fm_biometric_enrollment_photos").fetchone()["n"] == 3
     assert len(storage.deletes) == 15
-    assert set(storage.objects) == {"private/face01.jpg", "private/face03.jpg", "private/face05.jpg", "private/face_front.jpg", "private/grid_sedcard.jpg"}
+    assert set(storage.objects) == {"private/sh_front.jpg", "private/sh_34.jpg", "private/sh_side.jpg", "private/face_front.jpg", "private/grid_sedcard.jpg"}
 
 
 def test_real_postgres_stale_photo_job_cannot_fail_current_revision(pg_registration):

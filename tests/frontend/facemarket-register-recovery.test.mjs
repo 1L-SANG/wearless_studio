@@ -56,12 +56,12 @@ test('changing a completed photo first reopens and then uploads under preserved 
   });
   try {
     button(h.render(), '이전').props.onClick();
-    findTree(h.render(), node => node.props?.['aria-label'] === '얼굴 사진 고치기').props.onClick();
+    findTree(h.render(), node => node.props?.['aria-label'] === '그늘 사진 고치기').props.onClick();
     assert.deepEqual(calls, []);
     const input = findTree(h.render(), node => node.type === 'input' && node.props.type === 'file');
     input.props.onChange({ target: { files: [new Blob(['new-photo'], { type: 'image/jpeg' })], value: 'upload' } });
     await eventually(() => !h.runtime.states[4], 'photo upload completed');
-    assert.deepEqual(calls, [['reopen', 'enrollment-recovery'], ['upload', 'face01']]);
+    assert.deepEqual(calls, [['reopen', 'enrollment-recovery'], ['upload', 'sh_front']]);
     assert.equal(h.runtime.states[1].status, 'liveness_pending');
   } finally { await h.close(); }
 });
@@ -70,15 +70,15 @@ test('a rejected reopen leaves the stored photo intact and never uploads', async
   let uploads = 0;
   const h = await mount({
     reopenEnrollmentPhotos: async () => { throw new Error('증서 발급을 시작해서 사진을 고칠 수 없어요.'); },
-    uploadEnrollmentPhoto: async () => { uploads++; return { slot: 'face01' }; },
+    uploadEnrollmentPhoto: async () => { uploads++; return { slot: 'sh_front' }; },
   });
   try {
     button(h.render(), '이전').props.onClick();
-    findTree(h.render(), node => node.props?.['aria-label'] === '얼굴 사진 고치기').props.onClick();
+    findTree(h.render(), node => node.props?.['aria-label'] === '그늘 사진 고치기').props.onClick();
     findTree(h.render(), node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [new Blob(['new'])], value: 'upload' } });
     await eventually(() => !h.runtime.states[4], 'reopen rejected');
     assert.equal(uploads, 0);
-    assert.equal(h.runtime.states[1].photos.length, 18);
+    assert.equal(h.runtime.states[1].photos.length, SLOTS.length);
     assert.match(h.runtime.states[3], /증서 발급/);
   } finally { await h.close(); }
 });

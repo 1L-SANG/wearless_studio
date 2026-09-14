@@ -20,7 +20,7 @@ from botocore.exceptions import EndpointConnectionError
 from psycopg.errors import UniqueViolation
 from starlette.datastructures import Headers
 
-from app import cx_identity, facemarket_enrollment, r2
+from app import cx_identity, facemarket_enrollment, facemarket_photos, r2
 from app.facemarket import _gender_from_trans
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
@@ -1232,6 +1232,13 @@ class FakeCursor:
                 model["body_type"] = body_type
             if not model.get("gender") and derived_gender is not None:
                 model["gender"] = derived_gender
+        elif query.startswith(
+            "update fm_biometric_enrollments set provider_versions = provider_versions ||"
+        ):
+            # 기준 4장 합의도 기록 — 완료 판정에 쓰이지 않는다(기록 전용).
+            merged, enrollment_id = params
+            row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
+            row.setdefault("provider_versions", {}).update(_json_value(merged))
         elif query.startswith("update fm_biometric_enrollments set model_id"):
             model_id, token_digest, policy_version, provider_versions, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
@@ -1490,7 +1497,7 @@ def enrollment_client(
         fm_biometric_enrollment_enabled=True,
         fm_face_match_enabled=True,
         fm_liveness_enabled=True,
-        fm_photo_slots=("face01", "face03", "face05"),
+        fm_photo_slots=("sh_front", "sh_34", "sh_side"),
         fm_required_slot_count=3,
         fm_oacx_contract_mode="dev-mock-v1",
         fm_liveness_browser_role_arn="arn:aws:iam::123456789012:role/test",
@@ -1663,20 +1670,33 @@ def dev_trans(**patch):
 
 
 class RecordingFaceQc:
+    #: 신원 앵커 — 이쪽이 낀 호출만 "본인확인 매칭"이다.
+    ANCHORS = ("id", "live")
+
     def __init__(self, scores=(0.46, 0.41, 0.42, 0.43), fail=False):
         self.scores = list(scores)
         self.fail = fail
         self.calls = []
+        #: 기준 4장끼리의 합의도(refset_agreement) — 매칭과 **다른 경로**라 따로 센다.
+        #: 같은 목록에 섞으면 "매칭 안 했다" 는 검증이 거짓이 된다.
+        self.refset_calls = []
+
+    @staticmethod
+    def label(data):
+        raw = bytes(data)
+        if raw == PORTRAIT_JPEG_BYTES:
+            return "id"
+        if raw == b"live-reference":
+            return "live"
+        text = raw.decode("utf-8", "ignore")
+        return text[: -len("-bytes")] if text.endswith("-bytes") else None
 
     def one_to_one_similarity(self, reference, candidate):
-        labels = {
-            PORTRAIT_JPEG_BYTES: "id",
-            b"front-bytes": "front",
-            b"angle45-bytes": "angle45",
-            b"side-bytes": "side",
-            b"live-reference": "live",
-        }
-        self.calls.append((labels.get(bytes(reference)), labels.get(bytes(candidate))))
+        pair = (self.label(reference), self.label(candidate))
+        if not any(side in self.ANCHORS for side in pair):
+            self.refset_calls.append(pair)
+            return 0.85
+        self.calls.append(pair)
         if self.fail:
             raise RuntimeError("qc unavailable")
         return self.scores.pop(0)
@@ -1769,6 +1789,21 @@ def liveness_off_client(
     return TestClient(app)
 
 
+def test_startup_requires_the_detector_even_with_face_matching_off(monkeypatch):
+    """촬영 스펙 검사는 fm_face_match_enabled 와 무관하게 항상 돈다.
+
+    잡는 회귀: 검출기 가중치 없이 뜬 배포는 사진 업로드가 전부 503 이라 등록이 통째로 막힌다.
+    옛 검증은 얼굴 매칭이 켜져 있을 때만 가중치를 봤다 — 운영 기본값은 off 다.
+    """
+    settings = _make_liveness_off_settings()
+    assert settings.fm_face_match_enabled is False
+    monkeypatch.setattr(
+        facemarket_enrollment, "weight_paths", lambda _s: ("/nonexistent/yunet.onnx", __file__)
+    )
+    with pytest.raises(RuntimeError, match="YuNet"):
+        facemarket_enrollment.validate_biometric_settings(settings)
+
+
 def test_liveness_disabled_validate_passes_without_liveness_settings(monkeypatch):
     # 기동검증: 라이브니스 off 면 role/confidence/id_live 가 None 이어도 통과해야 한다.
     settings = _make_liveness_off_settings()
@@ -1789,12 +1824,8 @@ def test_config_reports_liveness_not_required(liveness_off_client):
             {"code": "nh", "name": "NH농협은행"}, {"code": "ibk", "name": "IBK기업은행"},
             {"code": "kakao", "name": "카카오뱅크"}, {"code": "toss", "name": "토스뱅크"},
         ],
-        "photoSlots": [
-            *[f"face{i:02d}" for i in range(1, 9)],
-            *[f"torso{i:02d}" for i in range(1, 6)],
-            *[f"full{i:02d}" for i in range(1, 6)],
-        ],
-        "requiredSlotCount": 18,
+        "photoSlots": list(facemarket_photos.PHOTO_SLOTS),
+        "requiredSlotCount": 17,
         "faceMatchEnabled": False,
         "livenessRequired": False,
         "applicationRequired": False,
@@ -1805,14 +1836,14 @@ def test_config_reports_liveness_not_required(liveness_off_client):
 def test_config_reports_valid_custom_slot_prefix(liveness_off_client):
     settings = replace(
         liveness_off_client.app.state.settings,
-        fm_photo_slots=("face01", "face03", "face05", "torso01", "full01"),
+        fm_photo_slots=("sh_front", "sh_34", "sh_side", "sl_front", "bl_34"),
         fm_required_slot_count=3,
     )
     liveness_off_client.app.state.settings = settings
     response = liveness_off_client.get("/v1/facemarket/config")
     assert response.status_code == 200
     assert response.json()["photoSlots"] == [
-        "face01", "face03", "face05", "torso01", "full01"
+        "sh_front", "sh_34", "sh_side", "sl_front", "bl_34"
     ]
     assert response.json()["requiredSlotCount"] == 3
 
@@ -1902,16 +1933,11 @@ def test_physique_accepts_new_body_type_without_height(
     assert response.json()["bodyType"] == "delicate"
 
 
-def test_eighteen_slots_upload_and_complete_without_face_matching(
+def test_every_slot_uploads_and_completes_without_face_matching(
     liveness_off_client, auth, enrollment_store, fake_r2, completion_fakes
 ):
     eid = create_enrollment(liveness_off_client, auth)
-    slots = [
-        *[f"face{i:02d}" for i in range(1, 9)],
-        *[f"torso{i:02d}" for i in range(1, 6)],
-        *[f"full{i:02d}" for i in range(1, 6)],
-    ]
-    for slot in slots:
+    for slot in facemarket_photos.PHOTO_SLOTS:
         response = liveness_off_client.post(
             f"/v1/facemarket/enrollments/{eid}/photos",
             data={"slot": slot},
@@ -1941,7 +1967,7 @@ def test_legacy_angle_upload_maps_to_new_slot(
         headers=auth(),
     )
     assert response.status_code == 201, response.text
-    assert response.json()["slot"] == "face01"
+    assert response.json()["slot"] == "sh_front"
     assert response.json()["angle"] == "front"
 
 
@@ -2208,6 +2234,8 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
         "faceLiveness": "aws-rekognition-face-liveness",
         "oacx": "dev-mock-v1",
         "faceMatch": "sface-one-to-one",
+        # 이 등록은 자산 소스 3칸만 요구하는 구성이라 기준 4장이 없다 — 상태만 남는다.
+        "refset": {"status": "absent", "photos": 0},
     }
     assert stored["raw_deletion_evidence"] == {
         "oacxPortraitReleased": True,
@@ -2771,7 +2799,7 @@ def test_create_enrollment_records_consent_without_oacx_token(
     assert response.status_code == 201
     # 신분증-먼저 재배치(Task1 DEFAULT): 새 등록은 identity_pending 부터 시작한다.
     assert response.json()["status"] == "identity_pending"
-    assert response.json()["requiredAngles"] == ["face01", "face03", "face05"]
+    assert response.json()["requiredAngles"] == ["sh_front", "sh_34", "sh_side"]
     assert "token" not in response.text
     assert "r2Key" not in response.text
     assert DEVICE_ID not in enrollment_store.serialized()
@@ -3081,7 +3109,7 @@ def test_upload_passed_photo_uses_quarantine_prefix(
     assert response.json()["angle"] == "angle45"
     assert response.json()["qcStatus"] == "passed"
     assert fake_r2.puts[0][0].startswith(
-        f"facemarket/enrollments/{enrollment_id}/quarantine/face03/"
+        f"facemarket/enrollments/{enrollment_id}/quarantine/sh_34/"
     )
     assert fake_r2.puts[0][0].endswith(".jpg")
     assert "quarantine" not in response.text
@@ -3102,8 +3130,160 @@ def test_upload_canonicalizes_uppercase_enrollment_uuid(
 
     assert response.status_code == 201, response.text
     assert fake_r2.puts[0][0].startswith(
-        f"facemarket/enrollments/{enrollment_id}/quarantine/face01/"
+        f"facemarket/enrollments/{enrollment_id}/quarantine/sh_front/"
     )
+
+
+# ── 기준 4장 합의도(기록만) ──────────────────────────────────────────────────
+class _FakeQc:
+    def __init__(self, scores=None, raise_on=()):
+        self.scores, self.raise_on, self.pairs = scores or {}, set(raise_on), []
+
+    def one_to_one_similarity(self, a, b):
+        key = tuple(sorted((bytes(a).decode(), bytes(b).decode())))
+        self.pairs.append(key)
+        if key in self.raise_on:
+            raise RuntimeError("no face")
+        return self.scores.get(key, 0.85)
+
+
+def _refset_items(*slots):
+    return [(slot, bytearray(slot.encode())) for slot in slots]
+
+
+def test_refset_agreement_scores_every_pair_of_the_four(monkeypatch):
+    qc = _FakeQc()
+    monkeypatch.setattr(facemarket_enrollment, "load_face_qc", lambda settings, required: qc)
+    items = _refset_items(*facemarket_photos.REFSET_SLOTS, "sh_front", "sh_side")
+
+    summary = facemarket_enrollment.refset_agreement(object(), items)
+
+    assert len(qc.pairs) == 6, "4장 → 6쌍. 학습컷·측면은 기준이 아니다"
+    assert summary == {"status": "ok", "pairs": 6, "median": 0.85, "min": 0.85,
+                       "rule": "median>=0.8 and min>=0.7", "photos": 4}
+
+
+def test_refset_agreement_records_a_weak_set_without_blocking(monkeypatch):
+    pair = tuple(sorted(("sh_front2", "sh_gaze_left")))
+    monkeypatch.setattr(facemarket_enrollment, "load_face_qc",
+                        lambda settings, required: _FakeQc({pair: 0.41}))
+
+    summary = facemarket_enrollment.refset_agreement(
+        object(), _refset_items(*facemarket_photos.REFSET_SLOTS))
+
+    assert summary["status"] == "weak" and summary["min"] == 0.41
+
+
+def test_refset_agreement_never_raises_when_the_detector_is_missing(monkeypatch):
+    def boom(settings, required):
+        raise FileNotFoundError("face QC weights missing")
+
+    monkeypatch.setattr(facemarket_enrollment, "load_face_qc", boom)
+    summary = facemarket_enrollment.refset_agreement(
+        object(), _refset_items(*facemarket_photos.REFSET_SLOTS))
+    assert summary == {"status": "unavailable", "photos": 4, "error": "FileNotFoundError"}
+
+
+def test_refset_agreement_survives_a_pair_that_cannot_be_scored(monkeypatch):
+    bad = tuple(sorted(("sh_chin_down", "sh_gaze_right")))
+    monkeypatch.setattr(facemarket_enrollment, "load_face_qc",
+                        lambda settings, required: _FakeQc(raise_on={bad}))
+
+    summary = facemarket_enrollment.refset_agreement(
+        object(), _refset_items(*facemarket_photos.REFSET_SLOTS))
+
+    assert summary["pairs"] == 5 and summary["unscored"] == 1 and summary["status"] == "ok"
+
+
+def test_refset_agreement_on_a_legacy_enrollment_has_nothing_to_compare(monkeypatch):
+    """옛 3장 등록엔 기준 4장이 없다 — 판정 대신 상태만 남긴다."""
+    monkeypatch.setattr(facemarket_enrollment, "load_face_qc",
+                        lambda settings, required: pytest.fail("불러선 안 된다"))
+    assert facemarket_enrollment.refset_agreement(
+        object(), _refset_items("sh_front", "sh_34", "sh_side")) == {
+            "status": "absent", "photos": 0}
+
+
+# ── 촬영 스펙 검사 배선 ──────────────────────────────────────────────────────
+# 판정 자체는 tests/test_facemarket_photo_check.py(v7 실사진 16장의 숫자 픽스처)가 본다.
+# 여기서 보는 건 "라우트가 그 판정을 실제로 부르고, 막았을 때 아무것도 저장하지 않는가" 다.
+def _upload_one(client, auth, eid, slot="sh_front"):
+    return client.post(
+        f"/v1/facemarket/enrollments/{eid}/photos",
+        data={"slot": slot},
+        files={"photo": ("face.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+
+@pytest.mark.real_photo_check
+def test_a_badly_framed_photo_is_rejected_before_anything_is_stored(
+    liveness_off_client, auth, fake_r2, monkeypatch
+):
+    eid = create_enrollment(liveness_off_client, auth)
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
+                        lambda data, slot, **kw: ("face_too_small", {"face_w": 120.0}))
+
+    response = _upload_one(liveness_off_client, auth, eid)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "photo_framing"
+    assert response.json()["error"]["reasons"] == ["face_too_small"]
+    assert "한 걸음 다가가서" in response.json()["error"]["message"]
+    assert fake_r2.puts == []
+
+
+@pytest.mark.real_photo_check
+def test_the_shot_check_runs_even_when_face_matching_is_off(
+    liveness_off_client, auth, monkeypatch
+):
+    """본인확인 QC(fm_face_match_enabled)와 별개다 — 등록 사진이 곧 학습셋이라 항상 본다."""
+    assert liveness_off_client.app.state.settings.fm_face_match_enabled is False
+    eid = create_enrollment(liveness_off_client, auth)
+    seen = []
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
+                        lambda data, slot, **kw: (seen.append(slot), (None, {}))[1])
+
+    assert _upload_one(liveness_off_client, auth, eid, slot="sl_34").status_code == 201
+    assert seen == ["sl_34"], "정식 슬롯 이름으로 검사한다"
+
+
+@pytest.mark.real_photo_check
+def test_a_legacy_angle_is_checked_under_its_canonical_slot(
+    liveness_off_client, auth, monkeypatch
+):
+    eid = create_enrollment(liveness_off_client, auth)
+    seen = []
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
+                        lambda data, slot, **kw: (seen.append(slot), (None, {}))[1])
+
+    response = liveness_off_client.post(
+        f"/v1/facemarket/enrollments/{eid}/photos",
+        data={"angle": "angle45"},
+        files={"photo": ("face.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    assert response.status_code == 201, response.text
+    assert seen == ["sh_34"], "옛 angle45 도 3/4 창으로 잰다"
+
+
+@pytest.mark.real_photo_check
+def test_a_detector_outage_is_not_the_users_fault(
+    liveness_off_client, auth, fake_r2, monkeypatch
+):
+    """가중치 부재·cv2 오류는 503 — 사진을 다시 찍으라고 하면 안 된다(qc_unavailable 과 같은 규칙)."""
+    eid = create_enrollment(liveness_off_client, auth)
+
+    def boom(data, slot, **kw):
+        raise facemarket_enrollment.PhotoCheckUnavailable("FileNotFoundError")
+
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo", boom)
+
+    response = _upload_one(liveness_off_client, auth, eid)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "qc_unavailable"
+    assert fake_r2.puts == []
 
 
 def test_upload_rejects_invalid_angle(enrollment_client, auth, fake_r2, monkeypatch):
@@ -3247,9 +3427,9 @@ def test_three_legacy_angles_complete_custom_three_slot_configuration(
     )
     assert status.json()["status"] == "liveness_pending"
     assert [photo["angle"] for photo in status.json()["photos"]] == [
-        "face01",
-        "face03",
-        "face05",
+        "sh_front",
+        "sh_34",
+        "sh_side",
     ]
 
 

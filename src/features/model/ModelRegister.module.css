@@ -49,7 +49,15 @@
 .sectionTitle { margin-bottom: 16px !important; }
 .tips { background: var(--color-soft); border: 1px dashed var(--fm-line); border-radius: 12px; padding: 18px; margin-bottom: 24px; font-size: 14px; }
 .tips p { color: var(--fm-muted); margin-top: 6px; }
+.shootRules { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.shootRules li { display: flex; flex-direction: column; gap: 2px; }
+.shootRules b { font-weight: 600; }
+.shootRules span { color: var(--fm-muted); font-size: 13px; }
 .groupHeading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+/* 조명 이름만으로는 어디 서야 하는지 알기 어려워, 위에서 본 그림을 같이 둬요. */
+.sunGuide { display: flex; align-items: center; gap: 12px; flex: 1 1 220px; min-width: 0; }
+.sunGuide p { color: var(--fm-muted); font-size: 13px; min-width: 0; }
+.sunDiagram { width: 52px; height: 52px; flex-shrink: 0; color: var(--fg-3); }
 .photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .slotCard { position: relative; min-width: 0; }
 .slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--fm-line); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }

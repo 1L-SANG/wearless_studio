@@ -15,7 +15,7 @@ import s from '../FacemarketLanding.module.css';
 
 const STEPS = [
   { label: '본인확인', note: '동의 3건과 모바일 신분증 인증' },
-  { label: '사진', note: '얼굴 8장, 상반신 5장, 전신 5장' },
+  { label: '사진', note: '야외에서 조명 4가지로 얼굴 17장' },
   { label: '조건', note: '쓸 수 있는 옷 종류' },
   { label: '증서', note: '얼굴 사용 증서 발급' },
 ];

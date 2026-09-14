@@ -27,8 +27,11 @@ from .config import Settings
 from .db import get_conn
 from .models import CamelModel
 from .facemarket_photos import (
-    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, canonical_photo_slot,
+    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, REFSET_SLOTS, canonical_photo_slot,
     photo_slot_candidates, resolve_photo_rows,
+)
+from .facemarket_photo_check import (
+    PhotoCheckUnavailable, check_enrollment_photo, judge_refset, reject_message,
 )
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
 from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_mime, sha256_sri
@@ -60,13 +63,11 @@ REVIEW_DEADLINE_DAYS = 5
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 LEGACY_ANGLES = ("front", "angle45", "side")
-PHOTO_SLOTS = tuple(
-    [f"face{i:02d}" for i in range(1, 9)]
-    + [f"torso{i:02d}" for i in range(1, 6)]
-    + [f"full{i:02d}" for i in range(1, 6)]
-)
 REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
-ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + LEGACY_ANGLES
+# 업로드가 받아 주는 이름 = 정식 17칸 + 그 17칸으로 **올려 줄 수 있는** 옛 이름뿐이다
+# (face01/face03/face05 · front/angle45/side). 새 스펙에 자리가 없는 옛 이름(face02·torso*·full* …)은
+# 여기서 invalid_slot 으로 막힌다 — 이미 올라간 행은 남아 있고(파기가 쓸어 담는다) 완료 판정에서만 빠진다.
+ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + tuple(LEGACY_SLOT_ALIASES)
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
 START_LIVENESS_POLICY = {
@@ -260,6 +261,44 @@ class EnrollmentView(CamelModel):
 class PhysiqueBody(CamelModel):
     height_bucket: str | None = None
     body_type: str | None = None
+
+
+def refset_agreement(settings: Settings, photo_items) -> dict:
+    """기준 4장이 서로 같은 사람·같은 조건으로 찍혔는가. **기록만 하고 아무것도 막지 않는다.**
+
+    v6_refset_check.py 와 같은 규칙(중앙값 0.80 · 최저쌍 0.70)이지만, 등록이 이 촬영으로
+    처음 들어오는 중이라 그 문턱이 실사용자 분포에 맞는지 아직 모른다. 차단 여부는 첫 실데이터를
+    보고 정한다 — 그때 되짚을 수 있게 숫자를 남긴다.
+
+    `fm_face_match_enabled`(본인확인 매칭)와 무관하게 돈다. 가중치가 없거나 한 쌍도 못 재면
+    상태만 남기고 넘어간다 — 완료를 막는 경로가 절대 되면 안 된다.
+    """
+    refs = [buffer for slot, buffer in photo_items
+            if canonical_photo_slot(slot) in REFSET_SLOTS]
+    if len(refs) < 2:
+        return {"status": "absent", "photos": len(refs)}
+    try:
+        qc = load_face_qc(settings, required=True)
+    except Exception as exc:  # noqa: BLE001 — 가중치 부재 등. 기록만 남기고 완료는 그대로 간다
+        return {"status": "unavailable", "photos": len(refs), "error": type(exc).__name__}
+    scores: list[float] = []
+    unscored = 0
+    for first in range(len(refs)):
+        for second in range(first + 1, len(refs)):
+            try:
+                score = qc.one_to_one_similarity(refs[first], refs[second])
+            except Exception:  # noqa: BLE001 — 한 쌍이 안 나와도 나머지로 본다
+                unscored += 1
+                continue
+            if score is None:
+                unscored += 1
+            else:
+                scores.append(float(score))
+    summary = judge_refset(scores)
+    summary["photos"] = len(refs)
+    if unscored:
+        summary["unscored"] = unscored
+    return summary
 
 
 def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
@@ -1470,6 +1509,26 @@ async def upload_enrollment_photo(
             raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
         if len(data) > MAX_FACE_BYTES:
             raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+        # 촬영 스펙 검사 — 등록 사진이 곧 학습셋이라 **항상** 본다(fm_face_match_enabled 와 무관).
+        # 여기서 막지 않으면 사용자는 촬영 자리를 떠난 뒤에야 못 쓰는 사진임을 알게 된다.
+        try:
+            shot_reason, shot = await asyncio.to_thread(
+                check_enrollment_photo, data, angle,
+                model_dir=request.app.state.settings.fm_face_qc_dir,
+            )
+        except PhotoCheckUnavailable:
+            raise _err(
+                "qc_unavailable",
+                "사진 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                status=503,
+            )
+        if shot_reason:
+            logger.info(
+                "facemarket_enrollment_photo_rejected",
+                extra={"enrollment_id": enrollment_id, "angle": angle,
+                       "reason": shot_reason, **shot},
+            )
+            raise _err("photo_framing", reject_message(shot_reason), reasons=[shot_reason])
         qc = None
         if request.app.state.settings.fm_face_match_enabled:
             try:
@@ -2789,8 +2848,8 @@ async def _initial_completion_checks(
                 """,
                 (
                     enrollment_id,
-                    list(PHOTO_SLOTS + LEGACY_ANGLES),
-                    list(PHOTO_SLOTS + LEGACY_ANGLES),
+                    list(ACCEPTED_PHOTO_SLOTS),
+                    list(ACCEPTED_PHOTO_SLOTS),
                 ),
             )
             required_slots = _required_photo_slots(settings)
@@ -2906,6 +2965,10 @@ async def process_enrollment_completion(
                 raise EnrollmentMappedError("id_portrait_unavailable") from None
             photo_items.append((photo["angle"], buffer))
             photo_buffers.append(buffer)  # 아래 finally 에서 일괄 wipe
+
+        # 기준 4장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
+        refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
+        logger.info("fm_refset_agreement enrollment=%s %s", enrollment_id, refset)
 
         if settings.fm_face_match_enabled:
           try:
@@ -3037,6 +3100,13 @@ async def process_enrollment_completion(
                         "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
                         status=409,
                     )
+                # 기준 4장 합의도를 남긴다. 통과/실패 어느 쪽으로도 쓰이지 않는다 — 문턱이
+                # 실사용자 분포에 맞는지 보려는 기록이다(차단 여부는 그다음에 정한다).
+                await cur.execute(
+                    "update fm_biometric_enrollments "
+                    "set provider_versions = provider_versions || %s::jsonb where id = %s",
+                    (Json({"refset": refset}), enrollment_id),
+                )
                 if match_required_review:
                     # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
                     # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
@@ -3217,6 +3287,13 @@ def validate_biometric_settings(settings: Settings) -> None:
             raise RuntimeError("FM_LIVENESS_CONFIDENCE_THRESHOLD is required")
     if not settings.fm_ci_pepper or not settings.fm_ci_pepper.strip():
         raise RuntimeError("FM_CI_PEPPER is required for biometric enrollment")
+    # 촬영 스펙 검사(facemarket_photo_check)는 fm_face_match_enabled 와 무관하게 **항상** 돈다.
+    # YuNet 가중치가 없으면 사진 업로드가 전부 503 이라 등록이 통째로 막힌다 — 그런 배포가
+    # 조용히 나가지 않게 부팅에서 막는다(가중치는 Dockerfile 이 빌드 때 받는다).
+    if not os.path.exists(weight_paths(settings)[0]):
+        raise RuntimeError(
+            "YuNet face detector weight file is required for biometric enrollment"
+        )
     required = []
     bounded_thresholds = []
     if settings.fm_liveness_enabled:

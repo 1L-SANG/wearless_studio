@@ -2,8 +2,8 @@ import { Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
-import { SLOTS, PHOTO_GROUPS, REGISTER_BODIES, photoSlotKey, toggleRegisterCategory } from './registerSlots.js';
-import { RegisterIllustration } from './RegisterIllustration.jsx';
+import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, SHOOT_RULES, REGISTER_BODIES, photoSlotKey, toggleRegisterCategory } from './registerSlots.js';
+import { RegisterIllustration, SunDiagram } from './RegisterIllustration.jsx';
 import s from './ModelRegister.module.css';
 
 export const heading = (title, description) => <div className={s.intro}><h1 tabIndex={-1}>{title}</h1>{description && <p className={s.description}>{description}</p>}</div>;
@@ -34,7 +34,7 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
       </label>
       <div className={s.consentCard}>{check(0, 'FaceMarket 모델 이용약관에 동의하고 개인정보 처리방침을 확인했어요.')}<div className={s.legalLinks}>{legalLink('/terms', '이용약관 전문 보기')}{legalLink('/privacy', '처리방침 전문 보기')}</div></div>
       <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<div className={s.legalSummary}>
-        <p><b>수집:</b> 얼굴·전신 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
+        <p><b>수집:</b> 얼굴 사진 17장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
         <p><b>목적:</b> 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
         <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
         <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>{legalLink('/biometric-consent')}
@@ -44,8 +44,8 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
 }
 
 export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove, editGroup }) {
-  if (sub === 4) return <>
-    {heading('18장을 확인해 주세요', '내 사진으로 모두 채웠는지 한 번 더 봐 주세요.')}
+  if (sub === PHOTO_REVIEW_SUB) return <>
+    {heading(`${SLOTS.length}장을 확인해 주세요`, '내 사진으로 모두 채웠는지 한 번 더 봐 주세요.')}
     <div className={s.reviewRows}>{PHOTO_GROUPS.map((group, index) => {
       const slots = SLOTS.filter((slot) => slot.group === group.id);
       return <div className={s.reviewRow} key={group.id}>
@@ -60,15 +60,22 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
   const group = PHOTO_GROUPS[sub - 1];
   const uploaded = new Set((enrollment?.photos || []).map(photoSlotKey));
   return <>
-    {heading('사진을 등록해요', '모델 이미지를 만들려면 여러 방향의 사진이 필요해요. 각 카드의 예시와 같은 구도로 올려 주세요.')}
-    {sub === 1 && <div className={s.tips}><strong>친구나 셀카봉, 카메라 타이머를 준비하면 편해요.</strong><p>혼자 찍는다면 폰 카메라의 타이머를 쓰고, 밝은 곳에서 필터 없이 찍어요. 모자·마스크·선글라스는 벗어요.</p></div>}
-    {sub > 1 && <p className={s.encouragement}>{sub === 2 ? '거의 다 왔어요. 방금 하신 대로 아래 이미지들을 찍어 주세요.' : '이제 마지막이에요. 아래 이미지들만 찍으면 끝나요.'}</p>}
-    <div className={s.groupHeading}><span className={s.tag}>{group.badge}</span></div>
+    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 다른 사진이 여러 장 필요해요. 조명 네 곳을 옮겨 다니며 각 카드와 같은 구도로 찍어 주세요.')}
+    {sub === 1 && <div className={s.tips}>
+      <strong>찍기 전에</strong>
+      <p>맑은 날 야외에서, 폰 뒷카메라로 찍어요. 하나라도 어기면 사진이 반려돼요.</p>
+      <ul className={s.shootRules}>{SHOOT_RULES.map((rule) => <li key={rule.title}><b>{rule.title}</b><span>{rule.body}</span></li>)}</ul>
+    </div>}
+    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 조명이에요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 해의 위치만 바꿔서 찍어 주세요.'}</p>}
+    <div className={s.groupHeading}>
+      <span className={s.tag}>{group.badge}</span>
+      <div className={s.sunGuide}><SunDiagram className={s.sunDiagram} sun={group.sun} /><p>{group.note}</p></div>
+    </div>
     <div className={s.photoGrid}>{SLOTS.filter((slot) => slot.group === group.id).map((slot) => {
       const filled = uploaded.has(slot.key);
       return <div className={s.slotCard} key={slot.key}>
         <label className={`${s.slot} ${filled ? s.filled : ''}`}>
-          <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" capture="user" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '사진 바꾸기' : '사진 올리기'}`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+          <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '사진 바꾸기' : '사진 올리기'}`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
           {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <RegisterIllustration className={s.person} framing={slot.framing} angle={slot.angle} />}
           <span className={s.slotBadge}>{filled ? '✓ 내 사진' : '예시'}</span>
           <span className={s.slotAction}>{filled ? '바꾸기' : '내 사진으로'}</span><span className={s.slotBottom}><span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 {filled ? '바꾸기' : '올리기'}</span></span><span className={s.slotHint}>{filled && !previews[slot.key] ? '사진을 저장했어요' : slot.hint}</span></span>

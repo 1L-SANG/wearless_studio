@@ -24,7 +24,7 @@ import hashlib
 import logging
 import uuid
 
-from ..facemarket_photos import ASSET_SOURCE_SLOTS, resolve_photo_rows
+from ..facemarket_photos import ASSET_SOURCE_SLOTS, REFSET_SLOTS, resolve_photo_rows
 
 
 log = logging.getLogger("wearless.identity_source")
@@ -175,10 +175,10 @@ async def resolve_real_model_assets(
     return out
 
 
-#: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — **정면 계열만**.
-#:   face01 정면 무표정 · face02 정면 미소 · face07 턱 위 · face08 턱 아래
-#: 옛 3장 등록은 resolve_photo_rows 가 front→face01 로 올려 주므로 자동으로 front 한 장만 남는다
-#: (angle45→face03 · side→face05 는 이 목록에 없다).
+#: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — **정면 계열만**, 그리고 **한 조명 한 자리**.
+#: 17칸 스펙(2026-09-14)의 기준 4장이 그대로 이 자리다: 그늘에서 정면 무표정 2 · 턱 살짝 내리기 ·
+#: 시선만 왼쪽 · 시선만 오른쪽. 조명이 섞이면 기준끼리의 점수부터 무너진다(v6_refset_check 규칙:
+#: 중앙값 0.80 · 최저쌍 0.70).
 #:
 #: 왜 정면만인가(2026-09-13 실측, prod 테스트컷 8장 · YuNet+SFace):
 #:     기준                         테스트컷 점수
@@ -190,7 +190,13 @@ async def resolve_real_model_assets(
 #:     9/11 3/4 4장 중앙            0.58 ~ 0.66
 #: SFace 임베딩이 정면 기준이라 각도 사진은 같은 사람이라도 점수가 내려간다. 기준에 섞으면
 #: 중앙값이 내려가 **같은 사람을 떨어뜨린다** — 문턱을 내리는 것보다 기준을 맞추는 게 먼저다.
-IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = ("face01", "face02", "face07", "face08")
+IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = REFSET_SLOTS
+#: 17칸 이전 등록(18칸 · 옛 3장)의 기준. face01 은 SLOT_CANDIDATES 를 타고 sh_front → face01 →
+#: front 순으로 내려가므로 옛 3장 등록도 front 한 장이 잡힌다(angle45·side 는 목록에 없다).
+LEGACY_IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = ("face01", "face02", "face07", "face08")
+#: 앞 단계가 0장이면 다음 단계로 간다. 둘 다 0장이면 호출자가 승인 face_front 한 장으로 폴백한다.
+IDENTITY_REFERENCE_SLOT_TIERS: tuple[tuple[str, ...], ...] = (
+    IDENTITY_REFERENCE_SLOTS, LEGACY_IDENTITY_REFERENCE_SLOTS)
 #: 기준 사진으로 쓸 수 있는 저장 상태. 승인 전(quarantine)도 기준으로는 유효하다 — 게이트는
 #: "같은 사람인가"만 보고, 공개 자산 승인과는 다른 판단이다.
 _REFERENCE_STORAGE_STATES = ("quarantine", "approved")
@@ -210,8 +216,10 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
     슬롯 이름만 믿지 않는다 — 정면 슬롯에 각도 사진이 올라온 촬영 실수를 대비해 사진마다 YuNet
     yaw_proxy 를 재서 YAW_FRONT_MAX 이상이면 뺀다.
 
-    정면 기준이 0장이면 [] — 호출자는 그때 기존 face_front 한 장 경로로 폴백한다. 기준이 아예
-    없으면 게이트가 신원을 보지 않는다(identity=None). 얼굴 패스 자체는 어떤 경우에도 막지 않는다.
+    단계는 둘이다(IDENTITY_REFERENCE_SLOT_TIERS): 17칸 기준 4장 → 0장이면 옛 슬롯(face01·02·
+    07·08, 옛 3장 등록은 front 한 장). 그마저 0장이면 [] — 호출자가 기존 face_front 한 장 경로로
+    폴백한다. 기준이 아예 없으면 게이트가 신원을 보지 않는다(identity=None). 얼굴 패스 자체는
+    어떤 경우에도 막지 않는다.
     """
     r2_face = getattr(app.state, "r2_face", None)
     if r2_face is None:
@@ -231,10 +239,23 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
     except Exception as exc:  # noqa: BLE001 — 기준을 못 읽으면 폴백한다(컷을 막지 않는다)
         log.warning("enrollment reference photos lookup failed for %s: %r", model_id, exc)
         return []
-    usable = [r for r in resolve_photo_rows(rows, IDENTITY_REFERENCE_SLOTS)
+    for slots in IDENTITY_REFERENCE_SLOT_TIERS:
+        out = await _reference_tier(rows, slots, r2_face, model_id,
+                                    limit=limit, model_dir=model_dir)
+        if out:
+            return out
+    return []
+
+
+async def _reference_tier(rows, slots, r2_face, model_id: str, *, limit: int,
+                          model_dir: str | None) -> list[bytes]:
+    """한 단계의 기준 슬롯으로 실제 바이트를 모은다. 한 장도 못 모으면 [] — 호출자가 다음 단계로."""
+    usable = [r for r in resolve_photo_rows(rows, slots)
               if r.get("qc_status") == "passed"
               and r.get("storage_state") in _REFERENCE_STORAGE_STATES
               and str(r.get("r2_key") or "").strip()]
+    if not usable:
+        return []
     out: list[bytes] = []
     turned = 0
     for row in usable[:limit]:
@@ -247,8 +268,8 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
             turned += 1
             continue
         out.append(data)
-    log.info("identity reference photos for %s: %d/%d usable (yaw 로 뺀 것 %d)",
-             model_id, len(out), len(usable), turned)
+    log.info("identity reference photos for %s (%s): %d/%d usable (yaw 로 뺀 것 %d)",
+             model_id, slots[0], len(out), len(usable), turned)
     return out
 
 

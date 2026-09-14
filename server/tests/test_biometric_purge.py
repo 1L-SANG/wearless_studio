@@ -1501,6 +1501,28 @@ def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineag
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
 
 
+def test_photos_uploaded_under_dropped_slots_are_still_purged():
+    """17칸 스펙에 자리가 없는 옛 슬롯(face04·torso·full)으로 올라간 사진도 파기가 쓸어 담는다.
+
+    2026-09-14 슬롯 교체로 저 이름들은 완료 판정에서 빠졌다. 판정에서 빠진 것과 R2 에서
+    사라진 것은 다르다 — 수집이 angle 을 한 번이라도 거르기 시작하면 생체정보가 남는다.
+    """
+    ctx = _fake_case()
+    dropped = []
+    for angle in ("face04", "torso01", "full05"):
+        key = f"facemarket/enrollments/{ctx.enrollment}/quarantine/{angle}.png"
+        ctx.db.add("fm_biometric_enrollment_photos",
+                   enrollment_id=ctx.enrollment, angle=angle, r2_key=key)
+        ctx.r2_face.keys.add(key)
+        dropped.append(key)
+
+    result = _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert result.complete is True
+    assert set(dropped) <= set(ctx.r2_face.deleted)
+    assert ctx.db.tables["fm_biometric_enrollment_photos"] == []
+
+
 def test_withdrawal_purges_private_test_cuts_and_public_confirmed_cover():
     ctx = _fake_case()
     cut_key = f"private/facemarket/models/{ctx.model}/test-cuts/cut-a.png"
