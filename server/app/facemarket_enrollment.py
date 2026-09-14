@@ -1803,6 +1803,14 @@ async def upload_id_document(
                 # 있다(이름·생년월일·CI 확보됨) — 이 카드 사진은 이제 "정보를 읽는 대상"이
                 # 아니라 "방금 인증된 그 사람 것인가"를 확인하는 물증이라, 성공하면 곧장
                 # 사진 촬영(photos_pending)으로 넘어간다.
+                #
+                # `identity_ci_hash is not null` 은 불변조건이다 — 이 단계에 왔다면 본인확인은
+                # 이미 끝나 있어야 한다. 새 순서로 만들어진 행은 전부 이 조건을 만족하므로
+                # 정상 흐름에서는 이 가드가 절대 발동하지 않는다(no-op). 발동한다면 그건 순서
+                # 뒤집기 배포 이전에 id_capture_pending 에서 멈춰 있던 행뿐이다 — 그런 행은
+                # (구버전 순서에서) 본인확인을 아직 거치지 않았으므로 CI 교차계정 충돌 검사도
+                # 안 거쳤고, 이대로 photos_pending 으로 보내면 identity_ci_hash 가 NULL 인 채로
+                # 나중에 fm_identity_verifications 삽입이 NOT NULL 제약 위반으로 죽는다.
                 await cur.execute(
                     """
                     update fm_biometric_enrollments
@@ -1810,12 +1818,30 @@ async def upload_id_document(
                         id_document_r2_key = %s, id_document_type = %s,
                         id_document_uploaded_at = now(), id_document_purged_at = null
                     where id = %s and user_id = %s and status = 'id_capture_pending'
+                      and identity_ci_hash is not null
                     """,
                     (key, document_type, enrollment_id, user_id),
                 )
                 if cur.rowcount == 0:
-                    # 이미 지나간 단계이거나 남의 등록 — 방금 올린 객체를 되돌린다.
+                    # 이미 지나간 단계이거나 남의 등록이거나(오늘과 동일), 위 불변조건이
+                    # 깨진 구버전 행(신규)이거나 — 어느 쪽이든 방금 올린 객체를 되돌린다.
                     await asyncio.to_thread(r2.delete, key)
+                    await cur.execute(
+                        "select status, identity_ci_hash from fm_biometric_enrollments "
+                        "where id = %s and user_id = %s",
+                        (enrollment_id, user_id),
+                    )
+                    guard_row = await cur.fetchone()
+                    if (
+                        guard_row is not None
+                        and guard_row["status"] == "id_capture_pending"
+                        and guard_row["identity_ci_hash"] is None
+                    ):
+                        raise _err(
+                            "identity_not_verified",
+                            "본인확인을 다시 진행한 뒤 신분증을 올려 주세요.",
+                            status=409,
+                        )
                     raise _err(
                         "invalid_enrollment_state",
                         "신분증을 올릴 수 있는 단계가 아니에요.",

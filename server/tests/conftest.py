@@ -378,11 +378,15 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
             # photos_pending 으로 바뀌었다(순서 뒤집기 — 촬영이 본인인증 다음이라 촬영
             # 성공은 곧장 사진 단계로 간다). id_document_r2_key 로 identity 검증 UPDATE
             # (identity_ci_hash 를 쓴다)와 구분한다.
+            # 리뷰 finding(critical): 구버전 순서로 남은 id_capture_pending 행(본인확인을
+            # 거치지 않아 identity_ci_hash 가 NULL)이 이 UPDATE 를 그냥 통과하면 본인확인
+            # 자체를 건너뛰게 된다 — WHERE 에 identity_ci_hash is not null 을 더해 막는다.
             if (
                 query.startswith(
                     "update fm_biometric_enrollments set status = 'photos_pending'"
                 )
                 and "id_document_r2_key" in query
+                and "identity_ci_hash is not null" in query
             ):
                 key, document_type, enrollment_id, user_id = params
                 row = next(
@@ -392,6 +396,7 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                         if item["id"] == enrollment_id
                         and item["user_id"] == user_id
                         and item["status"] == "id_capture_pending"
+                        and item.get("identity_ci_hash") is not None
                     ),
                     None,
                 )
@@ -407,6 +412,30 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                         id_document_purged_at=None,
                     )
                     self.rowcount = 1
+                return
+            # Task6 리뷰 fix: 위 UPDATE 가 rowcount==0 일 때, 라우트가 "상태가 틀렸다"와
+            # "본인확인이 안 끝났다(불변조건 위반)"를 구분하려고 던지는 진단용 SELECT.
+            if query.startswith(
+                "select status, identity_ci_hash from fm_biometric_enrollments"
+            ):
+                enrollment_id, user_id = params
+                row = next(
+                    (
+                        item
+                        for item in self.store.enrollments
+                        if item["id"] == enrollment_id and item["user_id"] == user_id
+                    ),
+                    None,
+                )
+                self.result = (
+                    {
+                        "status": row["status"],
+                        "identity_ci_hash": row.get("identity_ci_hash"),
+                    }
+                    if row is not None
+                    else None
+                )
+                self.many = []
                 return
             await _original_execute(self, sql, params)
 

@@ -85,6 +85,12 @@ def id_capture(enrollment_client_factory, monkeypatch):
     먼저다) — 본인인증(POST /identity)을 통과해야 id_capture_pending 에 닿는다. 이 파일은
     /identity 라우트 자체가 관심사가 아니므로(신분증 업로드 라우트만 본다), 그 전이를
     직접 시뮬레이션하지 않고 도달한 상태만 밀어 넣는다.
+
+    리뷰 finding(critical): id_capture_pending 에 왔다는 건 새 순서에서는 항상 본인확인이
+    끝났다는 뜻이라, identity_ci_hash 도 함께 채워 둔다 — 실제 verify_enrollment_identity
+    가 그렇게 하기 때문이다. 이걸 안 채우면 이 파일의 모든 "정상 경로" 테스트가
+    test_legacy_id_capture_pending_without_identity_is_rejected 가 잡는 새 불변조건
+    가드에 걸려 조용히 오탐(false negative)이 된다.
     """
 
     def _make(*, face_detected=True, **settings_overrides):
@@ -120,6 +126,7 @@ def id_capture(enrollment_client_factory, monkeypatch):
             row = next(item for item in store.enrollments if item["id"] == enrollment_id)
             assert row["status"] == "identity_pending"
             row["status"] = "id_capture_pending"
+            row["identity_ci_hash"] = "test-ci-hash-" + enrollment_id
         return client, store, settings, enrollment_id
 
     return _make
@@ -310,6 +317,51 @@ def test_other_users_enrollment_is_not_writable(id_capture):
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "invalid_enrollment_state"
     assert _row(store, enrollment_id).get("id_document_r2_key") is None
+
+
+# ── 본인확인 불변조건(리뷰 finding: critical) ────────────────────────────────────────
+#
+# Task6(순서 뒤집기) 이후 id_capture_pending 은 "본인확인이 이미 끝났다"는 뜻으로
+# 의미가 뒤집혔다. 순서 뒤집기 배포 이전에 이 상태에서 멈춰 있던 simple_auth 행은
+# (구버전 순서에서) 아직 본인확인을 거치지 않았으므로 identity_ci_hash 가 NULL 이다.
+# 같은 상태값이 정반대 의미로 재사용되는 이 틈을 막지 않으면, 그런 행이 이 라우트를
+# 그대로 통과해 본인확인(CI 교차계정 충돌 검사 포함)을 건너뛰고 photos_pending 으로
+# 넘어간다 — 조용한 신원 검증 우회다.
+
+
+def test_legacy_id_capture_pending_without_identity_is_rejected(id_capture):
+    """구버전 순서로 남은 행(본인확인 미완료, identity_ci_hash NULL)은 거부되어야 한다.
+
+    통과시키면 이후 바인딩 시점에 identity_ci_hash 가 NULL 인 채로
+    fm_identity_verifications 삽입이 NOT NULL 제약 위반으로 죽는다(처리되지 않는 예외) —
+    그전에 여기서, 진단 가능한 별도 에러 코드로 막는다.
+    """
+    client, store, _settings, enrollment_id = id_capture()
+    # id_capture() 픽스처는 정상 흐름(본인확인 완료)을 시뮬레이션하며 identity_ci_hash 를
+    # 채운다 — 여기서만 구버전 상태(본인확인 미완료)를 흉내내려 되돌린다.
+    _row(store, enrollment_id)["identity_ci_hash"] = None
+
+    response = _upload(client, enrollment_id)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "identity_not_verified"
+    row = _row(store, enrollment_id)
+    assert row["status"] == "id_capture_pending", "본인확인 없이 photos_pending 으로 새면 안 된다"
+    assert row.get("id_document_r2_key") is None
+    put_key = client.app.state.r2_face.puts[-1][0]
+    assert put_key in client.app.state.r2_face.deletes, "올린 객체를 안 지웠다(고아 신분증)"
+
+
+def test_upload_succeeds_when_identity_already_verified(id_capture):
+    """가드의 반대쪽 확인 — identity_ci_hash 가 채워진 정상적인 새 순서 경로는 그대로
+    통과해야 한다(가드가 무조건 거부만 하는 게 아님을 못박는다)."""
+    client, store, _settings, enrollment_id = id_capture()
+    assert _row(store, enrollment_id)["identity_ci_hash"] is not None
+
+    response = _upload(client, enrollment_id)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "photos_pending"
 
 
 # ── 마스킹 기하 검증(FM_ID_MASK_VERIFY) ──────────────────────────────────────────────
