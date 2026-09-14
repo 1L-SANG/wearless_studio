@@ -149,12 +149,50 @@ def test_unknown_or_review_only_surface_never_erases_other_critical_signals():
         surface_policy_normalized=True, surface_review_only=True,
         critical_errors=["unclassified critical"],
     )
-    assert mannequin_job.score_outcome(make_settings(), inconsistent) == "needs_review"
+    assert mannequin_job.score_outcome(make_settings(), inconsistent) == "regenerate"
     assert inconsistent["critical_errors"] == ["unclassified critical"]
 
     legacy = assessment(pattern="critical")
     legacy["critical_errors"] = ["unclassified legacy critical"]
     assert mannequin_job.score_outcome(make_settings(), legacy) == "regenerate"
+
+
+def test_only_exact_pattern_duplicate_is_removed_from_fresh_surface_actions():
+    pattern = assessment(pattern="critical")
+    pattern.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=["pattern scale changed"],
+    )
+    assert quality.actionable_critical_errors(pattern) == []
+    assert pattern["critical_errors"] == ["pattern scale changed"]
+
+    pattern["critical_errors"] = ["pattern scale changed", "body shape broken"]
+    assert quality.actionable_critical_errors(pattern) == ["body shape broken"]
+
+    pattern["critical_errors"] = ["pattern scale changed and body shape broken"]
+    assert quality.actionable_critical_errors(pattern) == [
+        "pattern scale changed and body shape broken"
+    ]
+
+    material = assessment(material="critical")
+    material.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=["pattern scale changed"],
+    )
+    assert quality.actionable_critical_errors(material) == ["pattern scale changed"]
+
+
+@pytest.mark.parametrize("critical", ["pattern scale changed", [None], [""], [object()]])
+def test_malformed_fresh_critical_payload_fails_closed(critical):
+    report = assessment(pattern="critical")
+    report.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=critical,
+    )
+    assert quality.actionable_critical_errors(report)
 
 
 def test_targeted_edit_cannot_turn_unknown_surface_into_new_confirmed_defect():

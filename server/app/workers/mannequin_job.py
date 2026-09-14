@@ -609,7 +609,7 @@ def score_outcome(s, p2, *, product_policy=True) -> str:
     """
     if not isinstance(p2, dict):
         return "auto_pass"
-    if p2.get("critical_errors") and p2.get("surface_review_only") is not True:
+    if mannequin_quality.actionable_critical_errors(p2):
         return "regenerate"
     if product_policy and mannequin_quality.repairable_issues(p2):
         return "regenerate"
@@ -722,9 +722,9 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     낮은 케이스), 그때 빈 피드백이면 다음 attempt 가 같은 프롬프트로 돌아 같은 결과를 낸다.
     """
     parts = []
-    if ((scores or {}).get("critical_errors")
-            and (scores or {}).get("surface_policy_normalized") is not True):
-        parts.append("CRITICAL: " + "; ".join(dict.fromkeys(scores["critical_errors"])))
+    critical = mannequin_quality.actionable_critical_errors(scores)
+    if critical:
+        parts.append("CRITICAL: " + "; ".join(critical))
     issues = mannequin_quality.repairable_issues({"product_risks": (scores or {}).get("product_risks")})
     if issues:
         parts.append("PRODUCT IDENTITY: " + "; ".join(issues))
@@ -1758,6 +1758,12 @@ async def _run_candidate(
         return chosen
 
     async def finish(res, p2, series, scores, attempt, *, untuck=True):
+        if (
+            (scores or {}).get("surface_policy_normalized") is True
+            and mannequin_quality.actionable_critical_errors(scores)
+        ):
+            raise MannequinQualityError("unclassified_critical_rejected")
+
         async def inspect(current):
             if specialist_mode not in ("shadow", "enforce"):
                 return None

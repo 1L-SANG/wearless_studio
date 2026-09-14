@@ -143,6 +143,34 @@ def fresh_surface_policy(scores) -> tuple[bool, bool]:
     return True, not _axis_issues(scores, repairable_axes)
 
 
+def actionable_critical_errors(scores) -> list[str]:
+    """Keep all critical signals except one exact, structured pattern duplicate."""
+    if not isinstance(scores, dict):
+        return []
+    raw = scores.get('critical_errors', [])
+    if not isinstance(raw, list):
+        return ['malformed critical_errors']
+    risks = _risks(scores)
+    pattern_duplicate_allowed = bool(
+        scores.get('surface_policy_normalized') is True
+        and risks is not None
+        and risks['pattern']['severity'] in {'major', 'critical'}
+    )
+    actionable = []
+    malformed = False
+    for item in raw:
+        text = clean_text(item, 200) if isinstance(item, str) else ''
+        if not text:
+            malformed = True
+            continue
+        if pattern_duplicate_allowed and text == 'pattern scale changed':
+            continue
+        actionable.append(text)
+    if malformed:
+        actionable.append('malformed critical_errors')
+    return list(dict.fromkeys(actionable))
+
+
 def repairable_issues(scores) -> list[str]:
     """Confirmed non-surface product defects that may authorize mannequin repair."""
     risks = _risks(scores)
@@ -227,7 +255,7 @@ def review_only_surface_edit_accepted(before, after) -> bool:
         or after.get('protected_regions_unchanged') is not True
         or after.get('regression_reasons') != []
         or after.get('verdict') != 'pass'
-        or (after.get('critical_errors') and after.get('surface_review_only') is not True)
+        or actionable_critical_errors(after)
         or after.get('matching_critical_errors')
         or repairable_issues(after)
         or not surface_review_issues(after)

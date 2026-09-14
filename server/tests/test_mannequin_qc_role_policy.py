@@ -81,6 +81,7 @@ def test_fresh_complete_surface_only_duplicate_critical_is_normalized_for_review
         pattern="critical", logo_graphic="critical"
     )["product_risks"]
     raw["critical_errors"] = ["non-surface critical also reported"]
+    raw["mismatches"] = ["pattern scale changed", "body shape broken"]
     mixed = asyncio.run(image_qc.verdict(
         make_settings(), [InlineImage("image/png", b"PRODUCT")],
         InlineImage("image/png", b"SECOND"), scored=True,
@@ -88,6 +89,7 @@ def test_fresh_complete_surface_only_duplicate_critical_is_normalized_for_review
     ))
     assert mixed["surface_policy_normalized"] is True
     assert mixed["surface_review_only"] is False
+    assert mixed["mismatches"] == ["pattern scale changed", "body shape broken"]
     assert mannequin_job.score_outcome(make_settings(), mixed) == "regenerate"
 
 

@@ -50,7 +50,7 @@ def test_surface_only_risk_keeps_first_cut_for_review_without_reroll_or_repair(m
     surface = rated(**{axis: 'critical'})
     surface.update(
         verdict='retry', correctionPrompt='Redraw the visible surface.',
-        critical_errors=['pattern scale changed'],
+        critical_errors=(['pattern scale changed'] if axis == 'pattern' else []),
         surface_policy_normalized=True, surface_review_only=True,
     )
     result, seen = run_worker(monkeypatch, has_match=False, p2={
@@ -60,6 +60,31 @@ def test_surface_only_risk_keeps_first_cut_for_review_without_reroll_or_repair(m
     assert seen.puts == [b'before']
     assert result['qc_scores']['outcome'] == 'needs_review'
     assert result['qc_scores']['product_risks'][axis]['severity'] == 'critical'
+
+
+@pytest.mark.parametrize('critical_errors', [
+    ['body shape broken'],
+    ['pattern scale changed', 'body shape broken'],
+])
+def test_surface_report_with_independent_technical_critical_is_not_shipped_or_repaired(
+    monkeypatch, critical_errors,
+):
+    surface = rated(pattern='critical')
+    surface.update(
+        verdict='retry', correctionPrompt='Redraw the visible surface.',
+        critical_errors=critical_errors,
+        surface_policy_normalized=True, surface_review_only=True,
+    )
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='unclassified_critical_rejected'):
+        run_worker(
+            monkeypatch, has_match=False, captures=seen,
+            p2={b'before': surface},
+            settings_overrides={'mannequin_max_attempts': 1},
+        )
+    assert seen.image_calls == ['generate']
+    assert seen.puts == []
+    assert not any(event.get('status') == 'quality_repair' for event in seen.events)
 
 
 def test_mixed_surface_and_structure_uses_one_structural_only_targeted_repair(monkeypatch):
