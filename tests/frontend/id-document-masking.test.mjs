@@ -225,11 +225,12 @@ test('엘리먼트 박스를 잴 수 없으면 자연 격자 기준으로 되돌
 
 test('burnGuideMask: 규격 좌표 자리에 덮고, 그린 뒤에 덮는다', async () => {
   const calls = [];
+  let fillStyle = null;
   const ctx = {
     drawImage: (...args) => calls.push({ op: 'drawImage', args }),
     fillRect: (...args) => calls.push({ op: 'fillRect', args }),
-    set fillStyle(v) { calls.push({ op: 'fillStyle', value: v }); },
-    get fillStyle() { return '#111'; },
+    set fillStyle(v) { fillStyle = v; calls.push({ op: 'fillStyle', value: v }); },
+    get fillStyle() { return fillStyle; },
   };
   const canvas = { width: 0, height: 0, getContext: () => ctx, toBlob: (cb) => cb({ type: 'image/jpeg' }) };
 
@@ -239,6 +240,11 @@ test('burnGuideMask: 규격 좌표 자리에 덮고, 그린 뒤에 덮는다', a
   const ops = calls.filter((c) => c.op === 'drawImage' || c.op === 'fillRect').map((c) => c.op);
   assert.deepEqual(ops, ['drawImage', 'fillRect'],
     'fillRect 가 drawImage 보다 먼저면 원본이 마스크 위에 다시 그려져 주민번호가 살아난다');
+
+  // 좌표가 맞아도 칠하는 색이 불투명이 아니면(반투명·투명) 번호가 비친다 — buildMaskedBlob
+  // 테스트가 이미 #111 을 확인하는데, 이 함수는 그보다 더 안전 필수적이므로 같은 수준으로 잡는다.
+  const fillStyleCalls = calls.filter((c) => c.op === 'fillStyle');
+  assert.ok(fillStyleCalls.some((c) => c.value === '#111'), 'fillStyle 이 #111 로 설정돼야 한다');
 
   const expected = rrnRectInFrame(1920, 1080);
   const [x, y, w, h] = calls.find((c) => c.op === 'fillRect').args;
@@ -251,11 +257,12 @@ test('burnGuideMask: 마스크 좌표 골든값 — 규격에서 직접 계산�
   // 손으로 계산한 절대 좌표를 박아, 좌표가 조용히 어긋나면 여기서 깨지게 한다.
   // 1920x1080 에서 가이드 = {x:224, y:76, w:1473, h:929}.
   const calls = [];
+  let fillStyle = null;
   const ctx = {
     drawImage: () => calls.push({ op: 'drawImage' }),
     fillRect: (...args) => calls.push({ op: 'fillRect', args }),
-    set fillStyle(v) {},
-    get fillStyle() { return '#111'; },
+    set fillStyle(v) { fillStyle = v; },
+    get fillStyle() { return fillStyle; },
   };
   const canvas = { width: 0, height: 0, getContext: () => ctx, toBlob: (cb) => cb({ type: 'image/jpeg' }) };
 
@@ -263,4 +270,6 @@ test('burnGuideMask: 마스크 좌표 골든값 — 규격에서 직접 계산�
 
   const [x, y, w, h] = calls.find((c) => c.op === 'fillRect').args;
   assert.deepEqual({ x, y, w, h }, { x: 312, y: 615, w: 913, h: 130 });
+  // 골든값은 좌표뿐 아니라 칠하는 색도 고정한다 — 좌표가 맞아도 반투명·투명이면 번호가 비친다.
+  assert.equal(fillStyle, '#111');
 });
