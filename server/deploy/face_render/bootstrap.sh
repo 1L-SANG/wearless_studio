@@ -11,8 +11,17 @@ set -euo pipefail
 
 ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
 MODEL_ID="${FACE_RENDER_MODEL_ID:-Qwen/Qwen-Image-Edit-2509}"
-export HF_HOME="${HF_HOME:-$ROOT/hf}"
-export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
+# ★ HF_HOME 은 **덮어쓴다**(`:-` 아님). 베이스 이미지가 HF_HOME=/workspace/.cache/huggingface/ 를
+#   박아 두는데 /workspace 는 MooseFS 네트워크 볼륨(20GB)이라 53.8GiB 가중치가 안 들어간다
+#   — 2026-09-13 파드 r5lk3ysffgayyk: `OSError: [Errno 122] Disk quota exceeded`(컨테이너 디스크는
+#   46GB 남아 있었다. 받던 곳이 달랐다). 이 파일 위쪽 주석의 "/workspace 금지" 가 env 한 줄로 뚫렸다.
+export HF_HOME="$ROOT/hf"
+# ★ xet 전송을 끈다. huggingface_hub 1.x 는 `[cli,hf_transfer]` extra 를 더는 제공하지 않아
+#   hf_transfer 가 설치되지 않고 기본이 xet 으로 떨어지는데, 그 xet 이
+#   `File reconstruction error: Internal Writer Error` 로 35파일 중 29개에서 터졌다(캐시 0바이트).
+#   끄면 같은 54GB 를 **114초**에 받는다(실측). HF_HUB_ENABLE_HF_TRANSFER 는 1.x 에 상수 자체가
+#   없어(hasattr=False) 값을 줘도 무시되므로 설정하지 않는다.
+export HF_HUB_DISABLE_XET=1
 mkdir -p "$ROOT"/{hf,code,loras,logs}
 LOG="$ROOT/logs/bootstrap-$(date -u +%Y%m%dT%H%M%SZ).log"
 say() { echo "bootstrap: $*" | tee -a "$LOG"; }
@@ -58,8 +67,20 @@ if [ ! -x "$ROOT/venv/bin/python" ]; then
   # --system-site-packages: 베이스 이미지의 torch(2.8+cu128)를 그대로 쓴다. 다시 받으면 3GB·수 분.
   python3 -m venv --system-site-packages "$ROOT/venv"
   "$ROOT/venv/bin/pip" install -q --upgrade pip >>"$LOG" 2>&1
-  "$ROOT/venv/bin/pip" install -q diffusers transformers accelerate peft safetensors \
-      fastapi uvicorn httpx opencv-python-headless "huggingface_hub[cli,hf_transfer]" >>"$LOG" 2>&1
+  # ★ 버전을 고정한다. 파드는 매번 새로 깔리므로 고정하지 않으면 **아무 날에나** 조합이 바뀐다.
+  #   2026-09-13 에 실제로 그랬다: transformers 5.17.0 · opencv 5.0.0.93 · huggingface_hub 1.31.0 이
+  #   한꺼번에 올라왔고, 그중 hub 1.x 가 다운로드를 깨뜨렸다(extra 소멸 → xet 기본화 → 크래시).
+  #
+  #   아래 값은 **그날 실제로 끝까지 돌아간 조합 그대로**다 — 가중치 54GB 수신(114초, xet off),
+  #   파이프라인 적재 8.5초, 렌더 200 OK(50.6초), /upscale 200 OK 까지 확인했다. hub 를 0.x 로
+  #   내리는 것도 고려했지만 diffusers 0.40 · transformers 5.x 와의 조합을 확인하지 않았다 —
+  #   검증한 조합을 박는 쪽이 낫다. 올릴 때는 파드 1대로 부팅을 확인하고 올린다.
+  #   hf_transfer 는 요청하지 않는다: hub 1.x 에 HF_HUB_ENABLE_HF_TRANSFER 상수 자체가 없다.
+  "$ROOT/venv/bin/pip" install -q \
+      "diffusers==0.40.0" "transformers==5.17.0" "accelerate==1.15.0" "peft==0.20.0" \
+      "safetensors==0.8.0" "huggingface_hub==1.31.0" \
+      "fastapi==0.141.1" "uvicorn==0.52.4" "httpx==0.28.1" \
+      "opencv-python-headless==5.0.0.93" >>"$LOG" 2>&1
 else
   say "venv 있음 — 건너뜀"
 fi
