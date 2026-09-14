@@ -353,6 +353,14 @@ class Settings:
     # 신분증 마스킹 기하 검증. off=검사 안 함 / shadow=판정만 기록 / enforce=미달 거부.
     # 임계 캘리브 전에는 shadow — v1 에서 SFace 임계를 캘리브 없이 넣었다가 오탈락으로
     # 고생했다. job_events/로그로 분포를 본 뒤 enforce 로 올린다.
+    # ⚠️⚠️ enforce 로 올리기 전에 서버 쪽 수동 경로 허용을 먼저 만들 것(최종리뷰 I1).
+    # 이 검사는 클라이언트가 camera/file/manual 어느 모드로 찍었는지 보지 않고 업로드마다
+    # 돈다 — file·manual 사진은 가이드로 찍히지 않으므로 이 기하 검사를 구조적으로
+    # 통과할 수 없다. 지금 enforce 로 올리면: 카메라가 있는 사용자는 3회 실패 뒤
+    # manual 로 내려가도 같은 검사에 또 막혀 무한 루프에 갇히고, 카메라 권한을 거부한
+    # 사용자는 애초에 file 모드로 시작하므로 등록 자체가 영영 불가능해진다. 서버가
+    # "연속 실패 N회는 통과시킨다" 같은 진짜 비상구를 갖추기 전에는 이 값을 절대
+    # enforce 로 바꾸지 말 것 — 관측(로그 분포)만으로는 부족하다.
     fm_id_mask_verify: str = "shadow"  # off | shadow | enforce
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
     fm_payout_account_key: str | None = None  # 계좌번호 Fernet 암호화 키. 없으면 계좌 API 503

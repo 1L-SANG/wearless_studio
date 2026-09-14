@@ -494,3 +494,32 @@ def test_off_leaves_mask_mode_null(id_capture):
 
     assert response.status_code == 201, response.text
     assert _row(store, enrollment_id)["mask_mode"] is None
+
+
+# ── enforce 가 아직 안전하지 않다는 경고(최종리뷰 I1) ────────────────────────────────
+#
+# 이 검사는 client 가 camera/file/manual 어느 모드로 찍었는지 안 보고 업로드마다 돈다
+# — file·manual 사진은 가이드로 찍히지 않아 구조적으로 이 기하 검사를 통과할 수 없다.
+# 그래서 enforce 로 올리면 카메라를 못 쓰는 사용자는 등록 자체가 영영 불가능해진다.
+# 서버 쪽에 진짜 수동 경로 허용(예: 연속 실패 N회는 통과)이 생기기 전까지는 아무도
+# 이 값을 enforce 로 올리면 안 된다 — 그 경고가 플래그 정의 옆(env 하나로 바꿀 수 있는
+# 바로 그 자리)에서 사라지지 않게 문구 존재를 고정한다. 값 자체(shadow)는
+# test_deploy_manifest_qc_flags.py 류가 이미 다루므로 여기서는 경고 문구만 본다.
+
+
+def test_enforce_warning_survives_in_manifest_and_config():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    manifest = (root / "copilot/api/manifest.yml").read_text()
+    config = (root / "server/app/config.py").read_text()
+
+    warning = "수동 경로 허용을 먼저 만들 것"
+    assert warning in manifest, (
+        "copilot/api/manifest.yml 의 FM_ID_MASK_VERIFY 주석에서 enforce 경고가 사라졌다 — "
+        "이게 없으면 누군가 env 값만 바꿔 enforce 를 켜고, 카메라를 못 쓰는 사용자는 "
+        "등록이 통째로 막힌다."
+    )
+    assert warning in config, (
+        "server/app/config.py 의 fm_id_mask_verify 주석에서 enforce 경고가 사라졌다."
+    )

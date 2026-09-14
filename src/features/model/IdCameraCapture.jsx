@@ -38,7 +38,7 @@ const SAMPLE_WIDTH = 320;     // 판정용 다운스케일 — 전체 해상도�
 const HINT_AFTER_MS = 15000;
 const SAMPLE_INTERVAL_MS = 100;   // ~10fps
 
-export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
+export default function IdCameraCapture({ onCaptured, onUnavailable, busy, paused }) {
   const videoRef = useRef(null);
   const sampleRef = useRef(null);   // 판정용 작은 캔버스
   const shotRef = useRef(null);     // 촬영용 전체 해상도 캔버스
@@ -47,12 +47,16 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
   const capturingRef = useRef(false);   // burnGuideMask 가 비동기라 진행 중 중복 촬영을 막는다
   const mountedRef = useRef(true);
   const busyRef = useRef(busy);   // 부모가 업로드 중이면(=busy) 판정 루프도 셔터를 눌러선 안 된다
+  // paused: 직전 업로드가 실패해 부모가 세운 일시정지 신호(최종리뷰 I2b) — 판정 루프만
+  // 멈춘다. 수동 셔터(아래 button onClick={capture})는 이 값을 보지 않는다: 자동은
+  // 편의이지 관문이 아니라는 이 파일의 원칙대로, 멈추는 건 자동뿐이어야 한다.
+  const pausedRef = useRef(paused);
   const [ready, setReady] = useState(false);
   const [frameSize, setFrameSize] = useState(null);   // { width, height } — 오버레이 좌표계
   const [showManualHint, setShowManualHint] = useState(false);
   const [captureError, setCaptureError] = useState(false);
 
-  // onCaptured/onUnavailable/busy 를 ref 로 미러링한다 — 이 값들의 정체성에 카메라
+  // onCaptured/onUnavailable/busy/paused 를 ref 로 미러링한다 — 이 값들의 정체성에 카메라
   // 마운트 주기(아래 effect)나 capture() 의 정체성을 걸면 안 된다. 부모가 매 렌더마다
   // 새 함수를 넘기는 흔한 실수 하나로 카메라가 매번 껐다 켜진다(트랙 정지 → 재권한
   // 요청 → 화면 깜빡임).
@@ -61,6 +65,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
   const onUnavailableRef = useRef(onUnavailable);
   useEffect(() => { onUnavailableRef.current = onUnavailable; });
   useEffect(() => { busyRef.current = busy; });
+  useEffect(() => { pausedRef.current = paused; });
 
   // 카메라 시작 + 언마운트에서 트랙 정지(안 하면 카메라 표시등이 계속 켜져 있다)
   // 의존성 배열을 비워 둔다 — 카메라는 마운트당 한 번만 잡고, onUnavailable 의
@@ -76,6 +81,15 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
       }
     };
     video?.addEventListener('loadedmetadata', captureFrameSize);
+    // 트랙의 실제 프레임 크기가 세션 도중 바뀔 수 있다 — 가장 흔한 경우가 사용자가
+    // 폰을 가로로 돌리는 것인데, 이 가이드(카드 = 가로로 넓고 낮은 네모)는 그렇게
+    // 돌리고 싶게 생겼다(최종리뷰 I3). 브라우저는 그 변화를 <video> 에 `resize` 로
+    // 쏘지 `loadedmetadata` 로 다시 쏘지 않는다 — 안 들으면 frameSize 가 낡은 채로
+    // 남아 가이드(guideRectPercent)는 옛 프레임 기준으로 그려지는데 capture() 는
+    // video.videoWidth/Height(실제 프레임)로 마스크를 태워, 사용자가 카드를 맞춘 그
+    // 박스와 실제로 칠해지는 박스가 어긋난다 — 이 파일이 이미 두 번 고친 바로 그
+    // 결함(가이드·마스크 좌표계 불일치)이 세 번째 문으로 들어오는 것이다.
+    video?.addEventListener('resize', captureFrameSize);
     (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -105,6 +119,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
     return () => {
       cancelled = true;
       video?.removeEventListener('loadedmetadata', captureFrameSize);
+      video?.removeEventListener('resize', captureFrameSize);
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
@@ -157,7 +172,10 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
     if (!video || !sampleCanvas) return undefined;
     const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
     const timer = setInterval(() => {
-      if (capturingRef.current || busyRef.current) return;   // 업로드 중엔 자동 셔터도 쉰다
+      // 업로드 중(busy)이거나 직전 업로드가 실패해 일시정지(paused, 최종리뷰 I2b)됐으면
+      // 자동 셔터도 쉰다 — paused 는 사용자가 다시 시도할 때까지(uploadMasked 진입 시점)
+      // 안 풀린다. 수동 셔터(아래 button onClick={capture})는 이 게이트를 거치지 않는다.
+      if (capturingRef.current || busyRef.current || pausedRef.current) return;
       const vw = video.videoWidth;
       const vh = video.videoHeight;
       if (!vw || !vh) return;

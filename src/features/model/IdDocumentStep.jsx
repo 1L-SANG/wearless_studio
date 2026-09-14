@@ -6,14 +6,18 @@
    가려졌는지" 검증할 수 없다 — 그래서 서버로 가기 전에 클라이언트가 픽셀을 실제로
    덮어써야 한다.
 
-   세 가지 모드(mode) — 카메라가 기본이고, 나머지 둘은 카메라가 막혔을 때만 여는 비상구다.
+   세 가지 모드(mode) — 카메라가 기본이고, 나머지 둘은 카메라를 벗어나는 길이다.
      · camera — <IdCameraCapture>. 카드가 화면 가이드를 채우면 idCardGeometry 의 고정
        규격으로 주민등록번호 위치가 계산되고, IdCameraCapture 내부의 burnGuideMask 가
        그 자리를 실제로 칠한 뒤(fillRect) blob 하나만 onCaptured 로 돌려준다. 이미 칠해진
        채로 오므로 여기서는 미리보기도, "가렸어요" 확인 체크도 필요 없다 — 확인할 게
-       없다(사람이 아니라 좌표 계산이 마스킹했다).
-     · file — onUnavailable('permission'|'unsupported')이 오면(권한 거부·카메라 미지원)
-       내려간다. v1 의 파일 선택 + 드래그 마스킹 화면 그대로다.
+       없다(사람이 아니라 좌표 계산이 마스킹했다). file 로 내려가는 길은 셋이다:
+       onUnavailable('permission'|'unsupported')(권한 거부·카메라 미지원), 3연속
+       id_mask_not_applied(서버 거절), 그리고 switchToFile(사용자가 직접 누르는 버튼,
+       최종리뷰 I2a — 카메라는 켜지지만 렌즈가 흐리거나 전면 카메라를 잡는 등 "작동은
+       하지만 못 쓰겠는" 경우를 위한 것으로, shadow/off 에선 서버 거절 코드가 오지 않아
+       이게 사실상 유일한 자발적 탈출구다).
+     · file — v1 의 파일 선택 + 드래그 마스킹 화면 그대로다.
      · manual — 서버의 기하 검증(FM_ID_MASK_VERIFY, 지금은 shadow)이 id_mask_not_applied 를
        MANUAL_MASK_AFTER 회 연속 돌려주면 내려간다. file 과 화면은 동일하다(어차피 v1
        화면이 이미 드래그로 직접 옮기는 기능이다) — 다른 건 배너 문구뿐이다.
@@ -34,12 +38,22 @@
    blob 만 쓴다.
 
    훅 호출 순서 고정(테스트가 인덱스로 state/ref 를 직접 찌른다):
-     useState 9개: documentType(0) → imageUrl(1) → imageLoaded(2) → maskRatio(3) →
-       maskedConfirmed(4) → busy(5) → localError(6) → mode(7) → cameraUnavailableReason(8).
+     useState 10개: documentType(0) → imageUrl(1) → imageLoaded(2) → maskRatio(3) →
+       maskedConfirmed(4) → busy(5) → localError(6) → mode(7) → cameraUnavailableReason(8) →
+       autoPaused(9).
      useRef 4개: imageRef(0) → canvasRef(1) → dragRef(2) → maskFailStreakRef(3).
    앞의 7 state·3 ref는 v1 과 순서가 같다(기존 테스트가 그 인덱스를 그대로 쓴다) — 새로
    추가한 것들은 뒤에만 붙인다. 이 순서를 바꾸면 tests/frontend/facemarket-id-capture.test.mjs
    가 깨진다.
+
+   autoPaused(최종리뷰 I2b): camera 모드 자동 촬영이 서버를 계속 두드리지 않게 막는
+   일시정지 플래그다. 업로드가 실패하면(마스킹 실패든 qc_unavailable 같은 일시 오류든)
+   true 가 되어 IdCameraCapture 의 ~10fps 판정 루프를 멈춘다 — 안 멈추면 사용자가 카드를
+   계속 들고 있는 것만으로 ~1초마다 얼굴 인식(YuNet+SFace)이 서버에서 다시 돈다
+   (2026-08-26 이벤트루프 정지의 부하 프로파일과 같다). 수동 셔터는 이 플래그를 보지
+   않는다(disabled 는 여전히 busy 로만 결정) — 자동은 편의이지 관문이 아니라는 원칙이라,
+   막힌 건 자동뿐이어야 한다. 새 시도가 시작되면(자동이든 수동이든 uploadMasked 진입
+   시점에) 다시 false 로 풀린다 — "사용자가 뭔가 했다"는 신호이기 때문이다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { uploadIdDocument } from '@/lib/api/facemarket.js';
@@ -73,6 +87,9 @@ const MANUAL_MASK_AFTER = 3;
 const CAMERA_UNAVAILABLE_MESSAGES = {
   permission: '카메라 권한이 없어서 촬영할 수 없어요. 사진을 선택해서 올려 주세요.',
   unsupported: '이 브라우저에서는 카메라 촬영을 지원하지 않아요. 사진을 선택해서 올려 주세요.',
+  // getUserMedia 는 성공했지만 사용자가 스스로 파일 선택으로 옮긴 경우(최종리뷰 I2a) —
+  // "권한이 없어서"·"지원하지 않아서" 라고 하면 거짓 원인을 알려주는 셈이라 따로 둔다.
+  choice: '사진을 선택해서 올려 주세요.',
 };
 const MANUAL_FALLBACK_MESSAGE = '자동 마스킹이 계속 인식되지 않았어요. 사진 위에서 가릴 위치를 직접 옮겨 주세요.';
 
@@ -86,6 +103,8 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
   const [localError, setLocalError] = useState('');
   const [mode, setMode] = useState('camera');
   const [cameraUnavailableReason, setCameraUnavailableReason] = useState(null);
+  // 자동 촬영 일시정지(최종리뷰 I2b) — 위 파일 top 주석 참고.
+  const [autoPaused, setAutoPaused] = useState(false);
 
   // imageRef: drawImage 소스이자 naturalWidth/Height 출처(file·manual 전용). canvasRef:
   // 화면에 안 보이는 스크래치 캔버스 — submit 시점에만 실제로 그려지고 그 즉시 blob 으로
@@ -165,6 +184,10 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
   // 그 결과만 올린다.
   const uploadMasked = useCallback(async (blob, docType) => {
     setLocalError('');
+    // 새 시도가 시작됐다 — 자동이든(게이트가 열려 있었다는 뜻) 수동이든(사용자가 직접
+    // 셔터를 눌렀다는 뜻) "사용자가 뭔가 했다"는 신호이므로 이전 실패로 걸린 일시정지를
+    // 먼저 푼다(최종리뷰 I2b). 이번 시도도 실패하면 아래 catch 가 다시 세운다.
+    setAutoPaused(false);
     // burnGuideMask 도 buildMaskedBlob 도 canvas.toBlob(resolve, …) 으로 끝난다 — toBlob 은
     // 인코더가 실패하면 reject 가 아니라 null 을 resolve 한다(MDN 명세). null 을 그대로
     // 올리면 이 시도 자체가 낭비되고 서버는 "빈 파일"이라는 알아듣기 힘든 에러만 돌려준다.
@@ -204,6 +227,14 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
       // qc_unavailable·얼굴 인식 사유 등)는 마스킹 문제가 아니므로 스트라이크에 안 세고
       // 메시지만 보여준다 — 재촬영한다고 나아지지 않는 실패를 마스킹 실패로 취급하면
       // 엉뚱하게 수동 모드로 떨어진다.
+      //
+      // 409(위에서 이미 return)를 뺀 모든 실패에서 자동 촬영을 멈춘다(최종리뷰 I2b) —
+      // 마스킹 실패든 storage_unavailable·qc_unavailable 같은 일시 오류든, 사용자가
+      // 에러 문구를 읽는 동안에도 카드를 든 손은 그대로라 자동 판정 게이트가 ~1초
+      // 안에 다시 열린다. 그대로 두면 실패마다 얼굴 인식(YuNet+SFace)이 서버에서 계속
+      // 돈다(2026-08-26 이벤트루프 정지와 같은 부하 프로파일). 수동 셔터는 이 플래그의
+      // 영향을 받지 않는다 — 자동만 멈추고 수동은 항상 살아 있어야 한다.
+      setAutoPaused(true);
       setLocalError(error?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
       onError?.(error);
     } finally {
@@ -221,6 +252,17 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
   // 문구를 고르는 데만 쓴다(그 외 동작 차이는 없다 — 둘 다 결국 "사진을 선택해 주세요").
   const handleCameraUnavailable = useCallback((reason) => {
     setCameraUnavailableReason(reason);
+    setMode('file');
+  }, []);
+
+  // 카메라가 멀쩡히 켜져도 결과물을 못 쓰는 경우가 있다 — 렌즈 얼룩, 기기가 후면
+  // facingMode 힌트를 무시하고 전면 카메라를 잡는 경우, 이미 스캔본을 갖고 있는 경우
+  // (최종리뷰 I2a). 지금까지 file 모드로 가는 길은 handleCameraUnavailable(기술적
+  // 실패) 아니면 3연속 id_mask_not_applied(shadow/off 에선 서버가 절대 안 준다) 뿐이라,
+  // 카메라가 "작동은 하지만 못 쓰겠는" 사용자에겐 사실상 탈출구가 없었다. 사용자가
+  // 직접 파일 선택으로 넘어갈 수 있는 버튼을 하나 둔다.
+  const switchToFile = useCallback(() => {
+    setCameraUnavailableReason('choice');
     setMode('file');
   }, []);
 
@@ -294,8 +336,15 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
             onCaptured={handleCameraCaptured}
             onUnavailable={handleCameraUnavailable}
             busy={busy}
+            paused={autoPaused}
           />
           {localError && <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {localError}</p>}
+          {/* 카메라가 작동은 하지만 못 쓰겠는 사용자를 위한 탈출구(최종리뷰 I2a) —
+              지금까지는 getUserMedia 실패나 3연속 서버 거절(shadow/off 에선 오지 않는다)
+              뿐이라 사실상 닫혀 있었다. */}
+          <button type="button" className={s.backLink} disabled={busy} onClick={switchToFile}>
+            사진을 선택해서 올릴게요
+          </button>
         </>
       ) : (
         <>

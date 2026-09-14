@@ -575,6 +575,31 @@ test('카메라 권한이 없으면(onUnavailable) 실제로 file 모드로 내�
   }
 });
 
+test('카메라가 멀쩡히 작동해도 사용자가 직접 파일 선택으로 넘어갈 수 있다(최종리뷰 I2a)', async () => {
+  // 잡는 회귀: 지금까지 file 모드로 가는 길은 onUnavailable(getUserMedia 실패)뿐이었다
+  // — 렌즈가 흐리거나 전면 카메라를 잡는 등 "카메라는 켜지지만 못 쓰겠는" 사용자는
+  // shadow/off 에선 서버가 id_mask_not_applied 를 3연속 주지도 않으니 탈출구가 없었다.
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.ok(findCameraNode(tree), '카메라가 살아 있어야 한다');
+    const switchButton = findTree(tree, (node) => node.type === 'button'
+      && collectText(node).includes('사진을 선택해서 올릴게요'));
+    assert.ok(switchButton, '카메라 화면에서 파일 선택으로 넘어가는 사용자 조작 버튼을 찾을 수 없다');
+    switchButton.props.onClick();
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree), null, '눌렀으면 실제로 카메라 화면이 사라지고 file 화면이어야 한다');
+    assert.equal(harness.runtime.states[7], 'file', 'mode 상태가 실제로 file 로 바뀌어야 한다');
+    assert.doesNotMatch(
+      collectText(tree),
+      /권한이 없어서|지원하지 않아요/,
+      '기술적 실패가 아니라 사용자가 스스로 고른 것이므로 거짓 원인을 보여주면 안 된다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
 test('빈 blob(toBlob 인코딩 실패)은 올리지 않고 다시 찍으라고 안내한다', async () => {
   const uploads = [];
   const harness = await stepHarness({
@@ -734,6 +759,44 @@ test('업로드 중엔 busy 가 IdCameraCapture 로 전달돼 자동/수동 셔�
     await pending;
     tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
     assert.equal(findCameraNode(tree).props.busy, false, '업로드가 끝나면 busy 를 풀어야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('업로드 실패 뒤엔 자동 촬영을 멈추고, 새 시도가 시작되면 다시 연다(최종리뷰 I2b)', async () => {
+  // 잡는 회귀: 실패해도 아무것도 안 멈추면, 사용자가 에러 문구를 읽는 동안에도 카드를
+  // 든 손은 그대로라 자동 판정 게이트(~5프레임 ≈ 0.5초)가 곧 다시 열려 서버(얼굴 인식)를
+  // 계속 두드리게 된다.
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('얼굴 검사를 지금 수행할 수 없습니다.'), {
+          status: 503, code: 'qc_unavailable',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.paused, false, '실패 전엔 자동 촬영이 멈춰 있으면 안 된다');
+
+    await findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(
+      findCameraNode(tree).props.paused,
+      true,
+      '업로드가 실패하면 자동 촬영을 멈춰야 한다 — 안 그러면 사용자가 가만히 있어도 서버를 계속 두드린다',
+    );
+    assert.equal(findCameraNode(tree).props.busy, false, 'paused 는 busy 와 별개다 — 수동 셔터는 여전히 살아 있어야 한다');
+
+    // 새 시도(자동 게이트가 다시 열려서든, 수동 셔터를 눌러서든)가 시작되면 "사용자가
+    // 뭔가 했다"는 신호이므로 곧바로 풀린다 — 이 시도가 또 실패하면 catch 가 다시 세운다.
+    const pending = findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.paused, false, '새 시도가 시작되는 즉시(업로드 응답을 기다리지 않고) 풀려야 한다');
+    await pending;
   } finally {
     await harness.close();
   }

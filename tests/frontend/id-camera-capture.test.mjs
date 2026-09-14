@@ -79,3 +79,41 @@ test('가이드 오버레이는 비디오 전용 래퍼 안에만 있다 — 다
   assert.ok(!/s\.error/.test(wrapper), '캡처 에러 문단은 래퍼 밖에 있어야 한다');
   assert.ok(!/showManualHint/.test(wrapper), '15초 힌트 문단은 래퍼 밖에 있어야 한다');
 });
+
+test('paused 는 자동 판정 루프만 멈추고 수동 셔터는 막지 않는다(최종리뷰 I2b)', () => {
+  // 부모(IdDocumentStep)가 업로드 실패 뒤 세우는 일시정지 신호 — ~10fps 판정 루프
+  // 안에서 확인해야 한다. 자동은 편의이지 관문이 아니므로 수동 셔터의 disabled 는
+  // 여전히 busy 로만 결정돼야 한다(paused 로 잠기면 안 된다).
+  const intervalStart = code.indexOf('setInterval(');
+  assert.ok(intervalStart >= 0, '판정 루프(setInterval)를 찾을 수 없다');
+  const guardWindow = code.slice(intervalStart, intervalStart + 400);
+  assert.match(
+    guardWindow,
+    /pausedRef\.current/,
+    '판정 루프 초입에서 pausedRef 를 확인해야 업로드 실패 뒤 자동 촬영이 멈춘다',
+  );
+  assert.ok(
+    !/disabled=\{[^}]*paused/.test(code),
+    '수동 셔터가 paused 로도 잠기면 "자동은 편의이지 관문이 아니다"라는 이 파일의 원칙이 깨진다',
+  );
+});
+
+test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시 계산한다(최종리뷰 I3)', () => {
+  // 브라우저는 video 트랙의 실제 프레임 크기가 바뀌면(가장 흔한 경우가 세로→가로 회전)
+  // <video> 에 resize 를 쏘지 loadedmetadata 를 다시 쏘지 않는다. 이 리스너가 없으면
+  // frameSize 가 낡아 가이드(화면에 그리는 박스)와 capture() 가 실제로 마스킹하는
+  // 박스(video.videoWidth/Height 기준)가 어긋난다 — R10a/R13 이 이미 두 번 고친 결함이
+  // 세 번째 문으로 들어오는 것이다.
+  assert.match(code, /addEventListener\('loadedmetadata'/, 'loadedmetadata 리스너가 있어야 한다');
+  assert.match(
+    code,
+    /addEventListener\('resize'/,
+    'resize 리스너가 없으면 회전 뒤 가이드와 실제 마스킹 좌표가 어긋난다',
+  );
+  assert.match(code, /removeEventListener\('loadedmetadata'/, 'loadedmetadata 리스너를 정리해야 한다');
+  assert.match(
+    code,
+    /removeEventListener\('resize'/,
+    'resize 리스너도 같은 클린업에서 정리해야 한다 — 안 하면 언마운트 뒤에도 setFrameSize 가 불릴 수 있다',
+  );
+});
