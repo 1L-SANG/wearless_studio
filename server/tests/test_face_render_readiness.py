@@ -35,8 +35,8 @@ class _Pipe:
 def fresh(monkeypatch):
     monkeypatch.setattr(svc, "TOKEN", TOKEN)
     monkeypatch.setattr(svc, "PRELOAD_LORA", None)
-    monkeypatch.setattr(svc, "_state", {"lora": None, "backend": None, "base": None,
-                                        "loaded_at": None, "renders": 0})
+    # 키를 손으로 적지 않는다 — 서비스가 정하는 초기 상태를 그대로 쓴다(키가 갈라지면 healthz 가 죽는다).
+    monkeypatch.setattr(svc, "_state", svc.initial_state())
     loads = []
 
     def fake_load_base(model_id, device, **kw):

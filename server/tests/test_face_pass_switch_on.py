@@ -196,7 +196,7 @@ def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=Tr
     class _Adapter:
         enabled = autoscale
 
-    async def fake_backend(_pool):
+    async def fake_backend(_pool, model_id=None):
         return "https://pod-8000.proxy.runpod.net/render" if has_pod else None
 
     monkeypatch.setattr(facemarket, "get_conn", fake_conn)

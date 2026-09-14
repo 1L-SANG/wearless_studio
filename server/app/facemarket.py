@@ -3361,7 +3361,7 @@ async def face_render_status(
         from .agents import face_identity, identity_source
 
         pool = getattr(request.app.state, "pool", None)
-        backend = await identity_source.active_face_backend_url(pool) if pool else None
+        backend = await identity_source.active_face_backend_url(pool, model_id) if pool else None
         if backend:
             health = (backend[: -len("/render")] if backend.endswith("/render") else backend) + \
                 ("" if backend.endswith("/healthz") else "/healthz")
