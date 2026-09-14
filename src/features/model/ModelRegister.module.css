@@ -67,6 +67,10 @@
 .slotHint { font-size: 11px; line-height: 1.5; color: var(--bg-1); background: var(--fg-1); border-radius: 8px; padding: 4px 8px; margin-top: 4px; }
 .tapLabel { display: none; font-size: 10px; font-weight: 400; margin-top: 2px; }
 .removePhoto { position: absolute; right: 4px; bottom: 4px; width: 36px; height: 36px; border-radius: 50%; background: var(--bg-1); color: var(--fg-1); font-size: 20px !important; line-height: 1; border: 1px solid var(--ring-strong); }
+/* 지우기 버튼(36px)은 그대로 두고 손끝 히트박스만 44px 로 넓힌다. 원을 직접 키우면
+   `.filled .slotBottom { right: 40px }`(36px 버튼 + 4px 오프셋에 맞춘 값) 이 겹쳐
+   모서리 배지 자리를 다시 침범한다 — 안 보이는 ::after 로만 늘린다. */
+.removePhoto::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 .bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .bodyCard { position: relative; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
 .bodyCard.selected { border-color: var(--fg-1); box-shadow: 0 0 0 1px var(--fg-1); }
@@ -79,7 +83,13 @@
 .categoryRow + .categoryRow { border-top: 1px solid var(--fm-line); }
 .categoryRow p { font-size: 14px; color: var(--fm-muted); margin-top: 4px; }
 .categoryNote { grid-column: 1 / -1; padding-top: 7px; }
-.switch { width: 46px; height: 28px; border-radius: 99px; background: var(--fm-line); padding: 4px; border: 0; }
+.switch { position: relative; width: 46px; height: 28px; border-radius: 99px; background: var(--fm-line); padding: 4px; border: 0; }
+/* 알약 자체는 28px 로 고정(리뷰 끝난 크기라 키우지 않는다) — 손끝 히트박스만 44px 로
+   넓힌다. 폭은 이미 46px(.categoryRow 의 스위치 칸 폭과 같다)라 그대로 두고 높이만
+   위아래로 늘린다: align-items: center 로 행 안에서 가운데 있어 늘어난 8px 는 행의
+   위아래 패딩(19px, 모바일 17px) 안에 들어가 옆 행이나 아래 안내문(.categoryNote)을
+   침범하지 않는다. */
+.switch::after { content: ''; position: absolute; top: 50%; left: 50%; width: 46px; height: 44px; transform: translate(-50%, -50%); }
 .switch span { display: block; width: 20px; height: 20px; background: var(--bg-1); border-radius: 50%; }
 .switch[aria-checked='true'] { background: var(--fg-1); }
 .switch[aria-checked='true'] span { transform: translateX(18px); }
@@ -226,7 +236,7 @@
   line-height: 0;
 }
 
-.idPreviewImage { display: block; width: 100%; max-height: 60vh; object-fit: contain; }
+.idPreviewImage { display: block; width: 100%; max-height: 60dvh; object-fit: contain; }
 
 .idMaskBox {
   position: absolute;

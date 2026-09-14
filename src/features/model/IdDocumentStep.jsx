@@ -123,7 +123,7 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
       canvas.height = image.naturalHeight || image.height;
       // maskRatio 는 화면 <img> **엘리먼트 박스** 기준 비율이다(드래그가
       // getBoundingClientRect 로 정규화하고 오버레이도 그 박스의 %로 앉는다). 그런데
-      // .idPreviewImage 는 `object-fit: contain` + `max-height: 60vh` 라 세로로 긴 사진은
+      // .idPreviewImage 는 `object-fit: contain` + `max-height: 60dvh` 라 세로로 긴 사진은
       // 레터박스된다 — 그때 엘리먼트 박스 비율을 그대로 자연 픽셀에 곱하면 마스크가 엉뚱한
       // 곳에 찍히고 주민등록번호가 그대로 올라간다(최종리뷰 C3). 실제로 그려진 내용
       // 영역(contain 사각형)을 거쳐 자연 좌표로 옮긴다.
