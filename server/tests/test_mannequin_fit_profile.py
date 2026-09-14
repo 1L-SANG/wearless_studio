@@ -796,7 +796,7 @@ def test_prompt_golden_top_women_slim_long():
         product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
         analysis={"clothingType": "top", "targetGenders": ["women"]})
     golden = Path("tests/golden/mannequin_generate_top_women_slim_long.txt").read_text(encoding="utf-8")
-    assert prompt == golden
+    assert prompt == golden.rstrip("\n")
 
 
 @pytest.mark.parametrize("f", [None, "prompts/mannequin_generate_v1.ko.txt"])
@@ -832,7 +832,7 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
         assert "otherwise use appropriate layering, tuck, and proportion" not in prompt
         # round 3: 체형 볼륨(가슴·힙) 보존 강제(2026-07-30) — image 모델이 표준 마네킹으로
         # flatten 하는 걸 막는 critical rule.
-        assert "never flattens them" in prompt
+        assert "Do not amplify or cosmetically reshape it" in prompt
     else:
         assert "완전히 밖으로 빼서 입힌다" in prompt
         assert "끊김 없이 이어진 하나의 선" in prompt
@@ -840,7 +840,7 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
         assert "하프 턱" in prompt
         # 조건부 분기가 남아 있으면 실패시킨다
         assert "적절한 레이어링·턱·비율" not in prompt
-        assert "절대 평평하게 만들지 않는다" in prompt
+        assert "윤곽을 정확히 유지하고 과장하지 않는다" in prompt
 
 
 # ---------- 소매 기장 축 ----------

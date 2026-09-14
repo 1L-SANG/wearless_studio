@@ -140,7 +140,8 @@ def test_scored_provider_request_binds_assessment_to_actual_image(monkeypatch):
     from app.agents.gemini_image import InlineImage
     from conftest import make_settings
 
-    async def provider(settings, prompt, images, schema):
+    async def provider(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         assert 'product_risks' in schema['properties']
         assert set(schema['properties']['product_risks']['required']) == set(assessment()['product_risks'])
         assert images[-1].data == b'candidate'
@@ -161,7 +162,8 @@ def test_scored_provider_missing_report_preserves_known_signals_without_claiming
     from app.workers import mannequin_job as job
     from conftest import make_settings
 
-    async def provider(*args):
+    async def provider(*args, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         return {'verdict': 'pass', 'product_fidelity': 99, 'critical_errors': critical}, 'gemini'
 
     monkeypatch.setattr(image_qc, 'analyze_with_fallback', provider)

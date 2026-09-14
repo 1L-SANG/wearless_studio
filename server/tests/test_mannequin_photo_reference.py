@@ -113,7 +113,7 @@ def test_live_fresh_requests_use_photos_without_composition_guidance(monkeypatch
     assert "Material rendering guidance" not in call["prompt"]
     assert "두 개의 주머니" in call["prompt"]
     assert [image.data for image in call["images"]] == [b"base", *(slot.encode() for slot in slots)]
-    assert call["model"] == "gpt-image-2.5-flare"
+    assert call["model"] == "gpt-image-2.5-sunburst"
 
 
 def test_fresh_adjustment_fallback_keeps_declared_fit_and_photo_policy(monkeypatch):

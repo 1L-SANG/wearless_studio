@@ -108,19 +108,20 @@ def test_unavailable_matching_retry_cannot_erase_previously_confirmed_defect(mon
 
 
 def test_main_shadow_does_not_block_matching_repair_on_main_uncertainty(monkeypatch):
-    _, seen = run_worker(monkeypatch, mode='shadow', pants_mode='enforce',
-        generated=(b'first', b'second', b'final'), p2={
-            b'first': {**rated(), 'matching_critical_errors': ['wrong trousers']},
-            b'second': {**rated(), 'matching_critical_errors': ['wrong trousers']},
-            b'final': rated(color='uncertain')})
-    assert seen.puts == [b'final']
-    assert seen.image_calls == ['generate', 'generate', 'generate']
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
+        run_worker(monkeypatch, mode='shadow', pants_mode='enforce', captures=seen,
+            generated=(b'first', b'second', b'final'), p2={
+                b'first': {**rated(), 'matching_critical_errors': ['wrong trousers']},
+                b'second': {**rated(), 'matching_critical_errors': ['wrong trousers']},
+                b'final': rated(color='uncertain')})
+    assert seen.puts == []
 
 
 def test_shadow_main_risks_do_not_revert_observed_edit(monkeypatch):
     _, seen = run_worker(monkeypatch, mode='shadow', p2={
         b'before': rated(logo_graphic='critical'), b'after': rated(color='critical')})
-    assert seen.puts == [b'after']
+    assert seen.puts == [b'before']
 
 
 def test_final_pool_tradeoff_preserves_existing_candidate(monkeypatch):
@@ -131,16 +132,13 @@ def test_final_pool_tradeoff_preserves_existing_candidate(monkeypatch):
     assert seen.puts == [b'first']
 
 
-def test_final_repair_uses_original_inputs_not_failed_parent(monkeypatch):
-    from app.agents.gemini_image import InlineImage
+def test_final_repair_edits_failed_current_cut_with_original_inputs(monkeypatch):
     _, seen = run_worker(monkeypatch, has_match=False,
         generated=(b'first', b'second', b'final'), p2={
             b'first': rated(logo_graphic='critical'), b'second': rated(color='critical'),
-            b'final': rated()}, candidate_kwargs={
-            'generation_path': 'edit', 'parent_cut_img': InlineImage('image/png', b'parent'),
-            'adjust_directives': 'Adjust length to basic.'})
-    assert b'parent' in [i.data for i in seen.requests[0]['images']]
-    assert [i.data for i in seen.requests[-1]['images']] == [b'base', FRONT.data, DETAIL.data]
+            b'final': rated()})
+    assert [i.data for i in seen.requests[-1]['images']][:3] == [b'first', FRONT.data, DETAIL.data]
+    assert seen.requests[-1]['model'] == 'gpt-image-2.5-sunburst'
 
 
 @pytest.mark.parametrize('failure', ['lookup', 'storage', 'judge', 'empty_result', 'no_references'])

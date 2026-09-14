@@ -128,8 +128,8 @@ def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monk
     )
 
 
-def test_generation_budget_is_fixed_at_two_and_untuck_is_exempt(manifest_vars):
-    """일반 generation/QC 예산은 2 로 고정이다 — untuck 이 전용 슬롯로 분리됐기 때문.
+def test_first_generation_defaults_to_one_confirmed_repair_slot(manifest_vars):
+    """기본 최초 생성은 한 번이고, 확인된 결함만 별도 수정 슬롯을 쓴다.
 
     이 자리는 원래 "IMAGE_QC=enforce 면 MANNEQUIN_MAX_ATTEMPTS >= 3" 불변식이었다. 근거는
     편집 패스(untuck·fabric·bust)가 재시도와 예산을 공유해서, 2 로는 재시도 전에 소진된다는
@@ -146,14 +146,19 @@ def test_generation_budget_is_fixed_at_two_and_untuck_is_exempt(manifest_vars):
     """
     from app.config import Settings
 
-    assert manifest_vars.get("MANNEQUIN_MAX_ATTEMPTS") == "2", (
+    assert manifest_vars.get("MANNEQUIN_MAX_ATTEMPTS") == "1", (
         f"manifest MANNEQUIN_MAX_ATTEMPTS={manifest_vars.get('MANNEQUIN_MAX_ATTEMPTS')!r} — "
         "일반 생성/QC 예산은 2 고정이다. 올려서 untuck 기아를 가리지 말 것"
         " (untuck 은 이미 예산 밖 전용 슬롯이다)."
     )
-    assert Settings.__dataclass_fields__["mannequin_max_attempts"].default == 2, (
-        "dataclass 기본값이 manifest(2)와 어긋난다"
+    assert Settings.__dataclass_fields__["mannequin_max_attempts"].default == 1, (
+        "dataclass 기본값이 manifest(1)과 어긋난다"
     )
+    assert manifest_vars["MANNEQUIN_BUST_PASS"] == "off"
+    assert manifest_vars["MANNEQUIN_FABRIC_PASS"] == "off"
+    assert manifest_vars["MANNEQUIN_UNTUCK_PASS"] == "on"
+    assert manifest_vars["MANNEQUIN_UNTUCK_GATE"] == "on"
+    assert manifest_vars["MANNEQUIN_ADJUST_TIER"] == "image_mannequin"
 
 
 def test_dataclass_defaults_match_loader_defaults(monkeypatch):
@@ -405,6 +410,12 @@ def test_analysis_model_is_split_from_the_gating_qc_model(manifest_vars):
     QC 를 flash 로 내리거나(판정이 무뎌져 다른 옷 컷 출고).
     """
     assert manifest_vars["MODEL_ROUTING_TEXT_GEMINI_ANALYSIS"] != manifest_vars["MODEL_ROUTING_TEXT_GEMINI"]
+
+
+def test_m0_models_and_specialist_qc_match_approved_release(manifest_vars):
+    assert manifest_vars["MODEL_ROUTING_IMAGE_MANNEQUIN"] == "gpt-image-2.5-sunburst"
+    assert manifest_vars["MODEL_ROUTING_TEXT_GEMINI_ANALYSIS"] == "gemini-3.8-flash"
+    assert manifest_vars["MANNEQUIN_SPECIALIST_QC"] == "off"
 
 
 

@@ -1,5 +1,6 @@
 """Independent main-garment QC, with bounded evidence and no provider fallback."""
 import asyncio
+import copy
 import hashlib
 from io import BytesIO
 import json
@@ -14,9 +15,9 @@ from .image_qc import build_declared_fit_block
 from .product_reference import ProductReference
 from .prompts import build_mirrored_source_block, clean_text
 
-VERSION = "visible_garment_specialists_v1"
+VERSION = "visible_garment_flash_v2"
 ROLES = ("structure", "details", "appearance")
-_PROMPT = Path(__file__).resolve().parents[2] / "prompts/mannequin_specialist_qc_v1.txt"
+_PROMPT = Path(__file__).resolve().parents[2] / "prompts/mannequin_specialist_qc_flash_v2.txt"
 _KINDS = {
     "structure": ("family_change", "silhouette_change", "construction_change", "other"),
     "details": ("construction_change", "design_line_change", "closure_change", "pocket_change", "trim_change", "other"),
@@ -126,6 +127,17 @@ def validate_response(raw, images, role):
     return raw
 
 
+def request_schema(manifest):
+    schema = copy.deepcopy(SCHEMA)
+    properties = schema["properties"]["issues"]["items"]["properties"]
+    for key, kind in (("sourceEvidence", "source"), ("candidateEvidence", "candidate")):
+        properties[key] = copy.deepcopy(properties[key])
+        indices = [row["imageIndex"] for row in manifest if row["kind"] == kind]
+        properties[key]["properties"]["imageIndex"]["description"] = (
+            f"One-based {kind} image index. Valid indices: {indices}. Never use zero.")
+    return schema
+
+
 def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -136,12 +148,13 @@ def _within(outer, inner):
             round(x + inner[2] * (right-x), 5), round(y + inner[3] * (bottom-y), 5)]
 
 
-def _prepare(product_refs, candidate, clothing_type, match_image, fit_profile, role, source_mirrored=False):
+def _prepare(product_refs, candidate, clothing_type, match_image, fit_profile, role, source_mirrored=False,
+             product_evidence=None):
     family = "top" if clothing_type in ("top", "outer") else "bottom" if clothing_type in ("bottom", "pants", "skirt") else "whole"
     main_box = [0.15, 0.16, 0.85, 0.58] if family == "top" else [0.18, 0.40, 0.85, 0.96] if family == "bottom" else [0.15, 0.16, 0.85, 0.96]
     region = ({"structure": [0, 0, 1, .72], "details": [0, .10, 1, 1], "appearance": [.10, .18, .90, .92]}
               if family == "top" else {"structure": [0, 0, 1, 1], "details": [0, 0, 1, .62], "appearance": [.05, .18, .95, .90]})[role]
-    if family == "whole" and role == "details":
+    if role == "details":
         region = [0, .10, 1, 1]
     images, manifest = [], []
 
@@ -171,17 +184,28 @@ def _prepare(product_refs, candidate, clothing_type, match_image, fit_profile, r
     if not product_refs:
         raise ValueError("No source photographs")
     priority = {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3, "Fit": 4}
-    for ref in sorted(product_refs, key=lambda ref: priority.get(ref.slot, 5)):
+    preferred = {"structure": {"Front", "Back", "Fit"},
+                 "appearance": {"Front", "Detail"}}
+    selected = [ref for ref in product_refs if role not in preferred or ref.slot in preferred[role]]
+    selected = selected or list(product_refs)
+    for ref in sorted(selected, key=lambda ref: priority.get(ref.slot, 5)):
         slot = clean_text(ref.slot, 48) or "Unknown"
         append(ref.image, "source", f"Source {slot} photograph", slot=slot)
-    crop(1, region, f"Source {manifest[0]['slot']} generic {family} {role} region")
-    if match_image is not None:
-        append(match_image, "matching", "Matching garment identity reference ONLY; not a validated source")
+    if role == "details":
+        crop(1, region, f"Source {manifest[0]['slot']} generic {family} {role} region")
     candidate_index = append(candidate, "candidate", "Candidate whole full-body photograph")
     crop(candidate_index, main_box, f"Candidate generic {family} main garment region")
-    crop(candidate_index, _within(main_box, region), f"Candidate generic {family} {role} region")
     prompt = _PROMPT.read_text(encoding="utf-8")
     prompt += f"\nASSIGNED ROLE: {role}\n{_RESPONSIBILITIES[role]}\nAPPLICABLE CHECKLIST: {_CHECKLISTS[family][role]}\n"
+    if product_evidence is not None:
+        from . import mannequin_photo_structure, product_evidence_contract
+        verified = mannequin_photo_structure.from_analysis(
+            {product_evidence_contract.PERSISTED_KEY: product_evidence}, product_refs)
+        prompt += ("\nSOURCE FEATURES ALREADY RECORDED BY AG-01: Within your role, check each applicable "
+                   "recorded feature against the CANDIDATE, including low-contrast continuations. "
+                   "Verify the source observation against the source photographs; do not assume it is "
+                   "present in the candidate. Category wording alone is not a construction difference.\n"
+                   + mannequin_photo_structure.prompt_block(verified) + "\n")
     if role == "structure":
         prompt += build_declared_fit_block(fit_profile)
     if source_mirrored is True:
@@ -197,7 +221,8 @@ def _prepare(product_refs, candidate, clothing_type, match_image, fit_profile, r
 
 
 async def judge(settings, product_refs: list[ProductReference], generated_image: InlineImage,
-                *, clothing_type, fit_profile=None, match_image=None, source_mirrored=False) -> dict:
+                *, clothing_type, fit_profile=None, match_image=None, source_mirrored=False,
+                product_evidence=None) -> dict:
     """Three independent calls. An unavailable role yields review, never approval."""
     async def assess(role):
         metadata = {}
@@ -205,13 +230,17 @@ async def judge(settings, product_refs: list[ProductReference], generated_image:
         try:
             prompt, images, manifest = await run_cpu_bound(
                 _prepare, product_refs, generated_image, clothing_type, match_image, fit_profile, role,
-                source_mirrored)
+                source_mirrored, product_evidence)
+            schema = request_schema(manifest)
             result.update(images=manifest, prompt_hash=_sha(prompt.encode()),
-                          schema_hash=_sha(json.dumps(SCHEMA, sort_keys=True).encode()))
-            raw = await vision_llm._call_gpt(
-                settings, settings.mannequin_specialist_model, prompt, images, SCHEMA,
-                settings.mannequin_specialist_timeout_seconds, reasoning_effort="medium", image_detail="high",
-                max_completion_tokens=1800, metadata=metadata)
+                          schema_hash=_sha(json.dumps(schema, sort_keys=True).encode()))
+            if not str(settings.mannequin_specialist_model).startswith("gemini-"):
+                raise ValueError("Garment QC requires a Gemini model")
+            raw = await asyncio.wait_for(vision_llm._call_gemini(
+                settings, settings.mannequin_specialist_model, prompt, images, schema,
+                settings.mannequin_specialist_timeout_seconds,
+                thinking_level="low", max_output_tokens=2048, metadata=metadata),
+                timeout=settings.mannequin_specialist_timeout_seconds)
             result.update(response=validate_response(raw, manifest, role), status="ok")
         except Exception as error:
             result["error_type"] = type(error).__name__

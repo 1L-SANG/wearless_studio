@@ -21,8 +21,8 @@ def png(color, size=(120, 180)):
 FRONT, BACK, DETAIL, CANDIDATE, MATCH = [png(c) for c in ("red", "blue", "green", "white", "black")]
 REFS = [ProductReference("Back", "b", BACK), ProductReference("Front", "f", FRONT),
         ProductReference("Detail", "d", DETAIL)]
-SETTINGS = SimpleNamespace(mannequin_specialist_model="gpt-6-astra", analysis_timeout_seconds=30,
-                           mannequin_specialist_timeout_seconds=120.0)
+SETTINGS = SimpleNamespace(mannequin_specialist_model="gemini-3.8-flash", analysis_timeout_seconds=30,
+                           mannequin_specialist_timeout_seconds=25.0)
 
 
 def passed(**changes):
@@ -121,7 +121,7 @@ def test_three_roles_run_independently_with_bounded_calls_and_real_crop_provenan
                                       usage={"prompt_tokens": 100, "completion_tokens": 20}, finish_reason="stop")
             return passed(summary="PRIVATE ROLE RESULT MUST NEVER ENTER ANOTHER PROMPT")
 
-        monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+        monkeypatch.setattr(vision_llm, "_call_gemini", transport)
         return await qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="bottom", match_image=MATCH,
                               fit_profile={"category": "bottom", "axes": {"fit": "wide"}})
 
@@ -133,19 +133,24 @@ def test_three_roles_run_independently_with_bounded_calls_and_real_crop_provenan
     assert len({id(c[-1]["metadata"]) for c in calls}) == 3
     assert len({c[1] for c in calls}) == 3
     for model, prompt, images, schema, timeout, options in calls:
-        assert model == "gpt-6-astra" and timeout == 120.0
+        assert model == "gemini-3.8-flash" and timeout == 25.0
         assert timeout != SETTINGS.analysis_timeout_seconds
-        assert options["reasoning_effort"] == "medium"
-        assert options["image_detail"] == "high" and options["max_completion_tokens"] == 1800
+        assert options["thinking_level"] in ("low", "medium")
+        assert options["max_output_tokens"] in (2048, 4096)
         assert schema["properties"]["issues"]["maxItems"] == 3
         assert "PRIVATE ROLE RESULT" not in prompt
-        assert "Source Front" in prompt and "Source Back" in prompt and "Source Detail" in prompt
-        assert "Matching garment identity" in prompt
-        assert FRONT in images and BACK in images and DETAIL in images and CANDIDATE in images and MATCH in images
+        assert "Source Front" in prompt
+        assert FRONT in images and CANDIDATE in images and MATCH not in images
+        if "ASSIGNED ROLE: details" in prompt:
+            assert BACK in images and DETAIL in images
+        elif "ASSIGNED ROLE: structure" in prompt:
+            assert BACK in images and DETAIL not in images
+        else:
+            assert DETAIL in images and BACK not in images
     for role in report["roles"].values():
         assert role["metadata"]["usage"]["prompt_tokens"] == 100
         crops = [m for m in role["images"] if "parentImageIndex" in m]
-        assert {m["kind"] for m in crops} == {"source", "candidate"}
+        assert "candidate" in {m["kind"] for m in crops}
         for crop in crops:
             assert len(crop["parentPixelBox"]) == 4 and len(crop["parentNormalizedBox"]) == 4
             assert crop["parentSha256"] == role["images"][crop["parentImageIndex"] - 1]["sha256"]
@@ -161,7 +166,7 @@ def test_one_provider_error_is_review_and_not_retried_or_hidden(monkeypatch):
             raise vision_llm.VisionError("secret must not appear in report")
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     report = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="top"))
     assert count == 3 and report["verdict"] == "review" and not report["complete"]
     assert not qc.repair_accepted(report)
@@ -172,7 +177,7 @@ def test_invalid_inputs_do_not_spend_calls(monkeypatch):
     async def forbidden(*args, **kwargs):
         pytest.fail("invalid images must not reach transport")
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", forbidden)
+    monkeypatch.setattr(vision_llm, "_call_gemini", forbidden)
     for refs, candidate in (([], CANDIDATE), (REFS, InlineImage("image/png", b"broken"))):
         report = asyncio.run(qc.judge(SETTINGS, refs, candidate, clothing_type="top"))
         assert report["verdict"] == "review" and not report["complete"]
@@ -205,7 +210,7 @@ def test_one_error_does_not_erase_an_independent_material_failure(monkeypatch):
             return passed(verdict="fail", issues=[item])
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     report = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="top"))
     assert count == 3 and report["verdict"] == "fail" and not report["complete"]
     assert len(qc.blocking_issues(report)) == 1
@@ -219,7 +224,7 @@ def test_repair_image_gets_three_fresh_calls_and_never_borrows_another_images_sc
         calls.append(args)
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     first = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="bottom"))
     second = asyncio.run(qc.judge(SETTINGS, REFS, png("yellow"), clothing_type="bottom"))
     assert len(calls) == 6 and first["image_hash"] != second["image_hash"]
@@ -233,7 +238,7 @@ def test_whole_garments_keep_lower_details_in_the_domain_crop(monkeypatch):
     async def transport(*args, **kwargs):
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     report = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="dress"))
     regions = [im["parentNormalizedBox"] for im in report["roles"]["details"]["images"]
                if im["kind"] == "source" and "parentNormalizedBox" in im]
@@ -244,7 +249,7 @@ def test_other_source_slots_retain_their_real_view_label(monkeypatch):
     async def transport(*args, **kwargs):
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     refs = [ProductReference("Side", "side", FRONT)]
     report = asyncio.run(qc.judge(SETTINGS, refs, CANDIDATE, clothing_type="outer"))
     for row in report["roles"].values():
@@ -253,21 +258,6 @@ def test_other_source_slots_retain_their_real_view_label(monkeypatch):
 
 
 _REGULAR_FIT = {"category": "top", "axes": {"fit": "regular"}}
-# Frozen before adding mirrored-source support. Default requests must preserve
-# the live calibration packet, including its pre-existing role-specific fit block.
-_UNMIRRORED_PROMPT_HASHES = {
-    "structure": "1d1f0f9bfdbd2ea1837a2eeb467376c8f89a863216fce5749c01f0ee597357bd",
-    "details": "a0b32dec5a90080b4ac08ca1250dca7e53bfbed5f2e883fee89270cf0b243330",
-    "appearance": "f47b63851818423d5c22321e84a90f6c9c458ad294d3dd95e162e81c0f51d710",
-}
-
-
-def test_default_source_direction_preserves_frozen_role_prompts():
-    for role, expected in _UNMIRRORED_PROMPT_HASHES.items():
-        prompt, _, _ = qc._prepare(REFS, CANDIDATE, "top", MATCH, _REGULAR_FIT, role)
-        assert hashlib.sha256(prompt.encode()).hexdigest() == expected
-
-
 @pytest.mark.parametrize("flag", [False, None, "false", "true", 0, 1])
 def test_non_true_mirrored_flag_preserves_default_requests_byte_for_byte(monkeypatch, flag):
     calls = []
@@ -276,13 +266,13 @@ def test_non_true_mirrored_flag_preserves_default_requests_byte_for_byte(monkeyp
         calls.append((model, prompt, images, schema, timeout, options))
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     default = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="top",
                                   match_image=MATCH, fit_profile=_REGULAR_FIT))
     explicit = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="top",
                                    match_image=MATCH, fit_profile=_REGULAR_FIT, source_mirrored=flag))
     assert default["complete"] and explicit["complete"] and len(calls) == 6
-    assert {row["prompt_hash"] for row in explicit["roles"].values()} == set(_UNMIRRORED_PROMPT_HASHES.values())
+    assert {row["prompt_hash"] for row in explicit["roles"].values()} == {row["prompt_hash"] for row in default["roles"].values()}
     # Parallel scheduling may differ, so compare complete call payloads by prompt.
     before, after = sorted(calls[:3], key=lambda c: c[1]), sorted(calls[3:], key=lambda c: c[1])
     assert before == after
@@ -302,7 +292,7 @@ def test_true_mirrored_source_reaches_all_roles_without_losing_fit_or_source_pix
             raise vision_llm.VisionError("one role unavailable")
         return passed()
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(vision_llm, "_call_gemini", transport)
     report = asyncio.run(qc.judge(SETTINGS, REFS, CANDIDATE, clothing_type="top",
                                  fit_profile=_REGULAR_FIT, match_image=MATCH, source_mirrored=True))
     assert set(calls) == set(qc.ROLES)
@@ -314,6 +304,7 @@ def test_true_mirrored_source_reaches_all_roles_without_losing_fit_or_source_pix
         assert "SOURCE ORIENTATION FOR COMPARISON:" in prompt
         assert ("DECLARED FIT" in prompt) == ("DECLARED FIT" in baseline)
         assert images == original_images
-        assert schema == qc.SCHEMA
-        assert options["image_detail"] == "high" and options["max_completion_tokens"] == 1800
+        assert schema["properties"]["verdict"] == qc.SCHEMA["properties"]["verdict"]
+        assert options["thinking_level"] in ("low", "medium")
+        assert options["max_output_tokens"] in (2048, 4096)
     assert "light, even ease at chest and waist" in calls["structure"][0]

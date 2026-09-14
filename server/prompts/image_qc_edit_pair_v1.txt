@@ -1,0 +1,22 @@
+PAIRED EDIT ASSESSMENT.
+
+The original product sources keep their existing image numbers. Image ${beforeIndex} is BEFORE,
+the accepted current mannequin cut. Image ${afterIndex} is AFTER, the proposed edit.
+
+EDIT GOAL:
+${editGoal}
+
+Set target_resolved true only when AFTER visibly and exactly resolves that goal. Set
+protected_regions_unchanged true only when every region outside the requested axis preserves the
+BEFORE cut and remains consistent with the original product sources. A user-declared fit or length
+axis may change on that axis; it does not authorize waist or bust restyling, a different silhouette
+outside the target, or a different pose or matching garment.
+
+Reject unauthorized changes to garment color, rib or weave scale, pattern, material, seams,
+placket, exact closure and button count, fastening state, untargeted fit and silhouette, mannequin
+body, pose, framing, background, or matching garment. Small natural fold and lighting changes are
+acceptable when they are local consequences of the requested edit and do not change product
+identity. An invisible back, inner label, or occluded feature is not a missing design detail.
+
+regression_reasons contains short observed regressions only. Return an empty list when none exist.
+If either the target result or preservation cannot be observed, return false rather than guessing.

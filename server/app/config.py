@@ -46,11 +46,11 @@ class Settings:
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
     # 마네킹 생성과 사용자 조정 전용. 공유 image_high와 상세페이지 모델은 바꾸지 않는다.
-    model_image_mannequin: str = "gpt-image-2.5-flare"
+    model_image_mannequin: str = "gpt-image-2.5-sunburst"
     # 추가 전문 검사는 검증 후 명시적으로 켠다. 배포 manifest는 변경하지 않는다.
     mannequin_specialist_qc: str = "off"  # off | shadow | enforce
-    mannequin_specialist_model: str = "gpt-6-astra"
-    mannequin_specialist_timeout_seconds: float = 120.0
+    mannequin_specialist_model: str = "gemini-3.8-flash"
+    mannequin_specialist_timeout_seconds: float = 25.0
     mannequin_specialist_repair_model: str = "gpt-image-2.5-sunburst"
     # 시그니처 컷(상세페이지 첫 화면) 전용. gpt-image 계열은 gemini_image.py 가 OpenAI
     # images/edits 경로로 분기한다(:127) — 표기는 그 분기가 인식하는 그대로 둔다.
@@ -106,7 +106,7 @@ class Settings:
     # 평가)를 쓴다 — 실셀러 트래픽을 태우지 않고 같은 답을 얻는다.
     # 되돌리기: INPUT_CONSISTENCY=off (재배포 없이 env 만으로 즉시 무력화).
     input_consistency: str = "warn"  # off | warn
-    mannequin_tier: str = "image_mannequin"  # AG-04 전용 Flare, 다른 이미지 기능과 분리
+    mannequin_tier: str = "image_mannequin"  # AG-04 전용 Sunburst, 다른 이미지 기능과 분리
     # 조정(:regenerate) 전용 tier. 지정하면 초기 생성과 별도로 사용한다.
     # 빈 값의 편집 경로는 새 기본값이면 image_mannequin, 기존 설정이면 image_high를 쓴다.
     mannequin_adjust_tier: str = ""  # "" | image_mannequin | image_light | image_high
@@ -116,10 +116,9 @@ class Settings:
     detail_cut_image_size: str = ""  # ""=mannequin_image_size 상속 | 1K | 2K | 4K
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
-    #: 일반 generation/QC 호출 총 상한 — 최초 생성 포함 2회 고정(최초 + 재시도 1회).
-    #: untuck 은 이 예산 밖의 전용 post-pass 슬롯 1회다(2026-08-12 분리 — 공유 시절
-    #: attempt 소진 잡이 tuck 교정을 못 받았다). 3·5 등으로 올리지 않는다.
-    mannequin_max_attempts: int = 2
+    #: 기본 최초 생성은 1회. 확인된 결함은 현재 컷을 보존하는 별도 수정 슬롯으로
+    #: 다룬다. 운영자가 명시한 더 큰 값은 하위 호환으로 계속 지원한다.
+    mannequin_max_attempts: int = 1
     # 상세페이지 컷 생성 재시도 횟수(1 = 재시도 없음). 일시적 실패로 빈 슬롯이 나는 것을
     # 줄인다 — 실패 컷은 미차감이라 재시도 비용은 성공했을 때만 발생한다.
     detail_cut_max_attempts: int = 2
@@ -232,14 +231,14 @@ class Settings:
     # 가슴 2패스와 같은 규약: 기본 off 로 두고 실측 확인 뒤 켠다.
     mannequin_fabric_pass: str = "off"  # off | on
     # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
-    # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
-    # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
-    mannequin_untuck_pass: str = "off"  # off | on
+    # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). 현재는 확정 tucked 판정이
+    # 공유 임계 이상일 때만 원본 근거를 첨부한 수정을 1회 허용한다.
+    mannequin_untuck_pass: str = "on"  # off | on
     # untuck 사전 게이트(2026-08-19 오너 승인) — 편집 콜(40~60초·$0.14) 전에 값싼 판정
-    # (3~5초·~$0.01)으로 "이미 빠져 있나"를 묻고, **확신에 찬 untucked 만** 편집을 스킵한다.
-    # tucked/unclear/판정실패는 전부 기존 동작(무조건 편집)으로 — 검출 불안정 이력
+    # (3~5초·~$0.01)으로 tuck 여부를 묻고, **확신에 찬 tucked 만** 편집을 허용한다.
+    # tucked가 공유 임계 이상일 때만 편집. unclear·판정실패·off는 스킵.
     # (mannequin_untuck 모듈 주석) 때문에 "tuck 놓침" 방향으론 게이트에 권한이 없다.
-    mannequin_untuck_gate: str = "off"  # off | on
+    mannequin_untuck_gate: str = "on"  # off | on
     # 게이트 전용 판정 모델. "" 면 정본 텍스트 모델(model_text_gemini) 그대로 —
     # AG-08 features 분기와 같은 패턴. 스킵률·오탐 관측 후 flash-lite 강등을 별도 결정.
     mannequin_untuck_gate_model: str = ""
@@ -502,6 +501,15 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     return v if v in allowed else default
 
 
+def _default_on_flag(env: str) -> str:
+    """미설정은 on, 명시적 off는 존중하고 오타는 편집 불가 안전값으로 눕힌다."""
+    raw = os.getenv(env)
+    if raw is None:
+        return "on"
+    value = raw.strip().lower()
+    return value if value in {"off", "on"} else "off"
+
+
 def _build_sha() -> str | None:
     """이 이미지가 어느 커밋으로 빌드됐는가 — CI 가 배포 직전에 server/BUILD_SHA 에 쓴다.
 
@@ -529,10 +537,10 @@ def _int_env(env: str, default: int) -> int:
 
 def _specialist_timeout() -> float:
     try:
-        value = float(os.getenv("MANNEQUIN_SPECIALIST_TIMEOUT_SECONDS", "120"))
+        value = float(os.getenv("MANNEQUIN_SPECIALIST_TIMEOUT_SECONDS", "25"))
     except ValueError:
-        return 120.0
-    return min(180.0, max(15.0, value)) if math.isfinite(value) else 120.0
+        return 25.0
+    return min(60.0, max(10.0, value)) if math.isfinite(value) else 25.0
 
 
 def _optional_float_env(env: str) -> float | None:
@@ -596,9 +604,9 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
-        model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare",
+        model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         mannequin_specialist_qc=_flag("MANNEQUIN_SPECIALIST_QC", "off", {"off", "shadow", "enforce"}),
-        mannequin_specialist_model=(os.getenv("MANNEQUIN_SPECIALIST_MODEL") or "gpt-6-astra").strip() or "gpt-6-astra",
+        mannequin_specialist_model=(os.getenv("MANNEQUIN_SPECIALIST_MODEL") or "gemini-3.8-flash").strip() or "gemini-3.8-flash",
         mannequin_specialist_timeout_seconds=_specialist_timeout(),
         mannequin_specialist_repair_model=(os.getenv("MANNEQUIN_SPECIALIST_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
@@ -622,7 +630,7 @@ def load_settings() -> Settings:
         mannequin_image_size=_image_size(),
         detail_cut_image_size=_detail_cut_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
-        mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
+        mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "1")),
         detail_cut_max_attempts=int(os.getenv("DETAIL_CUT_MAX_ATTEMPTS", "2")),
         detail_cut_retry_delay_seconds=float(os.getenv("DETAIL_CUT_RETRY_DELAY_SECONDS", "2")),
         detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
@@ -633,8 +641,8 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
-        mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
-        mannequin_untuck_gate=_flag("MANNEQUIN_UNTUCK_GATE", "off", {"off", "on"}),
+        mannequin_untuck_pass=_default_on_flag("MANNEQUIN_UNTUCK_PASS"),
+        mannequin_untuck_gate=_default_on_flag("MANNEQUIN_UNTUCK_GATE"),
         mannequin_untuck_gate_model=os.getenv("MANNEQUIN_UNTUCK_GATE_MODEL", ""),
         mannequin_bust_gate=_flag("MANNEQUIN_BUST_GATE", "off", {"off", "on"}),
         mannequin_bust_gate_model=os.getenv("MANNEQUIN_BUST_GATE_MODEL", ""),

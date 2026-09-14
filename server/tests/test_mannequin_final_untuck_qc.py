@@ -25,14 +25,17 @@ DETAIL = InlineImage("image/png", b"seller-detail")
 MATCHING = InlineImage("image/png", b"matching-bottom")
 
 
-def scored(value, *, critical=(), matching_critical=()):
+def scored(value, *, critical=(), matching_critical=(), target=True, protected=True,
+           regressions=()):
     return image_qc.validate({
         "verdict": "pass", "mismatches": [], "correctionPrompt": None,
         "product_fidelity": value, "physical_naturalness": value,
         "image_quality": value, "series_consistency": None,
         "critical_errors": list(critical), "matching_fidelity": 99,
         "matching_critical_errors": list(matching_critical),
-    }, scored=True, matching=True)
+        "target_resolved": target, "protected_regions_unchanged": protected,
+        "regression_reasons": list(regressions),
+    }, scored=True, matching=True, paired=True)
 
 
 def series(value):
@@ -46,10 +49,12 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
     pending = list(generated)
     captures = captures or SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
     captures.requests = []
+    captures.pairs = []
+    captures.pair_options = []
 
     class Provider:
         async def generate_content_image(self, model, prompt, images, size, **kwargs):
-            bust = "BUST SIZE" in prompt
+            bust = "confirmed under-rendering" in prompt
             untuck = not bust and "unbroken visible line" in prompt
             captures.image_calls.append("bust" if bust else "untuck" if untuck else "generate")
             captures.prompts.append(prompt)
@@ -67,7 +72,15 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
         assert source_images == [FRONT, DETAIL]
         assert kwargs["scored"] is True
         assert kwargs["fit_profile"] == PROFILE
-        assert kwargs["match_image"] == (MATCHING if pants_mode != "off" and has_match else None)
+        expected_match = MATCHING if has_match and pants_mode != "off" else None
+        assert kwargs["match_image"] == expected_match
+        if kwargs.get("before_image") is not None:
+            assert kwargs["edit_goal"]
+            captures.pairs.append((kwargs["before_image"].data, candidate.data))
+            captures.pair_options.append({
+                "source_mirrored": kwargs.get("source_mirrored"),
+                "match_is_custom": kwargs.get("match_is_custom"),
+            })
         captures.judged.append(candidate.data)
         response = p2[candidate.data]
         if isinstance(response, Exception):
@@ -83,6 +96,12 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
         captures.events.append(deepcopy(payload))
 
     monkeypatch.setattr(job.image_qc, "verdict", judge)
+    async def untuck_gate(*args, **kwargs):
+        return {"verdict": "tucked", "confidence": 0.95}
+    async def bust_gate(*args, **kwargs):
+        return {"verdict": "insufficient", "confidence": 0.95}
+    monkeypatch.setattr(job.mannequin_untuck, "judge_gate", untuck_gate)
+    monkeypatch.setattr(job.mannequin_bust, "judge_gate", bust_gate)
     monkeypatch.setattr(job, "_apply_series_qc", judge_series)
     monkeypatch.setattr(job, "_emit", emit)
     monkeypatch.setattr(job.qc, "evaluate_mannequin_qc", lambda _: QcResult("pass", [], {}))
@@ -91,8 +110,8 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
     settings = make_settings(**{
         **dict(
         r2_bucket="bucket", image_qc=mode, mannequin_axis_qc="off",
-        mannequin_max_attempts=2, mannequin_bust_pass=bust_pass, mannequin_bust_gate="off", mannequin_fabric_pass="off",
-        mannequin_untuck_pass="on", mannequin_untuck_gate="off", mannequin_pants_qc=pants_mode,
+        mannequin_max_attempts=2, mannequin_bust_pass=bust_pass, mannequin_bust_gate="on", mannequin_fabric_pass="off",
+        mannequin_untuck_pass="on", mannequin_untuck_gate="on", mannequin_pants_qc=pants_mode,
         qc_edit_regression_margin=10),
         **(settings_overrides or {}),
     })
@@ -132,6 +151,31 @@ def test_bad_final_edit_rolls_back_image_and_scores_together(monkeypatch, post):
     assert seen.image_calls == ["generate", "untuck"]
 
 
+@pytest.mark.parametrize("post", [
+    scored(99, target=False),
+    scored(99, protected=False, regressions=("rib scale changed",)),
+])
+def test_higher_score_cannot_override_unresolved_or_regressed_pair(monkeypatch, post):
+    result, seen = run_worker(monkeypatch, p2={b"before": scored(80), b"after": post})
+    assert seen.puts == [b"before"]
+    assert result["qc_scores"]["product_fidelity"] == 80
+
+
+def test_untuck_request_includes_current_cut_original_sources_and_matching(monkeypatch):
+    _, seen = run_worker(
+        monkeypatch, p2={b"before": scored(90), b"after": scored(92)},
+        pants_mode="shadow",
+        candidate_kwargs={"match_is_custom": True, "source_mirrored": True})
+    request = seen.requests[-1]
+    assert request["model"] == "gpt-image-2.5-sunburst"
+    assert [image.data for image in request["images"]][:4] == [
+        b"before", FRONT.data, DETAIL.data, MATCHING.data]
+    assert "2x2 contact sheet" in seen.prompts[-1]
+    assert "MIRRORED SOURCE PHOTOS" in seen.prompts[-1]
+    assert seen.pair_options[-1] == {
+        "source_mirrored": True, "match_is_custom": True}
+
+
 def test_small_score_drop_keeps_successful_edit(monkeypatch):
     result, seen = run_worker(monkeypatch, p2={b"before": scored(80), b"after": scored(76)})
     assert seen.puts == [b"after"]
@@ -168,9 +212,9 @@ def test_unchanged_image_needs_no_additional_checks(monkeypatch, has_match, afte
 
 
 def test_disabled_main_qc_is_not_enabled_by_final_edit(monkeypatch):
-    result, seen = run_worker(monkeypatch, p2={}, mode="off")
+    result, seen = run_worker(monkeypatch, p2={b"after": scored(95)}, mode="off")
     assert seen.puts == [b"after"]
-    assert seen.judged == []
+    assert seen.judged == [b"after"]
     assert result["qc_scores"] is None
 
 
@@ -211,8 +255,8 @@ def test_new_final_judgment_stays_observational_in_shadow(monkeypatch):
     result, seen = run_worker(monkeypatch, mode="shadow", p2={
         b"before": RuntimeError("initial unavailable"),
         b"after": scored(95, critical=["invented panel seam"])})
-    assert seen.puts == [b"after"]
-    assert result["qc_scores"]["critical_errors"] == ["invented panel seam"]
+    assert seen.puts == [b"before"]
+    assert result["qc_scores"] is None
 
 
 def test_new_final_series_pass_is_not_rejected_for_missing_baseline(monkeypatch):

@@ -130,6 +130,20 @@ def test_prompt_block_names_exact_order_hashes_and_same_call_contract():
     assert "additional output from this same AG-01 call" in prompt
 
 
+def test_prompt_block_prioritizes_visible_construction_without_inventing_answers():
+    prompt = pec.render_prompt_block(_binding())
+    normalized = " ".join(prompt.split())
+
+    assert "record closure count separately from closure function" in normalized
+    assert "Keep boundary count distinct from parallel stitch rows" in normalized
+    assert "do not bridge an occlusion by symmetry or expectation" in normalized
+    assert "Do not infer that a feature is absent merely because it is hidden" in normalized
+    assert "back-only detail must remain back-only" in normalized
+    assert "This does not mean every broad shoulder is sleeveless" in normalized
+    assert "Unsupported worn fit remains an uncertainty" in normalized
+    assert "EXPERIMENT-ONLY PROPOSAL" not in prompt
+
+
 def test_validate_binds_only_server_metadata_and_derives_front_authority():
     contract = pec.validate_and_bind(_raw(), _binding())
     assert contract["direction"] == "front"

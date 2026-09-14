@@ -30,9 +30,7 @@ def setup(monkeypatch, assessments):
         value = assessments[candidate.data]
         if isinstance(value, Exception): raise value
         return value
-    async def source(*args): return {"family": "top", "attributes": [], "uncertainties": []}
     monkeypatch.setattr(worker.mannequin_specialist_qc, "judge", judge)
-    monkeypatch.setattr(worker.mannequin_photo_structure, "analyze", source)
     monkeypatch.setattr(worker.mannequin_photo_structure, "prepare", lambda refs: list(refs))
     return seen
 
@@ -41,7 +39,7 @@ def test_specialist_feature_is_off_unless_explicitly_enabled():
     assert make_settings().mannequin_specialist_qc == "off"
 
 
-@pytest.mark.parametrize("raw,expected", [("nan", 120), ("bad", 120), ("0", 15), ("500", 180), ("90", 90)])
+@pytest.mark.parametrize("raw,expected", [("nan", 25), ("bad", 25), ("0", 10), ("500", 60), ("40", 40)])
 def test_specialist_wait_budget_is_separate_and_bounded(monkeypatch, raw, expected):
     from app import config
     monkeypatch.setenv("MANNEQUIN_SPECIALIST_TIMEOUT_SECONDS", raw)
@@ -94,7 +92,7 @@ def test_shadow_defect_is_observed_without_repair(monkeypatch):
 def test_specialist_only_mode_can_store_its_own_checked_result(monkeypatch):
     setup(monkeypatch, {b"before": report(b"before", "fail"), b"repaired": report(b"repaired")})
     result, captures = run_worker(monkeypatch, mode="off", has_match=False,
-        generated=(b"before", b"repaired"), p2={},
+        generated=(b"before", b"repaired"), p2={b"repaired": rated()},
         settings_overrides={"mannequin_specialist_qc": "enforce"})
     assert captures.puts == [b"repaired"]
     assert result["qc_scores"]["specialist_qc"]["image_hash"] == hashlib.sha256(b"repaired").hexdigest()
@@ -109,15 +107,34 @@ def test_wrong_image_assessment_cannot_approve_storage(monkeypatch):
     assert captures.puts == [] and len(captures.requests) == 1
 
 
-def test_photo_family_conflict_stops_before_paid_generation(monkeypatch):
+def test_invalid_saved_source_evidence_is_skipped_without_a_new_analysis(monkeypatch):
+    setup(monkeypatch, {b"before": report(b"before")})
+    _, captures = run_worker(monkeypatch, has_match=False, p2={b"before": rated()},
+        analysis_override={"confirmedGptProductEvidence": {"untrusted": "not a sealed contract"}},
+        settings_overrides={"mannequin_specialist_qc": "enforce"})
+    assert captures.puts == [b"before"] and len(captures.requests) == 1
+    assert "not a sealed contract" not in captures.prompts[0]
+    assert any(event.get("status") == "photo_evidence_rejected" for event in captures.events)
+
+
+def test_existing_ag01_contract_reaches_generation_and_flash_qc_without_reanalysis(monkeypatch):
+    from app.agents import product_evidence_contract as pec
+    from test_product_evidence_contract import _raw
+    from test_mannequin_final_untuck_qc import FRONT, DETAIL
+    images = [(im.data, im.mime) for im in (FRONT, DETAIL)]
+    stored = pec.validate_and_bind(_raw(), pec.build_input_binding(images, images, ["Front", "Detail"]))
     setup(monkeypatch, {})
-    async def source(*args): return {"family": "bottom", "attributes": [], "uncertainties": []}
-    monkeypatch.setattr(worker.mannequin_photo_structure, "analyze", source)
-    captures = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
-    with pytest.raises(worker.MannequinQualityError, match="source_structure_unavailable"):
-        run_worker(monkeypatch, captures=captures, has_match=False, p2={},
-            settings_overrides={"mannequin_specialist_qc": "enforce"})
-    assert not captures.requests and not captures.puts
+    received = []
+    async def judge(settings, refs, candidate, **kwargs):
+        received.append(kwargs.get("product_evidence"))
+        return report(candidate.data)
+    monkeypatch.setattr(worker.mannequin_specialist_qc, "judge", judge)
+    _, captures = run_worker(monkeypatch, has_match=False, p2={b"before": rated()},
+        analysis_override={pec.PERSISTED_KEY:stored}, settings_overrides={"mannequin_specialist_qc":"enforce"})
+    assert received == [stored]
+    assert "single front button placket" in captures.prompts[0]
+    assert len(captures.requests) == 1 and captures.requests[0]["model"] == "gpt-image-2.5-sunburst"
+    assert any(event.get("additional_analysis_calls") == 0 for event in captures.events)
 
 
 def test_combined_existing_and_specialist_defects_share_one_repair_with_both_diagnostics(monkeypatch):
@@ -129,7 +146,7 @@ def test_combined_existing_and_specialist_defects_share_one_repair_with_both_dia
     assert captures.puts == [b"repaired"] and len(captures.requests) == 3
     assert "logo_graphic" in captures.prompts[-1]
     assert "Restore the missing front line." in captures.prompts[-1]
-    assert result["qc_scores"]["quality_repair_kind"] == "source_regeneration"
+    assert result["qc_scores"]["quality_repair_kind"] == "targeted_edit"
 
 
 def test_mirrored_source_contract_reaches_specialists_and_targeted_repair(monkeypatch):
@@ -142,6 +159,7 @@ def test_mirrored_source_contract_reaches_specialists_and_targeted_repair(monkey
     _, captures = run_worker(monkeypatch, has_match=False,
         generated=(b"before", b"repaired"), p2={b"before": rated(), b"repaired": rated()},
         analysis_override={"sourceMirrored": True},
+        candidate_kwargs={"source_mirrored": True},
         settings_overrides={"mannequin_specialist_qc": "enforce"})
     assert observed == [True, True]
     assert "MIRRORED SOURCE PHOTOS" in captures.prompts[-1]

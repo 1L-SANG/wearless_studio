@@ -184,7 +184,8 @@ async def verdict(
         raise VisionError("axis_qc: 선언 축 없음")
     images = [*product_images] + ([match_image] if match_image else []) + [generated_image]
     prompt = build_prompt(len(product_images), match_image is not None, axis_spec)
-    raw, _provider = await analyze_with_fallback(settings, prompt, images, qc_schema(axis_spec))
+    raw, _provider = await analyze_with_fallback(
+        settings, prompt, images, qc_schema(axis_spec), require_complete_envelope=True)
     return validate(raw, axis_spec)
 
 

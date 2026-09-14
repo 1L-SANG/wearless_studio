@@ -30,6 +30,8 @@ def _p2(*, product=90, matching_fidelity=88, matching_critical=None, critical=No
         "critical_errors": critical or [],
         "matching_fidelity": matching_fidelity,
         "matching_critical_errors": matching_critical or [],
+        "target_resolved": True, "protected_regions_unchanged": True,
+        "regression_reasons": [],
     }
 
 
@@ -41,6 +43,8 @@ class _Gemini:
     async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
         self.generation_calls.append(prompt)
         out = self.outputs.pop(0) if self.outputs else b"extra"
+        if isinstance(out, Exception):
+            raise out
         return types.SimpleNamespace(image=out, mime="image/png")
 
 
@@ -73,7 +77,7 @@ def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="e
     if base_fidelity_axes is not None:
         monkeypatch.setattr(mannequin_job, "base_fidelity_retry_axes", base_fidelity_axes)
 
-    async def fake_verdict(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_verdict(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         verdict_calls["n"] += 1
         verdict_calls["match_seen"].append(match_image is not None)
         return p2s.pop(0) if p2s else p2s_last()
@@ -82,6 +86,15 @@ def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="e
         return p2_by_attempt[-1]
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_verdict)
+
+    async def confirmed_tuck(*args, **kwargs):
+        return {"verdict": "tucked", "confidence": 0.95}
+
+    async def confirmed_bust(*args, **kwargs):
+        return {"verdict": "insufficient", "confidence": 0.95}
+
+    monkeypatch.setattr(mannequin_job.mannequin_untuck, "judge_gate", confirmed_tuck)
+    monkeypatch.setattr(mannequin_job.mannequin_bust, "judge_gate", confirmed_bust)
 
     async def fake_emit(pool, job_id, event_type, payload):
         emits.append(dict(payload))
@@ -92,7 +105,9 @@ def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="e
     settings = make_settings(
         r2_bucket="bucket", image_qc=image_qc, mannequin_pants_qc=pants_qc,
         mannequin_axis_qc="off", mannequin_max_attempts=max_attempts,
-        mannequin_bust_pass=bust, mannequin_fabric_pass="off", mannequin_untuck_pass=untuck)
+        mannequin_bust_pass=bust, mannequin_bust_gate="on",
+        mannequin_fabric_pass="off", mannequin_untuck_pass=untuck,
+        mannequin_untuck_gate="on")
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=object(), r2=r2, gemini=gemini))
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "payload": {}}
@@ -159,13 +174,41 @@ def test_pants_ref_omitted_when_flag_off(monkeypatch):
     assert vc["match_seen"] == [False]
 
 
+def test_bottom_hero_paired_qc_never_classifies_matching_top_as_bottom(monkeypatch):
+    captured = {}
+
+    async def analyze(settings, prompt, images, schema, **kwargs):
+        captured.update(prompt=prompt, images=[image.data for image in images], schema=schema)
+        return ({**assessment(), **_p2()}, "gemini")
+
+    async def no_base(**kwargs):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "analyze_with_fallback", analyze)
+    monkeypatch.setattr(mannequin_job, "_apply_base_fidelity_qc", no_base)
+    before = mannequin_job.InlineImage("image/png", b"BEFORE")
+    after = types.SimpleNamespace(mime="image/png", image=b"AFTER")
+    asyncio.run(mannequin_job._observe_generation_qc(
+        pool=None, s=make_settings(image_qc="shadow", mannequin_pants_qc="enforce"),
+        job_id="j", candidate="A", attempt=1, res=after,
+        prod_imgs=[mannequin_job.InlineImage("image/png", b"BOTTOM-PRODUCT")],
+        match_img=mannequin_job.InlineImage("image/png", b"MATCHING-TOP"),
+        clothing_type="bottom", fit_profile=None, eff_image_qc="shadow",
+        base_img=before, product={}, analysis={}, before_image=before,
+        edit_goal="lengthen only the bottom product",
+    ))
+    assert captured["images"] == [b"BOTTOM-PRODUCT", b"BEFORE", b"AFTER"]
+    assert "MATCHING BOTTOM" not in captured["prompt"]
+    assert "matching_fidelity" not in captured["schema"]["properties"]
+
+
 # ── 2. 예산 내 재롤과 최종 1회 구제 ────────────────────────────────────────
 
 def test_pants_critical_gets_one_final_repair_then_stops(monkeypatch):
     """마지막 1회에도 바지 하드 오류가 남으면 저장과 자동 재시도 없이 실패로 종결한다."""
     crit = ["matching bottom colour changed"]
     gemini, r2 = _Gemini([b'gen-1', b'gen-2', b'final']), _R2()
-    with pytest.raises(mannequin_job.MannequinQualityError, match='final_product_rejected'):
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_edit_preservation_rejected'):
         _run(monkeypatch, gemini=gemini, r2=r2, outputs=[],
             p2_by_attempt=[{**_p2(matching_critical=crit), **assessment()}] * 3)
     assert len(gemini.generation_calls) == 3
@@ -182,20 +225,20 @@ def test_product_reject_with_pants_critical_gets_one_final_repair_without_crash(
     crit = ["matching bottom colour changed"]
     gemini, r2 = _Gemini([b'gen-1', b'gen-2', b'final']), _R2()
     failed = {**assessment(), **_p2(critical=['logo altered'], matching_critical=crit)}
-    with pytest.raises(mannequin_job.MannequinQualityError, match='final_product_rejected'):
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_edit_preservation_rejected'):
         _run(monkeypatch, gemini=gemini, r2=r2, outputs=[], p2_by_attempt=[failed] * 3)
     assert len(gemini.generation_calls) == 3
     assert 'logo altered' in gemini.generation_calls[-1]
     assert r2.puts == []
 
 
-def test_pants_critical_salvages_clean_final_reject_instead_of_dropping(monkeypatch):
-    """드롭 직전, 깨끗한 final_reject 후보가 있으면 그걸로 구제한다(드롭보다 우선).
+def test_restored_candidate_keeps_its_confirmed_base_failure_and_is_repaired(monkeypatch):
+    """매칭이 깨끗한 이전 후보를 복원해도 그 후보의 베이스 결함을 지우지 않는다.
 
     attempt 1: base-fidelity 재시도(바지 깨끗) → final_reject 풀에 담기고 재롤.
     attempt 2: 상품 통과·바지 critical + 예산 소진 → 드롭 대신 attempt 1(깨끗)로 구제 출고.
     """
-    axes = iter([["poseFrameMatch"], []])  # attempt1 만 base-fidelity 재시도
+    axes = iter([["poseFrameMatch"], [], []])
 
     def fake_bf(s, base_fidelity):
         try:
@@ -205,13 +248,62 @@ def test_pants_critical_salvages_clean_final_reject_instead_of_dropping(monkeypa
 
     result, gemini, r2, emits, vc = _run(
         monkeypatch,
-        p2_by_attempt=[_p2(matching_critical=[]),
-                       _p2(matching_critical=["matching bottom type changed"])],
-        outputs=[b"clean-1", b"bad-2"], base_fidelity_axes=fake_bf)
+        p2_by_attempt=[
+            {**assessment(), **_p2(matching_critical=[])},
+            _p2(matching_critical=["matching bottom type changed"]),
+            {**assessment(), **_p2(matching_critical=[])},
+        ],
+        outputs=[b"clean-1", b"bad-2", b"repaired"], base_fidelity_axes=fake_bf)
     assert result is not None, "깨끗한 후보가 있으면 드롭하지 않는다"
-    assert r2.puts[0][1] == b"clean-1", "출고본은 바지 깨끗했던 attempt 1"
+    assert r2.puts[0][1] == b"repaired"
+    assert len(gemini.generation_calls) == 3
+    assert "poseFrameMatch" in gemini.generation_calls[-1]
     salvaged = _status(emits, "qc_salvaged")
     assert any(e.get("reason") == "matching_identity_dropped" for e in salvaged)
+
+
+@pytest.mark.parametrize("repair_base_failed", [False, True])
+def test_loop_exhausted_pre_reject_keeps_base_failure(monkeypatch, repair_base_failed):
+    axes = iter([["poseFrameMatch"], ["poseFrameMatch"] if repair_base_failed else []])
+    gemini = _Gemini([
+        b"low-score-base-bad",
+        mannequin_job.GeminiError("request rejected", billable=False),
+        b"repaired",
+    ])
+    r2 = _R2()
+
+    def run():
+        return _run(
+            monkeypatch, gemini=gemini, r2=r2, outputs=[], with_match=False,
+            p2_by_attempt=[{**assessment(), **_p2(product=40)},
+                           {**assessment(), **_p2()}],
+            base_fidelity_axes=lambda _s, _result: next(axes))
+
+    if repair_base_failed:
+        with pytest.raises(mannequin_job.MannequinQualityError, match="final_base_rejected"):
+            run()
+        assert r2.puts == []
+    else:
+        run()
+        assert r2.puts[0][1] == b"repaired"
+    assert len(gemini.generation_calls) == 3
+    assert "poseFrameMatch" in gemini.generation_calls[-1]
+
+
+def test_earlier_base_failure_does_not_taint_good_later_candidate(monkeypatch):
+    axes = iter([["poseFrameMatch"], []])
+
+    def fake_bf(s, base_fidelity):
+        return next(axes)
+
+    result, gemini, r2, _emits, _vc = _run(
+        monkeypatch,
+        p2_by_attempt=[_p2(), _p2()],
+        outputs=[b"base-bad-1", b"good-2"],
+        base_fidelity_axes=fake_bf)
+    assert result is not None
+    assert len(gemini.generation_calls) == 2
+    assert r2.puts[0][1] == b"good-2"
 
 
 # ── 3. shadow 는 막지 않는다 ─────────────────────────────────────────────────
@@ -277,6 +369,7 @@ def test_shadow_region_observes_but_never_reverts(monkeypatch):
         bust="on", compare=regressed)
     assert result is not None
     assert r2.puts[0][1] == b"busted", "shadow 는 회귀해도 편집본을 그대로 출고한다"
+    assert vc["n"] == 1, "활성 편집은 IMAGE_QC=off에서도 쌍대 채택 판정을 거친다"
     region = [e for e in _status(emits, "pants_region") if e.get("mode") == "shadow"]
     assert region and region[0]["pants_verdict"] == "pants_regressed", "관측은 남긴다"
     assert not any(e.get("reason") == "pants_regressed"

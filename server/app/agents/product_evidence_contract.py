@@ -415,9 +415,45 @@ Return `confirmedGptProductEvidence` in English with exactly these four fields:
   permanent-detail facts. Each item is {{code, value, evidenceOrdinals}}. Codes are
   lowercase snake_case. Every ordinal must directly support the fact. Do not promote
   inferred material, exact RGB, hand feel or unsupported worn fit to a hard fact.
+  Within this limit, prioritize visible distinguishing construction over generic
+  garment labels. When clearly supported, record closure count separately from closure
+  function: uncertainty about whether a closed placket opens must not discard a clearly
+  visible button count.
+
+  For distinctive seams or panel boundaries, state the visible count and surface,
+  shape, start and end landmarks, and which boundaries actually join. A paired
+  construction can be one concise fact. Keep boundary count distinct from parallel
+  stitch rows, knit ribs, folds and shadows. Record a connection only if it can be
+  traced in the supplied pixels; do not bridge an occlusion by symmetry or expectation.
+
+  Use product-specific facts, not a fixed checklist of positive features. Plain
+  garments do not require invented seam facts. Do not infer that a feature is absent
+  merely because it is hidden, low contrast or outside the image. Preserve clearly
+  supported parts as hardFacts and place only the unresolved count, endpoint or
+  connection in uncertainties, with its concrete image limitation and relevant
+  evidenceOrdinals.
+
+  Avoid duplicating the same seam in several facts. Do not import examples' button
+  numbers, seam counts or garment categories into another product. Each evidenceOrdinal
+  must directly support the specific statement; a back-only detail must remain back-only.
+
+  For shoulder and sleeve identity, report visible construction rather than a category
+  inferred from the product name or upper-arm coverage. Broad continuous shoulder fabric
+  may belong to a sleeveless garment. Distinguish its bound arm-opening edge from a
+  separately attached sleeve seam. If the construction cannot be resolved, put that
+  specific ambiguity in uncertainties instead of declaring a cap sleeve as a hard fact.
+  This does not mean every broad shoulder is sleeveless; preserve genuine sleeves when
+  evidenced.
 - uncertainties: 1-12 facts that seller pixels cannot prove exactly. Each item is
   {{code, value, reason, evidenceOrdinals}}. Include the relevant source ordinals and a
   concrete visual limitation; do not use generic model uncertainty.
+  Include unresolved identity-critical counts, seam endpoints, connections or sleeve
+  construction when present, not only generic fiber composition. Do not force those
+  observations into hardFacts merely because the full photo is marked usable.
+
+  Do not convert a flat garment's proportions into a proven worn hem position or an
+  exact physical length. Unsupported worn fit remains an uncertainty under this
+  contract.
 - visibleSurfacePlan: one single-line FRONT-direction plan. FRONT/FRONT_DETAIL surfaces
   are dominant, BACK/BACK_DETAIL is context only for physically revealed slivers and
   transitions. Name supported seams/pattern/structure that must remain on the correct

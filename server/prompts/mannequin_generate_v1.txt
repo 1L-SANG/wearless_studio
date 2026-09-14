@@ -42,7 +42,7 @@ GARMENT-BODY CONTACT (mandatory)
 <output format>
 - Output ONE brand-new photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from image 1, now solidly wearing the garment(s). The output canvas and studio background have no alpha or accidental transparency.
 - The mannequin body is solid and opaque. The garment is opaque unless PRODUCT evidence proves native sheerness, mesh, lace, crochet or open knit; then preserve only that evidenced transmission or real openings. In every case it is a physically worn garment, never a faded, washed-out or ghosted overlay of an input photo.
-- Keep the SAME mannequin body and shape, the SAME pose, the SAME camera framing, and the SAME plain studio background as image 1. Body shape includes the mannequin's bust and hip volume: reproduce them exactly as they appear in image 1 and let the garment drape over that volume. Do NOT slim, flatten, or normalize the torso toward a standard retail mannequin silhouette. Observable target: where image 1 has a full bust or wide hips, the dressed result shows the corresponding projection and width through the fabric rather than a flat front or a straight side line.
+- Keep the SAME mannequin body and shape, the SAME pose, the SAME camera framing, and the SAME plain studio background as image 1. Preserve the fixed base's natural, moderate chest, waist and hip contour exactly as shown and let the garment drape over it with the product's source-proven fit and ease. Do not amplify the bust or hips, cinch the waist, impose an hourglass shape, or normalize the torso toward another retail mannequin silhouette. A seller-declared fit axis may override only that named garment axis, never the mannequin body or any untargeted axis.
 - The BASE MANNEQUIN is barefoot; keep both feet barefoot and do not add footwear.
 - FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
 - Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
@@ -51,7 +51,7 @@ GARMENT-BODY CONTACT (mandatory)
 <critical rules>
 - Use ONLY the attached images. If a back, detail, fit, or bottom image is not attached, simply omit it — do NOT fabricate it.
 - The attached product photos are the ground truth for garment identity — color, pattern, fabric, construction, seams, neckline, trims, hardware, logos, and prints. The only exceptions to their fit, length, cut, or silhouette are declared FIT PROFILE axes, and only where visual evidence conflicts with the declaration; PRODUCT CONTEXT must NEVER override what the photos clearly show.
-- The mannequin's bust and hip volume from image 1 are preserved exactly — the garment drapes over them and never flattens them.
+- The fixed base's natural, moderate chest, waist and hip contour is preserved exactly. Do not amplify or cosmetically reshape it.
 - The main product is NEVER tucked into the matching bottom and is never hidden by it.
 - Inner care/brand labels stitched inside the garment (inner neckline, inner hem, side seams) are visible in the flat-lay photos only because the garment lies open; on the worn mannequin they sit against the body and are NOT visible — never render a label peeking above the collar or hem. Exterior branding (chest prints, logo graphics, outside patches) remains part of the garment identity and stays.
 - No part of the matching bottom's waistband, drawstring or fastening is drawn over the main product.
