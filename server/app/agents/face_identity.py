@@ -97,6 +97,11 @@ YAW_THREE_QUARTER_MAX = 0.45
 #: 표본 4컷·시드 1개의 잠정값.
 YAW_APPLY_MAX = 0.65
 YAW_POSE_RISK_MIN = 0.25
+#: 건너뛴 이유 중 **원본으로 내보내면 안 되는** 것. 실존 모델 컷에서 원본 얼굴은 provider 가 그린
+#: 남의 얼굴이라, 나가면 셀러가 산 적 없는 얼굴이 라이선스 이름으로 팔린다(2026-09-14 제품 결정).
+#: yaw 만 넣는다 — 그 컷은 얼굴이 분명히 있는데 각도 때문에 못 바꾼 것이다.
+#: no_face(사람이 안 담긴 컷일 수 있다)·too_small(얼굴이 몇 px 라 육안 식별이 안 된다)은 빼 둔다.
+SKIP_REASONS_UNAVAILABLE = frozenset({"yaw"})
 #: 정면화 게이트: 결과 yaw < 입력 yaw × 0.6 이면 포즈가 펴진 것(측면 입력이 3/4 로) → 실패, 시드 재시도.
 #: 입력이 이미 정면(<0.20)이면 검사하지 않는다(값이 작아 비율이 불안정).
 GATE_YAW_FLATTEN_RATIO = 0.6
@@ -187,6 +192,27 @@ EDGE_FADE_PX = 48
 EDGE_FADE_HARD_PX = 3
 #: 얼굴 크롭 확대 상한 — RealESRGAN x4plus 가 4배까지만 낸다. k = ceil(1024/side) 를 여기서 자른다.
 CROP_UPSCALE_MAX = 4
+
+# ── 바탕 보존(keep) 판정 상수 — composite_with_meta 의 "생성본을 안 쓰는 자리" 를 정한다.
+#: 배경 판정 = 크롭 테두리에서 추정한 배경색과의 최대채널 차. T0 이하는 확실한 배경(1.0),
+#: T1 이상은 확실히 아님(0.0), 그 사이는 부드러운 램프. 최대채널을 쓰는 이유는 회색 배경에서
+#: 색만 다른 차이(살구빛 번짐)를 놓치지 않기 위해서다.
+BACKDROP_T0, BACKDROP_T1 = 8.0, 20.0
+#: 배경 판정 침식 반경(1024 기준). **잔머리를 지키는 장치다.** 얇은 머리카락 한 올은 주위가 거의
+#: 배경이라, 침식 없이 "둘 다 배경" 을 그대로 쓰면 축소 보간에서 그 올이 배경 평균에 묻혀 사라진다
+#: (2026-09-14 실측). 이웃까지 전부 배경일 때만 배경으로 친다.
+BACKDROP_ERODE_PX = 9
+#: 피부 판정 = 얼굴 박스 볼에서 뽑은 CrCb 중앙값과의 색차. 고정 임계는 사람·조명마다 어긋나서
+#: 기준색을 그림에서 직접 뽑는다. 명도(Y)는 안 본다 — 턱 그림자가 피부에서 빠지면 그 자리에
+#: 옷 알파가 되살아난다. 회색 후드·연청 데님은 기준색에서 25~40 떨어진다.
+SKIN_T0, SKIN_T1 = 10.0, 22.0
+#: 옷 판정 침식 반경(1024 기준). 이웃까지 옷일 때만 옷으로 친다 — 목·턱 경계의 얇은 피부를 안 먹는다.
+#: 1 은 띠를 더 지우지만 생성 목을 50~90px 건드리고, 9 는 띠가 3~6% 남는다. 3 이 그 사이다.
+GARMENT_ERODE_PX = 3
+#: 보호 경계는 턱선이 아니라 **턱선 위 이만큼**(얼굴 높이 대비)이다. 후드 유령의 날개가 턱보다 위까지
+#: 올라와서, 턱선에서 끊으면 날개가 반만 지워진다(2026-09-14 확대 관찰). 0.15 에서 수치가 포화하고
+#: 0.35 는 신원이 떨어진다(SFace 0.773 → 0.755).
+GARMENT_CHIN_LIFT = 0.15
 
 _YUNET = "face_detection_yunet_2023mar.onnx"
 _SFACE = "face_recognition_sface_2021dec.onnx"
@@ -834,6 +860,87 @@ def _hf_std(arr: np.ndarray, region: np.ndarray) -> float:
     return float(vals.std()) if vals.size else 0.0
 
 
+def _backdrop_color(up: np.ndarray) -> np.ndarray:
+    """크롭 테두리 12px 의 중앙값 = 배경색 추정. 중앙값이라 머리카락이 걸려도 끌려가지 않는다."""
+    b = 12
+    edge = np.concatenate([up[:b].reshape(-1, 3), up[-b:].reshape(-1, 3),
+                           up[:, :b].reshape(-1, 3), up[:, -b:].reshape(-1, 3)])
+    return np.median(edge, axis=0)
+
+
+def _backdropness(arr: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    d = np.abs(arr - bg[None, None, :]).max(axis=2)
+    return np.clip((BACKDROP_T1 - d) / (BACKDROP_T1 - BACKDROP_T0), 0.0, 1.0)
+
+
+def _skin_reference(up: np.ndarray, plan: FacePlan) -> np.ndarray | None:
+    """양 볼 높이(얼굴 박스 안쪽)에서 피부 CrCb 중앙값. 눈·머리·배경이 안 들어오는 구간이다."""
+    fx, fy, fw, fh = plan.face_box_crop
+    x0, x1 = int(max(0, fx + 0.25 * fw)), int(min(CROP, fx + 0.75 * fw))
+    y0, y1 = int(max(0, fy + 0.45 * fh)), int(min(CROP, fy + 0.80 * fh))
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    patch = cv2.cvtColor(np.clip(up[y0:y1, x0:x1], 0, 255).astype(np.uint8),
+                         cv2.COLOR_RGB2YCrCb).astype(np.float32)
+    return np.median(patch.reshape(-1, 3), axis=0)[1:]
+
+
+def _skinness(arr: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    ycrcb = cv2.cvtColor(np.clip(arr, 0, 255).astype(np.uint8), cv2.COLOR_RGB2YCrCb).astype(np.float32)
+    d = np.linalg.norm(ycrcb[..., 1:] - ref[None, None, :], axis=2)
+    return np.clip((SKIN_T1 - d) / (SKIN_T1 - SKIN_T0), 0.0, 1.0)
+
+
+def _soften(mask: np.ndarray, radius: int) -> np.ndarray:
+    """침식 후 같은 반경으로 다시 흐린다 — 이웃까지 같은 판정일 때만 1, 경계는 램프."""
+    k = abs(int(radius)) | 1
+    return cv2.GaussianBlur(cv2.erode(mask, np.ones((k, k), np.float32)), (k, k), k / 3.0)
+
+
+def keep_mask(up: np.ndarray, gen_arr: np.ndarray, plan: FacePlan) -> tuple[np.ndarray, dict]:
+    """1024² 알파 배율 — **생성본을 안 쓸 자리는 0**. 바탕 픽셀이 그대로 남는다.
+
+    얼굴 패스가 바꿔야 하는 건 머리(얼굴·머리카락)뿐인데, 페더/페이드 띠는 그보다 훨씬 넓게
+    퍼져 있어 머리 주변까지 생성본으로 덮는다. 민무늬 스튜디오 배경에서 그게 두 가지로 보인다:
+
+      ① 뜨는 띠  — 링 전역 보정이 얹힌 생성 배경이 바탕 배경과 미세하게 달라, 머리 둘레로 후광이
+                  진다. 운영 컷에서 color_shift 11.3 이던 회차가 그것(다른 컷은 2.1~3.9).
+      ② 이중 테두리 — 생성된 후드가 바탕 후드보다 커서 **바탕의 배경 위에** 덧칠된다.
+                  바탕=배경·생성=옷 이라 ①의 규칙("둘 다 배경")에 걸리지 않는다.
+
+    그래서 두 규칙을 같이 쓴다.
+      ① 바탕도 배경이고 생성도 배경이면 → 바탕을 둔다(색을 새로 계산하지 않는다).
+      ② 턱선 위 GARMENT_CHIN_LIFT·얼굴높이 아래에서는 **바탕이 피부인 자리만** 블렌드한다
+         — 그 아래 목·옷·배경은 얼굴 패스가 그릴 이유가 없다.
+
+    ★ 색을 새로 만들지 않는 것이 요점이다. 22.B(국소 차분 필드)는 링 잔차를 줄였지만 목·턱을
+      노랗게 과보정해 기각됐다(목 색이동 38.7→65.6). 여기서는 피부·머리의 **판정에서 빠질 뿐**
+      값이 바뀌지 않는다 — 11컷 실측에서 A 대비 목 픽셀 변화는 전체의 1.0%(3209/310552)다.
+
+    실측(2026-09-14, 11컷 · 저장된 파드 렌더로 합성만 재실행):
+      띠 ≥3 비율  A 0.6~27.0% → 0.00~0.03% (11/11 개선, 9컷은 0.0000)
+      유령 ≥3 비율 A 2.8~35.8% → 0.04~0.22%
+      SFace       최악 −0.003, 최선 +0.013 (fullbody_3 0.765→0.778)
+      알파 0 영역  변화 0.0 (옷·나머지 픽셀 무변경)
+    """
+    meta: dict = {}
+    bg = _backdrop_color(up)
+    bg_base = _backdropness(up, bg)
+    keep = 1.0 - _soften(bg_base * _backdropness(gen_arr, bg), BACKDROP_ERODE_PX)
+    meta["keep_backdrop_frac"] = round(float((keep < 0.5).mean()), 4)
+
+    ref = _skin_reference(up, plan)
+    if ref is not None:
+        fx, fy, fw, fh = plan.face_box_crop
+        line = fy + fh - GARMENT_CHIN_LIFT * fh
+        below = np.repeat(np.clip(np.arange(CROP, dtype=np.float32)[:, None] - line, 0.0, 1.0),
+                          CROP, axis=1)
+        garment = _soften(below * (1.0 - _skinness(up, ref)), GARMENT_ERODE_PX)
+        keep = keep * (1.0 - garment)
+        meta["keep_garment_frac"] = round(float((garment > 0.5).mean()), 4)
+    return np.clip(keep, 0.0, 1.0), meta
+
+
 def paste_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
                 edge_fade_px: int = EDGE_FADE_PX,
                 feather_bottom: float | None = None) -> np.ndarray:
@@ -856,12 +963,15 @@ def composite_with_meta(
     grain: bool | None = None,
     feather_bottom: float | None = None,
     crop: Image.Image | None = None,
+    keep_backdrop: bool = True,
 ) -> tuple[Image.Image, dict]:
     """생성 1024² 크롭의 타원 영역을 원본에 되붙인다. 마스크 밖 픽셀은 원본과 100% 동일.
 
-    순서: 색 보정(타원 테두리 안쪽 8px 링 평균 RGB 를 원본에 맞춤) → 페더 합성(1024²) →
-    조건부 grain(결과 얼굴 고주파 σ < 0.85×원본일 때만) → 크롭 크기로 축소해 알파로 되붙임.
-    grain=None 이면 조건부, True/False 는 강제.
+    순서: 색 보정(타원 테두리 안쪽 8px 링 평균 RGB 를 원본에 맞춤) → **바탕 보존 판정**(keep_mask)
+    → 페더 합성(1024²) → 조건부 grain(결과 얼굴 고주파 σ < 0.85×원본일 때만) → 크롭 크기로
+    축소해 알파로 되붙임. grain=None 이면 조건부, True/False 는 강제.
+
+    keep_backdrop=False 는 바탕 보존을 끈 옛 경로(회귀 비교·되돌리기 전용).
     """
     orig = original.convert("RGB")
     # crop 은 호출자가 확대기로 만든 1024² 바탕. 없으면 지금까지처럼 여기서 만든다.
@@ -886,7 +996,15 @@ def composite_with_meta(
         gen_arr = np.clip(gen_arr + shift, 0, 255)
         meta["color_shift"] = [round(float(v), 2) for v in shift]
 
-    alpha = composite_alpha(plan, feather, feather_bottom=feather_bottom)[..., None]
+    # 판정은 **링 보정 뒤** 픽셀로 한다. 보정 전에 재면, 파드 결과가 통째로 어두운 회차
+    # (운영 color_shift 11.3)에서 생성 배경이 바탕 배경색과 11 떨어져 "배경" 판정이 0.75 로 깎이고
+    # 억제가 70%밖에 안 든다(스트레스 시험 실측). 실제로 합성될 픽셀로 재야 맞다.
+    keep = np.ones((CROP, CROP), np.float32)
+    if keep_backdrop:
+        keep, keep_meta = keep_mask(up, gen_arr, plan)
+        meta.update(keep_meta)
+
+    alpha = (composite_alpha(plan, feather, feather_bottom=feather_bottom) * keep)[..., None]
     comp = gen_arr * alpha + up * (1.0 - alpha)
 
     hf_orig = _hf_std(up, ell)
@@ -903,7 +1021,11 @@ def composite_with_meta(
 
     x0, y0, side = plan.crop
     small = np.asarray(comp_img.resize((side, side), Image.LANCZOS), np.float32)
-    a_small = paste_alpha(plan, feather, feather_bottom=feather_bottom)[y0 : y0 + side, x0 : x0 + side][..., None]
+    a_small = paste_alpha(plan, feather, feather_bottom=feather_bottom)[y0 : y0 + side, x0 : x0 + side]
+    if keep_backdrop:
+        # 되붙일 알파도 같은 규칙으로 깎는다 — 여기서 빼먹으면 1024 에서 지운 띠가 축소본에서 되살아난다.
+        a_small = a_small * cv2.resize(keep, (side, side), interpolation=cv2.INTER_AREA)
+    a_small = a_small[..., None]
     out = np.asarray(orig, np.float32).copy()
     region = out[y0 : y0 + side, x0 : x0 + side]
     out[y0 : y0 + side, x0 : x0 + side] = small * a_small + region * (1.0 - a_small)
@@ -919,9 +1041,11 @@ def composite(
     grain: bool | None = None,
     feather_bottom: float | None = None,
     crop: Image.Image | None = None,
+    keep_backdrop: bool = True,
 ) -> Image.Image:
     return composite_with_meta(original, generated_1024, plan, feather=feather, grain=grain,
-                               feather_bottom=feather_bottom, crop=crop)[0]
+                               feather_bottom=feather_bottom, crop=crop,
+                               keep_backdrop=keep_backdrop)[0]
 
 
 # ---------------------------------------------------------------- 게이트
@@ -1130,7 +1254,14 @@ class HttpFaceBackend:
                             exc_info=False)
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         res = httpx.post(self.url, json=payload, headers=headers, timeout=self.timeout)
-        res.raise_for_status()
+        try:
+            res.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # 여기까지는 "폴백했다" 한 줄만 남아서, 파드가 401(토큰) 인지 413(본문) 인지 500(OOM) 인지
+            # 구분이 안 됐다. 상태코드와 응답 앞머리만 남긴다 — URL·토큰·presigned 는 절대 로그에 없다.
+            log.warning("face_identity: render HTTP %s — %s", exc.response.status_code,
+                        (exc.response.text or "")[:120].replace("\n", " "))
+            raise
         data = base64.b64decode(res.json()["image_png"])
         with Image.open(BytesIO(data)) as im:
             im.load()
@@ -1567,10 +1698,12 @@ async def apply_face_pass(
     FACE_PASS_WAIT_SECONDS), 그 사이 파드가 바뀌면 새 주소로 간다(url_provider).
 
     outcome 이 오면 결과를 적는다:
-      "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다)
+      "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다.
+      yaw 는 기록만 남기고 곧바로 FacePassUnavailable 이 된다)
       · "fallback:<reason>"(backend_error · gate_failed) · "failed:pod_not_ready".
 
-    ★ 폴백이 계약이 아닌 경우가 하나 있다: 파드가 끝내 안 뜨면 **FacePassUnavailable** 을 올린다.
+    ★ 폴백이 계약이 아닌 경우가 둘 있다 — 파드가 끝내 안 뜰 때와 skipped_reason 이
+      SKIP_REASONS_UNAVAILABLE(현재 yaw) 일 때. **FacePassUnavailable** 을 올린다.
       이 함수에 오는 컷은 전부 실존 모델(LoRA) 컷이라, 원본을 내보내면 셀러가 산 적 없는 얼굴이
       라이선스 이름으로 나간다. 나머지 폴백(backend_error · gate_failed)은 아직 원본으로 간다.
     """
@@ -1632,6 +1765,16 @@ async def apply_face_pass(
         # 렌더 전에 그림을 보고 내린 판정이다 — 파드 기억을 지우지도, 다시 돌리지도, 알리지도 않는다.
         # 같은 그림을 다시 돌려도 같은 답이고, 재대기는 컷마다 파드 확인 한 번을 더 낭비한다.
         _record(f"skipped:{skipped}")
+        if skipped in SKIP_REASONS_UNAVAILABLE:
+            # 건너뛰어도 **원본은 나가면 안 된다** — 파드 미준비와 같은 이유다(2026-09-14 제품 결정).
+            # 옆모습(yaw > YAW_APPLY_MAX)은 v7 학습셋에 옆모습이 없어 억지로 태우면 남의 얼굴이 나온다
+            # (강제 실험 실측: 게이트 identity_low, SFace 0.413). 그렇다고 원본을 내보내면 provider 가
+            # 그린 얼굴이 라이선스 이름으로 팔린다. 그래서 이 컷은 실패시키고 크레딧을 돌려준다.
+            # 근본 해결은 옆모습 컷을 애초에 안 만드는 것 — cut_generator 의 DIR:side_identity(3/4).
+            # 파드 알림(_note_fallback)은 부르지 않는다 — 파드는 멀쩡하고, 그림의 각도가 문제다.
+            # 이걸 파드 고장으로 세면 CRITICAL 알림이 옆모습 컷 수만큼 울린다.
+            log.warning("face_identity: 건너뜀(%s) — 원본을 내보내지 않고 이 컷을 실패시킨다", skipped)
+            raise FacePassUnavailable(f"skipped_{skipped}")
         return result.image, result.mime
 
     if not result.applied and not result.meta.get("tries"):
