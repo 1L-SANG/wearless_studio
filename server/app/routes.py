@@ -3040,7 +3040,11 @@ async def generate_editor_image(
                 payload["source"] = {**source, "cutType": trusted_cut_type}
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 brand_use_category = analysis.get("brandUseCategory")
-                await facemarket.verify_license(
+                # ★ 여기서는 **DB 게이트만** 한다(해지·만료·모델 verified·용도). holder(VC 확인)는
+                # 잡이 wait_for_holder 뒤에 부른다 — 셀러에게 "라이선스 확인 중"·"켜는 중"을
+                # 보여 주지 않기 위해서다(2026-09-14 제품 결정). fail-closed 는 그대로다:
+                # 잡이 VC 를 확인하고, 확인 못 하면 컷을 내보내지 않고 크레딧을 돌려준다.
+                facemarket.verify_license_local(
                     request.app,
                     license_row,
                     model_id=model_id,
@@ -3115,7 +3119,8 @@ async def generate_editor_image(
                 conn, selected_model_id
             )
             # 수요 기록은 이 함수 맨 앞(커넥션 잡기 전)에서 이미 했다.
-            await facemarket.verify_license(
+            # holder 는 여기서 안 부른다 — 위 vary 경로 주석 참조(잡이 확인한다).
+            facemarket.verify_license_local(
                 request.app,
                 license_row,
                 model_id=selected_model_id,
@@ -3210,7 +3215,8 @@ async def generate_detail_page(
             if facemarket.is_real_model_id(selected_model_id):
                 await facemarket.note_holder_demand(
                     request.app, user_id=user_id, model_id=selected_model_id, conn=conn)
-            await facemarket.verify_license(
+            # holder 는 여기서 안 부른다 — 잡이 wait_for_holder 뒤에 확인한다(fail-closed 유지).
+            facemarket.verify_license_local(
                 request.app,
                 license_row,
                 model_id=selected_model_id,

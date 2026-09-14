@@ -588,7 +588,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
         assert model_id == MODEL_ID and kwargs == {}
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(app, row, **kwargs):
+    def fake_verify(app, row, **kwargs):
         assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
 
     async def fake_create(conn, **kwargs):
@@ -608,7 +608,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
@@ -668,7 +668,7 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         assert kwargs == {"license_id": LICENSE_ID}
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(app, row, **kwargs):
+    def fake_verify(app, row, **kwargs):
         assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
 
     async def fake_create(conn, **kwargs):
@@ -694,7 +694,7 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         raising=False,
     )
     monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
@@ -769,7 +769,7 @@ def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
         assert model_id == MODEL_ID and kwargs == {"license_id": LICENSE_ID}
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(app, row, **kwargs):
+    def fake_verify(app, row, **kwargs):
         seen["verified"] = kwargs
 
     async def fake_create(conn, **kwargs):
@@ -789,7 +789,7 @@ def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_asset_facemarket_provenance", fake_provenance)
     monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
@@ -882,7 +882,7 @@ def test_editor_new_real_cut_outside_horizon_is_accepted(
         assert model_id == MODEL_ID
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_verify(app, row, **kwargs):
+    def fake_verify(app, row, **kwargs):
         seen["verified"] = kwargs
 
     async def fake_create(conn, **kwargs):
@@ -901,7 +901,7 @@ def test_editor_new_real_cut_outside_horizon_is_accepted(
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)

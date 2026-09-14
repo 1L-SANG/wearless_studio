@@ -1,39 +1,39 @@
-/* 라이선스 확인 서비스(holder)는 scale-to-zero 다. 0대일 때 셀러가 컷을 만들면 "켜는 중"이고,
-   1~2분 뒤 같은 버튼이 그대로 된다 — 고장이 아니다.
+/* 셀러는 라이선스 확인 서비스(holder)의 사정을 몰라야 한다 — 2026-09-14 제품 결정.
 
-   2026-09-14 운영: 그 상황에서 셀러는 "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다" 를
-   x 아이콘으로 받았다. 문구도 아이콘도 "끝났다"로 읽혀서 다시 누를 이유가 없었다. */
+   실제 모델을 고르면 그때부터 서버를 켜고, 준비되는 동안은 평소 "생성 중"으로만 보인다.
+   확인은 잡이 하고(fail-closed), 끝내 못 하면 잡은 **일반 실패**로 끝난다. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { jobFailure } from '../../src/lib/api/jobFailure.js';
-import { isNonRetryableRegenerateError } from '../../src/features/mannequin/generationRunnerCore.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-test('holder_starting 은 잡 실패에서도 코드가 살아남는다', () => {
+test('holder 사정은 잡 실패 코드로도 새지 않는다', () => {
+  // 서버가 이미 일반 실패로 바꿔 보내지만, 옛 잡 결과가 남아 있어도 화면은 분기하지 않는다.
   const error = jobFailure({
-    status: 'error',
-    errorMessage: '라이선스 확인 서비스를 켜는 중이에요. 1~2분 뒤 다시 시도해 주세요.',
+    status: 'error', errorMessage: '이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.',
     result: { errorCode: 'holder_starting' },
   });
-  assert.equal(error.code, 'holder_starting');
-  // 재시도 금지 목록에 들어가면 안 된다 — 다시 시도하는 게 정답인 유일한 경로다.
-  assert.equal(isNonRetryableRegenerateError(error), false);
+  assert.equal(error.code, 'job_failed');
 });
 
-test('에디터는 holder_starting 을 실패 아이콘으로 띄우지 않는다', () => {
+test('에디터가 holder 코드로 분기하지 않는다', () => {
   const source = read('../../src/features/editor/Editor.jsx');
-  const handler = source.slice(source.indexOf('const handleImageJobFailure'));
-  const body = handler.slice(0, handler.indexOf('\n  };'));
-  assert.match(body, /holder_starting/);
-  assert.match(body, /icon: e\?\.code === 'holder_starting' \? 'sparkles' : 'x'/);
+  assert.doesNotMatch(source, /holder_starting/);
 });
 
-test('서버와 화면이 같은 문구를 쓴다', () => {
-  // 문구는 서버가 만든다(라우트 503·잡 실패 메시지 모두). 화면은 그대로 보여 준다 —
-  // 두 벌로 나뉘면 한쪽만 고쳐지고 다른 쪽이 옛말을 계속한다.
-  const server = read('../../server/app/facemarket.py');
-  assert.match(server, /"라이선스 확인 서비스를 켜는 중이에요\. 1~2분 뒤 다시 시도해 주세요\."/);
-  assert.match(server, /"holder_starting",/);
+test('서버가 셀러에게 보내기 전에 내부 사유를 가린다', () => {
+  for (const worker of ('editor_image_job detail_page_job'.split(' '))) {
+    const source = read(`../../server/app/workers/${worker}.py`);
+    assert.match(source, /_INTERNAL_FAILURE_CODES = \{"holder_starting", "holder_unavailable"\}/,
+      worker);
+  }
+});
+
+test('라우트는 holder 를 부르지 않는다', () => {
+  // 셀러 요청 경로에서 holder 를 부르면 "확인 중"이 화면 시간이 된다(콜드스타트 ~2분).
+  const routes = read('../../server/app/routes.py');
+  assert.doesNotMatch(routes, /await facemarket\.verify_license\(/);
+  assert.match(routes, /facemarket\.verify_license_local\(/);
 });
