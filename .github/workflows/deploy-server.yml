@@ -14,6 +14,16 @@ on:
             - "server/uv.lock"
             - "server/Dockerfile"
             - "server/.dockerignore"
+            # 얼굴 렌더 파드로 가는 코드. 파드 묶음(face_render/<커밋 sha>.tgz)은 **deploy-api 잡
+            # 안에서만** 만들어지고 서버가 자기 빌드 sha 로 그 묶음을 지목한다 — 여기 빠져 있으면
+            # 이 파일들만 바꾼 커밋은 워크플로가 아예 안 돌고, 새 묶음이 안 생겨 파드가 옛
+            # bootstrap.sh 로 뜬다(2026-09-13: #295 가 그 상태였다).
+            - "server/deploy/**"
+            - "server/face_render_service.py"
+            - "server/face_esrgan.py"
+            # 셸 계약 테스트(tests/shell/*.test.sh)는 server/tests/test_shell_contracts.py 가 돌린다.
+            # 그 .sh 만 바뀐 커밋도 CI 가 돌아야 한다.
+            - "tests/shell/**"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
@@ -30,6 +40,16 @@ on:
             - "server/uv.lock"
             - "server/Dockerfile"
             - "server/.dockerignore"
+            # 얼굴 렌더 파드로 가는 코드. 파드 묶음(face_render/<커밋 sha>.tgz)은 **deploy-api 잡
+            # 안에서만** 만들어지고 서버가 자기 빌드 sha 로 그 묶음을 지목한다 — 여기 빠져 있으면
+            # 이 파일들만 바꾼 커밋은 워크플로가 아예 안 돌고, 새 묶음이 안 생겨 파드가 옛
+            # bootstrap.sh 로 뜬다(2026-09-13: #295 가 그 상태였다).
+            - "server/deploy/**"
+            - "server/face_render_service.py"
+            - "server/face_esrgan.py"
+            # 셸 계약 테스트(tests/shell/*.test.sh)는 server/tests/test_shell_contracts.py 가 돌린다.
+            # 그 .sh 만 바뀐 커밋도 CI 가 돌아야 한다.
+            - "tests/shell/**"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
@@ -105,6 +125,13 @@ jobs:
                         - 'server/uv.lock'
                         - 'server/Dockerfile'
                         - 'server/.dockerignore'
+                        # 파드 묶음의 **내용물**. 바뀌면 배포가 돌아야 새 sha 로 묶음이 올라가고
+                        # 서버가 지목하는 키와 실제 묶음이 맞는다(tests/shell 은 여기 넣지 않는다 —
+                        # 테스트만 바뀐 커밋으로 ECS 를 교체할 이유가 없다).
+                        - 'server/deploy/**'
+                        - 'server/face_render_service.py'
+                        - 'server/face_esrgan.py'
+                        - 'server/scripts/face_render_bundle.sh'
                         - 'copilot/api/manifest.yml'
                         - 'copilot/api/addons/**'
                         - 'copilot/detail-worker/manifest.yml'
