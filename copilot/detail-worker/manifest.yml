@@ -75,6 +75,14 @@ variables:
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"
   OPENDID_HOLDER_URL: http://opendid:8100
+  # **대기 게이트 전용**이다(reconciler 를 띄우는 스위치가 아니다).
+  # detail_page 잡은 이 워커가 돌리고, 그 잡은 verify_license 로 holder 를 부른다. holder 는
+  # scale-to-zero 라 0대일 수 있는데, facemarket.wait_for_holder 가 이 값이 "on" 일 때만
+  # 콜드스타트(~2분)를 기다려 준다 — 없으면 대기 없이 바로 holder_starting 으로 잡이 죽는다.
+  # main.py 는 JOB_KINDS 가 detail_page 뿐이면(detail_worker_only) autoscaler 자체를 안 만든다.
+  # 그래서 이 값을 켜도 reconciler 가 둘이 되지 않는다(테스트로 고정).
+  # 깨우는 건 api 쪽 reconciler 가 한다 — 도는 잡이 수요로 세어지므로 60초 안에 올라온다.
+  OPENDID_AUTOSCALE: "on"
   FM_CHAIN_ID: "201210"
   # FaceMarketSettlement(정산) 컨트랙트 주소 — 공개값이지만 평문. FM_PROVENANCE_ADDRESS
   # (출처증명 컨트랙트, 같은 성격의 공개 주소)는 secrets: 로 배선했다 — 재배포 시 매니페스트

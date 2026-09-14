@@ -163,6 +163,41 @@ def _holder_starting(app) -> HTTPException:
     )
 
 
+async def note_holder_demand(app, *, user_id: str, model_id: str, conn=None) -> None:
+    """REAL 모델 요청이 왔다 — holder 수요를 **즉시 커밋**하고 깨운다.
+
+    왜 즉시 커밋인가: 호출자의 트랜잭션에 얹어 두기만 하면 바로 뒤 verify_license 가 503 으로
+    올라갈 때 같이 롤백된다. 기록이 필요한 경우가 바로 그 경우다.
+
+    왜 깨우는 것만으로 부족한가(운영 03:35 prewarm → 03:37 down 패턴): reconciler 는 켜지는
+    중(running==0)엔 그대로 두지만, running 이 되는 순간 **DB 수요가 없으면 0 으로 내린다**.
+    워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔 경우)는 깨움 → 부팅 → 즉시 종료가 반복돼
+    재시도가 계속 실패한다. 그래서 깨우기 전에 수요를 먼저 남긴다.
+
+    `conn` 을 주면 **그 커넥션에** 쓰고 커밋한다. 이미 커넥션을 쥔 호출자(generate_detail_page)가
+    풀에서 하나를 더 잡으면, 동시 요청이 풀 크기만큼 올 때 서로의 두 번째 커넥션을 기다린다
+    (2026-09-08 풀 고갈 계열). 커넥션을 아직 안 잡은 호출자는 `conn` 없이 부르면 된다.
+    호출 지점까지 쓰기가 없어야 한다 — 지금 두 호출자 모두 읽기만 했다.
+
+    실패해도 요청 흐름을 막지 않는다 — 부가 신호다.
+    """
+    try:
+        if conn is not None:
+            async with conn.cursor() as cur:
+                await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
+            await conn.commit()
+        else:
+            pool = getattr(app.state, "pool", None)
+            if pool is not None:
+                async with pool.connection() as owned:
+                    async with owned.cursor() as cur:
+                        await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
+                    await owned.commit()
+    except Exception:  # noqa: BLE001 — 신호 기록 실패가 생성 요청을 막으면 안 된다
+        logger.info("holder_demand_note_skipped")
+    _wake_opendid(app)
+
+
 async def holder_ready(app, *, timeout: float = _HOLDER_HEALTH_TIMEOUT) -> bool:
     """holder 가 지금 응답하는가. 서명 없는 GET /holder/health 한 방(컨테이너 healthcheck 와 같은 경로)."""
     base = getattr(app.state.settings, "opendid_holder_url", None)

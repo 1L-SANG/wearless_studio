@@ -2983,6 +2983,21 @@ async def generate_editor_image(
     s = request.app.state.settings
     cost = s.credit_cost_editor_image
     scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
+    # holder 수요는 **커넥션을 잡기 전에** 남긴다 — 라우트 커넥션을 쥔 채로 풀에서 하나 더 잡으면
+    # 동시 요청이 풀 크기만큼 올 때 서로의 두 번째 커넥션을 기다린다(2026-09-08 풀 고갈 계열).
+    # mode:'new' 의 모델 id 는 본문에 그대로 있어 DB 없이 판정할 수 있다. 아래 게이트와 같은 조건을
+    # 쓴다 — 얼굴이 안 들어가는 컷까지 수요로 세면 holder 가 쓸데없이 30분 더 떠 있는다.
+    _requested = (body or {})
+    if (
+        s.facemarket_enabled
+        and _requested.get("mode") == "new"
+        and cut_generator.real_identity_plan(_requested.get("cutType"), wants_face=False)[0]
+        and facemarket.is_real_model_id(
+            _requested.get("modelId") or _requested.get("model_id"))
+    ):
+        await facemarket.note_holder_demand(
+            request.app, user_id=user_id,
+            model_id=str(_requested.get("modelId") or _requested.get("model_id")))
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -3099,6 +3114,7 @@ async def generate_editor_image(
             license_row = await facemarket.resolve_model_license(
                 conn, selected_model_id
             )
+            # 수요 기록은 이 함수 맨 앞(커넥션 잡기 전)에서 이미 했다.
             await facemarket.verify_license(
                 request.app,
                 license_row,
@@ -3186,6 +3202,14 @@ async def generate_detail_page(
         if s.facemarket_enabled and uses_real_identity:
             if license_row is None:      # 동의 판정에서 이미 읽었으면 그 행을 그대로 쓴다
                 license_row = await facemarket.resolve_project_license(conn, project, analysis)
+            # verify 전에 수요를 남긴다(verify 가 503 이면 트랜잭션이 롤백되고, 깨우기만으로는
+            # reconciler 가 60초 뒤 다시 0 으로 내린다 — 재시도가 같은 자리에서 계속 실패한다).
+            # 여기 모델 id 는 분석 행에서 나오므로 커넥션 전에 알 수 없다 — 그래서 **쥐고 있는
+            # 커넥션을 그대로 넘긴다**(풀에서 하나 더 잡으면 동시 요청이 서로를 기다린다).
+            # 여기까지 이 커넥션은 읽기만 했으므로 그 자리 커밋은 안전하다.
+            if facemarket.is_real_model_id(selected_model_id):
+                await facemarket.note_holder_demand(
+                    request.app, user_id=user_id, model_id=selected_model_id, conn=conn)
             await facemarket.verify_license(
                 request.app,
                 license_row,
