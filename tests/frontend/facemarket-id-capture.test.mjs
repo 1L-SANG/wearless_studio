@@ -224,8 +224,11 @@ test('simpleAuthUnavailableReason 이 없으면 간편인증 버튼이 활성화
 // ── (b) IdDocumentStep: 서버로 가는 건 캔버스에서 뽑은 blob 이지 원본 File 이 아니다 ──
 
 // 훅 호출 순서(IdDocumentStep.jsx 상단 주석과 동일해야 한다):
-//   useState: documentType, imageUrl, imageLoaded, maskRatio, maskedConfirmed, busy, localError
-//   useRef:   imageRef(0), canvasRef(1), dragRef(2)
+//   useState: documentType(0), imageUrl(1), imageLoaded(2), maskRatio(3), maskedConfirmed(4),
+//             busy(5), localError(6), mode(7), cameraUnavailableReason(8)
+//   useRef:   imageRef(0), canvasRef(1), dragRef(2), maskFailStreakRef(3)
+// 아래 file·manual 경로 테스트는 전부 initialStates[7]='file' 로 카메라 분기를 건너뛴다 —
+// 이 파일들이 검증하는 건 v1 의 드래그 마스킹 화면이지 카메라가 아니다.
 // sequence 는 drawImage/fillRect 를 하나의 시간순 배열에 적재한다(길이만 세는 배열 두 개가
 // 아니다) — drawImage.length===1 && fillRect.length===1 은 fillRect 를 먼저 부르고
 // drawImage 로 원본을 그 위에 덧그려도(마스킹이 사라짐) 똑같이 통과해 버린다. 아래
@@ -244,8 +247,10 @@ function fakeCanvasElement() {
     toBlob(resolve, type) {
       // 이 blob 은 원본 File 이 절대 아니다 — 캔버스가 방금 그리고 채운 결과를 대신하는
       // 표식(__maskedBlobMarker)일 뿐이다. 아래 테스트는 uploadIdDocument 가 이 표식을
-      // 받는지, 원본 File 객체를 받는지를 가른다.
-      resolve({ __maskedBlobMarker: true, type, sequence: [...sequence] });
+      // 받는지, 원본 File 객체를 받는지를 가른다. size 는 IdDocumentStep 의 "빈 blob 이면
+      // 올리지 않는다" 가드(Task 7)를 이 마커가 통과하게 하는 값일 뿐, 실제 바이트 크기가
+      // 아니다.
+      resolve({ __maskedBlobMarker: true, type, size: 2048, sequence: [...sequence] });
     },
   };
 }
@@ -266,6 +271,7 @@ test('제출하면 원본 File 이 아니라 캔버스에서 뽑은 마스킹된
       true,                                      // maskedConfirmed
       false,                                     // busy
       '',                                        // localError
+      'file',                                    // mode — camera 를 건너뛰고 v1 화면을 그린다
     ],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: {
@@ -339,7 +345,7 @@ test('레터박스된 미리보기에서도 fillRect 가 원본의 의도한 영
     initialStates: [
       'rrc', 'blob:fake-preview-url', true,
       { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.1 },
-      true, false, '',
+      true, false, '', 'file',
     ],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: {
@@ -371,7 +377,7 @@ test('마스킹 확인 체크가 안 됐으면 제출 버튼이 비활성화된�
   const fakeCanvas = fakeCanvasElement();
   const harness = await stepHarness({
     entry: '/src/features/model/IdDocumentStep.jsx',
-    initialStates: ['rrc', 'blob:fake-preview-url', true, { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, false, false, ''],
+    initialStates: ['rrc', 'blob:fake-preview-url', true, { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, false, false, '', 'file'],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: { uploadIdDocument: async () => { throw new Error('불려서는 안 된다'); } },
   });
@@ -392,7 +398,7 @@ test('마스킹 확인 체크가 안 됐으면 제출 버튼이 비활성화된�
 test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드 존 분기 점검)', async () => {
   const harness = await stepHarness({
     entry: '/src/features/model/IdDocumentStep.jsx',
-    initialStates: [null, null, false, null, false, false, ''],
+    initialStates: [null, null, false, null, false, false, '', 'file'],
     initialRefs: [null, null, null],
   });
   try {
@@ -408,6 +414,230 @@ test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드
     // 서버 ALLOWED_ID_MIME 과 같은 집합만 건다.
     assert.equal(fileInput.props.accept, 'image/jpeg,image/png,image/webp');
     assert.equal(fileInput.props.capture, 'environment');
+  } finally {
+    await harness.close();
+  }
+});
+
+// ── (b-2) Task 7: 카메라 우선 모드 머신 (camera → file → manual) ────────────────
+// 아래부터는 소스 정규식이 아니라 실제 모드 머신을 돌려 검증한다 — 세 겹 비상구(카메라
+// 미지원 → file, 기하 검증 연속 실패 → manual)가 이 기능의 핵심 안전장치라서, "정규식이
+// 통과했다"보다 "실제로 그 모드로 넘어갔다"를 확인해야 한다.
+const idDocumentStepSource = readFileSync(
+  new URL('../../src/features/model/IdDocumentStep.jsx', import.meta.url), 'utf8',
+);
+const findCameraNode = (tree) => findTree(tree, (node) => node.type?.name === 'IdCameraCapture');
+
+test('기본은 카메라 촬영이다', () => {
+  assert.match(idDocumentStepSource, /IdCameraCapture/, '카메라가 기본 경로여야 한다');
+  // 실제 자동 마스킹 호출은 IdCameraCapture.jsx 내부(burnGuideMask)에서 일어난다 —
+  // onCaptured 가 이미 마스킹된 blob 하나만 주므로 이 파일이 다시 부를 필요는 없다.
+  // 그래도 그 사실 자체는 여기 문서화돼 있어야 한다(다음 사람이 "왜 여긴 안 부르지"
+  // 를 코드만 보고 오해하지 않게).
+  assert.match(idDocumentStepSource, /burnGuideMask/, '가이드 기준 자동 마스킹의 출처를 언급해야 한다');
+});
+
+test('카메라를 못 쓰면 파일 선택으로 내려간다(onUnavailable)', () => {
+  assert.match(idDocumentStepSource, /onUnavailable/, '권한 거부·미지원 시 폴백이 있어야 한다');
+  assert.match(idDocumentStepSource, /image\/jpeg,image\/png,image\/webp|ACCEPT_ATTR/, '폴백도 형식을 좁혀야 한다');
+});
+
+test('기하 검증 실패가 반복되면 수동 마스킹으로 내려준다(소스)', () => {
+  assert.match(idDocumentStepSource, /MANUAL_MASK_AFTER|manualFallback/, '연속 실패 횟수로 비상구를 열어야 한다');
+  assert.match(idDocumentStepSource, /buildMaskedBlob/, '수동 마스킹 경로(v1)를 버리지 않는다');
+});
+
+test('기본 렌더는 카메라이고, 종류 선택·파일 입력 화면은 안 보인다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    const tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.ok(findCameraNode(tree), '기본 화면에 IdCameraCapture 가 있어야 한다');
+    assert.equal(
+      findTree(tree, (node) => node.type === 'input' && node.props.type === 'file'),
+      null,
+      'camera 모드에선 파일 입력이 보이면 안 된다 — 비상구가 아니라 기본 경로다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('카메라 권한이 없으면(onUnavailable) 실제로 file 모드로 내려가고 이유를 보여준다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    const cameraNode = findCameraNode(tree);
+    assert.ok(cameraNode, '카메라가 아직 살아 있어야 한다');
+    cameraNode.props.onUnavailable('permission');
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree), null, 'onUnavailable 뒤엔 카메라 화면이 사라져야 한다');
+    assert.equal(harness.runtime.states[7], 'file', 'mode 상태가 실제로 file 로 바뀌어야 한다');
+    assert.equal(harness.runtime.states[8], 'permission', '왜 내려왔는지(reason)도 기억해야 배너에 쓸 수 있다');
+    assert.match(collectText(tree), /카메라 권한이 없어서/, '왜 사진 선택 화면인지 사용자에게 설명해야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('빈 blob(toBlob 인코딩 실패)은 올리지 않고 다시 찍으라고 안내한다', async () => {
+  const uploads = [];
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: { uploadIdDocument: async (enrollmentId, body) => { uploads.push(body); return {}; } },
+  });
+  try {
+    const tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    const cameraNode = findCameraNode(tree);
+    await cameraNode.props.onCaptured(null);
+    assert.equal(uploads.length, 0, 'canvas.toBlob 이 null 을 주면 업로드를 시도하면 안 된다');
+    assert.match(harness.runtime.states[6], /다시 찍어 주세요/);
+
+    await cameraNode.props.onCaptured({ size: 0 });
+    assert.equal(uploads.length, 0, '크기 0 인 blob 도 같은 취급을 받아야 한다(빈 파일)');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('id_mask_not_applied 가 연속 3회면 manual 로 내려간다(세 번째 시도까지는 카메라)', async () => {
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('마스킹이 주민등록번호를 덮지 못했어요.'), {
+          status: 422, code: 'id_mask_not_applied',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    // IdDocumentStep.jsx 의 MANUAL_MASK_AFTER 와 같은 값(3) — 상수 자체는 export 되지
+    // 않으므로(내부 전용) 여기선 그 값을 안다는 전제로 리터럴을 쓴다. 값이 바뀌면 이
+    // 테스트도 같이 고쳐야 한다.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const cameraNode = findCameraNode(tree);
+      assert.ok(cameraNode, `${attempt}번째 시도 전엔 아직 카메라 화면이어야 한다`);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(harness.runtime.states[7], 'manual', '연속 3회째엔 수동 마스킹 화면으로 내려가야 한다');
+    assert.equal(findCameraNode(tree), null);
+    assert.match(collectText(tree), /직접 옮겨 주세요/, '왜 수동 화면인지 설명해야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('성공은 연속 실패 횟수를 초기화한다(2번 실패 → 성공 → 2번 실패는 3연속이 아니다)', async () => {
+  const outcomes = ['fail', 'fail', 'success', 'fail', 'fail'];
+  let call = 0;
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        const outcome = outcomes[call];
+        call += 1;
+        if (outcome === 'success') return { status: 'identity_pending' };
+        throw Object.assign(new Error('마스킹이 주민등록번호를 덮지 못했어요.'), {
+          status: 422, code: 'id_mask_not_applied',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    for (let i = 0; i < outcomes.length; i += 1) {
+      const cameraNode = findCameraNode(tree);
+      assert.ok(cameraNode, `${i}번째 시도는 카메라 화면에서 이뤄져야 한다(아직 3연속에 못 미침)`);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(
+      harness.runtime.states[7],
+      'camera',
+      '성공이 중간에 끼어 스트라이크를 초기화했으므로 뒤이은 2연속은 3연속이 아니다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('id_mask_not_applied 가 아닌 코드는 몇 번을 반복해도 수동으로 내려가지 않는다', async () => {
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('파일이 너무 커요.'), { status: 413, code: 'file_too_large' });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    for (let i = 0; i < 5; i += 1) {
+      const cameraNode = findCameraNode(tree);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(harness.runtime.states[7], 'camera', 'file_too_large 는 마스킹 실패가 아니므로 스트라이크가 아니다');
+    assert.match(harness.runtime.states[6], /파일이 너무 커요/, '메시지는 그대로 보여줘야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('camera 경로에서도 409 는 스트라이크로 안 세고 onStale 로 되돌린다', async () => {
+  const stale = [];
+  const errors = [];
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('신분증을 올릴 수 있는 단계가 아니에요.'), {
+          status: 409, code: 'invalid_enrollment_state',
+        });
+      },
+    },
+  });
+  try {
+    const tree = harness.render({
+      enrollmentId: 'enrollment-1',
+      onUploaded: () => {},
+      onStale: (e) => stale.push(e),
+      onError: (e) => errors.push(e),
+    });
+    const cameraNode = findCameraNode(tree);
+    await cameraNode.props.onCaptured({ size: 100 });
+    assert.equal(stale.length, 1, '409 는 부모의 재조회 경로(onStale)로 가야 한다');
+    assert.deepEqual(errors, [], '409 를 일반 에러로 처리하면 안 된다');
+    assert.equal(harness.runtime.states[7], 'camera', '409 는 이 화면이 유효하지 않다는 뜻이지 마스킹 실패가 아니다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('업로드 중엔 busy 가 IdCameraCapture 로 전달돼 자동/수동 셔터를 막는다', async () => {
+  let resolveUpload;
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: { uploadIdDocument: () => new Promise((resolve) => { resolveUpload = resolve; }) },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.busy, false, '업로드 전엔 busy 가 아니어야 한다');
+
+    const pending = findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(
+      findCameraNode(tree).props.busy,
+      true,
+      '업로드가 끝나기 전엔 busy=true 를 넘겨야 자동 판정기·수동 셔터가 또 찍지 않는다',
+    );
+
+    resolveUpload({ status: 'identity_pending' });
+    await pending;
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.busy, false, '업로드가 끝나면 busy 를 풀어야 한다');
   } finally {
     await harness.close();
   }
@@ -588,7 +818,7 @@ test('신분증 업로드 409 는 부모의 재조회 경로로 되돌린다(사
     entry: '/src/features/model/IdDocumentStep.jsx',
     initialStates: [
       'rrc', 'blob:fake-preview-url', true,
-      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, true, false, '',
+      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, true, false, '', 'file',
     ],
     initialRefs: [
       { naturalWidth: 800, naturalHeight: 600, getBoundingClientRect: () => ({ width: 800, height: 600 }) },

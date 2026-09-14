@@ -258,10 +258,15 @@
   pointer-events: none;
 }
 
+/* right/bottom 을 박스 안쪽으로 둔다(원래는 -6px 로 박스 밖에 반쯤 걸쳐 있었다) —
+   .idImageStage 가 overflow: hidden 이고 clampMaskRatio 는 박스가 이미지 오른쪽/아래
+   끝에 딱 붙는 걸 허용한다. 그 상태에서 손잡이가 박스 밖으로 나가 있으면 이미지 바깥이라
+   같이 잘려 나가 손도 못 댈 자리가 된다(모바일 감사). 박스 안쪽에 두면 박스가 어디
+   있든 항상 이미지 안이라 절대 잘리지 않는다. */
 .idMaskHandle {
   position: absolute;
-  right: -6px;
-  bottom: -6px;
+  right: 2px;
+  bottom: 2px;
   width: 16px;
   height: 16px;
   border-radius: 50%;
@@ -269,6 +274,17 @@
   border: 2px solid var(--fm-ink, #111);
   cursor: nwse-resize;
   touch-action: none;
+}
+/* 보이는 손잡이는 16px 그대로 두고(디자인 유지), 투명 의사요소로 히트 영역만
+   44px 로 넓힌다 — .switch::after/.removePhoto::after 와 같은 기법(#274). */
+.idMaskHandle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 .idHiddenCanvas { display: none; }
@@ -294,11 +310,15 @@
 .purposeNoticeHead svg { flex: none; color: var(--fg-2); }
 /* 힌트와 인증 버튼 사이 여백. */
 .identityAction { margin-top: 22px; }
+/* min-height: 52px — .priceConsent 와 같은 값(모바일 감사). 라벨이 한 줄(~24px)뿐이라
+   높이가 없으면 히트 영역이 그 한 줄로 줄어든다 — <label> 전체가 체크박스를 토글하므로
+   높이를 키우면 그 여백까지 그대로 눌리는 영역이 된다. */
 .consentCheck {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   margin: 18px 0;
+  min-height: 52px;
   color: var(--fg-1);
   font-size: 14px;
   line-height: 1.5;
@@ -417,6 +437,14 @@
 }
 .physiqueGroup:last-of-type {
   margin-bottom: 22px;
+}
+/* IdDocumentStep 의 신분증 종류 칩만 손댄다(:global 로 app.css 의 .chip 자체는 그대로
+   둔다 — 그건 전역이라 여기서 키우면 다른 화면 칩까지 다 바뀐다). 기본 .chip 은
+   padding 9px 라 렌더 높이가 ~35px 밖에 안 된다(모바일 감사) — min-height 만 44px 로
+   올린다. .chip 이 이미 inline-flex + align-items:center 라 내용은 그대로 가운데
+   정렬된 채 세로만 커진다. */
+.physiqueGroup :global(.chip) {
+  min-height: 44px;
 }
 .physiqueLabel {
   font-size: 12.5px;
