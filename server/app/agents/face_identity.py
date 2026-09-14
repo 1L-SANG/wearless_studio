@@ -473,6 +473,20 @@ def pad_edges(image: Image.Image, pad: tuple[int, int, int, int]) -> Image.Image
     return Image.fromarray(np.pad(arr, ((top, bottom), (left, right), (0, 0)), mode="edge"))
 
 
+def shift_detection(det: FaceDetection, dx: int, dy: int) -> FaceDetection:
+    """검출 결과를 (dx, dy) 만큼 옮긴다 — 박스 **와 랜드마크 둘 다**.
+
+    ★ 박스만 옮기면 estimate_expression 이 엉뚱한 곳을 본다. 표정 추정은 YuNet 5점 중 입꼬리 두
+    점으로 입술 영역을 잡으므로, 좌·상 패딩이 있는 컷에서 랜드마크가 그대로면 입술 마스크가
+    패딩만큼 왼쪽·위로 밀린 자리를 읽는다(2026-09-13 리뷰에서 잡힘).
+    """
+    if not dx and not dy:
+        return det
+    bx, by, bw, bh = det.box
+    return replace(det, box=(bx + dx, by + dy, bw, bh),
+                   landmarks=tuple((x + dx, y + dy) for x, y in det.landmarks))
+
+
 def unpad_edges(image: Image.Image, pad) -> Image.Image:
     """pad_edges 를 되돌린다. 덧댄 픽셀이 결과에 남지 않게 하는 유일한 자리다."""
     left, top, right, bottom = (int(v) for v in (pad or (0, 0, 0, 0)))
@@ -513,8 +527,7 @@ def prepare_image(image: Image.Image, model_dir: str | None = None, *,
         if any(pad):
             image = pad_edges(image, pad)
             meta["crop_pad"] = pad
-            bx, by, bw, bh = det.box
-            det = replace(det, box=(bx + pad[0], by + pad[1], bw, bh))
+            det = shift_detection(det, pad[0], pad[1])
     plan = plan_from_box(
         image.size[0], image.size[1], det.box, yaw_proxy=det.yaw_proxy, eye_dist=det.eye_dist,
         **dict(zip(("expression", "expression_metrics"), estimate_expression(image, det))))

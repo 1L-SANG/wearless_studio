@@ -172,6 +172,49 @@ def test_a_cut_that_never_needed_padding_is_untouched_either_way(monkeypatch):
     assert on.image == off.image, "패딩 스위치가 이 컷의 픽셀을 바꾸면 안 된다"
 
 
+# ── 랜드마크도 같이 옮긴다 ──────────────────────────────────────────────────
+def test_shift_moves_the_landmarks_not_just_the_box():
+    det = fi.FaceDetection(box=(10.0, 20.0, 30.0, 40.0), yaw_proxy=0.1, eye_dist=12.0, score=0.9,
+                           landmarks=((11.0, 22.0), (30.0, 22.0), (20.0, 35.0), (14.0, 48.0), (27.0, 48.0)))
+    out = fi.shift_detection(det, 7, 3)
+    assert out.box == (17.0, 23.0, 30.0, 40.0)
+    assert out.landmarks == ((18.0, 25.0), (37.0, 25.0), (27.0, 38.0), (21.0, 51.0), (34.0, 51.0))
+    assert fi.shift_detection(det, 0, 0) is det
+
+
+def test_expression_is_read_from_the_same_pixels_after_padding(monkeypatch):
+    """표정 추정은 입꼬리 랜드마크로 입술을 잡는다 — 패딩 뒤에도 같은 곳을 봐야 한다.
+
+    박스만 옮기고 랜드마크를 두면 입술 마스크가 패딩만큼 밀린 자리를 읽는다(2026-09-13 리뷰).
+    """
+    box = BLOCKED["closeup_1"]
+    rng = np.random.default_rng(11)
+    src = Image.fromarray(rng.integers(0, 255, (H, W, 3), dtype=np.uint8))
+    lm = ((box[0] + 110, box[1] + 200), (box[0] + 300, box[1] + 200),
+          (box[0] + 210, box[1] + 330), (box[0] + 150, box[1] + 430), (box[0] + 280, box[1] + 430))
+    det = fi.FaceDetection(box=box, yaw_proxy=0.05, eye_dist=190.0, score=0.9, landmarks=lm)
+
+    base_expr, base_metrics = fi.estimate_expression(src, det)
+    pad = fi.crop_pad_for(W, H, box)
+    assert any(pad)
+    padded = fi.pad_edges(src, pad)
+    moved = fi.shift_detection(det, pad[0], pad[1])
+    pad_expr, pad_metrics = fi.estimate_expression(padded, moved)
+
+    assert pad_expr == base_expr
+    assert pad_metrics == base_metrics
+
+    # 랜드마크를 안 옮기면(옛 버그) 다른 곳을 읽는다 — 이 테스트가 그걸 잡는다
+    stale = replace_box_only(det, pad[0], pad[1])
+    assert fi.estimate_expression(padded, stale)[1] != base_metrics
+
+
+def replace_box_only(det, dx, dy):
+    from dataclasses import replace as _replace
+    bx, by, bw, bh = det.box
+    return _replace(det, box=(bx + dx, by + dy, bw, bh))
+
+
 # ── 설정·레시피 ─────────────────────────────────────────────────────────────
 def test_the_setting_defaults_on_with_an_escape_hatch():
     import pathlib
