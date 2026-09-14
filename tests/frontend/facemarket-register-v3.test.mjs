@@ -98,6 +98,34 @@ test('인증 대기자는 동의가 체크되어 있고 인증창 대기 중에�
   } finally { await h.close(); }
 });
 
+// 최종리뷰 C1: runIdentity 가 '2'(사진 화면)를 하드코딩하면 simple_auth 지원자는 방금
+// 끝낸 간편인증 뒤 신분증 촬영 화면을 영영 못 보고 사진 화면에서 "현재 등록 단계에서는
+// 사진을 고칠 수 없어요"만 본다. 위 테스트(mid, photos_pending → '2')와 짝을 이뤄 두
+// 경로를 실제로 렌더/클릭/await 해서 증명한다 — 이 파일은 JSX 라 node --test 가 직접
+// import 를 못 하므로, ModelRegister.jsx 에 대한 유일한 보증이 정규식 소스 대조뿐이던
+// 문제(최종리뷰가 지적한 바로 그 결함)를 modelComponentHarness(Vite SSR + jsx 스텁)로
+// 실제 실행 검증한다.
+test('간편인증 지원자는 인증이 끝나면 신분증 촬영 화면으로 가요(사진 화면으로 새지 않아요)', async () => {
+  const simpleAuthEnrollment = { ...baseEnrollment, identityMethod: 'simple_auth' };
+  let resolve;
+  const h = await modelComponentHarness({ initialStates: [], honorHookDependencies: true, api: {
+    getCurrentEnrollment: async () => simpleAuthEnrollment,
+    runIdentityWidget: () => new Promise(done => { resolve = done; }),
+    createIdentity: async () => ({ ...simpleAuthEnrollment, status: 'id_capture_pending' }),
+  } });
+  try {
+    commit(h); await flush();
+    const tree = h.render();
+    assert.equal(h.runtime.states[0], '1');
+    // 간편인증 사용자에겐 "신분증 인증하기"가 아니라 "간편인증하기"로 보여요(PASS·카카오
+    // 창과 문구가 어긋나면 안 되니까) — 그 버튼이 runIdentity() 를 부릅니다.
+    const pending = button(tree, '간편인증하기').props.onClick();
+    resolve('token'); await pending;
+    assert.equal(h.runtime.states[0], 'id_capture', '신분증 촬영 화면(id_capture)으로 가야 한다 — 사진 화면(2)이 아니다');
+    assert.equal(h.runtime.states[2], 1);
+  } finally { await h.close(); }
+});
+
 for (const [sub, encouragement] of [[1, null], [2, '거의 다 왔어요. 방금 하신 대로 아래 이미지들을 찍어 주세요.'], [3, '이제 마지막이에요. 아래 이미지들만 찍으면 끝나요.']]) {
   test(`사진 ${sub}단계는 공통 안내와 촬영 범위만 보여요`, async () => {
     const h = await modelComponentHarness({ initialStates: ['2', baseEnrollment, sub], api: {} });

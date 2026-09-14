@@ -172,7 +172,14 @@ export function ModelRegister() {
       if (!mounted.current || controller.signal.aborted) return;
       const verified = await createIdentity(record.id, { token });
       if (!mounted.current || controller.signal.aborted) return;
-      setEnrollment(verified); setSub(1); setStep('2');
+      setEnrollment(verified);
+      // 다음 화면은 항상 서버 상태로 고른다(최종리뷰 C1) — mid 는 photos_pending 이라
+      // 오늘까지처럼 사진 화면('2')으로 가지만, simple_auth 는 신분증을 아직 안 찍었으므로
+      // id_capture_pending 이고 그러면 촬영 화면으로 가야 한다. '2' 를 여기 박아 두면
+      // simple_auth applicant 는 신분증 촬영 화면을 아예 못 보고 사진 단계에서
+      // "현재 등록 단계에서는 사진을 고칠 수 없어요" 만 본다.
+      const screen = restoreRegisterScreen(verified);
+      setStep(screen.step); setSub(screen.sub);
     } catch (requestError) {
       if (mounted.current && !controller.signal.aborted) { setError(requestError.message || '본인 확인에 실패했어요.'); }
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
@@ -231,8 +238,8 @@ export function ModelRegister() {
   const handleMethodPick = useCallback((method) => startEnrollmentRef.current?.(method), []);
 
   // 간편인증 경로 전용: 신분증 업로드(마스킹 확인 완료)가 끝나면 서버 상태를 다시 읽어
-  // 다음 화면으로 넘어가요. 성공하면 identity_pending 으로 바뀌고, 그 화면의 버튼이
-  // 같은 위젯을 ENT_SIMPLE_AUTH 로 엽니다.
+  // 다음 화면으로 넘어가요. 성공하면 photos_pending 으로 바뀌고(신분증은 이미 본인확인
+  // 뒤에 찍은 거라 더 볼 게 없어요 — Task6 순서 뒤집기), 사진 3장 화면으로 넘어갑니다.
   const finishIdDocument = async () => {
     if (!enrollment?.id) return;
     try {
