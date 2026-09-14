@@ -175,19 +175,30 @@ async def resolve_real_model_assets(
     return out
 
 
-#: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — 18슬롯 등록의 face01~face08.
-IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = tuple(f"face{i:02d}" for i in range(1, 9))
-#: 옛 3장 등록에서 기준으로 쓰지 않는 각도. resolve_photo_rows 는 side 를 face05 자리로 올려 주는데,
-#: 옆얼굴은 SFace(정면 임베딩)에서 같은 사람이라도 점수가 낮게 나와 중앙값을 통째로 끌어내린다.
-#: 18슬롯 등록의 face05 는 그대로 쓴다 — 여기서 거르는 건 **옛 별칭 행**뿐이다.
-_LEGACY_SLOTS_NOT_A_REFERENCE = ("side",)
+#: 동일인 검사 기준으로 쓸 등록 얼굴 사진 슬롯 — **정면 계열만**.
+#:   face01 정면 무표정 · face02 정면 미소 · face07 턱 위 · face08 턱 아래
+#: 옛 3장 등록은 resolve_photo_rows 가 front→face01 로 올려 주므로 자동으로 front 한 장만 남는다
+#: (angle45→face03 · side→face05 는 이 목록에 없다).
+#:
+#: 왜 정면만인가(2026-09-13 실측, prod 테스트컷 8장 · YuNet+SFace):
+#:     기준                         테스트컷 점수
+#:     옛 등록 front 1장            0.51 ~ 0.60
+#:     옛 등록 angle45 1장          0.34 ~ 0.43      ← 45도가 통째로 끌어내린다
+#:     front+angle45 중앙값         0.435 ~ 0.514    ← 0.45 에서 2장 탈락·1장 턱걸이
+#:     9/11 정면 8장 중앙           0.72 ~ 0.79
+#:     9/11 정면+3/4 12장 중앙      0.69 ~ 0.73
+#:     9/11 3/4 4장 중앙            0.58 ~ 0.66
+#: SFace 임베딩이 정면 기준이라 각도 사진은 같은 사람이라도 점수가 내려간다. 기준에 섞으면
+#: 중앙값이 내려가 **같은 사람을 떨어뜨린다** — 문턱을 내리는 것보다 기준을 맞추는 게 먼저다.
+IDENTITY_REFERENCE_SLOTS: tuple[str, ...] = ("face01", "face02", "face07", "face08")
 #: 기준 사진으로 쓸 수 있는 저장 상태. 승인 전(quarantine)도 기준으로는 유효하다 — 게이트는
 #: "같은 사람인가"만 보고, 공개 자산 승인과는 다른 판단이다.
 _REFERENCE_STORAGE_STATES = ("quarantine", "approved")
 
 
-async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8) -> list[bytes]:
-    """동일인 검사 기준셋 = 등록 얼굴 사진 **여러 장**(face01~face08 중 있는 것).
+async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8,
+                                     model_dir: str | None = None) -> list[bytes]:
+    """동일인 검사 기준셋 = 등록 **정면** 얼굴 사진 여러 장(IDENTITY_REFERENCE_SLOTS).
 
     왜 여러 장인가(2026-09-13 실측): 기준을 승인 자산 face_front **한 장**으로 쓰면 그 한 장의
     촬영 조건이 곧 기준이 된다. 같은 사람인데도
@@ -196,8 +207,11 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
     로 갈렸다 — 얼굴이 아니라 **조명·카메라가 다른 날** 이 점수를 갈랐다. 여러 장의 중앙값을 쓰면
     한 장의 촬영 조건이 문턱을 대신 정하는 일이 없어진다(identity_score 가 중앙값을 쓴다).
 
-    읽을 수 없으면 [] — 호출자는 그때 기존 한 장 경로로 폴백한다. 기준이 없으면 게이트가
-    신원을 보지 않는다(identity=None). 얼굴 패스 자체는 어떤 경우에도 막지 않는다.
+    슬롯 이름만 믿지 않는다 — 정면 슬롯에 각도 사진이 올라온 촬영 실수를 대비해 사진마다 YuNet
+    yaw_proxy 를 재서 YAW_FRONT_MAX 이상이면 뺀다.
+
+    정면 기준이 0장이면 [] — 호출자는 그때 기존 face_front 한 장 경로로 폴백한다. 기준이 아예
+    없으면 게이트가 신원을 보지 않는다(identity=None). 얼굴 패스 자체는 어떤 경우에도 막지 않는다.
     """
     r2_face = getattr(app.state, "r2_face", None)
     if r2_face is None:
@@ -218,26 +232,48 @@ async def enrollment_reference_faces(app, conn, model_id: str, *, limit: int = 8
         log.warning("enrollment reference photos lookup failed for %s: %r", model_id, exc)
         return []
     usable = [r for r in resolve_photo_rows(rows, IDENTITY_REFERENCE_SLOTS)
-              if r.get("angle") not in _LEGACY_SLOTS_NOT_A_REFERENCE
-              and r.get("qc_status") == "passed"
+              if r.get("qc_status") == "passed"
               and r.get("storage_state") in _REFERENCE_STORAGE_STATES
               and str(r.get("r2_key") or "").strip()]
     out: list[bytes] = []
+    turned = 0
     for row in usable[:limit]:
         try:
-            out.append(await asyncio.to_thread(r2_face.get_bytes, row["r2_key"]))
+            data = await asyncio.to_thread(r2_face.get_bytes, row["r2_key"])
         except Exception as exc:  # noqa: BLE001 — 한 장이 없어도 나머지로 간다
             log.info("reference photo unavailable (%s) — skipped", type(exc).__name__)
-    log.info("identity reference photos for %s: %d/%d usable", model_id, len(out), len(usable))
+            continue
+        if not await asyncio.to_thread(_is_frontal, data, model_dir):
+            turned += 1
+            continue
+        out.append(data)
+    log.info("identity reference photos for %s: %d/%d usable (yaw 로 뺀 것 %d)",
+             model_id, len(out), len(usable), turned)
     return out
 
 
-async def reference_face_bytes(app, conn, model_id: str, license_row) -> list[bytes]:
+def _is_frontal(data: bytes, model_dir: str | None) -> bool:
+    """기준으로 쓸 만큼 정면인가. 못 재면 **쓴다**(기준을 잃는 쪽이 더 나쁘다)."""
+    from . import face_identity  # 지연 임포트 — 이 모듈은 cv2 없이도 임포트될 수 있어야 한다
+
+    try:
+        image = face_identity._decode(data)
+        det = face_identity.detect_face(image, model_dir)
+    except Exception as exc:  # noqa: BLE001 — 판정 불가는 통과로 본다
+        log.info("reference yaw 측정 실패(%s) — 그대로 쓴다", type(exc).__name__)
+        return True
+    if det is None:
+        return True
+    return det.yaw_proxy < face_identity.YAW_FRONT_MAX
+
+
+async def reference_face_bytes(app, conn, model_id: str, license_row, *,
+                               model_dir: str | None = None) -> list[bytes]:
     """동일인 검사 기준. 등록 얼굴 사진 여러 장이 우선이고, 없으면 승인된 face_front 한 장.
 
     변형 컷처럼 실존 자산을 따로 안 읽는 경로가 쓴다. 새 컷·상세페이지는 이미 읽은 model_images[0] 를 그대로 쓴다.
     """
-    photos = await enrollment_reference_faces(app, conn, model_id)
+    photos = await enrollment_reference_faces(app, conn, model_id, model_dir=model_dir)
     if photos:
         return photos
     if not isinstance(license_row, dict):

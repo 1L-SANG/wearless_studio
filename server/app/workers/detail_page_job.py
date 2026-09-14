@@ -1285,7 +1285,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             if fm_lora_spec is not None:
                 async with app.state.pool.connection() as _conn:
                     _refs = await identity_source.enrollment_reference_faces(
-                        app, _conn, str(license_row["model_id"]))
+                        app, _conn, str(license_row["model_id"]),
+                        model_dir=getattr(s, "fm_face_qc_dir", None))
                 if not _refs and real_model_images:
                     _refs = [real_model_images[0].data]
                 if _refs:

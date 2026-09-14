@@ -69,30 +69,66 @@ def _photo(angle, key=None, qc="passed", state="quarantine"):
 MODEL = "ca5d2abd-5a70-47c1-973b-10573cf60680"
 
 
-def _load(rows, r2=None, **kw):
+def _load(rows, r2=None, yaw=None, **kw):
+    """yaw: r2 키 → yaw_proxy. 주면 그 값으로 정면 판정을 흉내낸다(YuNet weights 없이 돈다)."""
     r2 = r2 or _R2()
-    return asyncio.run(identity_source.enrollment_reference_faces(_app(r2), _Conn(rows), MODEL, **kw)), r2
+    import contextlib
+    from unittest import mock
+    ctx = contextlib.nullcontext()
+    if yaw is not None:
+        def fake(data, model_dir=None):
+            key = data.decode().split("bytes:")[1]
+            return None if key not in yaw else _Det(yaw[key])
+        ctx = mock.patch.object(identity_source, "_is_frontal",
+                                lambda data, model_dir: (fake(data) is None
+                                                         or fake(data).yaw_proxy < 0.25))
+    with ctx:
+        out = asyncio.run(identity_source.enrollment_reference_faces(_app(r2), _Conn(rows), MODEL, **kw))
+    return out, r2
 
 
-def test_eight_face_slots_become_eight_references():
+class _Det:
+    def __init__(self, yaw):
+        self.yaw_proxy = yaw
+
+
+def test_only_the_frontal_slots_are_used():
+    """face03(3/4)·face05(옆)·face04/06 은 기준이 아니다 — SFace 가 정면 임베딩이라서."""
     rows = [_photo(f"face{i:02d}") for i in range(1, 9)]
     out, r2 = _load(rows)
-    assert len(out) == 8
-    assert r2.reads == [f"k/face{i:02d}.jpg" for i in range(1, 9)]
+    assert r2.reads == ["k/face01.jpg", "k/face02.jpg", "k/face07.jpg", "k/face08.jpg"]
+    assert len(out) == 4
+    assert identity_source.IDENTITY_REFERENCE_SLOTS == ("face01", "face02", "face07", "face08")
 
 
-def test_legacy_three_photo_enrollment_uses_front_and_angle45():
-    """옛 등록은 front→face01 · angle45→face03 으로 대체된다. side(→face05)는 기준에 넣지 않는다."""
+def test_legacy_three_photo_enrollment_uses_front_only():
+    """옛 등록은 front→face01 만 남는다. angle45(→face03)·side(→face05)는 목록에 없다.
+
+    실측: front+angle45 중앙값이면 테스트컷이 0.435~0.514 로 떨어져 0.45 에서 2장이 탈락했다.
+    front 1장만 쓰면 0.51~0.60 이다.
+    """
     out, r2 = _load([_photo("front"), _photo("angle45"), _photo("side")])
-    assert r2.reads == ["k/front.jpg", "k/angle45.jpg"], "옆얼굴은 기준이 아니다"
-    assert len(out) == 2
-    assert identity_source.IDENTITY_REFERENCE_SLOTS == tuple(f"face{i:02d}" for i in range(1, 9))
+    assert r2.reads == ["k/front.jpg"]
+    assert len(out) == 1
 
 
-def test_the_new_scheme_keeps_face05_even_though_side_maps_to_it():
-    """거르는 건 옛 별칭 side 행뿐이다 — 18슬롯 등록의 face05 는 기준으로 쓴다."""
-    out, r2 = _load([_photo("face05")])
-    assert r2.reads == ["k/face05.jpg"] and len(out) == 1
+def test_a_turned_photo_in_a_frontal_slot_is_dropped():
+    """슬롯 이름만 믿지 않는다 — 촬영 실수로 정면 슬롯에 각도 사진이 오면 yaw 로 뺀다."""
+    rows = [_photo("face01"), _photo("face02"), _photo("face07")]
+    out, r2 = _load(rows, yaw={"k/face01.jpg": 0.04, "k/face02.jpg": 0.41, "k/face07.jpg": 0.12})
+    assert len(r2.reads) == 3, "읽어 봐야 각도를 잴 수 있다"
+    assert len(out) == 2, "0.41 짜리 한 장이 빠진다"
+
+
+def test_when_yaw_cannot_be_measured_the_photo_is_kept():
+    """판정 불가는 통과로 본다 — 기준을 잃는 쪽이 더 나쁘다."""
+    from unittest import mock
+    with mock.patch.object(identity_source, "_is_frontal", side_effect=lambda d, m: True):
+        out, _ = _load([_photo("face01")])
+    assert len(out) == 1
+    # 진짜 구현도 detect 실패·예외를 통과로 본다
+    with mock.patch("app.agents.face_identity.detect_face", return_value=None):
+        assert identity_source._is_frontal(b"x", None) is True
 
 
 @pytest.mark.parametrize("bad", [
@@ -107,7 +143,8 @@ def test_unusable_photos_are_left_out(bad):
 
 def test_a_missing_object_does_not_lose_the_rest():
     """한 장이 R2 에 없어도 나머지로 간다 — 기준이 줄어들 뿐 컷은 막지 않는다."""
-    out, r2 = _load([_photo(f"face{i:02d}") for i in range(1, 4)], r2=_R2(missing={"k/face02.jpg"}))
+    out, r2 = _load([_photo(s) for s in ("face01", "face02", "face07")],
+                    r2=_R2(missing={"k/face02.jpg"}))
     assert len(out) == 2 and len(r2.reads) == 3
 
 
@@ -128,6 +165,12 @@ def test_a_bad_model_id_is_refused_before_the_query():
     assert asyncio.run(identity_source.enrollment_reference_faces(_app(r2), _Conn([]), "not-a-uuid")) == []
 
 
+def test_no_frontal_reference_falls_back_to_the_single_asset():
+    """정면 기준이 0장이면 [] — 호출자가 예전 face_front 한 장 경로로 간다."""
+    out, r2 = _load([_photo("angle45"), _photo("side"), _photo("face03")])
+    assert out == [] and r2.reads == []
+
+
 def test_the_query_pins_the_models_current_enrollment():
     """다른 등록 회차의 사진이 기준으로 섞이면 안 된다 — 조인이 current_enrollment_id 로 묶인다."""
     conn = _Conn([_photo("face01")])
@@ -141,7 +184,7 @@ def test_reference_face_bytes_prefers_photos_then_falls_back(monkeypatch):
     """변형 컷 경로: 등록 사진이 있으면 그것, 없으면 예전처럼 승인 face_front 한 장."""
     calls = []
 
-    async def photos(app, conn, model_id):
+    async def photos(app, conn, model_id, *, model_dir=None):
         calls.append("photos")
         return [b"a", b"b"]
 
@@ -149,7 +192,7 @@ def test_reference_face_bytes_prefers_photos_then_falls_back(monkeypatch):
     assert asyncio.run(identity_source.reference_face_bytes(_app(_R2()), _Conn([]), MODEL, {})) == [b"a", b"b"]
     assert calls == ["photos"]
 
-    async def none(app, conn, model_id):
+    async def none(app, conn, model_id, *, model_dir=None):
         return []
 
     monkeypatch.setattr(identity_source, "enrollment_reference_faces", none)

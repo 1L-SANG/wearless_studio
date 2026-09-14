@@ -515,7 +515,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                 if fm_lora_spec is not None and fm_source == "REAL":
                     async with pool.connection() as _conn:
                         _refs = await identity_source.enrollment_reference_faces(
-                            app, _conn, str(selected_model_id))
+                            app, _conn, str(selected_model_id),
+                            model_dir=getattr(s, "fm_face_qc_dir", None))
                     if not _refs and model_images:
                         _refs = [model_images[0].data]
                     if _refs:
