@@ -8,13 +8,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import pathlib
 import re
+import uuid
+from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from app.routes import _cut_to_api, _enqueue_missing_tone_mask
+from app.models import ToneApplyRequest
 from app.services import editor_garment_mask as egm
 from app.services import mannequin_tone_render as tone
 from app.workers import editor_garment_mask_job as job
@@ -248,6 +254,81 @@ def test_tone_render_metadata_reconstructs_from_the_original():
     assert meta["sourceAssetId"] == "asset-1", "원본 컷 자산을 가리켜야 한다"
     assert meta["rendererVersion"] == tone.RENDERER_VERSION
     assert (meta["saturation"], meta["exposure"]) == (-10, 8)
+
+
+def test_tone_apply_saves_a_native_bound_seller_display_derivative(monkeypatch):
+    from app import routes
+
+    rendered_id = str(uuid.uuid4())
+    source_id = str(uuid.uuid4())
+    image = Image.new("RGB", (1024, 1536), (31, 67, 103))
+    native = BytesIO()
+    image.save(native, "PNG")
+    puts = []
+    recorded = {}
+
+    class R2:
+        def get_bytes(self, key):
+            assert key == "uploads/tone.png"
+            return native.getvalue()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            puts.append((key, data, mime, cache))
+
+    class Conn:
+        async def commit(self):
+            return None
+
+    @contextlib.asynccontextmanager
+    async def get_conn(_request):
+        yield Conn()
+
+    async def get_project(_conn, user_id, project_id):
+        return {"id": project_id, "user_id": user_id}
+
+    async def get_cut(_conn, user_id, project_id, cut_id):
+        return {"id": source_id, "r2_key": "ai/native.png", "mime_type": "image/png"}
+
+    async def current_mask(*_args, **_kwargs):
+        return ({"id": "mask", "metadata": {"sourceHash": "hash", "algorithmVersion": "v1"}}, None, None)
+
+    async def get_asset(_conn, user_id, asset_id):
+        assert asset_id == rendered_id
+        return {"id": rendered_id, "r2_key": "uploads/tone.png", "mime_type": "image/png"}
+
+    async def clear(*_args, **_kwargs):
+        return 0
+
+    async def record(*_args, **kwargs):
+        recorded.update(kwargs)
+
+    async def state(*_args, **_kwargs):
+        return {"cutId": "A-1", "status": "ready"}
+
+    monkeypatch.setattr(routes, "get_conn", get_conn)
+    monkeypatch.setattr(routes.repo, "get_project", get_project)
+    monkeypatch.setattr(routes.repo, "get_mannequin_cut_asset", get_cut)
+    monkeypatch.setattr(routes.editor_garment_mask, "current_mask_for_cut", current_mask)
+    monkeypatch.setattr(routes.repo, "get_asset_for_user", get_asset)
+    monkeypatch.setattr(routes.mannequin_tone_render, "clear_for_cut", clear)
+    monkeypatch.setattr(routes.mannequin_tone_render, "record", record)
+    monkeypatch.setattr(routes, "_tone_state", state)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        settings=SimpleNamespace(mannequin_tone_editor="on"), r2=R2())))
+
+    asyncio.run(routes.apply_tone_editor(
+        request,
+        "p1",
+        "A-1",
+        ToneApplyRequest(assetId=rendered_id, saturation=10, exposure=-5),
+        "u1",
+    ))
+
+    assert len(puts) == 1
+    assert puts[0][0] == "uploads/tone.png.seller-display-2x.png"
+    assert puts[0][2] == "image/png"
+    assert recorded["seller_display"]["r2Key"] == puts[0][0]
+    assert (recorded["native_width"], recorded["native_height"]) == (1024, 1536)
 
 
 def test_tone_render_is_bound_to_one_cut():

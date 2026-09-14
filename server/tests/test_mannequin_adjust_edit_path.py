@@ -92,6 +92,7 @@ def _run_worker(
     adjusted_axes=("fit",),
     current_match_id=None,
     candidate_qc=None,
+    candidate_metadata=None,
     analysis_overrides=None,
 ):
     calls = {"run": [], "success": [], "failure": [], "emits": [], "parent_lookup": 0}
@@ -146,6 +147,7 @@ def _run_worker(
             "candidate": kwargs["candidate"],
             "base_fit": kwargs["base_fit"],
             "qc_scores": candidate_qc,
+            "generation_metadata": dict(candidate_metadata or {}),
         }
 
     async def finalize_success(conn, **kwargs):

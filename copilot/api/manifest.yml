@@ -122,18 +122,14 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   MANNEQUIN_ADJUST_TIER: "image_mannequin"
   # 가슴 보정은 기본 off. 명시 opt-in 시에도 insufficient가 0.85 이상일 때만 원본 근거 편집을 허용한다.
   MANNEQUIN_BUST_GATE: "on"
-  # 마네킹컷 기본 해상도 1K → 2K (2026-08-19 오너 결정). 근거 = 해상도 A/B: 1K 는 작은
-  # 글자가 깨지고(실컷 0/3 통과) 2K 는 3/4 통과, pro 모델 요금은 1K 와 동일(출력 1,120tok)
-  # = 추가 비용 0. 편집 패스(축·가슴·언턱·패턴)도 effective_image_size 를 따라 2K 로 돈다.
-  # 2026-09 선택한 마네킹 전용 Sunburst 2K. 패턴만으로 4K 자동 승급하지 않는다.
-  # 되돌리기: 이 줄을 "1K" 로 — 재배포만으로 즉시 원복.
-  MANNEQUIN_IMAGE_SIZE: "2K"
+  # Sunburst 최초 생성과 보호된 후속 편집 입력은 native 1K(1024x1536)를 유지한다.
+  # 셀러 화면만 서버가 저장한 LANCZOS 2x 파생본을 쓰며, AI 해상도 승급은 별도 검증 전까지 없다.
+  MANNEQUIN_IMAGE_SIZE: "1K"
   MANNEQUIN_TIER: "image_mannequin"
   MODEL_ROUTING_IMAGE_MANNEQUIN: "gpt-image-2.5-sunburst"
   MANNEQUIN_PATTERN_IMAGE_SIZE: "off"
-  # 로고·레터링 상품 2K 승급(해상도 A/B 근거). 기본이 2K 가 된 지금은 바닥값 역할이다 —
-  # 기본을 1K 로 되돌려도 로고 상품만은 2K 를 유지한다. 끄려면 "off".
-  MANNEQUIN_LOGO_IMAGE_SIZE: "2K"
+  # 상품 패턴이나 로고만으로 native 생성 크기를 다시 올리지 않는다.
+  MANNEQUIN_LOGO_IMAGE_SIZE: "off"
   # 베이스 충실도 QC — 생성 컷이 베이스 마네킹의 연출(뷰·프레이밍·스케일)을 지켰는가.
   # AG-P2 는 상품 사진 + 생성물만 받아서 "베이스와 달라졌다"를 **구조적으로 판정할 수 없다**.
   # 실측(2026-08-12): AG-P2 가 auto_pass 를 준 베이스 이탈 6건을 이 QC 가 잡았다.

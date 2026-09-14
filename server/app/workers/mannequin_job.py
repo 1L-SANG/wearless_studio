@@ -1,6 +1,6 @@
 """AG-04 마네킹 생성 워커 (요리사). dispatcher가 claim한 job 1건을 실행한다.
 
-베이스, 상품 사진과 매칭 의류를 읽고 마네킹 전용 tier로 생성한다. 기본은 Sunburst 2K다.
+베이스, 상품 사진과 매칭 의류를 읽고 마네킹 전용 tier로 생성한다. 기본은 Sunburst native 1K다.
 설정된 검사와 편집을 거쳐 선택한 사진을 R2에 저장하고 에셋·컷·크레딧을 원자적으로 확정한다.
 공유 이미지 모델은 바꾸지 않으며 생성과 네트워크는 to_thread와 async로 격리한다.
 """
@@ -52,7 +52,7 @@ from ..agents.prompts import (
 )
 from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
-from ..services import canonical_reference, editor_garment_mask, qc, sam_fallback
+from ..services import canonical_reference, editor_garment_mask, mannequin_display, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
@@ -347,7 +347,7 @@ def _effective_axis_qc_mode(s) -> str:
 
 
 def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
-    """잡의 출력 크기. 기본은 패턴 여부와 관계없이 2K이며 명시한 승급만 적용한다."""
+    """잡의 native 출력 크기. 기본은 1K이며 명시한 승급만 적용한다."""
     # 적용 가능한 승급들 중 **최댓값** 하나를 고른다(리뷰 2026-08-19): 패턴 분기가 무조건
     # return 하면 운영자가 패턴 크기를 내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안
     # 된다. 로고 2K 는 해상도 A/B 근거(1K 실컷 0/3 vs 2K 3/4 통과, pro 요금 동일).
@@ -1481,10 +1481,32 @@ async def _save_cut(
     # 일어나므로 옛 성별 컷은 노출되지 않고, 이미 올라간 R2 바이트는 허용된 고아로 남는다.
     await _cancel_checkpoint(cancel_check)
     w, h = _image_dims(res.image)
+    generation_metadata = {}
+    derivative = await asyncio.to_thread(
+        mannequin_display.build, res.image, res.mime, key)
+    if derivative is not None:
+        await _cancel_checkpoint(cancel_check)
+        try:
+            await asyncio.to_thread(
+                r2.put_bytes,
+                derivative.key,
+                derivative.data,
+                mannequin_display.DISPLAY_MIME,
+                cache=IMMUTABLE_CACHE,
+            )
+        except Exception:
+            # 화면용 확대본은 보조 자산이다. 저장 장애가 이미 생성된 native 컷과 차감을
+            # 실패시키면 안 되며, 메타데이터가 없으면 /file 은 안전하게 native 로 폴백한다.
+            log.warning("seller display derivative save failed key=%s", derivative.key,
+                        exc_info=True)
+        else:
+            generation_metadata[mannequin_display.METADATA_KEY] = derivative.metadata
+        await _cancel_checkpoint(cancel_check)
     return {
         "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
         "size": len(res.image), "width": w, "height": h,
         "candidate": candidate, "base_fit": base_fit, "qc_scores": qc_scores,
+        "generation_metadata": generation_metadata,
     }
 
 
@@ -2480,7 +2502,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                               else s.mannequin_prompt_version),
         }
         for candidate_result in passed:
-            candidate_result["generation_metadata"] = dict(cut_generation_metadata)
+            candidate_result["generation_metadata"] = {
+                **(candidate_result.get("generation_metadata") or {}),
+                **cut_generation_metadata,
+            }
 
         # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
@@ -2498,10 +2523,20 @@ async def run_mannequin_job(app, job: dict) -> None:
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:
-                try:
-                    await asyncio.to_thread(app.state.r2.delete, c["key"])
-                except Exception:
-                    log.warning("orphan R2 cleanup failed: %s", c["key"])
+                keys = [c["key"]]
+                display_key = mannequin_display.resolve_key({
+                    "r2_key": c["key"],
+                    "width": c.get("width"),
+                    "height": c.get("height"),
+                    "metadata": c.get("generation_metadata"),
+                })
+                if display_key:
+                    keys.append(display_key)
+                for key in keys:
+                    try:
+                        await asyncio.to_thread(app.state.r2.delete, key)
+                    except Exception:
+                        log.warning("orphan R2 cleanup failed: %s", key)
         else:
             # 톤 에디터 마스크는 **커밋 뒤에** 별도 트랜잭션으로 건다. 컷은 이미 확정됐고
             # 셀러 화면에도 떴다 — 전처리 큐잉이 실패해도 생성 결과는 그대로 성공이다.

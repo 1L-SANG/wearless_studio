@@ -110,10 +110,10 @@ class Settings:
     # 조정(:regenerate) 전용 tier. 지정하면 초기 생성과 별도로 사용한다.
     # 빈 값의 편집 경로는 새 기본값이면 image_mannequin, 기존 설정이면 image_high를 쓴다.
     mannequin_adjust_tier: str = ""  # "" | image_mannequin | image_light | image_high
-    mannequin_image_size: str = "2K"  # 1K | 2K | 4K (오너 결정: 모든 마네킹컷 기본 2K)
+    mannequin_image_size: str = "1K"  # Sunburst native 1024x1536. 화면은 별도 LANCZOS 2x 파생본.
     # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
     # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
-    detail_cut_image_size: str = ""  # ""=mannequin_image_size 상속 | 1K | 2K | 4K
+    detail_cut_image_size: str = "2K"  # 비마네킹 기존 기본 유지 | 1K | 2K | 4K
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
     #: 기본 최초 생성은 1회. 확인된 결함은 현재 컷을 보존하는 별도 수정 슬롯으로
@@ -167,7 +167,7 @@ class Settings:
     # 2K 는 3/4 통과 + **1K 와 요금 동일**(공식 표 출력 1,120tok)이라 승급 비용 0.
     # 4K 는 0/2(글자는 읽히나 다른 결함·+80% 비용)라 채택하지 않았다. 'off' 면 승급 없음.
     # 패턴 승급(4K)과 겹치면 패턴이 이긴다(상위 호환). 승급은 base 해상도를 깎지 않는다.
-    mannequin_logo_image_size: str = "2K"  # off | 1K | 2K | 4K
+    mannequin_logo_image_size: str = "OFF"  # off | 1K | 2K | 4K. 기본은 패턴별 분기 없음.
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
@@ -483,17 +483,22 @@ def _bust_pass() -> str:
 
 
 def _image_size() -> str:
-    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "2K").upper()
-    return v if v in {"1K", "2K", "4K"} else "2K"
+    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "1K").upper()
+    return v if v in {"1K", "2K", "4K"} else "1K"
 
 
 def _detail_cut_image_size() -> str:
-    # 미설정 환경은 기존 MANNEQUIN_IMAGE_SIZE를 그대로 상속해 하위 호환한다.
+    # MANNEQUIN_IMAGE_SIZE를 명시한 구 환경은 그대로 상속한다. 둘 다 미설정인 환경은
+    # 마네킹 기본을 1K로 내리더라도 비마네킹 상세컷의 기존 2K 기본을 유지한다.
+    inherited = os.getenv("MANNEQUIN_IMAGE_SIZE")
+    inherited = inherited.upper() if inherited is not None else "2K"
+    if inherited not in {"1K", "2K", "4K"}:
+        inherited = "2K"
     v = os.getenv("DETAIL_CUT_IMAGE_SIZE")
     if v is None:
-        return _image_size()
+        return inherited
     v = v.upper()
-    return v if v in {"1K", "2K", "4K"} else _image_size()
+    return v if v in {"1K", "2K", "4K"} else inherited
 
 
 def _mannequin_tier() -> str:
@@ -718,7 +723,7 @@ def load_settings() -> Settings:
         mannequin_pattern_image_size=_flag(
             "MANNEQUIN_PATTERN_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         mannequin_logo_image_size=_flag(
-            "MANNEQUIN_LOGO_IMAGE_SIZE", "2K", {"off", "1k", "2k", "4k"}).upper(),
+            "MANNEQUIN_LOGO_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),

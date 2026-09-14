@@ -59,7 +59,7 @@ def test_public_asset_lookup_loads_server_written_privacy_marker():
     asset_id = str(uuid.uuid4())
     row = asyncio.run(routes.repo.get_asset_public(Conn(), asset_id))
 
-    assert "source, metadata from assets" in seen["sql"]
+    assert "source, width, height, metadata from assets" in seen["sql"]
     assert seen["params"] == (asset_id,)
     assert row["metadata"]["facemarket_real_derived"] is True
 
@@ -166,6 +166,65 @@ def test_asset_file_serves_without_auth(client, monkeypatch):
     assert res.status_code == 302, res.text
     assert res.headers["location"] == "https://pub.example.com/u1/p1/cut.png"
     assert "immutable" in res.headers["cache-control"]
+
+
+def _seller_display_asset(asset_id, *, display_key="u1/p1/cut.png.seller-display-2x.png"):
+    return {
+        "id": asset_id,
+        "r2_key": "u1/p1/cut.png",
+        "mime_type": "image/png",
+        "source": "ai",
+        "width": 1024,
+        "height": 1536,
+        "metadata": {
+            "facemarket_real_derived": False,
+            "sellerDisplay": {
+                "algorithm": "pillow-lanczos-2x-v1",
+                "r2Key": display_key,
+                "mimeType": "image/png",
+                "sourceWidth": 1024,
+                "sourceHeight": 1536,
+                "width": 2048,
+                "height": 3072,
+                "byteSize": 123,
+            },
+        },
+    }
+
+
+def test_asset_file_projects_valid_seller_display_but_bytes_stays_native(client, monkeypatch):
+    asset_id = str(uuid.uuid4())
+
+    async def fake_get_asset_public(conn, requested_id):
+        assert requested_id == asset_id
+        return _seller_display_asset(asset_id)
+
+    monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2()
+
+    display = client.get(f"/v1/assets/{asset_id}/file", follow_redirects=False)
+    native = client.get(f"/v1/assets/{asset_id}/bytes")
+
+    assert display.headers["location"] == (
+        "https://pub.example.com/u1/p1/cut.png.seller-display-2x.png"
+    )
+    assert native.content == b"bytes:u1/p1/cut.png"
+
+
+def test_asset_file_rejects_cross_asset_display_key_and_falls_back_native(client, monkeypatch):
+    asset_id = str(uuid.uuid4())
+
+    async def fake_get_asset_public(conn, requested_id):
+        return _seller_display_asset(asset_id, display_key="users/other/project/foreign.png")
+
+    monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2()
+
+    response = client.get(f"/v1/assets/{asset_id}/file", follow_redirects=False)
+
+    assert response.headers["location"] == "https://pub.example.com/u1/p1/cut.png"
 
 
 def test_real_derived_asset_file_redirect_is_never_cached(client, monkeypatch):

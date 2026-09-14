@@ -17,6 +17,7 @@ import logging
 import uuid
 
 from app import repo
+from app.services import mannequin_display
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +53,9 @@ def is_neutral(saturation: int, exposure: int) -> bool:
 
 def metadata_for(*, cut_id: str, source_asset_id: str, source_hash: str | None,
                  mask_asset_id: str | None, mask_algorithm_version: str | None,
-                 saturation: int, exposure: int) -> dict:
-    return {
+                 saturation: int, exposure: int,
+                 seller_display: dict | None = None) -> dict:
+    metadata = {
         "type": RENDER_KIND,
         "sourceCutId": cut_id,
         "sourceAssetId": source_asset_id,
@@ -64,6 +66,9 @@ def metadata_for(*, cut_id: str, source_asset_id: str, source_hash: str | None,
         "saturation": saturation,
         "exposure": exposure,
     }
+    if seller_display is not None:
+        metadata[mannequin_display.METADATA_KEY] = dict(seller_display)
+    return metadata
 
 
 def is_current(meta: dict, *, cut_id: str, source_hash: str | None = None) -> bool:
@@ -101,16 +106,22 @@ async def active_for_cut(conn, *, project_id: str, cut_id: str,
 
 async def record(conn, *, user_id: str, project_id: str, asset_id: str, cut_id: str,
                  source_asset_id: str, source_hash: str | None, mask_asset_id: str | None,
-                 mask_algorithm_version: str | None, saturation: int, exposure: int) -> None:
+                 mask_algorithm_version: str | None, saturation: int, exposure: int,
+                 seller_display: dict | None = None,
+                 native_width: int | None = None, native_height: int | None = None) -> None:
     """Attach provenance to an already-uploaded render asset."""
     from psycopg.types.json import Json
     meta = metadata_for(cut_id=cut_id, source_asset_id=source_asset_id,
                         source_hash=source_hash, mask_asset_id=mask_asset_id,
                         mask_algorithm_version=mask_algorithm_version,
-                        saturation=saturation, exposure=exposure)
+                        saturation=saturation, exposure=exposure,
+                        seller_display=seller_display)
     async with conn.cursor() as cur:
-        await cur.execute("update assets set metadata = %s where id = %s and project_id = %s",
-                          (Json(meta), asset_id, project_id))
+        await cur.execute(
+            "update assets set metadata = %s, width = coalesce(%s, width), "
+            "height = coalesce(%s, height) where id = %s and project_id = %s",
+            (Json(meta), native_width, native_height, asset_id, project_id),
+        )
     log.info("tone render recorded project=%s cut=%s asset=%s sat=%s exp=%s",
              project_id, cut_id, asset_id, saturation, exposure)
 

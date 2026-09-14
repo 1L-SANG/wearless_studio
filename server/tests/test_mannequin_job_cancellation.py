@@ -42,12 +42,16 @@ class _Pool:
 class _R2:
     def __init__(self):
         self.puts = []
+        self.deletes = []
 
     def get_bytes(self, key):
         return b"input"
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, data, mime))
+
+    def delete(self, key):
+        self.deletes.append(key)
 
 
 def _wire_worker(monkeypatch, *, state, gemini=None, candidate_runner=None, with_product=True):
@@ -331,6 +335,53 @@ def test_success_finalize_checkpoint_keeps_cancelled_job_terminal(monkeypatch):
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
 
     assert calls["success"] == [] and calls["failure"] == []
+
+
+def test_lost_lease_cleans_native_and_display_derivative(monkeypatch):
+    from app.services import mannequin_display
+
+    state = {"cancelled": False}
+    native_key = "users/u/projects/p/ai/j/asset.png"
+    display_key = "users/u/projects/p/ai/j/asset.png.seller-display-2x.png"
+
+    async def finished_candidate(**kwargs):
+        return {
+            "asset_id": "asset-1",
+            "bucket": "bucket",
+            "key": native_key,
+            "mime": "image/png",
+            "size": 3,
+            "width": 1024,
+            "height": 1536,
+            "candidate": "A",
+            "base_fit": "regular",
+            "generation_metadata": {
+                "sellerDisplay": {
+                    "algorithm": mannequin_display.ALGORITHM,
+                    "r2Key": display_key,
+                    "mimeType": "image/png",
+                    "sourceWidth": 1024,
+                    "sourceHeight": 1536,
+                    "width": 2048,
+                    "height": 3072,
+                    "byteSize": 10,
+                },
+            },
+        }
+
+    app, job, r2, calls = _wire_worker(
+        monkeypatch, state=state, candidate_runner=finished_candidate,
+    )
+
+    async def lost_lease(_conn, **kwargs):
+        calls["success"].append(kwargs)
+        return None
+
+    monkeypatch.setattr(mannequin_job.repo, "finalize_mannequin_success", lost_lease)
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+
+    assert r2.deletes == [native_key, display_key]
+    assert calls["failure"] == []
 
 
 def test_failure_finalize_checkpoint_keeps_cancelled_job_terminal(monkeypatch):

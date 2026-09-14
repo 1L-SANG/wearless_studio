@@ -878,7 +878,7 @@ async def get_asset_public(conn: AsyncConnection, asset_id: str) -> dict | None:
     새 노출을 만들지 않는다. 브라우저 <img>는 Bearer를 못 붙이므로 무인증이 필수."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id::text as id, r2_bucket, r2_key, mime_type, source, metadata "
+            "select id::text as id, r2_bucket, r2_key, mime_type, source, width, height, metadata "
             "from assets where id = %s and deleted_at is null",
             (asset_id,),
         )
