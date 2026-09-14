@@ -1764,15 +1764,18 @@ async def apply_face_pass(
     가끔 쓰는 셀러에게는 그게 사실상 항상이다. 그래서 렌더 전에 파드를 기다리고(최대
     FACE_PASS_WAIT_SECONDS), 그 사이 파드가 바뀌면 새 주소로 간다(url_provider).
 
-    outcome 이 오면 결과를 적는다:
-      "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다.
-      yaw 는 기록만 남기고 곧바로 FacePassUnavailable 이 된다)
-      · "fallback:<reason>"(backend_error · gate_failed) · "failed:pod_not_ready".
+    outcome 이 오면 결과를 적는다(기록은 사유별로 그대로 남는다 — 원장에서 구분이 사라지면 안 된다):
+      "applied" · "skipped:<reason>"(no_face · too_small · yaw) · "fallback:<reason>"
+      (backend_error · gate_failed) · "failed:pod_not_ready".
 
-    ★ 폴백이 계약이 아닌 경우가 둘 있다 — 파드가 끝내 안 뜰 때와 skipped_reason 이
-      SKIP_REASONS_UNAVAILABLE(현재 yaw) 일 때. **FacePassUnavailable** 을 올린다.
-      이 함수에 오는 컷은 전부 실존 모델(LoRA) 컷이라, 원본을 내보내면 셀러가 산 적 없는 얼굴이
-      라이선스 이름으로 나간다. 나머지 폴백(backend_error · gate_failed)은 아직 원본으로 간다.
+    ★ **원본 폴백은 더 이상 계약이 아니다.** 이 함수에 오는 컷은 전부 실존 모델(LoRA) 컷이고,
+      원본은 provider 가 그린 **남의 얼굴**이다. 그게 나가면 셀러는 산 적 없는 얼굴을 받고
+      라이선스·정산이 그 사람 이름으로 거짓이 된다(2026-09-14 제품 결정). 그래서
+      파드 미준비 · backend_error · gate_failed · SKIP_REASONS_UNAVAILABLE(yaw) 은 전부
+      **FacePassUnavailable** 을 올리고, 호출자(워커)가 그 컷/잡을 실패로 종결하며 크레딧을 돌려준다.
+
+      원본이 그대로 나가는 경로는 하나 남는다: no_face · too_small — 사람이 안 담긴 컷이거나
+      얼굴이 몇 px 라 육안 식별이 안 되는 컷이다. 그건 얼굴을 판 적도 없다.
     """
     def _record(value: str) -> None:
         if outcome is not None:
@@ -1820,10 +1823,10 @@ async def apply_face_pass(
     live = replace(spec, backend_url=render_url) if render_url else spec
     task = _run(live)
     if task is None:
-        log.warning("face_identity enabled but no backend (url/lora) — skipping face pass")
+        log.warning("face_identity enabled but no backend (url/lora) — 이 컷은 실패시킨다")
         _record("fallback:backend_error")
         _note_fallback("backend_error")
-        return image, mime
+        raise FacePassUnavailable("backend_error")
     result = await task
     log.info("face_identity applied=%s meta=%s", result.applied, _meta_for_log(result.meta))
 
@@ -1859,11 +1862,19 @@ async def apply_face_pass(
     if result.applied:
         _record("applied")
         _record_recipe(result.meta)      # 채택된 컷에만 — 폴백 컷은 얼굴 패스 산물이 아니다
-    else:
-        reason = _outcome_reason(result)
-        _record(f"fallback:{reason}")
-        _note_fallback(reason)
-    return result.image, result.mime
+        return result.image, result.mime
+
+    # **원본으로 내보내지 않는다.** 남은 두 경로(backend_error · gate_failed)도 같은 규칙이다.
+    # 원본은 provider 가 그린 남의 얼굴이라, 나가면 셀러는 산 적 없는 얼굴을 받고 라이선스·정산이
+    # 그 사람 이름으로 거짓이 된다. 특히 gate_failed 는 파드가 멀쩡히 돌았는데 결과가 기준
+    # (신원·기하·색)을 못 넘은 것이라 — 그 컷이야말로 "남의 얼굴" 이 가장 잘 남는다.
+    # 기록·알림은 그대로 남긴다(원장에서 사유 구분이 사라지면 안 된다).
+    reason = _outcome_reason(result)
+    _record(f"fallback:{reason}")
+    _note_fallback(reason)
+    log.warning("face_identity: %s — 원본을 내보내지 않고 이 컷을 실패시킨다 meta=%s",
+                reason, _meta_for_log(result.meta))
+    raise FacePassUnavailable(reason)
 
 
 def _forget_ready(render_url: str) -> None:

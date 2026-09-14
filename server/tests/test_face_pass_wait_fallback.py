@@ -1,8 +1,11 @@
-"""파드가 꺼져 있으면 기다렸다가 렌더하고, 그래도 안 뜨면 gpt-image 얼굴로 내보낸다.
+"""파드가 꺼져 있으면 기다렸다가 렌더하고, 그래도 안 되면 **그 컷을 실패시킨다**.
 
-폴백 자체는 원래 계약이다(run_face_pass 는 예외를 던지지 않는다). 문제는 **언제** 폴백하느냐였다:
-파드는 필요할 때만 켜지는데(콜드 ≈2분, reconciler 60초 주기) 첫 렌더가 즉시 실패하면
-가끔 쓰는 셀러는 사실상 항상 생성 모델 얼굴을 받는다. 그래서 렌더 전에 파드를 기다린다.
+파드는 필요할 때만 켜지는데(콜드 ≈2분, reconciler 60초 주기) 첫 렌더가 즉시 실패하면 가끔 쓰는
+셀러는 사실상 항상 폴백을 받는다. 그래서 렌더 전에 파드를 기다린다 — 그건 그대로다.
+
+바뀐 것: **원본 폴백은 더 이상 계약이 아니다.** 원본은 provider 가 그린 남의 얼굴이라, 나가면
+셀러는 산 적 없는 얼굴을 받고 라이선스·정산이 그 사람 이름으로 거짓이 된다(2026-09-14 제품 결정).
+사유 기록(fallback:<reason>)과 파드 알림은 그대로 남기고, 그 뒤 FacePassUnavailable 을 올린다.
 """
 
 import asyncio
@@ -158,28 +161,49 @@ def test_the_real_cut_gets_its_own_longer_budget(monkeypatch):
     assert fi.FACE_PASS_REAL_WAIT_SECONDS_DEFAULT == 600
 
 
-def test_backend_error_is_its_own_reason(monkeypatch):
-    # run_face_pass 가 예외를 삼키고 tries 없이 돌아온 경우 = 렌더 자체가 안 됐다
+def test_backend_error_is_recorded_then_fails_the_cut(monkeypatch):
+    """run_face_pass 가 예외를 삼키고 tries 없이 돌아온 경우 = 렌더 자체가 안 됐다.
+
+    사유는 남기되 원본은 내보내지 않는다 — 사유를 지우면 원장에서 파드 장애를 못 센다.
+    """
     dead = fi.FacePassResult(b"ORIG", "image/png", False, {"reason": "backend"})
-    image, _, outcome = _apply(monkeypatch, result=dead)
-    assert image == b"ORIG" and outcome == {"face_pass": "fallback:backend_error"}
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _apply(monkeypatch, result=dead, outcome=outcome)
+    assert outcome == {"face_pass": "fallback:backend_error"}
 
 
 def test_missing_backend_is_backend_error(monkeypatch):
-    image, _, outcome = _apply(monkeypatch, backend=None)
-    assert image == b"ORIG" and outcome == {"face_pass": "fallback:backend_error"}
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _apply(monkeypatch, backend=None, outcome=outcome)
+    assert outcome == {"face_pass": "fallback:backend_error"}
 
 
 @pytest.mark.parametrize("meta,expected", [
-    ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "fallback:gate_failed"),
-    ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "fallback:gate_failed"),
-    # 얼굴 없음은 렌더 전에 내리는 설계상 건너뜀이다 — 폴백이 아니다(test_face_pass_skip_outcome).
+    # 얼굴 없음·너무 작음만 원본으로 나간다 — 사람이 안 담겼거나 얼굴이 몇 px 라 얼굴을 판 적도 없다.
     ({"tries": [], "skipped_reason": "no_face", "reason": "no_face"}, "skipped:no_face"),
+    ({"tries": [], "skipped_reason": "too_small", "reason": "too_small"}, "skipped:too_small"),
 ])
-def test_gate_and_skip_reasons(monkeypatch, meta, expected):
+def test_the_only_two_reasons_that_still_ship_the_original(monkeypatch, meta, expected):
     res = fi.FacePassResult(b"ORIG", "image/png", False, meta)
-    _, _, outcome = _apply(monkeypatch, result=res)
-    assert outcome == {"face_pass": expected}
+    image, _, outcome = _apply(monkeypatch, result=res)
+    assert image == b"ORIG" and outcome == {"face_pass": expected}
+
+
+@pytest.mark.parametrize("meta", [
+    {"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"},
+    {"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"},
+])
+def test_a_gate_failure_never_ships_the_original(monkeypatch, meta):
+    """★ 게이트 실패는 파드가 멀쩡히 돌았는데 결과가 기준을 못 넘은 것 — 그 컷이야말로 원본
+    (남의 얼굴)이 그대로 나가면 안 되는 경우다. 사유는 fallback:gate_failed 로 남는다.
+    """
+    res = fi.FacePassResult(b"ORIG", "image/png", False, meta)
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _apply(monkeypatch, result=res, outcome=outcome)
+    assert outcome == {"face_pass": "fallback:gate_failed"}
 
 
 def test_a_yaw_skip_is_recorded_then_raised(monkeypatch):
@@ -327,7 +351,7 @@ def test_render_connection_error_clears_the_memo_and_retries(monkeypatch):
     assert results == []                   # 렌더를 정확히 두 번 했다
 
 
-def test_retry_that_fails_again_falls_back(monkeypatch):
+def test_retry_that_fails_again_fails_the_cut(monkeypatch):
     fi._ready_seen[HEALTH] = 1e18
     _probe(monkeypatch, [True])
     _no_sleep(monkeypatch)
@@ -335,7 +359,8 @@ def test_retry_that_fails_again_falls_back(monkeypatch):
     dead = fi.FacePassResult(b"ORIG", "image/png", False, {"reason": "backend"})
     monkeypatch.setattr(fi, "run_face_pass", lambda *a, **k: dead)
     outcome: dict = {}
-    asyncio.run(fi.apply_face_pass(_settings(), b"ORIG", "image/png", SPEC, outcome=outcome))
+    with pytest.raises(fi.FacePassUnavailable):
+        asyncio.run(fi.apply_face_pass(_settings(), b"ORIG", "image/png", SPEC, outcome=outcome))
     assert outcome == {"face_pass": "fallback:backend_error"}
 
 
