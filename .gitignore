@@ -106,3 +106,23 @@ phase1-ko-review-top.png
 # 실존 인물 얼굴 학습 데이터 (생체정보) — 절대 커밋 금지
 LoRA/
 .venv_clip/
+
+# 로컬 산출물·캐시·타사 원문 (2026-09-14 정리)
+deliverables/
+.pnpm-store/
+reference/privacy/
+
+# 공개 저장소에 올리지 않는 내부 전략·경쟁사·대회 문서 (로컬 보관)
+documents/facemarket_hackathon_final_plan_2026-09-06.md
+documents/facemarket_hackathon_final_plan_v2_2026-09-07.md
+documents/facemarket_raon_mentoring_prep_2026-09-15.md
+documents/research/2026-08-21-facemarket-model-market-problems.md
+documents/research/2026-09-01-facemarket-actor-value-erosion-critique.md
+documents/research/2026-09-01-facemarket-similar-services-insights.md
+documents/research/2026-09-01-facemarket-supply-strategy-decision.md
+documents/research/2026-09-01-model-digitization-onboarding-systems.md
+documents/research/2026-09-01-model-input-requirements-directory.md
+documents/research/thatsmyface-models-analysis.html
+
+# 6월 스파이크 산출물 849MB (main 2e7b9664에서 삭제됨, 로컬 잔존, 얼굴 팩 실험 포함)
+spike/
