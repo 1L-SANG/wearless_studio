@@ -43,8 +43,11 @@ def _skipped(reason: str) -> fi.FacePassResult:
     })
 
 
-def _run(monkeypatch, results):
-    """파드는 떠 있고(기억 있음), run_face_pass 는 대본대로 답한다. 프로브·렌더 호출 수를 센다."""
+def _run(monkeypatch, results, outcome: dict | None = None, calls: dict | None = None):
+    """파드는 떠 있고(기억 있음), run_face_pass 는 대본대로 답한다. 프로브·렌더 호출 수를 센다.
+
+    calls 를 주면 호출 목록을 **부르기 전에** 거기 담는다 — yaw 처럼 예외로 끝나는 경로도 세야 한다.
+    """
     fi._ready_seen[HEALTH] = 1e18
     probes = []
     monkeypatch.setattr(fi, "_probe_ready", lambda url, timeout=5.0: probes.append(url) or True)
@@ -61,29 +64,53 @@ def _run(monkeypatch, results):
         return results.pop(0) if len(results) > 1 else results[0]   # 대본이 다하면 마지막 답을 반복
 
     monkeypatch.setattr(fi, "run_face_pass", fake_run)
-    outcome: dict = {}
+    if calls is not None:
+        calls.update({"probes": probes, "renders": renders})
+    outcome = {} if outcome is None else outcome
     image, mime = asyncio.run(fi.apply_face_pass(_settings(), b"ORIG", "image/png", SPEC, outcome=outcome))
     return image, mime, outcome, probes, renders
 
 
-@pytest.mark.parametrize("reason", ["yaw", "no_face", "too_small"])
+@pytest.mark.parametrize("reason", ["no_face", "too_small"])
 def test_design_skip_is_recorded_as_skipped_not_backend_error(monkeypatch, reason):
     image, mime, outcome, _, _ = _run(monkeypatch, [_skipped(reason)])
     assert (image, mime) == (b"ORIG", "image/png")
     assert outcome == {"face_pass": f"skipped:{reason}"}
 
 
+def test_a_yaw_skip_does_not_ship_the_original(monkeypatch):
+    """옆모습은 건너뛰는 게 맞다 — 그런데 **원본을 내보내면 안 된다**(2026-09-14 제품 결정).
+
+    v7 학습셋에 옆모습이 없어 억지로 태우면 남의 얼굴이 나오고(강제 실험: 게이트 identity_low,
+    SFace 0.413), 그렇다고 원본을 내보내면 provider 가 그린 얼굴이 라이선스 이름으로 팔린다.
+    기록은 그대로 "skipped:yaw" 다 — 사유를 폴백으로 바꾸면 원장에서 구분이 사라진다.
+    """
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable) as err:
+        _run(monkeypatch, [_skipped("yaw")], outcome=outcome)
+    assert "yaw" in str(err.value)
+    assert outcome == {"face_pass": "skipped:yaw"}
+    assert "yaw" in fi.SKIP_REASONS_UNAVAILABLE
+    # 얼굴이 안 담긴 컷일 수 있는 두 사유는 그대로 원본으로 간다
+    assert not {"no_face", "too_small"} & fi.SKIP_REASONS_UNAVAILABLE
+
+
 def test_design_skip_does_not_forget_the_pod_or_render_again(monkeypatch):
-    _, _, _, probes, renders = _run(monkeypatch, [_skipped("yaw")])
-    assert renders == [1]              # 한 번 보고 끝 — 같은 그림을 다시 돌려도 같은 yaw 다
-    assert probes == []                # "떠 있다"는 기억을 지우지 않았다(다시 대기하지 않았다)
+    calls: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _run(monkeypatch, [_skipped("yaw")], calls=calls)
+    assert calls["renders"] == [1]     # 한 번 보고 끝 — 같은 그림을 다시 돌려도 같은 yaw 다
+    assert calls["probes"] == []       # "떠 있다"는 기억을 지우지 않았다(다시 대기하지 않았다)
     assert HEALTH in fi._ready_seen
 
 
 def test_design_skip_does_not_count_toward_the_pod_alert(monkeypatch, caplog):
+    """파드는 멀쩡하고 그림의 각도가 문제다 — 파드 고장으로 세면 옆모습 컷 수만큼 CRITICAL 이 울린다."""
     with caplog.at_level(logging.CRITICAL):
         for _ in range(fi.FALLBACK_ALERT_THRESHOLD + 1):
-            _run(monkeypatch, [_skipped("yaw")])
+            with pytest.raises(fi.FacePassUnavailable):
+                _run(monkeypatch, [_skipped("yaw")])
+            _run(monkeypatch, [_skipped("no_face")])
     assert fi._fallback_events == []
     assert [r for r in caplog.records if r.levelno == logging.CRITICAL] == []
 

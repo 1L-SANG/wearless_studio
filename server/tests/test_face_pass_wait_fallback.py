@@ -97,13 +97,13 @@ def test_no_health_address_skips_waiting(monkeypatch):
 
 
 # ── 결과 기록 ──
-def _apply(monkeypatch, *, ready=True, backend=object(), result=None):
+def _apply(monkeypatch, *, ready=True, backend=object(), result=None, outcome=None):
     monkeypatch.setattr(fi, "resolve_backend", lambda s, spec: backend)
     monkeypatch.setattr(fi, "_probe_ready", lambda url, timeout=5.0: ready)
     _no_sleep(monkeypatch)
     if result is not None:
         monkeypatch.setattr(fi, "run_face_pass", lambda *a, **k: result)
-    outcome: dict = {}
+    outcome = {} if outcome is None else outcome
     image, mime = asyncio.run(fi.apply_face_pass(
         _settings(face_pass_wait_seconds=0, face_pass_real_wait_seconds=0),
         b"ORIG", "image/png", SPEC, outcome=outcome))
@@ -173,14 +173,23 @@ def test_missing_backend_is_backend_error(monkeypatch):
 @pytest.mark.parametrize("meta,expected", [
     ({"tries": [{"gate": "identity_low"}], "reason": "gate_failed:identity_lowx3"}, "fallback:gate_failed"),
     ({"tries": [{"gate": "yaw_drift"}], "reason": "gate_failed:yaw_driftx3"}, "fallback:gate_failed"),
-    # 얼굴 없음·측면은 렌더 전에 내리는 설계상 건너뜀이다 — 폴백이 아니다(test_face_pass_skip_outcome).
+    # 얼굴 없음은 렌더 전에 내리는 설계상 건너뜀이다 — 폴백이 아니다(test_face_pass_skip_outcome).
     ({"tries": [], "skipped_reason": "no_face", "reason": "no_face"}, "skipped:no_face"),
-    ({"tries": [], "skipped_reason": "yaw", "reason": "yaw"}, "skipped:yaw"),
 ])
 def test_gate_and_skip_reasons(monkeypatch, meta, expected):
     res = fi.FacePassResult(b"ORIG", "image/png", False, meta)
     _, _, outcome = _apply(monkeypatch, result=res)
     assert outcome == {"face_pass": expected}
+
+
+def test_a_yaw_skip_is_recorded_then_raised(monkeypatch):
+    """측면도 건너뜀으로 **적히지만** 원본이 나가지 않는다 — 기록과 출고는 다른 이야기다."""
+    res = fi.FacePassResult(b"ORIG", "image/png", False,
+                            {"tries": [], "skipped_reason": "yaw", "reason": "yaw"})
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _apply(monkeypatch, result=res, outcome=outcome)
+    assert outcome == {"face_pass": "skipped:yaw"}
 
 
 # ── 알림 ──

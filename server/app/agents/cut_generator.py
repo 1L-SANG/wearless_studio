@@ -619,6 +619,7 @@ def render_cut_prompt(
     body_profile: dict | None = None,
     hair_profile: dict | None = None,
     face_shape_profile: dict | None = None,
+    face_pass: bool = False,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -679,7 +680,13 @@ def render_cut_prompt(
         direction_line = need(f"DIR:{spec['direction']}_product")
     else:
         face_line = need(f"FACE:{spec['faceExposure']}")
-        direction_line = need(f"DIR:{spec['direction']}")
+        # 얼굴 패스를 받는 컷(실존 모델 + LoRA)은 **옆모습을 주문하지 않는다.** 얼굴 패스는
+        # yaw > YAW_APPLY_MAX(0.65) 인 그림을 건너뛰고, 억지로 태우면 학습셋에 옆모습이 없어
+        # 남의 얼굴이 나온다(2026-09-14 실측: 게이트 identity_low, SFace 0.413). 건너뛴 컷은
+        # 이제 실패로 처리되므로(face_identity.SKIP_REASONS_UNAVAILABLE) 옆모습 주문은 곧 빈 컷이다.
+        # 3/4(yaw 0.25~0.45 구간)면 몸은 옆으로 두고 얼굴은 바꿀 수 있다.
+        direction_line = need(f"DIR:{spec['direction']}"
+                              + ("_identity" if face_pass and spec["direction"] == "side" else ""))
     if use_licensed_face:
         face_line = need("FACE:licensed")
     elif (
@@ -1255,6 +1262,7 @@ def build_prompt(
     hair_profile: dict | None = None,
     face_shape_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
+    face_pass: bool = False,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
     일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
@@ -1295,7 +1303,8 @@ def build_prompt(
         directing_profile=directing_profile,
         body_profile=body_profile,
         hair_profile=hair_profile,
-        face_shape_profile=face_shape_profile)
+        face_shape_profile=face_shape_profile,
+        face_pass=face_pass)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1428,6 +1437,7 @@ async def generate(
             hair_profile=hair_profile,
             face_shape_profile=face_shape_profile,
             qc_corrections=qc_corrections,
+            face_pass=_face_identity_spec(settings, spec, clothing_type, face_identity_spec) is not None,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
     if confirmed_prompt_input is not None:
