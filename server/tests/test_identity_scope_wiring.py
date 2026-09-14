@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import app.routes as routes
 import pytest
-from app.agents import identity_source
+from app.agents import identity_scope, identity_source
 from app.workers import detail_page_job as dpj
 from conftest import (
     FakeR2, auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job,
@@ -128,7 +128,8 @@ def test_editor_new_cut_outside_the_scope_is_refused_before_any_charge(
                                 if k not in ("id", "source")}, "modelId": REAL},
     )
     assert res.status_code == 409, res.text
-    assert res.json()["error"]["code"] == "identity_scope_mismatch"
+    # styling 컷은 이제 **섹션 규칙**에 먼저 걸린다(2026-09-14: 실제 모델은 studio 섹션만).
+    assert res.json()["error"]["code"] == identity_scope.STUDIO_ONLY_CODE
     assert calls == {"create": 0, "reserve": 0}
 
 
@@ -235,7 +236,7 @@ def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
     assert "v1" not in captured["cuts"]
     skipped = [payload for kind, payload in captured["events"]
                if isinstance(payload, dict) and payload.get("status") == "cut_skipped"]
-    assert any(p.get("reason") == "identity_scope_mismatch" and p.get("blockId") == "v1"
+    assert any(p.get("reason") == identity_scope.STUDIO_ONLY_CODE and p.get("blockId") == "v1"
                for p in skipped), (skipped, captured["events"], captured.get("cuts"))
     # 건너뛴 컷은 자산이 없다 = 성공 컷 수 기준 정산에서 빠진다(크레딧 0).
     assets = (captured.get("finalize") or {}).get("cut_assets") or []

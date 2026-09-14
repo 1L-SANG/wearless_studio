@@ -232,17 +232,21 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
         headers=auth_headers(make_token),
     )
 
-    assert response.status_code == 202, response.text
-    assert seen["payload"] == {"mode": "generate"}
-    assert events == ["cache", "job", "reserve", "commit"]
+    # 2026-09-14: 실제 모델은 studio 섹션 컷만 만든다. 제품 컷만 있는 콘티는 만들 수 있는 컷이
+    # 0 이라 잡도 예약도 없이 끝난다("전부 걸러져 0컷이면 400" — 사용자 지시).
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "real_model_studio_only"
+    assert seen == {} and events == ["cache"]
 
 
 def test_detail_real_styling_needs_no_virtual_stand_in(
     client, make_token, monkeypatch
 ):
-    """스타일링 컷만 있는 콘티도 실제 모델 그대로 큐에 들어간다(2026-09-11 사용자 결정).
+    """스타일링 컷은 실제 모델로 만들지 않는다(2026-09-14 사용자 결정).
 
-    예전에는 400 styling_model_required 로 막고 가상 대역을 고르게 했다.
+    이력: 2026-09-11 에 "가상 대역 없이 실제 모델 그대로 간다" 로 바뀌었고(400
+    styling_model_required 폐기), 이제는 **아예 만들지 않는다** — 얼굴 합성이 검증된 곳이
+    studio 섹션뿐이라 나머지는 gpt-image 비용만 나간다. 모델 선택 자체는 그대로다.
     """
     seen = {}
     client.app.state.settings = replace(
@@ -298,13 +302,9 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
         headers=auth_headers(make_token),
     )
 
-    assert response.status_code == 202, response.text
-    assert seen["payload"] == {
-        "mode": "generate",
-        "modelId": MODEL_ID,
-        "brandUseCategory": CATEGORY,
-        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
-    }
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "real_model_studio_only"
+    assert seen == {}
 
 
 def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
@@ -1936,10 +1936,11 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
 def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     monkeypatch, real_cuts_fail,
 ):
-    """실제 모델을 고르면 스튜디오·스타일링·미러 전부 그 얼굴로 간다(2026-09-11 사용자 결정).
+    """실제 모델은 **스튜디오 컷만** 만들고 그 얼굴로 간다(2026-09-14 사용자 결정).
 
-    예전에는 horizon 만 REAL 이고 나머지는 가상 대역(mA)으로 갈렸다 — 같은 상세페이지 안에서
-    인물이 둘로 나뉘었다는 뜻이다. 이제 가상 참조는 한 번도 쓰이지 않는다.
+    이력: 2026-09-11 에 "스튜디오·스타일링·미러 전부 실제 얼굴" 로 바뀌어 가상 대역(mA)이
+    사라졌다. 이제는 그 위에 범위를 좁혔다 — 얼굴 합성이 검증된 곳이 studio 섹션뿐이라
+    나머지는 아예 만들지 않는다(gpt-image 호출 0, 정산 0).
     """
     captured = {"cuts": {}, "settlements": [], "events": []}
     storyboard = [
@@ -2064,9 +2065,16 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }, credits_reserved=4)))
 
-    for block_id in ("h-front", "h-side", "styling", "mirror"):
+    for block_id in ("h-front", "h-side"):
         assert captured["cuts"][block_id]["modelId"] == MODEL_ID, block_id
         assert "real/face" in captured["cuts"][block_id]["images"], block_id
+    # studio 밖 컷은 생성기까지 가지 않는다 = gpt-image 호출 0.
+    for block_id in ("styling", "mirror"):
+        assert block_id not in captured["cuts"], block_id
+    skipped = {payload["blockId"]: payload for event_type, payload in captured["events"]
+               if event_type == "step" and payload.get("status") == "cut_skipped"}
+    assert set(skipped) == {"styling", "mirror"}
+    assert all(p["reason"] == "real_model_studio_only" for p in skipped.values())
     done_events = {
         payload["blockId"]: payload
         for event_type, payload in captured["events"]
@@ -2077,17 +2085,21 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     else:
         assert "previewUrl" not in done_events["h-front"]
         assert "previewUrl" not in done_events["h-side"]
-    # 실제 얼굴이 담긴 컷은 미리보기 URL 을 내보내지 않는다(비공개 버킷) — 이제 전 컷이 그렇다.
-    assert "previewUrl" not in done_events["styling"]
-    assert "previewUrl" not in done_events["mirror"]
+    # 건너뛴 컷은 완료 이벤트도 자산도 없다 = 정산(성공 컷 수 기준)에서 빠진다.
+    assert "styling" not in done_events and "mirror" not in done_events
+    if real_cuts_fail:
+        # 만들 컷이 스튜디오 둘뿐인데 그 둘이 실패하면 나온 컷이 0 이다 — 성공 종결도 없다.
+        assert "finalize" not in captured
+        assert captured["settlements"] == []
+        return
     assets = captured["finalize"]["cut_assets"]
-    assert len(assets) == (2 if real_cuts_fail else 4)
+    assert len(assets) == 2
     for asset in assets:
         assert asset["metadata"]["facemarket_real_derived"] is True
         assert asset["provenance"] == {"license_id": LICENSE_ID, "model_id": MODEL_ID}
     # 정산은 실제 얼굴 컷이 하나라도 나왔을 때 1회(단가는 라이선스 unit_price).
     if real_cuts_fail:
-        assert len(captured["settlements"]) == 1
+        assert captured["settlements"] == []      # 나온 컷이 없다 — 정산도 없다
     else:
         assert len(captured["settlements"]) == 1
         assert captured["settlements"][0]["total"] == 5000

@@ -10,6 +10,9 @@
     fail-closed 로 컷을 버린다).
   · virtual — 스튜디오(horizon) 공간세트 전부. hatchingroom_2161 세트가 REAL 0/9,
     VIRTUAL 3/3 이었다(2026-09-11 실측). 나머지 스튜디오 세트는 REAL 미검증이라 함께 막는다.
+  · virtual — **studio 섹션 밖의 모든 블록**(2026-09-14 사용자 결정). 얼굴 합성이 검증된 건
+    studio 섹션뿐이라, 나머지까지 그리면 gpt-image 비용만 나간다. 푸는 방법은
+    REAL_ALLOWED_SECTION_ROLES 에 섹션을 더하는 것 하나뿐이다.
   · real    — 아직 없다. 구조만 지원한다(콘티보드에 실제 모델 전용 입력이 생기면 채운다).
   · both    — 그 밖의 전부.
 
@@ -28,6 +31,16 @@ REAL = "real"
 BOTH = "both"
 SCOPES = (VIRTUAL, REAL, BOTH)
 
+#: 실제 모델로 만들 수 있는 섹션. **여기 한 줄이 정책의 전부다** — 검증이 끝난 섹션을 더하면 풀린다.
+#: 지금 studio 뿐인 이유: 얼굴 합성을 실측으로 확인한 곳이 거기뿐이다(2026-09-14 사용자 결정).
+REAL_ALLOWED_SECTION_ROLES = ("studio",)
+#: 그 규칙에 걸렸을 때 셀러가 보는 것. 인프라 단어(파드·라이선스·LoRA)는 쓰지 않는다.
+STUDIO_ONLY_CODE = "real_model_studio_only"
+STUDIO_ONLY_MESSAGE = "실제 모델은 현재 스튜디오 컷만 만들 수 있어요."
+#: 그 밖의 이유(가상 전용 예시·공간세트)로 막힌 경우
+MISMATCH_CODE = "identity_scope_mismatch"
+MISMATCH_MESSAGE = "이 모델로는 만들 수 없는 컷이에요."
+
 #: 선택된 모델 종류 → 그 모델로 만들 수 있는 범위
 _ALLOWED: dict[str, frozenset[str]] = {
     REAL: frozenset({REAL, BOTH}),
@@ -35,8 +48,35 @@ _ALLOWED: dict[str, frozenset[str]] = {
 }
 
 
+def section_of(block: Mapping[str, Any] | None) -> str | None:
+    """이 블록이 속한 섹션. 옛 블록은 contentRole·cutType 에서 추론된다(content_roles 규칙)."""
+    from . import content_roles
+
+    return content_roles.resolve_section_role(dict(block or {}))
+
+
+def studio_only_block(block: Mapping[str, Any] | None) -> bool:
+    """실제 모델로는 못 만드는 섹션인가. 섹션을 못 알아내면 **막지 않는다**(both 로 둔다)."""
+    section = section_of(block)
+    return section is not None and section not in REAL_ALLOWED_SECTION_ROLES
+
+
 def scope_for_block(block: Mapping[str, Any] | None) -> str:
     """이 콘티 블록(=컷 스펙)의 범위. 모르는 값은 전부 both 로 떨어진다."""
+    if not isinstance(block, Mapping):
+        return BOTH
+    if studio_only_block(block):
+        return VIRTUAL
+    return shape_scope_for_block(block)
+
+
+def shape_scope_for_block(block: Mapping[str, Any] | None) -> str:
+    """**섹션 규칙을 빼고** 컷 모양만 본 범위.
+
+    공간세트 표(gen_identity_scopes)가 이걸 쓴다 — 세트의 가상 전용 여부는 세트 고유의
+    이유(REAL 미검증)여야지, 그 멤버가 어느 섹션에 놓이느냐로 정해지면 안 된다.
+    섹션 규칙은 블록마다 따로 걸린다.
+    """
     if not isinstance(block, Mapping):
         return BOTH
     try:
@@ -69,3 +109,17 @@ def identity_kind(model_id: str | None) -> str:
 
 def block_allowed(block: Mapping[str, Any] | None, model_id: str | None) -> bool:
     return allows(scope_for_block(block), identity_kind(model_id))
+
+
+def block_rejection(block: Mapping[str, Any] | None,
+                    model_id: str | None) -> tuple[str, str] | None:
+    """막혔으면 (코드, 셀러 문구). 만들 수 있으면 None.
+
+    이유를 갈라 두는 값어치: "스튜디오 컷만 된다" 와 "이 예시는 가상 전용이다" 는 셀러가
+    할 수 있는 일이 다르다(섹션을 옮긴다 vs 예시를 바꾼다).
+    """
+    if block_allowed(block, model_id):
+        return None
+    if identity_kind(model_id) == REAL and studio_only_block(block):
+        return STUDIO_ONLY_CODE, STUDIO_ONLY_MESSAGE
+    return MISMATCH_CODE, MISMATCH_MESSAGE

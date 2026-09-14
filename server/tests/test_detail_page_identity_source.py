@@ -365,9 +365,11 @@ def test_product_only_queued_real_model_does_not_require_face_assets(monkeypatch
 
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
-    assert captured["calls"]
-    assert captured["success"]["charge"] == 1
-    assert captured.get("failure") is None
+    # 2026-09-14: 실제 모델은 studio 섹션 컷만 만든다 — 제품컷만 있는 잡은 만들 컷이 0 이다.
+    # (라우트가 예약 전에 400 으로 끊으므로 실제로는 여기까지 오지 않는다. 구 클라이언트·
+    #  재시도로 들어온 잡도 얼굴 자산을 읽지 않는다는 것이 이 테스트의 요점이다.)
+    assert captured.get("calls") in (None, [])
+    assert captured.get("success", {}).get("charge", 0) == 0
 
 
 @pytest.mark.parametrize(

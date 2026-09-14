@@ -1,4 +1,5 @@
 import SCOPES from '../data/identityScopes.json' with { type: 'json' };
+import { inferSectionRole } from './storyboardTaxonomy.js';
 
 /**
  * 컷을 어떤 모델로 만들 수 있는가 — **판정 규칙은 서버에 있다**.
@@ -16,6 +17,12 @@ const listHas = (list, value) => !Array.isArray(list) || list.includes(String(va
 
 function matches(when, block) {
   if (!when) return false;
+  if (when.sectionNotIn) {
+    // 섹션을 못 알아내면 막지 않는다 — 서버(identity_scope.studio_only_block)와 같은 규칙.
+    const section = inferSectionRole(block);
+    if (!section || when.sectionNotIn.includes(section)) return false;
+    return true;
+  }
   const spaceSetId = block.spaceSetId || block.setId
     || (block.spaceGroupId ? String(block.spaceGroupId) : null);
   if (when.cutType && String(block.cutType || '') !== when.cutType) return false;
@@ -34,6 +41,30 @@ function matches(when, block) {
   }
   if (when.exampleIn && !when.spaceSetIn && !listHas(when.exampleIn, block.exampleId)) return false;
   return true;
+}
+
+/** 막힌 이유(코드·문구). 서버가 규칙과 함께 내보낸 값을 그대로 쓴다 — 문구를 프런트에서 짓지 않는다. */
+export function rejectionOfBlock(block, identityKind) {
+  if (!block || typeof block !== 'object') return null;
+  for (const rule of RULES) {
+    if (!matches(rule.when, block)) continue;
+    if (scopeAllows(rule.scope, identityKind)) return null;
+    return rule.code ? { code: rule.code, message: rule.message } : null;
+  }
+  return null;
+}
+
+/** 이 섹션에 이 모델의 컷을 넣을 수 있는가 — 막혔으면 {code,message}. */
+export function rejectionOfSection(sectionRole, identityKind) {
+  return rejectionOfBlock({ sectionRole }, identityKind);
+}
+
+/** 이 모델로 실제 생성될 블록만 남긴다 — 서버 예약 필터(routes.generate_detail_page)와 같은 규칙. */
+export function blocksForModel(blocks, identityKind) {
+  if (!identityKind) return blocks || [];
+  return (blocks || []).filter(
+    (block) => block?.source === 'mine' || blockAllowedForModel(block, identityKind),
+  );
 }
 
 /** 이 컷의 범위. 규칙에 안 걸리면 both(막지 않는다). */

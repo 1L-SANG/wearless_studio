@@ -68,6 +68,9 @@ import { pickSignatureCut, signatureCutById, signatureCutsFor } from '@/lib/sign
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
 import {
   blockAllowedForModel,
+  blocksForModel,
+  rejectionOfBlock,
+  rejectionOfSection,
   filterExamplesForModel,
   filterSpaceSetsForModel,
   identityKindOf,
@@ -625,9 +628,9 @@ function StoryboardCard({
           {/* 모델을 바꿔서 이 컷의 범위 밖이 된 경우 — 자동 교체는 하지 않고 표시만 하고
               생성에서 뺀다(2026-09-11 사용자 결정). 서버도 같은 판정으로 건너뛴다. */}
           {outOfScope && (
-            <div className="sb-out-of-scope" title="이 모델로는 만들 수 없는 컷이에요">
+            <div className="sb-out-of-scope" title={outOfScope.message}>
               <Icon name="alertTri" size={12} />
-              <span>이 모델로는 만들 수 없는 컷</span>
+              <span>{outOfScope.label}</span>
             </div>
           )}
         </CardDragSurface>
@@ -2799,6 +2802,12 @@ export function Storyboard({ toastOverride = null } = {}) {
     const targetHost = blocks.find((b) => b.sectionId === targetSid);
     const host = targetHost || (!targetRole ? blocks[Math.max(0, Math.min(idx - 1, blocks.length - 1))] : null);
     const sectionRole = targetRole || host?.sectionRole || SECTION_ROLES.HOOKING;
+    // 실제 모델은 검증된 섹션에만 컷을 넣을 수 있다 — 판정·문구는 서버 규칙 표에서 온다.
+    const sectionRejection = rejectionOfSection(sectionRole, identityKind);
+    if (sectionRejection) {
+      toast.push(sectionRejection.message);
+      return;
+    }
     const droppedExample = droppedExampleId
       ? (catalogs.genExamples || []).find((example) => example.id === droppedExampleId)
       : null;
@@ -3679,7 +3688,13 @@ export function Storyboard({ toastOverride = null } = {}) {
           canDelete={canDeleteBlock(block)}
           swapProps={swapTargetProps(block.id)}
           alignCaptionWithMoodGrid={section.role === SECTION_ROLES.HOOKING}
-          outOfScope={block.source === 'ai' && !blockAllowedForModel(block, identityKind)}
+          outOfScope={block.source === 'ai' && !blockAllowedForModel(block, identityKind)
+            ? (rejectionOfBlock(block, identityKind)
+              ? { label: '스튜디오 컷만 만들 수 있어요',
+                  message: rejectionOfBlock(block, identityKind).message }
+              : { label: '이 모델로는 만들 수 없는 컷',
+                  message: '이 모델로는 만들 수 없는 컷이에요' })
+            : null}
           microVariationIds={microVariationIds}
           onShuffle={canShuffleBlock(block) ? (() => shuffleBlock(group, block.id)) : null}
         />
@@ -4071,7 +4086,8 @@ export function Storyboard({ toastOverride = null } = {}) {
           <div className="sb-ab-count">
             AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
           </div>
-          <span className="sb-ab-cost">생성 {uniqueGenerationCutCount(blocks) * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
+          {/* 만들 수 없는 컷은 서버 예약에서도 빠진다 — 견적도 같은 수를 봐야 한다. */}
+          <span className="sb-ab-cost">생성 {uniqueGenerationCutCount(blocksForModel(blocks, identityKind)) * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={onCopywritingChange} label="카피라이팅" />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
