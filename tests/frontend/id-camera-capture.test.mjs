@@ -8,29 +8,54 @@ import { fileURLToPath } from 'node:url';
 const source = readFileSync(
   fileURLToPath(new URL('../../src/features/model/IdCameraCapture.jsx', import.meta.url)), 'utf8');
 
+// 주석 안의 문장은 코드가 아니다 — 아래 매칭들이 파일 상단 설명 주석에 적힌 단어만
+// 보고 통과하면(=실제로는 안 그런데 통과) 회귀를 못 잡는다. 블록·라인 주석을 지운
+// 코드에 대고만 검증한다.
+const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
 test('후면 카메라를 요청한다', () => {
-  assert.match(source, /facingMode/, '후면 카메라를 지정해야 신분증을 찍는다');
-  assert.match(source, /environment/);
+  assert.match(code, /facingMode/, '후면 카메라를 지정해야 신분증을 찍는다');
+  assert.match(code, /environment/);
 });
 
 test('수동 셔터가 항상 있다 — 자동은 편의이지 관문이 아니다', () => {
-  assert.match(source, /수동|직접 찍기|촬영/, '수동 촬영 버튼이 있어야 한다');
-  assert.ok(!/disabled=\{[^}]*autoReady/.test(source),
+  assert.match(code, /수동|직접 찍기|촬영/, '수동 촬영 버튼이 있어야 한다');
+  assert.ok(!/disabled=\{[^}]*autoReady/.test(code),
     '자동 판정이 수동 셔터를 막으면 자동이 안 잡히는 사용자가 갇힌다');
 });
 
 test('카메라를 못 쓰면 부모에게 알린다 (폴백 경로)', () => {
-  assert.match(source, /onUnavailable/, '권한 거부·미지원 시 파일 선택으로 내려갈 수 있어야 한다');
+  assert.match(code, /onUnavailable/, '권한 거부·미지원 시 파일 선택으로 내려갈 수 있어야 한다');
 });
 
-test('촬영 결과는 JPEG blob 이다 — 원본 프레임을 넘기지 않는다', () => {
-  assert.match(source, /toBlob\(/, '캔버스에서 blob 을 뽑아야 한다');
-  assert.match(source, /image\/jpeg/);
-  assert.ok(!/onCaptured\(\s*(?:stream|video|frame)\b/.test(source),
+test('촬영 결과는 마스킹을 거친다 — 원본 프레임을 넘기지 않는다', () => {
+  // JPEG 인코딩(canvas.toBlob('image/jpeg', …))은 burnGuideMask(idDocumentMasking.js,
+  // 이미 검증됨) 안에 있다. 이 컴포넌트가 증명해야 할 건 "그 함수에 위임한다"는 것과
+  // "원본 스트림/비디오/프레임을 onCaptured 로 그대로 흘려보내지 않는다"는 것뿐이다.
+  assert.match(code, /burnGuideMask\(/, '가이드 기준 마스킹(burnGuideMask)에 위임해야 한다');
+  assert.ok(!/onCaptured\w*(?:\.current)?\??\.?\(\s*(?:stream|video|frame)\b/.test(code),
     '원본 스트림/비디오 엘리먼트를 그대로 넘기면 안 된다');
 });
 
+test('onCaptured 는 마스킹된 blob 하나만 받는다 — {blob,width,height} 객체가 아니다', () => {
+  // 이전 계약(브리핑 원안)은 onCaptured({ blob, width, height }) 였다. 정정 1은
+  // onCaptured(blob) 하나로 좁혔다 — 마스킹 전 blob 이 부모 state 를 한 틱이라도
+  // 거치는 걸 막으려는 것이므로, 인자가 다시 객체로 넓어지면 그 취지가 깨진다.
+  // burnGuideMask(...).then(callbackParam => { ... onCaptured(무언가) ... }) 형태에서
+  // callbackParam 과 onCaptured 에 실제로 넘어가는 인자가 같은 식별자인지 비교한다.
+  const start = code.indexOf('burnGuideMask(');
+  assert.ok(start >= 0, 'burnGuideMask 호출을 찾을 수 없다');
+  const window_ = code.slice(start, start + 600);
+  const thenMatch = window_.match(/\.then\(\s*\(?\s*(\w+)\s*\)?\s*=>/);
+  assert.ok(thenMatch, 'burnGuideMask(...).then(blob => …) 콜백을 찾을 수 없다');
+  const callMatch = window_.match(/onCaptured\w*(?:\.current)?\??\.?\(([^)]*)\)/);
+  assert.ok(callMatch, 'onCaptured 호출을 찾을 수 없다');
+  const arg = callMatch[1].trim();
+  assert.equal(arg, thenMatch[1],
+    `onCaptured 는 마스킹된 blob 하나만 받아야 한다 (받은 인자: "${arg}")`);
+});
+
 test('스트림을 반드시 정리한다', () => {
-  assert.match(source, /getTracks\(\)[\s\S]{0,80}stop\(\)/,
+  assert.match(code, /getTracks\(\)[\s\S]{0,80}stop\(\)/,
     '언마운트에서 트랙을 멈추지 않으면 카메라 표시등이 계속 켜져 있다');
 });

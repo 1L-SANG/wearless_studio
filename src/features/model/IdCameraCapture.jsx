@@ -39,11 +39,25 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
   const gateRef = useRef(createShutterGate({ needed: 5 }));
   const capturingRef = useRef(false);   // burnGuideMask 가 비동기라 진행 중 중복 촬영을 막는다
   const mountedRef = useRef(true);
+  const busyRef = useRef(busy);   // 부모가 업로드 중이면(=busy) 판정 루프도 셔터를 눌러선 안 된다
   const [ready, setReady] = useState(false);
   const [frameSize, setFrameSize] = useState(null);   // { width, height } — 오버레이 좌표계
   const [showManualHint, setShowManualHint] = useState(false);
+  const [captureError, setCaptureError] = useState(false);
+
+  // onCaptured/onUnavailable/busy 를 ref 로 미러링한다 — 이 값들의 정체성에 카메라
+  // 마운트 주기(아래 effect)나 capture() 의 정체성을 걸면 안 된다. 부모가 매 렌더마다
+  // 새 함수를 넘기는 흔한 실수 하나로 카메라가 매번 껐다 켜진다(트랙 정지 → 재권한
+  // 요청 → 화면 깜빡임).
+  const onCapturedRef = useRef(onCaptured);
+  useEffect(() => { onCapturedRef.current = onCaptured; });
+  const onUnavailableRef = useRef(onUnavailable);
+  useEffect(() => { onUnavailableRef.current = onUnavailable; });
+  useEffect(() => { busyRef.current = busy; });
 
   // 카메라 시작 + 언마운트에서 트랙 정지(안 하면 카메라 표시등이 계속 켜져 있다)
+  // 의존성 배열을 비워 둔다 — 카메라는 마운트당 한 번만 잡고, onUnavailable 의
+  // 정체성이 바뀌어도(부모 리렌더) 다시 잡지 않는다(위 ref 미러링 참조).
   useEffect(() => {
     let cancelled = false;
     const video = videoRef.current;
@@ -74,7 +88,11 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
         if (cancelled) return;
         setReady(true);
       } catch (error) {
-        onUnavailable?.(error?.name === 'NotAllowedError' ? 'permission' : 'unsupported');
+        // 권한 프롬프트가 떠 있는 동안 언마운트되면 그 이후의 거부/실패는 이미 버려진
+        // effect 인스턴스의 것이다 — 여기서도 cancelled 를 봐야 다른 부모에게 잘못
+        // onUnavailable 이 불리지 않는다.
+        if (cancelled) return;
+        onUnavailableRef.current?.(error?.name === 'NotAllowedError' ? 'permission' : 'unsupported');
       }
     })();
     return () => {
@@ -83,7 +101,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
-  }, [onUnavailable]);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -92,22 +110,37 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
 
   // 실제 프레임 픽셀(videoWidth/videoHeight)로만 찍는다 — CSS 표시 크기로 찍으면
   // burnGuideMask 가 계산하는 주민번호 사각형이 실제 카드 위치와 어긋난다.
+  // 의존성을 비워 둔다: onCaptured 는 ref 로만 읽어서, 부모가 매 렌더마다 새
+  // 함수를 넘겨도 이 콜백과 그걸 물고 있는 판정 루프 effect 가 다시 돌지 않는다.
   const capture = useCallback(() => {
     const video = videoRef.current;
     const canvas = shotRef.current;
-    if (!video || !canvas || capturingRef.current) return;
+    if (!video || !canvas || capturingRef.current || busyRef.current) return;
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return;
     capturingRef.current = true;
     gateRef.current.reset();   // 게이트는 레벨 트리거라 리셋 안 하면 다음 프레임에도 계속 찍힌다
-    burnGuideMask(canvas, video, width, height)
-      .then((blob) => {
-        if (!mountedRef.current) return;
-        onCaptured?.(blob);
-      })
-      .finally(() => { capturingRef.current = false; });
-  }, [onCaptured]);
+    setCaptureError(false);
+    try {
+      // burnGuideMask 는 Promise 를 만들기 전에 canvas.width 대입·drawImage 를 동기로
+      // 실행한다. 거기서 던지면 이 호출 자체가 예외를 던지고 .then/.finally 에는
+      // 닿지 못한다 — try/catch 로 감싸지 않으면 capturingRef 가 영영 true 로 남아
+      // 자동 판정도, 수동 셔터도 다시는 못 찍는다.
+      burnGuideMask(canvas, video, width, height)
+        .then((blob) => {
+          if (!mountedRef.current) return;
+          onCapturedRef.current?.(blob);
+        })
+        .catch(() => {
+          if (mountedRef.current) setCaptureError(true);
+        })
+        .finally(() => { capturingRef.current = false; });
+    } catch {
+      capturingRef.current = false;
+      if (mountedRef.current) setCaptureError(true);
+    }
+  }, []);
 
   // ~10fps 판정 루프: video → 작은 캔버스 → 그레이스케일 → scoreFrame → gate
   useEffect(() => {
@@ -117,7 +150,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
     if (!video || !sampleCanvas) return undefined;
     const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
     const timer = setInterval(() => {
-      if (capturingRef.current) return;
+      if (capturingRef.current || busyRef.current) return;   // 업로드 중엔 자동 셔터도 쉰다
       const vw = video.videoWidth;
       const vh = video.videoHeight;
       if (!vw || !vh) return;
@@ -164,6 +197,9 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
       <p className={s.idCameraHint} role="status">
         신분증을 네모 안에 맞춰 주세요. 잘 맞으면 자동으로 찍혀요.
       </p>
+      {captureError && (
+        <p className={s.error} role="alert">사진을 저장하지 못했어요. 다시 찍어 주세요.</p>
+      )}
       <button type="button" className={s.primary} disabled={busy} onClick={capture}>
         직접 찍기
       </button>
