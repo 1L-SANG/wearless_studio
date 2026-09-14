@@ -3,8 +3,10 @@ import contextlib
 import copy
 import hashlib
 import hmac
+import inspect
 import io
 import json
+import re
 import threading
 import types
 import uuid
@@ -23,6 +25,44 @@ from app.facemarket import _gender_from_trans
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
 from conftest import make_settings
+
+
+def _select_aliases(sql_text: str) -> tuple[str, ...]:
+    """`select ... from` 사이의 컬럼 목록에서 결과 dict 의 키(별칭)만 뽑는다.
+
+    `dict_row` 커서는 **select 한 컬럼만** 돌려준다. 가짜 커서가 손으로 적은 dict 를 주면
+    그 사실이 사라져, 프로덕션 SELECT 에 없는 컬럼을 코드가 읽어도 테스트가 전부 통과한다
+    — 최종리뷰 C1(간편인증 완료 경로가 프로덕션에서만 죽어 있던 버그)이 정확히 그 틈으로
+    빠져나갔다. 그래서 가짜 커서도 프로덕션 SQL 이 실제로 뽑는 컬럼만 돌려주게 한다.
+    """
+    body = re.search(r"select\s(.*?)\sfrom\s", sql_text, re.S | re.I)
+    assert body, "select ... from 절을 찾지 못했다"
+    # SQL 주석(-- ...) 은 컬럼이 아니다.
+    columns = re.sub(r"--[^\n]*", "", body.group(1))
+    aliases = []
+    for item in columns.split(","):
+        item = " ".join(item.split())
+        if not item:
+            continue
+        lowered = item.lower()
+        if " as " in lowered:
+            aliases.append(item[lowered.rindex(" as ") + 4:].strip())
+        else:
+            aliases.append(item.rsplit(".", 1)[-1].strip())
+    return tuple(aliases)
+
+
+def completion_check_columns() -> tuple[str, ...]:
+    """`_initial_completion_checks` 의 완료-체크 SELECT 가 실제로 투영하는 컬럼들."""
+    source = inspect.getsource(facemarket_enrollment._initial_completion_checks)
+    return _select_aliases(source[source.index("select e.id::text"):])
+
+
+# 컬럼 목록은 프로덕션 SQL 에서 뽑지만(손으로 적으면 "코드는 읽는데 SELECT 엔 없는" 컬럼을
+# 가짜 커서가 대신 채워 줘 프로덕션에서만 죽는다), 값의 기본형은 DB 스키마를 따라야 한다 —
+# photo_revision 은 `integer not null default 0` 이라 실서버에서 절대 NULL 이 아니다.
+# 여기서 None 을 주면 실서버엔 없는 NoneType 비교 오류가 테스트에서만 난다.
+COMPLETION_COLUMN_DEFAULTS = {"photo_revision": 0}
 
 
 NOW = datetime(2026, 8, 21, 6, 0, tzinfo=timezone.utc)
@@ -155,6 +195,9 @@ class FakeCursor:
         params = params or ()
         self.result = None
         self.many = []
+        # 라우트가 보는 값 — 상태 가드 UPDATE 는 rowcount 로 승패를 가른다(신분증 업로드의
+        # 보상 삭제가 그 위에 걸려 있다). 분기가 안 잡히면 0 이 남아 "졌다"로 읽힌다.
+        self.rowcount = 0
 
         if (
             "kind = 'personalization_purge'" in query
@@ -256,28 +299,13 @@ class FakeCursor:
                 ),
                 None,
             )
+            # 컬럼 목록을 손으로 적지 않는다 — 프로덕션 SELECT 에서 그대로 읽어 온다.
+            # 손으로 적으면 "코드는 읽는데 SELECT 엔 없는" 컬럼을 이 가짜 커서가 대신
+            # 채워 줘서, 프로덕션에서만 죽는 경로가 초록불로 통과한다(최종리뷰 C1).
             self.result = (
                 {
-                    "id": row["id"],
-                    "user_id": row["user_id"],
-                    "model_id": row["model_id"],
-                    "status": row["status"],
-                    "cooldown_until": row.get("cooldown_until"),
-                    "expires_at": row["expires_at"],
-                    "liveness_session_digest": row.get("liveness_session_digest"),
-                    "device_digest": row["device_digest"],
-                    # Task3: /complete 의 바인딩이 읽는 저장된 신분증 증거 컬럼.
-                    "identity_ci_hash": row.get("identity_ci_hash"),
-                    "identity_name_masked": row.get("identity_name_masked"),
-                    "identity_birth_year": row.get("identity_birth_year"),
-                    "identity_tx_digest": row.get("identity_tx_digest"),
-                    "identity_contract_version": row.get("identity_contract_version"),
-                    # Task4: 바인딩때 승격할 대표이미지 키.
-                    "profile_image_r2_key": row.get("profile_image_r2_key"),
-                    # Task5: 바인딩때 승격할 키·체형 속성.
-                    "height_bucket": row.get("height_bucket"),
-                    "body_type": row.get("body_type"),
-                    "photo_revision": row.get("photo_revision", 0),
+                    column: row.get(column, COMPLETION_COLUMN_DEFAULTS.get(column))
+                    for column in completion_check_columns()
                 }
                 if row
                 else None
@@ -383,6 +411,35 @@ class FakeCursor:
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
+        elif (
+            query.startswith("with due as ( select id from fm_biometric_enrollments")
+            and "review_status = 'pending'" in query
+        ):
+            # 심사 기한(REVIEW_DEADLINE_DAYS) 초과 종료(최종리뷰 I3). 만료 스윕과 같은
+            # `with due as (...)` 로 시작하므로 **이 분기가 먼저**여야 한다.
+            limit = params[0]
+            deadline = self.store.now - timedelta(
+                days=facemarket_enrollment.REVIEW_DEADLINE_DAYS
+            )
+            due = sorted(
+                [
+                    row
+                    for row in self.store.enrollments
+                    if row["status"] == "review_pending"
+                    and row.get("review_status") == "pending"
+                    and row.get("created_at", self.store.now) <= deadline
+                ],
+                key=lambda row: row.get("created_at", self.store.now),
+            )[:limit]
+            self.many = [{"id": row["id"]} for row in due]
+            for row in due:
+                row.update(
+                    status="failed",
+                    decision="failed",
+                    reason="review_timeout",
+                    review_status=None,
+                    completed_at=self.store.now,
+                )
         elif query.startswith("with due as ( select id from fm_biometric_enrollments"):
             limit = params[0]
             due = sorted(
@@ -850,6 +907,22 @@ class FakeCursor:
                     cooldown_until=cooldown_until or row.get("cooldown_until"),
                 )
                 self.result = {"status": "failed"}
+        elif query.startswith(
+            "select identity_method from fm_biometric_enrollments where id"
+        ):
+            # /identity 게이트가 계약 선택을 위해 fetch_trans 앞에서 락 없이 읽는 조회
+            # (Task6). mid 로 만들어진 행은 identity_method 키 자체가 없다 — 그대로
+            # None 을 돌려줘 라우트가 'mid' 로 폴백하게 한다(NULL=mid 와 동일한 모양).
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id and item["user_id"] == user_id
+                ),
+                None,
+            )
+            self.result = {"identity_method": row.get("identity_method")} if row else None
         elif (
             query.startswith("select status, application_id")
             and "fm_biometric_enrollments where id" in query
@@ -932,6 +1005,31 @@ class FakeCursor:
             )
             if row["status"] == "liveness_pending":
                 row["status"] = "photos_pending"
+        elif query.startswith(
+            "update fm_biometric_enrollments set status = 'identity_pending', "
+            "id_document_r2_key"
+        ):
+            # 신분증 업로드 성공 전이(status 가드 포함) — 라우트는 rowcount 로 승패를 본다.
+            key, document_type, enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id
+                    and item["user_id"] == user_id
+                    and item["status"] == "id_capture_pending"
+                ),
+                None,
+            )
+            if row is not None:
+                row.update(
+                    status="identity_pending",
+                    id_document_r2_key=key,
+                    id_document_type=document_type,
+                    id_document_uploaded_at=self.store.now,
+                    id_document_purged_at=None,
+                )
+                self.rowcount = 1
         elif query.startswith("update fm_biometric_enrollments e set status = 'cancelled'"):
             enrollment_id, user_id = params
             row = next(
@@ -940,13 +1038,23 @@ class FakeCursor:
                     for item in self.store.enrollments
                     if item["id"] == enrollment_id
                     and item["user_id"] == user_id
-                    and (item["status"] in ACTIVE_STATUSES or item["status"] == "cancelled")
+                    # 프로덕션 cancel SQL 의 상태 목록을 따른다 — ACTIVE_STATUSES 는 mid
+                    # 시절의 7개라 간편인증 신규 두 상태(id_capture_pending·review_pending)가
+                    # 빠져 있다. 그대로 쓰면 취소 경로가 이 페이크에서만 404 가 된다.
+                    and (
+                        item["status"] in ACTIVE_STATUSES
+                        or item["status"] in {"cancelled", "id_capture_pending", "review_pending"}
+                    )
                 ),
                 None,
             )
             if row:
                 row["status"] = "cancelled"
                 row["completed_at"] = row.get("completed_at") or NOW
+                # 취소한 등록이 관리자 대기 큐에 남지 않게 review_status='pending' 만 비운다
+                # (이미 내려진 승인·거절 기록은 그대로 둔다).
+                if row.get("review_status") == "pending":
+                    row["review_status"] = None
                 self.result = {"id": row["id"]}
         elif query.startswith("select e.status, p.angle, p.r2_key"):
             self.conn.store.terminal_cleanup_loads += 1
@@ -982,6 +1090,25 @@ class FakeCursor:
                     ]
                     or [{"status": enrollment["status"], "angle": None, "r2_key": None, "model_id": enrollment.get("model_id"), "unsigned": unsigned}]
                 )
+        # --- Task9: cleanup_terminal_enrollment 이 부르는 purge_id_document 의 SELECT/UPDATE.
+        # mid 경로는 id_document_r2_key 가 애초에 None 이라 이 UPDATE 가 타도 관측 가능한
+        # 사진 정리/만료 동작은 그대로다(id_document_purged_at 은 API 로 노출되지 않는다). ---
+        elif query.startswith("select id_document_r2_key from fm_biometric_enrollments"):
+            (enrollment_id,) = params
+            row = next(
+                (item for item in self.store.enrollments if item["id"] == enrollment_id),
+                None,
+            )
+            self.result = {"id_document_r2_key": row.get("id_document_r2_key")} if row else None
+        elif "id_document_purged_at = now()" in query:
+            (enrollment_id,) = params
+            row = next(
+                (item for item in self.store.enrollments if item["id"] == enrollment_id),
+                None,
+            )
+            if row is not None:
+                row["id_document_r2_key"] = None
+                row["id_document_purged_at"] = NOW
         elif "as remaining" in query and query.startswith("select"):
             enrollment_id = params[0]
             unsigned = not any(row.get("enrollment_id") == enrollment_id for row in self.store.licenses)
@@ -2862,15 +2989,18 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         # Task4: physique(체형·키) + 검증용 모델 성별.
         "heightBucket",
         "bodyType",
-            "gender",
-            "photoCount",
-            "photoRevision",
-            "consentDocumentVersion",
-            "licenseId",
-            "licenseTerms",
-            "termsConsentVersion",
-            "overseasConsentVersion",
-        }
+        "gender",
+        # Task5: 인증 수단 분기 + 심사 상태.
+        "identityMethod",
+        "reviewStatus",
+        "photoCount",
+        "photoRevision",
+        "consentDocumentVersion",
+        "licenseId",
+        "licenseTerms",
+        "termsConsentVersion",
+        "overseasConsentVersion",
+    }
     assert "digest" not in status.text.lower()
     assert "r2" not in status.text.lower()
 
@@ -4191,6 +4321,31 @@ def test_cancel_is_idempotent_and_cleans_quarantine_photos(
     assert "facemarket/" not in json.dumps(evidence)
 
 
+def test_cancel_purges_id_document_from_r2_and_clears_column(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    """review fix round1: 기존 cancel/expire 회귀 테스트는 전부 id_document_r2_key 가
+    None 인 fixture 라 purge_id_document 의 'key 없음' no-op 분기만 타고 있었다 —
+    실제로 문서가 있을 때 취소가 R2 delete 를 부르고 컬럼을 지우는지는 아무 테스트도
+    확인하지 않았다. simple_auth 가 심었을 법한 실제 신분증 키를 fixture 에 직접 심고
+    취소 경로(cancel_enrollment → cleanup_terminal_enrollment)로 몰아 이 갭을 메운다."""
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    key = r2.enrollment_id_document_key(enrollment_id, "jpg", version="test-version")
+    enrollment_store.enrollments[0]["id_document_r2_key"] = key
+    fake_r2.objects[key] = (b"masked-id-bytes", "image/jpeg")
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    assert key in fake_r2.deletes
+    row = enrollment_store.enrollments[0]
+    assert row["id_document_r2_key"] is None
+    assert row["id_document_purged_at"] is not None
+
+
 def test_cancel_allows_identity_pending_enrollment(
     enrollment_client, auth, enrollment_store
 ):
@@ -4297,7 +4452,10 @@ def test_cancel_cleanup_finalize_commit_failure_is_retryable(
         headers=auth(),
     )
     key = enrollment_store.photos[0]["r2_key"]
-    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
+    # Task9: cleanup_terminal_enrollment 이 이제 사진 드레인 전에 purge_id_document
+    # 커밋을 하나 더 낸다(카운트 +1) — 노리는 대상은 여전히 드레인 커밋(R2 는 이미
+    # 지웠는데 그 사실을 기록하는 커밋만 실패)이라 오프셋을 그만큼 밀어야 한다.
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 4)
 
     first = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
@@ -4357,7 +4515,10 @@ def test_terminal_cleanup_finalize_commit_failure_retries_after_object_is_gone(
     )
     key = enrollment_store.photos[0]["r2_key"]
     enrollment_store.enrollments[0]["status"] = "expired"
-    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
+    # Task9: cleanup_terminal_enrollment 이 이제 사진 드레인 전에 purge_id_document
+    # 커밋을 하나 더 낸다(카운트 +1) — 노리는 대상은 여전히 드레인 커밋이라 오프셋을
+    # 그만큼 밀어야 한다.
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
 
     first = asyncio.run(
         facemarket_enrollment.cleanup_terminal_enrollment(
@@ -4841,3 +5002,143 @@ def test_create_enrollment_rejects_awaiting_confirmation_without_side_effects(
     assert enrollment_store.serialized() == before
     assert enrollment_store.commit_attempts == 0
     assert fake_r2.puts == [] and fake_r2.deletes == []
+
+
+def test_completion_select_projects_every_column_read():
+    """`/complete` 가 row 에서 읽는 컬럼은 전부 완료-체크 SELECT 에 있어야 한다.
+
+    `dict_row` 커서는 select 한 컬럼만 담은 dict 를 준다 — 목록에 없는 컬럼을 읽으면
+    KeyError 가 아니라 조용한 None 이다. 최종리뷰 C1 이 정확히 그 사건이었다:
+    `identity_method`/`id_document_r2_key` 가 SELECT 에 없어 항상 None 이 되었고,
+    `row.get("identity_method") or "mid"` 가 그 None 을 mid 로 접어 **간편인증 완료
+    경로 전체가 프로덕션에서만 죽어 있었다**(테스트는 전부 통과). 컬럼을 지우거나
+    읽는 쪽에 새 컬럼이 생기면 여기서 먼저 터진다.
+    """
+    projected = set(completion_check_columns())
+    read_keys: set[str] = set()
+    for reader in (
+        facemarket_enrollment.process_enrollment_completion,
+        # 완료 경로의 tail — 같은 row 를 그대로 받아 읽는다.
+        facemarket_enrollment.bind_model_and_enqueue_asset_build,
+    ):
+        source = inspect.getsource(reader)
+        read_keys |= set(re.findall(r"""row(?:\.get\(|\[)["']([a-z0-9_]+)["']""", source))
+    assert read_keys, "row 를 읽는 코드를 하나도 못 찾았다 — 정규식이 낡았다"
+    assert "identity_method" in read_keys and "id_document_r2_key" in read_keys
+    missing = sorted(read_keys - projected)
+    assert not missing, (
+        f"_initial_completion_checks 의 SELECT 에 없는 컬럼을 읽는다: {missing}. "
+        "dict_row 라 그 값은 항상 None 이 된다 — SELECT 목록에 추가해야 한다."
+    )
+
+
+def test_cancel_clears_pending_review_status(enrollment_client, auth, enrollment_store):
+    """취소한 등록은 관리자 대기 큐에서도 사라져야 한다(최종리뷰 I5).
+
+    `cancel_enrollment` 는 review_pending 을 받아 주면서 review_status 를 안 지웠다 —
+    큐는 review_status 로만 필터하므로 그 행이 영원히 대기 목록에 남고, 심사자가 승인을
+    누르면 상태 가드 UPDATE 가 0-row → 409 다. 지울 수도 처리할 수도 없는 유령 항목이다.
+    """
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    # 커밋이 store 를 새 dict 로 갈아끼우므로 요청 뒤에 다시 읽는다.
+    cancelled = enrollment_store.enrollments[0]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["review_status"] is None
+
+
+def test_cancel_keeps_a_decided_review_status(enrollment_client, auth, enrollment_store):
+    """이미 내려진 승인·거절 기록까지 지우지는 않는다 — 'pending' 일 때만 비운다."""
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "processing"
+    row["review_status"] = "approved"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    assert enrollment_store.enrollments[0]["review_status"] == "approved"
+
+
+def test_review_pending_expires_after_the_review_deadline(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    """심사 대기는 5일 뒤 failed('review_timeout') 로 닫히고 통지된다(최종리뷰 I3).
+
+    일반 만료 스윕에서 review_pending 을 뺀 건 "심사가 밀렸다고 24시간 만에 자동 탈락시키지
+    않는다"는 뜻이지 "영원히 기다린다"가 아니다 — 신분증 촬영본은 7일이면 배치 스윕이
+    DB 와 무관하게 지우므로 그 뒤엔 심사 자체가 불가능하고, 행은 사용자의 단일 활성 등록
+    슬롯을 영구 점유한다(= 재등록 불가). 기한은 7일보다 **짧아야** 증거가 살아 있는 동안
+    심사가 끝난다.
+    """
+    notified = []
+
+    async def fake_notify(_app, *, enrollment_id, email_type, reject_reason=None):
+        notified.append((enrollment_id, email_type))
+        return True
+
+    monkeypatch.setattr(facemarket_enrollment, "notify_enrollment_decision", fake_notify)
+
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+    row["created_at"] = NOW - timedelta(days=facemarket_enrollment.REVIEW_DEADLINE_DAYS, hours=1)
+
+    asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(enrollment_client.app))
+
+    swept = enrollment_store.enrollments[0]
+    assert swept["id"] == enrollment_id
+    assert swept["status"] == "failed"
+    assert swept["reason"] == "review_timeout"
+    # 관리자 대기 큐에서도 내려간다 — 처리할 수 없는 행이 큐에 남으면 안 된다.
+    assert swept["review_status"] is None
+    assert notified == [(enrollment_id, "enrollment_review_timeout")]
+
+
+def test_review_pending_within_the_deadline_is_left_alone(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    """기한 안이면 건드리지 않는다 — 심사가 하루 밀렸다고 지원자를 떨어뜨리지 않는다."""
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "notify_enrollment_decision",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("통지하면 안 된다")),
+    )
+    create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+    row["created_at"] = NOW - timedelta(days=facemarket_enrollment.REVIEW_DEADLINE_DAYS - 1)
+    # 일반 만료 스윕이 review_pending 을 집지 않는다는 사실도 함께 지킨다.
+    row["expires_at"] = NOW - timedelta(hours=1)
+
+    asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(enrollment_client.app))
+
+    assert enrollment_store.enrollments[0]["status"] == "review_pending"
+
+
+def test_review_deadline_is_shorter_than_the_id_document_sweep():
+    """기한은 신분증 촬영본 배치 스윕(7일)보다 반드시 짧아야 한다.
+
+    이게 뒤집히면 "심사하러 갔더니 증거가 이미 파기됨" 상태가 다시 생긴다 — 두 상수가
+    서로 다른 파일에 있어서 한쪽만 바뀌기 쉽다.
+    """
+    import inspect as _inspect
+
+    from app import facemarket_id_document
+
+    sweep_default = _inspect.signature(
+        facemarket_id_document.sweep_stale_id_documents
+    ).parameters["older_than_seconds"].default
+    assert facemarket_enrollment.REVIEW_DEADLINE_DAYS * 86400 < sweep_default

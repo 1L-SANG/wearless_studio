@@ -12,6 +12,7 @@ import { RequireDevice } from './RequireDevice.jsx';
 import { AdminShell } from '@/features/admin/AdminShell.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
+import { AdminEnrollmentReview } from '@/features/admin/AdminEnrollmentReview.jsx';
 import { AdminModels } from '@/features/admin/AdminModels.jsx';
 import { AdminStaff } from '@/features/admin/AdminStaff.jsx';
 import { AdminUsageReports } from '@/features/admin/AdminUsageReports.jsx';
@@ -40,6 +41,7 @@ export default function AppAdmin() {
           <Route element={<AdminShell />}>
             <Route index element={<AdminDashboard />} />
             <Route path="applications" element={<AdminApplications />} />
+            <Route path="review" element={<AdminEnrollmentReview />} />
             <Route path="usage-reports" element={<AdminUsageReports />} />
             <Route path="payout-statements" element={<AdminPayoutStatements />} />
             <Route path="models" element={<AdminModels />} />

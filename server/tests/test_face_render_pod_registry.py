@@ -251,7 +251,11 @@ def test_new_pod_spec_carries_bootstrap_and_secret_token():
     a.begin_cycle()
     asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
     body = client.creates[0]
-    assert body["containerDiskInGb"] == POD_DISK_GB        # 볼륨 없음 — 가중치가 컨테이너 디스크에 온다
+    assert body["containerDiskInGb"] == POD_DISK_GB        # 가중치는 컨테이너 디스크에 온다
+    # ★ 볼륨을 **명시적으로 0** 으로 요청한다. 안 쓰면 RunPod 이 계정 기본 20GB 를 /workspace 에
+    #   붙인다(2026-09-13 파드 r5lk3ysffgayyk 실측: 요청에 없었는데 volumeInGb=20). 그 볼륨이
+    #   베이스 이미지의 HF_HOME=/workspace/... 와 만나 53.8GiB 가중치를 20GB 로 보내 Errno 122 로 죽었다.
+    assert body["volumeInGb"] == 0, "안 쓰는 볼륨을 붙이지 않는다"
     assert set(body["ports"]) == {"8000/http", "22/tcp"}
     # ★ dockerStartCmd 는 **argv 배열**이다. 한 문자열로 보내면 RunPod 이 400
     #   "got string, want array" 로 파드 생성을 거부한다(2026-09-11 실측, GPU 3종 전부).

@@ -1,6 +1,8 @@
 """관리자 모델 조회 — 검색·필터·상세의 SQL 계약."""
 import asyncio
 import contextlib
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -133,3 +135,99 @@ def test_detail_404_for_unknown_model():
     with pytest.raises(Exception) as exc:
         asyncio.run(facemarket_admin.model_detail(conn, model_id="nope"))
     assert exc.value.status_code == 404
+
+
+def test_detail_includes_submission_profile_terms_and_consent_without_private_fields():
+    now = datetime(2026, 9, 12, tzinfo=timezone.utc)
+    application = {
+        "id": "application-private", "user_id": "user-private", "status": "approved",
+        "applicant_name": "김모델", "contact_email": "model@example.com",
+        "birthdate": date(2000, 1, 2), "region": "서울", "gender": "female",
+        "height_cm": 170, "weight_kg": 52, "phone": "010-1234-5678",
+        "experience_level": "professional", "agency_contracted": False,
+        "categories": ["패션"], "portfolio_url": "https://example.com/portfolio",
+        "sns_url": "https://example.com/sns", "bio": "첫 줄\n마지막 줄",
+        "photo_keys": {"profile": "private/photo.webp"}, "profile_image_r2_key": "private/photo.webp",
+        "created_at": now, "reviewed_at": now, "reject_reason": None,
+        "identity_mismatch_count": 0, "privacy_consent_version": "privacy-v1",
+        "privacy_consented_at": now, "attestations": {"photosAreMine": True, "digest": "private"},
+    }
+    profile = {"height_cm": Decimal("170.5"), "weight_kg": Decimal("52.5"),
+               "bust_cm": Decimal("85"), "waist_cm": Decimal("60"), "hip_cm": Decimal("90"),
+               "body_type": "slim", "body_type_custom": "직접 적은 체형", "gender": "female",
+               "age_range": "20s", "skin_tone": "밝음", "hair": "긴 머리", "clothing_size": "S",
+               "hair_color": "brown", "hair_length": "long", "eye_color": "brown",
+               "id": "profile-private", "image_digest": "digest-private"}
+    consent = {"biometric_version": "bio-v1", "terms_version": "terms-v1",
+               "overseas_version": "notice-v1", "accepted_at": now, "user_id": "private"}
+    conn = FakeConn([
+        dict(MODEL_ROW, gender="female", height_bucket="f_170_175", body_type="regular"),
+        [{"id": "l1", "status": "active", "unit_price": 7000, "license_valid_until": None,
+          "vc_id": "vc-visible", "created_at": now, "allowed_use": ["일반 패션"],
+          "opt_location_cuts": True, "opt_lookbook_person_replace": False,
+          "opt_consent_version": "opt-v1", "opt_consented_at": now,
+          "face_image_key": "private-face", "face_image_digest": "private-digest"}],
+        [], {"id": "e1", "status": "passed", "completed_at": now, "photo_count": 18,
+             "body_type": "slim", "height_bucket": "f_170_175", "device_digest": "private-device"},
+        application, profile, [consent],
+    ])
+    payload = asyncio.run(facemarket_admin.model_detail(conn, model_id="m1"))
+    assert payload["application"]["bio"] == "첫 줄\n마지막 줄"
+    assert payload["application"]["photoUris"] == {
+        "profile": "/v1/facemarket/admin/applications/application-private/profile-image?kind=profile"
+    }
+    assert payload["application"]["privacyConsentVersion"] == "privacy-v1"
+    assert payload["application"]["attestations"] == {"photosAreMine": True}
+    assert "id" not in payload["application"] and "userId" not in payload["application"]
+    assert set(payload["application"]) == {
+        "status", "rejectReason", "identityMismatchCount", "hasProfileImage", "createdAt", "reviewedAt",
+        "contactEmail", "applicantName", "birthdate", "region", "gender", "heightCm", "weightKg", "phone",
+        "experienceLevel", "agencyContracted", "categories", "portfolioUrl", "snsUrl", "bio", "photoKinds",
+        "photoUris", "attestations", "privacyConsentVersion", "privacyConsentedAt",
+    }
+    assert payload["profile"] == {
+        "heightCm": 170.5, "weightKg": 52.5, "bustCm": 85.0, "waistCm": 60.0, "hipCm": 90.0,
+        "bodyType": "slim", "bodyTypeCustom": "직접 적은 체형", "gender": "female", "ageRange": "20s",
+        "skinTone": "밝음", "hair": "긴 머리", "clothingSize": "S",
+        "hairColor": "brown", "hairLength": "long", "eyeColor": "brown",
+    }
+    assert payload["model"]["gender"] == "female"
+    assert payload["enrollment"]["photoCount"] == 18
+    assert payload["enrollment"]["bodyType"] == "slim"
+    assert payload["licenses"][0]["allowedUse"] == ["일반 패션"]
+    assert payload["licenses"][0]["optLocationCuts"] is True
+    assert payload["licenses"][0]["optConsentVersion"] == "opt-v1"
+    assert payload["consentEvents"] == [{"biometricVersion": "bio-v1", "termsVersion": "terms-v1",
+                                          "overseasVersion": "notice-v1", "acceptedAt": now.isoformat()}]
+    import json
+    encoded = json.dumps(payload)
+    for secret in ["private/photo.webp", "private-face", "private-digest", "private-device", "profile-private", "digest-private"]:
+        assert secret not in encoded
+    assert all(not sql.lower().startswith(("insert", "update", "delete")) for sql, _ in conn.executed)
+    assert "application_id" in conn.executed[4][0]
+    assert "current_enrollment_id" in conn.executed[4][0]
+    assert "fm_enrollment_consent_events" in conn.executed[6][0]
+
+
+def test_detail_handles_missing_submission_profile_and_consent():
+    conn = FakeConn([MODEL_ROW, [], [], None, None, None, []])
+    payload = asyncio.run(facemarket_admin.model_detail(conn, model_id="m1"))
+    assert payload["application"] is None
+    assert payload["profile"] is None
+    assert payload["consentEvents"] == []
+
+
+def test_application_list_card_exposes_consent_without_storage_evidence():
+    from app.facemarket_applications import _admin_card
+
+    now = datetime(2026, 9, 12, tzinfo=timezone.utc)
+    payload = _admin_card({
+        "id": "a1", "user_id": "u1", "status": "approved", "applicant_name": "모델",
+        "birthdate": date(2000, 1, 2), "contact_email": "model@example.com", "created_at": now,
+        "privacy_consent_version": "privacy-v1", "privacy_consented_at": now,
+        "profile_image_r2_key": "private-photo", "device_digest": "private-device",
+    }).model_dump(mode="json", by_alias=True)
+    assert payload["privacyConsentVersion"] == "privacy-v1"
+    assert payload["privacyConsentedAt"] == "2026-09-12T00:00:00Z"
+    assert "private-photo" not in str(payload)
+    assert "private-device" not in str(payload)

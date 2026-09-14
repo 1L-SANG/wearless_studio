@@ -66,8 +66,15 @@ GPU_PRIORITY: tuple[tuple[str, float], ...] = (
     ("NVIDIA A100 80GB PCIe", 1.59),
 )
 #: 새 파드 사양. 볼륨은 쓰지 않는다(2026-09-10 실측: 볼륨 적재 472초로 이득 없음).
+#: ★ 그런데 **요청하지 않으면 RunPod 가 기본 20GB 볼륨을 /workspace 에 붙인다** — 2026-09-13
+#:   파드 r5lk3ysffgayyk 에서 확인했다(요청 본문에 volume 관련 필드가 없었는데 조회 결과는
+#:   volumeInGb=20, volumeMountPath=/workspace). 그게 베이스 이미지의 HF_HOME=/workspace/.cache/
+#:   huggingface/ 와 만나 53.8GiB 가중치가 20GB 볼륨으로 향했고 Errno 122 로 죽었다.
+#:   HF_HOME 은 deploy 스크립트가 덮어쓰지만(별도 PR), 애초에 안 쓰는 볼륨을 붙일 이유가 없다.
 POD_IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
 POD_DISK_GB = 100
+#: 0 = 네트워크 볼륨 없음. 명시하지 않으면 계정 기본값(20GB)이 붙는다.
+POD_VOLUME_GB = 0
 POD_PORTS = ("8000/http", "22/tcp")
 #: 파드 부팅 훅 — 이미지의 /start.sh 가 /pre_start.sh 를 부르고, 그게 bootstrap → start 를 잇는다.
 #:
@@ -465,6 +472,7 @@ class RunpodAutoscaleAdapter:
                 "imageName": POD_IMAGE,
                 "cloudType": "SECURE",
                 "containerDiskInGb": POD_DISK_GB,
+                "volumeInGb": POD_VOLUME_GB,
                 "ports": list(POD_PORTS),
                 "gpuTypeIds": [gpu_type],
                 "gpuCount": 1,

@@ -155,6 +155,8 @@ export async function modelComponentHarness({
         if (id === '\0fm-test-css') return 'export default new Proxy({}, { get: (_, key) => key });';
         if (id === '\0fm-test-api') return `
           const api = ${access}.api;
+          export const adminFetchApplicationPhotoUrl = (...args) => api.adminFetchApplicationPhotoUrl(...args);
+          export const adminApplicationProfileImage = (...args) => api.adminApplicationProfileImage(...args);
           export const cancelEnrollment = (...args) => api.cancelEnrollment(...args);
           export const createLicense = (...args) => api.createLicense(...args);
           export const revokeLicense = (...args) => api.revokeLicense(...args);
@@ -204,6 +206,7 @@ export async function modelComponentHarness({
             api.getPublicationPreviewUrl ? api.getPublicationPreviewUrl(...args) : Promise.reject(new Error('no preview'))
           );
           export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
+          export const deleteStagedApplicationPhoto = (...args) => api.deleteStagedApplicationPhoto(...args);
           export const submitApplication = (...args) => api.submitApplication(...args);
           export const fetchLicenseFaceUrl = (...args) => (
             api.fetchLicenseFaceUrl ? api.fetchLicenseFaceUrl(...args) : Promise.reject(new Error('no face'))

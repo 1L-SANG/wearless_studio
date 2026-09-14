@@ -13,6 +13,8 @@ const fail = (status, code) => Object.assign(new Error(code), { status, code });
 export function createFacemarketMock({ scenario = 'new', storage = null } = {}) {
   let application = null;
   let staged = false;
+  let stagedId = null;
+  let stageSequence = 0;
   if (scenario === 'saved') {
     try { application = JSON.parse(storage?.getItem(STORAGE_KEY) || 'null'); } catch { /* 빈 시작 */ }
   } else if (['review', 'approved', 'rejected'].includes(scenario)) {
@@ -31,13 +33,24 @@ export function createFacemarketMock({ scenario = 'new', storage = null } = {}) 
   if (scenario !== 'saved') persist();
   return {
     getCurrentApplication: async () => application ? structuredClone(application) : null,
-    stageApplicationPhoto: async ({ kind }) => { staged = kind === 'profile'; return { staged, kind }; },
+    stageApplicationPhoto: async ({ kind }) => {
+      staged = kind === 'profile';
+      stagedId = staged ? `mock-profile-${++stageSequence}` : stagedId;
+      return { staged, kind, stageId: stagedId };
+    },
+    deleteStagedApplicationPhoto: async (kind = 'profile', requestedId) => {
+      if (kind === 'profile' && stagedId !== requestedId) throw fail(409, 'staging_changed');
+      if (kind === 'profile') { staged = false; stagedId = null; }
+      return null;
+    },
     submitApplication: async (body) => {
       if (application && ['under_review', 'approved'].includes(application.status)) throw fail(409, 'application_exists');
       if (!staged) throw fail(400, 'profile_photo_required');
+      if (body.profileStageId !== stagedId) throw fail(409, 'profile_photo_changed');
       const now = new Date().toISOString();
-      application = { ...structuredClone(body), id: 'mock-application', status: 'under_review', createdAt: now, submittedAt: now, reviewedAt: null, rejectReason: null, hasProfileImage: true, photoKinds: ['profile'], piiPurgedAt: null };
-      staged = false;
+      const { profileStageId: _profileStageId, ...applicationBody } = structuredClone(body);
+      application = { ...applicationBody, id: 'mock-application', status: 'under_review', createdAt: now, submittedAt: now, reviewedAt: null, rejectReason: null, hasProfileImage: true, photoKinds: ['profile'], piiPurgedAt: null };
+      staged = false; stagedId = null;
       persist();
       return structuredClone(application);
     },

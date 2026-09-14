@@ -32,17 +32,28 @@ export function isLandingCtaResolved(userId, resolvedFor) {
 export function registerCta(
   ownedModel,
   enrollment,
-  { application = null, applicationRequired = true, scope = 'hub' } = {},
+  { application = null, applicationRequired = true, license = null, scope = 'hub' } = {},
 ) {
-  // 랜딩(상단바·히어로)은 신규 지원만 맡는다. 지원서가 한 번이라도 생겼거나 등록/모델이
-  // 있으면 다음 행동은 마이페이지가 안내하므로 CTA 자체를 그리지 않는다.
+  // 랜딩(상단바·히어로): 기록이 하나도 없는 방문자는 공개 지원 시작 페이지(/apply)로.
   // applicationRequired 는 운영 게이트일 뿐, 얼리버드 지원의 목적지는 항상 지원서다.
-  if (scope === 'landing') {
-    if (ownedModel || enrollment || application) return null;
+  // 지원서·등록·모델이 있는 로그인 사용자는 CTA 를 비우지 않고(2026-09-12 오너 지시 — 첫 화면
+  // 한가운데가 버튼 없이 비면 등록자에게도 어색하다) 아래 허브와 같은 '다음 행동' 버튼을 준다.
+  // 목적지가 지금 화면이면 LandingShell 이 버튼을 숨긴다.
+  if (scope === 'landing' && !ownedModel && !enrollment && !application) {
     return { label: APPLY_LABEL, to: '/apply' };
   }
 
-  if (ownedModel?.status === 'verified') {
+  if (ownedModel?.status === 'awaiting_confirm' || enrollment?.status === 'confirm_pending') {
+    return { label: '테스트컷 고르기', to: '/model/confirm' };
+  }
+  if (ownedModel?.status === 'verified' || ownedModel?.status === 'suspended') {
+    return { label: '마이페이지', to: '/status' };
+  }
+  if ((enrollment && !['cancelled', 'failed', 'passed'].includes(enrollment.status))
+    || ['pending', 'reverification_required'].includes(ownedModel?.status)) {
+    return { label: REGISTER_LABEL, to: '/model/register' };
+  }
+  if (['revoked', 'expired'].includes(license?.status)) {
     return { label: '마이페이지', to: '/status' };
   }
   if (ownedModel || enrollment) {

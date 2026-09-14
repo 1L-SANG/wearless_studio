@@ -140,8 +140,8 @@ def _fake_plan():
     from unittest import mock
     plan = _plan()
     return mock.patch.object(fi, "prepare_image",
-                             lambda image, model_dir=None: (image.convert("RGB"), plan,
-                                                            {"skipped_reason": None, "pose_risk": False}))
+                             lambda image, model_dir=None, **kw: (image.convert("RGB"), plan,
+                                                                  {"skipped_reason": None, "pose_risk": False}))
 
 
 # ── 2) 사진 가장자리에서는 페이드하지 않는다 ────────────────────────────────

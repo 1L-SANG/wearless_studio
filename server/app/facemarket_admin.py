@@ -321,7 +321,7 @@ async def list_models(conn, *, q: str | None, status: str | None, limit: int) ->
 # where 가 아니라 서브쿼리 중간에서 잘린다. 전문을 따로 적는다.
 DETAIL_MODEL_SQL = """
 select m.id::text as id, m.display_name, m.status, m.suspension_source,
-       m.suspended_at, m.created_at,
+       m.suspended_at, m.created_at, m.gender, m.height_bucket, m.body_type,
        u.email as email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
        (select max(s.created_at) from fm_settlements s
@@ -333,8 +333,13 @@ where m.id = %(model_id)s
 """
 
 DETAIL_LICENSES_SQL = """
-select id::text as id, status, unit_price, license_valid_until, vc_id
-from fm_licenses where model_id = %(model_id)s order by created_at desc
+select l.id::text as id, l.status, l.unit_price, l.license_valid_until, l.vc_id,
+       l.allowed_use, l.created_at,
+       coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false) as opt_location_cuts,
+       coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false) as opt_lookbook_person_replace,
+       to_jsonb(l) ->> 'opt_consent_version' as opt_consent_version,
+       to_jsonb(l) ->> 'opt_consented_at' as opt_consented_at
+from fm_licenses l where l.model_id = %(model_id)s order by l.created_at desc
 """
 
 DETAIL_SETTLEMENTS_SQL = """
@@ -344,10 +349,88 @@ where l.model_id = %(model_id)s order by s.created_at desc limit 10
 """
 
 DETAIL_ENROLLMENT_SQL = """
-select id::text as id, status, completed_at
-from fm_biometric_enrollments where model_id = %(model_id)s
-order by created_at desc limit 1
+select e.id::text as id, e.status, e.completed_at, e.body_type, e.height_bucket,
+       (select count(distinct p.angle) from fm_biometric_enrollment_photos p
+        where p.enrollment_id = e.id and p.storage_state <> 'delete_pending') as photo_count
+from fm_biometric_enrollments e where e.model_id = %(model_id)s
+order by e.created_at desc limit 1
 """
+
+DETAIL_APPLICATION_SQL = """
+select a.id::text as id, a.status, a.contact_email, a.applicant_name, a.birthdate,
+       a.region, a.gender, a.height_cm, a.weight_kg, a.phone, a.experience_level,
+       a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
+       a.profile_image_r2_key, a.photo_keys, a.attestations, a.identity_mismatch_count,
+       a.reviewed_at, a.reject_reason, a.created_at,
+       a.privacy_consent_version, a.privacy_consented_at
+from fm_models m join fm_model_applications a on a.id = coalesce(
+    (select e.application_id from fm_biometric_enrollments e
+     where e.model_id = m.id and e.application_id is not null
+     order by (e.id = m.current_enrollment_id) desc nulls last, e.created_at desc limit 1),
+    (select ap.id from fm_model_applications ap where ap.user_id = m.user_id
+     order by ap.created_at desc limit 1)
+)
+where m.id = %(model_id)s
+"""
+
+DETAIL_PROFILE_SQL = """
+select p.height_cm, p.weight_kg, p.body_type, p.body_type_custom, p.gender, p.age_range,
+       p.skin_tone, p.hair, p.clothing_size, p.bust_cm, p.waist_cm, p.hip_cm,
+       p.hair_color, p.hair_length, p.eye_color
+from personalization_profiles p join fm_models m on p.user_id = m.user_id
+where m.id = %(model_id)s and p.status <> 'purged'
+order by p.created_at desc limit 1
+"""
+
+DETAIL_CONSENTS_SQL = """
+select coalesce(c.biometric_version, e.consent_version) as biometric_version,
+       coalesce(c.terms_version, e.terms_consent_version) as terms_version,
+       coalesce(c.overseas_version, e.overseas_consent_version) as overseas_version,
+       coalesce(c.accepted_at, e.consented_at) as accepted_at
+from fm_biometric_enrollments e
+left join fm_enrollment_consent_events c on c.enrollment_id = e.id
+where e.model_id = %(model_id)s
+order by accepted_at desc
+"""
+
+
+def _detail_application(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    from .facemarket_applications import ATTESTATION_KEYS, _application_view
+
+    # 기존 게이트 주소만 전달한다. 지원서/계정 ID와 저장소 키를 새 응답 필드로 공개하지 않는다.
+    view = _application_view(row).model_dump(mode="json", by_alias=True, exclude={"id"})
+    view["photoUris"] = {
+        kind: f"/v1/facemarket/admin/applications/{row['id']}/profile-image?kind={kind}"
+        for kind in view["photoKinds"]
+    }
+    view["attestations"] = {
+        key: value for key, value in (row.get("attestations") or {}).items()
+        if key in ATTESTATION_KEYS and isinstance(value, bool)
+    }
+    view["privacyConsentVersion"] = row.get("privacy_consent_version")
+    view["privacyConsentedAt"] = _detail_time(row.get("privacy_consented_at"))
+    return view
+
+
+def _detail_time(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _detail_profile(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    numbers = {"heightCm": "height_cm", "weightKg": "weight_kg", "bustCm": "bust_cm",
+               "waistCm": "waist_cm", "hipCm": "hip_cm"}
+    labels = {"bodyType": "body_type", "bodyTypeCustom": "body_type_custom", "gender": "gender",
+              "ageRange": "age_range", "skinTone": "skin_tone", "hair": "hair",
+              "clothingSize": "clothing_size", "hairColor": "hair_color",
+              "hairLength": "hair_length", "eyeColor": "eye_color"}
+    return {
+        **{key: float(row[column]) if row.get(column) is not None else None for key, column in numbers.items()},
+        **{key: row.get(column) for key, column in labels.items()},
+    }
 
 
 async def model_detail(conn, *, model_id: str) -> dict:
@@ -363,14 +446,34 @@ async def model_detail(conn, *, model_id: str) -> dict:
         settlements = await cur.fetchall() or []
         await cur.execute(DETAIL_ENROLLMENT_SQL, params)
         enrollment = await cur.fetchone()
+        await cur.execute(DETAIL_APPLICATION_SQL, params)
+        application = await cur.fetchone()
+        await cur.execute(DETAIL_PROFILE_SQL, params)
+        profile = await cur.fetchone()
+        await cur.execute(DETAIL_CONSENTS_SQL, params)
+        consents = await cur.fetchall() or []
 
     return {
-        "model": _model_row(model),
+        "model": {**_model_row(model), "gender": model.get("gender"),
+                  "heightBucket": model.get("height_bucket"), "bodyType": model.get("body_type")},
+        "application": _detail_application(application),
+        "profile": _detail_profile(profile),
+        "consentEvents": [
+            {"biometricVersion": row.get("biometric_version"), "termsVersion": row.get("terms_version"),
+             "overseasVersion": row.get("overseas_version"), "acceptedAt": _detail_time(row.get("accepted_at"))}
+            for row in consents
+        ],
         "licenses": [
             {
                 "id": r["id"], "status": r["status"], "unitPrice": r["unit_price"],
                 "validUntil": r["license_valid_until"].isoformat() if r.get("license_valid_until") else None,
                 "vcId": r.get("vc_id"),
+                "allowedUse": list(r.get("allowed_use") or []),
+                "createdAt": _detail_time(r.get("created_at")),
+                "optLocationCuts": bool(r.get("opt_location_cuts")),
+                "optLookbookPersonReplace": bool(r.get("opt_lookbook_person_replace")),
+                "optConsentVersion": r.get("opt_consent_version"),
+                "optConsentedAt": _detail_time(r.get("opt_consented_at")),
             }
             for r in licenses
         ],
@@ -386,6 +489,9 @@ async def model_detail(conn, *, model_id: str) -> dict:
             {
                 "id": enrollment["id"], "status": enrollment["status"],
                 "completedAt": enrollment["completed_at"].isoformat() if enrollment.get("completed_at") else None,
+                "photoCount": enrollment.get("photo_count", 0),
+                "bodyType": enrollment.get("body_type"),
+                "heightBucket": enrollment.get("height_bucket"),
             }
             if enrollment else None
         ),

@@ -200,6 +200,9 @@
 .certHolder small { display: block; font-size: 10px; color: var(--color-on-key-muted); }
 .certCode { border-top: 1px solid var(--color-ornament); padding-top: 13px; margin-top: var(--sp-12); font-size: 10px; font-family: var(--font-mono); overflow-wrap: anywhere; color: var(--color-on-key-muted); }
 .certCode a { display: block; margin-top: var(--sp-4); color: inherit; }
+/* 증서 카드 안에서 /model/license 로 나가는 줄. 증서 카드는 어두운 키 컬러 위라 본문 색을 따른다. */
+.certificateManage { display: inline-flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-12); font-size: 12px; color: inherit; text-decoration: underline; text-underline-offset: 4px; }
+.certificateManage .icon { width: 14px; height: 14px; }
 .certificateLarge .emptyPanel > .icon, .certificateLarge .emptyPanel small { color: var(--color-on-key-muted); }
 .certificateLarge .emptyPanel { padding-inline: 0; }
 .certificateOpen { display: block; margin-top: var(--sp-8); padding: var(--sp-4) 0; border: 0; background: transparent; font-size: 12px; color: var(--color-secondary); text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }

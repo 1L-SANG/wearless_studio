@@ -497,7 +497,9 @@ def test_holder_outage_at_worker_time_fails_before_face_read(monkeypatch):
 
     assert captured.get("calls") is None
     assert captured["failure"]["reserved"] == 1
-    assert captured["failure"]["code"] == "holder_unavailable"
+    # holder 가 못 닿으면 "켜는 중" 으로 남긴다 — 프런트가 재시도 안내를 띄우는 근거다.
+    # 실패한다는 사실·얼굴을 안 읽는다는 사실은 그대로다(fail-closed 불변).
+    assert captured["failure"]["code"] == "holder_starting"
     assert app.state.r2_face.gets == []
 
 

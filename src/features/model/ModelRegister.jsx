@@ -1,15 +1,28 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
-import { runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
+import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
+import { CX_AUTH_CONFIG_URL, runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toUploadableImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
+import IdDocumentStep from './IdDocumentStep.jsx';
+import IdentityMethodStep from './IdentityMethodStep.jsx';
+import { deriveSimpleAuthUnavailableReason, parseIdentityMethods } from './identityMethodConfig.js';
 import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
 import { heading, renderConditions, renderConsent, renderPhotos } from './RegisterScreens.jsx';
 import s from './ModelRegister.module.css';
 
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
 const DEVICE_KEY = 'wearless.fmDeviceId';
+// 파생 로직(삼항 방향 포함)은 identityMethodConfig.js 에 순수 함수로 뽑아 뒀다 — 이 파일은
+// JSX 를 포함해 plain node 테스트가 직접 import 할 수 없어서, 그 로직만 값 단위로 검증하려면
+// 이렇게 갈라야 한다.
+const SIMPLE_AUTH_UNAVAILABLE_REASON = deriveSimpleAuthUnavailableReason(CX_AUTH_CONFIG_URL);
+// 발표/롤백 모드(FM_IDENTITY_METHODS=mid)에서 이 배열 길이가 1 이면 선택 화면을 아예 거치지
+// 않는다 — 한 방법뿐인데 고르라고 하면 클릭 한 번이 늘 뿐이다.
+const IDENTITY_METHODS = parseIdentityMethods(import.meta.env.VITE_FM_IDENTITY_METHODS);
+// 서버 facemarket_enrollment.REVIEW_DEADLINE_DAYS 와 같은 값 — 심사 대기 화면이 사용자에게
+// 언제까지 기다리면 되는지 말해 준다(그 기한이 지나면 서버가 자동으로 닫고 메일을 보낸다).
+const REVIEW_DEADLINE_DAYS = 5;
 function getDeviceId() {
   try {
     const current = localStorage.getItem(DEVICE_KEY);
@@ -46,6 +59,8 @@ export function ModelRegister() {
   const operation = useRef(null);
   const previewUrls = useRef({});
   const inFlight = useRef(false);
+  // "이전"으로 취소한 등록 id — 그 등록의 늦은 응답을 무시하는 데 써요(backFromIdCapture·finishIdDocument).
+  const abandonedEnrollmentId = useRef(null);
 
   const showRecord = useCallback((record) => {
     setEnrollment(record);
@@ -151,7 +166,9 @@ export function ModelRegister() {
     inFlight.current = true; setBusy(true); setError('');
     const controller = new AbortController(); operation.current = controller;
     try {
-      const token = await runIdentityWidget({ signal: controller.signal });
+      // 위젯 종류는 이 등록이 어느 경로로 시작했는지로만 갈린다(서버가 준 값) — 화면 상태가
+      // 아니라 등록 자체가 진실이라, 새로고침 뒤 이어서 인증해도 같은 위젯이 열려요.
+      const token = await runIdentityWidget({ identityMethod: record?.identityMethod || 'mid', signal: controller.signal });
       if (!mounted.current || controller.signal.aborted) return;
       const verified = await createIdentity(record.id, { token });
       if (!mounted.current || controller.signal.aborted) return;
@@ -161,13 +178,27 @@ export function ModelRegister() {
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
-  const startEnrollment = async () => {
+  // identityMethod: 인증 수단 선택 화면(step 'method')이 넘겨주는 값. 'mid'(또는 미지정)면
+  // 옛 요청 그대로(identityMethod 키를 아예 안 보낸다) — FM_IDENTITY_METHODS=mid 인 배포에서
+  // 서버로 가는 요청이 오늘과 바이트 단위로 같아야 한다는 제약을 이렇게 지켜요.
+  const startEnrollment = async (identityMethod) => {
     if (!consents.every(Boolean) || inFlight.current) return;
+    // 간편인증 설정이 없으면 **시작 전에** 막아요. 선택 화면이 버튼을 비활성화해 주지만,
+    // 수단이 하나뿐이면(VITE_FM_IDENTITY_METHODS=simple_auth) 그 화면 자체가 안 뜨고 여기로
+    // 곧장 와요 — 그러면 사용자는 신분증을 다 찍어 올린 **뒤**에야 하드 에러를 만나요.
+    if (identityMethod === 'simple_auth' && SIMPLE_AUTH_UNAVAILABLE_REASON) {
+      setError(SIMPLE_AUTH_UNAVAILABLE_REASON);
+      return;
+    }
     inFlight.current = true; setBusy(true); setError('');
     let created;
     try {
       // 동의를 편집한 등록은 서버의 같은 활성 등록을 반환해요.
-      created = await createEnrollment({ documentVersion: CONSENT_VERSION, deviceId: getDeviceId() });
+      created = await createEnrollment({
+        documentVersion: CONSENT_VERSION,
+        deviceId: getDeviceId(),
+        ...(identityMethod && identityMethod !== 'mid' ? { identityMethod } : {}),
+      });
       if (!mounted.current) return;
       setEnrollment(created);
     } catch (requestError) {
@@ -180,6 +211,84 @@ export function ModelRegister() {
       else showRecord(created);
     }
   };
+  // IdentityMethodStep 은 methods.length===1 이면 onPick 을 effect 로 자동 호출해요 — onPick 이
+  // 매 렌더 새 함수 참조면 그 effect 가 deps 변경으로 다시 돌아 등록을 한 번 더 만들 수 있어요.
+  // 참조는 고정하되(useCallback deps 없음) 최신 startEnrollment 를 ref 로 부릅니다 —
+  // startEnrollment 는 consents 를 읽으므로 클로저를 굳히면 첫 렌더의 false 를 영원히 보게 돼요.
+  const startEnrollmentRef = useRef(null);
+  startEnrollmentRef.current = startEnrollment;
+  const handleMethodPick = useCallback((method) => startEnrollmentRef.current?.(method), []);
+
+  // 간편인증 경로 전용: 신분증 업로드(마스킹 확인 완료)가 끝나면 서버 상태를 다시 읽어
+  // 다음 화면으로 넘어가요. 성공하면 identity_pending 으로 바뀌고, 그 화면의 버튼이
+  // 같은 위젯을 ENT_SIMPLE_AUTH 로 엽니다.
+  const finishIdDocument = async () => {
+    if (!enrollment?.id) return;
+    try {
+      const current = await getEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      // "이전"으로 이미 취소한 등록의 늦은 응답(업로드 중 되돌리기 → 409 → 재조회)이면 무시해요
+      // — 취소된 등록을 복원하면 방금 한 되돌리기가 '실패' 화면으로 뒤집혀요.
+      if (abandonedEnrollmentId.current === enrollment.id) return;
+      setEnrollment(current);
+      // 이전 시도에서 남은 부모 배너를 지워요 — 안 지우면 재시도가 성공해 다음 화면으로
+      // 넘어가도 지난 실패 메시지가 그대로 떠 있어요.
+      setError('');
+      const screen = restoreRegisterScreen(current);
+      setStep(screen.step); setSub(screen.sub);
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
+    }
+  };
+
+  // 심사 대기 화면(review_pending)은 폴링하지 않아요 — 사람 심사는 즉시 끝나지 않아요.
+  // 대신 (a) 직접 확인할 수 있는 새로고침과 (b) 취소 탈출구를 줍니다. 취소가 없으면 심사가
+  // 밀렸을 때 단일 활성 등록 슬롯이 묶인 채 아무것도 할 수 없어요(서버는 review_pending
+  // 취소를 이미 허용해요 — 화면에만 길이 없었어요).
+  const refreshReview = useCallback(async () => {
+    if (!enrollment?.id) return;
+    setBusy(true); setError('');
+    try {
+      const current = await getEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      setEnrollment(current);
+      const screen = restoreRegisterScreen(current);
+      setStep(screen.step); setSub(screen.sub);
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
+    } finally { if (mounted.current) setBusy(false); }
+  }, [enrollment?.id]);
+
+  const cancelReview = useCallback(async () => {
+    if (!enrollment?.id) return;
+    setBusy(true); setError('');
+    try {
+      await cancelEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      setEnrollment(null); setConsents([false, false]); setStep('1'); setSub(1);
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '등록을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally { if (mounted.current) setBusy(false); }
+  }, [enrollment?.id]);
+
+  // 신분증 촬영 화면의 "이전" — 수단을 잘못 골랐을 때의 되돌리기. 서버는 identity_method 를
+  // 등록 생성 때 박고 바꿔 주지 않아요(createEnrollment 는 활성 등록이 있으면 그걸 그대로
+  // 돌려줘요). 그래서 되돌리기 = 이 등록을 취소하고 수단 선택으로. 이 화면엔 아직 서버에 남은
+  // 게 없어(신분증은 제출 순간 올라가고 곧장 다음 상태로 가요) 확인 없이 바로 취소해요.
+  // 동의는 이미 한 것이라 유지하고, 수단이 하나뿐이면(선택 화면이 자동으로 다시 시작해 버려요)
+  // 동의 화면으로 가요.
+  const backFromIdCapture = useCallback(async () => {
+    if (!enrollment?.id || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError('');
+    try {
+      await cancelEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      abandonedEnrollmentId.current = enrollment.id;
+      setEnrollment(null); setSub(1); setStep(IDENTITY_METHODS.length > 1 ? 'method' : '1');
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '이전 단계로 돌아가지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+  }, [enrollment?.id]);
 
   const editableEnrollment = async () => {
     if (enrollment?.status === 'license_pending') {
@@ -331,16 +440,48 @@ export function ModelRegister() {
     if (step === '4b' && enrollment?.id && !inFlight.current) issueCertificate();
   }, [step, enrollment?.id]);
 
-  const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness'].includes(step) ? 2 : Number(step[0]) || 1;
+  const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness', 'review'].includes(step) ? 2 : Number(step[0]) || 1;
+  // 이 등록이 어느 경로인가 — 화면 문구를 실제로 열리는 위젯에 맞추는 데 써요(표시층 전용,
+  // 컷 파이프라인·상태머신은 이 값으로 갈리지 않아요).
+  const isSimpleAuthEnrollment = enrollment?.identityMethod === 'simple_auth';
   let content, next, previous;
   if (step === '1') {
-    content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen);
+    content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen, busy);
     const identityPending = enrollment?.status === 'identity_pending' && [enrollment.consentDocumentVersion, enrollment.termsConsentVersion].every((version) => version === CONSENT_VERSION);
-    next = { label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? '신분증 인증하기' : '동의하고 신분증 인증하기', action: identityPending ? () => runIdentity() : startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
+    // 간편인증 사용자에게 "신분증 인증하기" 라고 적어 두면, 눌러서 열리는 PASS·카카오·
+    // 네이버 선택창과 문구가 정면으로 어긋나요.
+    const verb = isSimpleAuthEnrollment ? '간편인증' : '신분증 인증';
+    const chooseMethod = IDENTITY_METHODS.length > 1;
+    next = {
+      label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? `${verb}하기` : chooseMethod ? '동의하고 본인 확인 시작' : `동의하고 ${verb}하기`,
+      action: identityPending ? () => runIdentity() : chooseMethod ? () => setStep('method') : () => startEnrollment(IDENTITY_METHODS[0]),
+      disabled: !consents.every(Boolean),
+      hint: consents.every(Boolean) ? '두 가지 필수 항목을 모두 확인했어요' : '두 가지 필수 항목에 동의해야 다음으로 갈 수 있어요',
+    };
+  } else if (step === 'method') {
+    content = <>{heading('본인 확인 방법을 골라 주세요', '방법에 따라 다음 단계가 조금 달라요.')}<IdentityMethodStep methods={IDENTITY_METHODS} onPick={handleMethodPick} simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON} /></>;
+    previous = { label: '이전', action: () => setStep('1') };
+  } else if (step === 'id_capture') {
+    content = <>{heading('신분증을 찍어 올려요', `주민등록번호 뒷자리는 직접 가린 뒤 올려 주세요. 이 사진은 담당자가 본인 확인을 마칠 때까지만 보관하고, 심사가 끝나면 바로 지워요(최대 7일).`)}
+      {enrollment?.id && <IdDocumentStep
+        enrollmentId={enrollment.id}
+        onUploaded={finishIdDocument}
+        // 409(이 단계가 아님/경로 꺼짐)면 성공 때와 같은 재조회 경로로 되돌려요 — 이 화면은
+        // 성공으로만 빠져나가서, 안 그러면 사용자가 갇혀요.
+        onStale={finishIdDocument}
+        onError={(requestError) => setError(requestError?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.')}
+      />}</>;
+    previous = { label: '이전', action: backFromIdCapture };
+  } else if (step === 'review') {
+    // 간편인증 경로에서 관리자가 신분증 사진을 육안으로 재확인하는 동안 머무는 화면.
+    // 결과는 메일로 나가요(승인·거절·기한초과 3종).
+    content = <>{heading('검수 중이에요', `담당자가 신분증과 얼굴 사진을 직접 확인하고 있어요. 결과는 메일로 알려 드려요 — 보통 하루 안에 끝나고, ${REVIEW_DEADLINE_DAYS}일이 지나면 자동으로 종료돼요.`)}<p className={s.description} role="status">이 화면을 닫아도 검수는 계속돼요. 마이페이지에서도 진행 상태를 볼 수 있어요.</p></>;
+    next = { label: busy ? '확인 중이에요' : '지금 결과 확인하기', action: refreshReview, disabled: busy };
+    previous = { label: '기다리지 않고 취소하기', action: cancelReview };
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });
     const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
-    next = { label: sub === 4 ? '확인 완료' : '이동', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    next = { label: sub === 4 ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
     previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === '3') {
     content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
@@ -368,8 +509,12 @@ export function ModelRegister() {
       {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span></li>)}</ol></nav>}
       {error && step !== '4c' && <p className={s.error} role="alert">{error}</p>}
       {content}
-      <div id="oacxDiv" />
+      {/* 위젯이 붙을 빈 호스트. React 는 이 안을 절대 안 본다 — #oacxDiv 는
+          facemarketIdentityWidget 이 직접 만들어 넣는다(oacxHost.js 참고).
+          React 가 #oacxDiv 를 그리면 Vue 가 그걸 교체할 때 형제 앵커가 깨져 앱이 죽는다. */}
+      <div id="oacxHost" />
     </div>
-    {next && <footer className={s.bottomBar}>{next.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}<button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button></div></div></footer>}
+    {/* 이전만 있는 화면(수단 선택·신분증 촬영)도 푸터를 그려요 — 다음 동작은 화면 안에 있어요. */}
+    {(next || previous) && <footer className={s.bottomBar}>{next?.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}<div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}{next && <button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button>}</div></div></footer>}
   </div>;
 }

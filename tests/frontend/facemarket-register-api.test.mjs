@@ -47,10 +47,24 @@ test('사진 어댑터는 슬롯과 파일을 함께 보내고 비공개 조회�
   }finally{globalThis.fetch=fetch;await h.close();}
 });
 
+test('지원 사진 삭제 어댑터는 사진 식별자를 인코딩해 인증된 DELETE를 보낸다', async () => {
+  const h = await apiHarness(); const originalFetch = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(null, { status: 204 }); };
+  try {
+    await h.api.deleteStagedApplicationPhoto('profile', 'stage/id');
+    assert.match(calls[0].url, /\/applications\/photo-staging\/profile\/stage%2Fid$/);
+    assert.equal(calls[0].options.method, 'DELETE');
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer local-test');
+  } finally { globalThis.fetch = originalFetch; await h.close(); }
+});
+
 test('본인확인 위젯은 사진 변환을 끄고 성공 토큰만 돌려줘요',async()=>{
   const h=await apiHarness();const saved={window:globalThis.window,document:globalThis.document,raf:globalThis.requestAnimationFrame};let options;
   globalThis.window={OACX:{LOAD_MODULE:(url,opts,callback)=>{options=opts;callback({token:'auth-token',data:{dlphotoimage:'must-not-return'}});}}};
-  globalThis.document={getElementById:()=>({replaceChildren(){}}),addEventListener(){},removeEventListener(){}};
+  // 위젯은 이제 #oacxDiv 를 찾아 쓰지 않고 호스트(#oacxHost) 안에 새로 만들어 붙인다
+  // (Vue 가 마운트 대상 노드를 교체해 React 형제 앵커가 깨지던 것 — oacxHost.js).
+  // 그래서 스텁도 createElement/appendChild 를 갖춰야 한다.
+  globalThis.document={getElementById:()=>({replaceChildren(){},appendChild(){}}),createElement:()=>({}),addEventListener(){},removeEventListener(){}};
   globalThis.requestAnimationFrame=(callback)=>callback();
   try {assert.equal(await h.widget.runIdentityWidget(),'auth-token');assert.equal(options.useConvertor,false);assert.equal(options.contentInfo.signType,'ENT_MID');}
   finally{globalThis.window=saved.window;globalThis.document=saved.document;globalThis.requestAnimationFrame=saved.raf;await h.close();}

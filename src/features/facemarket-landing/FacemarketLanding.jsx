@@ -33,7 +33,7 @@ const DESCRIPTION =
 export function FacemarketLanding() {
   return (
     <LandingShell description={DESCRIPTION} title={TITLE}>
-      {({ ctaLabel, onPrimary }) => (
+      {({ ctaLabel, onPrimary, statusPill }) => (
         <>
           {/* 첫 화면 = 원본 spotlight 의 한 뷰포트 구성. 상단바 아래 남는 높이를 이 그리드가
               전부 받아(행: 히어로 / 스테이지 1fr / 메타 바) 캐러셀이 남는 만큼 커지고, 메타 바
@@ -41,7 +41,7 @@ export function FacemarketLanding() {
               래퍼 없이 스테이지와 메타 바를 이 그리드의 직접 자식으로 돌려준다.
               리드문·CTA 는 2026-09-03 부터 히어로 안에 있다(HeroSection 머리말 참고). */}
           <div className={s.screen}>
-            <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
+            <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} statusPill={statusPill} />
             <GallerySection />
           </div>
           {/* 별도 리드문과 CTA 섹션은 2026-09-03 오너 지시로 내렸고 파일도 지웠다 — 리드와

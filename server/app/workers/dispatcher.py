@@ -258,7 +258,14 @@ class JobDispatcher:
         if getattr(self.app.state.settings, "facemarket_enabled", False):
             from ..facemarket_enrollment import sweep_terminal_enrollments
 
-            await sweep_terminal_enrollments(self.app, limit=100)
+            # review fix round1: 다른 세 스윕과 달리 여기 try/except 가 없으면, 이 호출이
+            # 예외를 던질 때 아래 신분증 스윕까지 포함한 이번 tick 전체가 조용히 안 돈다
+            # ("실제로 스케줄된다"는 이 태스크의 근거 속성을 침식한다). 다음 60초 tick 에
+            # 자연 복구되긴 하지만 원인 없이 침묵하면 안 된다 — 로그만 남기고 계속한다.
+            try:
+                await sweep_terminal_enrollments(self.app, limit=100)
+            except Exception:
+                log.exception("terminal enrollment sweep failed")
             # 미제출 지원서 스테이징 사진 회수(리뉴얼, 스펙 9). 실패는 무해 — 다음 주기에 재시도.
             try:
                 from ..facemarket_applications import sweep_application_photo_staging
@@ -273,3 +280,28 @@ class JobDispatcher:
                 await sweep_terminal_application_pii(self.app, limit=100)
             except Exception:
                 log.exception("terminal application pii sweep failed")
+            # 승인됐는데 자산빌드가 안 걸린 등록 재조정(최종리뷰 I4). 승인 응답·ERROR 로그·
+            # 감사 행으로 "보이게" 는 했지만 아무도 다시 시도하지 않아, 사람이 알아챌 때쯤엔
+            # 신분증도 사진도 이미 파기된 뒤였다 — 이 스윕이 실제로 다시 집는다.
+            try:
+                from ..facemarket_admin_review import sweep_stalled_review_approvals
+
+                resumed = await sweep_stalled_review_approvals(self.app, limit=20)
+                if resumed:
+                    log.info("enrollment_review_resume_reconciled count=%d", resumed)
+            except Exception:
+                log.exception("stalled review approval sweep failed")
+            # 신분증 촬영본 파기 안전망 3번째 겹(Task9) — 승인/거절 즉시 파기, 취소/실패/
+            # 만료 정리(cleanup_terminal_enrollment)가 전부 실패해도 7일 지난 iddoc/ 객체는
+            # R2 prefix 를 직접 훑어(DB 비의존) 지운다. list_prefix_aged/delete 는 동기
+            # boto3 호출이라 to_thread 로 감싼다(§5, 이벤트 루프 차단 방지).
+            try:
+                from ..facemarket_id_document import sweep_stale_id_documents
+
+                r2_face = getattr(self.app.state, "r2_face", None)
+                if r2_face is not None:
+                    removed = await asyncio.to_thread(sweep_stale_id_documents, r2_face)
+                    if removed:
+                        log.info("id_document_sweep_removed count=%d", removed)
+            except Exception:
+                log.exception("id document sweep failed")

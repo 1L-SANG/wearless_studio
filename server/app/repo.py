@@ -1489,18 +1489,41 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
 #: license_pending 행은 영구히 남는다. 창이 없으면 그 한 행이 holder 를 24/7 켜 둔다.
 #: 창 밖에서 뒤늦게 발급을 누르면 콜드스타트로 돌아가지만 그건 재시도 UX 가 흡수한다.
 OPENDID_PENDING_ACTIVE_HOURS = 2
+#: 실존 모델 얼굴이 들어가는 컷 잡 = 하나하나가 holder 호출이다(facemarket.verify_license).
+#: face_autoscale.FACE_KINDS 와 같은 목록이지만 **필터가 다르다**(저쪽은 켜진 LoRA 만).
+HOLDER_JOB_KINDS = ("editor_image", "detail_page")
 
 
 async def opendid_demand_snapshot(conn: AsyncConnection):
     """opendid(fm-holder) 가 켜져 있어야 하는지 판단. sam 과 같은 DemandSnapshot 모양을 재사용한다.
 
-    수요 = api 가 holder 를 부르는 등록 단계(license_pending·vc_pending: wallet/register-did/VC 발급),
-    단 최근 OPENDID_PENDING_ACTIVE_HOURS 안에 움직인 것만(위 상수 참고).
-    active 가 0이라도 방금 통과(passed+vc_id)했거나 라이브니스·매칭·자산빌드로 홀더 단계에
-    다가가는 등록이 idle 창 안이면 켜 둔다 — scale-to-zero 콜드스타트(4 JVM ~2분)를 발급
-    버튼 앞에서 미리 흡수한다(라우트 프리워밍 훅이 실패해도 이 루프가 60초 안에 수렴).
+    수요는 두 갈래다.
+
+    ① **등록**: api 가 holder 를 부르는 단계(license_pending·vc_pending: wallet/register-did/
+       VC 발급), 단 최근 OPENDID_PENDING_ACTIVE_HOURS 안에 움직인 것만(위 상수 참고).
+       active 가 0이라도 방금 통과(passed+vc_id)했거나 라이브니스·매칭·자산빌드로 홀더 단계에
+       다가가는 등록이 idle 창 안이면 켜 둔다 — scale-to-zero 콜드스타트(4 JVM ~2분)를 발급
+       버튼 앞에서 미리 흡수한다(라우트 프리워밍 훅이 실패해도 이 루프가 60초 안에 수렴).
+
+    ② **셀러 사용**(2026-09-14 추가): 실존 모델로 컷을 만들면 워커가 매번 verify_license 로
+       `/holder/vc/verify` 를 부른다(FACEMARKET_VC_REQUIRED=true). 이게 수요에 없어서, 마지막
+       등록으로부터 30분이 지나면 holder 가 0대로 내려가고 **모든 셀러의 실존 모델 사용이
+       503 으로 막혔다**(prod 실측 04:10 down → 04:17 holder_vc_verify_unreachable). 손으로
+       desired=1 을 써도 이 루프가 60초 안에 되돌렸다. 그래서 실존 모델 잡(대기·실행 중)과
+       셀러의 모델 선택 핑(fm_holder_warm_pings)을 수요로 같이 센다.
+
+    ★ 얼굴 파드 수요(face_autoscale)와는 **다른 신호를 쓴다.** 저쪽은 켜진 LoRA 가 있는 모델만
+      센다(LoRA 없는 모델로 GPU 를 켤 이유가 없다). holder 는 LoRA 와 무관하게 모든 실존 모델
+      사용에 필요하다 — 같은 테이블을 공유하면 둘 중 하나가 반드시 틀린다.
     """
     from app.services.sam_autoscale import DemandSnapshot
+    async with conn.cursor() as cur:
+        await cur.execute("select to_regclass('public.fm_holder_warm_pings') as t")
+        has_pings = bool((await cur.fetchone() or {}).get("t"))
+    ping_sql = (
+        "  (select max(pinged_at) from fm_holder_warm_pings)"
+        if has_pings else "  null::timestamptz"
+    )
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
@@ -1511,13 +1534,26 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
             # 60초 뒤 이 루프가 "수요 없음"으로 0 을 다시 써 버렸다 — 홀더는 2분 부팅을
             # 못 끝내고 죽었고 폐기는 영원히 transport 로 실패했다(prod 실측 attempts=867).
             "  + (select count(*) from fm_vc_revocation_jobs "
-            "       where status in ('pending', 'retry', 'processing')) as active, "
-            "  (select max(completed_at) from fm_biometric_enrollments "
-            "     where status = 'passed' and vc_id is not null) as last_finished, "
-            "  (select max(updated_at) from fm_biometric_enrollments "
-            "     where status in ('liveness_pending', 'processing', 'asset_building', "
-            "                      'license_pending', 'vc_pending')) as last_activity",
-            (OPENDID_PENDING_ACTIVE_HOURS,),
+            "       where status in ('pending', 'retry', 'processing')) "
+            # 셀러 사용 — 실존 모델(payload._facemarket.modelId)이 붙은 컷 잡. 이 잡들은
+            # 하나하나가 verify_license → holder 호출이다.
+            "  + (select count(*) from jobs where kind = any(%s) "
+            "       and status in ('pending', 'running') "
+            "       and nullif(btrim(payload -> '_facemarket' ->> 'modelId'), '') is not null) as active, "
+            "  greatest("
+            "    (select max(completed_at) from fm_biometric_enrollments "
+            "       where status = 'passed' and vc_id is not null), "
+            "    (select max(finished_at) from jobs where kind = any(%s) "
+            "       and finished_at is not null "
+            "       and nullif(btrim(payload -> '_facemarket' ->> 'modelId'), '') is not null)"
+            "  ) as last_finished, "
+            "  greatest("
+            "    (select max(updated_at) from fm_biometric_enrollments "
+            "       where status in ('liveness_pending', 'processing', 'asset_building', "
+            "                        'license_pending', 'vc_pending')), "
+            f"{ping_sql}"
+            "  ) as last_activity",
+            (OPENDID_PENDING_ACTIVE_HOURS, list(HOLDER_JOB_KINDS), list(HOLDER_JOB_KINDS)),
         )
         row = await cur.fetchone() or {}
     return DemandSnapshot(

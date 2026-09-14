@@ -29,7 +29,7 @@ UPSCALE_SCOPE_OFF = "off"
 
 
 def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
-                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP) -> dict:
+                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True) -> dict:
     """해시에 들어가는 값 전부. 사람이 읽을 수 있는 형태 그대로 남긴다(해시만 남기면 못 되짚는다)."""
     return {
         "schema": RECIPE_SCHEMA,
@@ -53,6 +53,8 @@ def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = 
         "grain_min_ratio": fi.GRAIN_MIN_RATIO,
         "upscale_scope": upscale_scope,
         "upscale_max_k": fi.CROP_UPSCALE_MAX,
+        # 3×얼굴폭이 사진에 막힐 때 가장자리를 덧대는가. 켜고 끈 컷은 다른 그림이 나온다.
+        "crop_pad": bool(crop_pad),
     }
 
 
@@ -63,6 +65,7 @@ def recipe_id(fields: dict) -> str:
 
 
 def recipe(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
-           upscale_scope: str = UPSCALE_SCOPE_FACE_CROP) -> dict:
-    fields = recipe_fields(model_id=model_id, lora_sha256=lora_sha256, upscale_scope=upscale_scope)
+           upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True) -> dict:
+    fields = recipe_fields(model_id=model_id, lora_sha256=lora_sha256, upscale_scope=upscale_scope,
+                           crop_pad=crop_pad)
     return {"id": recipe_id(fields), "fields": fields}

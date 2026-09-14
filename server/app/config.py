@@ -324,6 +324,15 @@ class Settings:
     # 탈취된 세션 하나가 목록을 스팸으로 덮고 Slack 을 울릴 수 있다.
     admin_device_max_pending_per_user: int = 5
     fm_oacx_contract_mode: str = "disabled"
+    # 등록 위저드에 노출할 본인인증 수단. mid=모바일 신분증(OACX ENT_MID),
+    # simple_auth=간편인증(ENT_SIMPLE_AUTH)+신분증 촬영. 기본은 mid 하나 —
+    # 해커톤 발표 때 이 한 줄로 신규 경로 전체가 사라진다.
+    fm_identity_methods: tuple[str, ...] = ("mid",)
+    # 관리자 육안 심사 적용 범위. simple_auth_only = 촬영 신분증 경로만 사람이 본다
+    # (mid 는 OACX VC 서명검증이 있어 기계 대조로 충분).
+    fm_enrollment_review: str = "simple_auth_only"  # off | simple_auth_only | all
+    # 간편인증 응답 스키마가 실거래로 확정되기 전에는 disabled — 호출 자체가 막힌다.
+    fm_oacx_simple_auth_contract: str = "disabled"  # disabled | simple-auth-v1
     fm_face_match_enabled: bool = False
     fm_standard_unit_price: int = 14900
     fm_photo_slots: tuple[str, ...] = (
@@ -438,6 +447,9 @@ class Settings:
     #: 기본 on. false 가 탈출구다(결과를 예전 Lanczos 경로와 똑같이 만들고 싶을 때).
     #: 파드가 /upscale 을 모르거나 가중치가 없으면 이 값과 무관하게 Lanczos 로 폴백한다.
     face_crop_upscale: bool = True
+    #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
+    #: 기본 on. false 가 탈출구다 — 끄면 막힌 컷에서 정수리가 크롭 경계에 걸린다(2026-09-13 실측).
+    face_crop_pad: bool = True
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -508,6 +520,23 @@ def _default_on_flag(env: str) -> str:
         return "on"
     value = raw.strip().lower()
     return value if value in {"off", "on"} else "off"
+
+
+_IDENTITY_METHODS = ("mid", "simple_auth")
+
+
+def _identity_methods_env() -> tuple[str, ...]:
+    """FM_IDENTITY_METHODS 를 순서 있는 튜플로. 알 수 없는 값은 버린다.
+
+    오타 하나가 인증 수단을 통째로 지워 등록이 아예 불가능해지는 걸 막는다 —
+    남는 게 없으면 ("mid",) 로 되돌린다.
+    """
+    raw = os.getenv("FM_IDENTITY_METHODS", "mid")
+    picked = tuple(
+        m for m in _IDENTITY_METHODS
+        if m in {part.strip() for part in raw.split(",") if part.strip()}
+    )
+    return picked or ("mid",)
 
 
 def _build_sha() -> str | None:
@@ -728,6 +757,15 @@ def load_settings() -> Settings:
         admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
         admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_identity_methods=_identity_methods_env(),
+        fm_enrollment_review=_flag(
+            "FM_ENROLLMENT_REVIEW", "simple_auth_only",
+            {"off", "simple_auth_only", "all"},
+        ),
+        fm_oacx_simple_auth_contract=_flag(
+            "FM_OACX_SIMPLE_AUTH_CONTRACT", "disabled",
+            {"disabled", "simple-auth-v1"},
+        ),
         fm_face_match_enabled=(
             os.getenv("FM_FACE_MATCH_ENABLED", "false").lower() == "true"
         ),
@@ -792,6 +830,7 @@ def load_settings() -> Settings:
         face_render_code_version=(os.getenv("FACE_RENDER_CODE_VERSION") or _build_sha()),
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
+        face_crop_pad=(os.getenv("FACE_CROP_PAD", "true").lower() != "false"),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

@@ -3,6 +3,7 @@ import tempfile
 import time
 import contextlib
 import types
+import uuid
 
 import jwt
 import pytest
@@ -178,6 +179,252 @@ def make_token(keypair):
             **extra,
         }
         return jwt.encode(claims, private_key, algorithm="ES256")
+
+    return _make
+
+
+# ── Task5: 간편인증(simple_auth) 등록 경로 공유 픽스처 ──────────────────────────────────
+# Task6·7 도 이 픽스처를 재사용한다(컨트롤러 룰링). test_facemarket_biometric_enrollment.py
+# 의 EnrollmentStore/FakeCursor/FakePool 조립을 그대로 재사용해 세 벌로 드리프트하지
+# 않게 한다. 그 파일은 mid 경로의 회귀 방어망이라 손대지 않는다 — 필요한 확장(신분증
+# 촬영 경로가 id_capture_pending 에서 시작하는 것을 그 파일의 FakeCursor 가 표현하지
+# 못하는 문제)은 이 픽스처 안에서 monkeypatch 로 감싸 처리하고, 그 외 SQL 은 전부
+# 원래 구현에 위임한다.
+#
+# 이름을 `enrollment_client_factory`로 둔다(fix round 2) — `enrollment_client`는
+# test_facemarket_biometric_enrollment.py 가 이미 모듈 스코프 픽스처로 오래 쓰고 있다
+# (거기선 바로 TestClient 를 반환, 팩토리가 아니다). 모듈 스코프 픽스처가 conftest 것을
+# 가려서 오늘은 안 깨지지만, 나중에 그 로컬 픽스처를 "이제 공유 걸로 대체됐겠지" 하고
+# 지우면 수십 곳의 `enrollment_client.post(...)` 호출이 조용히 함수 객체로 재바인딩된다.
+# 이름을 아예 다르게 둬서 그 함정 자체를 없앤다.
+_ID_CAPTURE_ACTIVE_STATUSES = {
+    "id_capture_pending", "identity_pending", "photos_pending", "review_pending",
+    "liveness_pending", "processing", "asset_building", "license_pending", "vc_pending",
+}
+
+
+@pytest.fixture()
+def enrollment_client_factory(keypair, monkeypatch, make_token):
+    """생체등록 라우트 통합 테스트용 팩토리 픽스처.
+
+    ``enrollment_client_factory(**settings_overrides) -> (TestClient, EnrollmentStore, Settings)``.
+    반환된 client 는 기본 Authorization 헤더(sub="user-1")를 이미 갖고 있어 개별 테스트가
+    매번 auth 헤더를 넘길 필요가 없다.
+    """
+
+    def _make(**settings_overrides):
+        # 지연 임포트: test_facemarket_biometric_enrollment.py 가 모듈 최상단에서
+        # `from conftest import make_settings` 를 한다. 이 임포트를 conftest 모듈
+        # 최상단에 두면, conftest 가 자기 자신을 다 로드하기 전에 그 파일을 당겨오면서
+        # 순환 임포트로 죽는다. 픽스처가 실제로 호출되는 시점(수집 완료 후)까지 미룬다.
+        import test_facemarket_biometric_enrollment as biometric_tests
+
+        EnrollmentStore = biometric_tests.EnrollmentStore
+        FakeCursor = biometric_tests.FakeCursor
+        FakePool = biometric_tests.FakePool
+        FakeRekognition = biometric_tests.FakeRekognition
+        FakeSts = biometric_tests.FakeSts
+        from app import facemarket_enrollment as facemarket_enrollment_module
+
+        private_key, public_key = keypair
+        overrides = dict(
+            app_env="dev",
+            facemarket_enabled=True,
+            fm_biometric_enrollment_enabled=True,
+            fm_oacx_contract_mode="dev-mock-v1",
+            fm_liveness_browser_role_arn="arn:aws:iam::123456789012:role/test",
+            fm_liveness_confidence_threshold=90.0,
+            fm_id_live_threshold=0.45,
+            fm_retouched_live_threshold=0.40,
+            fm_match_policy_version="dev-gold-v1",
+            fm_ci_pepper="pep",
+            fm_face_qc_enabled=True,
+            opendid_holder_url="http://holder.test",
+        )
+        overrides.update(settings_overrides)
+        settings = make_settings(**overrides)
+
+        store = EnrollmentStore()
+        pool = FakePool(store)
+        fake_rekognition = FakeRekognition()
+        fake_sts = FakeSts()
+        fake_r2 = FakeR2()
+
+        monkeypatch.setattr(
+            facemarket_enrollment_module,
+            "build_biometric_aws_clients",
+            lambda _settings: (fake_rekognition, fake_sts),
+        )
+
+        @contextlib.asynccontextmanager
+        async def fake_get_conn(_request):
+            async with pool.connection() as conn:
+                yield conn
+
+        monkeypatch.setattr(
+            facemarket_enrollment_module, "get_conn", fake_get_conn, raising=False
+        )
+
+        # create_enrollment 는 simple_auth 일 때 identity_method/status 를 INSERT 문
+        # 텍스트에 리터럴로 박는다(바인드 파라미터 개수를 mid 분기와 똑같이 유지하기
+        # 위해서 — test_facemarket_biometric_enrollment.py 의 FakeCursor 는 그 INSERT 를
+        # 고정 개수로 언패킹하고 status 를 'identity_pending' 으로 하드코딩해서, 개수가
+        # 갈라지면 회귀 스위트 전체가 ValueError 로 죽는다). 여기서만 그 리터럴을 인식해
+        # 올바른 상태로 행을 만들고, 그 외 SQL 은 원래 구현에 위임한다.
+        # #285 가 동의 버전 두 컬럼(terms/overseas)을 더해 파라미터는 8개다.
+        _original_execute = FakeCursor.execute
+
+        async def _patched_execute(self, sql, params=None):
+            query = " ".join(sql.split()).lower()
+            if (
+                query.startswith("insert into fm_biometric_enrollments")
+                and "'simple_auth'" in query
+                and "'id_capture_pending'" in query
+            ):
+                (
+                    user_id, model_id, device_digest, consent_version, expires_at,
+                    application_id, terms_consent_version, overseas_consent_version,
+                ) = params
+                existing = next(
+                    (
+                        row
+                        for row in self.store.enrollments
+                        if row["user_id"] == user_id
+                        and row["status"] in _ID_CAPTURE_ACTIVE_STATUSES
+                    ),
+                    None,
+                )
+                if existing:
+                    self.result = None
+                else:
+                    row = {
+                        "id": str(uuid.uuid4()),
+                        "user_id": user_id,
+                        "model_id": model_id,
+                        "device_digest": device_digest,
+                        "consent_version": consent_version,
+                        "status": "id_capture_pending",
+                        "identity_method": "simple_auth",
+                        "review_status": None,
+                        "decision": None,
+                        "reason": None,
+                        "provider_versions": {},
+                        "cooldown_until": None,
+                        "expires_at": expires_at,
+                        "completed_at": None,
+                        "raw_deletion_evidence": {},
+                        "identity_ci_hash": None,
+                        "identity_name_masked": None,
+                        "identity_birth_year": None,
+                        "identity_tx_digest": None,
+                        "identity_contract_version": None,
+                        "application_id": application_id,
+                        "terms_consent_version": terms_consent_version,
+                        "overseas_consent_version": overseas_consent_version,
+                        "photo_revision": 0,
+                    }
+                    self.store.enrollments.append(row)
+                    self.result = {"id": row["id"]}
+                self.many = []
+                return
+            await _original_execute(self, sql, params)
+
+        monkeypatch.setattr(FakeCursor, "execute", _patched_execute)
+
+        # _enrollment_db_view 는 EnrollmentView 로 나가는 필드를 만드는 단일 지점이다.
+        # 원본은 identity_method/review_status 를 모른다(이 두 컬럼이 생기기 전에 쓰였다) —
+        # 감싸서 원시 row 에서 그대로 흘려보낸다. mid 로 만들어진 행(원본 INSERT 분기)은
+        # 이 두 키가 아예 없으므로 DB 기본값과 같은 폴백("mid"/None)을 쓴다.
+        _original_enrollment_db_view = biometric_tests._enrollment_db_view
+
+        def _patched_enrollment_db_view(row, *, model_gender=None):
+            view = _original_enrollment_db_view(row, model_gender=model_gender)
+            view["identity_method"] = row.get("identity_method") or "mid"
+            view["review_status"] = row.get("review_status")
+            return view
+
+        monkeypatch.setattr(
+            biometric_tests, "_enrollment_db_view", _patched_enrollment_db_view
+        )
+
+        app = create_app(settings)
+        app.state.jwt_key_resolver = lambda _token: public_key
+        app.state.r2_face = fake_r2
+        app.state.pool = pool
+
+        token = make_token()
+        client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+        return client, store, settings
+
+    return _make
+
+
+# ── Task8: 관리자 육안 심사(admin review) 픽스처 ─────────────────────────────────────
+# 컨트롤러 룰링: admin_client 는 T8 소관, 여기(conftest.py)에 둔다. enrollment_client_factory
+# 와 별개의 lean 한 페이크 DB(AdminStore)를 쓴다 — 정의는
+# test_facemarket_admin_review.py 에 있고 여기선 지연 임포트만 한다(순환 임포트 회피,
+# enrollment_client_factory 와 같은 패턴).
+
+
+@pytest.fixture()
+def admin_client(keypair, monkeypatch, make_token):
+    """관리자 심사 API(Task8) 통합 테스트용 팩토리 픽스처.
+
+    ``admin_client(*, is_admin: bool, **settings_overrides) -> (TestClient, AdminStore)``.
+    반환된 client 는 기본 Authorization 헤더를 이미 갖고 있다(sub="admin-1" — 심사 대상
+    등록의 소유자는 별개 유저 "enrollee-1" 이 기본값이라 관리자/등록자 신원이 우연히
+    섞이지 않는다).
+    """
+
+    def _make(*, is_admin: bool, **settings_overrides):
+        import test_facemarket_admin_review as admin_tests
+
+        AdminStore = admin_tests.AdminStore
+        AdminFakePool = admin_tests.AdminFakePool
+        AdminFakeR2 = admin_tests.AdminFakeR2
+
+        from app import facemarket_admin_review as admin_review_module
+
+        private_key, public_key = keypair
+        overrides = dict(
+            app_env="dev",
+            facemarket_enabled=True,
+            fm_biometric_enrollment_enabled=True,
+            fm_match_policy_version="dev-gold-v1",
+            fm_ci_pepper="pep",
+            opendid_holder_url="http://holder.test",
+            # 리뷰 대상은 항상 fm_liveness_enabled=False 조합이다(Task7) — validate_
+            # biometric_settings 가 켜져 있으면 브라우저 role ARN 등 라이브니스 전용
+            # 설정을 추가로 요구하므로, 이 API 와 무관한 그 요구를 여기서 끈다.
+            fm_liveness_enabled=False,
+            fm_face_qc_enabled=True,
+            fm_retouched_live_threshold=0.15,
+            fm_oacx_contract_mode="dev-mock-v1",
+        )
+        overrides.update(settings_overrides)
+        settings = make_settings(**overrides)
+
+        store = AdminStore()
+        admin_user_id = "admin-1"
+        if is_admin:
+            store.admin_user_ids.add(admin_user_id)
+        pool = AdminFakePool(store)
+
+        @contextlib.asynccontextmanager
+        async def fake_get_conn(_request):
+            async with pool.connection() as conn:
+                yield conn
+
+        monkeypatch.setattr(admin_review_module, "get_conn", fake_get_conn, raising=False)
+
+        app = create_app(settings)
+        app.state.jwt_key_resolver = lambda _token: public_key
+        app.state.r2_face = AdminFakeR2(store)
+        app.state.pool = pool
+
+        token = make_token(sub=admin_user_id)
+        client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+        return client, store
 
     return _make
 

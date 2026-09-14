@@ -220,6 +220,14 @@ test('nextEnrollmentStep maps identity_pending to identity', () => {
   assert.equal(nextEnrollmentStep({ status: 'identity_pending' }), 'identity');
 });
 
+// 간편인증(simple_auth) 경로 신규 상태 — Task5/7 이 백엔드에 추가한 두 상태를 위저드
+// 스텝으로 매핑한다. id_capture_pending(신분증 촬영 대기)은 mid 경로에는 없는 진입점,
+// review_pending(관리자 육안 심사 대기)은 완료 직전에 사람이 끼어드는 종착 대기 상태다.
+test('nextEnrollmentStep maps id_capture_pending to id_capture, review_pending to review', () => {
+  assert.equal(nextEnrollmentStep({ status: 'id_capture_pending' }), 'id_capture');
+  assert.equal(nextEnrollmentStep({ status: 'review_pending' }), 'review');
+});
+
 test('ENROLLMENT_ANGLES carry pose example images', () => {
   for (const a of ENROLLMENT_ANGLES) assert.ok(a.exampleImage, a.value);
 });
@@ -234,6 +242,74 @@ test('uploadProfileImage mirrors multipart pattern', () => {
   const apiSrc = read('../../src/lib/api/facemarket.js');
   assert.match(apiSrc, /uploadProfileImage\(\{\s*enrollmentId,\s*fileBlob,\s*filename\s*\}\)/);
   assert.match(apiSrc, /profile-image/);
+});
+
+// 간편인증(simple_auth) 경로 신규 클라이언트 — Task10 fix round 1.
+// uploadProfileImage 와 같은 멀티파트 패턴을 따르는지, id-document 경로가 맞는지 확인.
+test('uploadIdDocument multiparts file+documentType+maskedConfirmed to the id-document route', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed\s*\}\)/);
+  assert.match(apiSrc, /form\.append\('file',\s*file/);
+  assert.match(apiSrc, /form\.append\('documentType',\s*documentType\)/);
+  assert.match(apiSrc, /form\.append\('maskedConfirmed'/);
+  assert.match(apiSrc, /enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/id-document/);
+});
+
+test('createEnrollment carries identityMethod through to the request body', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /createEnrollment\(\{\s*documentVersion,\s*deviceId,\s*identityMethod\s*\}\)/);
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function createEnrollment'),
+    apiSrc.indexOf('export async function uploadIdDocument'),
+  );
+  assert.match(fnSrc, /identityMethod/);
+});
+
+// 서버 라우트(facemarket_admin_review.py list_review_queue)는 review 를
+// `Query(..., ...)` — 기본값 없는 **필수** 파라미터로 선언한다. adminListApplications 의
+// 옵션-쿼리 패턴(있으면만 붙임)을 그대로 베끼면 인자 없이 부르는 순간 서버가 422 를 준다.
+// 이 테스트는 그 회귀(다시 조건부 가드로 되돌아가는 것)를 정확히 잡는다.
+test('adminListEnrollments always puts review in the querystring (server route requires it)', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminListEnrollments'),
+    apiSrc.indexOf('export function adminEnrollmentCard'),
+  );
+  assert.match(fnSrc, /admin\/enrollments\?review=\$\{encodeURIComponent\(review\)\}/);
+  assert.ok(!fnSrc.includes('review ? `'), 'review 가 조건부(있을 때만)로 되돌아갔다 — 서버는 review 를 필수로 요구한다');
+});
+
+test('adminEnrollmentCard hits the admin enrollment {id} route', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /adminEnrollmentCard\(enrollmentId\)/);
+  const fnSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminEnrollmentCard'),
+    apiSrc.indexOf('export function adminApproveEnrollment'),
+  );
+  assert.match(fnSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}`\)/);
+});
+
+test('adminApproveEnrollment/adminRejectEnrollment hit approve/reject, reject sends a reason', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  const approveSrc = apiSrc.slice(
+    apiSrc.indexOf('export function adminApproveEnrollment'),
+    apiSrc.indexOf('export function adminRejectEnrollment'),
+  );
+  assert.match(approveSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/approve/);
+  const rejectSrc = apiSrc.slice(apiSrc.indexOf('export function adminRejectEnrollment'));
+  assert.match(rejectSrc, /admin\/enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/reject/);
+  assert.match(rejectSrc, /body:\s*\{\s*reason\s*\}/);
+});
+
+test('identity step runs OACX widget at the FRONT and calls createIdentity with token', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /createIdentity\(/);
+  // #285 이후 /complete 는 sessionId 만 보낸다 — 얼굴 매칭이 기본 off(FM_FACE_MATCH_ENABLED)
+  // 라 신분증 초상(idPhotoHex)을 클라가 릴레이할 이유가 사라졌다. 이 단언은 "token 도
+  // idPhotoHex 도 싣지 않는다"로 남는다(클라→서버 PII 신뢰 금지라는 원래 취지 그대로).
+  assert.match(reg, /completeEnrollment\(\s*[^,]+,\s*\{\s*sessionId[^}]*\}\s*,/);
+  assert.doesNotMatch(reg, /completeEnrollment\([^)]*token/);
+  assert.doesNotMatch(reg, /idPhotoHex/);
 });
 
 test('portrait is held in a ref, never stored/logged', () => {
@@ -561,24 +637,47 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 
 // ── 문구: 사용자 화면에서 "생체 확인" 걷어내기 ───────────────────────────────
 
-test('등록 화면은 본인 확인 안내, 두 가지 필수 동의 링크, 국외 이전 안내 링크를 유지한다', async () => {
+test('등록 화면은 필수 동의 링크를 유지하고 국외 이전 안내 카드는 제거한다', async () => {
   const harness = await modelComponentHarness({ initialStates: ['1'], api: {} });
   try {
     const tree = harness.render();
     const text = collectText(tree);
     assert.ok(text.includes('먼저 본인인지 확인해요'));
-    for (const path of ['/terms', '/privacy', '/biometric-consent', '/overseas-transfer']) {
+    for (const path of ['/terms', '/privacy', '/biometric-consent']) {
       assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === path));
     }
     for (let i = 0; i < 2; i++) {
       assert.equal(findTree(tree, (node) => node.props?.id === `consent-${i}`).props.checked, false);
     }
-    assert.equal(findTree(tree, (node) => node.props?.id === 'consent-2'), null, '국외 이전은 체크박스가 아니라 안내');
-    {
-    }
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/overseas-transfer'), null);
+    assert.ok(!text.includes('안내 · 동의 아님'));
+    assert.equal(findTree(tree, (node) => node.props?.id === 'consent-2'), null);
     const hubState = read('../../src/features/model/modelHubState.js');
     assert.match(hubState, /label: '모델 등록'/);
     assert.match(hubState, /label: '프로필 이미지 확정'/);
+  } finally { await harness.close(); }
+});
+
+test('등록의 필수 항목 전체 동의는 법정 안내를 제외한 두 체크만 함께 선택한다', async () => {
+  const harness = await modelComponentHarness({ initialStates: ['1'], api: {} });
+  try {
+    let tree = harness.render();
+    let all = findTree(tree, (node) => node.props?.id === 'register-consent-all');
+    assert.ok(all);
+    assert.equal(all.props.checked, false);
+    findTree(tree, (node) => node.props?.id === 'consent-0').props.onChange({ target: { checked: true } });
+    tree = harness.render();
+    all = findTree(tree, (node) => node.props?.id === 'register-consent-all');
+    assert.equal(all.props.checked, false);
+    assert.equal(all.props['aria-checked'], 'mixed');
+    all.props.onChange({ target: { checked: true } });
+    assert.deepEqual(harness.runtime.states[5], [true, true]);
+    tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.props?.id === 'register-consent-all').props.checked, true);
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '동의하고 신분증 인증하기').props.disabled, false);
+    assert.ok(collectText(tree).includes('두 가지 필수 항목을 모두 확인했어요'));
+    findTree(tree, (node) => node.props?.id === 'register-consent-all').props.onChange({ target: { checked: false } });
+    assert.deepEqual(harness.runtime.states[5], [false, false]);
   } finally { await harness.close(); }
 });
 
@@ -641,7 +740,7 @@ test('조건 화면은 사용료 동의 뒤 같은 위저드에서 증서를 발
 test('등록 완료 화면은 발급된 조건과 영구 유효 안내 및 마이페이지 경로를 보여 준다', async () => {
   const license = { id: 'l1', vcId: 'vc-1', allowedUse: ['일반 의류', '액티브웨어'], licenseValidUntil: null };
   const harness = await modelComponentHarness({
-    initialStates: ['done', { id: 'e1', modelId: 'm1', status: 'passed' }, 1, '', false, [true, true, true], { allowedUse: license.allowedUse }, null, null, license],
+    initialStates: ['done', { id: 'e1', modelId: 'm1', status: 'passed' }, 1, '', false, [true, true], { allowedUse: license.allowedUse }, null, null, license],
     api: {},
   });
   try {
@@ -697,13 +796,14 @@ const applicationAttestations = {
   adultAndTruthful: true, photosAreMine: true, noAgencyContract: true,
   reviewOnlyUse: true, privacyPolicy: true,
 };
+const applicationPhoto = { staged: true, stageId: 'a'.repeat(64) };
 
 test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상태 보기로 이어진다', async () => {
   const navigations = [];
   const submissions = [];
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', { ...completeApplicationForm, portfolioUrl: 'www.portfolio.com', snsUrl: 'www.instagram.com/example' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 3, null, false, ''],
+    initialStates: ['ready', { ...completeApplicationForm, portfolioUrl: 'www.portfolio.com', snsUrl: 'www.instagram.com/example' }, { ...applicationPhoto, previewUrl: 'blob:profile' }, applicationAttestations, 3, null, false, ''],
     api: { submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; } },
   });
   harness.runtime.navigate = (...args) => navigations.push(args);
@@ -718,6 +818,7 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
       contactEmail: 'model@example.com', applicantName: '김하나', phone: '010-1234-5678',
       birthdate: '2000-01-01', gender: 'female', heightCm: 170, weightKg: 55,
       experienceLevel: 'beginner', agencyContracted: false, portfolioUrl: 'https://www.portfolio.com', snsUrl: 'https://www.instagram.com/example',
+      profileStageId: 'a'.repeat(64),
       attestations: applicationAttestations,
       privacyConsent: { accepted: true, documentVersion: '2026-09-v1' },
     });
@@ -733,14 +834,14 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
 test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은 다시 확인을 연다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 3, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, applicationAttestations, 3, null, false, ''], api: {},
   });
   try {
     let tree = harness.render();
     findTree(tree, (node) => node.type === 'button' && node.props['aria-label'] === '기본 정보 고치기').props.onClick();
     tree = harness.render();
-    assert.ok(findTree(tree, (node) => node.type === 'input' && node.props.value === '김하나'));
-    const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
+    assert.ok(findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.value === '김하나'));
+    const email = findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.type === 'email');
     assert.ok(!email.props.readOnly);
     email.props.onChange({ target: { value: 'contact@example.com' } });
     tree = harness.render();
@@ -754,7 +855,7 @@ test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은
 test('체크사항 하나가 비어 있으면 지원 완료가 잠기고 미동의 개수를 안내한다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, { ...applicationAttestations, privacyPolicy: false }, 3, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, { ...applicationAttestations, privacyPolicy: false }, 3, null, false, ''], api: {},
   });
   try {
     const tree = harness.render();
@@ -851,7 +952,7 @@ test('지원 기본 정보는 유효한 생일과 전화번호를 요구하고 �
   try {
     let tree = harness.render();
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
-    findTree(tree, (node) => node.type === 'input' && node.props.type === 'tel').props.onChange({ target: { value: '010abc12345678' } });
+    findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.type === 'tel').props.onChange({ target: { value: '010abc12345678' } });
     assert.equal(harness.runtime.states[1].phone, '010-1234-5678');
     findTree(tree, (node) => node.type?.name === 'BirthdateInput').props.onChange('2000-01-01');
     tree = harness.render();
@@ -867,19 +968,19 @@ test('지원 프로필은 사진 업로드와 에이전시 답을 요구하며 �
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
     initialStates: ['ready', { ...completeApplicationForm, weightKg: '', experienceLevel: '', agencyContracted: null }, null, {}, 2, null, false, ''],
-    api: { stageApplicationPhoto: async (body) => { uploaded.push(body); } },
+    api: { stageApplicationPhoto: async (body) => { uploaded.push(body); return { staged: true, stageId: 'a'.repeat(64) }; } },
   });
   let preview;
   try {
     let tree = harness.render();
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
     const file = Object.assign(new Blob(['profile'], { type: 'image/jpeg' }), { name: 'profile.jpg' });
-    await findTree(tree, (node) => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [file], value: 'profile.jpg' } });
+    await findTree(tree, (node) => node.type?.name === 'ImageUpload').props.onSelect(file);
     assert.equal(uploaded[0].kind, 'profile');
     assert.equal(uploaded[0].fileBlob, file);
     preview = harness.runtime.states[2].previewUrl;
     tree = harness.render();
-    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.src === preview));
+    assert.equal(findTree(tree, (node) => node.type?.name === 'ImageUpload').props.previewUrl, preview);
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
     findTree(tree, (node) => node.type === 'button' && node.props.children === '아니오').props.onClick();
     tree = harness.render();
@@ -949,13 +1050,13 @@ for (const accountEmail of [null, 'google@example.com']) {
     const submissions = [];
     const harness = await modelComponentHarness({
       entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
+      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { ...applicationPhoto, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
       api: { submitApplication: async (body) => { submissions.push(body); return { status: 'under_review' }; } },
     });
     harness.runtime.session = { user: { email: accountEmail } };
     try {
       let tree = harness.render();
-      const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
+      const email = findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.type === 'email');
       assert.equal(email.props.value, accountEmail || '');
       assert.ok(!email.props.readOnly);
       for (const invalid of ['', 'wrong-address', 'a'.repeat(255) + '@example.com']) {
@@ -983,18 +1084,18 @@ for (const accountEmail of [null, 'google@example.com']) {
 test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알리고 수정 후 진행한다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
-    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 2, null, false, ''], api: {},
+    initialStates: ['ready', completeApplicationForm, applicationPhoto, applicationAttestations, 2, null, false, ''], api: {},
   });
   try {
-    for (const placeholder of ['www.portfolio.com', 'www.instagram.com/example']) {
-      const input = findTree(harness.render(), (node) => node.type === 'input' && node.props.placeholder === placeholder);
+    for (const label of ['포트폴리오 링크', 'SNS 링크']) {
+      const input = findTree(harness.render(), (node) => node.type?.name === 'FormInput' && node.props.label === label);
       // https:// is added before submission; it must count towards the server's limit.
       for (const invalid of ['example.com/' + 'a'.repeat(490), 'ftp://example.com/file']) {
         input.props.onChange({ target: { value: invalid } });
         const tree = harness.render();
         assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
-        assert.ok(findTree(tree, (node) => node.props.role === 'alert'));
-        assert.equal(findTree(tree, (node) => node.type === 'input' && node.props.placeholder === placeholder).props.value, invalid, 'pasting must not silently truncate the URL');
+        assert.ok(findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.label === label).props.error);
+        assert.equal(findTree(tree, (node) => node.type?.name === 'FormInput' && node.props.label === label).props.value, invalid, 'pasting must not silently truncate the URL');
       }
       input.props.onChange({ target: { value: 'https://example.com/' + 'a'.repeat(480) } });
       assert.equal(findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '다음').props.disabled, false);
@@ -1013,7 +1114,7 @@ for (const failure of [
   test(`지원서 제출 실패(${failure.code || failure.status || 'network'})는 원인을 구분하고 작성 내용을 보존한다`, async () => {
     let attempts = 0;
     const form = { ...completeApplicationForm, portfolioUrl: 'https://example.com/portfolio' };
-    const photo = { staged: true, previewUrl: 'blob:profile' };
+    const photo = { ...applicationPhoto, previewUrl: 'blob:profile' };
     const harness = await modelComponentHarness({
       entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
       initialStates: ['ready', form, photo, applicationAttestations, 3, null, false, ''],

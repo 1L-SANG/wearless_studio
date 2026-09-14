@@ -4,15 +4,20 @@
    항상 보이고, 화면이 늘어도 세로로 늘어난다). 모바일은 대상이 아니다 — 작은 화면에서는
    내비가 위로 접힌다. */
 import { NavLink, Outlet } from 'react-router-dom';
-import { Banknote, Camera, FileText, Flag, LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
+import { Banknote, Camera, FileText, Flag, IdCard, LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
 import { cn } from '@/lib/adminCn.js';
 
 /* '모델' 과 '사용자' 는 다른 화면이다 — 전자는 FaceMarket 에 얼굴을 올린 모델(fm_models),
    후자는 두 서비스의 가입 계정(profiles) 전체다. 모델 항목이 예전처럼 '유저' 까지
-   이름에 달고 있으면, 둘 중 어디를 눌러야 하는지 알 수 없다. */
+   이름에 달고 있으면, 둘 중 어디를 눌러야 하는지 알 수 없다.
+
+   '지원서 검토'(모델 지원 여부)와 '등록 심사'(간편인증으로 촬영한 신분증 육안 대조)도
+   서로 다른 화면이다 — 전자는 fm_model_applications, 후자는 fm_biometric_enrollments
+   review_pending 큐다. */
 const NAV = [
   { to: '/', label: '대시보드', icon: LayoutDashboard, end: true },
   { to: '/applications', label: '지원서 검토', icon: FileText },
+  { to: '/review', label: '등록 심사', icon: IdCard },
   { to: '/usage-reports', label: '사용 신고', icon: Flag },
   { to: '/payout-statements', label: '지급 명세', icon: Banknote },
   { to: '/models', label: '모델', icon: Camera },

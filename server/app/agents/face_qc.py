@@ -79,6 +79,29 @@ class FaceQc:
             if image is not None:
                 image.fill(0)
 
+    def detect_largest_face(self, data: bytes | bytearray) -> tuple[int, int, int, int] | None:
+        """가장 큰 얼굴의 (x, y, w, h). 검출 0건이면 None.
+
+        _embed 와 달리 여러 얼굴을 실패로 보지 않는다 — 신분증을 손에 들고 찍으면
+        배경에 사람이 들어오기 때문이다. 신분증 증명사진이 프레임에서 가장 큰
+        얼굴이라는 전제로 하나를 고르고, 그 크롭만 대조에 쓴다.
+        """
+        image = None
+        try:
+            image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                raise QcFailed("decode_failed")
+            h, w = image.shape[:2]
+            self._det.setInputSize((w, h))
+            _, faces = self._det.detect(image)
+            if faces is None or len(faces) == 0:
+                return None
+            best = max(faces, key=lambda f: float(f[2]) * float(f[3]))
+            return (int(best[0]), int(best[1]), int(best[2]), int(best[3]))
+        finally:
+            if image is not None:
+                image.fill(0)
+
     def one_to_one_similarity(
         self, reference: bytes | bytearray, candidate: bytes | bytearray
     ) -> float:

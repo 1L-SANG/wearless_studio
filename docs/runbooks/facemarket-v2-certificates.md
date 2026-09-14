@@ -22,6 +22,13 @@
    bash scripts/issuer-provision-facelicense.sh
    ```
 
+   **운영(ECS Fargate + RDS)에는 docker/psql이 없다.** 같은 리소스를 `aws ecs execute-command`로 만드는 ECS 판을 쓴다. opendid 태스크가 1대 떠 있어야 한다(0대면 `desired=1`로 먼저 깨운다). `DRY_RUN=1`은 읽기만 한다.
+
+   ```sh
+   AWS_PROFILE=wearless AWS_REGION=us-east-1 DRY_RUN=1 bash scripts/issuer-provision-facelicense-ecs.sh
+   AWS_PROFILE=wearless AWS_REGION=us-east-1 bash scripts/issuer-provision-facelicense-ecs.sh
+   ```
+
    스크립트가 `facelicense_plan=present`를 반환하는지 확인한다. 기존 리소스가 있으면 생성하지 않는다. 새 namespace의 여섯 필수 claim과 schema 2.0, Issuer 및 TAS의 `vcplanface0000000002` 연결을 확인한다. 기존 v1 리소스를 갱신하는 명령은 없다.
 
 2. JDK 21을 사용해 새 Holder를 빌드하고 기존 Holder 배포 절차로 교체한다. Holder의 기존 data-dir은 유지한다.
@@ -30,6 +37,20 @@
    cd services/fm-holder
    ./gradlew test bootJar --no-daemon
    ```
+
+   운영 opendid는 `image.location`(프리빌트 이미지) 수동 배포다 — **CI가 안 낸다.** 이미지를 새로 만들어 ECR에 올리고 `copilot/opendid/manifest.yml`의 태그를 바꾼 뒤 배포한다. 맥(arm64)에서는 플랫폼을 강제해야 한다. 앱 메타데이터는 서울 리전에 있어 `AWS_REGION=ap-northeast-2`로 부른다.
+
+   ```sh
+   TAG=$(git rev-parse --short=8 HEAD)
+   DOCKER_DEFAULT_PLATFORM=linux/amd64 IMAGE=439328746001.dkr.ecr.us-east-1.amazonaws.com/wearless/opendid:$TAG \
+     bash deploy/opendid/container/build.sh
+   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 439328746001.dkr.ecr.us-east-1.amazonaws.com
+   docker push 439328746001.dkr.ecr.us-east-1.amazonaws.com/wearless/opendid:$TAG
+   # copilot/opendid/manifest.yml image.location 태그를 $TAG 로 바꾼 뒤(반드시 최신 main — EFS 지갑 마운트 포함):
+   AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws svc deploy --name opendid --env use1
+   ```
+
+   ⚠️ 2026-09-13 사고: PR #280이 API·Holder·프로비저닝을 한 PR에 담았는데 API만 CI로 먼저 나가 하루 동안 신규 증서 발급이 전부 503(`unknown plan 'facelicense-v2'`)이었다. Holder 계약을 바꾸는 PR은 **머지 전에 1·2를 먼저** 끝낸다.
 
 3. 새 Python API를 배포한다. HTTP 발급과 백그라운드 재시도 모두 같은 저장된 `created_at`과 등록 동의 버전을 사용한다. 현재 서버 시각이나 최신 동의 문서 상수로 대체하지 않는다.
 
