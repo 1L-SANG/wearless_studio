@@ -1,3 +1,36 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/node_modules/**": true,
+        "**/.worktrees/**": true,
+        "**/.pnpm-store/**": true,
+        "**/dist/**": true,
+        "**/build/**": true,
+        "**/output/**": true,
+        "**/outputs/**": true,
+        "**/generated-assets/**": true,
+        "**/.pytest_cache/**": true,
+        "**/tmp/**": true,
+        "**/.scratch/**": true,
+        "**/.claude/**": true,
+        "**/.codex/**": true,
+        "**/.vercel/**": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/.worktrees": true,
+        "**/.pnpm-store": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/output": true,
+        "**/outputs": true,
+        "**/generated-assets": true,
+        "**/tmp": true,
+        "**/.scratch": true,
+        "**/.claude": true,
+        "**/.codex": true
+    }
 }
+
