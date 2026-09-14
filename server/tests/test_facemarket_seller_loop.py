@@ -165,7 +165,10 @@ def test_required_verify_holder_transport_failure_is_503(monkeypatch, error):
     with pytest.raises(facemarket.HTTPException) as ei:
         asyncio.run(_verify(_app("http://holder", required=True)))
     assert ei.value.status_code == 503
-    assert ei.value.detail["code"] == "holder_unavailable"
+    # 못 닿은 것 = 켜는 중일 수 있다(scale-to-zero). 코드가 holder_unavailable 이면 화면이
+    # "사용할 수 없습니다" 로 끝내 버려 셀러가 다시 누르지 않는다(2026-09-14 운영 장애).
+    assert ei.value.detail["code"] == "holder_starting"
+    assert "1~2분" in ei.value.detail["message"]
 
 
 def test_required_verify_without_vc_is_409(monkeypatch):
