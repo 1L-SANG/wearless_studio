@@ -77,10 +77,10 @@ class _Store:
         self.active = active
         self.set_calls, self.retired = [], []
 
-    async def get_active(self):
+    async def get_active(self, model_id=None):
         return self.active
 
-    async def set_active(self, pod_id, gpu_type):
+    async def set_active(self, pod_id, gpu_type, model_id=None):
         self.active = pod_id
         self.set_calls.append((pod_id, gpu_type))
 

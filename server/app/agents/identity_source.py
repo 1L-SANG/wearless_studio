@@ -344,11 +344,11 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
     if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
         return None
     row = dict(row)
-    row["face_backend_url"] = await _active_face_backend_url(conn)
+    row["face_backend_url"] = await _active_face_backend_url(conn, model_id)
     return row
 
 
-async def active_face_backend_url(pool) -> str | None:
+async def active_face_backend_url(pool, model_id: str | None = None) -> str | None:
     """지금 등록된 렌더 파드의 URL. 워커가 **대기 중에도 계속** 다시 묻는 자리다.
 
     파드는 재고 때문에 바뀌고(id 가 바뀌면 URL 도 바뀐다), 처음에는 아예 없을 수도 있다
@@ -357,14 +357,19 @@ async def active_face_backend_url(pool) -> str | None:
     """
     try:
         async with pool.connection() as conn:
-            return await _active_face_backend_url(conn)
+            return await _active_face_backend_url(conn, model_id)
     except Exception as exc:  # noqa: BLE001 — 못 읽으면 "아직 없음"으로 본다
         log.warning("face render pod lookup failed: %r", exc)
         return None
 
 
-async def _active_face_backend_url(conn) -> str | None:
-    """DB 에 등록된 현재 렌더 파드에서 URL 을 유도한다. 없으면 None → 설정값 폴백."""
+async def _active_face_backend_url(conn, model_id: str | None = None) -> str | None:
+    """이 모델의 렌더 파드 URL. 없으면 None → 설정값 폴백.
+
+    **파드 하나 = LoRA 하나**(2026-09-14). 모델을 주면 그 모델의 파드를 고르고, 없으면
+    모델 미지정 행(구 단일 파드)으로 떨어진다 — 모델별 파드를 세우기 전까지의 다리다.
+    남의 모델 파드로는 절대 안 보낸다: 그 파드는 다른 LoRA 를 물고 있어 409 만 돌려준다.
+    """
     from ..services.face_autoscale import pod_backend_url
 
     try:
@@ -373,8 +378,10 @@ async def _active_face_backend_url(conn) -> str | None:
             if not (await cur.fetchone() or {}).get("t"):
                 return None
             await cur.execute(
-                "select pod_id from fm_face_render_pod where retired_at is null "
-                "order by created_at desc limit 1")
+                "select pod_id, model_id from fm_face_render_pod where retired_at is null "
+                "and (model_id = %s or model_id is null) "
+                "order by (model_id is null), created_at desc limit 1",
+                (model_id,))
             row = await cur.fetchone()
     except Exception as exc:  # noqa: BLE001 — 못 읽으면 설정값으로 간다
         log.warning("face render pod lookup failed: %r", exc)

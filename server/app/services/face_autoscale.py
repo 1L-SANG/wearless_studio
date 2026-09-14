@@ -140,26 +140,37 @@ class FaceRenderPodStore:
     def __init__(self, pool):
         self._pool = pool
 
-    async def get_active(self) -> str | None:
+    async def get_active(self, model_id: str | None = None) -> str | None:
+        """이 모델의 살아 있는 파드. **파드 하나 = LoRA 하나**(2026-09-14).
+
+        모델을 주면 그 모델 전용 행을 먼저 보고, 없으면 모델 미지정 행(구 단일 파드)으로
+        떨어진다. 남의 모델 파드는 고르지 않는다 — 그 파드는 다른 LoRA 를 물고 있어 409 만 준다.
+        """
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute("select to_regclass('public.fm_face_render_pod') as t")
             if not (await cur.fetchone() or {}).get("t"):
                 return None            # 마이그 미적용 환경 — 설정값으로 간다
             await cur.execute(
                 "select pod_id from fm_face_render_pod where retired_at is null "
-                "order by created_at desc limit 1")
+                "and (model_id = %s or model_id is null) "
+                "order by (model_id is null), created_at desc limit 1",
+                (model_id,))
             row = await cur.fetchone()
         return (row or {}).get("pod_id")
 
-    async def set_active(self, pod_id: str, gpu_type: str) -> None:
+    async def set_active(self, pod_id: str, gpu_type: str, model_id: str | None = None) -> None:
+        """이 파드를 이 모델의 현재 파드로 만든다. **같은 모델의** 옛 파드만 퇴역시킨다 —
+        전부 퇴역시키면 모델별 파드를 나란히 못 쓴다."""
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(
                 "update fm_face_render_pod set retired_at = now() "
-                "where retired_at is null and pod_id <> %s", (pod_id,))
+                "where retired_at is null and pod_id <> %s "
+                "and coalesce(model_id, '') = coalesce(%s, '')", (pod_id, model_id))
             await cur.execute(
-                "insert into fm_face_render_pod (pod_id, gpu_type) values (%s, %s) "
-                "on conflict (pod_id) do update set retired_at = null, gpu_type = excluded.gpu_type",
-                (pod_id, gpu_type))
+                "insert into fm_face_render_pod (pod_id, gpu_type, model_id) values (%s, %s, %s) "
+                "on conflict (pod_id) do update set retired_at = null, "
+                "gpu_type = excluded.gpu_type, model_id = excluded.model_id",
+                (pod_id, gpu_type, model_id))
             await conn.commit()
 
     async def retire(self, pod_id: str) -> None:
@@ -434,7 +445,36 @@ class RunpodAutoscaleAdapter:
         if not url:
             self._alert_code_missing("코드 묶음 URL 이 비었다")
             return {}
-        return {"CODE_TARBALL_URL": url, "CODE_SHA256": content_sha}
+        env = {"CODE_TARBALL_URL": url, "CODE_SHA256": content_sha}
+        env.update(self._lora_env())
+        return env
+
+    def _lora_env(self) -> dict[str, str]:
+        """이 파드가 물 LoRA. **파드 하나 = LoRA 하나**라 생성 시점에 정해져야 한다.
+
+        키만 줘도 캐시가 있으면 붙지만, URL·sha 를 함께 주면 부팅에서 다운로드·검증·결합까지
+        끝나 첫 컷이 그걸 물지 않는다. 값이 없으면 빈 dict — 파드는 첫 렌더 요청의 키로 붙는다.
+        ★ presigned URL 은 로그·DB 어디에도 남기지 않는다(여기서 만들어 RunPod 에만 준다).
+        """
+        binding = getattr(self, "_lora_binding", None)
+        if not binding or not binding.get("key"):
+            return {}
+        env = {"FACE_RENDER_LORA_KEY": str(binding["key"])}
+        if binding.get("url"):
+            env["FACE_RENDER_LORA_URL"] = str(binding["url"])
+        if binding.get("sha256"):
+            env["FACE_RENDER_LORA_SHA256"] = str(binding["sha256"])
+        return env
+
+    def bind_lora(self, *, key: str, url: str | None = None, sha256: str | None = None,
+                  model_id: str | None = None) -> None:
+        """다음에 만들 파드가 물 LoRA 를 정한다(모델별 파드 인터페이스).
+
+        자동 켜기는 아직 꺼져 있다(FACE_AUTOSCALE) — 이 자리는 켤 때 쓰라고 맞춰 둔 것이고,
+        지금은 수동 스크립트가 같은 env 이름으로 파드를 만든다.
+        """
+        self._lora_binding = {"key": key, "url": url, "sha256": sha256}
+        self._lora_model_id = model_id
 
     def _code_content_sha(self, key: str) -> str | None:
         """업로드 때 붙여 둔 메타(sha256)를 읽는다. 객체·메타가 없으면 None."""
@@ -490,7 +530,8 @@ class RunpodAutoscaleAdapter:
                 continue
             log.info("face autoscale: 새 파드 %s (%s, $%.2f/h)", pod_id, gpu_type, price)
             if self._pod_store is not None:
-                await self._pod_store.set_active(pod_id, gpu_type)
+                await self._pod_store.set_active(
+                    pod_id, gpu_type, getattr(self, "_lora_model_id", None))
             self._target = RunpodTarget(pod_id)
             if replacing is not None and replacing.pod_id != pod_id:
                 await self._retire(replacing.pod_id)

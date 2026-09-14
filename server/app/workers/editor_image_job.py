@@ -256,8 +256,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 if vary_lora_spec is not None:
                     _vary_kw["face_identity_spec"] = vary_lora_spec
                     _vary_kw["face_pass_outcome"] = face_pass_outcome
+                    # 파드 하나 = LoRA 하나다 — **이 모델의 파드**를 묻는다(남의 파드는 409 만 준다).
+                    _vary_model_id = str(snapshot["modelId"])
                     _vary_kw["face_pass_url_provider"] = (
-                        lambda: identity_source.active_face_backend_url(pool))
+                        lambda: identity_source.active_face_backend_url(pool, _vary_model_id))
                 image, mime = await cut_variator.generate(
                     editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except GeminiError as e:
@@ -726,8 +728,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["face_pass_outcome"] = face_pass_outcome
                 # 대기 중에도 현재 파드를 다시 묻는다 — 잡 시작 때 읽은 주소를 붙들면
                 # 파드가 생기기 전에 폴백하거나 교체된 뒤 죽은 주소를 계속 찌른다.
+                # 파드 하나 = LoRA 하나다 — **이 모델의 파드**를 묻는다(남의 파드는 409 만 준다).
                 generate_kwargs["face_pass_url_provider"] = (
-                    lambda: identity_source.active_face_backend_url(pool))
+                    lambda: identity_source.active_face_backend_url(
+                        pool, str(selected_model_id)))
             if hair_profile is not None:
                 generate_kwargs["hair_profile"] = hair_profile
             if face_shape_profile is not None:

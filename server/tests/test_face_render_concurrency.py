@@ -1,4 +1,4 @@
-"""얼굴 파드 동시 요청 — 2026-09-14 20:33 셀러 잡 3ed6970e 얼굴컷 8장 전멸의 원인 두 개.
+"""얼굴 파드 — 2026-09-14 20:33 셀러 잡 3ed6970e 얼굴컷 8장 전멸의 원인 두 개.
 
 detail-worker 로그(11:36Z): render HTTP 400 {"detail":"lora sha256 mismatch"} ×2 · HTTP 500 ×2 ·
 이어서 "파드가 600초 안에 뜨지 않았다" ×4. fm_model_loras.lora_sha256 과 R2 파일 sha 는 같았다
@@ -6,9 +6,9 @@ detail-worker 로그(11:36Z): render HTTP 400 {"detail":"lora sha256 mismatch"} 
 
   ① 같은 `<path>.part` 에 동시 쓰기 → 내용이 섞여 sha 불일치(400), 한쪽 _unlink 가 다른 쪽이
      os.replace 할 파일을 지워 500.
-  ② 교체가 **새 파일을 받기 전에** 기존 backend 를 버린다. 베이스는 backend 안에 있어서
-     (_state["base"]=None) 다운로드가 깨지면 backend 도 base 도 없다 → healthz base_loaded=false
-     영구 → 클라이언트는 base_loaded 만 보고 기다리다 상한에서 포기 → 교착.
+  ② LoRA **교체** 자체. Qwen-Image-Edit-2509 파이프라인이 ≈58GB 라 80GB 카드에 한 벌만 들어간다 —
+     교체는 이전 파이프라인 참조를 쥔 채 새로 적재해 항상 OOM 이고, 두 번째 모델이 영영 안 올라간다.
+     그래서 **교체를 없앴다**: 파드 하나 = LoRA 하나, 다른 키는 409(2026-09-14 사용자 결정).
 """
 
 import hashlib
@@ -147,7 +147,7 @@ def test_startup_sweeps_partials_left_by_a_crash(tmp_path, monkeypatch):
     assert (tmp_path / "keep.safetensors").exists()
 
 
-# ── ② 교체 ──────────────────────────────────────────────────────────────────
+# ── ② 파드 하나 = LoRA 하나 ─────────────────────────────────────────────────
 class _FakeBackend:
     def __init__(self, *a, **kw):
         self.base_pipe = kw.get("base_pipe")
@@ -156,79 +156,90 @@ class _FakeBackend:
         return self
 
 
-def _patch_swap(monkeypatch, *, backend=_FakeBackend, lora_file=None):
+def _patch_bind(monkeypatch, *, backend=_FakeBackend, lora_file=None, bound=None):
     monkeypatch.setattr(svc, "QwenLocalBackend", backend)
-    if hasattr(svc, "_free_cuda"):
-        monkeypatch.setattr(svc, "_free_cuda", lambda: None)
+    monkeypatch.setattr(svc, "LORA_KEY", bound)
+    monkeypatch.setattr(svc, "LORA_URL", None)
+    monkeypatch.setattr(svc, "LORA_SHA256", None)
     if lora_file is not None:
         monkeypatch.setattr(svc, "_lora_file", lora_file)
 
 
-def test_a_failed_lora_fetch_keeps_the_current_backend(monkeypatch):
-    """★ 다운로드가 깨져도 **지금 돌던 LoRA 로 계속 렌더한다**. base_loaded 는 true 로 남는다."""
-    current = _FakeBackend()
-    svc._state.update(backend=current, lora=LORA_KEY, lora_sha256="a" * 64, loaded_at=1.0,
-                      base=None, swapping=None, last_error=None)
+def test_another_lora_is_refused_not_swapped(monkeypatch):
+    """★ 이 파드는 물고 있는 LoRA 만 렌더한다. 교체 시도 자체가 없다.
 
-    def boom(key, url=None, sha=None):
-        raise HTTPException(400, "lora sha256 mismatch")
+    교체하면 58GB 파이프라인 두 벌이 겹치는 순간이 생겨 항상 OOM 이다. 409 를 받은 클라이언트는
+    그 컷을 실패시키고 원본을 내보내지 않는다(#309 규칙).
+    """
+    loads = []
 
-    _patch_swap(monkeypatch, lora_file=boom)
+    class _Counting(_FakeBackend):
+        def pipeline(self):
+            loads.append(1)
+            return self
+
+    _patch_bind(monkeypatch, backend=_Counting, bound=LORA_KEY,
+                lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
+    svc._state.update(backend=None, lora=None, base=object(), binding=None, last_error=None)
+    assert svc._backend(LORA_KEY, _URL, None) is not None
+
     with pytest.raises(HTTPException) as err:
-        svc._backend(OTHER_KEY, _URL, "b" * 64)
-    assert err.value.status_code == 400
-
-    assert svc._state["backend"] is current, "받지도 못한 LoRA 때문에 멀쩡한 backend 를 버렸다"
+        svc._backend(OTHER_KEY, _URL, None)
+    assert err.value.status_code == 409
+    assert "bound to another lora" in str(err.value.detail)
+    assert loads == [1], "다른 키 요청이 파이프라인을 다시 올렸다 — 교체가 남아 있다"
     assert svc._state["lora"] == LORA_KEY
-    assert svc.healthz()["base_loaded"] is True
-    assert svc._state["swapping"] is None
-    assert "mismatch" in (svc._state["last_error"] or "")
 
 
-def test_a_failed_pipeline_load_restores_the_previous_backend(monkeypatch):
-    """파이프라인 적재가 깨지면 이전 backend 를 되돌린다 — base_loaded=false 로 굳지 않는다."""
-    current = _FakeBackend()
-    svc._state.update(backend=current, lora=LORA_KEY, lora_sha256="a" * 64, loaded_at=1.0,
-                      base=None, swapping=None, last_error=None)
+def test_the_pod_binds_at_boot_when_the_env_says_which_lora(monkeypatch):
+    """부팅에서 결합까지 끝낸다 — 첫 컷이 다운로드·적재를 물지 않는다."""
+    got = {}
 
+    def fake_file(key, url=None, sha=None):
+        got.update(key=key, url=url, sha=sha)
+        return "/tmp/x.safetensors"
+
+    _patch_bind(monkeypatch, bound=LORA_KEY, lora_file=fake_file)
+    monkeypatch.setattr(svc, "LORA_URL", _URL)
+    monkeypatch.setattr(svc, "LORA_SHA256", "b" * 64)
+    svc._state.update(backend=None, lora=None, base=object(), binding=None, last_error=None)
+
+    svc._backend(LORA_KEY, None, None)
+    assert got == {"key": LORA_KEY, "url": _URL, "sha": "b" * 64}
+    body = svc.healthz()
+    assert body["lora"] == LORA_KEY and body["ready"] is True
+
+
+def test_healthz_names_the_bound_lora_before_it_is_loaded(monkeypatch):
+    """아직 적재 전이라도 **어느 LoRA 의 파드인지**는 보여야 한다 — 라우팅을 사람이 확인한다."""
+    _patch_bind(monkeypatch, bound=LORA_KEY)
+    svc._state.update(backend=None, lora=None, base=None, binding=None, last_error="boom")
+    body = svc.healthz()
+    assert body["lora"] == LORA_KEY and body["ready"] is False
+    assert body["last_error"] == "boom"
+
+
+def test_a_failed_bind_leaves_no_half_fused_base(monkeypatch):
+    """적재가 깨지면 베이스를 버린다 — 절반 융합된 베이스를 다음 시도가 재사용하면 안 된다."""
     class _Boom:
         def __init__(self, *a, **kw):
             raise RuntimeError("CUDA out of memory")
 
-    _patch_swap(monkeypatch, backend=_Boom, lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
+    _patch_bind(monkeypatch, backend=_Boom, bound=LORA_KEY,
+                lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
+    monkeypatch.setattr(svc, "_free_cuda", lambda: None)
+    svc._state.update(backend=None, lora=None, base=object(), binding=None, last_error=None)
     with pytest.raises(HTTPException) as err:
-        svc._backend(OTHER_KEY, _URL, "b" * 64)
+        svc._backend(LORA_KEY, _URL, None)
     assert err.value.status_code == 503
-
-    assert svc._state["backend"] is current and svc._state["lora"] == LORA_KEY
-    assert svc.healthz()["base_loaded"] is True
+    assert svc._state["base"] is None and svc._state["backend"] is None
     assert "CUDA" in (svc._state["last_error"] or "") or "RuntimeError" in (svc._state["last_error"] or "")
+    assert svc._state["binding"] is None
 
 
-def test_with_no_previous_backend_a_failed_swap_reloads_the_base(monkeypatch):
-    """되돌릴 backend 가 없으면 최소한 base 를 다시 올린다 — 준비 판정이 살아 있어야 한다."""
-    svc._state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None,
-                      base=None, swapping=None, last_error=None)
-    reloaded = []
-
-    class _Boom:
-        def __init__(self, *a, **kw):
-            raise RuntimeError("load failed")
-
-    monkeypatch.setattr(svc, "_load_base", lambda: (reloaded.append(1), svc._state.update(base=object()))[0])
-    _patch_swap(monkeypatch, backend=_Boom, lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
-    with pytest.raises(HTTPException):
-        svc._backend(LORA_KEY, _URL, "b" * 64)
-    assert reloaded == [1]
-    assert svc.healthz()["base_loaded"] is True
-
-
-def test_swaps_are_serialized(monkeypatch):
-    """교체가 겹치면 직렬화된다 — 두 스레드가 동시에 파이프라인을 만들지 않는다."""
-    svc._state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None,
-                      base=object(), swapping=None, last_error=None)
-    inside = []
-    peak = []
+def test_binding_is_serialized(monkeypatch):
+    """같은 키로 동시에 들어와도 파이프라인은 한 번만 만든다."""
+    inside, peak = [], []
 
     class _Slow(_FakeBackend):
         def pipeline(self):
@@ -238,9 +249,10 @@ def test_swaps_are_serialized(monkeypatch):
             inside.pop()
             return self
 
-    _patch_swap(monkeypatch, backend=_Slow, lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
-    threads = [threading.Thread(target=svc._backend, args=(f"{LORA_KEY}#{i}", _URL, None))
-               for i in range(3)]
+    _patch_bind(monkeypatch, backend=_Slow, bound=LORA_KEY,
+                lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
+    svc._state.update(backend=None, lora=None, base=object(), binding=None, last_error=None)
+    threads = [threading.Thread(target=svc._backend, args=(LORA_KEY, _URL, None)) for _ in range(3)]
     for t in threads:
         t.start()
     for t in threads:
@@ -248,24 +260,12 @@ def test_swaps_are_serialized(monkeypatch):
     assert max(peak) == 1, f"동시에 {max(peak)}개가 파이프라인을 만들었다"
 
 
-def test_the_same_key_twice_does_not_reload(monkeypatch):
-    """같은 키가 다시 오면 그대로 쓴다(교체 아님) — 자물쇠를 잡고도 다시 확인한다."""
-    loads = []
-
-    class _Counting(_FakeBackend):
-        def pipeline(self):
-            loads.append(1)
-            return self
-
-    svc._state.update(backend=None, lora=None, lora_sha256=None, loaded_at=None,
-                      base=object(), swapping=None, last_error=None)
-    _patch_swap(monkeypatch, backend=_Counting, lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
-    first = svc._backend(LORA_KEY, _URL, None)
-    second = svc._backend(LORA_KEY, _URL, None)
-    assert first is second and len(loads) == 1
-
-
-def test_healthz_shows_swapping_and_last_error():
-    svc._state.update(backend=None, base=object(), swapping="k", last_error="boom")
-    body = svc.healthz()
-    assert body.get("swapping") == "k" and body.get("last_error") == "boom"
+def test_a_pod_without_an_env_key_binds_to_the_first_request(monkeypatch):
+    """env 가 없는 수동 파드는 첫 요청의 키로 굳는다 — 그 뒤로는 마찬가지로 409 다."""
+    _patch_bind(monkeypatch, bound=None, lora_file=lambda k, u=None, s=None: "/tmp/x.safetensors")
+    svc._state.update(backend=None, lora=None, base=object(), binding=None, last_error=None)
+    svc._backend(LORA_KEY, _URL, None)
+    assert svc.bound_lora() == LORA_KEY
+    with pytest.raises(HTTPException) as err:
+        svc._backend(OTHER_KEY, _URL, None)
+    assert err.value.status_code == 409
