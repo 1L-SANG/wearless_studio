@@ -61,6 +61,14 @@ def _parse_source_asset_id(src: str | None) -> str | None:
 #: 우리 인프라 사정이지 셀러가 알아야 할 일이 아니다(2026-09-14 제품 결정) — 로그에는 남는다.
 _INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
 _GENERIC_FAILURE = ("generation_failed", "이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.")
+#: 얼굴 패스를 못 한 컷은 **원본(남의 얼굴)으로 나가지 않고** 실패한다(face_identity 참조).
+#: 일반 문구로 끝내면 셀러는 "왜 안 나왔나" 도 "돈은 어떻게 됐나" 도 모른다 — 둘 다 말해 준다.
+#: 파드·라이선스 같은 우리 인프라 사정은 여기 쓰지 않는다.
+_FACE_PASS_FAILURE = (
+    "face_pass_unavailable",
+    "모델 얼굴을 적용하지 못해 이 컷을 만들지 못했어요. 크레딧은 차감되지 않았습니다. "
+    "잠시 후 다시 시도해 주세요.",
+)
 
 
 def _seller_facing_failure(code: str, message: str) -> tuple[str, str]:
@@ -981,5 +989,9 @@ async def run_editor_image_job(app, job: dict) -> None:
             if isinstance(detail, dict)
             else "이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요."
         )
+        if isinstance(e, face_identity.FacePassUnavailable):
+            # 사유(pod_not_ready · backend_error · gate_failed · skipped_yaw)는 로그·원장에만 남는다.
+            log.warning("editor_image face pass unavailable (%s) for job %s", e, job_id)
+            code, message = _FACE_PASS_FAILURE
         code, message = _seller_facing_failure(code, message)
         await _fail(message, {"error": str(e)[:300]}, code=code)

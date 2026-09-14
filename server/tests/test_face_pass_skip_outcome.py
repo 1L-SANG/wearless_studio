@@ -115,10 +115,16 @@ def test_design_skip_does_not_count_toward_the_pod_alert(monkeypatch, caplog):
     assert [r for r in caplog.records if r.levelno == logging.CRITICAL] == []
 
 
-def test_connection_error_still_retries_once_and_falls_back_as_backend_error(monkeypatch):
-    """연결 오류(예외로 끝나 tries 없음)는 기존대로 — 기억을 지우고 한 번 더 기다렸다 재실행한다."""
+def test_connection_error_still_retries_once_then_fails_the_cut(monkeypatch):
+    """연결 오류(예외로 끝나 tries 없음)는 기존대로 — 기억을 지우고 한 번 더 기다렸다 재실행한다.
+
+    두 번째도 실패하면 **원본을 내보내지 않고** 컷을 실패시킨다. 기록·파드 알림은 그대로.
+    """
     dead = fi.FacePassResult(b"ORIG", "image/png", False, {"tries": [], "reason": "error:ConnectError"})
-    _, _, outcome, probes, renders = _run(monkeypatch, [dead, dead])
-    assert renders == [1, 1] and probes == [HEALTH]
+    calls: dict = {}
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _run(monkeypatch, [dead, dead], outcome=outcome, calls=calls)
+    assert calls["renders"] == [1, 1] and calls["probes"] == [HEALTH]
     assert outcome == {"face_pass": "fallback:backend_error"}
     assert len(fi._fallback_events) == 1
