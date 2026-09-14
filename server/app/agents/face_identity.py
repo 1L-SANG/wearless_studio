@@ -209,6 +209,16 @@ SKIN_T0, SKIN_T1 = 10.0, 22.0
 #: 옷 판정 침식 반경(1024 기준). 이웃까지 옷일 때만 옷으로 친다 — 목·턱 경계의 얇은 피부를 안 먹는다.
 #: 1 은 띠를 더 지우지만 생성 목을 50~90px 건드리고, 9 는 띠가 3~6% 남는다. 3 이 그 사이다.
 GARMENT_ERODE_PX = 3
+#: 머리카락 판정 = 얼굴 박스 **위쪽** 머리에서 뽑은 YCrCb 중앙값과의 거리. 여기엔 명도(Y)도 넣는다 —
+#: 옷과 머리를 가르는 축이 대개 명암이기 때문이다(검은 머리 vs 회색 후드).
+#: 왜 필요한가: 턱선 아래 "피부가 아닌 것" 을 전부 지키면 **바탕 인물의 머리카락**까지 지킨다.
+#: 실측(2026-09-14, 실제 룩북 coor_1 — 바탕 머리가 턱선 아래로 내려온 컷): 가드 없이 SFace
+#: 0.701 → 0.659(−0.042). 머리색 제외 후 회복. 옷이 머리색과 비슷하면 그 자리는 보호를 잃을 뿐이라
+#: 안전한 방향으로 진다(= 지금 동작).
+HAIR_T0, HAIR_T1 = 22.0, 46.0
+#: 머리색과 옷색이 이보다 가까우면 가드를 걸지 않는다 — 갈라낼 수 없는데 걸면 옷이 통째로
+#: 머리로 잡혀 보호가 풀리고 띠가 되돌아온다.
+HAIR_GARMENT_MIN_GAP = 30.0
 #: 보호 경계는 턱선이 아니라 **턱선 위 이만큼**(얼굴 높이 대비)이다. 후드 유령의 날개가 턱보다 위까지
 #: 올라와서, 턱선에서 끊으면 날개가 반만 지워진다(2026-09-14 확대 관찰). 0.15 에서 수치가 포화하고
 #: 0.35 는 신원이 떨어진다(SFace 0.773 → 0.755).
@@ -891,6 +901,56 @@ def _skinness(arr: np.ndarray, ref: np.ndarray) -> np.ndarray:
     return np.clip((SKIN_T1 - d) / (SKIN_T1 - SKIN_T0), 0.0, 1.0)
 
 
+def _hair_reference(up: np.ndarray, plan: FacePlan, bg: np.ndarray,
+                    skin_ref: np.ndarray | None) -> np.ndarray | None:
+    """얼굴 박스 **위쪽**(이마 위~정수리)에서 배경도 피부도 아닌 픽셀의 YCrCb 중앙값 = 머리색.
+
+    거기 있는 것은 머리카락뿐이다(모자·두건이면 그것이 머리로 잡히는데, 그건 그것대로 맞다 —
+    턱 아래로 내려온 그 픽셀도 바탕 인물의 것이라 지우는 게 낫다).
+    """
+    if skin_ref is None:
+        return None
+    fx, fy, fw, fh = plan.face_box_crop
+    x0, x1 = int(max(0, fx)), int(min(CROP, fx + fw))
+    y0, y1 = int(max(0, fy - 0.7 * fh)), int(max(0, fy + 0.10 * fh))
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
+    return _region_color(up[y0:y1, x0:x1], bg, skin_ref)
+
+
+def _region_color(patch: np.ndarray, bg: np.ndarray, skin_ref: np.ndarray) -> np.ndarray | None:
+    """배경도 피부도 아닌 픽셀의 YCrCb 중앙값. 그런 픽셀이 거의 없으면 None."""
+    keep = (_backdropness(patch, bg) < 0.3) & (_skinness(patch, skin_ref) < 0.3)
+    if keep.sum() < 256:
+        return None
+    ycrcb = cv2.cvtColor(np.clip(patch, 0, 255).astype(np.uint8), cv2.COLOR_RGB2YCrCb).astype(np.float32)
+    return np.median(ycrcb[keep], axis=0)
+
+
+def _hair_guard(up: np.ndarray, plan: FacePlan, bg: np.ndarray,
+                skin_ref: np.ndarray | None) -> np.ndarray | None:
+    """머리색을 옷색과 **구분할 수 있을 때만** 돌려준다.
+
+    구분이 안 되는데 가드를 걸면 옷이 통째로 머리로 잡혀 보호가 풀린다 — 그러면 띠가 되돌아온다.
+    못 가르면 None(= 지금 동작: 옷을 지키고 머리 위험은 남는다). 안전한 방향이다.
+    """
+    hair = _hair_reference(up, plan, bg, skin_ref)
+    if hair is None:
+        return None
+    fx, fy, fw, fh = plan.face_box_crop
+    y0 = int(min(CROP - 1, max(0, fy + fh)))
+    garment = _region_color(up[y0:, :], bg, skin_ref)
+    if garment is not None and float(np.linalg.norm(hair - garment)) < HAIR_GARMENT_MIN_GAP:
+        return None
+    return hair
+
+
+def _hairness(arr: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    ycrcb = cv2.cvtColor(np.clip(arr, 0, 255).astype(np.uint8), cv2.COLOR_RGB2YCrCb).astype(np.float32)
+    d = np.linalg.norm(ycrcb - ref[None, None, :], axis=2)
+    return np.clip((HAIR_T1 - d) / (HAIR_T1 - HAIR_T0), 0.0, 1.0)
+
+
 def _soften(mask: np.ndarray, radius: int) -> np.ndarray:
     """침식 후 같은 반경으로 다시 흐린다 — 이웃까지 같은 판정일 때만 1, 경계는 램프."""
     k = abs(int(radius)) | 1
@@ -935,7 +995,14 @@ def keep_mask(up: np.ndarray, gen_arr: np.ndarray, plan: FacePlan) -> tuple[np.n
         line = fy + fh - GARMENT_CHIN_LIFT * fh
         below = np.repeat(np.clip(np.arange(CROP, dtype=np.float32)[:, None] - line, 0.0, 1.0),
                           CROP, axis=1)
-        garment = _soften(below * (1.0 - _skinness(up, ref)), GARMENT_ERODE_PX)
+        garment = below * (1.0 - _skinness(up, ref))
+        hair_ref = _hair_guard(up, plan, bg, ref)
+        if hair_ref is not None:
+            # ★ 바탕 인물의 **머리카락**은 지키지 않는다 — 지키면 턱 아래로 내려온 남의 머리 가닥이
+            #   그대로 남아 신원이 떨어진다(coor_1 실측 −0.042). 얼굴 패스가 바꿔야 할 것이다.
+            garment = garment * (1.0 - _hairness(up, hair_ref))
+            meta["keep_hair_excluded"] = True
+        garment = _soften(garment, GARMENT_ERODE_PX)
         keep = keep * (1.0 - garment)
         meta["keep_garment_frac"] = round(float((garment > 0.5).mean()), 4)
     return np.clip(keep, 0.0, 1.0), meta

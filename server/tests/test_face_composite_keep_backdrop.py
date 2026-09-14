@@ -26,6 +26,7 @@ from app.agents import face_identity as fi
 BACKDROP = (200, 200, 200)
 SKIN = (214, 172, 148)
 GARMENT = (150, 150, 152)
+HAIR = (42, 34, 30)
 #: 배경만 이만큼 어둡게 — 링(타원 테두리)은 머리를 주로 표본하므로 전역 보정이 이걸 못 지운다.
 #: 운영 실측 color_shift 11.3 회차의 축소판이다.
 GEN_BACKDROP_DROP = 8.0
@@ -173,6 +174,37 @@ def test_the_keep_mask_never_raises_the_alpha():
     keep, _meta = fi.keep_mask(up, gen, plan)
     assert keep.shape == (fi.CROP, fi.CROP)
     assert keep.min() >= 0.0 and keep.max() <= 1.0
+
+
+def test_the_base_persons_hair_below_the_chin_is_not_protected():
+    """★ 턱 아래 "피부가 아닌 것" 을 전부 지키면 **바탕 인물의 머리카락**까지 지킨다.
+
+    실제 룩북 컷(coor_1 — 바탕 머리가 턱선 아래로 내려온 사진)에서 그것 때문에 남의 머리 가닥이
+    남아 SFace 가 0.701 → 0.659 로 떨어졌다. 머리색을 얼굴 박스 위쪽에서 뽑아 옷 판정에서 뺀다.
+    옷이 머리색과 비슷하면 그 자리는 보호를 잃을 뿐이라 안전한 방향으로 진다(= 지금 동작).
+    """
+    orig, plan = _scene()
+    draw = ImageDraw.Draw(orig)
+    bx, by, bw, bh = plan.box
+    draw.ellipse((bx - 0.2 * bw, by - 0.5 * bh, bx + 1.2 * bw, by + 0.35 * bh), fill=HAIR)  # 정수리
+    strand = (bx + 1.0 * bw, by + 0.9 * bh, bx + 1.25 * bw, by + 1.9 * bh)                  # 턱 아래로
+    draw.rectangle(strand, fill=HAIR)
+    gen = _generated(orig, plan)
+    up = np.asarray(fi.crop_1024(orig, plan).convert("RGB"), np.float32)
+    keep, meta = fi.keep_mask(up, np.asarray(gen.convert("RGB"), np.float32), plan)
+    assert meta.get("keep_hair_excluded") is True, "머리색을 못 뽑았다 — 가드가 안 걸린다"
+
+    s = fi.CROP / plan.crop[2]
+    def _crop_box(b):
+        return (int((b[0] - plan.crop[0]) * s), int((b[1] - plan.crop[1]) * s),
+                int((b[2] - plan.crop[0]) * s), int((b[3] - plan.crop[1]) * s))
+    hx0, hy0, hx1, hy1 = _crop_box(strand)
+    hair_keep = keep[hy0 + 8:hy1 - 8, hx0 + 8:hx1 - 8]
+    assert hair_keep.size and hair_keep.min() > 0.9, "바탕 머리 가닥을 지키면 남의 머리가 남는다"
+
+    gx0, gy0, gx1, gy1 = _crop_box((bx - 0.5 * bw, by + 1.6 * bh, bx + 0.5 * bw, by + 2.2 * bh))
+    garment_keep = keep[max(0, gy0):min(fi.CROP, gy1), max(0, gx0):min(fi.CROP, gx1)]
+    assert garment_keep.size and garment_keep.max() < 0.1, "옷은 여전히 지켜야 한다"
 
 
 def test_a_face_box_at_the_photo_edge_still_produces_a_mask():
