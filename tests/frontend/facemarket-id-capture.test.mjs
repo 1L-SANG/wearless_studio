@@ -221,6 +221,102 @@ test('simpleAuthUnavailableReason 이 없으면 간편인증 버튼이 활성화
   }
 });
 
+// ── (d) isMobileLike 힌트: 간편인증은 폰에서만 시작하게 안내한다 (Task 8) ─────────
+// IdentityMethodStep.jsx 는 isMobileLike() 를 인자 없이 호출해 실행 시점의 실제 window
+// 전역을 본다 — 그래서 여기서는(unit 테스트처럼 인자로 넣는 대신) globalThis.window 를
+// 직접 몽키패치해 컴포넌트가 실제로 그 전역을 읽는지까지 통합 검증한다. 각 테스트가 끝나면
+// 원래 상태로 되돌려(finally) 같은 파일의 다른 테스트로 전역이 새지 않게 한다.
+function withWindow(windowLike, fn) {
+  const hadOwn = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const original = globalThis.window;
+  if (windowLike === undefined) delete globalThis.window;
+  else globalThis.window = windowLike;
+  return Promise.resolve().then(fn).finally(() => {
+    if (hadOwn) globalThis.window = original; else delete globalThis.window;
+  });
+}
+
+test('거친 포인터(폰)면 간편인증이 선택 가능하다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow({ matchMedia: () => ({ matches: true }) }, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, false, 'coarse pointer 면 막으면 안 된다');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('정밀 포인터(PC)면 간편인증을 막고 폰에서 진행하라고 안내한다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow({ matchMedia: () => ({ matches: false }) }, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, true, 'coarse pointer 가 없으면 막아야 한다');
+      assert.match(collectText(simpleAuthButton), /휴대폰에서 진행해 주세요/, '왜 막혔는지 알려줘야 한다');
+      assert.match(collectText(simpleAuthButton), /이어져요/, '진행 상황이 안 사라진다는 안심 문구가 있어야 한다(핸드오프를 만드는 대신 GET /enrollments/current 이어받기를 안내)');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('matchMedia 를 못 구하면(구형 브라우저·window 부재) 간편인증을 막지 않는다(fail open)', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow(undefined, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, false, '판별이 불확실하면 허용 쪽으로 접어야 한다');
+    });
+    await withWindow({}, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.equal(simpleAuthButton.props.disabled, false, 'matchMedia 가 없는 window 도 fail open 이어야 한다');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('기기 판별과 무관하게 모바일 신분증(mid)은 세 경우 모두 그대로 선택 가능하다', async () => {
+  // mid 는 애초에 simpleAuthReason 을 전혀 참조하지 않는다 — 이 테스트는 그 무관함을
+  // "코드를 안 읽는다"가 아니라 세 device 상태 각각에서 렌더+클릭까지 직접 증명한다.
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    const cases = [
+      { label: 'coarse(폰)', windowLike: { matchMedia: () => ({ matches: true }) } },
+      { label: 'fine(PC)', windowLike: { matchMedia: () => ({ matches: false }) } },
+      { label: 'window 없음', windowLike: undefined },
+    ];
+    for (const { label, windowLike } of cases) {
+      // eslint-disable-next-line no-loop-func
+      await withWindow(windowLike, () => {
+        const picked = [];
+        const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: (m) => picked.push(m) });
+        const midButton = findTree(tree, (node) => node.type === 'button'
+          && collectText(node).includes('모바일 신분증으로 확인'));
+        assert.ok(midButton, `mid 버튼을 찾을 수 없다 (${label})`);
+        assert.equal(Boolean(midButton.props.disabled), false, `mid 는 disabled 가 아니어야 한다 (${label})`);
+        midButton.props.onClick();
+        assert.deepEqual(picked, ['mid'], `mid 클릭이 그대로 onPick('mid') 로 이어져야 한다 (${label})`);
+      });
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
 // ── (b) IdDocumentStep: 서버로 가는 건 캔버스에서 뽑은 blob 이지 원본 File 이 아니다 ──
 
 // 훅 호출 순서(IdDocumentStep.jsx 상단 주석과 동일해야 한다):

@@ -8,6 +8,7 @@
    ============================================================= */
 import { useEffect } from 'react';
 import s from './ModelRegister.module.css';
+import { isMobileLike } from './identityMethodConfig.js';
 
 const METHOD_COPY = Object.freeze({
   mid: {
@@ -24,12 +25,29 @@ const METHOD_COPY = Object.freeze({
 // 그 설정 없이 위젯을 열면 v1.0 경로(모바일 신분증용)를 타서 조용히 실패하므로, 버튼을
 // 아예 숨기지 않고 비활성화한 채 이유를 화면에 남긴다(설정 문제를 사용자 탓처럼 보이지
 // 않게, 그리고 운영자가 콘솔 없이도 원인을 볼 수 있게).
+//
+// 간편인증 승인은 어차피 폰 앱으로 온다. PC 로 시작하면 승인 때 폰으로, 신분증 촬영
+// 때문에 또 폰으로 — 두 기기를 오가게 된다. 그래서 거친 포인터(coarse pointer, 손가락)가
+// 없는 기기에서는 아래에서 isMobileLike() 로 이 이유를 하나 더 만들어, 부모가 넘긴
+// simpleAuthUnavailableReason 과 같은 채널(같은 disabled·같은 힌트 자리)로 합쳐 보여준다 —
+// 막을 이유가 두 가지라고 비활성화·힌트 표시를 두 벌 만들지 않는다.
+const SIMPLE_AUTH_DEVICE_REASON = '간편인증은 휴대폰에서 진행해 주세요. 폰에서 같은 계정으로 접속하면 여기서부터 이어져요.';
+
 export default function IdentityMethodStep({ methods, onPick, simpleAuthUnavailableReason }) {
   useEffect(() => {
     if (methods.length === 1) onPick(methods[0]);
   }, [methods, onPick]);
 
   if (methods.length <= 1) return null;
+
+  // 설정 부재가 기기 판별보다 먼저다 — 설정 자체가 없으면 폰이어도 위젯이 못 열리므로 그
+  // 이유가 더 근본적이다(그리고 부모가 이미 계산해 준 값이라 다시 계산할 필요가 없다).
+  // isMobileLike() 는 렌더마다 새로 읽는다: 마운트 시점 값을 state 로 캐시해 버리면 그
+  // 값이 바뀌는 드문 경우(태블릿에 마우스를 붙이는 등)에도 옛 판정이 화면에 남는다.
+  // 다만 pointer:coarse 는 화면 회전·창 리사이즈로는 바뀌지 않는 값이라, 그 두 이벤트에
+  // 대해서는 애초에 "낡을" 값 자체가 없다.
+  const simpleAuthReason = simpleAuthUnavailableReason
+    || (isMobileLike() ? null : SIMPLE_AUTH_DEVICE_REASON);
 
   return (
     <div className="surface">
@@ -50,12 +68,12 @@ export default function IdentityMethodStep({ methods, onPick, simpleAuthUnavaila
           <button
             type="button"
             className={s.methodChoice}
-            disabled={Boolean(simpleAuthUnavailableReason)}
+            disabled={Boolean(simpleAuthReason)}
             onClick={() => onPick('simple_auth')}
           >
             <span className={s.methodChoiceLabel}>{METHOD_COPY.simple_auth.label}</span>
             <small className={s.methodChoiceHint}>
-              {simpleAuthUnavailableReason || METHOD_COPY.simple_auth.hint}
+              {simpleAuthReason || METHOD_COPY.simple_auth.hint}
             </small>
           </button>
         )}
