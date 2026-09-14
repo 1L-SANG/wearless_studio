@@ -40,3 +40,18 @@ export function rrnRectInFrame(frameW, frameH, fill) {
     h: Math.round(RRN_REGION.hr * g.h),
   };
 }
+
+/* 가이드 박스를 프레임 대비 백분율로. 화면에 그릴 때 쓴다.
+
+   오버레이를 CSS 로 따로 그리면 안 된다 — 사용자가 맞춘 네모와 마스크를 칠하는
+   네모가 어긋나면 기하는 맞는데 번호가 안 가려진다. 비디오를 width:100%; height:auto
+   로 두면 표시 박스가 곧 프레임이라, 이 백분율이 어떤 배율에서도 정확히 겹친다. */
+export function guideRectPercent(frameW, frameH, fill) {
+  const g = guideRectInFrame(frameW, frameH, fill);
+  return {
+    left: (g.x / frameW) * 100,
+    top: (g.y / frameH) * 100,
+    width: (g.w / frameW) * 100,
+    height: (g.h / frameH) * 100,
+  };
+}

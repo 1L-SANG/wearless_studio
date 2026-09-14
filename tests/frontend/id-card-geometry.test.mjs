@@ -3,7 +3,7 @@
    이 모듈이 틀리면 마스크가 엉뚱한 데 찍히므로(=주민번호 노출) 좌표를 테스트로 굳힌다. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CARD_ASPECT, RRN_REGION, guideRectInFrame, rrnRectInFrame } from '../../src/features/model/idCardGeometry.js';
+import { CARD_ASPECT, RRN_REGION, guideRectInFrame, rrnRectInFrame, guideRectPercent } from '../../src/features/model/idCardGeometry.js';
 
 test('카드 비율은 ISO/IEC 7810 ID-1 (85.6 × 53.98mm)', () => {
   assert.ok(Math.abs(CARD_ASPECT - 85.6 / 53.98) < 1e-9);
@@ -36,4 +36,15 @@ test('fill 을 줄이면 가이드가 작아지고 주민번호 영역도 같이
   const big = rrnRectInFrame(1080, 1920, 0.9);
   const small = rrnRectInFrame(1080, 1920, 0.6);
   assert.ok(small.w < big.w && small.h < big.h);
+});
+
+test('guideRectPercent: 화면 오버레이 백분율 — 실측값 고정', () => {
+  // 오버레이가 CSS 로 따로 그려지면 사용자가 맞춘 네모와 마스크 칠하는 네모가
+  // 어긋난다. 그래서 오버레이도 같은 함수에서 나와야 하고, 그 값을 실측으로 박는다.
+  const p = guideRectPercent(1920, 1080);
+  assert.ok(Math.abs(p.left - 11.6667) < 0.01, `left=${p.left}`);
+  assert.ok(Math.abs(p.top - 7.0370) < 0.01, `top=${p.top}`);
+  assert.ok(Math.abs(p.width - 76.7188) < 0.01, `width=${p.width}`);
+  // 높이 비율은 fill 과 같아야 한다 — 세로가 제약일 때 카드 높이는 정확히 frameH*fill 이다.
+  assert.ok(Math.abs(p.height - 86.0185) < 0.01, `height=${p.height}`);
 });

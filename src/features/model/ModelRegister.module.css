@@ -464,3 +464,11 @@
   letter-spacing: -0.01em;
   color: var(--fm-ink);
 }
+/* 신분증 가이드 촬영 스테이지. 비디오를 width:100%; height:auto 로 두면 표시 박스가
+   곧 프레임 픽셀 좌표계가 되고, idCardGeometry.guideRectPercent 가 뽑는 백분율이
+   그 좌표계 위에 어떤 배율에서도 정확히 겹친다 — 그래서 가이드 박스의 위치·크기는
+   여기(CSS)가 아니라 컴포넌트가 인라인 style 로 넣는다. 이 클래스들은 시각 스타일만 쥔다. */
+.idCameraStage { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+.idCameraVideo { display: block; width: 100%; height: auto; }
+.idCameraGuide { position: absolute; border: 2px dashed #fff; border-radius: 10px; pointer-events: none; }
+.idCameraHint { margin-top: 12px; text-align: center; color: var(--fm-muted); }
