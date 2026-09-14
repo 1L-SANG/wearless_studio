@@ -30,7 +30,7 @@ def _reset():
 
 def _settings(**kw):
     base = {"gemini_api_key": "x", "r2_bucket": "b", "face_identity_enabled": True,
-            "face_pass_wait_seconds": 300}
+            "face_pass_wait_seconds": 300, "face_pass_real_wait_seconds": 600}
     base.update(kw)
     return make_settings(**base)
 
@@ -105,7 +105,8 @@ def _apply(monkeypatch, *, ready=True, backend=object(), result=None):
         monkeypatch.setattr(fi, "run_face_pass", lambda *a, **k: result)
     outcome: dict = {}
     image, mime = asyncio.run(fi.apply_face_pass(
-        _settings(face_pass_wait_seconds=0), b"ORIG", "image/png", SPEC, outcome=outcome))
+        _settings(face_pass_wait_seconds=0, face_pass_real_wait_seconds=0),
+        b"ORIG", "image/png", SPEC, outcome=outcome))
     return image, mime, outcome
 
 
@@ -117,14 +118,44 @@ def test_applied_outcome(monkeypatch):
     assert len(outcome["face_recipe"]) == 12
 
 
-def test_pod_not_ready_falls_back_to_the_generated_face(monkeypatch):
+def test_pod_not_ready_fails_the_cut_instead_of_shipping_the_generated_face(monkeypatch):
+    """**원본으로 내보내지 않는다.** 여기 오는 컷은 전부 실존 모델(LoRA) 컷이고, 원본은 provider 가
+    그린 남의 얼굴이다. 그게 나가면 셀러는 산 적 없는 얼굴을 받고 라이선스·정산이 거짓이 된다
+    (2026-09-14 제품 결정). 호출자가 그 컷/잡을 실패로 종결하고 크레딧을 돌려준다.
+    """
     def boom(*a, **k):
         raise AssertionError("파드가 안 떴으면 렌더를 부르지 않는다")
 
     monkeypatch.setattr(fi, "run_face_pass", boom)
-    image, mime, outcome = _apply(monkeypatch, ready=False)
-    assert (image, mime) == (b"ORIG", "image/png")
-    assert outcome == {"face_pass": "fallback:pod_not_ready"}
+    outcome: dict = {}
+    with pytest.raises(fi.FacePassUnavailable):
+        _apply(monkeypatch, ready=False)
+    # 기록은 남는다 — 어떤 컷이 왜 못 나갔는지 되짚을 수 있어야 한다
+    monkeypatch.setattr(fi, "resolve_backend", lambda s, spec: object())
+    monkeypatch.setattr(fi, "_probe_ready", lambda url, timeout=5.0: False)
+    with pytest.raises(fi.FacePassUnavailable):
+        asyncio.run(fi.apply_face_pass(
+            _settings(face_pass_wait_seconds=0, face_pass_real_wait_seconds=0),
+            b"ORIG", "image/png", SPEC, outcome=outcome))
+    assert outcome["face_pass"] == "failed:pod_not_ready"
+
+
+def test_the_real_cut_gets_its_own_longer_budget(monkeypatch):
+    """일반 대기(FACE_PASS_WAIT_SECONDS)와 따로 둔다 — 새 호스트 콜드스타트 실측 549초."""
+    seen = {}
+
+    async def fake_wait(settings, spec, url_provider=None, *, budget_seconds=None):
+        seen["budget"] = budget_seconds
+        return None
+
+    monkeypatch.setattr(fi, "wait_for_backend", fake_wait)
+    monkeypatch.setattr(fi, "resolve_backend", lambda s, spec: object())
+    with pytest.raises(fi.FacePassUnavailable):
+        asyncio.run(fi.apply_face_pass(
+            _settings(face_pass_wait_seconds=30, face_pass_real_wait_seconds=600),
+            b"ORIG", "image/png", SPEC))
+    assert seen["budget"] == 600
+    assert fi.FACE_PASS_REAL_WAIT_SECONDS_DEFAULT == 600
 
 
 def test_backend_error_is_its_own_reason(monkeypatch):

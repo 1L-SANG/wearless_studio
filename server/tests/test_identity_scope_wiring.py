@@ -52,7 +52,7 @@ def test_reserve_counts_only_cuts_this_model_can_make(
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": REAL}
 
-    async def fake_verify(*args, **kwargs):
+    def fake_verify(*args, **kwargs):
         return None
 
     async def fake_lock(conn, project_id, license_id):
@@ -78,7 +78,7 @@ def test_reserve_counts_only_cuts_this_model_can_make(
     monkeypatch.setattr(routes.repo, "get_product", fake_product)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)

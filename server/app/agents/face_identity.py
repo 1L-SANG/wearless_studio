@@ -1371,6 +1371,9 @@ def _meta_for_log(meta: dict) -> dict:
 #: 파드가 깨어날 때까지 기다리는 최대 시간(초). 실측 콜드스타트 ≈2분 + reconciler 주기 60초.
 #: 잡 lease 는 heartbeat 로 연장되므로(dispatcher lease/3) 몇 분 대기는 안전하다.
 FACE_PASS_WAIT_SECONDS_DEFAULT = 300
+#: 실존 모델(LoRA) 컷의 대기 상한. 이 컷은 못 기다려도 **원본으로 못 내보낸다**(아래 예외 참조).
+#: 600 의 근거: 새 호스트 콜드스타트 실측 549초(가중치 내려받기 포함).
+FACE_PASS_REAL_WAIT_SECONDS_DEFAULT = 600
 #: 헬스 폴링 간격. 파드가 뜨는 데 분 단위가 걸리므로 촘촘히 찌를 이유가 없다.
 FACE_PASS_POLL_SECONDS = 10
 #: 한 번 떠 있는 걸 본 URL 은 이 시간 동안 다시 기다리지 않는다 — 같은 잡의 두 번째 컷부터는
@@ -1436,7 +1439,17 @@ def _probe_ready(url: str, timeout: float = 5.0) -> bool:
         return False
 
 
-async def wait_for_backend(settings, spec: FaceIdentitySpec, url_provider=None) -> str | None:
+class FacePassUnavailable(RuntimeError):
+    """얼굴 패스를 할 수 없었다 — **원본을 대신 내보내면 안 되는** 경우.
+
+    실존 모델 컷에서 파드가 끝내 안 뜨면 여기로 온다. 그 컷을 원본(provider 가 그린 얼굴)으로
+    내보내면 셀러는 산 적 없는 얼굴을 받고, 라이선스·정산은 그 사람 이름으로 기록된다 —
+    상품의 전제가 깨진다. 호출자(워커)가 그 컷/잡을 실패로 종결하고 크레딧을 돌려준다.
+    """
+
+
+async def wait_for_backend(settings, spec: FaceIdentitySpec, url_provider=None,
+                           *, budget_seconds: int | None = None) -> str | None:
     """렌더 전에 파드가 깨어날 때까지 기다린다. 준비된 **URL** 을 돌려주고, 못 뜨면 None.
 
     **여기서 파드를 켜지는 않는다.** 이 잡 자체가 수요라 reconciler 가 60초 안에 켠다
@@ -1447,7 +1460,11 @@ async def wait_for_backend(settings, spec: FaceIdentitySpec, url_provider=None) 
     있어서, 잡 시작 때 한 번 읽은 주소를 붙들면 죽은 파드를 끝까지 찌르거나 파드가 생기기도
     전에 폴백한다.
     """
-    budget = int(getattr(settings, "face_pass_wait_seconds", FACE_PASS_WAIT_SECONDS_DEFAULT) or 0)
+    budget = int(
+        budget_seconds
+        if budget_seconds is not None
+        else (getattr(settings, "face_pass_wait_seconds", FACE_PASS_WAIT_SECONDS_DEFAULT) or 0)
+    )
     deadline = time.monotonic() + max(0, budget)
     last_url: str | None = None
     while True:
@@ -1543,7 +1560,7 @@ async def apply_face_pass(
     outcome: dict | None = None,
     url_provider=None,
 ) -> tuple[bytes, str]:
-    """generate() 후처리 진입점. 실패하면 원본 (image, mime) 그대로 — **폴백이 계약이다.**
+    """generate() 후처리 진입점. 대부분의 실패는 원본 (image, mime) 그대로 — **폴백이 계약이다.**
 
     파드는 필요할 때만 켠다. 꺼져 있거나 아직 만들어지는 중이면 첫 렌더가 즉시 실패하는데,
     가끔 쓰는 셀러에게는 그게 사실상 항상이다. 그래서 렌더 전에 파드를 기다리고(최대
@@ -1551,7 +1568,11 @@ async def apply_face_pass(
 
     outcome 이 오면 결과를 적는다:
       "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다)
-      · "fallback:<reason>"(pod_not_ready · backend_error · gate_failed).
+      · "fallback:<reason>"(backend_error · gate_failed) · "failed:pod_not_ready".
+
+    ★ 폴백이 계약이 아닌 경우가 하나 있다: 파드가 끝내 안 뜨면 **FacePassUnavailable** 을 올린다.
+      이 함수에 오는 컷은 전부 실존 모델(LoRA) 컷이라, 원본을 내보내면 셀러가 산 적 없는 얼굴이
+      라이선스 이름으로 나간다. 나머지 폴백(backend_error · gate_failed)은 아직 원본으로 간다.
     """
     def _record(value: str) -> None:
         if outcome is not None:
@@ -1584,12 +1605,18 @@ async def apply_face_pass(
             crop_pad=bool(getattr(settings, "face_crop_pad", True)),
         )
 
-    render_url = await wait_for_backend(settings, spec, url_provider)
+    # 여기 오는 컷은 전부 **실존 모델 + 켜진 LoRA** 다(_face_identity_spec 이 그 행으로만 spec 을
+    # 만든다 — 가상모델 JSON 경로는 삭제됐다). 그래서 대기 상한도 실존 컷 기준을 쓴다.
+    real_budget = int(getattr(settings, "face_pass_real_wait_seconds",
+                              FACE_PASS_REAL_WAIT_SECONDS_DEFAULT) or 0)
+    render_url = await wait_for_backend(settings, spec, url_provider, budget_seconds=real_budget)
     if render_url is None:
-        log.warning("face_identity: 파드가 대기 시간 안에 뜨지 않았다 — 이 컷은 원본으로 간다")
-        _record("fallback:pod_not_ready")
+        # **원본으로 내보내지 않는다.** 셀러가 산 것은 이 사람의 얼굴이고, 원본은 provider 가
+        # 그린 남의 얼굴이다. 그 컷이 나가면 라이선스·정산이 거짓이 된다(2026-09-14 제품 결정).
+        log.warning("face_identity: 파드가 %d초 안에 뜨지 않았다 — 이 컷은 실패시킨다", real_budget)
+        _record("failed:pod_not_ready")
         _note_fallback("pod_not_ready")
-        return image, mime
+        raise FacePassUnavailable("pod_not_ready")
     live = replace(spec, backend_url=render_url) if render_url else spec
     task = _run(live)
     if task is None:
@@ -1662,6 +1689,7 @@ __all__ = [
     "HttpFaceBackend",
     "NullBackend",
     "QwenLocalBackend",
+    "FacePassUnavailable",
     "apply_face_pass",
     "wait_for_backend",
     "composite_alpha",
