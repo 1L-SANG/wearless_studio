@@ -15,9 +15,13 @@
   - put_bytes 실패 → 503
   - 정상 경로의 상태 전이(id_capture_pending → identity_pending)와 저장 컬럼
   - 마스킹 기하 검증(FM_ID_MASK_VERIFY) — enforce 는 미검출을 422 로 거부하고 아무것도
-    저장하지 않는다, shadow(기본)는 같은 업로드를 통과시킨다. 순수 함수 테스트만으로는
-    이 검사가 라우트에 실제로 배선됐는지(혹은 잘못된 자리에 배선됐는지) 알 수 없다.
+    저장하지 않는다, shadow(기본)는 같은 업로드를 통과시키되 판정을 mean/stddev 와
+    함께 반드시 로그로 남긴다, off 는 검사도 로그도 없다. 순수 함수 테스트만으로는
+    이 검사가 라우트에 실제로 배선됐는지, 로그가 실제로 나가는지 알 수 없다.
 """
+
+import logging
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -25,20 +29,48 @@ import pytest
 
 from app import facemarket_enrollment, facemarket_id_document
 from app.agents.face_qc import QcFailed
-from app.facemarket_id_mask_verify import RRN_REGION
+from app.facemarket_id_mask_verify import rrn_rect_in_frame
 
 JPEG = b"\xff\xd8\xff" + b"id-card-bytes"
 
 
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):  # noqa: D102
+        self.records.append(record)
+
+
+@contextmanager
+def _capture_enrollment_logs():
+    """`app.facemarket_enrollment` 로거에 직접 붙는다.
+
+    test_http_error_log.py 와 같은 이유(create_app 이 _configure_logging 으로 root
+    핸들러를 통째로 교체하므로 pytest caplog(root 에 붙는다)는 client 픽스처 생성
+    뒤에 지워진다) — 이름 있는 로거에 직접 붙이면 그 교체와 무관하다."""
+    handler = _LogCapture()
+    logger = logging.getLogger("app.facemarket_enrollment")
+    logger.addHandler(handler)
+    try:
+        yield handler.records
+    finally:
+        logger.removeHandler(handler)
+
+
 def _id_card_bytes(masked: bool) -> bytes:
     """가이드를 채운 카드 한 장 — test_facemarket_id_mask_verify.py 의 `_card()` 와 동일한
-    구성. masked=True 면 RRN_REGION 자리를 단색으로 덮는다."""
+    구성. masked=True 면 rrn_rect_in_frame() 이 계산한 자리를 단색으로 덮는다.
+
+    RRN_REGION 비율을 프레임 전체에 바로 적용하면(fix round 1 이전의 버그) 서버가
+    보는 자리와 다른 곳을 칠하게 된다 — 가이드 박스 "안에서" 적용하는 rrn_rect_in_frame
+    을 그대로 써야 한다."""
     img = np.full((540, 856, 3), 200, np.uint8)
     img[::7, :] = 120
     if masked:
-        x = int(RRN_REGION["xr"] * 856); y = int(RRN_REGION["yr"] * 540)
-        w = int(RRN_REGION["wr"] * 856); h = int(RRN_REGION["hr"] * 540)
-        img[y:y + h, x:x + w] = 17
+        r = rrn_rect_in_frame(856, 540)
+        img[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]] = 17
     ok, buf = cv2.imencode(".jpg", img)
     assert ok
     return buf.tobytes()
@@ -303,9 +335,34 @@ def test_shadow_lets_the_same_unmasked_upload_through(id_capture):
     assert client.app.state.r2_face.puts, "정상 경로인데 저장이 안 됐다"
 
 
+def test_shadow_logs_the_verdict_with_metrics(id_capture):
+    """Correction 4 의 핵심: shadow 는 거부하지 않는 대신 판정을 반드시 기록해야
+    임계 캘리브 근거가 된다(리뷰 finding 2). 분기만 맞고 로그 호출이 빠지는 리팩터를
+    이 테스트가 잡는다 — 기존 테스트들은 거부 여부만 보고 로그 유무는 안 봤다.
+
+    pytest caplog(root 로거) 대신 `app.facemarket_enrollment` 로거에 직접 핸들러를
+    붙인다 — client 생성이 create_app()→_configure_logging() 을 거치며 root 핸들러를
+    통째로 교체해 caplog 를 지운다(test_http_error_log.py 의 같은 함정)."""
+    client, _store, _settings, enrollment_id = id_capture(fm_id_mask_verify="shadow")
+
+    with _capture_enrollment_logs() as records:
+        response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+
+    assert response.status_code == 201, response.text
+    verdicts = [r for r in records if r.getMessage() == "facemarket_id_mask_verify_verdict"]
+    assert len(verdicts) == 1, "판정 로그가 정확히 한 번 남아야 한다"
+    record = verdicts[0]
+    assert record.enrollment_id == enrollment_id
+    assert record.fm_id_mask_verify == "shadow"
+    assert record.mask_applied is False, "덮이지 않은 사진이니 판정은 False 여야 한다"
+    assert hasattr(record, "mean") and hasattr(record, "stddev"), \
+        "캘리브 근거인 mean/stddev 가 로그에 없다"
+
+
 def test_off_skips_the_check_entirely(id_capture, monkeypatch):
     """off 면 mask_is_applied 자체를 호출하지 않는다 — 검사 대상 사진이 뭐든(마스킹
-    함수가 터지더라도) 업로드는 영향받지 않는다."""
+    함수가 터지더라도) 업로드는 영향받지 않는다. 검사를 안 하니 판정 로그도 없어야
+    한다(리뷰 finding 2 — off 에서 로그가 남으면 검사 자체는 스킵했다는 주장과 모순)."""
     client, _store, _settings, enrollment_id = id_capture(fm_id_mask_verify="off")
 
     def boom(_data):
@@ -313,6 +370,10 @@ def test_off_skips_the_check_entirely(id_capture, monkeypatch):
 
     monkeypatch.setattr(facemarket_enrollment.facemarket_id_mask_verify, "mask_is_applied", boom)
 
-    response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
+    with _capture_enrollment_logs() as records:
+        response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
 
     assert response.status_code == 201, response.text
+    assert not any(
+        r.getMessage() == "facemarket_id_mask_verify_verdict" for r in records
+    ), "off 인데 판정 로그가 남았다"
