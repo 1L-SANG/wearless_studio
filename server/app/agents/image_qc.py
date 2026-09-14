@@ -195,7 +195,7 @@ def build_prompt(
         with open(_SCORE_PROMPT_FILE, encoding="utf-8") as f:
             scoring = f.read().replace("${roleSpecificRules}", "\n".join(role_rules))
             scoring = scoring.replace("${tuckCriticalError}",
-                "the top or outerwear product tucked into the bottom; "
+                "; the top or outerwear product tucked into the bottom"
                 if category in (None, "top", "outer") else "")
             prompt = f"{prompt}\n{scoring}"
         # 매칭 하의 블록은 **scored 위에만** 얹는다. 매칭 없는 경로(scene·best_of·매칭無
@@ -371,6 +371,10 @@ async def verdict(
         result.setdefault("product_risks", None)
         result["quality_policy"] = mannequin_quality.POLICY_VERSION
         result["image_hash"] = hashlib.sha256(generated_image.data).hexdigest()
+        normalized_surface, surface_only = mannequin_quality.fresh_surface_policy(result)
+        if normalized_surface:
+            result["surface_policy_normalized"] = True
+            result["surface_review_only"] = surface_only
     return result
 
 

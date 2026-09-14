@@ -303,7 +303,7 @@ async def run_personalization_generation_job(app, job: dict) -> None:
         model = resolve_model(s, "image_high")
         try:
             res = await app.state.gemini.generate_content_image(
-                model, prompt, [*face_imgs, *product_imgs], s.mannequin_image_size,
+                model, prompt, [*face_imgs, *product_imgs], s.detail_cut_image_size,
                 aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
             await _fail("개인화 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

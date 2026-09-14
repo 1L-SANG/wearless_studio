@@ -609,7 +609,7 @@ def score_outcome(s, p2, *, product_policy=True) -> str:
     """
     if not isinstance(p2, dict):
         return "auto_pass"
-    if p2.get("critical_errors"):
+    if p2.get("critical_errors") and p2.get("surface_review_only") is not True:
         return "regenerate"
     if product_policy and mannequin_quality.repairable_issues(p2):
         return "regenerate"
@@ -686,7 +686,10 @@ def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | N
         out["series_consistency"] = series["consistency"]
         out["series_inconsistencies"] = series["inconsistencies"]
     out["critical_errors"] = p2d.get("critical_errors") or []
-    for key in ("product_risks", "quality_policy", "image_hash", "matching_critical_errors"):
+    for key in (
+        "product_risks", "quality_policy", "image_hash", "matching_critical_errors",
+        "surface_policy_normalized", "surface_review_only",
+    ):
         if key in p2d:
             out[key] = p2d[key]
     out["salvaged"] = salvaged
@@ -719,7 +722,8 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     낮은 케이스), 그때 빈 피드백이면 다음 attempt 가 같은 프롬프트로 돌아 같은 결과를 낸다.
     """
     parts = []
-    if (scores or {}).get("critical_errors"):
+    if ((scores or {}).get("critical_errors")
+            and (scores or {}).get("surface_policy_normalized") is not True):
         parts.append("CRITICAL: " + "; ".join(dict.fromkeys(scores["critical_errors"])))
     issues = mannequin_quality.repairable_issues({"product_risks": (scores or {}).get("product_risks")})
     if issues:

@@ -43,6 +43,54 @@ def test_unscored_shared_prompt_is_not_changed_by_mannequin_role():
     assert image_qc.build_prompt(2, main_product_category="bottom") == before
 
 
+def test_scored_mannequin_prompt_keeps_pattern_critical_out_of_paid_action_fields():
+    prompt = image_qc.build_prompt(2, scored=True, main_product_category="top")
+    assert 'report the critical error "pattern scale changed"' not in prompt.lower()
+    assert "report pattern and material findings only in product_risks" in prompt
+    assert "do not put them in critical_errors, mismatches, correctionprompt, or retry" in prompt.lower()
+
+
+def test_fresh_complete_surface_only_duplicate_critical_is_normalized_for_review(monkeypatch):
+    raw = {
+        **assessment(pattern="critical"),
+        "verdict": "retry",
+        "mismatches": ["pattern scale changed"],
+        "correctionPrompt": "Redraw the grid at a larger scale.",
+        "product_fidelity": 40,
+        "physical_naturalness": 95,
+        "image_quality": 95,
+        "series_consistency": None,
+        "critical_errors": ["pattern scale changed"],
+    }
+
+    async def model(*_args, **_kwargs):
+        return raw, "gemini"
+
+    monkeypatch.setattr(image_qc, "analyze_with_fallback", model)
+    result = asyncio.run(image_qc.verdict(
+        make_settings(), [InlineImage("image/png", b"PRODUCT")],
+        InlineImage("image/png", b"GENERATED"), scored=True,
+        main_product_category="top",
+    ))
+    assert result["critical_errors"] == ["pattern scale changed"]
+    assert result["mismatches"] == ["pattern scale changed"]
+    assert result["surface_review_only"] is True
+    assert mannequin_job.score_outcome(make_settings(), result) == "needs_review"
+
+    raw["product_risks"] = assessment(
+        pattern="critical", logo_graphic="critical"
+    )["product_risks"]
+    raw["critical_errors"] = ["non-surface critical also reported"]
+    mixed = asyncio.run(image_qc.verdict(
+        make_settings(), [InlineImage("image/png", b"PRODUCT")],
+        InlineImage("image/png", b"SECOND"), scored=True,
+        main_product_category="top",
+    ))
+    assert mixed["surface_policy_normalized"] is True
+    assert mixed["surface_review_only"] is False
+    assert mannequin_job.score_outcome(make_settings(), mixed) == "regenerate"
+
+
 def test_detailed_qc_direction_survives_validation_and_repair_compilation():
     direction = ("At the front panel, restore the observed grid path; " * 12
                  + "Keep the cuff opening and straight hem unchanged.")

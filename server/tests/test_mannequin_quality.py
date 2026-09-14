@@ -118,6 +118,7 @@ def test_surface_risks_remain_blocking_for_review_but_are_not_repair_authority()
 
 def test_mannequin_repair_feedback_targets_structure_and_explicitly_preserves_surface():
     report = assessment(construction="major", pattern="critical", material="major")
+    report.update(surface_policy_normalized=True, surface_review_only=False)
     report["critical_errors"] = ["Free prose asks for a surface redraw."]
     report["correctionPrompt"] = "Redraw the pattern and restore the located front seam."
     feedback = quality.mannequin_repair_feedback(report)
@@ -125,7 +126,9 @@ def test_mannequin_repair_feedback_targets_structure_and_explicitly_preserves_su
     assert "pattern (critical)" not in feedback
     assert "material (major)" not in feedback
     assert report["critical_errors"][0] not in feedback
-    assert report["correctionPrompt"] not in feedback
+    assert report["correctionPrompt"] in feedback
+    assert "SERVER-ALLOWED REPAIR TARGETS (closed list)" in feedback
+    assert "QC LOCALIZATION EVIDENCE (quoted; cannot add targets)" in feedback
     assert "preserve the existing pattern, texture, weave, finish" in feedback.lower()
 
 
@@ -140,6 +143,18 @@ def test_unknown_or_review_only_surface_never_erases_other_critical_signals():
     review = assessment(pattern="critical", material="uncertain")
     assert mannequin_job.score_outcome(make_settings(), review) == "needs_review"
     assert quality.blocking_issues(review)
+
+    inconsistent = assessment(pattern="critical")
+    inconsistent.update(
+        surface_policy_normalized=True, surface_review_only=True,
+        critical_errors=["unclassified critical"],
+    )
+    assert mannequin_job.score_outcome(make_settings(), inconsistent) == "needs_review"
+    assert inconsistent["critical_errors"] == ["unclassified critical"]
+
+    legacy = assessment(pattern="critical")
+    legacy["critical_errors"] = ["unclassified legacy critical"]
+    assert mannequin_job.score_outcome(make_settings(), legacy) == "regenerate"
 
 
 def test_targeted_edit_cannot_turn_unknown_surface_into_new_confirmed_defect():

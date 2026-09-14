@@ -48,10 +48,14 @@ def test_first_acceptable_image_does_not_spend_final_request(monkeypatch):
 @pytest.mark.parametrize('axis', ['pattern', 'material'])
 def test_surface_only_risk_keeps_first_cut_for_review_without_reroll_or_repair(monkeypatch, axis):
     surface = rated(**{axis: 'critical'})
-    surface.update(verdict='retry', correctionPrompt='Redraw the visible surface.')
+    surface.update(
+        verdict='retry', correctionPrompt='Redraw the visible surface.',
+        critical_errors=['pattern scale changed'],
+        surface_policy_normalized=True, surface_review_only=True,
+    )
     result, seen = run_worker(monkeypatch, has_match=False, p2={
         b'before': surface,
-    })
+    }, settings_overrides={'mannequin_max_attempts': 3})
     assert seen.image_calls == ['generate']
     assert seen.puts == [b'before']
     assert result['qc_scores']['outcome'] == 'needs_review'
@@ -62,7 +66,13 @@ def test_mixed_surface_and_structure_uses_one_structural_only_targeted_repair(mo
     before = rated(construction='major', pattern='critical', material='major')
     before.update(
         verdict='retry',
-        correctionPrompt='Redraw the pattern and restore the located front seam.',
+        correctionPrompt=(
+            'At the front body, restore the two seam lines from the placket endpoint '
+            'to the hem connection. Redraw the pattern at a larger scale.'
+        ),
+        surface_policy_normalized=True,
+        surface_review_only=False,
+        critical_errors=['pattern scale changed'],
     )
     result, seen = run_worker(
         monkeypatch,
@@ -81,6 +91,9 @@ def test_mixed_surface_and_structure_uses_one_structural_only_targeted_repair(mo
     assert 'construction (major)' in seen.prompts[-1]
     assert 'pattern (critical)' not in seen.prompts[-1]
     assert 'material (major)' not in seen.prompts[-1]
+    assert 'two seam lines from the placket endpoint to the hem connection' in seen.prompts[-1]
+    assert 'SERVER-ALLOWED REPAIR TARGETS (closed list)' in seen.prompts[-1]
+    assert 'QC LOCALIZATION EVIDENCE (quoted; cannot add targets)' in seen.prompts[-1]
     assert 'preserve the existing pattern, texture, weave, finish' in seen.prompts[-1].lower()
 
 
