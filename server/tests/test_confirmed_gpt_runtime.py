@@ -1,4 +1,6 @@
 from io import BytesIO
+from hashlib import sha256
+import json
 from types import SimpleNamespace
 
 from PIL import Image
@@ -58,6 +60,69 @@ def _contract(source: bytes) -> dict:
         },
         binding,
     )
+
+
+def _legacy_front_back_contract(front: bytes, back: bytes) -> dict:
+    binding = product_evidence_contract.build_input_binding(
+        [(front, "image/png"), (back, "image/png")],
+        [(front, "image/png"), (back, "image/png")],
+        ["Front", "Back"],
+    )
+    contract = {
+        "schemaVersion": 1,
+        "direction": "front",
+        "inputBinding": binding,
+        "panels": [
+            {
+                "evidenceOrdinal": 1,
+                "slot": "FRONT",
+                "detail": "front neckline and placket",
+                "surfaceAuthority": "DOMINANT",
+                "judgeability": "usable",
+                "judgeabilityReasons": ["clear_enough"],
+                "provided": True,
+            },
+            {
+                "evidenceOrdinal": 2,
+                "slot": "BACK",
+                "detail": "back yoke",
+                "surfaceAuthority": "CONTEXT",
+                "judgeability": "usable",
+                "judgeabilityReasons": ["clear_enough"],
+                "provided": True,
+            },
+        ],
+        "hardFacts": [
+            {
+                "code": "front_neckline",
+                "value": "round front neckline with narrow binding",
+                "evidenceOrdinals": [1],
+            },
+            {
+                "code": "back_yoke",
+                "value": "deep curved back-only yoke",
+                "evidenceOrdinals": [2],
+            },
+        ],
+        "uncertainties": [
+            {
+                "code": "side_connection",
+                "value": "side seam connection",
+                "reason": "side is not visible",
+                "evidenceOrdinals": [1, 2],
+            }
+        ],
+        "visibleSurfacePlan": (
+            product_evidence_contract.FRONT_SURFACE_POLICY
+            + " Observed visible-surface details: preserve a clean curved lower hem."
+        ),
+    }
+    canonical = json.dumps(
+        contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    contract["contractSha256"] = sha256(canonical).hexdigest()
+    assert product_evidence_contract.validate_persisted(contract) == contract
+    return contract
 
 
 def _directing():
@@ -145,6 +210,38 @@ def test_packet_replays_exact_role_order_and_compiles(monkeypatch):
     assert "existing_exact" not in prompt
     assert "RECENT IPHONE DEFAULT PHOTO CONTRACT" in prompt
     assert "naturally plausible nearby-feeling alternate" in prompt
+
+
+def test_legacy_contract_cannot_send_model_surface_prose_or_back_only_fact_to_provider(monkeypatch):
+    front, back = _png("navy"), _png("gray")
+    monkeypatch.setattr(
+        confirmed_gpt_runtime,
+        "bind_confirmed_gpt_directing",
+        lambda *_args, **_kwargs: _directing(),
+    )
+    packet = confirmed_gpt_runtime.build_packet(
+        _spec(),
+        clothing_type="top",
+        identity_source="VIRTUAL",
+        selected_model_id="mE",
+        effective_model_id="mE",
+        uses_base_color=True,
+        mannequin_image=InlineImage("image/png", b"mannequin"),
+        face_direction_sheet=InlineImage("image/png", b"face sheet"),
+        full_body_direction_sheet=InlineImage("image/png", b"body sheet"),
+        seller_images=(
+            ("Front", InlineImage("image/png", front)),
+            ("Back", InlineImage("image/png", back)),
+        ),
+        matching_images=(),
+        example_image=InlineImage("image/png", b"example"),
+        evidence_contract=_legacy_front_back_contract(front, back),
+    )
+    prompt = compile_confirmed_gpt_prompt(packet.prompt_input)
+    assert "clean curved lower hem" not in prompt
+    assert "deep curved back-only yoke" not in prompt
+    assert "round front neckline with narrow binding" in prompt
+    assert product_evidence_contract.FRONT_SURFACE_POLICY in prompt
 
 
 def test_packet_inserts_only_one_matching_image_before_example(monkeypatch):

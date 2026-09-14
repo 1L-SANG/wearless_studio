@@ -235,6 +235,26 @@ def build_packet(
         raise ConfirmedGptRuntimeError(str(exc)) from exc
 
     matching_attached = bool(matches)
+    front_usable_ordinals = {
+        panel["evidenceOrdinal"]
+        for panel in contract["panels"]
+        if (
+            panel["slot"] in {"FRONT", "FRONT_DETAIL"}
+            and panel["surfaceAuthority"] == "DOMINANT"
+            and panel["judgeability"] == "usable"
+            and panel["provided"] is True
+        )
+    }
+    front_hard_facts = tuple(
+        fact
+        for fact in contract["hardFacts"]
+        if any(
+            ordinal in front_usable_ordinals
+            for ordinal in fact["evidenceOrdinals"]
+        )
+    )
+    if not front_hard_facts:
+        raise ConfirmedGptRuntimeError("confirmed_gpt_front_hard_facts_required")
     roles = (
         InputRole.SELECTED_MANNEQUIN_CUT,
         InputRole.MODEL_FACE_DIRECTION_SHEET,
@@ -256,10 +276,10 @@ def build_packet(
         ordered_roles=roles,
         seller_evidence=tuple(prompt_panels),
         cut_lock=directing.cut_lock(),
-        visible_surface_plan=contract["visibleSurfacePlan"],
+        visible_surface_plan=product_evidence_contract.FRONT_SURFACE_POLICY,
         hard_facts=tuple(
             SellerFact(code=fact["code"], value=fact["value"])
-            for fact in contract["hardFacts"]
+            for fact in front_hard_facts
         ),
         uncertainties=tuple(
             SellerUncertainty(
