@@ -373,24 +373,59 @@ def test_turning_that_on_does_not_start_a_second_reconciler():
     assert "opendid_autoscaler = SamAutoscaler(" not in outside
 
 
-def test_the_route_records_demand_before_it_verifies(monkeypatch):
-    """깨우기만으로는 모자란다 — reconciler 가 running 이 되는 순간 DB 수요를 보고 0 으로 내린다.
-
-    운영 패턴: 03:35 prewarm → 03:37 down. 워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔
-    경우)는 깨움 → 부팅 → 즉시 종료가 반복돼 재시도가 계속 실패한다.
-    """
+def _route_body(name):
     import pathlib
 
     from app import routes
 
     text = pathlib.Path(routes.__file__).read_text(encoding="utf-8")
-    for marker in ("editor_image", "detail_page"):
-        assert marker in text
-    # 두 생성 라우트 모두 verify 앞에 기록한다
-    assert text.count("await facemarket.note_holder_demand(") == 2
-    for chunk in text.split("await facemarket.note_holder_demand(")[1:]:
-        verify_at = chunk.index("facemarket.verify_license(")
-        assert verify_at < 400, "verify 직전에 있어야 한다"
+    start = text.index(f"async def {name}(")
+    end = text.find("\n@router.", start)
+    return text[start:end if end > 0 else len(text)]
+
+
+def test_both_routes_record_demand_before_they_verify():
+    """깨우기만으로는 모자란다 — reconciler 가 running 이 되는 순간 DB 수요를 보고 0 으로 내린다.
+
+    운영 패턴: 03:35 prewarm → 03:37 down. 워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔
+    경우)는 깨움 → 부팅 → 즉시 종료가 반복돼 재시도가 계속 실패한다.
+    """
+    for name in ("generate_editor_image", "generate_detail_page"):
+        body = _route_body(name)
+        assert body.index("facemarket.note_holder_demand(") < body.index("facemarket.verify_license("), name
+
+
+def test_no_route_grabs_a_second_connection_while_holding_one():
+    """**쥔 채로 풀에서 하나 더 잡으면** 동시 요청이 풀 크기만큼 올 때 서로를 기다린다.
+
+    두 갈래로 푼다.
+      · generate_editor_image — 모델 id 가 본문에 있으므로 커넥션을 잡기 **전에** 기록한다.
+      · generate_detail_page — 모델 id 가 분석 행에서 나오므로 **쥐고 있는 커넥션을 넘긴다**.
+    """
+    editor = _route_body("generate_editor_image")
+    assert editor.index("facemarket.note_holder_demand(") < editor.index("async with get_conn(request)")
+    assert "conn=conn" not in editor.split("facemarket.note_holder_demand(")[1][:200]
+
+    detail = _route_body("generate_detail_page")
+    assert detail.index("async with get_conn(request)") < detail.index("facemarket.note_holder_demand(")
+    assert "conn=conn" in detail.split("facemarket.note_holder_demand(")[1][:200]
+
+
+def test_the_note_uses_the_given_connection_and_never_the_pool(monkeypatch):
+    """conn 을 주면 풀을 건드리지 않는다 — 그게 중첩 획득을 막는 전부다."""
+    conn = _Conn([{"t": "fm_holder_warm_pings"}, None])
+
+    class _Forbidden:
+        def connection(self):
+            raise AssertionError("커넥션을 쥐고 있는데 풀에서 또 잡으면 안 된다")
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_Forbidden()))
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda a: None)
+
+    asyncio.run(facemarket.note_holder_demand(app, user_id=USER, model_id=MODEL, conn=conn))
+
+    assert "insert into fm_holder_warm_pings" in " ".join(conn.cur.sql)
+    assert conn.commits == 1, "그 자리에서 커밋해야 verify 의 롤백에 안 쓸려 간다"
 
 
 def test_the_demand_note_survives_the_verify_rollback(monkeypatch):
