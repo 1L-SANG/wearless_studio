@@ -19,8 +19,15 @@
    크기(clientWidth 등 CSS 크기)로 찍으면 burnGuideMask 가 계산하는 주민번호 사각형이
    실제 카드 위치와 어긋난다 — 배율이 다른 두 좌표계를 섞는 것이기 때문이다. 같은
    이유로 화면 가이드 박스도 CSS 로 따로 그리지 않고 idCardGeometry.guideRectPercent
-   에서 뽑는다: 비디오를 width:100%; height:auto 로 두면 표시 박스가 곧 프레임이라
-   이 백분율이 어떤 배율에서도 정확히 겹친다. */
+   에서 뽑는다.
+
+   그 퍼센트는 "가장 가까운 position 조상"을 기준으로 해석되므로, 비디오와 가이드를
+   .idCameraViewport 전용 래퍼 안에 딱 둘만 담는다 — 힌트·에러 문구·셔터 버튼처럼
+   높이가 바뀌는 형제를 같은 조상에 같이 두면, 그 형제의 유무로 조상 높이가 바뀔
+   때마다 가이드가 비디오와 어긋난다(리뷰에서 실측: 15초 힌트가 뜨는 순간 가이드가
+   점프한다). 이 래퍼의 렌더 크기(아래 viewportStyle)도 항상 프레임 비율 그대로
+   줄고 늘어야 한다 — object-fit: cover 로 잘라내면 이 화면에 보이는 비디오와
+   가이드 좌표계가 어긋나므로 절대 쓰지 않는다. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { guideRectPercent } from './idCardGeometry.js';
 import { createShutterGate, scoreFrame } from './idCardDetector.js';
@@ -176,22 +183,35 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy }) {
   }, []);
 
   const guide = frameSize ? guideRectPercent(frameSize.width, frameSize.height) : null;
+  // 뷰포트(비디오+가이드 전용 래퍼)의 렌더 크기를 프레임 비율 그대로 계산한다.
+  // width 는 "60dvh 높이를 내는 너비"와 "부모 100%" 중 작은 쪽 — 세로가 짧은
+  // 화면(가로로 눕힌 폰)에서 60dvh 가 이기면 너비도 같은 비율만큼 줄어든다.
+  // object-fit 없이(=자르지 않고) 원본 비율을 지키므로 비디오는 항상 이 박스를
+  // 정확히 채우고, 가이드의 퍼센트 좌표도 항상 비디오의 실제 렌더 박스와 같다.
+  const viewportStyle = frameSize
+    ? {
+        aspectRatio: `${frameSize.width} / ${frameSize.height}`,
+        width: `min(100%, 60dvh * ${(frameSize.width / frameSize.height).toFixed(4)})`,
+      }
+    : undefined;
 
   return (
     <div className={s.idCameraStage}>
-      <video ref={videoRef} playsInline muted className={s.idCameraVideo} />
-      {guide && (
-        <div
-          className={s.idCameraGuide}
-          aria-hidden="true"
-          style={{
-            left: `${guide.left}%`,
-            top: `${guide.top}%`,
-            width: `${guide.width}%`,
-            height: `${guide.height}%`,
-          }}
-        />
-      )}
+      <div className={s.idCameraViewport} style={viewportStyle}>
+        <video ref={videoRef} playsInline muted className={s.idCameraVideo} />
+        {guide && (
+          <div
+            className={s.idCameraGuide}
+            aria-hidden="true"
+            style={{
+              left: `${guide.left}%`,
+              top: `${guide.top}%`,
+              width: `${guide.width}%`,
+              height: `${guide.height}%`,
+            }}
+          />
+        )}
+      </div>
       <canvas ref={sampleRef} width={SAMPLE_WIDTH} hidden />
       <canvas ref={shotRef} hidden />
       <p className={s.idCameraHint} role="status">

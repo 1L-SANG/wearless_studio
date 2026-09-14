@@ -59,3 +59,23 @@ test('스트림을 반드시 정리한다', () => {
   assert.match(code, /getTracks\(\)[\s\S]{0,80}stop\(\)/,
     '언마운트에서 트랙을 멈추지 않으면 카메라 표시등이 계속 켜져 있다');
 });
+
+test('가이드 오버레이는 비디오 전용 래퍼 안에만 있다 — 다른 형제는 밖에 있어야 한다', () => {
+  // guideRectPercent 의 퍼센트는 "가장 가까운 position 조상"을 기준으로 해석된다.
+  // 힌트·에러 문구·셔터 버튼처럼 높이가 바뀌는 형제가 그 조상 안에 같이 있으면,
+  // 그 형제가 나타나거나 사라질 때마다(15초 힌트, 캡처 에러) 조상의 높이가 바뀌어
+  // 가이드가 비디오와 어긋난다(모바일 감사에서 실측된 결함). 그래서 비디오와
+  // 가이드만 담는 전용 래퍼가 있어야 하고, 셔터 버튼·힌트 문단은 그 밖에 있어야
+  // 한다 — 나중에 누가 형제를 래퍼 안으로 다시 옮기면 이 테스트가 잡아야 한다.
+  const start = code.indexOf('idCameraViewport');
+  assert.ok(start >= 0, 'idCameraViewport 래퍼를 찾을 수 없다');
+  const match = code.match(/<div className=\{s\.idCameraViewport\}[^]*?<\/div>/);
+  assert.ok(match, '<div className={s.idCameraViewport}>...</div> 래퍼를 찾을 수 없다');
+  const wrapper = match[0];
+  assert.match(wrapper, /<video/, '래퍼 안에 video 가 있어야 한다');
+  assert.match(wrapper, /idCameraGuide/, '래퍼 안에 가이드가 있어야 한다');
+  assert.ok(!/직접 찍기/.test(wrapper), '셔터 버튼은 래퍼 밖에 있어야 한다');
+  assert.ok(!/idCameraHint/.test(wrapper), '안내 문단은 래퍼 밖에 있어야 한다');
+  assert.ok(!/s\.error/.test(wrapper), '캡처 에러 문단은 래퍼 밖에 있어야 한다');
+  assert.ok(!/showManualHint/.test(wrapper), '15초 힌트 문단은 래퍼 밖에 있어야 한다');
+});

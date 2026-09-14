@@ -116,7 +116,11 @@
 @media (prefers-reduced-motion: reduce) { .primary:hover:not(:disabled)::after { animation: none; } }
 .primary:disabled { box-shadow: none; background: var(--bg-2); border-color: var(--fm-line); color: var(--fg-3); }
 .secondary { background: var(--bg-1); color: var(--fg-1); border: 1px solid var(--fm-line); }
-@media (max-width: 700px) {
+/* max-height 병기: 가로로 눕힌 폰(예 844×390)은 너비 조건(700px)엔 안 걸리지만
+   세로 공간이 좁기는 마찬가지다 — 신분증 카메라 화면처럼 진행 레일·헤딩·안내문이
+   비디오 위를 다 차지하는 화면에서, 너비만 보는 조건은 하필 세로가 가장 좁을 때
+   데스크톱용 여백·글자 크기를 그대로 준다. */
+@media (max-width: 700px), (max-height: 480px) {
   .main { padding: 24px 20px 32px; }
   .page h1 { font-size: 26px; }
   .intro { margin-bottom: 24px; }
@@ -467,8 +471,23 @@
 /* 신분증 가이드 촬영 스테이지. 비디오를 width:100%; height:auto 로 두면 표시 박스가
    곧 프레임 픽셀 좌표계가 되고, idCardGeometry.guideRectPercent 가 뽑는 백분율이
    그 좌표계 위에 어떤 배율에서도 정확히 겹친다 — 그래서 가이드 박스의 위치·크기는
-   여기(CSS)가 아니라 컴포넌트가 인라인 style 로 넣는다. 이 클래스들은 시각 스타일만 쥔다. */
-.idCameraStage { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+   여기(CSS)가 아니라 컴포넌트가 인라인 style 로 넣는다. 이 클래스들은 시각 스타일만 쥔다.
+
+   ⚠️ .idCameraGuide 의 퍼센트는 "가장 가까운 position 조상"(.idCameraViewport) 기준으로
+   해석된다 — .idCameraStage 가 아니다. 스테이지 안에는 힌트·에러 문구·셔터 버튼처럼
+   높이가 변하는 형제가 더 있어서, 가이드가 스테이지를 기준 삼으면 그 형제들 때문에
+   조상 높이가 늘었다 줄었다 할 때마다 가이드가 비디오와 어긋난다(15초 힌트가 뜨는
+   순간, 캡처 에러가 뜨는 순간 등). 그래서 비디오와 가이드만 담는 전용 래퍼
+   (.idCameraViewport)를 두고, 그 래퍼만 position:relative 를 쥔다. */
+.idCameraStage { width: 100%; }
+/* 비디오 렌더 박스 = 가이드의 containing block. width 는 인라인 style 로 프레임
+   비율(aspect-ratio)·60dvh 상한을 반영해 컴포넌트가 계산해 넣는다 — 세로가 짧은
+   화면(가로로 눕힌 폰)에서도 비디오가 화면을 넘지 않게 하면서, object-fit 없이
+   원본 비율 그대로 줄어들게 하기 위해서다(object-fit: cover 는 프레임을 잘라내서
+   가이드 좌표계가 화면에 보이는 비디오와 어긋난다 — 절대 쓰면 안 된다). 클래스의
+   width:100% 는 그 인라인 style 이 아직 없을 때(프레임 크기를 모르는 아주 짧은
+   순간)만 쓰이는 기본값이다. */
+.idCameraViewport { position: relative; width: 100%; margin: 0 auto; overflow: hidden; border-radius: 12px; background: #000; }
 .idCameraVideo { display: block; width: 100%; height: auto; }
 .idCameraGuide { position: absolute; border: 2px dashed #fff; border-radius: 10px; pointer-events: none; }
 .idCameraHint { margin-top: 12px; text-align: center; color: var(--fm-muted); }
