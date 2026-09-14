@@ -327,3 +327,149 @@ def test_the_workers_wait_before_they_take_a_connection():
         wait_at = body.index("await facemarket.wait_for_holder(app)")
         first_conn = body.index("pool.connection()")
         assert wait_at < first_conn, module.__name__
+
+
+# ── (5) 빈틈 둘 — detail-worker 대기 게이트 · 라우트의 수요 기록 ─────────────
+def test_the_detail_worker_can_wait_for_the_holder():
+    """detail_page 잡은 **detail-worker** 가 돌린다(JOB_KINDS: detail_page).
+
+    wait_for_holder 는 OPENDID_AUTOSCALE == "on" 일 때만 기다리는데 그 env 가 api 매니페스트에만
+    있었다 — 그래서 이 워커는 holder 가 0대일 때 대기 없이 바로 holder_starting 으로 죽었다.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    worker = (root / "copilot/detail-worker/manifest.yml").read_text(encoding="utf-8")
+    assert "JOB_KINDS: detail_page" in worker
+    assert 'OPENDID_AUTOSCALE: "on"' in worker
+
+
+def test_turning_that_on_does_not_start_a_second_reconciler():
+    """**reconciler 가 둘이 되면 서로 반대 방향으로 민다.**
+
+    main.py 는 JOB_KINDS 가 detail_page 뿐이면(detail_worker_only) autoscaler 를 아예 안 만든다.
+    그래서 위 env 는 대기 게이트로만 쓰인다 — 그 전제가 깨지면 여기서 잡는다.
+    """
+    import pathlib
+
+    from app.main import __file__ as main_file
+
+    text = pathlib.Path(main_file).read_text(encoding="utf-8")
+    guard = "            if not detail_worker_only:\n"
+    assert text.count(guard) >= 1
+    block_start = text.index(guard)
+    block = text[block_start:]
+    # 가드 블록은 들여쓰기가 16칸 이상인 줄까지다(가드 자체가 12칸).
+    lines, body = block.splitlines(keepends=True), []
+    for line in lines[1:]:
+        if line.strip() and not line.startswith(" " * 16):
+            break
+        body.append(line)
+    body = "".join(body)
+    assert "app.state.opendid_autoscaler = SamAutoscaler(" in body
+    assert "await opendid_autoscaler.start()" in body
+    # 가드 밖에서 opendid autoscaler 를 만들지 않는다
+    outside = text[:block_start] + text[block_start + len(guard) + len(body):]
+    assert "opendid_autoscaler = SamAutoscaler(" not in outside
+
+
+def test_the_route_records_demand_before_it_verifies(monkeypatch):
+    """깨우기만으로는 모자란다 — reconciler 가 running 이 되는 순간 DB 수요를 보고 0 으로 내린다.
+
+    운영 패턴: 03:35 prewarm → 03:37 down. 워밍 핑이 30분 창 밖인 셀러(에디터를 오래 켜 둔
+    경우)는 깨움 → 부팅 → 즉시 종료가 반복돼 재시도가 계속 실패한다.
+    """
+    import pathlib
+
+    from app import routes
+
+    text = pathlib.Path(routes.__file__).read_text(encoding="utf-8")
+    for marker in ("editor_image", "detail_page"):
+        assert marker in text
+    # 두 생성 라우트 모두 verify 앞에 기록한다
+    assert text.count("await facemarket.note_holder_demand(") == 2
+    for chunk in text.split("await facemarket.note_holder_demand(")[1:]:
+        verify_at = chunk.index("facemarket.verify_license(")
+        assert verify_at < 400, "verify 직전에 있어야 한다"
+
+
+def test_the_demand_note_survives_the_verify_rollback(monkeypatch):
+    """호출자 트랜잭션에 얹으면 verify 의 503 이 같이 롤백시킨다 — 별도 커넥션에 즉시 커밋한다."""
+    conn = _Conn([{"t": "fm_holder_warm_pings"}, None])
+    woken = []
+
+    class _Pool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield conn
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_Pool()))
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda a: woken.append(a))
+
+    asyncio.run(facemarket.note_holder_demand(app, user_id=USER, model_id=MODEL))
+
+    assert "insert into fm_holder_warm_pings" in " ".join(conn.cur.sql)
+    assert conn.commits == 1, "커밋하지 않으면 롤백과 함께 사라진다"
+    assert len(woken) == 1
+
+
+def test_the_demand_note_never_breaks_the_request(monkeypatch):
+    """부가 신호다 — 기록이 실패해도 생성 요청은 계속 간다."""
+    class _BrokenPool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            raise RuntimeError("pool exhausted")
+            yield  # pragma: no cover
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(pool=_BrokenPool()))
+    woken = []
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda a: woken.append(a))
+    asyncio.run(facemarket.note_holder_demand(app, user_id=USER, model_id=MODEL))
+    assert len(woken) == 1, "기록이 깨져도 깨우기는 한다"
+
+
+def test_a_fresh_note_makes_the_snapshot_want_it_running():
+    """기록 → 스냅샷이 그걸 수요로 읽는다. 이게 끊기면 재시도가 영원히 같은 자리에서 실패한다."""
+    snap, _ = _demand(last_activity=NOW - timedelta(seconds=30))
+    assert sam_autoscale.want_running(snap, idle_minutes=30, now=NOW) is True
+
+
+def test_a_stale_seller_recovers_on_the_next_try(monkeypatch):
+    """사용자가 지목한 순서 그대로: 핑이 30분 밖 → 라우트가 기록 + holder_starting → 스냅샷 True.
+
+    이 사슬이 끊기면(기록 없이 깨우기만 하면) 셀러는 같은 버튼을 눌러도 계속 실패한다 —
+    reconciler 가 running 이 되는 순간 "수요 없음"으로 다시 내리기 때문이다.
+    """
+    stale = NOW - timedelta(minutes=45)
+    assert sam_autoscale.want_running(
+        _demand(last_activity=stale)[0], idle_minutes=30, now=NOW) is False
+
+    # ① 라우트가 verify 전에 수요를 남긴다(별도 커넥션·즉시 커밋)
+    conn = _Conn([{"t": "fm_holder_warm_pings"}, None])
+
+    class _Pool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield conn
+
+    app = _app()
+    app.state.pool = _Pool()
+    woken = []
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda a: woken.append(a))
+    asyncio.run(facemarket.note_holder_demand(app, user_id=USER, model_id=MODEL))
+    assert "insert into fm_holder_warm_pings" in " ".join(conn.cur.sql) and conn.commits == 1
+
+    # ② 그 요청 자체는 holder 가 아직 안 떠서 holder_starting 으로 돌아간다
+    async def down(*a, **kw):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(facemarket, "verify_license_local", lambda *a, **kw: None)
+    monkeypatch.setattr(facemarket.holder_client, "post", down)
+    with pytest.raises(facemarket.HTTPException) as caught:
+        asyncio.run(facemarket.verify_license(
+            app, dict(LICENSE), model_id=MODEL, brand_use_category="일반 의류"))
+    assert caught.value.detail["code"] == "holder_starting"
+
+    # ③ 이제 수요가 창 안이라 reconciler 가 켠 채로 둔다 — 재시도가 통한다
+    fresh, _ = _demand(last_activity=NOW - timedelta(seconds=5))
+    assert sam_autoscale.want_running(fresh, idle_minutes=30, now=NOW) is True

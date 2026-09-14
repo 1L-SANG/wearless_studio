@@ -3099,6 +3099,11 @@ async def generate_editor_image(
             license_row = await facemarket.resolve_model_license(
                 conn, selected_model_id
             )
+            # REAL 모델 요청 = holder 수요. **verify 전에** 남긴다 — verify 가 503 으로 올라가면
+            # 이 커넥션의 트랜잭션은 롤백되고, 깨우기만으로는 reconciler 가 60초 뒤 다시 0 으로
+            # 내린다(수요가 DB 에 없으므로). 그러면 재시도가 영원히 같은 자리에서 실패한다.
+            await facemarket.note_holder_demand(
+                request.app, user_id=user_id, model_id=selected_model_id)
             await facemarket.verify_license(
                 request.app,
                 license_row,
@@ -3186,6 +3191,10 @@ async def generate_detail_page(
         if s.facemarket_enabled and uses_real_identity:
             if license_row is None:      # 동의 판정에서 이미 읽었으면 그 행을 그대로 쓴다
                 license_row = await facemarket.resolve_project_license(conn, project, analysis)
+            # 위 editor_image 경로와 같은 이유로 verify 전에 수요를 남긴다.
+            if facemarket.is_real_model_id(selected_model_id):
+                await facemarket.note_holder_demand(
+                    request.app, user_id=user_id, model_id=selected_model_id)
             await facemarket.verify_license(
                 request.app,
                 license_row,
