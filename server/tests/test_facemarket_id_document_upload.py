@@ -13,7 +13,8 @@
   - 얼굴 미검출 → 저장 안 함
   - rowcount == 0 → 방금 올린 객체를 되돌리는 보상 삭제 + 409
   - put_bytes 실패 → 503
-  - 정상 경로의 상태 전이(id_capture_pending → identity_pending)와 저장 컬럼
+  - 정상 경로의 상태 전이(id_capture_pending → photos_pending, Task6 순서 뒤집기 이후)와
+    저장 컬럼
   - 마스킹 기하 검증(FM_ID_MASK_VERIFY) — enforce 는 미검출을 422 로 거부하고 아무것도
     저장하지 않는다, shadow(기본)는 같은 업로드를 통과시키되 판정을 mean/stddev 와
     함께 반드시 로그로 남긴다, off 는 검사도 로그도 없다. 순수 함수 테스트만으로는
@@ -78,7 +79,13 @@ def _id_card_bytes(masked: bool) -> bytes:
 
 @pytest.fixture()
 def id_capture(enrollment_client_factory, monkeypatch):
-    """id_capture_pending 상태의 simple_auth 등록 + 얼굴이 잡히는 crop 스텁."""
+    """id_capture_pending 상태의 simple_auth 등록 + 얼굴이 잡히는 crop 스텁.
+
+    Task6(순서 뒤집기) 이후 생성 직후 상태는 identity_pending 이다(간편인증이 촬영보다
+    먼저다) — 본인인증(POST /identity)을 통과해야 id_capture_pending 에 닿는다. 이 파일은
+    /identity 라우트 자체가 관심사가 아니므로(신분증 업로드 라우트만 본다), 그 전이를
+    직접 시뮬레이션하지 않고 도달한 상태만 밀어 넣는다.
+    """
 
     def _make(*, face_detected=True, **settings_overrides):
         import test_facemarket_biometric_enrollment as biometric_tests
@@ -110,6 +117,9 @@ def id_capture(enrollment_client_factory, monkeypatch):
             )
             assert response.status_code == 201, response.text
             enrollment_id = response.json()["id"]
+            row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+            assert row["status"] == "identity_pending"
+            row["status"] = "id_capture_pending"
         return client, store, settings, enrollment_id
 
     return _make
@@ -131,15 +141,15 @@ def _row(store, enrollment_id):
 # ── 정상 경로 ─────────────────────────────────────────────────────────────────────────
 
 
-def test_upload_transitions_to_identity_pending_and_records_the_key(id_capture):
+def test_upload_transitions_to_photos_pending_and_records_the_key(id_capture):
     client, store, _settings, enrollment_id = id_capture()
 
     response = _upload(client, enrollment_id)
 
     assert response.status_code == 201, response.text
-    assert response.json()["status"] == "identity_pending"
+    assert response.json()["status"] == "photos_pending"
     row = _row(store, enrollment_id)
-    assert row["status"] == "identity_pending"
+    assert row["status"] == "photos_pending"
     assert row["id_document_type"] == "rrc"
     # 시도별 버전 키(/iddoc/) — 7일 배치 스윕이 prefix 로 훑는 바로 그 경로여야 한다.
     assert "/iddoc/" in row["id_document_r2_key"]
@@ -277,8 +287,10 @@ def test_wrong_state_deletes_the_object_it_just_wrote(id_capture):
     전까지 남는다. 버전 키를 쓰므로 이 삭제는 **자기 객체만** 지운다.
     """
     client, store, _settings, enrollment_id = id_capture()
-    # 이미 다음 단계로 넘어간 등록 — 신분증을 받을 자리가 아니다.
-    _row(store, enrollment_id)["status"] = "identity_pending"
+    # 이미 다음 단계로 넘어간 등록 — 신분증을 받을 자리가 아니다. Task6 순서 뒤집기
+    # 이후 id_capture_pending 다음 단계는 photos_pending 이다(identity_pending 은
+    # 오히려 이보다 앞선 단계다).
+    _row(store, enrollment_id)["status"] = "photos_pending"
 
     response = _upload(client, enrollment_id)
 
@@ -329,9 +341,9 @@ def test_shadow_lets_the_same_unmasked_upload_through(id_capture):
     response = _upload(client, enrollment_id, data=_id_card_bytes(masked=False))
 
     assert response.status_code == 201, response.text
-    assert response.json()["status"] == "identity_pending"
+    assert response.json()["status"] == "photos_pending"
     row = _row(store, enrollment_id)
-    assert row["status"] == "identity_pending"
+    assert row["status"] == "photos_pending"
     assert client.app.state.r2_face.puts, "정상 경로인데 저장이 안 됐다"
 
 

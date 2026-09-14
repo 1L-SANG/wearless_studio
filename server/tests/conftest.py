@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import time
 import contextlib
@@ -186,10 +187,12 @@ def make_token(keypair):
 # ── Task5: 간편인증(simple_auth) 등록 경로 공유 픽스처 ──────────────────────────────────
 # Task6·7 도 이 픽스처를 재사용한다(컨트롤러 룰링). test_facemarket_biometric_enrollment.py
 # 의 EnrollmentStore/FakeCursor/FakePool 조립을 그대로 재사용해 세 벌로 드리프트하지
-# 않게 한다. 그 파일은 mid 경로의 회귀 방어망이라 손대지 않는다 — 필요한 확장(신분증
-# 촬영 경로가 id_capture_pending 에서 시작하는 것을 그 파일의 FakeCursor 가 표현하지
-# 못하는 문제)은 이 픽스처 안에서 monkeypatch 로 감싸 처리하고, 그 외 SQL 은 전부
-# 원래 구현에 위임한다.
+# 않게 한다. 그 파일은 mid 경로의 회귀 방어망이라 손대지 않는다 — 필요한 확장(그 파일의
+# 원본 FakeCursor 는 INSERT 에서 identity_method 컬럼을 아예 모른다 — simple_auth 로
+# 만든 행도 이 컬럼이 없어 `row.get("identity_method") or "mid"` 폴백에 걸려 "mid"로
+# 오분류된다. Task6 이후로는 초기 status 값 자체가 두 경로 모두 identity_pending 이라
+# 더는 상태값으로 분기를 구분할 수 없다 — identity_method 리터럴만이 유일한 신호다)은
+# 이 픽스처 안에서 monkeypatch 로 감싸 처리하고, 그 외 SQL 은 전부 원래 구현에 위임한다.
 #
 # 이름을 `enrollment_client_factory`로 둔다(fix round 2) — `enrollment_client`는
 # test_facemarket_biometric_enrollment.py 가 이미 모듈 스코프 픽스처로 오래 쓰고 있다
@@ -265,12 +268,15 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
             facemarket_enrollment_module, "get_conn", fake_get_conn, raising=False
         )
 
-        # create_enrollment 는 simple_auth 일 때 identity_method/status 를 INSERT 문
-        # 텍스트에 리터럴로 박는다(바인드 파라미터 개수를 mid 분기와 똑같이 유지하기
-        # 위해서 — test_facemarket_biometric_enrollment.py 의 FakeCursor 는 그 INSERT 를
-        # 고정 개수로 언패킹하고 status 를 'identity_pending' 으로 하드코딩해서, 개수가
-        # 갈라지면 회귀 스위트 전체가 ValueError 로 죽는다). 여기서만 그 리터럴을 인식해
-        # 올바른 상태로 행을 만들고, 그 외 SQL 은 원래 구현에 위임한다.
+        # create_enrollment 는 simple_auth 일 때 identity_method 를 INSERT 문 텍스트에
+        # 리터럴로 박는다(바인드 파라미터 개수를 mid 분기와 똑같이 유지하기 위해서 —
+        # test_facemarket_biometric_enrollment.py 의 FakeCursor 는 그 INSERT 를 고정
+        # 개수로 언패킹하고 identity_method 컬럼 자체를 모른다. 그 컬럼이 없으면 나중에
+        # `row.get("identity_method") or "mid"` 폴백에 걸려 simple_auth 행이 mid 로
+        # 오분류된다). 여기서만 그 리터럴('simple_auth')을 인식해 identity_method 를
+        # 제대로 채운 행을 만들고, 그 외 SQL 은 원래 구현에 위임한다.
+        # Task6: 두 경로 모두 초기 status 가 identity_pending 이라(순서 뒤집기), status
+        # 리터럴로는 더 이상 분기를 구분할 수 없다 — identity_method 리터럴만 본다.
         # #285 가 동의 버전 두 컬럼(terms/overseas)을 더해 파라미터는 8개다.
         _original_execute = FakeCursor.execute
 
@@ -279,7 +285,6 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
             if (
                 query.startswith("insert into fm_biometric_enrollments")
                 and "'simple_auth'" in query
-                and "'id_capture_pending'" in query
             ):
                 (
                     user_id, model_id, device_digest, consent_version, expires_at,
@@ -297,13 +302,19 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                 if existing:
                     self.result = None
                 else:
+                    # status 는 하드코딩하지 않고 SQL 텍스트에 실제로 박힌 리터럴을
+                    # 읽는다 — create_enrollment 의 initial_status 계산이 회귀해도
+                    # (예: 다시 조건부로 바뀌어 'id_capture_pending' 을 내도) 이 픽스처가
+                    # 조용히 못 본 척 넘어가지 않게 한다.
+                    status_match = re.search(r"'simple_auth',\s*'([a-z_]+)'", query)
+                    status = status_match.group(1) if status_match else "identity_pending"
                     row = {
                         "id": str(uuid.uuid4()),
                         "user_id": user_id,
                         "model_id": model_id,
                         "device_digest": device_digest,
                         "consent_version": consent_version,
-                        "status": "id_capture_pending",
+                        "status": status,
                         "identity_method": "simple_auth",
                         "review_status": None,
                         "decision": None,
@@ -326,6 +337,76 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
                     self.store.enrollments.append(row)
                     self.result = {"id": row["id"]}
                 self.many = []
+                return
+            # Task6: verify_enrollment_identity 의 simple_auth 분기 — 성공하면
+            # id_capture_pending 으로 넘어간다(mid 분기는 기존과 동일한 리터럴
+            # "'photos_pending'" 을 그대로 써서 test_facemarket_biometric_enrollment.py
+            # 의 FakeCursor 가 이미 처리한다 — 그 파일은 손대지 않는다).
+            if (
+                query.startswith(
+                    "update fm_biometric_enrollments set status = 'id_capture_pending'"
+                )
+                and "identity_ci_hash" in query
+            ):
+                (
+                    ci_hash, name_masked, birth_year, tx_digest, contract_version,
+                    enrollment_id, user_id,
+                ) = params
+                row = next(
+                    (
+                        item
+                        for item in self.store.enrollments
+                        if item["id"] == enrollment_id and item["user_id"] == user_id
+                    ),
+                    None,
+                )
+                self.result = None
+                self.many = []
+                self.rowcount = 0
+                if row is not None and row["status"] == "identity_pending":
+                    row.update(
+                        status="id_capture_pending",
+                        identity_ci_hash=ci_hash,
+                        identity_name_masked=name_masked,
+                        identity_birth_year=birth_year,
+                        identity_tx_digest=tx_digest,
+                        identity_contract_version=contract_version,
+                    )
+                    self.rowcount = 1
+                return
+            # Task6: upload_id_document 의 성공 전이 목적지가 identity_pending 에서
+            # photos_pending 으로 바뀌었다(순서 뒤집기 — 촬영이 본인인증 다음이라 촬영
+            # 성공은 곧장 사진 단계로 간다). id_document_r2_key 로 identity 검증 UPDATE
+            # (identity_ci_hash 를 쓴다)와 구분한다.
+            if (
+                query.startswith(
+                    "update fm_biometric_enrollments set status = 'photos_pending'"
+                )
+                and "id_document_r2_key" in query
+            ):
+                key, document_type, enrollment_id, user_id = params
+                row = next(
+                    (
+                        item
+                        for item in self.store.enrollments
+                        if item["id"] == enrollment_id
+                        and item["user_id"] == user_id
+                        and item["status"] == "id_capture_pending"
+                    ),
+                    None,
+                )
+                self.result = None
+                self.many = []
+                self.rowcount = 0
+                if row is not None:
+                    row.update(
+                        status="photos_pending",
+                        id_document_r2_key=key,
+                        id_document_type=document_type,
+                        id_document_uploaded_at=self.store.now,
+                        id_document_purged_at=None,
+                    )
+                    self.rowcount = 1
                 return
             await _original_execute(self, sql, params)
 
