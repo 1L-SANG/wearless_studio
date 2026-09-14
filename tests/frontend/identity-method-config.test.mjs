@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   deriveSimpleAuthUnavailableReason,
+  isMobileLike,
   parseIdentityMethods,
 } from '../../src/features/model/identityMethodConfig.js';
 
@@ -40,4 +41,33 @@ test('설정 URL이 없으면(빈 문자열/undefined) 간편인증을 막을 �
   assert.equal(typeof deriveSimpleAuthUnavailableReason(''), 'string');
   assert.match(deriveSimpleAuthUnavailableReason(''), /설정되지 않았어요/);
   assert.match(deriveSimpleAuthUnavailableReason(undefined), /설정되지 않았어요/);
+});
+
+// isMobileLike: User-Agent 를 쓰지 않는 기기 판별 힌트. 아래 네 테스트가 브리프의 핵심
+// 계약을 값으로 고정한다 — (1) 거친 포인터=모바일로 본다, (2) 정밀 포인터(마우스)=아니다로
+// 본다, (3)(4) 판별이 불확실하면(matchMedia 없음·window 자체가 없음) 반드시 "허용"
+// 쪽으로 접는다(fail open). fail-open 이 아니라 fail-closed 로 뒤집히면, 판별 실패 한 번이
+// 실제로 끝까지 갈 수 있는 사용자를 조용히 막아 버린다.
+test('거친 포인터(pointer: coarse)면 모바일로 본다', () => {
+  const windowLike = { matchMedia: (query) => ({ matches: query === '(pointer: coarse)' }) };
+  assert.equal(isMobileLike(windowLike), true);
+});
+
+test('정밀 포인터만 있으면(coarse 가 아니면) 모바일로 보지 않는다', () => {
+  const windowLike = { matchMedia: () => ({ matches: false }) };
+  assert.equal(isMobileLike(windowLike), false);
+});
+
+test('matchMedia 가 없는 window 는 판별할 수 없으므로 허용한다(fail open)', () => {
+  assert.equal(isMobileLike({}), true);
+  assert.equal(isMobileLike({ matchMedia: undefined }), true);
+});
+
+test('window 자체가 없으면(SSR·구형 브라우저) 허용한다(fail open)', () => {
+  assert.equal(isMobileLike(undefined), true);
+  assert.equal(isMobileLike(null), true);
+  // 인자를 아예 안 주면 기본값이 실행 시점의 실제 window 를 본다 — 이 테스트(plain
+  // node --test)에는 window 전역이 없으므로 같은 fail-open 경로를 타야 한다.
+  assert.equal(typeof window, 'undefined', '이 가정이 깨지면 아래 단언이 fail-open 을 증명하지 못한다');
+  assert.equal(isMobileLike(), true);
 });

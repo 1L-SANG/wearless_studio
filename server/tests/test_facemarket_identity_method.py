@@ -181,7 +181,10 @@ def test_create_rejects_simple_auth_when_flag_off(enrollment_client_factory):
     assert response.json()["error"]["code"] == "identity_method_unavailable"
 
 
-def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client_factory):
+def test_simple_auth_now_starts_at_identity_pending(enrollment_client_factory):
+    """Task6(순서 뒤집기): 두 경로가 같은 자리에서 시작한다. 간편인증이 먼저고 촬영이
+    나중이다 — 촬영 시점에 인증사가 검증한 이름·생년월일·CI 를 이미 쥐고 있어야, 카드가
+    '정보를 읽는 대상'이 아니라 '그 사람 것인가'를 확인하는 물증이 된다."""
     client, store, settings = enrollment_client_factory(
         fm_identity_methods=("mid", "simple_auth")
     )
@@ -194,7 +197,7 @@ def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client_facto
         },
     )
     assert response.status_code == 201
-    assert response.json()["status"] == "id_capture_pending"
+    assert response.json()["status"] == "identity_pending"
     assert response.json()["identityMethod"] == "simple_auth"
 
 
@@ -232,12 +235,12 @@ def _spy_parsers(monkeypatch):
 
 
 def _create_simple_auth_enrollment(client, store):
-    """simple_auth 등록을 만들고 identity_pending 으로 밀어 넣는다.
+    """simple_auth 등록을 만든다.
 
-    실제 서비스에서는 촬영 라우트(Task4)가 id_capture_pending → identity_pending
-    전이를 수행하지만, 이 테스트는 /identity 라우트의 계약 분기만 검증하므로 그
-    단계는 건너뛰고 상태만 직접 바꾼다 — test_facemarket_biometric_enrollment.py 의
-    `_fast_forward_identity` 와 같은 결의 지름길이다.
+    Task6(순서 뒤집기) 이후로는 생성 직후 상태가 이미 identity_pending 이다(간편인증이
+    촬영보다 먼저다) — 더 이상 상태를 밀어 넣을 필요가 없다. 이 전제를 직접 못박아
+    둔다: 이 헬퍼가 조용히 오래된 순서(id_capture_pending 먼저)로 되돌아가도 아래 assert
+    가 바로 잡아낸다.
     """
     response = client.post(
         "/v1/facemarket/enrollments",
@@ -250,7 +253,7 @@ def _create_simple_auth_enrollment(client, store):
     assert response.status_code == 201, response.text
     enrollment_id = response.json()["id"]
     row = next(item for item in store.enrollments if item["id"] == enrollment_id)
-    row["status"] = "identity_pending"
+    assert row["status"] == "identity_pending"
     return enrollment_id
 
 
@@ -275,7 +278,9 @@ def test_identity_uses_simple_auth_contract_for_simple_auth_method(
         json={"token": "tok-1"},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "photos_pending"
+    # Task6: 간편인증은 여기서 곧장 사진이 아니라 신분증 촬영으로 넘어간다 — 이 성공은
+    # "본인확인 완료"일 뿐, 아직 카드(사람 얼굴 앵커)가 없다.
+    assert response.json()["status"] == "id_capture_pending"
     assert captured.get("called")
     # 픽스처가 우연히 mid 파서로도 파싱 가능해도(dig() 다중 키 폴백 때문에 두 파서의
     # 수용 집합이 겹친다) 실제로 불린 파서가 simple_auth 전용인지를 직접 못박는다.
@@ -353,6 +358,32 @@ def test_identity_uses_mid_contract_when_identity_method_is_mid(
     # 픽스처가 우연히 simple_auth 파서로도 파싱 가능해도(dig() 다중 키 폴백 때문에
     # utf8Nm/nm/name/userName 이 겹친다) 실제로 불린 파서가 mid 전용인지를 직접 못박는다.
     assert calls == ["parse_oacx_biometric_evidence"]
+
+
+def test_mid_identity_success_still_goes_to_photos(enrollment_client_factory, monkeypatch):
+    """mid 경로는 그대로다 — 촬영 단계가 없다. Task6 이 simple_auth 만 새 단계를
+    끼워 넣고 mid 는 identity_pending → photos_pending 그대로 유지해야 한다."""
+    client, store, settings = enrollment_client_factory(fm_identity_methods=("mid",))
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    enrollment_id = response.json()["id"]
+
+    async def fake_fetch(base_url, token):
+        return {"ci": "CI-3", "name": "김철수", "birth": "19900101", "txId": "t3"}
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity",
+        json={"token": "tok-3"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "photos_pending"
 
 
 def test_accepts_new_and_previous_consent_versions():

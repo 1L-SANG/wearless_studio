@@ -537,8 +537,8 @@ graph TB
     C2 --> C4["cx_tx_id UNIQUE → 리플레이 차단"]
 
     S1["경로 S(기본 off)<br/>간편인증 ENT_SIMPLE_AUTH<br/>모바일 신분증 없는 이용자용"] --> S2["신분증 촬영·마스킹은 브라우저에서<br/>캔버스에 픽셀 덮어씀, 원본 미전송"]
-    S2 --> S3["SFace 매칭은 advisory만<br/>서버는 마스킹 여부를 검증할 수 없음"]
-    S3 --> S4["review_pending<br/>관리자 육안 심사(마스킹 확인·3사진·CI 대조)"]
+    S2 --> S3["SFace 매칭은 advisory만<br/>FM_ID_MASK_VERIFY(기본 shadow)가 마스킹 위치를<br/>기하 판정해 로그만 남김(업로드 차단 안 함)"]
+    S3 --> S4["review_pending<br/>관리자 육안 심사(마스킹 확인·3사진·CI 대조)<br/>여전히 최종 게이트"]
     S4 -->|"승인/거절 커밋 직후"| S5["R2 즉시 파기 + id_document_purged_at<br/>배치 스윕 백스톱 7일"]
   end
 

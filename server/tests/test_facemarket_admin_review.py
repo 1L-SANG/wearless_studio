@@ -1167,6 +1167,79 @@ def test_review_card_application_id_is_null_without_application(admin_client):
     assert card["application"] is None
 
 
+# ── Task9: mask_mode 영속화 + 관리자 노출 ────────────────────────────────────────────
+#
+# mask_mode 는 facemarket_id_mask_verify(신분증 마스킹 기하 검증)의 판정을 그대로
+# 옮겨 적은 값이다 — 클라이언트가 선언한 값이 아니다(클라는 어느 경로를 탔는지 거짓말할
+# 수 있지만 서버의 기하 판정은 그럴 수 없다). 'auto' 는 통과, 'manual' 은 검사는 돌았지만
+# 통과 못 함(shadow 라 업로드 자체는 막지 않음), None 은 검사가 아예 안 돎
+# (FM_ID_MASK_VERIFY=off 또는 이 컬럼이 생기기 전 행) — 심사자는 'auto' 가 아닌 모든
+# 경우를 "더 봐야 하는 건"으로 취급해야 한다.
+
+
+def test_review_card_exposes_mask_mode(admin_client):
+    """브리핑의 계약 테스트 그대로 — 수동 마스킹 건은 관리자가 더 꼼꼼히 봐야 한다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", mask_mode="manual")
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["maskMode"] == "manual", "수동 마스킹 건은 관리자가 더 꼼꼼히 봐야 한다"
+
+
+def test_review_card_exposes_auto_mask_mode(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", mask_mode="auto")
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["maskMode"] == "auto"
+
+
+def test_review_card_mask_mode_is_null_when_check_never_ran(admin_client):
+    """FM_ID_MASK_VERIFY=off 로 올라온 건(또는 이 컬럼이 생기기 전 구행)은 검사 자체가
+    없었다 — 'auto'(검사 안 한 걸 통과로 꾸밈)로 채워 넣지 않는다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", mask_mode=None)
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["maskMode"] is None
+
+
+def test_review_card_exposes_certified_identity(admin_client):
+    """캐리어가 증명한 이름·생년(Task6) — 지원서 자기신고와 별개로, "이 카드가 방금
+    인증된 그 사람 것인가"를 심사자가 판단하려면 그 인증된 신원 자체가 카드에 있어야
+    한다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", identity_name_masked="홍*동",
+                         identity_birth_year="1990")
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["identityNameMasked"] == "홍*동"
+    assert card["identityBirthYear"] == "1990"
+
+
+def test_review_card_select_projects_mask_mode_and_identity_columns():
+    """가짜 DB 는 SELECT 목록과 무관하게 row 전체를 돌려준다(AdminFakeCursor 의
+    `dict(row)`) — 그래서 이 파일의 카드 테스트들은 실제 SELECT 가 mask_mode·
+    identity_name_masked·identity_birth_year 를 뽑는지 전혀 검증하지 못한다. 예전에
+    바로 이 틈으로 identity_method/id_document_r2_key 가 14개 태스크를 살아남은 채
+    프로덕션에서만 죽어 있었다(test_facemarket_biometric_enrollment.py 의
+    test_completion_select_projects_every_column_read 참고). 여기서는 프로덕션
+    SELECT 문자열 자체를 파싱해 세 컬럼이 실제로 있는지 확인한다 — 컬럼을 지우면
+    이 테스트가 먼저 터진다.
+    """
+    from app import facemarket_admin_review
+
+    projected = {
+        col.strip().split(" as ")[-1].strip()
+        for col in facemarket_admin_review.ENROLLMENT_CARD_COLUMNS.strip().split(",")
+    }
+    for column in ("mask_mode", "identity_name_masked", "identity_birth_year"):
+        assert column in projected, (
+            f"ENROLLMENT_CARD_COLUMNS 에 {column} 이 없다 — _card_view 가 읽어도 "
+            "실제 DB 에서는 항상 None 이다."
+        )
+
+
 def test_image_route_is_no_store(admin_client):
     client, store = admin_client(is_admin=True)
     store.add_enrollment(status="review_pending", review_status="pending",

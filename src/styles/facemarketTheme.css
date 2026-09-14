@@ -73,7 +73,7 @@
    같은 사이트로 안 읽힌다. */
 .fm-theme-page {
   position: relative;
-  min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.72), transparent 32rem),
     linear-gradient(180deg, #f8fbfd 0%, var(--fm-page-bg) 100%);

@@ -221,11 +221,110 @@ test('simpleAuthUnavailableReason 이 없으면 간편인증 버튼이 활성화
   }
 });
 
+// ── (d) isMobileLike 힌트: 간편인증은 폰에서만 시작하게 안내한다 (Task 8) ─────────
+// IdentityMethodStep.jsx 는 isMobileLike() 를 인자 없이 호출해 실행 시점의 실제 window
+// 전역을 본다 — 그래서 여기서는(unit 테스트처럼 인자로 넣는 대신) globalThis.window 를
+// 직접 몽키패치해 컴포넌트가 실제로 그 전역을 읽는지까지 통합 검증한다. 각 테스트가 끝나면
+// 원래 상태로 되돌려(finally) 같은 파일의 다른 테스트로 전역이 새지 않게 한다.
+function withWindow(windowLike, fn) {
+  const hadOwn = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const original = globalThis.window;
+  if (windowLike === undefined) delete globalThis.window;
+  else globalThis.window = windowLike;
+  return Promise.resolve().then(fn).finally(() => {
+    if (hadOwn) globalThis.window = original; else delete globalThis.window;
+  });
+}
+
+test('거친 포인터(폰)면 간편인증이 선택 가능하다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow({ matchMedia: () => ({ matches: true }) }, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, false, 'coarse pointer 면 막으면 안 된다');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('정밀 포인터(PC)면 간편인증을 막고 폰에서 진행하라고 안내한다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow({ matchMedia: () => ({ matches: false }) }, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, true, 'coarse pointer 가 없으면 막아야 한다');
+      assert.match(collectText(simpleAuthButton), /휴대폰에서 진행해 주세요/, '왜 막혔는지 알려줘야 한다');
+      assert.match(collectText(simpleAuthButton), /이어져요/, '진행 상황이 안 사라진다는 안심 문구가 있어야 한다(핸드오프를 만드는 대신 GET /enrollments/current 이어받기를 안내)');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('matchMedia 를 못 구하면(구형 브라우저·window 부재) 간편인증을 막지 않는다(fail open)', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    await withWindow(undefined, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.ok(simpleAuthButton, '간편인증 버튼을 찾을 수 없다');
+      assert.equal(simpleAuthButton.props.disabled, false, '판별이 불확실하면 허용 쪽으로 접어야 한다');
+    });
+    await withWindow({}, () => {
+      const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: () => {} });
+      const simpleAuthButton = findTree(tree, (node) => node.type === 'button'
+        && collectText(node).includes('간편인증으로 확인'));
+      assert.equal(simpleAuthButton.props.disabled, false, 'matchMedia 가 없는 window 도 fail open 이어야 한다');
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test('기기 판별과 무관하게 모바일 신분증(mid)은 세 경우 모두 그대로 선택 가능하다', async () => {
+  // mid 는 애초에 simpleAuthReason 을 전혀 참조하지 않는다 — 이 테스트는 그 무관함을
+  // "코드를 안 읽는다"가 아니라 세 device 상태 각각에서 렌더+클릭까지 직접 증명한다.
+  const harness = await stepHarness({ entry: '/src/features/model/IdentityMethodStep.jsx' });
+  try {
+    const cases = [
+      { label: 'coarse(폰)', windowLike: { matchMedia: () => ({ matches: true }) } },
+      { label: 'fine(PC)', windowLike: { matchMedia: () => ({ matches: false }) } },
+      { label: 'window 없음', windowLike: undefined },
+    ];
+    for (const { label, windowLike } of cases) {
+      // eslint-disable-next-line no-loop-func
+      await withWindow(windowLike, () => {
+        const picked = [];
+        const tree = harness.render({ methods: ['mid', 'simple_auth'], onPick: (m) => picked.push(m) });
+        const midButton = findTree(tree, (node) => node.type === 'button'
+          && collectText(node).includes('모바일 신분증으로 확인'));
+        assert.ok(midButton, `mid 버튼을 찾을 수 없다 (${label})`);
+        assert.equal(Boolean(midButton.props.disabled), false, `mid 는 disabled 가 아니어야 한다 (${label})`);
+        midButton.props.onClick();
+        assert.deepEqual(picked, ['mid'], `mid 클릭이 그대로 onPick('mid') 로 이어져야 한다 (${label})`);
+      });
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
 // ── (b) IdDocumentStep: 서버로 가는 건 캔버스에서 뽑은 blob 이지 원본 File 이 아니다 ──
 
 // 훅 호출 순서(IdDocumentStep.jsx 상단 주석과 동일해야 한다):
-//   useState: documentType, imageUrl, imageLoaded, maskRatio, maskedConfirmed, busy, localError
-//   useRef:   imageRef(0), canvasRef(1), dragRef(2)
+//   useState: documentType(0), imageUrl(1), imageLoaded(2), maskRatio(3), maskedConfirmed(4),
+//             busy(5), localError(6), mode(7), cameraUnavailableReason(8)
+//   useRef:   imageRef(0), canvasRef(1), dragRef(2), maskFailStreakRef(3)
+// 아래 file·manual 경로 테스트는 전부 initialStates[7]='file' 로 카메라 분기를 건너뛴다 —
+// 이 파일들이 검증하는 건 v1 의 드래그 마스킹 화면이지 카메라가 아니다.
 // sequence 는 drawImage/fillRect 를 하나의 시간순 배열에 적재한다(길이만 세는 배열 두 개가
 // 아니다) — drawImage.length===1 && fillRect.length===1 은 fillRect 를 먼저 부르고
 // drawImage 로 원본을 그 위에 덧그려도(마스킹이 사라짐) 똑같이 통과해 버린다. 아래
@@ -244,8 +343,10 @@ function fakeCanvasElement() {
     toBlob(resolve, type) {
       // 이 blob 은 원본 File 이 절대 아니다 — 캔버스가 방금 그리고 채운 결과를 대신하는
       // 표식(__maskedBlobMarker)일 뿐이다. 아래 테스트는 uploadIdDocument 가 이 표식을
-      // 받는지, 원본 File 객체를 받는지를 가른다.
-      resolve({ __maskedBlobMarker: true, type, sequence: [...sequence] });
+      // 받는지, 원본 File 객체를 받는지를 가른다. size 는 IdDocumentStep 의 "빈 blob 이면
+      // 올리지 않는다" 가드(Task 7)를 이 마커가 통과하게 하는 값일 뿐, 실제 바이트 크기가
+      // 아니다.
+      resolve({ __maskedBlobMarker: true, type, size: 2048, sequence: [...sequence] });
     },
   };
 }
@@ -266,6 +367,7 @@ test('제출하면 원본 File 이 아니라 캔버스에서 뽑은 마스킹된
       true,                                      // maskedConfirmed
       false,                                     // busy
       '',                                        // localError
+      'file',                                    // mode — camera 를 건너뛰고 v1 화면을 그린다
     ],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: {
@@ -339,7 +441,7 @@ test('레터박스된 미리보기에서도 fillRect 가 원본의 의도한 영
     initialStates: [
       'rrc', 'blob:fake-preview-url', true,
       { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.1 },
-      true, false, '',
+      true, false, '', 'file',
     ],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: {
@@ -371,7 +473,7 @@ test('마스킹 확인 체크가 안 됐으면 제출 버튼이 비활성화된�
   const fakeCanvas = fakeCanvasElement();
   const harness = await stepHarness({
     entry: '/src/features/model/IdDocumentStep.jsx',
-    initialStates: ['rrc', 'blob:fake-preview-url', true, { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, false, false, ''],
+    initialStates: ['rrc', 'blob:fake-preview-url', true, { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, false, false, '', 'file'],
     initialRefs: [fakeImage, fakeCanvas, null],
     api: { uploadIdDocument: async () => { throw new Error('불려서는 안 된다'); } },
   });
@@ -392,7 +494,7 @@ test('마스킹 확인 체크가 안 됐으면 제출 버튼이 비활성화된�
 test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드 존 분기 점검)', async () => {
   const harness = await stepHarness({
     entry: '/src/features/model/IdDocumentStep.jsx',
-    initialStates: [null, null, false, null, false, false, ''],
+    initialStates: [null, null, false, null, false, false, '', 'file'],
     initialRefs: [null, null, null],
   });
   try {
@@ -408,6 +510,293 @@ test('사진을 고르기 전 첫 화면도 예외 없이 그려진다(업로드
     // 서버 ALLOWED_ID_MIME 과 같은 집합만 건다.
     assert.equal(fileInput.props.accept, 'image/jpeg,image/png,image/webp');
     assert.equal(fileInput.props.capture, 'environment');
+  } finally {
+    await harness.close();
+  }
+});
+
+// ── (b-2) Task 7: 카메라 우선 모드 머신 (camera → file → manual) ────────────────
+// 아래부터는 소스 정규식이 아니라 실제 모드 머신을 돌려 검증한다 — 세 겹 비상구(카메라
+// 미지원 → file, 기하 검증 연속 실패 → manual)가 이 기능의 핵심 안전장치라서, "정규식이
+// 통과했다"보다 "실제로 그 모드로 넘어갔다"를 확인해야 한다.
+const idDocumentStepSource = readFileSync(
+  new URL('../../src/features/model/IdDocumentStep.jsx', import.meta.url), 'utf8',
+);
+const findCameraNode = (tree) => findTree(tree, (node) => node.type?.name === 'IdCameraCapture');
+
+test('기본은 카메라 촬영이다', () => {
+  assert.match(idDocumentStepSource, /IdCameraCapture/, '카메라가 기본 경로여야 한다');
+  // 실제 자동 마스킹 호출은 IdCameraCapture.jsx 내부(burnGuideMask)에서 일어난다 —
+  // onCaptured 가 이미 마스킹된 blob 하나만 주므로 이 파일이 다시 부를 필요는 없다.
+  // 그래도 그 사실 자체는 여기 문서화돼 있어야 한다(다음 사람이 "왜 여긴 안 부르지"
+  // 를 코드만 보고 오해하지 않게).
+  assert.match(idDocumentStepSource, /burnGuideMask/, '가이드 기준 자동 마스킹의 출처를 언급해야 한다');
+});
+
+test('카메라를 못 쓰면 파일 선택으로 내려간다(onUnavailable)', () => {
+  assert.match(idDocumentStepSource, /onUnavailable/, '권한 거부·미지원 시 폴백이 있어야 한다');
+  assert.match(idDocumentStepSource, /image\/jpeg,image\/png,image\/webp|ACCEPT_ATTR/, '폴백도 형식을 좁혀야 한다');
+});
+
+test('기하 검증 실패가 반복되면 수동 마스킹으로 내려준다(소스)', () => {
+  assert.match(idDocumentStepSource, /MANUAL_MASK_AFTER|manualFallback/, '연속 실패 횟수로 비상구를 열어야 한다');
+  assert.match(idDocumentStepSource, /buildMaskedBlob/, '수동 마스킹 경로(v1)를 버리지 않는다');
+});
+
+test('기본 렌더는 카메라이고, 종류 선택·파일 입력 화면은 안 보인다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    const tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.ok(findCameraNode(tree), '기본 화면에 IdCameraCapture 가 있어야 한다');
+    assert.equal(
+      findTree(tree, (node) => node.type === 'input' && node.props.type === 'file'),
+      null,
+      'camera 모드에선 파일 입력이 보이면 안 된다 — 비상구가 아니라 기본 경로다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('카메라 권한이 없으면(onUnavailable) 실제로 file 모드로 내려가고 이유를 보여준다', async () => {
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    const cameraNode = findCameraNode(tree);
+    assert.ok(cameraNode, '카메라가 아직 살아 있어야 한다');
+    cameraNode.props.onUnavailable('permission');
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree), null, 'onUnavailable 뒤엔 카메라 화면이 사라져야 한다');
+    assert.equal(harness.runtime.states[7], 'file', 'mode 상태가 실제로 file 로 바뀌어야 한다');
+    assert.equal(harness.runtime.states[8], 'permission', '왜 내려왔는지(reason)도 기억해야 배너에 쓸 수 있다');
+    assert.match(collectText(tree), /카메라 권한이 없어서/, '왜 사진 선택 화면인지 사용자에게 설명해야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('카메라가 멀쩡히 작동해도 사용자가 직접 파일 선택으로 넘어갈 수 있다(최종리뷰 I2a)', async () => {
+  // 잡는 회귀: 지금까지 file 모드로 가는 길은 onUnavailable(getUserMedia 실패)뿐이었다
+  // — 렌즈가 흐리거나 전면 카메라를 잡는 등 "카메라는 켜지지만 못 쓰겠는" 사용자는
+  // shadow/off 에선 서버가 id_mask_not_applied 를 3연속 주지도 않으니 탈출구가 없었다.
+  const harness = await stepHarness({ entry: '/src/features/model/IdDocumentStep.jsx' });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.ok(findCameraNode(tree), '카메라가 살아 있어야 한다');
+    const switchButton = findTree(tree, (node) => node.type === 'button'
+      && collectText(node).includes('사진을 선택해서 올릴게요'));
+    assert.ok(switchButton, '카메라 화면에서 파일 선택으로 넘어가는 사용자 조작 버튼을 찾을 수 없다');
+    switchButton.props.onClick();
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree), null, '눌렀으면 실제로 카메라 화면이 사라지고 file 화면이어야 한다');
+    assert.equal(harness.runtime.states[7], 'file', 'mode 상태가 실제로 file 로 바뀌어야 한다');
+    assert.doesNotMatch(
+      collectText(tree),
+      /권한이 없어서|지원하지 않아요/,
+      '기술적 실패가 아니라 사용자가 스스로 고른 것이므로 거짓 원인을 보여주면 안 된다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('빈 blob(toBlob 인코딩 실패)은 올리지 않고 다시 찍으라고 안내한다', async () => {
+  const uploads = [];
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: { uploadIdDocument: async (enrollmentId, body) => { uploads.push(body); return {}; } },
+  });
+  try {
+    const tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    const cameraNode = findCameraNode(tree);
+    await cameraNode.props.onCaptured(null);
+    assert.equal(uploads.length, 0, 'canvas.toBlob 이 null 을 주면 업로드를 시도하면 안 된다');
+    assert.match(harness.runtime.states[6], /다시 찍어 주세요/);
+
+    await cameraNode.props.onCaptured({ size: 0 });
+    assert.equal(uploads.length, 0, '크기 0 인 blob 도 같은 취급을 받아야 한다(빈 파일)');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('id_mask_not_applied 가 연속 3회면 manual 로 내려간다(세 번째 시도까지는 카메라)', async () => {
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('마스킹이 주민등록번호를 덮지 못했어요.'), {
+          status: 422, code: 'id_mask_not_applied',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    // IdDocumentStep.jsx 의 MANUAL_MASK_AFTER 와 같은 값(3) — 상수 자체는 export 되지
+    // 않으므로(내부 전용) 여기선 그 값을 안다는 전제로 리터럴을 쓴다. 값이 바뀌면 이
+    // 테스트도 같이 고쳐야 한다.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const cameraNode = findCameraNode(tree);
+      assert.ok(cameraNode, `${attempt}번째 시도 전엔 아직 카메라 화면이어야 한다`);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(harness.runtime.states[7], 'manual', '연속 3회째엔 수동 마스킹 화면으로 내려가야 한다');
+    assert.equal(findCameraNode(tree), null);
+    assert.match(collectText(tree), /직접 옮겨 주세요/, '왜 수동 화면인지 설명해야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('성공은 연속 실패 횟수를 초기화한다(2번 실패 → 성공 → 2번 실패는 3연속이 아니다)', async () => {
+  const outcomes = ['fail', 'fail', 'success', 'fail', 'fail'];
+  let call = 0;
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        const outcome = outcomes[call];
+        call += 1;
+        if (outcome === 'success') return { status: 'identity_pending' };
+        throw Object.assign(new Error('마스킹이 주민등록번호를 덮지 못했어요.'), {
+          status: 422, code: 'id_mask_not_applied',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    for (let i = 0; i < outcomes.length; i += 1) {
+      const cameraNode = findCameraNode(tree);
+      assert.ok(cameraNode, `${i}번째 시도는 카메라 화면에서 이뤄져야 한다(아직 3연속에 못 미침)`);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(
+      harness.runtime.states[7],
+      'camera',
+      '성공이 중간에 끼어 스트라이크를 초기화했으므로 뒤이은 2연속은 3연속이 아니다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('id_mask_not_applied 가 아닌 코드는 몇 번을 반복해도 수동으로 내려가지 않는다', async () => {
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('파일이 너무 커요.'), { status: 413, code: 'file_too_large' });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    for (let i = 0; i < 5; i += 1) {
+      const cameraNode = findCameraNode(tree);
+      await cameraNode.props.onCaptured({ size: 100 });
+      tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    }
+    assert.equal(harness.runtime.states[7], 'camera', 'file_too_large 는 마스킹 실패가 아니므로 스트라이크가 아니다');
+    assert.match(harness.runtime.states[6], /파일이 너무 커요/, '메시지는 그대로 보여줘야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('camera 경로에서도 409 는 스트라이크로 안 세고 onStale 로 되돌린다', async () => {
+  const stale = [];
+  const errors = [];
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('신분증을 올릴 수 있는 단계가 아니에요.'), {
+          status: 409, code: 'invalid_enrollment_state',
+        });
+      },
+    },
+  });
+  try {
+    const tree = harness.render({
+      enrollmentId: 'enrollment-1',
+      onUploaded: () => {},
+      onStale: (e) => stale.push(e),
+      onError: (e) => errors.push(e),
+    });
+    const cameraNode = findCameraNode(tree);
+    await cameraNode.props.onCaptured({ size: 100 });
+    assert.equal(stale.length, 1, '409 는 부모의 재조회 경로(onStale)로 가야 한다');
+    assert.deepEqual(errors, [], '409 를 일반 에러로 처리하면 안 된다');
+    assert.equal(harness.runtime.states[7], 'camera', '409 는 이 화면이 유효하지 않다는 뜻이지 마스킹 실패가 아니다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('업로드 중엔 busy 가 IdCameraCapture 로 전달돼 자동/수동 셔터를 막는다', async () => {
+  let resolveUpload;
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: { uploadIdDocument: () => new Promise((resolve) => { resolveUpload = resolve; }) },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.busy, false, '업로드 전엔 busy 가 아니어야 한다');
+
+    const pending = findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(
+      findCameraNode(tree).props.busy,
+      true,
+      '업로드가 끝나기 전엔 busy=true 를 넘겨야 자동 판정기·수동 셔터가 또 찍지 않는다',
+    );
+
+    resolveUpload({ status: 'identity_pending' });
+    await pending;
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.busy, false, '업로드가 끝나면 busy 를 풀어야 한다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('업로드 실패 뒤엔 자동 촬영을 멈추고, 새 시도가 시작되면 다시 연다(최종리뷰 I2b)', async () => {
+  // 잡는 회귀: 실패해도 아무것도 안 멈추면, 사용자가 에러 문구를 읽는 동안에도 카드를
+  // 든 손은 그대로라 자동 판정 게이트(~5프레임 ≈ 0.5초)가 곧 다시 열려 서버(얼굴 인식)를
+  // 계속 두드리게 된다.
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    api: {
+      uploadIdDocument: async () => {
+        throw Object.assign(new Error('얼굴 검사를 지금 수행할 수 없습니다.'), {
+          status: 503, code: 'qc_unavailable',
+        });
+      },
+    },
+  });
+  try {
+    let tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.paused, false, '실패 전엔 자동 촬영이 멈춰 있으면 안 된다');
+
+    await findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(
+      findCameraNode(tree).props.paused,
+      true,
+      '업로드가 실패하면 자동 촬영을 멈춰야 한다 — 안 그러면 사용자가 가만히 있어도 서버를 계속 두드린다',
+    );
+    assert.equal(findCameraNode(tree).props.busy, false, 'paused 는 busy 와 별개다 — 수동 셔터는 여전히 살아 있어야 한다');
+
+    // 새 시도(자동 게이트가 다시 열려서든, 수동 셔터를 눌러서든)가 시작되면 "사용자가
+    // 뭔가 했다"는 신호이므로 곧바로 풀린다 — 이 시도가 또 실패하면 catch 가 다시 세운다.
+    const pending = findCameraNode(tree).props.onCaptured({ size: 100 });
+    tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    assert.equal(findCameraNode(tree).props.paused, false, '새 시도가 시작되는 즉시(업로드 응답을 기다리지 않고) 풀려야 한다');
+    await pending;
   } finally {
     await harness.close();
   }
@@ -588,7 +977,7 @@ test('신분증 업로드 409 는 부모의 재조회 경로로 되돌린다(사
     entry: '/src/features/model/IdDocumentStep.jsx',
     initialStates: [
       'rrc', 'blob:fake-preview-url', true,
-      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, true, false, '',
+      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, true, false, '', 'file',
     ],
     initialRefs: [
       { naturalWidth: 800, naturalHeight: 600, getBoundingClientRect: () => ({ width: 800, height: 600 }) },
@@ -655,5 +1044,80 @@ test('간편인증 설정이 없으면 등록을 시작하기 전에 막는다(�
   assert.ok(
     body.indexOf('SIMPLE_AUTH_UNAVAILABLE_REASON') < body.indexOf('await createEnrollment('),
     '등록을 만든 뒤에 확인하면 이미 늦다',
+  );
+});
+
+// ── 수단이 하나뿐이면 선택 화면이 안 뜬다 → 기기 힌트도 시작 전에 막아야 한다 ────────
+// (Task 8 리뷰 IMPORTANT) IdentityMethodStep.jsx 의 isMobileLike() 체크는 그 화면 안에서만
+// 산다. VITE_FM_IDENTITY_METHODS=simple_auth 처럼 수단이 하나뿐이면 그 화면 자체가 안 뜨고
+// (useEffect 가 onPick 을 곧장 부른다) startEnrollment 가 곧장 불린다 — 그러면 PC 사용자가
+// 기기 힌트를 한 번도 못 보고 곧장 위젯을 연다. 위의 SIMPLE_AUTH_UNAVAILABLE_REASON 가드와
+// 정확히 같은 구조적 이유로, 같은 자리에 두 번째 가드가 있어야 한다.
+//
+// ModelRegister.jsx 는 JSX 를 포함해 plain node 로 직접 import·렌더할 수 없어(파일 상단
+// 관례 그대로) 아래도 readFileSync + 정규식으로 source 를 직접 대조한다. 대신 여기서 쓰는
+// isMobileLike() 자체의 네 가지 동작(coarse→true, fine→false, matchMedia 없음→true,
+// window 없음→true)은 identity-method-config.test.mjs 가 이미 함수 단위로 증명해 뒀다 —
+// 아래 테스트들은 "그 함수를 뒤집지 않고, mid 로 새지 않게, createEnrollment 전에" 정확히
+// 그대로 불러 쓰는지만 source 레벨에서 고정한다(함수 동작 증명 + 배선 증명 = 합쳐서
+// 시나리오 전체 증명).
+function startEnrollmentBody() {
+  const start = modelRegisterSource.indexOf('const startEnrollment = async (identityMethod) => {');
+  assert.ok(start > 0, 'startEnrollment 를 못 찾았다');
+  // 기존 IMPORTANT 3 테스트의 'const runCxWidget' 종료 마커는 #285/#287 리네임(runCxWidget →
+  // runIdentityWidget) 이후 더 이상 소스에 없어(더 아래까지 슬라이스됨) — 여기서는 실제로
+  // startEnrollment 바로 다음 줄에 있는 startEnrollmentRef 선언을 경계로 써서 함수 본문만
+  // 정확히 잘라낸다.
+  const end = modelRegisterSource.indexOf('const startEnrollmentRef = useRef(null);', start);
+  assert.ok(end > start, 'startEnrollment 함수 끝(startEnrollmentRef 선언)을 찾을 수 없다');
+  return modelRegisterSource.slice(start, end);
+}
+
+test('간편인증이 기기 힌트로 막히면(수단이 하나뿐인 배포에서도) 시작 전에 막는다', () => {
+  const body = startEnrollmentBody();
+  assert.match(
+    body,
+    /if \(identityMethod === 'simple_auth' && !isMobileLike\(\)\) \{/,
+    'startEnrollment 가 기기 힌트를 확인하지 않는다 — 수단이 하나뿐인 배포에서 PC 사용자가 그대로 위젯을 연다',
+  );
+  assert.match(
+    body,
+    /setError\(SIMPLE_AUTH_DEVICE_REASON\);/,
+    '기기 힌트로 막을 때 IdentityMethodStep 과 같은 문구(SIMPLE_AUTH_DEVICE_REASON)를 보여줘야 한다',
+  );
+  assert.ok(
+    body.indexOf('!isMobileLike()') < body.indexOf('await createEnrollment('),
+    '등록을 만든 뒤에 확인하면 이미 늦다 — 신분증 촬영까지 다 끝난 뒤 막히는 것과 같은 문제가 재발한다',
+  );
+});
+
+test('기기 힌트 가드는 isMobileLike/SIMPLE_AUTH_DEVICE_REASON 을 새로 만들지 않고 그대로 재사용한다', () => {
+  // 잡는 회귀: 이 가드가 identityMethodConfig.js 의 공유 헬퍼·문구를 안 쓰고 로컬로
+  // 다시 정의하면, 언젠가 IdentityMethodStep.jsx 쪽만 고쳐지고 여기는 안 고쳐져 말이 갈린다.
+  assert.match(
+    modelRegisterSource,
+    /import \{ deriveSimpleAuthUnavailableReason, isMobileLike, parseIdentityMethods, SIMPLE_AUTH_DEVICE_REASON \} from '\.\/identityMethodConfig\.js';/,
+  );
+});
+
+test('기기 힌트 가드는 mid 로 새지 않는다(simple_auth 에만 걸린다)', () => {
+  // 잡는 회귀: identityMethod === 'simple_auth' 조건이 빠지면 mid 단일 배포에서도(발표/
+  // 롤백 모드) 이 가드가 걸려, PC 로 접속한 정상적인 mid 사용자까지 막아 버린다.
+  const body = startEnrollmentBody();
+  assert.doesNotMatch(
+    body,
+    /if \(!isMobileLike\(\)\) \{/,
+    'identityMethod 조건 없이 isMobileLike() 만 보면 mid 까지 막아 버린다',
+  );
+});
+
+test('기기 힌트 가드는 방향이 뒤집히지 않았다(!isMobileLike, isMobileLike 단독 아님)', () => {
+  // 잡는 회귀: '!' 가 빠지면(fail closed 로 뒤집히면) coarse pointer(폰)에서도 간편인증이
+  // 막혀 버린다 — 반대로 폰이 아닌데 통과시키는 것보다 더 나쁘다(정상 사용자를 막음).
+  const body = startEnrollmentBody();
+  assert.doesNotMatch(
+    body,
+    /if \(identityMethod === 'simple_auth' && isMobileLike\(\)\) \{\s*\n\s*setError\(SIMPLE_AUTH_DEVICE_REASON\)/,
+    '부정(!)이 빠지면 방향이 뒤집혀 폰 사용자까지 막는다',
   );
 });

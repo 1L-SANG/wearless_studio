@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity, facemarket_id_document, repo
+from . import cx_identity, facemarket_id_document, facemarket_id_mask_verify, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
 from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_email
@@ -1081,7 +1081,11 @@ async def create_enrollment(
             "지금은 이 방식으로 등록할 수 없어요.",
             status=409,
         )
-    initial_status = "id_capture_pending" if method == "simple_auth" else "identity_pending"
+    # Task6: 순서 뒤집기 — 두 경로 모두 identity_pending 에서 시작한다. simple_auth 는
+    # 본인확인을 마친 뒤(verify_enrollment_identity)에야 id_capture_pending(신분증 촬영)
+    # 으로 넘어간다. 촬영 시점에 이미 이름·생년월일·CI 를 인증사가 검증해 뒀어야, 카드가
+    # "정보를 읽는 대상"이 아니라 "그 사람 것인가"를 확인하는 물증이 된다.
+    initial_status = "identity_pending"
     device_digest = hashlib.sha256(device_id.encode()).hexdigest()
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
@@ -1435,11 +1439,18 @@ async def verify_enrollment_identity(
                             f"{MAX_IDENTITY_MISMATCH - new_count}회 더 시도할 수 있어요.",
                             status=422,
                         )
-            # 증거 저장 + 상태 전이
+            # 증거 저장 + 상태 전이. Task6: 다음 상태는 인증 수단으로 가른다 — simple_auth
+            # 는 아직 사람 얼굴 앵커가 없어(초상이 안 온다) 신분증 촬영(id_capture_pending)
+            # 으로, mid 는 이미 초상이 있어 곧장 사진 촬영(photos_pending)으로 간다.
+            # mid 분기의 SQL 텍스트는 오늘과 완전히 동일하게 유지한다(리터럴
+            # "'photos_pending'") — 바인드 파라미터로 통합하면 문자열이 갈라져,
+            # test_facemarket_biometric_enrollment.py 의 FakeCursor 가 이 UPDATE 를
+            # 리터럴로 식별하는 mid 회귀 스위트 전체가 조용히 다른 분기로 샌다.
+            next_status = "id_capture_pending" if method == "simple_auth" else "photos_pending"
             await cur.execute(
-                """
+                f"""
                 update fm_biometric_enrollments
-                set status = 'photos_pending',
+                set status = '{next_status}',
                     identity_ci_hash = %s, identity_name_masked = %s,
                     identity_birth_year = %s, identity_tx_digest = %s,
                     identity_contract_version = %s
@@ -1806,6 +1817,37 @@ async def upload_id_document(
                 "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 status=503,
             )
+        # 신분증 마스킹 기하 검증(shadow). 얼굴 게이트를 통과했고 아직 아무것도 저장하지
+        # 않은 시점 — off 면 검사 자체를 건너뛴다. cv2.imdecode 는 이벤트 루프를 얼릴 수
+        # 있는 동기 작업이라(2026-08-26 ALB 37초 장애 선례) crop_id_face 와 같은 방식으로
+        # to_thread 에 위임한다. 판정은 enforce 여부와 무관하게 항상 로그로 남긴다 —
+        # 임계 캘리브 근거가 그 로그뿐이다(off 는 예외 — 검사 자체를 안 하니 남길 것도 없다).
+        #
+        # mask_mode 는 이 판정을 그대로 영속화한다(Task9) — 클라이언트가 선언하는 값이
+        # 아니다: 클라는 어느 경로를 탔는지 거짓말할 수 있지만 서버의 기하 판정은 그럴 수
+        # 없다. off 라 판정 자체가 없으면 None(NULL) 을 그대로 둔다 — 'auto'는 검사 안
+        # 한 걸 통과로, 'manual'은 통과 못 한 걸로 거짓 기록하는 셈이라 둘 다 안 된다.
+        mask_mode: str | None = None
+        if settings.fm_id_mask_verify != "off":
+            mask_applied, mask_metrics = await asyncio.to_thread(
+                facemarket_id_mask_verify.mask_is_applied, data
+            )
+            logger.info(
+                "facemarket_id_mask_verify_verdict",
+                extra={
+                    "enrollment_id": enrollment_id,
+                    "fm_id_mask_verify": settings.fm_id_mask_verify,
+                    "mask_applied": mask_applied,
+                    **mask_metrics,
+                },
+            )
+            mask_mode = "auto" if mask_applied else "manual"
+            if settings.fm_id_mask_verify == "enforce" and not mask_applied:
+                raise _err(
+                    "id_mask_not_applied",
+                    "주민등록번호가 가려졌는지 확인해 주세요.",
+                    status=422,
+                )
         # 업로드 시도마다 새 키를 쓴다. 고정 키를 쓰면 동시/재시도 제출이 같은 객체를
         # 공유해, 늦게 실패한 요청의 rowcount==0 정리(delete)가 먼저 커밋된 요청의
         # 객체를 지워 버린다(리뷰 finding) — enrollment_quarantine_key 와 같은 이유다.
@@ -1829,19 +1871,50 @@ async def upload_id_document(
                     status=503,
                 )
             async with conn.cursor() as cur:
+                # Task6: 순서 뒤집기 이후 이 라우트에 오는 시점엔 본인확인이 이미 끝나
+                # 있다(이름·생년월일·CI 확보됨) — 이 카드 사진은 이제 "정보를 읽는 대상"이
+                # 아니라 "방금 인증된 그 사람 것인가"를 확인하는 물증이라, 성공하면 곧장
+                # 사진 촬영(photos_pending)으로 넘어간다.
+                #
+                # `identity_ci_hash is not null` 은 불변조건이다 — 이 단계에 왔다면 본인확인은
+                # 이미 끝나 있어야 한다. 새 순서로 만들어진 행은 전부 이 조건을 만족하므로
+                # 정상 흐름에서는 이 가드가 절대 발동하지 않는다(no-op). 발동한다면 그건 순서
+                # 뒤집기 배포 이전에 id_capture_pending 에서 멈춰 있던 행뿐이다 — 그런 행은
+                # (구버전 순서에서) 본인확인을 아직 거치지 않았으므로 CI 교차계정 충돌 검사도
+                # 안 거쳤고, 이대로 photos_pending 으로 보내면 identity_ci_hash 가 NULL 인 채로
+                # 나중에 fm_identity_verifications 삽입이 NOT NULL 제약 위반으로 죽는다.
                 await cur.execute(
                     """
                     update fm_biometric_enrollments
-                    set status = 'identity_pending',
+                    set status = 'photos_pending',
                         id_document_r2_key = %s, id_document_type = %s,
-                        id_document_uploaded_at = now(), id_document_purged_at = null
+                        id_document_uploaded_at = now(), id_document_purged_at = null,
+                        mask_mode = %s
                     where id = %s and user_id = %s and status = 'id_capture_pending'
+                      and identity_ci_hash is not null
                     """,
-                    (key, document_type, enrollment_id, user_id),
+                    (key, document_type, mask_mode, enrollment_id, user_id),
                 )
                 if cur.rowcount == 0:
-                    # 이미 지나간 단계이거나 남의 등록 — 방금 올린 객체를 되돌린다.
+                    # 이미 지나간 단계이거나 남의 등록이거나(오늘과 동일), 위 불변조건이
+                    # 깨진 구버전 행(신규)이거나 — 어느 쪽이든 방금 올린 객체를 되돌린다.
                     await asyncio.to_thread(r2.delete, key)
+                    await cur.execute(
+                        "select status, identity_ci_hash from fm_biometric_enrollments "
+                        "where id = %s and user_id = %s",
+                        (enrollment_id, user_id),
+                    )
+                    guard_row = await cur.fetchone()
+                    if (
+                        guard_row is not None
+                        and guard_row["status"] == "id_capture_pending"
+                        and guard_row["identity_ci_hash"] is None
+                    ):
+                        raise _err(
+                            "identity_not_verified",
+                            "본인확인을 다시 진행한 뒤 신분증을 올려 주세요.",
+                            status=409,
+                        )
                     raise _err(
                         "invalid_enrollment_state",
                         "신분증을 올릴 수 있는 단계가 아니에요.",

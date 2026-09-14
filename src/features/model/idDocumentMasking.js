@@ -12,6 +12,8 @@
    같은 패턴: document.createElement 를 흉내 낸 캔버스 스텁만으로 검증한다).
    ============================================================= */
 
+import { rrnRectInFrame } from './idCardGeometry.js';
+
 // 서버 계약(facemarket_id_document.ID_DOCUMENT_TYPES)과 같은 집합이어야 한다.
 // v1 은 주민등록증만 받는다 — 마스크가 사각형 하나뿐이라 면허번호·여권번호·외국인등록번호는
 // 가려지지 않은 채 저장되는데, 셋 다 고유식별정보다(최종리뷰 I12).
@@ -121,5 +123,21 @@ export function buildMaskedBlob({ canvas, image, mask, quality = 0.92 }) {
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#111';
   ctx.fillRect(mask.x, mask.y, mask.w, mask.h);
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+}
+
+/* 가이드 촬영용 자동 마스킹. 카드가 가이드를 채운 상태로 찍혔으므로 주민등록번호
+   위치가 규격으로 계산된다 — 사용자가 박스를 끌지 않는다.
+
+   drawImage → fillRect 순서가 뒤집히면 원본이 마스크 위에 다시 그려져 번호가
+   살아난다. 순서를 테스트로 고정한다(v1 에서 그 순서를 못 잡는 테스트가 있었다). */
+export function burnGuideMask(canvas, source, width, height, quality = 0.92) {
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(source, 0, 0, width, height);
+  const r = rrnRectInFrame(width, height);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 }
