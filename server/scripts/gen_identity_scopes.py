@@ -60,7 +60,8 @@ def _virtual_space_sets(sets: dict[str, list[dict]]) -> list[str]:
     out = []
     for set_id, members in sets.items():
         scopes = {
-            identity_scope.scope_for_block({
+            # 섹션 규칙은 빼고 본다 — 세트의 가상 전용 여부는 세트 고유 사유여야 한다.
+            identity_scope.shape_scope_for_block({
                 "exampleId": m.get("exampleId"), "cutType": m.get("cutType"),
                 "direction": m.get("direction"), "shot": m.get("shot"),
                 "refScope": "pose", "pose": "auto", "spaceGroupId": set_id,
@@ -75,6 +76,13 @@ def _virtual_space_sets(sets: dict[str, list[dict]]) -> list[str]:
 def _cases(ids: list[str], sets: dict[str, list[dict]]) -> list[dict]:
     """서버가 실제로 계산한 답 — 프런트 평가기가 이걸 그대로 재현해야 한다."""
     shapes = [
+        # 섹션 규칙 대조 — 같은 모양이라도 섹션이 다르면 답이 달라진다.
+        {"cutType": "horizon", "direction": "front", "shot": "full", "refScope": "all",
+         "pose": "auto", "sectionRole": "studio"},
+        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "all",
+         "pose": "auto", "sectionRole": "styling"},
+        {"cutType": "product", "direction": "front", "shot": "ghost", "refScope": "all",
+         "pose": "auto", "sectionRole": "product"},
         {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "all", "pose": "auto"},
         {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all", "pose": "auto"},
         {"cutType": "styling", "direction": "back", "shot": "full", "refScope": "all", "pose": "auto"},
@@ -113,6 +121,12 @@ def build() -> dict:
             "scopes": list(identity_scope.SCOPES),
         },
         "rules": [
+            # 섹션 규칙이 **먼저** 온다 — 프런트 평가기는 첫 일치 규칙을 쓴다.
+            {"scope": identity_scope.VIRTUAL,
+             "why": "studio 밖 섹션 — 실제 모델 얼굴 합성은 studio 에서만 검증됐다(2026-09-14)",
+             "code": identity_scope.STUDIO_ONLY_CODE,
+             "message": identity_scope.STUDIO_ONLY_MESSAGE,
+             "when": {"sectionNotIn": list(identity_scope.REAL_ALLOWED_SECTION_ROLES)}},
             {"scope": identity_scope.VIRTUAL,
              "why": "확정 GPT 프로필 — 근거가 가상 모델 확정 시트라 실제 등록자에겐 없다",
              "when": {**_PROFILE_SHAPE, "exampleIn": confirmed}},
@@ -142,8 +156,8 @@ def main() -> int:
         return 0
     OUT.write_text(text, encoding="utf-8")
     print(f"{OUT.relative_to(ROOT)}: rules={len(data['rules'])} "
-          f"confirmed={len(data['rules'][0]['when']['exampleIn'])} "
-          f"virtualSets={len(data['rules'][1]['when']['spaceSetIn'])} cases={len(data['cases'])}")
+          f"confirmed={len(data['rules'][1]['when']['exampleIn'])} "
+          f"virtualSets={len(data['rules'][2]['when']['spaceSetIn'])} cases={len(data['cases'])}")
     return 0
 
 

@@ -17,7 +17,7 @@ import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
-import { getFaceRenderStatus, listModels, warmFaceRender } from '@/lib/api/facemarket.js';
+import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -1013,42 +1013,18 @@ export function Editor() {
   // 첫 로딩 실패 상태 — 훅은 로딩 early-return 위에만 둔다(훅 개수 불변).
   const [loadError, setLoadError] = useState(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  // REAL 모델 프로젝트를 열면 얼굴 렌더 파드를 미리 켜고(1회) 준비 상태를 30초마다 확인한다.
-  // 실패는 전부 무시한다 — 이 표시가 에디터 동작에 영향을 주면 안 된다.
-  const [faceRender, setFaceRender] = useState(null);
+  // REAL 모델 프로젝트를 열면 얼굴 렌더 파드를 미리 켠다(1회) — **표시는 하지 않는다**.
+  // 준비 칩을 없앤 이유 둘(2026-09-14 실측):
+  //   ① .ed-face-chip 이 position:absolute; top:68px 라 생성 진행 바와 겹쳐 보였다.
+  //   ② etaMinutes 는 facemarket.face_render_status 의 COLD_START_ETA_MINUTES 고정값이라,
+  //      파드가 떠 있고 LoRA 교체로 재적재 중일 때도 "약 4분" 이 떴다 — 틀린 안내였다.
+  // 셀러는 파드·라이선스·준비 같은 인프라 사정을 몰라야 한다(#303 원칙). 기다림 안내가
+  // 필요하면 기존 생성 진행 문구("컷을 만들고 있어요")로만 한다.
   useEffect(() => {
     const modelId = analysis?.selectedModelId;
-    if (!isRealModelSelection(modelId)) { setFaceRender(null); return undefined; }
-    let alive = true;
-    void warmFaceRender(modelId);
-    const tick = () => {
-      void getFaceRenderStatus(modelId).then((status) => { if (alive) setFaceRender(status); });
-    };
-    tick();
-    const timer = setInterval(tick, 30000);
-    return () => { alive = false; clearInterval(timer); };
+    if (!isRealModelSelection(modelId)) return;
+    void warmFaceRender(modelId);       // 실패는 무시 — 켜기는 거들 뿐이고 잡이 다시 기다린다
   }, [analysis?.selectedModelId]);
-  // 준비됨(ready)은 3초만 보여 주고 감춘다. 준비 중은 계속 띄운다.
-  const [faceReadyShown, setFaceReadyShown] = useState(false);
-  useEffect(() => {
-    if (!faceRender?.enabled || !faceRender?.ready) { setFaceReadyShown(false); return undefined; }
-    setFaceReadyShown(true);
-    const timer = setTimeout(() => setFaceReadyShown(false), 3000);
-    return () => clearTimeout(timer);
-  }, [faceRender?.enabled, faceRender?.ready]);
-  const faceRenderChip = (() => {
-    if (!faceRender?.enabled) return null;
-    // state 를 주지 않는 옛 서버 응답과도 맞물린다(ready 면 ready, 아니면 준비 중).
-    const state = faceRender.state || (faceRender.ready ? 'ready' : 'starting');
-    if (state === 'offline') return null;
-    if (faceRender.ready) {
-      return faceReadyShown ? { ready: true, label: '실제 모델 얼굴 준비됨' } : null;
-    }
-    return {
-      ready: false,
-      label: `실제 모델 얼굴 준비 중${faceRender.etaMinutes ? ` · 약 ${faceRender.etaMinutes}분` : ''}`,
-    };
-  })();
 
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
@@ -3145,17 +3121,6 @@ export function Editor() {
           ) : (
             <Button size="sm" variant="ghost" onClick={retrySaveNow}>다시 저장</Button>
           )}
-        </div>
-      )}
-      {/* 얼굴 렌더 준비 상태 — REAL 모델일 때만. 파드가 자는 동안 첫 컷이 몇 분 걸리는 이유를
-          먼저 말해 주는 칩이다(사용자가 "멈췄다"고 읽지 않게). 준비되면 3초만 보여 주고
-          사라진다 — 다 된 상태를 계속 붙여 두면 화면만 시끄럽다. 파드가 없고 자동 켜기도
-          꺼져 있으면(state=offline) 아예 안 보인다. */}
-      {faceRenderChip && (
-        <div className={`ed-face-chip${faceRenderChip.ready ? ' ready' : ''}`} role="status">
-          <Icon name={faceRenderChip.ready ? 'check' : 'loader'} size={13}
-            className={faceRenderChip.ready ? undefined : 'spin'} />
-          <span>{faceRenderChip.label}</span>
         </div>
       )}
       {/* toolbar */}

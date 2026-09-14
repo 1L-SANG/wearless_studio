@@ -1398,13 +1398,17 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
             # 실제 모델에 가상 전용 컷을 억지로 일반 패킷으로 만들지 않는다(2026-09-11 결정).
             # 건너뛴 컷은 자산이 없으니 정산(성공 컷 수 기준)에도 안 잡힌다 = 크레딧 0.
-            if not identity_scope.block_allowed(b, selected_model_id):
-                log.info("AG-06 identity_scope_mismatch job %s block %s scope=%s model=%s",
-                         job_id, b.get("id"), identity_scope.scope_for_block(b),
+            rejection = identity_scope.block_rejection(b, selected_model_id)
+            if rejection is not None:
+                # 라우트가 예약 전에 이미 걸렀다 — 여기 걸리는 건 구 클라이언트·재시도·
+                # 콘티 재저장으로 들어온 것이다. 건너뛴 컷은 자산이 없으니 정산(성공 컷 수
+                # 기준)에도 안 잡힌다 = 크레딧 0.
+                log.info("AG-06 %s job %s block %s scope=%s model=%s",
+                         rejection[0], job_id, b.get("id"), identity_scope.scope_for_block(b),
                          identity_scope.identity_kind(selected_model_id))
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_skipped",
-                             "reason": "identity_scope_mismatch"})
+                             "reason": rejection[0]})
                 prepared.append((cut_spec, [], "", False, [], None, False))
                 continue
             try:

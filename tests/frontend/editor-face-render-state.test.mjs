@@ -41,3 +41,20 @@ test('Editor.jsx: 호출하는 facemarket API 는 import 돼 있어야 한다', 
     assert.ok(imported.has(name), `${name}(...) 를 부르는데 '@/lib/api/facemarket.js' 에서 import 하지 않았다`);
   }
 });
+
+/* 2026-09-14: 셀러 화면에서 얼굴 준비 칩을 없앴다. 이유 둘 —
+   ① .ed-face-chip 이 position:absolute; top:68px 라 생성 진행 바와 겹쳐 보였다.
+   ② etaMinutes 는 COLD_START_ETA_MINUTES 고정값이라 파드가 떠 있고 LoRA 교체로 재적재
+      중일 때도 "약 4분" 이 떴다 — 틀린 안내였다.
+   셀러는 파드·라이선스·준비 같은 인프라 사정을 몰라야 한다(#303 원칙). */
+test('Editor.jsx: 얼굴 준비 칩이 셀러 화면에 없다', () => {
+  assert.doesNotMatch(editor, /ed-face-chip/);
+  assert.doesNotMatch(editor, /실제 모델 얼굴 준비/);
+  assert.doesNotMatch(editor, /etaMinutes/);
+  // 파드 깨우기는 남긴다 — 표시만 없앴다.
+  assert.match(editor, /warmFaceRender\(/);
+});
+
+test('features.css: 칩 스타일도 남지 않았다', () => {
+  assert.doesNotMatch(read('src/styles/features.css'), /ed-face-chip/);
+});

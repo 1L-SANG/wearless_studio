@@ -11,6 +11,17 @@
  "rules": [
   {
    "scope": "virtual",
+   "why": "studio 밖 섹션 — 실제 모델 얼굴 합성은 studio 에서만 검증됐다(2026-09-14)",
+   "code": "real_model_studio_only",
+   "message": "실제 모델은 현재 스튜디오 컷만 만들 수 있어요.",
+   "when": {
+    "sectionNotIn": [
+     "studio"
+    ]
+   }
+  },
+  {
+   "scope": "virtual",
    "why": "확정 GPT 프로필 — 근거가 가상 모델 확정 시트라 실제 등록자에겐 없다",
    "when": {
     "cutType": "styling",
@@ -277,6 +288,42 @@
   {
    "block": {
     "exampleId": "ex_horizon_women_bottom_medium_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
+   "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_01",
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
@@ -305,7 +352,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -316,7 +363,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -338,7 +385,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_bottom_medium_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -371,7 +454,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -382,7 +465,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -404,7 +487,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_dress_medium_front_satin_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_dress_medium_front_satin_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_horizon_women_dress_medium_front_satin_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -437,7 +556,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -448,7 +567,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -470,7 +589,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -503,7 +658,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -514,7 +669,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -536,7 +691,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -569,7 +760,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -580,7 +771,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -602,7 +793,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -635,7 +862,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -646,7 +873,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -668,7 +895,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -701,7 +964,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -712,7 +975,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -734,7 +997,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_button_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_button_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_button_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -767,7 +1066,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -778,7 +1077,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -800,7 +1099,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_zipper_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_zipper_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_zipper_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -833,7 +1168,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -844,7 +1179,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -866,7 +1201,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_collar_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_collar_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_collar_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -899,7 +1270,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -910,7 +1281,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -932,7 +1303,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_cuff_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_cuff_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_cuff_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -965,7 +1372,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -976,7 +1383,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -998,7 +1405,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_fabric_sewing_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_fabric_sewing_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_fabric_sewing_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1031,7 +1474,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1042,7 +1485,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1064,7 +1507,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_pocket_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_pocket_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_pocket_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1097,7 +1576,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1108,7 +1587,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1130,7 +1609,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1163,7 +1678,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1174,7 +1689,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1196,7 +1711,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_open_two_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_open_two_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_open_two_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1229,7 +1780,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1240,7 +1791,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1262,7 +1813,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_ghost_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_ghost_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_ghost_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1295,7 +1882,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1306,7 +1893,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1328,7 +1915,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1361,7 +1984,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1372,7 +1995,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1394,7 +2017,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1427,7 +2086,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1438,7 +2097,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1460,7 +2119,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1493,7 +2188,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1504,7 +2199,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1526,7 +2221,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1559,7 +2290,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1570,7 +2301,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1592,7 +2323,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1625,7 +2392,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1636,7 +2403,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1658,7 +2425,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1691,7 +2494,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1702,7 +2505,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1724,7 +2527,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1757,7 +2596,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1768,7 +2607,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1790,7 +2629,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1823,7 +2698,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1834,7 +2709,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1856,7 +2731,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1889,7 +2800,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1900,7 +2811,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1922,7 +2833,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1955,7 +2902,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1966,7 +2913,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -1988,7 +2935,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_06",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_06",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2021,7 +3004,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2032,7 +3015,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2054,7 +3037,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2087,7 +3106,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2098,7 +3117,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2120,7 +3139,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2153,7 +3208,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2164,7 +3219,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2186,7 +3241,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2219,7 +3310,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2230,7 +3321,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2252,7 +3343,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2285,7 +3412,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2296,7 +3423,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2318,7 +3445,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2351,7 +3514,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2362,7 +3525,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2384,7 +3547,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_06",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_06",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_06",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2417,7 +3616,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2428,7 +3627,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2450,7 +3649,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_07",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_07",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_07",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2483,7 +3718,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2494,7 +3729,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2516,7 +3751,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_08",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_08",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_08",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2549,7 +3820,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2560,7 +3831,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2582,7 +3853,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_01",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_01",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_01",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2615,7 +3922,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2626,7 +3933,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2648,7 +3955,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_02",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_02",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_02",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2681,7 +4024,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2692,7 +4035,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2714,7 +4057,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_03",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_03",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_03",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2747,7 +4126,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2758,7 +4137,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2780,7 +4159,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_04",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_04",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_04",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2813,7 +4228,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2824,7 +4239,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2846,7 +4261,43 @@
     "refScope": "all",
     "pose": "auto"
    },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_05",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "studio"
+   },
    "scope": "both"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_05",
+    "cutType": "styling",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "styling"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_medium_05",
+    "cutType": "product",
+    "direction": "front",
+    "shot": "ghost",
+    "refScope": "all",
+    "pose": "auto",
+    "sectionRole": "product"
+   },
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2879,7 +4330,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2890,7 +4341,7 @@
     "refScope": "pose",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2912,7 +4363,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2984,7 +4435,7 @@
     "pose": "auto",
     "spaceGroupId": "set-women-bottom-rainy-storefront-kclub-140072876"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -2996,7 +4447,7 @@
     "pose": "auto",
     "spaceGroupId": "set-women-bottom-urban-ggsing-140741411"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3008,7 +4459,7 @@
     "pose": "auto",
     "spaceGroupId": "set-women-bottom-home-petrichoor-162619101"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3020,7 +4471,7 @@
     "pose": "auto",
     "spaceGroupId": "set-women-bottom-beach-nissome-133330805"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3032,7 +4483,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-botanical-attrangs-160835-root01"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3044,7 +4495,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-city-ivy-modimood-2928-root02"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3056,7 +4507,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-cafe-garden-attrangs-160544-root03"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3068,7 +4519,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-neighborhood-garage-modimood-3266-root04"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3080,7 +4531,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-coast-beach-hotping-48001-root05"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3092,7 +4543,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-home-living-musinsa-6570399-root06"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3104,7 +4555,7 @@
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-night-riverwalk-maybins-40948-root07"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3116,7 +4567,7 @@
     "pose": "auto",
     "spaceGroupId": "set_style_women_top_indoor_attrangs_170129_prod01"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3128,7 +4579,7 @@
     "pose": "auto",
     "spaceGroupId": "set_style_women_top_outdoor_slowand_10690_prod01"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3140,7 +4591,7 @@
     "pose": "auto",
     "spaceGroupId": "set_style_women_outer_indoor_commonunique_26096_prod01"
    },
-   "scope": "both"
+   "scope": "virtual"
   },
   {
    "block": {
@@ -3152,7 +4603,7 @@
     "pose": "auto",
     "spaceGroupId": "set_style_women_top_cafe_attrangs_170103_prod02"
    },
-   "scope": "both"
+   "scope": "virtual"
   }
  ]
 }

@@ -862,10 +862,14 @@ def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
     assert calls == {"create": 0, "reserve": 0}
 
 
-def test_editor_new_real_cut_outside_horizon_is_accepted(
+def test_editor_new_real_studio_cut_is_accepted(
     client, make_token, monkeypatch
 ):
-    """실제 모델로 스타일링 컷을 새로 만들 수 있다 — 예전 409(real_model_horizon_only) 폐기."""
+    """실제 모델로 **스튜디오 컷**은 새로 만들 수 있다.
+
+    2026-09-14: 실제 모델은 studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
+    스타일링 컷은 아래 test_editor_new_real_styling_cut_is_refused 가 잠근다.
+    """
     client.app.state.settings = replace(
         client.app.state.settings,
         facemarket_enabled=True,
@@ -911,16 +915,55 @@ def test_editor_new_real_cut_outside_horizon_is_accepted(
     response = client.post(
         "/v1/projects/p1/editor:generate-image",
         headers=_auth(make_token),
-        json={"mode": "new", "cutType": "styling", "modelId": MODEL_ID},
+        json={"mode": "new", "cutType": "horizon", "modelId": MODEL_ID},
     )
 
     assert response.status_code == 202, response.text
     assert seen["payload"]["modelId"] == MODEL_ID
-    assert seen["payload"]["cutType"] == "styling"
+    assert seen["payload"]["cutType"] == "horizon"
     assert seen["payload"]["brandUseCategory"] == CATEGORY
     # 라이선스 확인은 컷 종류와 무관하게 그대로 붙는다.
     assert seen["verified"] == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
     assert seen["payload"]["_facemarket"] == {"modelId": MODEL_ID, "licenseId": LICENSE_ID}
+
+
+def test_editor_new_real_styling_cut_is_refused(client, make_token, monkeypatch):
+    """실제 모델 + studio 밖 섹션 = 생성 전에 거부. 잡도 예약도 없다(과금 0)."""
+    client.app.state.settings = replace(client.app.state.settings, facemarket_enabled=True)
+    calls = {"create": 0, "reserve": 0}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def forbidden_create(conn, **kwargs):
+        calls["create"] += 1
+        raise AssertionError("범위 밖이면 잡을 만들지 않는다")
+
+    async def forbidden_reserve(conn, user_id, amount):
+        calls["reserve"] += 1
+        raise AssertionError("범위 밖이면 크레딧을 잡지 않는다")
+
+    async def forbidden_resolve(*args, **kwargs):
+        raise AssertionError("범위 밖이면 라이선스도 읽지 않는다")
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "create_job", forbidden_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", forbidden_reserve)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", forbidden_resolve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={"mode": "new", "cutType": "styling", "modelId": MODEL_ID},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "real_model_studio_only"
+    assert calls == {"create": 0, "reserve": 0}
 
 
 def test_editor_product_cut_strips_real_model_before_facemarket_gate(

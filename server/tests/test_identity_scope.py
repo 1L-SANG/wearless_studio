@@ -40,13 +40,25 @@ def test_studio_space_sets_are_virtual_only():
 
 
 @pytest.mark.parametrize("spec", [
+    _block(cutType="horizon", exampleId=None),           # 공간세트 아닌 스튜디오 컷
+])
+def test_studio_cuts_are_both(spec):
+    assert identity_scope.scope_for_block(spec) == identity_scope.BOTH
+
+
+@pytest.mark.parametrize("spec", [
     _block(cutType="product", exampleId="ex_product_top_ghost_01"),
     _block(cutType="mirror", exampleId=None),
-    _block(cutType="horizon", exampleId=None),           # 공간세트 아닌 스튜디오 컷
     _block(cutType="styling", exampleId=None),
 ])
-def test_everything_else_is_both(spec):
-    assert identity_scope.scope_for_block(spec) == identity_scope.BOTH
+def test_cuts_outside_the_studio_section_are_virtual_only(spec):
+    """2026-09-14: 실제 모델은 studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
+
+    컷 모양만 보던 예전에는 이 셋이 전부 both 였다. 얼굴 합성이 studio 에서만 검증돼서 좁혔다.
+    """
+    assert identity_scope.scope_for_block(spec) == identity_scope.VIRTUAL
+    # 섹션 규칙을 뺀 판정(공간세트 표가 쓰는 것)은 예전 그대로 both 다.
+    assert identity_scope.shape_scope_for_block(spec) == identity_scope.BOTH
 
 
 def test_unknown_input_never_blocks():

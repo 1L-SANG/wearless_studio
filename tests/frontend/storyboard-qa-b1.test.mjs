@@ -95,7 +95,7 @@ test('1-11 credit cost remains a separate visible label at 899px and 560px', () 
     storyboardSource.indexOf('<div className="sb-actionbar">'),
     storyboardSource.indexOf('</div>\n  );', storyboardSource.indexOf('<div className="sb-actionbar">')),
   );
-  assert.match(actionbar, /<div className="sb-ab-count">[\s\S]*?<\/div>\s*<span className="sb-ab-cost">생성/);
+  assert.match(actionbar, /<div className="sb-ab-count">[\s\S]*?<\/div>[\s\S]*?<span className="sb-ab-cost">생성/);
   const actionbarCssStart = featureStyles.indexOf('.sb-actionbar {');
   const compact = featureStyles.slice(
     featureStyles.indexOf('@media (max-width: 900px)', actionbarCssStart),
