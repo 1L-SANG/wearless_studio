@@ -6,7 +6,7 @@ import { toUploadableImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
 import IdDocumentStep from './IdDocumentStep.jsx';
 import IdentityMethodStep from './IdentityMethodStep.jsx';
-import { deriveSimpleAuthUnavailableReason, parseIdentityMethods } from './identityMethodConfig.js';
+import { deriveSimpleAuthUnavailableReason, isMobileLike, parseIdentityMethods, SIMPLE_AUTH_DEVICE_REASON } from './identityMethodConfig.js';
 import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
 import { heading, renderConditions, renderConsent, renderPhotos } from './RegisterScreens.jsx';
 import s from './ModelRegister.module.css';
@@ -183,11 +183,22 @@ export function ModelRegister() {
   // 서버로 가는 요청이 오늘과 바이트 단위로 같아야 한다는 제약을 이렇게 지켜요.
   const startEnrollment = async (identityMethod) => {
     if (!consents.every(Boolean) || inFlight.current) return;
-    // 간편인증 설정이 없으면 **시작 전에** 막아요. 선택 화면이 버튼을 비활성화해 주지만,
-    // 수단이 하나뿐이면(VITE_FM_IDENTITY_METHODS=simple_auth) 그 화면 자체가 안 뜨고 여기로
-    // 곧장 와요 — 그러면 사용자는 신분증을 다 찍어 올린 **뒤**에야 하드 에러를 만나요.
+    // 간편인증 설정이 없으면, 그리고 이 기기가 폰처럼 보이지 않으면(기기 힌트) **시작
+    // 전에** 막아요. 선택 화면(IdentityMethodStep)이 두 이유 다 버튼을 비활성화해 안내해
+    // 주지만, 수단이 하나뿐이면(VITE_FM_IDENTITY_METHODS=simple_auth) 그 화면 자체가 안
+    // 뜨고(useEffect 가 onPick 을 곧장 불러요) 여기로 곧장 와요 — 그러면 설정 부재는
+    // 신분증을 다 찍어 올린 **뒤**에야, 기기 힌트는 승인·촬영 때문에 PC↔폰을 오가는
+    // **도중**에야 만나게 돼요. 두 가드를 같은 모양(if + setError + return)으로 나란히
+    // 두었다 — 조건이 늘었다고 새 패턴을 만들지 않는다.
     if (identityMethod === 'simple_auth' && SIMPLE_AUTH_UNAVAILABLE_REASON) {
       setError(SIMPLE_AUTH_UNAVAILABLE_REASON);
+      return;
+    }
+    // isMobileLike() 는 판별이 불확실하면(window·matchMedia 부재) 허용으로 접는다(fail
+    // open) — 이 가드도 같은 방향을 따른다. 선택 화면이 통과시켰을 사용자를 여기서 더
+    // 엄하게 막으면(fail closed) 안 된다.
+    if (identityMethod === 'simple_auth' && !isMobileLike()) {
+      setError(SIMPLE_AUTH_DEVICE_REASON);
       return;
     }
     inFlight.current = true; setBusy(true); setError('');

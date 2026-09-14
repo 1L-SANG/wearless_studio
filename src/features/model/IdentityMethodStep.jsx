@@ -8,7 +8,7 @@
    ============================================================= */
 import { useEffect } from 'react';
 import s from './ModelRegister.module.css';
-import { isMobileLike } from './identityMethodConfig.js';
+import { isMobileLike, SIMPLE_AUTH_DEVICE_REASON } from './identityMethodConfig.js';
 
 const METHOD_COPY = Object.freeze({
   mid: {
@@ -30,8 +30,10 @@ const METHOD_COPY = Object.freeze({
 // 때문에 또 폰으로 — 두 기기를 오가게 된다. 그래서 거친 포인터(coarse pointer, 손가락)가
 // 없는 기기에서는 아래에서 isMobileLike() 로 이 이유를 하나 더 만들어, 부모가 넘긴
 // simpleAuthUnavailableReason 과 같은 채널(같은 disabled·같은 힌트 자리)로 합쳐 보여준다 —
-// 막을 이유가 두 가지라고 비활성화·힌트 표시를 두 벌 만들지 않는다.
-const SIMPLE_AUTH_DEVICE_REASON = '간편인증은 휴대폰에서 진행해 주세요. 폰에서 같은 계정으로 접속하면 여기서부터 이어져요.';
+// 막을 이유가 두 가지라고 비활성화·힌트 표시를 두 벌 만들지 않는다. 문구(SIMPLE_AUTH_
+// DEVICE_REASON)는 identityMethodConfig.js 에 있다 — ModelRegister.jsx 의 startEnrollment
+// 도 같은 문구를 써야 하는 자리가 있어서(수단이 하나뿐이면 이 화면 자체가 안 뜨는 경로),
+// 두 파일이 각자 문구를 들고 있다가 말이 갈리지 않게 한 곳에 둔다.
 
 export default function IdentityMethodStep({ methods, onPick, simpleAuthUnavailableReason }) {
   useEffect(() => {

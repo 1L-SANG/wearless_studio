@@ -983,3 +983,78 @@ test('간편인증 설정이 없으면 등록을 시작하기 전에 막는다(�
     '등록을 만든 뒤에 확인하면 이미 늦다',
   );
 });
+
+// ── 수단이 하나뿐이면 선택 화면이 안 뜬다 → 기기 힌트도 시작 전에 막아야 한다 ────────
+// (Task 8 리뷰 IMPORTANT) IdentityMethodStep.jsx 의 isMobileLike() 체크는 그 화면 안에서만
+// 산다. VITE_FM_IDENTITY_METHODS=simple_auth 처럼 수단이 하나뿐이면 그 화면 자체가 안 뜨고
+// (useEffect 가 onPick 을 곧장 부른다) startEnrollment 가 곧장 불린다 — 그러면 PC 사용자가
+// 기기 힌트를 한 번도 못 보고 곧장 위젯을 연다. 위의 SIMPLE_AUTH_UNAVAILABLE_REASON 가드와
+// 정확히 같은 구조적 이유로, 같은 자리에 두 번째 가드가 있어야 한다.
+//
+// ModelRegister.jsx 는 JSX 를 포함해 plain node 로 직접 import·렌더할 수 없어(파일 상단
+// 관례 그대로) 아래도 readFileSync + 정규식으로 source 를 직접 대조한다. 대신 여기서 쓰는
+// isMobileLike() 자체의 네 가지 동작(coarse→true, fine→false, matchMedia 없음→true,
+// window 없음→true)은 identity-method-config.test.mjs 가 이미 함수 단위로 증명해 뒀다 —
+// 아래 테스트들은 "그 함수를 뒤집지 않고, mid 로 새지 않게, createEnrollment 전에" 정확히
+// 그대로 불러 쓰는지만 source 레벨에서 고정한다(함수 동작 증명 + 배선 증명 = 합쳐서
+// 시나리오 전체 증명).
+function startEnrollmentBody() {
+  const start = modelRegisterSource.indexOf('const startEnrollment = async (identityMethod) => {');
+  assert.ok(start > 0, 'startEnrollment 를 못 찾았다');
+  // 기존 IMPORTANT 3 테스트의 'const runCxWidget' 종료 마커는 #285/#287 리네임(runCxWidget →
+  // runIdentityWidget) 이후 더 이상 소스에 없어(더 아래까지 슬라이스됨) — 여기서는 실제로
+  // startEnrollment 바로 다음 줄에 있는 startEnrollmentRef 선언을 경계로 써서 함수 본문만
+  // 정확히 잘라낸다.
+  const end = modelRegisterSource.indexOf('const startEnrollmentRef = useRef(null);', start);
+  assert.ok(end > start, 'startEnrollment 함수 끝(startEnrollmentRef 선언)을 찾을 수 없다');
+  return modelRegisterSource.slice(start, end);
+}
+
+test('간편인증이 기기 힌트로 막히면(수단이 하나뿐인 배포에서도) 시작 전에 막는다', () => {
+  const body = startEnrollmentBody();
+  assert.match(
+    body,
+    /if \(identityMethod === 'simple_auth' && !isMobileLike\(\)\) \{/,
+    'startEnrollment 가 기기 힌트를 확인하지 않는다 — 수단이 하나뿐인 배포에서 PC 사용자가 그대로 위젯을 연다',
+  );
+  assert.match(
+    body,
+    /setError\(SIMPLE_AUTH_DEVICE_REASON\);/,
+    '기기 힌트로 막을 때 IdentityMethodStep 과 같은 문구(SIMPLE_AUTH_DEVICE_REASON)를 보여줘야 한다',
+  );
+  assert.ok(
+    body.indexOf('!isMobileLike()') < body.indexOf('await createEnrollment('),
+    '등록을 만든 뒤에 확인하면 이미 늦다 — 신분증 촬영까지 다 끝난 뒤 막히는 것과 같은 문제가 재발한다',
+  );
+});
+
+test('기기 힌트 가드는 isMobileLike/SIMPLE_AUTH_DEVICE_REASON 을 새로 만들지 않고 그대로 재사용한다', () => {
+  // 잡는 회귀: 이 가드가 identityMethodConfig.js 의 공유 헬퍼·문구를 안 쓰고 로컬로
+  // 다시 정의하면, 언젠가 IdentityMethodStep.jsx 쪽만 고쳐지고 여기는 안 고쳐져 말이 갈린다.
+  assert.match(
+    modelRegisterSource,
+    /import \{ deriveSimpleAuthUnavailableReason, isMobileLike, parseIdentityMethods, SIMPLE_AUTH_DEVICE_REASON \} from '\.\/identityMethodConfig\.js';/,
+  );
+});
+
+test('기기 힌트 가드는 mid 로 새지 않는다(simple_auth 에만 걸린다)', () => {
+  // 잡는 회귀: identityMethod === 'simple_auth' 조건이 빠지면 mid 단일 배포에서도(발표/
+  // 롤백 모드) 이 가드가 걸려, PC 로 접속한 정상적인 mid 사용자까지 막아 버린다.
+  const body = startEnrollmentBody();
+  assert.doesNotMatch(
+    body,
+    /if \(!isMobileLike\(\)\) \{/,
+    'identityMethod 조건 없이 isMobileLike() 만 보면 mid 까지 막아 버린다',
+  );
+});
+
+test('기기 힌트 가드는 방향이 뒤집히지 않았다(!isMobileLike, isMobileLike 단독 아님)', () => {
+  // 잡는 회귀: '!' 가 빠지면(fail closed 로 뒤집히면) coarse pointer(폰)에서도 간편인증이
+  // 막혀 버린다 — 반대로 폰이 아닌데 통과시키는 것보다 더 나쁘다(정상 사용자를 막음).
+  const body = startEnrollmentBody();
+  assert.doesNotMatch(
+    body,
+    /if \(identityMethod === 'simple_auth' && isMobileLike\(\)\) \{\s*\n\s*setError\(SIMPLE_AUTH_DEVICE_REASON\)/,
+    '부정(!)이 빠지면 방향이 뒤집혀 폰 사용자까지 막는다',
+  );
+});

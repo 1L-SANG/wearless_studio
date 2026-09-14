@@ -48,3 +48,10 @@ export function isMobileLike(windowLike = (typeof window === 'undefined' ? undef
   if (!windowLike || typeof windowLike.matchMedia !== 'function') return true;
   return Boolean(windowLike.matchMedia('(pointer: coarse)').matches);
 }
+
+// isMobileLike() 가 false 일 때 사용자에게 보여줄 문구. 두 곳이 이 문구를 그대로 써야 한다:
+// (1) IdentityMethodStep — 선택 화면에서 간편인증 버튼을 비활성화할 때, (2) ModelRegister의
+// startEnrollment — 수단이 하나뿐이라(VITE_FM_IDENTITY_METHODS=simple_auth) 그 선택 화면
+// 자체가 안 뜨고 곧장 여기로 오는 경로를 막을 때. 문구를 두 파일에 각자 적으면 언젠가
+// 말이 갈린다(하나만 고치고 하나는 안 고치는 흔한 실수) — 여기 하나로 묶어 둔다.
+export const SIMPLE_AUTH_DEVICE_REASON = '간편인증은 휴대폰에서 진행해 주세요. 폰에서 같은 계정으로 접속하면 여기서부터 이어져요.';
