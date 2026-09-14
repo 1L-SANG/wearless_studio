@@ -19,11 +19,14 @@ def test_photo_resolution_keeps_actual_rows_and_never_falls_back_from_deleted_ca
     from app.facemarket_photos import resolve_photo_rows, photo_slot_candidates
 
     legacy = {"angle": "front", "storage_state": "approved", "r2_key": "old"}
-    canonical = {"angle": "face01", "storage_state": "delete_pending", "r2_key": "new"}
-    assert resolve_photo_rows([legacy], ("face01",)) == [legacy]
-    assert resolve_photo_rows([canonical, legacy], ("face01",)) == [canonical]
-    assert resolve_photo_rows([legacy, canonical], ("front",)) == [canonical]
-    assert photo_slot_candidates("front") == ("face01", "front")
+    eighteen = {"angle": "face01", "storage_state": "delete_pending", "r2_key": "new"}
+    canonical = {"angle": "sh_front", "storage_state": "quarantine", "r2_key": "now"}
+    assert resolve_photo_rows([legacy], ("sh_front",)) == [legacy]
+    assert resolve_photo_rows([eighteen, legacy], ("sh_front",)) == [eighteen]
+    assert resolve_photo_rows([legacy, eighteen], ("front",)) == [eighteen]
+    # 17칸 행이 있으면 그게 이긴다 — 옛 이름으로 물어도 같다.
+    assert resolve_photo_rows([legacy, eighteen, canonical], ("face01",)) == [canonical]
+    assert photo_slot_candidates("front") == ("sh_front", "face01", "front")
 
 
 def add_photo(store, storage, eid, angle, *, state="quarantine"):
@@ -92,9 +95,7 @@ def test_application_identity_mismatch_is_rejected_with_face_comparison_off(
 
 def prepare_license_pending(client, auth, store, storage):
     eid = create_enrollment(client, auth)
-    for slot in ("face01", "face02", "face03", "face04", "face05", "face06", "face07", "face08",
-                 "torso01", "torso02", "torso03", "torso04", "torso05",
-                 "full01", "full02", "full03", "full04", "full05"):
+    for slot in facemarket_enrollment.PHOTO_SLOTS:
         add_photo(store, storage, eid, slot)
     store.enrollments[0]["status"] = "liveness_pending"
     result = client.post(f"/v1/facemarket/enrollments/{eid}/complete", json={}, headers=auth())
@@ -103,7 +104,7 @@ def prepare_license_pending(client, auth, store, storage):
     store.enrollments[0]["status"] = "license_pending"
     store.models[0]["assets_status"] = "ready"
     for photo in store.photos:
-        if photo["angle"] in ("face01", "face03", "face05"):
+        if photo["angle"] in facemarket_enrollment.ASSET_SOURCE_SLOTS:
             photo["storage_state"] = "approved"
     return eid
 
@@ -119,7 +120,7 @@ def test_reopen_preserves_identity_and_revalidates_approved_unchanged_photos(
     assert opened.json()["status"] == "liveness_pending"
     assert enrollment_store.models[0]["assets_status"] == "none"
     changed = liveness_off_client.post(
-        f"/v1/facemarket/enrollments/{eid}/photos", data={"slot": "face01"},
+        f"/v1/facemarket/enrollments/{eid}/photos", data={"slot": "sh_front"},
         files={"photo": ("new.jpg", b"changed-photo", "image/jpeg")}, headers=auth(),
     )
     assert changed.status_code == 201, changed.text
@@ -174,7 +175,8 @@ def test_revalidation_terminal_cleanup_deletes_unchanged_approved_photos(
         response = liveness_off_client.post(f"/v1/facemarket/enrollments/{eid}/cancel", headers=auth())
     else:
         if failure == "storage":
-            fake_r2.objects.pop("private/face02.jpg")
+            # 자산 소스가 아닌 필수 한 장이 저장소에서 사라진 상황
+            fake_r2.objects.pop("private/sh_smile.jpg")
         else:
             enrollment_store.enrollments[0]["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
         response = liveness_off_client.post(f"/v1/facemarket/enrollments/{eid}/complete", json={}, headers=auth())

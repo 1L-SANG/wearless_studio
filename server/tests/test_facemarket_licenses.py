@@ -197,6 +197,10 @@ class FakeR2Face:
         return f"https://signed.example/{key}?sig=test"
 
 
+def _accepted(value):
+    return set(value) if isinstance(value, (list, tuple, set)) else {value}
+
+
 def _current_card(store, *, model_id=None, license_id=None, user_id=None, consent_version=None):
     license_row = (
         next((row for row in store["licenses"] if row["id"] == license_id), None)
@@ -260,7 +264,8 @@ def _current_card(store, *, model_id=None, license_id=None, user_id=None, consen
         and license_row.get("enrollment_id") == enrollment["id"]
         and enrollment["status"] == "passed"
         and enrollment["decision"] == "passed"
-        and enrollment["consent_version"] == consent_version
+        # 자격 판정은 **여러 버전**을 받는다 — 옛 동의로 이미 passed 인 모델이 빠지면 안 된다.
+        and enrollment["consent_version"] in _accepted(consent_version)
         and str(enrollment.get("match_policy_version") or "").strip()
         and license_row["status"] == "active"
         and (valid_until is None or valid_until > datetime.now(timezone.utc))
@@ -382,7 +387,7 @@ def _assert_current_card_sql(sql):
         "m.assets_status = 'ready'",
         "e.status = 'passed'",
         "e.decision = 'passed'",
-        "e.consent_version = %s",
+        "e.consent_version = any(%s)",
         "nullif(btrim(e.match_policy_version), '') is not null",
         "l.status = 'active'",
         "l.license_valid_until > now()",

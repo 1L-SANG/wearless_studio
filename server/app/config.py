@@ -330,12 +330,16 @@ class Settings:
     fm_oacx_simple_auth_contract: str = "disabled"  # disabled | simple-auth-v1
     fm_face_match_enabled: bool = False
     fm_standard_unit_price: int = 14900
+    #: 등록 사진 슬롯 = LoRA 학습 촬영 스펙 그대로 16칸(facemarket_photos.PHOTO_SLOTS 가 정본).
+    #: 옛 18칸은 상반신·전신 10장을 아무도 읽지 않았고 그 사진으로 LoRA 를 만들 수도 없었다.
     fm_photo_slots: tuple[str, ...] = (
-        "face01", "face02", "face03", "face04", "face05", "face06", "face07", "face08",
-        "torso01", "torso02", "torso03", "torso04", "torso05",
-        "full01", "full02", "full03", "full04", "full05",
+        "sh_front", "sh_smile", "sh_34", "sh_front2",
+        "sh_gaze_left", "sh_gaze_right", "sh_side",
+        "sl_front", "sl_smile", "sl_34",
+        "sr_front", "sr_smile", "sr_34",
+        "bl_front", "bl_smile", "bl_34",
     )
-    fm_required_slot_count: int = 18
+    fm_required_slot_count: int = 16
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
     # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.

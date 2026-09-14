@@ -18,3 +18,22 @@ export function RegisterIllustration({ framing = 'full', angle = 'front', width 
     </g>
   </svg>;
 }
+
+// 위에서 본 그림 — 원은 머리, 뾰족한 쪽이 코(찍는 사람 쪽)예요. 찍는 사람은 늘 얼굴 정면에
+// 서고 해의 위치만 바뀌어요. 조명 이름만으로는 어디 서야 하는지 알기 어려워 그림을 같이 둬요.
+export function SunDiagram({ sun = 'shade', className }) {
+  const sunAt = { left: [14, 40], right: [86, 40], back: [50, 10] }[sun];
+  return <svg className={className} viewBox="0 0 100 100" aria-hidden="true">
+    {sun === 'shade' && <rect x="6" y="6" width="88" height="52" rx="10" fill="currentColor" opacity="0.12" />}
+    {sunAt && <g transform={`translate(${sunAt[0]} ${sunAt[1]})`}>
+      <circle r="9" fill="currentColor" opacity="0.85" />
+      {[0, 45, 90, 135].map((deg) => <line key={deg} x1="-14" y1="0" x2="14" y2="0" transform={`rotate(${deg})`} stroke="currentColor" strokeWidth="2" opacity="0.5" />)}
+    </g>}
+    {/* 머리 — 코가 아래(찍는 사람)를 향해요 */}
+    <circle cx="50" cy="46" r="15" fill="none" stroke="currentColor" strokeWidth="3" />
+    <path d="M44 58 50 68 56 58Z" fill="currentColor" />
+    {/* 찍는 사람 */}
+    <rect x="42" y="80" width="16" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="3" />
+    <path d="M50 72v6" stroke="currentColor" strokeWidth="3" />
+  </svg>;
+}

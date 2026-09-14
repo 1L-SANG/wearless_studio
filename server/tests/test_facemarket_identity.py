@@ -340,7 +340,8 @@ def _is_current_catalog_card(store, model):
         and model.get("assets_status") == "ready"
         and enrollment["status"] == "passed"
         and enrollment["decision"] == "passed"
-        and enrollment["consent_version"] == facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
+        # 자격 판정은 **받아들이는 버전 목록** 전체를 본다(옛 동의도 유효).
+        and enrollment["consent_version"] in facemarket_enrollment.ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
         and enrollment["match_policy_version"]
         and license_row["status"] == "active"
         and (license_row["license_valid_until"] is None or license_row["license_valid_until"] > datetime.now(timezone.utc))
@@ -472,7 +473,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     # PII/식별자 미노출
     assert "ciHash" not in card and "userId" not in card and "ci_hash" not in r.text
     sql = store["catalog_sql"]
-    assert store["catalog_params"] == (facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,)
+    assert store["catalog_params"] == (list(facemarket_enrollment.ACCEPTED_BIOMETRIC_CONSENT_VERSIONS),)
     for required in (
         "m.current_enrollment_id",
         "l.enrollment_id = e.id",
@@ -481,7 +482,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         "m.assets_status = 'ready'",
         "e.status = 'passed'",
         "e.decision = 'passed'",
-        "e.consent_version = %s",
+        "e.consent_version = any(%s)",
         "nullif(btrim(e.match_policy_version), '') is not null",
         "l.status = 'active'",
         "l.license_valid_until > now()",
@@ -507,33 +508,38 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     assert "r2_key" not in sql.split(" from fm_models m", 1)[0]
 
 
-def test_catalog_eligibility_survives_for_the_literal_shipped_consent_version(fm, make_token):
-    """이미 저장된 동의 버전 문자열 '2026-09-v1' 로도 카탈로그에 남아 있어야 한다.
+@pytest.mark.parametrize("stored", ["2026-09-v1", "2026-09-v2"])
+def test_catalog_eligibility_survives_every_shipped_consent_version(fm, make_token, stored):
+    """이미 저장된 동의 버전 문자열로도 카탈로그에 남아 있어야 한다.
 
-    위 테스트는 픽스처와 단언 양쪽에 `BIOMETRIC_CONSENT_VERSION` 을 바인딩한다 — 상수를
-    올리면 둘이 함께 움직이므로 **버전 범프로 라이브 카탈로그가 비는 사고를 구조적으로
-    잡지 못한다**. `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 그 상수를
-    그대로 바인딩하는데, 이미 passed 인 등록은 저장 당시 문자열을 들고 있고 백필은 없다
-    (최종리뷰 C2 — 같은 범프가 2026-08-29 에 한 번 조용히 터졌다). 그래서 여기서는
-    **리터럴**을 심는다: 상수를 올리는 순간 이 테스트가 먼저 터진다.
+    위 테스트는 픽스처와 단언 양쪽에 상수를 바인딩한다 — 상수를 올리면 둘이 함께 움직이므로
+    **버전 범프로 라이브 카탈로그가 비는 사고를 구조적으로 잡지 못한다**. 그래서 여기서는
+    **리터럴**을 심는다. 예전에는 `_CURRENT_CARD_ELIGIBILITY` 가 `= %s` 로 단일 상수를
+    바인딩해서, 올릴 때마다 옛 버전으로 기록된 등록이 통째로 빠졌다(최종리뷰 C2 — 같은
+    범프가 2026-08-29 에 한 번 조용히 터졌다). #298 에서 `= any(%s)` 로 바꿔 그 대가를 없앴다.
 
-    리터럴은 2026-08-v2 → 2026-09-v1 로 갱신했다. #285/#287 이 동의·안내 공개본을
-    실제로 내보내면서 상수를 올렸기 때문이다 — 그 배포의 대가로 2026-08-v2 로 기록된
-    기존 등록은 카탈로그에서 빠진다(백필 없음). 다음 범프 때 또 같은 값을 치르지 않도록
-    이 리터럴은 상수와 따로 손으로 올린다.
+    새 버전을 추가할 때는 이 목록에 리터럴을 **추가**한다. 지우면 그 순간 그 버전으로
+    기록된 모델이 사라진다.
     """
     client, store, _ = fm
     _seed_eligible_catalog(store)
     enrollment = next(row for row in store["enrollments"] if row["id"] == ENROLLMENT_ID)
-    enrollment["consent_version"] = "2026-09-v1"
+    enrollment["consent_version"] = stored
 
     r = client.get("/v1/facemarket/models", headers=_headers(make_token))
     assert r.status_code == 200, r.text
     assert [card["id"] for card in r.json()] == [ELIGIBLE_MODEL_ID], (
-        "'2026-09-v1' 로 기록된 기존 모델이 카탈로그에서 사라졌다 — "
-        "BIOMETRIC_CONSENT_VERSION 을 올리면 배포 즉시 라이브 카탈로그가 빈다. "
-        "동의 문구가 실제로 바뀌어 함께 나가는 배포에서만 올린다."
+        f"'{stored}' 로 기록된 모델이 카탈로그에서 사라졌다 — 동의 버전을 올리면 "
+        "배포 즉시 라이브 카탈로그가 빈다. ACCEPTED_BIOMETRIC_CONSENT_VERSIONS 를 확인해라."
     )
+
+
+def test_the_shipped_consent_versions_are_pinned_as_literals():
+    """상수를 올려도 옛 값이 목록에서 **빠지지 않는지**를 리터럴로 잠근다."""
+    accepted = facemarket_enrollment.ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
+    assert "2026-09-v1" in accepted, "#285/#287 로 운영에 기록된 값이다 — 지우면 그 모델들이 빠진다"
+    assert "2026-09-v2" in accepted, "#298 이 기록하는 값"
+    assert facemarket_enrollment.BIOMETRIC_CONSENT_VERSION in accepted
 
 
 def test_catalog_cover_absent_degrades_to_placeholder(fm, make_token):

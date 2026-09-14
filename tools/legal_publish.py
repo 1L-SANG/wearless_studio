@@ -16,8 +16,9 @@ EFFECTIVE = _korean_date(EFFECTIVE_DATE)
 # 여기 적은 값이 manifest 의 version/effectiveDate 와 그 문서 본문의 [시행일] 치환을 함께 정한다.
 # (slug → (version, ISO date))
 DOC_REVISIONS = {
-    # 간편인증 경로의 신분증 촬영본 수집·보유·파기 고지 추가(§2 수집항목 표 · §5 고유식별정보).
-    "privacy-model": ("v1.2", "2026-09-12"),
+    # v1.2 간편인증 경로의 신분증 촬영본 수집·보유·파기 고지 추가(§2 수집항목 표 · §5 고유식별정보).
+    # v1.3 등록 사진이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌어 §2 수집항목을 고쳤다(#298).
+    "privacy-model": ("v1.3", "2026-09-14"),
 }
 DEFAULT_VERSION = "v1.1"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
@@ -37,8 +38,10 @@ DOCS = [
 SELLER, FM = "https://wearless.kr", "https://facemarket.wearless.kr"
 # 04 동의서에서 손으로 옮긴 공개본. 버전은 서버 facemarket_enrollment.BIOMETRIC_CONSENT_VERSION 과 같이 올린다.
 CONSENT_DOCUMENTS = [
-    {"slug": "biometric-consent", "app": "facemarket", "title": "얼굴 정보 수집·생성·이용 동의", "version": "2026-09-v1", "effectiveDate": "2026-09-11", "source": "04_facemarket_biometric_consent_forms_v1.md"},
-    {"slug": "overseas-transfer", "app": "facemarket", "title": "얼굴 정보의 국외 이전 안내", "version": "2026-09-v1", "effectiveDate": "2026-09-11", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+    # 2026-09-v2: 수집 항목이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌었다(#298).
+    # 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
+    {"slug": "biometric-consent", "app": "facemarket", "title": "얼굴 정보 수집·생성·이용 동의", "version": "2026-09-v2", "effectiveDate": "2026-09-14", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+    {"slug": "overseas-transfer", "app": "facemarket", "title": "얼굴 정보의 국외 이전 안내", "version": "2026-09-v2", "effectiveDate": "2026-09-14", "source": "04_facemarket_biometric_consent_forms_v1.md"},
 ]
 LANDING_DOCUMENTS = {
     "terms-seller": ("/terms", "이용약관"),

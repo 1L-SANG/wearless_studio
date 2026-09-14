@@ -180,9 +180,9 @@ def _setup(
         fm_side_live_threshold=0.10,
         # #285 이후 얼굴 매칭은 기본 off 다 — advisory 점수가 이 파일의 검증 대상이므로 켠다.
         fm_face_match_enabled=True,
-        # 같은 PR 이 필수 사진을 18장으로 늘렸다. 이 파일은 /complete 하나만 보므로
-        # 자산 소스 3슬롯만 요구하게 좁히고, 레거시 3각도 행으로 그 3슬롯을 채운다.
-        fm_photo_slots=("face01", "face03", "face05"),
+        # 같은 PR 이 필수 사진을 18장으로 늘렸고 16칸 스펙이 그걸 다시 바꿨다. 이 파일은
+        # /complete 하나만 보므로 자산 소스 3슬롯만 요구하게 좁히고, 레거시 3각도 행으로 채운다.
+        fm_photo_slots=("sh_front", "sh_34", "sh_side"),
         fm_required_slot_count=3,
     )
     overrides.update(settings_overrides)
@@ -817,18 +817,19 @@ class AdminFakeCursor:
         if "fm_biometric_enrollment_photos" in query and query.startswith(
             "select p.r2_key, p.mime_type"
         ):
-            enrollment_id, angle = params
+            # 16칸 스펙 이후 행 이름은 등록 회차마다 다르다 — 라우트가 후보 목록을 넘기고
+            # 선호 순서(array_position)로 한 장을 고른다.
+            enrollment_id, candidates, _order = params
             enrollment = next(
                 (r for r in store.enrollments if r["id"] == enrollment_id), None
             )
-            photo = next(
-                (
-                    p
-                    for p in store.photos
-                    if p["enrollment_id"] == enrollment_id and p["angle"] == angle
-                ),
-                None,
-            )
+            rows = [
+                p
+                for p in store.photos
+                if p["enrollment_id"] == enrollment_id and p["angle"] in candidates
+            ]
+            rows.sort(key=lambda row: candidates.index(row["angle"]))
+            photo = rows[0] if rows else None
             # join fm_biometric_enrollments … and e.review_status is not null (최종리뷰 I6)
             if enrollment is None or not enrollment.get("review_status"):
                 photo = None
@@ -1212,6 +1213,37 @@ def test_image_route_streams_angle_photo(admin_client):
     assert response.content == b"\xff\xd8\xff" + key.encode("utf-8")
     assert response.headers["cache-control"] == "private, no-store"
     assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_image_route_finds_the_16_slot_row_behind_the_old_name(admin_client):
+    """심사 화면의 이름(정면·45도·측면)은 그대로지만 저장된 행 이름은 sh_front·sh_34·sh_side 다.
+
+    잡는 회귀: angle 을 그대로 비교하면 16칸 등록의 심사 화면에 사진이 한 장도 안 뜬다 —
+    간편인증 심사는 신분증과 얼굴을 사람이 대조하는 절차라 그러면 심사 자체가 불가능하다.
+    """
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    for slot, kind in (("sh_front", "front"), ("sh_34", "angle45"), ("sh_side", "side")):
+        key = f"facemarket/enrollments/e1/quarantine/{slot}.jpg"
+        store.add_photo(store.latest_id, slot, key, mime_type="image/jpeg")
+        response = client.get(
+            f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/{kind}"
+        )
+        assert response.status_code == 200, response.text
+        assert response.content == b"\xff\xd8\xff" + key.encode("utf-8")
+
+
+def test_image_route_prefers_the_canonical_row_over_a_legacy_one(admin_client):
+    """정식 행이 있으면 옛 행은 보이지 않는다(업로드 선호 순서와 같은 규칙)."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    store.add_photo(store.latest_id, "front", "old-key.jpg", mime_type="image/jpeg")
+    store.add_photo(store.latest_id, "sh_front", "new-key.jpg", mime_type="image/jpeg")
+    response = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/front")
+    assert response.status_code == 200, response.text
+    assert response.content.endswith(b"new-key.jpg")
 
 
 def test_approve_transitions_and_purges_document(admin_client):

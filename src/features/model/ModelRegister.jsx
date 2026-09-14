@@ -7,7 +7,7 @@ import { enrollmentReasonMessage } from './biometricEnrollment.js';
 import IdDocumentStep from './IdDocumentStep.jsx';
 import IdentityMethodStep from './IdentityMethodStep.jsx';
 import { deriveSimpleAuthUnavailableReason, parseIdentityMethods } from './identityMethodConfig.js';
-import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
+import { CONSENT_VERSION, PHOTO_GROUPS, PHOTO_REVIEW_SUB, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
 import { heading, renderConditions, renderConsent, renderPhotos } from './RegisterScreens.jsx';
 import s from './ModelRegister.module.css';
 
@@ -370,9 +370,9 @@ export function ModelRegister() {
 
   const nextPhoto = async () => {
     if (busy) return;
-    if (sub <= 3) {
+    if (sub < PHOTO_REVIEW_SUB) {
       if (photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete) {
-        setSub(editingPhotos ? 4 : sub + 1); setEditingPhotos(false);
+        setSub(editingPhotos ? PHOTO_REVIEW_SUB : sub + 1); setEditingPhotos(false);
       }
     } else await finishPhotos();
   };
@@ -480,13 +480,13 @@ export function ModelRegister() {
     previous = { label: '기다리지 않고 취소하기', action: cancelReview };
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });
-    const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
-    next = { label: sub === 4 ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    const complete = sub < PHOTO_REVIEW_SUB ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
+    next = { label: sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
     previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === '3') {
     content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
     next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };
-    previous = { label: '이전', action: () => { setStep('2'); setSub(4); setEditingPhotos(false); } };
+    previous = { label: '이전', action: () => { setStep('2'); setSub(PHOTO_REVIEW_SUB); setEditingPhotos(false); } };
   } else if (step === '4b') {
     content = <>{heading('라이선스 증서를 발급하고 있어요', '발급에 3분 정도 걸려요. 발급되면 이메일로 알려드려요. 로그인 후 마이페이지에서도 확인할 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫아도 발급은 계속돼요.</p></>;
     next = { label: '발급 중이에요', disabled: true };
@@ -496,7 +496,7 @@ export function ModelRegister() {
   } else if (step === 'done') {
     content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 철회하기 전까지 유효해요.</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
   } else if (step === 'liveness') {
-    content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(4); }} onCancel={() => { setSession(null); setStep('2'); setSub(4); }} /></Suspense></>;
+    content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(PHOTO_REVIEW_SUB); }} onCancel={() => { setSession(null); setStep('2'); setSub(PHOTO_REVIEW_SUB); }} /></Suspense></>;
   } else if (step === 'loading' || step === 'processing') {
     content = <>{heading(step === 'loading' ? '등록 상태를 불러오고 있어요' : '등록을 마무리하고 있어요')}<p className={s.description} role="status"><span className={s.spinner} /> 잠시만 기다려 주세요.</p></>;
   } else {

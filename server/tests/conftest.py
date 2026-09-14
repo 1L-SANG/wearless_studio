@@ -42,6 +42,23 @@ def _face_qc_test_weights_dir() -> str:
     return _FACE_QC_TEST_WEIGHTS_DIR
 
 
+@pytest.fixture(autouse=True)
+def stub_enrollment_photo_check(request, monkeypatch):
+    """등록 사진 업로드 검사(YuNet)를 기본 '통과'로 둔다.
+
+    진짜 판정에는 onnx 가중치가 필요한데 그건 gitignore 라 저장소·CI 에 없고(Dockerfile 이
+    빌드 때 받는다), 테스트가 올리는 사진은 대부분 `b"image"` 같은 가짜 바이트다. 검사 자체는
+    tests/test_facemarket_photo_check.py 가 숫자 픽스처로 본다.
+    라우트 배선(400 photo_framing · 503)을 보는 테스트는 real_photo_check 마커로 이걸 끈다.
+    """
+    if request.node.get_closest_marker("real_photo_check"):
+        return
+    from app import facemarket_enrollment
+
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
+                        lambda data, slot, **kw: (None, {"stub": True}))
+
+
 def auth_headers(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 

@@ -283,6 +283,18 @@ def detect_face(image: Image.Image, model_dir: str | None = None, *, downscale: 
     214px 짜리 다른 얼굴을 골랐고, 2005×6673 컷은 아예 no_face 였다.
     downscale=False 는 학습 데이터 재현 경로용(그 입력은 2000px 이하라 실제로는 같은 결과다).
     """
+    faces = detect_faces(image, model_dir, downscale=downscale)
+    if not faces:
+        return None
+    return max(faces, key=lambda d: d.box[2] * d.box[3])
+
+
+def detect_faces(image: Image.Image, model_dir: str | None = None, *,
+                 downscale: bool = True) -> list[FaceDetection]:
+    """YuNet 이 찾은 **모든** 얼굴. 좌표는 detect_face 와 같은 원본 픽셀 기준이다.
+
+    등록 사진 검사가 "한 사람만" 을 보려면 최대 얼굴 하나로는 판정할 수 없다.
+    """
     arr = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2BGR)
     h, w = arr.shape[:2]
     sc = 4 if (downscale and max(h, w) > 2000) else 1
@@ -292,21 +304,24 @@ def detect_face(image: Image.Image, model_dir: str | None = None, *, downscale: 
         det.setInputSize((small.shape[1], small.shape[0]))
         _, faces = det.detect(small)
     if faces is None or len(faces) == 0:
-        return None
-    f = faces[int(np.argmax(faces[:, 2] * faces[:, 3]))].copy()
-    if sc > 1:
-        f[:14] *= sc  # 박스 4 + 랜드마크 5점(10) 복원. f[14] 는 점수라 건드리지 않는다.
-    eye_r, eye_l, nose = f[4:6], f[6:8], f[8:10]
-    mid = (eye_r + eye_l) / 2
-    eye_dist = float(np.linalg.norm(eye_r - eye_l)) or 1.0
-    yaw = abs(float(nose[0] - mid[0])) / eye_dist
-    return FaceDetection(
-        box=tuple(float(v) for v in f[:4]),
-        yaw_proxy=round(yaw, 3),
-        eye_dist=round(eye_dist, 1),
-        score=float(f[14]) if len(f) > 14 else 0.0,
-        landmarks=tuple((float(f[i]), float(f[i + 1])) for i in range(4, 14, 2)),
-    )
+        return []
+    out = []
+    for raw in faces:
+        f = raw.copy()
+        if sc > 1:
+            f[:14] *= sc  # 박스 4 + 랜드마크 5점(10) 복원. f[14] 는 점수라 건드리지 않는다.
+        eye_r, eye_l, nose = f[4:6], f[6:8], f[8:10]
+        mid = (eye_r + eye_l) / 2
+        eye_dist = float(np.linalg.norm(eye_r - eye_l)) or 1.0
+        yaw = abs(float(nose[0] - mid[0])) / eye_dist
+        out.append(FaceDetection(
+            box=tuple(float(v) for v in f[:4]),
+            yaw_proxy=round(yaw, 3),
+            eye_dist=round(eye_dist, 1),
+            score=float(f[14]) if len(f) > 14 else 0.0,
+            landmarks=tuple((float(f[i]), float(f[i + 1])) for i in range(4, 14, 2)),
+        ))
+    return out
 
 
 def estimate_expression(image: Image.Image, det: FaceDetection) -> tuple[str | None, dict]:

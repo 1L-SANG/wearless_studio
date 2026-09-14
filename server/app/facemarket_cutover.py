@@ -15,10 +15,11 @@ from . import repo
 from .services import biometric_purge
 from .services.biometric_purge import purge_biometric_scope
 from .facemarket_enrollment import (
-    BIOMETRIC_CONSENT_VERSION,
+    ACCEPTED_BIOMETRIC_CONSENT_VERSIONS,
     _MODEL_ASSET_FENCE_NAMESPACE,
     _PHOTO_FENCE_NAMESPACE,
 )
+from .facemarket_photos import preferred_photo_predicate
 
 _CUTOVER_CANCEL_MESSAGE = "실물 모델 보안 전환으로 작업을 취소하고 크레딧을 돌려드렸어요."
 _PERSONALIZATION_CANCEL_MESSAGE = "개인화 파기로 작업을 취소하고 크레딧을 돌려드렸어요."
@@ -84,7 +85,10 @@ class CutoverBlocked(RuntimeError):
         self.code = code
 
 
-_INITIAL_LEGACY_MODEL_SCOPE_SQL = """
+# 정면 사진은 등록 회차마다 행 이름이 다르다(16칸 sh_front · 18칸 face01 · 옛 3장 front).
+# 'front' 로 못박아 두면 새 스펙으로 등록한 모델이 "현행이 아니다" 로 읽혀 **legacy 파기 대상**이
+# 된다 — 카탈로그 자격(facemarket._CURRENT_CARD_ELIGIBILITY)과 같은 술어를 써야 한다.
+_INITIAL_LEGACY_MODEL_SCOPE_SQL = f"""
 select m.id::text as id
   from fm_models m
  where not exists (
@@ -93,7 +97,7 @@ select m.id::text as id
          join fm_licenses l
            on l.model_id = m.id and l.enrollment_id = e.id
          join fm_biometric_enrollment_photos p
-           on p.enrollment_id = e.id and p.angle = 'front'
+           on {preferred_photo_predicate('p', 'e.id')}
          join fm_model_assets fa
            on fa.model_id = m.id and fa.view = 'face_front'
          join fm_model_assets ga
@@ -102,7 +106,9 @@ select m.id::text as id
           and e.model_id = m.id
           and e.status = 'passed'
           and e.decision = 'passed'
-          and e.consent_version = %s
+          /* 옛 동의 버전도 '현행'이다. 단일 바인딩하면 v1 모델이 legacy 로 분류돼
+             cutover 파기 대상이 된다(상수 주석 참조). */
+          and e.consent_version = any(%s)
           and nullif(btrim(e.match_policy_version), '') is not null
           and m.assets_status = 'ready'
           and nullif(btrim(l.vc_id), '') is not null
@@ -203,7 +209,8 @@ async def _lock_freeze_batch(conn, batch_id: str) -> dict:
 
 async def _initial_legacy_model_ids(conn) -> list[str]:
     async with conn.cursor() as cur:
-        await cur.execute(_INITIAL_LEGACY_MODEL_SCOPE_SQL, (BIOMETRIC_CONSENT_VERSION,))
+        await cur.execute(_INITIAL_LEGACY_MODEL_SCOPE_SQL,
+                          (list(ACCEPTED_BIOMETRIC_CONSENT_VERSIONS),))
         return _ids(await cur.fetchall())
 
 
