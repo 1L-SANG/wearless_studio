@@ -2,8 +2,9 @@
 
 from .prompts import clean_text
 
-POLICY_VERSION = 'product_impact_v1'
+POLICY_VERSION = 'product_impact_v2'
 RISK_AXES = ('logo_graphic', 'color', 'construction', 'pattern', 'material', 'fit')
+SURFACE_REVIEW_AXES = ('pattern', 'material')
 SEVERITIES = ('none', 'minor', 'major', 'critical', 'uncertain')
 _RANK = {'none': 0, 'minor': 1, 'major': 2, 'critical': 3}
 
@@ -114,6 +115,38 @@ def blocking_issues(scores) -> list[str]:
     return list(dict.fromkeys([*structured, *legacy]))
 
 
+def _axis_issues(scores, axes) -> list[str]:
+    risks = _risks(scores)
+    if risks is None:
+        return []
+    return [
+        f"{axis} ({risks[axis]['severity']}): {risks[axis]['evidence']}"
+        for axis in axes
+        if _RANK.get(risks[axis]['severity'], -1) >= _RANK['major']
+    ]
+
+
+def surface_review_issues(scores) -> list[str]:
+    """Keep pattern/material defects observable without authorizing image edits."""
+    return _axis_issues(scores, SURFACE_REVIEW_AXES)
+
+
+def repairable_issues(scores) -> list[str]:
+    """Confirmed non-surface product defects that may authorize mannequin repair."""
+    risks = _risks(scores)
+    structured = (
+        _axis_issues(
+            scores, tuple(axis for axis in RISK_AXES if axis not in SURFACE_REVIEW_AXES)
+        )
+        if risks is not None else []
+    )
+    legacy = [
+        text for item in (scores or {}).get('critical_errors') or []
+        if (text := clean_text(item, 200))
+    ] if isinstance(scores, dict) and not surface_review_issues(scores) else []
+    return list(dict.fromkeys([*structured, *legacy]))
+
+
 def review_complete(scores) -> bool:
     return _vector(scores) is not None
 
@@ -140,3 +173,47 @@ def repair_feedback(scores) -> str:
         'invent a detail from an occluded or missing reference. Follow every declared '
         'fit axis, preserve natural folds and normal lighting variation. Return one image.'
     )
+
+
+def mannequin_repair_feedback(scores) -> str:
+    """Compile only structured repair-safe defects for a mannequin edit request."""
+    issues = repairable_issues(scores)
+    matching = (scores or {}).get('matching_critical_errors') or []
+    reasons = [*issues, *[text for item in matching if (text := clean_text(item, 200))]]
+    return (
+        'FINAL PRODUCT CORRECTION. Previous attempts failed these repairable checks:\n'
+        + '\n'.join(f'- {reason}' for reason in reasons)
+        + '\nUse the attached product photos as the design authority. Correct only the '
+        'source-proven structural, fit, color, logo or text failure named above, and preserve '
+        'the existing pattern, texture, weave, finish and sheen plus every other already-correct '
+        'surface exactly; do not redraw them as a repair target. Do not invent a detail from '
+        'an occluded or missing reference. Follow every declared fit axis, preserve natural '
+        'folds and normal lighting variation. Return one image.'
+    )
+
+
+def review_only_surface_edit_accepted(before, after) -> bool:
+    """Accept a resolved targeted edit when only unchanged surface review risk remains."""
+    if not isinstance(after, dict):
+        return False
+    if (
+        after.get('role_policy_conflict') is True
+        or after.get('target_resolved') is not True
+        or after.get('protected_regions_unchanged') is not True
+        or after.get('regression_reasons') != []
+        or after.get('verdict') != 'pass'
+        or after.get('critical_errors')
+        or after.get('matching_critical_errors')
+        or repairable_issues(after)
+        or not surface_review_issues(after)
+        or not review_complete(after)
+    ):
+        return False
+    old_risks, new_risks = _risks(before), _risks(after)
+    if old_risks is None or new_risks is None or any(
+        _RANK[new_risks[axis]['severity']] > _RANK.get(old_risks[axis]['severity'], -1)
+        for axis in SURFACE_REVIEW_AXES
+        if _RANK.get(new_risks[axis]['severity'], -1) >= _RANK['major']
+    ):
+        return False
+    return edit_risk_reason(before, after) is None

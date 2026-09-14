@@ -43,9 +43,10 @@
   → Analysis 조립(matchCandidates 후보 + matchSelections 기본 선택 포함) → 응답
 ```
 - 진행률: 단일 job 0→100 (현 mock의 2.8s runJob 자리). 실패: throw, 화면 재시도 버튼.
-- 확정 GPT 상품 근거는 별도 호출이 아니다. 같은 AG-01 호출이 패널별 판독 가능성·hard facts·
-  uncertainties·visibleSurfacePlan을 만들고, 서버가 원본과 실제 분석 입력의 순서·MIME·길이·
+- 확정 GPT 상품 근거는 별도 호출이 아니다. 같은 AG-01 호출이 패널별 판독 가능성, hard facts,
+  uncertainties와 여섯 고정 사진 관찰을 만들고, 서버가 원본과 실제 분석 입력의 순서·MIME·길이·
   SHA-256을 결합해 analysis payload에 저장한다. 일반 클라이언트 응답에서는 숨긴다.
+  앞면과 뒷면의 권한을 나누는 visibleSurfacePlan은 서버 라우팅 정책이며 상품 디자인 서술이 아니다.
 - [P1 훅] AG-P1로 M-01 스왑 가능(동일 출력 shape).
 
 ### PL-2 마네킹 생성 — `generateMannequins(projectId)` (페이지 진입 시 자동)

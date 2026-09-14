@@ -19,9 +19,14 @@ def contract():
     binding = pec.build_input_binding(images, images, ["Front"])
     return pec.validate_and_bind({
         "panels": [{"evidenceOrdinal": 1, "detail": "front body", "judgeability": "usable", "judgeabilityReasons": ["clear_enough"]}],
-        "hardFacts": [{"code": "arbitrary_product_specific_code", "value": "Five front buttons", "evidenceOrdinals": [1]}],
+        "hardFacts": [{"code": "neck_shape", "value": "rounded neckline with narrow binding", "evidenceOrdinals": [1]}],
         "uncertainties": [{"code": "sleeve_construction", "value": "Cap sleeve or broad sleeveless shoulder", "reason": "Attachment is not clear", "evidenceOrdinals": [1]}],
-        "visibleSurfacePlan": "FRONT is dominant; BACK is context only."}, binding)
+        "hem_shape": {"value": "straight", "evidenceOrdinals": [1]},
+        "cuff": {"value": "none", "evidenceOrdinals": [1]},
+        "button_count_visible": {"value": 5, "evidenceOrdinals": [1]},
+        "pattern_structure": {"value": "none", "evidenceOrdinals": [1]},
+        "surface_texture": {"value": "fine ribbing is visible", "evidenceOrdinals": [1]},
+        "seam_lines": {"value": "unknown", "evidenceOrdinals": []}}, binding)
 
 
 def test_saved_evidence_is_used_without_a_new_analysis():
@@ -42,11 +47,78 @@ def test_wrong_original_and_tampered_facts_cannot_be_reused():
 
 def test_free_code_values_and_uncertainties_survive_rendering():
     text = photo.prompt_block(contract())
-    assert "Five front buttons" in text
+    payload = __import__("json").loads(text.splitlines()[-1])
+    assert "rounded neckline with narrow binding" in text
+    assert payload["button_count_visible"] == {"value": 5, "sourceViews": ["FRONT"]}
     assert "Cap sleeve or broad sleeveless shoulder" in text
     assert "Attachment is not clear" in text
     assert "not seller confirmation" in text
     assert "FRONT" in text
+    assert "visibleSurfacePlan" not in text
+    assert len(text.splitlines()[-1]) <= 2400
+
+
+def test_legacy_contract_renders_missing_fixed_fields_unknown_without_rehashing():
+    from test_product_evidence_contract import _legacy_contract
+    legacy = _legacy_contract()
+    before_hash = legacy["contractSha256"]
+    text = photo.prompt_block(legacy)
+    payload = __import__("json").loads(text.splitlines()[-1])
+    assert all(payload[field] == {"value": "unknown", "sourceViews": []} for field in (
+        "hem_shape", "cuff", "button_count_visible", "pattern_structure",
+        "surface_texture", "seam_lines",
+    ))
+    assert "single front button placket" in text
+    assert legacy["contractSha256"] == before_hash
+
+
+def test_front_product_block_does_not_pass_back_only_design_facts():
+    source = refs()[0].image
+    binding = pec.build_input_binding(
+        [(source.data, source.mime), (source.data + b"back", source.mime)],
+        [(source.data, source.mime), (source.data + b"back", source.mime)],
+        ["Front", "Back"],
+    )
+    raw = {
+        "panels": [
+            {"evidenceOrdinal": 1, "detail": "front", "judgeability": "usable", "judgeabilityReasons": ["clear_enough"]},
+            {"evidenceOrdinal": 2, "detail": "back", "judgeability": "usable", "judgeabilityReasons": ["clear_enough"]},
+        ],
+        "hardFacts": [
+            {"code": "neck_shape", "value": "rounded front neckline", "evidenceOrdinals": [1]},
+            {"code": "back_yoke", "value": "deep curved back yoke", "evidenceOrdinals": [2]},
+        ],
+        "uncertainties": [{"code": "hidden_side", "value": "side construction", "reason": "not visible", "evidenceOrdinals": [1]}],
+        "hem_shape": {"value": "straight", "evidenceOrdinals": [1]},
+        "cuff": {"value": "unknown", "evidenceOrdinals": []},
+        "button_count_visible": {"value": None, "evidenceOrdinals": []},
+        "pattern_structure": {"value": "none", "evidenceOrdinals": [1]},
+        "surface_texture": {"value": "unknown", "evidenceOrdinals": []},
+        "seam_lines": {"value": "unknown", "evidenceOrdinals": []},
+    }
+    text = photo.prompt_block(pec.validate_and_bind(raw, binding))
+    assert "rounded front neckline" in text
+    assert "deep curved back yoke" not in text
+
+
+def test_short_block_cap_keeps_all_fixed_fields_and_complete_seam_endpoints():
+    from test_product_evidence_contract import _binding, _raw
+    raw = _raw()
+    raw["hardFacts"].extend({
+        "code": f"extra_fact_{index}",
+        "value": f"source-proven distinguishing construction {index} " + "x" * 170,
+        "evidenceOrdinals": [1],
+    } for index in range(1, 12))
+    stored = pec.validate_and_bind(raw, _binding())
+    text = photo.prompt_block(stored)
+    encoded = text.splitlines()[-1]
+    payload = __import__("json").loads(encoded)
+    assert len(encoded) <= 2400
+    assert set(pec.FIXED_OBSERVATION_FIELDS).issubset(payload)
+    assert payload["seam_lines"] == {
+        "value": "two front seam lines start below the placket and continue to the hem",
+        "sourceViews": ["FRONT"],
+    }
 
 
 def test_source_crops_preserve_bytes_and_explicit_parent_provenance():
@@ -72,4 +144,5 @@ def test_photo_structure_render_omits_unverified_title_and_sleeve_assumption():
     prompt = render_mannequin_prompt(template, ctx, {"name": "반팔 티셔츠"}, {"subCategory": "tshirt"}, material_policy="photo_evidence")
     assert "반팔 티셔츠" not in prompt and "tshirt" not in prompt
     assert template not in prompt
-    assert "Five front buttons" in prompt and "not seller confirmation" in prompt
+    assert "rounded neckline with narrow binding" in prompt
+    assert '"value":5' in prompt and "not seller confirmation" in prompt

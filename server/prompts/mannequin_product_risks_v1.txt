@@ -51,7 +51,16 @@ the coordination item if provided. Body breakdown and unusable image artifacts s
 belong in the existing technical scores and critical_errors. Keep critical_errors
 consistent with this rubric; it contains only actual critical defects, not minor
 differences, uncertainty, or a count of concerns. Put a concise source-grounded repair
-instruction for major/critical findings in correctionPrompt and set verdict=retry.
+instruction for repairable major/critical findings in correctionPrompt and set verdict=retry.
+
+Pattern and material findings are review-only for mannequin generation. Report their
+severity and evidence in product_risks so they remain visible to comparison and review,
+but do not ask to redraw pattern, texture, weave, finish or sheen in correctionPrompt.
+Do not copy a pattern/material-only finding into critical_errors, mismatches or a retry
+verdict, because those fields authorize another paid image attempt. Keep its structured
+severity even when it is critical so the server marks the first cut for review.
+When another confirmed structural, fit, color, logo or text defect also needs correction,
+target only that defect and explicitly preserve the existing surface appearance.
 
 REPAIR DIRECTION QUALITY. For each confirmed major/critical issue, specify the affected
 garment role and visible region, the source observation, the actual output difference,

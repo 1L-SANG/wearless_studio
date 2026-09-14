@@ -603,13 +603,18 @@ def score_outcome(s, p2, *, product_policy=True) -> str:
     점수 신호가 아예 없으면(off·shadow·판정실패·미채점 모델) **auto_pass** 로 눕힌다 —
     신호 부재를 나쁨으로 읽으면 QC 를 켜는 순간 멀쩡한 컷이 재생성된다.
 
-    치명 오류와 구조화된 major 이상은 점수와 무관하게 regenerate. 새 정책의 명시적인
-    미판정은 auto_pass로 표시하지 않는다. 구형 점수 부재와는 구분한다.
+    치명 오류와 보정 가능한 구조화된 major 이상은 점수와 무관하게 regenerate. 무늬와
+    원단만의 major 이상은 첫 컷을 유지하고 needs_review로 남긴다. 새 정책의 명시적인
+    미판정도 auto_pass로 표시하지 않는다. 구형 점수 부재와는 구분한다.
     """
     if not isinstance(p2, dict):
         return "auto_pass"
-    if p2.get("critical_errors") or (product_policy and mannequin_quality.blocking_issues(p2)):
+    if p2.get("critical_errors"):
         return "regenerate"
+    if product_policy and mannequin_quality.repairable_issues(p2):
+        return "regenerate"
+    if product_policy and mannequin_quality.surface_review_issues(p2):
+        return "needs_review"
     unverified = product_policy and mannequin_quality.review_unavailable(p2)
     worst = _worst_score(p2)  # 평균이 아니라 최저 — 한 축 붕괴가 고득점에 가려지면 안 된다
     if worst is None:
@@ -716,7 +721,7 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     parts = []
     if (scores or {}).get("critical_errors"):
         parts.append("CRITICAL: " + "; ".join(dict.fromkeys(scores["critical_errors"])))
-    issues = mannequin_quality.blocking_issues({"product_risks": (scores or {}).get("product_risks")})
+    issues = mannequin_quality.repairable_issues({"product_risks": (scores or {}).get("product_risks")})
     if issues:
         parts.append("PRODUCT IDENTITY: " + "; ".join(issues))
     if series and series.get("inconsistencies"):
@@ -727,9 +732,13 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     if isinstance(p2, dict) and p2.get("matching_critical_errors"):
         parts.append("MATCHING GARMENT (reproduce the coordination item exactly as in its "
                      "reference photo): " + "; ".join(p2["matching_critical_errors"][:3]))
-    if isinstance(p2, dict) and p2.get("correctionPrompt"):
+    if (isinstance(p2, dict) and p2.get("correctionPrompt")
+            and not mannequin_quality.surface_review_issues(p2)):
         parts.append("CORRECTION (generate the SAME garment as the product photos): "
                      + p2["correctionPrompt"])
+    if mannequin_quality.surface_review_issues(p2):
+        parts.append("SURFACE PRESERVATION: preserve the existing pattern, texture, weave, "
+                     "finish and sheen exactly; they are review-only and not redraw targets.")
     if not parts and scores:
         # 폴백: 가장 낮은 축을 집어 그 축의 지시를 준다.
         scored = [(v, k) for k in image_qc.SCORE_KEYS
@@ -1767,7 +1776,7 @@ async def _run_candidate(
             return report
 
         needs_repair = (
-            (s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores))
+            (s.image_qc == "enforce" and mannequin_quality.repairable_issues(scores))
             or pants_gate(s, scores) or bool(confirmed_repair_reasons))
         if untuck and not needs_repair:
             res, scores = await _apply_checked_untuck_postpass(
@@ -1783,13 +1792,14 @@ async def _run_candidate(
         specialist_failed = specialist_mode == "enforce" and bool(mannequin_specialist_qc.blocking_issues(specialist))
         if specialist_mode == "enforce" and not specialist_failed and not mannequin_specialist_qc.repair_accepted(specialist):
             raise MannequinQualityError("specialist_review_unavailable")
-        important = s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores)
+        important = s.image_qc == "enforce" and mannequin_quality.repairable_issues(scores)
         if important or pants_gate(s, scores) or specialist_failed or confirmed_repair_reasons:
             # 최종 한 번은 랜덤 재생성이 아니라 현재 컷의 확인 결함만 고친다.
             # 원본 사진과 크롭은 정체성 근거이고 현재 컷이 포즈·프레임·비수정 영역의 기준이다.
             diagnostics = list(dict.fromkeys(
-                mannequin_quality.repair_feedback(item) for item in [*observed_scores, scores]
-                if mannequin_quality.blocking_issues(item) or pants_gate(s, item)))
+                mannequin_quality.mannequin_repair_feedback(item)
+                for item in [*observed_scores, scores]
+                if mannequin_quality.repairable_issues(item) or pants_gate(s, item)))
             repair_goal = "\n\n".join(diagnostics) or "Correct only the confirmed source-supported defect."
             if confirmed_repair_reasons:
                 repair_goal += "\nCONFIRMED REQUIRED CORRECTIONS:\n" + "\n".join(
@@ -1832,13 +1842,15 @@ async def _run_candidate(
                 before_image=InlineImage(res.mime, res.image), edit_goal=repair_goal,
                 source_mirrored=source_mirrored, match_is_custom=match_is_custom)
             await _cancel_checkpoint(cancel_check)
-            if not image_qc.edit_accepted(post_p2):
+            if (not image_qc.edit_accepted(post_p2)
+                    and not mannequin_quality.review_only_surface_edit_accepted(
+                        scores, post_p2)):
                 raise MannequinQualityError("final_edit_preservation_rejected")
             if s.image_qc == "enforce" and not mannequin_quality.review_complete(post_p2):
                 raise MannequinQualityError("final_review_unavailable")
             if _matching_review_unavailable(s, post_p2, match_img, clothing_type):
                 raise MannequinQualityError("final_matching_unavailable")
-            if (s.image_qc == "enforce" and mannequin_quality.blocking_issues(post_p2)) or pants_gate(s, post_p2):
+            if (s.image_qc == "enforce" and mannequin_quality.repairable_issues(post_p2)) or pants_gate(s, post_p2):
                 raise MannequinQualityError("final_product_rejected")
             if base_fidelity_retry_axes(s, base_fidelity):
                 raise MannequinQualityError("final_base_rejected")

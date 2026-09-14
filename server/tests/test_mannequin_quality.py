@@ -109,6 +109,49 @@ def test_important_issues_are_blocking_but_minor_and_uncertain_are_not_claimed_c
     assert quality.blocking_issues({'critical_errors': ['legacy defect']}) == ['legacy defect']
 
 
+def test_surface_risks_remain_blocking_for_review_but_are_not_repair_authority():
+    report = assessment(pattern="critical", material="major")
+    assert quality.blocking_issues(report)
+    assert quality.surface_review_issues(report)
+    assert quality.repairable_issues(report) == []
+
+
+def test_mannequin_repair_feedback_targets_structure_and_explicitly_preserves_surface():
+    report = assessment(construction="major", pattern="critical", material="major")
+    report["critical_errors"] = ["Free prose asks for a surface redraw."]
+    report["correctionPrompt"] = "Redraw the pattern and restore the located front seam."
+    feedback = quality.mannequin_repair_feedback(report)
+    assert "construction (major)" in feedback
+    assert "pattern (critical)" not in feedback
+    assert "material (major)" not in feedback
+    assert report["critical_errors"][0] not in feedback
+    assert report["correctionPrompt"] not in feedback
+    assert "preserve the existing pattern, texture, weave, finish" in feedback.lower()
+
+
+def test_unknown_or_review_only_surface_never_erases_other_critical_signals():
+    from app.workers import mannequin_job
+    from conftest import make_settings
+
+    critical = assessment(logo_graphic="critical", pattern="uncertain")
+    assert mannequin_job.score_outcome(make_settings(), critical) == "regenerate"
+    assert quality.repairable_issues(critical)
+
+    review = assessment(pattern="critical", material="uncertain")
+    assert mannequin_job.score_outcome(make_settings(), review) == "needs_review"
+    assert quality.blocking_issues(review)
+
+
+def test_targeted_edit_cannot_turn_unknown_surface_into_new_confirmed_defect():
+    before = assessment(construction="major", pattern="uncertain")
+    after = assessment(pattern="major")
+    after.update(
+        verdict="pass", target_resolved=True, protected_regions_unchanged=True,
+        regression_reasons=[],
+    )
+    assert not quality.review_only_surface_edit_accepted(before, after)
+
+
 def test_technical_critical_is_not_erased_by_clean_product_dimensions():
     old = assessment()
     old['critical_errors'] = ['mannequin body broken']

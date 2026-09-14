@@ -66,12 +66,12 @@ def test_stale_or_missing_source_contract_does_not_become_a_qc_instruction():
     source = refs()
     stored = contract()
     prompt, _, _ = qc._prepare(source, CANDIDATE, "top", None, None, "details", product_evidence=stored)
-    assert "Five front buttons" in prompt and "SOURCE FEATURES ALREADY RECORDED" in prompt
+    assert "rounded neckline with narrow binding" in prompt and "SOURCE FEATURES ALREADY RECORDED" in prompt
     stored["hardFacts"][0]["value"] = "Nine buttons"
     with pytest.raises(ValueError):
         qc._prepare(source, CANDIDATE, "top", None, None, "details", product_evidence=stored)
     plain, _, _ = qc._prepare(source, CANDIDATE, "top", None, None, "details")
-    assert "Five front buttons" not in plain
+    assert "rounded neckline with narrow binding" not in plain
 
 
 def test_old_astra_setting_is_rejected_without_any_provider_call(monkeypatch):

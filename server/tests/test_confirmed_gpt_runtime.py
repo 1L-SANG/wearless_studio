@@ -49,9 +49,12 @@ def _contract(source: bytes) -> dict:
                     "evidenceOrdinals": [1],
                 }
             ],
-            "visibleSurfacePlan": (
-                "FRONT is DOMINANT; preserve the visible neckline, sleeves and hem."
-            ),
+            "hem_shape": {"value": "straight", "evidenceOrdinals": [1]},
+            "cuff": {"value": "unknown", "evidenceOrdinals": []},
+            "button_count_visible": {"value": None, "evidenceOrdinals": []},
+            "pattern_structure": {"value": "none", "evidenceOrdinals": [1]},
+            "surface_texture": {"value": "unknown", "evidenceOrdinals": []},
+            "seam_lines": {"value": "unknown", "evidenceOrdinals": []},
         },
         binding,
     )

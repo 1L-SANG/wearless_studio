@@ -45,6 +45,62 @@ def test_first_acceptable_image_does_not_spend_final_request(monkeypatch):
     assert seen.puts == [b'before']
 
 
+@pytest.mark.parametrize('axis', ['pattern', 'material'])
+def test_surface_only_risk_keeps_first_cut_for_review_without_reroll_or_repair(monkeypatch, axis):
+    surface = rated(**{axis: 'critical'})
+    surface.update(verdict='retry', correctionPrompt='Redraw the visible surface.')
+    result, seen = run_worker(monkeypatch, has_match=False, p2={
+        b'before': surface,
+    })
+    assert seen.image_calls == ['generate']
+    assert seen.puts == [b'before']
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert result['qc_scores']['product_risks'][axis]['severity'] == 'critical'
+
+
+def test_mixed_surface_and_structure_uses_one_structural_only_targeted_repair(monkeypatch):
+    before = rated(construction='major', pattern='critical', material='major')
+    before.update(
+        verdict='retry',
+        correctionPrompt='Redraw the pattern and restore the located front seam.',
+    )
+    result, seen = run_worker(
+        monkeypatch,
+        has_match=False,
+        generated=(b'before', b'repaired'),
+        p2={
+            b'before': before,
+            b'repaired': rated(pattern='critical', material='major'),
+        },
+        settings_overrides={'mannequin_max_attempts': 1},
+    )
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == [b'repaired']
+    assert result['qc_scores']['quality_repair_kind'] == 'targeted_edit'
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert 'construction (major)' in seen.prompts[-1]
+    assert 'pattern (critical)' not in seen.prompts[-1]
+    assert 'material (major)' not in seen.prompts[-1]
+    assert 'preserve the existing pattern, texture, weave, finish' in seen.prompts[-1].lower()
+
+
+def test_structural_repair_is_rejected_when_review_only_surface_gets_worse(monkeypatch):
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
+        run_worker(
+            monkeypatch,
+            has_match=False,
+            captures=seen,
+            generated=(b'before', b'repaired'),
+            p2={
+                b'before': rated(construction='major', pattern='major'),
+                b'repaired': rated(pattern='critical'),
+            },
+            settings_overrides={'mannequin_max_attempts': 1},
+        )
+    assert seen.puts == []
+
+
 def test_shadow_observation_does_not_add_a_generation(monkeypatch):
     _, seen = run_worker(monkeypatch, has_match=False, mode='shadow',
         p2={b'before': rated(logo_graphic='critical')})
