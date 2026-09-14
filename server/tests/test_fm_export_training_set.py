@@ -100,6 +100,41 @@ def test_a_partial_set_is_refused_unless_asked(monkeypatch, tmp_path, capsys):
     assert "--allow-partial" in capsys.readouterr().out
 
 
+def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, capsys):
+    """--apply 경로 전체 — 디렉터리 두 개, 파일 16장, 이름은 <조명>__<컷>.png."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example:5432/x")
+    monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
+        database_url="", r2_face_bucket="face", r2_bucket="main"))
+    monkeypatch.setattr(ex, "fetch_photos",
+                        lambda dsn, eid: [_row(slot) for _group, slot in ex.EXPORTS])
+
+    class _R2:
+        def __init__(self, *a, **kw):
+            self.reads = []
+
+        def get_bytes(self, key):
+            self.reads.append(key)
+            return _jpeg(320, 240)
+
+    r2 = _R2()
+    monkeypatch.setattr(ex, "R2Client", lambda *a, **kw: r2)
+    out = tmp_path / "ds"
+    monkeypatch.setattr("sys.argv",
+                        ["x", "6f1d0c2e-0000-4000-8000-000000000001", str(out), "--apply"])
+
+    assert ex.main() == 0
+
+    train = sorted(path.name for path in (out / "train").iterdir())
+    refset = sorted(path.name for path in (out / "refset").iterdir())
+    assert len(train) == 12 and len(refset) == 4
+    assert "해가왼쪽__3:4_무표정.png" in train
+    assert refset == sorted(f"{fp.export_name(slot)}.png" for slot in fp.REFSET_SLOTS)
+    assert sorted(path.name for path in out.iterdir()) == ["refset", "train"]
+    assert len(r2.reads) == 16
+    # 키는 여전히 출력에 안 나온다
+    assert "facemarket/enrollments/" not in capsys.readouterr().out
+
+
 # ── 진입점 정규화 ───────────────────────────────────────────────────────────
 def _jpeg(width, height, orientation=None):
     from PIL import Image
