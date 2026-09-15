@@ -23,7 +23,6 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from ipaddress import ip_address
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -38,6 +37,7 @@ from pydantic import Field, ValidationError, field_validator
 from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
+from .client_ip import client_ip as _request_client_ip
 from .db import get_conn
 from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
@@ -1987,18 +1987,6 @@ class UsageReportCard(CamelModel):
     reason: str | None = None
     status: str
     created_at: datetime
-
-
-def _request_client_ip(request: Request) -> str:
-    """AWS ALB append-mode XFF의 마지막 주소를 사용하고 ASGI peer로 폴백한다."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        candidate = forwarded.rsplit(",", 1)[-1].strip()
-        try:
-            return str(ip_address(candidate))
-        except ValueError:
-            pass
-    return request.client.host if request.client else "unknown"
 
 
 async def _take_simulation_rate_slot(
