@@ -441,6 +441,13 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # 정규화본(EXIF 적용 무손실 PNG)의 긴 변 상한. **원본 바이트는 그대로 보관한다** — 줄이는
+    # 것은 읽기용 사본뿐이다.
+    # 4096 인 이유: 학습은 얼굴폭×3 크롭을 1024 로 줄여 쓰는데, 4096 에서도 얼굴폭 ≥342px 가
+    # 남아 크롭이 1024 를 넘는다(= 업스케일이 안 일어난다). 그 위는 인코드 시간과 관리자 열람
+    # 부담만 늘린다 — 48MP 실측 51MB/1.2s → 4096 에서 약 13MB.
+    # 0 이하면 상한 없음(원본 해상도 그대로).
+    fm_normalized_max_edge: int = 4096
     # ---- 인물 LoRA 얼굴 패스(agents/face_identity.py) — 기본 off. 켜도 virtual_models.json 항목에
     # faceIdentity{loraPath,token} 가 있는 모델의 착용컷만 후처리한다. 기본값에서는 기존 동작이 한 줄도 안 바뀐다.
     face_identity_enabled: bool = False
@@ -850,6 +857,7 @@ def load_settings() -> Settings:
         fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
         fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
+        fm_normalized_max_edge=int(os.getenv("FM_NORMALIZED_MAX_EDGE") or "4096"),
         face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,

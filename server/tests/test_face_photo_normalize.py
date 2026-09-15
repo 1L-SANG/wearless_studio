@@ -17,8 +17,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from app.config import load_settings
 from app.facemarket_photo_normalize import (
-    NORMALIZED_MIME, NormalizeFailed, normalize_png, sniff_image_mime,
+    DEFAULT_MAX_EDGE, NORMALIZED_MIME, NormalizeFailed, normalize_png, sniff_image_mime,
 )
 
 
@@ -69,6 +70,62 @@ def test_the_rewrite_is_lossless():
     assert size == (64, 48)
     with Image.open(io.BytesIO(original)) as before, Image.open(io.BytesIO(png)) as after:
         assert np.array_equal(np.asarray(before.convert("RGB")), np.asarray(after))
+
+
+# ── 긴 변 상한 ─────────────────────────────────────────────────────────────
+#
+# 원본은 그대로 보관한다. 줄이는 건 **읽기용 사본**뿐이다.
+# 4096 인 이유: 학습은 얼굴폭×3 크롭을 1024 로 줄여 쓴다. 등록 스펙이 "얼굴폭 ≈ 가로의 1/4"
+# 이라 4096 에서 얼굴폭 ≈1024px → 크롭 ≈3072px 로, 1024 까지 여유가 3배다. 그 위는 인코드
+# 시간과 관리자 열람 부담만 늘린다(48MP 실측 51.0MB/2.80s → 4096 에서 17.6MB/1.41s).
+
+
+def test_a_huge_photo_is_capped_on_its_long_edge():
+    png, size = normalize_png(_jpeg(8064, 6048), max_edge=4096)
+
+    assert size == (4096, 3072), "긴 변이 상한에 맞고 종횡비가 유지돼야 한다"
+    with Image.open(io.BytesIO(png)) as out:
+        assert out.size == (4096, 3072)
+
+
+def test_the_cap_applies_after_the_rotation_not_before():
+    """EXIF 를 먼저 적용해야 '긴 변'이 사람이 보는 긴 변이다 — 순서가 바뀌면 세로 사진이
+    가로 기준으로 잘려 상한을 넘거나 덜 줄어든다."""
+    png, size = normalize_png(_jpeg(8064, 6048, orientation=6), max_edge=4096)
+
+    assert size == (3072, 4096)
+    with Image.open(io.BytesIO(png)) as out:
+        assert max(out.size) == 4096
+
+
+def test_a_small_photo_is_never_enlarged():
+    """상한은 자르는 것이지 키우는 게 아니다 — 업스케일은 없던 화질을 지어낸다."""
+    for width, height in ((640, 480), (4096, 2160), (1000, 4096)):
+        _png_bytes, size = normalize_png(_jpeg(width, height), max_edge=4096)
+        assert size == (width, height)
+
+
+def test_the_capped_result_still_agrees_across_libraries():
+    """축소를 넣어도 PIL·cv2 대조는 그대로다 — 이 대조가 EXIF·디코더 드리프트를 잡는 자리다."""
+    import cv2
+
+    png, size = normalize_png(_jpeg(5000, 4000, orientation=6), max_edge=2048)
+    decoded = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+
+    # 5000×4000 → EXIF 회전으로 4000×5000 → 긴 변 5000 을 2048 로(×0.4096) → 1638×2048
+    assert size == (1638, 2048)
+    assert (decoded.shape[1], decoded.shape[0]) == size
+
+
+def test_the_cap_can_be_turned_off():
+    _png_bytes, size = normalize_png(_jpeg(5000, 4000), max_edge=0)
+    assert size == (5000, 4000)
+
+
+def test_the_default_cap_matches_the_setting():
+    """설정과 모듈 기본값이 갈라지면, 테스트는 4096 을 보고 운영은 다른 값을 쓴다."""
+    assert DEFAULT_MAX_EDGE == 4096
+    assert load_settings().fm_normalized_max_edge == DEFAULT_MAX_EDGE
 
 
 def test_unreadable_bytes_are_refused():

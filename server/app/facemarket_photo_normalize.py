@@ -26,8 +26,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-#: 정규화본 MIME. 무손실이라 학습이 원본 화질을 그대로 본다.
+#: 정규화본 MIME. 무손실이라 학습이 이 사본의 화질을 그대로 본다.
 NORMALIZED_MIME = "image/png"
+
+#: 정규화본 긴 변 기본 상한(설정 FM_NORMALIZED_MAX_EDGE 가 덮어쓴다). 원본은 그대로 보관한다 —
+#: 줄이는 것은 읽기용 사본뿐이다.
+#: 4096 인 이유: 학습은 얼굴폭×3 크롭을 1024 로 줄여 쓴다. 4096 에서도 얼굴폭이 ≥342px 면
+#: 크롭이 1024 를 넘어 업스케일이 안 일어난다(등록 스펙은 얼굴폭 ≈ 가로의 1/4 이라 4096 에서
+#: 1024px 로, 여유가 3배다). 그 위는 인코드 시간과 관리자 열람 부담만 늘린다.
+DEFAULT_MAX_EDGE = 4096
 
 #: ISO-BMFF ftyp 브랜드. iOS·AirDrop 은 File.type 을 비워 보내기도 해서 **매직바이트**로 본다.
 #: 프런트 src/lib/imageTranscode.js 의 HEIC_BRANDS 와 같은 집합이다.
@@ -80,11 +87,24 @@ class NormalizeFailed(RuntimeError):
     """정규화본을 만들지 못했다 — 업로드를 받으면 안 된다(읽을 수 없는 사진이 학습셋에 남는다)."""
 
 
-def normalize_png(data: bytes) -> tuple[bytes, tuple[int, int]]:
+def _fit(size: tuple[int, int], max_edge: int) -> tuple[int, int]:
+    """긴 변을 max_edge 로 맞춘 크기. 이미 작으면 그대로(**절대 키우지 않는다**)."""
+    width, height = size
+    longest = max(width, height)
+    if max_edge <= 0 or longest <= max_edge:
+        return size
+    scale = max_edge / longest
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def normalize_png(data: bytes, max_edge: int = DEFAULT_MAX_EDGE) -> tuple[bytes, tuple[int, int]]:
     """원본 바이트 → (EXIF 를 픽셀에 적용한 무손실 PNG 바이트, (가로, 세로)).
 
-    **호출부는 이 함수를 반드시 asyncio.to_thread 로 돌린다.** 48MP 한 장이 PNG 로 56MB 다 —
-    이벤트 루프에서 돌리면 그 몇 초 동안 /healthz 까지 멈춘다(2026-08-26 ALB 장애).
+    긴 변이 max_edge 를 넘으면 LANCZOS 로 줄인다 — **원본은 호출부가 따로 그대로 저장한다.**
+    무손실은 "이 사본 안에서 재압축 손실이 없다" 는 뜻이고, 축소는 그와 별개의 의도된 결정이다.
+
+    **호출부는 이 함수를 반드시 asyncio.to_thread 로 돌린다.** 48MP 한 장이 여기서 수 초를 쓴다 —
+    이벤트 루프에서 돌리면 그 동안 /healthz 까지 멈춘다(2026-08-26 ALB 장애).
     """
     _register_heif()
     import cv2
@@ -94,6 +114,9 @@ def normalize_png(data: bytes) -> tuple[bytes, tuple[int, int]]:
     try:
         with Image.open(io.BytesIO(data)) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
+            target = _fit(image.size, max_edge)
+            if target != image.size:
+                image = image.resize(target, Image.LANCZOS)
             size = image.size
             buffer = io.BytesIO()
             # compress_level=3 — 무손실은 레벨과 무관하다(픽셀은 같다). 실측(48MP 8064×6048,

@@ -5495,6 +5495,46 @@ def test_a_normalized_png_is_stored_next_to_the_original(
     assert r2.normalized_sibling_key(original_key) == normalized_key
 
 
+def test_a_huge_photo_keeps_its_original_but_the_copy_is_capped(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    """★ 상한은 **읽기용 사본에만** 걸린다 — 원본이 줄면 이 PR 의 요점이 사라진다.
+
+    48MP(8064×6048) 실측: 정규화본 51.0MB/2.80s → 4096 상한에서 17.6MB/1.41s. api 태스크가
+    작은 vCPU 를 셀러 API·헬스체크와 나눠 쓰므로 그 1.4초가 그냥 비용이다.
+    """
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    # 설정은 frozen dataclass 다 — 기본값(4096)을 그대로 쓰고, 그 값이 기본임을 여기서 잠근다.
+    assert enrollment_client.app.state.settings.fm_normalized_max_edge == 4096
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    body = _real_jpeg(8064, 6048)
+
+    assert _upload(enrollment_client, auth(), enrollment_id, body).status_code == 201
+
+    original_key, normalized_key = _uploaded_pair(fake_r2, 0)
+    assert fake_r2.objects[original_key][0] == body, "원본은 한 비트도 안 바뀐다"
+    with Image.open(io.BytesIO(fake_r2.objects[normalized_key][0])) as copy:
+        assert copy.size == (4096, 3072)
+    row = enrollment_store.photos[0]
+    assert (row["normalized_width"], row["normalized_height"]) == (4096, 3072)
+    assert row["byte_size"] == len(body), "행에 남는 원본 크기도 원본 기준이다"
+
+
+def test_a_photo_under_the_cap_is_not_resized(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    assert _upload(enrollment_client, auth(), enrollment_id,
+                   _real_jpeg(900, 1200)).status_code == 201
+
+    row = enrollment_store.photos[0]
+    assert (row["normalized_width"], row["normalized_height"]) == (900, 1200)
+
+
 def test_the_quality_check_sees_the_normalized_bytes(
     enrollment_client, auth, monkeypatch
 ):

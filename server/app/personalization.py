@@ -806,7 +806,8 @@ async def upload_face_photo(
     # EXIF 를 픽셀에 적용한 무손실 PNG 로 한 번 정리한다 — HEIC 는 cv2 가 아예 못 읽고,
     # JPEG 의 orientation 은 PIL 과 cv2 가 다르게 다룬다. to_thread 필수(48MP 면 수 초).
     try:
-        data, _size = await asyncio.to_thread(normalize_png, data)
+        data, _size = await asyncio.to_thread(
+            normalize_png, data, request.app.state.settings.fm_normalized_max_edge)
     except NormalizeFailed:
         raise _err("unsupported_type", "이 사진을 읽지 못했어요. 다시 찍어 올려 주세요.")
     mime = NORMALIZED_MIME

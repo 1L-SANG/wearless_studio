@@ -1667,7 +1667,8 @@ async def upload_enrollment_photo(
         # 아예 못 읽고, JPEG 는 EXIF orientation 을 PIL 과 cv2 가 다르게 다룬다.
         # to_thread 필수: 48MP 한 장이 이 자리에서 수 초를 쓴다(2026-08-26 루프 동결 사고).
         try:
-            normalized, normalized_size = await asyncio.to_thread(normalize_png, data)
+            normalized, normalized_size = await asyncio.to_thread(
+                normalize_png, data, request.app.state.settings.fm_normalized_max_edge)
         except NormalizeFailed as exc:
             logger.info(
                 "facemarket_enrollment_photo_unreadable",

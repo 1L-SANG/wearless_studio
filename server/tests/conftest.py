@@ -60,7 +60,8 @@ def stub_enrollment_photo_check(request, monkeypatch):
     # 여럿이라 여기서 바꾸면 그쪽이 거짓으로 통과한다.
     # 진짜 변환은 tests/test_face_photo_normalize.py 가 실제 이미지로 본다.
     for module in (facemarket_enrollment, personalization):
-        monkeypatch.setattr(module, "normalize_png", lambda data: (data, (1200, 1600)))
+        monkeypatch.setattr(module, "normalize_png",
+                            lambda data, max_edge=0: (data, (1200, 1600)))
     if request.node.get_closest_marker("real_photo_check"):
         return
 
