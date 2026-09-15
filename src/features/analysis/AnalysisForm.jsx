@@ -156,22 +156,15 @@ export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGen
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
 // 2026-07-16 prod 실측(의류 5종·사진 1~3장 7회 벤치): 클릭→완료 = 업로드 3.5~11s +
-// 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s. 이 애니메이션은 클릭 직후(업로드 포함)
-// 시작하므로 앞 4단계 합을 10초로 잡는다 — p50(~13s)에서 마지막 단계 대기가 짧게 남는다.
+// 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s. 기다림 초반에 진행감을 분명히 주도록
+// 앞 4단계를 3.2초 안에 채우고, 실제 결과가 늦으면 마지막 단계가 남은 시간을 흡수한다.
 //
-// 앞 4단계는 2.5초씩 균등(오너 결정 2026-08-14). 처음엔 단계마다 길이를 달리 줘 "자연스러운
-// 페이스" 를 노렸는데, 진행바가 단계마다 같은 몫(20%)을 가져가는 이상 그 차이가 곧 속도 차로
-// 보인다. 대신 변동은 전부 마지막 단계가 흡수한다 — 결과가 안 오면 거기서 더 기다린다.
-//
-// 결과 선착 시 잔여 단계를 순차(320ms)로 훑어 완주한 뒤 onFinished — 애니메이션 끝과 화면
-// 전환이 맞물린다. 분석이 늦으면 마지막 단계 스피너로 은은히 대기(멈춘 느낌 방지).
+// 결과가 먼저 도착해도 남은 단계만 갑자기 빨라지지 않는다. 모든 단계가 같은 800ms와 같은
+// 20% 몫을 써서 처음부터 끝까지 일정한 속도로 완주한 뒤 onFinished가 화면을 전환한다.
+// 분석이 늦으면 마지막 단계 스피너로 은은히 대기(멈춘 느낌 방지).
 // 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
 const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
-const STEP_MS = 2500;                                    // 앞 4개 합 10000ms (실측 p50 기반)
-// 마지막 항목은 실제로 쓰이지 않는다(그 단계는 타이머 없이 결과를 기다린다). 인덱스가
-// ANALYZE_STEPS 와 어긋나지 않도록 같은 길이로 채워 둔다.
-const STEP_DUR = ANALYZE_STEPS.map(() => STEP_MS);
-const FAST_DUR = 320;                               // 결과 선착 시 잔여 단계 순차 훑기(스냅 방지)
+const STEP_MS = 800;
 
 const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
 
@@ -188,33 +181,34 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     return () => clearTimeout(t);
   }, [done]);
 
-  useEffect(() => {
-    if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 살짝 여운 후 전환
-      if (finishedRef.current) return;
-      finishedRef.current = true;
-      const t = setTimeout(() => onFinishedRef.current?.(), 400);
-      return () => clearTimeout(t);
-    }
-    // 마지막 단계는 결과가 도착해야만 완료 — 그 전엔 스피너 유지 (분석 최대시간 커버)
-    if (!done && doneCount === ANALYZE_STEPS.length - 1) return;
-    const t = setTimeout(() => setDoneCount((n) => n + 1), done ? FAST_DUR : STEP_DUR[doneCount]);
-    return () => clearTimeout(t);
-  }, [doneCount, done]);
-
   // 마지막 단계는 타이머 없이 결과를 기다린다 — 예정 시간이 없다는 뜻으로 null 을 넘긴다.
   const waitingForResult = !done && doneCount === ANALYZE_STEPS.length - 1;
-  const plannedMs = waitingForResult ? null : (done ? FAST_DUR : STEP_DUR[doneCount]);
+  const plannedMs = waitingForResult ? null : STEP_MS;
 
   /* 지금 칸의 시계가 언제 시작됐는지. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터
      새 칸을 채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 튄다).
 
-     단계 번호뿐 아니라 **예정 시간이 바뀔 때도** 시계를 다시 건다. 결과가 도착하면
-     예정 시간이 2500ms→320ms 로 줄어드는데, 경과시간을 그대로 두면 elapsed/planned 가
-     즉시 1 을 넘겨 칸 끝까지 한 프레임에 튄다(실측 9~17%p — 이 작업이 없애려던 바로
-     그 증상이 다른 트리거로 남아 있었다). */
+     단계 번호뿐 아니라 **예정 시간이 바뀔 때도** 시계를 다시 건다. 마지막 단계에서
+     결과가 도착하면 무기한 대기(null)에서 800ms 완주로 바뀌므로 그때 새 시계를 시작한다. */
   const stepRef = useRef({ key: '', at: Date.now() });
   const stepKey = `${doneCount}:${plannedMs}`;
   if (stepRef.current.key !== stepKey) stepRef.current = { key: stepKey, at: Date.now() };
+
+  useEffect(() => {
+    if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 짧은 여운 후 전환
+      if (finishedRef.current) return;
+      finishedRef.current = true;
+      const t = setTimeout(() => onFinishedRef.current?.(), 240);
+      return () => clearTimeout(t);
+    }
+    // 마지막 단계는 결과가 도착해야만 완료 — 그 전엔 스피너 유지 (분석 최대시간 커버)
+    if (plannedMs === null) return;
+    // 결과가 중간에 도착해 effect가 다시 돌아도 현재 단계의 시계를 되감지 않는다.
+    const elapsed = Date.now() - stepRef.current.at;
+    const remaining = Math.max(0, plannedMs - elapsed);
+    const t = setTimeout(() => setDoneCount((n) => n + 1), remaining);
+    return () => clearTimeout(t);
+  }, [doneCount, done, plannedMs]);
 
   const barPercent = useSteppedProgress({
     stepIndex: doneCount,
