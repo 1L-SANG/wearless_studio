@@ -5,8 +5,9 @@ import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 // 순서·문구는 촬영 가이드를 따라요 — 번호대로 찍으면 그대로 채워져요.
 // 슬롯 키는 서버(`server/app/facemarket_photos.py` PHOTO_SLOTS)와 **같은 이름**이에요.
 // 조명 4가지(그늘·해가 왼쪽·해가 오른쪽·역광) × 컷 3장 = 학습 12장, 그늘에서 기준 3장,
-// 그리고 공개 프로필에만 쓰는 측면 1장 = 16장.
+// 공개 프로필에 쓰는 옆모습(왼쪽) 1장, 그리고 각도 수집 2장(옆모습 오른쪽·뒷모습) = 18장.
 // 기준에서 '턱 살짝 내리기'는 뺐어요 — 기준끼리의 얼굴 점수가 기준선 아래로 떨어져요.
+// 옆모습·뒷모습은 학습 12장에 **안 들어가요**. 지금은 모아 두고, 검증 뒤에 쓰임새를 정해요.
 export const SLOTS = Object.freeze([
   { n: 1, key: 'sh_front', group: 'sh', title: '정면 · 무표정', hint: '카메라를 똑바로, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
   { n: 2, key: 'sh_smile', group: 'sh', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
@@ -14,21 +15,23 @@ export const SLOTS = Object.freeze([
   { n: 4, key: 'sh_front2', group: 'sh', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
   { n: 5, key: 'sh_gaze_left', group: 'sh', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
   { n: 6, key: 'sh_gaze_right', group: 'sh', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
-  { n: 7, key: 'sh_side', group: 'sh', title: '측면', hint: '고개를 끝까지 돌려 옆모습. 이 한 장만 학습이 아니라 공개 프로필에 써요', framing: 'face', angle: 'left' },
-  { n: 8, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
-  { n: 9, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 10, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 11, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '카메라를 똑바로', framing: 'face', angle: 'front' },
-  { n: 12, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 13, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 14, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '플래시 끄고, 얼굴이 까맣게 나오면 다시', framing: 'face', angle: 'front' },
-  { n: 15, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 16, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 7, key: 'sh_side', group: 'sh', title: '옆모습 · 코가 화면 왼쪽', hint: '고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'left' },
+  { n: 8, key: 'sh_side_right', group: 'sh', title: '옆모습 · 코가 화면 오른쪽', hint: '반대쪽으로 고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'right' },
+  { n: 9, key: 'sh_back', group: 'sh', title: '뒷모습', hint: '뒤돌아서 뒤통수 정중앙을 머리 높이에서, 고개 똑바로, 어깨까지', framing: 'face', angle: 'back' },
+  { n: 10, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
+  { n: 11, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 12, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 13, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '카메라를 똑바로', framing: 'face', angle: 'front' },
+  { n: 14, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 15, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 16, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '플래시 끄고, 얼굴이 까맣게 나오면 다시', framing: 'face', angle: 'front' },
+  { n: 17, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 18, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
 ].map((slot) => Object.freeze(slot)));
 
 // 조명별로 한 화면씩. `sun` 은 위에서 본 그림(RegisterIllustration.SunDiagram)이 쓰는 값이에요.
 export const PHOTO_GROUPS = Object.freeze([
-  { id: 'sh', sun: 'shade', title: '그늘', badge: '건물 그림자 · 나무 그늘', note: '해가 얼굴에 직접 안 닿는 곳에 서고, 찍는 사람은 얼굴 정면에.' },
+  { id: 'sh', sun: 'shade', title: '그늘', badge: '건물 그림자 · 나무 그늘', note: '해가 얼굴에 직접 안 닿는 곳에 서고, 찍는 사람은 얼굴 정면에. 7~9번(옆모습 둘·뒷모습)은 같은 자리에서 몸만 돌려요.' },
   { id: 'sl', sun: 'left', title: '해가 왼쪽', badge: '해가 왼쪽 옆에서', note: '해가 화면 왼쪽 옆에서 얼굴을 비추게 서요.' },
   { id: 'sr', sun: 'right', title: '해가 오른쪽', badge: '해가 오른쪽 옆에서', note: '반대로 돌아서, 해가 화면 오른쪽 옆에서 비추게 서요.' },
   { id: 'bl', sun: 'back', title: '역광', badge: '해를 등지고', note: '해를 등지고 서요. 화면에서 얼굴을 눌러 밝기를 얼굴에 맞춰요.' },
@@ -44,6 +47,7 @@ export const SHOOT_RULES = Object.freeze([
   { title: '뒷카메라 1배, 기본 설정 그대로', body: '인물사진 모드 · 뷰티 필터 · 0.5배 광각은 쓰지 마세요.' },
   { title: '같은 날, 지금 머리 그대로', body: '머리 모양까지 배워요. 중간에 바꾸면 섞여요.' },
   { title: '기준 3장(4~6번)은 전부 그늘 같은 자리', body: '조명이 섞이면 기준 사진끼리 점수가 떨어져 기준으로 못 써요.' },
+  { title: '옆모습 2장(7~8번)은 고개를 끝까지', body: '덜 돌리면 3/4 와 구분이 안 돼 반려돼요. 한쪽 눈만 보이게 돌려요.' },
 ]);
 
 export const REGISTER_BODIES = Object.freeze([
@@ -52,8 +56,8 @@ export const REGISTER_BODIES = Object.freeze([
   { value: 'regular', label: '보통', width: 1.06 },
   { value: 'plump', label: '통통', width: 1.25 },
 ]);
-export const CONSENT_VERSION = '2026-09-v2';
-// 옛 등록(3각도 · 18칸)이 돌려주는 이름 → 지금 슬롯. 서버 facemarket_photos.SLOT_CANDIDATES 와 같아요.
+export const CONSENT_VERSION = '2026-09-v3';
+// 옛 등록(3각도 · 16칸)이 돌려주는 이름 → 지금 슬롯. 서버 facemarket_photos.SLOT_CANDIDATES 와 같아요.
 export const LEGACY_PHOTO_SLOTS = Object.freeze({
   front: 'sh_front', angle45: 'sh_34', side: 'sh_side',
   face01: 'sh_front', face03: 'sh_34', face05: 'sh_side',
@@ -76,6 +80,11 @@ export function toggleRegisterCategory(allowed, category) {
 export function restoreRegisterScreen(enrollment) {
   const status = enrollment?.status;
   if (!status) return { step: '1', sub: 1 };
+  // 관리자가 재촬영을 요청했으면 그게 지금 할 일이에요 — 등록은 이미 끝났고(passed) 증서도
+  // 있을 수 있지만, 요청된 칸을 다시 받기 전엔 학습이 안 돌아요. 상태(status)보다 먼저 봐요.
+  if (enrollment.photoReviewStatus === 'reshoot_requested' && (enrollment.reshootSlots || []).length) {
+    return { step: 'reshoot', sub: 1 };
+  }
   // 간편인증(simple_auth) 경로 전용 두 상태. id_capture_pending 은 본인확인 전에 신분증을
   // 찍어 올리는 단계이고, review_pending 은 완료 직전 관리자 육안 심사를 기다리는 단계다
   // — 둘 다 '끝났다'(done)로 보내면 사용자는 증서도 없이 축하 화면을 보게 된다.

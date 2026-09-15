@@ -26,8 +26,12 @@ def _row(angle, key=None, qc="passed", state="quarantine", size=1234):
 def test_the_layout_is_twelve_training_and_three_reference():
     groups = [group for group, _slot in ex.EXPORTS]
     assert groups.count("train") == 12 and groups.count("refset") == 3
-    # 측면은 학습에 안 쓴다 — 공개 자산용 한 장이다
-    assert "sh_side" not in [slot for _group, slot in ex.EXPORTS]
+    # 옆모습·뒷모습은 **학습에 안 들어간다**. 모아는 두되 angles/ 로 따로 나간다 —
+    # 여기서 train 에 섞이면 12장 학습 구성이 조용히 바뀐다.
+    angles = [slot for group, slot in ex.EXPORTS if group == "angles"]
+    assert angles == list(ex.ANGLE_EXPORT_SLOTS)
+    assert set(angles) == {"sh_side", "sh_side_right", "sh_back"}
+    assert not set(angles) & {slot for group, slot in ex.EXPORTS if group != "angles"}
 
 
 def test_file_names_come_from_the_server_constant():
@@ -76,6 +80,7 @@ def test_a_dry_run_writes_nothing_and_never_prints_a_key(monkeypatch, tmp_path, 
     monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
         database_url="", r2_face_bucket="face", r2_bucket="main"))
     monkeypatch.setattr(ex, "fetch_photos", lambda dsn, eid: [_row("sh_front", key=key)])
+    monkeypatch.setattr(ex, "fetch_review_status", lambda dsn, eid: "approved")
     monkeypatch.setattr(ex, "R2Client", lambda *a, **kw: pytest.fail("dry-run 은 R2 를 안 만진다"))
     monkeypatch.setattr("sys.argv", ["x", "6f1d0c2e-0000-4000-8000-000000000001", str(tmp_path / "ds")])
 
@@ -93,6 +98,7 @@ def test_a_partial_set_is_refused_unless_asked(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
         database_url="", r2_face_bucket="face", r2_bucket="main"))
     monkeypatch.setattr(ex, "fetch_photos", lambda dsn, eid: [_row("sh_front")])
+    monkeypatch.setattr(ex, "fetch_review_status", lambda dsn, eid: "approved")
     monkeypatch.setattr(ex, "R2Client", lambda *a, **kw: pytest.fail("쓰기 전에 멈춰야 한다"))
     monkeypatch.setattr("sys.argv",
                         ["x", "6f1d0c2e-0000-4000-8000-000000000001", str(tmp_path / "ds"), "--apply"])
@@ -102,12 +108,13 @@ def test_a_partial_set_is_refused_unless_asked(monkeypatch, tmp_path, capsys):
 
 
 def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, capsys):
-    """--apply 경로 전체 — 디렉터리 두 개, 파일 15장, 이름은 <조명>__<컷>.png."""
+    """--apply 경로 전체 — 디렉터리 셋, 파일 18장, 이름은 <조명>__<컷>.png."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example:5432/x")
     monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
         database_url="", r2_face_bucket="face", r2_bucket="main"))
     monkeypatch.setattr(ex, "fetch_photos",
                         lambda dsn, eid: [_row(slot) for _group, slot in ex.EXPORTS])
+    monkeypatch.setattr(ex, "fetch_review_status", lambda dsn, eid: "approved")
 
     class _R2:
         def __init__(self, *a, **kw):
@@ -127,13 +134,33 @@ def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, caps
 
     train = sorted(path.name for path in (out / "train").iterdir())
     refset = sorted(path.name for path in (out / "refset").iterdir())
-    assert len(train) == 12 and len(refset) == 3
+    angles = sorted(path.name for path in (out / "angles").iterdir())
+    assert len(train) == 12 and len(refset) == 3 and len(angles) == 3
     assert "해가왼쪽__3:4_무표정.png" in train
     assert refset == sorted(f"{fp.export_name(slot)}.png" for slot in fp.REFSET_SLOTS)
-    assert sorted(path.name for path in out.iterdir()) == ["refset", "train"]
-    assert len(r2.reads) == 15
+    # 옆모습·뒷모습은 angles/ 안에만 있다 — train 에 섞이면 학습 구성이 바뀐다.
+    assert angles == sorted(f"{fp.export_name(slot)}.png" for slot in ex.ANGLE_EXPORT_SLOTS)
+    assert sorted(path.name for path in out.iterdir()) == ["angles", "refset", "train"]
+    assert len(r2.reads) == 18
     # 키는 여전히 출력에 안 나온다
     assert "facemarket/enrollments/" not in capsys.readouterr().out
+
+
+def test_an_unreviewed_enrollment_is_refused(monkeypatch, tmp_path, capsys):
+    """확인 전 사진으로 학습하면 반려될 사진이 가중치에 들어간다 — 되돌리려면 재학습뿐이다."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example:5432/x")
+    monkeypatch.setattr(ex, "load_settings", lambda: types.SimpleNamespace(
+        database_url="", r2_face_bucket="face", r2_bucket="main"))
+    monkeypatch.setattr(ex, "fetch_photos",
+                        lambda dsn, eid: [_row(slot) for _group, slot in ex.EXPORTS])
+    monkeypatch.setattr(ex, "fetch_review_status", lambda dsn, eid: "pending")
+    monkeypatch.setattr(ex, "R2Client", lambda *a, **kw: pytest.fail("확인 전에는 R2 를 안 만진다"))
+    monkeypatch.setattr("sys.argv",
+                        ["x", "6f1d0c2e-0000-4000-8000-000000000001", str(tmp_path / "ds"), "--apply"])
+
+    assert ex.main() == 1
+    assert "--allow-unreviewed" in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []
 
 
 # ── 진입점 정규화 ───────────────────────────────────────────────────────────

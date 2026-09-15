@@ -310,6 +310,26 @@ export function adminRejectEnrollment(enrollmentId, reason) {
   });
 }
 
+// ── 관리자: 학습 전 사진 확인 ───────────────────────────────────────────────
+// 심사 큐(review_status)와 다른 축이다 — 표준인증(mid) 등록은 사람 심사를 안 거치지만
+// 사진 확인은 똑같이 받는다. status 는 'awaiting' | 'approved'.
+export function adminListPhotoReview(status = 'awaiting') {
+  return http(`/v1/facemarket/admin/enrollments/photo-review?status=${encodeURIComponent(status)}`);
+}
+
+export function adminApproveEnrollmentPhotos(enrollmentId) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/photos/approve`, {
+    method: 'POST',
+  });
+}
+
+// slots: [{ slot, reason }] — 칸 이름은 서버가 화이트리스트(PHOTO_SLOTS)로 다시 검사한다.
+export function adminRequestEnrollmentReshoot(enrollmentId, slots) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/photos/reshoot`, {
+    method: 'POST', body: { slots },
+  });
+}
+
 // 신분증·등록 사진 스트림: 게이트 라우트라 <img src> 로 못 건다(adminFetchApplicationPhotoUrl
 // 과 같은 이유). 경로는 호출부가 카드 응답의 `images` 맵에서 그대로 받아 넘긴다 — 프런트가
 // `/v1/facemarket/admin/enrollments/{id}/images/{kind}` 를 다시 조립하면, 서버가 라우트

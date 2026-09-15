@@ -21,15 +21,39 @@ test('동의 문서 버전이 서버 상수와 같다', () => {
   assert.equal(consent.version, shipped, '게시된 동의서 버전이 기록되는 값과 다르다');
 });
 
-test('16장의 서로 다른 슬롯이 있어야 확인 단계를 마칠 수 있어요', () => {
+test('18장의 서로 다른 슬롯이 있어야 확인 단계를 마칠 수 있어요', () => {
   assert.equal(typeof module.photoProgress, 'function');
   const photos = module.SLOTS.map((slot) => ({ slot: slot.key }));
-  assert.equal(photos.length, 16);
+  assert.equal(photos.length, 18);
   assert.equal(module.photoProgress(photos).complete, true);
   // 같은 칸을 두 번 올려도 채워지지 않는다
-  assert.equal(module.photoProgress([...photos.slice(0, 15), photos[0]]).complete, false);
-  assert.equal(module.photoProgress(photos.slice(0, 7), 'sh').complete, true);
-  assert.equal(module.photoProgress(photos.slice(0, 9), 'sl').complete, false);
+  assert.equal(module.photoProgress([...photos.slice(0, 17), photos[0]]).complete, false);
+  // 그늘 묶음은 9장(기존 7 + 옆모습 오른쪽 + 뒷모습)
+  assert.equal(module.photoProgress(photos.slice(0, 9), 'sh').complete, true);
+  assert.equal(module.photoProgress(photos.slice(0, 8), 'sh').complete, false);
+  assert.equal(module.photoProgress(photos.slice(0, 11), 'sl').complete, false);
+});
+
+test('슬롯 이름과 순서가 서버 정본과 같다', () => {
+  // 이름이 갈라지면 업로드가 invalid_slot 으로 막히고, 순서가 갈라지면 촬영 안내와
+  // 파일 이름(<조명>__<컷>)이 어긋난다. 정본은 서버 facemarket_photos.PHOTO_SLOTS 다.
+  const server = readFileSync(
+    new URL('../../server/app/facemarket_photos.py', import.meta.url), 'utf8',
+  );
+  const block = /PHOTO_SLOTS: tuple\[str, \.\.\.\] = \(([\s\S]*?)\)/.exec(server)?.[1];
+  assert.ok(block, '서버 PHOTO_SLOTS 를 못 찾았다');
+  const slots = [...block.matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(module.SLOTS.map((slot) => slot.key), slots);
+});
+
+test('옆모습 오른쪽·뒷모습 칸이 있고, 옆모습 왼쪽은 키를 그대로 쓴다', () => {
+  const byKey = Object.fromEntries(module.SLOTS.map((slot) => [slot.key, slot]));
+  // sh_side 는 이미 올라온 사진이 있는 칸이다 — 키를 바꾸면 그 사진들이 길을 잃는다.
+  assert.ok(byKey.sh_side, '옆모습(왼쪽) 칸의 키는 그대로여야 한다');
+  assert.equal(byKey.sh_side.angle, 'left');
+  assert.equal(byKey.sh_side_right.angle, 'right');
+  assert.equal(byKey.sh_back.angle, 'back');
+  assert.equal(byKey.sh_side.group, byKey.sh_back.group, '옆모습·뒷모습은 그늘에서 함께 찍는다');
 });
 
 test('구형 사진 각도는 해당 슬롯 한 칸으로만 복원해요', () => {
@@ -322,15 +346,16 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
     findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === '역광 사진 고치기').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_GROUPS.length, '역광은 마지막 조명 화면이다');
     let tree = harness.render();
-    const input = findTree(tree, (node) => node.type === 'input' && node.props['aria-label']?.startsWith('16번'));
+    // 역광 3/4 는 마지막 칸이다 — 옆모습 둘·뒷모습이 그늘에 붙으면서 16번 → 18번이 됐다.
+    const input = findTree(tree, (node) => node.type === 'input' && node.props['aria-label']?.startsWith('18번'));
     input.props.onChange({ target: { files: [file], value: '' } });
     await eventually(() => calls.length === 1); await flush();
     assert.equal(calls[0].slot, 'bl_34'); assert.equal(calls[0].fileBlob, file);
     tree = harness.render();
-    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '16번 내 사진'));
+    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '18번 내 사진'));
     await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_REVIEW_SUB);
-    assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '16번 내 사진'));
+    assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '18번 내 사진'));
     Object.values(harness.runtime.states[11]).forEach(URL.revokeObjectURL);
   } finally { await harness.close(); }
 });

@@ -44,18 +44,32 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/admin-ui/table.jsx';
 import {
-  adminApproveEnrollment, adminEnrollmentCard, adminFetchApplicationPhotoUrl,
-  adminFetchGatedImageUrl, adminListEnrollments, adminRejectEnrollment,
+  adminApproveEnrollment, adminApproveEnrollmentPhotos, adminEnrollmentCard,
+  adminFetchApplicationPhotoUrl, adminFetchGatedImageUrl, adminListEnrollments,
+  adminListPhotoReview, adminRejectEnrollment, adminRequestEnrollmentReshoot,
 } from '@/lib/api/facemarket.js';
+import { PHOTO_GROUPS, SLOTS } from '@/features/model/registerSlots.js';
 import { seoulDateTime } from '@/lib/datetime.js';
 import { finalRejectReason, imageFailureLabel, scoreRow } from './enrollmentReviewMath.js';
 
+// 마지막 탭만 다른 축이다 — 신원 심사가 아니라 **학습 전 사진 확인**이고, 표준인증(mid)
+// 등록까지 포함한다(그쪽은 review_status 가 null 이라 앞의 세 탭에 아예 안 뜬다).
+const PHOTO_FILTER = 'photos';
 const REVIEW_FILTERS = [
   { value: 'pending', label: '대기' },
   { value: 'approved', label: '승인' },
   { value: 'rejected', label: '거절' },
+  { value: PHOTO_FILTER, label: '사진 확인' },
 ];
 const REVIEW_LABEL = { pending: '대기', approved: '승인됨', rejected: '거절됨' };
+
+// 학습 전 사진 확인 상태(fm_biometric_enrollments.photo_review_status).
+const PHOTO_REVIEW_LABEL = {
+  pending: '확인 대기', approved: '확인 완료', reshoot_requested: '재촬영 요청',
+};
+// 칸 제목·조명 묶음은 등록 화면과 **한 곳**에서 가져온다(registerSlots.js). 여기서 다시
+// 적으면 칸이 늘 때 두 곳이 어긋나고, 어긋난 쪽이 조용히 빈 칸으로 보인다.
+const SLOT_BY_KEY = new Map(SLOTS.map((slot) => [slot.key, slot]));
 
 const IDENTITY_METHOD_LABEL = { mid: '표준인증', simple_auth: '간편인증' };
 
@@ -201,6 +215,215 @@ function ApplicationProfilePhoto({ applicationId, hasPhoto }) {
       {hasPhoto && !failed && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
       <figcaption className="text-center text-xs text-muted-foreground">지원서 프로필</figcaption>
     </figure>
+  );
+}
+
+/* 전체 등록 사진 한 칸. EnrollmentImage 와 같은 관례다 — 게이트 라우트라 <img src> 로
+   직접 걸지 못하고, 인증 fetch 로 받은 objectURL 을 쓰고 언마운트 때 해제한다.
+
+   누르면 크게 본다. 흐림·눈 감음·안경은 축소판에서 안 보인다 — 축소판만 보고 "확인 완료"를
+   누르면 그 사진이 그대로 가중치에 들어가고, 되돌리려면 LoRA 를 다시 학습해야 한다. */
+function PhotoSlotTile({ imagePath, slotKey, label, onZoom, checked, onToggle }) {
+  const [url, setUrl] = useState(null);
+  const [failedStatus, setFailedStatus] = useState(null);
+  useEffect(() => {
+    if (!imagePath) { setUrl(null); setFailedStatus(404); return undefined; }
+    let alive = true;
+    let objectUrl = null;
+    setUrl(null);
+    setFailedStatus(null);
+    adminFetchGatedImageUrl(imagePath)
+      .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
+      .catch((e) => { if (alive) setFailedStatus(e?.status || 0); });
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [imagePath]);
+  const failed = failedStatus !== null;
+  return (
+    <figure className="flex w-24 shrink-0 flex-col gap-1">
+      {failed && (
+        <div className="flex h-32 w-24 items-center justify-center rounded-md bg-muted px-1 text-center text-[11px] text-muted-foreground">
+          {imageFailureLabel(failedStatus, slotKey)}
+        </div>
+      )}
+      {!failed && !url && <Skeleton className="h-32 w-24" />}
+      {!failed && url && (
+        <button
+          type="button"
+          className="h-32 w-24 overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onZoom({ url, label })}
+        >
+          <img className="h-32 w-24 object-cover" src={url} alt={`등록 사진 ${label}`} />
+        </button>
+      )}
+      <figcaption className="text-center text-[11px] leading-tight text-muted-foreground">{label}</figcaption>
+      {onToggle && (
+        <label className="flex items-start gap-1 text-[11px] leading-tight">
+          <input type="checkbox" checked={checked} onChange={(e) => onToggle(slotKey, e.target.checked)} />
+          다시 찍기
+        </label>
+      )}
+    </figure>
+  );
+}
+
+/* 학습 전 사진 확인 — 등록 사진 전부(동의 판에 따라 16 또는 18칸)를 조명 묶음대로 보고,
+   확인 완료를 찍거나 칸을 골라 재촬영을 요청한다.
+
+   확인 완료 전까지 학습 내보내기(fm_export_training_set)가 막혀 있다. 확인이 끝나고
+   그 모델의 LoRA 가 켜지면 서버가 전체 칸 열람을 다시 닫는다(FULL_PHOTO_SCOPE) —
+   그때부터의 열람은 심사가 아니라 구경이라, 여기서도 안내만 남고 사진은 안 나온다. */
+function PhotoReviewSection({ card, onChanged }) {
+  const { push } = useToast();
+  const [zoom, setZoom] = useState(null);
+  const [reshooting, setReshooting] = useState(false);
+  const [picked, setPicked] = useState({});   // slot -> reason
+  const [busy, setBusy] = useState(false);
+
+  // 확대창은 Esc 로도 닫힌다 — 마우스를 옮기지 않고 여러 장을 훑는 게 이 화면의 일이다.
+  useEffect(() => {
+    if (!zoom) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setZoom(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoom]);
+
+  const slots = card.photoSlots || [];
+  const status = card.photoReviewStatus || 'pending';
+  const visible = !!card.fullPhotosVisible;
+  const pickedKeys = Object.keys(picked);
+
+  const toggle = (slotKey, on) => setPicked((prev) => {
+    const next = { ...prev };
+    if (on) next[slotKey] = next[slotKey] || '';
+    else delete next[slotKey];
+    return next;
+  });
+
+  const approvePhotos = async () => {
+    setBusy(true);
+    try {
+      await adminApproveEnrollmentPhotos(card.id);
+      push?.('사진 확인을 완료했어요. 이제 학습에 쓸 수 있어요.', { icon: 'check' });
+      onChanged();
+    } catch (e) {
+      push?.(e.message, { icon: 'alertCircle' });
+    } finally { setBusy(false); }
+  };
+
+  const requestReshoot = async () => {
+    setBusy(true);
+    try {
+      await adminRequestEnrollmentReshoot(
+        card.id,
+        pickedKeys.map((slot) => ({ slot, reason: picked[slot] || '' })),
+      );
+      push?.(`${pickedKeys.length}칸 재촬영을 요청했어요.`, { icon: 'check' });
+      onChanged();
+    } catch (e) {
+      push?.(e.message, { icon: 'alertCircle' });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="border-t border-border pt-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h4 className="text-xs font-medium text-muted-foreground">학습 전 사진 확인 ({slots.length}칸)</h4>
+        <Badge variant={status === 'approved' ? 'default' : status === 'reshoot_requested' ? 'destructive' : 'secondary'}>
+          {PHOTO_REVIEW_LABEL[status] || status}
+        </Badge>
+        {card.photoReviewedAt && (
+          <span className="text-xs text-muted-foreground">{seoulDateTime(card.photoReviewedAt)}</span>
+        )}
+      </div>
+
+      {!visible && (
+        <p className="text-sm text-muted-foreground">
+          확인이 끝나고 이 모델의 얼굴 자산이 살아 있어요 — 전체 사진은 더 열리지 않아요.
+        </p>
+      )}
+
+      {visible && PHOTO_GROUPS.map((group) => {
+        const groupSlots = slots.filter((key) => SLOT_BY_KEY.get(key)?.group === group.id);
+        if (groupSlots.length === 0) return null;
+        return (
+          <div key={group.id} className="mb-3">
+            <p className="mb-1 text-xs font-medium">{group.title} <span className="font-normal text-muted-foreground">· {group.badge}</span></p>
+            <div className="flex flex-wrap gap-2">
+              {groupSlots.map((key) => (
+                <PhotoSlotTile
+                  key={key}
+                  imagePath={card.images?.[key]}
+                  slotKey={key}
+                  label={`${SLOT_BY_KEY.get(key)?.n ?? ''}. ${SLOT_BY_KEY.get(key)?.title || key}`}
+                  onZoom={setZoom}
+                  checked={key in picked}
+                  onToggle={reshooting ? toggle : null}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* 이미 요청해 둔 재촬영 칸 — 모델이 다시 올리기를 기다리는 중이다. */}
+      {status === 'reshoot_requested' && (card.reshootSlots || []).length > 0 && (
+        <ul className="mb-3 list-none p-0 text-xs text-destructive">
+          {card.reshootSlots.map((item) => (
+            <li key={item.slot}>
+              {SLOT_BY_KEY.get(item.slot)?.title || item.slot}
+              {item.reason ? ` — ${item.reason}` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {visible && !reshooting && (
+        <div className="flex gap-2">
+          <Button variant="default" size="sm" disabled={busy} onClick={approvePhotos}>사진 확인 완료</Button>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setReshooting(true)}>재촬영 요청</Button>
+        </div>
+      )}
+
+      {visible && reshooting && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-muted-foreground">다시 찍을 칸을 고르고, 왜 다시 찍어야 하는지 적어 주세요 (모델이 그대로 읽어요).</p>
+          {pickedKeys.map((key) => (
+            <label key={key} className="flex flex-col gap-1 text-xs">
+              <span className="font-medium">{SLOT_BY_KEY.get(key)?.title || key}</span>
+              <Textarea
+                rows={1}
+                value={picked[key]}
+                onChange={(e) => setPicked((prev) => ({ ...prev, [key]: e.target.value }))}
+                placeholder="예: 얼굴이 흔들려 흐려요"
+              />
+            </label>
+          ))}
+          <div className="flex gap-2">
+            <Button variant="destructive" size="sm" disabled={busy || pickedKeys.length === 0} onClick={requestReshoot}>
+              재촬영 요청 보내기
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setReshooting(false); setPicked({}); }}>
+              취소
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {zoom && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${zoom.label} 크게 보기`}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoom(null)}
+        >
+          <figure className="flex max-h-full flex-col items-center gap-2">
+            <img className="max-h-[80vh] max-w-full rounded-md object-contain" src={zoom.url} alt={`${zoom.label} 크게 보기`} />
+            <figcaption className="text-sm text-white">{zoom.label} · 아무 곳이나 누르거나 Esc 로 닫아요</figcaption>
+          </figure>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -402,6 +625,12 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
           )}
         </section>
 
+        {/* 학습 전 사진 확인 — 신원 심사가 끝난 뒤의 일이다. 아직 심사 중인 등록은
+            서버가 전체 칸을 안 열어 주므로(decision != 'passed') 구역 자체를 안 그린다. */}
+        {(card.fullPhotosVisible || card.photoReviewStatus !== 'pending') && (
+          <PhotoReviewSection card={card} onChanged={load} />
+        )}
+
         {pending && !rejecting && (
           <section className="border-t border-border pt-4">
             {/* 서버는 마스킹 여부를 검증할 수 없다 — 이 체크가 그 자리를 메운다. 승인
@@ -480,7 +709,11 @@ export function AdminEnrollmentReview() {
   const load = useCallback(() => {
     setItems(null);
     setListError(null);
-    adminListEnrollments(review)
+    // '사진 확인' 탭만 다른 라우트다 — 필터 축(photo_review_status)도, 대상(mid 포함)도 다르다.
+    const request = review === PHOTO_FILTER
+      ? adminListPhotoReview('awaiting')
+      : adminListEnrollments(review);
+    request
       .then(setItems)
       .catch((e) => setListError(e.message || '심사 큐를 불러오지 못했어요.'));
   }, [review]);
@@ -502,6 +735,11 @@ export function AdminEnrollmentReview() {
           간편인증으로 들어온 등록의 신분증·등록 사진·지원서를 보고 승인 또는 거절해요.
           대조 점수는 참고용이에요 — 위조 신분증도 점수가 높게 나올 수 있고, 진짜
           신분증도 반사광 때문에 낮게 나올 수 있어요.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          <strong className="font-medium">사진 확인</strong> 탭은 다른 일이에요 — 통과한 등록의
+          얼굴 사진 전부를 학습 전에 보고, 확인 완료를 찍거나 칸을 골라 재촬영을 요청해요.
+          확인 완료 전에는 학습 내보내기가 열리지 않아요.
         </p>
       </header>
 
@@ -535,7 +773,7 @@ export function AdminEnrollmentReview() {
                   <TableRow>
                     <TableHead>등록</TableHead>
                     <TableHead>방식</TableHead>
-                    <TableHead>제출일</TableHead>
+                    <TableHead>{review === PHOTO_FILTER ? '사진 확인' : '제출일'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -556,13 +794,22 @@ export function AdminEnrollmentReview() {
                     >
                       <TableCell className="font-mono text-xs">{row.id.slice(0, 8)}</TableCell>
                       <TableCell>{IDENTITY_METHOD_LABEL[row.identityMethod] || row.identityMethod}</TableCell>
-                      <TableCell className="text-muted-foreground">{seoulDateTime(row.createdAt)}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {review === PHOTO_FILTER ? (
+                          <span>
+                            {PHOTO_REVIEW_LABEL[row.photoReviewStatus] || row.photoReviewStatus}
+                            {row.reshootSlotCount > 0 ? ` · ${row.reshootSlotCount}칸` : ''}
+                          </span>
+                        ) : seoulDateTime(row.createdAt)}
+                      </TableCell>
                     </TableRow>
                   ))}
                   {items.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
-                        {REVIEW_LABEL[review] || '해당'} 상태의 등록이 없어요.
+                        {review === PHOTO_FILTER
+                          ? '확인을 기다리는 등록 사진이 없어요.'
+                          : `${REVIEW_LABEL[review] || '해당'} 상태의 등록이 없어요.`}
                       </TableCell>
                     </TableRow>
                   )}

@@ -335,16 +335,18 @@ class Settings:
     fm_oacx_simple_auth_contract: str = "disabled"  # disabled | simple-auth-v1
     fm_face_match_enabled: bool = False
     fm_standard_unit_price: int = 14900
-    #: 등록 사진 슬롯 = LoRA 학습 촬영 스펙 그대로 16칸(facemarket_photos.PHOTO_SLOTS 가 정본).
-    #: 옛 18칸은 상반신·전신 10장을 아무도 읽지 않았고 그 사진으로 LoRA 를 만들 수도 없었다.
+    #: 등록 사진 슬롯 = LoRA 학습 촬영 12 + 기준 3 + 각도 3(facemarket_photos.PHOTO_SLOTS 가 정본).
+    #: 2026-09-15 에 옆모습 오른쪽·뒷모습을 더해 18칸이 됐다 — 학습(TRAINING_SLOTS)은 그대로 12장이다.
     fm_photo_slots: tuple[str, ...] = (
-        "sh_front", "sh_smile", "sh_34", "sh_front2",
-        "sh_gaze_left", "sh_gaze_right", "sh_side",
+        "sh_front", "sh_smile", "sh_34", "sh_front2", "sh_gaze_left", "sh_gaze_right",
+        "sh_side", "sh_side_right", "sh_back",
         "sl_front", "sl_smile", "sl_34",
         "sr_front", "sr_smile", "sr_34",
         "bl_front", "bl_smile", "bl_34",
     )
-    fm_required_slot_count: int = 16
+    #: 바깥 테두리다. 등록이 실제로 채워야 하는 칸은 **동의 버전**이 정한다
+    #: (facemarket_enrollment.required_slots_for_consent) — 옛 동의로 시작한 등록은 16칸 그대로다.
+    fm_required_slot_count: int = 18
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
     # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.

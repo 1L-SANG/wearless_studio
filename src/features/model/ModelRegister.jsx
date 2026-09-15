@@ -8,7 +8,7 @@ import IdDocumentStep from './IdDocumentStep.jsx';
 import IdentityMethodStep from './IdentityMethodStep.jsx';
 import { deriveSimpleAuthUnavailableReason, isMobileLike, parseIdentityMethods, SIMPLE_AUTH_DEVICE_REASON } from './identityMethodConfig.js';
 import { CONSENT_VERSION, PHOTO_GROUPS, PHOTO_REVIEW_SUB, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
-import { heading, renderConditions, renderConsent, renderPhotos } from './RegisterScreens.jsx';
+import { heading, renderConditions, renderConsent, renderPhotos, renderReshoot } from './RegisterScreens.jsx';
 import s from './ModelRegister.module.css';
 
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
@@ -314,6 +314,9 @@ export function ModelRegister() {
       if (mounted.current) setEnrollment(reopened);
       return reopened;
     }
+    // 재촬영 요청 — 등록 상태는 그대로(passed) 두고 요청된 칸만 갈아 끼워요. 서버도 같은
+    // 규칙이에요(_validate_photo_mutation_enrollment: 요청된 칸이 아니면 409).
+    if (enrollment?.photoReviewStatus === 'reshoot_requested') return enrollment;
     if (!['photos_pending', 'liveness_pending'].includes(enrollment?.status)) {
       throw new Error('현재 등록 단계에서는 사진을 고칠 수 없어요.');
     }
@@ -334,6 +337,12 @@ export function ModelRegister() {
       previewUrls.current[slot] = url; setPreviews({ ...previewUrls.current });
       if (Array.isArray(result.photos)) setEnrollment(result);
       else setEnrollment((current) => ({ ...current, photos: [...(current.photos || []).filter((photo) => photoSlotKey(photo) !== slot), { ...result, slot }] }));
+      // 업로드 응답은 사진 한 장(EnrollmentPhotoView)이라 재촬영 목록이 안 들어 있어요 —
+      // 남은 칸을 세려면 등록을 다시 읽어야 해요. 안 읽으면 "0장 남았어요" 가 영원히 안 떠요.
+      if (editable.photoReviewStatus === 'reshoot_requested') {
+        const refreshed = await getEnrollment(editable.id);
+        if (mounted.current) setEnrollment(refreshed);
+      }
     } catch (requestError) { if (mounted.current) setError(requestError.message || '사진을 올리지 못했어요. 다시 시도해 주세요.'); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
@@ -458,7 +467,7 @@ export function ModelRegister() {
     if (step === '4b' && enrollment?.id && !inFlight.current) issueCertificate();
   }, [step, enrollment?.id]);
 
-  const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness', 'review'].includes(step) ? 2 : Number(step[0]) || 1;
+  const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness', 'review', 'reshoot'].includes(step) ? 2 : Number(step[0]) || 1;
   // 이 등록이 어느 경로인가 — 화면 문구를 실제로 열리는 위젯에 맞추는 데 써요(표시층 전용,
   // 컷 파이프라인·상태머신은 이 값으로 갈리지 않아요).
   const isSimpleAuthEnrollment = enrollment?.identityMethod === 'simple_auth';
@@ -501,6 +510,16 @@ export function ModelRegister() {
     const complete = sub < PHOTO_REVIEW_SUB ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
     next = { label: sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
     previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
+  } else if (step === 'reshoot') {
+    content = renderReshoot({ enrollment, previews, busy, onFile: changePhoto });
+    const remaining = (enrollment?.reshootSlots || []).length;
+    next = {
+      label: busy ? '올리는 중이에요' : remaining ? `${remaining}장 남았어요` : '확인 요청 보내기',
+      action: restore,
+      disabled: busy || remaining > 0,
+      hint: remaining ? '요청받은 칸을 모두 새로 올리면 담당자에게 자동으로 다시 넘어가요.' : '다 올렸어요. 담당자가 다시 확인해요.',
+    };
+    previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === '3') {
     content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
     next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };

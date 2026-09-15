@@ -6,9 +6,13 @@
 멱등 규칙:
   · R2 키는 (model_id, version, 파일명)으로 결정된다. 같은 내용이 이미 있으면 다시 안 올린다.
   · 행은 unique(model_id, version) 기준 upsert.
-  · 기본이 **켬**이다 — 등록한 버전만 enabled=true 가 되고 같은 모델의 이전 버전은 자동으로
-    꺼진다(partial unique index fm_model_loras_one_enabled_uidx 가 두 개를 허용하지 않는다).
-    스테이징처럼 붙이기만 할 때는 --no-enable.
+  · 켬 여부의 기본값은 **모델 상태**가 정한다.
+      - status='verified' (이미 쓰이고 있는 모델의 재학습 교체) → 켠다. 등록한 버전만
+        enabled=true 가 되고 같은 모델의 이전 버전은 자동으로 꺼진다(partial unique index
+        fm_model_loras_one_enabled_uidx 가 두 개를 허용하지 않는다).
+      - 그 밖(pending·awaiting_confirm) → **끈 채로** 붙인다. 본인이 테스트컷을 확인해
+        승인(confirm_test_cut)하는 트랜잭션에서 켜진다.
+    --no-enable / --enable 을 주면 그 값이 이긴다.
 
 머리·얼굴형 값은 **등록자의 현재 모습이 아니라 이 LoRA 가 학습한 모습**을 넣는다
 (마이그레이션 20260910100000 주석). enum 은 app/facemarket_physique.py 와 같아야 한다.
@@ -57,6 +61,18 @@ def _key(model_id: str, version: int, ckpt: pathlib.Path) -> str:
     return f"facemarket/models/{model_id}/loras/v{version}_{ckpt.name}"
 
 
+def resolve_enable(requested: bool | None, model_status: str | None) -> bool:
+    """켤지 말지 — 플래그를 줬으면 그 값, 안 줬으면 모델 상태가 정한다.
+
+    승인 전(pending·awaiting_confirm) 모델을 켜 두면 본인이 테스트컷으로 얼굴을 확인하기
+    전에 착용컷에 쓰인다. 켜는 건 confirm_test_cut 이 한다(_enable_ready_lora).
+    이미 verified 인 모델에 붙이는 건 재학습 교체라 예전처럼 바로 켠다.
+    """
+    if requested is not None:
+        return bool(requested)
+    return model_status == "verified"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", required=True, help="fm_models.id (uuid)")
@@ -72,13 +88,14 @@ def main() -> int:
     ap.add_argument("--trained-steps", type=int)
     ap.add_argument("--source-enrollment-id")
     ap.add_argument("--metrics", help="jsonb 로 넣을 JSON 문자열")
-    # **등록 = 사용**이 기본이다. 꺼진 채로 등록하면 그 사실을 아무 데서도 못 보고
-    # "얼굴이 안 바뀐다" 로만 나타난다(원인을 찾는 데 사람 시간이 든다).
+    # 기본값은 모델 상태가 정한다(아래 resolve). 승인 전 모델을 켜 두면 본인이 얼굴을
+    # 확인하기 전에 착용컷에 쓰이고, 반대로 verified 모델을 꺼 두면 "얼굴이 안 바뀐다" 로만
+    # 나타난다(원인을 찾는 데 사람 시간이 든다).
     ap.add_argument("--no-enable", dest="enable", action="store_false",
-                    help="스테이징용 — 등록만 하고 켜지 않는다")
+                    help="등록만 하고 켜지 않는다(승인 전 모델의 기본값)")
     ap.add_argument("--enable", dest="enable", action="store_true",
-                    help="(호환용) 기본이 이미 켬이라 효과 없음")
-    ap.set_defaults(enable=True)
+                    help="승인 전 모델이어도 강제로 켠다")
+    ap.set_defaults(enable=None)
     ap.add_argument("--apply", action="store_true", help="없으면 확인만 하고 아무것도 안 쓴다")
     a = ap.parse_args()
 
@@ -104,10 +121,32 @@ def main() -> int:
     # 렌더 파드가 presigned 로 받은 파일을 대조할 값(fm_model_loras.lora_sha256).
     sha256 = hashlib.sha256(data).hexdigest()
     head = r2.head(key)
+
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        # 확인만 할 때도 모델 상태를 봐야 "켜질지" 를 미리 말할 수 있다.
+        print("DATABASE_URL 미설정")
+        return 2
+    with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as conn, conn.cursor() as cur:
+        cur.execute("select to_regclass('public.fm_model_loras') as t")
+        if not (cur.fetchone() or {}).get("t"):
+            print("fm_model_loras 가 없다 — 마이그레이션 20260910100000 을 먼저 적용할 것")
+            return 2
+        cur.execute("select status from fm_models where id = %s", (a.model_id,))
+        model = cur.fetchone()
+        if model is None:
+            print(f"fm_models 에 {a.model_id} 가 없다 — 등록된 사람만 LoRA 를 가질 수 있다")
+            return 2
+    model_status = model.get("status")
+    enable = resolve_enable(a.enable, model_status)
+
     print(f"ckpt   {ckpt} ({len(data)/2**20:.1f}MB md5={digest})")
     print(f"sha256 {sha256}")
     print(f"key    {key}  (이미 있음: {bool(head)})")
-    print(f"db     {'apply' if a.apply else 'dry-run'}  enable={a.enable} version={a.version}")
+    print(f"model  status={model_status}")
+    print(f"db     {'apply' if a.apply else 'dry-run'}  enable={enable} version={a.version}")
+    if not enable and a.enable is None:
+        print("       (승인 전 모델이라 끈 채로 붙인다 — 본인이 테스트컷을 확인하면 켜진다)")
 
     if not a.apply:
         print("\n--apply 없이 실행 — 아무것도 쓰지 않았다.")
@@ -119,20 +158,8 @@ def main() -> int:
     else:
         print("upload skipped (같은 크기의 객체가 이미 있다)")
 
-    dsn = os.getenv("DATABASE_URL")
-    if not dsn:
-        print("DATABASE_URL 미설정")
-        return 2
     with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as conn, conn.cursor() as cur:
-        cur.execute("select to_regclass('public.fm_model_loras') as t")
-        if not (cur.fetchone() or {}).get("t"):
-            print("fm_model_loras 가 없다 — 마이그레이션 20260910100000 을 먼저 적용할 것")
-            return 2
-        cur.execute("select 1 from fm_models where id = %s", (a.model_id,))
-        if cur.fetchone() is None:
-            print(f"fm_models 에 {a.model_id} 가 없다 — 등록된 사람만 LoRA 를 가질 수 있다")
-            return 2
-        if a.enable:
+        if enable:
             # partial unique(model_id) where enabled — 다른 버전을 **먼저** 꺼야 insert 가 통과한다.
             cur.execute(
                 "update fm_model_loras set enabled = false "
@@ -154,7 +181,7 @@ def main() -> int:
                  jaw_line = excluded.jaw_line, trained_steps = excluded.trained_steps,
                  source_enrollment_id = excluded.source_enrollment_id, metrics = excluded.metrics
                returning id::text as id""",
-            (a.model_id, a.version, a.enable, a.base_model, key, sha256, a.trigger,
+            (a.model_id, a.version, enable, a.base_model, key, sha256, a.trigger,
              a.hair_length, a.hair_color, a.hair_texture, a.face_shape, a.jaw_line,
              a.trained_steps, a.source_enrollment_id,
              Json(metrics) if metrics is not None else None),

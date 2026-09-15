@@ -34,8 +34,10 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
       </label>
       <div className={s.consentCard}>{check(0, 'FaceMarket 모델 이용약관에 동의하고 개인정보 처리방침을 확인했어요.')}<div className={s.legalLinks}>{legalLink('/terms', '이용약관 전문 보기')}{legalLink('/privacy', '처리방침 전문 보기')}</div></div>
       <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<div className={s.legalSummary}>
-        <p><b>수집:</b> 얼굴 사진 16장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
+        <p><b>수집:</b> 얼굴·옆모습·뒷모습 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
         <p><b>목적:</b> 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
+        <p><b>확인:</b> 올린 사진은 학습 전에 FaceMarket 담당자가 품질 확인을 위해 열람하며, 열람 기록이 남아요.</p>
+        <p><b>사용 시점:</b> 만든 얼굴 참조 자산은 내가 테스트컷을 확인·승인한 뒤부터 착용컷 생성에 쓰여요.</p>
         <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
         <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>{legalLink('/biometric-consent')}
       </div></div>
@@ -81,6 +83,36 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
           <span className={s.slotAction}>{filled ? '바꾸기' : '내 사진으로'}</span><span className={s.slotBottom}><span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 {filled ? '바꾸기' : '올리기'}</span></span><span className={s.slotHint}>{filled && !previews[slot.key] ? '사진을 저장했어요' : slot.hint}</span></span>
         </label>
         {filled && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 지우기`} disabled={busy} onClick={() => onRemove(slot.key)}>×</button>}
+      </div>;
+    })}</div>
+  </>;
+}
+
+/* 관리자가 "이 칸은 다시 찍어 주세요" 한 뒤의 화면.
+
+   등록은 이미 끝났고 모델도 있다 — 여기서 받는 건 **요청된 칸뿐**이다. 다 올리면 서버가
+   저절로 '확인 대기'로 되돌려 관리자 큐에 다시 띄운다(_consume_reshoot_slot). 사유는
+   관리자가 적은 문장을 그대로 보여 준다 — 무엇이 문제였는지가 다시 찍는 데 필요한 전부다. */
+export function renderReshoot({ enrollment, previews, busy, onFile }) {
+  const requested = enrollment?.reshootSlots || [];
+  const reasons = new Map(requested.map((item) => [item.slot, item.reason]));
+  const slots = SLOTS.filter((slot) => reasons.has(slot.key));
+  return <>
+    {heading('사진 몇 장만 다시 찍어 주세요', '담당자가 확인하다 다시 받고 싶은 칸을 골랐어요. 아래 칸만 새로 올리면 끝나요.')}
+    {slots.length === 0 && <p className={s.description} role="status">다시 찍을 칸이 없어요. 잠시 후 다시 확인해 주세요.</p>}
+    <div className={s.photoGrid}>{slots.map((slot) => {
+      const reason = reasons.get(slot.key);
+      return <div className={s.slotCard} key={slot.key}>
+        <label className={s.slot}>
+          <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} 다시 올리기`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <RegisterIllustration className={s.person} framing={slot.framing} angle={slot.angle} />}
+          <span className={s.slotBadge}>다시 찍기</span>
+          <span className={s.slotAction}>내 사진으로</span>
+          <span className={s.slotBottom}>
+            <span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 올리기</span></span>
+            <span className={s.slotHint}>{reason || slot.hint}</span>
+          </span>
+        </label>
       </div>;
     })}</div>
   </>;

@@ -11,12 +11,13 @@ SQL(신규 identity_method/id_document_r2_key 컬럼을 얹은 완료-체크 SEL
 그대로 초록이다.
 """
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import facemarket_enrollment, facemarket_id_document
+from app import facemarket_enrollment, facemarket_id_document, facemarket_photos
 from app.agents.face_qc import QcFailed
 
 # #285 가 사진 슬롯을 3각도 → 18장으로 넓히면서 이 상수를 LEGACY_ANGLES 로 개명했다.
@@ -625,6 +626,8 @@ class AdminStore:
         self.applications: dict[str, dict] = {}
         self.photos: list[dict] = []
         self.models: list[dict] = []
+        # 얼굴 LoRA 장부 — 전체 사진 열람 범위가 "켜진 행이 있는가" 로도 닫힌다.
+        self.loras: list[dict] = []
         self.identity_verifications: list[dict] = []
         self.jobs: list[dict] = []
         self.audit: list[dict] = []
@@ -676,6 +679,12 @@ class AdminStore:
             "body_type": None,
             "provider_versions": {},
             "match_policy_version": None,
+            # 학습 전 관리자 사진 확인(마이그 20260915120000). 기본은 '확인 대기'.
+            "photo_review_status": "pending",
+            "photo_reviewed_at": None,
+            "photo_reviewed_by": None,
+            "reshoot_slots": None,
+            "consent_version": None,
         }
         row.update(overrides)
         if application is not None:
@@ -717,6 +726,19 @@ class AdminFakeR2:
 
     def preview_url(self, key: str, expires: int = 3600) -> str:
         return f"https://r2.test/{key}"
+
+
+def _photo_review_open(store, row) -> bool:
+    """FULL_PHOTO_SCOPE/PHOTO_REVIEW_PREDICATE 를 그대로 흉내낸다 — 통과한 등록 중
+    확인이 안 끝났거나, 그 모델에 켜진 LoRA 가 아직 없는 것."""
+    if row is None or row.get("decision") != "passed":
+        return False
+    if (row.get("photo_review_status") or "pending") in ("pending", "reshoot_requested"):
+        return True
+    return not any(
+        lora["model_id"] == row.get("model_id") and lora["enabled"] and lora["status"] == "ready"
+        for lora in store.loras
+    )
 
 
 class AdminFakeCursor:
@@ -778,10 +800,16 @@ class AdminFakeCursor:
         if "application_id::text as application_id" in query:
             (enrollment_id,) = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
-            # 심사에 들어온 등록만 본다(최종리뷰 I6) — 프로덕션 SQL 의 술어를 그대로 흉내낸다.
-            if row is not None and "review_status is not null" in query and not row.get("review_status"):
-                row = None
-            self.result = None if row is None else dict(row)
+            # 심사에 들어온 등록(최종리뷰 I6) **또는** 학습 전 사진 확인 대상(mid 포함).
+            # 프로덕션 SQL 의 술어를 그대로 흉내낸다(CARD_SCOPE).
+            if row is not None and "review_status is not null" in query:
+                if not row.get("review_status") and not _photo_review_open(store, row):
+                    row = None
+            if row is None:
+                self.result = None
+                return
+            self.result = {**row, "full_photos_visible": _photo_review_open(store, row),
+                           "photo_review_status": row.get("photo_review_status") or "pending"}
             return
 
         # --- 결과 통지 메일: 연락처 조회 (최종리뷰 I2) ---
@@ -830,10 +858,55 @@ class AdminFakeCursor:
             ]
             rows.sort(key=lambda row: candidates.index(row["angle"]))
             photo = rows[0] if rows else None
-            # join fm_biometric_enrollments … and e.review_status is not null (최종리뷰 I6)
-            if enrollment is None or not enrollment.get("review_status"):
+            # 옛 이름 3장은 심사 범위(review_status is not null, 최종리뷰 I6),
+            # 나머지 칸은 학습 전 확인 범위(PHOTO_REVIEW_PREDICATE).
+            legacy_scope = "e.review_status is not null" in query
+            allowed = (bool(enrollment and enrollment.get("review_status")) if legacy_scope
+                       else _photo_review_open(store, enrollment))
+            if not allowed:
                 photo = None
             self.result = photo
+            return
+
+        # --- 학습 전 사진 확인 큐 ---
+        if "coalesce(jsonb_array_length(reshoot_slots), 0)" in query:
+            rows = [r for r in store.enrollments if r.get("decision") == "passed"]
+            if "photo_review_status = 'approved'" in query:
+                rows = [r for r in rows if (r.get("photo_review_status") or "pending") == "approved"]
+            else:
+                rows = [r for r in rows
+                        if (r.get("photo_review_status") or "pending")
+                        in ("pending", "reshoot_requested")]
+            self._many = [
+                {"id": r["id"], "identity_method": r.get("identity_method"),
+                 "status": r["status"],
+                 "photo_review_status": r.get("photo_review_status") or "pending",
+                 "reshoot_slot_count": len(r.get("reshoot_slots") or []),
+                 "completed_at": r.get("completed_at"), "created_at": r["created_at"]}
+                for r in rows
+            ]
+            return
+
+        # --- 사진 확인 완료 / 재촬영 요청 ---
+        if "set photo_review_status = 'approved'" in query:
+            reviewer, enrollment_id = params
+            row = next((r for r in store.enrollments
+                        if r["id"] == enrollment_id and r.get("decision") == "passed"), None)
+            if row is not None:
+                row.update(photo_review_status="approved", photo_reviewed_by=reviewer,
+                           photo_reviewed_at=datetime.now(timezone.utc), reshoot_slots=None)
+                self.result = {"photo_review_status": "approved"}
+            return
+
+        if "set photo_review_status = 'reshoot_requested'" in query:
+            reviewer, payload, enrollment_id = params
+            row = next((r for r in store.enrollments
+                        if r["id"] == enrollment_id and r.get("decision") == "passed"), None)
+            if row is not None:
+                row.update(photo_review_status="reshoot_requested", photo_reviewed_by=reviewer,
+                           photo_reviewed_at=datetime.now(timezone.utc),
+                           reshoot_slots=json.loads(payload))
+                self.result = {"photo_review_status": "reshoot_requested"}
             return
 
         # --- 승인 UPDATE (상태 가드) ---
@@ -1111,7 +1184,11 @@ def test_review_card_includes_scores_and_application(admin_client):
     card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
     assert card["matchScores"]["scores"]["front"] == 0.31
     assert card["application"]["applicantName"] == "홍길동"
-    assert set(card["images"]) == {"id_document", "front", "angle45", "side"}
+    # 신분증 + 옛 이름 3장 + 전체 등록 칸. 링크는 항상 실리고, **볼 수 있는지**는 서버가
+    # 범위 술어로 따로 판정한다(FULL_PHOTO_SCOPE) — 프런트는 fullPhotosVisible 로 안다.
+    assert set(card["images"]) == (
+        {"id_document", "front", "angle45", "side"} | set(facemarket_photos.PHOTO_SLOTS)
+    )
 
 
 def test_review_card_exposes_identity_mismatch_count_and_application_id(admin_client):
@@ -1752,3 +1829,199 @@ def test_decision_email_failure_never_breaks_the_decision(admin_client, monkeypa
     enrollment_id = _seed_reviewable_with_contact(store)
     assert client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/approve").status_code == 200
     assert store.latest_enrollment["review_status"] == "approved"
+
+
+# ── 학습 전 사진 확인 (2026-09-15) ─────────────────────────────────────────────
+#
+# 등록 사진이 곧 학습셋이다. 반려할 사진(흐림·안경·각도 미달)이 가중치에 들어가면 되돌릴
+# 방법이 재학습뿐이라, 사람이 **전체 칸**을 보고 확인 도장을 찍기 전에는 내보내기가 안 열린다.
+# 그 대가로 이 라우터가 등록 사진 전부를 스트리밍할 수 있게 됐다 — 그래서 범위 술어
+# (PHOTO_REVIEW_PREDICATE)가 이 구역 테스트의 주인공이다.
+
+
+def _seed_trained_candidate(store, *, photo_review_status="pending", model_id="model-1",
+                            identity_method="mid", review_status=None):
+    """통과한 등록 하나 + 모든 칸의 사진. 표준인증(mid)이라 review_status 는 비어 있다."""
+    enrollment_id = store.add_enrollment(
+        status="passed", decision="passed", identity_method=identity_method,
+        review_status=review_status, model_id=model_id,
+        photo_review_status=photo_review_status,
+    )
+    for slot in facemarket_photos.PHOTO_SLOTS:
+        store.add_photo(enrollment_id, slot, f"facemarket/enrollments/{enrollment_id}/{slot}.jpg")
+    return enrollment_id
+
+
+def test_the_full_photo_scope_covers_the_mid_path(admin_client):
+    """표준인증(mid) 등록은 사람 심사를 안 거쳐 review_status 가 null 이다.
+
+    심사 범위(REVIEW_SCOPE)로만 묶으면 프로덕션 주 경로의 사진을 관리자가 **아예 못 보고**,
+    확인이 안 되니 학습 내보내기도 영원히 막힌다.
+    """
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+
+    card = client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}")
+    assert card.status_code == 200, card.text
+    assert card.json()["fullPhotosVisible"] is True
+    assert card.json()["photoReviewStatus"] == "pending"
+
+    image = client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/sh_back")
+    assert image.status_code == 200
+    assert image.headers["cache-control"] == "private, no-store"
+
+
+def test_an_in_flight_enrollment_never_streams_its_photos(admin_client):
+    """★ 범위 술어가 하는 일 — 등록 id 만 알면 아무 사진이나 흐르면 안 된다.
+
+    통과하지 않은 등록(decision is null)은 확인 대상이 아니다. 여기서 열리면 이 라우터가
+    "id 를 아는 관리자에게 모든 생체 사진" 을 주는 자리가 된다.
+    """
+    client, store = admin_client(is_admin=True)
+    enrollment_id = store.add_enrollment(status="photos_pending", decision=None)
+    store.add_photo(enrollment_id, "sh_front", "facemarket/e/sh_front.jpg")
+
+    assert client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}").status_code == 404
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/sh_front"
+    ).status_code == 404
+
+
+def test_the_scope_closes_again_once_the_face_asset_is_live(admin_client):
+    """확인이 끝나고 LoRA 가 켜지면 다시 닫힌다 — 그 뒤의 열람은 심사가 아니라 구경이다."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store, photo_review_status="approved")
+    store.loras.append({"id": "l1", "model_id": "model-1", "enabled": True,
+                        "status": "ready", "version": 1})
+
+    card = client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}")
+    assert card.status_code == 404, "심사 큐 밖 + 확인 끝 + 자산 살아 있음 = 볼 이유가 없다"
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/sh_back"
+    ).status_code == 404
+
+
+def test_the_scope_stays_open_while_training_has_not_landed(admin_client):
+    """확인은 끝났는데 아직 켜진 LoRA 가 없으면(학습 대기·학습 중) 계속 볼 수 있다."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store, photo_review_status="approved")
+    store.loras.append({"id": "l1", "model_id": "model-1", "enabled": False,
+                        "status": "ready", "version": 1})
+
+    card = client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}")
+    assert card.status_code == 200, card.text
+    assert card.json()["fullPhotosVisible"] is True
+
+
+def test_every_full_photo_view_leaves_an_audit_row(admin_client):
+    """열람만 기록이 없으면 누가 무엇을 봤는지 아무 데도 없다(처리방침 §접속기록 2년)."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+
+    client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/sh_side_right")
+
+    views = [row for row in store.audit if row["action"] == "enrollment_review_image_view"]
+    assert len(views) == 1 and views[0]["target_id"] == enrollment_id
+
+
+def test_a_non_admin_cannot_see_any_registration_photo(admin_client):
+    client, store = admin_client(is_admin=False)
+    enrollment_id = _seed_trained_candidate(store)
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/sh_front"
+    ).status_code == 403
+
+
+def test_the_card_carries_the_slots_of_the_consent_it_was_taken_under(admin_client):
+    """16칸 동의로 시작한 등록에 18칸을 그려 놓으면 두 칸이 영원히 404 로 보인다."""
+    client, store = admin_client(is_admin=True)
+    old = _seed_trained_candidate(store, model_id="model-old")
+    store.latest_enrollment["consent_version"] = "2026-09-v2"
+    card = client.get(f"/v1/facemarket/admin/enrollments/{old}").json()
+    assert card["photoSlots"] == list(facemarket_photos.PHOTO_SLOTS_V2)
+    assert len(card["photoSlots"]) == 16
+
+    new = _seed_trained_candidate(store, model_id="model-new")
+    store.latest_enrollment["consent_version"] = "2026-09-v3"
+    card = client.get(f"/v1/facemarket/admin/enrollments/{new}").json()
+    assert card["photoSlots"] == list(facemarket_photos.PHOTO_SLOTS)
+    assert len(card["photoSlots"]) == 18
+
+
+def test_approving_the_photos_opens_the_export_and_closes_the_view(admin_client):
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+
+    result = client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/photos/approve")
+
+    assert result.status_code == 200, result.text
+    assert result.json() == {"photoReviewStatus": "approved", "reshootSlots": []}
+    assert store.latest_enrollment["photo_review_status"] == "approved"
+    assert [row["action"] for row in store.audit] == ["enrollment_photo_review_approve"]
+
+
+def test_requesting_a_reshoot_records_the_slots_and_reasons(admin_client):
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+
+    result = client.post(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/photos/reshoot",
+        json={"slots": [{"slot": "sh_34", "reason": "먼 쪽 눈이 안 보여요"},
+                        {"slot": "sh_back", "reason": ""}]},
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["photoReviewStatus"] == "reshoot_requested"
+    assert store.latest_enrollment["reshoot_slots"] == [
+        {"slot": "sh_34", "reason": "먼 쪽 눈이 안 보여요"},
+        {"slot": "sh_back", "reason": ""},
+    ]
+    assert [row["action"] for row in store.audit] == ["enrollment_photo_review_reshoot"]
+
+
+def test_an_unknown_slot_name_is_refused(admin_client):
+    """칸 이름이 그대로 저장돼 모델 화면에 뿌려진다 — 화이트리스트 밖은 400."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+
+    result = client.post(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/photos/reshoot",
+        json={"slots": [{"slot": "../../etc/passwd", "reason": "x"}]},
+    )
+
+    assert result.status_code == 400
+    assert result.json()["error"]["code"] == "invalid_reshoot_slots"
+    assert store.latest_enrollment["reshoot_slots"] is None
+
+
+def test_an_empty_reshoot_request_is_refused(admin_client):
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_trained_candidate(store)
+    result = client.post(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/photos/reshoot",
+        json={"slots": []},
+    )
+    assert result.status_code == 400
+
+
+def test_the_photo_review_queue_lists_what_is_waiting(admin_client):
+    """심사 큐와 다른 축이다 — mid 등록(review_status null)도 여기엔 떠야 한다."""
+    client, store = admin_client(is_admin=True)
+    waiting = _seed_trained_candidate(store, model_id="m1")
+    _seed_trained_candidate(store, photo_review_status="approved", model_id="m2")
+    in_flight = store.add_enrollment(status="photos_pending", decision=None)
+
+    rows = client.get("/v1/facemarket/admin/enrollments/photo-review?status=awaiting")
+    assert rows.status_code == 200, rows.text
+    ids = [row["id"] for row in rows.json()]
+    assert ids == [waiting] and in_flight not in ids
+
+    done = client.get("/v1/facemarket/admin/enrollments/photo-review?status=approved").json()
+    assert [row["photoReviewStatus"] for row in done] == ["approved"]
+
+
+def test_the_photo_review_queue_rejects_an_unknown_filter(admin_client):
+    client, _store = admin_client(is_admin=True)
+    response = client.get("/v1/facemarket/admin/enrollments/photo-review?status=everything")
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_review_filter"

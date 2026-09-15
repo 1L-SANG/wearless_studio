@@ -20,6 +20,7 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -37,9 +38,10 @@ from .facemarket_enrollment import (
     _wake_dispatcher,
     bind_model_and_enqueue_asset_build,
     notify_enrollment_decision,
+    required_slots_for_consent,
 )
 from .facemarket_id_document import purge_id_document
-from .facemarket_photos import photo_slot_candidates
+from .facemarket_photos import PHOTO_SLOTS, lighting_of, photo_slot_candidates
 from .models import CamelModel
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,10 @@ REVIEW_STATUSES = ("pending", "approved", "rejected")
 # 심사 화면의 이름은 그대로 둔다(정면·45도·측면). 실제 행 이름은 등록 회차마다 다르므로
 # photo_slot_candidates 로 풀어 쓴다 — 16칸 스펙은 sh_front·sh_34·sh_side 다.
 PHOTO_ANGLES = ("front", "angle45", "side")
-IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES
+#: 전체 사진 확인(2026-09-15) — 18칸을 그대로 열람한다. 학습 전에 사람이 품질을 보는 자리다.
+#: 옛 이름 3개(front·angle45·side)는 그대로 둔다 — 기존 심사 화면이 그 이름으로 부른다.
+FULL_PHOTO_KINDS: tuple[str, ...] = tuple(PHOTO_SLOTS)
+IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES + FULL_PHOTO_KINDS
 
 # 이 라우터가 볼 수 있는 등록의 범위. `review_status` 가 채워진 행 = 실제로 사람 심사에
 # 들어온 등록뿐이다. 이 술어가 없으면 관리자 카드·이미지 라우트가 **등록 id 하나만 알면
@@ -60,11 +65,42 @@ IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES
 # (최종리뷰 I6). 열람 자체도 감사 기록을 남긴다(처리방침 §접속기록).
 REVIEW_SCOPE = " and review_status is not null"
 
+#: 전체 18칸을 열 수 있는 범위. **이것도 범위 술어다** — 아무 등록 id 로나 사진이 흐르면 안 된다.
+#: 열리는 때: 통과한 등록(decision='passed') 중 사진 확인이 아직 안 끝났거나
+#: (pending·reshoot_requested), 그 모델에 켜진 LoRA 가 아직 없을 때(= 학습 대기·학습 중).
+#: 확인이 끝나고 LoRA 가 살아 있으면 다시 3장으로 좁아진다 — 그 뒤의 열람은 심사가 아니라 구경이다.
+#:
+#: REVIEW_SCOPE(review_status is not null)를 쓰지 않는 이유: 표준인증(mid) 등록은 사람 심사를
+#: 거치지 않아 review_status 가 null 이다. 그 범위로 묶으면 프로덕션 주 경로(mid)의 사진을
+#: 관리자가 **아예 못 보고**, 확인이 안 되니 학습 내보내기도 영원히 막힌다.
+PHOTO_REVIEW_PREDICATE = """(
+        {a}decision = 'passed'
+        and (
+            coalesce({a}photo_review_status, 'pending') in ('pending', 'reshoot_requested')
+            or not exists (
+                select 1 from fm_model_loras l
+                where l.model_id = {a}model_id and l.enabled and l.status = 'ready'
+            )
+        )
+    )"""
+FULL_PHOTO_SCOPE = "\n    and " + PHOTO_REVIEW_PREDICATE.format(a="e.") + "\n"
+#: 카드 조회 범위 — 심사 큐에 들어온 등록(간편인증) **또는** 사진 확인 대상(mid 포함).
+CARD_SCOPE = (" and (review_status is not null or "
+              + PHOTO_REVIEW_PREDICATE.format(a="fm_biometric_enrollments.") + ")")
+#: 프런트가 "지금 전체 칸을 볼 수 있는가"를 알아야 한다 — 볼 수 없는 칸을 그려 놓고 404 를
+#: 받으면 "사진이 파기됐다" 와 구분이 안 된다. 범위 술어와 **같은 식**을 컬럼으로 낸다.
+FULL_PHOTO_VISIBLE_COLUMN = (PHOTO_REVIEW_PREDICATE.format(a="fm_biometric_enrollments.")
+                             + " as full_photos_visible")
+
 ENROLLMENT_CARD_COLUMNS = """
     id::text as id, user_id::text as user_id, model_id::text as model_id,
     identity_method, review_status, status, match_scores,
     application_id::text as application_id,
     identity_name_masked, identity_birth_year, mask_mode,
+    consent_version,
+    coalesce(photo_review_status, 'pending') as photo_review_status,
+    photo_reviewed_at, reshoot_slots,
+    """ + FULL_PHOTO_VISIBLE_COLUMN + """,
     reviewed_by::text as reviewed_by, reviewed_at, review_reason, created_at
 """
 
@@ -95,6 +131,25 @@ def _r2_face(request: Request):
 def _image_urls(enrollment_id: str) -> dict[str, str]:
     base = f"/v1/facemarket/admin/enrollments/{enrollment_id}/images"
     return {kind: f"{base}/{kind}" for kind in IMAGE_KINDS}
+
+
+class ReshootSlot(CamelModel):
+    """다시 찍어야 할 칸 하나 — 관리자가 고르고, 모델 화면이 그대로 읽는다."""
+    slot: str
+    reason: str = ""
+
+
+def _reshoot_slots(raw) -> list["ReshootSlot"]:
+    """jsonb 컬럼 → 모델. 모양이 깨진 행은 조용히 버린다(화면이 죽는 것보다 낫다)."""
+    out: list[ReshootSlot] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        slot = str(item.get("slot") or "")
+        if slot not in PHOTO_SLOTS:
+            continue
+        out.append(ReshootSlot(slot=slot, reason=str(item.get("reason") or "")))
+    return out
 
 
 class AdminReviewApplication(CamelModel):
@@ -128,6 +183,19 @@ class AdminReviewQueueRow(CamelModel):
     created_at: datetime
 
 
+class PhotoReviewQueueRow(CamelModel):
+    """학습 전 사진 확인 큐 한 줄. 심사 큐(review_status)와 **다른 축**이다 —
+    표준인증(mid) 등록은 사람 심사를 안 거쳐 review_status 가 null 이지만 사진 확인은
+    똑같이 받아야 한다."""
+    id: str
+    identity_method: str
+    status: str
+    photo_review_status: str
+    reshoot_slot_count: int = 0
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
 class AdminReviewCard(CamelModel):
     id: str
     user_id: str
@@ -154,6 +222,15 @@ class AdminReviewCard(CamelModel):
     # 않음) 애초에 검사가 안 돌았음(FM_ID_MASK_VERIFY=off, 또는 이 컬럼이 생기기 전 행) —
     # 어느 쪽이든 "확인됨"이 아니므로 프런트는 이 둘을 하나로 묶어 배지를 낸다(Task9).
     mask_mode: str | None = None
+    #: 이 등록이 동의한 판(2026-09-v2=16칸, v3=18칸) 기준 칸 목록 — 화면이 그릴 순서 그대로.
+    consent_version: str | None = None
+    photo_slots: list[str] = []
+    #: 학습 전 사진 확인. pending | approved | reshoot_requested.
+    photo_review_status: str = "pending"
+    photo_reviewed_at: datetime | None = None
+    reshoot_slots: list["ReshootSlot"] = []
+    #: 지금 전체 칸을 스트리밍할 수 있는가(FULL_PHOTO_SCOPE 와 같은 식).
+    full_photos_visible: bool = False
     images: dict[str, str]
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -215,6 +292,12 @@ def _card_view(row: dict, application: AdminReviewApplication | None) -> AdminRe
         identity_name_masked=row.get("identity_name_masked"),
         identity_birth_year=row.get("identity_birth_year"),
         mask_mode=row.get("mask_mode"),
+        consent_version=row.get("consent_version"),
+        photo_slots=list(required_slots_for_consent(row.get("consent_version"))),
+        photo_review_status=row.get("photo_review_status") or "pending",
+        photo_reviewed_at=row.get("photo_reviewed_at"),
+        reshoot_slots=_reshoot_slots(row.get("reshoot_slots")),
+        full_photos_visible=bool(row.get("full_photos_visible")),
         images=_image_urls(row["id"]),
         reviewed_by=row.get("reviewed_by"),
         reviewed_at=row.get("reviewed_at"),
@@ -270,6 +353,58 @@ async def list_review_queue(
     ]
 
 
+PHOTO_REVIEW_FILTERS = {
+    # 확인이 남은 것 — 대기 + 재촬영 요청(모델이 다시 올리길 기다리는 중)을 한 줄로 본다.
+    "awaiting": "coalesce(photo_review_status, 'pending') in ('pending', 'reshoot_requested')",
+    "approved": "photo_review_status = 'approved'",
+}
+
+
+@router.get("/enrollments/photo-review", response_model=list[PhotoReviewQueueRow])
+async def list_photo_review_queue(
+    request: Request,
+    status: str = Query("awaiting", description="awaiting|approved"),
+    user_id: str = Depends(require_user),
+):
+    """학습 전 사진 확인 큐. 통과한 등록(decision='passed')만 — 아직 진행 중이거나 실패한
+    등록의 사진에는 확인 도장을 찍을 이유가 없다.
+
+    라우트 순서 주의: `/enrollments/{enrollment_id}` 보다 **위**에 있어야 한다. 아래에 두면
+    'photo-review' 가 enrollment_id 로 잡혀 404 가 된다.
+    """
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id, request)
+        where = PHOTO_REVIEW_FILTERS.get(status)
+        if where is None:
+            raise _err("invalid_review_filter", "사진 확인 필터가 올바르지 않습니다.")
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                select id::text as id, identity_method, status,
+                       coalesce(photo_review_status, 'pending') as photo_review_status,
+                       coalesce(jsonb_array_length(reshoot_slots), 0) as reshoot_slot_count,
+                       completed_at, created_at
+                from fm_biometric_enrollments
+                where decision = 'passed' and {where}
+                order by completed_at desc nulls last, created_at desc
+                limit 200
+                """,
+            )
+            rows = await cur.fetchall()
+    return [
+        PhotoReviewQueueRow(
+            id=row["id"],
+            identity_method=row.get("identity_method") or "mid",
+            status=row["status"],
+            photo_review_status=row["photo_review_status"],
+            reshoot_slot_count=row.get("reshoot_slot_count") or 0,
+            completed_at=row.get("completed_at"),
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
 @router.get("/enrollments/{enrollment_id}", response_model=AdminReviewCard)
 async def get_review_card(
     request: Request, enrollment_id: str, user_id: str = Depends(require_user)
@@ -282,7 +417,7 @@ async def get_review_card(
         async with conn.cursor() as cur:
             await cur.execute(
                 f"select {ENROLLMENT_CARD_COLUMNS} from fm_biometric_enrollments "
-                f"where id = %s{REVIEW_SCOPE}",
+                f"where id = %s{CARD_SCOPE}",
                 (enrollment_id,),
             )
             row = await cur.fetchone()
@@ -321,11 +456,14 @@ async def get_review_image(
                 mime_hint = None
             else:
                 candidates = list(photo_slot_candidates(kind))
+                # 옛 이름 3장은 기존 심사 범위 그대로. 나머지 칸은 **학습 전 확인 범위**에서만 열린다.
+                scope = (" and e.review_status is not null" if kind in PHOTO_ANGLES
+                         else FULL_PHOTO_SCOPE)
                 await cur.execute(
                     "select p.r2_key, p.mime_type from fm_biometric_enrollment_photos p "
                     "join fm_biometric_enrollments e on e.id = p.enrollment_id "
                     "where p.enrollment_id = %s and p.angle = any(%s) "
-                    "and e.review_status is not null "
+                    f"{scope} "
                     "order by array_position(%s, p.angle) limit 1",
                     (enrollment_id, candidates, candidates),
                 )
@@ -492,6 +630,101 @@ async def _resume_asset_build(
             "enrollment_resume_failure_audit_failed enrollment=%s", enrollment_id, exc_info=True
         )
     return "processing", error_code
+
+
+class ReshootRequest(CamelModel):
+    slots: list[ReshootSlot]
+
+
+class PhotoReviewResult(CamelModel):
+    photo_review_status: str
+    reshoot_slots: list[ReshootSlot] = []
+
+
+@router.post("/enrollments/{enrollment_id}/photos/approve", response_model=PhotoReviewResult)
+async def approve_enrollment_photos(
+    request: Request, enrollment_id: str, user_id: str = Depends(require_user)
+):
+    """사진 확인 완료 — 이 뒤로 학습 내보내기가 열린다(fm_export_training_set 게이트).
+
+    전체 18칸 열람도 여기서 닫힌다(FULL_PHOTO_SCOPE). 확인이 끝났는데 계속 열어 두면
+    그 뒤의 열람은 심사가 아니라 구경이다.
+    """
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set photo_review_status = 'approved', photo_reviewed_by = %s,
+                    photo_reviewed_at = now(), reshoot_slots = null
+                where id = %s and decision = 'passed' 
+                returning coalesce(photo_review_status, 'pending') as photo_review_status
+                """,
+                (user_id, enrollment_id),
+            )
+            updated = await cur.fetchone()
+        if updated is None:
+            raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="enrollment_photo_review_approve",
+            target_type="enrollment",
+            target_id=enrollment_id,
+            after={"photoReviewStatus": "approved"},
+        )
+        await conn.commit()
+    return PhotoReviewResult(photo_review_status="approved", reshoot_slots=[])
+
+
+@router.post("/enrollments/{enrollment_id}/photos/reshoot", response_model=PhotoReviewResult)
+async def request_enrollment_reshoot(
+    request: Request, enrollment_id: str, body: ReshootRequest,
+    user_id: str = Depends(require_user),
+):
+    """다시 찍어야 할 칸을 지정한다. 모델 화면이 그 칸만 다시 받는다.
+
+    칸 이름은 **화이트리스트**(PHOTO_SLOTS)만 — 클라이언트 문자열이 그대로 저장돼 화면에
+    뿌려지면 안 된다. 사유는 모델이 읽는 문장이라 길이만 자른다.
+    """
+    slots = list(body.slots or [])
+    if not slots:
+        raise _err("invalid_reshoot_slots", "다시 찍을 칸을 하나 이상 골라 주세요.")
+    unknown = [item.slot for item in slots if item.slot not in PHOTO_SLOTS]
+    if unknown:
+        raise _err("invalid_reshoot_slots", "알 수 없는 사진 칸입니다.")
+    payload = [{"slot": item.slot, "reason": str(item.reason or "")[:200]} for item in slots]
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set photo_review_status = 'reshoot_requested', photo_reviewed_by = %s,
+                    photo_reviewed_at = now(), reshoot_slots = %s::jsonb
+                where id = %s and decision = 'passed' 
+                returning coalesce(photo_review_status, 'pending') as photo_review_status
+                """,
+                (user_id, json.dumps(payload, ensure_ascii=False), enrollment_id),
+            )
+            updated = await cur.fetchone()
+        if updated is None:
+            raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="enrollment_photo_review_reshoot",
+            target_type="enrollment",
+            target_id=enrollment_id,
+            after={"photoReviewStatus": "reshoot_requested",
+                   "slots": [item["slot"] for item in payload]},
+        )
+        await conn.commit()
+    return PhotoReviewResult(photo_review_status="reshoot_requested",
+                             reshoot_slots=[ReshootSlot(**item) for item in payload])
 
 
 @router.post("/enrollments/{enrollment_id}/approve", response_model=AdminReviewDecisionResult)
