@@ -193,6 +193,23 @@ EDGE_FADE_HARD_PX = 3
 #: 얼굴 크롭 확대 상한 — RealESRGAN x4plus 가 4배까지만 낸다. k = ceil(1024/side) 를 여기서 자른다.
 CROP_UPSCALE_MAX = 4
 
+# ── 마스크 밖 latent 고정(2026-09-15) ──────────────────────────────────────
+#: 지금까지는 파드가 1024² 크롭 **전체**를 새로 그리고 서버가 타원 알파로 되붙였다. 그래서
+#: 그림자 있는 배경에서 목 옆에 직사각형 조각이 남고(붙이기 경계) 그림자가 얼룩졌다.
+#: 잠그면 디노이즈 매 스텝마다 머리 마스크 밖 latent 가 원본으로 돌아가 **머리 밖이 원본 그대로**다.
+#: 실험(v7·seed 42·5컷): 5/5 조각 소멸, 신원 ±0.02 안, 머리 밖 |생성−크롭| 8.2~24.9 → 1.1~3.3.
+#: 크롭 경계에서 이만큼을 생성 마스크에서 뺀다. 이 띠가 잠겨 있어야 크롭 경계 이음매가 안 생긴다.
+#: 사진 가장자리에 붙은 변은 빼지 않는다 — 그 너머에 이을 원본이 없다.
+MASK_LOCK_EDGE_PX = 72
+#: latent 한 칸 = 화면 8px. 되붙이기 알파도 **같은 격자**로 판정해야 파드가 실제로 다시 그린
+#: 자리와 알파가 어긋나지 않는다.
+MASK_LOCK_CELL_PX = 8
+#: 생성 영역 알파를 이만큼 부풀린 뒤 흐린다 — 칸 경계(8px 계단)가 그대로 보이지 않게.
+MASK_LOCK_DILATE_PX = 24
+MASK_LOCK_BLUR_SIGMA = 10.0
+#: 크롭 경계 페이드. 잠금 경로는 경계가 이미 원본이라 48px 이 필요 없다.
+MASK_LOCK_FADE_PX = 8
+
 # ── 바탕 보존(keep) 판정 상수 — composite_with_meta 의 "생성본을 안 쓰는 자리" 를 정한다.
 #: 배경 판정 = 크롭 테두리에서 추정한 배경색과의 최대채널 차. T0 이하는 확실한 배경(1.0),
 #: T1 이상은 확실히 아님(0.0), 그 사이는 부드러운 램프. 최대채널을 쓰는 이유는 회색 배경에서
@@ -812,6 +829,72 @@ def binary_mask(plan: FacePlan) -> Image.Image:
     return feather_mask(plan, FEATHER_FRAC).point(lambda v: 255 if v > 127 else 0)
 
 
+def generation_mask(plan: FacePlan) -> Image.Image:
+    """파드가 **다시 그려도 되는 영역**(흰색) — binary_mask 에서 크롭 경계 띠를 뺀 것.
+
+    왜 띠를 빼나: 크롭 경계까지 생성 영역이 닿으면 그 경계가 이음매가 된다. 경계 72px 을 잠가
+    두면 그 자리는 원본 그대로라 이을 것이 없다. 사진 가장자리에 붙은 변은 빼지 않는다 —
+    그 너머에 원본이 없어 이음매가 생길 수 없고, 빼면 머리만 잘린다(at_photo_edge).
+    """
+    mask = np.asarray(binary_mask(plan), np.uint8).copy()
+    px = min(MASK_LOCK_EDGE_PX, CROP // 2)
+    left, top, right, bottom = at_photo_edge(plan)
+    if not left:
+        mask[:, :px] = 0
+    if not right:
+        mask[:, CROP - px:] = 0
+    if not top:
+        mask[:px, :] = 0
+    if not bottom:
+        mask[CROP - px:, :] = 0
+    return Image.fromarray(mask, "L")
+
+
+def mask_lock_alpha(plan: FacePlan, gen_mask: Image.Image) -> np.ndarray:
+    """잠금 경로의 되붙이기 알파(CROP², 0~1).
+
+    파드가 실제로 다시 그린 자리는 **latent 칸 단위**다(8px). 그래서 같은 판정으로 칸을 복원한
+    뒤 부풀리고 흐려 계단을 없앤다. 크롭 경계는 원본이라 얇은 페이드만 둔다.
+    """
+    lat = CROP // MASK_LOCK_CELL_PX
+    cells = np.asarray(gen_mask.convert("L").resize((lat, lat), Image.BOX), np.float32) > 0
+    unlocked = np.asarray(Image.fromarray((cells * 255).astype(np.uint8), "L")
+                          .resize((CROP, CROP), Image.NEAREST), np.float32) / 255.0
+    k = 2 * MASK_LOCK_DILATE_PX + 1
+    grown = cv2.dilate(unlocked, np.ones((k, k), np.float32))
+    soft = cv2.GaussianBlur(grown, (0, 0), MASK_LOCK_BLUR_SIGMA)
+    alpha = np.maximum(soft, unlocked)      # 다시 그린 자리는 반드시 1 로 남는다
+    return np.clip(alpha, 0.0, 1.0) * _edge_fade(MASK_LOCK_FADE_PX, fade_sides(plan))
+
+
+def composite_locked(original: Image.Image, generated_1024: Image.Image, plan: FacePlan, *,
+                     crop: Image.Image, gen_mask: Image.Image) -> tuple[Image.Image, dict]:
+    """잠금 렌더 결과를 되붙인다 — 링 색보정도 keep_mask 도 쓰지 않는다.
+
+    쓸 이유가 없다: 머리 밖이 이미 원본 픽셀이라 맞출 색 차이가 없고(실측 |생성−크롭| 1.1~3.3),
+    보존할 배경·옷도 파드가 안 건드렸다. 실험 없이 얹으면 측정하지 않은 것을 더하는 셈이다.
+    """
+    orig = original.convert("RGB")
+    up = np.asarray(crop.convert("RGB"), np.float32)
+    gen = generated_1024.convert("RGB")
+    if gen.size != (CROP, CROP):
+        gen = gen.resize((CROP, CROP), Image.LANCZOS)
+    alpha2 = mask_lock_alpha(plan, gen_mask)
+    alpha = alpha2[..., None]
+    comp = np.asarray(gen, np.float32) * alpha + up * (1.0 - alpha)
+    comp_img = Image.fromarray(np.clip(comp + 0.5, 0, 255).astype(np.uint8))
+
+    x0, y0, side = plan.crop
+    small = np.asarray(comp_img.resize((side, side), Image.LANCZOS), np.float32)
+    a_small = cv2.resize(alpha2, (side, side), interpolation=cv2.INTER_AREA)[..., None]
+    out = np.asarray(orig, np.float32).copy()
+    region = out[y0 : y0 + side, x0 : x0 + side]
+    out[y0 : y0 + side, x0 : x0 + side] = small * a_small + region * (1.0 - a_small)
+    meta = {"mask_lock": True, "unlocked_frac": round(float((alpha2 > 0.999).mean()), 4),
+            "color_shift": None}
+    return Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)), meta
+
+
 def build_control(image: Image.Image, plan: FacePlan, *, crop: Image.Image | None = None) -> Image.Image:
     """학습 control 과 동일: 크롭 1024² 의 타원 안을 radius 0.5·얼굴폭 가우시안 블러로 채움.
 
@@ -1203,7 +1286,36 @@ def check_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None 
 
 
 class FaceBackend(Protocol):
-    def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image: ...
+    def render(self, control: Image.Image, prompt: str, seed: int,
+               base: Image.Image | None = None,
+               gen_mask: Image.Image | None = None) -> Image.Image: ...
+
+
+def _png_b64(img: Image.Image) -> str:
+    buf = BytesIO()
+    img.save(buf, "PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def backend_mask_lock(backend, enabled: bool = True) -> bool:
+    """이 백엔드로 **마스크 잠금**을 쓸 수 있는가.
+
+    ★ 옛 파드는 모르는 필드(base_png·gen_mask_png)를 조용히 무시하고 크롭 전체를 다시 그린다.
+      그 결과에 잠금 알파를 쓰면 머리 밖이 생성본인 채로 남아 경계가 깨진다. 그래서 **파드가
+      할 수 있다고 말할 때만** 그 경로로 간다(healthz.mask_lock).
+    """
+    if not enabled:
+        return False
+    fn = getattr(backend, "supports_mask_lock", None)
+    if callable(fn):
+        return bool(fn())
+    # 로컬 백엔드(QwenLocalBackend·NullBackend)는 인자를 직접 받는다 — 시그니처로 판정한다.
+    try:
+        import inspect
+
+        return "gen_mask" in inspect.signature(backend.render).parameters
+    except (TypeError, ValueError):  # 시그니처를 못 읽는 목(mock)은 쓰지 않는다
+        return False
 
 
 def backend_upscaler(backend, enabled: bool = True):
@@ -1217,7 +1329,9 @@ def backend_upscaler(backend, enabled: bool = True):
 class NullBackend:
     """control 을 그대로 돌려준다(테스트·배선 검증용)."""
 
-    def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image:
+    def render(self, control: Image.Image, prompt: str, seed: int,
+               base: Image.Image | None = None,
+               gen_mask: Image.Image | None = None) -> Image.Image:
         return control.copy()
 
 
@@ -1243,6 +1357,23 @@ class HttpFaceBackend:
         self._version_checked = False
         #: 파드가 /upscale 을 모르면(옛 코드) 한 번 겪고 그 뒤로는 묻지 않는다.
         self._upscale_supported = True
+        #: healthz.mask_lock 을 한 번만 묻는다(None = 아직 안 물어봄).
+        self._mask_lock_supported: bool | None = None
+
+    def supports_mask_lock(self) -> bool:
+        """파드가 마스크 잠금을 아는가. **모르면 안 보낸다** — 옛 파드는 그 필드를 무시하고
+        크롭 전체를 다시 그리는데, 그 결과에 잠금 알파를 쓰면 경계가 깨진다.
+        확인 실패도 "모른다"로 본다(안전한 쪽)."""
+        if self._mask_lock_supported is None:
+            self._mask_lock_supported = False
+            try:
+                import httpx
+
+                body = httpx.get(f"{self._base()}/healthz", timeout=10.0).json()
+                self._mask_lock_supported = bool(body.get("mask_lock"))
+            except Exception as exc:  # noqa: BLE001 — 확인 실패가 렌더를 막아선 안 된다
+                log.info("face_identity: mask_lock probe failed: %r", exc)
+        return self._mask_lock_supported
 
     def check_version(self) -> None:
         """파드에 올라간 코드가 기대 버전인가 — **경고만** 한다(컷을 막지 않는다).
@@ -1297,7 +1428,9 @@ class HttpFaceBackend:
             im.load()
             return im.convert("RGB")
 
-    def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image:
+    def render(self, control: Image.Image, prompt: str, seed: int,
+               base: Image.Image | None = None,
+               gen_mask: Image.Image | None = None) -> Image.Image:
         import httpx
 
         self.check_version()
@@ -1319,6 +1452,9 @@ class HttpFaceBackend:
             except Exception:  # noqa: BLE001 — URL 을 못 만들면 캐시 히트에 기대고 계속 간다
                 log.warning("face_identity: presigned lora url unavailable; relying on pod cache",
                             exc_info=False)
+        if base is not None and gen_mask is not None and self.supports_mask_lock():
+            payload["base_png"] = _png_b64(base)
+            payload["gen_mask_png"] = _png_b64(gen_mask)
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         res = httpx.post(self.url, json=payload, headers=headers, timeout=self.timeout)
         try:
@@ -1359,6 +1495,7 @@ def run_face_pass(
     references=None,
     crop_upscale: bool = True,
     crop_pad: bool = True,
+    mask_lock: bool = True,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -1383,6 +1520,11 @@ def run_face_pass(
                                           upscaler=backend_upscaler(backend, crop_upscale))
         meta["crop_upscale"] = umeta
         control = build_control(original, plan, crop=crop)
+        # 마스크 잠금 — 파드가 할 수 있을 때만. 못 하는 파드에 보내면 그 파드는 필드를 무시하고
+        # 크롭 전체를 다시 그리는데, 그 결과에 잠금 알파를 쓰면 경계가 깨진다(backend_mask_lock).
+        locked = mask_lock and backend_mask_lock(backend)
+        gen_mask = generation_mask(plan) if locked else None
+        meta["mask_lock"] = bool(locked)
         streak_reason, streak = None, 0
         for seed in seeds:
             if streak >= GATE_SAME_REASON_STOP:
@@ -1392,8 +1534,16 @@ def run_face_pass(
                 return FacePassResult(image_bytes, mime, False, meta)
             meta["attempts"] += 1
             t1 = time.perf_counter()
-            generated = backend.render(control, prompt, int(seed))
-            result, cmeta = composite_with_meta(original, generated, plan, feather=feather, crop=crop)
+            # 잠글 때만 새 인자를 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
+            generated = (backend.render(control, prompt, int(seed), base=crop, gen_mask=gen_mask)
+                         if locked else backend.render(control, prompt, int(seed)))
+            if locked:
+                result, cmeta = composite_locked(original, generated, plan, crop=crop,
+                                                 gen_mask=gen_mask)
+            else:
+                result, cmeta = composite_with_meta(original, generated, plan, feather=feather,
+                                                    crop=crop)
+            # 잠금 경로는 색보정을 안 하므로 lighting 게이트에 넣을 값이 없다(color_shift=None).
             gate = evaluate_gate(plan, result, model_dir, references=references,
                                  color_ring_mean=cmeta.get("color_shift"))
             meta["tries"].append({
@@ -1792,7 +1942,10 @@ async def apply_face_pass(
                  else face_recipe.UPSCALE_SCOPE_OFF)
         outcome["face_recipe"] = face_recipe.recipe_id(face_recipe.recipe_fields(
             lora_sha256=spec.sha256, upscale_scope=scope,
-            crop_pad=bool(getattr(settings, "face_crop_pad", True))))
+            crop_pad=bool(getattr(settings, "face_crop_pad", True)),
+            # 잠금은 **그 컷이 실제로 그렇게 나왔는가**다 — 설정이 아니라 결과 메타를 본다
+            # (파드가 못 하면 설정이 켜져 있어도 옛 경로로 나온다).
+            mask_lock=bool((meta or {}).get("mask_lock"))))
 
     def _run(live_spec: FaceIdentitySpec):
         backend = resolve_backend(settings, live_spec)
@@ -1806,6 +1959,7 @@ async def apply_face_pass(
             references=live_spec.references,      # 없으면 None — 게이트가 신원을 보지 않는다
             crop_upscale=bool(getattr(settings, "face_crop_upscale", True)),
             crop_pad=bool(getattr(settings, "face_crop_pad", True)),
+            mask_lock=bool(getattr(settings, "face_mask_lock", True)),
         )
 
     # 여기 오는 컷은 전부 **실존 모델 + 켜진 LoRA** 다(_face_identity_spec 이 그 행으로만 spec 을
@@ -1940,6 +2094,10 @@ __all__ = [
     "crop_pad_for",
     "pad_edges",
     "unpad_edges",
+    "generation_mask",
+    "mask_lock_alpha",
+    "composite_locked",
+    "backend_mask_lock",
     "resolve_backend",
     "resolve_lora_file",
     "run_face_pass",

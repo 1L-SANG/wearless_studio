@@ -29,7 +29,8 @@ UPSCALE_SCOPE_OFF = "off"
 
 
 def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
-                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True) -> dict:
+                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True,
+                  mask_lock: bool = False) -> dict:
     """해시에 들어가는 값 전부. 사람이 읽을 수 있는 형태 그대로 남긴다(해시만 남기면 못 되짚는다)."""
     return {
         "schema": RECIPE_SCHEMA,
@@ -55,6 +56,14 @@ def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = 
         "upscale_max_k": fi.CROP_UPSCALE_MAX,
         # 3×얼굴폭이 사진에 막힐 때 가장자리를 덧대는가. 켜고 끈 컷은 다른 그림이 나온다.
         "crop_pad": bool(crop_pad),
+        # 마스크 밖 latent 를 고정했는가 — 켠 컷은 머리 밖이 원본 픽셀이라 아예 다른 산물이다.
+        # 상수까지 넣는다: 띠 폭·격자·팽창·흐림이 바뀌면 경계가 달라진다.
+        "mask_lock": bool(mask_lock),
+        "mask_lock_edge_px": fi.MASK_LOCK_EDGE_PX,
+        "mask_lock_cell_px": fi.MASK_LOCK_CELL_PX,
+        "mask_lock_dilate_px": fi.MASK_LOCK_DILATE_PX,
+        "mask_lock_blur_sigma": fi.MASK_LOCK_BLUR_SIGMA,
+        "mask_lock_fade_px": fi.MASK_LOCK_FADE_PX,
     }
 
 

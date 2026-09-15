@@ -137,6 +137,10 @@ _state: dict = initial_state()
 
 class RenderRequest(BaseModel):
     control_png: str
+    #: 마스크 잠금(선택). 둘 다 와야 한다 — base_png = control 을 만든 **그 1024² 크롭**,
+    #: gen_mask_png = 다시 그릴 영역(흰색). 없으면 예전처럼 크롭 전체를 새로 그린다.
+    base_png: str | None = None
+    gen_mask_png: str | None = None
     prompt: str
     seed: int = 42
     steps: int = Field(default=RENDER_STEPS, ge=1, le=100)
@@ -390,6 +394,35 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
         return backend
 
 
+def _decode_png(value: str, field: str) -> Image.Image:
+    try:
+        raw = base64.b64decode(value, validate=True)
+        with Image.open(BytesIO(raw)) as im:
+            im.load()
+            return im.copy()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{field} must be a base64 PNG") from exc
+
+
+def _mask_lock_inputs(req: "RenderRequest", size: tuple[int, int]):
+    """마스크 잠금 입력 (base, gen_mask). 안 쓰면 (None, None).
+
+    **반만 오면 400 이다.** 하나만 가지고 추측해서 그리면, 호출자는 잠근 줄 알고 lock 알파로
+    합성하는데 파드는 전체를 다시 그린 상태가 된다 — 경계가 깨진다.
+    """
+    if req.base_png is None and req.gen_mask_png is None:
+        return None, None
+    if req.base_png is None or req.gen_mask_png is None:
+        raise HTTPException(400, "base_png and gen_mask_png must be sent together")
+    base = _decode_png(req.base_png, "base_png")
+    gen_mask = _decode_png(req.gen_mask_png, "gen_mask_png")
+    for name, img in (("base_png", base), ("gen_mask_png", gen_mask)):
+        if img.size != size:
+            raise HTTPException(400, f"{name} size {img.size} != control_png {size}")
+    return base.convert("RGB"), gen_mask.convert("L")
+
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {
@@ -412,6 +445,10 @@ def healthz() -> dict:
         "cpu_offload": CPU_OFFLOAD,
         "gpu_fuse": GPU_FUSE,
         "code_version": CODE_VERSION,
+        # 마스크 밖 latent 고정을 할 수 있는 파드인가. 호출자는 이게 true 일 때만
+        # base_png·gen_mask_png 를 보낸다 — 옛 파드는 모르는 필드를 조용히 무시하고
+        # 전체를 다시 그리는데, 그 결과에 lock 알파를 쓰면 경계가 깨진다.
+        "mask_lock": True,
         "cache_dir": CACHE_DIR,
         # 얼굴 크롭 확대기. available=false 면 호출자가 Lanczos 로 간다(컷은 그대로 나온다).
         "esrgan": face_esrgan.status(),
@@ -477,6 +514,7 @@ def render(req: RenderRequest, authorization: str | None = Header(default=None))
     with Image.open(BytesIO(raw)) as im:
         im.load()
         control = im.convert("RGB")
+    base, gen_mask = _mask_lock_inputs(req, control.size)
     backend = _backend(req.lora, req.lora_url, req.lora_sha256)
     # 요청이 준 값이 정본 — 호출자(face_identity)가 RENDER_* 를 보낸다. 파드가 임의로 바꾸면
     # 같은 시드로도 그림이 달라져 로컬/원격 비교가 성립하지 않는다.
@@ -485,7 +523,9 @@ def render(req: RenderRequest, authorization: str | None = Header(default=None))
     backend.negative_prompt = req.negative_prompt
     t0 = time.perf_counter()
     with _RENDER_LOCK:
-        out = backend.render(control, req.prompt, int(req.seed))
+        # 잠금 입력이 있을 때만 넘긴다 — 옛 시그니처 백엔드(render(control, prompt, seed))가 그대로 돈다.
+        out = (backend.render(control, req.prompt, int(req.seed), base=base, gen_mask=gen_mask)
+               if base is not None else backend.render(control, req.prompt, int(req.seed)))
     buf = BytesIO()
     out.save(buf, "PNG")
     _state["renders"] += 1
