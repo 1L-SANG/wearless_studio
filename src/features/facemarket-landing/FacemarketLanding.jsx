@@ -11,8 +11,11 @@
 import { LandingShell } from './LandingShell.jsx';
 import { HeroSection } from './sections/HeroSection.jsx';
 import { GallerySection } from './sections/GallerySection.jsx';
+import { FoundingSection } from './sections/FoundingSection.jsx';
+import { RightsSection } from './sections/RightsSection.jsx';
 import { HowItWorksSection } from './sections/HowItWorksSection.jsx';
 import { FaqSection } from './sections/FaqSection.jsx';
+import { ClosingSection } from './sections/ClosingSection.jsx';
 import s from './FacemarketLanding.module.css';
 
 const TITLE = 'FaceMarket — 내 얼굴을 라이선스로';
@@ -44,12 +47,13 @@ export function FacemarketLanding() {
             <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} statusPill={statusPill} />
             <GallerySection />
           </div>
-          {/* 별도 리드문과 CTA 섹션은 2026-09-03 오너 지시로 내렸고 파일도 지웠다 — 리드와
-              CTA 가 히어로로 올라가 같은 내용이 두 번 서던 것. */}
-          {/* 서비스 설명과 FAQ 는 홈에만 둔다(사용자 지시 2026-09-02). 두 섹션 모두
-              **아직 코드에 없는 지원·검토 절차**를 설명한다 — 각 파일 머리말의 경고 참고. */}
-          <HowItWorksSection />
-          <FaqSection />
+          <div className={s.landingFlow}>
+            <FoundingSection onPrimary={onPrimary} />
+            <RightsSection />
+            <HowItWorksSection />
+            <FaqSection />
+          </div>
+          <ClosingSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
         </>
       )}
     </LandingShell>

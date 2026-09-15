@@ -968,59 +968,291 @@
 .exitTitle { margin: 0 0 0.5rem; font: 600 1rem/1.4 var(--font-body); }
 .exitBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.7 var(--font-body); }
 
-/* ---- FAQ ---- */
-/* <details>/<summary> 를 그대로 꾸민다(FaqSection 머리말 — 직접 만든 아코디언으로 바꾸지
-   마라). 기본 삼각형 마커는 지우고 오른쪽에 +/− 를 직접 그린다. */
-.faqList {
+/* ---- 홈 랜딩 하단 ---- */
+.landingFlow {
+  width: 100%;
+  max-width: 74rem;
+  margin: 0 auto;
+  word-break: keep-all;   /* 한글 제목이 '어떤 옷 / 에 쓸지' 처럼 글자 사이에서 끊기지 않게 */
+}
+
+/* 파운딩 모델 */
+.foundingSection { padding: clamp(2.75rem, 5vw, 4rem) 0 0; }
+.foundingHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+.foundingTitle {
+  margin: 0;
+  font: 600 clamp(1.5rem, 2.25vw, 1.75rem)/1.25 var(--font-body);
+  letter-spacing: -0.02em;
+}
+.foundingTitle strong { color: var(--fm-accent); font-weight: 600; }
+.foundingSub {
+  margin: 0.5rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.875rem/1.5 var(--font-body);
+}
+.foundingRemaining {
+  flex: none;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.8125rem/1.2 var(--font-body);
+  text-align: right;
+  white-space: nowrap;
+}
+.foundingRemaining strong {
+  display: block;
+  color: var(--fm-ink);
+  font-size: 1.875rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.foundingSlots {
   display: grid;
-  gap: 0.6rem;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+.foundingSlot {
+  position: relative;
+  display: grid;
+  aspect-ratio: 4 / 5;
+  min-width: 0;
+  padding: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 1.5px dashed var(--fm-line);
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--fm-line) 18%, transparent);
+  color: var(--fm-muted);
+  font: 400 0.8125rem/1 var(--font-body);
+}
+button.foundingSlot { cursor: pointer; }
+.foundingSlot:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
+.foundingSlotFilled { border: 0; }
+.foundingSlotFilled img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.foundingSlotFilled span {
+  position: absolute;
+  bottom: 0.625rem;
+  left: 0.625rem;
+  padding: 0.25rem 0.5625rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fm-line) 16%, transparent);
+  color: var(--fm-ink);
+  backdrop-filter: blur(10px) brightness(3);
+  font: 600 0.71875rem/1 var(--font-body);
+}
+.foundingSlotOpen {
+  border-color: var(--fm-accent);
+  background: color-mix(in srgb, var(--fm-accent) 5%, transparent);
+  color: var(--fm-accent);
+  font-weight: 600;
+}
+
+/* 초상 원칙 */
+.rightsSection { padding: clamp(4rem, 6vw, 5rem) 0 1.25rem; }
+/* 왼쪽 원칙 5줄, 오른쪽 실제 착용컷 2장. 오른쪽은 스크롤해도 따라오게 sticky. */
+.rightsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(2rem, 4vw, 3.5rem);
+  align-items: start;
+}
+.rightsCuts {
+  position: sticky;
+  top: calc(var(--fm-header-h, 4rem) + 1.5rem);
+  margin: 0;
+}
+.rightsCutRow { display: flex; gap: 0.75rem; }
+.rightsCutsNote {
+  margin: 0.75rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.8125rem/1.5 var(--font-body);
+  text-align: center;
+}
+.rightsCut {
+  flex: none;
+  width: min(17.5rem, 21vw);
+  aspect-ratio: 1 / 2;
+  overflow: hidden;
+  border-radius: 1rem;
+}
+.rightsCut img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rightsList {
   margin: 0;
   padding: 0;
+  border-top: 1px solid var(--fm-ink);
   list-style: none;
 }
-
-.faqItem {
-  padding: 0 1.25rem;
-  border: 1px solid var(--fm-line);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.62);
+.rightsList li {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.75rem 0;
+  border-bottom: 1px solid var(--fm-line);
 }
-
-.faqQuestion {
-  position: relative;
-  padding: 1.05rem 2.25rem 1.05rem 0;
-  font: 600 0.98rem/1.5 var(--font-body);
-  cursor: pointer;
-  list-style: none;              /* 파이어폭스 */
-}
-.faqQuestion::-webkit-details-marker { display: none; }   /* 사파리·구형 크롬 */
-
-/* +/− 표시. ::after 하나로 가로줄, ::before 로 세로줄을 그리고 열리면 세로줄만 지운다. */
-.faqQuestion::before,
-.faqQuestion::after {
-  position: absolute;
-  right: 0.15rem;
-  top: 50%;
-  background: var(--fm-muted);
-  content: '';
-  transition: opacity 160ms ease, rotate 200ms ease;
-}
-.faqQuestion::after { width: 0.75rem; height: 1.5px; translate: 0 -50%; }
-/* 세로줄은 가로줄 **한가운데**에 겹쳐야 +가 된다. 둘 다 right 기준이라, 가로줄 중심
-   (right 0.525rem)까지 왼쪽으로 밀어 준다 — 부호를 뒤집으면 ㅡ 옆에 ㅣ 가 따로 서서
-   '—|' 처럼 보인다(실제로 그렇게 났다). */
-.faqQuestion::before { width: 1.5px; height: 0.75rem; translate: -0.37rem -50%; }
-.faqItem[open] .faqQuestion::before { opacity: 0; rotate: 90deg; }
-
-.faqAnswer {
+.rightsList h3 {
   margin: 0;
-  padding: 0 0 1.15rem;
+  font: 600 clamp(1.75rem, 2.65vw, 2.125rem)/1.2 var(--font-body);
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.rightsList h3 strong { color: var(--fm-accent); font-weight: 600; }
+.rightsList p {
+  margin: 0;
   color: var(--fm-muted);
-  font: 400 0.92rem/1.75 var(--font-body);
+  font: 400 1rem/1.7 var(--font-body);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .faqQuestion::before, .faqQuestion::after { transition: none; }
+/* 얼굴 사진과 착용컷 */
+
+/* 지원부터 등록까지 */
+.howSection { padding: clamp(4rem, 7vw, 5rem) 0 1.5rem; }
+.howEyebrow {
+  margin: 0;
+  color: var(--fm-muted);
+  font: 500 0.8125rem/1 var(--font-body);
+}
+.howTitle {
+  margin: 0.625rem 0 0;
+  font: 600 clamp(2rem, 3.2vw, 2.5rem)/1.15 var(--font-body);
+  letter-spacing: -0.03em;
+}
+.stepGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 2.5rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--fm-ink);
+  list-style: none;
+}
+.stepItem {
+  padding: 1.625rem 1.75rem 1.875rem 0;
+  border-right: 1px solid var(--fm-line);
+}
+.stepItem + .stepItem { padding-left: 1.75rem; }
+.stepItem:last-child { padding-right: 0; border-right: 0; }
+.stepNumber {
+  color: var(--fm-muted);
+  font: 400 0.8125rem/1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.stepItem h3 {
+  margin: 1.125rem 0 0;
+  font: 600 1.625rem/1.25 var(--font-body);
+  letter-spacing: -0.02em;
+}
+.stepTime {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fm-accent) 8%, transparent);
+  color: var(--fm-accent);
+  font: 600 0.8125rem/1 var(--font-body);
+}
+.stepItem p {
+  margin: 1rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.96875rem/1.7 var(--font-body);
+}
+.stepFoot {
+  margin: 1.625rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.9375rem/1.7 var(--font-body);
+}
+.stepFoot strong { color: var(--fm-ink); font-weight: 600; }
+
+/* 홈 FAQ */
+.faqSection { padding: clamp(4rem, 7vw, 5rem) 0 clamp(4.5rem, 7.5vw, 5.625rem); }
+.faqHead {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  align-items: start;
+  gap: 2.5rem;
+}
+.faqHead h2 {
+  margin: 0;
+  font: 600 clamp(2rem, 3.2vw, 2.5rem)/1.15 var(--font-body);
+  letter-spacing: -0.03em;
+}
+.faqHead p {
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.9375rem/1.7 var(--font-body);
+}
+.faqHead a {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.faqHead a:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
+.faqGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 3rem;
+  margin-top: 2.25rem;
+  border-top: 1px solid var(--fm-ink);
+}
+.faqEntry {
+  padding: 1.5rem 0;
+  border-bottom: 1px solid var(--fm-line);
+}
+.faqEntry h3 {
+  margin: 0;
+  font: 600 1.125rem/1.4 var(--font-body);
+  letter-spacing: -0.01em;
+}
+.faqAnswerText {
+  margin: 0.625rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.9375rem/1.75 var(--font-body);
+}
+.faqAnswerText strong { color: var(--fm-ink); font-weight: 600; }
+
+/* 마무리 CTA */
+.closingSection {
+  padding: 4rem 0 4.5rem;
+  border-top: 1px solid var(--fm-line);
+  text-align: center;
+}
+.heroTitle.closingTitle { font-size: clamp(2rem, 4vw, 2.5rem); line-height: 1.1; }
+.closingCta { margin-top: 1.5rem; padding: 1.0625rem 1.625rem; font-weight: 600; }
+.closingCaption {
+  margin: 0.75rem 0 0;
+  color: var(--fm-muted);
+  font: 400 0.8125rem/1.5 var(--font-body);
+}
+
+@media (max-width: 47.99rem) {
+  .foundingHead { align-items: flex-start; flex-direction: column; }
+  .foundingRemaining { text-align: left; }
+  .foundingSlots { grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
+  .foundingSlotFilled span { bottom: 0.4rem; left: 0.4rem; padding-inline: 0.4rem; }
+
+  .rightsList li { grid-template-columns: 1fr; align-items: start; gap: 0.75rem; }
+
+
+  .stepGrid { grid-template-columns: 1fr; }
+  .stepItem,
+  .stepItem + .stepItem {
+    padding: 1.5rem 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--fm-line);
+  }
+  .stepItem:last-child { padding-right: 0; border-bottom: 0; }
+
+  .faqHead { grid-template-columns: 1fr; gap: 1rem; }
+  .faqGrid { grid-template-columns: 1fr; }
 }
 
 /* ---- 푸터 ---- */
@@ -1045,6 +1277,9 @@
 .footerCompact { margin-top: 2.5rem; padding: 1.5rem 0 1.75rem; }
 
 @media (max-width: 767px) {
+  .rightsGrid { grid-template-columns: 1fr; }
+  .rightsCuts { position: static; }
+  .rightsCut { flex: 1; width: auto; }
   .footer { text-align: center; }
   .footerTop { flex-direction: column; }
   .footerLegal { justify-content: center; }
