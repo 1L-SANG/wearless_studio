@@ -10,6 +10,22 @@ SURFACE_REVIEW_AXES = ('pattern', 'material')
 SEVERITIES = ('none', 'minor', 'major', 'critical', 'uncertain')
 _RANK = {'none': 0, 'minor': 1, 'major': 2, 'critical': 3}
 
+# Exact codes only. A mixed sentence must not hide an independent fatal error.
+# Legacy phrases are deliberately narrow; unfamiliar prose stays blocked.
+_CRITICAL_REPAIR_AXES = {
+    'logo_text_mismatch': 'logo_graphic',
+    'logo changed': 'logo_graphic',
+    'text or logo altered': 'logo_graphic',
+    'garment_color_mismatch': 'color',
+    'color changed': 'color',
+    'garment color changed': 'color',
+    'garment_structure_mismatch': 'construction',
+    'garment type changed': 'construction',
+    'garment_fit_mismatch': 'fit',
+    'garment fit changed': 'fit',
+    'top tucked into the bottom': 'fit',
+}
+
 
 def risk_schema() -> dict:
     row = {
@@ -169,6 +185,25 @@ def actionable_critical_errors(scores) -> list[str]:
     if malformed:
         actionable.append('malformed critical_errors')
     return list(dict.fromkeys(actionable))
+
+
+def unclassified_critical_errors(scores) -> list[str]:
+    """Only a code backed by its own major/critical axis may enter targeted repair.
+
+    This does not clear critical_errors, approve an image, or waive post-edit QC.
+    Body/garment collapse, malformed reports and unmapped prose remain blockers.
+    """
+    critical = actionable_critical_errors(scores)
+    if not review_complete(scores):
+        return critical
+    risks = _risks(scores)
+    unresolved = []
+    for error in critical:
+        axis = _CRITICAL_REPAIR_AXES.get(error)
+        if (axis is None or risks is None
+                or risks[axis]['severity'] not in ('major', 'critical')):
+            unresolved.append(error)
+    return unresolved
 
 
 def repairable_issues(scores) -> list[str]:

@@ -1763,7 +1763,7 @@ async def _run_candidate(
     async def finish(res, p2, series, scores, attempt, *, untuck=True):
         if (
             (scores or {}).get("surface_policy_normalized") is True
-            and mannequin_quality.actionable_critical_errors(scores)
+            and mannequin_quality.unclassified_critical_errors(scores)
         ):
             raise MannequinQualityError("unclassified_critical_rejected")
 

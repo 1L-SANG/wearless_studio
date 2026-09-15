@@ -205,6 +205,51 @@ def test_targeted_edit_cannot_turn_unknown_surface_into_new_confirmed_defect():
     assert not quality.review_only_surface_edit_accepted(before, after)
 
 
+@pytest.mark.parametrize('axis,code', [
+    ('logo_graphic', 'logo_text_mismatch'), ('logo_graphic', 'logo changed'),
+    ('color', 'garment_color_mismatch'), ('color', 'garment color changed'),
+    ('construction', 'garment_structure_mismatch'), ('fit', 'garment_fit_mismatch'),
+])
+def test_classified_critical_is_repairable_but_not_cleared(axis, code):
+    report = assessment(**{axis: 'critical', 'pattern': 'major'})
+    report.update(surface_policy_normalized=True, critical_errors=[code])
+    assert quality.unclassified_critical_errors(report) == []
+    assert quality.actionable_critical_errors(report) == [code]
+    assert report['critical_errors'] == [code]
+    assert quality.repairable_issues(report)
+
+
+@pytest.mark.parametrize('severity', ['none', 'minor', 'uncertain'])
+def test_known_code_without_its_own_confirmed_axis_stays_blocked(severity):
+    report = assessment(logo_graphic=severity, construction='critical', pattern='major')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch'])
+    assert quality.unclassified_critical_errors(report) == ['logo_text_mismatch']
+
+
+@pytest.mark.parametrize('fatal', [
+    'body_shape_broken', 'garment_shape_broken', 'unclassified_critical',
+    'body shape broken', 'logo changed and body shape broken',
+    'logo_text_mismatch: body_shape_broken',
+])
+def test_confirmed_logo_cannot_mask_a_second_or_compound_critical(fatal):
+    report = assessment(logo_graphic='critical', construction='critical', pattern='major')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch', fatal])
+    assert quality.unclassified_critical_errors(report) == [fatal]
+
+
+@pytest.mark.parametrize('errors', ['logo changed', [None], [''], [{}]])
+def test_classification_does_not_waive_malformed_critical_errors(errors):
+    report = assessment(logo_graphic='critical', pattern='critical')
+    report.update(surface_policy_normalized=True, critical_errors=errors)
+    assert quality.unclassified_critical_errors(report)
+
+
+def test_partial_qc_does_not_certify_critical_classification():
+    report = assessment(logo_graphic='critical', pattern='major', color='uncertain')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch'])
+    assert quality.unclassified_critical_errors(report) == ['logo_text_mismatch']
+
+
 def test_technical_critical_is_not_erased_by_clean_product_dimensions():
     old = assessment()
     old['critical_errors'] = ['mannequin body broken']

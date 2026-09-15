@@ -50,6 +50,16 @@ def test_scored_mannequin_prompt_keeps_pattern_critical_out_of_paid_action_field
     assert "do not put them in critical_errors, mismatches, correctionprompt, or retry" in prompt.lower()
 
 
+def test_scored_critical_codes_separate_repairable_product_errors_from_collapse():
+    prompt = image_qc.build_prompt(2, scored=True, main_product_category='top')
+    for code in ('logo_text_mismatch', 'garment_color_mismatch',
+                 'garment_structure_mismatch', 'garment_fit_mismatch',
+                 'body_shape_broken', 'garment_shape_broken', 'unclassified_critical'):
+        assert code in prompt
+    assert 'Never combine multiple failures into one list entry' in prompt
+    assert 'logo_text_mismatch' not in image_qc.build_prompt(2)
+
+
 def test_fresh_complete_surface_only_duplicate_critical_is_normalized_for_review(monkeypatch):
     raw = {
         **assessment(pattern="critical"),

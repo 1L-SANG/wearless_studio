@@ -164,7 +164,8 @@ def _spec():
     }
 
 
-def _build(monkeypatch, *, source=None, selected="mE", effective="mE", matches=()):
+def _build(monkeypatch, *, source=None, selected="mE", effective="mE", matches=(),
+           contract=None, seller_images=None):
     source = source or _png()
     monkeypatch.setattr(
         confirmed_gpt_runtime,
@@ -182,11 +183,132 @@ def _build(monkeypatch, *, source=None, selected="mE", effective="mE", matches=(
         mannequin_image=InlineImage("image/png", b"mannequin"),
         face_direction_sheet=InlineImage("image/png", b"face sheet"),
         full_body_direction_sheet=InlineImage("image/png", b"body sheet"),
-        seller_images=(("Front", image),),
+        seller_images=seller_images if seller_images is not None else (("Front", image),),
         matching_images=matches,
         example_image=InlineImage("image/png", b"example"),
-        evidence_contract=_contract(source),
+        evidence_contract=contract if contract is not None else _contract(source),
     )
+
+
+def _observation_contract(front, *, extra_slot=None, changes=None):
+    """Use the real AG-01 validator and byte binding, not a forged persisted fixture."""
+    base = _contract(front)
+    fields = ('hardFacts', 'uncertainties', *product_evidence_contract.FIXED_OBSERVATION_FIELDS)
+    raw = {field: base[field] for field in fields}
+    raw['panels'] = [{
+        'evidenceOrdinal': 1, 'detail': 'front garment construction',
+        'judgeability': 'usable', 'judgeabilityReasons': ['clear_enough'],
+    }]
+    images = [('Front', InlineImage('image/png', front))]
+    if extra_slot:
+        images.append((extra_slot, InlineImage('image/png', _png('gray'))))
+        raw['panels'].append({
+            'evidenceOrdinal': 2, 'detail': 'additional garment view',
+            'judgeability': 'usable', 'judgeabilityReasons': ['clear_enough'],
+        })
+    raw.update(changes or {})
+    sources = [(im.data, im.mime) for _, im in images]
+    binding = product_evidence_contract.build_input_binding(sources, sources, [s for s, _ in images])
+    return product_evidence_contract.validate_and_bind(raw, binding), tuple(images)
+
+
+@pytest.mark.parametrize('count', [0, 7])
+def test_fixed_front_observations_reach_the_actual_final_prompt(monkeypatch, count):
+    source = _png()
+    contract, images = _observation_contract(source, changes={
+        'cuff': {'value': 'narrow cuff with an open edge', 'evidenceOrdinals': [1]},
+        'button_count_visible': {'value': count, 'evidenceOrdinals': [1]},
+        'pattern_structure': {'value': 'paired blue lines with a fine dark center', 'evidenceOrdinals': [1]},
+        'surface_texture': {'value': 'fine outer knit loops', 'evidenceOrdinals': [1]},
+        'seam_lines': {'value': 'Two curved front seams join two vertical seams extending to the hem.', 'evidenceOrdinals': [1]},
+    })
+    original = json.dumps(contract, sort_keys=True)
+    packet = _build(monkeypatch, source=source, contract=contract, seller_images=images)
+    prompt = compile_confirmed_gpt_prompt(packet.prompt_input)
+    for field in product_evidence_contract.FIXED_OBSERVATION_FIELDS:
+        assert f'[observed_{field}]' in prompt
+        assert str(contract[field]['value']) in prompt
+    assert f'not total or hidden button count): {count}' in prompt
+    assert 'Observed front hem shape (not worn length): straight' in prompt
+    assert contract['hardFacts'][0]['value'] in prompt
+    assert 'selected resolved mannequin owns' in prompt
+    assert json.dumps(contract, sort_keys=True) == original
+
+
+def test_unknown_observations_are_not_promoted_to_final_facts(monkeypatch):
+    source = _png()
+    contract, images = _observation_contract(source, changes={
+        field: {'value': None if field == 'button_count_visible' else 'unknown', 'evidenceOrdinals': []}
+        for field in product_evidence_contract.FIXED_OBSERVATION_FIELDS
+    })
+    packet = _build(monkeypatch, source=source, contract=contract, seller_images=images)
+    assert [fact.code for fact in packet.prompt_input.hard_facts] == ['front_shape']
+
+
+@pytest.mark.parametrize('field,value', [
+    ('hem_shape', 'curved'), ('cuff', 'wide cuff'), ('button_count_visible', 7),
+    ('pattern_structure', 'back-only paired lines'), ('surface_texture', 'back-only rib texture'),
+    ('seam_lines', 'deep curved back-only yoke'),
+])
+def test_back_only_fixed_observation_is_not_front_design(monkeypatch, field, value):
+    source = _png()
+    contract, images = _observation_contract(source, extra_slot='Back', changes={
+        field: {'value': value, 'evidenceOrdinals': [2]},
+    })
+    packet = _build(monkeypatch, source=source, contract=contract, seller_images=images)
+    assert f'observed_{field}' not in [fact.code for fact in packet.prompt_input.hard_facts]
+
+
+def test_uncertain_front_cannot_borrow_usable_back_to_certify_seams(monkeypatch):
+    source = _png()
+    contract, images = _observation_contract(source, extra_slot='Back', changes={
+        'panels': [
+            {'evidenceOrdinal': 1, 'detail': 'blurred front', 'judgeability': 'uncertain', 'judgeabilityReasons': ['blur']},
+            {'evidenceOrdinal': 2, 'detail': 'clear back', 'judgeability': 'usable', 'judgeabilityReasons': ['clear_enough']},
+        ],
+        'hardFacts': [{'code': 'back_yoke', 'value': 'back yoke', 'evidenceOrdinals': [2]}],
+        'hem_shape': {'value': 'unknown', 'evidenceOrdinals': []},
+        'pattern_structure': {'value': 'unknown', 'evidenceOrdinals': []},
+        'seam_lines': {'value': 'curved yoke joins vertical seams', 'evidenceOrdinals': [1, 2]},
+    })
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError, match='front_hard_facts_required'):
+        _build(monkeypatch, source=source, contract=contract, seller_images=images)
+
+
+def test_front_detail_observation_suffices_when_old_facts_are_back_only(monkeypatch):
+    source = _png()
+    contract, images = _observation_contract(source, extra_slot='Back', changes={
+        'hardFacts': [{'code': 'back_yoke', 'value': 'back yoke', 'evidenceOrdinals': [2]}],
+        'button_count_visible': {'value': 7, 'evidenceOrdinals': [1]},
+    })
+    # Keep the required full front and bind a separate genuine detail photograph.
+    raw = {field: contract[field] for field in ('hardFacts', 'uncertainties', *product_evidence_contract.FIXED_OBSERVATION_FIELDS)}
+    raw['panels'] = [{k: p[k] for k in ('evidenceOrdinal', 'detail', 'judgeability', 'judgeabilityReasons')} for p in contract['panels']]
+    raw['panels'].append({'evidenceOrdinal': 3, 'detail': 'front placket closeup',
+                          'judgeability': 'usable', 'judgeabilityReasons': ['clear_enough']})
+    for field in product_evidence_contract.FIXED_OBSERVATION_FIELDS:
+        raw[field] = {'value': 'unknown', 'evidenceOrdinals': []}
+    raw['button_count_visible'] = {'value': 7, 'evidenceOrdinals': [3]}
+    images = (*images, ('Detail', InlineImage('image/png', _png('pink'))))
+    sources = [(im.data, im.mime) for _, im in images]
+    binding = product_evidence_contract.build_input_binding(sources, sources, [s for s, _ in images])
+    contract = product_evidence_contract.validate_and_bind(raw, binding)
+    packet = _build(monkeypatch, source=source, contract=contract, seller_images=images)
+    prompt = compile_confirmed_gpt_prompt(packet.prompt_input)
+    assert 'not total or hidden button count): 7' in prompt
+    assert '[back_yoke]' not in prompt
+
+
+def test_observation_codes_do_not_collide_with_existing_fact_or_uncertainty(monkeypatch):
+    source = _png()
+    contract, images = _observation_contract(source, changes={
+        'hardFacts': [{'code': 'observed_hem_shape', 'value': 'source identity', 'evidenceOrdinals': [1]}],
+        'uncertainties': [{'code': 'observed_hem_shape_2', 'value': 'hidden hem transition', 'reason': 'occluded', 'evidenceOrdinals': [1]}],
+    })
+    prompt = compile_confirmed_gpt_prompt(_build(monkeypatch, source=source, contract=contract, seller_images=images).prompt_input)
+    assert '[observed_hem_shape_3] Observed front hem shape' in prompt
+    assert '[observed_hem_shape] source identity' in prompt
+    assert 'hidden hem transition' in prompt
 
 
 def test_packet_replays_exact_role_order_and_compiles(monkeypatch):

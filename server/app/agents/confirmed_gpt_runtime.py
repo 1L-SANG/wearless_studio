@@ -125,6 +125,44 @@ def _manifest(*, matching_attached: bool) -> str:
     return "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
 
 
+def _front_seller_facts(contract: dict) -> tuple[SellerFact, ...]:
+    """Project already-validated, source-bound observations without guessing hidden facts."""
+    front_usable = {
+        panel["evidenceOrdinal"] for panel in contract["panels"]
+        if panel["slot"] in {"FRONT", "FRONT_DETAIL"}
+        and panel["surfaceAuthority"] == "DOMINANT"
+        and panel["judgeability"] == "usable" and panel["provided"] is True
+    }
+
+    def supported(row):
+        return any(i in front_usable for i in row["evidenceOrdinals"])
+
+    facts = [SellerFact(code=row["code"], value=row["value"])
+             for row in contract["hardFacts"] if supported(row)]
+    # Reserve uncertain codes too: the prompt compiler requires cross-list uniqueness.
+    used = {row["code"] for row in (*contract["hardFacts"], *contract["uncertainties"])}
+    descriptions = {
+        "hem_shape": "Observed front hem shape (not worn length)",
+        "cuff": "Observed cuff construction and opening in the source photo (not imposed worn fit)",
+        "button_count_visible": "Buttons actually visible in the source front views (not total or hidden button count)",
+        "pattern_structure": "Observed front pattern structure",
+        "surface_texture": "Visible front outer-surface texture (not inferred fiber or a new finish)",
+        "seam_lines": "Visible front seam paths and traced connections (do not bridge hidden portions)",
+    }
+    for field in product_evidence_contract.FIXED_OBSERVATION_FIELDS:
+        row = contract.get(field)  # Legacy contracts have no fixed observations.
+        if row is None or row["value"] == "unknown" or not supported(row):
+            continue
+        code = f"observed_{field}"
+        suffix = 2
+        while code in used:
+            code = f"observed_{field}_{suffix}"
+            suffix += 1
+        used.add(code)
+        facts.append(SellerFact(code=code, value=f"{descriptions[field]}: {row['value']}"))
+    return tuple(facts)
+
+
 def build_packet(
     spec: dict,
     *,
@@ -235,25 +273,8 @@ def build_packet(
         raise ConfirmedGptRuntimeError(str(exc)) from exc
 
     matching_attached = bool(matches)
-    front_usable_ordinals = {
-        panel["evidenceOrdinal"]
-        for panel in contract["panels"]
-        if (
-            panel["slot"] in {"FRONT", "FRONT_DETAIL"}
-            and panel["surfaceAuthority"] == "DOMINANT"
-            and panel["judgeability"] == "usable"
-            and panel["provided"] is True
-        )
-    }
-    front_hard_facts = tuple(
-        fact
-        for fact in contract["hardFacts"]
-        if any(
-            ordinal in front_usable_ordinals
-            for ordinal in fact["evidenceOrdinals"]
-        )
-    )
-    if not front_hard_facts:
+    front_facts = _front_seller_facts(contract)
+    if not front_facts:
         raise ConfirmedGptRuntimeError("confirmed_gpt_front_hard_facts_required")
     roles = (
         InputRole.SELECTED_MANNEQUIN_CUT,
@@ -277,10 +298,7 @@ def build_packet(
         seller_evidence=tuple(prompt_panels),
         cut_lock=directing.cut_lock(),
         visible_surface_plan=product_evidence_contract.FRONT_SURFACE_POLICY,
-        hard_facts=tuple(
-            SellerFact(code=fact["code"], value=fact["value"])
-            for fact in front_hard_facts
-        ),
+        hard_facts=front_facts,
         uncertainties=tuple(
             SellerUncertainty(
                 code=fact["code"], value=fact["value"], reason=fact["reason"]
