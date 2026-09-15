@@ -30,11 +30,20 @@ from .facemarket_photos import (
     ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, PHOTO_SLOTS_V2, REFSET_SLOTS,
     canonical_photo_slot, photo_slot_candidates, resolve_photo_rows,
 )
+from .facemarket_photo_normalize import (
+    NORMALIZED_MIME,
+    NormalizeFailed,
+    normalize_png,
+    sniff_image_mime,
+)
 from .facemarket_photo_check import (
     PhotoCheckUnavailable, check_enrollment_photo, judge_refset, reject_message,
 )
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
-from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_mime, sha256_sri
+from .r2 import (
+    enrollment_id_document_key, enrollment_normalized_key, enrollment_quarantine_key,
+    ext_for_mime, normalized_sibling_key, sha256_sri,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
@@ -87,8 +96,25 @@ REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
 # (face01/face03/face05 · front/angle45/side). 새 스펙에 자리가 없는 옛 이름(face02·torso*·full* …)은
 # 여기서 invalid_slot 으로 막힌다 — 이미 올라간 행은 남아 있고(파기가 쓸어 담는다) 완료 판정에서만 빠진다.
 ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + tuple(LEGACY_SLOT_ALIASES)
-MAX_FACE_BYTES = 25 * 1024 * 1024
-ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
+# 등록 사진은 **원본 그대로** 받는다(프런트가 다시 인코딩하지 않는다) — 등록 사진이 곧
+# LoRA 학습셋이라, 셀러 상품 사진용 축소 규칙(4000px·JPEG 0.85)이 학습 화질을 깎고 있었다.
+# 실측(아이폰 48MP, 8064×6048): HEIC 8.6MB · JPEG 최고화질 26.6MB. 25MB 상한으로는 JPEG
+# 원본이 막힌다. 40MB = 그 위로 한 뼘.
+MAX_FACE_BYTES = 40 * 1024 * 1024
+MAX_FACE_MB = MAX_FACE_BYTES // (1024 * 1024)
+# 아이폰이 주는 HEIC/HEIF 를 그대로 받는다. content-type 이 비거나 octet-stream 으로 와도
+# 매직바이트(ftyp 브랜드)로 판정한다 — 확장자는 .HEIC/.heif/.hif 로 제각각이다.
+ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+#: 얼굴 전용 확장자 맵. r2.MIME_EXT(셀러 presigned 업로드 화이트리스트)에는 **더하지 않는다** —
+#: 그쪽은 상품 사진 경로라 HEIC 를 받을 이유가 없고, 다운스트림(Gemini)도 못 읽는다.
+FACE_MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+                 "image/heic": "heic", "image/heif": "heif"}
+#: 브라우저가 "모르겠다" 고 말하는 값. 이걸 거절하면 아이폰 HEIC 가 통째로 막힌다 — 실제
+#: 형식은 매직바이트로 판정한다(sniff_image_mime).
+GENERIC_MIME = {"", "application/octet-stream", "binary/octet-stream"}
+#: 대표이미지(cover)는 브라우저가 그대로 <img> 로 그린다 — HEIC 를 받으면 빈 칸이 된다.
+#: 등록 사진과 달리 정규화본을 만들지 않으므로 여기선 HEIC 를 받지 않는다.
+ALLOWED_COVER_MIME = {"image/png", "image/jpeg", "image/webp"}
 START_LIVENESS_POLICY = {
     "Version": "2012-10-17",
     "Statement": [
@@ -604,6 +630,19 @@ def _prewarm_opendid(request: Request) -> None:
             scaler.prewarm_soon()
 
 
+def _readable_photo(row: dict) -> tuple[str, str]:
+    """이 사진을 **읽을 때** 쓸 (R2 키, MIME).
+
+    원본은 사용자가 올린 그대로라 HEIC 일 수 있다 — 브라우저도 cv2 도 못 읽는다. 읽기는
+    언제나 정규화본(EXIF 적용 무손실 PNG)으로 한다. 정규화본이 없는 옛 행(2026-09-15 이전)만
+    원본으로 물러난다.
+    """
+    normalized = row.get("normalized_r2_key")
+    if normalized:
+        return normalized, NORMALIZED_MIME
+    return row["r2_key"], row.get("mime_type") or "image/jpeg"
+
+
 async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -857,11 +896,16 @@ async def _drain_photo_cleanup_locked(
                         is None
                     ):
                         continue
-                try:
-                    await _run_r2_call_until_done(r2.delete, row["r2_key"])
-                except Exception as exc:
-                    if not _is_r2_not_found(exc):
-                        raise
+                # 정규화본은 원본 키에서 계산되는 형제다 — 같이 지운다. 없으면 R2 delete 는
+                # 무해한 no-op 이라(S3 의미론) 옛 행에도 안전하다.
+                for target in (row["r2_key"], normalized_sibling_key(row["r2_key"])):
+                    if target is None:
+                        continue
+                    try:
+                        await _run_r2_call_until_done(r2.delete, target)
+                    except Exception as exc:
+                        if not _is_r2_not_found(exc):
+                            raise
                 if row["reason"] == "upload_orphan" and (
                     await _run_r2_call_until_done(r2.head, row["r2_key"])
                     is not None
@@ -1607,24 +1651,45 @@ async def upload_enrollment_photo(
     if slot not in request.app.state.settings.fm_photo_slots:
         raise _err("invalid_slot", "사진 슬롯을 확인해 주세요.")
     angle = slot
-    mime = (photo.content_type or "").lower()
-    if mime not in ALLOWED_FACE_MIME:
-        raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
+    # content-type 은 믿지 **않지만**, 확실히 아닌 것은 바이트를 읽기 전에 막는다. iOS 는
+    # HEIC 의 type 을 비우거나 octet-stream 으로 주므로 그 둘만 통과시키고 아래에서 매직바이트로
+    # 판정한다. 이 앞당긴 검사가 없으면 PDF 업로드가 400 이 아니라 계정·단계 게이트의 403/409 를
+    # 받는다 — 요청 모양이 틀린 것과 권한이 없는 것을 클라이언트가 구분하지 못한다.
+    declared = (photo.content_type or "").lower()
+    if declared and declared not in GENERIC_MIME and declared not in ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "HEIC, PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
     r2 = _r2_face(request)
     data = await photo.read()
+    # 확장자·content-type 은 믿지 않는다 — 실제 형식은 매직바이트가 정한다.
+    mime = sniff_image_mime(data, declared)
+    if mime not in ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "HEIC, PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
     new_key = None
+    normalized_key = None
     try:
         if not data:
             raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
         if len(data) > MAX_FACE_BYTES:
-            raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+            raise _err("file_too_large", f"이미지는 {MAX_FACE_MB}MB 이하만 가능합니다.", status=413)
+        # 정규화본을 **먼저** 만든다. 검사도 열람도 학습도 전부 이걸 읽는다 — HEIC 는 cv2 가
+        # 아예 못 읽고, JPEG 는 EXIF orientation 을 PIL 과 cv2 가 다르게 다룬다.
+        # to_thread 필수: 48MP 한 장이 이 자리에서 수 초를 쓴다(2026-08-26 루프 동결 사고).
+        try:
+            normalized, normalized_size = await asyncio.to_thread(
+                normalize_png, data, request.app.state.settings.fm_normalized_max_edge)
+        except NormalizeFailed as exc:
+            logger.info(
+                "facemarket_enrollment_photo_unreadable",
+                extra={"enrollment_id": enrollment_id, "angle": angle, "reason": str(exc)},
+            )
+            raise _err("photo_framing", reject_message("unreadable"), reasons=["unreadable"])
         # 촬영 스펙 검사 — 등록 사진이 곧 학습셋이라 **항상** 본다(fm_face_match_enabled 와 무관).
         # 여기서 막지 않으면 사용자는 촬영 자리를 떠난 뒤에야 못 쓰는 사진임을 알게 된다.
         try:
             shot_reason, shot = await asyncio.to_thread(
-                check_enrollment_photo, data, angle,
+                check_enrollment_photo, normalized, angle,
                 model_dir=request.app.state.settings.fm_face_qc_dir,
             )
         except PhotoCheckUnavailable:
@@ -1645,8 +1710,8 @@ async def upload_enrollment_photo(
             try:
                 qc = await evaluate_face_qc(
                     request.app.state.settings,
-                    image_bytes=data,
-                    mime=mime,
+                    image_bytes=normalized,
+                    mime=NORMALIZED_MIME,
                     angle=angle,
                 )
             except FaceQcUnavailable:
@@ -1663,10 +1728,12 @@ async def upload_enrollment_photo(
                 qc_reason_message(qc.blocking_reasons),
                 reasons=qc.blocking_reasons,
             )
-        ext = ext_for_mime(mime)
-        new_key = enrollment_quarantine_key(
-            enrollment_id, angle, ext, version=uuid.uuid4().hex
-        )
+        # 원본의 확장자는 실제 형식을 따른다(HEIC 는 .heic). 정규화본은 같은 버전을 쓰는
+        # 형제 키다 — 한 업로드가 만든 두 객체가 짝이라는 게 키에서 보여야 파기·정리가 쉽다.
+        version = uuid.uuid4().hex
+        ext = FACE_MIME_EXT[mime]
+        new_key = enrollment_quarantine_key(enrollment_id, angle, ext, version=version)
+        normalized_key = enrollment_normalized_key(enrollment_id, angle, version=version)
         old_key = None
         intent_committed = False
         try:
@@ -1710,6 +1777,9 @@ async def upload_enrollment_photo(
                                 "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
                                 status=409,
                             )
+                        # 원본 키 **하나만** 예약한다. 정규화본은 이 키에서 계산되는
+                        # 형제(normalized_sibling_key)라, 이 한 줄이 정리되면 둘 다 정리된다 —
+                        # 둘을 따로 추적하면 반쪽만 남는 경우가 생긴다.
                         await cur.execute(
                             """
                             insert into fm_biometric_enrollment_photo_cleanup
@@ -1723,6 +1793,8 @@ async def upload_enrollment_photo(
                     intent_committed = True
                     try:
                         await _run_r2_call_until_done(r2.put_bytes, new_key, data, mime)
+                        await _run_r2_call_until_done(
+                            r2.put_bytes, normalized_key, normalized, NORMALIZED_MIME)
                     except Exception as exc:
                         logger.warning(
                             "facemarket_enrollment_photo_store_failed",
@@ -1758,6 +1830,8 @@ async def upload_enrollment_photo(
                                 status=409,
                             )
                         old_key = old["r2_key"] if old else None
+                        # 이전 정규화본도 같이 회수한다 — 안 하면 갈아 끼울 때마다 옛 PNG 가
+                        # 한 장씩 쌓인다(48MP 면 한 장 51MB).
                         if old_key and old_key != new_key:
                             await cur.execute(
                                 """
@@ -1772,13 +1846,19 @@ async def upload_enrollment_photo(
                         await cur.execute(
                             """
                             insert into fm_biometric_enrollment_photos
-                                (enrollment_id, angle, r2_key, image_digest, mime_type, byte_size)
-                            values (%s, %s, %s, %s, %s, %s)
+                                (enrollment_id, angle, r2_key, image_digest, mime_type, byte_size,
+                                 normalized_r2_key, normalized_byte_size,
+                                 normalized_width, normalized_height)
+                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             on conflict (enrollment_id, angle) do update set
                                 r2_key = excluded.r2_key,
                                 image_digest = excluded.image_digest,
                                 mime_type = excluded.mime_type,
                                 byte_size = excluded.byte_size,
+                                normalized_r2_key = excluded.normalized_r2_key,
+                                normalized_byte_size = excluded.normalized_byte_size,
+                                normalized_width = excluded.normalized_width,
+                                normalized_height = excluded.normalized_height,
                                 qc_status = 'passed',
                                 storage_state = 'quarantine',
                                 uploaded_at = now(),
@@ -1789,9 +1869,15 @@ async def upload_enrollment_photo(
                                 enrollment_id,
                                 angle,
                                 new_key,
+                                # 무결성 해시는 **원본** 바이트로 남긴다 — 증서(VC)가 가리키는
+                                # 것이 사용자가 올린 그 파일이어야 한다.
                                 sha256_sri(data),
                                 mime,
                                 len(data),
+                                normalized_key,
+                                len(normalized),
+                                normalized_size[0],
+                                normalized_size[1],
                             ),
                         )
                         uploaded_at = (await cur.fetchone())["uploaded_at"]
@@ -2043,13 +2129,13 @@ async def upload_profile_image(
     # SFace/QC 없음, 상태 전이 없음. 바인딩 시 fm_models.cover_image_url 로 승격만 한다.
     enrollment_id = _canonical_enrollment_id(enrollment_id)
     mime = (image.content_type or "").lower()
-    if mime not in ALLOWED_FACE_MIME:
+    if mime not in ALLOWED_COVER_MIME:
         raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
     data = await image.read()
     if not data:
         raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
     if len(data) > MAX_FACE_BYTES:
-        raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+        raise _err("file_too_large", f"이미지는 {MAX_FACE_MB}MB 이하만 가능합니다.", status=413)
     r2 = _r2_face(request)
     ext = ext_for_mime(mime)
     key = f"private/fm-profile/{enrollment_id}.{ext}"
@@ -2319,7 +2405,8 @@ async def get_enrollment_photo(
         async with conn.cursor() as cur:
             for candidate in photo_slot_candidates(slot):
                 await cur.execute(
-                    "select r2_key, mime_type, storage_state from fm_biometric_enrollment_photos "
+                    "select r2_key, normalized_r2_key, mime_type, storage_state "
+                    "from fm_biometric_enrollment_photos "
                     "where enrollment_id = %s and angle = %s", (enrollment_id, candidate),
                 )
                 photo = await cur.fetchone()
@@ -2327,13 +2414,16 @@ async def get_enrollment_photo(
                     break
     if photo is None or photo["storage_state"] not in {"quarantine", "approved"}:
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
+    # 정규화본을 준다 — 원본이 HEIC 면 브라우저가 못 그려서 미리보기가 빈 칸이 된다.
+    # 정규화본이 없는 옛 행은 원본으로 물러난다(그때는 전부 JPEG 였다).
+    key, mime = _readable_photo(photo)
     try:
-        data = await asyncio.to_thread(_r2_face(request).get_bytes, photo["r2_key"])
+        data = await asyncio.to_thread(_r2_face(request).get_bytes, key)
     except Exception:
         raise _err("storage_unavailable", "사진을 불러올 수 없습니다.", status=503)
     return Response(
         content=data,
-        media_type=photo["mime_type"],
+        media_type=mime,
         headers={"Cache-Control": "private, no-store"},
     )
 

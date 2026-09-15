@@ -20,6 +20,11 @@ dependencies = [
     "numpy>=1.26",
     # C2PA Content Credential 서명(층②). manylinux_2_28 휠 제공 → Rust 툴체인 불필요.
     "c2pa-python>=0.37.8",
+    # HEIC/HEIF 디코더(아이폰 등록 사진). **pillow-heif 가 아니라 pi-heif** 다 —
+    # pillow-heif 휠은 x265 인코더를 묶어 휠 전체가 GPLv2 이고(휠 안 LICENSES_bundled.txt),
+    # pi-heif 는 디코더만(libheif + libde265, 둘 다 LGPLv3) 묶어 LGPLv3 다. 우리는 디코드만
+    # 쓰고 라이브러리를 고치지 않으며 동적 링크라 상업 이용에 문제가 없다.
+    "pi-heif>=1.0",
 ]
 
 [project.optional-dependencies]

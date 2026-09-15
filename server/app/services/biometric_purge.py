@@ -575,6 +575,16 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(enrollment_ids),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 정규화본(EXIF 적용 무손실 PNG)은 **별개의 객체**다 — 원본만 지우면 얼굴이 그대로
+        # 남는다. 얼굴은 prefix 스윕에서 빼 두고 DB 행으로만 지우므로(위 주석), 이 행이
+        # 없으면 아무도 안 지운다. 컬럼이 없는 환경(마이그 전)은 조용히 건너뛴다.
+        if enrollment_ids and _has(schema, "fm_biometric_enrollment_photos", "normalized_r2_key"):
+            await cur.execute(
+                "select normalized_r2_key as k from fm_biometric_enrollment_photos "
+                "where enrollment_id = any(%s) and normalized_r2_key is not null",
+                (list(enrollment_ids),),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if enrollment_ids and _has(schema, "fm_biometric_enrollment_photo_cleanup", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_biometric_enrollment_photo_cleanup "

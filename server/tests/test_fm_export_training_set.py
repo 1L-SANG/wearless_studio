@@ -61,6 +61,26 @@ def test_unusable_rows_are_not_exported(bad):
     assert [item for item in ex.plan([_row("sh_front", **bad)]) if item["row"]] == []
 
 
+def test_the_plan_reads_the_normalized_copy_when_there_is_one():
+    """서버가 이미 EXIF 를 적용한 무손실 PNG 를 만들어 뒀다 — 그걸 읽는다.
+
+    원본은 사용자가 올린 그대로라 HEIC 일 수 있다. 여기서 원본을 읽으면 cv2·PIL 이 못 읽어
+    내보내기가 통째로 실패하거나(HEIC), EXIF 가 안 적용된 그림이 학습에 들어간다(JPEG).
+    """
+    row = _row("sh_front")
+    row["normalized_r2_key"] = "facemarket/enrollments/e/sh_front/v1.normalized.png"
+    item = next(item for item in ex.plan([row]) if item["slot"] == "sh_front")
+    assert item["source_key"] == row["normalized_r2_key"]
+    assert item["normalized"] is True
+
+
+def test_an_old_row_without_a_normalized_copy_falls_back_to_the_original():
+    """2026-09-15 이전 등록에는 정규화본이 없다 — 그때는 전부 JPEG 였고, 여기서 같은 규칙으로 바꾼다."""
+    item = next(item for item in ex.plan([_row("sh_front")]) if item["slot"] == "sh_front")
+    assert item["source_key"] == item["row"]["r2_key"]
+    assert item["normalized"] is False
+
+
 def test_a_legacy_row_still_fills_its_slot():
     """옛 등록(front·face01)도 sh_front 자리를 채운다 — 후보 사슬은 서버와 같은 함수다."""
     item = next(item for item in ex.plan([_row("front")]) if item["slot"] == "sh_front")

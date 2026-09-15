@@ -192,6 +192,37 @@ export async function toUploadableImage(file, options = {}) {
   });
 }
 
+/* 얼굴 등록 사진의 **미리보기 전용** 축소본. 업로드하지 않는다. → Blob
+
+   등록 사진은 원본 바이트 그대로 올린다(등록 사진이 곧 LoRA 학습셋이라, 상품 사진용 축소
+   규칙 4000px·JPEG 0.85 를 먹이면 48MP 원본이 12MP 손실본이 되어 학습에 들어간다).
+   그런데 화면은 여전히 그림을 보여 줘야 한다 — 크롬·파이어폭스는 HEIC 를 못 그리고,
+   48MP JPEG 를 <img> 로 그대로 띄우면 탭이 수백 MB 를 먹는다. 그래서 **보여 주기 위한**
+   작은 JPEG 를 따로 만든다.
+
+   실패는 삼킨다(null) — 미리보기가 없다고 업로드를 막을 이유가 없다. */
+export const PREVIEW_MAX_EDGE = 1024;
+
+export async function toPreviewImage(file, options = {}) {
+  const settings = { maxEdge: PREVIEW_MAX_EDGE, jpegQuality: 0.8, forceJpeg: true, ...options };
+  try {
+    if (await isHeic(file)) {
+      const { heicTo } = await withTimeout(import('heic-to'), {
+        ms: settings.timeoutMs ?? IMAGE_PIPELINE_TIMEOUT_MS,
+        message: 'HEIC 디코딩 모듈을 불러오지 못했어요.',
+      });
+      const bitmap = await heicTo({
+        blob: file, type: 'bitmap', options: { imageOrientation: 'from-image' },
+      });
+      return await bitmapToJpeg(bitmap, settings);
+    }
+    const shrunk = await downscaleJpeg(file, settings);
+    return shrunk || null;
+  } catch {
+    return null; // 미리보기 실패는 업로드를 막지 않는다
+  }
+}
+
 export function renameExt(name, ext) {
   const base = (name || 'photo').replace(/\.[^.]+$/, '');
   return `${base}.${ext}`;

@@ -599,7 +599,11 @@ class FakeDB:
             ]
         if q.startswith("select") and "from fm_biometric_enrollment_photos" in q:
             ids = set(params[0])
-            return [{"k": r.get("r2_key")} for r in self.tables["fm_biometric_enrollment_photos"] if r.get("enrollment_id") in ids]
+            # 원본(r2_key)과 정규화본(normalized_r2_key)은 **다른 객체**다 — 파기는 둘 다 모은다.
+            column = "normalized_r2_key" if "normalized_r2_key" in q else "r2_key"
+            return [{"k": r.get(column)}
+                    for r in self.tables["fm_biometric_enrollment_photos"]
+                    if r.get("enrollment_id") in ids and r.get(column)]
         if q.startswith("select") and "from fm_biometric_enrollment_photo_cleanup" in q:
             ids = set(params[0])
             return [{"k": r.get("r2_key")} for r in self.tables["fm_biometric_enrollment_photo_cleanup"] if r.get("enrollment_id") in ids]
@@ -1272,7 +1276,9 @@ def _fake_case():
     db.add("fm_model_assets", model_id=model, view="face_front", r2_key=f"facemarket/models/{model}/enrollments/{enrollment}/assets/face_front.png", source_enrollment_id=enrollment)
     db.add("fm_model_assets", model_id=model, view="grid_sedcard", r2_key=shared_key, source_enrollment_id=enrollment)
     db.add("fm_model_asset_cleanup", model_id=model, r2_key=f"facemarket/models/{model}/cleanup/old.png")
-    db.add("fm_biometric_enrollment_photos", enrollment_id=enrollment, angle="front", r2_key=f"facemarket/enrollments/{enrollment}/quarantine/front.png")
+    db.add("fm_biometric_enrollment_photos", enrollment_id=enrollment, angle="front",
+           r2_key=f"facemarket/enrollments/{enrollment}/quarantine/front/v1.jpg",
+           normalized_r2_key=f"facemarket/enrollments/{enrollment}/quarantine/front/v1.normalized.png")
     db.add("fm_biometric_enrollment_photo_cleanup", enrollment_id=enrollment, angle="side", r2_key=f"facemarket/enrollments/{enrollment}/cleanup/side.png")
     for angle in ("front", "side", "angle45"):
         db.add("personalization_face_photos", profile_id=profile, angle=angle, r2_key=f"personalization/profiles/{profile}/faces/{angle}.png", image_digest=f"sha256-{angle}")
@@ -1299,6 +1305,9 @@ def _fake_case():
     db.add("exports", id="export-a", asset_id=asset)
     db.add("product_truth_assets", id="truth-a", asset_id=child_asset)
     face_keys = {r["r2_key"] for table in ("fm_model_assets", "fm_model_asset_cleanup", "fm_biometric_enrollment_photos", "fm_biometric_enrollment_photo_cleanup") for r in db.tables[table]}
+    # 정규화본(EXIF 적용 무손실 PNG)도 얼굴이다 — 원본만 지우면 얼굴이 R2 에 그대로 남는다.
+    face_keys |= {r["normalized_r2_key"] for r in db.tables["fm_biometric_enrollment_photos"]
+                  if r.get("normalized_r2_key")}
     face_keys |= {db.tables["fm_licenses"][0]["face_image_key"], shared_key, f"facemarket/models/{model}/orphan.png", f"facemarket/enrollments/{enrollment}/orphan.png"}
     face_keys |= {r["r2_key"] for r in db.tables["personalization_face_photos"]}
     face_keys |= {f"personalization/{user}/generations/gen-a/0.png", f"personalization/{user}/generations/orphan/0.png"}
@@ -1499,6 +1508,26 @@ def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineag
     assert ctx.db.tables["personalization_consents"]
     assert ctx.db.tables["personalization_audit_log"]
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
+def test_the_normalized_copy_is_purged_with_the_original():
+    """정규화본(EXIF 적용 무손실 PNG)은 원본과 **다른 객체**다.
+
+    2026-09-15 부터 한 장의 등록 사진이 R2 객체를 둘 만든다 — 사용자가 올린 원본(HEIC 일 수
+    있다)과, 서버가 만든 읽기용 PNG. 수집이 원본만 보면 파기 영수증이 나가고도 얼굴이
+    그대로 남는다. 얼굴은 prefix 스윕에서 빠져 있어(데이터 파괴 방지) DB 행으로만 지운다.
+    """
+    ctx = _fake_case()
+    normalized = next(row["normalized_r2_key"]
+                      for row in ctx.db.tables["fm_biometric_enrollment_photos"]
+                      if row.get("normalized_r2_key"))
+    assert normalized in ctx.r2_face.keys, "픽스처 전제: 정규화본이 R2 에 있어야 한다"
+
+    result = _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert result.complete is True
+    assert normalized not in ctx.r2_face.keys
+    assert normalized in ctx.r2_face.purged or normalized in ctx.r2_face.deleted
 
 
 def test_photos_uploaded_under_dropped_slots_are_still_purged():
@@ -2209,7 +2238,7 @@ def _sync(url):
 def _require_live_schema(conn):
     required = {
         "fm_biometric_enrollments": {"id", "user_id", "model_id"},
-        "fm_biometric_enrollment_photos": {"enrollment_id", "r2_key"},
+        "fm_biometric_enrollment_photos": {"enrollment_id", "r2_key", "normalized_r2_key"},
         "fm_biometric_enrollment_photo_cleanup": {"enrollment_id", "r2_key"},
         "fm_model_asset_cleanup": {"model_id", "r2_key"},
         "fm_models": {"reverification_batch_id", "current_enrollment_id"},
@@ -2269,7 +2298,7 @@ def test_live_facemarket_scope_job_discovery_json_paths_and_joins():
                 found.setdefault(row["table_name"], set()).add(row["column_name"])
             for table, cols in {
                 "fm_biometric_enrollments": {"id", "user_id", "model_id"},
-                "fm_biometric_enrollment_photos": {"enrollment_id", "r2_key"},
+                "fm_biometric_enrollment_photos": {"enrollment_id", "r2_key", "normalized_r2_key"},
                 "fm_biometric_enrollment_photo_cleanup": {"enrollment_id", "r2_key"},
                 "fm_model_asset_cleanup": {"model_id", "r2_key"},
                 "fm_models": {"reverification_batch_id", "current_enrollment_id"},

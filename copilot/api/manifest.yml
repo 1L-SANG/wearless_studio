@@ -34,12 +34,19 @@ image:
       BUILDKIT_INLINE_CACHE: "1" # 다음 배포가 레지스트리 이미지에서 캐시 메타데이터를 복원
   port: 8080
 
-cpu: 512        # Pillow 이미지 처리 여유
-# image_high job + OpenCV SFace ONNX(얼굴 QC) 상주. 1024는 부족(codex 리뷰).
+# 0.5 vCPU → 1 vCPU (2026-09-15 리뷰 결정). 등록 사진을 원본으로 받으면서 서버가 정규화본
+# (EXIF 적용 PNG)을 만든다 — 48MP 한 장이 to_thread 안에서 1.4초(4096 상한 실측, 맥 기준)를
+# 쓰고, 한 사람이 18칸을 연달아 올린다. 0.5 vCPU 면 그 시간을 셀러 API·헬스체크와 통째로
+# 나눠 쓴다(루프는 안 막히지만 전부 느려진다). 여유는 CPU 쪽에만 준다.
+cpu: 1024
+# image_high job + OpenCV SFace ONNX(얼굴 QC) 상주. 512 vCPU 시절 1024MB 는 부족했다(codex 리뷰).
 # 2048 은 컷 동시 생성의 상한이기도 했다: 4K 컷 하나가 응답 base64 + 디코딩본 + QC 입력을
 # 동시에 잡고, repair 는 1차를 살려둔 채 2차를 만들어 컷당 4K 이미지가 두 장이다
 # (detail_page_job.py 의 chosen 교체 지점). 그래서 동시 2 로 묶여 한 페이지에 ~10분이 걸렸다.
-# 4096 = 0.5 vCPU 가 붙일 수 있는 최대. 동시 5 로 올려 ~4분을 목표한다(오너 승인 2026-08-19).
+# 4096 으로 동시 5 를 목표했다(오너 승인 2026-08-19).
+# ★ cpu 를 올려도 memory 는 **그대로 둔다** — DETAIL_CUT_CONCURRENCY 가 이 값과 짝이라
+#   (아래 주석) 같이 올리면 검증 안 된 동시성 여유가 생긴다. 1 vCPU 는 2048~8192 를 허용하므로
+#   4096 은 유효한 조합이다.
 memory: 4096
 platform: linux/x86_64
 count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음

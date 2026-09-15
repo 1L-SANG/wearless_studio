@@ -6,7 +6,7 @@ import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
   deleteFacePhoto, fetchFacePhotoUrl, getStatus, listFacePhotos, uploadFacePhoto,
 } from '@/lib/api/personalization.js';
-import { toUploadableImage } from '@/lib/imageTranscode.js';
+import { toPreviewImage } from '@/lib/imageTranscode.js';
 import { ENROLLMENT_ANGLES } from './biometricEnrollment.js';
 import s from './ModelPersonalization.module.css';
 
@@ -187,17 +187,15 @@ export function ModelFaceUpload({
     uploadQueueRef.current = uploadQueueRef.current.then(async () => {
       setSlotBusy((m) => ({ ...m, [angle]: 'checking' }));
       try {
-        // HEIC → JPEG(+긴 변 축소). 서버·QC(SFace)가 HEIC 를 못 읽으므로 업로드 전에 바꾼다.
-        let file;
-        try {
-          file = await toUploadableImage(picked);
-        } catch {
-          push?.('이 사진은 불러오지 못했어요. JPG·PNG 로 저장해 올려주세요.', { icon: 'alertCircle' });
-          return;
-        }
-        // 변환본으로 프리뷰를 만든다 — 아이폰 HEIC 원본은 브라우저가 못 그린다.
-        // QC 결과와 무관하게 먼저 건다: 떨어져도 "내가 뭘 올렸는지" 보고 다시 찍을 수 있어야 한다.
-        putPreview(angle, URL.createObjectURL(file));
+        // 얼굴 사진은 **원본 바이트 그대로** 올린다 — 이 사진이 학습·대조의 근거라, 여기서
+        // 축소·재인코딩하면 그만큼이 영영 사라진다. HEIC 해독과 EXIF 회전은 서버가 한 번에
+        // 한다(facemarket_photo_normalize).
+        const file = picked;
+        // 미리보기는 브라우저에서 작게 따로 만든다(업로드하지 않는다) — 아이폰 HEIC 원본은
+        // 브라우저가 못 그린다. QC 결과와 무관하게 먼저 건다: 떨어져도 "내가 뭘 올렸는지"
+        // 보고 다시 찍을 수 있어야 한다.
+        const preview = await toPreviewImage(file);
+        if (preview) putPreview(angle, URL.createObjectURL(preview));
         const res = await photoApi.upload({ angle, fileBlob: file, filename: file.name });
         setSlots((m) => ({ ...m, [angle]: res }));
         push?.('사진이 등록됐어요.', { icon: 'check' });
