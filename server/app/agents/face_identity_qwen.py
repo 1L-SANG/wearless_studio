@@ -27,8 +27,7 @@ RENDER_MODEL_ID = "Qwen/Qwen-Image-Edit-2509"
 RENDER_STEPS = 25
 RENDER_GUIDANCE = 4.0
 RENDER_NEGATIVE = ""
-#: latent 한 변 = CROP/8. 마스크 잠금이 쓰는 격자 크기다(VAE 8배 축소 + 2×2 패킹).
-MASK_LOCK_LATENT = CROP // 8
+
 
 
 def load_base_pipeline(model_id: str = RENDER_MODEL_ID, device: str = "cuda", *,
@@ -141,43 +140,38 @@ class QwenLocalBackend:
 
 
 def _mask_lock(pipe, base: Image.Image, gen_mask: Image.Image, generator, device: str) -> dict:
-    """마스크 밖 latent 를 원본 궤적에 고정하는 pipe 인자(diffusers 0.40 QwenImageEditPlusPipeline).
+    """마스크 밖 latent 를 매 스텝 원본 궤적으로 되돌린다(diffusers 0.40 QwenImageEditPlusPipeline).
 
-    latent 한 칸 = 화면 8px. 매 스텝 끝에
-        latents = m·latents + (1−m)·((1−σ)·x0 + σ·noise)
-    로 되돌린다 — 마스크 밖은 "원본을 그 시각 σ 만큼 노이즈에 섞은 값"이라 디노이즈가 끝나면
-    정확히 원본이 된다. 마스크 안은 손대지 않으므로 생성은 그대로다.
+    gen_mask 밖은 스텝마다 "base 크롭의 latent 를 **다음** 시그마만큼 노이즈에 섞은 값"으로 덮어쓴다
+    (QwenImageEditInpaintPipeline 과 같은 혼합). 그래서 모델은 1024² 사각형을 통째로 다시 그리지 않고
+    **손대지 않은 주변 안으로** 머리를 그려 넣는다. 초기 노이즈는 파이프라인이 뽑는 것과 똑같이 만든다
+    — VAE encode 는 argmax 라 generator 를 건드리지 않으므로, 같은 시드의 잠금 없는 렌더와 시작점이 같다.
 
-    ★ latents=noise 로 초기값을 우리가 준다. VAE encode 는 argmax 라 generator 를 쓰지 않으므로
-      잠금을 안 건 렌더와 **초기 노이즈가 같다** — 같은 시드의 두 경로가 비교 가능하다.
+    ★ 정본은 ~/Downloads/comfy_swap_test/reference_code/pod_mask_lock.patch 다. 상수·식은 실측이라
+      그대로 옮겼다 — 바꾸려면 키트 10컷을 다시 돌려야 한다.
     """
     import numpy as np
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
     dtype = pipe.transformer.dtype
-    channels = pipe.transformer.config.in_channels // 4
-    lat = MASK_LOCK_LATENT
-    dev = torch.device(device)
+    c = pipe.transformer.config.in_channels // 4
+    lat = 2 * (CROP // (pipe.vae_scale_factor * 2))
+    noise = randn_tensor((1, 1, c, lat, lat), generator=generator, device=torch.device(device), dtype=dtype)
+    noise = pipe._pack_latents(noise, 1, c, lat, lat)
+    with torch.no_grad():
+        pix = pipe.image_processor.preprocess(base.convert("RGB"), CROP, CROP).unsqueeze(2)
+        x0 = pipe._encode_vae_image(image=pix.to(device=device, dtype=dtype), generator=generator)
+    x0 = pipe._pack_latents(x0, 1, c, lat, lat)
+    cell = np.asarray(gen_mask.convert("L").resize((lat, lat), Image.BOX), np.float32) > 0.0
+    m = torch.from_numpy(cell.astype(np.float32)).to(device=device, dtype=dtype)
+    m = pipe._pack_latents(m.view(1, 1, 1, lat, lat).expand(1, c, 1, lat, lat).contiguous(), 1, c, lat, lat)
 
-    noise = randn_tensor((1, 1, channels, lat, lat), generator=generator, device=dev, dtype=dtype)
-    noise = pipe._pack_latents(noise, 1, channels, lat, lat)
-
-    image = pipe.image_processor.preprocess(base.convert("RGB"), CROP, CROP).unsqueeze(2)
-    x0 = pipe._encode_vae_image(image.to(device=dev, dtype=dtype), generator=generator)
-    x0 = pipe._pack_latents(x0, 1, channels, lat, lat)
-
-    # BOX 축소 = 8×8 칸 평균 → >0 이면 그 칸에 생성 영역이 한 픽셀이라도 걸친 것이다(보수적).
-    small = np.asarray(gen_mask.convert("L").resize((lat, lat), Image.BOX), np.float32) > 0
-    mask = torch.from_numpy(small).to(device=dev, dtype=dtype)
-    mask = mask.view(1, 1, 1, lat, lat).expand(1, channels, 1, lat, lat)
-    mask = pipe._pack_latents(mask, 1, channels, lat, lat)
-
-    def lock(pipe_, step_index, timestep, callback_kwargs):
-        sigma = pipe_.scheduler.sigmas[pipe_.scheduler.step_index]
-        latents = callback_kwargs["latents"]
-        callback_kwargs["latents"] = mask * latents + (1 - mask) * ((1 - sigma) * x0 + sigma * noise)
-        return callback_kwargs
+    def lock(p, i, t, kw):
+        # step_index 는 scheduler.step() 안에서 이미 올라갔다 — 여기서 읽는 시그마가 **다음** 시그마다.
+        sigma = p.scheduler.sigmas[p.scheduler.step_index].to(device=device, dtype=dtype)
+        ref = (1.0 - sigma) * x0 + sigma * noise
+        return {"latents": m * kw["latents"] + (1.0 - m) * ref}
 
     return {"latents": noise, "callback_on_step_end": lock,
             "callback_on_step_end_tensor_inputs": ["latents"]}

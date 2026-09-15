@@ -193,23 +193,6 @@ EDGE_FADE_HARD_PX = 3
 #: 얼굴 크롭 확대 상한 — RealESRGAN x4plus 가 4배까지만 낸다. k = ceil(1024/side) 를 여기서 자른다.
 CROP_UPSCALE_MAX = 4
 
-# ── 마스크 밖 latent 고정(2026-09-15) ──────────────────────────────────────
-#: 지금까지는 파드가 1024² 크롭 **전체**를 새로 그리고 서버가 타원 알파로 되붙였다. 그래서
-#: 그림자 있는 배경에서 목 옆에 직사각형 조각이 남고(붙이기 경계) 그림자가 얼룩졌다.
-#: 잠그면 디노이즈 매 스텝마다 머리 마스크 밖 latent 가 원본으로 돌아가 **머리 밖이 원본 그대로**다.
-#: 실험(v7·seed 42·5컷): 5/5 조각 소멸, 신원 ±0.02 안, 머리 밖 |생성−크롭| 8.2~24.9 → 1.1~3.3.
-#: 크롭 경계에서 이만큼을 생성 마스크에서 뺀다. 이 띠가 잠겨 있어야 크롭 경계 이음매가 안 생긴다.
-#: 사진 가장자리에 붙은 변은 빼지 않는다 — 그 너머에 이을 원본이 없다.
-MASK_LOCK_EDGE_PX = 72
-#: latent 한 칸 = 화면 8px. 되붙이기 알파도 **같은 격자**로 판정해야 파드가 실제로 다시 그린
-#: 자리와 알파가 어긋나지 않는다.
-MASK_LOCK_CELL_PX = 8
-#: 생성 영역 알파를 이만큼 부풀린 뒤 흐린다 — 칸 경계(8px 계단)가 그대로 보이지 않게.
-MASK_LOCK_DILATE_PX = 24
-MASK_LOCK_BLUR_SIGMA = 10.0
-#: 크롭 경계 페이드. 잠금 경로는 경계가 이미 원본이라 48px 이 필요 없다.
-MASK_LOCK_FADE_PX = 8
-
 # ── 바탕 보존(keep) 판정 상수 — composite_with_meta 의 "생성본을 안 쓰는 자리" 를 정한다.
 #: 배경 판정 = 크롭 테두리에서 추정한 배경색과의 최대채널 차. T0 이하는 확실한 배경(1.0),
 #: T1 이상은 확실히 아님(0.0), 그 사이는 부드러운 램프. 최대채널을 쓰는 이유는 회색 배경에서
@@ -240,6 +223,12 @@ HAIR_GARMENT_MIN_GAP = 30.0
 #: 올라와서, 턱선에서 끊으면 날개가 반만 지워진다(2026-09-14 확대 관찰). 0.15 에서 수치가 포화하고
 #: 0.35 는 신원이 떨어진다(SFace 0.773 → 0.755).
 GARMENT_CHIN_LIFT = 0.15
+
+# ── 마스크 밖 latent 고정("6번", 2026-09-15) ─────────────────────────────
+#: 지금까지는 파드가 1024² 크롭 **전체**를 새로 그리고 서버가 타원 알파로 되붙였다. 그래서
+#: 그림자 있는 벽에서 목 옆 네모 조각과 반원 얼룩이 남았다 — 붙이기 경계다.
+#: 잠그면 파드가 마스크 밖을 손대지 않아 그 자리가 원본 픽셀 그대로다.
+#: 마스크·알파·되돌리기 규칙과 상수는 **agents/face_mask_lock.py** 가 정본이다(키트 10컷 실측).
 
 _YUNET = "face_detection_yunet_2023mar.onnx"
 _SFACE = "face_recognition_sface_2021dec.onnx"
@@ -827,72 +816,6 @@ def composite_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
 def binary_mask(plan: FacePlan) -> Image.Image:
     """학습 control 의 블러 영역. 합성 페더와 무관하게 항상 0.12 페더에서 파생(build_v4c)."""
     return feather_mask(plan, FEATHER_FRAC).point(lambda v: 255 if v > 127 else 0)
-
-
-def generation_mask(plan: FacePlan) -> Image.Image:
-    """파드가 **다시 그려도 되는 영역**(흰색) — binary_mask 에서 크롭 경계 띠를 뺀 것.
-
-    왜 띠를 빼나: 크롭 경계까지 생성 영역이 닿으면 그 경계가 이음매가 된다. 경계 72px 을 잠가
-    두면 그 자리는 원본 그대로라 이을 것이 없다. 사진 가장자리에 붙은 변은 빼지 않는다 —
-    그 너머에 원본이 없어 이음매가 생길 수 없고, 빼면 머리만 잘린다(at_photo_edge).
-    """
-    mask = np.asarray(binary_mask(plan), np.uint8).copy()
-    px = min(MASK_LOCK_EDGE_PX, CROP // 2)
-    left, top, right, bottom = at_photo_edge(plan)
-    if not left:
-        mask[:, :px] = 0
-    if not right:
-        mask[:, CROP - px:] = 0
-    if not top:
-        mask[:px, :] = 0
-    if not bottom:
-        mask[CROP - px:, :] = 0
-    return Image.fromarray(mask, "L")
-
-
-def mask_lock_alpha(plan: FacePlan, gen_mask: Image.Image) -> np.ndarray:
-    """잠금 경로의 되붙이기 알파(CROP², 0~1).
-
-    파드가 실제로 다시 그린 자리는 **latent 칸 단위**다(8px). 그래서 같은 판정으로 칸을 복원한
-    뒤 부풀리고 흐려 계단을 없앤다. 크롭 경계는 원본이라 얇은 페이드만 둔다.
-    """
-    lat = CROP // MASK_LOCK_CELL_PX
-    cells = np.asarray(gen_mask.convert("L").resize((lat, lat), Image.BOX), np.float32) > 0
-    unlocked = np.asarray(Image.fromarray((cells * 255).astype(np.uint8), "L")
-                          .resize((CROP, CROP), Image.NEAREST), np.float32) / 255.0
-    k = 2 * MASK_LOCK_DILATE_PX + 1
-    grown = cv2.dilate(unlocked, np.ones((k, k), np.float32))
-    soft = cv2.GaussianBlur(grown, (0, 0), MASK_LOCK_BLUR_SIGMA)
-    alpha = np.maximum(soft, unlocked)      # 다시 그린 자리는 반드시 1 로 남는다
-    return np.clip(alpha, 0.0, 1.0) * _edge_fade(MASK_LOCK_FADE_PX, fade_sides(plan))
-
-
-def composite_locked(original: Image.Image, generated_1024: Image.Image, plan: FacePlan, *,
-                     crop: Image.Image, gen_mask: Image.Image) -> tuple[Image.Image, dict]:
-    """잠금 렌더 결과를 되붙인다 — 링 색보정도 keep_mask 도 쓰지 않는다.
-
-    쓸 이유가 없다: 머리 밖이 이미 원본 픽셀이라 맞출 색 차이가 없고(실측 |생성−크롭| 1.1~3.3),
-    보존할 배경·옷도 파드가 안 건드렸다. 실험 없이 얹으면 측정하지 않은 것을 더하는 셈이다.
-    """
-    orig = original.convert("RGB")
-    up = np.asarray(crop.convert("RGB"), np.float32)
-    gen = generated_1024.convert("RGB")
-    if gen.size != (CROP, CROP):
-        gen = gen.resize((CROP, CROP), Image.LANCZOS)
-    alpha2 = mask_lock_alpha(plan, gen_mask)
-    alpha = alpha2[..., None]
-    comp = np.asarray(gen, np.float32) * alpha + up * (1.0 - alpha)
-    comp_img = Image.fromarray(np.clip(comp + 0.5, 0, 255).astype(np.uint8))
-
-    x0, y0, side = plan.crop
-    small = np.asarray(comp_img.resize((side, side), Image.LANCZOS), np.float32)
-    a_small = cv2.resize(alpha2, (side, side), interpolation=cv2.INTER_AREA)[..., None]
-    out = np.asarray(orig, np.float32).copy()
-    region = out[y0 : y0 + side, x0 : x0 + side]
-    out[y0 : y0 + side, x0 : x0 + side] = small * a_small + region * (1.0 - a_small)
-    meta = {"mask_lock": True, "unlocked_frac": round(float((alpha2 > 0.999).mean()), 4),
-            "color_shift": None}
-    return Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)), meta
 
 
 def build_control(image: Image.Image, plan: FacePlan, *, crop: Image.Image | None = None) -> Image.Image:
@@ -1523,7 +1446,15 @@ def run_face_pass(
         # 마스크 잠금 — 파드가 할 수 있을 때만. 못 하는 파드에 보내면 그 파드는 필드를 무시하고
         # 크롭 전체를 다시 그리는데, 그 결과에 잠금 알파를 쓰면 경계가 깨진다(backend_mask_lock).
         locked = mask_lock and backend_mask_lock(backend)
-        gen_mask = generation_mask(plan) if locked else None
+        gen_mask_arr = gen_mask_img = None
+        if locked:
+            from . import face_mask_lock
+
+            # 판정에 쓰는 크롭은 **하나뿐**이다 — control 을 만든 그 ESRGAN 1024² 크롭.
+            # gen_mask·base_png·되돌리기가 서로 다른 크롭을 보면 경계가 어긋난다.
+            crop_arr = np.asarray(crop.convert("RGB"), np.float32)
+            gen_mask_arr = face_mask_lock.gen_mask(crop_arr, plan)
+            gen_mask_img = Image.fromarray((gen_mask_arr.astype(np.uint8) * 255), "L")
         meta["mask_lock"] = bool(locked)
         streak_reason, streak = None, 0
         for seed in seeds:
@@ -1535,15 +1466,19 @@ def run_face_pass(
             meta["attempts"] += 1
             t1 = time.perf_counter()
             # 잠글 때만 새 인자를 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
-            generated = (backend.render(control, prompt, int(seed), base=crop, gen_mask=gen_mask)
+            # 잠글 때만 새 인자를 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
+            generated = (backend.render(control, prompt, int(seed), base=crop, gen_mask=gen_mask_img)
                          if locked else backend.render(control, prompt, int(seed)))
             if locked:
-                result, cmeta = composite_locked(original, generated, plan, crop=crop,
-                                                 gen_mask=gen_mask)
+                from . import face_mask_lock
+
+                result = face_mask_lock.composite(original, generated, plan, crop, gen_mask_arr)
+                # 링 색보정을 안 하므로 lighting 게이트에 넣을 값이 없다. 나머지 게이트(신원·yaw·
+                # 기하)는 그대로 돈다 — 잠금은 **어디를** 그리느냐만 바꾼다.
+                cmeta = {"mask_lock": True, "color_shift": None}
             else:
                 result, cmeta = composite_with_meta(original, generated, plan, feather=feather,
                                                     crop=crop)
-            # 잠금 경로는 색보정을 안 하므로 lighting 게이트에 넣을 값이 없다(color_shift=None).
             gate = evaluate_gate(plan, result, model_dir, references=references,
                                  color_ring_mean=cmeta.get("color_shift"))
             meta["tries"].append({
@@ -2094,9 +2029,6 @@ __all__ = [
     "crop_pad_for",
     "pad_edges",
     "unpad_edges",
-    "generation_mask",
-    "mask_lock_alpha",
-    "composite_locked",
     "backend_mask_lock",
     "resolve_backend",
     "resolve_lora_file",
