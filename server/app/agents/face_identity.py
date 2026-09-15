@@ -1280,22 +1280,35 @@ class HttpFaceBackend:
         self._version_checked = False
         #: 파드가 /upscale 을 모르면(옛 코드) 한 번 겪고 그 뒤로는 묻지 않는다.
         self._upscale_supported = True
-        #: healthz.mask_lock 을 한 번만 묻는다(None = 아직 안 물어봄).
+        #: healthz.mask_lock 의 **확답**만 담는다(None = 아직 확답 없음). 아래 규칙 참조.
         self._mask_lock_supported: bool | None = None
+        #: 그 확답이 어느 파드의 것인가. 파드가 바뀌면 다시 묻는다.
+        self._mask_lock_probed_base: str | None = None
 
     def supports_mask_lock(self) -> bool:
         """파드가 마스크 잠금을 아는가. **모르면 안 보낸다** — 옛 파드는 그 필드를 무시하고
         크롭 전체를 다시 그리는데, 그 결과에 잠금 알파를 쓰면 경계가 깨진다.
-        확인 실패도 "모른다"로 본다(안전한 쪽)."""
-        if self._mask_lock_supported is None:
-            self._mask_lock_supported = False
-            try:
-                import httpx
 
-                body = httpx.get(f"{self._base()}/healthz", timeout=10.0).json()
-                self._mask_lock_supported = bool(body.get("mask_lock"))
-            except Exception as exc:  # noqa: BLE001 — 확인 실패가 렌더를 막아선 안 된다
-                log.info("face_identity: mask_lock probe failed: %r", exc)
+        캐시 규칙 — **확답만 기억한다**:
+          · /healthz 가 대답했다(true 든 false 든) → 그 값을 기억하고 다시 안 묻는다.
+          · 확인에 실패했다(부팅 중·네트워크·타임아웃) → 이번 컷만 False 로 가고 **기억하지 않는다.**
+            이걸 기억해 버리면 파드가 뜨기 전 첫 probe 한 번이 그 백엔드 인스턴스의 남은 수명
+            **전체**에서 마스크 잠금을 끈다 — 그 뒤 컷은 전부 조각 경계가 있는 옛 방식으로
+            나가는데 로그엔 그 한 줄(probe failed)만 남아 원인을 못 찾는다.
+          · 파드가 바뀌면(base URL 이 다르면) 확답도 무효다 — 새 파드는 다른 코드일 수 있다.
+        """
+        base = self._base()
+        if self._mask_lock_supported is not None and self._mask_lock_probed_base == base:
+            return self._mask_lock_supported
+        try:
+            import httpx
+
+            body = httpx.get(f"{base}/healthz", timeout=10.0).json()
+        except Exception as exc:  # noqa: BLE001 — 확인 실패가 렌더를 막아선 안 된다
+            log.info("face_identity: mask_lock probe failed (will retry): %r", exc)
+            return False
+        self._mask_lock_supported = bool(body.get("mask_lock"))
+        self._mask_lock_probed_base = base
         return self._mask_lock_supported
 
     def check_version(self) -> None:

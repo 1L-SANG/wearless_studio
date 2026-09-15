@@ -7,6 +7,7 @@ env 로 넣는다. 서버와 파드 코드가 같은 sha 라는 보장이 여기
 
 import hashlib
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -30,6 +31,45 @@ def test_bundle_contains_only_what_the_pod_needs(tmp_path):
     assert member.read() == b""
     # 서버 코드·테스트가 섞여 들어가면 안 된다
     assert not any(n.startswith("code/app/routes") or "tests/" in n for n in names)
+
+
+def test_the_bundle_imports_on_its_own(tmp_path):
+    """★ 번들을 **실제로 풀어서 import** 한다 — 파일 목록 검사로는 못 잡는 게 있다.
+
+    `face_recipe` 는 모듈 최상단에서 `from . import face_mask_lock as fml` 을 한다. 그 파일을
+    안 넣으면 파드가 face_recipe 를 import 하는 순간 ModuleNotFoundError 로 죽고, /healthz 가
+    아예 안 떠서 증상은 "파드가 600초 안에 안 떴다" 로만 보인다(원인이 코드 누락이라는 단서가
+    어디에도 안 남는다). 그래서 목록이 아니라 **import 가 되는지**를 본다.
+
+    레포 경로가 아니라 **푼 디렉터리만** sys.path 에 둔다 — 레포에서 끌어오면 빠진 파일이
+    있어도 통과한다(이 테스트가 존재하는 이유 자체가 사라진다).
+    """
+    subprocess.run([str(BUNDLE), str(tmp_path)], capture_output=True, text=True, check=True)
+    extracted = tmp_path / "x"
+    with tarfile.open(tmp_path / "face_render.tgz") as tar:
+        tar.extractall(extracted, filter="data")
+
+    probe = (
+        "import sys; sys.path.insert(0, %r);"
+        # 파드가 부팅에서 실제로 import 하는 것들. face_recipe 는 /healthz 의 레시피 해시,
+        # face_mask_lock 은 그 상수의 정본, face_render_service 는 서비스 본체다.
+        "import app.agents.face_recipe as r;"
+        "import app.agents.face_mask_lock as m;"
+        "import app.agents.face_identity as i;"
+        # import 만으로는 '빈 껍데기'도 통과한다 — 파드가 부르는 이름을 실제로 짚는다.
+        "print(r.recipe_id({}), m.gen_mask.__name__, i.CROP)"
+        % str(extracted / "code")
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
+                          cwd=tmp_path)   # 레포 밖에서 — cwd 가 app/ 을 주워 오지 않게
+    assert done.returncode == 0, done.stderr
+    assert "gen_mask" in done.stdout
+
+
+def test_bundle_carries_the_mask_lock_rules():
+    """상수·마스크 규칙의 정본. 서버와 파드가 다른 규칙을 쓰면 경계가 조용히 깨진다."""
+    text = BUNDLE.read_text(encoding="utf-8")
+    assert "face_mask_lock.py" in text
 
 
 def test_bundle_is_reproducible(tmp_path):

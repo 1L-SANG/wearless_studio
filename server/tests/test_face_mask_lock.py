@@ -377,3 +377,79 @@ def test_the_pod_module_keeps_the_no_torch_guard():
 def test_the_server_module_never_imports_torch():
     text = pathlib.Path(fml.__file__).read_text(encoding="utf-8")
     assert "import torch" not in text and "diffusers" not in text
+
+
+# ── 파드 지원 여부 캐시 규칙 ────────────────────────────────────────────────
+#
+# 마스크 잠금은 **파드가 안다고 확인된 뒤에만** 켠다. 옛 파드는 그 필드를 조용히 무시하고
+# 크롭 전체를 다시 그리는데, 그 결과에 잠금 알파를 쓰면 경계가 깨진다. 그래서 확인 실패는
+# 안전한 쪽(False)으로 간다 — 다만 **그 실패를 기억하면 안 된다.**
+
+
+class _Probe:
+    """httpx.get 대역. 첫 n 번은 터지고 그 뒤로는 mask_lock 값을 돌려준다."""
+
+    def __init__(self, *, fail_times=0, mask_lock=True):
+        self.fail_times, self.mask_lock = fail_times, mask_lock
+        self.calls = []
+
+    def __call__(self, url, timeout=None):
+        self.calls.append(url)
+        if len(self.calls) <= self.fail_times:
+            raise RuntimeError("pod still booting")
+        return type("R", (), {"json": lambda _self, body={"mask_lock": self.mask_lock}: body})()
+
+
+def _backend(monkeypatch, probe, url="http://pod.test/render"):
+    import httpx
+
+    from app.agents.face_identity import HttpFaceBackend
+
+    monkeypatch.setattr(httpx, "get", probe)
+    return HttpFaceBackend(url)
+
+
+def test_a_definite_yes_is_asked_once(monkeypatch):
+    probe = _Probe(mask_lock=True)
+    backend = _backend(monkeypatch, probe)
+
+    assert [backend.supports_mask_lock() for _ in range(3)] == [True, True, True]
+    assert len(probe.calls) == 1
+    assert probe.calls[0] == "http://pod.test/healthz"
+
+
+def test_a_definite_no_is_also_asked_once(monkeypatch):
+    """파드가 '모른다'고 **대답**한 것은 확답이다 — 매 컷 다시 물을 이유가 없다."""
+    probe = _Probe(mask_lock=False)
+    backend = _backend(monkeypatch, probe)
+
+    assert [backend.supports_mask_lock() for _ in range(3)] == [False, False, False]
+    assert len(probe.calls) == 1
+
+
+def test_a_failed_probe_is_not_remembered(monkeypatch):
+    """★ 이게 규칙의 핵심.
+
+    파드가 뜨는 중이라 첫 확인이 실패하는 건 흔하다. 그걸 기억해 버리면 그 백엔드 인스턴스의
+    남은 수명 **전체**에서 마스크 잠금이 꺼지고, 그 뒤 컷은 전부 조각 경계가 있는 옛 방식으로
+    나간다 — 로그엔 probe failed 한 줄뿐이라 원인을 못 찾는다.
+    """
+    probe = _Probe(fail_times=2, mask_lock=True)
+    backend = _backend(monkeypatch, probe)
+
+    assert backend.supports_mask_lock() is False   # 확인 실패 → 이번 컷만 안전하게
+    assert backend.supports_mask_lock() is False
+    assert backend.supports_mask_lock() is True    # 파드가 뜨자마자 회복한다
+    assert len(probe.calls) == 3
+    assert backend.supports_mask_lock() is True and len(probe.calls) == 3  # 그 뒤엔 확답 재사용
+
+
+def test_a_different_pod_is_asked_again(monkeypatch):
+    """파드가 바뀌면 확답도 무효다 — 새 파드는 다른 코드일 수 있다."""
+    probe = _Probe(mask_lock=True)
+    backend = _backend(monkeypatch, probe)
+    assert backend.supports_mask_lock() is True
+
+    backend.url = "http://other-pod.test/render"
+    assert backend.supports_mask_lock() is True
+    assert probe.calls == ["http://pod.test/healthz", "http://other-pod.test/healthz"]
