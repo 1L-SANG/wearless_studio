@@ -204,16 +204,16 @@ def test_bottom_hero_paired_qc_never_classifies_matching_top_as_bottom(monkeypat
 
 # ── 2. 예산 내 재롤과 최종 1회 구제 ────────────────────────────────────────
 
-def test_pants_critical_gets_one_final_repair_then_stops(monkeypatch):
-    """마지막 1회에도 바지 하드 오류가 남으면 저장과 자동 재시도 없이 실패로 종결한다."""
+def test_matching_only_critical_preserves_first_cut_for_review(monkeypatch):
+    """자동 생성의 매칭 단독 경고는 주상품을 다시 그리지 않고 기록만 남긴다."""
     crit = ["matching bottom colour changed"]
     gemini, r2 = _Gemini([b'gen-1', b'gen-2', b'final']), _R2()
-    with pytest.raises(mannequin_job.MannequinQualityError, match='final_edit_preservation_rejected'):
-        _run(monkeypatch, gemini=gemini, r2=r2, outputs=[],
-            p2_by_attempt=[{**_p2(matching_critical=crit), **assessment()}] * 3)
-    assert len(gemini.generation_calls) == 3
-    assert 'matching bottom colour changed' in gemini.generation_calls[-1]
-    assert r2.puts == []
+    result = _run(monkeypatch, gemini=gemini, r2=r2, outputs=[],
+        p2_by_attempt=[{**_p2(matching_critical=crit), **assessment()}] * 3)[0]
+    assert len(gemini.generation_calls) == 1
+    assert [item[1] for item in r2.puts] == [b'gen-1']
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert result['qc_scores']['matching_critical_errors'] == crit
 
 
 def test_product_reject_with_pants_critical_gets_one_final_repair_without_crash(monkeypatch):

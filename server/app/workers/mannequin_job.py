@@ -613,6 +613,8 @@ def score_outcome(s, p2, *, product_policy=True) -> str:
         return "regenerate"
     if product_policy and mannequin_quality.repairable_issues(p2):
         return "regenerate"
+    if product_policy and p2.get("matching_review_only") is True:
+        return "needs_review"
     if product_policy and mannequin_quality.surface_review_issues(p2):
         return "needs_review"
     unverified = product_policy and mannequin_quality.review_unavailable(p2)
@@ -689,6 +691,7 @@ def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | N
     for key in (
         "product_risks", "quality_policy", "image_hash", "matching_critical_errors",
         "surface_policy_normalized", "surface_review_only",
+        "matching_review_only",
     ):
         if key in p2d:
             out[key] = p2d[key]
@@ -1996,6 +1999,39 @@ async def _run_candidate(
                 "candidate": candidate, "attempt": attempt,
                 "status": "adjustment_postcheck", "outcome": "rejected"})
             raise MannequinQualityError("adjustment_preservation_rejected")
+        # A matching-only warning is not permission to repaint the main product.
+        # Preserve the first fresh automatic cut before any optional postpass or retry.
+        # Explicit seller edits/axes, hero occlusion, unknown QC and base defects still
+        # use their existing checks. Keep the actual warning and original score values.
+        if (
+            attempt == 1 and generation_path == "fresh"
+            and not adjusted_axes and not mannequin_fit_qc.declared_axis_spec(fit_profile)
+            and not (fit_profile or {}).get("matchingFit")
+            and not (fit_profile or {}).get("matchCut")
+            and specialist_mode != "enforce"
+            and (eff_image_qc == "enforce" or getattr(s, "mannequin_pants_qc", "off") == "enforce")
+            and not bf_axes
+            and not (getattr(s, "mannequin_base_fidelity_qc", "off") == "enforce"
+                     and (not base_fidelity or base_fidelity["poseFrameMatch"]["decision"] == "skip"))
+            and not (image_qc.bottom_visibility_required(clothing_type, fit_profile)
+                     and (p2 or {}).get("bottom_waistband_visible") != "visible")
+            and mannequin_quality.matching_only_review(p2, review_threshold=s.qc_score_review)
+            and not gate_decision(s, verdict.verdict, p2)[0]
+        ):
+            series = await _apply_series_qc(
+                app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
+                candidate=candidate, attempt=attempt, res=res)
+            if series is None or series.get("consistency", 0) >= s.qc_score_review:
+                scores = merge_qc_scores(p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+                scores["matching_review_only"] = True
+                await _emit(pool, job_id, "step", {
+                    "status": "matching_review_only", "candidate": candidate,
+                    "outcome": "first_retained", "image_hash": hashlib.sha256(res.image).hexdigest(),
+                    "matchingCriticalErrors": p2["matching_critical_errors"]})
+                return await _save_cut(
+                    s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+                    candidate=candidate, base_fit=base_fit, res=res, qc_scores=scores,
+                    cancel_check=cancel_check)
         unverified_main = (s.image_qc == "enforce" and mannequin_quality.review_unavailable(p2)
                 and any(mannequin_quality.blocking_issues(previous) for previous in observed_scores)
                 and not mannequin_quality.blocking_issues(p2))

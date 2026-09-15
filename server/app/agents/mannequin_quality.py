@@ -201,6 +201,26 @@ def review_unavailable(scores) -> bool:
         and not review_complete(scores))
 
 
+def matching_only_review(scores, *, review_threshold=65) -> bool:
+    """Known matching warnings cannot authorize repainting an otherwise sound hero."""
+    if not isinstance(scores, dict) or not review_complete(scores):
+        return False
+    warnings = scores.get('matching_critical_errors')
+    if not isinstance(warnings, list) or not warnings or any(
+        not isinstance(item, str) or not item.strip() for item in warnings
+    ):
+        return False
+    if actionable_critical_errors(scores) or repairable_issues(scores):
+        return False
+    if scores.get('bottom_waistband_visible') in ('covered', 'uncertain'):
+        return False
+    return all(
+        type(scores.get(key)) in (int, float)
+        and review_threshold <= scores[key] <= 100
+        for key in ('product_fidelity', 'image_quality', 'physical_naturalness')
+    )
+
+
 def repair_feedback(scores) -> str:
     issues = blocking_issues(scores)
     matching = (scores or {}).get('matching_critical_errors') or []
