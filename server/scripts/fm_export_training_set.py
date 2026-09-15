@@ -92,8 +92,9 @@ def fetch_photos(dsn: str, enrollment_id: str) -> list[dict]:
         conn.read_only = True
         with conn.cursor() as cur:
             cur.execute(
-                "select angle, r2_key, mime_type, qc_status, storage_state, byte_size "
-                "from fm_biometric_enrollment_photos where enrollment_id = %s",
+                "select angle, r2_key, normalized_r2_key, mime_type, qc_status, "
+                "storage_state, byte_size from fm_biometric_enrollment_photos "
+                "where enrollment_id = %s",
                 (enrollment_id,),
             )
             return [dict(row) for row in cur.fetchall()]
@@ -128,6 +129,10 @@ def plan(rows: list[dict]) -> list[dict]:
         out.append({
             "group": group, "slot": slot, "name": export_name(slot),
             "row": row if usable else None,
+            # 정규화본이 있으면 그걸 읽는다 — 서버가 이미 EXIF 를 픽셀에 적용해 무손실 PNG 로
+            # 만들어 뒀다(2026-09-15~). 없는 옛 행은 원본을 여기서 같은 규칙으로 바꾼다.
+            "source_key": (row.get("normalized_r2_key") or row.get("r2_key")) if usable else None,
+            "normalized": bool(usable and row.get("normalized_r2_key")),
             "angle": row.get("angle") if row else None,
             "state": row.get("storage_state") if row else None,
             "qc": row.get("qc_status") if row else None,
@@ -230,10 +235,12 @@ def main() -> int:
         target = out_dir / item["group"]
         target.mkdir(parents=True, exist_ok=True)
         destination = target / f"{item['name']}.png"
-        data = r2.get_bytes(item["row"]["r2_key"])
+        data = r2.get_bytes(item["source_key"])
         width, height = normalize_png(data, destination)
         written += 1
-        print(f"  wrote {item['group']}/{destination.name} {width}x{height} ({len(data)}B → {destination.stat().st_size}B)")
+        source = "normalized" if item["normalized"] else "original"
+        print(f"  wrote {item['group']}/{destination.name} {width}x{height} "
+              f"({len(data)}B {source} → {destination.stat().st_size}B)")
     print(f"{written}장을 {out_dir} 에 썼다. 학습 {len([i for i in have if i['group'] == 'train'])}장 · "
           f"기준 {len([i for i in have if i['group'] == 'refset'])}장 · "
           f"각도 {len([i for i in have if i['group'] == 'angles'])}장.")

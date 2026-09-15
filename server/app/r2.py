@@ -71,6 +71,43 @@ def enrollment_quarantine_key(
     return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}/{version}.{ext}"
 
 
+#: 정규화본 키의 꼬리. 원본 키에서 **계산**할 수 있어야 한다 — 정리 원장(cleanup)이 키를
+#: 하나만 추적하고 지울 때 형제를 함께 지우는 구조라, 이 규칙이 그 둘을 잇는 유일한 끈이다.
+NORMALIZED_SUFFIX = ".normalized.png"
+
+
+def enrollment_normalized_key(
+    enrollment_id: str,
+    angle: str,
+    *,
+    version: str,
+) -> str:
+    """원본과 **같은 버전**을 쓰는 형제 키. 한 업로드가 만든 두 객체가 짝이라는 게 키에서 보인다.
+
+    격리(quarantine) prefix 아래 둔다 — 파기 스윕·수명 규칙이 원본과 같은 자리에 걸린다.
+    """
+    return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}/{version}{NORMALIZED_SUFFIX}"
+
+
+def normalized_sibling_key(r2_key: str | None) -> str | None:
+    """원본 키 → 정규화본 키. 버전 없는 옛 키(그 시절엔 정규화본이 없었다)는 None.
+
+    정리·파기가 "원본을 지웠는데 정규화본이 남는" 상태를 만들지 않으려면, 두 키를 따로
+    추적하는 대신 **한쪽에서 다른 쪽을 계산**할 수 있어야 한다. 추적 대상이 하나면
+    반쪽만 정리되는 경우가 아예 생기지 않는다.
+    """
+    key = str(r2_key or "")
+    prefix, sep, tail = key.rpartition("/")
+    if not sep or "/quarantine/" not in prefix:
+        return None            # 옛 평면 키(quarantine/<angle>.<ext>) — 형제가 없다
+    if tail.endswith(NORMALIZED_SUFFIX):
+        return None            # 이미 정규화본이다
+    version = tail.rsplit(".", 1)[0]
+    if not version:
+        return None
+    return f"{prefix}/{version}{NORMALIZED_SUFFIX}"
+
+
 def enrollment_id_document_key(
     enrollment_id: str,
     ext: str,

@@ -843,7 +843,7 @@ class AdminFakeCursor:
 
         # --- 이미지: 각도 사진 키 조회 ---
         if "fm_biometric_enrollment_photos" in query and query.startswith(
-            "select p.r2_key, p.mime_type"
+            "select p.r2_key, p.normalized_r2_key, p.mime_type"
         ):
             # 16칸 스펙 이후 행 이름은 등록 회차마다 다르다 — 라우트가 후보 목록을 넘기고
             # 선호 순서(array_position)로 한 장을 고른다.
@@ -865,7 +865,8 @@ class AdminFakeCursor:
                        else _photo_review_open(store, enrollment))
             if not allowed:
                 photo = None
-            self.result = photo
+            # 읽기는 정규화본으로 한다 — 원본은 HEIC 일 수 있다.
+            self.result = dict(photo, normalized_r2_key=photo.get("normalized_r2_key")) if photo else None
             return
 
         # --- 학습 전 사진 확인 큐 ---

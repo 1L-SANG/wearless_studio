@@ -225,9 +225,14 @@ export async function modelComponentHarness({
           export const fetchFacePhotoUrl = (...args) => api.fetchFacePhotoUrl(...args);
         `;
         // 변환(HEIC→JPEG)은 canvas 를 쓰므로 노드에서 못 돈다 — 기본은 원본 통과, 필요하면 런타임이 교체.
+        // toPreviewImage 는 **미리보기 전용**이다(업로드하지 않는다, 2026-09-15). 얼굴 등록
+        // 사진은 원본 바이트 그대로 올라가므로 이 스텁이 업로드 바이트를 만들지 않는다.
         if (id === '\0fm-test-transcode') return `
           export const toUploadableImage = (file) => (
             ${access}.toUploadableImage ? ${access}.toUploadableImage(file) : Promise.resolve(file)
+          );
+          export const toPreviewImage = (file) => (
+            ${access}.toPreviewImage ? ${access}.toPreviewImage(file) : Promise.resolve(file)
           );
         `;
         return null;

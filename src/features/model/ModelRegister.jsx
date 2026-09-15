@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
 import { CX_AUTH_CONFIG_URL, runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
-import { toUploadableImage } from '../../lib/imageTranscode.js';
+import { toPreviewImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
 import IdDocumentStep from './IdDocumentStep.jsx';
 import IdentityMethodStep from './IdentityMethodStep.jsx';
@@ -327,14 +327,20 @@ export function ModelRegister() {
     if (inFlight.current || !enrollment?.id) return;
     inFlight.current = true; setBusy(true); setError('');
     try {
-      const blob = await toUploadableImage(file);
+      // 등록 사진은 **원본 바이트 그대로** 올려요 — 이 사진이 곧 학습셋이라, 상품 사진용
+      // 축소 규칙(4000px·JPEG 0.85)을 먹이면 48MP 원본이 12MP 손실본이 돼요.
+      // EXIF 회전·HEIC 해독은 서버가 정규화본을 만들며 한 번에 해요.
       const editable = await editableEnrollment();
       if (!mounted.current) return;
-      const result = await uploadEnrollmentPhoto({ enrollmentId: editable.id, slot, fileBlob: blob, filename: blob.name || file.name });
+      const result = await uploadEnrollmentPhoto({ enrollmentId: editable.id, slot, fileBlob: file, filename: file.name });
       if (!mounted.current) return;
-      const url = URL.createObjectURL(blob);
+      // 미리보기만 브라우저에서 작게 만들어요(업로드하지 않아요). 실패하면 미리보기만 없어요.
+      const preview = await toPreviewImage(file);
+      if (!mounted.current) return;
       if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
-      previewUrls.current[slot] = url; setPreviews({ ...previewUrls.current });
+      if (preview) { previewUrls.current[slot] = URL.createObjectURL(preview); }
+      else { delete previewUrls.current[slot]; }
+      setPreviews({ ...previewUrls.current });
       if (Array.isArray(result.photos)) setEnrollment(result);
       else setEnrollment((current) => ({ ...current, photos: [...(current.photos || []).filter((photo) => photoSlotKey(photo) !== slot), { ...result, slot }] }));
       // 업로드 응답은 사진 한 장(EnrollmentPhotoView)이라 재촬영 목록이 안 들어 있어요 —

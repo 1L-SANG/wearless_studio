@@ -41,6 +41,9 @@ from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
+from .facemarket_photo_normalize import (
+    NORMALIZED_MIME, NormalizeFailed, normalize_png, sniff_image_mime,
+)
 from .r2 import ext_for_mime, sha256_sri
 
 logger = logging.getLogger(__name__)
@@ -50,8 +53,13 @@ router = APIRouter(prefix="/v1/personalization", tags=["Personalization"])
 ANGLES = ("front", "side", "angle45")
 ALL_CONSENT_TYPES = ("service_use", "training_use", "cross_border_transfer")
 REQUIRED_CONSENTS = ("service_use", "cross_border_transfer")
-MAX_FACE_BYTES = 25 * 1024 * 1024  # 25MB — routes.MAX_UPLOAD_BYTES / facemarket MAX_FACE_BYTES 미러
-_ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}  # 얼굴은 png/jpg/webp 만(§3.2)
+# 얼굴 사진은 **원본 그대로** 받는다 — 프런트가 축소·재인코딩하지 않는다.
+# facemarket MAX_FACE_BYTES 미러(아이폰 48MP JPEG 최고화질이 26.6MB 실측).
+MAX_FACE_BYTES = 40 * 1024 * 1024
+MAX_FACE_MB = MAX_FACE_BYTES // (1024 * 1024)
+# 아이폰이 주는 HEIC/HEIF 포함. 저장은 언제나 정규화본(EXIF 적용 무손실 PNG)이다 —
+# 이 경로엔 원본·정규화본을 따로 담을 칸이 없어서, 읽을 수 있는 쪽 하나만 둔다.
+_ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
 
 # 동의 문서 현행 버전(법무 확정값 자리). 제출 docVersion 이 불일치하면 400 stale_consent_doc.
 CONSENT_DOC_VERSION = "2026-10-v1"
@@ -772,9 +780,8 @@ async def upload_face_photo(
     """
     if angle not in ANGLES:
         raise _err("invalid_angle", "각도는 front/side/angle45 중 하나여야 해요.")
-    mime = (photo.content_type or "").lower()
-    if mime not in _ALLOWED_FACE_MIME or not ext_for_mime(mime):
-        raise _err("unsupported_type", "허용되지 않는 이미지 형식입니다. (png/jpg/webp)")
+    # content-type 은 믿지 않는다 — iOS 는 HEIC 의 type 을 비워 보내기도 한다.
+    declared = (photo.content_type or "").lower()
 
     # 1) 전제조건 게이트(얼굴 바이트를 외부 API로 보내기 전에 필수 동의를 코드로 확인 — §1.4).
     async with get_conn(request) as conn:
@@ -793,7 +800,16 @@ async def upload_face_photo(
     if not data:
         raise _err("unsupported_type", "빈 파일입니다.")
     if len(data) > MAX_FACE_BYTES:
-        raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+        raise _err("file_too_large", f"이미지는 {MAX_FACE_MB}MB 이하만 가능합니다.", status=413)
+    if sniff_image_mime(data, declared) not in _ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "허용되지 않는 이미지 형식입니다. (heic/png/jpg/webp)")
+    # EXIF 를 픽셀에 적용한 무손실 PNG 로 한 번 정리한다 — HEIC 는 cv2 가 아예 못 읽고,
+    # JPEG 의 orientation 은 PIL 과 cv2 가 다르게 다룬다. to_thread 필수(48MP 면 수 초).
+    try:
+        data, _size = await asyncio.to_thread(normalize_png, data)
+    except NormalizeFailed:
+        raise _err("unsupported_type", "이 사진을 읽지 못했어요. 다시 찍어 올려 주세요.")
+    mime = NORMALIZED_MIME
 
     # 3) 동기 QC(외부 비전 API — cross_border 동의가 전제라 국외전송 정합). 실패=503 fail-safe.
     try:

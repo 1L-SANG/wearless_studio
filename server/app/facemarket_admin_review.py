@@ -32,6 +32,7 @@ from . import admin_guard
 from .auth import require_user
 from .db import get_conn
 from .facemarket_enrollment import (
+    _readable_photo as readable_photo,
     EnrollmentMappedError,
     _assert_account_open,
     _reject_cutover_closed,
@@ -460,7 +461,8 @@ async def get_review_image(
                 scope = (" and e.review_status is not null" if kind in PHOTO_ANGLES
                          else FULL_PHOTO_SCOPE)
                 await cur.execute(
-                    "select p.r2_key, p.mime_type from fm_biometric_enrollment_photos p "
+                    "select p.r2_key, p.normalized_r2_key, p.mime_type "
+                    "from fm_biometric_enrollment_photos p "
                     "join fm_biometric_enrollments e on e.id = p.enrollment_id "
                     "where p.enrollment_id = %s and p.angle = any(%s) "
                     f"{scope} "
@@ -468,8 +470,8 @@ async def get_review_image(
                     (enrollment_id, candidates, candidates),
                 )
                 found = await cur.fetchone()
-                key = found.get("r2_key") if found else None
-                mime_hint = found.get("mime_type") if found else None
+                # 정규화본을 낸다 — 원본이 HEIC 면 브라우저가 못 그려서 심사자는 빈 칸을 본다.
+                key, mime_hint = readable_photo(found) if found else (None, None)
         # 키를 못 찾아도(파기됨·범위 밖) 시도 자체를 남긴다 — "무엇을 보려 했는가" 도 기록이다.
         await admin_guard.write_audit(
             conn,

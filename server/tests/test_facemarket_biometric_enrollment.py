@@ -20,10 +20,36 @@ from botocore.exceptions import EndpointConnectionError
 from psycopg.errors import UniqueViolation
 from starlette.datastructures import Headers
 
+from PIL import Image
+
 from app import cx_identity, facemarket_enrollment, facemarket_photos, r2
 from app.facemarket import _gender_from_trans
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
+
+
+def _uploaded_pair(fake_r2, nth=0):
+    """nth 번째 업로드가 만든 두 객체 키 [원본, 정규화본].
+
+    2026-09-15 부터 한 번의 업로드가 R2 객체를 **둘** 만든다 — 원본은 사용자가 올린 그대로
+    (HEIC 일 수 있다), 정규화본은 그걸 읽을 수 있게 만든 무손실 PNG. 그래서 puts 는 짝으로
+    쌓이고, 지울 때도 짝으로 지워진다(r2.normalized_sibling_key 가 그 둘을 잇는다).
+    """
+    original = fake_r2.puts[nth * 2][0]
+    return [original, r2.normalized_sibling_key(original)]
+
+
+def _uploaded_key(fake_r2, nth=0):
+    """nth 번째 업로드의 **원본** 키."""
+    return fake_r2.puts[nth * 2][0]
+
+
+def _last_uploaded_key(fake_r2):
+    """가장 최근 업로드의 **원본** 키. puts 의 마지막은 정규화본이라 그대로 쓰면 안 된다 —
+    정리 원장(cleanup)이 추적하는 건 원본 키 하나뿐이다."""
+    return next(key for key, *_ in reversed(fake_r2.puts)
+                if not key.endswith(r2.NORMALIZED_SUFFIX))
+
 from conftest import make_settings
 
 
@@ -663,6 +689,7 @@ class FakeCursor:
                 and photo["storage_state"] == "quarantine"
             ]
         elif query.startswith("select r2_key, storage_state"):
+            # 업로드 1차 통과(고아 예약 직전)의 좁은 조회 — storage_state 만 본다.
             enrollment_id, angle = params
             photo = next(
                 (
@@ -673,14 +700,10 @@ class FakeCursor:
                 None,
             )
             self.result = (
-                {
-                    "r2_key": photo["r2_key"],
-                    "storage_state": photo["storage_state"],
-                }
-                if photo
-                else None
+                {"r2_key": photo["r2_key"], "storage_state": photo["storage_state"]}
+                if photo else None
             )
-        elif query.startswith("select r2_key, mime_type"):
+        elif query.startswith("select r2_key, normalized_r2_key, mime_type"):
             enrollment_id, angle = params
             photo = next(
                 (
@@ -691,7 +714,10 @@ class FakeCursor:
                 None,
             )
             self.result = (
-                {"r2_key": photo["r2_key"], "mime_type": photo["mime_type"], "storage_state": photo["storage_state"]}
+                {"r2_key": photo["r2_key"],
+                 "normalized_r2_key": photo.get("normalized_r2_key"),
+                 "mime_type": photo["mime_type"],
+                 "storage_state": photo["storage_state"]}
                 if photo else None
             )
         elif query.startswith("select r2_key from fm_biometric_enrollment_photos"):
@@ -805,7 +831,8 @@ class FakeCursor:
         elif query.startswith("insert into fm_biometric_enrollment_photos"):
             if self.store.fail_photo_upsert:
                 raise RuntimeError("database unavailable")
-            enrollment_id, angle, key, digest, mime, byte_size = params
+            (enrollment_id, angle, key, digest, mime, byte_size,
+             normalized_key, normalized_bytes, normalized_w, normalized_h) = params
             photo = next(
                 (
                     item
@@ -822,6 +849,10 @@ class FakeCursor:
                 "image_digest": digest,
                 "mime_type": mime,
                 "byte_size": byte_size,
+                "normalized_r2_key": normalized_key,
+                "normalized_byte_size": normalized_bytes,
+                "normalized_width": normalized_w,
+                "normalized_height": normalized_h,
                 "qc_status": "passed",
                 "storage_state": "quarantine",
                 "uploaded_at": uploaded_at,
@@ -3368,14 +3399,14 @@ def test_upload_rejects_empty_file(enrollment_client, auth, fake_r2, monkeypatch
     assert fake_r2.puts == []
 
 
-def test_upload_rejects_file_over_25_mib(enrollment_client, auth, fake_r2, monkeypatch):
+def test_upload_rejects_file_over_the_face_cap(enrollment_client, auth, fake_r2, monkeypatch):
     stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
         data={"angle": "front"},
-        files={"photo": ("face.jpg", b"x" * (25 * 1024 * 1024 + 1), "image/jpeg")},
+        files={"photo": ("face.jpg", b"x" * (facemarket_enrollment.MAX_FACE_BYTES + 1), "image/jpeg")},
         headers=auth(),
     )
 
@@ -3594,7 +3625,12 @@ def test_other_user_same_angle_upload_never_touches_owner_object_or_row(
     )
     assert owner.status_code == 201
     owner_photo = copy.deepcopy(enrollment_store.photos[0])
-    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    # 주인의 사진은 원본·정규화본 **한 짝**이다. "남의 업로드가 이걸 건드리지 않았다" 를
+    # 보려면 두 객체 모두가 그대로 있어야 한다.
+    owner_objects = {key: fake_r2.objects[key]
+                     for key in (owner_photo["r2_key"],
+                                 r2.normalized_sibling_key(owner_photo["r2_key"]))
+                     if key in fake_r2.objects}
     puts_before_attack = list(fake_r2.puts)
 
     attack = enrollment_client.post(
@@ -3607,7 +3643,7 @@ def test_other_user_same_angle_upload_never_touches_owner_object_or_row(
     assert attack.status_code == 404
     assert fake_r2.puts == puts_before_attack
     assert enrollment_store.photos == [owner_photo]
-    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+    assert fake_r2.objects == owner_objects
 
 
 def test_delete_photo_removes_private_object_before_metadata(
@@ -3628,7 +3664,8 @@ def test_delete_photo_removes_private_object_before_metadata(
     )
 
     assert response.status_code == 204
-    assert fake_r2.deletes == [fake_r2.puts[0][0]]
+    # 원본과 정규화본이 짝으로 지워진다 — 하나만 지우면 얼굴이 R2 에 그대로 남는다.
+    assert fake_r2.deletes == _uploaded_pair(fake_r2)
     assert enrollment_store.photos == []
 
 
@@ -3733,10 +3770,10 @@ def test_upload_replacement_with_new_extension_deletes_old_object_after_commit(
         )
         assert response.status_code == 201, response.text
 
-    old_key = fake_r2.puts[0][0]
-    new_key = fake_r2.puts[1][0]
+    old_key = _uploaded_key(fake_r2, 0)
+    new_key = _uploaded_key(fake_r2, 1)
     assert old_key != new_key
-    assert fake_r2.deletes == [old_key]
+    assert fake_r2.deletes == _uploaded_pair(fake_r2, 0)
     assert enrollment_store.photos[0]["r2_key"] == new_key
     assert enrollment_store.cleanup == []
 
@@ -3831,11 +3868,11 @@ def test_upload_database_failure_removes_new_quarantine_object(
         headers=auth(),
     )
 
-    key = fake_r2.puts[0][0]
+    key = _uploaded_key(fake_r2, 0)
     assert response.status_code == 503
     assert key not in response.text
     assert "digest" not in response.text.lower()
-    assert fake_r2.deletes == [key]
+    assert fake_r2.deletes == _uploaded_pair(fake_r2, 0)
     assert key not in fake_r2.objects
 
 
@@ -3852,7 +3889,12 @@ def test_same_extension_replacement_db_failure_preserves_owner_photo(
     )
     assert first.status_code == 201
     owner_photo = copy.deepcopy(enrollment_store.photos[0])
-    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    # 주인의 사진은 원본·정규화본 **한 짝**이다. "남의 업로드가 이걸 건드리지 않았다" 를
+    # 보려면 두 객체 모두가 그대로 있어야 한다.
+    owner_objects = {key: fake_r2.objects[key]
+                     for key in (owner_photo["r2_key"],
+                                 r2.normalized_sibling_key(owner_photo["r2_key"]))
+                     if key in fake_r2.objects}
     enrollment_store.fail_photo_upsert = True
 
     failed = enrollment_client.post(
@@ -3864,7 +3906,7 @@ def test_same_extension_replacement_db_failure_preserves_owner_photo(
 
     assert failed.status_code == 503
     assert enrollment_store.photos == [owner_photo]
-    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+    assert fake_r2.objects == owner_objects
     assert enrollment_store.cleanup == []
 
 
@@ -3880,7 +3922,12 @@ def test_replacement_commit_failure_rolls_back_switch_and_cleans_new_object(
         headers=auth(),
     )
     owner_photo = copy.deepcopy(enrollment_store.photos[0])
-    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    # 주인의 사진은 원본·정규화본 **한 짝**이다. "남의 업로드가 이걸 건드리지 않았다" 를
+    # 보려면 두 객체 모두가 그대로 있어야 한다.
+    owner_objects = {key: fake_r2.objects[key]
+                     for key in (owner_photo["r2_key"],
+                                 r2.normalized_sibling_key(owner_photo["r2_key"]))
+                     if key in fake_r2.objects}
     enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
 
     failed = enrollment_client.post(
@@ -3892,7 +3939,7 @@ def test_replacement_commit_failure_rolls_back_switch_and_cleans_new_object(
 
     assert failed.status_code == 503
     assert enrollment_store.photos == [owner_photo]
-    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+    assert fake_r2.objects == owner_objects
     assert enrollment_store.cleanup == []
 
 
@@ -3910,7 +3957,7 @@ def test_failed_replacement_cleanup_is_tracked_and_retried_on_next_upload(
         files={"photo": ("front.jpg", b"orphan-candidate", "image/jpeg")},
         headers=auth(),
     )
-    orphan_key = fake_r2.puts[-1][0]
+    orphan_key = _last_uploaded_key(fake_r2)
 
     assert failed.status_code == 503
     assert orphan_key in fake_r2.objects
@@ -4218,7 +4265,7 @@ def test_upload_fence_blocks_due_orphan_cleanup_beyond_old_lease(
             )
         )
         assert await asyncio.to_thread(object_stored.wait, 3)
-        new_key = fake_r2.puts[-1][0]
+        new_key = _last_uploaded_key(fake_r2)
         enrollment_store.now += timedelta(minutes=5, seconds=1)
 
         drained = asyncio.create_task(
@@ -4372,7 +4419,9 @@ def test_due_upload_orphan_cleanup_resumes_after_fence_connection_dies(
             )
             assert await asyncio.wait_for(cleaned, timeout=0.2) == (1, 0)
 
-        assert fake_r2.deletes == [key]
+        # 정리는 짝으로 움직인다 — 원본 키 하나만 추적하고, 지울 때 형제(정규화본)를 함께
+        # 지운다. 형제가 없어도 R2 delete 는 무해한 no-op 이라 옛 객체에도 안전하다.
+        assert fake_r2.deletes == [key, r2.normalized_sibling_key(key)]
         assert enrollment_store.cleanup == []
         assert fake_pool.failed_try_locks == 1
         assert fake_pool.max_checkout_depth == 1
@@ -5356,3 +5405,184 @@ def test_review_deadline_is_shorter_than_the_id_document_sweep():
         facemarket_id_document.sweep_stale_id_documents
     ).parameters["older_than_seconds"].default
     assert facemarket_enrollment.REVIEW_DEADLINE_DAYS * 86400 < sweep_default
+
+
+# ── 원본 그대로 받기 + 정규화본 (2026-09-15) ──────────────────────────────────
+#
+# 등록 사진이 곧 LoRA 학습셋인데, 프런트가 셀러 상품 사진용 규칙(긴 변 4000px·JPEG 0.85)으로
+# 다시 인코딩해 올리고 있었다 — 48MP 원본이 12MP 손실본으로 학습에 들어갔다. 이제 받은
+# 바이트를 그대로 저장하고, **읽을 것**(QC·관리자 열람·학습 내보내기)은 서버가 만든
+# 정규화본(EXIF 적용 무손실 PNG)을 쓴다.
+
+
+def _real_normalize(monkeypatch):
+    """conftest 의 정규화 스텁을 끄고 진짜 변환을 쓴다(이 구역 전용)."""
+    from app import facemarket_photo_normalize
+
+    monkeypatch.setattr(facemarket_enrollment, "normalize_png",
+                        facemarket_photo_normalize.normalize_png)
+
+
+def _real_jpeg(width=900, height=1200, *, orientation=None) -> bytes:
+    buffer = io.BytesIO()
+    image = Image.new("RGB", (width, height), (80, 120, 200))
+    image.paste((240, 40, 40), (0, 0, width, max(1, height // 4)))
+    if orientation is None:
+        image.save(buffer, "JPEG", quality=95)
+    else:
+        exif = image.getexif()
+        exif[274] = orientation
+        image.save(buffer, "JPEG", quality=95, exif=exif)
+    return buffer.getvalue()
+
+
+def _upload(client, auth_headers, enrollment_id, body, *, filename="front.jpg",
+            content_type="image/jpeg", slot="front"):
+    return client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": slot},
+        files={"photo": (filename, body, content_type)},
+        headers=auth_headers,
+    )
+
+
+def test_the_original_bytes_are_stored_unchanged(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    """★ 이 PR 의 요점. 올린 바이트가 한 비트도 안 바뀌어야 학습이 원본 화질을 본다."""
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    body = _real_jpeg()
+
+    response = _upload(enrollment_client, auth(), enrollment_id, body)
+
+    assert response.status_code == 201, response.text
+    original_key = _uploaded_key(fake_r2, 0)
+    stored, mime = fake_r2.objects[original_key]
+    assert stored == body, "원본이 재인코딩되면 그만큼이 영영 사라진다"
+    assert mime == "image/jpeg"
+    row = enrollment_store.photos[0]
+    assert row["byte_size"] == len(body)
+    # 무결성 해시는 원본 기준이다 — 증서(VC)가 가리키는 게 사용자가 올린 그 파일이어야 한다.
+    assert row["image_digest"] == r2.sha256_sri(body)
+
+
+def test_a_normalized_png_is_stored_next_to_the_original(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    # orientation=6 = 시계방향 90도. 픽셀에 적용되면 가로·세로가 뒤집힌다.
+    assert _upload(enrollment_client, auth(), enrollment_id,
+                   _real_jpeg(900, 1200, orientation=6)).status_code == 201
+
+    original_key, normalized_key = _uploaded_pair(fake_r2, 0)
+    assert normalized_key in fake_r2.objects, "정규화본이 없으면 cv2 가 HEIC 를 못 읽는다"
+    data, mime = fake_r2.objects[normalized_key]
+    assert mime == "image/png"
+    with Image.open(io.BytesIO(data)) as out:
+        assert out.format == "PNG"
+        assert out.size == (1200, 900), "EXIF 회전이 픽셀에 적용돼야 한다"
+        assert out.getexif().get(274) in (None, 1)
+    row = enrollment_store.photos[0]
+    assert row["normalized_r2_key"] == normalized_key
+    assert (row["normalized_width"], row["normalized_height"]) == (1200, 900)
+    assert row["normalized_byte_size"] == len(data)
+    # 형제 규칙 — 정리·파기가 이 계산으로 둘을 잇는다.
+    assert r2.normalized_sibling_key(original_key) == normalized_key
+
+
+def test_the_quality_check_sees_the_normalized_bytes(
+    enrollment_client, auth, monkeypatch
+):
+    """HEIC 는 cv2 가 아예 못 읽는다 — 검사에 원본을 넘기면 전부 'unreadable' 이 된다."""
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    seen = {}
+
+    def spy(data, slot, **kwargs):
+        seen["data"] = data
+        return None, {"spy": True}
+
+    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo", spy)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    body = _real_jpeg()
+
+    assert _upload(enrollment_client, auth(), enrollment_id, body).status_code == 201
+
+    assert seen["data"] != body
+    with Image.open(io.BytesIO(seen["data"])) as checked:
+        assert checked.format == "PNG"
+
+
+@pytest.mark.parametrize("brand", [b"heic", b"mif1"])
+@pytest.mark.parametrize("declared", ["", "application/octet-stream", "image/heic"])
+def test_heic_is_accepted_whatever_the_browser_calls_it(
+    enrollment_client, auth, fake_r2, monkeypatch, brand, declared
+):
+    """iOS 는 HEIC 의 content-type 을 비워 보내기도 한다 — 확장자도 .HEIC/.hif 로 제각각이다.
+
+    여기서는 매직바이트 판정만 본다(진짜 HEIC 디코드는 test_face_photo_normalize 가 본다).
+    """
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    body = b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 64
+
+    response = _upload(enrollment_client, auth(), enrollment_id, body,
+                       filename="IMG_0001.HEIC", content_type=declared)
+
+    assert response.status_code == 201, response.text
+    assert _uploaded_key(fake_r2, 0).endswith(".heic" if brand == b"heic" else ".heif")
+
+
+def test_a_video_wearing_the_same_box_header_is_refused(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    """mp4 도 ftyp 박스다 — 브랜드를 안 보면 동영상이 얼굴 사진 자리에 들어온다."""
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = _upload(enrollment_client, auth(), enrollment_id,
+                       b"\x00\x00\x00\x18ftypisom" + b"\x00" * 64,
+                       filename="clip.mp4", content_type="video/mp4")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_type"
+    assert fake_r2.puts == []
+
+
+def test_an_unreadable_upload_never_reaches_storage(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    """읽을 수 없는 사진을 받아 두면, 학습 내보내기 날에야 깨진 파일을 발견한다."""
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = _upload(enrollment_client, auth(), enrollment_id, b"\xff\xd8\xff not-a-jpeg")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "photo_framing"
+    assert fake_r2.puts == []
+
+
+def test_the_model_sees_the_normalized_bytes_back(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    """미리보기로 원본(HEIC)을 내려주면 브라우저가 못 그려 빈 칸이 된다."""
+    stub_qc(monkeypatch)
+    _real_normalize(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    assert _upload(enrollment_client, auth(), enrollment_id, _real_jpeg()).status_code == 201
+
+    response = enrollment_client.get(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/sh_front", headers=auth())
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "private, no-store"
+    _original, normalized_key = _uploaded_pair(fake_r2, 0)
+    assert response.content == fake_r2.objects[normalized_key][0]
