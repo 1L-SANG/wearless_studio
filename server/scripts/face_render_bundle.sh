@@ -23,8 +23,13 @@ mkdir -p "$STAGE/code/app/agents" "$STAGE/deploy"
 cp "$HERE/face_render_service.py" "$HERE/face_esrgan.py" "$STAGE/code/"
 # face_recipe + face_identity: /healthz 가 찍는 레시피 해시의 상수 출처. 같은 계산식이어야
 # 컷 메타(face_recipe)와 파드가 맞춰진다. face_identity 는 cv2·numpy·PIL 만 쓴다(파드 venv 에 있음).
+# face_mask_lock: face_recipe 가 **모듈 최상단에서** import 한다(`from . import face_mask_lock as fml`).
+#   이게 빠지면 파드가 face_recipe 를 import 하는 순간 ModuleNotFoundError 로 죽는다 —
+#   /healthz 가 아예 안 뜨니 "파드가 600초 안에 안 떴다"로만 보인다. 이 파일도 cv2·numpy·PIL
+#   + face_identity 만 쓴다.
 cp "$HERE/app/agents/face_identity_qwen.py" "$HERE/app/agents/face_identity.py" \
-   "$HERE/app/agents/face_recipe.py" "$STAGE/code/app/agents/"
+   "$HERE/app/agents/face_recipe.py" "$HERE/app/agents/face_mask_lock.py" \
+   "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/__init__.py"
 : > "$STAGE/code/app/agents/__init__.py"
 cp "$HERE/deploy/face_render/start.sh" "$HERE/deploy/face_render/pre_start.sh" \

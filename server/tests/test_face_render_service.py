@@ -38,7 +38,7 @@ class _Backend:
     def __init__(self):
         self.calls = []
 
-    def render(self, control, prompt, seed):
+    def render(self, control, prompt, seed, base=None, gen_mask=None):
         self.calls.append({"prompt": prompt, "seed": seed, "steps": self.steps,
                            "guidance": self.guidance_scale, "negative": self.negative_prompt,
                            "size": control.size})

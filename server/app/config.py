@@ -472,6 +472,8 @@ class Settings:
     #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
     #: 기본 on. false 가 탈출구다 — 끄면 막힌 컷에서 정수리가 크롭 경계에 걸린다(2026-09-13 실측).
     face_crop_pad: bool = True
+    #: 마스크 밖 latent 고정(2026-09-15). 파드가 할 수 있을 때만 걸린다 — false 면 옛 경로.
+    face_mask_lock: bool = True
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -862,6 +864,7 @@ def load_settings() -> Settings:
         face_pass_real_wait_seconds=_int_env("FACE_PASS_REAL_WAIT_SECONDS", 600),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
         face_crop_pad=(os.getenv("FACE_CROP_PAD", "true").lower() != "false"),
+        face_mask_lock=(os.getenv("FACE_MASK_LOCK", "true").lower() != "false"),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

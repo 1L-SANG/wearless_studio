@@ -29,6 +29,7 @@ RENDER_GUIDANCE = 4.0
 RENDER_NEGATIVE = ""
 
 
+
 def load_base_pipeline(model_id: str = RENDER_MODEL_ID, device: str = "cuda", *,
                        cpu_offload: bool = False, gpu_fuse: bool = True):
     """LoRA 없는 베이스 파이프라인. 서비스가 **기동 때** 올려 두는 것이다 — 첫 요청이 수 분을 물지 않게.
@@ -106,11 +107,25 @@ class QwenLocalBackend:
                 self._pipe = pipe
             return self._pipe
 
-    def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image:
+    def render(self, control: Image.Image, prompt: str, seed: int,
+               base: Image.Image | None = None, gen_mask: Image.Image | None = None) -> Image.Image:
+        """base·gen_mask 를 둘 다 주면 **마스크 밖 latent 를 매 스텝 원본으로 되돌린다**.
+
+        왜: 지금은 1024² 크롭 전체를 새로 그리고 서버가 타원 알파로 되붙인다. 그림자 있는 배경에서
+        목 옆에 직사각형 조각이 남고(붙이기 경계) hz_d7 에서 그림자 얼룩이 생겼다.
+        2026-09-15 실험(v7·seed 42·5컷): 잠그면 5/5 에서 조각이 사라지고 신원은 ±0.02 안
+        (0.755→0.744 / 0.674→0.685 / 0.693→0.700 / 0.726→0.705 / 0.757→0.754),
+        머리 밖 생성본과 크롭의 차이 8.2~24.9 → 1.1~3.3, 렌더 시간 동일(~62s, A100).
+
+        둘 중 하나만 오면 잠그지 않는다 — 반만 있는 상태로 추측하지 않는다.
+        """
         import torch
 
         pipe = self.pipeline()
         generator = torch.Generator(self.device).manual_seed(int(seed))
+        extra = {}
+        if base is not None and gen_mask is not None:
+            extra = _mask_lock(pipe, base, gen_mask, generator, self.device)
         return pipe(
             image=[control.convert("RGB")],
             prompt=prompt,
@@ -120,4 +135,43 @@ class QwenLocalBackend:
             height=CROP,
             width=CROP,
             generator=generator,
+            **extra,
         ).images[0]
+
+
+def _mask_lock(pipe, base: Image.Image, gen_mask: Image.Image, generator, device: str) -> dict:
+    """마스크 밖 latent 를 매 스텝 원본 궤적으로 되돌린다(diffusers 0.40 QwenImageEditPlusPipeline).
+
+    gen_mask 밖은 스텝마다 "base 크롭의 latent 를 **다음** 시그마만큼 노이즈에 섞은 값"으로 덮어쓴다
+    (QwenImageEditInpaintPipeline 과 같은 혼합). 그래서 모델은 1024² 사각형을 통째로 다시 그리지 않고
+    **손대지 않은 주변 안으로** 머리를 그려 넣는다. 초기 노이즈는 파이프라인이 뽑는 것과 똑같이 만든다
+    — VAE encode 는 argmax 라 generator 를 건드리지 않으므로, 같은 시드의 잠금 없는 렌더와 시작점이 같다.
+
+    ★ 정본은 ~/Downloads/comfy_swap_test/reference_code/pod_mask_lock.patch 다. 상수·식은 실측이라
+      그대로 옮겼다 — 바꾸려면 키트 10컷을 다시 돌려야 한다.
+    """
+    import numpy as np
+    import torch
+    from diffusers.utils.torch_utils import randn_tensor
+
+    dtype = pipe.transformer.dtype
+    c = pipe.transformer.config.in_channels // 4
+    lat = 2 * (CROP // (pipe.vae_scale_factor * 2))
+    noise = randn_tensor((1, 1, c, lat, lat), generator=generator, device=torch.device(device), dtype=dtype)
+    noise = pipe._pack_latents(noise, 1, c, lat, lat)
+    with torch.no_grad():
+        pix = pipe.image_processor.preprocess(base.convert("RGB"), CROP, CROP).unsqueeze(2)
+        x0 = pipe._encode_vae_image(image=pix.to(device=device, dtype=dtype), generator=generator)
+    x0 = pipe._pack_latents(x0, 1, c, lat, lat)
+    cell = np.asarray(gen_mask.convert("L").resize((lat, lat), Image.BOX), np.float32) > 0.0
+    m = torch.from_numpy(cell.astype(np.float32)).to(device=device, dtype=dtype)
+    m = pipe._pack_latents(m.view(1, 1, 1, lat, lat).expand(1, c, 1, lat, lat).contiguous(), 1, c, lat, lat)
+
+    def lock(p, i, t, kw):
+        # step_index 는 scheduler.step() 안에서 이미 올라갔다 — 여기서 읽는 시그마가 **다음** 시그마다.
+        sigma = p.scheduler.sigmas[p.scheduler.step_index].to(device=device, dtype=dtype)
+        ref = (1.0 - sigma) * x0 + sigma * noise
+        return {"latents": m * kw["latents"] + (1.0 - m) * ref}
+
+    return {"latents": noise, "callback_on_step_end": lock,
+            "callback_on_step_end_tensor_inputs": ["latents"]}

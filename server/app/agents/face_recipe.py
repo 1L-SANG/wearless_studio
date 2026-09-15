@@ -19,6 +19,7 @@ import hashlib
 import json
 
 from . import face_identity as fi
+from . import face_mask_lock as fml
 from .face_identity_qwen import RENDER_MODEL_ID
 
 #: 필드 구성 판. 필드를 더하거나 이름을 바꿀 때만 올린다.
@@ -29,7 +30,8 @@ UPSCALE_SCOPE_OFF = "off"
 
 
 def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
-                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True) -> dict:
+                  upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True,
+                  mask_lock: bool = False) -> dict:
     """해시에 들어가는 값 전부. 사람이 읽을 수 있는 형태 그대로 남긴다(해시만 남기면 못 되짚는다)."""
     return {
         "schema": RECIPE_SCHEMA,
@@ -55,6 +57,23 @@ def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = 
         "upscale_max_k": fi.CROP_UPSCALE_MAX,
         # 3×얼굴폭이 사진에 막힐 때 가장자리를 덧대는가. 켜고 끈 컷은 다른 그림이 나온다.
         "crop_pad": bool(crop_pad),
+        # 마스크 밖 latent 를 고정했는가 — 켠 컷은 머리 밖이 원본 픽셀이라 아예 다른 산물이다.
+        # 상수를 전부 넣는다: 하나만 바뀌어도 마스크·경계·되돌리기가 달라진다(정본 face_mask_lock).
+        "mask_lock": "mask_lock_6" if mask_lock else None,
+        **({} if not mask_lock else {
+            "mask_lock_cell": fml.CELL,
+            "mask_lock_edge_px": fml.EDGE_LOCK_PX,
+            "mask_lock_spill_px": fml.SPILL_PX,
+            "mask_lock_feather_sigma": fml.FEATHER_SIGMA,
+            "mask_lock_head": [fml.HEAD_SIDE, fml.HEAD_TOP, fml.HEAD_BOTTOM],
+            "mask_lock_head_margin_px": fml.HEAD_MARGIN_PX,
+            "mask_lock_neck_dilate": fml.NECK_DILATE,
+            "mask_lock_protect_new_head_px": fml.PROTECT_NEW_HEAD_PX,
+            "mask_lock_old_head_px": fml.OLD_HEAD_PX,
+            "mask_lock_old_head_core_px": fml.OLD_HEAD_CORE_PX,
+            "mask_lock_old_person_t": fml.OLD_PERSON_T,
+            "mask_lock_new_person_t": fml.NEW_PERSON_T,
+        }),
     }
 
 
