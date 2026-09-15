@@ -55,12 +55,15 @@ def _parse_json(text: str, provider: str) -> dict:
     return parsed
 
 
-def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict) -> dict:
+def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict,
+              reasoning_effort=None, image_detail=None, max_completion_tokens=None) -> dict:
     content = [{"type": "text", "text": prompt}]
     for im in images:
-        content.append({"type": "image_url",
-                        "image_url": {"url": f"data:{im.mime};base64,{_b64(im.data)}"}})
-    return {
+        image_url = {"url": f"data:{im.mime};base64,{_b64(im.data)}"}
+        if image_detail is not None:
+            image_url["detail"] = image_detail
+        content.append({"type": "image_url", "image_url": image_url})
+    body = {
         "model": model,
         "messages": [{"role": "user", "content": content}],
         "response_format": {
@@ -68,28 +71,44 @@ def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict) 
             "json_schema": {"name": "product_analysis", "strict": True, "schema": schema},
         },
     }
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
+    if max_completion_tokens is not None:
+        body["max_completion_tokens"] = max_completion_tokens
+    return body
 
 
-def _parse_gpt_response(res) -> dict:
+def _parse_gpt_response(res, metadata=None, requested_model=None) -> dict:
     data = _envelope_json(res, "OpenAI")
-    msg = ((data.get("choices") or [{}])[0].get("message") or {})
+    choices = data.get("choices") or []
+    choice = (choices or [{}])[0]
+    msg = choice.get("message") or {}
+    if metadata is not None:
+        metadata.update(requested_model=requested_model, returned_model=data.get("model"),
+                        usage=data.get("usage"), finish_reason=choice.get("finish_reason"))
+        if len(choices) != 1 or choice.get("finish_reason") != "stop":
+            raise VisionError("OpenAI 검사 응답이 완결되지 않았어요.")
+    if choice.get("finish_reason") not in (None, "stop") or msg.get("refusal"):
+        raise VisionError("OpenAI 응답이 완결되지 않았거나 요청이 거절됐어요.")
     return _parse_json(msg.get("content") or "", "OpenAI")
 
 
 async def _call_gpt(settings: Settings, model: str, prompt: str,
                     images: list[InlineImage], schema: dict, timeout: float,
-                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
+                    thinking_level: str | None = None, *, reasoning_effort=None,
+                    image_detail=None, max_completion_tokens=None, metadata=None) -> dict:
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
     if not settings.openai_api_key:
         raise VisionError("OPENAI_API_KEY 미설정")
-    body = await run_cpu_bound(_gpt_body, model, prompt, images, schema)
+    body = await run_cpu_bound(_gpt_body, model, prompt, images, schema,
+                               reasoning_effort, image_detail, max_completion_tokens)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _OPENAI_URL, json=body,
             headers={"Authorization": f"Bearer {settings.openai_api_key}"})
     if res.status_code != 200:
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
-    return await run_cpu_bound(_parse_gpt_response, res)
+    return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
 
 
 def _to_gemini_schema(node: dict) -> dict:
@@ -127,6 +146,7 @@ def _gemini_body(
     images: list[InlineImage],
     schema: dict,
     thinking_level: str,
+    max_output_tokens=None,
 ) -> dict:
     parts: list = [{"text": prompt}]
     for im in images:
@@ -137,22 +157,34 @@ def _gemini_body(
     }
     if thinking_level != "off":
         gen["thinkingConfig"] = {"thinkingLevel": thinking_level}
+    if max_output_tokens is not None:
+        if type(max_output_tokens) is not int or max_output_tokens <= 0:
+            raise ValueError("Invalid Gemini output limit")
+        gen["maxOutputTokens"] = max_output_tokens
     return {
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": gen,
     }
 
 
-def _parse_gemini_response(res) -> dict:
+def _parse_gemini_response(res, metadata=None, requested_model=None) -> dict:
     data = _envelope_json(res, "Gemini")
-    parts_out = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
-    text = "".join(p.get("text", "") for p in parts_out)
+    candidates = data.get("candidates") or []
+    candidate = (candidates or [{}])[0]
+    finish = candidate.get("finishReason")
+    if metadata is not None:
+        metadata.update(requested_model=requested_model, returned_model=data.get("modelVersion"),
+                        usage=data.get("usageMetadata"), finish_reason=finish)
+        if len(candidates) != 1 or finish != "STOP" or (data.get("promptFeedback") or {}).get("blockReason"):
+            raise VisionError("Gemini 검사 응답이 완결되지 않았어요.")
+    parts_out = (candidate.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts_out if not p.get("thought"))
     return _parse_json(text, "Gemini")
 
 
 async def _call_gemini(settings: Settings, model: str, prompt: str,
                        images: list[InlineImage], schema: dict, timeout: float,
-                       thinking_level: str | None = None) -> dict:
+                       thinking_level: str | None = None, *, max_output_tokens=None, metadata=None) -> dict:
     """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
     if not settings.gemini_api_key:
         raise VisionError("GEMINI_API_KEY 미설정")
@@ -161,14 +193,14 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
     #  2026-08-14 gemini-3.7-flash 로 교체하며 low/medium 둘 다 200 재확인).
     # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
     level = thinking_level or settings.analysis_thinking_level
-    body = await run_cpu_bound(_gemini_body, prompt, images, schema, level)
+    body = await run_cpu_bound(_gemini_body, prompt, images, schema, level, max_output_tokens)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _GEMINI_URL.format(model=model), json=body,
             headers={"x-goog-api-key": settings.gemini_api_key})
     if res.status_code != 200:
         raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}")
-    return await run_cpu_bound(_parse_gemini_response, res)
+    return await run_cpu_bound(_parse_gemini_response, res, metadata, model)
 
 
 # provider 이름 → (호출 함수, 모델 selector, 키 selector). ANALYSIS_MODEL_ORDER 가 순서를 정한다.
@@ -186,6 +218,7 @@ def _order(settings: Settings) -> list[str]:
 async def analyze_with_fallback(
     settings: Settings, prompt: str, images: list[InlineImage], schema: dict,
     thinking_level: str | None = None, models: dict[str, str] | None = None,
+    require_complete_envelope: bool = False,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
@@ -193,7 +226,8 @@ async def analyze_with_fallback(
     실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage).
     thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level).
     models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.7-flash'}) — 에이전트별 tier
-    분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다."""
+    분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다.
+    require_complete_envelope=True는 정상 종료, 단일 후보, 비차단 응답만 인정한다."""
     timeout = settings.analysis_timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
@@ -205,8 +239,9 @@ async def analyze_with_fallback(
         model = (models or {}).get(name) or model_of(settings)
         started = time.perf_counter()
         try:
+            complete_kwargs = {"metadata": {}} if require_complete_envelope else {}
             raw = await call(settings, model, prompt, images, schema, timeout,
-                             thinking_level=thinking_level)
+                             thinking_level=thinking_level, **complete_kwargs)
             if attempts:
                 logger.info("vision_llm fallback used", extra={"provider": name, "prior": attempts})
             return raw, name

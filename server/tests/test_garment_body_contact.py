@@ -96,6 +96,13 @@ def test_contact_block_never_touches_product_identity():
         assert banned not in en
 
 
+@pytest.mark.parametrize("path", [EN, KO], ids=["en", "ko"])
+def test_first_generation_preserves_moderate_base_contour_without_amplification(path):
+    prompt = _text(path).lower()
+    assert "moderate" in prompt or "자연스러운 중간" in prompt
+    assert "do not amplify" in prompt or "과장하지" in prompt
+
+
 # ── 렌더 경로 ────────────────────────────────────────────────────────────────
 
 def _render():

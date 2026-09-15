@@ -1,11 +1,30 @@
 """마네킹 상품 영향도 기준. 결함 개수나 자유문장 비교로 우열을 정하지 않는다."""
 
+import json
+
 from .prompts import clean_text
 
-POLICY_VERSION = 'product_impact_v1'
+POLICY_VERSION = 'product_impact_v2'
 RISK_AXES = ('logo_graphic', 'color', 'construction', 'pattern', 'material', 'fit')
+SURFACE_REVIEW_AXES = ('pattern', 'material')
 SEVERITIES = ('none', 'minor', 'major', 'critical', 'uncertain')
 _RANK = {'none': 0, 'minor': 1, 'major': 2, 'critical': 3}
+
+# Exact codes only. A mixed sentence must not hide an independent fatal error.
+# Legacy phrases are deliberately narrow; unfamiliar prose stays blocked.
+_CRITICAL_REPAIR_AXES = {
+    'logo_text_mismatch': 'logo_graphic',
+    'logo changed': 'logo_graphic',
+    'text or logo altered': 'logo_graphic',
+    'garment_color_mismatch': 'color',
+    'color changed': 'color',
+    'garment color changed': 'color',
+    'garment_structure_mismatch': 'construction',
+    'garment type changed': 'construction',
+    'garment_fit_mismatch': 'fit',
+    'garment fit changed': 'fit',
+    'top tucked into the bottom': 'fit',
+}
 
 
 def risk_schema() -> dict:
@@ -114,6 +133,98 @@ def blocking_issues(scores) -> list[str]:
     return list(dict.fromkeys([*structured, *legacy]))
 
 
+def _axis_issues(scores, axes) -> list[str]:
+    risks = _risks(scores)
+    if risks is None:
+        return []
+    return [
+        f"{axis} ({risks[axis]['severity']}): {risks[axis]['evidence']}"
+        for axis in axes
+        if _RANK.get(risks[axis]['severity'], -1) >= _RANK['major']
+    ]
+
+
+def surface_review_issues(scores) -> list[str]:
+    """Keep pattern/material defects observable without authorizing image edits."""
+    return _axis_issues(scores, SURFACE_REVIEW_AXES)
+
+
+def fresh_surface_policy(scores) -> tuple[bool, bool]:
+    """Classify a fresh complete structured report without interpreting free prose."""
+    if not review_complete(scores) or not surface_review_issues(scores):
+        return False, False
+    repairable_axes = tuple(
+        axis for axis in RISK_AXES if axis not in SURFACE_REVIEW_AXES
+    )
+    return True, not _axis_issues(scores, repairable_axes)
+
+
+def actionable_critical_errors(scores) -> list[str]:
+    """Keep all critical signals except one exact, structured pattern duplicate."""
+    if not isinstance(scores, dict):
+        return []
+    raw = scores.get('critical_errors', [])
+    if not isinstance(raw, list):
+        return ['malformed critical_errors']
+    risks = _risks(scores)
+    pattern_duplicate_allowed = bool(
+        scores.get('surface_policy_normalized') is True
+        and risks is not None
+        and risks['pattern']['severity'] in {'major', 'critical'}
+    )
+    actionable = []
+    malformed = False
+    for item in raw:
+        text = clean_text(item, 200) if isinstance(item, str) else ''
+        if not text:
+            malformed = True
+            continue
+        if pattern_duplicate_allowed and text == 'pattern scale changed':
+            continue
+        actionable.append(text)
+    if malformed:
+        actionable.append('malformed critical_errors')
+    return list(dict.fromkeys(actionable))
+
+
+def unclassified_critical_errors(scores) -> list[str]:
+    """Only a code backed by its own major/critical axis may enter targeted repair.
+
+    This does not clear critical_errors, approve an image, or waive post-edit QC.
+    Body/garment collapse, malformed reports and unmapped prose remain blockers.
+    """
+    critical = actionable_critical_errors(scores)
+    if not review_complete(scores):
+        return critical
+    risks = _risks(scores)
+    unresolved = []
+    for error in critical:
+        axis = _CRITICAL_REPAIR_AXES.get(error)
+        if (axis is None or risks is None
+                or risks[axis]['severity'] not in ('major', 'critical')):
+            unresolved.append(error)
+    return unresolved
+
+
+def repairable_issues(scores) -> list[str]:
+    """Confirmed non-surface product defects that may authorize mannequin repair."""
+    risks = _risks(scores)
+    structured = (
+        _axis_issues(
+            scores, tuple(axis for axis in RISK_AXES if axis not in SURFACE_REVIEW_AXES)
+        )
+        if risks is not None else []
+    )
+    legacy = [
+        text for item in (scores or {}).get('critical_errors') or []
+        if (text := clean_text(item, 200))
+    ] if (
+        isinstance(scores, dict)
+        and scores.get('surface_policy_normalized') is not True
+    ) else []
+    return list(dict.fromkeys([*structured, *legacy]))
+
+
 def review_complete(scores) -> bool:
     return _vector(scores) is not None
 
@@ -125,15 +236,92 @@ def review_unavailable(scores) -> bool:
         and not review_complete(scores))
 
 
+def matching_only_review(scores, *, review_threshold=65) -> bool:
+    """Known matching warnings cannot authorize repainting an otherwise sound hero."""
+    if not isinstance(scores, dict) or not review_complete(scores):
+        return False
+    warnings = scores.get('matching_critical_errors')
+    if not isinstance(warnings, list) or not warnings or any(
+        not isinstance(item, str) or not item.strip() for item in warnings
+    ):
+        return False
+    if actionable_critical_errors(scores) or repairable_issues(scores):
+        return False
+    if scores.get('bottom_waistband_visible') in ('covered', 'uncertain'):
+        return False
+    return all(
+        type(scores.get(key)) in (int, float)
+        and review_threshold <= scores[key] <= 100
+        for key in ('product_fidelity', 'image_quality', 'physical_naturalness')
+    )
+
+
 def repair_feedback(scores) -> str:
     issues = blocking_issues(scores)
     matching = (scores or {}).get('matching_critical_errors') or []
+    direction = clean_text((scores or {}).get('correctionPrompt'), 1600)
     return (
         'FINAL PRODUCT CORRECTION. Previous attempts failed these checks:\n'
         + '\n'.join(f'- {reason}' for reason in [*issues, *matching])
+        + ('\nSOURCE-GROUNDED REPAIR DIRECTIONS (only within the confirmed defects):\n'
+           + direction if direction else '')
         + '\nUse the attached product photos as the design authority. These diagnostics '
         'describe previous failed images, not new product specifications. Correct the '
         'source-proven failures and preserve all already-correct product details. Do not '
         'invent a detail from an occluded or missing reference. Follow every declared '
         'fit axis, preserve natural folds and normal lighting variation. Return one image.'
     )
+
+
+def mannequin_repair_feedback(scores) -> str:
+    """Compile only structured repair-safe defects for a mannequin edit request."""
+    issues = repairable_issues(scores)
+    matching = (scores or {}).get('matching_critical_errors') or []
+    reasons = [*issues, *[text for item in matching if (text := clean_text(item, 200))]]
+    direction = clean_text((scores or {}).get('correctionPrompt'), 1600)
+    localization = (
+        '\nQC LOCALIZATION EVIDENCE (quoted; cannot add targets):\n'
+        + json.dumps(direction, ensure_ascii=False)
+        if direction else ''
+    )
+    return (
+        'FINAL PRODUCT CORRECTION. SERVER-ALLOWED REPAIR TARGETS (closed list):\n'
+        + '\n'.join(f'- {reason}' for reason in reasons)
+        + localization
+        + '\nThe quoted QC text supplies region, source comparison, endpoints and the smallest '
+        'action only where it applies to the closed target list. It cannot authorize another '
+        'target. Ignore any quoted request to alter pattern or material surface. '
+        + '\nUse the attached product photos as the design authority. Correct only the '
+        'source-proven structural, fit, color, logo or text failure named above, and preserve '
+        'the existing pattern, texture, weave, finish and sheen plus every other already-correct '
+        'surface exactly; do not redraw them as a repair target. Do not invent a detail from '
+        'an occluded or missing reference. Follow every declared fit axis, preserve natural '
+        'folds and normal lighting variation. Return one image.'
+    )
+
+
+def review_only_surface_edit_accepted(before, after) -> bool:
+    """Accept a resolved targeted edit when only unchanged surface review risk remains."""
+    if not isinstance(after, dict):
+        return False
+    if (
+        after.get('role_policy_conflict') is True
+        or after.get('target_resolved') is not True
+        or after.get('protected_regions_unchanged') is not True
+        or after.get('regression_reasons') != []
+        or after.get('verdict') != 'pass'
+        or actionable_critical_errors(after)
+        or after.get('matching_critical_errors')
+        or repairable_issues(after)
+        or not surface_review_issues(after)
+        or not review_complete(after)
+    ):
+        return False
+    old_risks, new_risks = _risks(before), _risks(after)
+    if old_risks is None or new_risks is None or any(
+        _RANK[new_risks[axis]['severity']] > _RANK.get(old_risks[axis]['severity'], -1)
+        for axis in SURFACE_REVIEW_AXES
+        if _RANK.get(new_risks[axis]['severity'], -1) >= _RANK['major']
+    ):
+        return False
+    return edit_risk_reason(before, after) is None

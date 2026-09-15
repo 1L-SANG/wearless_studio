@@ -10,6 +10,42 @@ from conftest import make_settings
 RAW = {"clothingType": "top", "fit": "regular", "styleTags": ["basic"]}
 
 
+def test_specialist_options_and_usage_are_opt_in(monkeypatch):
+    seen = []
+    payload = {"model": "gpt-6-astra", "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+               "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(RAW)}}]}
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            seen.append(kwargs["json"])
+            return FakeResp(payload=payload)
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    metadata = {}
+    args = (make_settings(openai_api_key="test"), "gpt-6-astra", "inspect", _images(), {"type": "object"}, 60)
+    assert run(vision_llm._call_gpt(*args, reasoning_effort="medium", image_detail="high",
+                                  max_completion_tokens=1800, metadata=metadata)) == RAW
+    assert seen[0]["reasoning_effort"] == "medium"
+    assert seen[0]["max_completion_tokens"] == 1800
+    assert seen[0]["messages"][0]["content"][1]["image_url"]["detail"] == "high"
+    assert metadata == {"requested_model": "gpt-6-astra", "returned_model": "gpt-6-astra",
+                        "usage": payload["usage"], "finish_reason": "stop"}
+    run(vision_llm._call_gpt(*args))
+    assert "reasoning_effort" not in seen[1] and "max_completion_tokens" not in seen[1]
+    assert "detail" not in seen[1]["messages"][0]["content"][1]["image_url"]
+
+
+@pytest.mark.parametrize("finish,refusal", [("length", None), ("content_filter", None), ("stop", "refused")])
+def test_complete_looking_json_with_incomplete_or_refused_envelope_is_not_accepted(finish, refusal):
+    response = FakeResp(payload={"choices": [{"finish_reason": finish,
+        "message": {"content": json.dumps(RAW), "refusal": refusal}}]})
+    with pytest.raises(vision_llm.VisionError):
+        vision_llm._parse_gpt_response(response)
+
+
 class FakeResp:
     def __init__(self, status_code=200, payload=None, text="", bad_json=False):
         self.status_code = status_code

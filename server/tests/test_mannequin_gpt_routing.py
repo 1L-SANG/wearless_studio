@@ -14,15 +14,15 @@ from conftest import make_settings
 
 def test_default_mannequin_model_does_not_change_shared_image_models():
     settings = make_settings()
-    assert resolve_model(settings, settings.mannequin_tier) == 'gpt-image-2.5-flare'
+    assert resolve_model(settings, settings.mannequin_tier) == 'gpt-image-2.5-sunburst'
     assert resolve_model(settings, 'image_high') == 'gemini-3-pro-image'
     assert resolve_model(settings, 'image_light') == 'gemini-3.1-flash-image'
 
 
-def test_default_stripes_and_checks_do_not_raise_output_above_2k():
+def test_default_plain_pattern_and_logo_products_all_request_native_1k():
     settings = make_settings()
-    for name in ('스트라이프 셔츠', '체크 셔츠', '무지 바지'):
-        assert job.effective_image_size(settings, {'name': name}, {}) == '2K'
+    for name in ('스트라이프 셔츠', '체크 셔츠', '로고 티셔츠', '무지 바지'):
+        assert job.effective_image_size(settings, {'name': name}, {}) == '1K'
 
 
 def test_env_routing_and_legacy_rollback(monkeypatch):
@@ -30,8 +30,8 @@ def test_env_routing_and_legacy_rollback(monkeypatch):
                 'MANNEQUIN_PATTERN_IMAGE_SIZE'):
         monkeypatch.delenv(key, raising=False)
     settings = load_settings()
-    assert resolve_model(settings, settings.mannequin_tier) == 'gpt-image-2.5-flare'
-    assert job.effective_image_size(settings, {'name': '스트라이프 셔츠'}, {}) == '2K'
+    assert resolve_model(settings, settings.mannequin_tier) == 'gpt-image-2.5-sunburst'
+    assert job.effective_image_size(settings, {'name': '스트라이프 셔츠'}, {}) == '1K'
     monkeypatch.setenv('MODEL_ROUTING_IMAGE_MANNEQUIN', 'gemini-3-pro-image')
     assert resolve_model(load_settings(), 'image_mannequin') == 'gemini-3-pro-image'
     monkeypatch.setenv('MANNEQUIN_TIER', 'image_high')
@@ -39,13 +39,13 @@ def test_env_routing_and_legacy_rollback(monkeypatch):
 
 
 @pytest.mark.parametrize('edit,overrides,expected_model', [
-    (False, {}, 'gpt-image-2.5-flare'),
-    (True, {}, 'gpt-image-2.5-flare'),
-    (True, {'mannequin_tier': 'image_light'}, 'gemini-3-pro-image'),
-    (True, {'mannequin_tier': 'image_high'}, 'gemini-3-pro-image'),
-    (True, {'mannequin_tier': 'image_light', 'mannequin_adjust_tier': 'image_mannequin'}, 'gpt-image-2.5-flare'),
+    (False, {}, 'gpt-image-2.5-sunburst'),
+    (True, {}, 'gpt-image-2.5-sunburst'),
+    (True, {'mannequin_tier': 'image_light'}, 'gpt-image-2.5-sunburst'),
+    (True, {'mannequin_tier': 'image_high'}, 'gpt-image-2.5-sunburst'),
+    (True, {'mannequin_tier': 'image_light', 'mannequin_adjust_tier': 'image_mannequin'}, 'gpt-image-2.5-sunburst'),
     (True, {'mannequin_adjust_tier': 'image_high'}, 'gemini-3-pro-image'),
-    (False, {'mannequin_adjust_tier': 'image_high'}, 'gpt-image-2.5-flare'),
+    (False, {'mannequin_adjust_tier': 'image_high'}, 'gpt-image-2.5-sunburst'),
 ])
 def test_worker_routes_first_and_adjust_models_with_original_input_order(monkeypatch, edit, overrides, expected_model):
     class Captured(BaseException):
@@ -84,5 +84,5 @@ def test_worker_routes_first_and_adjust_models_with_original_input_order(monkeyp
     model, images, size, options = requests[0]
     assert model == expected_model
     assert images == [b'parent' if edit else b'base', b'front', b'back', b'matching']
-    assert size == '2K'
+    assert size == '1K'
     assert options['aspect_ratio'] == '2:3'

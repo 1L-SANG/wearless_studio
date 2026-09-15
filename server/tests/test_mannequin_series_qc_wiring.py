@@ -380,7 +380,7 @@ def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -414,7 +414,7 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
@@ -437,17 +437,10 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    seq = [
-        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
-         "product_fidelity": 90, "physical_naturalness": 90, "image_quality": 90,
-         "series_consistency": None, "critical_errors": []},          # 편집 전
-        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
-         "product_fidelity": 85, "physical_naturalness": 85, "image_quality": 85,
-         "series_consistency": None, "critical_errors": []},          # 편집 후(등급 내 하락)
-    ]
+    seq = [_p2c(90), _p2c(85)]
     calls = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -471,7 +464,9 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
 def _p2(fid=90, nat=90, qual=90, critical=()):
     return {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
             "product_fidelity": fid, "physical_naturalness": nat, "image_quality": qual,
-            "series_consistency": None, "critical_errors": list(critical)}
+            "series_consistency": None, "critical_errors": list(critical),
+            "target_resolved": True, "protected_regions_unchanged": True,
+            "regression_reasons": []}
 
 
 def test_edit_regressed_only_fires_on_grade_drop_or_new_critical():
@@ -531,7 +526,7 @@ def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
 
     seq, calls = [_p2(90), _p2(30)], {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -682,7 +677,9 @@ def _p2c(fid, critical=()):
     return {"verdict": "retry" if critical else "pass", "mismatches": [],
             "correctionPrompt": None, "product_fidelity": fid,
             "physical_naturalness": 95, "image_quality": 95,
-            "series_consistency": None, "critical_errors": list(critical)}
+            "series_consistency": None, "critical_errors": list(critical),
+            "target_resolved": True, "protected_regions_unchanged": True,
+            "regression_reasons": []}
 
 
 def test_bust_pass_counts_against_the_same_budget(monkeypatch):
@@ -724,7 +721,7 @@ def test_pre_gate_reject_respects_budget(monkeypatch):
     n = {"i": 0}
     edits = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -811,7 +808,7 @@ def test_new_critical_error_reverts_even_without_pre_scores():
     assert edit_regressed(s, no_scores, _p2c(10)) is False
 
 
-def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
+def test_paired_rejection_keeps_pre_edit_image_on_critical_regression(monkeypatch):
     """두 편집이 다 돌았고 bust 만 망쳤으면 axis 교정은 살린다.
 
     한 덩어리로 되돌리면 핏을 제대로 고친 axis 결과까지 같이 버린다(codex 8차 MEDIUM).
@@ -823,7 +820,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -841,10 +838,10 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
         image_qc="shadow", mannequin_bust_pass="on")
 
     saved = r2.puts[-1][1]
-    assert saved == b"axis-fixed", f"axis 교정까지 버렸다: {saved!r}"
-    assert result["qc_scores"]["product_fidelity"] == 88
+    assert saved == harness._PNG_1PX
+    assert result["qc_scores"]["product_fidelity"] == 90
     reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
-    assert reverted and reverted[-1]["reason"] == "bust_only"
+    assert reverted and reverted[-1]["reason"] == "paired_edit_rejected"
 
 
 def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
@@ -854,7 +851,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["broken"]), _p2c(30, critical=["broken"])]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -875,8 +872,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     assert saved == harness._PNG_1PX, f"편집 전 원본이 아니다: {saved!r}"
     assert _r["qc_scores"]["product_fidelity"] == 90, "편집 전 점수가 아니다"
     ev = [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]
-    assert ev["reason"] == "all_edits"
-    assert (ev["from"], ev["to"]) == ("regenerate", "auto_pass")
+    assert ev["reason"] == "paired_edit_rejected"
 
 
 def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
@@ -893,7 +889,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
     seq = [_p2c(90), _p2c(20, critical=["garment shape broken"]), _p2c(95)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -916,7 +912,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
 
     assert r2.puts[-1][1] != b"axis-broke-it", "손상본이 가짜 중간본 분기로 출고됐다"
     assert n["i"] == 2, f"판정이 {n['i']}회 — 같은 이미지를 다시 판정했다"
-    assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "all_edits"
+    assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "paired_edit_rejected"
 
 
 def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
@@ -1049,10 +1045,10 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
     # 2회차: 치명 오류로 사전 게이트 거절 + 예산 소진 → final_reject 구제
     # 1회차 통과(편집으로 이미지 변경 → 재판정) → D축 10 으로 최종 거절 → final_reject 적재
     # 2회차 치명오류로 사전 게이트 거절 + 예산 소진 → final_reject 구제
-    seq = [_p2c(95), _p2c(95), _p2c(20, critical=["logo altered"])]
+    seq = [_p2c(95), _p2c(20, critical=["logo altered"])]
     calls = {"p2": 0, "series": 0, "axis": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         calls["p2"] += 1
         return seq[min(calls["p2"] - 1, len(seq) - 1)]
 
@@ -1119,7 +1115,7 @@ def test_worker_passes_declared_fit_to_image_qc(monkeypatch):
 
     seen = []
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
         seen.append(fit_profile)
         return _p2c(90)
 
@@ -1223,6 +1219,7 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
 
     class _Gemini:
         async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+            sent["model"] = model
             sent["images"] = images
             sent["prompt"] = prompt
             sent["size"] = size
@@ -1234,6 +1231,7 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
     s = types.SimpleNamespace(
         mannequin_fabric_pass="on", mannequin_max_attempts=3, mannequin_image_size="2K",
         mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
+        model_image_mannequin="gpt-image-2.5-sunburst",
         model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
     mj._emit = fake_emit
     res = types.SimpleNamespace(image=b"cut", mime="image/png")
@@ -1252,6 +1250,7 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
     assert [image.data for image in sent["images"][1:]] == [b"front", b"detail", b"back"]
     assert sent["prompt"].count("Unlabeled seller product photo") == 3
     assert sent["size"] == "4K", "승급된 해상도를 편집에서도 유지해야 한다"
+    assert sent["model"] == "gpt-image-2.5-sunburst"
     assert "${" not in sent["prompt"]
     assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"
                for e in sent["events"])
@@ -1296,11 +1295,16 @@ def test_untuck_postpass_gate_and_single_task_call(monkeypatch):
     async def fake_emit(pool, job_id, et, payload):
         sent.setdefault("events", []).append(payload)
 
+    async def confirmed_tuck(*args, **kwargs):
+        return {"verdict": "tucked", "confidence": 0.95}
+
     s = types.SimpleNamespace(
-        mannequin_untuck_pass="on", mannequin_max_attempts=2, mannequin_image_size="2K",
+        mannequin_untuck_pass="on", mannequin_untuck_gate="on",
+        mannequin_max_attempts=2, mannequin_image_size="2K",
         mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
         model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
     monkeypatch.setattr(mj, "_emit", fake_emit)
+    monkeypatch.setattr(mj.mannequin_untuck, "judge_gate", confirmed_tuck)
     monkeypatch.setattr(mj.qc, "evaluate_canvas_alpha_qc", lambda data: QcResult("pass"))
     res = types.SimpleNamespace(image=b"cut", mime="image/png")
     match = mj.InlineImage("image/png", b"bottom")
@@ -1308,11 +1312,10 @@ def test_untuck_postpass_gate_and_single_task_call(monkeypatch):
     out = asyncio.run(mj._apply_untuck_postpass(
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A",
         generation_attempts=2, res=res, match_img=match, clothing_type="top",
-        image_size="4K"))
+        image_size="4K", prod_imgs=[mj.InlineImage("image/png", b"product")]))
 
     assert out.image == b"untucked"
-    assert len(sent["images"]) == 1 and sent["images"][0].data == b"cut", \
-        "이미지 1장·과제 1개 — 매칭/상품 사진을 섞으면 과제가 흐려진다"
+    assert [image.data for image in sent["images"]] == [b"cut", b"product", b"bottom"]
     assert sent["size"] == "4K", "승급 해상도를 편집에서도 유지"
     assert "unbroken visible line" in sent["prompt"], "관측 가능한 목표가 있어야 한다"
     assert "return it unchanged" in sent["prompt"], "이미 빠져 있으면 무변경 — no-op 계약"

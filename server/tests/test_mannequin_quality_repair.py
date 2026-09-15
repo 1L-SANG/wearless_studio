@@ -45,6 +45,166 @@ def test_first_acceptable_image_does_not_spend_final_request(monkeypatch):
     assert seen.puts == [b'before']
 
 
+@pytest.mark.parametrize('axis', ['pattern', 'material'])
+def test_surface_only_risk_keeps_first_cut_for_review_without_reroll_or_repair(monkeypatch, axis):
+    surface = rated(**{axis: 'critical'})
+    surface.update(
+        verdict='retry', correctionPrompt='Redraw the visible surface.',
+        critical_errors=(['pattern scale changed'] if axis == 'pattern' else []),
+        surface_policy_normalized=True, surface_review_only=True,
+    )
+    result, seen = run_worker(monkeypatch, has_match=False, p2={
+        b'before': surface,
+    }, settings_overrides={'mannequin_max_attempts': 3})
+    assert seen.image_calls == ['generate']
+    assert seen.puts == [b'before']
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert result['qc_scores']['product_risks'][axis]['severity'] == 'critical'
+
+
+@pytest.mark.parametrize('critical_errors', [
+    ['body shape broken'],
+    ['pattern scale changed', 'body shape broken'],
+])
+def test_surface_report_with_independent_technical_critical_is_not_shipped_or_repaired(
+    monkeypatch, critical_errors,
+):
+    surface = rated(pattern='critical')
+    surface.update(
+        verdict='retry', correctionPrompt='Redraw the visible surface.',
+        critical_errors=critical_errors,
+        surface_policy_normalized=True, surface_review_only=True,
+    )
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='unclassified_critical_rejected'):
+        run_worker(
+            monkeypatch, has_match=False, captures=seen,
+            p2={b'before': surface},
+            settings_overrides={'mannequin_max_attempts': 1},
+        )
+    assert seen.image_calls == ['generate']
+    assert seen.puts == []
+    assert not any(event.get('status') == 'quality_repair' for event in seen.events)
+
+
+def test_mixed_surface_and_structure_uses_one_structural_only_targeted_repair(monkeypatch):
+    before = rated(construction='major', pattern='critical', material='major')
+    before.update(
+        verdict='retry',
+        correctionPrompt=(
+            'At the front body, restore the two seam lines from the placket endpoint '
+            'to the hem connection. Redraw the pattern at a larger scale.'
+        ),
+        surface_policy_normalized=True,
+        surface_review_only=False,
+        critical_errors=['pattern scale changed'],
+    )
+    result, seen = run_worker(
+        monkeypatch,
+        has_match=False,
+        generated=(b'before', b'repaired'),
+        p2={
+            b'before': before,
+            b'repaired': rated(pattern='critical', material='major'),
+        },
+        settings_overrides={'mannequin_max_attempts': 1},
+    )
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == [b'repaired']
+    assert result['qc_scores']['quality_repair_kind'] == 'targeted_edit'
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert 'construction (major)' in seen.prompts[-1]
+    assert 'pattern (critical)' not in seen.prompts[-1]
+    assert 'material (major)' not in seen.prompts[-1]
+    assert 'two seam lines from the placket endpoint to the hem connection' in seen.prompts[-1]
+    assert 'SERVER-ALLOWED REPAIR TARGETS (closed list)' in seen.prompts[-1]
+    assert 'QC LOCALIZATION EVIDENCE (quoted; cannot add targets)' in seen.prompts[-1]
+    assert 'preserve the existing pattern, texture, weave, finish' in seen.prompts[-1].lower()
+
+
+def test_structural_repair_is_rejected_when_review_only_surface_gets_worse(monkeypatch):
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
+        run_worker(
+            monkeypatch,
+            has_match=False,
+            captures=seen,
+            generated=(b'before', b'repaired'),
+            p2={
+                b'before': rated(construction='major', pattern='major'),
+                b'repaired': rated(pattern='critical'),
+            },
+            settings_overrides={'mannequin_max_attempts': 1},
+        )
+    assert seen.puts == []
+
+
+def surface_rated(**axes):
+    report = rated(**axes)
+    normalized, only = job.mannequin_quality.fresh_surface_policy(report)
+    if normalized:
+        report.update(surface_policy_normalized=True, surface_review_only=only)
+    return report
+
+
+@pytest.mark.parametrize('surface', ['pattern', 'material'])
+@pytest.mark.parametrize('axis,code', [
+    ('logo_graphic', 'logo changed'), ('logo_graphic', 'logo_text_mismatch'),
+    ('color', 'garment_color_mismatch'), ('construction', 'garment_structure_mismatch'),
+    ('fit', 'garment_fit_mismatch'),
+])
+def test_confirmed_critical_with_surface_warning_reaches_one_targeted_edit(monkeypatch, surface, axis, code):
+    before = surface_rated(**{axis: 'critical', surface: 'major'})
+    before.update(verdict='retry', critical_errors=[code],
+                  correctionPrompt='Restore only the confirmed product detail at its source location.')
+    after = surface_rated(**{surface: 'major'})
+    result, seen = run_worker(monkeypatch, has_match=False,
+        generated=(b'before', b'repaired'), p2={b'before': before, b'repaired': after},
+        settings_overrides={'mannequin_max_attempts': 1})
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == [b'repaired']
+    assert seen.pairs == [(b'before', b'repaired')]
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert result['qc_scores']['product_risks'][surface]['severity'] == 'major'
+    assert f'{axis} (critical)' in seen.prompts[-1]
+    assert f'{surface} (major)' not in seen.prompts[-1]
+    assert 'preserve the existing pattern, texture, weave, finish' in seen.prompts[-1].lower()
+
+
+@pytest.mark.parametrize('fatal', ['body_shape_broken', 'garment_shape_broken', 'unknown severe failure'])
+def test_classified_logo_does_not_authorize_edit_of_independent_fatal(monkeypatch, fatal):
+    before = surface_rated(logo_graphic='critical', pattern='major')
+    before.update(verdict='retry', critical_errors=['logo_text_mismatch', fatal])
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='unclassified_critical_rejected'):
+        run_worker(monkeypatch, has_match=False, captures=seen, p2={b'before': before},
+                   settings_overrides={'mannequin_max_attempts': 1})
+    assert seen.image_calls == ['generate']
+    assert seen.puts == []
+
+
+@pytest.mark.parametrize('after', [
+    surface_rated(logo_graphic='critical', pattern='major'),
+    surface_rated(color='major', pattern='major'),
+    surface_rated(pattern='critical'),
+    {**surface_rated(pattern='major'), 'critical_errors': ['logo_text_mismatch']},
+    {**surface_rated(pattern='major'), 'critical_errors': ['body_shape_broken']},
+    {**surface_rated(pattern='major'), 'target_resolved': False},
+    {**surface_rated(pattern='major'), 'protected_regions_unchanged': False},
+    RuntimeError('paired QC unavailable'),
+])
+def test_logo_surface_repair_cannot_ship_unresolved_regressed_or_unchecked_result(monkeypatch, after):
+    before = surface_rated(logo_graphic='critical', pattern='major')
+    before.update(verdict='retry', critical_errors=['logo_text_mismatch'])
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError):
+        run_worker(monkeypatch, has_match=False, captures=seen,
+            generated=(b'before', b'repaired'), p2={b'before': before, b'repaired': after},
+            settings_overrides={'mannequin_max_attempts': 1})
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == []
+
+
 def test_shadow_observation_does_not_add_a_generation(monkeypatch):
     _, seen = run_worker(monkeypatch, has_match=False, mode='shadow',
         p2={b'before': rated(logo_graphic='critical')})
@@ -108,19 +268,20 @@ def test_unavailable_matching_retry_cannot_erase_previously_confirmed_defect(mon
 
 
 def test_main_shadow_does_not_block_matching_repair_on_main_uncertainty(monkeypatch):
-    _, seen = run_worker(monkeypatch, mode='shadow', pants_mode='enforce',
-        generated=(b'first', b'second', b'final'), p2={
-            b'first': {**rated(), 'matching_critical_errors': ['wrong trousers']},
-            b'second': {**rated(), 'matching_critical_errors': ['wrong trousers']},
-            b'final': rated(color='uncertain')})
-    assert seen.puts == [b'final']
-    assert seen.image_calls == ['generate', 'generate', 'generate']
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
+        run_worker(monkeypatch, mode='shadow', pants_mode='enforce', captures=seen,
+            generated=(b'first', b'second', b'final'), p2={
+                b'first': {**rated(), 'matching_critical_errors': ['wrong trousers']},
+                b'second': {**rated(), 'matching_critical_errors': ['wrong trousers']},
+                b'final': rated(color='uncertain')})
+    assert seen.puts == []
 
 
 def test_shadow_main_risks_do_not_revert_observed_edit(monkeypatch):
     _, seen = run_worker(monkeypatch, mode='shadow', p2={
         b'before': rated(logo_graphic='critical'), b'after': rated(color='critical')})
-    assert seen.puts == [b'after']
+    assert seen.puts == [b'before']
 
 
 def test_final_pool_tradeoff_preserves_existing_candidate(monkeypatch):
@@ -131,16 +292,13 @@ def test_final_pool_tradeoff_preserves_existing_candidate(monkeypatch):
     assert seen.puts == [b'first']
 
 
-def test_final_repair_uses_original_inputs_not_failed_parent(monkeypatch):
-    from app.agents.gemini_image import InlineImage
+def test_final_repair_edits_failed_current_cut_with_original_inputs(monkeypatch):
     _, seen = run_worker(monkeypatch, has_match=False,
         generated=(b'first', b'second', b'final'), p2={
             b'first': rated(logo_graphic='critical'), b'second': rated(color='critical'),
-            b'final': rated()}, candidate_kwargs={
-            'generation_path': 'edit', 'parent_cut_img': InlineImage('image/png', b'parent'),
-            'adjust_directives': 'Adjust length to basic.'})
-    assert b'parent' in [i.data for i in seen.requests[0]['images']]
-    assert [i.data for i in seen.requests[-1]['images']] == [b'base', FRONT.data, DETAIL.data]
+            b'final': rated()})
+    assert [i.data for i in seen.requests[-1]['images']][:3] == [b'first', FRONT.data, DETAIL.data]
+    assert seen.requests[-1]['model'] == 'gpt-image-2.5-sunburst'
 
 
 @pytest.mark.parametrize('failure', ['lookup', 'storage', 'judge', 'empty_result', 'no_references'])

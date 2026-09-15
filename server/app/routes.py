@@ -37,6 +37,7 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
+                       mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval, sam_retry)
 from .auth import require_user
@@ -2588,6 +2589,33 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
         if rendered is None or str(rendered.get("project_id") or project_id) != project_id:
             raise _not_found()
 
+        seller_display = None
+        native_width = native_height = None
+        try:
+            native = await asyncio.to_thread(
+                _r2(request).get_bytes, rendered["r2_key"])
+            derivative = await asyncio.to_thread(
+                mannequin_display.build,
+                native,
+                rendered.get("mime_type") or "image/png",
+                rendered["r2_key"],
+            )
+            if derivative is not None:
+                await asyncio.to_thread(
+                    _r2(request).put_bytes,
+                    derivative.key,
+                    derivative.data,
+                    mannequin_display.DISPLAY_MIME,
+                    cache=IMMUTABLE_CACHE,
+                )
+                seller_display = derivative.metadata
+                native_width, native_height = mannequin_display.NATIVE_SIZE
+        except Exception:
+            # 톤 적용의 정본은 셀러가 올린 native 렌더다. 화면 확대만 실패했을 때 조정
+            # 자체까지 잃지 않고, sellerDisplay 메타가 없으므로 /file 은 native 로 폴백한다.
+            logger.warning("tone seller display derivative failed asset=%s", body.asset_id,
+                           exc_info=True)
+
         await mannequin_tone_render.clear_for_cut(
             conn, project_id=project_id, cut_id=cut_id)
         await mannequin_tone_render.record(
@@ -2596,7 +2624,9 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
             source_hash=(mask.get("metadata") or {}).get("sourceHash"),
             mask_asset_id=mask.get("id"),
             mask_algorithm_version=(mask.get("metadata") or {}).get("algorithmVersion"),
-            saturation=saturation, exposure=exposure)
+            saturation=saturation, exposure=exposure,
+            seller_display=seller_display,
+            native_width=native_width, native_height=native_height)
         await conn.commit()
         return _tone_public(await _tone_state(
             conn, _r2(request), user_id=user_id, project_id=project_id, cut_id=cut_id))
@@ -3338,7 +3368,10 @@ def _asset_file_location(request: Request, asset_id: str, asset: dict) -> str:
         # 민감 파생물은 public/presigned R2로 보내지 않는다. API bytes 경로가 본문까지
         # no-store를 집행하고, 새 capability version이 기존 /file 캐시를 우회한다.
         return f"/v1/assets/{asset_id}/bytes?e={ASSET_CACHE_VERSION}"
-    return _r2(request).public_url(asset["r2_key"])
+    # `/file` 은 셀러 화면용 capability다. native 키와 크기를 기준으로 엄격히 검증한
+    # 마네킹 확대본만 투영하고, `/bytes`와 모든 DB 기반 AI 로더는 canonical r2_key를 유지한다.
+    display_key = mannequin_display.resolve_key(asset)
+    return _r2(request).public_url(display_key or asset["r2_key"])
 
 
 #: 보관함 카드 폭(.lib-grid 는 minmax(220px, 1fr))의 2배 — DPR2 화면 기준.

@@ -54,6 +54,7 @@ class MannequinPromptContext:
     image_manifest: str = ""  # 첨부 이미지 순서·역할 목록 (워커가 실제 슬롯으로 구성)
     fit_profile: dict | None = None
     adjusted_axes: tuple = ()  # 이번 잡에서 셀러가 조정한 축(서버 diff 산출) — CHANGES 섹션 강조용
+    photo_structure: dict | None = None
 
 
 def load_prompt_template(settings: Settings) -> str:
@@ -104,6 +105,7 @@ def _product_block(
     *,
     include_legacy_fit: bool = True,
     material_policy: str = "legacy",
+    structure_from_photos: bool = False,
 ) -> str:
     """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
     legacy는 소재 설명을 유지한다. photo_evidence는 저장된 혼용률을 바꾸지 않고
@@ -133,7 +135,7 @@ def _product_block(
     # 강조특징 정규화 (FR-D1): off=원문 그대로 / shadow=원문+매핑 로그 / enforce=canonical 큐만
     raw_point_union = (
         list(analysis.get("sellingPoints") or [])
-        + list(analysis.get("aiSuggestedPoints") or [])
+        + ([] if structure_from_photos else list(analysis.get("aiSuggestedPoints") or []))
     )
     points = []
     seen_points = set()
@@ -177,11 +179,12 @@ def _product_block(
     genders = [_sanitize(g) for g in (analysis.get("targetGenders") or [])]
     category = " / ".join(
         _sanitize(x)
-        for x in (product.get("clothing_type") or product.get("clothingType"), analysis.get("subCategory"))
+        for x in (product.get("clothing_type") or product.get("clothingType"),
+                  None if structure_from_photos else analysis.get("subCategory"))
         if x
     )
     lines = [
-        product.get("name") and f"- Product name: {_sanitize(product.get('name'))}",
+        not structure_from_photos and product.get("name") and f"- Product name: {_sanitize(product.get('name'))}",
         category and f"- Category: {category}",
         genders and f"- Target gender: {', '.join(genders)}",
         include_legacy_fit and analysis.get("fit") and f"- Fit: {_sanitize(analysis.get('fit'))}",
@@ -241,6 +244,11 @@ def render_mannequin_prompt(
     material_policy: str = "legacy",
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
+    if ctx.photo_structure is not None:
+        template = template.replace(
+            "The sleeves and torso must connect naturally through the armholes as one continuous garment.",
+            "Preserve the photographed arm-opening construction. If sleeves are present, connect "
+            "them naturally; if absent, retain continuous shoulder fabric and its genuine edge binding.")
     outerwear_inner_token = "${outerwearInnerLine}"
     if str(ctx.clothing_type or "").strip().lower() in ("outer", "아우터"):
         template = template.replace(outerwear_inner_token, "")
@@ -266,9 +274,13 @@ def render_mannequin_prompt(
         knowledge,
         include_legacy_fit=fit_profile is None,
         material_policy=material_policy,
+        structure_from_photos=ctx.photo_structure is not None,
     )
     mirror_block = build_mirrored_source_block(analysis)
     blocks = [text, fit_block, product_block, mirror_block]
+    if ctx.photo_structure is not None:
+        from .mannequin_photo_structure import prompt_block
+        blocks.append(prompt_block(ctx.photo_structure))
     return "\n\n".join(block for block in blocks if block)
 
 

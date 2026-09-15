@@ -19,13 +19,14 @@ from app.workers import mannequin_job as mj
 # ---------------------------------------------------------------- 순수 판정 규칙
 
 
-def test_gate_skips_only_on_confident_adequate():
+def test_gate_skips_unless_insufficiency_is_confidently_confirmed():
     t = mannequin_bust.GATE_SKIP_CONFIDENCE
     assert mannequin_bust.gate_skips({"verdict": "adequate", "confidence": t})
-    assert not mannequin_bust.gate_skips({"verdict": "adequate", "confidence": t - 0.01})
+    assert mannequin_bust.gate_skips({"verdict": "adequate", "confidence": t - 0.01})
     assert not mannequin_bust.gate_skips({"verdict": "insufficient", "confidence": 1.0})
-    assert not mannequin_bust.gate_skips({"verdict": "unclear", "confidence": 1.0})
-    assert not mannequin_bust.gate_skips({"verdict": "gate_error", "confidence": 0.0})
+    assert mannequin_bust.gate_skips({"verdict": "insufficient", "confidence": t - 0.01})
+    assert mannequin_bust.gate_skips({"verdict": "unclear", "confidence": 1.0})
+    assert mannequin_bust.gate_skips({"verdict": "gate_error", "confidence": 0.0})
 
 
 def test_validate_gate_normalizes_hostile_raw():
@@ -39,8 +40,10 @@ def test_validate_gate_normalizes_hostile_raw():
 def test_judge_gate_sends_single_image_and_model_override(monkeypatch):
     sent = {}
 
-    async def fake_fallback(settings, prompt, images, schema, thinking_level=None, models=None):
+    async def fake_fallback(settings, prompt, images, schema, thinking_level=None, models=None,
+                            **kwargs):
         sent.update(prompt=prompt, images=images, models=models)
+        assert kwargs["require_complete_envelope"] is True
         return {"verdict": "adequate", "confidence": 0.9}, "gemini"
 
     monkeypatch.setattr(mannequin_bust, "analyze_with_fallback", fake_fallback)
@@ -89,7 +92,8 @@ def _bust(monkeypatch, *, gate_mode, judge=None, judge_raises=False):
     res = types.SimpleNamespace(image=b"cut", mime="image/png")
     out, spent = asyncio.run(mj._apply_bust_pass(
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
-        base_gender="women", res=res, calls_spent=0, clothing_type="top"))
+        base_gender="women", res=res, calls_spent=0, clothing_type="top",
+        prod_imgs=[mj.InlineImage("image/png", b"product")]))
     events = [e for e in sent["events"] if e.get("status") == "bust_pass"]
     return out, spent, sent, events
 
@@ -106,21 +110,22 @@ def test_gate_confident_adequate_skips_edit_and_budget(monkeypatch):
 
 
 @pytest.mark.parametrize("judge", [
-    {"verdict": "insufficient", "confidence": 0.99},
     {"verdict": "unclear", "confidence": 0.99},
     {"verdict": "adequate", "confidence": 0.5},
+    {"verdict": "insufficient", "confidence": 0.5},
 ])
-def test_gate_uncertain_or_insufficient_runs_edit(monkeypatch, judge):
+def test_gate_uncertain_or_nondefective_skips_edit(monkeypatch, judge):
     out, spent, sent, events = _bust(monkeypatch, gate_mode="on", judge=judge)
-    assert sent["edit_calls"] == 1 and spent is True
-    assert out.image == b"busted"
-    assert events[0]["outcome"] == "applied"
+    assert sent["edit_calls"] == 0 and spent is False
+    assert out.image == b"cut"
+    assert events[0]["outcome"] == "skipped_gate"
     assert events[0]["bust_gate"]["verdict"] == judge["verdict"]
 
 
-def test_gate_error_fails_open_to_edit(monkeypatch):
+def test_gate_error_cannot_authorize_edit(monkeypatch):
     out, spent, sent, events = _bust(monkeypatch, gate_mode="on", judge_raises=True)
-    assert sent["edit_calls"] == 1 and spent is True
+    assert sent["edit_calls"] == 0 and spent is False
+    assert out.image == b"cut"
     assert events[0]["bust_gate"]["verdict"] == "gate_error"
 
 
@@ -128,8 +133,18 @@ def test_gate_off_never_judges(monkeypatch):
     out, spent, sent, events = _bust(
         monkeypatch, gate_mode="off", judge={"verdict": "adequate", "confidence": 1.0})
     assert sent["judge_calls"] == 0, "off 면 판정 콜 자체가 없다 — 기존 동작 그대로"
-    assert sent["edit_calls"] == 1
+    assert sent["edit_calls"] == 0 and spent is False
+    assert out.image == b"cut"
+    assert events[0]["outcome"] == "skipped_gate_off"
     assert "bust_gate" not in events[0]
+
+
+def test_confident_insufficient_runs_edit(monkeypatch):
+    out, spent, sent, events = _bust(
+        monkeypatch, gate_mode="on", judge={"verdict": "insufficient", "confidence": 0.9})
+    assert sent["edit_calls"] == 1 and spent is True
+    assert out.image == b"busted"
+    assert events[0]["outcome"] == "applied"
 
 
 # ---------------------------------------------------------------- config 배선

@@ -13,27 +13,30 @@
 """
 
 import asyncio
+import json
 import types
 
+import httpx
 import pytest
 
-from app.agents import mannequin_untuck
+from app.agents import mannequin_untuck, vision_llm
 from app.services.qc import QcResult
 from app.workers import mannequin_job as mj
+from conftest import make_settings
 
 
 # ---------------------------------------------------------------- 순수 판정 규칙
 
 
-def test_gate_skips_only_on_confident_untucked():
+def test_gate_skips_unless_tuck_is_confidently_confirmed():
     t = mannequin_untuck.GATE_SKIP_CONFIDENCE
     assert mannequin_untuck.gate_skips({"verdict": "untucked", "confidence": t})
     assert mannequin_untuck.gate_skips({"verdict": "untucked", "confidence": 1.0})
-    assert not mannequin_untuck.gate_skips({"verdict": "untucked", "confidence": t - 0.01}), \
-        "임계 미만 확신은 스킵 근거가 못 된다"
+    assert mannequin_untuck.gate_skips({"verdict": "untucked", "confidence": t - 0.01})
     assert not mannequin_untuck.gate_skips({"verdict": "tucked", "confidence": 1.0})
-    assert not mannequin_untuck.gate_skips({"verdict": "unclear", "confidence": 1.0})
-    assert not mannequin_untuck.gate_skips({"verdict": "gate_error", "confidence": 0.0})
+    assert mannequin_untuck.gate_skips({"verdict": "tucked", "confidence": t - 0.01})
+    assert mannequin_untuck.gate_skips({"verdict": "unclear", "confidence": 1.0})
+    assert mannequin_untuck.gate_skips({"verdict": "gate_error", "confidence": 0.0})
 
 
 def test_validate_gate_normalizes_hostile_raw():
@@ -54,8 +57,10 @@ def test_judge_gate_sends_single_image_and_model_override(monkeypatch):
     전용 모델 설정이 있으면 gemini 오버라이드로 전달된다."""
     sent = {}
 
-    async def fake_fallback(settings, prompt, images, schema, thinking_level=None, models=None):
+    async def fake_fallback(settings, prompt, images, schema, thinking_level=None, models=None,
+                            **kwargs):
         sent.update(prompt=prompt, images=images, schema=schema, models=models)
+        assert kwargs["require_complete_envelope"] is True
         return {"verdict": "untucked", "confidence": 0.9}, "gemini"
 
     monkeypatch.setattr(mannequin_untuck, "analyze_with_fallback", fake_fallback)
@@ -107,7 +112,8 @@ def _postpass(monkeypatch, *, gate_mode, judge=None, judge_raises=False):
     out = asyncio.run(mj._apply_untuck_postpass(
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A",
         generation_attempts=1, res=res,
-        match_img=mj.InlineImage("image/png", b"bottom"), clothing_type="top"))
+        match_img=mj.InlineImage("image/png", b"bottom"), clothing_type="top",
+        prod_imgs=[mj.InlineImage("image/png", b"product")]))
     events = [e for e in sent["events"] if e.get("status") == "untuck_pass"]
     assert len(events) == 1, "untuck_pass 이벤트는 정확히 1회"
     return out, sent, events[0]
@@ -126,33 +132,80 @@ def test_gate_confident_untucked_skips_edit(monkeypatch):
 
 
 @pytest.mark.parametrize("judge", [
-    {"verdict": "tucked", "confidence": 0.99},
     {"verdict": "unclear", "confidence": 0.99},
     {"verdict": "untucked", "confidence": 0.5},
+    {"verdict": "tucked", "confidence": 0.5},
 ])
-def test_gate_uncertain_or_tucked_runs_edit(monkeypatch, judge):
+def test_gate_uncertain_or_nondefective_skips_edit(monkeypatch, judge):
     out, sent, ev = _postpass(monkeypatch, gate_mode="on", judge=judge)
     assert sent["judge_calls"] == 1
-    assert sent["edit_calls"] == 1, "스킵 조건 미달이면 오늘과 동일 — 편집 실행"
-    assert out.image == b"untucked"
-    assert ev["untuck_outcome"] == "applied"
+    assert sent["edit_calls"] == 0
+    assert out.image == b"cut"
+    assert ev["untuck_outcome"] == "skipped_gate"
     assert ev["untuck_gate"]["verdict"] == judge["verdict"]
 
 
-def test_gate_error_fails_open_to_edit(monkeypatch):
+def test_gate_error_cannot_authorize_edit(monkeypatch):
     out, sent, ev = _postpass(monkeypatch, gate_mode="on", judge_raises=True)
-    assert sent["edit_calls"] == 1, "게이트가 죽어도 최악은 '오늘 상태' — 편집은 나간다"
-    assert out.image == b"untucked"
-    assert ev["untuck_outcome"] == "applied"
+    assert sent["edit_calls"] == 0
+    assert out.image == b"cut"
+    assert ev["untuck_outcome"] == "skipped_gate"
     assert ev["untuck_gate"]["verdict"] == "gate_error"
+
+
+def test_valid_tucked_json_inside_incomplete_envelope_cannot_authorize_edit(monkeypatch):
+    sent = {"edit_calls": 0, "events": []}
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json={"candidates": [{
+                "finishReason": "MAX_TOKENS", "content": {"parts": [{"text": json.dumps({
+                    "verdict": "tucked", "confidence": 0.99})}]}}]})
+
+    class Provider:
+        async def generate_content_image(self, *args, **kwargs):
+            sent["edit_calls"] += 1
+            return types.SimpleNamespace(image=b"edited", mime="image/png")
+
+    async def emit(_pool, _job, _kind, payload):
+        sent["events"].append(payload)
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(mj, "_emit", emit)
+    settings = make_settings(
+        gemini_api_key="g", openai_api_key=None, analysis_model_order="gemini",
+        mannequin_untuck_pass="on", mannequin_untuck_gate="on")
+    before = types.SimpleNamespace(image=b"cut", mime="image/png")
+    out = asyncio.run(mj._apply_untuck_postpass(
+        pool=None, gemini=Provider(), s=settings, job_id="j", candidate="A",
+        generation_attempts=1, res=before,
+        match_img=mj.InlineImage("image/png", b"bottom"), clothing_type="top",
+        prod_imgs=[mj.InlineImage("image/png", b"product")]))
+    assert out is before
+    assert sent["edit_calls"] == 0
+    event = [item for item in sent["events"] if item.get("status") == "untuck_pass"][-1]
+    assert event["untuck_gate"]["verdict"] == "gate_error"
 
 
 def test_gate_off_never_judges(monkeypatch):
     out, sent, ev = _postpass(monkeypatch, gate_mode="off",
                               judge={"verdict": "untucked", "confidence": 1.0})
     assert sent["judge_calls"] == 0, "off 면 판정 콜 자체가 없다 — 기존 동작 그대로"
-    assert sent["edit_calls"] == 1
+    assert sent["edit_calls"] == 0
+    assert out.image == b"cut"
+    assert ev["untuck_outcome"] == "skipped_gate_off"
     assert "untuck_gate" not in ev
+
+
+def test_confident_tuck_runs_edit(monkeypatch):
+    out, sent, ev = _postpass(
+        monkeypatch, gate_mode="on", judge={"verdict": "tucked", "confidence": 0.9})
+    assert sent["edit_calls"] == 1
+    assert out.image == b"untucked"
+    assert ev["untuck_outcome"] == "applied"
 
 
 # ---------------------------------------------------------------- config 배선
@@ -164,7 +217,7 @@ def test_untuck_gate_flag_wiring(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     s = load_settings()
-    assert s.mannequin_untuck_gate == "off", "기본 off — 켜는 건 manifest 의 배포 결정"
+    assert s.mannequin_untuck_gate == "on"
     assert s.mannequin_untuck_gate_model == ""
 
     monkeypatch.setenv("MANNEQUIN_UNTUCK_GATE", "on")

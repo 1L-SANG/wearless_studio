@@ -104,7 +104,8 @@ def test_visible_false_is_axis_failure():
 def test_verdict_attaches_products_match_then_generated_last_without_base(monkeypatch):
     captured = {}
 
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         captured["images"] = images
         return ({"identityPass": True, "mismatches": [],
                  "axisPass": [_result("fit", "slim"), _result("length", "long")]}, "gemini")
@@ -118,7 +119,8 @@ def test_verdict_attaches_products_match_then_generated_last_without_base(monkey
 
 
 def test_verdict_propagates_vision_error_and_requires_declared_axes(monkeypatch):
-    async def boom(settings, prompt, images, schema):
+    async def boom(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         raise VisionError("down")
 
     monkeypatch.setattr(fq, "analyze_with_fallback", boom)

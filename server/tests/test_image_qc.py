@@ -1,6 +1,11 @@
 import asyncio
+import json
+
+import httpx
+import pytest
 
 from app.agents import image_qc as iq
+from app.agents import vision_llm
 from app.config import Settings, load_settings
 from app.agents.gemini_image import InlineImage
 from conftest import make_settings
@@ -48,6 +53,146 @@ def test_qc_schema_default_stays_three_fields():
     assert set(iq.qc_schema()["properties"]) == {"verdict", "mismatches", "correctionPrompt"}
     assert "${" not in iq.build_prompt(2)
     assert "SCORING" not in iq.build_prompt(2)
+
+
+def test_paired_schema_is_opt_in_and_strict():
+    default = iq.qc_schema(scored=True)
+    assert "target_resolved" not in default["properties"]
+    paired = iq.qc_schema(scored=True, paired=True)
+    assert paired["properties"]["target_resolved"] == {"type": "boolean"}
+    assert paired["properties"]["protected_regions_unchanged"] == {"type": "boolean"}
+    assert paired["properties"]["regression_reasons"]["type"] == "array"
+    assert set(paired["required"]) == set(paired["properties"])
+
+
+def test_paired_validation_is_fail_closed_and_score_cannot_override_regression():
+    base = {
+        "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+        "product_fidelity": 99, "physical_naturalness": 99,
+        "image_quality": 99, "series_consistency": None, "critical_errors": [],
+        **assessment(),
+    }
+    incomplete = iq.validate(base, scored=True, paired=True)
+    assert incomplete["target_resolved"] is False
+    assert incomplete["protected_regions_unchanged"] is False
+    assert iq.edit_accepted(incomplete) is False
+
+    changed_placket = iq.validate({
+        **base, "target_resolved": True, "protected_regions_unchanged": False,
+        "regression_reasons": ["front placket and button count changed"],
+    }, scored=True, paired=True)
+    assert iq.edit_accepted(changed_placket) is False
+
+    accepted = iq.validate({
+        **base, "target_resolved": True, "protected_regions_unchanged": True,
+        "regression_reasons": [],
+    }, scored=True, paired=True)
+    assert iq.edit_accepted(accepted) is True
+
+
+def test_paired_verdict_orders_source_match_before_and_after(monkeypatch):
+    captured = {}
+
+    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+        captured.update(prompt=prompt, images=[image.data for image in images], schema=schema)
+        assert kwargs["require_complete_envelope"] is True
+        return ({
+            "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 94,
+            "image_quality": 93, "series_consistency": None, "critical_errors": [],
+            **assessment(), "matching_fidelity": 92, "matching_critical_errors": [],
+            "target_resolved": True, "protected_regions_unchanged": True,
+            "regression_reasons": [],
+        }, "gemini")
+
+    monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
+    out = run(iq.verdict(
+        make_settings(gemini_api_key="x"),
+        [InlineImage("image/png", b"FRONT"), InlineImage("image/png", b"DETAIL")],
+        InlineImage("image/png", b"AFTER"), scored=True,
+        match_image=InlineImage("image/png", b"MATCH"),
+        before_image=InlineImage("image/png", b"BEFORE"),
+        edit_goal="lengthen only the main garment hem",
+    ))
+    assert captured["images"] == [b"FRONT", b"DETAIL", b"MATCH", b"BEFORE", b"AFTER"]
+    assert "BEFORE" in captured["prompt"] and "AFTER" in captured["prompt"]
+    assert "lengthen only the main garment hem" in captured["prompt"]
+    assert "immediately BEFORE the final generated image" not in captured["prompt"]
+    assert "followed by the BEFORE and AFTER images" in captured["prompt"]
+    assert out["target_resolved"] is True
+
+
+def _paired_raw():
+    return {
+        "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+        "product_fidelity": 95, "physical_naturalness": 94,
+        "image_quality": 93, "series_consistency": None, "critical_errors": [],
+        **assessment(), "target_resolved": True,
+        "protected_regions_unchanged": True, "regression_reasons": [],
+    }
+
+
+@pytest.mark.parametrize("invalid", ["finish", "blocked", "multiple"])
+def test_paired_public_call_rejects_incomplete_gemini_envelope_and_falls_back(
+    monkeypatch, invalid,
+):
+    calls = []
+    raw = _paired_raw()
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            calls.append(url)
+            if "generativelanguage" in url:
+                candidates = [{"finishReason": "STOP", "content": {
+                    "parts": [{"text": json.dumps(raw)}]}}]
+                payload = {"candidates": candidates}
+                if invalid == "finish":
+                    candidates[0]["finishReason"] = "MAX_TOKENS"
+                elif invalid == "blocked":
+                    payload["promptFeedback"] = {"blockReason": "SAFETY"}
+                else:
+                    candidates.append(dict(candidates[0]))
+                return httpx.Response(200, json=payload)
+            return httpx.Response(200, json={"choices": [{
+                "finish_reason": "stop", "message": {"content": json.dumps(raw)}}]})
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    out = run(iq.verdict(
+        make_settings(gemini_api_key="g", openai_api_key="o",
+                      analysis_model_order="gemini,gpt"),
+        [InlineImage("image/png", b"SOURCE")], InlineImage("image/png", b"AFTER"),
+        scored=True, before_image=InlineImage("image/png", b"BEFORE"),
+        edit_goal="correct only the confirmed hem defect",
+    ))
+    assert iq.edit_accepted(out) is True
+    assert len(calls) == 2 and "generativelanguage" in calls[0] and "openai" in calls[1]
+
+
+@pytest.mark.parametrize("invalid", ["missing_finish", "multiple"])
+def test_paired_public_call_rejects_incomplete_gpt_envelope(monkeypatch, invalid):
+    raw = _paired_raw()
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            choice = {"finish_reason": None if invalid == "missing_finish" else "stop",
+                      "message": {"content": json.dumps(raw)}}
+            choices = [choice, dict(choice)] if invalid == "multiple" else [choice]
+            return httpx.Response(200, json={"choices": choices})
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    with pytest.raises(vision_llm.VisionError):
+        run(iq.verdict(
+            make_settings(gemini_api_key=None, openai_api_key="o", analysis_model_order="gpt"),
+            [InlineImage("image/png", b"SOURCE")], InlineImage("image/png", b"AFTER"),
+            scored=True, before_image=InlineImage("image/png", b"BEFORE"),
+            edit_goal="correct only the confirmed hem defect",
+        ))
 
 
 def test_qc_schema_scored_adds_axes_and_keeps_strict_contract():
@@ -176,20 +321,12 @@ def test_scored_prompt_lists_tuck_as_critical():
     assert "DECLARED FIT" not in p
 
 
-def test_scored_prompt_lists_pattern_scale_as_critical():
-    """미세 줄무늬가 굵은 띠로 단순화되는 건 "다른 원단"이다 — 치명오류 어휘에 있어야 잡힌다.
-
-    2026-08-01 실측(prod da1b8101, 남성 스트라이프 셔츠): 원본은 흰 바탕에 하늘색+베이지 얇은
-    줄이 페어로 앞판 폭에 40~50줄인데, 생성본은 **하늘색 바탕에 굵은 베이지 줄 12~15개**로
-    나왔다. 바탕색이 뒤집히고 줄 간격이 3~4배가 됐는데도 QC 는 fid=82 로 auto_pass 했다.
-    DETAIL 클로즈업이 이미 첨부된 상태였다 — 정보 부족이 아니라 고주파 패턴을 저주파로
-    단순화하는 생성 모델의 실패 모드다. 무지 상품이 잘 나오는 이유도 같다(재현할 고주파가 없다).
-
-    핏 변화 때와 같은 이유로 치명오류에 둔다: 점수 설명 문장은 판정기 노이즈(±30) 안에서만
-    움직였고, critical_errors 어휘에 올렸을 때만 실제로 발화했다.
-    """
+def test_scored_prompt_routes_pattern_scale_to_structured_review_only_axis():
+    """무늬 축은 구체적으로 관찰하되 유료 재생성 필드로 복제하지 않는다."""
     p = iq.build_prompt(2, scored=True)
-    assert "pattern scale changed" in p, "치명오류 어휘에 있어야 재생성이 걸린다"
+    assert "changed pattern scale as a pattern-axis finding" in p
+    assert 'critical error "pattern scale changed"' not in p
+    assert "does not authorize another\npaid image or a surface redraw" in p
     assert "figure-ground" in p, "바탕/줄 반전(흰 바탕 → 색 바탕)도 결함으로 봐야 한다"
     assert "repeats across the garment" in p, "판정 기준이 '반복 개수'로 관측 가능해야 한다"
     # 주입 블록 마커(대문자 DECLARED FIT)는 fit_profile 이 있을 때만 나와야 한다 —
@@ -248,7 +385,8 @@ def test_validate_out_of_enum_defaults_pass():
 
 
 def test_verdict_orchestrates(monkeypatch):
-    async def fake_fallback(settings, prompt, images, schema):
+    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+        assert kwargs == {}
         assert len(images) == 3            # 상품 2 + 생성 1
         assert images[-1].data == b"GEN"   # 마지막이 생성 이미지
         return ({"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "블랙 유지"}, "gemini")
@@ -275,7 +413,8 @@ def test_pick_best_orchestrates_product_then_candidates(monkeypatch):
         InlineImage("image/jpeg", b"C1"),
     ]
 
-    async def fake_fallback(settings, prompt, images, schema):
+    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+        assert kwargs == {}
         assert [image.data for image in images] == [b"PRODUCT", b"C0", b"C1"]
         assert "FIRST 1 image" in prompt
         assert "2 image(s) are generated candidates" in prompt
@@ -357,7 +496,8 @@ def test_verdict_inserts_match_between_products_and_generated(monkeypatch):
     """첨부 순서 계약: [상품…, 매칭 하의, 생성]. 스키마·validate 도 matching 경로여야 한다."""
     captured = {}
 
-    async def fake_fallback(settings, prompt, images, schema):
+    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         captured["images"] = [i.data for i in images]
         captured["schema"] = schema
         assert "MATCHING BOTTOM" in prompt
@@ -383,7 +523,8 @@ def test_verdict_without_match_is_byte_identical_to_baseline(monkeypatch):
     """match_image 없으면 요청(이미지 수·프롬프트)·응답 shape 이 기존과 완전히 같다."""
     captured = {}
 
-    async def fake_fallback(settings, prompt, images, schema):
+    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         captured["n"] = len(images)
         captured["matching_in_prompt"] = "MATCHING BOTTOM" in prompt
         captured["matching_in_schema"] = "matching_fidelity" in schema["properties"]

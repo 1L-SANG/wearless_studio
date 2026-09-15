@@ -3,7 +3,7 @@
 조정(:regenerate)을 "베이스에서 재생성"이 아니라 "현재 컷 편집"으로 수행하기 위한
 프롬프트 빌더. v1은 폐기된 AG-05 유물이라 v2로 분리. 지시문은 fit_axes 고정 문구만 사용(셀러 텍스트 비주입), 의류 단위
 스코프(MAIN PRODUCT, MATCHING TOP, MATCHING BOTTOM)를 명시해 지시 밖 의류 변경을 금지한다.
-모델은 조정 전용 tier(MANNEQUIN_ADJUST_TIER=image_high → Gemini 3 Pro) 사용이 전제.
+모델은 조정 전용 tier(기본 image_mannequin)를 사용한다.
 """
 
 import os
@@ -14,6 +14,16 @@ _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # ser
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_adjust_v2.txt")
 
 ADJUST_PROMPT_VERSION = "adjust_v2"
+
+CUSTOM_MATCH_GRID_CONTEXT = (
+    "a 2x2 contact sheet showing 1-4 views of ONE SAME matching garment; treat every "
+    "occupied cell as evidence for that single garment; empty neutral cells mean no photo, "
+    "not a white garment or another product; render one garment only, never a collage or grid"
+)
+
+
+def custom_match_grid_context(enabled: bool) -> str:
+    return CUSTOM_MATCH_GRID_CONTEXT if enabled is True else ""
 
 
 def _directive_line(scope: str, category: str, axis: str, gender: str, value: str) -> str | None:
@@ -60,6 +70,7 @@ def build_adjust_directives(profile: dict, adjusted_axes: tuple | list) -> str:
 def build_adjust_manifest(
     product_count: int, has_match: bool, *, clothing_type: str | None = None,
     product_slots: tuple[str, ...] | list[str] | None = None,
+    match_is_custom: bool = False,
 ) -> str:
     """편집 입력 순서: 1=현재 컷(캔버스), 2..=상품 사진(정체성 기준), 마지막=매칭(있으면)."""
     if product_slots is not None and len(product_slots) != product_count:
@@ -80,7 +91,10 @@ def build_adjust_manifest(
         i += 1
     if has_match:
         role = "TOP" if str(clothing_type or "").lower() == "bottom" else "BOTTOM"
-        lines.append(f"{i}. matching {role.lower()} photo — identity reference for the MATCHING {role}")
+        custom = custom_match_grid_context(match_is_custom)
+        suffix = f"; {custom}" if custom else ""
+        lines.append(
+            f"{i}. matching {role.lower()} photo — identity reference for the MATCHING {role}{suffix}")
     return "\n".join(lines)
 
 

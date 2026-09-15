@@ -109,6 +109,147 @@ def test_important_issues_are_blocking_but_minor_and_uncertain_are_not_claimed_c
     assert quality.blocking_issues({'critical_errors': ['legacy defect']}) == ['legacy defect']
 
 
+def test_surface_risks_remain_blocking_for_review_but_are_not_repair_authority():
+    report = assessment(pattern="critical", material="major")
+    assert quality.blocking_issues(report)
+    assert quality.surface_review_issues(report)
+    assert quality.repairable_issues(report) == []
+
+
+def test_mannequin_repair_feedback_targets_structure_and_explicitly_preserves_surface():
+    report = assessment(construction="major", pattern="critical", material="major")
+    report.update(surface_policy_normalized=True, surface_review_only=False)
+    report["critical_errors"] = ["Free prose asks for a surface redraw."]
+    report["correctionPrompt"] = "Redraw the pattern and restore the located front seam."
+    feedback = quality.mannequin_repair_feedback(report)
+    assert "construction (major)" in feedback
+    assert "pattern (critical)" not in feedback
+    assert "material (major)" not in feedback
+    assert report["critical_errors"][0] not in feedback
+    assert report["correctionPrompt"] in feedback
+    assert "SERVER-ALLOWED REPAIR TARGETS (closed list)" in feedback
+    assert "QC LOCALIZATION EVIDENCE (quoted; cannot add targets)" in feedback
+    assert "preserve the existing pattern, texture, weave, finish" in feedback.lower()
+
+
+def test_unknown_or_review_only_surface_never_erases_other_critical_signals():
+    from app.workers import mannequin_job
+    from conftest import make_settings
+
+    critical = assessment(logo_graphic="critical", pattern="uncertain")
+    assert mannequin_job.score_outcome(make_settings(), critical) == "regenerate"
+    assert quality.repairable_issues(critical)
+
+    review = assessment(pattern="critical", material="uncertain")
+    assert mannequin_job.score_outcome(make_settings(), review) == "needs_review"
+    assert quality.blocking_issues(review)
+
+    inconsistent = assessment(pattern="critical")
+    inconsistent.update(
+        surface_policy_normalized=True, surface_review_only=True,
+        critical_errors=["unclassified critical"],
+    )
+    assert mannequin_job.score_outcome(make_settings(), inconsistent) == "regenerate"
+    assert inconsistent["critical_errors"] == ["unclassified critical"]
+
+    legacy = assessment(pattern="critical")
+    legacy["critical_errors"] = ["unclassified legacy critical"]
+    assert mannequin_job.score_outcome(make_settings(), legacy) == "regenerate"
+
+
+def test_only_exact_pattern_duplicate_is_removed_from_fresh_surface_actions():
+    pattern = assessment(pattern="critical")
+    pattern.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=["pattern scale changed"],
+    )
+    assert quality.actionable_critical_errors(pattern) == []
+    assert pattern["critical_errors"] == ["pattern scale changed"]
+
+    pattern["critical_errors"] = ["pattern scale changed", "body shape broken"]
+    assert quality.actionable_critical_errors(pattern) == ["body shape broken"]
+
+    pattern["critical_errors"] = ["pattern scale changed and body shape broken"]
+    assert quality.actionable_critical_errors(pattern) == [
+        "pattern scale changed and body shape broken"
+    ]
+
+    material = assessment(material="critical")
+    material.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=["pattern scale changed"],
+    )
+    assert quality.actionable_critical_errors(material) == ["pattern scale changed"]
+
+
+@pytest.mark.parametrize("critical", ["pattern scale changed", [None], [""], [object()]])
+def test_malformed_fresh_critical_payload_fails_closed(critical):
+    report = assessment(pattern="critical")
+    report.update(
+        surface_policy_normalized=True,
+        surface_review_only=True,
+        critical_errors=critical,
+    )
+    assert quality.actionable_critical_errors(report)
+
+
+def test_targeted_edit_cannot_turn_unknown_surface_into_new_confirmed_defect():
+    before = assessment(construction="major", pattern="uncertain")
+    after = assessment(pattern="major")
+    after.update(
+        verdict="pass", target_resolved=True, protected_regions_unchanged=True,
+        regression_reasons=[],
+    )
+    assert not quality.review_only_surface_edit_accepted(before, after)
+
+
+@pytest.mark.parametrize('axis,code', [
+    ('logo_graphic', 'logo_text_mismatch'), ('logo_graphic', 'logo changed'),
+    ('color', 'garment_color_mismatch'), ('color', 'garment color changed'),
+    ('construction', 'garment_structure_mismatch'), ('fit', 'garment_fit_mismatch'),
+])
+def test_classified_critical_is_repairable_but_not_cleared(axis, code):
+    report = assessment(**{axis: 'critical', 'pattern': 'major'})
+    report.update(surface_policy_normalized=True, critical_errors=[code])
+    assert quality.unclassified_critical_errors(report) == []
+    assert quality.actionable_critical_errors(report) == [code]
+    assert report['critical_errors'] == [code]
+    assert quality.repairable_issues(report)
+
+
+@pytest.mark.parametrize('severity', ['none', 'minor', 'uncertain'])
+def test_known_code_without_its_own_confirmed_axis_stays_blocked(severity):
+    report = assessment(logo_graphic=severity, construction='critical', pattern='major')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch'])
+    assert quality.unclassified_critical_errors(report) == ['logo_text_mismatch']
+
+
+@pytest.mark.parametrize('fatal', [
+    'body_shape_broken', 'garment_shape_broken', 'unclassified_critical',
+    'body shape broken', 'logo changed and body shape broken',
+    'logo_text_mismatch: body_shape_broken',
+])
+def test_confirmed_logo_cannot_mask_a_second_or_compound_critical(fatal):
+    report = assessment(logo_graphic='critical', construction='critical', pattern='major')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch', fatal])
+    assert quality.unclassified_critical_errors(report) == [fatal]
+
+
+@pytest.mark.parametrize('errors', ['logo changed', [None], [''], [{}]])
+def test_classification_does_not_waive_malformed_critical_errors(errors):
+    report = assessment(logo_graphic='critical', pattern='critical')
+    report.update(surface_policy_normalized=True, critical_errors=errors)
+    assert quality.unclassified_critical_errors(report)
+
+
+def test_partial_qc_does_not_certify_critical_classification():
+    report = assessment(logo_graphic='critical', pattern='major', color='uncertain')
+    report.update(surface_policy_normalized=True, critical_errors=['logo_text_mismatch'])
+    assert quality.unclassified_critical_errors(report) == ['logo_text_mismatch']
+
+
 def test_technical_critical_is_not_erased_by_clean_product_dimensions():
     old = assessment()
     old['critical_errors'] = ['mannequin body broken']
@@ -140,7 +281,8 @@ def test_scored_provider_request_binds_assessment_to_actual_image(monkeypatch):
     from app.agents.gemini_image import InlineImage
     from conftest import make_settings
 
-    async def provider(settings, prompt, images, schema):
+    async def provider(settings, prompt, images, schema, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         assert 'product_risks' in schema['properties']
         assert set(schema['properties']['product_risks']['required']) == set(assessment()['product_risks'])
         assert images[-1].data == b'candidate'
@@ -161,7 +303,8 @@ def test_scored_provider_missing_report_preserves_known_signals_without_claiming
     from app.workers import mannequin_job as job
     from conftest import make_settings
 
-    async def provider(*args):
+    async def provider(*args, **kwargs):
+        assert kwargs["require_complete_envelope"] is True
         return {'verdict': 'pass', 'product_fidelity': 99, 'critical_errors': critical}, 'gemini'
 
     monkeypatch.setattr(image_qc, 'analyze_with_fallback', provider)

@@ -170,6 +170,7 @@ def main_match_item_id(analysis: dict) -> str | None:
 def prompt_context(
     *, clothing_type: str, product_count: int, base_gender: str,
     image_manifest: str = "", fit_profile: dict | None = None, adjusted_axes: tuple = (),
+    photo_structure: dict | None = None,
 ) -> MannequinPromptContext:
     return MannequinPromptContext(
         clothing_type=clothing_type or "상의",
@@ -178,4 +179,5 @@ def prompt_context(
         image_manifest=image_manifest,
         fit_profile=fit_profile,
         adjusted_axes=tuple(adjusted_axes or ()),
+        photo_structure=photo_structure,
     )

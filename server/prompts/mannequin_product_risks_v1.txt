@@ -16,8 +16,13 @@ garment, even if its broad identity is recognizable. Correction is needed.
 critical: source-proven loss or alteration of a defining product feature, such as a
 missing or garbled visible logo, changed color family, garment type, or major pocket
 or closure structure. Other correct features never offset a critical defect.
-uncertain: the relevant feature cannot be checked from the supplied references or
-the candidate. Occlusion or an absent view is not evidence that a detail is missing.
+uncertain: visible evidence suggests a potentially important mismatch but the
+comparison cannot be resolved. An unseen back in a front mannequin view, an internal
+label hidden by normal wear, or another normally out-of-view region is outside the
+inspection scope, not an uncertain defect. If visible applicable features match,
+record none and describe that visible match. Uploaded back references explain the
+product; they do not require the front output to show the back. A feature specifically
+required to remain visible but incorrectly covered is still an observable defect.
 
 Axis guidance:
 - logo_graphic: exterior logos, text, embroidery and distinctive graphics. Missing,
@@ -46,4 +51,31 @@ the coordination item if provided. Body breakdown and unusable image artifacts s
 belong in the existing technical scores and critical_errors. Keep critical_errors
 consistent with this rubric; it contains only actual critical defects, not minor
 differences, uncertainty, or a count of concerns. Put a concise source-grounded repair
-instruction for major/critical findings in correctionPrompt and set verdict=retry.
+instruction for repairable major/critical findings in correctionPrompt and set verdict=retry.
+
+Pattern and material findings are review-only for mannequin generation. Report their
+severity and evidence in product_risks so they remain visible to comparison and review,
+but do not ask to redraw pattern, texture, weave, finish or sheen in correctionPrompt.
+Do not copy a pattern/material-only finding into critical_errors, mismatches or a retry
+verdict, because those fields authorize another paid image attempt. Keep its structured
+severity even when it is critical so the server marks the first cut for review.
+When another confirmed structural, fit, color, logo or text defect also needs correction,
+target only that defect and explicitly preserve the existing surface appearance.
+
+REPAIR DIRECTION QUALITY. For each confirmed major/critical issue, specify the affected
+garment role and visible region, the source observation, the actual output difference,
+and the smallest corrective action with protected neighboring features. Use garment
+landmarks such as placket, seam junction, cuff edge and hem, not invented body measurements.
+Do not merely say "improve fidelity", "restore texture" or "fix pattern". Keep the complete
+correctionPrompt within 1600 characters, prioritizing confirmed defining errors.
+
+For a pattern, inspect uninterrupted body and sleeve panels for line continuity, spacing,
+line widths and crossings. Lines may bend at real folds or end at actual seams/occlusions;
+unexplained gaps on visible continuous cloth are not cured just because a grid is present.
+For material, compare visible stitch/loop/weave structure and surface response, not just
+the broad garment class. Replacing visible fine rows with diffuse fuzzy or directional
+pile-like shading can change identity even if it still looks like a sweatshirt or trousers.
+Do not infer fiber composition, and account for lighting and unequal pixel scale.
+For readable lettering, transcribe source and generated text separately and identify the
+specific differing characters. If a character cannot actually be resolved, mark uncertainty
+rather than inventing a confident misspelling and authorizing a repair from it.

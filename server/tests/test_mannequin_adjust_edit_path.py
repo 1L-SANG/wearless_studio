@@ -92,6 +92,8 @@ def _run_worker(
     adjusted_axes=("fit",),
     current_match_id=None,
     candidate_qc=None,
+    candidate_metadata=None,
+    analysis_overrides=None,
 ):
     calls = {"run": [], "success": [], "failure": [], "emits": [], "parent_lookup": 0}
     analysis = {
@@ -99,6 +101,7 @@ def _run_worker(
         "fit": "regular",
         "fitProfile": PROFILE,
     }
+    analysis.update(analysis_overrides or {})
     if current_match_id is not None:
         analysis["matchSelections"] = [{"role": "main", "clothingId": current_match_id}]
 
@@ -144,6 +147,7 @@ def _run_worker(
             "candidate": kwargs["candidate"],
             "base_fit": kwargs["base_fit"],
             "qc_scores": candidate_qc,
+            "generation_metadata": dict(candidate_metadata or {}),
         }
 
     async def finalize_success(conn, **kwargs):
@@ -288,6 +292,18 @@ def test_match_compatible_parent_can_edit_and_persists_resolved_match(monkeypatc
     assert metadata["matchItemId"] == "match-1"
 
 
+def test_real_worker_propagates_verified_mirror_and_custom_match_flags(monkeypatch):
+    calls, _ = _run_worker(
+        monkeypatch,
+        parent=_parent(matchItemId="custom_grid_1"),
+        current_match_id="custom_grid_1",
+        analysis_overrides={"sourceMirrored": True},
+    )
+    run = calls["run"][0]
+    assert run["source_mirrored"] is True
+    assert run["match_is_custom"] is True
+
+
 def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_safe_event(
     monkeypatch,
 ):
@@ -309,6 +325,19 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
                 "visible": True,
                 "observedLandmark": "target visible",
             }],
+        }
+
+    async def fake_image_qc(settings, products, generated, **kwargs):
+        assert kwargs["before_image"].data == b"parent"
+        assert kwargs["edit_goal"] == directives
+        assert kwargs["source_mirrored"] is True
+        assert kwargs["match_is_custom"] is True
+        return {
+            "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None, "critical_errors": [],
+            "matching_critical_errors": [], "target_resolved": True,
+            "protected_regions_unchanged": True, "regression_reasons": [],
         }
 
     class _Gemini:
@@ -333,6 +362,7 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
     monkeypatch.setattr(mannequin_fit_qc, "verdict", fake_axis_verdict)
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_image_qc)
     gemini = _Gemini()
     settings = make_settings(
         r2_bucket="bucket",
@@ -341,6 +371,7 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
         mannequin_adjust_tier="",
         model_image_light="flash-test",
         model_image_high="pro-test",
+        model_image_mannequin="sunburst-test",
         mannequin_prompt_version="fresh_v1",
     )
     app = types.SimpleNamespace(state=types.SimpleNamespace(
@@ -373,16 +404,20 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
         generation_path="edit",
         parent_cut_img=parent,
         adjust_directives=directives,
+        source_mirrored=True,
+        match_is_custom=True,
         ref_imgs=(InlineImage("image/png", b"style-ref-must-not-be-sent"),),
     ))
 
     assert result is not None
     assert len(gemini.calls) == 1
     call = gemini.calls[0]
-    assert call["model"] == "pro-test"  # 빈 adjust tier도 image_high로 강제 해석
+    assert call["model"] == "sunburst-test"
     assert [image.data for image in call["images"]] == [b"parent", b"product", b"match"]
-    assert call["prompt"] == render_adjust_prompt(
-        directives, build_adjust_manifest(1, True))
+    assert "MIRRORED SOURCE PHOTOS" in call["prompt"]
+    assert "2x2 contact sheet" in call["prompt"]
+    assert call["prompt"].startswith(render_adjust_prompt(
+        directives, build_adjust_manifest(1, True, match_is_custom=True)))
     assert judged == [_PNG_1PX]  # 편집 경로의 최초 출력에도 기존 axis QC가 실행됨
 
     rendered = [

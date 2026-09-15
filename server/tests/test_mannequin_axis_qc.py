@@ -93,7 +93,7 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     if guard:
         monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
     if p2 is not None:
-        async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
+        async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None, **kwargs):
             assert scored, "마네킹 경로는 4축 점수를 받아야 한다(scored=True)"
             return p2
         monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -180,14 +180,25 @@ def test_axis_qc_guard_false_demotes_enforce_to_shadow(monkeypatch):
 # ---------- enforce (가드 해제) ----------
 
 def test_axis_qc_enforce_pass_fires_no_edit(monkeypatch):
-    result, g, _, emits = _run(monkeypatch, mode="enforce", guard=True, verdicts=[_verdict()])
+    result, g, _, emits = _run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=1,
+        verdicts=[_verdict()])
     assert result is not None and len(g.calls) == 1
     assert _events(emits, "axis_retry")[0]["outcome"] == "not_needed"
 
 
 def test_axis_qc_enforce_failure_edits_once_and_selects_edited(monkeypatch):
     result, g, r2, emits = _run(monkeypatch, mode="enforce", guard=True,
-                                verdicts=[_verdict(fit_ok=False), _verdict()])
+                                verdicts=[_verdict(fit_ok=False), _verdict()],
+                                p2={
+                                    "verdict": "pass", "mismatches": [],
+                                    "correctionPrompt": None, "product_fidelity": 95,
+                                    "physical_naturalness": 95, "image_quality": 95,
+                                    "series_consistency": None, "critical_errors": [],
+                                    "target_resolved": True,
+                                    "protected_regions_unchanged": True,
+                                    "regression_reasons": [],
+                                })
     assert result is not None
     assert len(g.calls) == 2  # 생성 1 + 편집 1
     edit_call = g.calls[1]
@@ -249,11 +260,46 @@ def test_axis_qc_edit_judge_error_keeps_original(monkeypatch):
 
 # ---------- 예산·선점·게이트 불변 ----------
 
-def test_axis_qc_retry_respects_shared_max_attempt_budget(monkeypatch):
-    result, g, r2, emits = _run(monkeypatch, mode="enforce", guard=True, max_attempts=1,
-                                verdicts=[_verdict(fit_ok=False)])
-    assert result is not None and len(g.calls) == 1  # 생성 1 = 예산 소진 → 편집 불가
-    assert _events(emits, "axis_retry")[0]["outcome"] == "budget_exhausted"
+def test_default_one_attempt_routes_failed_axis_into_single_final_repair(monkeypatch):
+    accepted = {
+        "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+        "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+        "series_consistency": None, "critical_errors": [], "target_resolved": True,
+        "protected_regions_unchanged": True, "regression_reasons": [],
+    }
+    result, g, r2, emits = _run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=1,
+        verdicts=[_verdict(fit_ok=False), _verdict()], p2=accepted)
+    assert result is not None and len(g.calls) == 2
+    assert [image.data for image in g.calls[1]["images"]][:2] == [_PNG_1PX, b"p"]
+    assert "fit" in g.calls[1]["prompt"] and "slim" in g.calls[1]["prompt"]
+    assert r2.puts[0][1] == _EDITED
+    assert _events(emits, "axis_retry")[0]["outcome"] == "routed_to_final_repair"
+
+
+def test_default_one_attempt_routes_confirmed_base_pose_failure_to_final_repair(monkeypatch):
+    base_results = iter([
+        {"poseFrameMatch": {"decision": "retry"}},
+        {"poseFrameMatch": {"decision": "pass"}},
+    ])
+
+    async def base_qc(**kwargs):
+        return next(base_results)
+
+    monkeypatch.setattr(mannequin_job, "_apply_base_fidelity_qc", base_qc)
+    accepted = {
+        "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+        "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+        "series_consistency": None, "critical_errors": [], "target_resolved": True,
+        "protected_regions_unchanged": True, "regression_reasons": [],
+    }
+    result, g, r2, _emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[],
+        image_qc="shadow", p2=accepted,
+        mannequin_base_fidelity_qc="enforce")
+    assert result is not None and len(g.calls) == 2
+    assert "poseFrameMatch" in g.calls[1]["prompt"]
+    assert r2.puts[0][1] == _EDITED
 
 
 def test_legacy_identity_rejection_preempts_axis_edit(monkeypatch):
@@ -295,7 +341,7 @@ def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatc
 def test_critical_salvage_gets_one_final_repair_but_never_ships_unverified(monkeypatch):
     """점수 95여도 로고 손상은 최종 한 장으로 교정하고, 재검수 미완료면 저장하지 않는다."""
     g, storage = _FakeGemini(), _R2()
-    with pytest.raises(mannequin_job.MannequinQualityError, match='final_review_unavailable'):
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_edit_preservation_rejected'):
         _run(monkeypatch, mode="off", guard=True, max_attempts=1, gemini=g, storage=storage,
             verdicts=[], image_qc="enforce",
             p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,

@@ -49,7 +49,7 @@ def test_has_logo_text_ignores_generic_marketing_words():
 # ---------------------------------------------------------------- 해상도 결정 (순수)
 
 
-def _s(base="1K", pattern="off", logo="2K"):
+def _s(base="1K", pattern="off", logo="off"):
     return SimpleNamespace(
         mannequin_image_size=base,
         mannequin_pattern_image_size=pattern,
@@ -63,7 +63,7 @@ _PATTERN_LOGO = ({"name": "스트라이프 로고 셔츠"}, {"sellingPoints": ["
 
 
 def test_logo_product_upgrades_to_2k():
-    assert effective_image_size(_s(), *_LOGO) == "2K"
+    assert effective_image_size(_s(logo="2K"), *_LOGO) == "2K"
 
 
 def test_plain_product_stays_at_base_size():
@@ -72,20 +72,20 @@ def test_plain_product_stays_at_base_size():
 
 def test_fine_pattern_wins_over_logo():
     """패턴 승급(4K)이 로고 승급(2K)의 상위 호환 — 둘 다면 4K."""
-    assert effective_image_size(_s(pattern="4K"), *_PATTERN_LOGO) == "4K"
+    assert effective_image_size(_s(pattern="4K", logo="2K"), *_PATTERN_LOGO) == "4K"
 
 
 def test_logo_upgrade_survives_lowered_pattern_size():
     """리뷰 지적(8/19): 패턴 분기가 무조건 return 하면, 운영자가 패턴 크기를 1K 로
     내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안 된다 — 적용 가능한 승급 중
     최댓값을 골라야 한다."""
-    assert effective_image_size(_s(pattern="1K"), *_PATTERN_LOGO) == "2K"
-    assert effective_image_size(_s(pattern="2K"), *_PATTERN_LOGO) == "2K"
+    assert effective_image_size(_s(pattern="1K", logo="2K"), *_PATTERN_LOGO) == "2K"
+    assert effective_image_size(_s(pattern="2K", logo="2K"), *_PATTERN_LOGO) == "2K"
 
 
 def test_logo_upgrade_never_downgrades_base():
     """기본이 이미 더 크면 승급이 깎아내리면 안 된다."""
-    assert effective_image_size(_s(base="4K"), *_LOGO) == "4K"
+    assert effective_image_size(_s(base="4K", logo="2K"), *_LOGO) == "4K"
 
 
 def test_logo_upgrade_off_restores_current_behavior():
@@ -98,13 +98,13 @@ def test_logo_upgrade_off_restores_current_behavior():
 
 def test_logo_image_size_flag_wiring(monkeypatch):
     from app.config import Settings, load_settings
-    assert Settings.__dataclass_fields__["mannequin_logo_image_size"].default == "2K"
+    assert Settings.__dataclass_fields__["mannequin_logo_image_size"].default == "OFF"
 
     monkeypatch.delenv("MANNEQUIN_LOGO_IMAGE_SIZE", raising=False)
-    assert load_settings().mannequin_logo_image_size == "2K"
+    assert load_settings().mannequin_logo_image_size == "OFF"
 
     monkeypatch.setenv("MANNEQUIN_LOGO_IMAGE_SIZE", "off")
     assert load_settings().mannequin_logo_image_size == "OFF"
 
     monkeypatch.setenv("MANNEQUIN_LOGO_IMAGE_SIZE", "banana")
-    assert load_settings().mannequin_logo_image_size == "2K", "모르는 값은 기본 2K"
+    assert load_settings().mannequin_logo_image_size == "OFF", "모르는 값은 안전한 기본 off"

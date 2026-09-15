@@ -10,7 +10,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.agents import mannequin_bust
-from app.agents.gemini_image import GeminiError
+from app.agents.gemini_image import GeminiError, InlineImage
 from app.agents.prompts import load_bust_prompt_template
 from app.workers import mannequin_job
 from tests.conftest import make_settings
@@ -71,7 +71,7 @@ def test_worker_passes_clothing_type_to_bust_gate(monkeypatch):
     assert seen.get("clothing_type") == "top", seen
 
 
-def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
+def test_build_prompt_is_neutral_and_base_preserving():
     """v3(핏 인식본)의 계약. **v1 의 최대치 압박 문구는 의도적으로 빠졌다.**
 
     v1 은 "과소 변화는 FAILURE", "확신 없으면 go FURTHER", "허리를 눈에 띄게 SLIMMER" 로
@@ -84,37 +84,30 @@ def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     # 실측 캘리브레이션으로 고른 크기 — 이 배수가 결과 크기를 결정한다.
     # 1.5 → 1.3 (2026-08-01): 1.5 는 전신이 "뚱뚱하게" 읽혀 상품 인상을 깎았다. 같은 베이스 컷에
     # 배수만 바꾼 그리드(1.5 ×1 vs 1.3 ×4)에서 셀러가 1.3 을 골랐다.
-    assert "a full C CUP" in prompt
-    assert "1.3 times" in prompt
+    assert "fixed base mannequin" in prompt
+    assert "source photographs" in prompt
     # 변화가 보이게 만드는 메커니즘(2026-07-30 스파이크) — 이건 유지한다.
-    assert "TENTS over the bust apex" in prompt
-    assert "falls AWAY from the stomach" in prompt
+    assert "exact fastened button count" in prompt
     # 핏 보존이 크기보다 위다. 이 우선순위가 v3 의 핵심이고, 빠지면 v1 회귀다.
-    assert "WHAT OUTRANKS WHAT" in prompt
-    assert "The garment's FIT is untouchable" in prompt
-    assert "A drawn-in waist on a loose garment is WRONG" in prompt
-    assert "GIVE UP THE VOLUME" in prompt
+    assert "preserve" in prompt.lower()
     # 프린트·레터링 보존 — v1 에서 'text or logo altered' 가 실제로 발생했다.
-    assert "letter for letter" in prompt
+    assert "color" in prompt.lower() and "rib" in prompt.lower()
     # 전신 비대화·골반 확대 방지 — 1차 스파이크 실패 모드의 직접 가드(유지).
-    assert "HIP WIDTH MUST NOT INCREASE" in prompt
-    assert "NOT read as heavier" in prompt
+    assert "do not cinch" in prompt.lower()
     # 프레이밍 — v2 가 한 건에서 전신 프레임을 잘랐다. v3 에서 하드 룰로 승격.
-    assert "The FRAMING is unchanged" in prompt
+    assert "framing" in prompt.lower()
     # 앞섬 잠금 — 2패스가 가슴 공간을 만드느라 단추를 풀어버린다(1패스 4/4 잠김 vs 2패스 풀림).
-    assert "stays done up" in prompt
-    assert "Do NOT open, unbutton, unzip" in prompt
-    assert "STAYING FASTENED" in prompt
+    assert "fastening state" in prompt
     # "잠긴 건 잠긴 채로" 만으로는 4회 중 1회가 목 부분을 더 벌렸다. 판정 가능한 기준
     # (잠긴 단추 수·개구부 깊이가 입력보다 나빠지지 않을 것)으로 대체한다(2026-07-30).
-    assert "THE SAME OR MORE" in prompt
-    assert "NO LOWER on the body" in prompt
+    assert "same exact number" in prompt
     # untuck 교정 — 들어와 있으면 빼내고, 이미 나와 있으면 그대로 둔다(2026-07-30).
-    assert "PULL IT OUT" in prompt
-    assert "COMPLETELY OUTSIDE" in prompt
-    assert "unbroken visible line" in prompt
+    assert "PULL IT OUT" not in prompt
+    assert "COMPLETELY OUTSIDE" not in prompt
     # 밑단 모양·길이는 건드리지 않는다 — 빼내는 것이지 늘리는 게 아니다.
-    assert "curved shirttail hem stays" in prompt
+    for harmful in ("C CUP", "B cup", "1.3 times", "nipped in",
+                    "SAME OR MORE", "gaps BETWEEN"):
+        assert harmful not in prompt
 
 
 def test_retired_maximal_push_wording_stays_out():
@@ -148,15 +141,21 @@ def _run(*, gender, mode, generate, calls_spent=0):
         emits.append((event_type, dict(payload)))
 
     gemini = SimpleNamespace(generate_content_image=generate)
-    s = make_settings(mannequin_bust_pass=mode)
+    s = make_settings(mannequin_bust_pass=mode, mannequin_bust_gate="on")
     orig_emit = mannequin_job._emit
+    orig_judge = mannequin_job.mannequin_bust.judge_gate
+    async def confirmed(*args, **kwargs):
+        return {"verdict": "insufficient", "confidence": 0.95}
     mannequin_job._emit = fake_emit
+    mannequin_job.mannequin_bust.judge_gate = confirmed
     try:
         out = asyncio.run(mannequin_job._apply_bust_pass(
             pool=None, gemini=gemini, s=s, job_id="j1", candidate="A", attempt=1,
-            base_gender=gender, res=_ORIG, calls_spent=calls_spent))[0]
+            base_gender=gender, res=_ORIG, calls_spent=calls_spent,
+            prod_imgs=[InlineImage("image/png", b"source")]))[0]
     finally:
         mannequin_job._emit = orig_emit
+        mannequin_job.mannequin_bust.judge_gate = orig_judge
     return out, emits
 
 
@@ -196,10 +195,9 @@ def test_bust_pass_applies_for_women():
 
     out, emits = _run(gender="women", mode="on", generate=generate)
     assert out is _EDITED
-    assert seen["n_images"] == 1                       # 1패스 결과 한 장만 — 단독 과제여야 먹힌다
-    assert "a full C CUP" in seen["prompt"]
-    # Flash 는 거부·미반영으로 탈락했다. 티어는 image_high 고정.
-    assert seen["model"] == make_settings().model_image_high
+    assert seen["n_images"] == 2
+    assert "fixed base mannequin" in seen["prompt"]
+    assert seen["model"] == make_settings().model_image_mannequin
     assert [p["outcome"] for t, p in emits if p.get("status") == "bust_pass"] == ["applied"]
 
 

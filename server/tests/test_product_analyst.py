@@ -424,7 +424,12 @@ def _confirmed_raw():
             "reason": "flat presentation does not prove body-worn fit",
             "evidenceOrdinals": [1],
         }],
-        "visibleSurfacePlan": "FRONT is dominant; preserve the supported neckline and seams.",
+        "hem_shape": {"value": "straight", "evidenceOrdinals": [1]},
+        "cuff": {"value": "unknown", "evidenceOrdinals": []},
+        "button_count_visible": {"value": None, "evidenceOrdinals": []},
+        "pattern_structure": {"value": "none", "evidenceOrdinals": [1]},
+        "surface_texture": {"value": "fine ribbing is visible", "evidenceOrdinals": [1]},
+        "seam_lines": {"value": "unknown", "evidenceOrdinals": []},
     }
 
 
@@ -435,6 +440,21 @@ def test_confirmed_evidence_schema_is_added_only_for_bound_production_call():
     assert pec.PERSISTED_KEY in confirmed["properties"]
     assert pec.PERSISTED_KEY in confirmed["required"]
     assert set(confirmed["properties"]) == set(confirmed["required"])
+
+
+def test_confirmed_evidence_schema_serializes_all_six_fields_for_gemini_with_nullable_count():
+    from app.agents import vision_llm
+
+    body = vision_llm._gemini_body(
+        "prompt", [], pa.analysis_schema(include_confirmed_evidence=True), "low"
+    )
+    evidence = body["generationConfig"]["responseSchema"]["properties"][pec.PERSISTED_KEY]
+    assert set(evidence["required"]) == {
+        "panels", "hardFacts", "uncertainties", "hem_shape", "cuff",
+        "button_count_visible", "pattern_structure", "surface_texture", "seam_lines",
+    }
+    count_value = evidence["properties"]["button_count_visible"]["properties"]["value"]
+    assert count_value == {"type": "INTEGER", "nullable": True}
 
 
 def test_confirmed_evidence_prompt_and_payload_flow_through_existing_ag01_call(monkeypatch):

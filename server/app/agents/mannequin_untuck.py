@@ -10,9 +10,8 @@
 과제 1개일 때 모델이 반영한다는 성질은 가슴·원단 2패스에서 검증됐고, bust v3 안에 untuck 이
 **부차 지시**로 있을 때는 실패했다(02:05: bust applied 후에도 tuck 잔존). 단일 과제가 변수다.
 
-실행 조건이 QC 검출에 **의존하지 않는 이유**: 5번 항목. 검출이 불안정한 신호를 게이트로 쓰면
-놓친 컷이 그대로 출고된다. 매칭 하의가 붙는 잡마다 항상 1회 돈다(사용자 승인, 2026-08-01) —
-이미 빠져 있으면 프롬프트가 무변경 반환을 지시하므로 no-op 호출이다.
+현재 정책은 확정 tuck 판정이 공유 임계 이상일 때만 편집을 허용한다. 정상, 불확실,
+판정 실패, 게이트 off는 자율 편집을 만들지 않는다.
 
 실행 위치는 일반 retry 가 끝난 **저장 직전 전용 post-pass** 다(2026-08-12). 편집 체인 맨 앞
 공유 예산 시절에는 attempt 를 소진한 잡이 budget_exhausted 로 스킵돼 "항상 1회" 계약이
@@ -26,12 +25,7 @@ from .vision_llm import analyze_with_fallback
 # 하의 위로 입는 주상품만 대상 — 하의 상품이면 매칭이 상의라 tuck 방향 자체가 다르다(WS4).
 _TUCKABLE = {"top", "outer"}
 
-# 사전 게이트(2026-08-19 오너 승인) — 편집 콜(이미지, 40~60초·$0.14) 전에 값싼 판정 콜
-# (vision, 3~5초·~$0.01)로 "이미 빠져 있나"를 묻는다. 위 주석 5항(검출 불안정)과 충돌하지
-# 않는 이유 = 비대칭 규약(edit_gate 모듈 docstring): 스킵은 확신에 찬 untucked 뿐이고
-# tucked/unclear/판정실패/off 는 전부 기존 동작(무조건 편집)이다. 유일한 하방은 판정기가
-# **자신 있게 틀린** 스킵이며, 보수 프롬프트("의심되면 unclear")와 공유 임계로 관리한다.
-# 스킵률·오탐 관측 = untuck_pass 이벤트의 untuck_gate 필드.
+# 사전 게이트는 확정 tucked 판정이 공유 임계 이상일 때만 이미지 편집을 허용한다.
 GATE_SKIP_CONFIDENCE = edit_gate.GATE_SKIP_CONFIDENCE
 
 _GATE_VERDICTS = ("tucked", "untucked", "unclear")
@@ -46,12 +40,12 @@ def validate_gate(raw: dict | None) -> dict:
 
 
 def gate_skips(result: dict) -> bool:
-    """이 판정으로 편집을 건너뛰어도 되는가 (순수). 확신에 찬 untucked 만 True."""
-    return edit_gate.skips(result, "untucked")
+    """확정 tuck이 아니면 편집을 건너뛰다."""
+    return edit_gate.skips(result, "tucked")
 
 
 async def judge_gate(settings, cut_image) -> dict:
-    """생성본 1장만 보고 밑단이 이미 빠져 있는지 판정한다. 실패는 호출자가 잡아 편집 실행.
+    """생성본 1장만 보고 tuck 여부를 판정한다. 실패는 편집 권한이 아니다.
 
     입력이 1장인 건 편집 패스와 같은 원칙(과제 1개) — 상품·매칭 사진은 이 질문에 필요
     없고 섞으면 판정 대상이 흐려진다. 전용 모델 설정(mannequin_untuck_gate_model)이 있으면
@@ -61,7 +55,8 @@ async def judge_gate(settings, cut_image) -> dict:
     model = getattr(settings, "mannequin_untuck_gate_model", "") or ""
     raw, _provider = await analyze_with_fallback(
         settings, prompt, [cut_image], gate_schema(),
-        models={"gemini": model} if model else None)
+        models={"gemini": model} if model else None,
+        require_complete_envelope=True)
     return validate_gate(raw)
 
 

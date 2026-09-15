@@ -77,6 +77,21 @@ def _run(monkeypatch, *, outputs, verdicts, with_match=True, untuck_raises=False
         mannequin_job.qc, "evaluate_canvas_alpha_qc", lambda _data: QcResult("pass"))
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", _no_series)
 
+    async def confirmed_tuck(*args, **kwargs):
+        return {"verdict": "tucked", "confidence": 0.95}
+
+    async def accepted_edit(*args, **kwargs):
+        return {
+            "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None, "critical_errors": [],
+            "matching_critical_errors": [], "target_resolved": True,
+            "protected_regions_unchanged": True, "regression_reasons": [],
+        }
+
+    monkeypatch.setattr(mannequin_job.mannequin_untuck, "judge_gate", confirmed_tuck)
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", accepted_edit)
+
     async def fake_emit(pool, job_id, event_type, payload):
         emits.append(dict(payload))
 
@@ -92,6 +107,7 @@ def _run(monkeypatch, *, outputs, verdicts, with_match=True, untuck_raises=False
         mannequin_bust_pass="off",
         mannequin_fabric_pass="off",
         mannequin_untuck_pass="on",
+        mannequin_untuck_gate="on",
     )
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=object(), r2=r2, gemini=gemini))
@@ -104,7 +120,7 @@ def _run(monkeypatch, *, outputs, verdicts, with_match=True, untuck_raises=False
         base_fit="regular",
         base_gender="women",
         base_img=types.SimpleNamespace(mime="image/png", data=b"base"),
-        prod_imgs=[],
+        prod_imgs=[mannequin_job.InlineImage("image/png", b"product")],
         match_img=(mannequin_job.InlineImage("image/png", b"bottom") if with_match else None),
         product_count=0,
         template="${baseGender} ${clothingType} ${imageManifest}",
