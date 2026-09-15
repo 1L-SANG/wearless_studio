@@ -109,6 +109,9 @@ ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp", "image/heic", "ima
 #: 그쪽은 상품 사진 경로라 HEIC 를 받을 이유가 없고, 다운스트림(Gemini)도 못 읽는다.
 FACE_MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
                  "image/heic": "heic", "image/heif": "heif"}
+#: 브라우저가 "모르겠다" 고 말하는 값. 이걸 거절하면 아이폰 HEIC 가 통째로 막힌다 — 실제
+#: 형식은 매직바이트로 판정한다(sniff_image_mime).
+GENERIC_MIME = {"", "application/octet-stream", "binary/octet-stream"}
 #: 대표이미지(cover)는 브라우저가 그대로 <img> 로 그린다 — HEIC 를 받으면 빈 칸이 된다.
 #: 등록 사진과 달리 정규화본을 만들지 않으므로 여기선 HEIC 를 받지 않는다.
 ALLOWED_COVER_MIME = {"image/png", "image/jpeg", "image/webp"}
@@ -1648,12 +1651,19 @@ async def upload_enrollment_photo(
     if slot not in request.app.state.settings.fm_photo_slots:
         raise _err("invalid_slot", "사진 슬롯을 확인해 주세요.")
     angle = slot
+    # content-type 은 믿지 **않지만**, 확실히 아닌 것은 바이트를 읽기 전에 막는다. iOS 는
+    # HEIC 의 type 을 비우거나 octet-stream 으로 주므로 그 둘만 통과시키고 아래에서 매직바이트로
+    # 판정한다. 이 앞당긴 검사가 없으면 PDF 업로드가 400 이 아니라 계정·단계 게이트의 403/409 를
+    # 받는다 — 요청 모양이 틀린 것과 권한이 없는 것을 클라이언트가 구분하지 못한다.
+    declared = (photo.content_type or "").lower()
+    if declared and declared not in GENERIC_MIME and declared not in ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "HEIC, PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
     r2 = _r2_face(request)
     data = await photo.read()
-    # 확장자·content-type 은 믿지 않는다 — iOS 는 HEIC 의 type 을 비워 보내기도 한다.
-    mime = sniff_image_mime(data, photo.content_type)
+    # 확장자·content-type 은 믿지 않는다 — 실제 형식은 매직바이트가 정한다.
+    mime = sniff_image_mime(data, declared)
     if mime not in ALLOWED_FACE_MIME:
         raise _err("unsupported_type", "HEIC, PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
     new_key = None

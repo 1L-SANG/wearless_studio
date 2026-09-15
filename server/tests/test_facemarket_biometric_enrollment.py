@@ -5578,6 +5578,35 @@ def test_heic_is_accepted_whatever_the_browser_calls_it(
     assert _uploaded_key(fake_r2, 0).endswith(".heic" if brand == b"heic" else ".heif")
 
 
+def test_an_obviously_wrong_type_is_refused_before_any_gate(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    """★ 형식 검사는 **계정·단계 게이트보다 먼저**다.
+
+    매직바이트로 판정하려면 바이트를 읽어야 해서 검사를 뒤로 미루기 쉬운데, 그러면 PDF 업로드가
+    400(요청이 틀림) 대신 403/409(권한·단계)를 받는다 — 클라이언트가 "내 파일이 잘못됐다" 와
+    "지금은 못 올린다" 를 구분하지 못한다. 실제로 2026-09-15 personalization 쪽에서 이 순서가
+    뒤집혀 CI 가 잡았다(403 == 400).
+
+    게이트가 도는지 여부와 무관함을 보이려고 DB 접근 자체를 폭탄으로 만든다 — 그래도 400 이면
+    그 검사가 DB 앞에 있다는 뜻이다.
+    """
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    @contextlib.asynccontextmanager
+    async def boom(_request):
+        raise AssertionError("형식 검사가 DB 게이트보다 뒤에 있다")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(facemarket_enrollment, "get_conn", boom)
+    response = _upload(enrollment_client, auth(), enrollment_id, b"%PDF-1.4",
+                       filename="x.pdf", content_type="application/pdf")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_type"
+    assert fake_r2.puts == []
+
+
 def test_a_video_wearing_the_same_box_header_is_refused(
     enrollment_client, auth, fake_r2, monkeypatch
 ):

@@ -60,6 +60,9 @@ MAX_FACE_MB = MAX_FACE_BYTES // (1024 * 1024)
 # 아이폰이 주는 HEIC/HEIF 포함. 저장은 언제나 정규화본(EXIF 적용 무손실 PNG)이다 —
 # 이 경로엔 원본·정규화본을 따로 담을 칸이 없어서, 읽을 수 있는 쪽 하나만 둔다.
 _ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+#: 브라우저가 "모르겠다" 고 말하는 값. 이걸 거절하면 아이폰 HEIC 가 통째로 막힌다 — 실제
+#: 형식은 매직바이트로 판정한다(sniff_image_mime).
+_GENERIC_MIME = {"", "application/octet-stream", "binary/octet-stream"}
 
 # 동의 문서 현행 버전(법무 확정값 자리). 제출 docVersion 이 불일치하면 400 stale_consent_doc.
 CONSENT_DOC_VERSION = "2026-10-v1"
@@ -780,8 +783,13 @@ async def upload_face_photo(
     """
     if angle not in ANGLES:
         raise _err("invalid_angle", "각도는 front/side/angle45 중 하나여야 해요.")
-    # content-type 은 믿지 않는다 — iOS 는 HEIC 의 type 을 비워 보내기도 한다.
+    # content-type 은 믿지 **않지만**, 확실히 아닌 것은 바이트를 읽기 전에 막는다.
+    # iOS 는 HEIC 의 type 을 비우거나 octet-stream 으로 주므로 그 둘은 통과시키고 매직바이트로
+    # 판정한다(아래). 이 앞당긴 검사가 없으면 PDF 업로드가 400 이 아니라 동의 게이트의 403 을
+    # 받는다 — 요청 모양이 틀린 것과 권한이 없는 것을 클라이언트가 구분하지 못한다.
     declared = (photo.content_type or "").lower()
+    if declared and declared not in _GENERIC_MIME and declared not in _ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "허용되지 않는 이미지 형식입니다. (heic/png/jpg/webp)")
 
     # 1) 전제조건 게이트(얼굴 바이트를 외부 API로 보내기 전에 필수 동의를 코드로 확인 — §1.4).
     async with get_conn(request) as conn:
