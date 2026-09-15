@@ -87,6 +87,7 @@ class FakeCursor:
         self.many = []
         model = self.store["model"]
         cuts = self.store["cuts"]
+        loras = self.store.setdefault("loras", [])
 
         if "as license_valid_days" in query and "from fm_models m" in query:
             if "where m.id = %s" in query:
@@ -322,6 +323,22 @@ class FakeCursor:
                     confirm_requested_at=None,
                 )
                 self.one = {"redo_count": model["redo_count"]}
+        elif query.startswith("select id::text as id from fm_model_loras"):
+            ready = sorted(
+                (row for row in loras
+                 if row["model_id"] == params[0] and row["status"] == "ready"),
+                key=lambda row: row["version"], reverse=True,
+            )
+            self.one = {"id": ready[0]["id"]} if ready else None
+        elif query.startswith("update fm_model_loras set enabled = false"):
+            model_id, keep_id = params
+            for row in loras:
+                if row["model_id"] == model_id and row["id"] != keep_id:
+                    row["enabled"] = False
+        elif query.startswith("update fm_model_loras set enabled = true"):
+            for row in loras:
+                if row["id"] == params[0]:
+                    row["enabled"] = True
         else:  # pragma: no cover - 새 SQL은 테스트 대역에도 명시적으로 추가한다.
             raise AssertionError(f"unexpected SQL: {query}")
 
@@ -395,6 +412,9 @@ def test_cut_api(keypair, make_token, monkeypatch):
         },
         "license_active": True,
         "cuts": [],
+        # 승인 전에 붙여 둔 얼굴 LoRA(seed_model_lora --no-enable 의 결과). 확정하는 그
+        # 트랜잭션에서 켜져야 한다 — 안 켜지면 "승인은 했는데 얼굴이 안 바뀐다" 가 된다.
+        "loras": [],
     }
 
     @contextlib.asynccontextmanager
@@ -868,6 +888,64 @@ def test_model_confirmation_slack_uses_existing_webhook_pattern(monkeypatch):
             "<https://admin.wearless.kr/models|관리자 모델 콘솔 열기>"
         )
     }
+
+
+def _lora(row_id, version, *, enabled=False, status="ready"):
+    return {"id": row_id, "model_id": MODEL_ID, "version": version,
+            "enabled": enabled, "status": status}
+
+
+def test_model_confirm_turns_on_the_face_asset(test_cut_api, monkeypatch):
+    """본인이 테스트컷을 확인해야 얼굴 참조 자산이 쓰이기 시작한다.
+
+    학습은 승인 전에 돌 수 있어서 seed_model_lora 가 행만 꺼진 채로 붙여 둔다
+    (scripts/seed_model_lora.resolve_enable). 켜는 자리는 여기 하나다 — verified 로
+    바꾸는 **같은 트랜잭션**이라, 승인은 됐는데 얼굴은 안 바뀌는 중간 상태가 없다.
+    """
+    client, store, face_r2, _public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, data=_png(1600, 1200))
+    store["model"]["status"] = "awaiting_confirm"
+    store["loras"] = [_lora("old", 1, enabled=True), _lora("new", 2)]
+
+    monkeypatch.setattr(
+        facemarket_notify, "notify_slack_model_confirmed",
+        _noop_notify, raising=False,
+    )
+    confirmed = client.post(
+        "/v1/facemarket/model/test-cuts/confirm",
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_ALT_ID},
+        headers=_auth(make_token),
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert store["model"]["status"] == "verified"
+    # 최신 버전만 켜져 있다 — partial unique index(model_id) where enabled 를 지킨다.
+    assert {row["id"]: row["enabled"] for row in store["loras"]} == {"old": False, "new": True}
+
+
+def test_model_confirm_without_a_lora_row_still_verifies(test_cut_api, monkeypatch):
+    """학습 전에 확정하는 경우 — verified 만 되고 얼굴 패스는 안 걸린다(500 이 아니다)."""
+    client, store, face_r2, _public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, data=_png(1600, 1200))
+    store["model"]["status"] = "awaiting_confirm"
+    store["loras"] = []
+
+    monkeypatch.setattr(
+        facemarket_notify, "notify_slack_model_confirmed",
+        _noop_notify, raising=False,
+    )
+    confirmed = client.post(
+        "/v1/facemarket/model/test-cuts/confirm",
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_ALT_ID},
+        headers=_auth(make_token),
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert store["model"]["status"] == "verified"
+
+
+async def _noop_notify(_settings, *, display_name, admin_link):
+    return None
 
 
 def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(

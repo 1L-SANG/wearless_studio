@@ -20,7 +20,7 @@ from io import BytesIO
 
 from PIL import Image, ImageOps
 
-from .facemarket_photos import cut_of
+from .facemarket_photos import PROFILE_CUTS, PROFILE_NOSE_SIDE, cut_of
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,13 @@ MULTI_AREA_FRAC = 0.25
 FACE_W_MIN = 342.0
 #: 3/4 컷 창. 하한은 v6_intake 와 같은 0.20, 상한은 v7 실측(해가왼쪽 0.701)을 담도록 0.80.
 YAW_34_MIN, YAW_34_MAX = 0.20, 0.80
+#: 옆모습 하한 = face_identity.YAW_APPLY_MAX. 얼굴 패스가 **건너뛰기 시작하는** 각도이고,
+#: 그보다 덜 돌린 사진은 3/4 와 구분이 안 돼 각도 참조로 쓸 수 없다.
+YAW_PROFILE_MIN = 0.65
+#: 코 방향 판정 최소 크기. 이보다 작으면 좌우가 애매해 **검사하지 않는다**(반려하지 않는다).
+NOSE_SIDE_MIN = 0.25
+#: 뒷모습에서 "얼굴이 보인다"고 보는 크기. 멀리 걸린 작은 오검출로 반려하지 않는다.
+BACK_FACE_W_MAX = 120.0
 
 #: 거절 사유 → 사용자에게 보이는 문구. 사용자는 지금 촬영 자리에 서 있다 — 다음 동작을 준다.
 MESSAGES: dict[str, str] = {
@@ -48,7 +55,12 @@ MESSAGES: dict[str, str] = {
     "face_too_small": "얼굴이 작아요. 한 걸음 다가가서 다시 찍어 주세요.",
     "turn_more": "3/4 각도가 덜 됐어요. 고개를 조금 더 돌려서 다시 찍어 주세요.",
     "turn_less": "너무 많이 돌았어요. 반대쪽 눈이 보이게 덜 돌려서 다시 찍어 주세요.",
+    "profile_turn_more": "고개를 더 돌려 완전한 옆모습으로 다시 찍어 주세요.",
+    "profile_wrong_side": "반대 방향이에요. 코가 화면 {side}쪽을 향하게 돌아서 다시 찍어 주세요.",
+    "back_face_visible": "얼굴이 보여요. 뒤돌아서 뒤통수를 찍어 주세요.",
 }
+#: {side} 를 채울 말.
+_SIDE_WORDS = {"left": "왼", "right": "오른"}
 
 
 #: 기준 3장끼리의 SFace 합의 눈금 — v6_refset_check.py 규칙(중앙값 0.80 · 최저쌍 0.70).
@@ -90,6 +102,9 @@ class PhotoMetrics:
     face_w: float
     eye_ratio: float
     yaw_proxy: float
+    #: 코가 눈 중점 기준 어느 쪽인가 — "left" | "right" | None(못 재거나 애매함).
+    #: yaw_proxy 는 절댓값이라 좌우를 못 가른다. 옆모습 칸의 방향 검사에만 쓴다.
+    nose_side: str | None = None
 
     def as_log(self) -> dict:
         return {
@@ -98,21 +113,33 @@ class PhotoMetrics:
             "face_w": round(self.face_w, 1),
             "eye_ratio": round(self.eye_ratio, 4),
             "yaw_proxy": round(self.yaw_proxy, 3),
+            "nose_side": self.nose_side,
         }
 
 
 def judge_photo(slot: str, metrics: PhotoMetrics | None) -> str | None:
     """측정값 → 거절 사유(통과면 None). 순수 함수 — 회귀 테스트가 보는 자리다.
 
-    metrics=None 은 "얼굴 미검출". 측면은 YuNet 이 옆얼굴을 놓치는 일이 잦아 미검출로 거절하지
-    않는다(그 한 장은 학습이 아니라 공개 자산용이다).
+    metrics=None 은 "얼굴 미검출". 옆모습·뒷모습은 미검출로 거절하지 않는다 — YuNet 은 옆얼굴을
+    자주 놓치고, 뒷모습은 얼굴이 **안 보이는 것이 맞다**.
     """
     cut = cut_of(slot)
     if metrics is None:
-        return None if cut == "side" else "no_face"
+        return None if cut in PROFILE_CUTS or cut == "back" else "no_face"
+    if cut == "back":
+        # 뒤통수 사진에 얼굴이 크게 잡혔다 = 안 돌아섰다. 작은 오검출은 통과시킨다.
+        return "back_face_visible" if metrics.face_w > BACK_FACE_W_MAX else None
     if metrics.n_big >= 2:
         return "multi_face"
-    if cut == "side":
+    if cut in PROFILE_CUTS:
+        if metrics.yaw_proxy < YAW_PROFILE_MIN:
+            return "profile_turn_more"
+        # 방향은 **잴 수 있을 때만** 본다. 코 위치가 애매하면(랜드마크 없음·중앙 근처) 통과시킨다 —
+        # 못 재는 것을 이유로 셀러를 되돌려 보내지 않는다.
+        want = PROFILE_NOSE_SIDE.get(cut)
+        got = metrics.nose_side
+        if want and got and got != want:
+            return f"profile_wrong_side:{want}"
         return None
     if metrics.yaw_proxy < YAW_FRONTAL_MAX and metrics.eye_ratio < EYE_RATIO_MIN:
         return "face_too_far"
@@ -154,6 +181,7 @@ def measure_photo(data: bytes, *, model_dir: str | None = None) -> PhotoMetrics 
     n_big = sum(1 for area in areas if area >= MULTI_AREA_FRAC * biggest)
     det = faces[areas.index(biggest)]
     return PhotoMetrics(
+        nose_side=_nose_side(det),
         width=width, height=height, n_faces=len(faces), n_big=n_big,
         face_w=float(det.box[2]),
         eye_ratio=(det.eye_dist / width) if width else 0.0,
@@ -170,5 +198,26 @@ def check_enrollment_photo(data: bytes, slot: str, *, model_dir: str | None = No
     return judge_photo(slot, metrics), (metrics.as_log() if metrics else {"n_faces": 0})
 
 
+def _nose_side(det) -> str | None:
+    """YuNet 5점(오른눈·왼눈·코끝·…)으로 코가 화면 어느 쪽인지. 애매하면 None.
+
+    화면 좌표라 x 가 작을수록 왼쪽이다. 눈간격으로 나눠 얼굴 크기와 무관하게 만든다.
+    """
+    marks = getattr(det, "landmarks", ()) or ()
+    if len(marks) < 3:
+        return None
+    (rx, _ry), (lx, _ly), (nx, _ny) = marks[0], marks[1], marks[2]
+    span = abs(float(lx) - float(rx)) or 1.0
+    offset = (float(nx) - (float(rx) + float(lx)) / 2.0) / span
+    if abs(offset) < NOSE_SIDE_MIN:
+        return None
+    return "left" if offset < 0 else "right"
+
+
 def reject_message(reason: str | None) -> str:
-    return MESSAGES.get(reason or "", "사진을 다시 찍어 주세요.")
+    """거절 사유 → 문구. `profile_wrong_side:left` 처럼 값이 붙은 사유도 받는다."""
+    key, _, arg = str(reason or "").partition(":")
+    text = MESSAGES.get(key, "사진을 다시 찍어 주세요.")
+    if arg and "{side}" in text:
+        return text.format(side=_SIDE_WORDS.get(arg, arg))
+    return text

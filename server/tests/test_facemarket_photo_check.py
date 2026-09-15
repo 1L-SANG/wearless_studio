@@ -49,12 +49,13 @@ def _metrics(row, scale=1.0):
     )
 
 
-def test_the_fixture_covers_every_slot_but_the_side_one():
-    """측면 한 장은 학습에 안 써서 인테이크 매니페스트에 없다 — 나머지 15칸은 전부 여기 있다."""
+def test_the_fixture_covers_every_slot_but_the_angle_ones():
+    """옆모습 둘·뒷모습은 학습에 안 써서 인테이크 매니페스트에 없다 — 나머지 15칸은 전부 여기 있다."""
     from app import facemarket_photos as fp
 
+    angles = {"sh_side", *fp.ANGLE_SLOTS}
     # 순서는 다르다 — 매니페스트는 조명×컷 순, PHOTO_SLOTS 는 촬영 순서다.
-    assert sorted(row[0] for row in V7_ROWS) == sorted(s for s in fp.PHOTO_SLOTS if s != "sh_side")
+    assert sorted(row[0] for row in V7_ROWS) == sorted(s for s in fp.PHOTO_SLOTS if s not in angles)
 
 
 @pytest.mark.parametrize("scale,label", [(1.0, "원본"), (FRONT_SCALE, "프론트 4000px 축소")])
@@ -129,11 +130,39 @@ def test_the_three_quarter_window_only_applies_to_34_slots():
     assert check.judge_photo("sh_front", _ok(yaw_proxy=0.9, eye_ratio=0.09)) is None
 
 
-# ── 측면 ────────────────────────────────────────────────────────────────────
+# ── 측면·뒷모습 ─────────────────────────────────────────────────────────────
 def test_a_profile_that_yunet_misses_is_not_rejected():
-    """옆얼굴은 YuNet 이 자주 놓친다. 그 한 장은 학습이 아니라 공개 자산용이라 막지 않는다."""
+    """옆얼굴은 YuNet 이 자주 놓친다. 못 찾은 것만으로는 반려하지 않는다."""
     assert check.judge_photo("sh_side", None) is None
-    assert check.judge_photo("sh_side", _ok(face_w=100.0, eye_ratio=0.01)) is None
+    assert check.judge_photo("sh_side_right", None) is None
+
+
+def test_a_profile_that_is_not_turned_far_enough_is_rejected():
+    """덜 돌린 옆모습은 3/4 와 구분이 안 된다 — 얼굴이 **보이는데** 정면에 가까우면 반려한다.
+
+    2026-09-15 이전엔 sh_side 를 무조건 통과시켰다(그 한 장은 공개 프로필용이었다). 지금은
+    좌·우 옆모습을 각도 자료로 모으므로, 덜 돌린 장이 섞이면 그 자료가 못 쓰게 된다.
+    """
+    assert check.judge_photo("sh_side", _ok(face_w=100.0, eye_ratio=0.01)) == "profile_turn_more"
+    assert check.judge_photo("sh_side", _ok(yaw_proxy=0.9, eye_ratio=0.01)) is None
+
+
+def test_a_profile_facing_the_wrong_way_is_rejected():
+    """왼쪽·오른쪽을 둘 다 받는 순간, 같은 쪽을 두 번 찍으면 자료가 반쪽이 된다."""
+    turned = dict(yaw_proxy=0.9, eye_ratio=0.01)
+    assert check.judge_photo("sh_side", _ok(nose_side="left", **turned)) is None
+    assert check.judge_photo("sh_side", _ok(nose_side="right", **turned)) == "profile_wrong_side:left"
+    assert check.judge_photo("sh_side_right", _ok(nose_side="right", **turned)) is None
+    assert check.judge_photo("sh_side_right", _ok(nose_side="left", **turned)) == "profile_wrong_side:right"
+    # 방향을 못 읽었으면(랜드마크가 흐릿) 방향으로는 막지 않는다 — 막을 근거가 없다.
+    assert check.judge_photo("sh_side", _ok(nose_side=None, **turned)) is None
+
+
+def test_a_back_shot_is_rejected_when_a_face_is_visible():
+    """뒷모습 칸에 앞모습이 들어오면 뒤통수 자료가 아니다. 얼굴이 안 잡히는 게 정상이다."""
+    assert check.judge_photo("sh_back", None) is None
+    assert check.judge_photo("sh_back", _ok(face_w=80.0, eye_ratio=0.01)) is None
+    assert check.judge_photo("sh_back", _ok(face_w=400.0, eye_ratio=0.09)) == "back_face_visible"
 
 
 def test_a_profile_with_two_people_is_still_rejected():

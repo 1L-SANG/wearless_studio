@@ -1825,7 +1825,9 @@ def test_config_reports_liveness_not_required(liveness_off_client):
             {"code": "kakao", "name": "카카오뱅크"}, {"code": "toss", "name": "토스뱅크"},
         ],
         "photoSlots": list(facemarket_photos.PHOTO_SLOTS),
-        "requiredSlotCount": 16,
+        # 2026-09-15: 옆모습 오른쪽·뒷모습이 더해져 18칸. **새로 시작하는** 등록이 보는 값이다
+        # (옛 동의로 시작한 등록은 16칸 그대로 — required_slots_for_consent).
+        "requiredSlotCount": 18,
         "faceMatchEnabled": False,
         "livenessRequired": False,
         "applicationRequired": False,
@@ -3055,6 +3057,9 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         "licenseTerms",
         "termsConsentVersion",
         "overseasConsentVersion",
+        # 2026-09-15: 학습 전 관리자 사진 확인. 재촬영 요청이 오면 등록 화면이 그 칸만 다시 받는다.
+        "photoReviewStatus",
+        "reshootSlots",
     }
     assert "digest" not in status.text.lower()
     assert "r2" not in status.text.lower()

@@ -1,4 +1,4 @@
-"""등록 사진 슬롯 — **LoRA 학습 촬영 스펙 그대로**(16칸).
+"""등록 사진 슬롯 — LoRA 학습 촬영 스펙(16칸) + 각도 수집 2칸 = **18칸**.
 
 2026-09-14 결정: 등록 사진을 v7 LoRA 를 학습시킨 촬영과 똑같이 받는다. 그 전 18칸(얼굴8·상반신5·
 전신5)은 상반신·전신 10장의 소비처가 코드에 하나도 없었고, 그 사진들로는 LoRA 를 만들 수도 없었다
@@ -6,8 +6,13 @@
 
   학습 12 = 조명 4(그늘·해가왼쪽·해가오른쪽·역광) × 컷 3(정면 무표정·정면 미소·3/4 무표정)
   기준  3 = 그늘에서 정면 무표정 2·시선만 왼쪽·시선만 오른쪽
-  자산  1 = 그늘 측면(공개 자산 잡이 front·angle45·side 세 장을 요구한다)
-                                                                      → 합 16
+  자산  1 = 그늘 측면 · 코가 화면 왼쪽(공개 자산 잡이 front·angle45·side 세 장을 요구한다)
+  각도  2 = 그늘 측면 · 코가 화면 오른쪽 · 뒷모습                       → 합 18
+
+2026-09-15 추가(각도 2칸): LoRA 는 정면·정면미소·3/4 만 배웠다. 그래서 옆모습 컷은 yaw>0.65 로
+건너뛰어 실존 모델 컷이 실패하고, 뒷모습은 no_face 라 **원래 모델의 뒷머리가 그대로 나간다**.
+그 두 각도를 지금부터 받아 둔다 — 당분간 gpt-image 참조로 쓰고, 검증 뒤 학습에 넣는다.
+★ TRAINING_SLOTS(학습 12장)는 **안 바꿨다**. 학습 편입은 v8 실험 결과를 보고 별도로 한다.
 
 기준에서 **턱 살짝 내리기는 뺐다**(2026-09-11 v7 인테이크 실측). 같은 사람인데 `시선만_왼쪽` 과
 SFace 0.664 로 기준선(최저 0.70)을 깬다 — 턱 각도가 바뀐 컷은 기준으로 쓰기에 너무 멀다.
@@ -37,7 +42,9 @@ CUT_LABELS: dict[str, tuple[str, str]] = {
     "front2": ("정면 무표정 2", "정면_무표정_2"),
     "gaze_left": ("시선만 왼쪽", "시선_왼쪽"),
     "gaze_right": ("시선만 오른쪽", "시선_오른쪽"),
-    "side": ("측면", "측면"),
+    "side": ("옆모습 · 왼쪽", "측면_왼쪽"),
+    "side_right": ("옆모습 · 오른쪽", "측면_오른쪽"),
+    "back": ("뒷모습", "뒷모습"),
 }
 
 #: 학습에 들어가는 12장 — 조명 4 × 컷 3. 순서는 촬영 가이드 번호 순서다.
@@ -48,11 +55,26 @@ TRAINING_SLOTS: tuple[str, ...] = tuple(
 #: 0.53 까지 떨어지고, 턱을 내린 컷을 섞으면 최저쌍이 0.664 로 기준선을 깬다(위 docstring).
 REFSET_SLOTS: tuple[str, ...] = ("sh_front2", "sh_gaze_left", "sh_gaze_right")
 #: 공개 자산 잡(fm_model_asset_job)이 요구하는 세 장의 소스. 측면은 학습에 안 쓰지만 자산에 필요하다.
+#: sh_side 는 키를 그대로 두고 의미만 "코가 화면 왼쪽"으로 못박았다 — 옛 등록 행(face05·side)이
+#: 계속 이 칸으로 풀려야 한다(SLOT_CANDIDATES).
 ASSET_SOURCE_SLOTS: tuple[str, ...] = ("sh_front", "sh_34", "sh_side")
 
-#: 전체 16칸. 순서 = 촬영 순서(그늘 7 → 해가왼쪽 3 → 해가오른쪽 3 → 역광 3).
-PHOTO_SLOTS: tuple[str, ...] = (
+#: 각도 수집 2칸(2026-09-15). 학습에도 기준에도 안 들어간다 — 모아 두고 쓰임새는 뒤에 정한다.
+ANGLE_SLOTS: tuple[str, ...] = ("sh_side_right", "sh_back")
+
+#: 2026-09-14~15 사이에 시작한 등록이 채운 16칸. **이미 통과한 등록을 미완료로 되돌리지 않으려고**
+#: 그대로 남긴다(완료 판정은 동의 버전으로 갈린다 — facemarket_enrollment.required_slots_for_consent).
+PHOTO_SLOTS_V2: tuple[str, ...] = (
     "sh_front", "sh_smile", "sh_34", "sh_front2", "sh_gaze_left", "sh_gaze_right", "sh_side",
+    "sl_front", "sl_smile", "sl_34",
+    "sr_front", "sr_smile", "sr_34",
+    "bl_front", "bl_smile", "bl_34",
+)
+
+#: 전체 18칸. 순서 = 촬영 순서(그늘 9 → 해가왼쪽 3 → 해가오른쪽 3 → 역광 3).
+PHOTO_SLOTS: tuple[str, ...] = (
+    "sh_front", "sh_smile", "sh_34", "sh_front2", "sh_gaze_left", "sh_gaze_right",
+    "sh_side", "sh_side_right", "sh_back",
     "sl_front", "sl_smile", "sl_34",
     "sr_front", "sr_smile", "sr_34",
     "bl_front", "bl_smile", "bl_34",
@@ -60,6 +82,10 @@ PHOTO_SLOTS: tuple[str, ...] = (
 
 #: 정면 계열 — 눈간격 검사를 적용하고 3/4 각도 검사는 하지 않는 슬롯.
 FRONTAL_CUTS: frozenset[str] = frozenset({"front", "smile", "front2", "gaze_left", "gaze_right"})
+#: 옆모습 두 칸. 얼굴 미검출을 허용하고(YuNet 이 옆얼굴을 자주 놓친다) 각도·방향만 본다.
+PROFILE_CUTS: frozenset[str] = frozenset({"side", "side_right"})
+#: 코가 향해야 하는 쪽(화면 기준). None 이면 방향을 안 본다.
+PROFILE_NOSE_SIDE: dict[str, str] = {"side": "left", "side_right": "right"}
 
 #: 옛 이름 → 새 슬롯. 한 슬롯의 후보는 **선호 순서**다(새 이름 먼저, 그다음 18칸, 그다음 3장 시절).
 #: 여기 없는 옛 슬롯(face02·face04·torso*·full* 등)은 새 스펙에 자리가 없다 — 완료 판정에서 무시되고

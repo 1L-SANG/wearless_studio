@@ -27,8 +27,8 @@ from .config import Settings
 from .db import get_conn
 from .models import CamelModel
 from .facemarket_photos import (
-    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, REFSET_SLOTS, canonical_photo_slot,
-    photo_slot_candidates, resolve_photo_rows,
+    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, PHOTO_SLOTS_V2, REFSET_SLOTS,
+    canonical_photo_slot, photo_slot_candidates, resolve_photo_rows,
 )
 from .facemarket_photo_check import (
     PhotoCheckUnavailable, check_enrollment_photo, judge_refset, reject_message,
@@ -43,22 +43,35 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollme
 # 2026-09-v1 은 등록 위저드의 동의·안내 공개본이 함께 나가면서 올렸다(#285/#287).
 # 2026-09-v2 는 수집 항목이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌면서 올렸다
 # (#298). 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
-BIOMETRIC_CONSENT_VERSION = "2026-09-v2"
+# 2026-09-v3 은 수집 항목에 옆모습 2장·뒷모습 1장이 더해지면서 올렸다(16장 → 18장).
+BIOMETRIC_CONSENT_VERSION = "2026-09-v3"
 # ⚠️ **판정에는 이 목록을 쓴다(단일 상수를 바인딩하지 마라).**
 # 옛 버전에 동의하고 이미 passed 인 등록은 그 문자열을 그대로 들고 있고 백필 마이그레이션은
 # 없다. 카탈로그 자격(`facemarket.py` `_CURRENT_CARD_ELIGIBILITY`)·cutover legacy 스코프가
 # 단일 상수를 바인딩하던 시절에는, 이 상수를 올리는 순간 **라이브 카탈로그가 비고** 기존
 # 모델이 cutover 파기 대상으로 분류됐다. 그래서 그 자리들은 전부 `= any(%s)` 로 바꿨다.
 # 새 버전을 추가할 때 옛 버전을 지우면 그 순간 같은 사고가 난다.
-ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2")
+ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2", "2026-09-v3")
 # 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
 # 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
 # 이 안내 본문도 #298 에서 이전 항목이 바뀌었다("얼굴·전신 사진" → "얼굴 사진") — 게시본이
 # 바뀌었으면 기록되는 버전도 같이 올린다. 이 값은 기록·표시 전용이라 자격 판정에 쓰이지 않는다.
-OVERSEAS_NOTICE_VERSION = "2026-09-v2"
+# 2026-09-v3: 이전 항목이 "얼굴 사진" → "등록 사진(얼굴·옆모습·뒷모습)" 으로 바뀌었다.
+OVERSEAS_NOTICE_VERSION = "2026-09-v3"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-ACCEPTED_CONSENT_VERSIONS = ("2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
+ACCEPTED_CONSENT_VERSIONS = ("2026-09-v3", "2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
+
+#: 이 동의 버전으로 시작한 등록은 **18칸**을 채워야 한다. 그 앞 버전은 그때 받은 16칸으로 완료다.
+#: ★ 칸이 늘었다고 이미 통과한 등록을 미완료로 되돌리면 그 모델이 카탈로그에서 사라진다
+#:   (운영 05caa497 은 v1·18칸 이름으로 passed 다). 그래서 **모르는 버전은 16칸**으로 본다.
+CONSENT_VERSIONS_WITH_ANGLES: frozenset[str] = frozenset({"2026-09-v3"})
+
+
+def required_slots_for_consent(consent_version: str | None) -> tuple[str, ...]:
+    """그 동의 본문에 적힌 칸만 요구한다 — 동의서와 검사가 갈리면 둘 다 거짓이 된다."""
+    return (PHOTO_SLOTS if str(consent_version or "") in CONSENT_VERSIONS_WITH_ANGLES
+            else PHOTO_SLOTS_V2)
 ENROLLMENT_TTL = timedelta(hours=24)
 # 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
 # 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
@@ -228,6 +241,12 @@ class IdentityVerifyBody(CamelModel):
     token: str
 
 
+class ReshootSlotView(CamelModel):
+    """다시 찍어야 할 칸 하나 — 관리자가 고르고, 등록 화면이 그대로 읽는다."""
+    slot: str
+    reason: str = ""
+
+
 class EnrollmentPhotoView(CamelModel):
     angle: str
     slot: str
@@ -262,6 +281,10 @@ class EnrollmentView(CamelModel):
     license_id: str | None = None
     license_terms: EnrollmentLicenseTerms | None = None
     photo_revision: int = 0
+    #: 관리자의 학습 전 사진 확인. pending | approved | reshoot_requested.
+    photo_review_status: str = "pending"
+    #: 다시 찍어야 할 칸 — [{slot, reason}]. 관리자가 고른 칸만, 사유 그대로.
+    reshoot_slots: list[ReshootSlotView] = []
 
 
 class PhysiqueBody(CamelModel):
@@ -314,7 +337,12 @@ def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
     )
 
 
-def _required_photo_slots(settings: Settings) -> tuple[str, ...]:
+def _required_photo_slots(settings: Settings, consent_version: str | None = None) -> tuple[str, ...]:
+    """이 등록이 채워야 하는 칸.
+
+    설정(FM_PHOTO_SLOTS·FM_REQUIRED_SLOT_COUNT)이 바깥 테두리이고, **동의 버전**이 그 안에서
+    실제 요구를 정한다 — 옛 동의로 시작한 등록에 뒤늦게 칸을 더 요구하지 않는다.
+    """
     slots = tuple(settings.fm_photo_slots)
     if (
         not slots
@@ -324,6 +352,8 @@ def _required_photo_slots(settings: Settings) -> tuple[str, ...]:
     ):
         raise RuntimeError("invalid FaceMarket photo slot settings")
     required = slots[: settings.fm_required_slot_count]
+    wanted = set(required_slots_for_consent(consent_version))
+    required = tuple(slot for slot in required if slot in wanted)
     if not all(slot in required for slot in ASSET_SOURCE_SLOTS):
         raise RuntimeError("required FaceMarket slots must include asset source slots")
     return required
@@ -583,7 +613,9 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
                    e.liveness_session_digest, e.height_bucket, e.body_type,
                    e.identity_method, e.review_status,
                    e.consent_version, e.terms_consent_version,
-                   e.overseas_consent_version, e.photo_revision, m.gender as model_gender,
+                   e.overseas_consent_version, e.photo_revision,
+                   coalesce(e.photo_review_status, 'pending') as photo_review_status,
+                   e.reshoot_slots, m.gender as model_gender,
                    l.id::text as license_id, l.allowed_use as license_allowed_use,
                    l.license_valid_until
             from fm_biometric_enrollments e
@@ -596,7 +628,59 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
         return await cur.fetchone()
 
 
-def _validate_photo_mutation_enrollment(row: dict | None) -> dict:
+def reshoot_slot_views(raw) -> list[ReshootSlotView]:
+    """jsonb 컬럼 → 뷰. 모양이 깨진 항목은 버린다(화면이 죽는 것보다 낫다)."""
+    out: list[ReshootSlotView] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        slot = str(item.get("slot") or "")
+        if slot not in PHOTO_SLOTS:
+            continue
+        out.append(ReshootSlotView(slot=slot, reason=str(item.get("reason") or "")))
+    return out
+
+
+def requested_reshoot_slots(row: dict | None) -> set[str]:
+    """지금 다시 받아도 되는 칸. 관리자가 재촬영을 요청한 칸 **그것뿐**이다."""
+    if not row or row.get("photo_review_status") != "reshoot_requested":
+        return set()
+    return {view.slot for view in reshoot_slot_views(row.get("reshoot_slots"))}
+
+
+async def _consume_reshoot_slot(cur, enrollment_id: str, user_id: str, slot: str) -> None:
+    """다시 찍은 칸을 요청 목록에서 뺀다. 남은 칸이 없으면 '확인 대기'로 돌아간다.
+
+    타임스탬프로 "다시 찍었는지" 를 추정하지 않는다 — 목록에서 빼는 게 유일한 진실이다.
+    photo_reviewed_at/by 는 그대로 둔다(누가 언제 재촬영을 요청했는지는 기록으로 남긴다).
+    """
+    await cur.execute(
+        """
+        update fm_biometric_enrollments
+           set reshoot_slots = coalesce((
+                   select jsonb_agg(item)
+                     from jsonb_array_elements(reshoot_slots) item
+                    where item->>'slot' <> %s
+               ), '[]'::jsonb)
+         where id = %s and user_id = %s and photo_review_status = 'reshoot_requested'
+        returning jsonb_array_length(reshoot_slots) as remaining
+        """,
+        (slot, enrollment_id, user_id),
+    )
+    row = await cur.fetchone()
+    if row is None or (row.get("remaining") or 0) > 0:
+        return
+    await cur.execute(
+        """
+        update fm_biometric_enrollments
+           set photo_review_status = 'pending', reshoot_slots = null
+         where id = %s and user_id = %s and photo_review_status = 'reshoot_requested'
+        """,
+        (enrollment_id, user_id),
+    )
+
+
+def _validate_photo_mutation_enrollment(row: dict | None, slot: str | None = None) -> dict:
     if row is None:
         raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
     if row["status"] == "photos_pending":
@@ -604,6 +688,11 @@ def _validate_photo_mutation_enrollment(row: dict | None) -> dict:
     if row["status"] == "liveness_pending" and not row.get(
         "liveness_session_digest"
     ):
+        return row
+    # 재촬영 요청 — 등록은 이미 끝났고(passed) 모델도 있다. 등록 상태는 **건드리지 않고**
+    # 관리자가 고른 칸만 새 사진으로 갈아 끼운다. 여기서 slot 을 안 보면 "한 칸 다시 찍어
+    # 주세요" 가 "사진 전부 다시 받습니다" 가 된다.
+    if slot is not None and slot in requested_reshoot_slots(row):
         return row
     raise _err(
         "invalid_enrollment_state",
@@ -613,12 +702,14 @@ def _validate_photo_mutation_enrollment(row: dict | None) -> dict:
 
 
 async def _lock_photo_mutation_enrollment(
-    conn, enrollment_id: str, user_id: str
+    conn, enrollment_id: str, user_id: str, slot: str | None = None
 ) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select e.id::text as id, e.status, e.liveness_session_digest
+            select e.id::text as id, e.status, e.liveness_session_digest,
+                   coalesce(e.photo_review_status, 'pending') as photo_review_status,
+                   e.reshoot_slots
             from fm_biometric_enrollments e
             where e.id = %s and e.user_id = %s
             for update
@@ -626,7 +717,7 @@ async def _lock_photo_mutation_enrollment(
             (enrollment_id, user_id),
         )
         row = await cur.fetchone()
-    return _validate_photo_mutation_enrollment(row)
+    return _validate_photo_mutation_enrollment(row, slot)
 
 
 def _is_r2_not_found(exc: Exception) -> bool:
@@ -1002,7 +1093,7 @@ async def _enrollment_view(conn, row: dict, settings: Settings) -> EnrollmentVie
         model_id=str(row["model_id"]) if row.get("model_id") else None,
         status=row["status"],
         photos=photos,
-        required_angles=list(_required_photo_slots(settings)),
+        required_angles=list(_required_photo_slots(settings, row.get("consent_version"))),
         passed=True if decision == "passed" else False if decision == "failed" else None,
         retryable=retryable,
         reason=row.get("reason"),
@@ -1010,6 +1101,8 @@ async def _enrollment_view(conn, row: dict, settings: Settings) -> EnrollmentVie
         height_bucket=row.get("height_bucket"),
         body_type=row.get("body_type"),
         gender=row.get("model_gender"),
+        photo_review_status=row.get("photo_review_status") or "pending",
+        reshoot_slots=reshoot_slot_views(row.get("reshoot_slots")),
         identity_method=row.get("identity_method") or "mid",
         review_status=row.get("review_status"),
         photo_count=len(photos),
@@ -1031,7 +1124,8 @@ async def facemarket_config(request: Request):
     """
     settings: Settings = request.app.state.settings
     from .facemarket_payout import PAYOUT_BANKS
-    required_slots = _required_photo_slots(settings)
+    # /config 는 **새로 시작하는** 등록이 본다 — 지금 게시된 동의 본문의 칸을 준다.
+    required_slots = _required_photo_slots(settings, BIOMETRIC_CONSENT_VERSION)
     return {
         "photoSlots": list(settings.fm_photo_slots),
         "payoutBanks": [{"code": code, "name": name} for code, name in PAYOUT_BANKS.items()],
@@ -1579,7 +1673,7 @@ async def upload_enrollment_photo(
             async with get_conn(request) as conn:
                 await _assert_account_open(conn, user_id)
                 row = await _load_owned_enrollment(conn, enrollment_id, user_id)
-                _validate_photo_mutation_enrollment(row)
+                _validate_photo_mutation_enrollment(row, angle)
                 await _reject_cutover_closed(conn)
                 await conn.commit()
             await _drain_photo_cleanup(
@@ -1598,7 +1692,8 @@ async def upload_enrollment_photo(
                 try:
                     await _assert_account_open(conn, user_id)
                     await _reject_cutover_closed(conn)
-                    await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
+                    locked = await _lock_photo_mutation_enrollment(
+                        conn, enrollment_id, user_id, angle)
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
@@ -1644,7 +1739,8 @@ async def upload_enrollment_photo(
                         )
 
                     await _reject_cutover_closed(conn)
-                    await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
+                    locked = await _lock_photo_mutation_enrollment(
+                        conn, enrollment_id, user_id, angle)
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
@@ -1706,11 +1802,12 @@ async def upload_enrollment_photo(
                             """,
                             (enrollment_id, new_key),
                         )
+                        # 동의 버전은 위에서 이미 읽은 등록 행(row)에서 가져온다 — 쿼리를 늘리지 않는다.
+                        required_slots = _required_photo_slots(
+                            request.app.state.settings, row.get("consent_version"))
                         uploaded = _ready_photo_rows(
-                            await _read_registration_photos(conn, enrollment_id),
-                            _required_photo_slots(request.app.state.settings),
-                        )
-                        if len(uploaded) == len(_required_photo_slots(request.app.state.settings)):
+                            await _read_registration_photos(conn, enrollment_id), required_slots)
+                        if len(uploaded) == len(required_slots):
                             await cur.execute(
                                 """
                                 update fm_biometric_enrollments set status = 'liveness_pending'
@@ -1718,6 +1815,10 @@ async def upload_enrollment_photo(
                                 """,
                                 (enrollment_id, user_id),
                             )
+                        # 재촬영 요청으로 들어온 칸이면 그 칸을 목록에서 뺀다 — 요청한 칸을
+                        # 다 채우면 저절로 '확인 대기'로 돌아가 관리자 큐에 다시 뜬다.
+                        if angle in requested_reshoot_slots(locked):
+                            await _consume_reshoot_slot(cur, enrollment_id, user_id, angle)
                     await conn.commit()
                     intent_committed = False
                 finally:
@@ -2030,7 +2131,7 @@ async def start_enrollment_liveness(
             await cur.execute(
                 """
                 select e.status, e.cooldown_until, e.liveness_nonce_digest,
-                       e.liveness_session_digest
+                       e.liveness_session_digest, e.consent_version
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -2077,7 +2178,7 @@ async def start_enrollment_liveness(
                     "새 인증 세션으로 다시 시도해 주세요.",
                     status=409,
                 )
-            required_slots = _required_photo_slots(settings)
+            required_slots = _required_photo_slots(settings, enrollment.get("consent_version"))
             if len(_ready_photo_rows(await _read_registration_photos(conn, enrollment_id), required_slots)) != len(required_slots):
                 raise _err(
                     "photos_required",
@@ -2163,8 +2264,9 @@ async def reopen_enrollment_photos(
         await _reject_cutover_closed(conn)
         async with conn.cursor() as cur:
             await cur.execute(
-                "select id::text as id, model_id::text as model_id, status, photo_revision "
-                "from fm_biometric_enrollments where id = %s and user_id = %s for update",
+                "select id::text as id, model_id::text as model_id, status, photo_revision, "
+                "consent_version from fm_biometric_enrollments where id = %s and user_id = %s "
+                "for update",
                 (enrollment_id, user_id),
             )
             row = await cur.fetchone()
@@ -2180,7 +2282,7 @@ async def reopen_enrollment_photos(
             if (await cur.fetchone())["has_license"]:
                 raise _err("license_already_started", "증서 발급을 시작해서 사진을 고칠 수 없어요.", status=409)
             if not retry:
-                required = _required_photo_slots(settings)
+                required = _required_photo_slots(settings, row.get("consent_version"))
                 ready = _ready_photo_rows(await _read_registration_photos(conn, enrollment_id), required)
                 status = "liveness_pending" if len(ready) == len(required) else "photos_pending"
                 await cur.execute(
@@ -2931,7 +3033,7 @@ async def _initial_completion_checks(
                     list(ACCEPTED_PHOTO_SLOTS),
                 ),
             )
-            required_slots = _required_photo_slots(settings)
+            required_slots = _required_photo_slots(settings, row.get("consent_version"))
             photos = _ready_photo_rows(
                 await cur.fetchall(), required_slots,
                 allow_approved=row.get("photo_revision", 0) > 0,
@@ -3352,7 +3454,8 @@ def validate_biometric_settings(settings: Settings) -> None:
         return
     if not settings.facemarket_enabled:
         raise RuntimeError("FACEMARKET_ENABLED is required for biometric enrollment")
-    _required_photo_slots(settings)
+    # 가장 넓은 요구(지금 동의 본문)로 검증한다 — 설정이 새 칸을 빠뜨리면 여기서 걸린다.
+    _required_photo_slots(settings, BIOMETRIC_CONSENT_VERSION)
     if not settings.opendid_holder_url:
         raise RuntimeError("OPENDID_HOLDER_URL is required for biometric enrollment")
     # 라이브니스 관련 요구는 on 일 때만 — off 면 매칭 앵커가 신분증 초상이라 리전·브라우저 role·

@@ -65,10 +65,12 @@ test('publisher uses the actual price launch date in both metadata and document 
   // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(BIOMETRIC_CONSENT_VERSION)을 따른다.
   // 2026-09-v2 · privacy-model v1.3: 등록 사진이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로
   // 바뀌면서 세 문서의 수집 항목 문구가 같이 바뀌었다(#298).
+  // 2026-09-v3 · privacy-model v1.4: 좌·우 옆모습과 뒷모습이 더해져 "등록 사진 18장"이 됐고,
+  // 동의서에 사진 확인(담당자 열람·기록)과 사용 시점(테스트컷 승인 이후) 두 항이 생겼다.
   const revised = {
-    'privacy-model': { version: 'v1.3', effectiveDate: '2026-09-14' },
-    'biometric-consent': { version: '2026-09-v2', effectiveDate: '2026-09-14' },
-    'overseas-transfer': { version: '2026-09-v2', effectiveDate: '2026-09-14' },
+    'privacy-model': { version: 'v1.4', effectiveDate: '2026-09-15' },
+    'biometric-consent': { version: '2026-09-v3', effectiveDate: '2026-09-15' },
+    'overseas-transfer': { version: '2026-09-v3', effectiveDate: '2026-09-15' },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };

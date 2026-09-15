@@ -780,6 +780,36 @@ def _new_confirmation_cover_key(model_id: str, cut_id: str) -> str:
     return model_catalog_cover_key(model_id, f"{cut_id}-{uuid.uuid4().hex}")
 
 
+async def _enable_ready_lora(cur, model_id: str) -> str | None:
+    """모델 승인 = 얼굴 참조 자산 사용 시작. 붙여만 둔 최신 LoRA 를 켠다.
+
+    seed_model_lora 는 승인 전 모델에 status='ready', enabled=false 로 행만 붙인다
+    (본인이 테스트컷을 확인하기 전에 착용컷에 쓰이면 안 된다). 켜는 시점은 여기 한 곳이다.
+    partial unique index(fm_model_loras_one_enabled_uidx)가 모델당 켜진 행 하나만 허용하므로
+    **먼저 끄고** 켠다. 붙은 행이 없으면 아무것도 안 하고 None 을 준다(=verified 만).
+    """
+    await cur.execute(
+        """select id::text as id from fm_model_loras
+            where model_id = %s and status = 'ready'
+            order by version desc
+            limit 1
+            for update""",
+        (model_id,),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    await cur.execute(
+        "update fm_model_loras set enabled = false where model_id = %s and id <> %s and enabled",
+        (model_id, row["id"]),
+    )
+    await cur.execute(
+        "update fm_model_loras set enabled = true where id = %s and not enabled",
+        (row["id"],),
+    )
+    return row["id"]
+
+
 @router.post("/model/test-cuts/confirm", response_model=ConfirmTestCutResult)
 async def confirm_test_cut(
     request: Request,
@@ -814,6 +844,7 @@ async def confirm_test_cut(
     )
     stored_keys: list[str] = []
     committed = False
+    enabled_lora: str | None = None
     try:
         for key, image in (
             (closeup_key, closeup_image),
@@ -859,10 +890,17 @@ async def confirm_test_cut(
                     ),
                 )
                 updated = await cur.fetchone()
+                if updated is not None:
+                    # verified 로 바꾸는 **같은 트랜잭션**에서 켠다 — 승인은 됐는데 얼굴 자산은
+                    # 꺼져 있는 중간 상태가 생기면 "얼굴이 안 바뀐다" 로만 나타난다.
+                    enabled_lora = await _enable_ready_lora(cur, locked_closeup["model_id"])
             if updated is None:
                 raise _err("not_awaiting_confirm", "확인 상태가 변경되었습니다.", status=409)
             await conn.commit()
             committed = True
+            if enabled_lora:
+                logger.info("model lora enabled on confirm model=%s lora=%s",
+                            locked_closeup["model_id"], enabled_lora)
     finally:
         if not committed:
             for key in stored_keys:

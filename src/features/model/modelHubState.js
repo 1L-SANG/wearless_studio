@@ -43,6 +43,15 @@ export function resolveHubJourney({
   });
   if (!authenticated) return make('guest', -1);
 
+  // 재촬영 요청은 증서가 이미 있어도 "지금 할 일"이에요 — 요청된 칸을 다시 받기 전까지
+  // 얼굴 참조 자산 학습이 안 돌아요. verified/active 판정보다 먼저 봐요.
+  if (enrollment?.photoReviewStatus === 'reshoot_requested' && (enrollment.reshootSlots || []).length) {
+    return make('onboarding', 2, 'todo', {
+      step: 2, reshootSlots: enrollment.reshootSlots,
+      action: route('사진 다시 찍기', '/model/register'),
+    });
+  }
+
   const sameModelLicense = !license?.modelId || license.modelId === ownedModel?.id;
   if (sameModelLicense && ['verified', 'suspended'].includes(ownedModel?.status)
     && ['active', 'revoked', 'suspended'].includes(license?.status)) {

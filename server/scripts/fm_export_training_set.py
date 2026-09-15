@@ -1,4 +1,4 @@
-"""등록 사진 16칸 → LoRA 학습셋(v7_dataset 레이아웃)으로 내보낸다. **읽기 전용.**
+"""등록 사진 18칸 → LoRA 학습셋(v7_dataset 레이아웃)으로 내보낸다. **읽기 전용.**
 
 16칸 스펙(2026-09-14)은 등록 사진을 그대로 학습 촬영으로 받는다. 그래서 등록이 끝나면
 그 사진들이 곧 학습셋이다 — 이 스크립트가 그 둘을 잇는다.
@@ -6,6 +6,10 @@
     out_dir/
       train/<조명>__<컷>.png     × 12   (조명 4 × 컷 3)
       refset/그늘__<기준>.png    ×  3   (학습 제외 · 채점용)
+      angles/그늘__측면_왼쪽.png ×  3   (옆모습 좌·우 · 뒷모습 — 학습 제외, 각도 참조용)
+
+각도 3장은 **학습에 안 들어간다**(2026-09-15). 옛 등록(16칸)에는 아예 없어서 angles/ 가 비고
+경고만 나온다 — 그게 정상이다.
 
 파일 이름은 서버와 같은 상수에서 나온다(app/facemarket_photos.export_name) — 학습 캡션이
 붙는 자리라 이름이 갈라지면 조명 라벨이 통째로 어긋난다.
@@ -50,16 +54,21 @@ import os  # noqa: E402
 
 from app.config import load_settings  # noqa: E402
 from app.facemarket_photos import (  # noqa: E402
-    REFSET_SLOTS, TRAINING_SLOTS, export_name, resolve_photo_rows,
+    ANGLE_SLOTS, ASSET_SOURCE_SLOTS, REFSET_SLOTS, TRAINING_SLOTS, export_name, resolve_photo_rows,
 )
 from app.r2 import R2Client  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-#: 내보낼 슬롯과 그 하위 디렉터리. 측면(sh_side)은 학습에 안 쓴다 — 공개 자산용이다.
+#: 내보낼 슬롯과 그 하위 디렉터리. 각도 3장(옆모습 좌·우 · 뒷모습)은 학습에 안 쓴다 —
+#: 모아 두고 쓰임새는 뒤에 정한다. sh_side 는 공개 자산 소스이기도 하다.
+ANGLE_EXPORT_SLOTS: tuple[str, ...] = ("sh_side",) + ANGLE_SLOTS
 EXPORTS: tuple[tuple[str, str], ...] = (
     tuple(("train", slot) for slot in TRAINING_SLOTS)
     + tuple(("refset", slot) for slot in REFSET_SLOTS)
+    + tuple(("angles", slot) for slot in ANGLE_EXPORT_SLOTS)
 )
+#: 각도 칸은 없어도 학습을 막지 않는다 — 옛 16칸 등록에는 존재하지 않는다.
+OPTIONAL_GROUPS = {"angles"}
 #: 기준으로 삼을 수 있는 저장 상태. 승인 전(quarantine)도 학습에는 유효하다.
 USABLE_STATES = {"quarantine", "approved"}
 
@@ -88,6 +97,20 @@ def fetch_photos(dsn: str, enrollment_id: str) -> list[dict]:
                 (enrollment_id,),
             )
             return [dict(row) for row in cur.fetchall()]
+
+
+def fetch_review_status(dsn: str, enrollment_id: str) -> str | None:
+    """관리자 사진 확인 상태. 'approved' 가 아니면 학습셋을 내보내지 않는다(게이트).
+
+    확인 전 사진으로 학습하면 반려될 사진이 가중치에 들어가고, 그건 되돌릴 수 없다.
+    """
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        conn.read_only = True
+        with conn.cursor() as cur:
+            cur.execute("select photo_review_status from fm_biometric_enrollments where id = %s",
+                        (enrollment_id,))
+            row = cur.fetchone()
+    return (row or {}).get("photo_review_status")
 
 
 def plan(rows: list[dict]) -> list[dict]:
@@ -136,12 +159,14 @@ def normalize_png(data: bytes, destination: pathlib.Path) -> tuple[int, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="등록 사진 16칸 → LoRA 학습셋")
+    ap = argparse.ArgumentParser(description="등록 사진 18칸 → LoRA 학습셋")
     ap.add_argument("enrollment_id")
     ap.add_argument("out_dir")
     ap.add_argument("--apply", action="store_true", help="없으면 세어 보기만 하고 파일을 안 쓴다")
     ap.add_argument("--allow-partial", action="store_true",
                     help="빠진 칸이 있어도 있는 것만 쓴다(기본은 거부 — 반쪽 학습셋은 조용한 품질 손실이다)")
+    ap.add_argument("--allow-unreviewed", action="store_true",
+                    help="관리자 사진 확인 전에도 내보낸다(기본은 거부). 경고를 찍는다.")
     a = ap.parse_args()
 
     try:
@@ -163,10 +188,19 @@ def main() -> int:
     host = dsn.split("@")[-1].split("/")[0] if "@" in dsn else "(unknown)"
     print(f"DB host sha256[:12] = {_digest(host)}")
 
+    review = fetch_review_status(dsn, a.enrollment_id)
+    if review != "approved":
+        if not a.allow_unreviewed:
+            print(f"사진 확인이 끝나지 않았다(photo_review_status={review!r}). "
+                  "관리자 확인 뒤에 내보낸다 — 그래도 하려면 --allow-unreviewed.")
+            return 1
+        print(f"⚠️ 사진 확인 전이다(photo_review_status={review!r}) — --allow-unreviewed 로 계속한다.")
+
     rows = fetch_photos(dsn, a.enrollment_id)
     items = plan(rows)
     have = [item for item in items if item["row"]]
-    missing = [item for item in items if not item["row"]]
+    missing = [item for item in items if not item["row"] and item["group"] not in OPTIONAL_GROUPS]
+    missing_optional = [item for item in items if not item["row"] and item["group"] in OPTIONAL_GROUPS]
 
     print(f"등록 {a.enrollment_id[:8]}… 행 {len(rows)}개 → 내보낼 칸 {len(items)}개 중 {len(have)}개 준비됨")
     for item in items:
@@ -178,6 +212,10 @@ def main() -> int:
         print(f"  [{mark}] {item['group']}/{item['name']}.png  ← {item['slot']}{source}{size}{key}{extra}")
     if missing:
         print(f"빠진 칸 {len(missing)}개: " + ", ".join(item["slot"] for item in missing))
+    if missing_optional:
+        # 옛 16칸 등록에는 각도 칸이 없다 — 경고만 하고 angles/ 를 비워 둔다.
+        print(f"⚠️ 각도 칸 {len(missing_optional)}개 없음(옛 등록이면 정상): "
+              + ", ".join(item["slot"] for item in missing_optional))
 
     if not a.apply:
         print("확인만 했다(--apply 없음). 파일을 쓰지 않았다.")
@@ -197,7 +235,8 @@ def main() -> int:
         written += 1
         print(f"  wrote {item['group']}/{destination.name} {width}x{height} ({len(data)}B → {destination.stat().st_size}B)")
     print(f"{written}장을 {out_dir} 에 썼다. 학습 {len([i for i in have if i['group'] == 'train'])}장 · "
-          f"기준 {len([i for i in have if i['group'] == 'refset'])}장.")
+          f"기준 {len([i for i in have if i['group'] == 'refset'])}장 · "
+          f"각도 {len([i for i in have if i['group'] == 'angles'])}장.")
     print("이 사진들은 이 맥에만 둔다. 공유 링크·메신저로 보내지 않는다.")
     return 0
 
