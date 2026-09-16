@@ -134,6 +134,21 @@ def _image_urls(enrollment_id: str) -> dict[str, str]:
     return {kind: f"{base}/{kind}" for kind in IMAGE_KINDS}
 
 
+class LoraTrainingRun(CamelModel):
+    """학습 런 한 줄. **키와 숫자만** — 가중치 바이트도 presigned URL 도 여기 없다."""
+    id: str
+    model_id: str
+    display_name: str | None = None
+    status: str
+    gpu_type: str | None = None
+    attempts: int = 0
+    metrics: dict | None = None
+    error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
 class ReshootSlot(CamelModel):
     """다시 찍어야 할 칸 하나 — 관리자가 고르고, 모델 화면이 그대로 읽는다."""
     slot: str
@@ -908,3 +923,48 @@ async def sweep_stalled_review_approvals(app, *, limit: int = 20) -> int:
                 enrollment_id, type(exc).__name__,
             )
     return resumed
+
+
+@router.get("/lora-training", response_model=list[LoraTrainingRun])
+async def list_lora_training(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    user_id: str = Depends(require_user),
+):
+    """진행 중 학습 + 최근 이력. 읽기 전용이다 — 여기서 학습을 시작하거나 멈추지 않는다.
+
+    동시 1건은 DB 인덱스가 지킨다(fm_lora_training_runs_one_active). 이 화면은 그 상태를
+    보여 줄 뿐이라, 큐가 막혀 있을 때 "왜 안 도는지" 를 사람이 바로 볼 수 있으면 된다.
+    """
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id, request)
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute(
+                    """
+                    select r.id::text as id, r.model_id::text as model_id, m.display_name,
+                           r.status, r.gpu_type, r.attempts, r.metrics, r.error,
+                           r.started_at, r.finished_at, r.created_at
+                      from fm_lora_training_runs r
+                      left join fm_models m on m.id = r.model_id
+                     order by case when r.status in ('preparing', 'training', 'scoring')
+                                   then 0 else 1 end,
+                              r.created_at desc
+                     limit %s
+                    """,
+                    (limit,))
+                rows = await cur.fetchall()
+            except Exception as exc:  # noqa: BLE001 — 마이그 전이면 표가 없다
+                logger.info("lora training 표 없음 (%s)", type(exc).__name__)
+                await conn.rollback()
+                return []
+    return [
+        LoraTrainingRun(
+            id=row["id"], model_id=row["model_id"], display_name=row.get("display_name"),
+            status=row["status"], gpu_type=row.get("gpu_type"), attempts=row.get("attempts") or 0,
+            metrics=row.get("metrics"), error=row.get("error"),
+            started_at=row.get("started_at"), finished_at=row.get("finished_at"),
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]

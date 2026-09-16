@@ -357,15 +357,31 @@ def test_turning_that_on_does_not_start_a_second_reconciler():
     text = pathlib.Path(main_file).read_text(encoding="utf-8")
     guard = "            if not detail_worker_only:\n"
     assert text.count(guard) >= 1
-    block_start = text.index(guard)
-    block = text[block_start:]
-    # 가드 블록은 들여쓰기가 16칸 이상인 줄까지다(가드 자체가 12칸).
-    lines, body = block.splitlines(keepends=True), []
-    for line in lines[1:]:
-        if line.strip() and not line.startswith(" " * 16):
+
+    def _body_at(start: int) -> str:
+        """가드 블록 본문 — 들여쓰기가 16칸 이상인 줄까지다(가드 자체가 12칸)."""
+        out = []
+        for line in text[start:].splitlines(keepends=True)[1:]:
+            if line.strip() and not line.startswith(" " * 16):
+                break
+            out.append(line)
+        return "".join(out)
+
+    # 같은 가드가 여러 번 나온다(다른 워커들도 같은 조건을 쓴다) — **opendid autoscaler 가 든**
+    # 블록을 찾는다. 앞에 다른 가드 블록이 하나 생겼다고 이 테스트가 깨지면 안 된다.
+    block_start = -1
+    body = ""
+    offset = 0
+    while True:
+        found = text.find(guard, offset)
+        if found < 0:
             break
-        body.append(line)
-    body = "".join(body)
+        candidate = _body_at(found)
+        if "app.state.opendid_autoscaler = SamAutoscaler(" in candidate:
+            block_start, body = found, candidate
+            break
+        offset = found + len(guard)
+    assert block_start >= 0, "opendid autoscaler 를 감싼 detail_worker_only 가드를 못 찾았다"
     assert "app.state.opendid_autoscaler = SamAutoscaler(" in body
     assert "await opendid_autoscaler.start()" in body
     # 가드 밖에서 opendid autoscaler 를 만들지 않는다
