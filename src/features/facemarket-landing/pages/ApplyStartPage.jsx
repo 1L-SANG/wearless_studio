@@ -21,14 +21,18 @@ export function ApplyStartPage() {
               <p className={s.eyebrow}>FaceMarket에서 모델로 시작해요</p>
               <h1 id="apply-title">모델 지원</h1>
               <p className={s.lead}>
-                내가 등록해 둔 얼굴을 이용해 셀러가 AI로 의류컷을 만들 수 있어요<br />
-                셀러 기준 1번 이용 시 <b>{formatKrw(FACEMARKET_PRICING.perCut)}</b>, 1개월 이용 시 <b>{formatKrw(FACEMARKET_PRICING.monthly)}</b> ({FACEMARKET_PRICING.monthlyCap}회 제한)
+                내가 등록한 얼굴을 이용해서 셀러가 쇼핑몰에 쓸 상세페이지를 AI로 만들어요
               </p>
+              <p className={s.protection}>
+                facemarket과 연계된 서비스에만 사용가능, 블록체인을 통한 위조불가 기록, 이미지 추적 가능
+              </p>
+              <blockquote className={s.earningsQuote}>
+                10명의 셀러가 나를 한번씩만 써도, <b>10만원</b>의 수익이 자동으로.
+              </blockquote>
               <Link className={s.primary} to="/model/apply">지원서 쓰기</Link>
-              <div className={s.faces} aria-label="가상 모델 프로필 사진">
-                {FACES.map((src, index) => <img key={src} src={src} alt={`가상 모델 프로필 예시 ${index + 1}`} decoding="async" />)}
+              <div className={s.faces} aria-label="모델 프로필 사진">
+                {FACES.map((src, index) => <img key={src} src={src} alt={`모델 프로필 사진 ${index + 1}`} decoding="async" />)}
               </div>
-              <p className={s.caption}>가상 모델 사진이에요</p>
               <div className={s.footnote}><span>사진 한 장이면 시작해요</span><span>경력 없이도 지원해요</span></div>
             </section>
             <div className={s.side}>
@@ -44,7 +48,6 @@ export function ApplyStartPage() {
                 <h2 id="apply-earnings">등록하면 이런 게 달라져요</h2>
                 <ul>
                   <li>
-                    10명의 셀러가 1번씩만 사용해도 약 <b className={s.emphasis}>{formatKrw(Math.round(perCutShare * 10 / 10_000) * 10_000)}</b>이 자동입금돼요.<br />
                     셀러가 결제한 금액의 {sharePercent}%를 정산해드려요{' '}
                     <span className={s.info} tabIndex={0} aria-label="정산 금액 안내" aria-describedby="apply-settlement-tooltip">
                       <Icon name="info" size={16} />

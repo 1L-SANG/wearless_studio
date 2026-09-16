@@ -94,24 +94,3 @@
   object-fit: cover;
   pointer-events: none;   /* 이미지 기본 드래그가 포인터 캡처를 가로채지 않게 */
 }
-
-.badge {
-  position: absolute;
-  top: 0.85rem;
-  left: 1rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: rgba(255, 255, 255, 0.92);
-  font: 500 0.8rem/1 var(--font-body);
-  letter-spacing: 0.06em;
-}
-
-/* 사진 위 아무 색에서나 읽혀야 하는 고지라 글자 그림자가 아니라 알약 배경을 깐다. */
-.badgeNotice {
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  background: rgba(16, 21, 26, 0.62);
-  font-size: 0.68rem;
-  letter-spacing: 0.02em;
-}
