@@ -4,49 +4,59 @@ import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 //
 // 순서·문구는 촬영 가이드를 따라요 — 번호대로 찍으면 그대로 채워져요.
 // 슬롯 키는 서버(`server/app/facemarket_photos.py` PHOTO_SLOTS)와 **같은 이름**이에요.
-// 조명 4가지(그늘·해가 왼쪽·해가 오른쪽·역광) × 컷 3장 = 학습 12장, 그늘에서 기준 3장,
+// 네 자리(sh·sl·sr·bl) × 컷 3장 = 학습 12장, 첫 자리에서 기준 3장,
 // 공개 프로필에 쓰는 옆모습(왼쪽) 1장, 그리고 각도 수집 2장(옆모습 오른쪽·뒷모습) = 18장.
+//
+// ★ 2026-09-16 대표 결정: 화면 문구에서 **조명 용어를 뺐어요.** 등록자가 "그늘·역광" 을
+//   이해해야 찍을 수 있는 안내였는데, 실제로 필요한 건 "밝은 야외에서 몸을 90도씩 돌린다"
+//   하나예요. 접두어(sh/sl/sr/bl)와 서버의 조명 이름(facemarket_photos.LIGHTING_LABELS ·
+//   export_name)은 **그대로** 둬요 — 학습 캡션과 내보내기 파일명이 거기서 나와요.
+// cut 은 칸 그림(SlotDiagram)이 쓰는 값이에요 — 슬롯 키에서 접두어를 뺀 것과 같고,
+// 서버 facemarket_photos.CUT_LABELS 의 키와도 같아요. framing/angle 은 그대로 둬요:
+// 체형 고르기 화면이 아직 RegisterIllustration 을 그 값으로 그려요.
 // 기준에서 '턱 살짝 내리기'는 뺐어요 — 기준끼리의 얼굴 점수가 기준선 아래로 떨어져요.
 // 옆모습·뒷모습은 학습 12장에 **안 들어가요**. 지금은 모아 두고, 검증 뒤에 쓰임새를 정해요.
 export const SLOTS = Object.freeze([
-  { n: 1, key: 'sh_front', group: 'sh', title: '정면 · 무표정', hint: '카메라를 똑바로, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
-  { n: 2, key: 'sh_smile', group: 'sh', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 3, key: 'sh_34', group: 'sh', title: '3/4 · 무표정', hint: '고개를 한쪽으로 30~40도. 끝까지 같은 쪽으로, 먼 쪽 눈이 꼭 보이게', framing: 'face', angle: 'left45' },
-  { n: 4, key: 'sh_front2', group: 'sh', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
-  { n: 5, key: 'sh_gaze_left', group: 'sh', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
-  { n: 6, key: 'sh_gaze_right', group: 'sh', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
-  { n: 7, key: 'sh_side', group: 'sh', title: '옆모습 · 코가 화면 왼쪽', hint: '고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'left' },
-  { n: 8, key: 'sh_side_right', group: 'sh', title: '옆모습 · 코가 화면 오른쪽', hint: '반대쪽으로 고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'right' },
-  { n: 9, key: 'sh_back', group: 'sh', title: '뒷모습', hint: '뒤돌아서 뒤통수 정중앙을 머리 높이에서, 고개 똑바로, 어깨까지', framing: 'face', angle: 'back' },
-  { n: 10, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
-  { n: 11, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 12, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 13, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '카메라를 똑바로', framing: 'face', angle: 'front' },
-  { n: 14, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 15, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 16, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '플래시 끄고, 얼굴이 까맣게 나오면 다시', framing: 'face', angle: 'front' },
-  { n: 17, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 18, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 1, key: 'sh_front', group: 'sh', cut: 'front', title: '정면 · 무표정', hint: '카메라를 똑바로 보고, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
+  { n: 2, key: 'sh_smile', group: 'sh', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 3, key: 'sh_34', group: 'sh', cut: '34', title: '3/4 · 무표정', hint: '고개를 한쪽으로 30~40도. 끝까지 같은 쪽으로, 먼 쪽 눈이 꼭 보이게', framing: 'face', angle: 'left45' },
+  { n: 4, key: 'sh_front2', group: 'sh', cut: 'front2', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
+  { n: 5, key: 'sh_gaze_left', group: 'sh', cut: 'gaze_left', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
+  { n: 6, key: 'sh_gaze_right', group: 'sh', cut: 'gaze_right', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
+  { n: 7, key: 'sh_side', group: 'sh', cut: 'side', title: '옆모습 · 코가 화면 왼쪽', hint: '고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'left' },
+  { n: 8, key: 'sh_side_right', group: 'sh', cut: 'side_right', title: '옆모습 · 코가 화면 오른쪽', hint: '반대쪽으로 고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'right' },
+  { n: 9, key: 'sh_back', group: 'sh', cut: 'back', title: '뒷모습', hint: '뒤돌아서 뒤통수 정중앙을 머리 높이에서, 고개 똑바로, 어깨까지', framing: 'face', angle: 'back' },
+  { n: 10, key: 'sl_front', group: 'sl', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
+  { n: 11, key: 'sl_smile', group: 'sl', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 12, key: 'sl_34', group: 'sl', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 13, key: 'sr_front', group: 'sr', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 돌아선 자리에서 카메라를 똑바로', framing: 'face', angle: 'front' },
+  { n: 14, key: 'sr_smile', group: 'sr', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 15, key: 'sr_34', group: 'sr', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 16, key: 'bl_front', group: 'bl', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 얼굴이 어두우면 화면에서 얼굴을 눌러 밝기를 맞춰요', framing: 'face', angle: 'front' },
+  { n: 17, key: 'bl_smile', group: 'bl', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 18, key: 'bl_34', group: 'bl', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
 ].map((slot) => Object.freeze(slot)));
 
-// 조명별로 한 화면씩. `sun` 은 위에서 본 그림(RegisterIllustration.SunDiagram)이 쓰는 값이에요.
+// 단계별로 한 화면씩 — **몸을 90도씩 돌리는 동작**이 안내의 전부예요. `sun` 은 위에서 본
+// 그림(RegisterIllustration.SunDiagram)이 쓰는 값이라 그대로 둬요(그림은 자리를 보여 줘요).
 export const PHOTO_GROUPS = Object.freeze([
-  { id: 'sh', sun: 'shade', title: '그늘', badge: '건물 그림자 · 나무 그늘', note: '해가 얼굴에 직접 안 닿는 곳에 서고, 찍는 사람은 얼굴 정면에. 7~9번(옆모습 둘·뒷모습)은 같은 자리에서 몸만 돌려요.' },
-  { id: 'sl', sun: 'left', title: '해가 왼쪽', badge: '해가 왼쪽 옆에서', note: '해가 화면 왼쪽 옆에서 얼굴을 비추게 서요.' },
-  { id: 'sr', sun: 'right', title: '해가 오른쪽', badge: '해가 오른쪽 옆에서', note: '반대로 돌아서, 해가 화면 오른쪽 옆에서 비추게 서요.' },
-  { id: 'bl', sun: 'back', title: '역광', badge: '해를 등지고', note: '해를 등지고 서요. 화면에서 얼굴을 눌러 밝기를 얼굴에 맞춰요.' },
+  { id: 'sh', sun: 'shade', title: '1단계 · 그늘진 곳', badge: '해가 얼굴에 직접 안 닿는 곳', note: '건물 그림자나 나무 아래에 서요. 9장 모두 같은 자리에서 찍고, 7~9번은 몸만 돌려요.' },
+  { id: 'sl', sun: 'left', title: '2단계 · 햇빛 드는 곳', badge: '그대로 정면', note: '그늘에서 나와 햇빛이 드는 곳에 서요. 찍는 사람은 계속 얼굴 정면에.' },
+  { id: 'sr', sun: 'right', title: '3단계 · 오른쪽으로 90도', badge: '몸을 돌려서', note: '선 자리에서 오른쪽으로 90도 돌아요. 찍는 사람이 따라 움직여 얼굴 정면에 서요.' },
+  { id: 'bl', sun: 'back', title: '4단계 · 한 번 더 90도', badge: '해를 등지고', note: '한 번 더 90도 돌면 해를 등지게 돼요. 얼굴이 어두우면 화면에서 얼굴을 눌러 밝기를 맞추고 플래시는 꺼요.' },
 ]);
-// 사진 확인 화면의 sub 번호. 조명 화면 다음 자리예요(조명이 늘면 같이 밀려요).
+// 사진 확인 화면의 sub 번호. 단계 화면 다음 자리예요(단계가 늘면 같이 밀려요).
 export const PHOTO_REVIEW_SUB = PHOTO_GROUPS.length + 1;
 
 // 찍기 전에 확인할 것. 하나라도 어기면 업로드에서 반려돼요(서버 검사와 같은 항목).
 export const SHOOT_RULES = Object.freeze([
+  { title: '18장 모두 얼굴·어깨까지', body: '전신·반신은 받지 않아요. 배우는 건 얼굴이라 그 위로는 필요 없어요.' },
   { title: '안경 · 선글라스 · 모자 없이', body: '얼굴 교체가 눈을 덮은 안경을 지워요. 모자는 머리 모양 학습을 망쳐요.' },
   { title: '머리부터 가슴까지, 얼굴이 크게', body: '얼굴 폭이 사진 가로의 1/4쯤 되게. 멀면 "얼굴이 작아요"로 반려돼요.' },
   { title: '한 사진에 한 사람만', body: '뒤에 다른 얼굴이 크게 걸리면 반려돼요.' },
   { title: '뒷카메라 1배, 기본 설정 그대로', body: '인물사진 모드 · 뷰티 필터 · 0.5배 광각은 쓰지 마세요.' },
-  { title: '같은 날, 지금 머리 그대로', body: '머리 모양까지 배워요. 중간에 바꾸면 섞여요.' },
-  { title: '기준 3장(4~6번)은 전부 그늘 같은 자리', body: '조명이 섞이면 기준 사진끼리 점수가 떨어져 기준으로 못 써요.' },
+  { title: '같은 날 한 번에, 지금 머리 그대로', body: '머리 모양까지 배워요. 중간에 바꾸면 섞여요.' },
+  { title: '기준 3장(4~6번)은 전부 같은 자리', body: '자리를 옮기면 기준 사진끼리 점수가 떨어져 기준으로 못 써요.' },
   { title: '옆모습 2장(7~8번)은 고개를 끝까지', body: '덜 돌리면 3/4 와 구분이 안 돼 반려돼요. 한쪽 눈만 보이게 돌려요.' },
 ]);
 

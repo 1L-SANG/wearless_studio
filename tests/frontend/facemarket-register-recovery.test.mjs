@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { modelComponentHarness, findTree, eventually } from './helpers/facemarketHarness.mjs';
-import { CONSENT_VERSION, SLOTS } from '../../src/features/model/registerSlots.js';
+import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS } from '../../src/features/model/registerSlots.js';
 
 const record = {
   id: 'enrollment-recovery', modelId: 'model-1', status: 'license_pending',
@@ -56,7 +56,7 @@ test('changing a completed photo first reopens and then uploads under preserved 
   });
   try {
     button(h.render(), '이전').props.onClick();
-    findTree(h.render(), node => node.props?.['aria-label'] === '그늘 사진 고치기').props.onClick();
+    findTree(h.render(), node => node.props?.['aria-label'] === `${PHOTO_GROUPS[0].title} 사진 고치기`).props.onClick();
     assert.deepEqual(calls, []);
     const input = findTree(h.render(), node => node.type === 'input' && node.props.type === 'file');
     input.props.onChange({ target: { files: [new Blob(['new-photo'], { type: 'image/jpeg' })], value: 'upload' } });
@@ -74,7 +74,7 @@ test('a rejected reopen leaves the stored photo intact and never uploads', async
   });
   try {
     button(h.render(), '이전').props.onClick();
-    findTree(h.render(), node => node.props?.['aria-label'] === '그늘 사진 고치기').props.onClick();
+    findTree(h.render(), node => node.props?.['aria-label'] === `${PHOTO_GROUPS[0].title} 사진 고치기`).props.onClick();
     findTree(h.render(), node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [new Blob(['new'])], value: 'upload' } });
     await eventually(() => !h.runtime.states[4], 'reopen rejected');
     assert.equal(uploads, 0);

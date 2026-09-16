@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
 import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, SHOOT_RULES, REGISTER_BODIES, photoSlotKey, toggleRegisterCategory } from './registerSlots.js';
-import { RegisterIllustration, SunDiagram } from './RegisterIllustration.jsx';
+import { RegisterIllustration } from './RegisterIllustration.jsx';
+// 칸마다 다른 그림은 여기서 와요. SunDiagram(해 위치)은 지우지 않았어요 — 다시 쓸 때를 위해
+// RegisterIllustration.jsx 에 그대로 있어요.
+import { SlotDiagram, FramingDiagram, StepDiagram } from './SlotDiagram.jsx';
 import s from './ModelRegister.module.css';
 
 export const heading = (title, description) => <div className={s.intro}><h1 tabIndex={-1}>{title}</h1>{description && <p className={s.description}>{description}</p>}</div>;
@@ -62,23 +65,25 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
   const group = PHOTO_GROUPS[sub - 1];
   const uploaded = new Set((enrollment?.photos || []).map(photoSlotKey));
   return <>
-    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 다른 사진이 여러 장 필요해요. 조명 네 곳을 옮겨 다니며 각 카드와 같은 구도로 찍어 주세요.')}
+    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 조금씩 다른 사진이 여러 장 필요해요. 밝은 야외에서 네 단계로, 몸을 90도씩 돌려 가며 각 카드와 같은 구도로 찍어 주세요.')}
     {sub === 1 && <div className={s.tips}>
       <strong>찍기 전에</strong>
       <p>맑은 날 야외에서, 폰 뒷카메라로 찍어요. 하나라도 어기면 사진이 반려돼요.</p>
+      {/* "얼굴 폭이 가로의 1/4" 은 글로만 읽으면 가늠이 안 돼요 — 반려되는 기준이라 그림으로 보여 줘요. */}
+      <FramingDiagram className={s.framingDiagram} />
       <ul className={s.shootRules}>{SHOOT_RULES.map((rule) => <li key={rule.title}><b>{rule.title}</b><span>{rule.body}</span></li>)}</ul>
     </div>}
-    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 조명이에요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 해의 위치만 바꿔서 찍어 주세요.'}</p>}
+    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 단계예요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 서는 자리만 바꿔서 찍어 주세요.'}</p>}
     <div className={s.groupHeading}>
       <span className={s.tag}>{group.badge}</span>
-      <div className={s.sunGuide}><SunDiagram className={s.sunDiagram} sun={group.sun} /><p>{group.note}</p></div>
+      <div className={s.sunGuide}><StepDiagram className={s.sunDiagram} step={sub} /><p>{group.note}</p></div>
     </div>
     <div className={s.photoGrid}>{SLOTS.filter((slot) => slot.group === group.id).map((slot) => {
       const filled = uploaded.has(slot.key);
       return <div className={s.slotCard} key={slot.key}>
         <label className={`${s.slot} ${filled ? s.filled : ''}`}>
           <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '사진 바꾸기' : '사진 올리기'}`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
-          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <RegisterIllustration className={s.person} framing={slot.framing} angle={slot.angle} />}
+          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <SlotDiagram className={s.slotArt} cut={slot.cut} />}
           <span className={s.slotBadge}>{filled ? '✓ 내 사진' : '예시'}</span>
           <span className={s.slotAction}>{filled ? '바꾸기' : '내 사진으로'}</span><span className={s.slotBottom}><span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 {filled ? '바꾸기' : '올리기'}</span></span><span className={s.slotHint}>{filled && !previews[slot.key] ? '사진을 저장했어요' : slot.hint}</span></span>
         </label>
@@ -105,7 +110,7 @@ export function renderReshoot({ enrollment, previews, busy, onFile }) {
       return <div className={s.slotCard} key={slot.key}>
         <label className={s.slot}>
           <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} 다시 올리기`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
-          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <RegisterIllustration className={s.person} framing={slot.framing} angle={slot.angle} />}
+          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <SlotDiagram className={s.slotArt} cut={slot.cut} />}
           <span className={s.slotBadge}>다시 찍기</span>
           <span className={s.slotAction}>내 사진으로</span>
           <span className={s.slotBottom}>

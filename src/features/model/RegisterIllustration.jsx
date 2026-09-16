@@ -20,10 +20,23 @@ export function RegisterIllustration({ framing = 'full', angle = 'front', width 
 }
 
 // 위에서 본 그림 — 원은 머리, 뾰족한 쪽이 코(찍는 사람 쪽)예요. 찍는 사람은 늘 얼굴 정면에
-// 서고 해의 위치만 바뀌어요. 조명 이름만으로는 어디 서야 하는지 알기 어려워 그림을 같이 둬요.
+// 서고, 등록자가 몸을 90도씩 돌리면 해의 위치가 따라 바뀌어요.
+//
+// 라벨은 **해 방향이 아니라 동작**이에요(2026-09-16 대표 결정).
+// 등록자가 알아야 할 건 "지금 어디 서는가 / 몇 도 도는가" 하나예요. 해 위치 표시는 그대로
+// 두되(그게 자리를 알려 줘요), 읽히는 말은 동작으로 바꿔요.
+const DIAGRAM_LABEL = {
+  shade: '지금 서는 자리 — 그늘진 곳, 찍는 사람은 얼굴 정면',
+  left: '지금 서는 자리 — 햇빛 드는 곳, 찍는 사람은 얼굴 정면',
+  right: '오른쪽으로 90도 돌기 — 찍는 사람이 따라 움직여요',
+  back: '한 번 더 90도 돌기 — 해를 등지게 돼요',
+};
+
 export function SunDiagram({ sun = 'shade', className }) {
   const sunAt = { left: [14, 40], right: [86, 40], back: [50, 10] }[sun];
-  return <svg className={className} viewBox="0 0 100 100" aria-hidden="true">
+  const label = DIAGRAM_LABEL[sun] || DIAGRAM_LABEL.shade;
+  return <svg className={className} viewBox="0 0 100 100" role="img" aria-label={label}>
+    <title>{label}</title>
     {sun === 'shade' && <rect x="6" y="6" width="88" height="52" rx="10" fill="currentColor" opacity="0.12" />}
     {sunAt && <g transform={`translate(${sunAt[0]} ${sunAt[1]})`}>
       <circle r="9" fill="currentColor" opacity="0.85" />
