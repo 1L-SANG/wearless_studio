@@ -23,9 +23,11 @@ export function ApplyStartPage() {
               <p className={s.lead}>
                 내가 등록한 얼굴을 이용해서 셀러가 쇼핑몰에 쓸 상세페이지를 AI로 만들어요
               </p>
-              <p className={s.protection}>
-                facemarket과 연계된 서비스에만 사용가능, 블록체인을 통한 위조불가 기록, 이미지 추적 가능
-              </p>
+              <ol className={s.protection}>
+                <li>facemarket과 연계된 서비스에서만 안전하게 사용가능</li>
+                <li>블록체인을 통한 위조 불가 사용 기록</li>
+                <li>내가 쓰인 이미지 추적 가능</li>
+              </ol>
               <blockquote className={s.earningsQuote}>
                 10명의 셀러가 나를 한번씩만 써도, <b>10만원</b>의 수익이 자동으로.
               </blockquote>
