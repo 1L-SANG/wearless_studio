@@ -173,13 +173,13 @@ test('간편인증 지원자는 인증이 끝나면 신분증 촬영 화면으�
   } finally { await h.close(); }
 });
 
-for (const [sub, encouragement] of [[1, null], [2, '방금 하신 대로, 해의 위치만 바꿔서 찍어 주세요.'], [4, '이제 마지막 조명이에요. 아래 사진들만 찍으면 끝나요.']]) {
+for (const [sub, encouragement] of [[1, null], [2, '방금 하신 대로, 서는 자리만 바꿔서 찍어 주세요.'], [4, '이제 마지막 단계예요. 아래 사진들만 찍으면 끝나요.']]) {
   test(`사진 ${sub}단계는 공통 안내와 촬영 범위만 보여요`, async () => {
     const h = await modelComponentHarness({ initialStates: ['2', baseEnrollment, sub], api: {} });
     try {
       const tree = h.render(), text = textOf(tree);
       assert.equal(findTree(tree, node => node.type === 'h1').props.children, '사진을 등록해요');
-      assert.ok(text.includes('내 얼굴을 그대로 배우려면 빛이 다른 사진이 여러 장 필요해요. 조명 네 곳을 옮겨 다니며 각 카드와 같은 구도로 찍어 주세요.'));
+      assert.ok(text.includes('내 얼굴을 그대로 배우려면 빛이 조금씩 다른 사진이 여러 장 필요해요. 밝은 야외에서 네 단계로, 몸을 90도씩 돌려 가며 각 카드와 같은 구도로 찍어 주세요.'));
       assert.equal(findTree(tree, node => node.type === 'progress'), null);
       assert.doesNotMatch(text, /사진 17장|0 \/|전체 5단계|몸의 두께/);
       if (encouragement) assert.ok(text.includes(encouragement));
@@ -343,7 +343,7 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
   } });
   try {
     const file = new File(['photo'], 'mine.jpg', { type: 'image/jpeg' });
-    findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === '역광 사진 고치기').props.onClick();
+    findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === `${module.PHOTO_GROUPS[3].title} 사진 고치기`).props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_GROUPS.length, '역광은 마지막 조명 화면이다');
     let tree = harness.render();
     // 역광 3/4 는 마지막 칸이다 — 옆모습 둘·뒷모습이 그늘에 붙으면서 16번 → 18번이 됐다.
@@ -626,4 +626,51 @@ test('체형 저장 실패는 조건 화면에서 재시도하며 저장 전에�
     await button(h.render(), '라이선스 증서 발급하기').props.onClick();
     assert.equal(issues, 1); assert.equal(h.runtime.states[0], 'done');
   } finally { await h.close(); }
+});
+
+test('문구를 바꿔도 슬롯 키와 순서는 그대로다', () => {
+  // 2026-09-16 조명 용어를 뺀 문구 교체 — **데이터는 한 글자도 안 바뀐다**. 키가 하나라도
+  // 달라지면 업로드가 invalid_slot 으로 막히고, 순서가 달라지면 촬영 안내 번호와 파일 이름
+  // (<조명>__<컷>)이 어긋난다. 그래서 목록을 통째로 못박는다.
+  assert.deepEqual(module.SLOTS.map((slot) => slot.key), [
+    'sh_front', 'sh_smile', 'sh_34', 'sh_front2', 'sh_gaze_left', 'sh_gaze_right',
+    'sh_side', 'sh_side_right', 'sh_back',
+    'sl_front', 'sl_smile', 'sl_34',
+    'sr_front', 'sr_smile', 'sr_34',
+    'bl_front', 'bl_smile', 'bl_34',
+  ]);
+  assert.deepEqual(module.SLOTS.map((slot) => slot.n), Array.from({ length: 18 }, (_v, i) => i + 1));
+  assert.deepEqual(module.PHOTO_GROUPS.map((group) => group.id), ['sh', 'sl', 'sr', 'bl']);
+  // 묶음별 장수도 그대로 — 그늘 9 + 나머지 3씩.
+  assert.deepEqual(
+    module.PHOTO_GROUPS.map((group) => module.SLOTS.filter((slot) => slot.group === group.id).length),
+    [9, 3, 3, 3],
+  );
+  // 18칸 전부 얼굴·어깨까지다(전신·반신을 받지 않는다).
+  assert.ok(module.SLOTS.every((slot) => slot.framing === 'face'));
+});
+
+test('등록 촬영 안내에 조명 용어가 남아 있지 않다', () => {
+  // 대표 결정: 등록자는 "밝은 야외에서 몸을 90도씩 돌린다" 만 알면 된다. 조명 이름은
+  // 서버(facemarket_photos)에만 남는다 — 학습 캡션과 내보내기 파일명이 거기서 나온다.
+  const shown = [
+    ...module.PHOTO_GROUPS.flatMap((group) => [group.title, group.badge, group.note]),
+    ...module.SHOOT_RULES.flatMap((rule) => [rule.title, rule.body]),
+    ...module.SLOTS.map((slot) => slot.hint),
+  ].join(' ');
+  for (const word of ['역광', '해가 왼쪽', '해가 오른쪽', '조명']) {
+    assert.ok(!shown.includes(word), `화면 문구에 "${word}" 가 남아 있다`);
+  }
+  // 단계 어휘는 있어야 한다.
+  assert.match(module.PHOTO_GROUPS[0].title, /1단계/);
+  assert.match(module.PHOTO_GROUPS[2].note, /90도/);
+});
+
+test('서버의 조명 이름은 그대로다 — 학습 캡션·파일명이 거기서 나온다', () => {
+  const photos = readFileSync(
+    new URL('../../server/app/facemarket_photos.py', import.meta.url), 'utf8',
+  );
+  for (const word of ['그늘', '해가왼쪽', '해가오른쪽', '해등지고']) {
+    assert.ok(photos.includes(word), `서버에서 "${word}" 가 사라졌다 — 내보내기 파일명이 바뀐다`);
+  }
 });

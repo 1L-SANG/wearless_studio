@@ -62,13 +62,13 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
   const group = PHOTO_GROUPS[sub - 1];
   const uploaded = new Set((enrollment?.photos || []).map(photoSlotKey));
   return <>
-    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 다른 사진이 여러 장 필요해요. 조명 네 곳을 옮겨 다니며 각 카드와 같은 구도로 찍어 주세요.')}
+    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 조금씩 다른 사진이 여러 장 필요해요. 밝은 야외에서 네 단계로, 몸을 90도씩 돌려 가며 각 카드와 같은 구도로 찍어 주세요.')}
     {sub === 1 && <div className={s.tips}>
       <strong>찍기 전에</strong>
       <p>맑은 날 야외에서, 폰 뒷카메라로 찍어요. 하나라도 어기면 사진이 반려돼요.</p>
       <ul className={s.shootRules}>{SHOOT_RULES.map((rule) => <li key={rule.title}><b>{rule.title}</b><span>{rule.body}</span></li>)}</ul>
     </div>}
-    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 조명이에요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 해의 위치만 바꿔서 찍어 주세요.'}</p>}
+    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 단계예요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 서는 자리만 바꿔서 찍어 주세요.'}</p>}
     <div className={s.groupHeading}>
       <span className={s.tag}>{group.badge}</span>
       <div className={s.sunGuide}><SunDiagram className={s.sunDiagram} sun={group.sun} /><p>{group.note}</p></div>
