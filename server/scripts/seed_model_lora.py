@@ -30,6 +30,7 @@ DB 는 server/.env 의 DATABASE_URL 을 따른다. 대상 DB 에 마이그레이
 20260911000100_fm_model_loras.sql 이 먼저 적용돼 있어야 한다.
 """
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -53,13 +54,7 @@ from app.facemarket_physique import (  # noqa: E402
     JAW_LINES,
 )
 from app.r2 import R2Client  # noqa: E402
-
-MIME = "application/octet-stream"
-
-
-def _key(model_id: str, version: int, ckpt: pathlib.Path) -> str:
-    return f"facemarket/models/{model_id}/loras/v{version}_{ckpt.name}"
-
+from app.services import model_lora  # noqa: E402
 
 def resolve_enable(requested: bool | None, model_status: str | None) -> bool:
     """켤지 말지 — 플래그를 줬으면 그 값, 안 줬으면 모델 상태가 정한다.
@@ -115,9 +110,8 @@ def main() -> int:
         print("R2_FACE_BUCKET 미설정 — 얼굴 자산 버킷 없이는 올릴 수 없다")
         return 2
     r2 = R2Client(s, bucket=s.r2_face_bucket, public_base=None)
-    key = _key(a.model_id, a.version, ckpt)
+    key = model_lora.lora_key(a.model_id, a.version, ckpt.name)
     data = ckpt.read_bytes()
-    digest = hashlib.md5(data).hexdigest()
     # 렌더 파드가 presigned 로 받은 파일을 대조할 값(fm_model_loras.lora_sha256).
     sha256 = hashlib.sha256(data).hexdigest()
     head = r2.head(key)
@@ -140,7 +134,7 @@ def main() -> int:
     model_status = model.get("status")
     enable = resolve_enable(a.enable, model_status)
 
-    print(f"ckpt   {ckpt} ({len(data)/2**20:.1f}MB md5={digest})")
+    print(f"ckpt   {ckpt} ({len(data)/2**20:.1f}MB)")
     print(f"sha256 {sha256}")
     print(f"key    {key}  (이미 있음: {bool(head)})")
     print(f"model  status={model_status}")
@@ -152,42 +146,25 @@ def main() -> int:
         print("\n--apply 없이 실행 — 아무것도 쓰지 않았다.")
         return 0
 
-    if head is None or int(head.get("size") or 0) != len(data):
-        r2.put_bytes(key, data, MIME)
-        print("uploaded")
-    else:
-        print("upload skipped (같은 크기의 객체가 이미 있다)")
+    # 업로드·행 등록의 정본은 app/services/model_lora.py 다. 학습 잡(자동)과 이 스크립트(손)가
+    # **같은 함수**를 불러야 두 경로의 산물이 같다.
+    async def go():
+        import psycopg
 
-    with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as conn, conn.cursor() as cur:
-        if enable:
-            # partial unique(model_id) where enabled — 다른 버전을 **먼저** 꺼야 insert 가 통과한다.
-            cur.execute(
-                "update fm_model_loras set enabled = false "
-                "where model_id = %s and version <> %s and enabled",
-                (a.model_id, a.version),
-            )
-        cur.execute(
-            """insert into fm_model_loras
-                 (model_id, version, status, enabled, base_model, lora_r2_key, lora_sha256, bucket,
-                  trigger_token, hair_length, hair_color, hair_texture, face_shape, jaw_line,
-                  trained_steps, source_enrollment_id, metrics)
-               values (%s, %s, 'ready', %s, %s, %s, %s, 'face', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               on conflict (model_id, version) do update set
-                 status = 'ready', enabled = excluded.enabled, base_model = excluded.base_model,
-                 lora_r2_key = excluded.lora_r2_key, lora_sha256 = excluded.lora_sha256,
-                 trigger_token = excluded.trigger_token,
-                 hair_length = excluded.hair_length, hair_color = excluded.hair_color,
-                 hair_texture = excluded.hair_texture, face_shape = excluded.face_shape,
-                 jaw_line = excluded.jaw_line, trained_steps = excluded.trained_steps,
-                 source_enrollment_id = excluded.source_enrollment_id, metrics = excluded.metrics
-               returning id::text as id""",
-            (a.model_id, a.version, enable, a.base_model, key, sha256, a.trigger,
-             a.hair_length, a.hair_color, a.hair_texture, a.face_shape, a.jaw_line,
-             a.trained_steps, a.source_enrollment_id,
-             Json(metrics) if metrics is not None else None),
-        )
-        row_id = (cur.fetchone() or {}).get("id")
-        conn.commit()
+        async with await psycopg.AsyncConnection.connect(
+                dsn, row_factory=psycopg.rows.dict_row) as conn:
+            return await model_lora.register(
+                conn, r2, model_id=a.model_id, weights=data, filename=ckpt.name,
+                trigger_token=a.trigger, base_model=a.base_model,
+                trained_steps=a.trained_steps, source_enrollment_id=a.source_enrollment_id,
+                physique={"hair_length": a.hair_length, "hair_color": a.hair_color,
+                          "hair_texture": a.hair_texture, "face_shape": a.face_shape,
+                          "jaw_line": a.jaw_line},
+                metrics=metrics, version=a.version, enable=enable)
+
+    result = asyncio.run(go())
+    row_id = result["id"]
+    print(f"uploaded {result['uploaded']} · sha256 {result['sha256'][:12]}…")
     print(f"row    {row_id}")
     return 0
 

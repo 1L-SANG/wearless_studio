@@ -479,6 +479,14 @@ class Settings:
     # 피부 보정 단계 50·0 이 켜는 네거티브 문구. 100(기본)은 빈 문구 = 지금 그대로다.
     # 2026-09-16 16장 실측에서 **이 문구가 실제 손잡이**였다(피부 결 +11~19%). 업스케일러
     # 강도는 100↔50 차이가 거의 없었다. 문구를 바꾸면 그 단계로 나온 컷의 레시피 해시도 바뀐다.
+    # ---- 인물 LoRA 학습 자동화(workers/lora_training_reconciler.py). 기본 off.
+    #: "on" 일 때만 학습 큐가 돈다. 파드를 만드는 경로라 문자열 스위치로 둔다(OPENDID_AUTOSCALE 선례).
+    fm_lora_training: str = "off"
+    #: 파드를 만들기 전에 보는 최소 잔액(USD). 0 이하면 검사를 아예 안 한다(운영자 비상구).
+    #: 1800 스텝 한 번이 RTX PRO 6000 에서 약 3시간 40분·약 $11 이라 그 위로 잡는다.
+    fm_lora_min_balance_usd: float = 20.0
+    #: 한 런의 상한(초). 넘으면 실패로 끝내고 파드를 지운다 — 켜 둔 채로 잊히면 요금만 나간다.
+    fm_lora_max_seconds: int = 5 * 3600
     face_skin_negative_prompt: str = (
         "airbrushed skin, retouched skin, smooth plastic skin, beauty filter")
     #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
@@ -876,6 +884,9 @@ def load_settings() -> Settings:
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         face_pass_real_wait_seconds=_int_env("FACE_PASS_REAL_WAIT_SECONDS", 600),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
+        fm_lora_training=(os.getenv("FM_LORA_TRAINING", "off").strip().lower() or "off"),
+        fm_lora_min_balance_usd=float(os.getenv("FM_LORA_MIN_BALANCE_USD") or "20"),
+        fm_lora_max_seconds=int(os.getenv("FM_LORA_MAX_SECONDS") or str(5 * 3600)),
         face_skin_negative_prompt=(
             os.getenv("FACE_SKIN_NEGATIVE_PROMPT")
             or "airbrushed skin, retouched skin, smooth plastic skin, beauty filter"),
