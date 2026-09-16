@@ -402,6 +402,23 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # A-5 콜드스타트 중앙값(≈8.5분) × 2, 최소 8 → 17.
   FACE_AUTOSCALE_START_GRACE_MINUTES: "17"
 
+  # ── 인물 LoRA 학습 큐 (workers/lora_training_reconciler.py) ──────────────────
+  # 한 건이 GPU 파드를 3~4시간, 약 $11 쓴다. 동시 1건은 DB 인덱스가 지키고
+  # (fm_lora_training_runs_one_active), 여기서는 큐를 돌릴지만 정한다.
+  #
+  # ★ 켜기 전 선행 조건: **RunPod 운영 키 교체**. 지금 SSM
+  #   /copilot/wearless/use1/secrets/RUNPOD_API_KEY 는 옛 계정이고, 맥의 ~/.runpod/api_key 는
+  #   401 이다. 잔액 조회가 fail-closed 라(못 읽으면 시작 안 함) 키가 살아 있지 않으면
+  #   큐는 켜도 한 건도 안 돈다 — CRITICAL 알림만 쌓인다.
+  #   되돌리기: 이 값을 "off". 그러면 RunPod 를 아예 호출하지 않는다.
+  FM_LORA_TRAINING: "off"
+  # 파드를 만들기 전에 보는 최소 잔액(USD). 1800 스텝 한 번이 RTX PRO 6000 에서 약 $11 이라
+  # 그 위로 잡는다. 0 이하면 검사 자체를 끈다 — RunPod 가 잔액 API 를 바꿔도 빠져나갈 길.
+  FM_LORA_MIN_BALANCE_USD: "20"
+  # 한 런의 상한(초). 넘으면 실패로 끝내고 파드를 지운다 — 켜 둔 채 잊히면 하루 $38~84 다.
+  # 실측 1800 스텝 ≈ 3시간 40분 + 세팅·검증 여유.
+  FM_LORA_MAX_SECONDS: "18000"
+
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   # 입금 계좌번호 Fernet 암호화 키. 2026-09-11 SSM(us-east-1)에 저장함. 바꾸면 저장된 계좌를 못 읽으니 회전 금지.
   FM_PAYOUT_ACCOUNT_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PAYOUT_ACCOUNT_KEY
