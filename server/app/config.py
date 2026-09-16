@@ -476,6 +476,11 @@ class Settings:
     #: 기본 on. false 가 탈출구다(결과를 예전 Lanczos 경로와 똑같이 만들고 싶을 때).
     #: 파드가 /upscale 을 모르거나 가중치가 없으면 이 값과 무관하게 Lanczos 로 폴백한다.
     face_crop_upscale: bool = True
+    # 피부 보정 단계 50·0 이 켜는 네거티브 문구. 100(기본)은 빈 문구 = 지금 그대로다.
+    # 2026-09-16 16장 실측에서 **이 문구가 실제 손잡이**였다(피부 결 +11~19%). 업스케일러
+    # 강도는 100↔50 차이가 거의 없었다. 문구를 바꾸면 그 단계로 나온 컷의 레시피 해시도 바뀐다.
+    face_skin_negative_prompt: str = (
+        "airbrushed skin, retouched skin, smooth plastic skin, beauty filter")
     #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
     #: 기본 on. false 가 탈출구다 — 끄면 막힌 컷에서 정수리가 크롭 경계에 걸린다(2026-09-13 실측).
     face_crop_pad: bool = True
@@ -871,6 +876,9 @@ def load_settings() -> Settings:
         face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         face_pass_real_wait_seconds=_int_env("FACE_PASS_REAL_WAIT_SECONDS", 600),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
+        face_skin_negative_prompt=(
+            os.getenv("FACE_SKIN_NEGATIVE_PROMPT")
+            or "airbrushed skin, retouched skin, smooth plastic skin, beauty filter"),
         face_crop_pad=(os.getenv("FACE_CROP_PAD", "true").lower() != "false"),
         face_mask_lock=(os.getenv("FACE_MASK_LOCK", "true").lower() != "false"),
         fm_provenance_enabled=(

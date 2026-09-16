@@ -671,8 +671,35 @@ def plan_face_pass(image_bytes: bytes, model_dir: str | None = None) -> FacePlan
     return plan_from_image(_decode(image_bytes), model_dir)
 
 
-def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None) -> tuple[Image.Image, dict]:
+#: 피부 보정 단계. 등록자가 테스트컷 승인 때 고른다(셀러는 못 바꾼다).
+SKIN_FINISH_LEVELS: tuple[int, ...] = (0, 50, 100)
+SKIN_FINISH_DEFAULT = 100
+#: 0 단계가 게이트를 못 넘었을 때 한 단계 올려 다시 그린다 — 아래 skin_finish_plan 주석 참조.
+SKIN_FINISH_RETRY = 50
+
+
+def skin_finish_plan(level: int | None, negative: str) -> tuple[int, float, str]:
+    """보정 단계 → (정규화한 단계, 크롭 확대 blend, 네거티브 문구).
+
+    2026-09-16 16장 실측에서 피부 결을 실제로 바꾼 손잡이는 **네거티브 문구**였다
+    (피부 결 +11~19%, 닮은 점수 변화는 ±0.03 오차 범위). 업스케일러 강도는 100↔50 차이가
+    거의 없어 단계 이름값만 한다 — 그래서 확대기를 아예 끄는 건 0 단계뿐이다.
+
+    모르는 값은 100 으로 본다. 100 은 **지금과 바이트 동일**한 경로다(blend 1.0 + 빈 네거티브).
+    """
+    value = int(level) if level in SKIN_FINISH_LEVELS else SKIN_FINISH_DEFAULT
+    if value == SKIN_FINISH_DEFAULT:
+        return value, 1.0, ""
+    return value, (0.5 if value == SKIN_FINISH_RETRY else 0.0), negative
+
+
+def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None,
+                        blend: float = 1.0) -> tuple[Image.Image, dict]:
     """크롭 → 1024². upscaler 를 주면 **그 크롭만** 그것으로 키운다(사진 전체는 건드리지 않는다).
+
+    blend 는 확대기 결과를 얼마나 쓸지다(보정 단계, skin_finish_plan):
+      1.0 = 지금과 **바이트 동일**(확대기 결과 그대로) · 0.5 = Lanczos 확대본과 반씩 섞음
+      0.0 = 확대기를 아예 **부르지 않는다**(돈·시간도 안 쓴다).
 
     왜 크롭만인가(2026-09-11 실측, 스튜디오 3컷 × v6-1500):
       · 화면 전체 ESRGAN ×2 는 옷 픽셀을 바꿨다 — G 대 H 옷 영역 |Δ| 평균 3.9~6.4(p99 43). 상품 사진을
@@ -684,8 +711,9 @@ def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None) ->
     """
     x0, y0, side = plan.crop
     box = image.convert("RGB").crop((x0, y0, x0 + side, y0 + side))
-    meta = {"applied": False, "method": "lanczos", "k": 1, "side": int(side)}
-    if upscaler is not None and side < CROP:
+    blend = min(1.0, max(0.0, float(blend)))
+    meta = {"applied": False, "method": "lanczos", "k": 1, "side": int(side), "blend": blend}
+    if upscaler is not None and side < CROP and blend > 0.0:
         k = min(CROP_UPSCALE_MAX, math.ceil(CROP / side))
         up = None
         try:
@@ -694,7 +722,12 @@ def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None) ->
             meta["error"] = type(exc).__name__
             log.warning("face_identity crop upscaler failed (%s); falling back to Lanczos", type(exc).__name__)
         if up is not None:
-            box = up
+            if blend >= 1.0:
+                # ★ 섞기 연산을 타지 않는다 — 100 단계는 이 PR 이전과 바이트가 같아야 한다.
+                box = up
+            else:
+                # 같은 크기의 Lanczos 확대본과 섞는다. Image.blend(a, b, t) = a*(1-t) + b*t.
+                box = Image.blend(box.resize(up.size, Image.LANCZOS), up.convert("RGB"), blend)
             meta.update({"applied": True, "method": "esrgan", "k": int(k)})
     return box.resize((CROP, CROP), Image.LANCZOS), meta
 
@@ -1211,7 +1244,8 @@ def check_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None 
 class FaceBackend(Protocol):
     def render(self, control: Image.Image, prompt: str, seed: int,
                base: Image.Image | None = None,
-               gen_mask: Image.Image | None = None) -> Image.Image: ...
+               gen_mask: Image.Image | None = None,
+               negative_prompt: str | None = None) -> Image.Image: ...
 
 
 def _png_b64(img: Image.Image) -> str:
@@ -1241,6 +1275,21 @@ def backend_mask_lock(backend, enabled: bool = True) -> bool:
         return False
 
 
+def backend_negative(backend) -> bool:
+    """이 백엔드에 컷별 네거티브 문구를 넘길 수 있는가.
+
+    보정 단계 50·0 에서만 넘긴다(100 은 빈 문구 = 지금 그대로라 넘길 이유가 없다). 옛 목(mock)·
+    옛 백엔드는 이 인자를 모르므로 **무조건 넘기면 TypeError 로 컷이 죽는다** — 마스크 잠금과
+    같은 이유로 시그니처를 먼저 본다.
+    """
+    try:
+        import inspect
+
+        return "negative_prompt" in inspect.signature(backend.render).parameters
+    except (TypeError, ValueError):  # 시그니처를 못 읽는 목(mock)은 쓰지 않는다
+        return False
+
+
 def backend_upscaler(backend, enabled: bool = True):
     """백엔드가 얼굴 크롭 확대를 해 주면 그 호출자를, 아니면 None. 옛 백엔드(메서드 없음)도 그냥 None 이다."""
     if not enabled:
@@ -1254,7 +1303,8 @@ class NullBackend:
 
     def render(self, control: Image.Image, prompt: str, seed: int,
                base: Image.Image | None = None,
-               gen_mask: Image.Image | None = None) -> Image.Image:
+               gen_mask: Image.Image | None = None,
+               negative_prompt: str | None = None) -> Image.Image:
         return control.copy()
 
 
@@ -1366,7 +1416,8 @@ class HttpFaceBackend:
 
     def render(self, control: Image.Image, prompt: str, seed: int,
                base: Image.Image | None = None,
-               gen_mask: Image.Image | None = None) -> Image.Image:
+               gen_mask: Image.Image | None = None,
+               negative_prompt: str | None = None) -> Image.Image:
         import httpx
 
         self.check_version()
@@ -1378,7 +1429,9 @@ class HttpFaceBackend:
             "seed": int(seed),
             "steps": RENDER_STEPS,
             "guidance_scale": RENDER_GUIDANCE,
-            "negative_prompt": RENDER_NEGATIVE,
+            # 보정 단계가 주는 값이 정본. None 이면 지금까지의 모듈 상수(빈 문구)다 —
+            # 백엔드가 프로세스당 캐시라(resolve_backend) 인스턴스에 심어 두면 컷끼리 섞인다.
+            "negative_prompt": RENDER_NEGATIVE if negative_prompt is None else negative_prompt,
             "lora": self.lora,
             "lora_sha256": self.lora_sha256,
         }
@@ -1432,13 +1485,17 @@ def run_face_pass(
     crop_upscale: bool = True,
     crop_pad: bool = True,
     mask_lock: bool = True,
+    skin_finish: int | None = None,
+    skin_negative: str = "",
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
     예외를 던지지 않는다 — 얼굴 패스가 컷 생성을 막아서는 안 된다.
     """
     t0 = time.perf_counter()
-    meta: dict = {"applied": False, "fallback": True, "attempts": 0, "seed": None, "tries": []}
+    finish, blend, negative = skin_finish_plan(skin_finish, skin_negative)
+    meta: dict = {"applied": False, "fallback": True, "attempts": 0, "seed": None, "tries": [],
+                  "skin_finish": finish}
     try:
         decoded = _decode(image_bytes)
         original, plan, pmeta = prepare_image(decoded, model_dir, pad_crop=crop_pad)
@@ -1453,7 +1510,8 @@ def run_face_pass(
         meta["prompt"] = prompt
         # 크롭은 **한 번만** 만든다 — control 과 합성 바탕이 같은 픽셀이어야 한다(확대기를 쓰면 특히).
         crop, umeta = crop_1024_with_meta(original, plan,
-                                          upscaler=backend_upscaler(backend, crop_upscale))
+                                          upscaler=backend_upscaler(backend, crop_upscale),
+                                          blend=blend)
         meta["crop_upscale"] = umeta
         control = build_control(original, plan, crop=crop)
         # 마스크 잠금 — 파드가 할 수 있을 때만. 못 하는 파드에 보내면 그 파드는 필드를 무시하고
@@ -1478,10 +1536,14 @@ def run_face_pass(
                 return FacePassResult(image_bytes, mime, False, meta)
             meta["attempts"] += 1
             t1 = time.perf_counter()
-            # 잠글 때만 새 인자를 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
-            # 잠글 때만 새 인자를 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
-            generated = (backend.render(control, prompt, int(seed), base=crop, gen_mask=gen_mask_img)
-                         if locked else backend.render(control, prompt, int(seed)))
+            # 새 인자는 **필요할 때만** 넘긴다 — 옛 백엔드(render(control, prompt, seed))가 그대로 돈다.
+            # 100 단계는 네거티브가 빈 문구라 넘길 것이 없다(= 이 PR 이전과 같은 호출).
+            extra = {}
+            if locked:
+                extra.update(base=crop, gen_mask=gen_mask_img)
+            if negative and backend_negative(backend):
+                extra["negative_prompt"] = negative
+            generated = backend.render(control, prompt, int(seed), **extra)
             if locked:
                 from . import face_mask_lock
 
@@ -1554,6 +1616,9 @@ class FaceIdentitySpec:
     #: 보지 않는다(identity=None). 워커가 with_references 로 채운다 — 이게 빠지면 얼굴이 바뀌었는지
     #: 기하·색만 보고 통과시킨다(2026-09-11 잡 6c270b84: applied 3컷 전부 identity=None).
     references: tuple[tuple[float, ...], ...] | None = None
+    #: 피부 보정 단계(fm_models.skin_finish). 등록자가 테스트컷 승인 때 고른 값이고 셀러는 못 바꾼다.
+    #: None·모르는 값은 100 = 지금 그대로다(skin_finish_plan).
+    skin_finish: int | None = None
 
 
 def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
@@ -1571,11 +1636,13 @@ def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
     sha = get("lora_sha256")
     backend = get("face_backend_url")
     token = get("trigger_token")
+    finish = get("skin_finish")
     return FaceIdentitySpec(
         lora.strip(),
         str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN,
         sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None,
-        backend_url=str(backend).strip() if isinstance(backend, str) and backend.strip() else None)
+        backend_url=str(backend).strip() if isinstance(backend, str) and backend.strip() else None,
+        skin_finish=int(finish) if isinstance(finish, int) else None)
 
 
 def reference_embeddings(images, model_dir: str | None = None) -> tuple[tuple[float, ...], ...]:
@@ -1893,9 +1960,12 @@ async def apply_face_pass(
             crop_pad=bool(getattr(settings, "face_crop_pad", True)),
             # 잠금은 **그 컷이 실제로 그렇게 나왔는가**다 — 설정이 아니라 결과 메타를 본다
             # (파드가 못 하면 설정이 켜져 있어도 옛 경로로 나온다).
-            mask_lock=bool((meta or {}).get("mask_lock"))))
+            mask_lock=bool((meta or {}).get("mask_lock")),
+            # 단계는 **그 컷이 실제로 어떻게 나왔는가**다 — 0 이 떨어져 50 으로 다시 그린 컷은
+            # 50 으로 남아야 원장에서 되짚을 수 있다(설정값이 아니라 결과 메타를 본다).
+            skin_finish=(meta or {}).get("skin_finish", SKIN_FINISH_DEFAULT)))
 
-    def _run(live_spec: FaceIdentitySpec):
+    def _run(live_spec: FaceIdentitySpec, skin_finish: int | None = None):
         backend = resolve_backend(settings, live_spec)
         if backend is None:
             return None
@@ -1908,6 +1978,8 @@ async def apply_face_pass(
             crop_upscale=bool(getattr(settings, "face_crop_upscale", True)),
             crop_pad=bool(getattr(settings, "face_crop_pad", True)),
             mask_lock=bool(getattr(settings, "face_mask_lock", True)),
+            skin_finish=live_spec.skin_finish if skin_finish is None else skin_finish,
+            skin_negative=str(getattr(settings, "face_skin_negative_prompt", "") or ""),
         )
 
     # 여기 오는 컷은 전부 **실존 모델 + 켜진 LoRA** 다(_face_identity_spec 이 그 행으로만 spec 을
@@ -1960,6 +2032,23 @@ async def apply_face_pass(
                 result = await retry_task
                 log.info("face_identity retry applied=%s meta=%s",
                          result.applied, _meta_for_log(result.meta))
+
+    if not result.applied and _outcome_reason(result) == "gate_failed" \
+            and result.meta.get("skin_finish") == 0:
+        # 0 단계("있는 그대로")만 컷이 비면 안 된다. 실존 모델 컷은 판정에 떨어지면 **빈 컷**으로
+        # 끝난다(원본 = provider 가 그린 남의 얼굴이라 못 내보낸다). 0 은 확대기를 아예 안 써서
+        # 게이트(신원·기하)가 더 자주 걸리는 단계라, 한 칸 올려(50) 딱 한 번 더 그린다.
+        # 그래도 떨어지면 지금까지와 같이 FacePassUnavailable 이다 — 100 으로까지 올리지 않는다.
+        # 등록자가 "있는 그대로"를 골랐는데 조용히 가장 매끈한 단계로 나가면 그건 다른 상품이다.
+        log.info("face_identity: 보정 0 단계가 게이트에 떨어졌다 — %d 단계로 한 번 더 그린다",
+                 SKIN_FINISH_RETRY)
+        retry_task = _run(live, SKIN_FINISH_RETRY)
+        if retry_task is not None:
+            retried = await retry_task
+            log.info("face_identity skin_finish retry applied=%s meta=%s",
+                     retried.applied, _meta_for_log(retried.meta))
+            if retried.applied:
+                result = retried
 
     if result.applied:
         _record("applied")

@@ -108,7 +108,8 @@ class QwenLocalBackend:
             return self._pipe
 
     def render(self, control: Image.Image, prompt: str, seed: int,
-               base: Image.Image | None = None, gen_mask: Image.Image | None = None) -> Image.Image:
+               base: Image.Image | None = None, gen_mask: Image.Image | None = None,
+               negative_prompt: str | None = None) -> Image.Image:
         """base·gen_mask 를 둘 다 주면 **마스크 밖 latent 를 매 스텝 원본으로 되돌린다**.
 
         왜: 지금은 1024² 크롭 전체를 새로 그리고 서버가 타원 알파로 되붙인다. 그림자 있는 배경에서
@@ -118,6 +119,8 @@ class QwenLocalBackend:
         머리 밖 생성본과 크롭의 차이 8.2~24.9 → 1.1~3.3, 렌더 시간 동일(~62s, A100).
 
         둘 중 하나만 오면 잠그지 않는다 — 반만 있는 상태로 추측하지 않는다.
+
+        negative_prompt 는 보정 단계가 주는 컷별 값이다. None 이면 인스턴스 기본값(= 지금까지의 동작).
         """
         import torch
 
@@ -129,7 +132,7 @@ class QwenLocalBackend:
         return pipe(
             image=[control.convert("RGB")],
             prompt=prompt,
-            negative_prompt=self.negative_prompt,
+            negative_prompt=(self.negative_prompt if negative_prompt is None else negative_prompt),
             num_inference_steps=self.steps,
             true_cfg_scale=self.guidance_scale,
             height=CROP,

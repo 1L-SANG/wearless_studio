@@ -21,6 +21,7 @@ angle45/side)의 지문을 fm_models.assets_source_hash 에 새긴다. resolve_r
 
 import asyncio
 import hashlib
+import contextlib
 import logging
 import uuid
 
@@ -316,6 +317,40 @@ async def reference_face_bytes(app, conn, model_id: str, license_row, *,
         return []
 
 
+#: 켜진 LoRA 한 행. 피부 보정 단계(fm_models.skin_finish)를 같이 읽는다 — 얼굴 패스가 그 값으로
+#: 네거티브 문구와 크롭 확대 blend 를 정한다.
+_LORA_COLUMNS = (
+    "l.id::text as id, l.version, l.lora_r2_key, l.lora_sha256, l.bucket, l.trigger_token, "
+    "l.hair_length, l.hair_color, l.hair_texture, l.face_shape, l.jaw_line, l.trained_steps"
+)
+_LORA_WHERE = " from fm_model_loras l where l.model_id = %s and l.enabled and l.status = 'ready' limit 1"
+
+
+async def _lora_row(conn, model_id: str) -> dict | None:
+    """행 조회. skin_finish 컬럼이 아직 없는 DB(마이그 미적용)에서도 옛 모양으로 한 번 더 시도한다.
+
+    ★ 여기서 그냥 None 을 돌려주면 **얼굴 패스가 통째로 꺼진다** — 실존 모델 컷은 그 순간
+      남의 얼굴이 나가거나(옛 계약) 컷이 실패한다. 컬럼 하나 때문에 그렇게 되면 안 된다.
+    """
+    select_with = ("select " + _LORA_COLUMNS
+                   + ", coalesce((select m.skin_finish from fm_models m where m.id = l.model_id), 100)"
+                     " as skin_finish" + _LORA_WHERE)
+    for sql, labelled in ((select_with, True), ("select " + _LORA_COLUMNS + _LORA_WHERE, False)):
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (model_id,))
+                return await cur.fetchone()
+        except Exception as exc:  # noqa: BLE001 — 테이블·컬럼 부재, 권한 등
+            if labelled:
+                # 실패한 트랜잭션은 그대로 두면 다음 질의가 InFailedSqlTransaction 으로 죽는다.
+                with contextlib.suppress(Exception):
+                    await conn.rollback()
+                log.info("fm_models.skin_finish unavailable (%s) — 단계 없이 읽는다", type(exc).__name__)
+                continue
+            log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
+    return None
+
+
 async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
     """이 모델의 **켜진** LoRA 행 하나. 없으면 None(얼굴 패스 없이 진행).
 
@@ -328,18 +363,8 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
         uuid.UUID(str(model_id))
     except (TypeError, ValueError):
         return None
-    try:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
-                "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps "
-                "from fm_model_loras "
-                "where model_id = %s and enabled and status = 'ready' "
-                "limit 1",
-                (model_id,))
-            row = await cur.fetchone()
-    except Exception as exc:  # noqa: BLE001 — 테이블 부재·권한 등은 얼굴 패스만 끄고 컷은 계속 만든다
-        log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
+    row = await _lora_row(conn, model_id)
+    if row is None:
         return None
     if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
         return None
