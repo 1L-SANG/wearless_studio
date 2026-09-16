@@ -674,3 +674,69 @@ test('서버의 조명 이름은 그대로다 — 학습 캡션·파일명이 �
     assert.ok(photos.includes(word), `서버에서 "${word}" 가 사라졌다 — 내보내기 파일명이 바뀐다`);
   }
 });
+
+/* 칸 그림 (2026-09-16) — RegisterIllustration 은 각도만 구분해서 정면 네 칸이 똑같이 보였고,
+   'back' 을 몰라 9번 뒷모습 칸에 앞모습이 나왔다. SlotDiagram 이 그 아홉을 갈라 그린다. */
+
+test('18칸 전부 cut 이 있고 서버 CUT_LABELS 키와 같다', () => {
+  // cut 이 없으면 그림이 기본값(정면)으로 떨어져 아홉 칸이 다시 한 그림이 된다. 이름이
+  // 서버와 갈라지면 관리자 화면·내보내기 파일명과 부르는 이름이 달라진다.
+  const photos = readFileSync(
+    new URL('../../server/app/facemarket_photos.py', import.meta.url), 'utf8',
+  );
+  const block = /CUT_LABELS: dict\[str, tuple\[str, str\]\] = \{([\s\S]*?)\n\}/.exec(photos)?.[1];
+  assert.ok(block, '서버 CUT_LABELS 를 못 찾았다');
+  const keys = [...block.matchAll(/^\s+"([a-z0-9_]+)":/gm)].map((m) => m[1]);
+  assert.equal(keys.length, 9);
+  for (const slot of module.SLOTS) {
+    assert.ok(keys.includes(slot.cut), `${slot.key} 의 cut(${slot.cut}) 이 서버에 없다`);
+    // 슬롯 키에서 조명 접두어를 뗀 것과 같아야 한다 — 서버 cut_of() 가 그렇게 자른다.
+    assert.equal(slot.cut, slot.key.slice(slot.group.length + 1));
+  }
+  assert.deepEqual([...new Set(module.SLOTS.map((slot) => slot.cut))].sort(), [...keys].sort());
+  // framing/angle 은 지우지 않았다 — 체형 고르기 화면이 아직 RegisterIllustration 을 쓴다.
+  assert.ok(module.SLOTS.every((slot) => slot.framing && slot.angle));
+});
+
+test('SlotDiagram 이 아홉 컷을 서로 다르게 그린다', async () => {
+  const h = await modelComponentHarness({
+    initialStates: [], api: {},
+    entry: '/src/features/model/SlotDiagram.jsx', exportName: 'SlotDiagram',
+  });
+  // 함수 컴포넌트를 펼쳐야 진짜 도형이 나온다(FaceFront/HeadTop 은 안이 다르다).
+  const expand = (node) => !node || typeof node !== 'object' ? node : Array.isArray(node) ? node.map(expand)
+    : typeof node.type === 'function' ? expand(node.type(node.props))
+      : { ...node, props: { ...node.props, children: expand(node.props?.children) } };
+  try {
+    const cuts = ['front', 'front2', 'smile', 'gaze_left', 'gaze_right', '34', 'side', 'side_right', 'back'];
+    const drawn = new Map();
+    for (const cut of cuts) {
+      const markup = JSON.stringify(expand(h.render({ cut })));
+      const twin = [...drawn].find(([, value]) => value === markup)?.[0];
+      assert.ok(!twin, `${cut} 과 ${twin} 이 같은 그림이다`);
+      drawn.set(cut, markup);
+      assert.match(markup, /"svg"/);
+      // 사진 파일은 쓰지 않는다 — 도형과 currentColor 뿐이다.
+      assert.ok(!markup.includes('<img'), `${cut} 이 사진을 쓴다`);
+    }
+    // 모르는 값이 와도 빈 화면은 안 나온다(옛 사진이 cut 없이 복원될 수 있다).
+    assert.ok(JSON.stringify(expand(h.render({}))).includes('svg'));
+  } finally { await h.close(); }
+});
+
+test('촬영 화면이 칸 그림·구도 그림·단계 그림을 쓴다', () => {
+  const screens = readFileSync(
+    new URL('../../src/features/model/RegisterScreens.jsx', import.meta.url), 'utf8',
+  );
+  // 슬롯 카드 두 곳(처음 올리기 · 다시 찍기)이 같은 그림을 쓴다.
+  assert.equal(screens.split('<SlotDiagram').length - 1, 2);
+  assert.match(screens, /cut=\{slot\.cut\}/);
+  assert.match(screens, /<FramingDiagram/);
+  assert.match(screens, /<StepDiagram[^>]*step=\{sub\}/);
+  // SunDiagram 은 지우지 않았다 — 해 위치 그림은 그대로 남겨 둔다.
+  const art = readFileSync(
+    new URL('../../src/features/model/RegisterIllustration.jsx', import.meta.url), 'utf8',
+  );
+  assert.match(art, /export function SunDiagram/);
+  assert.match(art, /export function RegisterIllustration/);
+});

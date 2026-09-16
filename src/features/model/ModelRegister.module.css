@@ -54,7 +54,7 @@
 .shootRules b { font-weight: 600; }
 .shootRules span { color: var(--fm-muted); font-size: 13px; }
 .groupHeading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
-/* 조명 이름만으로는 어디 서야 하는지 알기 어려워, 위에서 본 그림을 같이 둬요. */
+/* 단계 이름만으로는 어디 서서 어느 쪽으로 도는지 알기 어려워, 위에서 본 그림을 같이 둬요. */
 .sunGuide { display: flex; align-items: center; gap: 12px; flex: 1 1 220px; min-width: 0; }
 .sunGuide p { color: var(--fm-muted); font-size: 13px; min-width: 0; }
 .sunDiagram { width: 52px; height: 52px; flex-shrink: 0; color: var(--fg-3); }
@@ -63,7 +63,11 @@
 .slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--fm-line); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }
 .slot:hover { border-color: var(--fg-1); }
 .person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
-.slot > .person, .slot > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.slot > .person, .slot > .slotArt, .slot > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* 칸 예시 그림(SlotDiagram)은 선으로만 그려요. .person 처럼 fill/stroke 를 CSS 로 주면
+   fill="none" 으로 비워 둔 얼굴 윤곽까지 칠해져요 — 색은 color(currentColor)로만 줘요. */
+.slotArt { width: 100%; height: 100%; color: var(--fg-3); padding: 14px; }
+.framingDiagram { display: block; width: 100%; max-width: 340px; margin: 14px auto 0; color: var(--fg-3); }
 .fileInput { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
 .slotBadge, .slotAction { position: absolute; top: 10px; font-size: 11px; padding: 3px 8px; background: var(--bg-1); color: var(--fg-1); border-radius: 99px; }
 .slotBadge { left: 10px; }

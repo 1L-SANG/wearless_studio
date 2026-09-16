@@ -11,27 +11,30 @@ import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 //   이해해야 찍을 수 있는 안내였는데, 실제로 필요한 건 "밝은 야외에서 몸을 90도씩 돌린다"
 //   하나예요. 접두어(sh/sl/sr/bl)와 서버의 조명 이름(facemarket_photos.LIGHTING_LABELS ·
 //   export_name)은 **그대로** 둬요 — 학습 캡션과 내보내기 파일명이 거기서 나와요.
+// cut 은 칸 그림(SlotDiagram)이 쓰는 값이에요 — 슬롯 키에서 접두어를 뺀 것과 같고,
+// 서버 facemarket_photos.CUT_LABELS 의 키와도 같아요. framing/angle 은 그대로 둬요:
+// 체형 고르기 화면이 아직 RegisterIllustration 을 그 값으로 그려요.
 // 기준에서 '턱 살짝 내리기'는 뺐어요 — 기준끼리의 얼굴 점수가 기준선 아래로 떨어져요.
 // 옆모습·뒷모습은 학습 12장에 **안 들어가요**. 지금은 모아 두고, 검증 뒤에 쓰임새를 정해요.
 export const SLOTS = Object.freeze([
-  { n: 1, key: 'sh_front', group: 'sh', title: '정면 · 무표정', hint: '카메라를 똑바로 보고, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
-  { n: 2, key: 'sh_smile', group: 'sh', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 3, key: 'sh_34', group: 'sh', title: '3/4 · 무표정', hint: '고개를 한쪽으로 30~40도. 끝까지 같은 쪽으로, 먼 쪽 눈이 꼭 보이게', framing: 'face', angle: 'left45' },
-  { n: 4, key: 'sh_front2', group: 'sh', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
-  { n: 5, key: 'sh_gaze_left', group: 'sh', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
-  { n: 6, key: 'sh_gaze_right', group: 'sh', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
-  { n: 7, key: 'sh_side', group: 'sh', title: '옆모습 · 코가 화면 왼쪽', hint: '고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'left' },
-  { n: 8, key: 'sh_side_right', group: 'sh', title: '옆모습 · 코가 화면 오른쪽', hint: '반대쪽으로 고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'right' },
-  { n: 9, key: 'sh_back', group: 'sh', title: '뒷모습', hint: '뒤돌아서 뒤통수 정중앙을 머리 높이에서, 고개 똑바로, 어깨까지', framing: 'face', angle: 'back' },
-  { n: 10, key: 'sl_front', group: 'sl', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
-  { n: 11, key: 'sl_smile', group: 'sl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 12, key: 'sl_34', group: 'sl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 13, key: 'sr_front', group: 'sr', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 돌아선 자리에서 카메라를 똑바로', framing: 'face', angle: 'front' },
-  { n: 14, key: 'sr_smile', group: 'sr', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 15, key: 'sr_34', group: 'sr', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
-  { n: 16, key: 'bl_front', group: 'bl', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 얼굴이 어두우면 화면에서 얼굴을 눌러 밝기를 맞춰요', framing: 'face', angle: 'front' },
-  { n: 17, key: 'bl_smile', group: 'bl', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
-  { n: 18, key: 'bl_34', group: 'bl', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 1, key: 'sh_front', group: 'sh', cut: 'front', title: '정면 · 무표정', hint: '카메라를 똑바로 보고, 입 다물고 힘 뺀 얼굴', framing: 'face', angle: 'front' },
+  { n: 2, key: 'sh_smile', group: 'sh', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 3, key: 'sh_34', group: 'sh', cut: '34', title: '3/4 · 무표정', hint: '고개를 한쪽으로 30~40도. 끝까지 같은 쪽으로, 먼 쪽 눈이 꼭 보이게', framing: 'face', angle: 'left45' },
+  { n: 4, key: 'sh_front2', group: 'sh', cut: 'front2', title: '정면 · 무표정 (한 번 더)', hint: '1번과 같은 자리, 같은 얼굴', framing: 'face', angle: 'front' },
+  { n: 5, key: 'sh_gaze_left', group: 'sh', cut: 'gaze_left', title: '정면 · 시선만 왼쪽', hint: '얼굴은 정면 그대로, 눈동자만 왼쪽', framing: 'face', angle: 'front' },
+  { n: 6, key: 'sh_gaze_right', group: 'sh', cut: 'gaze_right', title: '정면 · 시선만 오른쪽', hint: '얼굴은 정면 그대로, 눈동자만 오른쪽', framing: 'face', angle: 'front' },
+  { n: 7, key: 'sh_side', group: 'sh', cut: 'side', title: '옆모습 · 코가 화면 왼쪽', hint: '고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'left' },
+  { n: 8, key: 'sh_side_right', group: 'sh', cut: 'side_right', title: '옆모습 · 코가 화면 오른쪽', hint: '반대쪽으로 고개를 끝까지 돌려 완전한 옆모습(한쪽 눈만 보이게), 턱은 수평, 어깨까지', framing: 'face', angle: 'right' },
+  { n: 9, key: 'sh_back', group: 'sh', cut: 'back', title: '뒷모습', hint: '뒤돌아서 뒤통수 정중앙을 머리 높이에서, 고개 똑바로, 어깨까지', framing: 'face', angle: 'back' },
+  { n: 10, key: 'sl_front', group: 'sl', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 눈부시면 잠깐 감았다 뜨고 바로', framing: 'face', angle: 'front' },
+  { n: 11, key: 'sl_smile', group: 'sl', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 12, key: 'sl_34', group: 'sl', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 13, key: 'sr_front', group: 'sr', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 돌아선 자리에서 카메라를 똑바로', framing: 'face', angle: 'front' },
+  { n: 14, key: 'sr_smile', group: 'sr', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 15, key: 'sr_34', group: 'sr', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
+  { n: 16, key: 'bl_front', group: 'bl', cut: 'front', title: '정면 · 무표정', hint: '1번과 같은 얼굴. 얼굴이 어두우면 화면에서 얼굴을 눌러 밝기를 맞춰요', framing: 'face', angle: 'front' },
+  { n: 17, key: 'bl_smile', group: 'bl', cut: 'smile', title: '정면 · 미소', hint: '입 다문 가벼운 미소', framing: 'face', angle: 'front' },
+  { n: 18, key: 'bl_34', group: 'bl', cut: '34', title: '3/4 · 무표정', hint: '3번과 같은 방향·같은 각도', framing: 'face', angle: 'left45' },
 ].map((slot) => Object.freeze(slot)));
 
 // 단계별로 한 화면씩 — **몸을 90도씩 돌리는 동작**이 안내의 전부예요. `sun` 은 위에서 본
