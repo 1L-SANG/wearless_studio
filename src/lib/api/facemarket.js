@@ -488,9 +488,12 @@ export function adminModelTestCuts(modelId) {
   return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`);
 }
 
-export async function adminUploadModelTestCuts(modelId, files, kind) {
+// 손으로 올리는 경로. 보정(prod|texture|soft50)은 **필수**예요 — 없으면 어느 묶음인지 몰라
+// 전송에서 영영 빠져요(서버가 400 으로 막아요).
+export async function adminUploadModelTestCuts(modelId, files, kind, skinFinish) {
   const form = new FormData();
   form.append('kind', kind);
+  form.append('skin_finish', skinFinish);
   for (const file of files) form.append('images', file, file.name || 'test-cut');
   return checkedJson(await _authFetch(
     `/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`,
@@ -505,8 +508,17 @@ export function adminDeleteModelTestCut(modelId, cutId) {
   );
 }
 
-export function adminSendModelTestCuts(modelId) {
+// 고른 보정 한 묶음(4장)만 등록자에게 보내요. 그 값이 그 사람의 설정이 돼요.
+export function adminSendModelTestCuts(modelId, skinFinish) {
   return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/send-test-cuts`, {
+    method: 'POST',
+    body: { skinFinish },
+  });
+}
+
+// 테스트컷 12장 자동 생성(수동 실행·다시 생성). 실제 생성은 서버 큐가 해요.
+export function adminBuildModelTestCuts(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts/build`, {
     method: 'POST',
   });
 }

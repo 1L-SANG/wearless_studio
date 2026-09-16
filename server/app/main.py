@@ -27,6 +27,7 @@ from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.lora_training_reconciler import LoraTrainingReconciler
+from .workers.test_cut_build_reconciler import TestCutBuildReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
 from .services.face_autoscale import (
@@ -135,6 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         vc_revocation_reconciler = None
         vc_issue_reconciler = None
         lora_training = None
+        test_cut_build = None
         publication_anchor = None
         sam_retry_pusher = None
         sam_autoscaler = None
@@ -165,6 +167,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only:
                 lora_training = LoraTrainingReconciler(app)
                 await lora_training.start()
+                # 테스트컷 12장 자동 생성 큐. 기본 off(FM_TEST_CUT_BUILD). 학습 큐와 같은 게이트를
+                # 쓴다 — 얼굴 렌더 파드가 모델당 하나라 도는 자리가 하나여야 한다.
+                test_cut_build = TestCutBuildReconciler(app)
+                await test_cut_build.start()
             # sibling(vc_revocation_reconciler·draft_asset_reclaimer)과 같은 게이트: detail-worker
             # 전용 프로세스에서는 안 돈다. 이 자체가 nonce 충돌을 막지는 않는다(advisory lock 이
             # 진짜 방어 — anchor_one 참고) — 다만 오늘 이 워커가 detail-worker 에서 돌 이유가
@@ -306,6 +312,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await vc_issue_reconciler.stop()
         if lora_training is not None:
             await lora_training.stop()
+        if test_cut_build is not None:
+            await test_cut_build.stop()
         if publication_anchor is not None:
             await publication_anchor.stop()
         if pool is not None:

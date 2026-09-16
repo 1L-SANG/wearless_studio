@@ -16,6 +16,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import Field
 
 from . import admin_guard, facemarket_notify, repo
+from .agents.face_identity import SKIN_FINISH_CODES, SKIN_FINISH_DEFAULT
 from .auth import require_user
 from .db import get_conn
 from .facemarket import _cover_serving_url
@@ -27,18 +28,20 @@ from .r2 import (
     model_catalog_cover_key,
     model_test_cut_key,
 )
+from .services import test_cut_build
+from .workers import test_cut_build_reconciler
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket model test cuts"])
 
-MAX_TEST_CUTS = 4
-#: 종류별 상한. 총 4장은 그대로 두고 구성만 바꿨다(2+2 → 3+1).
-#: 확대샷 3장은 **같은 원본 컷을 보정 단계 100/50/0 으로 다시 그린 것**이다 — 등록자가 그중
-#: 하나를 고르면 그 단계가 그 사람의 값이 된다(fm_models.skin_finish).
-#: 전신을 단계별로 안 만드는 이유: 전신은 얼굴 폭이 200px 안팎이라 단계 차이가 눈에 안 보인다(실측).
-TEST_CUT_KIND_LIMITS = {"closeup": 3, "fullbody": 1}
-#: 옛 이름 — 종류별 상한이 갈리기 전 값. 남은 참조를 위해 둔다.
+#: 한 모델의 테스트컷 전량 = 보정 3종 × (확대샷 2 + 전신 2) = 12장(2026-09-16 대표 결정).
+#: 서버가 **고정 기준 원본 4장에 얼굴만 세 번 다시 그려** 만든다(services/test_cut_build.py).
+MAX_TEST_CUTS = 12
+#: 상한은 **(보정, 종류) 조합마다** 2장이다. 종류별 총합은 그 곱(보정 3종 × 2 = 6)이다.
 MAX_TEST_CUTS_PER_KIND = 2
+TEST_CUT_KIND_LIMITS = {"closeup": MAX_TEST_CUTS_PER_KIND * 3, "fullbody": MAX_TEST_CUTS_PER_KIND * 3}
+#: 관리자가 한 보정을 골라 보낼 때 그 묶음에 있어야 하는 장수 — 등록자는 이 4장만 본다.
+CUTS_PER_FINISH = {"closeup": MAX_TEST_CUTS_PER_KIND, "fullbody": MAX_TEST_CUTS_PER_KIND}
 TEST_CUT_KINDS = {"closeup", "fullbody"}
 MAX_TEST_CUT_BYTES = 25 * 1024 * 1024
 ALLOWED_TEST_CUT_MIME = {"image/png", "image/jpeg", "image/webp"}
@@ -51,9 +54,21 @@ class TestCutView(CamelModel):
     kind: str
     approved: bool | None = None
     created_at: datetime
-    #: 이 컷을 만든 보정 단계 100|50|0. 옛 컷은 null — 화면·승인이 그걸 견뎌야 한다.
-    skin_finish: int | None = None
+    #: 이 컷을 만든 보정 prod|texture|soft50. 옛 컷은 null — 화면·승인이 그걸 견뎌야 한다.
+    skin_finish: str | None = None
     image_uri: str
+
+
+class TestCutBuildView(CamelModel):
+    """테스트컷 자동 생성 한 건의 상태. 관리자 화면의 대기/생성 중/부분 완료/완료 표시."""
+
+    id: str
+    status: str
+    requested: int = 0
+    produced: int = 0
+    error: str | None = None
+    created_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class AdminModelCard(CamelModel):
@@ -70,15 +85,27 @@ class AdminModelCard(CamelModel):
     confirmed_at: datetime | None = None
     redo_count: int = 0
     ready_to_send: bool = False
+    #: 보정별 구성 {prod: {closeup: 2, fullbody: 2}, ...}. 화면이 묶음마다 보낼 수 있는지 판단한다.
+    finish_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    #: 지금 이 모델에 설정된 보정(= 보낸 보정). 아직 안 보냈으면 기본값 prod.
+    skin_finish: str | None = None
+    #: 자동 생성 진행. 없으면 null(옛 모델·마이그 미적용).
+    build: TestCutBuildView | None = None
     #: 서버가 계산한 "지금 보내도 되는 상태". 화면은 이 값만 본다(_is_sendable 참고).
     sendable: bool = False
     test_cuts: list[TestCutView] = Field(default_factory=list)
+
+
+class SendTestCutsBody(CamelModel):
+    #: 등록자에게 보낼 보정 1종. 이 보정의 4장만 등록자에게 보인다.
+    skin_finish: str
 
 
 class SendTestCutsResult(CamelModel):
     status: str
     confirm_requested_at: datetime
     email_sent: bool
+    skin_finish: str
 
 
 class ProfileLicenseView(CamelModel):
@@ -189,7 +216,7 @@ def _cut_view(row: dict, *, model_side: bool = False) -> dict:
         "approved": row.get("approved"),
         "created_at": row["created_at"],
         # 옛 컷은 None — 화면이 이름표 없이 보여 준다(승인도 그대로 돈다).
-        "skin_finish": row.get("skin_finish"),
+        "skin_finish": row.get("skin_finish_code"),
         "image_uri": uri,
     }
 
@@ -321,7 +348,8 @@ async def _load_owned_model(conn, user_id: str, *, for_update: bool = False) -> 
     lock = " for update" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, status, redo_count, confirm_requested_at, confirmed_at
+            """select id::text as id, status, redo_count, confirm_requested_at, confirmed_at,
+                      skin_finish_code
                  from fm_models
                 where user_id = %s
                 order by created_at desc limit 1""" + lock,
@@ -330,13 +358,22 @@ async def _load_owned_model(conn, user_id: str, *, for_update: bool = False) -> 
         return await cur.fetchone()
 
 
-async def _load_cuts(conn, model_id: str) -> list[dict]:
+async def _load_cuts(conn, model_id: str, *, skin_finish: str | None = None) -> list[dict]:
+    """skin_finish 를 주면 **그 보정 묶음만**. 등록자는 관리자가 보낸 한 묶음만 본다.
+
+    옛 컷(보정 없음)은 coalesce 로 같이 잡는다 — 손으로 올린 4장짜리 모델이 화면에서 빈 채로
+    남으면 그 사람은 확정을 못 한다.
+    """
+    where, params = "model_id = %s", [model_id]
+    if skin_finish is not None:
+        where += " and coalesce(skin_finish_code, %s) = %s"
+        params += [skin_finish, skin_finish]
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, mime, sort, kind, approved, created_at, skin_finish
+            """select id::text as id, mime, sort, kind, approved, created_at, skin_finish_code
                  from fm_model_test_cuts
-                where model_id = %s order by sort, created_at""",
-            (model_id,),
+                where """ + where + " order by sort, created_at",
+            tuple(params),
         )
         return await cur.fetchall()
 
@@ -347,7 +384,7 @@ async def _load_cut_for_admin(
     lock = " for update" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, r2_key, mime, kind, approved
+            """select id::text as id, r2_key, mime, kind, approved, skin_finish_code
                  from fm_model_test_cuts
                 where id = %s and model_id = %s""" + lock,
             (cut_id, model_id),
@@ -362,7 +399,7 @@ async def _load_owned_cut(
     async with conn.cursor() as cur:
         await cur.execute(
             """select c.id::text as id, c.r2_key, c.mime, c.sort, c.kind,
-                      c.approved, c.created_at, c.skin_finish,
+                      c.approved, c.created_at, c.skin_finish_code,
                       m.id::text as model_id, m.status as model_status, m.redo_count,
                       m.display_name
                  from fm_model_test_cuts c
@@ -396,9 +433,10 @@ async def admin_model_test_cuts(
                             as closeup_count,
                           count(c.id) filter (where c.kind = 'fullbody')::integer
                             as fullbody_count,
-                          (count(c.id) filter (where c.kind = 'closeup') = 3
-                           and count(c.id) filter (where c.kind = 'fullbody') = 1)
+                          (count(c.id) filter (where c.kind = 'closeup') = %s
+                           and count(c.id) filter (where c.kind = 'fullbody') = %s)
                             as cuts_complete,
+                          m.skin_finish_code as skin_finish,
                           (m.status = 'pending' and m.redo_count > 0) as redo_requested,
                           m.confirm_requested_at, m.confirmed_at, m.redo_count,
                           (e.status = 'passed' and exists (
@@ -416,6 +454,7 @@ async def admin_model_test_cuts(
                             jsonb_agg(jsonb_build_object(
                               'id', c.id::text, 'mime', c.mime, 'sort', c.sort,
                               'kind', c.kind, 'approved', c.approved,
+                              'skin_finish_code', c.skin_finish_code,
                               'created_at', c.created_at
                             ) order by c.sort) filter (where c.id is not null),
                             '[]'::jsonb
@@ -425,17 +464,31 @@ async def admin_model_test_cuts(
                      left join fm_model_test_cuts c on c.model_id = m.id
                     where m.id = %s
                     group by m.id, e.status""",
-                (mid,),
+                (TEST_CUT_KIND_LIMITS["closeup"], TEST_CUT_KIND_LIMITS["fullbody"], mid),
             )
             row = await cur.fetchone()
+        build = await test_cut_build_reconciler.latest_build(conn, mid)
     if row is None:
         raise _err("model_not_found", "모델을 찾을 수 없어요.", status=404)
     data = dict(row)
-    data["test_cuts"] = [
-        _cut_view({**cut, "model_id": row["id"]})
-        for cut in (row.get("test_cuts") or [])
-    ]
+    cuts = row.get("test_cuts") or []
+    data["test_cuts"] = [_cut_view({**cut, "model_id": row["id"]}) for cut in cuts]
+    # 보정별 구성은 **파이썬에서** 센다. SQL 로 묶으려면 보정 목록을 cross join 해야 하는데,
+    # 그러면 같은 질의의 count(c.id) 들이 보정 수만큼 부풀어 cuts_complete 가 거짓이 된다.
+    data["finish_counts"] = finish_counts(cuts)
+    data["build"] = dict(build) if build else None
     return data
+
+
+def finish_counts(cuts) -> dict[str, dict[str, int]]:
+    """보정별 {closeup, fullbody} 장수. 보정 없는 옛 컷은 기본값(prod) 묶음으로 센다."""
+    out = {code: {"closeup": 0, "fullbody": 0} for code in SKIN_FINISH_CODES}
+    for cut in cuts:
+        code = cut.get("skin_finish_code") or SKIN_FINISH_DEFAULT
+        kind = cut.get("kind")
+        if code in out and kind in out[code]:
+            out[code][kind] += 1
+    return out
 
 
 @router.post(
@@ -455,8 +508,9 @@ async def admin_upload_test_cuts(
     kind = kind or ""
     if kind not in TEST_CUT_KINDS:
         raise _err("invalid_kind", "테스트컷 종류를 올바르게 선택해 주세요.")
-    if not 1 <= len(images) <= MAX_TEST_CUTS:
-        raise _err("invalid_cut_count", "테스트컷은 한 번에 1~4장 올려 주세요.")
+    if not 1 <= len(images) <= MAX_TEST_CUTS_PER_KIND:
+        raise _err("invalid_cut_count",
+                   f"테스트컷은 한 번에 1~{MAX_TEST_CUTS_PER_KIND}장 올려 주세요.")
 
     # multipart 파싱은 프레임워크가 맡지만 실제 파일 바이트는 관리자 확인 뒤에만 읽는다.
     # 비관리자가 큰 업로드를 반복해 애플리케이션 메모리를 쓰는 경로를 닫는다.
@@ -465,10 +519,14 @@ async def admin_upload_test_cuts(
         if await _load_admin_model(conn, model_id) is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
         existing_slots = await _load_cut_slots(conn, model_id)
-    _ensure_cut_capacity(existing_slots, kind, len(images))
-    # 보정 단계 판정은 **관리자 확인 뒤**다 — 비관리자에게는 요청 모양을 따져 줄 이유가 없고,
+    # 보정 판정은 **관리자 확인 뒤**다 — 비관리자에게는 요청 모양을 따져 줄 이유가 없고,
     # 그 순서가 뒤집히면 403 이어야 할 응답이 400 으로 나간다.
     finish = _parse_skin_finish(skin_finish)
+    if finish is None:
+        # 손으로 올리는 경로에도 보정이 있어야 한다 — 없으면 어느 묶음인지 알 수 없어
+        # 전송에서 영원히 빠진다(2026-09-16 대표 지시: 업로드 API 는 보정 필수).
+        raise _err("skin_finish_required", _FINISH_HELP)
+    _ensure_cut_capacity(existing_slots, kind, len(images), finish)
 
     prepared = []
     for image in images:
@@ -501,7 +559,7 @@ async def admin_upload_test_cuts(
             if await _load_admin_model(conn, model_id, for_update=True) is None:
                 raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
             slots = await _load_cut_slots(conn, model_id)
-            _ensure_cut_capacity(slots, kind, len(prepared))
+            _ensure_cut_capacity(slots, kind, len(prepared), finish)
             used = {slot["sort"] for slot in slots}
             available = [value for value in range(MAX_TEST_CUTS) if value not in used]
             rows = []
@@ -509,10 +567,10 @@ async def admin_upload_test_cuts(
                 for item, sort in zip(prepared, available[:len(prepared)], strict=True):
                     await cur.execute(
                         """insert into fm_model_test_cuts
-                             (id, model_id, r2_key, mime, kind, sort, skin_finish)
+                             (id, model_id, r2_key, mime, kind, sort, skin_finish_code)
                            values (%s, %s, %s, %s, %s, %s, %s)
                            returning id::text as id, mime, sort, kind, approved, created_at,
-                                     skin_finish""",
+                                     skin_finish_code""",
                         (item["id"], model_id, item["key"], item["mime"], kind, sort, finish),
                     )
                     rows.append(await cur.fetchone())
@@ -527,44 +585,66 @@ async def admin_upload_test_cuts(
     return [_cut_view({**row, "model_id": model_id}) for row in rows]
 
 
-def _parse_skin_finish(value: str | None) -> int | None:
-    """폼 값 → 보정 단계. 빈 값은 None(옛 컷과 같다), 모르는 값은 400.
+#: 관리자 화면에 보이는 보정 이름 — 셋을 나란히 놓고 하나를 고른다.
+SKIN_FINISH_LABEL = {
+    "prod": "A 매끈하게(지금 기본)",
+    "texture": "B 결 살리기",
+    "soft50": "C 중간",
+}
+_FINISH_HELP = "보정은 prod, texture, soft50 중 하나예요."
 
-    조용히 기본값(100)으로 바꾸지 않는다 — "있는 그대로"를 만들려던 컷이 "매끈하게" 로
-    기록되면 등록자가 고른 것과 다른 값이 그 사람의 설정이 된다.
+
+def _parse_skin_finish(value) -> str | None:
+    """폼·본문 값 → 보정 코드. 빈 값은 None(옛 컷과 같다), 모르는 값은 400.
+
+    조용히 기본값(prod)으로 바꾸지 않는다 — "결 살리기"로 만들려던 컷이 "매끈하게" 로
+    기록되면 관리자가 고른 것과 다른 값이 그 사람의 설정이 된다.
     """
-    from .agents.face_identity import SKIN_FINISH_LEVELS
-
     # FastAPI 를 거치지 않는 직접 호출은 Form(default=None) 센티널을 그대로 넘긴다 —
-    # 그걸 "값이 있다" 로 읽으면 없는 오류가 생긴다. 실제 값(문자열·정수)만 본다.
-    if not isinstance(value, (str, int)) or isinstance(value, bool):
+    # 그걸 "값이 있다" 로 읽으면 없는 오류가 생긴다. 실제 문자열만 본다.
+    if not isinstance(value, str):
         return None
-    if str(value).strip() == "":
+    text = value.strip().lower()
+    if text == "":
         return None
-    try:
-        parsed = int(str(value).strip())
-    except ValueError:
-        raise _err("invalid_skin_finish", "보정 단계는 100, 50, 0 중 하나예요.") from None
-    if parsed not in SKIN_FINISH_LEVELS:
-        raise _err("invalid_skin_finish", "보정 단계는 100, 50, 0 중 하나예요.")
-    return parsed
+    if text not in SKIN_FINISH_CODES:
+        raise _err("invalid_skin_finish", _FINISH_HELP)
+    return text
 
 
 async def _load_cut_slots(conn, model_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
-            "select sort, kind from fm_model_test_cuts where model_id = %s order by sort",
+            "select sort, kind, skin_finish_code from fm_model_test_cuts "
+            "where model_id = %s order by sort",
             (model_id,),
         )
         return await cur.fetchall()
 
 
-def _ensure_cut_capacity(slots: list[dict], kind: str, incoming: int) -> None:
-    limit = TEST_CUT_KIND_LIMITS.get(kind, 0)
-    kind_count = sum(slot.get("kind") == kind for slot in slots)
-    if kind_count + incoming > limit or len(slots) + incoming > MAX_TEST_CUTS:
-        label = "확대샷" if kind == "closeup" else "전신샷"
-        raise _err("cut_limit", f"{label}은 {limit}장까지 올릴 수 있어요.", status=409)
+def _ensure_cut_capacity(slots: list[dict], kind: str, incoming: int,
+                         skin_finish: str | None = None) -> None:
+    """상한은 **(보정, 종류) 조합마다** 2장이다.
+
+    종류 총합만 보면 한 보정에 6장이 몰려도 통과하는데, 그러면 그 보정 묶음만 전송 가능해지고
+    나머지 둘은 영영 못 보낸다 — 관리자가 셋을 비교할 수 없게 된다.
+    """
+    code = skin_finish or SKIN_FINISH_DEFAULT
+    label = "확대샷" if kind == "closeup" else "전신샷"
+    pair_count = sum(
+        slot.get("kind") == kind
+        and (slot.get("skin_finish_code") or SKIN_FINISH_DEFAULT) == code
+        for slot in slots
+    )
+    if pair_count + incoming > MAX_TEST_CUTS_PER_KIND:
+        raise _err(
+            "cut_limit",
+            f"{SKIN_FINISH_LABEL.get(code, code)} {label}은 "
+            f"{MAX_TEST_CUTS_PER_KIND}장까지 올릴 수 있어요.",
+            status=409,
+        )
+    if len(slots) + incoming > MAX_TEST_CUTS:
+        raise _err("cut_limit", f"테스트컷은 {MAX_TEST_CUTS}장까지예요.", status=409)
 
 
 @router.delete("/admin/models/{model_id}/test-cuts/{cut_id}", status_code=204)
@@ -643,9 +723,18 @@ def _not_sendable_message(model: dict) -> str:
 async def admin_send_test_cuts(
     request: Request,
     model_id: str,
+    body: SendTestCutsBody,
     user_id: str = Depends(require_user),
 ):
+    """고른 보정 **한 묶음(4장)** 만 등록자에게 보낸다.
+
+    등록자는 보정을 고르지 않는다(2026-09-16 대표 결정) — 셋을 비교하는 건 관리자 일이고,
+    등록자는 받은 4장에서 확대샷 1 + 전신 1 을 고를 뿐이다.
+    """
     model_id = _canonical_id(model_id)
+    finish = _parse_skin_finish(body.skin_finish)
+    if finish is None:
+        raise _err("invalid_skin_finish", _FINISH_HELP)
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
         model = await _load_admin_model(conn, model_id, for_update=True)
@@ -663,25 +752,32 @@ async def admin_send_test_cuts(
             await cur.execute(
                 """select count(*) filter (where kind = 'closeup')::integer as closeup_count,
                           count(*) filter (where kind = 'fullbody')::integer as fullbody_count
-                     from fm_model_test_cuts where model_id = %s""",
-                (model_id,),
+                     from fm_model_test_cuts
+                    where model_id = %s and coalesce(skin_finish_code, %s) = %s""",
+                (model_id, finish, finish),
             )
             counts = await cur.fetchone()
             if (
-                counts["closeup_count"] != TEST_CUT_KIND_LIMITS["closeup"]
-                or counts["fullbody_count"] != TEST_CUT_KIND_LIMITS["fullbody"]
+                counts["closeup_count"] != CUTS_PER_FINISH["closeup"]
+                or counts["fullbody_count"] != CUTS_PER_FINISH["fullbody"]
             ):
-                # 구성이 3+1 이 아니면 보내지 않는다 — 등록자가 고를 보정 단계가 빠진 채로
-                # 승인되면 그 사람의 단계가 기본값(100)으로 굳는다.
+                # 고른 보정 묶음이 4장이 아니면 보내지 않는다 — 반쪽 묶음을 보내면 등록자가
+                # 확대샷이나 전신샷 중 하나를 못 골라 확정 자체가 막힌다.
                 raise _err(
                     "test_cuts_incomplete",
-                    "확대샷 3장(보정 100/50/0)과 전신샷 1장을 모두 올려야 보낼 수 있어요.",
+                    f"{SKIN_FINISH_LABEL.get(finish, finish)} 묶음은 확대샷 "
+                    f"{CUTS_PER_FINISH['closeup']}장과 전신샷 "
+                    f"{CUTS_PER_FINISH['fullbody']}장이 다 있어야 보낼 수 있어요.",
                     status=409,
                 )
+            # ★ 보낸 보정이 곧 그 사람의 설정이다 — **같은 트랜잭션**에서 적는다. 따로 쓰면
+            #   "보내긴 했는데 보정은 예전 값" 인 중간 상태가 생기고, 등록자가 확정하는 순간
+            #   고르지도 않은 얼굴이 그 사람의 상품이 된다.
             await cur.execute(
-                """update fm_models set status = 'awaiting_confirm', confirm_requested_at = now()
-                    where id = %s returning confirm_requested_at""",
-                (model_id,),
+                """update fm_models set status = 'awaiting_confirm', confirm_requested_at = now(),
+                          skin_finish_code = %s
+                    where id = %s returning confirm_requested_at, skin_finish_code""",
+                (finish, model_id),
             )
             updated = await cur.fetchone()
         await conn.commit()
@@ -701,7 +797,52 @@ async def admin_send_test_cuts(
         "status": "awaiting_confirm",
         "confirm_requested_at": updated["confirm_requested_at"],
         "email_sent": email_sent,
+        "skin_finish": updated["skin_finish_code"],
     }
+
+
+@router.post(
+    "/admin/models/{model_id}/test-cuts/build",
+    response_model=TestCutBuildView,
+    status_code=202,
+    summary="테스트컷 12장 자동 생성(수동 실행 · 다시 생성)",
+)
+async def admin_build_test_cuts(
+    request: Request,
+    model_id: str,
+    user_id: str = Depends(require_user),
+):
+    """큐에 한 건 넣는다. 실제 생성은 reconciler 가 한다 — 한 건이 얼굴 파드를 몇 분 쓴다.
+
+    평소에는 학습이 끝나 ready LoRA 행이 붙는 순간 저절로 들어간다(services/model_lora.register).
+    이 엔드포인트는 그 자동 경로가 안 돌았거나(플래그 off 시절) 다시 만들고 싶을 때의 손잡이다.
+    **승인된 컷은 지우지 않는다** — 다시 생성은 승인 전 컷만 갈아 끼운다(test_cut_build.clear_cuts).
+    """
+    mid = _canonical_id(model_id)
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id, request)
+        if await _load_admin_model(conn, mid) is None:
+            raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id from fm_model_loras "
+                "where model_id = %s and status = 'ready' limit 1",
+                (mid,),
+            )
+            lora = await cur.fetchone()
+        if lora is None:
+            # 학습이 안 끝났으면 만들 얼굴이 없다. 조용히 큐에 넣으면 20분 뒤 실패로만 보인다.
+            raise _err(
+                "lora_not_ready",
+                "학습이 끝난 LoRA 가 없어요. 학습이 끝난 뒤에 생성할 수 있어요.",
+                status=409,
+            )
+        build_id = await test_cut_build.enqueue(conn, mid, lora_id=lora["id"])
+        await conn.commit()
+        if build_id is None:
+            raise _err("build_in_progress", "이미 생성 중이거나 대기 중이에요.", status=409)
+        build = await test_cut_build_reconciler.latest_build(conn, mid)
+    return dict(build) if build else {"id": build_id, "status": "queued"}
 
 
 @router.get("/admin/models/{model_id}/test-cuts/{cut_id}/image")
@@ -727,7 +868,9 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
         model = await _load_owned_model(conn, user_id)
         if model is None:
             raise _err("not_found", "내 모델을 찾을 수 없습니다.", status=404)
-        cuts = await _load_cuts(conn, model["id"])
+        # ★ 보낸 보정 묶음만. 나머지 8장은 등록자에게 보이지 않는다 — 고르는 건 관리자 일이다.
+        cuts = await _load_cuts(conn, model["id"], skin_finish=model.get("skin_finish_code")
+                                or SKIN_FINISH_DEFAULT)
         profiles = await _load_model_profiles(conn, model_id=model["id"])
     return {
         "model_id": model["id"],
@@ -913,22 +1056,18 @@ async def confirm_test_cut(
                         where model_id = %s""",
                     (closeup_cut_id, fullbody_cut_id, locked_closeup["model_id"]),
                 )
-                # ★ 고른 확대샷의 보정 단계를 **같은 트랜잭션**에서 모델로 옮긴다.
-                #   따로 쓰면 "승인은 됐는데 단계는 예전 값" 인 중간 상태가 생기고, 그 사이
-                #   나간 착용컷은 등록자가 고르지 않은 얼굴이다.
-                #   단계 없는 옛 컷(null)은 지금 값을 그대로 둔다 — coalesce 가 그 일을 한다.
+                # 보정은 **전송 때** 이미 정해졌다(admin_send_test_cuts) — 여기서 건드리지
+                # 않는다. 등록자는 받은 4장에서 1+1 을 고를 뿐이고, 그 넷은 전부 같은 보정이다.
                 await cur.execute(
                     """update fm_models set status = 'verified', confirmed_at = now(),
                               confirm_consent_version = %s, cover_image_url = %s,
-                              fullbody_image_url = %s,
-                              skin_finish = coalesce(%s, skin_finish)
+                              fullbody_image_url = %s
                         where id = %s and user_id = %s and status = 'awaiting_confirm'
-                        returning confirmed_at, skin_finish""",
+                        returning confirmed_at, skin_finish_code""",
                     (
                         CONSENT_DOC_VERSION,
                         closeup_key,
                         fullbody_key,
-                        locked_closeup.get("skin_finish"),
                         locked_closeup["model_id"],
                         user_id,
                     ),

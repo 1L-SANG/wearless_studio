@@ -92,8 +92,13 @@ async def register(conn, r2_face, *, model_id: str, weights: bytes, filename: st
                    trigger_token: str, base_model: str, trained_steps: int | None = None,
                    source_enrollment_id: str | None = None, physique: dict | None = None,
                    metrics: dict | None = None, version: int | None = None,
-                   enable: bool = False) -> dict:
-    """가중치 업로드 + 행 등록. 반환은 **키와 숫자만** — 바이트도 URL 도 안 싣는다."""
+                   enable: bool = False, build_test_cuts: bool = True) -> dict:
+    """가중치 업로드 + 행 등록. 반환은 **키와 숫자만** — 바이트도 URL 도 안 싣는다.
+
+    ready 행이 붙는 순간이 곧 테스트컷 12장을 만들 시점이다(대표 결정 2026-09-16) — 그래서
+    같은 트랜잭션에서 생성 큐에 한 건 넣는다. 손으로 seed 하든 학습이 자동으로 끝나든 자리는
+    여기 하나다. build_test_cuts=False 는 백필·복구 스크립트용 탈출구다.
+    """
     resolved = version if version is not None else await next_version(conn, model_id)
     key = lora_key(model_id, resolved, filename)
     sha256, uploaded = upload_weights(r2_face, key, weights)
@@ -102,7 +107,13 @@ async def register(conn, r2_face, *, model_id: str, weights: bytes, filename: st
         trigger_token=trigger_token, base_model=base_model, trained_steps=trained_steps,
         source_enrollment_id=source_enrollment_id, physique=physique, metrics=metrics,
         enable=enable)
-    log.info("model_lora registered model=%s v%d bytes=%d sha12=%s uploaded=%s enabled=%s",
-             model_id, resolved, len(weights), sha256[:12], uploaded, enable)
+    build_id = None
+    if build_test_cuts:
+        from . import test_cut_build
+
+        build_id = await test_cut_build.enqueue(conn, model_id, lora_id=row_id)
+    log.info("model_lora registered model=%s v%d bytes=%d sha12=%s uploaded=%s enabled=%s build=%s",
+             model_id, resolved, len(weights), sha256[:12], uploaded, enable, build_id)
     return {"id": row_id, "version": resolved, "key": key, "sha256": sha256,
-            "bytes": len(weights), "uploaded": uploaded, "enabled": enable}
+            "bytes": len(weights), "uploaded": uploaded, "enabled": enable,
+            "test_cut_build_id": build_id}

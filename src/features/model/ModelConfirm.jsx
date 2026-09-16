@@ -50,14 +50,9 @@ function PrivateCutImage({ cut, className, alt, eager = false }) {
   );
 }
 
-// 보정 단계 이름표. 등록자가 고른 값이 그 사람의 설정이 돼요(fm_models.skin_finish) — 셀러는 못 바꿔요.
-// 실측: 피부 결을 실제로 바꾸는 건 네거티브 문구예요(+11~19%). 닮은 정도는 단계와 무관해요(±0.03).
-const SKIN_FINISH_LABEL = {
-  100: '보정 100 — 매끈하게(기본)',
-  50: '보정 50 — 중간',
-  0: '보정 0 — 있는 그대로',
-};
-
+/* 보정 이름표·선택은 **없어요**(2026-09-16 대표 결정). 관리자가 12장을 보고 보정 1종을 골라
+   그 4장만 보내요 — 여기 오는 넷은 전부 같은 보정이라, 이름표를 붙이면 고를 수 없는 것을
+   고르라는 화면이 돼요. 등록자가 하는 일은 확대샷 1장 + 전신샷 1장 고르기예요. */
 function CutChoiceGroup({ kind, label, cuts, selectedId, onSelect }) {
   const titleId = `${kind}-cut-title`;
   return (
@@ -75,8 +70,7 @@ function CutChoiceGroup({ kind, label, cuts, selectedId, onSelect }) {
                 onChange={() => onSelect(cut.id)}
               />
               <PrivateCutImage cut={cut} className={s.thumb} alt={`${label} 후보 ${index + 1}`} />
-              {/* 단계가 없는 옛 컷은 지금까지처럼 번호로 보여 줘요 — 화면이 깨지면 안 돼요. */}
-              <span>{SKIN_FINISH_LABEL[cut.skinFinish] || `${label} ${index + 1}`}</span>
+              <span>{label} {index + 1}</span>
             </label>
           ))}
         </div>

@@ -62,6 +62,7 @@ def _cut_view(cut):
         "sort": cut["sort"],
         "kind": cut.get("kind"),
         "approved": cut.get("approved"),
+        "skin_finish_code": cut.get("skin_finish_code"),
         "created_at": cut.get("created_at", NOW),
     }
 
@@ -146,8 +147,9 @@ class FakeCursor:
                 "test_cut_count": len(cuts),
                 "closeup_count": closeup_count,
                 "fullbody_count": fullbody_count,
-                # 구성은 확대샷 3장(보정 100/50/0) + 전신샷 1장이다.
-                "cuts_complete": closeup_count == 3 and fullbody_count == 1,
+                # 전량은 보정 3종 × (확대 2 + 전신 2) = 12장이다.
+                "cuts_complete": closeup_count == 6 and fullbody_count == 6,
+                "skin_finish": model.get("skin_finish_code", "prod"),
                 "redo_requested": model["status"] == "pending" and model["redo_count"] > 0,
                 "confirm_requested_at": model.get("confirm_requested_at"),
                 "confirmed_at": model.get("confirmed_at"),
@@ -165,7 +167,7 @@ class FakeCursor:
                     _cut_view(c) for c in sorted(cuts, key=lambda item: item["sort"])
                 ],
             }
-            wanted = str(params[0]) if params else None
+            wanted = str(params[-1]) if params else None
             if wanted is not None and wanted != row["id"]:
                 self.one, self.many = None, []
             else:
@@ -197,6 +199,7 @@ class FakeCursor:
                     "redo_count": model["redo_count"],
                     "confirm_requested_at": model.get("confirm_requested_at"),
                     "confirmed_at": model.get("confirmed_at"),
+                    "skin_finish_code": model.get("skin_finish_code", "prod"),
                 }
         elif (
             query.startswith("select id::text as id")
@@ -204,12 +207,19 @@ class FakeCursor:
             and "order by sort" in query
         ):
             model_id = params[0]
-            self.many = [_cut_view(c) for c in cuts if c["model_id"] == model_id]
+            # 등록자 목록은 **보낸 보정 묶음만** 본다(coalesce 로 옛 컷도 잡는다).
+            finish = params[1] if len(params) > 1 else None
+            self.many = [
+                _cut_view(c) for c in cuts
+                if c["model_id"] == model_id
+                and (finish is None or (c.get("skin_finish_code") or finish) == finish)
+            ]
             self.many.sort(key=lambda item: item["sort"])
         elif query.startswith("select sort") and "from fm_model_test_cuts" in query:
             model_id = params[0]
             self.many = [
-                {"sort": c["sort"], "kind": c.get("kind")}
+                {"sort": c["sort"], "kind": c.get("kind"),
+                 "skin_finish_code": c.get("skin_finish_code")}
                 for c in cuts
                 if c["model_id"] == model_id
             ]
@@ -228,6 +238,7 @@ class FakeCursor:
                 "r2_key": key,
                 "mime": mime,
                 "kind": kind,
+                "skin_finish_code": finish,
                 "sort": sort,
                 "approved": None,
                 "created_at": NOW,
@@ -248,7 +259,12 @@ class FakeCursor:
             cuts[:] = [c for c in cuts if not (c["id"] == cut_id and c["model_id"] == model_id)]
         elif query.startswith("select count") and "fm_model_test_cuts" in query:
             model_id = params[0]
-            selected = [c for c in cuts if c["model_id"] == model_id]
+            finish = params[1] if len(params) > 1 else None
+            selected = [
+                c for c in cuts
+                if c["model_id"] == model_id
+                and (finish is None or (c.get("skin_finish_code") or finish) == finish)
+            ]
             self.one = {
                 "closeup_count": sum(c.get("kind") == "closeup" for c in selected),
                 "fullbody_count": sum(c.get("kind") == "fullbody" for c in selected),
@@ -267,7 +283,10 @@ class FakeCursor:
         elif query.startswith("update fm_models set status = 'awaiting_confirm'"):
             model["status"] = "awaiting_confirm"
             model["confirm_requested_at"] = NOW
-            self.one = {"confirm_requested_at": NOW}
+            # 보낸 보정이 곧 그 사람의 설정이다 — 같은 UPDATE 에서 적힌다.
+            model["skin_finish_code"] = params[0]
+            self.one = {"confirm_requested_at": NOW,
+                        "skin_finish_code": model["skin_finish_code"]}
         elif query.startswith("select c.id::text as id, c.r2_key"):
             cut_id, user_id = params[:2]
             cut = next(
@@ -297,11 +316,7 @@ class FakeCursor:
                 if cut["model_id"] == model_id:
                     cut["approved"] = cut["id"] in approved_ids
         elif query.startswith("update fm_models set status = 'verified'"):
-            skin_finish = None
-            if len(params) == 6:
-                (consent_version, cover_key, fullbody_key, skin_finish,
-                 model_id, user_id) = params
-            elif len(params) == 5:
+            if len(params) == 5:
                 consent_version, cover_key, fullbody_key, model_id, user_id = params
             else:
                 consent_version, cover_key, model_id, user_id = params
@@ -317,11 +332,10 @@ class FakeCursor:
                     confirm_consent_version=consent_version,
                     cover_image_url=cover_key,
                     fullbody_image_url=fullbody_key,
-                    # coalesce(%s, skin_finish) — 단계 없는 옛 컷은 지금 값을 그대로 둔다.
-                    skin_finish=(skin_finish if skin_finish is not None
-                                 else model.get("skin_finish", 100)),
                 )
-                self.one = {"confirmed_at": NOW, "skin_finish": model.get("skin_finish")}
+                # 보정은 **전송 때** 이미 정해졌다 — 확정은 건드리지 않는다.
+                self.one = {"confirmed_at": NOW,
+                            "skin_finish_code": model.get("skin_finish_code", "prod")}
         elif query.startswith("update fm_models set status = 'pending'"):
             reason, model_id, user_id = params
             if (
@@ -460,7 +474,7 @@ def _seed_cut(
     kind="closeup",
     approved=None,
     data=None,
-    skin_finish=None,
+    skin_finish="prod",
 ):
     data = data or _png()
     key = f"private/facemarket/models/{MODEL_ID}/test-cuts/{cut_id}.png"
@@ -470,7 +484,7 @@ def _seed_cut(
         "r2_key": key,
         "mime": "image/png",
         "kind": kind,
-        "skin_finish": skin_finish,
+        "skin_finish_code": skin_finish,
         "sort": len(store["cuts"]),
         "approved": approved,
         "created_at": NOW,
@@ -480,13 +494,20 @@ def _seed_cut(
     return cut
 
 
-def _seed_complete_cuts(store, r2, *, data=None):
-    """보낼 수 있는 구성 — 확대샷 3장(보정 100/50/0) + 전신샷 1장. 총 4장은 그대로다."""
+def _seed_complete_cuts(store, r2, *, data=None, skin_finish="prod"):
+    """**한 보정 묶음**이 보낼 수 있는 구성 — 확대샷 2장 + 전신샷 2장.
+
+    12장 전량이 아니라 한 묶음만 심는다. 전송은 묶음 단위라 이 넷이면 보낼 수 있고,
+    "다른 보정 묶음이 비었을 때 그 보정으로는 못 보낸다" 는 따로 검사한다.
+    """
     return [
-        _seed_cut(store, r2, cut_id=CUT_ID, kind="closeup", data=data, skin_finish=100),
-        _seed_cut(store, r2, cut_id=CLOSEUP_ALT_ID, kind="closeup", data=data, skin_finish=50),
-        _seed_cut(store, r2, cut_id=CLOSEUP_THIRD_ID, kind="closeup", data=data, skin_finish=0),
-        _seed_cut(store, r2, cut_id=FULLBODY_CUT_ID, kind="fullbody", data=data),
+        _seed_cut(store, r2, cut_id=CUT_ID, kind="closeup", data=data, skin_finish=skin_finish),
+        _seed_cut(store, r2, cut_id=CLOSEUP_ALT_ID, kind="closeup", data=data,
+                  skin_finish=skin_finish),
+        _seed_cut(store, r2, cut_id=FULLBODY_CUT_ID, kind="fullbody", data=data,
+                  skin_finish=skin_finish),
+        _seed_cut(store, r2, cut_id=FULLBODY_ALT_ID, kind="fullbody", data=data,
+                  skin_finish=skin_finish),
     ]
 
 
@@ -517,6 +538,7 @@ def test_non_admin_upload_is_rejected_before_reading_files(test_cut_api):
             model_id=MODEL_ID,
             images=[UnreadableUpload()],
             kind="closeup",
+            skin_finish="prod",
             user_id="user-1",
         ))
     assert caught.value.status_code == 403
@@ -530,7 +552,7 @@ def test_admin_upload_lists_and_streams_cuts_without_emitting_r2_keys(test_cut_a
             ("images", ("one.png", _png(), "image/png")),
             ("images", ("two.png", _png(color=(80, 140, 220)), "image/png")),
         ],
-        data={"kind": "closeup"},
+        data={"kind": "closeup", "skin_finish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert uploaded.status_code == 201, uploaded.text
@@ -544,6 +566,10 @@ def test_admin_upload_lists_and_streams_cuts_without_emitting_r2_keys(test_cut_a
     assert listing.status_code == 200
     assert listing.json()["testCutCount"] == 2
     assert listing.json()["closeupCount"] == 2
+    # 보정별 묶음 구성도 같이 온다 — 화면이 묶음마다 보낼 수 있는지 이걸로 판단한다.
+    assert listing.json()["finishCounts"]["prod"] == {"closeup": 2, "fullbody": 0}
+    assert listing.json()["finishCounts"]["texture"] == {"closeup": 0, "fullbody": 0}
+    assert {cut["skinFinish"] for cut in listing.json()["testCuts"]} == {"prod"}
     assert listing.json()["fullbodyCount"] == 0
     assert listing.json()["cutsComplete"] is False
     assert listing.json()["confirmedAt"] is None
@@ -567,7 +593,7 @@ def test_admin_upload_rejects_corrupt_image_before_storage(test_cut_api):
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
         files=[("images", ("broken.png", b"not-an-image", "image/png"))],
-        data={"kind": "closeup"},
+        data={"kind": "closeup", "skin_finish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 422
@@ -593,31 +619,56 @@ def test_admin_upload_requires_a_supported_kind(test_cut_api, data):
     assert face_r2.objects == {}
 
 
-def test_admin_upload_rejects_the_fourth_closeup(test_cut_api):
-    """확대샷은 3장(보정 100/50/0)까지다 — 네 번째가 들어오면 총 4장 상한도 같이 깨진다."""
+def test_the_cap_is_two_per_finish_and_kind(test_cut_api):
+    """★ 상한은 **(보정, 종류) 조합마다** 2장이다.
+
+    종류 총합만 보면 한 보정에 6장이 몰려도 통과하는데, 그러면 그 묶음만 보낼 수 있고 나머지
+    둘은 영영 못 보낸다 — 관리자가 셋을 비교할 수 없게 된다.
+    """
     client, store, face_r2, _public, make_token = test_cut_api
     first = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
         files=[
             ("images", ("one.png", _png(), "image/png")),
             ("images", ("two.png", _png(color=(80, 140, 220)), "image/png")),
-            ("images", ("three.png", _png(color=(10, 20, 30)), "image/png")),
         ],
-        data={"kind": "closeup"},
+        data={"kind": "closeup", "skin_finish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert first.status_code == 201, first.text
 
     third = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
-        files=[("images", ("four.png", _png(color=(1, 2, 3)), "image/png"))],
+        files=[("images", ("three.png", _png(color=(1, 2, 3)), "image/png"))],
+        data={"kind": "closeup", "skin_finish": "prod"},
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert third.status_code == 409
+    assert third.json()["error"]["code"] == "cut_limit"
+
+    # 다른 보정 묶음에는 그대로 들어간다 — 상한은 조합마다지 종류마다가 아니다.
+    other = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        files=[("images", ("three.png", _png(color=(1, 2, 3)), "image/png"))],
+        data={"kind": "closeup", "skin_finish": "texture"},
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert other.status_code == 201, other.text
+    assert len(store["cuts"]) == len(face_r2.objects) == 3
+
+
+def test_upload_without_a_finish_is_refused(test_cut_api):
+    """보정 없이 올리면 어느 묶음인지 알 수 없어 전송에서 영원히 빠진다."""
+    client, store, face_r2, _public, make_token = test_cut_api
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        files=[("images", ("one.png", _png(), "image/png"))],
         data={"kind": "closeup"},
         headers=_auth(make_token, "admin-1"),
     )
-
-    assert third.status_code == 409
-    assert third.json()["error"]["code"] == "cut_limit"
-    assert len(store["cuts"]) == len(face_r2.objects) == 3
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "skin_finish_required"
+    assert store["cuts"] == [] and face_r2.objects == {}
 
 
 def test_send_commits_awaiting_confirm_when_resend_is_not_configured(test_cut_api):
@@ -625,6 +676,7 @@ def test_send_commits_awaiting_confirm_when_resend_is_not_configured(test_cut_ap
     _seed_complete_cuts(store, face_r2)
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 200, response.text
@@ -641,6 +693,7 @@ def test_admin_send_requires_all_four_kinds(test_cut_api):
     _seed_cut(store, face_r2, cut_id=FULLBODY_CUT_ID, kind="fullbody")
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 409
@@ -662,6 +715,7 @@ def test_admin_cannot_send_before_enrollment_and_vc_are_complete(
 
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
 
@@ -704,6 +758,7 @@ def test_admin_can_resend_to_legacy_verified_model_without_fullbody(test_cut_api
 
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 200, response.text
@@ -727,6 +782,7 @@ def test_admin_cannot_resend_to_a_model_already_published_with_two_cuts(test_cut
 
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 409
@@ -746,6 +802,7 @@ def test_admin_cannot_send_when_license_is_expired_even_if_status_is_active(test
 
     response = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "prod"},
         headers=_auth(make_token, "admin-1"),
     )
     assert response.status_code == 409
@@ -1024,12 +1081,14 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
     assert {
         cut["id"]: cut["approved"] for cut in store["cuts"]
     } == {
-        # 고른 확대샷 1 + 전신샷 1 만 approved. 나머지 보정 단계 두 장은 내려간다.
+        # 고른 확대샷 1 + 전신샷 1 만 approved. 같은 묶음의 나머지 두 장은 내려간다.
         CUT_ID: True,
         CLOSEUP_ALT_ID: False,
-        CLOSEUP_THIRD_ID: False,
         FULLBODY_CUT_ID: True,
+        FULLBODY_ALT_ID: False,
     }
+    # 보정은 **전송 때** 정해졌다 — 확정이 다시 쓰지 않는다.
+    assert store["model"].get("skin_finish_code", "prod") == "prod"
     assert len(face_r2.objects) == 4, "비공개 원본은 남아야 한다"
     assert len(public_r2.objects) == 2
     for image_bytes, image_mime, _cache in public_r2.objects.values():
@@ -1046,9 +1105,11 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
         headers=_auth(make_token, "admin-1"),
     )
     assert admin_view.status_code == 200
-    assert admin_view.json()["closeupCount"] == 3     # 보정 100/50/0
-    assert admin_view.json()["fullbodyCount"] == 1     # 전신은 단계 차이가 안 보인다
-    assert admin_view.json()["cutsComplete"] is True
+    assert admin_view.json()["closeupCount"] == 2     # 한 보정 묶음의 확대샷 2장
+    assert admin_view.json()["fullbodyCount"] == 2     # 한 보정 묶음의 전신샷 2장
+    # cutsComplete 는 **12장 전량**을 뜻한다 — 한 묶음만 심은 이 시나리오는 아직 아니다.
+    assert admin_view.json()["cutsComplete"] is False
+    assert admin_view.json()["finishCounts"]["prod"] == {"closeup": 2, "fullbody": 2}
     assert admin_view.json()["confirmedAt"] == NOW.isoformat().replace("+00:00", "Z")
 
 
@@ -1239,3 +1300,75 @@ def test_approved_test_cut_cannot_be_deleted(test_cut_api):
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "approved_cut_locked"
     assert len(store["cuts"]) == len(face_r2.objects) == 1
+
+
+# ── 보정 묶음 전송 (2026-09-16) ─────────────────────────────────────────────
+def test_sending_a_finish_that_is_not_complete_is_blocked(test_cut_api):
+    """★ 반쪽 묶음을 보내면 등록자가 확대샷이나 전신샷 중 하나를 못 골라 확정이 막힌다."""
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, skin_finish="prod")
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "texture"},
+        headers=_auth(make_token, "admin-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "test_cuts_incomplete"
+    assert store["model"]["status"] == "pending"
+    assert "skin_finish_code" not in store["model"], "막힌 전송이 보정을 적으면 안 된다"
+
+
+def test_sending_records_the_finish_and_shows_the_model_only_those_four(test_cut_api):
+    """보낸 보정이 그 사람의 설정이 되고, 등록자는 그 4장만 본다."""
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, skin_finish="texture")
+    # 다른 보정 묶음도 같이 있다 — 이게 등록자에게 새어 나가면 안 된다.
+    _seed_cut(store, face_r2, cut_id="99999999-9999-9999-9999-999999999999",
+              kind="closeup", skin_finish="prod")
+
+    sent = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "texture"},
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["skinFinish"] == "texture"
+    assert store["model"]["skin_finish_code"] == "texture"
+
+    mine = client.get("/v1/facemarket/model/test-cuts", headers=_auth(make_token))
+    assert mine.status_code == 200, mine.text
+    cuts = mine.json()["cuts"]
+    assert len(cuts) == 4, "보낸 묶음 4장만 보여야 한다"
+    assert {cut["skinFinish"] for cut in cuts} == {"texture"}
+    assert {cut["kind"] for cut in cuts} == {"closeup", "fullbody"}
+
+
+def test_an_unknown_finish_is_refused_at_send(test_cut_api):
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2)
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        json={"skinFinish": "100"},
+        headers=_auth(make_token, "admin-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_skin_finish"
+    assert store["model"]["status"] == "pending"
+
+
+def test_building_needs_a_trained_lora(test_cut_api):
+    """학습이 안 끝났으면 만들 얼굴이 없다 — 조용히 큐에 넣으면 20분 뒤 실패로만 보인다."""
+    client, store, _face, _public, make_token = test_cut_api
+    store.setdefault("loras", [])
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts/build",
+        headers=_auth(make_token, "admin-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "lora_not_ready"

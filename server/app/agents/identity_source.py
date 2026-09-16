@@ -317,7 +317,7 @@ async def reference_face_bytes(app, conn, model_id: str, license_row, *,
         return []
 
 
-#: 켜진 LoRA 한 행. 피부 보정 단계(fm_models.skin_finish)를 같이 읽는다 — 얼굴 패스가 그 값으로
+#: 켜진 LoRA 한 행. 피부 보정(fm_models.skin_finish_code)을 같이 읽는다 — 얼굴 패스가 그 값으로
 #: 네거티브 문구와 크롭 확대 blend 를 정한다.
 _LORA_COLUMNS = (
     "l.id::text as id, l.version, l.lora_r2_key, l.lora_sha256, l.bucket, l.trigger_token, "
@@ -327,14 +327,14 @@ _LORA_WHERE = " from fm_model_loras l where l.model_id = %s and l.enabled and l.
 
 
 async def _lora_row(conn, model_id: str) -> dict | None:
-    """행 조회. skin_finish 컬럼이 아직 없는 DB(마이그 미적용)에서도 옛 모양으로 한 번 더 시도한다.
+    """행 조회. skin_finish_code 컬럼이 아직 없는 DB(마이그 미적용)에서도 옛 모양으로 한 번 더 시도한다.
 
     ★ 여기서 그냥 None 을 돌려주면 **얼굴 패스가 통째로 꺼진다** — 실존 모델 컷은 그 순간
       남의 얼굴이 나가거나(옛 계약) 컷이 실패한다. 컬럼 하나 때문에 그렇게 되면 안 된다.
     """
     select_with = ("select " + _LORA_COLUMNS
-                   + ", coalesce((select m.skin_finish from fm_models m where m.id = l.model_id), 100)"
-                     " as skin_finish" + _LORA_WHERE)
+                   + ", coalesce((select m.skin_finish_code from fm_models m where m.id = l.model_id),"
+                     " 'prod') as skin_finish" + _LORA_WHERE)
     for sql, labelled in ((select_with, True), ("select " + _LORA_COLUMNS + _LORA_WHERE, False)):
         try:
             async with conn.cursor() as cur:
@@ -345,7 +345,8 @@ async def _lora_row(conn, model_id: str) -> dict | None:
                 # 실패한 트랜잭션은 그대로 두면 다음 질의가 InFailedSqlTransaction 으로 죽는다.
                 with contextlib.suppress(Exception):
                     await conn.rollback()
-                log.info("fm_models.skin_finish unavailable (%s) — 단계 없이 읽는다", type(exc).__name__)
+                log.info("fm_models.skin_finish_code unavailable (%s) — 보정 없이 읽는다",
+                         type(exc).__name__)
                 continue
             log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
     return None
