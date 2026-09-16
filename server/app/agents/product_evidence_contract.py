@@ -12,10 +12,13 @@ from __future__ import annotations
 from hashlib import sha256
 import hmac
 import json
+import logging
 import re
 import time
 from typing import Any
 
+
+log = logging.getLogger("wearless.product_evidence_contract")
 
 PERSISTED_KEY = "confirmedGptProductEvidence"
 INTERNAL_BINDING_KEY = "__confirmedGptProductEvidenceInput"
@@ -630,6 +633,39 @@ def _validate_fixed_observation(
     return {"value": value, "evidenceOrdinals": ordinals}
 
 
+def _normalized_judgeability_reasons(raw: object, *, ordinal: int) -> list[str]:
+    """Normalize a panel's judgeability reasons; reject only real contract breaks.
+
+    The vision model sometimes writes ``clear_enough`` next to an actual limitation, or
+    repeats a reason.  Neither is a different judgement — the panel already carries its
+    own usable/uncertain verdict, and this list only says what limits it.  Rejecting the
+    self-contradiction turned one sloppy panel into a failed analysis for the whole
+    product (2026-09-16 production 502s), so resolve it instead: a contradiction reads
+    toward "there is a limitation", never away from one, and duplicates collapse in
+    place.  An unlisted or non-string reason still fails closed — that is vocabulary the
+    server never defined, so we cannot know what the model meant by it.
+    """
+
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or any(
+            not isinstance(reason, str) or reason not in _JUDGEABILITY_REASONS
+            for reason in raw
+        )
+    ):
+        raise ProductEvidenceContractError("product_evidence_invalid_judgeability_reasons")
+    reasons = list(dict.fromkeys(raw))
+    if len(reasons) > 1:
+        reasons = [reason for reason in reasons if reason != "clear_enough"]
+    if reasons != raw:
+        log.info(
+            "judgeability_reasons_normalized ordinal=%d from=%s to=%s",
+            ordinal, raw, reasons,
+        )
+    return reasons
+
+
 def _validate_and_bind_version(
     raw_value: object,
     binding_value: object,
@@ -661,17 +697,11 @@ def _validate_and_bind_version(
         if panel["evidenceOrdinal"] != ordinal:
             raise ProductEvidenceContractError("product_evidence_panel_order_mismatch")
         status = panel["judgeability"]
-        reasons = panel["judgeabilityReasons"]
         if status not in _JUDGEABILITY:
             raise ProductEvidenceContractError("product_evidence_invalid_judgeability")
-        if (
-            not isinstance(reasons, list)
-            or not reasons
-            or reasons != list(dict.fromkeys(reasons))
-            or any(reason not in _JUDGEABILITY_REASONS for reason in reasons)
-            or ("clear_enough" in reasons and len(reasons) != 1)
-        ):
-            raise ProductEvidenceContractError("product_evidence_invalid_judgeability_reasons")
+        reasons = _normalized_judgeability_reasons(
+            panel["judgeabilityReasons"], ordinal=ordinal
+        )
         slot = image["slot"]
         panels.append(
             {

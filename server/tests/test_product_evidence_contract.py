@@ -1,6 +1,7 @@
 from copy import deepcopy
 from hashlib import sha256
 import json
+import logging
 
 import pytest
 
@@ -197,7 +198,7 @@ def test_new_surface_plan_is_server_owned_routing_policy_not_model_design_prose(
         ),
         (
             lambda raw: raw["panels"][0].update(
-                judgeabilityReasons=["clear_enough", "mixed_light"]
+                judgeabilityReasons=["mixed_light", "sharp_enough"]
             ),
             "judgeability_reasons",
         ),
@@ -241,6 +242,91 @@ def test_invalid_model_evidence_fails_closed(mutate, error):
     raw = _raw()
     mutate(raw)
     with pytest.raises(pec.ProductEvidenceContractError, match=error):
+        pec.validate_and_bind(raw, _binding())
+
+
+_REASON_LOG = "wearless.product_evidence_contract"
+
+
+@pytest.mark.parametrize(
+    "reasons,expected",
+    [
+        # 한 패널에 clear_enough 와 진짜 한계가 같이 오면 모순은 "문제 있음" 쪽으로 읽는다.
+        (["clear_enough", "fold_distortion"], ["fold_distortion"]),
+        (
+            ["fold_distortion", "clear_enough", "mixed_light"],
+            ["fold_distortion", "mixed_light"],
+        ),
+        # 중복은 순서를 지키며 하나로 합친다.
+        (["mixed_light", "blur", "mixed_light"], ["mixed_light", "blur"]),
+        (["clear_enough", "clear_enough"], ["clear_enough"]),
+    ],
+)
+def test_contradictory_or_repeated_reasons_normalize_instead_of_failing_analysis(
+    reasons, expected, caplog
+):
+    raw = _raw()
+    raw["panels"][0]["judgeabilityReasons"] = reasons
+    with caplog.at_level(logging.INFO, logger=_REASON_LOG):
+        contract = pec.validate_and_bind(raw, _binding())
+    assert contract["panels"][0]["judgeabilityReasons"] == expected
+    # 모델 품질을 추적할 수 있도록 정규화 사실을 남긴다.
+    assert "judgeability_reasons_normalized" in caplog.text
+    # 정규화 결과는 저장본 재검증을 그대로 통과해야 한다(2차 검증이 같은 규칙을 본다).
+    assert pec.validate_persisted(contract) == contract
+
+
+def test_reason_normalization_never_moves_the_panel_verdict():
+    raw = _raw()
+    raw["panels"][0]["judgeabilityReasons"] = ["clear_enough", "fold_distortion"]
+    raw["panels"][1]["judgeabilityReasons"] = [
+        "partial_crop", "clear_enough", "partial_crop",
+    ]
+    baseline = pec.validate_and_bind(_raw(), _binding())
+    contract = pec.validate_and_bind(raw, _binding())
+    verdicts = [panel["judgeability"] for panel in contract["panels"]]
+    assert verdicts == [panel["judgeability"] for panel in baseline["panels"]]
+    assert verdicts == ["usable", "uncertain"]
+
+
+def test_clean_reasons_pass_through_untouched_and_unlogged(caplog):
+    with caplog.at_level(logging.INFO, logger=_REASON_LOG):
+        contract = pec.validate_and_bind(_raw(), _binding())
+    assert contract["panels"][0]["judgeabilityReasons"] == [
+        "fold_distortion", "mixed_light",
+    ]
+    assert contract["panels"][1]["judgeabilityReasons"] == ["partial_crop"]
+    assert "judgeability_reasons_normalized" not in caplog.text
+
+
+def test_clear_enough_alone_stays_the_whole_reason_list(caplog):
+    raw = _raw()
+    raw["panels"][0]["judgeabilityReasons"] = ["clear_enough"]
+    with caplog.at_level(logging.INFO, logger=_REASON_LOG):
+        contract = pec.validate_and_bind(raw, _binding())
+    assert contract["panels"][0]["judgeabilityReasons"] == ["clear_enough"]
+    assert "judgeability_reasons_normalized" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "reasons",
+    [
+        [],
+        # 목록에 없는 사유는 서버가 정의한 적 없는 어휘라 계약 위반이 맞다.
+        ["clear_enough", "sharp_enough"],
+        ["fold_distortion", None],
+        [["clear_enough"]],
+        "clear_enough",
+        None,
+    ],
+)
+def test_empty_or_unlisted_reasons_still_fail_closed(reasons):
+    raw = _raw()
+    raw["panels"][0]["judgeabilityReasons"] = reasons
+    with pytest.raises(
+        pec.ProductEvidenceContractError,
+        match="product_evidence_invalid_judgeability_reasons",
+    ):
         pec.validate_and_bind(raw, _binding())
 
 
