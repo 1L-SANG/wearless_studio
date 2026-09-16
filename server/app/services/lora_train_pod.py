@@ -63,6 +63,11 @@ def run_prefix(model_id: str, run_id: str) -> str:
     return f"facemarket/models/{model_id}/training/{run_id}"
 
 
+def result_key(model_id: str, run_id: str) -> str:
+    """파드가 올리는 채점 입력(후보별 렌더 임베딩·게이트). lora_scoring.evaluate 가 읽는다."""
+    return f"{run_prefix(model_id, run_id)}/result.json"
+
+
 @dataclass(frozen=True)
 class PodSpec:
     """이 런이 파드에 줄 것 전부. **URL 은 여기 안 남는다** — 만들 때 즉시 env 로 들어간다."""
@@ -142,7 +147,17 @@ code=$?; echo $code > /root/train_exit
 log "train exit=$code"
 for i in $(seq 1 60); do pgrep -f "pushed_" >/dev/null 2>&1 || break; sleep 10; done
 sleep 90
-if [ "$code" = "0" ] && ls /root/output/*/*.safetensors >/dev/null 2>&1; then finish "OK"; fi
+if [ "$code" = "0" ] && ls /root/output/*/*.safetensors >/dev/null 2>&1; then
+  # 학습이 끝난 그 파드에서 이어서 후보를 그린다 — 가중치가 이미 여기 있고 파이프라인도 떠 있다.
+  # 따로 파드를 또 만들면 54GB 적재를 한 번 더 한다(콜드스타트 ~10분 + 요금).
+  if [ -n "${VERIFY_PUT_URL:-}" ] && [ -f /root/verify.py ]; then
+    log "verify start"
+    /root/venv/bin/python -u /root/verify.py >>"$L" 2>&1 || log "verify 실패(학습 결과는 그대로)"
+    [ -f /root/verify/result.json ] && put "$VERIFY_PUT_URL" /root/verify/result.json \
+      && log "verify push"
+  fi
+  finish "OK"
+fi
 finish "ABNORMAL exit=$code"
 """
 POD_ARGS: tuple[str, ...] = ("bash", "-c", POD_BOOT_SCRIPT)
@@ -335,6 +350,8 @@ class LoraTrainPod:
             "DATASET_URL": self._r2.preview_url(spec.dataset_key, expires=GET_EXPIRES_SECONDS),
             "CKPT_URLS": ckpt_lines,
             "LOGS_PUT_URL": put(f"{spec.prefix}/logs.tgz", "application/gzip", PUT_EXPIRES_SECONDS),
+            "VERIFY_PUT_URL": put(f"{spec.prefix}/result.json", "application/json",
+                                  PUT_EXPIRES_SECONDS),
             "DONE_PUT_URL": put(f"{spec.prefix}/DONE", "text/plain", PUT_EXPIRES_SECONDS),
             "RUN_YAML": render_yaml(spec.config_name, sample_slots),
         }
