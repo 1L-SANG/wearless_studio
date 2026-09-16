@@ -226,3 +226,38 @@ def test_the_pod_pushes_the_scoring_input():
     assert "VERIFY_PUT_URL" in ltp.POD_BOOT_SCRIPT
     # 학습이 끝난 **그 파드**에서 이어 그린다 — 따로 만들면 54GB 적재를 한 번 더 한다.
     assert ltp.POD_BOOT_SCRIPT.index("verify start") > ltp.POD_BOOT_SCRIPT.index("train start")
+
+
+# ── 테스트컷 구성 3+1 ─────────────────────────────────────────────────────
+def test_the_test_cut_composition_is_three_closeups_and_one_fullbody():
+    """확대샷 3장 = 보정 100/50/0. 전신은 얼굴 폭이 200px 안팎이라 단계 차이가 안 보인다(실측)."""
+    from app import facemarket_admin_models as am
+
+    assert am.TEST_CUT_KIND_LIMITS == {"closeup": 3, "fullbody": 1}
+    assert sum(am.TEST_CUT_KIND_LIMITS.values()) == am.MAX_TEST_CUTS == 4
+
+
+def test_an_unknown_skin_finish_is_refused_not_defaulted():
+    """★ 조용히 100 으로 바꾸면 '있는 그대로' 를 만들려던 컷이 '매끈하게' 로 기록된다."""
+    from app import facemarket_admin_models as am
+
+    for bad in ("75", "abc", "-1"):
+        with pytest.raises(Exception) as caught:
+            am._parse_skin_finish(bad)
+        assert caught.value.status_code == 400
+    # 값이 없는 옛 호출은 그대로 통과한다(컷에 단계가 없을 뿐이다).
+    assert am._parse_skin_finish(None) is None
+    assert am._parse_skin_finish("") is None
+    for good in ("100", "50", "0", 0):
+        assert am._parse_skin_finish(good) in (0, 50, 100)
+
+
+def test_confirm_copies_the_level_in_the_same_transaction():
+    """승인과 단계 저장이 갈라지면 그 사이 나간 컷은 등록자가 고르지 않은 얼굴이다."""
+    import pathlib
+
+    text = pathlib.Path(
+        __import__("app.facemarket_admin_models", fromlist=["x"]).__file__).read_text()
+    block = text[text.index("update fm_models set status = 'verified'"):]
+    block = block[:block.index("returning")]
+    assert "skin_finish = coalesce(%s, skin_finish)" in block, "같은 UPDATE 안에 있어야 한다"

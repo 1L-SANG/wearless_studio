@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket model test cuts"])
 
 MAX_TEST_CUTS = 4
+#: 종류별 상한. 총 4장은 그대로 두고 구성만 바꿨다(2+2 → 3+1).
+#: 확대샷 3장은 **같은 원본 컷을 보정 단계 100/50/0 으로 다시 그린 것**이다 — 등록자가 그중
+#: 하나를 고르면 그 단계가 그 사람의 값이 된다(fm_models.skin_finish).
+#: 전신을 단계별로 안 만드는 이유: 전신은 얼굴 폭이 200px 안팎이라 단계 차이가 눈에 안 보인다(실측).
+TEST_CUT_KIND_LIMITS = {"closeup": 3, "fullbody": 1}
+#: 옛 이름 — 종류별 상한이 갈리기 전 값. 남은 참조를 위해 둔다.
 MAX_TEST_CUTS_PER_KIND = 2
 TEST_CUT_KINDS = {"closeup", "fullbody"}
 MAX_TEST_CUT_BYTES = 25 * 1024 * 1024
@@ -45,6 +51,8 @@ class TestCutView(CamelModel):
     kind: str
     approved: bool | None = None
     created_at: datetime
+    #: 이 컷을 만든 보정 단계 100|50|0. 옛 컷은 null — 화면·승인이 그걸 견뎌야 한다.
+    skin_finish: int | None = None
     image_uri: str
 
 
@@ -180,6 +188,8 @@ def _cut_view(row: dict, *, model_side: bool = False) -> dict:
         "kind": row["kind"],
         "approved": row.get("approved"),
         "created_at": row["created_at"],
+        # 옛 컷은 None — 화면이 이름표 없이 보여 준다(승인도 그대로 돈다).
+        "skin_finish": row.get("skin_finish"),
         "image_uri": uri,
     }
 
@@ -323,7 +333,7 @@ async def _load_owned_model(conn, user_id: str, *, for_update: bool = False) -> 
 async def _load_cuts(conn, model_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, mime, sort, kind, approved, created_at
+            """select id::text as id, mime, sort, kind, approved, created_at, skin_finish
                  from fm_model_test_cuts
                 where model_id = %s order by sort, created_at""",
             (model_id,),
@@ -352,7 +362,7 @@ async def _load_owned_cut(
     async with conn.cursor() as cur:
         await cur.execute(
             """select c.id::text as id, c.r2_key, c.mime, c.sort, c.kind,
-                      c.approved, c.created_at,
+                      c.approved, c.created_at, c.skin_finish,
                       m.id::text as model_id, m.status as model_status, m.redo_count,
                       m.display_name
                  from fm_model_test_cuts c
@@ -386,8 +396,8 @@ async def admin_model_test_cuts(
                             as closeup_count,
                           count(c.id) filter (where c.kind = 'fullbody')::integer
                             as fullbody_count,
-                          (count(c.id) filter (where c.kind = 'closeup') = 2
-                           and count(c.id) filter (where c.kind = 'fullbody') = 2)
+                          (count(c.id) filter (where c.kind = 'closeup') = 3
+                           and count(c.id) filter (where c.kind = 'fullbody') = 1)
                             as cuts_complete,
                           (m.status = 'pending' and m.redo_count > 0) as redo_requested,
                           m.confirm_requested_at, m.confirmed_at, m.redo_count,
@@ -438,6 +448,7 @@ async def admin_upload_test_cuts(
     model_id: str,
     images: list[UploadFile] = File(...),
     kind: str | None = Form(default=None),
+    skin_finish: str | None = Form(default=None),
     user_id: str = Depends(require_user),
 ):
     model_id = _canonical_id(model_id)
@@ -455,6 +466,9 @@ async def admin_upload_test_cuts(
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
         existing_slots = await _load_cut_slots(conn, model_id)
     _ensure_cut_capacity(existing_slots, kind, len(images))
+    # 보정 단계 판정은 **관리자 확인 뒤**다 — 비관리자에게는 요청 모양을 따져 줄 이유가 없고,
+    # 그 순서가 뒤집히면 403 이어야 할 응답이 400 으로 나간다.
+    finish = _parse_skin_finish(skin_finish)
 
     prepared = []
     for image in images:
@@ -495,10 +509,11 @@ async def admin_upload_test_cuts(
                 for item, sort in zip(prepared, available[:len(prepared)], strict=True):
                     await cur.execute(
                         """insert into fm_model_test_cuts
-                             (id, model_id, r2_key, mime, kind, sort)
-                           values (%s, %s, %s, %s, %s, %s)
-                           returning id::text as id, mime, sort, kind, approved, created_at""",
-                        (item["id"], model_id, item["key"], item["mime"], kind, sort),
+                             (id, model_id, r2_key, mime, kind, sort, skin_finish)
+                           values (%s, %s, %s, %s, %s, %s, %s)
+                           returning id::text as id, mime, sort, kind, approved, created_at,
+                                     skin_finish""",
+                        (item["id"], model_id, item["key"], item["mime"], kind, sort, finish),
                     )
                     rows.append(await cur.fetchone())
             await conn.commit()
@@ -512,6 +527,29 @@ async def admin_upload_test_cuts(
     return [_cut_view({**row, "model_id": model_id}) for row in rows]
 
 
+def _parse_skin_finish(value: str | None) -> int | None:
+    """폼 값 → 보정 단계. 빈 값은 None(옛 컷과 같다), 모르는 값은 400.
+
+    조용히 기본값(100)으로 바꾸지 않는다 — "있는 그대로"를 만들려던 컷이 "매끈하게" 로
+    기록되면 등록자가 고른 것과 다른 값이 그 사람의 설정이 된다.
+    """
+    from .agents.face_identity import SKIN_FINISH_LEVELS
+
+    # FastAPI 를 거치지 않는 직접 호출은 Form(default=None) 센티널을 그대로 넘긴다 —
+    # 그걸 "값이 있다" 로 읽으면 없는 오류가 생긴다. 실제 값(문자열·정수)만 본다.
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        return None
+    if str(value).strip() == "":
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except ValueError:
+        raise _err("invalid_skin_finish", "보정 단계는 100, 50, 0 중 하나예요.") from None
+    if parsed not in SKIN_FINISH_LEVELS:
+        raise _err("invalid_skin_finish", "보정 단계는 100, 50, 0 중 하나예요.")
+    return parsed
+
+
 async def _load_cut_slots(conn, model_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -522,13 +560,11 @@ async def _load_cut_slots(conn, model_id: str) -> list[dict]:
 
 
 def _ensure_cut_capacity(slots: list[dict], kind: str, incoming: int) -> None:
+    limit = TEST_CUT_KIND_LIMITS.get(kind, 0)
     kind_count = sum(slot.get("kind") == kind for slot in slots)
-    if (
-        kind_count + incoming > MAX_TEST_CUTS_PER_KIND
-        or len(slots) + incoming > MAX_TEST_CUTS
-    ):
+    if kind_count + incoming > limit or len(slots) + incoming > MAX_TEST_CUTS:
         label = "확대샷" if kind == "closeup" else "전신샷"
-        raise _err("cut_limit", f"{label}은 2장까지 올릴 수 있어요.", status=409)
+        raise _err("cut_limit", f"{label}은 {limit}장까지 올릴 수 있어요.", status=409)
 
 
 @router.delete("/admin/models/{model_id}/test-cuts/{cut_id}", status_code=204)
@@ -632,12 +668,14 @@ async def admin_send_test_cuts(
             )
             counts = await cur.fetchone()
             if (
-                counts["closeup_count"] != MAX_TEST_CUTS_PER_KIND
-                or counts["fullbody_count"] != MAX_TEST_CUTS_PER_KIND
+                counts["closeup_count"] != TEST_CUT_KIND_LIMITS["closeup"]
+                or counts["fullbody_count"] != TEST_CUT_KIND_LIMITS["fullbody"]
             ):
+                # 구성이 3+1 이 아니면 보내지 않는다 — 등록자가 고를 보정 단계가 빠진 채로
+                # 승인되면 그 사람의 단계가 기본값(100)으로 굳는다.
                 raise _err(
                     "test_cuts_incomplete",
-                    "확대샷 2장과 전신샷 2장을 모두 올려야 보낼 수 있어요.",
+                    "확대샷 3장(보정 100/50/0)과 전신샷 1장을 모두 올려야 보낼 수 있어요.",
                     status=409,
                 )
             await cur.execute(
@@ -875,16 +913,22 @@ async def confirm_test_cut(
                         where model_id = %s""",
                     (closeup_cut_id, fullbody_cut_id, locked_closeup["model_id"]),
                 )
+                # ★ 고른 확대샷의 보정 단계를 **같은 트랜잭션**에서 모델로 옮긴다.
+                #   따로 쓰면 "승인은 됐는데 단계는 예전 값" 인 중간 상태가 생기고, 그 사이
+                #   나간 착용컷은 등록자가 고르지 않은 얼굴이다.
+                #   단계 없는 옛 컷(null)은 지금 값을 그대로 둔다 — coalesce 가 그 일을 한다.
                 await cur.execute(
                     """update fm_models set status = 'verified', confirmed_at = now(),
                               confirm_consent_version = %s, cover_image_url = %s,
-                              fullbody_image_url = %s
+                              fullbody_image_url = %s,
+                              skin_finish = coalesce(%s, skin_finish)
                         where id = %s and user_id = %s and status = 'awaiting_confirm'
-                        returning confirmed_at""",
+                        returning confirmed_at, skin_finish""",
                     (
                         CONSENT_DOC_VERSION,
                         closeup_key,
                         fullbody_key,
+                        locked_closeup.get("skin_finish"),
                         locked_closeup["model_id"],
                         user_id,
                     ),

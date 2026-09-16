@@ -20,6 +20,7 @@ MODEL_ID = "11111111-1111-1111-1111-111111111111"
 ENROLLMENT_ID = "22222222-2222-2222-2222-222222222222"
 APPLICATION_ID = "33333333-3333-3333-3333-333333333333"
 CUT_ID = "44444444-4444-4444-4444-444444444444"
+CLOSEUP_THIRD_ID = "88888888-8888-8888-8888-888888888888"
 CLOSEUP_ALT_ID = "55555555-5555-5555-5555-555555555555"
 FULLBODY_CUT_ID = "66666666-6666-6666-6666-666666666666"
 FULLBODY_ALT_ID = "77777777-7777-7777-7777-777777777777"
@@ -145,7 +146,8 @@ class FakeCursor:
                 "test_cut_count": len(cuts),
                 "closeup_count": closeup_count,
                 "fullbody_count": fullbody_count,
-                "cuts_complete": closeup_count == 2 and fullbody_count == 2,
+                # 구성은 확대샷 3장(보정 100/50/0) + 전신샷 1장이다.
+                "cuts_complete": closeup_count == 3 and fullbody_count == 1,
                 "redo_requested": model["status"] == "pending" and model["redo_count"] > 0,
                 "confirm_requested_at": model.get("confirm_requested_at"),
                 "confirmed_at": model.get("confirmed_at"),
@@ -212,7 +214,10 @@ class FakeCursor:
                 if c["model_id"] == model_id
             ]
         elif query.startswith("insert into fm_model_test_cuts"):
-            if len(params) == 6:
+            finish = None
+            if len(params) == 7:
+                cut_id, model_id, key, mime, kind, sort, finish = params
+            elif len(params) == 6:
                 cut_id, model_id, key, mime, kind, sort = params
             else:
                 cut_id, model_id, key, mime, sort = params
@@ -226,6 +231,8 @@ class FakeCursor:
                 "sort": sort,
                 "approved": None,
                 "created_at": NOW,
+                # 확대샷은 어느 보정 단계로 나온 장인지 행에 남는다. 옛 컷은 None.
+                "skin_finish": finish,
             }
             cuts.append(cut)
             self.one = _cut_view(cut)
@@ -290,7 +297,11 @@ class FakeCursor:
                 if cut["model_id"] == model_id:
                     cut["approved"] = cut["id"] in approved_ids
         elif query.startswith("update fm_models set status = 'verified'"):
-            if len(params) == 5:
+            skin_finish = None
+            if len(params) == 6:
+                (consent_version, cover_key, fullbody_key, skin_finish,
+                 model_id, user_id) = params
+            elif len(params) == 5:
                 consent_version, cover_key, fullbody_key, model_id, user_id = params
             else:
                 consent_version, cover_key, model_id, user_id = params
@@ -306,8 +317,11 @@ class FakeCursor:
                     confirm_consent_version=consent_version,
                     cover_image_url=cover_key,
                     fullbody_image_url=fullbody_key,
+                    # coalesce(%s, skin_finish) — 단계 없는 옛 컷은 지금 값을 그대로 둔다.
+                    skin_finish=(skin_finish if skin_finish is not None
+                                 else model.get("skin_finish", 100)),
                 )
-                self.one = {"confirmed_at": NOW}
+                self.one = {"confirmed_at": NOW, "skin_finish": model.get("skin_finish")}
         elif query.startswith("update fm_models set status = 'pending'"):
             reason, model_id, user_id = params
             if (
@@ -446,6 +460,7 @@ def _seed_cut(
     kind="closeup",
     approved=None,
     data=None,
+    skin_finish=None,
 ):
     data = data or _png()
     key = f"private/facemarket/models/{MODEL_ID}/test-cuts/{cut_id}.png"
@@ -455,6 +470,7 @@ def _seed_cut(
         "r2_key": key,
         "mime": "image/png",
         "kind": kind,
+        "skin_finish": skin_finish,
         "sort": len(store["cuts"]),
         "approved": approved,
         "created_at": NOW,
@@ -465,11 +481,12 @@ def _seed_cut(
 
 
 def _seed_complete_cuts(store, r2, *, data=None):
+    """보낼 수 있는 구성 — 확대샷 3장(보정 100/50/0) + 전신샷 1장. 총 4장은 그대로다."""
     return [
-        _seed_cut(store, r2, cut_id=CUT_ID, kind="closeup", data=data),
-        _seed_cut(store, r2, cut_id=CLOSEUP_ALT_ID, kind="closeup", data=data),
+        _seed_cut(store, r2, cut_id=CUT_ID, kind="closeup", data=data, skin_finish=100),
+        _seed_cut(store, r2, cut_id=CLOSEUP_ALT_ID, kind="closeup", data=data, skin_finish=50),
+        _seed_cut(store, r2, cut_id=CLOSEUP_THIRD_ID, kind="closeup", data=data, skin_finish=0),
         _seed_cut(store, r2, cut_id=FULLBODY_CUT_ID, kind="fullbody", data=data),
-        _seed_cut(store, r2, cut_id=FULLBODY_ALT_ID, kind="fullbody", data=data),
     ]
 
 
@@ -576,13 +593,15 @@ def test_admin_upload_requires_a_supported_kind(test_cut_api, data):
     assert face_r2.objects == {}
 
 
-def test_admin_upload_rejects_the_third_cut_of_one_kind(test_cut_api):
+def test_admin_upload_rejects_the_fourth_closeup(test_cut_api):
+    """확대샷은 3장(보정 100/50/0)까지다 — 네 번째가 들어오면 총 4장 상한도 같이 깨진다."""
     client, store, face_r2, _public, make_token = test_cut_api
     first = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
         files=[
             ("images", ("one.png", _png(), "image/png")),
             ("images", ("two.png", _png(color=(80, 140, 220)), "image/png")),
+            ("images", ("three.png", _png(color=(10, 20, 30)), "image/png")),
         ],
         data={"kind": "closeup"},
         headers=_auth(make_token, "admin-1"),
@@ -591,14 +610,14 @@ def test_admin_upload_rejects_the_third_cut_of_one_kind(test_cut_api):
 
     third = client.post(
         f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
-        files=[("images", ("three.png", _png(color=(10, 20, 30)), "image/png"))],
+        files=[("images", ("four.png", _png(color=(1, 2, 3)), "image/png"))],
         data={"kind": "closeup"},
         headers=_auth(make_token, "admin-1"),
     )
 
     assert third.status_code == 409
     assert third.json()["error"]["code"] == "cut_limit"
-    assert len(store["cuts"]) == len(face_r2.objects) == 2
+    assert len(store["cuts"]) == len(face_r2.objects) == 3
 
 
 def test_send_commits_awaiting_confirm_when_resend_is_not_configured(test_cut_api):
@@ -913,7 +932,7 @@ def test_model_confirm_turns_on_the_face_asset(test_cut_api, monkeypatch):
     )
     confirmed = client.post(
         "/v1/facemarket/model/test-cuts/confirm",
-        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_ALT_ID},
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID},
         headers=_auth(make_token),
     )
 
@@ -936,7 +955,7 @@ def test_model_confirm_without_a_lora_row_still_verifies(test_cut_api, monkeypat
     )
     confirmed = client.post(
         "/v1/facemarket/model/test-cuts/confirm",
-        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_ALT_ID},
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID},
         headers=_auth(make_token),
     )
 
@@ -990,7 +1009,7 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
 
     confirmed = client.post(
         "/v1/facemarket/model/test-cuts/confirm",
-        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_ALT_ID},
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID},
         headers=_auth(make_token),
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -1005,10 +1024,11 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
     assert {
         cut["id"]: cut["approved"] for cut in store["cuts"]
     } == {
+        # 고른 확대샷 1 + 전신샷 1 만 approved. 나머지 보정 단계 두 장은 내려간다.
         CUT_ID: True,
         CLOSEUP_ALT_ID: False,
-        FULLBODY_CUT_ID: False,
-        FULLBODY_ALT_ID: True,
+        CLOSEUP_THIRD_ID: False,
+        FULLBODY_CUT_ID: True,
     }
     assert len(face_r2.objects) == 4, "비공개 원본은 남아야 한다"
     assert len(public_r2.objects) == 2
@@ -1026,8 +1046,8 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
         headers=_auth(make_token, "admin-1"),
     )
     assert admin_view.status_code == 200
-    assert admin_view.json()["closeupCount"] == 2
-    assert admin_view.json()["fullbodyCount"] == 2
+    assert admin_view.json()["closeupCount"] == 3     # 보정 100/50/0
+    assert admin_view.json()["fullbodyCount"] == 1     # 전신은 단계 차이가 안 보인다
     assert admin_view.json()["cutsComplete"] is True
     assert admin_view.json()["confirmedAt"] == NOW.isoformat().replace("+00:00", "Z")
 
