@@ -47,7 +47,8 @@ def test_upscaler_is_called_once_with_the_ceil_scale():
     out, meta = fi.crop_1024_with_meta(_photo(), plan, upscaler=up)
     assert out.size == (fi.CROP, fi.CROP)
     assert calls == [((540, 540), 2)]
-    assert meta == {"applied": True, "method": "esrgan", "k": 2, "side": 540}
+    # blend 는 보정 단계(skin_finish)가 정한다 — 기본 100 은 1.0 = 확대기 결과 그대로.
+    assert meta == {"applied": True, "method": "esrgan", "k": 2, "side": 540, "blend": 1.0}
 
 
 def test_scale_is_capped_at_the_models_native_four():
@@ -126,7 +127,8 @@ def test_run_face_pass_uses_the_backend_upscaler_and_records_it():
     with _fake_plan():
         res = fi.run_face_pass(buf.getvalue(), backend, seeds=(42,))
     assert backend.scales == [2]
-    assert res.meta["crop_upscale"] == {"applied": True, "method": "esrgan", "k": 2, "side": 540}
+    assert res.meta["crop_upscale"] == {"applied": True, "method": "esrgan", "k": 2,
+                                        "side": 540, "blend": 1.0}
 
     backend2 = Backend()
     with _fake_plan():

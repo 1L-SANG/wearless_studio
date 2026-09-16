@@ -31,7 +31,8 @@ UPSCALE_SCOPE_OFF = "off"
 
 def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
                   upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True,
-                  mask_lock: bool = False) -> dict:
+                  mask_lock: bool = False,
+                  skin_finish: int = fi.SKIN_FINISH_DEFAULT) -> dict:
     """해시에 들어가는 값 전부. 사람이 읽을 수 있는 형태 그대로 남긴다(해시만 남기면 못 되짚는다)."""
     return {
         "schema": RECIPE_SCHEMA,
@@ -42,6 +43,9 @@ def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = 
         "steps": fi.RENDER_STEPS,
         "guidance": fi.RENDER_GUIDANCE,
         "negative": fi.RENDER_NEGATIVE,
+        # 피부 보정 단계. 네거티브 문구와 크롭 확대 blend 를 동시에 바꾸므로 단계가 다르면
+        # 다른 산물이다 — 컷 원장에서 "이 얼굴은 어느 단계로 나왔나"를 되짚는 값이다.
+        "skin_finish": int(skin_finish),
         "crop": fi.CROP,
         "crop_face_width_mult": 3,          # plan_from_box: side = 3 × 얼굴폭
         "ellipse": list(fi.ELLIPSE),
