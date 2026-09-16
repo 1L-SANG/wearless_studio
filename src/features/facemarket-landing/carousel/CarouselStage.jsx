@@ -108,7 +108,7 @@ export function CarouselStage({ items, controller }) {
   useEffect(() => {
     if (!(stage.height > 0)) return undefined;
 
-    const metrics = metricsForAspect(stage.width / stage.height);
+    const metrics = metricsForAspect(stage.width / stage.height, stage.width);
     // 계수는 높이만이 아니라 폭에서도 잰다(cssProjection.js fillScale 머리말) — 데스크톱에서
     // 보이는 5장이 폭을 채운다. perspective 도 같은 k 로 걸어야 원근 불변식이 선다.
     const k = fillScale(stage.width, stage.height, metrics);
@@ -242,12 +242,12 @@ export function CarouselStage({ items, controller }) {
   }, [controller.activeIndex]);
 
   const ready = stage.height > 0;
-  const metrics = ready ? metricsForAspect(stage.width / stage.height) : null;
+  const metrics = ready ? metricsForAspect(stage.width / stage.height, stage.width) : null;
   const k = ready ? fillScale(stage.width, stage.height, metrics) : 0;
 
   return (
     <div
-      aria-label="가상 모델 예시 이미지"
+      aria-label="모델 이미지"
       className={s.stage}
       onKeyDown={controller.handleKeyDown}
       ref={stageRef}
@@ -282,16 +282,6 @@ export function CarouselStage({ items, controller }) {
           type="button"
         >
           <img alt={item.alt} className={s.photo} draggable="false" src={item.src} />
-          {/* 카드에는 '예시' 고지만 붙는다. 번호는 사용자 지시로 뺐다(2026-09-02) — 이름·연도
-              같은 메타는 애초에 지어내지 않으므로, 카드 위에 남는 글자는 이 고지뿐이다.
-              고지는 지우지 마라: 이미지만 잘려 공유돼도 가상 모델이라는 사실이 같이 나가야 한다
-              (PRD §13-5 의 '예시 사진과 내 사진의 구분 장치'). 순서는 img 의 alt 와 메타 바의
-              큰 인덱스가 계속 말해 준다.
-              화면에만 보이면 된다 — alt 가 이미 "가상 모델 예시 이미지 01" 이라 이걸 읽히면
-              스크린리더가 "…01 예시" 로 겹쳐 읽는다. */}
-          <span aria-hidden="true" className={s.badge}>
-            <span className={s.badgeNotice}>예시</span>
-          </span>
         </button>
       ))}
     </div>

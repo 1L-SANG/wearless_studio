@@ -301,7 +301,7 @@
    되돌려 폭 = 뷰포트 폭으로 만들고, 히어로·메타 바는 본문 열로 다시 들여쓴다. 폭이
    줄면 종횡비가 커져 metricsForAspect 버킷이 틀어진다. */
 .screen {
-  --fm-stage-track: clamp(24rem, 78vh, 35rem);   /* 폰: 원본 --stage-height 그대로 */
+  --fm-stage-track: clamp(20rem, 110vw, 28rem);   /* 폰: 화면 폭에 맞춰 이미지 크기를 제한한다. */
 
   position: relative;
   display: grid;
@@ -310,8 +310,7 @@
   margin-inline: calc(var(--fm-pad) * -1);
 }
 
-/* 폰은 세로가 남지 않아 한 화면에 안 들어간다(원본도 폰은 스크롤이다). 스테이지가 78vh
-   여야 aspect 가 1.1 밑으로 떨어져 폰 버킷(cardWidth 2.05, depthScale 0.55)이 잡힌다.
+/* 폰은 폭 기준의 스테이지로 이미지가 긴 화면에서 과도하게 커지는 것을 막는다.
    태블릿부터 뷰포트 맞춤이다. */
 @media (min-width: 48rem) {
   .screen {
@@ -416,11 +415,9 @@
 @media (min-width: 80rem)  { .heroOrb :global(.orb-bg) { --orb-scale: 2.3; } }
 @media (min-width: 100rem) { .heroOrb :global(.orb-bg) { --orb-scale: 3.0; } }
 
-/* 폰은 히어로가 낮고 **왼쪽 정렬**이다(.hero 가 justify-items: start / text-align: left).
-   가운데(50%)에 두면 빛이 제목 오른쪽 여백만 밝히고 정작 글자 뒤는 비어 보인다 — 중심을
-   제목 덩어리 쪽으로 끌어온다. 크기는 48rem 미만 기본값(1.7)이 이미 한 단계 작다. */
+/* 폰에서도 가운데 정렬된 제목 뒤에 빛의 중심을 맞춘다. */
 @media (max-width: 47.99rem) {
-  .heroOrb { top: 58%; left: 34%; }
+  .heroOrb { top: 58%; left: 50%; }
 }
 
 /* 색 회전은 아주 느리지만 이 첫 화면은 캐러셀이 이미 움직인다. 모션을 줄여 달라고 한
@@ -654,18 +651,15 @@
   .heroTitle { font-size: clamp(2.6rem, 5.2vw, 4rem); }
 }
 
-/* 폰은 원본처럼 왼쪽 정렬이고 헤어라인은 접는다(폭이 없다). */
+/* 폰에서도 제목, 리드문, 버튼, 혜택을 가운데 맞춘다. 헤어라인은 좁은 폭에서 접는다. */
 @media (max-width: 47.99rem) {
-  .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
-  .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
+  .hero { padding: 2rem var(--fm-pad) 1rem; }
+  .kicker { justify-content: center; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
   .kicker span { display: none; }
   /* 폰: 27자 영문이 두 줄("create your own / online model")로 접히는 크기. 원본 17vw 는
      두 단어 제목 기준이라 세 줄로 갈라진다. */
   .heroTitle { font-size: clamp(2.4rem, 10vw, 3.2rem); }
-  /* 폰은 히어로가 왼쪽 정렬이라 리드문도 왼쪽. 데스크탑의 center 가 그대로 오면 <br> 뒤
-     둘째 줄만 상자 안에서 가운데로 밀려 들쭉날쭉해 보인다(실측). 캡션 줄도 같은 이유. */
-  .heroLead, .heroCaption { text-align: left; }
-  .heroCtaRow { align-items: flex-start; }
+  .heroLead, .heroCaption { text-align: center; }
 }
 
 /* ---- 리드 + CTA(첫 화면 아래) ---- */
@@ -711,19 +705,8 @@
   letter-spacing: 0.42em;
 }
 
-/* 가상 모델 고지 — 원본에서 작품명·연도가 서던 자리. 한글이라 기본 자간이다. */
-.galleryNotice {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  margin: 0;
-  color: var(--fm-muted);
-  font: 400 clamp(0.8rem, 1vw, 0.9rem)/1.5 var(--font-body);
-}
-
 /* (2026-09-03 저녁) 좌우 화살표 버튼까지 오너 지시로 빠져 .galleryControls 줄은 사라졌다 —
-   메타 바는 고지문 + 신뢰 pill(.trustPills) 두 줄이다. 조작은 드래그·스와이프·키보드. */
+   메타 바에는 신뢰 pill(.trustPills)이 남는다. 조작은 드래그·스와이프·키보드. */
 
 /* 큰 인덱스 — 원본 .sequence-counter. 히어로와 같은 세리프다(원본에서 이 숫자가 페이지의
    두 번째 디스플레이 요소였다). Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로

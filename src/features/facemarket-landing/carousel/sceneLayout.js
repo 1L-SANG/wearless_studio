@@ -29,10 +29,19 @@
    데스크톱 3: ±2 까지 온전히, ±3 부터 안 보인다 → 첫 화면에 카드 **5장**. 원본(코덱스 4)은
    ±3 이 화면 양끝에 잘린 조각으로 걸려 7장이었는데, 사용자가 5장으로 줄여 달라고 했다.
    넘길 때는 들어오는 카드가 3→2 로 움직이는 동안 페이드인한다(원본이 4→3 에서 하던 것). */
-export function metricsForAspect(aspect) {
-  if (aspect < 1.1) return { cardWidth: 2.05, cardHeight: 2.87, spacing: 1.95, depthScale: 0.55, edgeFade: 1.9 };
-  if (aspect < 2.3) return { cardWidth: 1.7, cardHeight: 2.38, spacing: 1.98, depthScale: 0.8, edgeFade: 2.6 };
-  return { cardWidth: 1.64, cardHeight: 2.3, spacing: 2.25, depthScale: 1, edgeFade: 3 };
+export function metricsForAspect(aspect, stageWidth = Infinity) {
+  const metrics = aspect < 1.1
+    ? { cardWidth: 2.05, cardHeight: 2.87, spacing: 1.95, depthScale: 0.55, edgeFade: 1.9 }
+    : aspect < 2.3
+      ? { cardWidth: 1.7, cardHeight: 2.38, spacing: 1.98, depthScale: 0.8, edgeFade: 2.6 }
+      : { cardWidth: 1.64, cardHeight: 2.3, spacing: 2.25, depthScale: 1, edgeFade: 3 };
+
+  // 모바일은 카드 중심 간격을 유지하고 사진만 8% 줄여 사이에 여백을 만든다.
+  if (stageWidth < 768) {
+    metrics.cardWidth *= 0.92;
+    metrics.cardHeight *= 0.92;
+  }
+  return metrics;
 }
 
 /* |offset| 0..4. X 는 spacing 배수, Z 는 depthScale 배수(world), ROT 는 라디안.

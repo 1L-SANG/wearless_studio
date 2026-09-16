@@ -50,12 +50,13 @@ test('금지된 소재 경로는 패턴에서 떨어진다', () => {
   }
 });
 
-test('alt 는 예시라고 밝힌다', () => {
-  // 화면 고지(GallerySection)와 별개로, 스크린리더에도 "실제 등록 모델이 아니다"가
-  // 전달돼야 한다. 카드 메타는 번호뿐이라 alt 가 유일한 설명이다.
+test('alt 로 각 모델 이미지를 구분할 수 있다', () => {
+  const labels = new Set();
   for (const model of LANDING_MODELS) {
-    assert.ok(model.alt.includes('예시'), `alt 에 예시 고지가 없다: ${model.alt}`);
+    assert.match(model.alt, /^모델 이미지 \d+$/);
+    labels.add(model.alt);
   }
+  assert.equal(labels.size, LANDING_MODELS.length);
 });
 
 test('src 가 가리키는 파일이 public 에 실제로 있다', () => {

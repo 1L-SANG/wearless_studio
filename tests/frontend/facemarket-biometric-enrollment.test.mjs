@@ -1008,7 +1008,7 @@ test('재지원은 이전 입력만 복원하고 사진과 다섯 체크는 다�
   } finally { await harness.close(); }
 });
 
-test('공개 지원 시작 화면은 지원서 링크와 가격, 키보드 안내 말풍선을 렌더한다', async () => {
+test('공개 지원 시작 화면은 서비스 설명과 수익 인용문, 지원서 링크와 정산 안내를 렌더한다', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/facemarket-landing/pages/ApplyStartPage.jsx', exportName: 'ApplyStartPage', initialStates: [], api: {},
   });
@@ -1016,8 +1016,11 @@ test('공개 지원 시작 화면은 지원서 링크와 가격, 키보드 안�
     const shell = harness.render();
     const tree = shell.props.children();
     assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/apply' && node.props.children === '지원서 쓰기'));
-    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '14,900원'));
-    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '49,900원'));
+    assert.ok(findTree(tree, (node) => node.type === 'p' && node.props.children === '내가 등록한 얼굴을 이용해서 셀러가 쇼핑몰에 쓸 상세페이지를 AI로 만들어요'));
+    const quote = findTree(tree, (node) => node.type === 'blockquote');
+    assert.ok(quote);
+    assert.ok(findTree(quote, (node) => node.type === 'b' && node.props.children === '10만원'));
+    assert.equal(findTree(tree, (node) => node.type === 'p' && node.props.children === '가상 모델 사진이에요'), null);
     assert.ok(findTree(tree, (node) => node.props.tabIndex === 0 && node.props['aria-describedby'] === 'apply-settlement-tooltip'));
     assert.ok(findTree(tree, (node) => node.type === 'summary' && node.props.children === 'FaceMarket에서 모델은 무슨 일을 하나요?'));
     assert.equal(findTree(tree, (node) => node.type === 'summary' && node.props.children === '제 얼굴이 확실히 지켜지는 건가요?'), null);
