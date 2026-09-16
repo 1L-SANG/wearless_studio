@@ -23,7 +23,9 @@ from . import face_mask_lock as fml
 from .face_identity_qwen import RENDER_MODEL_ID
 
 #: 필드 구성 판. 필드를 더하거나 이름을 바꿀 때만 올린다.
-RECIPE_SCHEMA = 1
+#: 2 = skin_finish 가 정수 단계(100/50/0)에서 **코드**(prod/texture/soft50)로 바뀐 판.
+#:     값의 뜻이 달라졌으니 옛 id 와 섞여 보이면 안 된다(2026-09-16).
+RECIPE_SCHEMA = 2
 #: 얼굴 크롭 확대 정책. 화면 전체 확대는 쓰지 않는다 — 옷 픽셀이 바뀐다(2026-09-11 G 대 H 실측).
 UPSCALE_SCOPE_FACE_CROP = "face_crop"
 UPSCALE_SCOPE_OFF = "off"
@@ -32,7 +34,7 @@ UPSCALE_SCOPE_OFF = "off"
 def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = None,
                   upscale_scope: str = UPSCALE_SCOPE_FACE_CROP, crop_pad: bool = True,
                   mask_lock: bool = False,
-                  skin_finish: int = fi.SKIN_FINISH_DEFAULT) -> dict:
+                  skin_finish: str = fi.SKIN_FINISH_DEFAULT) -> dict:
     """해시에 들어가는 값 전부. 사람이 읽을 수 있는 형태 그대로 남긴다(해시만 남기면 못 되짚는다)."""
     return {
         "schema": RECIPE_SCHEMA,
@@ -43,9 +45,9 @@ def recipe_fields(*, model_id: str = RENDER_MODEL_ID, lora_sha256: str | None = 
         "steps": fi.RENDER_STEPS,
         "guidance": fi.RENDER_GUIDANCE,
         "negative": fi.RENDER_NEGATIVE,
-        # 피부 보정 단계. 네거티브 문구와 크롭 확대 blend 를 동시에 바꾸므로 단계가 다르면
-        # 다른 산물이다 — 컷 원장에서 "이 얼굴은 어느 단계로 나왔나"를 되짚는 값이다.
-        "skin_finish": int(skin_finish),
+        # 피부 보정. 네거티브 문구와 크롭 확대 blend 를 동시에 바꾸므로 보정이 다르면
+        # 다른 산물이다 — 컷 원장에서 "이 얼굴은 어느 보정으로 나왔나"를 되짚는 값이다.
+        "skin_finish": fi.skin_finish_code(skin_finish),
         "crop": fi.CROP,
         "crop_face_width_mult": 3,          # plan_from_box: side = 3 × 얼굴폭
         "ellipse": list(fi.ELLIPSE),

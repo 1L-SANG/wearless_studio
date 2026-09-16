@@ -671,26 +671,53 @@ def plan_face_pass(image_bytes: bytes, model_dir: str | None = None) -> FacePlan
     return plan_from_image(_decode(image_bytes), model_dir)
 
 
-#: 피부 보정 단계. 등록자가 테스트컷 승인 때 고른다(셀러는 못 바꾼다).
-SKIN_FINISH_LEVELS: tuple[int, ...] = (0, 50, 100)
-SKIN_FINISH_DEFAULT = 100
-#: 0 단계가 게이트를 못 넘었을 때 한 단계 올려 다시 그린다 — 아래 skin_finish_plan 주석 참조.
-SKIN_FINISH_RETRY = 50
+#: 피부 보정 **3종**(2026-09-16 대표 결정). 관리자가 테스트컷 12장을 보고 하나를 골라
+#: 등록자에게 보낸다 — 그 값이 그 사람의 설정이 된다(fm_models.skin_finish_code).
+#:
+#:   prod     업스케일러 100% · 네거티브 끔   ← 지금 운영과 **바이트 동일**. 기본값.
+#:   texture  업스케일러 100% · 네거티브 켬   ← 모공·잡티가 살아난다.
+#:   soft50   업스케일러  50% · 네거티브 끔
+#:
+#: 효과는 사람마다 갈린다(2026-09-16 실측, 파드 v7·v6): v7 은 네 컷 모두 피부 결 +11~19%,
+#: v6 는 sc_1 0.52→0.50 · sc_2 0.55→0.44 로 내려가고 hz_d7 만 0.56→0.66 으로 올랐다.
+#: 그래서 하나를 정하지 않고 **셋을 다 만들어 보여 주고 고르게** 한다.
+SKIN_FINISH_CODES: tuple[str, ...] = ("prod", "texture", "soft50")
+SKIN_FINISH_DEFAULT = "prod"
+#: soft50 이 게이트에 떨어지면 **한 번만** prod 로 다시 그린다(아래 apply_face_pass).
+#: 옛 0 단계 폴백(0 → 50)이 있던 자리다 — 확대기를 아예 끄는 단계가 없어지면서 옮겼다.
+SKIN_FINISH_RETRY_FROM = "soft50"
+SKIN_FINISH_RETRY = "prod"
+#: 코드 → (크롭 확대 blend, 네거티브를 쓰는가).
+_SKIN_FINISH_PLAN: dict[str, tuple[float, bool]] = {
+    "prod": (1.0, False), "texture": (1.0, True), "soft50": (0.5, False),
+}
+#: 옛 정수 단계 → 코드. 100 은 그때도 지금도 "지금 운영 그대로" 다. 50·0 은 네거티브가
+#: 켜져 있었으니 가장 가까운 자리로 보낸다 — 옛 행이 있어도 화면·렌더가 안 깨지게만 한다.
+LEGACY_SKIN_FINISH: dict[int, str] = {100: "prod", 50: "soft50", 0: "texture"}
 
 
-def skin_finish_plan(level: int | None, negative: str) -> tuple[int, float, str]:
-    """보정 단계 → (정규화한 단계, 크롭 확대 blend, 네거티브 문구).
+def skin_finish_code(value) -> str:
+    """무엇이 오든 코드 하나로. 모르는 값은 기본값(prod = 지금 운영)."""
+    if isinstance(value, bool) or value is None:
+        return SKIN_FINISH_DEFAULT
+    if isinstance(value, int):
+        return LEGACY_SKIN_FINISH.get(value, SKIN_FINISH_DEFAULT)
+    text = str(value).strip().lower()
+    return text if text in SKIN_FINISH_CODES else SKIN_FINISH_DEFAULT
+
+
+def skin_finish_plan(level, negative: str) -> tuple[str, float, str]:
+    """보정 → (정규화한 코드, 크롭 확대 blend, 네거티브 문구).
 
     2026-09-16 16장 실측에서 피부 결을 실제로 바꾼 손잡이는 **네거티브 문구**였다
     (피부 결 +11~19%, 닮은 점수 변화는 ±0.03 오차 범위). 업스케일러 강도는 100↔50 차이가
-    거의 없어 단계 이름값만 한다 — 그래서 확대기를 아예 끄는 건 0 단계뿐이다.
+    작아서 soft50 은 중간 자리를 맡는다.
 
-    모르는 값은 100 으로 본다. 100 은 **지금과 바이트 동일**한 경로다(blend 1.0 + 빈 네거티브).
+    prod 는 **지금과 바이트 동일**한 경로다(blend 1.0 + 빈 네거티브 = 넘길 인자가 없다).
     """
-    value = int(level) if level in SKIN_FINISH_LEVELS else SKIN_FINISH_DEFAULT
-    if value == SKIN_FINISH_DEFAULT:
-        return value, 1.0, ""
-    return value, (0.5 if value == SKIN_FINISH_RETRY else 0.0), negative
+    code = skin_finish_code(level)
+    blend, use_negative = _SKIN_FINISH_PLAN[code]
+    return code, blend, (negative if use_negative else "")
 
 
 def crop_1024_with_meta(image: Image.Image, plan: FacePlan, *, upscaler=None,
@@ -1616,9 +1643,9 @@ class FaceIdentitySpec:
     #: 보지 않는다(identity=None). 워커가 with_references 로 채운다 — 이게 빠지면 얼굴이 바뀌었는지
     #: 기하·색만 보고 통과시킨다(2026-09-11 잡 6c270b84: applied 3컷 전부 identity=None).
     references: tuple[tuple[float, ...], ...] | None = None
-    #: 피부 보정 단계(fm_models.skin_finish). 등록자가 테스트컷 승인 때 고른 값이고 셀러는 못 바꾼다.
-    #: None·모르는 값은 100 = 지금 그대로다(skin_finish_plan).
-    skin_finish: int | None = None
+    #: 피부 보정(fm_models.skin_finish_code). 관리자가 테스트컷을 보낼 때 고른 값이고
+    #: 셀러는 못 바꾼다. None·모르는 값은 prod = 지금 그대로다(skin_finish_plan).
+    skin_finish: str | None = None
 
 
 def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
@@ -1642,7 +1669,7 @@ def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
         str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN,
         sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None,
         backend_url=str(backend).strip() if isinstance(backend, str) and backend.strip() else None,
-        skin_finish=int(finish) if isinstance(finish, int) else None)
+        skin_finish=skin_finish_code(finish) if finish is not None else None)
 
 
 def reference_embeddings(images, model_dir: str | None = None) -> tuple[tuple[float, ...], ...]:
@@ -2034,14 +2061,14 @@ async def apply_face_pass(
                          result.applied, _meta_for_log(result.meta))
 
     if not result.applied and _outcome_reason(result) == "gate_failed" \
-            and result.meta.get("skin_finish") == 0:
-        # 0 단계("있는 그대로")만 컷이 비면 안 된다. 실존 모델 컷은 판정에 떨어지면 **빈 컷**으로
-        # 끝난다(원본 = provider 가 그린 남의 얼굴이라 못 내보낸다). 0 은 확대기를 아예 안 써서
-        # 게이트(신원·기하)가 더 자주 걸리는 단계라, 한 칸 올려(50) 딱 한 번 더 그린다.
-        # 그래도 떨어지면 지금까지와 같이 FacePassUnavailable 이다 — 100 으로까지 올리지 않는다.
-        # 등록자가 "있는 그대로"를 골랐는데 조용히 가장 매끈한 단계로 나가면 그건 다른 상품이다.
-        log.info("face_identity: 보정 0 단계가 게이트에 떨어졌다 — %d 단계로 한 번 더 그린다",
-                 SKIN_FINISH_RETRY)
+            and result.meta.get("skin_finish") == SKIN_FINISH_RETRY_FROM:
+        # soft50 만 컷이 비면 안 된다. 실존 모델 컷은 판정에 떨어지면 **빈 컷**으로 끝난다
+        # (원본 = provider 가 그린 남의 얼굴이라 못 내보낸다). soft50 은 확대기를 반만 써서
+        # 게이트(신원·기하)가 더 자주 걸리는 쪽이라, prod 로 딱 한 번 더 그린다.
+        # 그래도 떨어지면 지금까지와 같이 FacePassUnavailable 이다 — texture 로는 안 간다
+        # (네거티브가 켜지면 그건 고른 것과 다른 상품이다).
+        log.info("face_identity: 보정 %s 가 게이트에 떨어졌다 — %s 로 한 번 더 그린다",
+                 SKIN_FINISH_RETRY_FROM, SKIN_FINISH_RETRY)
         retry_task = _run(live, SKIN_FINISH_RETRY)
         if retry_task is not None:
             retried = await retry_task

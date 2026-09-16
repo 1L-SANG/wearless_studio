@@ -215,7 +215,8 @@ def test_the_result_carries_no_bytes_or_urls():
 
     text = json.dumps(result)
     assert "http" not in text and "weights-bytes" not in text
-    assert set(result) == {"id", "version", "key", "sha256", "bytes", "uploaded", "enabled"}
+    assert set(result) == {"id", "version", "key", "sha256", "bytes", "uploaded", "enabled",
+                           "test_cut_build_id"}
 
 
 # ── 파드가 결과를 올리는 자리 ─────────────────────────────────────────────
@@ -228,36 +229,53 @@ def test_the_pod_pushes_the_scoring_input():
     assert ltp.POD_BOOT_SCRIPT.index("verify start") > ltp.POD_BOOT_SCRIPT.index("train start")
 
 
-# ── 테스트컷 구성 3+1 ─────────────────────────────────────────────────────
-def test_the_test_cut_composition_is_three_closeups_and_one_fullbody():
-    """확대샷 3장 = 보정 100/50/0. 전신은 얼굴 폭이 200px 안팎이라 단계 차이가 안 보인다(실측)."""
+# ── 테스트컷 구성 12장 ────────────────────────────────────────────────────
+def test_the_test_cut_composition_is_three_finishes_of_two_and_two():
+    """보정 3종 × (확대 2 + 전신 2) = 12장. 한 묶음(4장)만 등록자에게 간다."""
     from app import facemarket_admin_models as am
+    from app.services import test_cut_build
 
-    assert am.TEST_CUT_KIND_LIMITS == {"closeup": 3, "fullbody": 1}
-    assert sum(am.TEST_CUT_KIND_LIMITS.values()) == am.MAX_TEST_CUTS == 4
+    assert am.MAX_TEST_CUTS_PER_KIND == 2
+    assert am.CUTS_PER_FINISH == {"closeup": 2, "fullbody": 2}
+    assert am.TEST_CUT_KIND_LIMITS == {"closeup": 6, "fullbody": 6}
+    assert sum(am.CUTS_PER_FINISH.values()) * 3 == am.MAX_TEST_CUTS == 12
+    # 생성 쪽과 상한이 같아야 한다 — 갈라지면 12장을 만들어 놓고 저장에서 막힌다.
+    assert test_cut_build.EXPECTED_CUTS == am.MAX_TEST_CUTS
 
 
 def test_an_unknown_skin_finish_is_refused_not_defaulted():
-    """★ 조용히 100 으로 바꾸면 '있는 그대로' 를 만들려던 컷이 '매끈하게' 로 기록된다."""
+    """★ 조용히 prod 로 바꾸면 '결 살리기' 로 만들려던 컷이 '매끈하게' 로 기록된다."""
     from app import facemarket_admin_models as am
 
-    for bad in ("75", "abc", "-1"):
+    # "100" 같은 옛 정수 문자열은 **거부**한다 — 뜻이 다른 값이 조용히 prod 가 되면 안 된다.
+    for bad in ("75", "abc", "-1", "100", "50"):
         with pytest.raises(Exception) as caught:
             am._parse_skin_finish(bad)
         assert caught.value.status_code == 400
-    # 값이 없는 옛 호출은 그대로 통과한다(컷에 단계가 없을 뿐이다).
+    # 값이 없는 직접 호출은 None 이다 — 업로드 라우트가 그걸 400 으로 막는다.
     assert am._parse_skin_finish(None) is None
     assert am._parse_skin_finish("") is None
-    for good in ("100", "50", "0", 0):
-        assert am._parse_skin_finish(good) in (0, 50, 100)
+    for good in ("prod", "texture", "soft50"):
+        assert am._parse_skin_finish(good) == good
+    # 대소문자·앞뒤 공백은 봐준다(관리자 화면이 그대로 보내는 값이다).
+    assert am._parse_skin_finish(" TEXTURE ") == "texture"
 
 
-def test_confirm_copies_the_level_in_the_same_transaction():
-    """승인과 단계 저장이 갈라지면 그 사이 나간 컷은 등록자가 고르지 않은 얼굴이다."""
+def test_send_records_the_finish_in_the_same_transaction():
+    """★ 보정을 정하는 자리는 **전송**이다(2026-09-16).
+
+    보내기와 보정 저장이 갈라지면 "보내긴 했는데 보정은 예전 값" 인 중간 상태가 생기고,
+    등록자가 확정하는 순간 고르지도 않은 얼굴이 그 사람의 상품이 된다.
+    """
     import pathlib
 
     text = pathlib.Path(
         __import__("app.facemarket_admin_models", fromlist=["x"]).__file__).read_text()
-    block = text[text.index("update fm_models set status = 'verified'"):]
+    block = text[text.index("update fm_models set status = 'awaiting_confirm'"):]
     block = block[:block.index("returning")]
-    assert "skin_finish = coalesce(%s, skin_finish)" in block, "같은 UPDATE 안에 있어야 한다"
+    assert "skin_finish_code = %s" in block, "같은 UPDATE 안에 있어야 한다"
+
+    # 반대로 확정은 보정을 **다시 쓰지 않는다** — 넷이 전부 같은 보정이라 고를 것이 없다.
+    confirm = text[text.index("update fm_models set status = 'verified'"):]
+    confirm = confirm[:confirm.index("returning")]
+    assert "skin_finish" not in confirm

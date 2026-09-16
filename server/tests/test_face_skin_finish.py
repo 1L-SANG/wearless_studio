@@ -1,18 +1,19 @@
-"""피부 보정 단계 — 등록자가 고르고, 셀러는 못 바꾼다.
+"""피부 보정 3종 — **관리자가** 테스트컷 12장을 보고 고르고, 등록자·셀러는 못 바꾼다.
 
-  100 = 지금 그대로(네거티브 없음 + 얼굴 크롭 ESRGAN 100%)
-   50 = 네거티브 켬 + ESRGAN 결과와 Lanczos 확대본을 0.5로 섞음
-    0 = 네거티브 켬 + ESRGAN 끔
+  prod     업스케일러 100% · 네거티브 끔   = 지금 운영 그대로. 기본값.
+  texture  업스케일러 100% · 네거티브 켬   = 모공·잡티가 살아난다.
+  soft50   업스케일러  50% · 네거티브 끔
 
 2026-09-16 16장 실측에서 피부 결을 실제로 바꾼 손잡이는 **네거티브 문구**였다(피부 결 +11~19%,
-닮은 점수 변화는 ±0.03 오차 범위). 업스케일러 강도는 100↔50 차이가 거의 없다 — 단계 이름값이다.
+닮은 점수 변화는 ±0.03 오차 범위). 효과는 사람마다 갈려서(v7 은 네 컷 다 올랐고 v6 는 두 컷이
+내려갔다) 하나를 정하지 않고 셋을 다 만들어 보여 준다.
 
 이 파일이 지키는 것:
-  · 100 은 **이 PR 이전과 바이트가 같다**(단계가 기본 경로를 건드리면 안 된다)
-  · 0 은 확대기를 아예 **안 부른다**(돈·시간도 안 쓴다)
-  · 단계마다 파드로 가는 네거티브 문구가 다르다
-  · 0 이 게이트에 떨어지면 50 으로 **한 번만** 더 그린다 — 100 까지 올리지 않는다
-  · 레시피 해시가 단계마다 다르다(컷 원장에서 되짚을 수 있어야 한다)
+  · prod 는 **이 변경 이전과 바이트가 같다**(보정이 기본 경로를 건드리면 안 된다)
+  · 보정마다 파드로 가는 네거티브 문구가 다르다 — texture 만 켠다
+  · soft50 이 게이트에 떨어지면 prod 로 **한 번만** 더 그린다 — texture 로는 안 간다
+  · 레시피 해시가 보정마다 다르다(컷 원장에서 되짚을 수 있어야 한다)
+  · 옛 정수 단계(100/50/0)가 와도 안 죽는다 — 행이 남아 있어도 화면·렌더가 돌아야 한다
 GPU 는 쓰지 않는다 — 확대기는 가짜 함수, 렌더는 가짜 백엔드다.
 """
 
@@ -46,19 +47,29 @@ def _up(calls):
 
 
 # ── 단계 해석 ───────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("level,expected", [
-    (100, (100, 1.0, "")),
-    (50, (50, 0.5, NEG)),
-    (0, (0, 0.0, NEG)),
+@pytest.mark.parametrize("code,expected", [
+    ("prod", ("prod", 1.0, "")),
+    ("texture", ("texture", 1.0, NEG)),
+    ("soft50", ("soft50", 0.5, "")),
 ])
-def test_each_level_maps_to_a_blend_and_a_negative(level, expected):
+def test_each_finish_maps_to_a_blend_and_a_negative(code, expected):
+    assert fi.skin_finish_plan(code, NEG) == expected
+
+
+@pytest.mark.parametrize("level,expected", [
+    (100, ("prod", 1.0, "")),
+    (50, ("soft50", 0.5, "")),
+    (0, ("texture", 1.0, NEG)),
+])
+def test_old_integer_levels_still_resolve(level, expected):
+    """옛 행(100/50/0)이 남아 있어도 렌더가 죽지 않는다 — 가장 가까운 자리로 간다."""
     assert fi.skin_finish_plan(level, NEG) == expected
 
 
-@pytest.mark.parametrize("level", [None, 7, -1, "50", 1000])
-def test_an_unknown_level_falls_back_to_the_default(level):
+@pytest.mark.parametrize("value", [None, 7, -1, "nope", 1000, "", True])
+def test_an_unknown_finish_falls_back_to_the_default(value):
     """모르는 값에서 조용히 다른 그림이 나오면 안 된다 — 기본은 '지금 그대로'다."""
-    assert fi.skin_finish_plan(level, NEG) == (100, 1.0, "")
+    assert fi.skin_finish_plan(value, NEG) == ("prod", 1.0, "")
 
 
 # ── 크롭 확대 ───────────────────────────────────────────────────────────────
@@ -132,8 +143,9 @@ def _run(backend, skin_finish):
     return fi.run_face_pass(buf.getvalue(), backend, None, skin_finish=skin_finish, skin_negative=NEG)
 
 
-@pytest.mark.parametrize("level,expected", [(100, None), (50, NEG), (0, NEG)])
-def test_the_pod_gets_the_negative_of_its_level(level, expected, monkeypatch):
+@pytest.mark.parametrize("level,expected",
+                         [("prod", None), ("texture", NEG), ("soft50", None)])
+def test_the_pod_gets_the_negative_of_its_finish(level, expected, monkeypatch):
     backend = _Backend()
     monkeypatch.setattr(fi, "prepare_image", lambda *a, **k: (_photo(), _plan(), {"skipped_reason": None}))
     _run(backend, level)
@@ -146,23 +158,25 @@ def test_an_old_backend_is_never_handed_the_new_argument(monkeypatch):
     """마스크 잠금과 같은 규칙 — 모르는 백엔드에 새 인자를 넘기면 그 컷이 TypeError 로 죽는다."""
     backend = _OldBackend()
     monkeypatch.setattr(fi, "prepare_image", lambda *a, **k: (_photo(), _plan(), {"skipped_reason": None}))
-    _run(backend, 0)
+    _run(backend, "texture")
     assert backend.calls > 0
 
 
-def test_the_level_is_recorded_in_the_result_meta(monkeypatch):
+def test_the_finish_is_recorded_in_the_result_meta(monkeypatch):
     backend = _Backend()
     monkeypatch.setattr(fi, "prepare_image", lambda *a, **k: (_photo(), _plan(), {"skipped_reason": None}))
-    assert _run(backend, 50).meta["skin_finish"] == 50
-    assert _run(backend, None).meta["skin_finish"] == 100
+    assert _run(backend, "soft50").meta["skin_finish"] == "soft50"
+    assert _run(backend, None).meta["skin_finish"] == "prod"
 
 
 # ── 레시피 ─────────────────────────────────────────────────────────────────
-def test_each_level_has_its_own_recipe_id():
-    ids = {level: face_recipe.recipe_id(face_recipe.recipe_fields(skin_finish=level))
-           for level in fi.SKIN_FINISH_LEVELS}
-    assert len(set(ids.values())) == len(ids), f"단계가 달라도 같은 해시다: {ids}"
-    assert face_recipe.recipe_fields()["skin_finish"] == 100
+def test_each_finish_has_its_own_recipe_id():
+    ids = {code: face_recipe.recipe_id(face_recipe.recipe_fields(skin_finish=code))
+           for code in fi.SKIN_FINISH_CODES}
+    assert len(set(ids.values())) == len(ids), f"보정이 달라도 같은 해시다: {ids}"
+    assert face_recipe.recipe_fields()["skin_finish"] == "prod"
+    # 값의 뜻이 바뀌었으니 옛 id 와 섞여 보이면 안 된다 — schema 판이 올라가 있어야 한다.
+    assert face_recipe.RECIPE_SCHEMA >= 2
 
 
 # ── 0 → 50 폴백 ────────────────────────────────────────────────────────────
@@ -209,46 +223,47 @@ def _result(applied, skin_finish, tries=1):
                               "tries": [{"gate": "identity_low"}] * tries})
 
 
-def test_level_zero_retries_once_at_fifty(monkeypatch):
-    """★ 0 단계만 컷이 비면 안 된다 — 확대기를 안 써서 게이트가 더 자주 걸린다."""
-    seen, outcome, image = _apply(monkeypatch,
-                                  [_result(False, 0), _result(True, 50)], _spec(0))
+def test_soft50_retries_once_at_prod(monkeypatch):
+    """★ soft50 만 컷이 비면 안 된다 — 확대기를 반만 써서 게이트가 더 자주 걸린다."""
+    seen, outcome, image = _apply(
+        monkeypatch, [_result(False, "soft50"), _result(True, "prod")], _spec("soft50"))
 
-    assert seen == [0, 50], "첫 시도는 spec 의 단계(0), 두 번째만 50 이어야 한다"
+    assert seen == ["soft50", "prod"], "첫 시도는 spec 의 보정, 두 번째만 prod 여야 한다"
     assert image == b"out"
     assert outcome["face_pass"] == "applied"
 
 
-def test_the_retry_never_climbs_to_a_hundred(monkeypatch):
-    """50 도 떨어지면 거기서 끝이다. '있는 그대로'를 고른 사람에게 가장 매끈한 단계를 조용히
-    내보내면 그건 다른 상품이다."""
-    seen, _outcome, raised = _apply(monkeypatch,
-                                    [_result(False, 0), _result(False, 50)], _spec(0))
+def test_the_retry_never_turns_the_negative_on(monkeypatch):
+    """prod 도 떨어지면 거기서 끝이다. texture 로 올리면 네거티브가 켜지는데, 그건 관리자가
+    고른 것과 다른 상품이다."""
+    seen, _outcome, raised = _apply(
+        monkeypatch, [_result(False, "soft50"), _result(False, "prod")], _spec("soft50"))
 
-    assert seen == [0, 50]
+    assert seen == ["soft50", "prod"]
+    assert "texture" not in seen
     assert isinstance(raised, fi.FacePassUnavailable)
 
 
-@pytest.mark.parametrize("level", [50, 100])
-def test_other_levels_do_not_retry(monkeypatch, level):
-    seen, _outcome, raised = _apply(monkeypatch, [_result(False, level)], _spec(level))
+@pytest.mark.parametrize("code", ["prod", "texture"])
+def test_other_finishes_do_not_retry(monkeypatch, code):
+    seen, _outcome, raised = _apply(monkeypatch, [_result(False, code)], _spec(code))
 
-    assert seen == [level], "단계를 안 올린다"
+    assert seen == [code], "보정을 바꾸지 않는다"
     assert isinstance(raised, fi.FacePassUnavailable)
 
 
 def test_a_backend_error_is_not_a_skin_finish_retry(monkeypatch):
-    """tries 가 비면 렌더 자체가 안 된 것이다 — 단계를 올려 봐야 소용없다(기존 재대기 경로)."""
-    empty = fi.FacePassResult(b"x", "image/png", False, {"skin_finish": 0, "tries": []})
-    seen, _outcome, raised = _apply(monkeypatch, [empty, empty], _spec(0))
+    """tries 가 비면 렌더 자체가 안 된 것이다 — 보정을 바꿔 봐야 소용없다(기존 재대기 경로)."""
+    empty = fi.FacePassResult(b"x", "image/png", False, {"skin_finish": "soft50", "tries": []})
+    seen, _outcome, raised = _apply(monkeypatch, [empty, empty], _spec("soft50"))
 
-    assert 50 not in seen
+    assert "prod" not in seen
     assert isinstance(raised, fi.FacePassUnavailable)
 
 
 # ── DB → spec 배선 ─────────────────────────────────────────────────────────
 class _Cur:
-    """skin_finish 컬럼이 있는/없는 DB 를 흉내낸다."""
+    """skin_finish_code 컬럼이 있는/없는 DB 를 흉내낸다."""
 
     def __init__(self, row, *, has_column=True):
         self.row, self.has_column = row, has_column
@@ -262,11 +277,11 @@ class _Cur:
 
     async def execute(self, sql, params=()):
         self.queries.append(" ".join(sql.split()))
-        if "skin_finish" in sql and not self.has_column:
-            raise RuntimeError('column "skin_finish" does not exist')
+        if "skin_finish_code" in sql and not self.has_column:
+            raise RuntimeError('column "skin_finish_code" does not exist')
 
     async def fetchone(self):
-        if "skin_finish" in self.queries[-1]:
+        if "skin_finish_code" in self.queries[-1]:
             return self.row
         return {k: v for k, v in self.row.items() if k != "skin_finish"}
 
@@ -287,7 +302,7 @@ _ROW = {"id": "l1", "version": 1, "lora_r2_key": "facemarket/loras/a.safetensors
         "lora_sha256": "a" * 64, "bucket": "face", "trigger_token": "ohwx man",
         "hair_length": "short", "hair_color": "black", "hair_texture": "straight",
         "face_shape": "oval", "jaw_line": "defined", "trained_steps": 1800,
-        "skin_finish": 50}
+        "skin_finish": "soft50"}
 
 
 def _resolved(cur):
@@ -302,7 +317,7 @@ def _resolved(cur):
     return asyncio.run(go()), conn
 
 
-def test_the_enabled_lora_row_carries_the_models_level(monkeypatch):
+def test_the_enabled_lora_row_carries_the_models_finish(monkeypatch):
     from app.agents import identity_source
 
     async def no_pod(*a, **k):
@@ -311,8 +326,8 @@ def test_the_enabled_lora_row_carries_the_models_level(monkeypatch):
     monkeypatch.setattr(identity_source, "_active_face_backend_url", no_pod)
     row, _conn = _resolved(_Cur(dict(_ROW)))
 
-    assert row["skin_finish"] == 50
-    assert fi.face_identity_from_lora_row(row).skin_finish == 50
+    assert row["skin_finish"] == "soft50"
+    assert fi.face_identity_from_lora_row(row).skin_finish == "soft50"
 
 
 def test_a_db_without_the_column_still_gets_a_face_pass(monkeypatch):
@@ -332,24 +347,44 @@ def test_a_db_without_the_column_still_gets_a_face_pass(monkeypatch):
     assert row is not None and row["lora_r2_key"] == _ROW["lora_r2_key"]
     assert "skin_finish" not in row
     assert conn.rollbacks == 1, "실패한 트랜잭션을 안 되돌리면 다음 질의가 통째로 죽는다"
-    # 단계를 모르면 기본값으로 간다 — 지금 그대로.
+    # 보정을 모르면 기본값으로 간다 — 지금 그대로.
     assert fi.face_identity_from_lora_row(row).skin_finish is None
-    assert fi.skin_finish_plan(fi.face_identity_from_lora_row(row).skin_finish, NEG)[0] == 100
+    assert fi.skin_finish_plan(fi.face_identity_from_lora_row(row).skin_finish, NEG) == ("prod", 1.0, "")
 
 
 # ── 마이그레이션 ───────────────────────────────────────────────────────────
-def test_the_migration_only_adds_and_keeps_todays_behaviour():
-    """추가만 하는 마이그레이션이다 — 기본값 100 이 지금 동작이라 옛 코드가 그대로 돌아도 같다."""
+def _migration(name: str) -> str:
     import pathlib
 
-    sql = (pathlib.Path(__file__).resolve().parents[2]
-           / "supabase/migrations/20260916100000_fm_skin_finish.sql").read_text()
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "supabase/migrations" / name).read_text()
 
-    assert "add column if not exists skin_finish int not null default 100" in sql
-    assert "check (skin_finish in (0, 50, 100))" in sql
-    # 컷 쪽은 null 을 허용한다 — 옛 컷은 단계가 없다.
-    assert "add column if not exists skin_finish int;" in sql
-    assert "skin_finish is null or skin_finish in (0, 50, 100)" in sql
-    # 기존 데이터를 고치거나 지우지 않는다.
-    for forbidden in ("drop column", "delete from", "update public.fm_models set"):
-        assert forbidden not in sql.lower(), forbidden
+
+def test_the_finish_migration_only_adds():
+    """★ **컬럼을 새로 더한다** — 옛 skin_finish 는 건드리지 않는다.
+
+    같은 숫자에 다른 뜻을 얹으면 이미 기록된 컷의 원장이 거짓이 된다. 이 컬럼을 모르는 옛
+    코드는 skin_finish 를 계속 읽는데, 그 기본값 100 이 곧 지금 운영이라 동작이 안 바뀐다.
+    """
+    sql = _migration("20260916140000_fm_skin_finish_code.sql")
+
+    assert "add column if not exists skin_finish_code text not null default 'prod'" in sql
+    assert "check (skin_finish_code in ('prod', 'texture', 'soft50'))" in sql
+    # 컷 쪽은 null 을 허용한다 — 옛 컷은 보정이 없다.
+    assert "add column if not exists skin_finish_code text;" in sql
+    assert "skin_finish_code is null or skin_finish_code in ('prod', 'texture', 'soft50')" in sql
+    # 옛 컬럼과 기존 행은 그대로 둔다. 옛 컷의 보정 코드를 채우는 update 하나만 허용한다.
+    lowered = sql.lower()
+    for forbidden in ("drop column", "delete from", "alter column", "drop constraint"):
+        assert forbidden not in lowered, forbidden
+    assert "update public.fm_models" not in lowered
+
+
+def test_the_build_table_serialises_one_run_at_a_time():
+    """얼굴 렌더 파드는 모델당 하나다 — 두 건이 겹치면 두 번째는 409 만 받는다."""
+    sql = _migration("20260916150000_fm_test_cut_builds.sql").lower()
+
+    assert "create table if not exists public.fm_test_cut_builds" in sql
+    assert "fm_test_cut_builds_one_active" in sql and "where status = 'running'" in sql
+    assert "fm_test_cut_builds_one_queued_per_model" in sql
+    assert "enable row level security" in sql

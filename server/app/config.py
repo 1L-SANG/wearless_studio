@@ -476,9 +476,9 @@ class Settings:
     #: 기본 on. false 가 탈출구다(결과를 예전 Lanczos 경로와 똑같이 만들고 싶을 때).
     #: 파드가 /upscale 을 모르거나 가중치가 없으면 이 값과 무관하게 Lanczos 로 폴백한다.
     face_crop_upscale: bool = True
-    # 피부 보정 단계 50·0 이 켜는 네거티브 문구. 100(기본)은 빈 문구 = 지금 그대로다.
+    # 보정 texture 가 켜는 네거티브 문구. prod·soft50 은 빈 문구 = 지금 그대로다.
     # 2026-09-16 16장 실측에서 **이 문구가 실제 손잡이**였다(피부 결 +11~19%). 업스케일러
-    # 강도는 100↔50 차이가 거의 없었다. 문구를 바꾸면 그 단계로 나온 컷의 레시피 해시도 바뀐다.
+    # 강도는 100↔50 차이가 거의 없었다. 문구를 바꾸면 그 보정으로 나온 컷의 레시피 해시도 바뀐다.
     # ---- 인물 LoRA 학습 자동화(workers/lora_training_reconciler.py). 기본 off.
     #: "on" 일 때만 학습 큐가 돈다. 파드를 만드는 경로라 문자열 스위치로 둔다(OPENDID_AUTOSCALE 선례).
     fm_lora_training: str = "off"
@@ -487,6 +487,18 @@ class Settings:
     fm_lora_min_balance_usd: float = 20.0
     #: 한 런의 상한(초). 넘으면 실패로 끝내고 파드를 지운다 — 켜 둔 채로 잊히면 요금만 나간다.
     fm_lora_max_seconds: int = 5 * 3600
+    # ---- 테스트컷 12장 자동 생성(workers/test_cut_build_reconciler.py). 기본 off.
+    #: "on" 일 때만 생성 큐가 돈다. 얼굴 파드를 깨우는 경로라 문자열 스위치로 둔다.
+    fm_test_cut_build: str = "off"
+    #: 기준 원본 컷 — **사람이 바뀌어도 그대로인 고정 자산**이다(얼굴 전용 비공개 R2 키).
+    #: 사람 간 비교가 되려면 입력이 같아야 한다. 컷 생성(gpt-image)은 하지 않고, 이 원본에
+    #: 얼굴만 보정 3종으로 다시 그린다 — 생성 비용 0, 얼굴 렌더 12회.
+    #: 쉼표로 2개씩. 관리자가 R2 에서 갈아 끼우면 다음 생성부터 새 원본을 쓴다.
+    fm_test_cut_source_closeup: str = ""
+    fm_test_cut_source_fullbody: str = ""
+    #: 파드를 기다리는 상한(초). 파드가 없는 건 **실패가 아니라 대기**다 — 넘으면 실패로
+    #: 남기고 관리자에게 알린다(대표 지시 2026-09-16: 예 20분).
+    fm_test_cut_pod_wait_seconds: int = 20 * 60
     face_skin_negative_prompt: str = (
         "airbrushed skin, retouched skin, smooth plastic skin, beauty filter")
     #: 3×얼굴폭 크롭이 사진에 막히면 가장자리를 덧대고 그 위에서 얼굴을 바꾼다(덧댄 부분은 잘라낸다).
@@ -887,6 +899,10 @@ def load_settings() -> Settings:
         fm_lora_training=(os.getenv("FM_LORA_TRAINING", "off").strip().lower() or "off"),
         fm_lora_min_balance_usd=float(os.getenv("FM_LORA_MIN_BALANCE_USD") or "20"),
         fm_lora_max_seconds=int(os.getenv("FM_LORA_MAX_SECONDS") or str(5 * 3600)),
+        fm_test_cut_build=(os.getenv("FM_TEST_CUT_BUILD", "off").strip().lower() or "off"),
+        fm_test_cut_source_closeup=(os.getenv("FM_TEST_CUT_SOURCE_CLOSEUP") or "").strip(),
+        fm_test_cut_source_fullbody=(os.getenv("FM_TEST_CUT_SOURCE_FULLBODY") or "").strip(),
+        fm_test_cut_pod_wait_seconds=_int_env("FM_TEST_CUT_POD_WAIT_SECONDS", 20 * 60),
         face_skin_negative_prompt=(
             os.getenv("FACE_SKIN_NEGATIVE_PROMPT")
             or "airbrushed skin, retouched skin, smooth plastic skin, beauty filter"),

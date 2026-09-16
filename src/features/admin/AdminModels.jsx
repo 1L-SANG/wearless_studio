@@ -4,9 +4,9 @@
    목록으로 곧장 돌아온다 — 라우트를 갈면 그 왕복마다 목록이 다시 로드되고 스크롤을 잃는다. */
 import { useCallback, useEffect, useState } from 'react';
 import {
-  adminDeleteModelTestCut, adminFetchModelTestCutUrl, adminListModels, adminModelDetail,
-  adminModelTestCuts, adminSendModelTestCuts, adminSuspendModel, adminUnsuspendModel,
-  adminUploadModelTestCuts,
+  adminBuildModelTestCuts, adminDeleteModelTestCut, adminFetchModelTestCutUrl, adminListModels,
+  adminModelDetail, adminModelTestCuts, adminSendModelTestCuts, adminSuspendModel,
+  adminUnsuspendModel, adminUploadModelTestCuts,
 } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -48,6 +48,20 @@ const TEST_CUT_GROUPS = [
   { kind: 'closeup', label: '확대샷' },
   { kind: 'fullbody', label: '전신샷' },
 ];
+// 보정 3종 — 서버가 기준 원본 4장에 얼굴만 세 번 다시 그려 12장을 만든다(2026-09-16 대표 결정).
+// 효과가 사람마다 갈려서(v7 은 네 컷 다 결 +11~19%, v6 는 두 컷이 내려갔다) 하나를 정하지 않고
+// 셋을 나란히 보고 고른다. 고른 묶음 4장만 등록자에게 간다.
+const SKIN_FINISHES = [
+  { code: 'prod', label: 'A 매끈하게', hint: '지금 기본이에요.' },
+  { code: 'texture', label: 'B 결 살리기', hint: '모공·잡티가 살아나요.' },
+  { code: 'soft50', label: 'C 중간', hint: '업스케일러를 절반만 써요.' },
+];
+const CUTS_PER_FINISH = { closeup: 2, fullbody: 2 };
+// 생성 진행 표시. 서버 status 를 그대로 쓴다 — 화면에서 다시 해석하면 둘이 갈라진다.
+const BUILD_LABEL = {
+  queued: '생성 대기', running: '생성 중', partial: '부분 완료', done: '생성 완료', failed: '생성 실패',
+};
+const BUILD_VARIANT = { failed: 'destructive', partial: 'secondary', done: 'default' };
 
 /* 테스트컷 — 모델 공개 승인 게이트(초상 계약 제8조 5항).
    목록이 아니라 상세 안에 두는 이유: 운영자가 "이 모델 뭐지"를 확인하는 자리에서 그대로
@@ -86,13 +100,13 @@ function TestCutThumb({ cut, disabled, onDelete }) {
   );
 }
 
-export function TestCutUpload({ inputId, disabled, onChange }) {
+export function TestCutUpload({ inputId, disabled, onChange, label = '이미지 추가' }) {
   return (
     <label
       htmlFor={inputId}
       className={`inline-flex h-8 cursor-pointer items-center rounded-md border border-input px-2.5 text-xs focus-within:outline-none focus-within:ring-2 focus-within:ring-ring${disabled ? ' pointer-events-none opacity-50' : ''}`}
     >
-      <span>이미지 추가</span>
+      <span>{label}</span>
       <input
         id={inputId}
         type="file"
@@ -144,57 +158,85 @@ function TestCuts({ modelId, onChanged }) {
   }
 
   const cuts = state.testCuts || [];
-  const counts = {
-    closeup: state.closeupCount,
-    fullbody: state.fullbodyCount,
-  };
+  const finishCounts = state.finishCounts || {};
+  const build = state.build || null;
   const sent = state.status === 'awaiting_confirm';
   const confirmed = state.status === 'verified';
   // sendable 은 서버가 계산한다(상태 + 전신샷 없이 확정된 옛 모델 예외). 화면에서 상태값을
   // 다시 해석하지 않는다 — 두 장으로 이미 공개된 모델에 보내기를 열어 두면 409 만 받는다.
   const sendable = state.sendable !== false;
-  const sendDisabledReason = !sendable
-    ? '이미 공개된 모델이에요. 지금은 다시 보낼 수 없어요.'
-    : (!state.cutsComplete
-      ? '확대샷 2장과 전신샷 2장이 모두 있어야 보낼 수 있어요.'
-      : (!state.readyToSend ? '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.' : undefined));
+  const groupReady = (code) => {
+    const counts = finishCounts[code] || {};
+    return TEST_CUT_GROUPS.every(({ kind }) => (counts[kind] || 0) >= CUTS_PER_FINISH[kind]);
+  };
+  const sendReason = (code) => {
+    if (!sendable) return '이미 공개된 모델이에요. 지금은 다시 보낼 수 없어요.';
+    if (!state.readyToSend) return '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.';
+    if (!groupReady(code)) return '이 보정의 확대샷 2장과 전신샷 2장이 다 있어야 보낼 수 있어요.';
+    return undefined;
+  };
 
   return (
     <section className="border-t border-border pt-4">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <h4 className="text-xs font-medium text-muted-foreground">테스트컷</h4>
+        {build && (
+          <Badge variant={BUILD_VARIANT[build.status] || 'secondary'}>
+            {BUILD_LABEL[build.status] || build.status}
+            {build.status === 'partial' ? ` ${build.produced}/${build.requested}` : ''}
+          </Badge>
+        )}
         {state.redoRequested && <Badge variant="destructive">재생성 요청</Badge>}
-        {sent && <Badge variant="secondary">확인 대기</Badge>}
+        {sent && <Badge variant="secondary">확인 대기 · {SKIN_FINISHES.find((f) => f.code === state.skinFinish)?.label || state.skinFinish}</Badge>}
         {confirmed && <Badge>공개 승인됨</Badge>}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          disabled={busy || build?.status === 'queued' || build?.status === 'running'}
+          onClick={() => act(
+            () => adminBuildModelTestCuts(modelId),
+            () => '생성을 요청했어요. 몇 분 뒤에 새로고침해 보세요.',
+          )}
+        >
+          {build ? '다시 생성' : '자동 생성'}
+        </Button>
       </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        같은 기준 원본 4장에 얼굴만 보정 3종으로 다시 그려요. 셋을 비교해 하나를 보내면
+        등록자는 그 4장만 봐요.
+        {build?.error ? ` 마지막 생성 오류: ${build.error}` : ''}
+      </p>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {TEST_CUT_GROUPS.map(({ kind, label }) => {
-          const groupCuts = cuts.filter((cut) => cut.kind === kind);
-          const count = counts[kind] ?? groupCuts.length;
-          const groupFull = count >= 2;
-          const inputId = `test-cut-upload-${modelId}-${kind}`;
+      <div className="grid gap-3">
+        {SKIN_FINISHES.map(({ code, label, hint }) => {
+          const counts = finishCounts[code] || {};
+          const groupCuts = cuts.filter(
+            (cut) => (cut.skinFinish || 'prod') === code,
+          );
+          const reason = sendReason(code);
           return (
-            <div className="rounded-md border border-border p-3" key={kind}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <h5 className="text-xs font-medium">{label} {count}/2</h5>
-                <TestCutUpload
-                  inputId={inputId}
-                  disabled={busy || groupFull}
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files || []);
-                    event.target.value = '';
-                    if (!files.length) return;
-                    if (count + files.length > 2) {
-                      push?.(`${label}은 2장까지 올릴 수 있어요.`, { icon: 'alertCircle' });
-                      return;
-                    }
-                    act(
-                      () => adminUploadModelTestCuts(modelId, files, kind),
-                      () => `${label} ${files.length}장을 올렸어요.`,
-                    );
-                  }}
-                />
+            <div className="rounded-md border border-border p-3" key={code}>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <h5 className="text-xs font-medium">{label}</h5>
+                <span className="text-xs text-muted-foreground">{hint}</span>
+                <span className="text-xs text-muted-foreground">
+                  확대 {counts.closeup || 0}/{CUTS_PER_FINISH.closeup} · 전신 {counts.fullbody || 0}/{CUTS_PER_FINISH.fullbody}
+                </span>
+                <Button
+                  size="sm"
+                  className="ml-auto"
+                  disabled={busy || Boolean(reason)}
+                  title={reason}
+                  onClick={() => act(
+                    () => adminSendModelTestCuts(modelId, code),
+                    (r) => (r.emailSent
+                      ? `${label}으로 보냈어요. 확인 메일도 발송했어요.`
+                      : `${label}으로 보냈어요. 메일은 발송되지 않았어요.`),
+                  )}
+                >
+                  이 보정으로 보내기
+                </Button>
               </div>
               {groupCuts.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -207,32 +249,43 @@ function TestCuts({ modelId, onChanged }) {
                         if (!window.confirm(`${label} ${selectedCut.sort + 1}을 삭제할까요?`)) return;
                         act(
                           () => adminDeleteModelTestCut(modelId, selectedCut.id),
-                          () => `${label}을 삭제했어요.`,
+                          () => '테스트컷을 삭제했어요.',
                         );
                       }}
                     />
                   ))}
                 </div>
               ) : <p className="text-xs text-muted-foreground">아직 없어요.</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {TEST_CUT_GROUPS.map(({ kind, label: kindLabel }) => {
+                  const inputId = `test-cut-upload-${modelId}-${code}-${kind}`;
+                  const full = (counts[kind] || 0) >= CUTS_PER_FINISH[kind];
+                  return (
+                    <TestCutUpload
+                      key={kind}
+                      inputId={inputId}
+                      label={`${kindLabel} 추가`}
+                      disabled={busy || full}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files || []);
+                        event.target.value = '';
+                        if (!files.length) return;
+                        if ((counts[kind] || 0) + files.length > CUTS_PER_FINISH[kind]) {
+                          push?.(`${label} ${kindLabel}은 ${CUTS_PER_FINISH[kind]}장까지예요.`, { icon: 'alertCircle' });
+                          return;
+                        }
+                        act(
+                          () => adminUploadModelTestCuts(modelId, files, kind, code),
+                          () => `${label} ${kindLabel} ${files.length}장을 올렸어요.`,
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
           );
         })}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          disabled={busy || !sendable || !state.cutsComplete || !state.readyToSend}
-          title={sendDisabledReason}
-          onClick={() => act(
-            () => adminSendModelTestCuts(modelId),
-            (r) => (r.emailSent
-              ? '모델에게 테스트컷 확인 메일을 보냈어요.'
-              : '확인 대기 상태로 바꿨어요. 메일은 발송되지 않았어요.'),
-          )}
-        >
-          {sent ? '다시 보내기' : '모델에게 보내기'}
-        </Button>
       </div>
 
       {sent && state.confirmRequestedAt && (

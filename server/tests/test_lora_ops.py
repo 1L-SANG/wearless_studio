@@ -54,5 +54,9 @@ def test_the_runbook_says_how_to_turn_each_thing_back_off():
 def test_the_runbook_has_the_end_to_end_checklist():
     text = RUNBOOK.read_text(encoding="utf-8")
     for step in ("사진 확인", "동시 1건", "enabled=false", "파드가 사라졌다",
-                 "보정 100/50/0", "같은 트랜잭션"):
+                 "같은 트랜잭션",
+                 # 테스트컷 12장 자동 생성(2026-09-16) — 켜는 법과 읽는 법이 다 있어야 한다.
+                 "FM_TEST_CUT_BUILD", "FM_TEST_CUT_SOURCE_CLOSEUP",
+                 "FM_TEST_CUT_POD_WAIT_SECONDS", "기준 원본", "다시 생성",
+                 "prod", "texture", "soft50"):
         assert step in text, step
