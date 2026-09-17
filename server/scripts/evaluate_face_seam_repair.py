@@ -1,4 +1,4 @@
-"""Local-only neck-band/blob evaluation; never uploads full photographs or writes a DB."""
+"""Local-only visual polygon/masked-repair evaluation; never uploads full photographs or writes a DB."""
 from __future__ import annotations
 
 import argparse
@@ -169,10 +169,25 @@ def check_cached_pixels(directory, crop, prefix):
             raise ValueError("cached_input_mismatch")
 
 
+def request_fingerprint(crop, prompt):
+    return {
+        "model": seam.SUNBURST_MODEL,
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "input_sha256": hashlib.sha256(crop.current.resize((1024, 1024), Image.LANCZOS).tobytes()).hexdigest(),
+        "mask_sha256": hashlib.sha256(crop.edit_mask.tobytes()).hexdigest(),
+    }
+
+
+def check_cached_request(directory, fingerprint):
+    saved = directory / "request.json"
+    if not saved.exists() or json.loads(saved.read_text()) != fingerprint:
+        raise ValueError("cached_request_mismatch")
+
+
 async def evaluate(args):
     from app.agents.gemini_image import run_cpu_bound
     from app.agents.image_cost import estimate_cost
-    from app.agents.face_seam_vision import plan_repair, verify_repair
+    from app.agents.face_seam_vision import plan_repair, plan_composition, verify_repair
 
     if args.plans_dir and args.responses_dir:
         raise ValueError("conflicting_plan_response_caches")
@@ -182,7 +197,7 @@ async def evaluate(args):
     settings = replace(load_settings(), face_seam_repair="on", face_tone_fix="on" if args.tone else "off", fm_face_qc_dir=str(args.model_dir))
     image_usage.configure(pool=None, persist=False)
     inputs = await run_cpu_bound(prepare_inputs, args)
-    report = {"evaluation": "blob_v8_tone_v4", "phase": "prepare" if args.prepare_only else "plan" if args.plan_only else "live" if args.live else "recompose",
+    report = {"evaluation": "visual_polygon_mask_alignment", "phase": "prepare" if args.prepare_only else "plan" if args.plan_only else "live" if args.live else "recompose",
               "image_model": seam.SUNBURST_MODEL, "tone": args.tone, "rows": [], "human_review": "not_performed"}
     semaphore = asyncio.Semaphore(3)
 
@@ -208,13 +223,21 @@ async def evaluate(args):
                 if args.prepare_only:
                     row.update(status="prepared", crop=list(look.box))
                     return
+                save_json(case / "repair-plan.json", asdict(repair))
                 crop = await run_cpu_bound(seam.prepare_repair_crop, current, context, gap=repair.neck_collar_gap)
+                repair = seam.remap_repair_plan(repair, look, crop)
+                crop = await run_cpu_bound(seam.prepare_edit_crop, crop, repair)
                 if args.responses_dir:
                     check_cached_pixels(args.responses_dir / name, crop, "neck")
                 crop.current.save(case / "neck-input.png")
                 crop.base.save(case / "neck-base.png")
                 prompt = seam.PROMPT_HEAD + repair.instruction.strip() + " " + seam.PROMPT_TAIL
-                save_json(case / "repair-plan.json", asdict(repair))
+                request = request_fingerprint(crop, prompt)
+                if args.responses_dir:
+                    check_cached_request(args.responses_dir / name, request)
+                save_json(case / "request.json", request)
+                save_json(case / "edit-plan.json", asdict(repair))
+                crop.edit_mask.save(case / "api-mask.png")
                 row.update(crop=list(crop.box), look_crop=list(look.box), neck_collar_gap=repair.neck_collar_gap,
                            observations=repair.observations, instruction=repair.instruction,
                            prompt_sha=hashlib.sha256(prompt.encode()).hexdigest()[:16])
@@ -234,6 +257,14 @@ async def evaluate(args):
                             "cost": asdict(estimate_cost(seam.SUNBURST_MODEL, "1024x1024", response.usage))}
                     row["image_call"] = call
                     save_json(case / "image-call.json", call)
+                if args.responses_dir:
+                    composition = json.loads((args.responses_dir / name / "composition-plan.json").read_text())
+                else:
+                    row["vision_calls"] += 1
+                    row["composition_planning"] = {}
+                    composition = await plan_composition(settings, crop, generated, repair, metadata=row["composition_planning"])
+                save_json(case / "composition-plan.json", composition)
+                repair = replace(repair, composition_polygons=composition)
                 repaired, meta, support = await run_cpu_bound(seam.finish_repair, current, context, crop, repair, generated, tone_enabled=args.tone)
                 repaired.save(case / "candidate.png")
                 Image.fromarray(support.astype(np.uint8)*255).save(case / "support.png")

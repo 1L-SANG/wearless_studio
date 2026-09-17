@@ -121,7 +121,7 @@ def test_finish_repair_keeps_pixels_outside_seam_and_tone_support_exact():
         skin=face_tone.skin_mask(current, _plan())[120:240, 70:190],
     )
     fixed, meta, support = seam.finish_repair(
-        current, context, crop, seam.RepairPlan("Repair neckline"), crop.current, tone_enabled=True,
+        current, context, crop, seam.RepairPlan("Repair neckline", damage_polygons=[[[200, 450], [800, 450], [800, 850], [200, 850]]], composition_polygons=[[[180, 430], [820, 430], [820, 870], [180, 870]]]), crop.current, tone_enabled=True,
     )
     assert meta["tone"]["ok"] is True
     assert meta["seam_outside_changed"] == meta["outside_changed"] == 0

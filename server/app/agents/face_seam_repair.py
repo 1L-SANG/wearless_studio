@@ -19,8 +19,8 @@ from .gemini_image import run_cpu_bound
 from .image_cost import estimate_cost
 
 SUNBURST_MODEL = "gpt-image-2.5-sunburst"
-PROMPT_HEAD = "Use case: precise-object-edit. This is a close crop from a real fashion catalog photograph, the sole edit target. "
-PROMPT_TAIL = "Do not invent an undershirt, jewelry, or extra buttons. Change ONLY the damaged neck/garment boundary. Keep every other part precisely identical: skin color, face and chin, garment texture and shape, collar tips, lighting, background, framing, position, scale. No beauty retouching. Do not shift, zoom, rotate, or recrop. Return the exact same crop with a small realistic seam repair only."
+PROMPT_HEAD = "Use case: precise-object-edit. This is a surgical photo restoration, not a new photograph. The input is a square crop of an existing studio fashion photograph. Keep the exact crop, subject placement, scale, geometry and camera view. Only repair the damaged neck/collar compositing inside the transparent mask.\n\n"
+PROMPT_TAIL = "Copy every intact feature exactly. Preserve the person's identity, face, jawline, hair, expression, pose, body proportions, clothing, lighting, texture, sharpness and neutral background. Match existing skin and cloth texture; no beauty retouch, no smoothing, no new detail or design. Eliminate abrupt cutouts, discontinuous edges, duplicated cloth fragments and pasted-skin seams. Make this look like the same unedited photograph with only the neck compositing defects corrected. All opaque mask areas must remain unchanged. Return a single square photograph, same framing. No text or borders."
 log = logging.getLogger(__name__)
 
 
@@ -50,6 +50,7 @@ class RepairCrop:
     crop_pad: tuple[int, int, int, int] = (0, 0, 0, 0)
     base: Image.Image | None = field(default=None, repr=False)
     skin: np.ndarray | None = field(default=None, repr=False)
+    edit_mask: Image.Image | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,8 @@ class RepairPlan:
     observations: list[str] = field(default_factory=list)
     neck_collar_gap: bool = False
     garment: str = ""
+    damage_polygons: list = field(default_factory=list)
+    composition_polygons: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -147,15 +150,16 @@ def neck_band_bounds(original_size, plan, gen_mask, crop_pad=None):
     return (int(xs[inside].min()), int(ys[inside].min()), int(xs[inside].max()), int(ys[inside].max()))
 
 
-def repair_crop_box(final_size, band_bounds, margin=.3):
+def repair_crop_box(final_size, band_bounds, margin=.3, *, min_top=0):
     if band_bounds is None:
         raise SeamRepairUnavailable("neck_band_missing")
     x0, y0, x1, y1 = band_bounds
-    side = min(int(max(x1-x0, y1-y0) * (1+margin)), *final_size)
+    min_top = max(0, int(np.ceil(min_top)))
+    side = min(int(max(x1-x0, y1-y0) * (1+margin)), final_size[0], final_size[1]-min_top)
     if side < 16:
         raise SeamRepairUnavailable("neck_crop_too_small")
     cx, cy = (x0+x1)//2, (y0+y1)//2
-    return (int(np.clip(cx-side//2, 0, final_size[0]-side)), int(np.clip(cy-side//2, 0, final_size[1]-side)), side)
+    return (int(np.clip(cx-side//2, 0, final_size[0]-side)), int(np.clip(cy-side//2, min_top, final_size[1]-side)), side)
 
 
 def capture_repair_context(original, plan, *, gen_mask=None, current=None, tone_enabled=False,
@@ -165,7 +169,8 @@ def capture_repair_context(original, plan, *, gen_mask=None, current=None, tone_
     pl, pt, pr, pb = _pad_ltrb(crop_pad)
     size = (original.width-pl-pr, original.height-pt-pb)
     bounds = neck_band_bounds(original.size, plan, gen_mask, crop_pad)
-    box = repair_crop_box(size, bounds, .6)
+    _, fy, _, fh = plan.box
+    box = repair_crop_box(size, bounds, .6, min_top=fy-pt+.55*fh)
     x, y, side = box
     base = original.crop((x+pl, y+pt, x+pl+side, y+pt+side)).convert("RGB")
     tone_context = None
@@ -185,13 +190,14 @@ def unpadded_plan(plan, crop_pad, size):
 
 def prepare_repair_crop(qwen: Image.Image, context: FaceSeamContext, *, gap=False) -> RepairCrop:
     from .face_tone import skin_mask
-    left, top, side = repair_crop_box(qwen.size, context.band_bounds, .6 if gap else .3)
+    plan = unpadded_plan(context.plan, context.crop_pad, qwen.size)
+    fx, fy, fw, fh = plan.box
+    # A centered square can include the entire face even when its bbox is a neck band.
+    left, top, side = repair_crop_box(qwen.size, context.band_bounds, .6 if gap else .3, min_top=fy+.55*fh)
     bx, by, bs = context.base_crop_box or (0, 0, 0)
     base = context.base_crop
     if base is None or base.size != (bs, bs) or not (bx <= left and by <= top and left+side <= bx+bs and top+side <= by+bs):
         raise SeamRepairUnavailable("base_crop_mismatch")
-    plan = unpadded_plan(context.plan, context.crop_pad, qwen.size)
-    fx, fy, fw, fh = plan.box
     skin = skin_mask(qwen, plan)[top:top+side, left:left+side]
     f = max(2, int(round(14*side/575)))
     skin = cv2.dilate(skin.astype(np.uint8), _ellipse(max(2, f//2))).astype(bool)
@@ -200,47 +206,25 @@ def prepare_repair_crop(qwen: Image.Image, context: FaceSeamContext, *, gap=Fals
                       _pad_ltrb(context.crop_pad), base.crop((left-bx, top-by, left-bx+side, top-by+side)), skin)
 
 
-def blob_region(api: np.ndarray, crop: RepairCrop, *, gap=False):
-    """v8_blob: remove thin edit echoes, include Qwen changes, feather within neck limits."""
-    if crop.base is None or crop.skin is None:
-        raise SeamRepairUnavailable("blob_context_missing")
-    side = crop.current.width
-    k = side/575
-    f = max(2, int(round(14*k)))
-    cur = np.asarray(crop.current, np.float32)
-    base = np.asarray(crop.base, np.float32)
-    dmap = cv2.GaussianBlur(np.abs(api-cur).mean(axis=2), (0, 0), 3*k)
-    big = cv2.morphologyEx((dmap > 10).astype(np.uint8), cv2.MORPH_OPEN, _ellipse(9*k)).astype(bool)
-    q = cv2.GaussianBlur(np.abs(cur-base).mean(axis=2), (0, 0), 2*k) > 6
-    q = cv2.morphologyEx(q.astype(np.uint8), cv2.MORPH_CLOSE, _ellipse(6*k)).astype(bool)
-    fx, fy, fw, fh = crop.face_box
-    clip = lambda v: int(np.clip(v, 0, side))
-    allowed = np.ones((side, side), bool)
-    allowed[:clip(fy+.55*fh)] = False
-    zone = np.zeros_like(allowed)
-    zone[clip(fy+.55*fh):clip(fy+.95*fh), clip(fx-.05*fw):clip(fx+1.05*fw)] = True
-    allowed &= ~(zone & crop.skin)
-    cx = (clip(fx)+clip(fx+fw))/2
-    half = (3.0 if gap else .85)*(clip(fx+fw)-clip(fx))
-    allowed[:, :int(max(0, cx-half))] = False
-    allowed[:, int(min(side, cx+half)):] = False
-    edge = np.zeros_like(allowed)
-    edge[f:-f, f:-f] = True
-    allowed &= edge
-    region = cv2.dilate(((big | q) & allowed).astype(np.uint8), _ellipse(12*k)).astype(bool) & allowed
-    # OpenCV has no zero seed when region is empty; define that case explicitly.
-    if region.any():
-        outside = cv2.distanceTransform((~region).astype(np.uint8), cv2.DIST_L2, 5)
-        inside = cv2.distanceTransform(allowed.astype(np.uint8), cv2.DIST_L2, 5)
-        alpha = (np.clip(1-outside/f, 0, 1)*np.clip(inside/f, 0, 1)).astype(np.float32)
-    else:
-        alpha = np.zeros((side, side), np.float32)
-    return alpha, alpha > 0, dict(big_px=int(big.sum()), q_px=int(q.sum()), thin_removed_px=int(((dmap > 10) & ~big).sum()))
+def remap_repair_plan(plan: RepairPlan, source: RepairCrop, target: RepairCrop) -> RepairPlan:
+    """Keep visual coordinates attached to source pixels when widening the neck crop."""
+    sx, sy, ss = source.box
+    tx, ty, ts = target.box
+    polygons = [[[((x/1024*ss)+sx-tx)/ts*1024, ((y/1024*ss)+sy-ty)/ts*1024]
+                 for x, y in polygon] for polygon in plan.damage_polygons]
+    return replace(plan, damage_polygons=polygons, composition_polygons=[])
+
+
+def prepare_edit_crop(crop: RepairCrop, plan: RepairPlan) -> RepairCrop:
+    from .face_seam_geometry import api_mask
+    return replace(crop, edit_mask=api_mask(crop, plan.damage_polygons))
 
 
 def composite_repair(qwen: Image.Image, crop: RepairCrop, plan: RepairPlan, generated: Image.Image):
-    api = np.asarray(generated.convert("RGB").resize(crop.current.size, Image.LANCZOS), np.float32)
-    alpha, support, stats = blob_region(api, crop, gap=plan.neck_collar_gap)
+    from .face_seam_geometry import composition_alpha, align_generated
+    alpha, support = composition_alpha(crop, plan.damage_polygons, plan.composition_polygons)
+    aligned, alignment = align_generated(crop, generated, support)
+    api = np.asarray(aligned, np.float32)
     current = np.asarray(crop.current, np.float32)
     pixels = np.clip(api*alpha[..., None]+current*(1-alpha[..., None])+.5, 0, 255).astype(np.uint8)
     out = qwen.convert("RGB").copy()
@@ -249,7 +233,7 @@ def composite_repair(qwen: Image.Image, crop: RepairCrop, plan: RepairPlan, gene
     full_support = np.zeros((qwen.height, qwen.width), bool)
     full_support[y:y+side, x:x+side] = support
     meta = pixel_change_meta(qwen, out, full_support)
-    return out, dict(meta, crop=list(crop.box), region_px=int(support.sum()), **stats), full_support
+    return out, dict(meta, crop=list(crop.box), region_px=int(support.sum()), alignment=alignment), full_support
 
 
 def pixel_change_meta(before, after, support):
@@ -279,9 +263,12 @@ async def call_sunburst_edit(settings, prompt: str, crop: RepairCrop, *, http_po
     key = getattr(settings, "openai_api_key", None)
     if not key:
         raise SeamRepairUnavailable("openai_key_missing")
+    if crop.edit_mask is None or crop.edit_mask.mode != "RGBA" or crop.edit_mask.size != (1024, 1024):
+        raise SeamRepairUnavailable("edit_mask_missing")
     data = {"model": SUNBURST_MODEL, "prompt": prompt, "size": "1024x1024", "quality": "high", "output_format": "png", "n": "1"}
     encoded = await run_cpu_bound(lambda: _png_bytes(crop.current.resize((1024, 1024), Image.LANCZOS)))
-    files = [("image[]", ("neck_crop.png", encoded, "image/png"))]
+    mask = await run_cpu_bound(_png_bytes, crop.edit_mask, "RGBA")
+    files = [("image[]", ("neck_crop.png", encoded, "image/png")), ("mask", ("neck_mask.png", mask, "image/png"))]
     started = time.perf_counter()
     if http_post is None:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -319,7 +306,7 @@ async def call_sunburst_edit(settings, prompt: str, crop: RepairCrop, *, http_po
 
 
 def _safe_meta(meta: dict) -> dict:
-    allowed = {"mode", "attempted", "accepted", "reason", "crop", "changed_pixels", "outside_changed", "latency_ms", "usage", "cost_usd", "identity_before", "identity_after", "prompt_sha", "neck_offset", "planning", "visual_check", "neck_collar_gap", "region_px", "big_px", "q_px", "thin_removed_px", "seam_outside_changed", "tone"}
+    allowed = {"mode", "attempted", "accepted", "reason", "crop", "changed_pixels", "outside_changed", "latency_ms", "usage", "cost_usd", "identity_before", "identity_after", "prompt_sha", "neck_offset", "planning", "composition_planning", "alignment", "failure_stage", "visual_check", "neck_collar_gap", "region_px", "seam_outside_changed", "tone"}
     return {k: cleaned for k, v in meta.items() if k in allowed and (cleaned := _json_safe(v)) is not None}
 
 
@@ -371,27 +358,42 @@ async def repair_after_face_pass(settings, result, context: FaceSeamContext | No
     if context is None:
         meta["reason"] = "missing_context"
         return replace(result, meta={**base_meta, "face_seam": meta})
+    stage = "crop"
     try:
         qwen = await run_cpu_bound(lambda: Image.open(BytesIO(result.image)).convert("RGB"))
         crop = await run_cpu_bound(prepare_repair_crop, qwen, context)
         meta["neck_offset"] = context.neck_offset
-        from .face_seam_vision import plan_repair, verify_repair
+        from .face_seam_vision import plan_repair, plan_composition, verify_repair
         planning = {}
         meta["planning"] = planning
+        stage = "planning"
         plan = await plan_repair(settings, crop, metadata=planning)
         meta["neck_collar_gap"] = plan.neck_collar_gap
         if plan.neck_collar_gap:
-            crop = await run_cpu_bound(prepare_repair_crop, qwen, context, gap=True)
+            wider = await run_cpu_bound(prepare_repair_crop, qwen, context, gap=True)
+            plan = remap_repair_plan(plan, crop, wider)
+            crop = wider
+        stage = "edit_mask"
+        crop = await run_cpu_bound(prepare_edit_crop, crop, plan)
         prompt = PROMPT_HEAD + plan.instruction.strip() + " " + PROMPT_TAIL
         meta["prompt_sha"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
         meta["attempted"] = True
+        stage = "image_edit"
         sunburst = await (edit or call_sunburst_edit)(settings, prompt, crop)
-        repaired, cmeta, _ = await run_cpu_bound(finish_repair, qwen, context, crop, plan, sunburst.image,
-                                               tone_enabled=getattr(settings, "face_tone_fix", "off") == "on")
-        meta.update(cmeta, latency_ms=sunburst.latency_ms, usage=sunburst.usage)
+        meta.update(latency_ms=sunburst.latency_ms, usage=sunburst.usage)
         cost = estimate_cost(SUNBURST_MODEL, "1024x1024", sunburst.usage, has_image=True)
         if cost.usd is not None:
             meta["cost_usd"] = cost.usd
+        stage = "composition_planning"
+        composition_planning = {}
+        meta["composition_planning"] = composition_planning
+        polygons = await plan_composition(settings, crop, sunburst.image, plan, metadata=composition_planning)
+        plan = replace(plan, composition_polygons=polygons)
+        stage = "composition_alignment"
+        repaired, cmeta, _ = await run_cpu_bound(finish_repair, qwen, context, crop, plan, sunburst.image,
+                                               tone_enabled=getattr(settings, "face_tone_fix", "off") == "on")
+        meta.update(cmeta)
+        stage = "identity"
         scorer = identity_score or (lambda im: _identity_score(im, context))
         before = _finite_score(await run_cpu_bound(scorer, qwen))
         after = _finite_score(await run_cpu_bound(scorer, repaired))
@@ -422,4 +424,5 @@ async def repair_after_face_pass(settings, result, context: FaceSeamContext | No
         return fi.FacePassResult(encoded, "image/png", True, {**base_meta, "face_seam": _safe_meta(meta)}, getattr(result, "context", None))
     except Exception:
         meta["reason"] = "repair_unavailable"
+        meta["failure_stage"] = stage
         return replace(result, meta={**base_meta, "face_seam": _safe_meta(meta)})

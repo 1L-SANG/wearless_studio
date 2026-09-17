@@ -43,3 +43,18 @@ def test_cannot_attribute_response_to_a_different_plan_cache(tmp_path):
     module = evaluator()
     with pytest.raises(ValueError, match="conflicting_plan_response_caches"):
         asyncio.run(module.evaluate(SimpleNamespace(plans_dir=tmp_path / "plans", responses_dir=tmp_path / "responses")))
+
+
+def test_cached_response_must_match_mask_and_prompt(tmp_path):
+    from PIL import Image
+    from types import SimpleNamespace
+    module = evaluator()
+    crop = SimpleNamespace(current=Image.new("RGB", (32, 32)), edit_mask=Image.new("RGBA", (1024, 1024), "white"))
+    fingerprint = module.request_fingerprint(crop, "Repair left collar")
+    module.save_json(tmp_path / "request.json", fingerprint)
+    module.check_cached_request(tmp_path, fingerprint)
+    with pytest.raises(ValueError, match="cached_request_mismatch"):
+        module.check_cached_request(tmp_path, module.request_fingerprint(crop, "Repair right collar"))
+    crop.edit_mask.putpixel((500, 500), (255, 255, 255, 0))
+    with pytest.raises(ValueError, match="cached_request_mismatch"):
+        module.check_cached_request(tmp_path, module.request_fingerprint(crop, "Repair left collar"))
