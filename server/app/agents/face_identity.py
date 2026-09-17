@@ -671,6 +671,42 @@ def plan_face_pass(image_bytes: bytes, model_dir: str | None = None) -> FacePlan
     return plan_from_image(_decode(image_bytes), model_dir)
 
 
+def neck_offset_meta(prepared: Image.Image, plan: FacePlan) -> float | None:
+    """Metadata-only neck center offset at chin+0.15h. It never selects mode or geometry."""
+    try:
+        crop = np.asarray(crop_1024(prepared, plan).convert("RGB"), np.float32)
+        ref = _skin_reference(crop, plan)
+        if ref is None:
+            return None
+        skin = cv2.morphologyEx(
+            (_skinness(crop, ref) > 0.5).astype(np.uint8),
+            cv2.MORPH_OPEN,
+            np.ones((5, 5), np.uint8),
+        ).astype(bool)
+        fx, fy, fw, fh = plan.face_box_crop
+        y = int(fy + fh + 0.15 * fh)
+        if y < 0 or y >= skin.shape[0]:
+            return None
+        row = skin[y]
+        cx = int(round(fx + fw / 2))
+        xs = np.nonzero(row)[0]
+        if len(xs) < 4:
+            return None
+        near = int(xs[np.argmin(np.abs(xs - cx))])
+        if abs(near - cx) > 0.3 * fw:
+            return None
+        left = right = near
+        while left > 0 and row[left - 1]:
+            left -= 1
+        while right < len(row) - 1 and row[right + 1]:
+            right += 1
+        if right - left < 0.2 * fw:
+            return None
+        return round(float(((left + right) / 2.0 - (fx + fw / 2.0)) / max(1.0, fw)), 3)
+    except Exception:  # noqa: BLE001 - optional metadata only.
+        return None
+
+
 #: 피부 보정 **3종**(2026-09-16 대표 결정). 관리자가 테스트컷 12장을 보고 하나를 골라
 #: 등록자에게 보낸다 — 그 값이 그 사람의 설정이 된다(fm_models.skin_finish_code).
 #:
@@ -1496,6 +1532,7 @@ class FacePassResult:
     mime: str
     applied: bool
     meta: dict = field(default_factory=dict)
+    context: dict | None = field(default=None, repr=False)
 
 
 def run_face_pass(
@@ -1514,6 +1551,7 @@ def run_face_pass(
     mask_lock: bool = True,
     skin_finish: int | None = None,
     skin_negative: str = "",
+    capture_seam_context: bool = False,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -1533,6 +1571,8 @@ def run_face_pass(
                 meta.update(plan.to_meta())
             return FacePassResult(image_bytes, mime, False, meta)
         meta.update(plan.to_meta())
+        if capture_seam_context:
+            meta["neck_offset"] = neck_offset_meta(original, plan)
         prompt = build_prompt(plan, expression, token=token)
         meta["prompt"] = prompt
         # 크롭은 **한 번만** 만든다 — control 과 합성 바탕이 같은 픽셀이어야 한다(확대기를 쓰면 특히).
@@ -1610,7 +1650,16 @@ def run_face_pass(
                 buf = BytesIO()
                 # 덧댄 영역은 결과에 남기지 않는다 — 잘라서 원래 크기로 되돌린다.
                 unpad_edges(result, meta.get("crop_pad")).save(buf, "PNG")
-                return FacePassResult(buf.getvalue(), "image/png", True, meta)
+                context = None
+                if capture_seam_context:
+                    context = {
+                        "plan": plan,
+                        "crop_pad": meta.get("crop_pad"),
+                        "references": references,
+                        "model_dir": model_dir,
+                        "neck_offset": meta.get("neck_offset"),
+                    }
+                return FacePassResult(buf.getvalue(), "image/png", True, meta, context)
         meta["reason"] = "gate_failed"
         meta["stopped_early"] = False
         return FacePassResult(image_bytes, mime, False, meta)
@@ -1992,10 +2041,14 @@ async def apply_face_pass(
             # 50 으로 남아야 원장에서 되짚을 수 있다(설정값이 아니라 결과 메타를 본다).
             skin_finish=(meta or {}).get("skin_finish", SKIN_FINISH_DEFAULT)))
 
+    seam_mode = str(getattr(settings, "face_seam_repair", "off") or "off").lower()
+    seam_enabled = seam_mode in {"shadow", "on"}
+
     def _run(live_spec: FaceIdentitySpec, skin_finish: int | None = None):
         backend = resolve_backend(settings, live_spec)
         if backend is None:
             return None
+        seam_kwargs = {"capture_seam_context": True} if seam_enabled else {}
         return asyncio.to_thread(
             run_face_pass, image, backend, expression,
             token=live_spec.token,
@@ -2007,6 +2060,7 @@ async def apply_face_pass(
             mask_lock=bool(getattr(settings, "face_mask_lock", True)),
             skin_finish=live_spec.skin_finish if skin_finish is None else skin_finish,
             skin_negative=str(getattr(settings, "face_skin_negative_prompt", "") or ""),
+            **seam_kwargs,
         )
 
     # 여기 오는 컷은 전부 **실존 모델 + 켜진 LoRA** 다(_face_identity_spec 이 그 행으로만 spec 을
@@ -2078,8 +2132,17 @@ async def apply_face_pass(
                 result = retried
 
     if result.applied:
+        try:
+            if seam_enabled:
+                from . import face_seam_repair
+
+                result = await face_seam_repair.repair_after_face_pass(settings, result)
+        except Exception:  # noqa: BLE001 - seam repair must never break the face pass.
+            pass
         _record("applied")
         _record_recipe(result.meta)      # 채택된 컷에만 — 폴백 컷은 얼굴 패스 산물이 아니다
+        if outcome is not None and result.meta.get("face_seam"):
+            outcome["face_seam"] = result.meta["face_seam"]
         return result.image, result.mime
 
     # **원본으로 내보내지 않는다.** 남은 두 경로(backend_error · gate_failed)도 같은 규칙이다.

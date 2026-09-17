@@ -150,6 +150,7 @@ def test_the_render_passes_the_finish_straight_through(monkeypatch):
 
     def fake_run(image, backend, **kwargs):
         seen.append(kwargs["skin_finish"])
+        assert "capture_seam_context" not in kwargs
         return _Result(True)
 
     monkeypatch.setattr(fi, "run_face_pass", fake_run)

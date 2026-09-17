@@ -921,6 +921,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # 셀러 화면은 달라지지 않는다 — 사후에 "왜 이 컷만 다른가"를 우리가 찾기 위한 기록.
                 **({"face_pass": face_pass_outcome["face_pass"]}
                    if face_pass_outcome.get("face_pass") else {}),
+                **({"face_recipe": face_pass_outcome["face_recipe"]}
+                   if face_pass_outcome.get("face_recipe") else {}),
+                **({"face_seam": face_pass_outcome["face_seam"]}
+                   if face_pass_outcome.get("face_seam") else {}),
             },
         }
 
