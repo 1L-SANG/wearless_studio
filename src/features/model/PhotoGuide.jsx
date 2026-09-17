@@ -1,23 +1,8 @@
-import { Link } from 'react-router-dom';
-import { ArrowRight, Camera, Clock3, Sun, Users } from 'lucide-react';
+import { Camera, Clock3, Sun, Users } from 'lucide-react';
 import { SLOTS, PHOTO_GROUPS, SHOOT_RULES, REGISTRATION_PHOTO_COUNT, SHOOTING_TIME_MINUTES } from './registerSlots.js';
 import { PhotoPoseIllustration } from './PhotoPoseIllustration.jsx';
 import { PhotoChecklistIcon } from './PhotoChecklistIcon.jsx';
 import s from './PhotoGuide.module.css';
-
-export function PhotoPlanSummary() {
-  return <section className={s.plan} aria-label="등록 사진 준비 안내">
-    <div className={s.planHead}>
-      <div><p className={s.eyebrow}>승인 후 준비할 사진</p><h2>야외에서 {REGISTRATION_PHOTO_COUNT}장, 촬영은 약 {SHOOTING_TIME_MINUTES}분</h2></div>
-      <Link className={s.guideLink} to="/photo-guide">촬영 가이드 보기 <ArrowRight size={16} aria-hidden="true" /></Link>
-    </div>
-    <ol className={s.route}>{PHOTO_GROUPS.map((group, index) => <li key={group.id}>
-      <span className={s.routeNumber}>{String(index + 1).padStart(2, '0')}</span>
-      <span>{group.title}</span><b>{SLOTS.filter((slot) => slot.group === group.id).length}장</b>
-    </li>)}</ol>
-    <p className={s.planNote}>도와줄 사람과 같은 날, 같은 머리·옷으로 찍어요.</p>
-  </section>;
-}
 
 export function PhotoPreparation() {
   return <div className={s.preparation}>
