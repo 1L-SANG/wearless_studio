@@ -137,9 +137,12 @@ test('formats the fixed FaceMarket price regardless of the catalog unit price', 
 });
 
 test('unavailable virtual model selection falls back to an available model without a real-model fee', () => {
-  assert.equal(resolveSelectedModelId({
-    selectedModelId: 'mZ', targetGenders: ['women'], models: [],
-    modelsLoading: false, aiModels: AI_MODELS,
-  }), 'mA');
-  assert.equal(realModelFeeLabel('mZ', []), '');
+  for (const selectedModelId of ['mE', 'mZ']) {
+    assert.equal(resolveSelectedModelId({
+      selectedModelId, targetGenders: ['women'], models: [],
+      modelsLoading: false, aiModels: AI_MODELS,
+    }), 'mA');
+    assert.equal(isRealModelSelection(selectedModelId), false);
+    assert.equal(realModelFeeLabel(selectedModelId, []), '');
+  }
 });
