@@ -23,7 +23,6 @@ const FILES = [
   'women/w11.webp',
   'men/m1.webp',
   'men/m2.webp',
-  'men/m3.webp',
 ];
 
 export const LANDING_MODELS = Object.freeze(
