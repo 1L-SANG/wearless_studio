@@ -16,9 +16,9 @@ export function FaqSection() {
   return (
     <section aria-labelledby="fm-faq-title" className={s.faqSection} id="faq">
       <div className={s.faqHead}>
-        <h2 id="fm-faq-title">궁금한 것들</h2>
+        <h2 id="fm-faq-title">자주 하는 질문들</h2>
         <p>
-          여기 없는 질문은 지원 페이지의 자주 묻는 질문에 더 있어요. 계약 조건은{' '}
+          계약 조건은{' '}
           <Link to="/license-agreement">초상 라이선스 계약서</Link>와{' '}
           <Link to="/biometric-consent">동의서</Link> 원문에서 그대로 읽을 수 있어요.
         </p>

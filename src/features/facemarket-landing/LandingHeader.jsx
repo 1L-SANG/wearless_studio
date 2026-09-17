@@ -8,7 +8,7 @@
    클릭에 로그인 모달을 맞는다. 설명을 읽기 전에 가입을 요구하는 순서가 되어, 랜딩을
    만든 이유 자체가 없어진다. 인증 라우트로는 각 페이지 끝 CTA 가 보낸다.
    ============================================================= */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -18,15 +18,11 @@ import s from './FacemarketLanding.module.css';
 
 /* 로그인한 확정 모델은 모델 지원 메뉴를 숨겨요.
    보호 메뉴의 로그인 복귀는 facemarketRootTarget에서 판정해요. */
-const DESKTOP_QUERY = '(min-width: 48rem)';
-
 /* CTA 를 인증 부트스트랩 중에 disabled 로 잠그지 않는 건 의도다 — LandingShell 의
    onPrimary 는 그 시간에 눌린 클릭을 보류함(pendingPrimary)에 담았다가 loading 이
    내려가면 한 번 실행한다. 버튼을 잠그면 그 클릭이 아예 안 들어와 보류함이 죽는다. */
 export function LandingHeader({ onPrimary, primaryLabel }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState(null);
-  const headerRef = useRef(null);
   const { session, loading, openLogin, signOut } = useAuth();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
@@ -51,35 +47,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
      세션이 사라져 RequireAuth 가 FacemarketLoginPrompt 를 그리고 그 effect 가 로그인
      모달을 연다(방금 로그아웃한 사람에게 로그인 창). shell.jsx 의 로그아웃과 같은 규율. */
   const handleSignOut = () => {
-    setMenuOpen(false);
     navigate('/');
     signOut?.();
   };
-
-  // 메뉴를 닫는 길을 세 개 둔다. 토글 버튼만으로는 갇히는 경우가 있었다:
-  // (1) 데스크톱 폭이 되면 햄버거가 display:none 이라 누를 대상 자체가 없어진다,
-  // (2) 바깥을 눌러도 안 닫혀 스크롤하면 헤더와 함께 화면 밖으로 열린 채 흘러간다,
-  // (3) 그동안 aria-expanded 는 계속 true 라 스크린리더에 '열림'으로 남는다.
-  // 셸의 ProfileMenu(shell/shell.jsx)와 같은 방식이다.
-  useEffect(() => {
-    if (!menuOpen) return undefined;
-
-    const close = () => setMenuOpen(false);
-    const onDoc = (e) => { if (headerRef.current && !headerRef.current.contains(e.target)) close(); };
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
-    // 데스크톱 폭으로 넘어가는 순간에만 접는다(반대 방향은 햄버거가 그대로 있으니 둔다).
-    const onDesktop = (e) => { if (e.matches) close(); };
-    const desktop = window.matchMedia(DESKTOP_QUERY);
-
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    desktop.addEventListener('change', onDesktop);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-      desktop.removeEventListener('change', onDesktop);
-    };
-  }, [menuOpen]);
 
   // 부트스트랩 중 보호 메뉴를 누른 의도는 세션 판정 뒤 한 번만 소비한다. 이미 로그인한
   // 사용자로 확인되면 곧장 이동하고, 비로그인이면 같은 목적지를 로그인 복귀 경로로 심는다.
@@ -91,13 +61,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
     else openLogin(to);
   }, [loading, navigate, openLogin, pendingNav, session]);
 
-  // 라우트가 바뀌면 모바일 메뉴는 닫힌다 — 링크를 눌러 페이지가 넘어갔는데 드롭다운이
-  // 새 페이지 위에 그대로 떠 있으면 안 된다.
-  const closeMenu = () => setMenuOpen(false);
   const applicationActive = (item) => item.to === '/apply' && /^\/model\/apply\/?$/.test(pathname);
   const linkClass = (item) => ({ isActive }) => (isActive || applicationActive(item) ? `${s.navLink} ${s.navLinkActive}` : s.navLink);
   const onNav = (event, item) => {
-    closeMenu();
     const action = landingNavAction(item.to, { session, loading });
     if (action === 'navigate') return;
     event.preventDefault();
@@ -106,7 +72,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   };
 
   return (
-    <header className={s.header} ref={headerRef}>
+    <header className={s.header}>
       {/* 브랜드는 홈('/') 링크다. 예전엔 같은 문서 안 앵커(#top)였는데, 이제 상단바가
           다른 라우트로 넘어가므로 앵커면 현재 페이지 맨 위로만 가고 홈으로 못 돌아온다. */}
       {/* facemarket 전용 워드마크(2026-09-03 오너 지급 SVG). 공유 로고(/assets/brand/logo.svg)는
@@ -114,7 +80,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
           이 헤더가 facemarket 도메인(랜딩+/model/*)에만 얹히므로 그 경계가 곧 노출 범위다.
           워드마크에 'facemarket' 글자가 포함돼 있어 텍스트 span 은 중복이라 내렸고,
           접근성 이름은 alt 가 승계한다. */}
-      <Link className={s.brand} onClick={closeMenu} to="/">
+      <Link className={s.brand} to="/">
         <img alt="FaceMarket" className={s.brandWordmark} src="/assets/brand/facemarket-wordmark.svg" />
       </Link>
 
@@ -144,26 +110,8 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
         ) : !primaryLabel || !onPrimary ? (
           <button className={s.headerQuiet} disabled={loading} onClick={() => openLogin(`${pathname}${search}`)} type="button">로그인</button>
         ) : null}
-        <button
-          aria-expanded={menuOpen}
-          aria-label={menuOpen ? '메뉴 닫기' : '메뉴 열기'}
-          className={s.menuButton}
-          onClick={() => setMenuOpen((open) => !open)}
-          type="button"
-        >
-          <Icon name={menuOpen ? 'x' : 'listBullet'} size={22} stroke={2} />
-        </button>
       </div>
 
-      {menuOpen && (
-        <nav aria-label="모바일 메뉴" className={s.mobileNav}>
-          {nav.map((item) => (
-            <NavLink aria-current={applicationActive(item) ? 'page' : undefined} className={linkClass(item)} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      )}
     </header>
   );
 }

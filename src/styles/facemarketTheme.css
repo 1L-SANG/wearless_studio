@@ -69,6 +69,11 @@
   font-family: var(--font-body);
 }
 
+/* 모바일 상단바는 랜딩과 모델 화면 모두 같은 두 행 높이를 쓴다. */
+@media (max-width: 47.99rem) {
+  .fm-theme { --fm-header-h: 6rem; }
+}
+
 /* 페이지 바탕. 랜딩 셸이 쓰던 그라데이션 그대로 — 두 영역을 오갈 때 배경이 바뀌면
    같은 사이트로 안 읽힌다. */
 .fm-theme-page {
