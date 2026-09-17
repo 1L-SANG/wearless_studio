@@ -1038,8 +1038,9 @@ test('지원 시작 상단바는 중복 지원 CTA 대신 로그인 버튼을 �
     const header = findTree(shell, (node) => node.type?.name === 'LandingHeader');
     assert.equal(header.props.primaryLabel, null);
     const tree = header.type(header.props);
-    const login = findTree(tree, (node) => node.type === 'button' && node.props.children === '로그인');
+    const login = findTree(tree, (node) => node.type === 'button' && node.props['aria-label'] === '로그인/회원가입');
     assert.ok(login);
+    assert.deepEqual(login.props.children.map((part) => part.props.children), ['로그인', '로그인/회원가입']);
     login.props.onClick();
     assert.deepEqual(logins, ['/apply']);
   } finally { await harness.close(); }
