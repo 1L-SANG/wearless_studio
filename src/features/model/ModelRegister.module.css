@@ -53,36 +53,54 @@
 .shootRules li { display: flex; flex-direction: column; gap: 2px; }
 .shootRules b { font-weight: 600; }
 .shootRules span { color: var(--fm-muted); font-size: 13px; }
-.groupHeading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
-/* 단계 이름만으로는 어디 서서 어느 쪽으로 도는지 알기 어려워, 위에서 본 그림을 같이 둬요. */
-.sunGuide { display: flex; align-items: center; gap: 12px; flex: 1 1 220px; min-width: 0; }
-.sunGuide p { color: var(--fm-muted); font-size: 13px; min-width: 0; }
-.sunDiagram { width: 52px; height: 52px; flex-shrink: 0; color: var(--fg-3); }
-.photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.slotCard { position: relative; min-width: 0; }
-.slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--fm-line); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }
-.slot:hover { border-color: var(--fg-1); }
+.photoProgress { margin-bottom: 24px; }
+.photoProgress > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-bottom: 10px; }
+.photoProgress strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.photoProgress progress { display: block; width: 100%; height: 5px; appearance: none; border: 0; border-radius: var(--r-pill); background: var(--fm-line); color: var(--fm-ink); overflow: hidden; }
+.photoProgress progress::-webkit-progress-bar { background: var(--fm-line); }
+.photoProgress progress::-webkit-progress-value { background: var(--fm-ink); }
+.photoProgress progress::-moz-progress-bar { background: var(--fm-ink); }
+.photoStages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; list-style: none; padding: 0; margin: 12px 0 0; }
+.photoStages li { display: flex; flex-direction: column; gap: 4px; padding: 10px 8px; border: 1px solid var(--fm-line); border-radius: var(--r-3); font-size: 12px; color: var(--fm-muted); }
+.photoStages b { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.photoStages [aria-current='step'] { border-color: var(--fm-ink); color: var(--fm-ink); background: var(--bg-2); }
+.photoStages [data-complete='true'] b { color: var(--accent-success); }
+.captureHelp { padding: 0 16px; border: 1px solid var(--fm-line); border-radius: var(--r-4); margin-bottom: 16px; }
+.captureHelp summary { min-height: 48px; padding: 12px 0; font-size: 14px; font-weight: 500; cursor: pointer; }
+.captureHelp[open] summary { margin-bottom: 12px; }
+.photoGuideLink { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.photoGuideLink a { display: inline-flex; min-height: 44px; align-items: center; }
+.photoGuideLink > span { color: var(--fm-muted); font-size: 11px; }
+.groupHeading { margin-bottom: 20px; }
+.groupHeading h2 { margin-top: 10px; font-size: 24px; text-wrap: balance; }
+.groupHeading p { color: var(--fm-muted); font-size: 14px; margin-top: 8px; line-height: 1.7; }
+.uploadInstruction { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px !important; padding: 12px 14px; border-radius: var(--r-4); background: var(--bg-2); color: var(--fm-ink); font-size: 13px; line-height: 1.6; }
+.uploadInstruction svg { flex: 0 0 auto; margin-top: 2px; color: var(--fm-accent); }
+.photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; }
+.slotCard { display: flex; flex-direction: column; min-width: 0; }
+.slot { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg-1); border: 1px solid var(--fm-line); border-radius: var(--r-4); overflow: hidden; cursor: pointer; }
+.slot:hover { border-color: var(--fm-ink); }
+.fileInput:disabled + .slot { cursor: wait; opacity: .72; }
+.slotImage { display: block; position: relative; aspect-ratio: 1; background: var(--bg-2); border-bottom: 1px solid var(--fm-line); }
+.slotImage > img { display: block; width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+.photoPose { display: block; width: 100%; height: 100%; color: var(--fm-muted); }
+.slotImageCue { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border-radius: var(--r-3); background: color-mix(in srgb, var(--fm-ink) 86%, transparent); color: var(--bg-1); font-size: 11px; font-weight: 600; text-align: center; }
+.savedPhoto { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--accent-success); font-size: 26px; }
+.savedPhoto > span { font-size: 12px; color: var(--fm-muted); }
 .person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
-.slot > .person, .slot > .slotArt, .slot > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-/* 칸 예시 그림(SlotDiagram)은 선으로만 그려요. .person 처럼 fill/stroke 를 CSS 로 주면
-   fill="none" 으로 비워 둔 얼굴 윤곽까지 칠해져요 — 색은 color(currentColor)로만 줘요. */
-.slotArt { width: 100%; height: 100%; color: var(--fg-3); padding: 14px; }
-.framingDiagram { display: block; width: 100%; max-width: 340px; margin: 14px auto 0; color: var(--fg-3); }
 .fileInput { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
-.slotBadge, .slotAction { position: absolute; top: 10px; font-size: 11px; padding: 3px 8px; background: var(--bg-1); color: var(--fg-1); border-radius: 99px; }
-.slotBadge { left: 10px; }
+.slotBadge { position: absolute; top: 10px; left: 10px; font-size: 11px; padding: 4px 8px; background: var(--bg-1); color: var(--fm-ink); border-radius: var(--r-pill); }
 .filled .slotBadge { color: var(--accent-success); }
-.slotAction { right: 10px; }
-.slotBottom { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; }
-.filled .slotBottom { right: 40px; }
-.caption { display: block; border-radius: 14px; background: var(--fg-1); color: var(--bg-1); font-size: 12px; font-weight: 600; padding: 5px 10px; max-width: 100%; }
-.slotHint { font-size: 11px; line-height: 1.5; color: var(--bg-1); background: var(--fg-1); border-radius: 8px; padding: 4px 8px; margin-top: 4px; }
-.tapLabel { display: none; font-size: 10px; font-weight: 400; margin-top: 2px; }
-.removePhoto { position: absolute; right: 4px; bottom: 4px; width: 36px; height: 36px; border-radius: 50%; background: var(--bg-1); color: var(--fg-1); font-size: 20px !important; line-height: 1; border: 1px solid var(--ring-strong); }
-/* 지우기 버튼(36px)은 그대로 두고 손끝 히트박스만 44px 로 넓힌다. 원을 직접 키우면
-   `.filled .slotBottom { right: 40px }`(36px 버튼 + 4px 오프셋에 맞춘 값) 이 겹쳐
-   모서리 배지 자리를 다시 침범한다 — 안 보이는 ::after 로만 늘린다. */
-.removePhoto::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+.slotBottom { display: flex; flex: 1; flex-direction: column; padding: 14px; }
+.caption { display: block; color: var(--fm-ink); font-size: 13px; font-weight: 600; line-height: 1.5; word-break: keep-all; }
+.slotHint { display: block; font-size: 12px; line-height: 1.65; color: var(--fm-muted); margin: 6px 0 14px; word-break: keep-all; }
+.slotActions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) auto; }
+.slotAction, .removePhoto { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--fm-line); border-radius: var(--r-3); background: var(--bg-1); color: var(--fm-ink); font-size: 12px; font-weight: 500; cursor: pointer; touch-action: manipulation; }
+.slotAction:hover, .removePhoto:hover { border-color: var(--fm-ink); }
+.fileInput:disabled ~ .slotActions .slotAction, .slotAction[aria-disabled='true'], .removePhoto:disabled { cursor: default; opacity: .45; }
+.removePhoto { color: var(--fm-muted); }
+.page .groupStatus { margin-top: 20px; color: var(--fm-muted); text-align: center; font-size: 13px; }
 .bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .bodyCard { position: relative; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
 .bodyCard.selected { border-color: var(--fg-1); box-shadow: 0 0 0 1px var(--fg-1); }
@@ -157,12 +175,16 @@
   .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tips { padding: 14px; }
   .groupHeading { gap: 7px; }
-  .slotAction { display: none; }
-  .slotBadge { top: 8px; left: 8px; font-size: 10px; padding: 3px 7px; }
-  .slotBottom { left: 7px; right: 7px; bottom: 7px; }
-  .caption { font-size: 11px; line-height: 1.4; padding: 5px 8px; border-radius: 11px; }
-  .tapLabel { display: block; }
-  .slotHint { font-size: 10px; padding: 3px 6px; }
+  .photoStages { gap: 5px; }
+  .photoStages li { padding: 8px 6px; font-size: 11px; }
+  .photoStages li > span { min-height: 2.8em; word-break: keep-all; }
+  .groupHeading h2 { font-size: 21px; }
+  .slotBadge { top: 8px; left: 8px; font-size: 10px; padding: 3px 6px; }
+  .slotBottom { padding: 12px 10px; }
+  .caption { font-size: 12px; }
+  .slotHint { font-size: 12px; }
+  .slotAction, .removePhoto { min-height: 44px; padding-inline: 9px; font-size: 11px; }
+  .slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) 72px; }
   .bodyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bodyArt { height: 160px; }
   .categoryRow { padding: 17px 16px; column-gap: 14px; }
@@ -183,10 +205,9 @@
 .withdrawalTooltip ul { margin: 0; padding-left: 16px; }
 .reassurance .withdrawalTooltip li { display: list-item; font-size: 13px; }
 .withdrawalTooltip li + li { margin-top: 8px; }
-.page .encouragement { margin-bottom: 20px; font-size: 16px; font-weight: 500; color: var(--fg-1); }
 .reviewRows { display: grid; gap: 16px; }
-.reviewRow { display: grid; grid-template-columns: 88px minmax(0, 1fr) 48px; gap: 16px; align-items: center; border-bottom: 1px solid var(--fm-line); padding-bottom: 16px; }
-.reviewRow h2 { font-size: 16px; white-space: nowrap; }
+.reviewRow { display: grid; grid-template-columns: 120px minmax(0, 1fr) 48px; gap: 16px; align-items: center; border-bottom: 1px solid var(--fm-line); padding-bottom: 16px; }
+.reviewRow h2 { font-size: 15px; word-break: keep-all; }
 .reviewThumbnails { display: flex; gap: 8px; overflow-x: auto; min-width: 0; padding: 4px 0; }
 .reviewThumbnails:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 .reviewThumbnail { width: 60px; height: 80px; flex: 0 0 60px; border-radius: 6px; overflow: hidden; background: var(--color-soft); }
@@ -200,7 +221,7 @@
 .priceConsent { min-height: 52px; margin-top: 24px; padding: 14px; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-2); }
 @media (max-width: 700px) {
   .withdrawalTooltip { position: static; margin-top: 8px; max-width: 320px; }
-  .reviewRow { grid-template-columns: 76px minmax(0, 1fr) 44px; gap: 10px; }
+  .reviewRow { grid-template-columns: 88px minmax(0, 1fr) 44px; gap: 10px; }
   .reviewRow h2 { font-size: 14px; }
 }
 

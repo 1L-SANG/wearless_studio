@@ -111,8 +111,8 @@ test('두 푸터에 같은 창 문의 링크가 있고 브랜드와 FaceMarket �
   assert.match(model, new RegExp(`<footer class="[^"]*${styles.footerCompact}`));
   assert.match(textContent(model), /FaceMarket · Wearless/);
   assert.match(textContent(model), /상품 상세페이지를 만드는 셀러라면 ai.wearless.kr 로 오세요\./);
-  assert.match(textContent(model), /모델 등록 안내 · 내 얼굴이 어떻게 다뤄지나요/);
-  for (const href of ['https://ai.wearless.kr', '/register', '/model-info']) {
+  assert.match(textContent(model), /모델 등록 안내 · 18장 촬영 가이드 · 내 얼굴이 어떻게 다뤄지나요/);
+  for (const href of ['https://ai.wearless.kr', '/register', '/photo-guide', '/model-info']) {
     assert.ok(model.includes(`href="${href}"`));
   }
 });

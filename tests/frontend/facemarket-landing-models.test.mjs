@@ -12,17 +12,17 @@ import { LANDING_MODELS } from '../../src/features/facemarket-landing/data/landi
    들어오면 안 된다. 목록이 순수 상수라 런타임 검증이 없으니 파일 경로 한 줄만
    바꿔도 아무 데서도 안 걸린다 — 그래서 여기서 잡는다.
 
-   출처: 설계 스펙 §2 "가상모델 14장(women w1~w11, men m1~m3), 카드에는 번호만,
-   `-face` 접미 파일과 pose/ · physique/ 는 쓰지 않는다".
+   현재 선택: 가상모델 13장(women w1~w11, men m1~m2), 카드에는 번호만,
+   `-face` 접미 파일과 pose/ · physique/ 는 쓰지 않는다.
    ============================================================= */
 
 /* 허용 경로는 이 한 줄뿐이다. `-face`(얼굴 크롭)·pose/·physique/(등록 위저드
    안내용 소재)는 전부 여기서 떨어진다. */
 const ALLOWED_SRC = /^\/models\/(women|men)\/[wm]\d+\.webp$/;
 
-test('랜딩 카드는 14장이다', () => {
-  // 스펙이 못 박은 수. 줄거나 늘면 카드 번호(01~14)와 고지 문구도 같이 손봐야 한다.
-  assert.equal(LANDING_MODELS.length, 14);
+test('랜딩 카드는 13장이다', () => {
+  assert.equal(LANDING_MODELS.length, 13);
+  assert.ok(LANDING_MODELS.every(({ id }) => id !== 'm3'));
 });
 
 test('id 가 겹치지 않는다', () => {

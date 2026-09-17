@@ -1,12 +1,11 @@
-import { Info } from 'lucide-react';
+import { Camera, ImagePlus, Info, RefreshCw, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
-import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, SHOOT_RULES, REGISTER_BODIES, photoSlotKey, toggleRegisterCategory } from './registerSlots.js';
+import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, REGISTER_BODIES, photoSlotKey, photoProgress, toggleRegisterCategory } from './registerSlots.js';
 import { RegisterIllustration } from './RegisterIllustration.jsx';
-// 칸마다 다른 그림은 여기서 와요. SunDiagram(해 위치)은 지우지 않았어요 — 다시 쓸 때를 위해
-// RegisterIllustration.jsx 에 그대로 있어요.
-import { SlotDiagram, FramingDiagram, StepDiagram } from './SlotDiagram.jsx';
+import { PhotoPoseIllustration } from './PhotoPoseIllustration.jsx';
+import { PhotoPreparation, ReferencePhotoNotice } from './PhotoGuide.jsx';
 import s from './ModelRegister.module.css';
 
 export const heading = (title, description) => <div className={s.intro}><h1 tabIndex={-1}>{title}</h1>{description && <p className={s.description}>{description}</p>}</div>;
@@ -17,12 +16,12 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
   const someChecked = consents.some(Boolean) && !allChecked;
   const check = (index, label) => <label className={s.consentLabel} htmlFor={`consent-${index}`}><input id={`consent-${index}`} type="checkbox" checked={consents[index]} disabled={busy} onChange={(event) => setConsents((current) => current.map((value, i) => i === index ? event.target.checked : value))} /><span>{label}<span className={s.required}> (필수)</span></span></label>;
   return <>
-    {heading('먼저 본인인지 확인해요', '필수 항목을 확인한 뒤 신분증 인증을 진행해요.')}
+    {heading('먼저 본인인지 확인해요', '약관에 동의한 뒤 본인인증을 진행해요.')}
     <ul className={s.reassurance}>
-      <li><span>✓</span><p>원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.</p></li>
-      <li><span>✓</span><p>철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)</p></li>
+      <li><span>✓</span><p>원본 사진은 공개되지 않아요.</p></li>
+      <li><span>✓</span><p>신분증은 본인확인에만 사용해요.</p></li>
       <li className={s.withdrawalRow}><span>✓</span><div className={s.withdrawalInfo} onMouseEnter={() => setWithdrawalOpen(true)} onMouseLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setWithdrawalOpen(false); }}>
-        <p>언제든지 모델 등록을 잠시 중지하거나 철회할 수 <span className={s.keepTogether}>있습니다 <button type="button" className={s.infoButton} aria-label="그만두면 이렇게 돼요" aria-describedby="withdrawal-tooltip" onMouseEnter={() => setWithdrawalOpen(true)} onFocus={() => setWithdrawalOpen(true)} onBlur={() => setWithdrawalOpen(false)} onClick={() => setWithdrawalOpen(true)} onKeyDown={(event) => { if (event.key === 'Escape') setWithdrawalOpen(false); }}><Info size={18} aria-hidden="true" /></button></span></p>
+        <p>언제든 등록을 중지하거나 철회할 수 <span className={s.keepTogether}>있어요. <button type="button" className={s.infoButton} aria-label="그만두면 이렇게 돼요" aria-describedby="withdrawal-tooltip" onMouseEnter={() => setWithdrawalOpen(true)} onFocus={() => setWithdrawalOpen(true)} onBlur={() => setWithdrawalOpen(false)} onClick={() => setWithdrawalOpen(true)} onKeyDown={(event) => { if (event.key === 'Escape') setWithdrawalOpen(false); }}><Info size={18} aria-hidden="true" /></button></span></p>
         <div id="withdrawal-tooltip" className={s.withdrawalTooltip} role="tooltip" hidden={!withdrawalOpen} onMouseEnter={() => setWithdrawalOpen(true)}><ul>
           <li>새로운 사용이 그 자리에서 멈춰요. 사유는 필요 없고, 위약금도 없어요.</li>
           <li>얼굴 정보는 30일 안에 파기해요. 백업은 90일 안에 지워요. 끝나면 알려 드려요.</li>
@@ -39,8 +38,8 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
       <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<div className={s.legalSummary}>
         <p><b>수집:</b> 얼굴·옆모습·뒷모습 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
         <p><b>목적:</b> 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
-        <p><b>확인:</b> 올린 사진은 학습 전에 FaceMarket 담당자가 품질 확인을 위해 열람하며, 열람 기록이 남아요.</p>
-        <p><b>사용 시점:</b> 만든 얼굴 참조 자산은 내가 테스트컷을 확인·승인한 뒤부터 착용컷 생성에 쓰여요.</p>
+        <p><b>확인:</b> 학습 전 담당자가 사진 품질을 확인해요. 열람 기록은 남아요.</p>
+        <p><b>사용 시점:</b> 테스트컷을 확인·승인한 뒤부터 착용컷 생성에 써요.</p>
         <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
         <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>{legalLink('/biometric-consent')}
       </div></div>
@@ -48,48 +47,71 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
   </>;
 }
 
+function renderPhotoCard({ slot, filled, preview, busy, onFile, onRemove, reason }) {
+  const hintId = `photo-hint-${slot.key}`;
+  const inputId = `photo-input-${slot.key}`;
+  return <div className={s.slotCard} key={slot.key}>
+    <input id={inputId} className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '다시 촬영하거나 사진 교체' : '사진 찍기 또는 선택'}`} aria-describedby={hintId} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+    <label className={`${s.slot} ${filled ? s.filled : ''}`} htmlFor={inputId}>
+      <span className={s.slotImage}>
+        {preview ? <img src={preview} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : filled ? <span className={s.savedPhoto}>✓<span>사진이 저장됐어요</span></span> : <PhotoPoseIllustration className={s.photoPose} slot={slot} />}
+        <span className={s.slotBadge}>{String(slot.n).padStart(2, '0')}{filled ? ' · 저장 완료' : reason ? ' · 다시 찍기' : ' · 촬영 예시'}</span>
+        {!filled && !reason && <span className={s.slotImageCue}><Camera size={16} aria-hidden="true" />예시를 눌러 사진 추가</span>}
+      </span>
+      <span className={s.slotBottom}>
+        <span className={s.caption}>{slot.title}</span>
+        <span className={s.slotHint} id={hintId}>{reason || slot.hint}</span>
+      </span>
+    </label>
+    <div className={s.slotActions}>
+      <label className={s.slotAction} htmlFor={inputId} aria-disabled={busy}>
+        {filled || reason ? <RefreshCw size={15} aria-hidden="true" /> : <ImagePlus size={15} aria-hidden="true" />}
+        {filled ? '재촬영·교체' : reason ? '재촬영·올리기' : '사진 찍기·선택'}
+      </label>
+      {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 삭제`} disabled={busy} onClick={() => onRemove(slot.key)}><Trash2 size={15} aria-hidden="true" />삭제</button>}
+    </div>
+  </div>;
+}
+
 export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove, editGroup }) {
+  const photos = enrollment?.photos || [];
+  const uploaded = new Set(photos.map(photoSlotKey));
   if (sub === PHOTO_REVIEW_SUB) return <>
-    {heading(`${SLOTS.length}장을 확인해 주세요`, '내 사진으로 모두 채웠는지 한 번 더 봐 주세요.')}
+    {heading(`${SLOTS.length}장을 확인해 주세요`, '사진이 번호별 자세와 맞는지 확인해 주세요.')}
     <div className={s.reviewRows}>{PHOTO_GROUPS.map((group, index) => {
       const slots = SLOTS.filter((slot) => slot.group === group.id);
       return <div className={s.reviewRow} key={group.id}>
         <h2>{group.title} {slots.length}장</h2>
         <div className={s.reviewThumbnails} tabIndex={0} role="region" aria-label={`${group.title} 사진`}>
-          {slots.map((slot) => <div className={s.reviewThumbnail} key={slot.key}>{previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="60" height="80" /> : <span>{slot.n}번 사진을 저장했어요</span>}</div>)}
+          {slots.map((slot) => <div className={s.reviewThumbnail} key={slot.key}>{previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 ${slot.title}`} width="60" height="80" /> : <span>{slot.n}번 {uploaded.has(slot.key) ? '저장 완료' : '사진이 없어요'}</span>}</div>)}
         </div>
         <button type="button" className={s.textLink} aria-label={`${group.title} 사진 고치기`} onClick={() => editGroup(index + 1)} disabled={busy}>고치기</button>
       </div>;
     })}</div>
   </>;
   const group = PHOTO_GROUPS[sub - 1];
-  const uploaded = new Set((enrollment?.photos || []).map(photoSlotKey));
+  const slots = SLOTS.filter((slot) => slot.group === group.id);
+  const progress = photoProgress(photos);
+  const groupProgress = photoProgress(photos, group.id);
   return <>
-    {heading('사진을 등록해요', '내 얼굴을 그대로 배우려면 빛이 조금씩 다른 사진이 여러 장 필요해요. 밝은 야외에서 네 단계로, 몸을 90도씩 돌려 가며 각 카드와 같은 구도로 찍어 주세요.')}
-    {sub === 1 && <div className={s.tips}>
-      <strong>찍기 전에</strong>
-      <p>맑은 날 야외에서, 폰 뒷카메라로 찍어요. 하나라도 어기면 사진이 반려돼요.</p>
-      {/* "얼굴 폭이 가로의 1/4" 은 글로만 읽으면 가늠이 안 돼요 — 반려되는 기준이라 그림으로 보여 줘요. */}
-      <FramingDiagram className={s.framingDiagram} />
-      <ul className={s.shootRules}>{SHOOT_RULES.map((rule) => <li key={rule.title}><b>{rule.title}</b><span>{rule.body}</span></li>)}</ul>
-    </div>}
-    {sub > 1 && <p className={s.encouragement}>{sub === PHOTO_GROUPS.length ? '이제 마지막 단계예요. 아래 사진들만 찍으면 끝나요.' : '방금 하신 대로, 서는 자리만 바꿔서 찍어 주세요.'}</p>}
-    <div className={s.groupHeading}>
-      <span className={s.tag}>{group.badge}</span>
-      <div className={s.sunGuide}><StepDiagram className={s.sunDiagram} step={sub} /><p>{group.note}</p></div>
+    {heading('등록 사진 18장을 올려요', '번호에 맞춰 올려 주세요. 나중에 이어서 등록해도 돼요.')}
+    <div className={s.photoProgress}>
+      <div><span>전체 사진</span><strong aria-live="polite">{progress.count} / {progress.total}장 저장</strong></div>
+      <progress aria-label="전체 사진 업로드 진행률" value={progress.count} max={progress.total} />
+      <ol className={s.photoStages}>{PHOTO_GROUPS.map((item, index) => {
+        const saved = photoProgress(photos, item.id);
+        return <li key={item.id} aria-current={sub === index + 1 ? 'step' : undefined} data-complete={saved.complete}><span>{index + 1}. {item.title}</span><b>{saved.complete ? '✓ ' : ''}{saved.count}/{saved.total}</b></li>;
+      })}</ol>
     </div>
-    <div className={s.photoGrid}>{SLOTS.filter((slot) => slot.group === group.id).map((slot) => {
-      const filled = uploaded.has(slot.key);
-      return <div className={s.slotCard} key={slot.key}>
-        <label className={`${s.slot} ${filled ? s.filled : ''}`}>
-          <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '사진 바꾸기' : '사진 올리기'}`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
-          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <SlotDiagram className={s.slotArt} cut={slot.cut} />}
-          <span className={s.slotBadge}>{filled ? '✓ 내 사진' : '예시'}</span>
-          <span className={s.slotAction}>{filled ? '바꾸기' : '내 사진으로'}</span><span className={s.slotBottom}><span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 {filled ? '바꾸기' : '올리기'}</span></span><span className={s.slotHint}>{filled && !previews[slot.key] ? '사진을 저장했어요' : slot.hint}</span></span>
-        </label>
-        {filled && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 지우기`} disabled={busy} onClick={() => onRemove(slot.key)}>×</button>}
-      </div>;
-    })}</div>
+    {sub === 1 && <details className={s.captureHelp}><summary>촬영 준비 보기</summary><PhotoPreparation /></details>}
+    <div className={s.photoGuideLink}><Link className={s.textLink} to="/photo-guide" target="_blank" rel="noreferrer">18장 촬영 가이드 열기 (새 탭)</Link><span>JPG · PNG · WEBP · HEIC</span></div>
+    <div className={s.groupHeading}>
+      <span className={s.tag}>{sub} / {PHOTO_GROUPS.length} · {slots[0].n}~{slots.at(-1).n}번</span>
+      <h2>{group.action} {slots.length}장</h2><p>{group.note}</p>
+    </div>
+    <p className={s.uploadInstruction}><Camera size={17} aria-hidden="true" /><span>예시 이미지를 눌러 카메라로 찍거나 앨범에서 선택하세요. 올리면 예시가 내 사진으로 바뀌어요.</span></p>
+    <div className={s.photoGrid} aria-busy={busy}>{slots.map((slot) => renderPhotoCard({ slot, filled: uploaded.has(slot.key), preview: previews[slot.key], busy, onFile, onRemove }))}</div>
+    <p className={s.groupStatus} role="status">{groupProgress.complete ? '이 단계 사진을 모두 저장했어요.' : `${groupProgress.total - groupProgress.count}장을 더 올려 주세요.`}</p>
   </>;
 }
 
@@ -103,40 +125,28 @@ export function renderReshoot({ enrollment, previews, busy, onFile }) {
   const reasons = new Map(requested.map((item) => [item.slot, item.reason]));
   const slots = SLOTS.filter((slot) => reasons.has(slot.key));
   return <>
-    {heading('사진 몇 장만 다시 찍어 주세요', '담당자가 확인하다 다시 받고 싶은 칸을 골랐어요. 아래 칸만 새로 올리면 끝나요.')}
+    {heading('요청받은 사진을 다시 올려요', '아래 사유를 보고 해당 사진만 다시 찍어 주세요.')}
     {slots.length === 0 && <p className={s.description} role="status">다시 찍을 칸이 없어요. 잠시 후 다시 확인해 주세요.</p>}
-    <div className={s.photoGrid}>{slots.map((slot) => {
-      const reason = reasons.get(slot.key);
-      return <div className={s.slotCard} key={slot.key}>
-        <label className={s.slot}>
-          <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} 다시 올리기`} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
-          {previews[slot.key] ? <img src={previews[slot.key]} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : <SlotDiagram className={s.slotArt} cut={slot.cut} />}
-          <span className={s.slotBadge}>다시 찍기</span>
-          <span className={s.slotAction}>내 사진으로</span>
-          <span className={s.slotBottom}>
-            <span className={s.caption}>{slot.n} · {slot.title}<span className={s.tapLabel}>탭해서 올리기</span></span>
-            <span className={s.slotHint}>{reason || slot.hint}</span>
-          </span>
-        </label>
-      </div>;
-    })}</div>
+    {slots.some((slot) => ['sh_front2', 'sh_gaze_left', 'sh_gaze_right'].includes(slot.key)) && <ReferencePhotoNotice />}
+    <p className={s.description}><Link className={s.textLink} to="/photo-guide" target="_blank" rel="noreferrer">촬영 가이드 보기 (새 탭)</Link></p>
+    <div className={s.photoGrid}>{slots.map((slot) => renderPhotoCard({ slot, preview: previews[slot.key], busy, onFile, reason: reasons.get(slot.key) || slot.hint }))}</div>
   </>;
 }
 
 export function renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed }) {
   const descriptions = ['상의, 하의, 아우터, 원피스 같은 평상복이에요.', '운동복, 레깅스, 요가복이에요.', '라운지웨어, 파자마예요.'];
   return <>
-    {heading('사용 조건을 정해요', '내 얼굴을 쓸 수 있는 옷과 몸의 두께를 알려 주세요. 여기서 정한 조건이 셀러 화면에 그대로 보여요.')}
+    {heading('사용 조건을 정해요', '내 얼굴을 사용할 옷 종류를 골라 주세요.')}
     <h2 className={s.sectionTitle}>내 얼굴을 쓸 수 있는 옷<span className={s.required}>*</span></h2>
-    <div className={s.categories}>{BRAND_USE_CATEGORIES.map((category, index) => { const on = terms.allowedUse.includes(category); const last = on && terms.allowedUse.length === 1; return <div className={s.categoryRow} key={category}><div><h3>{category}</h3><p>{descriptions[index]}</p></div><button type="button" className={s.switch} role="switch" aria-label={`${category} 허용`} aria-checked={on} disabled={busy || last} onClick={() => setTerms((current) => ({ ...current, allowedUse: toggleRegisterCategory(current.allowedUse, category) }))}><span /></button>{last && <p className={s.categoryNote}>최소 한 가지는 켜 두어야 해요</p>}{!on && <p className={s.categoryNote}>끈 옷은 셀러가 고를 수 없어요. 언제든 다시 켤 수 있어요.</p>}</div>; })}</div>
+    <div className={s.categories}>{BRAND_USE_CATEGORIES.map((category, index) => { const on = terms.allowedUse.includes(category); const last = on && terms.allowedUse.length === 1; return <div className={s.categoryRow} key={category}><div><h3>{category}</h3><p>{descriptions[index]}</p></div><button type="button" className={s.switch} role="switch" aria-label={`${category} 허용`} aria-checked={on} disabled={busy || last} onClick={() => setTerms((current) => ({ ...current, allowedUse: toggleRegisterCategory(current.allowedUse, category) }))}><span /></button>{last && <p className={s.categoryNote}>한 가지 이상 선택해 주세요.</p>}{!on && <p className={s.categoryNote}>이 종류의 옷에는 내 얼굴을 쓸 수 없어요.</p>}</div>; })}</div>
     <section className={s.bodySection}>
-      <h2>몸의 두께<span className={s.optional}>선택</span></h2><p className={s.bodyDescription}>셀러가 옷을 고를 때 참고해요. 고르지 않아도 괜찮아요.</p>
+      <h2>몸의 두께<span className={s.optional}>선택</span></h2><p className={s.bodyDescription}>셀러가 옷을 고를 때 참고해요.</p>
       <div className={s.bodyGrid} aria-label="몸의 두께, 선택 항목">{REGISTER_BODIES.map((item) => <button key={item.value} type="button" className={`${s.bodyCard} ${body === item.value ? s.selected : ''}`} aria-pressed={body === item.value} disabled={busy} onClick={() => setBody(item.value)}><span className={s.bodyArt}><RegisterIllustration className={s.person} width={item.width} /></span><span className={s.bodyName}>{item.label}</span>{body === item.value && <span className={s.bodyCheck}>✓</span>}</button>)}</div>
-      <p className={s.bodyOptional}>{body ? <>고른 두께는 {REGISTER_BODIES.find((item) => item.value === body)?.label}예요. <button type="button" className={s.textLink} onClick={() => setBody(null)} disabled={busy}>선택 지우기</button></> : '지금 고르지 않아도 괜찮아요.'}</p>
+      <p className={s.bodyOptional}>{body ? <>고른 두께는 {REGISTER_BODIES.find((item) => item.value === body)?.label}예요. <button type="button" className={s.textLink} onClick={() => setBody(null)} disabled={busy}>선택 지우기</button></> : '선택하지 않아도 돼요.'}</p>
     </section>
     <div className={s.priceCard}><h2>셀러 사용료 규칙</h2><ul>
-      <li>셀러가 한 번 모델을 이용한다면 {formatKrw(STANDARD_UNIT_PRICE_KRW)} / 월정액으로 이용한다면 {formatKrw(MONTHLY_PASS_PRICE_KRW)}을 결제해요. (1개월 당 {MONTHLY_PASS_CUTS}회 제한)</li>
-      <li>이 중 {MODEL_SHARE * 100}% 금액을 모델님께 자동 정산해드려요.</li>
+      <li>셀러 이용료: 1회 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 {formatKrw(MONTHLY_PASS_PRICE_KRW)} (월 {MONTHLY_PASS_CUTS}회)</li>
+      <li>결제 금액의 {MODEL_SHARE * 100}%를 정산받아요.</li>
     </ul></div>
     <div className={s.contractLink}>{legalLink('/license-agreement', '계약 요약과 전문 보기')}</div>
     <label className={`${s.consentLabel} ${s.priceConsent}`} htmlFor="price-agreed"><input id="price-agreed" type="checkbox" checked={priceAgreed} disabled={busy} onChange={(event) => setPriceAgreed(event.target.checked)} /><span>셀러 사용료 규칙에 동의해요<span className={s.required}> (필수)</span></span></label>

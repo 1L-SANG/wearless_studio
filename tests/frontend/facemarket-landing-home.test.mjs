@@ -137,7 +137,7 @@ test('HowItWorksSection은 세 시간 알약을 보여주고 기존 rail을 렌�
   ]);
   const tree = HowItWorksSection();
   const times = nodesBy(tree, (node) => node.props?.className === styles.stepTime).map(treeText);
-  assert.deepEqual(times, ['3분', REVIEW_SLA_LABEL, '10분']);
+  assert.deepEqual(times, ['지원서 약 3분', REVIEW_SLA_LABEL, '촬영 약 15분']);
   assert.ok(!styles.rail || nodesBy(tree, (node) => node.props?.className === styles.rail).length === 0);
 });
 

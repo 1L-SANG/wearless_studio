@@ -136,7 +136,7 @@ test('reissuing from completed registration requires two fresh consents before a
     await eventually(() => harness.runtime.states[0] === 'done', 'active license restores completed registration');
     let tree = commit();
     assert.equal(created.length, 0, 'visiting registration must never create a new enrollment');
-    const restart = findTree(tree, (node) => node.type === 'button' && node.props.children === '새 생체 등록 시작');
+    const restart = findTree(tree, (node) => node.type === 'button' && node.props.children === '새로 등록하기');
     await restart.props.onClick();
     tree = commit();
     await flush();
@@ -676,7 +676,7 @@ test('등록의 필수 항목 전체 동의는 법정 안내를 제외한 두 �
     tree = harness.render();
     assert.equal(findTree(tree, (node) => node.props?.id === 'register-consent-all').props.checked, true);
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '동의하고 신분증 인증하기').props.disabled, false);
-    assert.ok(collectText(tree).includes('두 가지 필수 항목을 모두 확인했어요'));
+    assert.ok(collectText(tree).includes('필수 동의를 마쳤어요'));
     findTree(tree, (node) => node.props?.id === 'register-consent-all').props.onChange({ target: { checked: false } });
     assert.deepEqual(harness.runtime.states[5], [false, false]);
   } finally { await harness.close(); }

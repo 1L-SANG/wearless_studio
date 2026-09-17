@@ -1,5 +1,7 @@
 # FaceMarket 온보딩 블루프린트 v1 — 단계별 화면·문구·동의란 전문
 
+> 과거 기획안이다. 현재 지원·등록 안내는 [2026-09-17 등록 흐름 정본](facemarket_registration_flow.md)을 따른다. 아래의 과거 장수와 소요 시간을 현재 화면에 사용하지 않는다.
+
 - 작성: 2026-09-02. 용도: 모델 온보딩~철회까지 전 단계의 **실제 화면 문구·체크박스 문안·동의란 설명문** 초안. 법률 검토 전 워킹 드래프트.
 - 근거: [온보딩 시스템 전수 조사](research/2026-09-01-model-digitization-onboarding-systems.md) · [입력 요건 디렉터리](research/2026-09-01-model-input-requirements-directory.md) · [공급 전략 결정](research/2026-09-01-facemarket-supply-strategy-decision.md)
 - 표기: `[오너 확정]` = 오너 결정 필요(추천값으로 초안 작성됨). `(출처)` = 차용한 서비스.

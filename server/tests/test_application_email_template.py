@@ -66,6 +66,22 @@ def test_cta_is_a_button_and_the_url_also_appears_as_text():
     assert f"{BASE}/status" in text
 
 
+def test_approval_email_explains_current_registration_and_publication_flow():
+    _subject, html, text = _content("approved")
+    for part in (html, text):
+        for required in ("본인확인", "등록 사진 18장", "사용 조건", "증서", "테스트컷", "확인·확정한 뒤", f"{BASE}/photo-guide"):
+            assert required in part
+        assert "셀카 한 장" not in part
+        assert "얼굴 사진 3장" not in part
+
+
+def test_identity_review_approval_does_not_claim_publication_is_complete():
+    _subject, html, text = _content("enrollment_review_approved")
+    for part in (html, text):
+        assert "남은 등록 절차" in part
+        assert "테스트컷을 직접 확인·확정한 뒤" in part
+
+
 def test_rejected_carries_the_reason_escaped():
     _subject, html, text = _content("rejected", reason='사진 <b>부족</b> & 흐림')
     assert "&lt;b&gt;" in html, "거절 사유가 이스케이프되지 않았다"

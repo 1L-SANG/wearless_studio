@@ -25,6 +25,7 @@ import { ModelsPage } from '@/features/facemarket-landing/pages/ModelsPage.jsx';
 import { PayoutPage } from '@/features/facemarket-landing/pages/PayoutPage.jsx';
 import { StatusPage } from '@/features/facemarket-landing/pages/StatusPage.jsx';
 import { RegisterPage } from '@/features/facemarket-landing/pages/RegisterPage.jsx';
+import { PhotoGuidePage } from '@/features/facemarket-landing/pages/PhotoGuidePage.jsx';
 import { ModelInfoPage } from '@/features/facemarket-landing/pages/ModelInfoPage.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
@@ -75,6 +76,7 @@ export default function AppFacemarket() {
           지우지 않는 이유: 등록 7단계 안내와 프라이버시 하드룰 설명은 승인받은 내용이고,
           생체정보를 넘기기 전에 읽을 자리가 사이트에 하나는 있어야 한다. */}
       <Route path="register" element={<RegisterPage />} />
+      <Route path="photo-guide" element={<PhotoGuidePage />} />
       <Route path="model-info" element={<ModelInfoPage />} />
       {/* 옛 주소. 지워진 라이선스 페이지(/license·/licensing)로 공유된 링크가 404 로 떨어지지 않게
           그 자리를 이어받은 등록 상태로 보낸다. */}
