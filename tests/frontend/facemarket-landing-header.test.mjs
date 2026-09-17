@@ -11,6 +11,11 @@ function navLabels(tree) {
     return nav.props.children.flat().map((node) => node.props.children);
 }
 
+function headerButtons(tree) {
+    const actions = tree.props.children.find((node) => node?.props.className === "headerActions");
+    return actions.props.children.flat().filter((node) => node?.type === "button");
+}
+
 async function headerHarness(listMyModels) {
     const harness = await modelComponentHarness({
         entry: "/src/features/facemarket-landing/LandingHeader.jsx",
@@ -92,6 +97,27 @@ test("로그인 사용자가 미등록으로 확인되면 모델 지원을 보�
             "모델 리스트",
             "마이페이지",
         ]);
+    } finally {
+        await harness.close();
+    }
+});
+
+test("비로그인은 랜딩 지원 버튼 옆에서 로그인과 회원가입을 열 수 있어요", async () => {
+    const harness = await headerHarness(async () => []);
+    const loginTargets = [];
+    harness.runtime.session = null;
+    harness.runtime.location = { pathname: "/", search: "" };
+    harness.runtime.openLogin = (target) => loginTargets.push(target);
+    try {
+        const buttons = headerButtons(harness.render({
+            primaryLabel: "얼리버드 지원하기",
+            onPrimary: () => {},
+        }));
+        assert.equal(buttons.length, 2);
+        assert.equal(buttons[0].props.children[0], "얼리버드 지원하기");
+        assert.equal(buttons[1].props["aria-label"], "로그인/회원가입");
+        buttons[1].props.onClick();
+        assert.deepEqual(loginTargets, ["/"]);
     } finally {
         await harness.close();
     }
