@@ -356,6 +356,8 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
     assert.equal(calls[0].slot, 'bl_34'); assert.equal(calls[0].fileBlob, file);
     tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '18번 내 사진'));
+    assert.ok(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === 'photo-input-bl_34' && textOf(node).includes('재촬영·교체')));
+    assert.ok(findTree(tree, (node) => node.type === 'button' && node.props.children?.[1] === '삭제'));
     await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_REVIEW_SUB);
     const reviewedPhoto = findTree(harness.render(), node => node.type === 'img' && node.props.alt === `18번 ${module.SLOTS.at(-1).title}`);
@@ -368,7 +370,7 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
 test('사진 삭제가 실패하면 기존 사진과 완료 판정을 유지해요', async () => {
   const harness = await modelComponentHarness({ initialStates: ['2', photoRecord(), 1], api: { deleteEnrollmentPhoto: async () => { throw new Error('삭제 실패'); } } });
   try {
-    await findTree(harness.render(), (node) => node.type === 'button' && node.props['aria-label'] === '1번 사진 지우기').props.onClick();
+    await findTree(harness.render(), (node) => node.type === 'button' && node.props['aria-label'] === '1번 사진 삭제').props.onClick();
     assert.equal(harness.runtime.states[1].photos.length, module.SLOTS.length); assert.equal(harness.runtime.states[3], '삭제 실패');
   } finally { await harness.close(); }
 });
@@ -377,7 +379,7 @@ test('사진 삭제가 성공하면 다음 버튼이 잠기고 사진 개수가 
   const calls = [];
   const harness = await modelComponentHarness({ initialStates: ['2', photoRecord(), 1], api: { deleteEnrollmentPhoto: async (...args) => calls.push(args) } });
   try {
-    await findTree(harness.render(), (node) => node.type === 'button' && node.props['aria-label'] === '1번 사진 지우기').props.onClick();
+    await findTree(harness.render(), (node) => node.type === 'button' && node.props['aria-label'] === '1번 사진 삭제').props.onClick();
     assert.deepEqual(calls, [['enrollment-1', 'sh_front']]); assert.equal(harness.runtime.states[1].photos.length, module.SLOTS.length - 1);
     assert.equal(button(harness.render(), '다음').props.disabled, true);
   } finally { await harness.close(); }

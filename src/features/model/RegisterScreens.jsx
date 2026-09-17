@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react';
+import { Camera, ImagePlus, Info, RefreshCw, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
@@ -49,20 +49,27 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
 
 function renderPhotoCard({ slot, filled, preview, busy, onFile, onRemove, reason }) {
   const hintId = `photo-hint-${slot.key}`;
+  const inputId = `photo-input-${slot.key}`;
   return <div className={s.slotCard} key={slot.key}>
-    <label className={`${s.slot} ${filled ? s.filled : ''}`}>
-      <input className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '사진 바꾸기' : '사진 올리기'}`} aria-describedby={hintId} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+    <input id={inputId} className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '다시 촬영하거나 사진 교체' : '사진 찍기 또는 선택'}`} aria-describedby={hintId} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+    <label className={`${s.slot} ${filled ? s.filled : ''}`} htmlFor={inputId}>
       <span className={s.slotImage}>
         {preview ? <img src={preview} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : filled ? <span className={s.savedPhoto}>✓<span>사진이 저장됐어요</span></span> : <PhotoPoseIllustration className={s.photoPose} slot={slot} />}
         <span className={s.slotBadge}>{String(slot.n).padStart(2, '0')}{filled ? ' · 저장 완료' : reason ? ' · 다시 찍기' : ' · 촬영 예시'}</span>
+        {!filled && !reason && <span className={s.slotImageCue}><Camera size={16} aria-hidden="true" />예시를 눌러 사진 추가</span>}
       </span>
       <span className={s.slotBottom}>
         <span className={s.caption}>{slot.title}</span>
         <span className={s.slotHint} id={hintId}>{reason || slot.hint}</span>
-        <span className={s.slotAction}>{filled ? '사진 바꾸기' : reason ? '다시 올리기' : '+ 사진 올리기'}</span>
       </span>
     </label>
-    {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 지우기`} disabled={busy} onClick={() => onRemove(slot.key)}>×</button>}
+    <div className={s.slotActions}>
+      <label className={s.slotAction} htmlFor={inputId} aria-disabled={busy}>
+        {filled || reason ? <RefreshCw size={15} aria-hidden="true" /> : <ImagePlus size={15} aria-hidden="true" />}
+        {filled ? '재촬영·교체' : reason ? '재촬영·올리기' : '사진 찍기·선택'}
+      </label>
+      {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 삭제`} disabled={busy} onClick={() => onRemove(slot.key)}><Trash2 size={15} aria-hidden="true" />삭제</button>}
+    </div>
   </div>;
 }
 
@@ -102,6 +109,7 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
       <span className={s.tag}>{sub} / {PHOTO_GROUPS.length} · {slots[0].n}~{slots.at(-1).n}번</span>
       <h2>{group.action} {slots.length}장</h2><p>{group.note}</p>
     </div>
+    <p className={s.uploadInstruction}><Camera size={17} aria-hidden="true" /><span>예시 이미지를 눌러 카메라로 찍거나 앨범에서 선택하세요. 올리면 예시가 내 사진으로 바뀌어요.</span></p>
     <div className={s.photoGrid} aria-busy={busy}>{slots.map((slot) => renderPhotoCard({ slot, filled: uploaded.has(slot.key), preview: previews[slot.key], busy, onFile, onRemove }))}</div>
     <p className={s.groupStatus} role="status">{groupProgress.complete ? '이 단계 사진을 모두 저장했어요.' : `${groupProgress.total - groupProgress.count}장을 더 올려 주세요.`}</p>
   </>;

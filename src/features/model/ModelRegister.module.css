@@ -74,14 +74,17 @@
 .groupHeading { margin-bottom: 20px; }
 .groupHeading h2 { margin-top: 10px; font-size: 24px; text-wrap: balance; }
 .groupHeading p { color: var(--fm-muted); font-size: 14px; margin-top: 8px; line-height: 1.7; }
+.uploadInstruction { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px !important; padding: 12px 14px; border-radius: var(--r-4); background: var(--bg-2); color: var(--fm-ink); font-size: 13px; line-height: 1.6; }
+.uploadInstruction svg { flex: 0 0 auto; margin-top: 2px; color: var(--fm-accent); }
 .photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; }
-.slotCard { position: relative; min-width: 0; }
+.slotCard { display: flex; flex-direction: column; min-width: 0; }
 .slot { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg-1); border: 1px solid var(--fm-line); border-radius: var(--r-4); overflow: hidden; cursor: pointer; }
 .slot:hover { border-color: var(--fm-ink); }
-.slot:has(input:disabled) { cursor: wait; }
+.fileInput:disabled + .slot { cursor: wait; opacity: .72; }
 .slotImage { display: block; position: relative; aspect-ratio: 1; background: var(--bg-2); border-bottom: 1px solid var(--fm-line); }
 .slotImage > img { display: block; width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
 .photoPose { display: block; width: 100%; height: 100%; color: var(--fm-muted); }
+.slotImageCue { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border-radius: var(--r-3); background: color-mix(in srgb, var(--fm-ink) 86%, transparent); color: var(--bg-1); font-size: 11px; font-weight: 600; text-align: center; }
 .savedPhoto { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--accent-success); font-size: 26px; }
 .savedPhoto > span { font-size: 12px; color: var(--fm-muted); }
 .person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
@@ -91,8 +94,12 @@
 .slotBottom { display: flex; flex: 1; flex-direction: column; padding: 14px; }
 .caption { display: block; color: var(--fm-ink); font-size: 13px; font-weight: 600; line-height: 1.5; word-break: keep-all; }
 .slotHint { display: block; font-size: 12px; line-height: 1.65; color: var(--fm-muted); margin: 6px 0 14px; word-break: keep-all; }
-.slotAction { display: flex; min-height: 36px; justify-content: center; align-items: center; margin-top: auto; border: 1px solid var(--fm-line); border-radius: var(--r-3); font-size: 12px; color: var(--fm-ink); }
-.removePhoto { position: absolute; right: 6px; top: 44px; width: 44px; height: 44px; border-radius: var(--r-pill); background: var(--bg-1); color: var(--fm-ink); font-size: 22px !important; line-height: 1; border: 1px solid var(--fm-line); }
+.slotActions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) auto; }
+.slotAction, .removePhoto { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--fm-line); border-radius: var(--r-3); background: var(--bg-1); color: var(--fm-ink); font-size: 12px; font-weight: 500; cursor: pointer; touch-action: manipulation; }
+.slotAction:hover, .removePhoto:hover { border-color: var(--fm-ink); }
+.fileInput:disabled ~ .slotActions .slotAction, .slotAction[aria-disabled='true'], .removePhoto:disabled { cursor: default; opacity: .45; }
+.removePhoto { color: var(--fm-muted); }
 .page .groupStatus { margin-top: 20px; color: var(--fm-muted); text-align: center; font-size: 13px; }
 .bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .bodyCard { position: relative; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
@@ -176,7 +183,8 @@
   .slotBottom { padding: 12px 10px; }
   .caption { font-size: 12px; }
   .slotHint { font-size: 12px; }
-  .slotAction { min-height: 40px; }
+  .slotAction, .removePhoto { min-height: 44px; padding-inline: 9px; font-size: 11px; }
+  .slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) 72px; }
   .bodyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bodyArt { height: 160px; }
   .categoryRow { padding: 17px 16px; column-gap: 14px; }

@@ -28,10 +28,14 @@ export function PhotoChecklistIcon({ kind, className }) {
         <path d="M59 33h3" className={s.iconAccentStroke} strokeWidth="4" />
       </>}
       {kind === 'calendar' && <>
-        <rect x="16" y="17" width="49" height="48" rx="7" className={s.iconSurface} />
-        <path d="M17 32h47" className={s.iconAccentStroke} strokeWidth="3" />
-        <path d="M28 12v12m25-12v12" fill="none" strokeWidth="4" />
-        <text x="40" y="56" textAnchor="middle" fontSize="22" fontWeight="600" fontFamily="inherit" stroke="none" className={s.iconAccentFill}>18</text>
+        <circle cx="20" cy="20" r="7" className={s.iconAccentFill} stroke="none" />
+        <path d="M20 7v5M7 20h5m16 0h5m-22-9 4 4m10-4-4 4" fill="none" className={s.iconAccentStroke} />
+        <circle cx="30" cy="37" r="9" className={s.iconSurface} />
+        <path d="M15 64v-5c0-16 30-16 30 0v5Z" className={s.iconSurface} />
+        <circle cx="55" cy="37" r="9" className={s.iconSurface} />
+        <path d="M40 64v-5c0-16 30-16 30 0v5Z" className={s.iconSurface} />
+        <path d="M38 37h9m-4-4 4 4-4 4" fill="none" className={s.iconAccentStroke} strokeWidth="3" />
+        <path d="M21 54h18m25 0H46" fill="none" opacity=".35" />
       </>}
     </g>
   </svg>;

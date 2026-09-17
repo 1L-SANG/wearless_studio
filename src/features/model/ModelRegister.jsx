@@ -338,8 +338,15 @@ export function ModelRegister() {
       const preview = await toPreviewImage(file);
       if (!mounted.current) return;
       if (previewUrls.current[slot]) URL.revokeObjectURL(previewUrls.current[slot]);
-      if (preview) { previewUrls.current[slot] = URL.createObjectURL(preview); }
-      else { delete previewUrls.current[slot]; }
+      if (preview) {
+        previewUrls.current[slot] = URL.createObjectURL(preview);
+      } else {
+        // 브라우저 미리보기가 실패해도 예시 그림으로 되돌아가지 않게 서버의 정규화본을 읽어요.
+        // HEIC처럼 브라우저가 직접 못 그리는 형식도 업로드가 끝나면 내 사진으로 바뀌어야 해요.
+        try {
+          previewUrls.current[slot] = await fetchEnrollmentPhotoUrl(editable.id, result.slot || slot);
+        } catch { delete previewUrls.current[slot]; }
+      }
       setPreviews({ ...previewUrls.current });
       if (Array.isArray(result.photos)) setEnrollment(result);
       else setEnrollment((current) => ({ ...current, photos: [...(current.photos || []).filter((photo) => photoSlotKey(photo) !== slot), { ...result, slot }] }));
