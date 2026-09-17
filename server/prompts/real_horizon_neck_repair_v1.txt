@@ -1,0 +1,10 @@
+Use case: precise-object-edit.
+Input image 1 is the complete original fashion catalog photograph and the sole edit target.
+Perform a minimal localized repair ONLY at the neck-to-garment boundary after a face replacement.
+Repair visible jagged fabric fragments, unnatural angular notches, and discontinuous edges around the neckline so the existing collar or neck opening contacts the skin naturally.
+Match the collar design already visible in the photo: preserve an open pointed shirt collar when present, or a continuous round ribbed crewneck when present. Preserve the existing fabric, stripes, knit texture, denim fading, stitching, neckline position, neck shape, and shadows. Do not invent an undershirt, jewelry, extra buttons, or unseen garment details. If the neckline is already natural, leave it unchanged.
+Treat the rest of the photo as locked original content: preserve the exact same person, face, facial expression, hair, skin texture, neck anatomy, body proportions, pose, hands, garment fit, buttons, pockets, seams, fabric pattern, fabric color, wrinkles, trousers, shoes, studio background, lighting, shadows, camera perspective, image borders, original aspect ratio and framing.
+Do not redraw or beautify the person. Do not restyle or clean up the clothing.
+Do not sharpen, denoise, relight, recolor, add, remove, or change any content away from the defective neckline.
+Return the entire original composition with only this tiny neckline defect repaired.
+No crop, zoom, rotation, reframing, or added captions, logos, or watermarks. Preserve all existing garment text and logos.
