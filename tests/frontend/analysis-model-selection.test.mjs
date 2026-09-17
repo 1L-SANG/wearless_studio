@@ -85,7 +85,7 @@ test('keeps the AI model when no gender chip is selected', () => {
 
 test('identifies only FaceMarket selections for the mannequin KRW surcharge label', () => {
   assert.equal(isRealModelSelection('mA'), false);
-  assert.equal(isRealModelSelection('mE'), false);
+  assert.equal(isRealModelSelection('mF'), false);
   assert.equal(isRealModelSelection('face-market-model-id'), true);
   assert.equal(isRealModelSelection(null), false);
 });
@@ -94,7 +94,8 @@ test('identifies only FaceMarket selections for the mannequin KRW surcharge labe
 // mF~mN 9인을 그리드에만 넣고 무료 집합에 안 넣어, 선택하면 '+ 실제 모델 이용료 별도'
 // 라는 없는 요금이 CTA 에 붙었다. 목록 전체를 훑어 그 사고가 다시 나면 여기서 깨진다.
 test('every catalog AI model is free — no fabricated licensing surcharge', () => {
-  assert.ok(AI_MODELS.length >= 14, 'catalog shrank unexpectedly');
+  assert.equal(AI_MODELS.length, 13);
+  assert.equal(AI_MODELS.some(({ id }) => id === 'mE'), false);
   for (const model of AI_MODELS) {
     assert.equal(isRealModelSelection(model.id), false, `${model.id} misread as a real model`);
     assert.equal(realModelFeeLabel(model.id, []), '', `${model.id} shows a fee label`);
@@ -133,4 +134,12 @@ test('formats the fixed FaceMarket price regardless of the catalog unit price', 
     ' + 실제 모델 ₩14,900',
   );
   assert.equal(realModelFeeLabel('mA', models), '');
+});
+
+test('unavailable virtual model selection falls back to an available model without a real-model fee', () => {
+  assert.equal(resolveSelectedModelId({
+    selectedModelId: 'mZ', targetGenders: ['women'], models: [],
+    modelsLoading: false, aiModels: AI_MODELS,
+  }), 'mA');
+  assert.equal(realModelFeeLabel('mZ', []), '');
 });

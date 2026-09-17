@@ -1,3 +1,5 @@
+import { AI_MODELS } from '../features/analysis/aiModels.js';
+
 /* =============================================================
    lib/limits.js — single source of tunable policy numbers.
    Credit unit costs + all the "상한"(caps) live HERE so they're
@@ -30,14 +32,14 @@ export const FREE_MANNEQUIN_ADJUSTS = Object.freeze({
 export const BASIC_VIRTUAL_MODEL_IDS = new Set(['mA', 'mB']);
 
 const PLAN_TIERS = new Set(Object.keys(EXTENSION_MODEL_FEE));
-const VIRTUAL_MODEL_ID = /^m[A-N]$/;
+const VIRTUAL_MODEL_IDS = new Set(AI_MODELS.map(({ id }) => id));
 
 export function normalizePlanTier(plan) {
   return PLAN_TIERS.has(plan) ? plan : 'free';
 }
 
 export function extensionModelFee(plan, selectedModelId) {
-  if (!VIRTUAL_MODEL_ID.test(selectedModelId || '')
+  if (!VIRTUAL_MODEL_IDS.has(selectedModelId)
       || BASIC_VIRTUAL_MODEL_IDS.has(selectedModelId)) return 0;
   return EXTENSION_MODEL_FEE[normalizePlanTier(plan)];
 }

@@ -18,7 +18,6 @@ export const AI_MODELS = [
   { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', tier: 'basic' },
   { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp', tier: 'extension' },
   { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp', tier: 'extension' },
-  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp', tier: 'extension' },
   { id: 'mF', displayName: '하린', gender: 'women', thumb: '/models/women/w3.webp', tier: 'extension' },
   { id: 'mG', displayName: '세아', gender: 'women', thumb: '/models/women/w4.webp', tier: 'extension' },
   { id: 'mH', displayName: '예린', gender: 'women', thumb: '/models/women/w5.webp', tier: 'extension' },

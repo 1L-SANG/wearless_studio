@@ -19,10 +19,10 @@ test('plan credit policy produces the owner-approved generation totals', () => {
 
   for (const [plan, modelId, expected] of [
     ['starter', 'mA', 45],
-    ['starter', 'mE', 64],
-    ['seller', 'mE', 55],
-    ['pro', 'mE', 45],
-    ['mystery-plan', 'mE', 64],
+    ['starter', 'mF', 64],
+    ['seller', 'mF', 55],
+    ['pro', 'mF', 45],
+    ['mystery-plan', 'mF', 64],
     ['starter', 'face-market-uuid', 45],
     ['starter', null, 45],
   ]) {
@@ -31,9 +31,9 @@ test('plan credit policy produces the owner-approved generation totals', () => {
 });
 
 test('all virtual models declare one of the two pricing tiers', () => {
-  assert.equal(AI_MODELS.length, 14);
+  assert.equal(AI_MODELS.length, 13);
   assert.equal(AI_MODELS.filter(({ tier }) => tier === 'basic').length, 2);
-  assert.equal(AI_MODELS.filter(({ tier }) => tier === 'extension').length, 12);
+  assert.equal(AI_MODELS.filter(({ tier }) => tier === 'extension').length, 11);
   assert.deepEqual(
     AI_MODELS.filter(({ tier }) => tier === 'basic').map(({ id }) => id),
     ['mA', 'mB'],
@@ -44,9 +44,9 @@ test('all virtual models declare one of the two pricing tiers', () => {
 test('generation and regeneration labels expose the exact next charge', () => {
   for (const [plan, modelId, expected] of [
     ['starter', 'mA', '의류정보 확정 완료 · 45 크레딧'],
-    ['starter', 'mE', '의류정보 확정 완료 · 64 크레딧'],
-    ['seller', 'mE', '의류정보 확정 완료 · 55 크레딧'],
-    ['pro', 'mE', '의류정보 확정 완료 · 45 크레딧'],
+    ['starter', 'mF', '의류정보 확정 완료 · 64 크레딧'],
+    ['seller', 'mF', '의류정보 확정 완료 · 55 크레딧'],
+    ['pro', 'mF', '의류정보 확정 완료 · 45 크레딧'],
   ]) {
     assert.equal(
       limits.mannequinGenerationCtaLabel(limits.mannequinGenerationTotal(plan, modelId)),
@@ -76,13 +76,13 @@ test('mock credit quote matches the server read contract', async (t) => {
   t.after(() => server.close());
   const { api: mockApi } = await server.ssrLoadModule('/src/mock/api.js');
   assert.equal(typeof mockApi.getCreditQuote, 'function');
-  assert.deepEqual(await mockApi.getCreditQuote('p1', { selectedModelId: 'mE' }), {
+  assert.deepEqual(await mockApi.getCreditQuote('p1', { selectedModelId: 'mF' }), {
     plan: 'free',
     mannequinGenerate: {
       base: 45,
       extensionModelFee: 19,
       total: 64,
-      selectedModelId: 'mE',
+      selectedModelId: 'mF',
       extensionFeeAlreadyPaid: false,
     },
     mannequinRegenerate: {
@@ -107,23 +107,23 @@ test('mock mannequin execution charges the snapshotted quote and preserves a fre
   const { api: mockApi } = await server.ssrLoadModule('/src/mock/api.js');
 
   const initialCredits = (await mockApi.getAccount()).credits;
-  await mockApi.saveAnalysis('p1', { selectedModelId: 'mE' });
+  await mockApi.saveAnalysis('p1', { selectedModelId: 'mF' });
   const cancelledGeneration = mockApi.generateMannequins('p1');
   const cancellationRejection = assert.rejects(cancelledGeneration, { code: 'job_cancelled' });
   await mockApi.saveAnalysis('p1', { selectedModelId: 'mA' });
   const cancellation = await mockApi.cancelMannequinGeneration('p1');
   await cancellationRejection;
   assert.equal(cancellation.credits, initialCredits - 64, 'cancellation settles the start-time extended quote');
-  assert.equal((await mockApi.getCreditQuote('p1', { selectedModelId: 'mE' }))
+  assert.equal((await mockApi.getCreditQuote('p1', { selectedModelId: 'mF' }))
     .mannequinGenerate.extensionFeeAlreadyPaid, false);
 
   await mockApi.createProject();
-  await mockApi.saveAnalysis('p1', { selectedModelId: 'mE' });
+  await mockApi.saveAnalysis('p1', { selectedModelId: 'mF' });
   const beforeSuccess = (await mockApi.getAccount()).credits;
   const generated = await mockApi.generateMannequins('p1');
   assert.equal(generated.credits, beforeSuccess - 64, 'successful extended generation charges its quoted total');
 
-  const afterGenerateQuote = await mockApi.getCreditQuote('p1', { selectedModelId: 'mE' });
+  const afterGenerateQuote = await mockApi.getCreditQuote('p1', { selectedModelId: 'mF' });
   assert.equal(afterGenerateQuote.mannequinGenerate.extensionFeeAlreadyPaid, true);
   assert.deepEqual(afterGenerateQuote.mannequinRegenerate, {
     freeAdjusts: 1,
@@ -162,4 +162,10 @@ test('http and screen wiring refreshes quotes without delaying local labels', ()
 test('the free-adjust ledger action has a seller-facing history label', () => {
   const creditsHistory = read('../../src/features/credits/CreditsHistory.jsx');
   assert.match(creditsHistory, /'mannequinGenerate\.reserve': '마네킹 무료 수정'/);
+});
+
+test('an unavailable virtual model has no extension model fee, matching the server registry', () => {
+  for (const plan of ['free', 'starter', 'seller', 'pro']) {
+    assert.equal(limits.extensionModelFee(plan, 'mZ'), 0);
+  }
 });

@@ -116,11 +116,11 @@ test('확대샷이 없는 항목은 버린다 — 카드 사진이 비면 안 �
 });
 
 test('가상 예시 → 같은 모양: 확대 = 초상, 전신 = 본인 전신 예시 첫 장(없으면 null), 예시는 검증 표시 없음', () => {
-  const w2 = fromExampleModel(BROWSE_MODELS.find((m) => m.id === 'w2'));
+  const m3 = fromExampleModel(BROWSE_MODELS.find((m) => m.id === 'm3'));
   const w1 = fromExampleModel(BROWSE_MODELS.find((m) => m.id === 'w1'));
-  assert.equal(w2.kind, 'example');
-  assert.equal(w2.closeup, '/models/women/w2.webp');
-  assert.match(w2.fullbody, /^\/models\/women\/w2-body-types\//);
+  assert.equal(m3.kind, 'example');
+  assert.equal(m3.closeup, '/models/men/m3.webp');
+  assert.match(m3.fullbody, /^\/models\/men\/m3-body-types\//);
   assert.equal(w1.fullbody, null);
   assert.equal(w1.gender, '여성');
   assert.equal(w1.spec, '168cm · 49kg');

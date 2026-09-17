@@ -220,7 +220,6 @@ const models = [
   { id: 'mB', name: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
   { id: 'mC', name: '도윤', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
   { id: 'mD', name: '수혁', gender: 'men', thumb: '/models/men/m3.webp', recommended: false },
-  { id: 'mE', name: '지안', gender: 'women', thumb: '/models/women/w2.webp', recommended: false },
   { id: 'mF', name: '하린', gender: 'women', thumb: '/models/women/w3.webp', recommended: false },
   { id: 'mG', name: '세아', gender: 'women', thumb: '/models/women/w4.webp', recommended: false },
   { id: 'mH', name: '예린', gender: 'women', thumb: '/models/women/w5.webp', recommended: false },

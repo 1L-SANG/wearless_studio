@@ -13,7 +13,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 // Execute the actual ProductInput callback while keeping its render-time closure.
 // The store can update without recreating onNext, including while the child awaits a save.
-function inputCreditGuard({ state, renderedCost = 64, quote = null, modelId = 'mE' }) {
+function inputCreditGuard({ state, renderedCost = 64, quote = null, modelId = 'mF' }) {
   const source = read('../../src/features/product-input/ProductInput.jsx');
   const start = source.indexOf('const guardMannequinCredits = () =>');
   const end = source.indexOf('// 콘티 이동은 아래에서 명시적으로 flush한다.', start);
@@ -50,7 +50,7 @@ test('input confirmation discards a previous plan quote after account changes', 
   const state = { account: { plan: 'pro', credits: 45 } };
   const { guard, notices } = inputCreditGuard({
     state, renderedCost: 45,
-    quote: { plan: 'pro', mannequinGenerate: { selectedModelId: 'mE', total: 45 } },
+    quote: { plan: 'pro', mannequinGenerate: { selectedModelId: 'mF', total: 45 } },
   });
   state.account = { plan: 'starter', credits: 63 };
   assert.equal(guard(), false);
@@ -62,7 +62,7 @@ test('input confirmation retains the server quote for the same plan and model', 
   const state = { account: { plan: 'seller', credits: 54 } };
   const { guard, notices } = inputCreditGuard({
     state, renderedCost: 55,
-    quote: { plan: 'seller', mannequinGenerate: { selectedModelId: 'mE', total: 55 } },
+    quote: { plan: 'seller', mannequinGenerate: { selectedModelId: 'mF', total: 55 } },
   });
   assert.equal(guard(), false);
   assert.equal(notices[0].requiredCredits, 55);

@@ -13,8 +13,8 @@ from app import repo, routes
     ('free', 19, 1), ('starter', 19, 1), ('seller', 10, 1), ('pro', 0, 2),
 ])
 @pytest.mark.parametrize('model_id,is_extension', [
-    ('mA', False), ('mB', False),
-    *((f'm{letter}', True) for letter in 'CDEFGHIJKLMN'),
+    ('mA', False), ('mB', False), ('mZ', False),
+    *((f'm{letter}', True) for letter in 'CDFGHIJKLMN'),
     ('b89d4972-54fa-413f-89d8-b1c123ec1424', False), (None, False), ('unknown', False),
 ])
 def test_plan_table(plan, fee, adjusts, model_id, is_extension):
@@ -37,7 +37,7 @@ class _Conn:
         pass
 
 
-def _wire(monkeypatch, *, plan='starter', model='mE', done_count=0, balance=100,
+def _wire(monkeypatch, *, plan='starter', model='mF', done_count=0, balance=100,
           owned=True, created=True, cuts=None, already_paid=False):
     state = {'plan': plan, 'selected_model_id': model, 'done_count': done_count,
              'extension_fee_already_paid': already_paid}
@@ -69,8 +69,8 @@ def _headers(make_token):
 
 
 @pytest.mark.parametrize('plan,model,total', [
-    ('starter', 'mE', 64), ('seller', 'mE', 55), ('pro', 'mE', 45),
-    ('free', 'mE', 64), ('starter', 'mA', 45), ('starter', 'mB', 45),
+    ('starter', 'mF', 64), ('seller', 'mF', 55), ('pro', 'mF', 45),
+    ('free', 'mF', 64), ('starter', 'mA', 45), ('starter', 'mB', 45),
     ('starter', 'b89d4972-54fa-413f-89d8-b1c123ec1424', 45), ('starter', None, 45),
 ])
 def test_generate_reserves_plan_total(client, make_token, monkeypatch, plan, model, total):
@@ -151,7 +151,7 @@ def test_credit_quote_shape(client, make_token, monkeypatch, plan, fee, free_adj
     assert response.json() == {
         'plan': plan if plan != 'unknown' else 'free',
         'mannequinGenerate': {'base': 45, 'extensionModelFee': fee, 'total': 45 + fee,
-                              'selectedModelId': 'mE', 'extensionFeeAlreadyPaid': False},
+                              'selectedModelId': 'mF', 'extensionFeeAlreadyPaid': False},
         'mannequinRegenerate': {'freeAdjusts': free_adjusts, 'usedAdjusts': max(done_count - 1, 0),
                                 'nextCost': next_cost},
         'storyboardPerCut': 19, 'editorImage': 19,
@@ -382,7 +382,7 @@ def test_pricing_counts_only_successful_mannequin_jobs():
         create table analyses(project_id text, payload text);
         create table jobs(user_id text, project_id text, kind text, status text, metadata text);
         insert into profiles values ('u1', 'starter');
-        insert into analyses values ('p1', '{"selectedModelId":"mE"}');
+        insert into analyses values ('p1', '{"selectedModelId":"mF"}');
         insert into jobs values ('u1','p1','mannequin','done','{"extensionModelFee":19}');
         insert into jobs values ('u1','p1','mannequin','error','{}');
         insert into jobs values ('u1','p1','mannequin','cancelled','{}');
@@ -393,7 +393,7 @@ def test_pricing_counts_only_successful_mannequin_jobs():
         insert into jobs values ('u2','p1','mannequin','done','{}');
     ''')
     state = asyncio.run(repo.get_mannequin_pricing_state(conn, 'u1', 'p1'))
-    assert state == {'plan': 'starter', 'selected_model_id': 'mE', 'done_count': 1,
+    assert state == {'plan': 'starter', 'selected_model_id': 'mF', 'done_count': 1,
                      'extension_fee_already_paid': True}
     from app.plan_pricing import mannequin_regenerate_cost
     assert mannequin_regenerate_cost(state['plan'], state['done_count'], 45) == 0

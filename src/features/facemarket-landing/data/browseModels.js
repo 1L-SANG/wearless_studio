@@ -16,15 +16,12 @@
    ============================================================= */
 
 /* 전신 예시 이미지. **그 모델 본인의 사진이 있을 때만** 보여 준다 — 이 소재는 원래 등록
-   위저드의 체형 안내용이라 w2·m3 기준으로만 찍혀 있다. 없는 모델에게 남의 전신 사진을
+   위저드의 체형 안내용이라 m3 기준으로만 찍혀 있다. 없는 모델에게 남의 전신 사진을
    돌려 쓰면, 카드에 적힌 이름 밑에 다른 얼굴이 서는 셈이라 데모라도 데이터 오류로 읽힌다.
    그래서 나머지 모델은 이 칸 자체를 안 그린다(상세 창이 빈 배열을 보고 접는다). */
 import { FACEMARKET_PRICING } from '../../../lib/facemarketPricing.js';
 
 const OWN_EXAMPLES = {
-  w2: ['slim', 'delicate', 'average', 'glamorous', 'plump']
-    .slice(0, 3)
-    .map((name) => `/models/women/w2-body-types/${name}.webp`),
   m3: ['thin', 'lean-muscular', 'solid-build']
     .map((name) => `/models/men/m3-body-types/${name}.webp`),
 };
@@ -47,7 +44,6 @@ const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장',
 /* [파일 이름, 성별, 키(cm), 몸무게(kg)] — 키·몸무게는 지어낸 예시값이다. */
 const ROWS = [
   ['women/w1', 'female', 168, 49],
-  ['women/w2', 'female', 172, 52],
   ['women/w3', 'female', 165, 47],
   ['women/w4', 'female', 174, 55],
   ['women/w5', 'female', 170, 51],
@@ -65,7 +61,7 @@ const ROWS = [
 /* -face 변형이 있는 모델만 상세 창에서 얼굴을 두 장 보여 준다. 없는 모델(w1·m1·m2)은
    한 장이고, 상세 창이 장수에 맞춰 배치한다 — 없는 파일을 억지로 채우지 않는다. */
 const HAS_FACE = new Set([
-  'women/w2', 'women/w3', 'women/w4', 'women/w5', 'women/w6', 'women/w7',
+  'women/w3', 'women/w4', 'women/w5', 'women/w6', 'women/w7',
   'women/w8', 'women/w9', 'women/w10', 'women/w11', 'men/m3',
 ]);
 

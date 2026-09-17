@@ -13,7 +13,7 @@ from app.agents.cut_generator import (
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
 
-VIRT = {"mA", "mB", "mC", "mD", "mE"}
+VIRT = {"mA", "mB", "mC", "mD", "mF"}
 
 
 def test_virtual_selection_honored():
@@ -21,7 +21,7 @@ def test_virtual_selection_honored():
     assert resolve_effective_model_id("mA", fallback_model_id="mB", virtual_ids=VIRT) == ("mA", False)
     assert resolve_effective_model_id("mC", fallback_model_id="mB", virtual_ids=VIRT) == ("mC", False)
     assert resolve_effective_model_id("mD", fallback_model_id="mB", virtual_ids=VIRT) == ("mD", False)
-    assert resolve_effective_model_id("mE", fallback_model_id="mB", virtual_ids=VIRT) == ("mE", False)
+    assert resolve_effective_model_id("mF", fallback_model_id="mB", virtual_ids=VIRT) == ("mF", False)
 
 
 def test_unknown_virtual_id_falls_back_and_warns():

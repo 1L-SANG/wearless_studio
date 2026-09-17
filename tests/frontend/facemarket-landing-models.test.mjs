@@ -12,7 +12,7 @@ import { LANDING_MODELS } from '../../src/features/facemarket-landing/data/landi
    들어오면 안 된다. 목록이 순수 상수라 런타임 검증이 없으니 파일 경로 한 줄만
    바꿔도 아무 데서도 안 걸린다 — 그래서 여기서 잡는다.
 
-   현재 선택: 가상모델 13장(women w1~w11, men m1~m2), 카드에는 번호만,
+   현재 선택: 가상모델 12장(women 10장, men m1~m2), 카드에는 번호만,
    `-face` 접미 파일과 pose/ · physique/ 는 쓰지 않는다.
    ============================================================= */
 
@@ -20,8 +20,9 @@ import { LANDING_MODELS } from '../../src/features/facemarket-landing/data/landi
    안내용 소재)는 전부 여기서 떨어진다. */
 const ALLOWED_SRC = /^\/models\/(women|men)\/[wm]\d+\.webp$/;
 
-test('랜딩 카드는 13장이다', () => {
-  assert.equal(LANDING_MODELS.length, 13);
+test('랜딩 카드는 12장이다', () => {
+  assert.equal(LANDING_MODELS.length, 12);
+  assert.ok(LANDING_MODELS.every(({ id }) => id !== 'w2'));
   assert.ok(LANDING_MODELS.every(({ id }) => id !== 'm3'));
 });
 
@@ -44,7 +45,7 @@ test('금지된 소재 경로는 패턴에서 떨어진다', () => {
     '/models/men/m3-face.webp',
     '/models/women/w10-face.webp',
     '/models/pose/front.webp',
-    '/models/physique/female/delicate_basic.webp',
+    '/models/physique/male/regular.webp',
   ]) {
     assert.doesNotMatch(forbidden, ALLOWED_SRC, `${forbidden} 가 통과해 버린다`);
   }

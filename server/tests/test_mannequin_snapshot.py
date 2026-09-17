@@ -283,7 +283,7 @@ def test_worker_confirms_reserved_extension_total_with_pricing_metadata(monkeypa
         payload={"mode": "generate"}, calls=calls,
     )
     job["credits_reserved"] = 64
-    job["metadata"] = {"extensionModelFee": 19, "plan": "starter", "selectedModelId": "mE"}
+    job["metadata"] = {"extensionModelFee": 19, "plan": "starter", "selectedModelId": "mF"}
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
     assert calls["failure"] == []
     confirmed = calls["success"][0]
