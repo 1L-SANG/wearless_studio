@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 import time
 from io import BytesIO
@@ -10,35 +9,30 @@ from PIL import Image
 
 from .gemini_image import InlineImage, run_cpu_bound
 
-_POINT_SCHEMA = {
+FALLBACK_INSTRUCTION = (
+    "Inside the editable area, repair any visible compositing seam, notch, step, torn-looking fragment, stray fabric shard or misaligned collar/neckline edge where the neck meets the garment, so the neck outline, skin and garment edge are continuous and natural. Preserve the same garment design, collar or neckline shape, stripes or pattern, knit, rib or denim texture, stitching, neck proportions and shadows."
+)
+
+_DEFECT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "x": {"type": "number", "minimum": 0, "maximum": 1000},
-        "y": {"type": "number", "minimum": 0, "maximum": 1000},
+        "what": {"type": "string", "minLength": 1, "maxLength": 220},
+        "where": {"type": "string", "minLength": 1, "maxLength": 160},
     },
-    "required": ["x", "y"],
-}
-
-_POLYGON_SCHEMA = {
-    "type": "array",
-    "minItems": 3,
-    "maxItems": 32,
-    "items": _POINT_SCHEMA,
+    "required": ["what", "where"],
 }
 
 _PLAN_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "observations": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 220}, "minItems": 1, "maxItems": 8},
+        "garment": {"type": "string", "minLength": 1, "maxLength": 220},
+        "defects": {"type": "array", "items": _DEFECT_SCHEMA, "maxItems": 12},
+        "edit_instruction": {"type": "string", "minLength": 1, "maxLength": 900},
         "neck_collar_gap": {"type": "boolean"},
-        "instruction": {"type": "string", "minLength": 1, "maxLength": 900},
-        "damage_polygons": {"type": "array", "items": _POLYGON_SCHEMA, "minItems": 1, "maxItems": 8},
-        "composition_polygons": {"type": "array", "items": _POLYGON_SCHEMA, "minItems": 1, "maxItems": 8},
-        "align": {"type": "boolean"},
     },
-    "required": ["observations", "neck_collar_gap", "instruction", "damage_polygons", "composition_polygons", "align"],
+    "required": ["garment", "defects", "edit_instruction", "neck_collar_gap"],
 }
 
 _QC_SCHEMA = {
@@ -53,6 +47,32 @@ _QC_SCHEMA = {
     },
     "required": ["remaining_defects", "garment_geometry_preserved", "skin_texture_preserved", "seamless", "uncertain"],
 }
+
+LOOK_PROMPT = """You inspect fashion catalog photos for AI compositing damage.
+Image 1: close crop around the neck of a catalog photo in which the head and neck were replaced by an AI model.
+Image 2: the same crop from the original photo BEFORE replacement. The person differs, but the garment in image 2 is the ground truth.
+
+Replacement often damages the place where the neck meets the garment: pointed fabric shards or scraps sticking out beside the neck,
+angular notches or steps in the neck outline, torn-looking fragments, a collar or strap edge that is cut, doubled or misaligned,
+a gap or wedge in a placket or strap, skin showing where fabric should be, or fabric covering where skin should be.
+Compare image 1 against image 2 and against how a real garment would sit on a real neck.
+
+Return:
+- garment: short English description of the garment around the neck (type, neckline or collar, color, material, pattern).
+- defects: every visible damage in image 1 near the neck/garment boundary. "what" = precise visual description, "where" = location using
+  IMAGE left/right (viewer side) and front/back. Look at both sides and the rear collar, especially denim collars and skin seams below the jaw.
+  Do not list the face itself, normal fabric folds, normal open chest/placket, normal white cloth fragments, or normal shadows.
+- neck_collar_gap: true only for a background-colored gap or missing wedge between the NECK skin edge and the FIXED collar/crewneck edge that should touch it.
+  Do not mark white cloth fragments, natural open chest/placket, ordinary shadows, skin visible in a normal neckline, or floating fabric as neck_collar_gap.
+- edit_instruction: 2-3 English sentences for an image editor, written like these examples:
+  "Repair the broken raised fabric scraps on both sides of the neck and make the striped shirt collar and skin contact continuous. Preserve the same open pointed shirt collar, fine stripes, neck shape, and shadows."
+  "Repair the jagged torn-looking artificial fragments around the denim collar opening, including the rear right collar sticking up behind the neck, left inner collar and dark triangular fragments at the front neck. Reconstruct a continuous natural open denim shirt collar, matching its existing faded denim and stitching."
+  "Remove the pointed grey fabric shard protruding at the left neck and the unnatural angular notch on the right neck. Restore a smooth continuous circular ribbed crewneck with natural contact against skin. Preserve its original grey knit and rib texture, round neck opening, and neck proportions."
+  Name each defect and its location, say what the correct garment edge should look like (use image 2), and what to preserve.
+  When neck_collar_gap is true, instruct the editor to extend only the neck skin edge to meet the existing collar naturally.
+  Explicitly keep the face, chin, jawline, garment, collar opening, ribbed band and both shoulder lines fixed; do not raise or reshape the garment to close the gap.
+  The editor sees ONLY image 1: never mention "image 1" or "image 2" in edit_instruction; describe the correct edge in words.
+  If you truly see no damage, still describe the boundary to keep continuous; never tell the editor to leave it as is."""
 
 
 def _png_1024(image: Image.Image) -> bytes:
@@ -94,7 +114,6 @@ def _copy_call_metadata(dst: dict | None, call_meta: dict, *, started: float, re
         return
     dst["duration_ms"] = int((time.perf_counter() - started) * 1000)
     usage = _safe_usage(call_meta.get("usage"))
-    # Never copy provider-supplied strings, even model identifiers, into logs.
     if re.fullmatch(r"gpt-[A-Za-z0-9._-]{1,64}", requested_model):
         dst["requested_model"] = requested_model
     if usage:
@@ -121,78 +140,46 @@ def _validate_bool(value: Any) -> bool:
     return value
 
 
-def _native_polygons(raw: Any, size: tuple[int, int], crop: Any) -> list[list[tuple[float, float]]]:
+def _defect_observations(raw: Any) -> list[str]:
     from .face_seam_repair import SeamRepairUnavailable
 
-    if not isinstance(raw, list) or not (1 <= len(raw) <= 8):
+    if not isinstance(raw, list) or len(raw) > 12:
         raise SeamRepairUnavailable("vision_bad_response") from None
-    width, height = size
-    out: list[list[tuple[float, float]]] = []
-    for poly in raw:
-        if not isinstance(poly, list) or not (3 <= len(poly) <= 32):
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item.keys()) != {"what", "where"}:
             raise SeamRepairUnavailable("vision_bad_response") from None
-        points: list[tuple[float, float]] = []
-        for point in poly:
-            if not isinstance(point, dict) or set(point.keys()) != {"x", "y"}:
-                raise SeamRepairUnavailable("vision_bad_response") from None
-            x = point["x"]
-            y = point["y"]
-            if type(x) not in (int, float) or type(y) not in (int, float):
-                raise SeamRepairUnavailable("vision_bad_response") from None
-            if not math.isfinite(float(x)) or not math.isfinite(float(y)) or not (0 <= x <= 1000) or not (0 <= y <= 1000):
-                raise SeamRepairUnavailable("vision_bad_response") from None
-            points.append((round(float(x) / 1000.0 * width, 4), round(float(y) / 1000.0 * height, 4)))
-        _reject_gross_polygon(points, size, crop)
-        out.append(points)
+        what = _clean_string(item["what"], field="observation")
+        where = _clean_string(item["where"], field="observation")
+        out.append(f"{where}: {what}")
     return out
 
 
-def _reject_gross_polygon(points: list[tuple[float, float]], size: tuple[int, int], crop: Any) -> None:
+def _strip_image_refs(instruction: str) -> str:
+    return re.sub(r"\bimage\s*[12]\b", "the crop", instruction, flags=re.I)
+
+
+def _make_plan(*, instruction: str, observations: list[str], neck_collar_gap: bool, garment: str):
+    from .face_seam_repair import RepairPlan
+
+    return RepairPlan(
+        instruction=instruction,
+        observations=observations,
+        neck_collar_gap=neck_collar_gap,
+        garment=garment,
+    )
+
+
+def _validate_plan(raw: Any):
     from .face_seam_repair import SeamRepairUnavailable
-
-    width, height = size
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    box_w = max(xs) - min(xs)
-    box_h = max(ys) - min(ys)
-    if box_w >= 0.92 * width and box_h >= 0.92 * height:
-        raise SeamRepairUnavailable("vision_bad_response") from None
-    if box_w * box_h > 0.72 * width * height:
-        raise SeamRepairUnavailable("vision_bad_response") from None
-    face_box = getattr(crop, "face_box", None)
-    if isinstance(face_box, tuple) and len(face_box) >= 4:
-        fx, fy, fw, fh = (float(v) for v in face_box[:4])
-        cx = fx + fw / 2
-        # Safety envelope only; the model still selects the actual repair polygons.
-        if (min(xs) < max(0, cx - 1.5 * fw) or max(xs) > min(width, cx + 1.5 * fw)
-                or min(ys) < max(0, fy + .55 * fh) or max(ys) > min(height, fy + 2.25 * fh)):
-            raise SeamRepairUnavailable("vision_polygon_outside_neck") from None
-
-
-def _validate_plan(raw: Any, crop: Any):
-    from .face_seam_repair import RepairPlan, SeamRepairUnavailable
 
     if not isinstance(raw, dict) or set(raw.keys()) != set(_PLAN_SCHEMA["required"]):
         raise SeamRepairUnavailable("vision_bad_response") from None
-    observations_raw = raw["observations"]
-    if not isinstance(observations_raw, list) or not (1 <= len(observations_raw) <= 8):
-        raise SeamRepairUnavailable("vision_bad_response") from None
-    observations = [_clean_string(v, field="observation") for v in observations_raw]
-    instruction = _clean_string(raw["instruction"], field="instruction")
-    if re.search(r"\bimage\s*[123]\b", instruction, re.I):
-        raise SeamRepairUnavailable("vision_bad_response") from None
-    damage = _native_polygons(raw["damage_polygons"], crop.current.size, crop)
-    composition = _native_polygons(raw["composition_polygons"], crop.current.size, crop)
-    return RepairPlan(
-        True,
-        instruction,
-        damage,
-        composition,
-        _validate_bool(raw["align"]),
-        7,
-        observations,
-        _validate_bool(raw["neck_collar_gap"]),
-    )
+    garment = _clean_string(raw["garment"], field="observation")
+    observations = _defect_observations(raw["defects"])
+    neck_collar_gap = _validate_bool(raw["neck_collar_gap"])
+    instruction = FALLBACK_INSTRUCTION if not observations and not neck_collar_gap else _strip_image_refs(_clean_string(raw["edit_instruction"], field="instruction"))
+    return _make_plan(instruction=instruction, observations=observations, neck_collar_gap=neck_collar_gap, garment=garment)
 
 
 def _validate_qc(raw: Any) -> bool:
@@ -210,37 +197,6 @@ def _validate_qc(raw: Any) -> bool:
     seamless = _validate_bool(raw["seamless"])
     uncertain = _validate_bool(raw["uncertain"])
     return len(remaining) == 0 and garment and skin and seamless and not uncertain
-
-
-def _plan_prompt(crop: Any) -> str:
-    face_box = getattr(crop, "face_box", None)
-    coords = ""
-    if isinstance(face_box, tuple) and len(face_box) >= 4:
-        fx, fy, fw, fh = (float(v) for v in face_box[:4])
-        w, h = crop.current.size
-        coords = (
-            f" Face box in the crop, normalized 0..1000, is approximately "
-            f"x={fx / w * 1000:.0f}, y={fy / h * 1000:.0f}, w={fw / w * 1000:.0f}, h={fh / h * 1000:.0f}; "
-            "polygon vertices must remain in the neck/collar safety envelope: x within face center +/-1.5 face widths, y within face y+0.55h through y+2.25h, clipped to the crop."
-        )
-    return (
-        "Create a photo-specific neck seam repair plan from two aligned 1024 crops. Image 1 is the current generated neck crop; "
-        "Image 2 is the original garment/base neck crop worn by a different person. Use Image 2 only for garment geometry, collar/binding structure, "
-        "scoop depth, button/opening state, fabric texture, stitching, rib/fold pattern and intact clothing continuity; do not copy that person's skin or identity."
-        f"{coords} Always produce a targeted neck joining plan. If no clear defect is visible, still mark the narrow complete neck-interface region and write a local continuity instruction. "
-        "Inspect the entire neck outline on BOTH sides and the FULL garment opening, including the rear collar, lower scoop, straps and placket. "
-        "Describe every actual broken edge: jagged cutouts/notches, floating cloth shards, duplicated binding or rib bands, patches of skin covering fabric, and pasted-skin transitions below the jaw. "
-        "Ignore normal folds/shadows and the deliberate difference in face identity. neck_collar_gap means a BACKGROUND-COLORED missing wedge separating neck skin from its fixed collar, not normal exposed chest or a dark collar shadow. "
-        "When the neck is too narrow for a fixed collar, extend the neck locally into the missing wedge; do not move/redraw the intact collar or shoulders. "
-        "When changing a binding or collar, repair one coherent segment; preserve binding width relative to the original perspective and do not blend incompatible widths, rib patterns, fold patterns, or force symmetry. "
-        "Do not change a normal opening, button state, pose, shoulder line, collar tip, placket alignment, scoop depth, garment width, or original perspective. "
-        "instruction must contain 2-3 English sentences: actual defect and precise location, desired continuous geometry, then specific intact features to preserve. "
-        "The editing model receives ONLY the current crop, so never mention Image 1/2 or a second reference in instruction. "
-        "Return normalized 0..1000 polygons: damage_polygons cover ALL defects plus a small repair margin; composition_polygons contain every damage polygon plus a generous feather margin on intact surroundings. "
-        "Keep existing intact rib/binding out of damage when only adjacent skin is broken. If binding itself must be repaired, include the complete damaged segment in composition, with its boundary landing on continuous intact cloth/skin instead of cutting across two incompatible outlines. "
-        "align=true uses intact surroundings to align the generated crop; use false if preserving a narrow binding would be distorted by alignment. "
-        "Reject filename rules and generic broad masks; keep polygons tight around the neck/collar interface."
-    )
 
 
 def _qc_prompt() -> str:
@@ -268,7 +224,7 @@ async def plan_repair(settings, crop, *, metadata: dict | None = None):
         raw = await vision_llm._call_gpt(
             settings,
             model,
-            _plan_prompt(crop),
+            LOOK_PROMPT,
             await run_cpu_bound(_inline_images, crop.current, base),
             _PLAN_SCHEMA,
             180.0,
@@ -280,7 +236,7 @@ async def plan_repair(settings, crop, *, metadata: dict | None = None):
         raise SeamRepairUnavailable("vision_provider_error") from None
     finally:
         _copy_call_metadata(metadata, call_meta, started=started, requested_model=model)
-    return _validate_plan(raw, crop)
+    return _validate_plan(raw)
 
 
 async def verify_repair(settings, crop, repaired_crop: Image.Image, *, metadata: dict | None = None) -> bool:

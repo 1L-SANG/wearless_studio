@@ -36,46 +36,72 @@ def _image(size=(220, 260)):
 
 def _context(image=None):
     from app.agents import face_seam_repair as sr
-
     image = image or _image()
-    plan = fi.plan_from_box(image.width, image.height, (86.0, 78.0, 50.0, 70.0), yaw_proxy=0.0, eye_dist=24.0)
-    return sr.FaceSeamContext(plan=plan, crop_pad=(0, 0, 0, 0), references=((1.0, 0.0),), model_dir=None)
+    plan = fi.plan_from_box(image.width, image.height, (86.0, 48.0, 50.0, 70.0), yaw_proxy=0.0, eye_dist=24.0)
+    mask = np.zeros((1024, 1024), bool)
+    fx, fy, fw, fh = plan.face_box_crop
+    mask[max(0, int(fy)):min(1024, int(fy+1.5*fh)), max(0, int(fx)):min(1024, int(fx+fw))] = True
+    raw = sr.capture_repair_context(image, plan, gen_mask=mask, references=((1.0, 0.0),))
+    return sr.FaceSeamContext(**raw)
 
 
 def _repair_plan():
     from app.agents.face_seam_repair import RepairPlan
-
-    return RepairPlan(
-        has_defect=True,
-        instruction="Repair the broken collar seam.",
-        damage_polygons=[[(70, 164), (92, 164), (92, 178), (70, 178)]],
-        composition_polygons=[[(60, 150), (156, 150), (156, 205), (60, 205)]],
-        align=True,
-        feather=7,
-    )
+    return RepairPlan("Repair the broken collar seam.")
 
 
-def test_repair_plan_is_dataclass_json_shape():
-    data = asdict(_repair_plan())
-    assert data["has_defect"] is True
-    assert data["feather"] == 7
-
-
-def test_capture_repair_context_preserves_aligned_base_pixels():
+def test_band_crop_and_aligned_neck_context():
     from app.agents import face_seam_repair as sr
     image = _image()
-    context = _context(image)
-    padded = Image.new("RGB", (image.width + 20, image.height + 28))
-    padded.paste(image, (7, 11))
-    padded_plan = SimpleNamespace(box=(93, 89, 50, 70))
-    raw = sr.capture_repair_context(padded, padded_plan, crop_pad=(7, 11, 13, 17))
-    crop = sr.prepare_repair_crop(image, sr.FaceSeamContext(**raw))
+    ctx = _context(image)
+    crop = sr.prepare_repair_crop(image, ctx)
+    wide = sr.prepare_repair_crop(image, ctx, gap=True)
+    assert crop.current.width < wide.current.width
     assert np.array_equal(np.asarray(crop.current), np.asarray(crop.base))
-    assert crop.base.size != image.size
-    assert "PIL" not in repr(sr.FaceSeamContext(**raw))
-    raw["base_crop_box"] = (0, 0, 16)
+    assert ctx.base_crop.size != image.size
+    assert ctx.band_bounds[1] >= int(ctx.plan.box[1] + .55*ctx.plan.box[3])
+    assert "PIL" not in repr(ctx)
+    with pytest.raises(sr.SeamRepairUnavailable, match="generation_mask_missing"):
+        sr.capture_repair_context(image, ctx.plan)
+    from dataclasses import replace
     with pytest.raises(sr.SeamRepairUnavailable, match="base_crop_mismatch"):
-        sr.prepare_repair_crop(image, sr.FaceSeamContext(**raw))
+        sr.prepare_repair_crop(image, replace(ctx, base_crop_box=(0, 0, 16)))
+
+
+def test_blob_removes_thin_edges_keeps_qwen_changes_and_preserves_outside():
+    from app.agents import face_seam_repair as sr
+    size = 575
+    cur = np.full((size, size, 3), 80, np.uint8)
+    base = cur.copy()
+    cur[400:450, 350:400] = 140  # Qwen changes must remain in the repair region.
+    generated = cur.copy()
+    generated[250:330, 200:280] = 230  # Real repair blob.
+    generated[210:360, 430:433] = 255  # Thin shifted edge echo.
+    crop = sr.RepairCrop(Image.fromarray(cur), (0, 0, size), (200, 50, 175, 150), (size, size),
+                         base=Image.fromarray(base), skin=np.zeros((size, size), bool))
+    alpha, support, stats = sr.blob_region(generated.astype(np.float32), crop)
+    assert alpha[285, 240] == 1 and alpha[425, 370] > 0
+    assert alpha[230, 432] == 0 and stats["thin_removed_px"] > 0
+    assert not support[:132].any() and not support[:, :14].any()
+    final, meta, full_support = sr.composite_repair(crop.current, crop, _repair_plan(), Image.fromarray(generated))
+    assert meta["outside_changed"] == 0
+    assert np.array_equal(np.asarray(final)[~full_support], cur[~full_support])
+    assert not hasattr(sr, "align_generated_crop") and not hasattr(sr, "build_repair_masks")
+
+
+def test_blob_protects_upper_face_skin_but_keeps_collar_and_empty_region_safe():
+    from app.agents import face_seam_repair as sr
+    size = 575
+    cur = np.full((size, size, 3), 50, np.uint8)
+    skin = np.zeros((size, size), bool)
+    skin[140:190, 220:280] = True
+    crop = sr.RepairCrop(Image.fromarray(cur), (0, 0, size), (200, 50, 175, 150), (size, size), base=Image.fromarray(cur), skin=skin)
+    changed = np.full_like(cur, 200, dtype=np.float32)
+    alpha, support, _ = sr.blob_region(changed, crop)
+    assert alpha[160, 250] == 0 and alpha[160, 320] > 0
+    assert alpha[80, 320] == 0
+    empty_alpha, empty_support, _ = sr.blob_region(cur.astype(np.float32), crop)
+    assert not empty_support.any() and not empty_alpha.any()
 
 
 @pytest.fixture
@@ -89,49 +115,7 @@ def visual_calls(monkeypatch):
     monkeypatch.setattr(vision, "verify_repair", verify)
 
 
-def test_build_masks_make_transparent_edit_region_and_preserve_rear_collar_margin():
-    from app.agents import face_seam_repair as sr
-
-    crop = sr.prepare_repair_crop(_image(), _context())
-    masks = sr.build_repair_masks(crop, _repair_plan())
-    rgba = np.asarray(masks.api_mask_rgba)
-    assert rgba[170, 80, 3] == 0
-    assert rgba[90, 110, 3] == 255
-    assert masks.composition_mask[170, 80]
-    assert masks.composition_mask[154, 145]
-
-
-def test_build_masks_rejects_uncontained_damage_after_alpha_support():
-    from app.agents import face_seam_repair as sr
-
-    crop = sr.prepare_repair_crop(_image(), _context())
-    bad = sr.RepairPlan(
-        True,
-        "Repair.",
-        [[(70, 164), (92, 164), (92, 178), (70, 178)]],
-        [[(100, 190), (120, 190), (120, 210), (100, 210)]],
-        True,
-        7,
-    )
-    with pytest.raises(sr.SeamRepairUnavailable, match="damage_outside_composition"):
-        sr.build_repair_masks(crop, bad)
-
-
-def test_align_generated_crop_recovers_synthetic_shift_inside_composition_mask():
-    from app.agents import face_seam_repair as sr
-
-    cur = np.full((96, 96, 3), 20, np.uint8)
-    cur[38:58, 36:56] = 220
-    generated = np.roll(cur, 4, axis=1)
-    mask = np.zeros((96, 96), bool)
-    mask[30:66, 28:68] = True
-    aligned = np.asarray(sr.align_generated_crop(Image.fromarray(cur), Image.fromarray(generated), mask, enabled=True))
-    before = np.abs(generated[38:58, 36:56].astype(int) - cur[38:58, 36:56].astype(int)).mean()
-    after = np.abs(aligned[38:58, 36:56].astype(int) - cur[38:58, 36:56].astype(int)).mean()
-    assert after < before
-
-
-def test_call_sunburst_edit_uses_one_native_png_and_rgba_mask(monkeypatch):
+def test_call_sunburst_edit_uses_only_one_1024_crop_without_mask(monkeypatch):
     from app.agents import face_seam_repair as sr
 
     calls = []
@@ -157,16 +141,15 @@ def test_call_sunburst_edit_uses_one_native_png_and_rgba_mask(monkeypatch):
     recorded = []
     monkeypatch.setattr(sr.image_usage, "record", lambda **kw: recorded.append({**kw, "stage": sr.image_usage._ctx.get().stage}))
     crop = sr.prepare_repair_crop(_image(), _context())
-    masks = sr.build_repair_masks(crop, _repair_plan())
-    result = asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, masks, http_post=fake_post))
+    result = asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, http_post=fake_post))
     assert result.image.size == (1024, 1024)
     url, headers, data, files, _timeout = calls[0]
     assert url.endswith("/v1/images/edits")
     assert headers == {"Authorization": "Bearer sk-test"}
     assert data == {"model": "gpt-image-2.5-sunburst", "prompt": "prompt", "size": "1024x1024", "quality": "high", "output_format": "png", "n": "1"}
-    assert [name for name, _payload in files] == ["image[]", "mask"]
+    assert [name for name, _payload in files] == ["image[]"]
     assert files[0][1][2] == "image/png"
-    assert files[1][1][2] == "image/png"
+    assert Image.open(BytesIO(files[0][1][1])).size == (1024, 1024)
     assert recorded[0]["usage"] == {
         "input_tokens": 3,
         "output_tokens": 5,
@@ -197,9 +180,8 @@ def test_call_sunburst_edit_records_billable_malformed_200(monkeypatch):
     recorded = []
     monkeypatch.setattr(sr.image_usage, "record", lambda **kw: recorded.append({**kw, "stage": sr.image_usage._ctx.get().stage}))
     crop = sr.prepare_repair_crop(_image(), _context())
-    masks = sr.build_repair_masks(crop, _repair_plan())
     with pytest.raises(sr.SeamRepairUnavailable):
-        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, masks, http_post=fake_post))
+        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, http_post=fake_post))
     assert recorded == [{
         "model": "gpt-image-2.5-sunburst",
         "image_size": "1024x1024",
@@ -218,15 +200,14 @@ def test_call_sunburst_edit_rejects_non_1024_image_and_static_http_reason():
         return SimpleNamespace(status_code=200, json=lambda: {"data": [{"b64_json": base64.b64encode(out).decode()}]})
 
     crop = sr.prepare_repair_crop(_image(), _context())
-    masks = sr.build_repair_masks(crop, _repair_plan())
     with pytest.raises(sr.SeamRepairUnavailable, match="openai_bad_response"):
-        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, masks, http_post=fake_small_image))
+        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, http_post=fake_small_image))
 
     async def fake_429(*_args, **_kwargs):
         return SimpleNamespace(status_code=429, text="sk-secret insufficient credits")
 
     with pytest.raises(sr.SeamRepairUnavailable, match="openai_http_429"):
-        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, masks, http_post=fake_429))
+        asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, http_post=fake_429))
 
 
 def test_repair_modes_fail_closed_and_identity_rollback(visual_calls):
@@ -234,9 +215,9 @@ def test_repair_modes_fail_closed_and_identity_rollback(visual_calls):
 
     qwen = _png(_image())
 
-    async def fake_edit(_settings, _prompt, crop, _masks):
+    async def fake_edit(_settings, _prompt, crop):
         edited = np.asarray(crop.current).copy()
-        edited[160:190, 65:155] = (120, 120, 130)
+        edited[:] = (120, 120, 130)
         return sr.SunburstResult(Image.fromarray(edited), {
             "input_tokens": 3,
             "output_tokens": 5,
@@ -268,9 +249,9 @@ def test_repair_rejects_nonfinite_identity_and_shadow_png_mismatch(monkeypatch, 
 
     qwen = _png(_image())
 
-    async def fake_edit(_settings, _prompt, crop, _masks):
+    async def fake_edit(_settings, _prompt, crop):
         edited = np.asarray(crop.current).copy()
-        edited[160:190, 65:155] = (120, 120, 130)
+        edited[:] = (120, 120, 130)
         return sr.SunburstResult(Image.fromarray(edited), {"total_tokens": 1}, 3)
 
     scores = iter([float("nan"), 0.8])
@@ -391,7 +372,8 @@ def _run_face_pass_for_seam_capture(monkeypatch, *, helper):
 def test_run_face_pass_capture_seam_context_uses_helper_result(monkeypatch):
     calls = []
 
-    def helper(original, plan, *, crop_pad, references, model_dir, neck_offset):
+    def helper(original, plan, *, crop_pad, references, model_dir, neck_offset, gen_mask, current, tone_enabled):
+        assert gen_mask is not None and gen_mask.shape == (1024, 1024)
         calls.append((original.size, plan.box, crop_pad, references, model_dir, neck_offset))
         return {
             "plan": plan,
@@ -409,6 +391,8 @@ def test_run_face_pass_capture_seam_context_uses_helper_result(monkeypatch):
     assert result.context["base_crop"] == "sentinel-crop"
     assert result.context["base_crop_box"] == (1, 2, 3)
     assert result.context["neck_offset"] == 0.123
+    assert result.meta["mask_lock"] is False
+    assert result.meta["seam_mask_source"] == "reconstructed"
     assert calls and calls[0][2] == result.meta["crop_pad"]
     assert calls[0][3] == ((1.0, 0.0),)
     assert calls[0][4] == "/tmp/model-dir"
@@ -426,10 +410,10 @@ def test_run_face_pass_capture_seam_context_failure_keeps_applied_result(monkeyp
     assert result.image
 
 
-def test_visual_rejection_never_replaces_qwen(monkeypatch, visual_calls):
+def test_visual_rejection_is_metadata_only(monkeypatch, visual_calls):
     from app.agents import face_seam_repair as sr, face_seam_vision as vision
     calls = []
-    async def edit(_settings, _prompt, crop, _masks):
+    async def edit(_settings, _prompt, crop):
         calls.append("edit")
         return sr.SunburstResult(Image.new("RGB", crop.current.size, "red"), None, 1)
     async def reject(_settings, crop, candidate, **kwargs):
@@ -440,6 +424,21 @@ def test_visual_rejection_never_replaces_qwen(monkeypatch, visual_calls):
     qwen = _png(_image())
     base = fi.FacePassResult(qwen, "image/png", True, {})
     out = asyncio.run(sr.repair_after_face_pass(_settings(), base, _context(), edit=edit, identity_score=lambda _: .8))
-    assert out.image == qwen and out.applied
-    assert out.meta["face_seam"]["reason"] == "visual_reject"
+    assert out.image != qwen and out.applied
+    assert out.meta["face_seam"]["accepted"] is True
+    assert out.meta["face_seam"]["visual_check"]["passed"] is False
     assert calls == ["edit", "verify"]
+
+
+def test_visual_audit_exception_cannot_veto_valid_repair(monkeypatch, visual_calls):
+    from app.agents import face_seam_repair as sr, face_seam_vision as vision
+    async def edit(_settings, _prompt, crop):
+        return sr.SunburstResult(Image.new("RGB", (1024, 1024), (20, 20, 20)), None, 1)
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("sk-secret")
+    monkeypatch.setattr(vision, "verify_repair", unavailable)
+    qwen = _png(_image())
+    out = asyncio.run(sr.repair_after_face_pass(_settings(), fi.FacePassResult(qwen, "image/png", True, {}), _context(), edit=edit, identity_score=lambda _: .8))
+    assert out.image != qwen and out.meta["face_seam"]["accepted"] is True
+    assert out.meta["face_seam"]["visual_check"] == {"reason": "unavailable"}
+    assert "sk-secret" not in repr(out.meta)

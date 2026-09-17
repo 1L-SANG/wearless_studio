@@ -35,3 +35,11 @@ def test_cache_provenance_cannot_be_overwritten_by_output(tmp_path):
         with pytest.raises(ValueError, match="output_overlaps_cache"):
             module.validate_cache_paths(output, cache)
     module.validate_cache_paths(tmp_path / "new-run", cache)
+
+
+def test_cannot_attribute_response_to_a_different_plan_cache(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    module = evaluator()
+    with pytest.raises(ValueError, match="conflicting_plan_response_caches"):
+        asyncio.run(module.evaluate(SimpleNamespace(plans_dir=tmp_path / "plans", responses_dir=tmp_path / "responses")))

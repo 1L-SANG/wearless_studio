@@ -5,6 +5,11 @@ import pytest
 from PIL import Image
 
 
+FALLBACK = (
+    "Inside the editable area, repair any visible compositing seam, notch, step, torn-looking fragment, stray fabric shard or misaligned collar/neckline edge where the neck meets the garment, so the neck outline, skin and garment edge are continuous and natural. Preserve the same garment design, collar or neckline shape, stripes or pattern, knit, rib or denim texture, stitching, neck proportions and shadows."
+)
+
+
 def _crop(*, base=True):
     return SimpleNamespace(
         current=Image.new("RGB", (80, 60), (100, 100, 100)),
@@ -16,18 +21,21 @@ def _settings(model="gpt-5.4"):
     return SimpleNamespace(face_seam_vision_model=model, analysis_timeout_seconds=12.0, openai_api_key="sk-test")
 
 
-def _plan_response():
-    return {
-        "observations": ["image-left collar binding has a doubled rib segment below the jaw"],
+def _look_response(**overrides):
+    raw = {
+        "garment": "faded denim shirt with rear collar and stitching",
+        "defects": [
+            {"what": "rear right collar edge is cut and floating", "where": "image-right back neck"},
+            {"what": "background-colored gap separates neck skin from fixed collar", "where": "image-left lower neck"},
+        ],
+        "edit_instruction": "Repair the rear right collar edge and image-left neck gap. Reconstruct continuous denim collar contact. Preserve faded denim stitching and open shirt shape.",
         "neck_collar_gap": True,
-        "instruction": "Repair the image-left neck/collar seam while preserving the original rib binding width.",
-        "damage_polygons": [[{"x": 250, "y": 600}, {"x": 430, "y": 600}, {"x": 430, "y": 780}, {"x": 250, "y": 780}]],
-        "composition_polygons": [[{"x": 200, "y": 560}, {"x": 520, "y": 560}, {"x": 520, "y": 830}, {"x": 200, "y": 830}]],
-        "align": False,
     }
+    raw.update(overrides)
+    return raw
 
 
-def test_plan_repair_calls_gpt_with_two_1024_neck_crops_and_returns_pixel_plan(monkeypatch):
+def test_plan_repair_uses_v3_description_schema_without_spatial_fields(monkeypatch):
     from app.agents import face_seam_vision as sv
     from app.agents import vision_llm
 
@@ -35,8 +43,8 @@ def test_plan_repair_calls_gpt_with_two_1024_neck_crops_and_returns_pixel_plan(m
 
     async def fake_call(settings, model, prompt, images, schema, timeout, **kwargs):
         seen.update(model=model, prompt=prompt, images=images, schema=schema, timeout=timeout, kwargs=kwargs)
-        kwargs["metadata"].update(requested_model="sk-private", returned_model="sk-private", usage={"total_tokens": 7, "bad": "secret"})
-        return _plan_response()
+        kwargs["metadata"].update(requested_model="sk-private", returned_model="sk-private", usage={"prompt_tokens": 7, "bad": "secret"})
+        return _look_response()
 
     monkeypatch.setattr(vision_llm, "_call_gpt", fake_call)
     metadata = {}
@@ -49,18 +57,42 @@ def test_plan_repair_calls_gpt_with_two_1024_neck_crops_and_returns_pixel_plan(m
     assert len(seen["images"]) == 2
     assert all(im.mime == "image/png" for im in seen["images"])
     assert all(Image.open(__import__("io").BytesIO(im.data)).size == (1024, 1024) for im in seen["images"])
-    assert "binding width" in seen["prompt"]
-    assert plan.instruction.startswith("Repair the image-left")
-    assert plan.damage_polygons == [[(20.0, 36.0), (34.4, 36.0), (34.4, 46.8), (20.0, 46.8)]]
-    assert plan.composition_polygons == [[(16.0, 33.6), (41.6, 33.6), (41.6, 49.8), (16.0, 49.8)]]
-    assert plan.align is False
-    assert plan.feather == 7
-    assert list(getattr(plan, "observations")) == ["image-left collar binding has a doubled rib segment below the jaw"]
+    schema_text = repr(seen["schema"])
+    assert "damage_polygons" not in schema_text
+    assert "composition_polygons" not in schema_text
+    assert "align" not in schema_text
+    assert "box" not in schema_text
+    assert "neck_collar_gap" in schema_text
+    assert "The person differs, but the garment in image 2 is the ground truth" in seen["prompt"]
+    assert "background-colored gap" in seen["prompt"]
+    assert "white cloth fragment" in seen["prompt"]
+    assert "extend only the neck skin edge" in seen["prompt"]
+    assert "do not raise or reshape the garment" in seen["prompt"]
+    assert plan.instruction.startswith("Repair the rear right collar edge")
+    assert list(getattr(plan, "observations")) == [
+        "image-right back neck: rear right collar edge is cut and floating",
+        "image-left lower neck: background-colored gap separates neck skin from fixed collar",
+    ]
     assert getattr(plan, "neck_collar_gap") is True
-    assert metadata == {"duration_ms": metadata["duration_ms"], "requested_model": "gpt-5.4", "usage": {"total_tokens": 7}}
+    assert getattr(plan, "garment", "") == "faded denim shirt with rear collar and stitching"
+    assert metadata == {"duration_ms": metadata["duration_ms"], "requested_model": "gpt-5.4", "usage": {"prompt_tokens": 7}}
 
 
-def test_plan_repair_rejects_missing_base_and_malicious_invalid_polygon(monkeypatch):
+def test_plan_repair_uses_exact_fallback_instruction_when_no_defects(monkeypatch):
+    from app.agents import face_seam_vision as sv
+    from app.agents import vision_llm
+
+    async def fake_call(*_args, **_kwargs):
+        return _look_response(defects=[], edit_instruction="This should not be used.", neck_collar_gap=False)
+
+    monkeypatch.setattr(vision_llm, "_call_gpt", fake_call)
+    plan = asyncio.run(sv.plan_repair(_settings(), _crop(), metadata={}))
+    assert plan.instruction == FALLBACK
+    assert list(getattr(plan, "observations")) == []
+    assert getattr(plan, "neck_collar_gap") is False
+
+
+def test_plan_repair_rejects_missing_base_malformed_boolean_and_unsafe_strings(monkeypatch):
     from app.agents import face_seam_vision as sv
     from app.agents import vision_llm
     from app.agents.face_seam_repair import SeamRepairUnavailable
@@ -68,15 +100,29 @@ def test_plan_repair_rejects_missing_base_and_malicious_invalid_polygon(monkeypa
     with pytest.raises(SeamRepairUnavailable, match="vision_base_missing"):
         asyncio.run(sv.plan_repair(_settings(), _crop(base=False)))
 
-    async def fake_call(*_args, **_kwargs):
-        bad = _plan_response()
-        bad["damage_polygons"] = [[{"x": "sk-secret", "y": 500}, {"x": 1, "y": 2}, {"x": 3, "y": 4}]]
-        return bad
+    async def bad_bool(*_args, **_kwargs):
+        return _look_response(neck_collar_gap="yes")
 
-    monkeypatch.setattr(vision_llm, "_call_gpt", fake_call)
+    monkeypatch.setattr(vision_llm, "_call_gpt", bad_bool)
+    with pytest.raises(SeamRepairUnavailable, match="vision_bad_response"):
+        asyncio.run(sv.plan_repair(_settings(), _crop()))
+
+    async def bad_string(*_args, **_kwargs):
+        return _look_response(edit_instruction="x" * 901)
+
+    monkeypatch.setattr(vision_llm, "_call_gpt", bad_string)
     with pytest.raises(SeamRepairUnavailable, match="vision_bad_response") as exc:
         asyncio.run(sv.plan_repair(_settings(), _crop()))
-    assert "sk-secret" not in str(exc.value)
+    assert "x" * 40 not in str(exc.value)
+
+
+def test_gap_instruction_survives_empty_defect_list():
+    from app.agents import face_seam_vision as sv
+
+    instruction = "Extend only the neck skin edge to meet the collar. Keep the garment, collar and shoulders fixed."
+    plan = sv._validate_plan(_look_response(defects=[], neck_collar_gap=True, edit_instruction=instruction))
+    assert plan.neck_collar_gap is True
+    assert plan.instruction == instruction
 
 
 def test_verify_repair_rejects_width_double_pattern_and_records_boolean_metadata(monkeypatch):
@@ -117,22 +163,3 @@ def test_provider_exception_is_fixed_reason_without_error_body(monkeypatch):
     with pytest.raises(SeamRepairUnavailable, match="vision_provider_error") as exc:
         asyncio.run(sv.plan_repair(_settings(), _crop(), metadata={}))
     assert "sk-live" not in str(exc.value)
-
-
-def test_face_seam_vision_model_config_env(monkeypatch):
-    from app.config import load_settings
-
-    monkeypatch.delenv("FACE_SEAM_VISION_MODEL", raising=False)
-    assert load_settings().face_seam_vision_model == "gpt-5.4"
-    monkeypatch.setenv("FACE_SEAM_VISION_MODEL", "gpt-test")
-    assert load_settings().face_seam_vision_model == "gpt-test"
-
-
-def test_automatic_polygons_cannot_edit_unrelated_chest_or_background():
-    from app.agents import face_seam_vision as sv
-    from app.agents.face_seam_repair import SeamRepairUnavailable
-    crop = SimpleNamespace(current=Image.new("RGB", (1000, 1000)), face_box=(350, 100, 200, 300))
-    raw = _plan_response()
-    raw["damage_polygons"] = [[{"x": 0, "y": 800}, {"x": 150, "y": 800}, {"x": 150, "y": 1000}, {"x": 0, "y": 1000}]]
-    with pytest.raises(SeamRepairUnavailable, match="vision_polygon_outside_neck"):
-        sv._validate_plan(raw, crop)

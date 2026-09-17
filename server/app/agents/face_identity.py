@@ -1552,6 +1552,7 @@ def run_face_pass(
     skin_finish: int | None = None,
     skin_negative: str = "",
     capture_seam_context: bool = False,
+    capture_tone_context: bool = False,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -1655,9 +1656,18 @@ def run_face_pass(
                     try:
                         from . import face_seam_repair
 
+                        seam_mask = gen_mask_arr
+                        if seam_mask is None:
+                            from . import face_mask_lock
+
+                            seam_mask = face_mask_lock.gen_mask(np.asarray(crop.convert("RGB"), np.float32), plan)
+                        meta["seam_mask_source"] = "captured" if locked else "reconstructed"
                         context = face_seam_repair.capture_repair_context(
                             original,
                             plan,
+                            gen_mask=seam_mask,
+                            current=result,
+                            tone_enabled=capture_tone_context,
                             crop_pad=meta.get("crop_pad"),
                             references=references,
                             model_dir=model_dir,
@@ -2054,7 +2064,7 @@ async def apply_face_pass(
         backend = resolve_backend(settings, live_spec)
         if backend is None:
             return None
-        seam_kwargs = {"capture_seam_context": True} if seam_enabled else {}
+        seam_kwargs = {"capture_seam_context": True, "capture_tone_context": getattr(settings, "face_tone_fix", "off") == "on"} if seam_enabled else {}
         return asyncio.to_thread(
             run_face_pass, image, backend, expression,
             token=live_spec.token,

@@ -127,7 +127,7 @@ async def render_variant(settings, spec, image: bytes, mime: str, skin_finish: s
         return None
     seam_mode = str(getattr(settings, "face_seam_repair", "off") or "off").lower()
     seam_enabled = seam_mode in {"shadow", "on"}
-    seam_kwargs = {"capture_seam_context": True} if seam_enabled else {}
+    seam_kwargs = {"capture_seam_context": True, "capture_tone_context": getattr(settings, "face_tone_fix", "off") == "on"} if seam_enabled else {}
     result = await asyncio.to_thread(
         face_identity.run_face_pass, image, backend,
         token=live.token,

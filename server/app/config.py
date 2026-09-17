@@ -67,6 +67,7 @@ class Settings:
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     face_seam_repair: str = "off"  # off | shadow | on
     face_seam_repair_model: str = "gpt-image-2.5-sunburst"
+    face_tone_fix: str = "off"  # off | on
     face_seam_vision_model: str = "gpt-5.4"
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
     # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
@@ -709,6 +710,7 @@ def load_settings() -> Settings:
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         face_seam_repair=_flag("FACE_SEAM_REPAIR", "off", {"off", "shadow", "on"}),
         face_seam_repair_model=(os.getenv("FACE_SEAM_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
+        face_tone_fix=_flag("FACE_TONE_FIX", "off", {"off", "on"}),
         face_seam_vision_model=(os.getenv("FACE_SEAM_VISION_MODEL") or "gpt-5.4").strip() or "gpt-5.4",
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
