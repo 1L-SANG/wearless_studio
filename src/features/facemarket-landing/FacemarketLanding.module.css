@@ -1215,8 +1215,19 @@ button.foundingSlot { cursor: pointer; }
     font-size: 0.875rem;
   }
   .headerActions { grid-column: 2; grid-row: 1; gap: 0.25rem; }
-  .headerCta { min-height: 40px; padding: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
-  .headerCta svg, .headerQuiet svg { display: none; }
+  .headerCta {
+    min-height: 40px;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--fm-ink);
+    font-size: 0.875rem;
+    white-space: nowrap;
+  }
+  .headerCta:hover:not([disabled]) { background: transparent; box-shadow: none; color: var(--fm-accent); }
+  .headerCta:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
+  .headerCta::after, .headerCta svg, .headerQuiet svg { display: none; }
   .headerActions .headerQuiet { min-height: 40px; padding: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
   .headerQuiet.headerAuthWithCta { display: inline-flex; }
   .headerAccountDesktopLabel { display: none; }
