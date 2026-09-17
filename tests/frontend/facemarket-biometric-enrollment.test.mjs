@@ -626,12 +626,11 @@ test('body types are split by gender without inventing new server values', () =>
     'unknown gender keeps every option — a choice must stay possible');
 });
 
-test('gendered body types carry an image path, the unknown-gender list does not', () => {
-  for (const gender of ['male', 'female']) {
-    for (const option of bodyTypeOptions(gender)) {
-      assert.equal(option.image, `/models/physique/${gender}/${option.value}.webp`);
-    }
+test('body types use available male images and text chips for other lists', () => {
+  for (const option of bodyTypeOptions('male')) {
+    assert.equal(option.image, `/models/physique/male/${option.value}.webp`);
   }
+  assert.ok(bodyTypeOptions('female').every((b) => !b.image));
   assert.ok(bodyTypeOptions(null).every((b) => !b.image),
     'without a gender there is no image to show — text chips stay');
 });
@@ -695,7 +694,7 @@ test('the female body matrix pairs every volume with its silhouettes', () => {
   for (const row of rows) {
     for (const option of row.options) {
       assert.match(option.value, new RegExp(`^${row.value}_`));
-      assert.equal(option.image, `/models/physique/female/${option.value}.webp`);
+      assert.equal(option.image, null);
     }
   }
   assert.equal(rows.flatMap((r) => r.options).length, 15);
@@ -707,13 +706,10 @@ test('men keep the flat chip list — a matrix is female-only for now', () => {
   assert.ok(bodyTypeOptions('male').length > 0);
 });
 
-test('every matrix photo referenced by the UI actually exists', () => {
+test('the female body matrix does not request removed photos', () => {
   for (const row of bodyTypeMatrix('female')) {
     for (const option of row.options) {
-      assert.ok(
-        existsSync(new URL(`../../public${option.image}`, import.meta.url)),
-        `${option.image} must be present`,
-      );
+      assert.equal(option.image, null);
     }
   }
 });

@@ -730,7 +730,7 @@ export function AnalysisForm({
   const [customMatchDeleting, setCustomMatchDeleting] = useState(false);
   // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
   const [modelTab, setModelTab] = useState(() =>
-    (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
+    isRealModelSelection(a.selectedModelId) ? 'real' : 'ai');
   useEffect(() => {
     if (authLoading) return undefined;
     if (!session) {

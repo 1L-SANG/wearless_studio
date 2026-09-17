@@ -77,7 +77,7 @@ export function bodyTypeMatrix(gender) {
       .map((shape) => ({
         value: `${volume.value}_${shape.value}`,
         label: shape.label,
-        image: `/models/physique/female/${volume.value}_${shape.value}.webp`,
+        image: null,
       })),
   }));
 }
@@ -89,7 +89,7 @@ export function bodyTypeOptions(gender) {
   return values.map((value) => ({
     value,
     label: BODY_TYPE_LABEL[value],
-    image: `/models/physique/${gender}/${value}.webp`,
+    image: gender === 'male' ? `/models/physique/male/${value}.webp` : null,
   }));
 }
 

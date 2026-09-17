@@ -237,64 +237,6 @@
         }
       }
     },
-    "mE": {
-      "gender": "women",
-      "name": "지안",
-      "thumb": "/models/women/w2.webp",
-      "views": {
-        "face_front": {
-          "key": "seed/models/mE/face_front.webp",
-          "url": "https://images.wearless.kr/seed/models/mE/face_front.webp",
-          "mime": "image/webp"
-        },
-        "grid_sedcard": {
-          "key": "seed/models/mE/grid_sedcard.png",
-          "url": "https://images.wearless.kr/seed/models/mE/grid_sedcard.png",
-          "mime": "image/png",
-          "byteLength": 2557224,
-          "sha256": "f1870727bce5e870f64f21b4cf7d46d07ce374a1fe8a9d7d43d761a18a7f538b"
-        },
-        "grid_face_direction": {
-          "key": "seed/models/mE/grid_face_direction.png",
-          "url": "https://images.wearless.kr/seed/models/mE/grid_face_direction.png",
-          "mime": "image/png",
-          "byteLength": 1739708,
-          "sha256": "987c88e59cc5fcbf20b290494ecc831ef926cd48c2efed3fb90ccbdbed04b1a9",
-          "sourceSha256": "e906d14b996fc32ad63b0e694c110b7d6b4c96b5cdb7da35289f98460c7f6062",
-          "width": 1254,
-          "height": 1254,
-          "decodedRgbaSha256": "c2a3f5d7a838c7f7db3541423887f554dfd26e38e3d6ce51af3cf5b1fd033f88",
-          "sanitization": "lossless_metadata_strip_no_resize"
-        },
-        "grid_fullbody": {
-          "key": "seed/models/mE/grid_fullbody.png",
-          "url": "https://images.wearless.kr/seed/models/mE/grid_fullbody.png",
-          "mime": "image/png",
-          "byteLength": 5423927,
-          "sha256": "d41a41271cb0f0a13586c508e4c00ada48712fd36fea62cce75bcd50c1f1a45b"
-        },
-        "three_quarter": {
-          "key": "seed/models/mE/three_quarter.png",
-          "url": "https://images.wearless.kr/seed/models/mE/three_quarter.png",
-          "mime": "image/png"
-        },
-        "profile": {
-          "key": "seed/models/mE/profile.png",
-          "url": "https://images.wearless.kr/seed/models/mE/profile.png",
-          "mime": "image/png"
-        },
-        "body_front": {
-          "key": "seed/models/mE/body_front.png",
-          "url": "https://images.wearless.kr/seed/models/mE/body_front.png",
-          "mime": "image/png"
-        },
-        "body_back": {
-          "key": "seed/models/mE/body_back.png",
-          "url": "https://images.wearless.kr/seed/models/mE/body_back.png",
-          "mime": "image/png"
-        }
-      }
-    },
     "mF": {
       "gender": "women",
       "name": "하린",

@@ -164,7 +164,7 @@ def _spec():
     }
 
 
-def _build(monkeypatch, *, source=None, selected="mE", effective="mE", matches=(),
+def _build(monkeypatch, *, source=None, selected="mF", effective="mF", matches=(),
            contract=None, seller_images=None):
     source = source or _png()
     monkeypatch.setattr(
@@ -345,8 +345,8 @@ def test_legacy_contract_cannot_send_model_surface_prose_or_back_only_fact_to_pr
         _spec(),
         clothing_type="top",
         identity_source="VIRTUAL",
-        selected_model_id="mE",
-        effective_model_id="mE",
+        selected_model_id="mF",
+        effective_model_id="mF",
         uses_base_color=True,
         mannequin_image=InlineImage("image/png", b"mannequin"),
         face_direction_sheet=InlineImage("image/png", b"face sheet"),
@@ -389,8 +389,8 @@ def test_packet_fails_on_current_seller_byte_drift(monkeypatch):
             _spec(),
             clothing_type="top",
             identity_source="VIRTUAL",
-            selected_model_id="mE",
-            effective_model_id="mE",
+            selected_model_id="mF",
+            effective_model_id="mF",
             uses_base_color=True,
             mannequin_image=InlineImage("image/png", b"mannequin"),
             face_direction_sheet=InlineImage("image/png", b"face"),
@@ -435,8 +435,8 @@ def test_structurally_exact_cut_fails_closed_when_prerequisite_is_missing(
 ):
     kwargs = {
         "identity_source": "VIRTUAL",
-        "selected_model_id": "mE",
-        "effective_model_id": "mE",
+        "selected_model_id": "mF",
+        "effective_model_id": "mF",
         "uses_base_color": True,
         **overrides,
     }

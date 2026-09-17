@@ -11,7 +11,6 @@
 
 const FILES = [
   'women/w1.webp',
-  'women/w2.webp',
   'women/w3.webp',
   'women/w4.webp',
   'women/w5.webp',

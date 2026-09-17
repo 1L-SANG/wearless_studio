@@ -31,7 +31,9 @@ export function resolveSelectedModelId({
 const VIRTUAL_MODEL_IDS = AI_MODEL_IDS;
 
 export function isRealModelSelection(selectedModelId) {
-  return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);
+  // 목록 밖의 가상모델 ID도 실제 모델 이용료 대상으로 분류하지 않는다.
+  return !!selectedModelId && !/^m[A-Z]$/.test(selectedModelId)
+    && !VIRTUAL_MODEL_IDS.has(selectedModelId);
 }
 
 /**

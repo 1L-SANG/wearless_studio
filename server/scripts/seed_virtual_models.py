@@ -61,7 +61,7 @@ _PROVENANCE_TERMS = (
 
 # 프론트 모델 ID(src/mock/db.js AI_MODELS) ↔ 스파이크 소스 ID 매핑
 # mF~mN(2026-08-17): 여성 9인 2차 배치. 크롭 바이트는 JPEG 라 pack_mime 기본값
-# (image/jpeg)을 그대로 쓴다. 앵커는 mD·mE 와 같이 셀렉터 썸네일({sid}.webp)과 분리된
+# (image/jpeg)을 그대로 쓴다. 앵커는 mD와 같이 셀렉터 썸네일({sid}.webp)과 분리된
 # {sid}-face.webp — 썸네일 restyle 이 R2 의 아이덴티티 정본을 덮지 못하게 하는 장치
 # (m3 qc-notes 의 확립된 패턴).
 #
@@ -78,10 +78,6 @@ MODELS = {
     "mD": {
         "sid": "m3", "gender": "men", "name": "수혁", "pack_mime": "image/png",
         "anchor": "m3-face.webp",
-    },
-    "mE": {
-        "sid": "w2", "gender": "women", "name": "지안", "pack_mime": "image/png",
-        "anchor": "w2-face.webp",
     },
     "mF": {"sid": "w3", "gender": "women", "name": "하린",
             "anchor": "w3-face.webp", "run": "facepack-w3v2-2026-08-16T19-27-21"},
@@ -109,7 +105,6 @@ _FACE_DIRECTION_SOURCE_SHA256 = {
     "mB": "99b9980a14814d2422f4abcecbb0029c10d16b6ca2e8d0fdd17df56341a687fc",
     "mC": "3ed8456e4793d9ee625911de5e49463154c0952d78d93fcc592a10a24fbec774",
     "mD": "ab244d4ab484ee80a843312ea6289b4b5a81ce660416c2225e4e85d10939b5f9",
-    "mE": "e906d14b996fc32ad63b0e694c110b7d6b4c96b5cdb7da35289f98460c7f6062",
     "mF": "32fe183ff9d4741086750258fac8b694d4256d3cc6434818edf540f8c7c0cc6c",
     "mG": "50ec960ea5f5ccacec02fed668452b9f9fef4267701d30536b4e4b324407202d",
     "mH": "544d6770f14dded28581ffe765cb45a176b5000bb21725765fe2360222325771",
@@ -125,7 +120,6 @@ _FULLBODY_SOURCE_SHA256 = {
     "mB": "44d6a1358a6bd12bfc5d1f6c6d04914a53d1cbe9d9d9e9e81a9d28862c330bc1",
     "mC": "6dd9ee2d87f6948347c4d74b54364a3f8938b42a3ca864ea5d64b4b77d955058",
     "mD": "d4f6f336f5f5d2475c88d692dee49f2cbde377dc1293984557ebf4aa4fe8b12f",
-    "mE": "d41a41271cb0f0a13586c508e4c00ada48712fd36fea62cce75bcd50c1f1a45b",
     "mF": "b3875984dade00ca6ed79cb539484eec070f6158eceefd5371556ddda9bdc1d8",
     "mG": "0730d45375e6fe11e6d761dea7a525f7b9900514b39c18d5249c3d4c53104e60",
     "mH": "8fb98c16c2d52fdaa1f64da3bb7c4f54e63a531609fe65706fbda5328c3c7ae2",
@@ -135,13 +129,6 @@ _FULLBODY_SOURCE_SHA256 = {
     "mL": "a25ca421aab59d4050f0324c3f5f2a276fa2816076ca20a810c4b24690be72b8",
     "mM": "ae8c6776fd99b8d1010e61861fc2ad5fad47914a901b0fee75d524b0a1cf0c75",
     "mN": "9c47fc0cb235ec023a0314c60a6b37ba37fb010ed37ea006d6460afac6ab32b3",
-}
-_HISTORICAL_ME_FACE_DIRECTION = {
-    "sha256": "987c88e59cc5fcbf20b290494ecc831ef926cd48c2efed3fb90ccbdbed04b1a9",
-    "byteLength": 1_739_708,
-    "width": 1254,
-    "height": 1254,
-    "decodedRgbaSha256": "c2a3f5d7a838c7f7db3541423887f554dfd26e38e3d6ce51af3cf5b1fd033f88",
 }
 # 팩 크롭 파일명 → manifest 뷰 키 (계약의 시트 낱장 4뷰)
 PACK_VIEWS = {
@@ -155,7 +142,7 @@ PACK_VIEWS = {
 def _pack_dir(sid: str, run: str | None = None) -> Path:
     """큐레이션 통과 런의 pack 디렉터리. `run` 이 지정되면 그것만 쓴다.
 
-    미지정 모델(1차 배치 mA~mE)은 종전대로 최신 런 폴백 — 런이 하나뿐이라 모호하지 않다.
+    미지정 모델(1차 배치 mA~mD)은 종전대로 최신 런 폴백 — 런이 하나뿐이라 모호하지 않다.
     """
     if run:
         pack = ROOT / "spike/runs" / run / "pack"
@@ -380,10 +367,6 @@ def _grid_face_direction_records() -> list[dict]:
             "sha256": hashlib.sha256(data).hexdigest(),
             **proof,
         }
-        if model_id == "mE":
-            observed = {key: record[key] for key in _HISTORICAL_ME_FACE_DIRECTION}
-            if observed != _HISTORICAL_ME_FACE_DIRECTION:
-                raise RuntimeError("mE historical face-direction outbound drift")
         records.append(record)
     return records
 
@@ -581,12 +564,12 @@ if __name__ == "__main__":
     group.add_argument(
         "--grid-fullbody-only",
         action="store_true",
-        help="upload and verify only the 14 approved grid_fullbody assets",
+        help="upload and verify only the 13 approved grid_fullbody assets",
     )
     group.add_argument(
         "--grid-face-direction-only",
         action="store_true",
-        help="upload and verify only 14 lossless historical face-direction assets",
+        help="upload and verify only 13 lossless historical face-direction assets",
     )
     args = parser.parse_args()
     if args.grid_fullbody_only:
