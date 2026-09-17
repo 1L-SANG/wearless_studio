@@ -1,4 +1,4 @@
-import { APPLY_TIME_MINUTES } from '../data/landingTiming.js';
+import { REGISTRATION_PHOTO_COUNT } from '../../model/registerSlots.js';
 import s from '../FacemarketLanding.module.css';
 
 export function ClosingSection({ onPrimary, primaryLabel }) {
@@ -12,7 +12,7 @@ export function ClosingSection({ onPrimary, primaryLabel }) {
           {primaryLabel}
         </button>
       ) : null}
-      <p className={s.closingCaption}>지원 {APPLY_TIME_MINUTES}분, 지금은 발급료 무료</p>
+      <p className={s.closingCaption}>등록 사진 {REGISTRATION_PHOTO_COUNT}장, 지금은 발급료 무료</p>
     </section>
   );
 }

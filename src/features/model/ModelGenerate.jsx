@@ -17,7 +17,7 @@ import s from './ModelPersonalization.module.css';
 function blockerLabel(code) {
   switch (code) {
     case 'consent_missing': return '필수 동의를 완료해주세요.';
-    case 'photos_incomplete': return '얼굴 3장을 모두 업로드해주세요.';
+    case 'photos_incomplete': return '등록 화면에서 필수 사진을 모두 올려 주세요.';
     case 'body_profile_missing': return '신체 정보를 입력해주세요.';
     case 'purge_in_progress': return '삭제가 진행 중이라 잠시 후 다시 시도해주세요.';
     default: return code;

@@ -239,7 +239,7 @@ export function ModelRegister() {
 
   // 간편인증 경로 전용: 신분증 업로드(마스킹 확인 완료)가 끝나면 서버 상태를 다시 읽어
   // 다음 화면으로 넘어가요. 성공하면 photos_pending 으로 바뀌고(신분증은 이미 본인확인
-  // 뒤에 찍은 거라 더 볼 게 없어요 — Task6 순서 뒤집기), 사진 3장 화면으로 넘어갑니다.
+  // 뒤에 찍은 거라 더 볼 게 없어요), 등록 사진 18장 화면으로 넘어갑니다.
   const finishIdDocument = async () => {
     if (!enrollment?.id) return;
     try {
@@ -489,13 +489,13 @@ export function ModelRegister() {
       label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? `${verb}하기` : chooseMethod ? '동의하고 본인 확인 시작' : `동의하고 ${verb}하기`,
       action: identityPending ? () => runIdentity() : chooseMethod ? () => setStep('method') : () => startEnrollment(IDENTITY_METHODS[0]),
       disabled: !consents.every(Boolean),
-      hint: consents.every(Boolean) ? '두 가지 필수 항목을 모두 확인했어요' : '두 가지 필수 항목에 동의해야 다음으로 갈 수 있어요',
+      hint: consents.every(Boolean) ? '필수 동의를 마쳤어요' : '필수 항목 2개에 동의해 주세요',
     };
   } else if (step === 'method') {
-    content = <>{heading('본인 확인 방법을 골라 주세요', '방법에 따라 다음 단계가 조금 달라요.')}<IdentityMethodStep methods={IDENTITY_METHODS} onPick={handleMethodPick} simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON} /></>;
+    content = <>{heading('본인 확인 방법을 골라 주세요')}<IdentityMethodStep methods={IDENTITY_METHODS} onPick={handleMethodPick} simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON} /></>;
     previous = { label: '이전', action: () => setStep('1') };
   } else if (step === 'id_capture') {
-    content = <>{heading('신분증을 찍어 올려요', `주민등록번호 뒷자리는 직접 가린 뒤 올려 주세요. 이 사진은 담당자가 본인 확인을 마칠 때까지만 보관하고, 심사가 끝나면 바로 지워요(최대 7일).`)}
+    content = <>{heading('신분증을 찍어 올려요', `주민등록번호 뒷자리는 가려 주세요. 심사 후 바로 삭제하며, 최대 7일 보관해요.`)}
       {enrollment?.id && <IdDocumentStep
         enrollmentId={enrollment.id}
         onUploaded={finishIdDocument}
@@ -508,13 +508,13 @@ export function ModelRegister() {
   } else if (step === 'review') {
     // 간편인증 경로에서 관리자가 신분증 사진을 육안으로 재확인하는 동안 머무는 화면.
     // 결과는 메일로 나가요(승인·거절·기한초과 3종).
-    content = <>{heading('검수 중이에요', `담당자가 신분증과 얼굴 사진을 직접 확인하고 있어요. 결과는 메일로 알려 드려요 — 보통 하루 안에 끝나고, ${REVIEW_DEADLINE_DAYS}일이 지나면 자동으로 종료돼요.`)}<p className={s.description} role="status">이 화면을 닫아도 검수는 계속돼요. 마이페이지에서도 진행 상태를 볼 수 있어요.</p></>;
+    content = <>{heading('검수 중이에요', `보통 하루 안에 이메일로 결과를 알려드려요. ${REVIEW_DEADLINE_DAYS}일이 지나면 자동 종료돼요.`)}<p className={s.description} role="status">화면을 닫아도 괜찮아요. 진행 상태는 마이페이지에서 확인해요.</p></>;
     next = { label: busy ? '확인 중이에요' : '지금 결과 확인하기', action: refreshReview, disabled: busy };
     previous = { label: '기다리지 않고 취소하기', action: cancelReview };
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });
-    const complete = sub < PHOTO_REVIEW_SUB ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
-    next = { label: sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    const progress = photoProgress(enrollment?.photos, sub < PHOTO_REVIEW_SUB ? PHOTO_GROUPS[sub - 1].id : undefined);
+    next = { label: sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !progress.complete, hint: progress.complete ? '모두 저장했어요' : `${progress.count}/${progress.total}장 저장. ${progress.total - progress.count}장을 더 올려 주세요.` };
     previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === 'reshoot') {
     content = renderReshoot({ enrollment, previews, busy, onFile: changePhoto });
@@ -523,21 +523,21 @@ export function ModelRegister() {
       label: busy ? '올리는 중이에요' : remaining ? `${remaining}장 남았어요` : '확인 요청 보내기',
       action: restore,
       disabled: busy || remaining > 0,
-      hint: remaining ? '요청받은 칸을 모두 새로 올리면 담당자에게 자동으로 다시 넘어가요.' : '다 올렸어요. 담당자가 다시 확인해요.',
+      hint: remaining ? '요청받은 사진을 모두 올리면 담당자가 다시 확인해요.' : '다 올렸어요. 담당자가 다시 확인해요.',
     };
     previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === '3') {
     content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
-    next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };
+    next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명돼요.' };
     previous = { label: '이전', action: () => { setStep('2'); setSub(PHOTO_REVIEW_SUB); setEditingPhotos(false); } };
   } else if (step === '4b') {
-    content = <>{heading('라이선스 증서를 발급하고 있어요', '발급에 3분 정도 걸려요. 발급되면 이메일로 알려드려요. 로그인 후 마이페이지에서도 확인할 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫아도 발급은 계속돼요.</p></>;
+    content = <>{heading('라이선스 증서를 발급하고 있어요', '약 3분 걸려요. 완료되면 이메일과 마이페이지에서 확인해요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />증서를 만들고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫아도 발급은 계속돼요.</p></>;
     next = { label: '발급 중이에요', disabled: true };
   } else if (step === '4c') {
-    content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 그대로 저장돼 있어요. 다시 누르면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>발급 서버가 남긴 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>지금 닫아도 괜찮아요. 나중에 등록 화면으로 돌아오면 이 단계부터 다시 시작해요.</p></>;
+    content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 저장돼 있어요. 발급만 다시 시도해 주세요.')}<div className={s.reasonCard}><span>발급 실패 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>나중에 돌아와 발급을 다시 시도해도 돼요.</p></>;
     next = { label: '다시 발급하기', action: issueCertificate }; previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === 'done') {
-    content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 철회하기 전까지 유효해요.</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
+    content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 철회하기 전까지 유효해요.</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>사진을 확인한 뒤 테스트컷을 보내드려요. 준비되면 이메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새로 등록하기</button></section>;
   } else if (step === 'liveness') {
     content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(PHOTO_REVIEW_SUB); }} onCancel={() => { setSession(null); setStep('2'); setSub(PHOTO_REVIEW_SUB); }} /></Suspense></>;
   } else if (step === 'loading' || step === 'processing') {

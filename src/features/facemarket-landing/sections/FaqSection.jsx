@@ -43,7 +43,7 @@ export function FaqSection() {
         </article>
         <article className={s.faqEntry}>
           <h3>등록할 때 무엇이 필요한가요?</h3>
-          <p className={s.faqAnswerText}>정부 모바일 신분증으로 본인확인을 하고, 정면, 45도, 측면 사진을 한 장씩 올려요. 신분증 얼굴은 대조한 뒤 바로 지워요.</p>
+          <p className={s.faqAnswerText}>본인확인과 등록 사진 <strong>18장</strong>이 필요해요. 밝은 야외에서 도와줄 사람 1명과 함께, 그늘 9장과 햇빛에서 방향을 바꾸며 3장씩 찍어요. 촬영은 약 15분이에요. <Link to="/photo-guide">촬영 가이드 보기</Link></p>
         </article>
         <article className={s.faqEntry}>
           <h3>조건은 나중에 바꿀 수 있나요?</h3>

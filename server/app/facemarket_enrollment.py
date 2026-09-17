@@ -2268,7 +2268,7 @@ async def start_enrollment_liveness(
             if len(_ready_photo_rows(await _read_registration_photos(conn, enrollment_id), required_slots)) != len(required_slots):
                 raise _err(
                     "photos_required",
-                    "정면, 45도, 측면 사진을 모두 등록해 주세요.",
+                    f"등록 사진 {len(required_slots)}장을 모두 올려 주세요.",
                     status=409,
                 )
             await cur.execute(
@@ -3129,7 +3129,7 @@ async def _initial_completion_checks(
                 allow_approved=row.get("photo_revision", 0) > 0,
             )
             if len(photos) != len(required_slots):
-                raise _err("photos_required", "필수 사진을 모두 등록해 주세요.", status=409)
+                raise _err("photos_required", f"등록 사진 {len(required_slots)}장을 모두 올려 주세요.", status=409)
             await cur.execute(
                 """
                 update fm_biometric_enrollments

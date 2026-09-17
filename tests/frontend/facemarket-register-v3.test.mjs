@@ -107,7 +107,7 @@ test('동의 안내와 필수 표시를 읽고 마우스, 키보드, 터치로 �
   try {
     let tree = h.render();
     const text = textOf(tree);
-    for (const sentence of ['필수 항목을 확인한 뒤 신분증 인증을 진행해요.', '원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.', '철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)', '언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다']) assert.ok(text.includes(sentence));
+    for (const sentence of ['약관에 동의한 뒤 본인인증을 진행해요.', '원본 사진은 공개되지 않아요.', '신분증은 본인확인에만 사용해요.', '언제든 등록을 중지하거나 철회할 수 있어요.']) assert.ok(text.includes(sentence));
     assert.equal((text.match(/\(필수\)/g) || []).length, 2);
     assert.ok(!text.includes('안내 · 동의 아님'));
     assert.equal(findTree(tree, node => node.props?.to === '/overseas-transfer'), null);
@@ -173,16 +173,19 @@ test('간편인증 지원자는 인증이 끝나면 신분증 촬영 화면으�
   } finally { await h.close(); }
 });
 
-for (const [sub, encouragement] of [[1, null], [2, '방금 하신 대로, 서는 자리만 바꿔서 찍어 주세요.'], [4, '이제 마지막 단계예요. 아래 사진들만 찍으면 끝나요.']]) {
+for (const sub of [1, 2, 4]) {
   test(`사진 ${sub}단계는 공통 안내와 촬영 범위만 보여요`, async () => {
     const h = await modelComponentHarness({ initialStates: ['2', baseEnrollment, sub], api: {} });
     try {
       const tree = h.render(), text = textOf(tree);
-      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '사진을 등록해요');
-      assert.ok(text.includes('내 얼굴을 그대로 배우려면 빛이 조금씩 다른 사진이 여러 장 필요해요. 밝은 야외에서 네 단계로, 몸을 90도씩 돌려 가며 각 카드와 같은 구도로 찍어 주세요.'));
-      assert.equal(findTree(tree, node => node.type === 'progress'), null);
-      assert.doesNotMatch(text, /사진 17장|0 \/|전체 5단계|몸의 두께/);
-      if (encouragement) assert.ok(text.includes(encouragement));
+      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '등록 사진 18장을 올려요');
+      assert.ok(text.includes('나중에 이어서 등록해도 돼요.'));
+      const progress = findTree(tree, node => node.type === 'progress');
+      assert.equal(progress.props.value, 0);
+      assert.equal(progress.props.max, 18);
+      assert.ok(findTree(tree, node => node.type === 'Link' && node.props.to === '/photo-guide'));
+      assert.ok(text.includes(sub === 1 ? '9장을 더 올려 주세요.' : '3장을 더 올려 주세요.'));
+      assert.doesNotMatch(text, /사진 17장|전체 5단계|몸의 두께/);
       assert.equal(button(tree, '다음').props.disabled, true);
     } finally { await h.close(); }
   });
@@ -212,12 +215,12 @@ test('조건에는 옷, 몸의 두께, 사용료 규칙, 필수 동의가 차례
   try {
     const tree = h.render(), text = textOf(tree);
     assert.equal(findTree(tree, node => node.type === 'h1').props.children, '사용 조건을 정해요');
-    assert.ok(text.includes('내 얼굴을 쓸 수 있는 옷과 몸의 두께를 알려 주세요. 여기서 정한 조건이 셀러 화면에 그대로 보여요.'));
+    assert.ok(text.includes('내 얼굴을 사용할 옷 종류를 골라 주세요.'));
     assert.ok(findTree(tree, node => node.props?.['aria-label'] === '몸의 두께, 선택 항목'));
     assert.ok(text.indexOf('몸의 두께셀러가 옷을') < text.indexOf('셀러 사용료 규칙'));
     assert.ok(text.indexOf('셀러 사용료 규칙') < text.indexOf('셀러 사용료 규칙에 동의해요'));
-    assert.ok(text.includes('셀러가 한 번 모델을 이용한다면 14,900원 / 월정액으로 이용한다면 49,900원을 결제해요. (1개월 당 10회 제한)'));
-    assert.ok(text.includes('이 중 70% 금액을 모델님께 자동 정산해드려요.'));
+    assert.ok(text.includes('셀러 이용료: 1회 14,900원, 월 49,900원 (월 10회)'));
+    assert.ok(text.includes('결제 금액의 70%를 정산받아요.'));
     assert.ok(text.includes('셀러 사용료 규칙에 동의해요 (필수)'));
     assert.doesNotMatch(text, /지급은 아직 시작 전|마이페이지에서 내역 보기/);
     assert.ok(findTree(tree, node => node.type === 'Link' && node.props.to === '/license-agreement'));
@@ -243,7 +246,7 @@ test('발급 중에는 예상 시간과 이메일, 화면을 닫아도 계속된
   try {
     const text = textOf(h.render());
     assert.ok(text.includes('라이선스 증서를 발급하고 있어요'));
-    assert.ok(text.includes('발급에 3분 정도 걸려요. 발급되면 이메일로 알려드려요. 로그인 후 마이페이지에서도 확인할 수 있어요.'));
+    assert.ok(text.includes('약 3분 걸려요. 완료되면 이메일과 마이페이지에서 확인해요.'));
     assert.ok(text.includes('이 화면을 닫아도 발급은 계속돼요.'));
   } finally { await h.close(); }
 });
@@ -343,7 +346,7 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
   } });
   try {
     const file = new File(['photo'], 'mine.jpg', { type: 'image/jpeg' });
-    findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === `${module.PHOTO_GROUPS[3].title} 사진 고치기`).props.onClick();
+    findTree(harness.render(), node => node.type === 'button' && node.props['aria-label'] === `${module.PHOTO_GROUPS.at(-1).title} 사진 고치기`).props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_GROUPS.length, '역광은 마지막 조명 화면이다');
     let tree = harness.render();
     // 역광 3/4 는 마지막 칸이다 — 옆모습 둘·뒷모습이 그늘에 붙으면서 16번 → 18번이 됐다.
@@ -355,7 +358,9 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
     assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '18번 내 사진'));
     await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_REVIEW_SUB);
-    assert.ok(findTree(harness.render(), node => node.type === 'img' && node.props.alt === '18번 내 사진'));
+    const reviewedPhoto = findTree(harness.render(), node => node.type === 'img' && node.props.alt === `18번 ${module.SLOTS.at(-1).title}`);
+    assert.ok(reviewedPhoto);
+    assert.equal(reviewedPhoto.props.src, harness.runtime.states[11].bl_34);
     Object.values(harness.runtime.states[11]).forEach(URL.revokeObjectURL);
   } finally { await harness.close(); }
 });
@@ -415,7 +420,7 @@ for (const outcome of ['awaiting_confirm', 'verified', 'error']) {
     try {
       harness.runtime.navigate = (to) => destinations.push(to);
       const tree = harness.render(); const cleanup = harness.runtime.effects[0]();
-      const pending = button(tree, '새 생체 등록 시작').props.onClick(); cleanup();
+      const pending = button(tree, '새로 등록하기').props.onClick(); cleanup();
       const updates = harness.runtime.updates.length;
       if (outcome === 'error') reject(new Error('late')); else settle([{ id: 'model-1', status: outcome }]);
       await pending; await flush();
@@ -427,7 +432,7 @@ for (const outcome of ['awaiting_confirm', 'verified', 'error']) {
 test('발급 직후 새 등록을 시작해도 동의를 다시 받아요', async () => {
   const harness = await modelComponentHarness({ initialStates: ['done', { modelId: 'model-1' }], api: { listMyModels: async () => [{ id: 'model-1', status: 'verified' }] } });
   try {
-    await button(harness.render(), '새 생체 등록 시작').props.onClick();
+    await button(harness.render(), '새로 등록하기').props.onClick();
     assert.equal(harness.runtime.states[0], '1'); assert.deepEqual(harness.runtime.states[5], [false, false]);
     assert.equal(button(harness.render(), '동의하고 신분증 인증하기').props.disabled, true);
   } finally { await harness.close(); }
@@ -516,7 +521,7 @@ test('새 등록을 시작하면 이전 등록의 사진 미리보기를 해제�
   const revoke=URL.revokeObjectURL;const released=[];URL.revokeObjectURL=(value)=>released.push(value);
   try {
     harness.render();harness.runtime.refs[2].current={face01:'blob:previous'};harness.runtime.states[11]={face01:'blob:previous'};
-    await button(harness.render(),'새 생체 등록 시작').props.onClick();
+    await button(harness.render(),'새로 등록하기').props.onClick();
     assert.deepEqual(released,['blob:previous']);assert.deepEqual(harness.runtime.states[11],{});
   } finally {URL.revokeObjectURL=revoke;await harness.close();}
 });
@@ -650,20 +655,14 @@ test('문구를 바꿔도 슬롯 키와 순서는 그대로다', () => {
   assert.ok(module.SLOTS.every((slot) => slot.framing === 'face'));
 });
 
-test('등록 촬영 안내에 조명 용어가 남아 있지 않다', () => {
-  // 대표 결정: 등록자는 "밝은 야외에서 몸을 90도씩 돌린다" 만 알면 된다. 조명 이름은
-  // 서버(facemarket_photos)에만 남는다 — 학습 캡션과 내보내기 파일명이 거기서 나온다.
-  const shown = [
-    ...module.PHOTO_GROUPS.flatMap((group) => [group.title, group.badge, group.note]),
-    ...module.SHOOT_RULES.flatMap((rule) => [rule.title, rule.body]),
-    ...module.SLOTS.map((slot) => slot.hint),
-  ].join(' ');
-  for (const word of ['역광', '해가 왼쪽', '해가 오른쪽', '조명']) {
-    assert.ok(!shown.includes(word), `화면 문구에 "${word}" 가 남아 있다`);
-  }
-  // 단계 어휘는 있어야 한다.
-  assert.match(module.PHOTO_GROUPS[0].title, /1단계/);
-  assert.match(module.PHOTO_GROUPS[2].note, /90도/);
+test('등록 촬영 안내는 그늘부터 역광까지 네 자리를 짧게 설명한다', () => {
+  assert.deepEqual(module.PHOTO_GROUPS.map((group) => group.title),
+    ['그늘', '햇빛', '90도 회전', '한 번 더 회전']);
+  assert.match(module.PHOTO_GROUPS[0].note, /1~9번/);
+  assert.match(module.PHOTO_GROUPS[2].action, /90도/);
+  assert.match(module.PHOTO_GROUPS[3].badge, /해를 등지고/);
+  assert.deepEqual(module.SHOOT_RULES.map((rule) => rule.title),
+    ['안경 모자 벗기', '혼자 나오기', '후면카메라 촬영', '같은 날 찍기']);
 });
 
 test('서버의 조명 이름은 그대로다 — 학습 캡션·파일명이 거기서 나온다', () => {
@@ -724,19 +723,17 @@ test('SlotDiagram 이 아홉 컷을 서로 다르게 그린다', async () => {
   } finally { await h.close(); }
 });
 
-test('촬영 화면이 칸 그림·구도 그림·단계 그림을 쓴다', () => {
+test('촬영 화면과 재촬영 화면은 같은 클레이 예시를 쓴다', () => {
   const screens = readFileSync(
     new URL('../../src/features/model/RegisterScreens.jsx', import.meta.url), 'utf8',
   );
-  // 슬롯 카드 두 곳(처음 올리기 · 다시 찍기)이 같은 그림을 쓴다.
-  assert.equal(screens.split('<SlotDiagram').length - 1, 2);
-  assert.match(screens, /cut=\{slot\.cut\}/);
-  assert.match(screens, /<FramingDiagram/);
-  assert.match(screens, /<StepDiagram[^>]*step=\{sub\}/);
-  // SunDiagram 은 지우지 않았다 — 해 위치 그림은 그대로 남겨 둔다.
+  assert.equal(screens.split('<PhotoPoseIllustration').length - 1, 1);
+  assert.match(screens, /slot=\{slot\}/);
+  assert.match(screens, /renderPhotoCard\(\{ slot/);
+  assert.match(screens, /<PhotoPreparation/);
   const art = readFileSync(
-    new URL('../../src/features/model/RegisterIllustration.jsx', import.meta.url), 'utf8',
+    new URL('../../src/features/model/PhotoPoseIllustration.jsx', import.meta.url), 'utf8',
   );
-  assert.match(art, /export function SunDiagram/);
-  assert.match(art, /export function RegisterIllustration/);
+  assert.match(art, /PHOTO_GUIDE_ASSETS/);
+  assert.match(art, /data-photo-example/);
 });

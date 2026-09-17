@@ -312,7 +312,7 @@ export function ModelApply() {
             </li>
           ))}</ol>
         </nav>
-        <h1 ref={heading} tabIndex={-1} className={s.heading}>{['기본적인 정보들을 알려주세요.', '추가 정보들까지 알려주세요.', '보내기 전에 확인해주세요.'][step - 1]}</h1>
+        <h1 ref={heading} tabIndex={-1} className={s.heading}>{['기본 정보를 입력해요', '프로필을 알려 주세요', '지원서를 확인해요'][step - 1]}</h1>
         <p className={s.description}>{step === 3 ? '이름과 생년월일이 신분증과 같은지 한 번 더 봐주세요.' : <><span className={s.required}>*</span>표시는 필수 입력 항목입니다.</>}</p>
 
         {step === 1 && <div className={s.form}>
@@ -333,6 +333,7 @@ export function ModelApply() {
         {step === 2 && <div className={s.form}>
           <section aria-labelledby="application-photo-title" className={s.photoSection}>
             <h2 id="application-photo-title" className={s.label}>프로필 사진<span className={s.required}>*</span></h2>
+            <p className={s.hint}>지원 심사용 사진이에요. 승인 후 등록 사진 18장을 따로 올려요. <Link to="/photo-guide" target="_blank" rel="noreferrer">18장 촬영 가이드 보기 (새 탭)</Link></p>
           <div className={s.upload}>
             <ImageUpload
               className={s.applicationUploader}

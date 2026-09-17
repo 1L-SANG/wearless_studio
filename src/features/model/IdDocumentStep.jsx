@@ -314,14 +314,13 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onSt
         <div className={s.purposeNoticeHead}><Icon name="info" size={15} /> 꼭 확인해 주세요</div>
         {mode === 'camera' ? (
           <p className={s.idNotice}>
-            신분증을 화면 가이드 안에 맞추면 주민등록번호도 자동으로 가려져요. 신분증 사진은
-            본인 확인 심사에만 쓰고 <strong>심사가 끝나면 바로 지웁니다.</strong> 원본은 서버로
-            전송되지 않습니다.
+            가이드 안에 맞추면 주민등록번호가 자동으로 가려져요. 가린 사진만 전송하며,
+            본인확인 <strong>심사가 끝나면 바로 지워요.</strong>
           </p>
         ) : (
           <p className={s.idNotice}>
-            주민등록번호 뒷자리를 가린 뒤 올려 주세요. 신분증 사진은 본인 확인 심사에만 쓰고
-            {' '}<strong>심사가 끝나면 바로 지웁니다.</strong> 원본은 서버로 전송되지 않습니다.
+            주민등록번호 뒷자리를 가려 주세요. 가린 사진만 전송하며,
+            본인확인 <strong>심사가 끝나면 바로 지워요.</strong>
           </p>
         )}
       </div>

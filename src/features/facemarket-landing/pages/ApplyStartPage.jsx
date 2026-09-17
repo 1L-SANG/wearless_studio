@@ -4,16 +4,17 @@ import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import { LandingShell } from '../LandingShell.jsx';
 import { MODEL_SHARE, MIN_PAYOUT_KRW, SETTLEMENT_DAY, formatKrw } from '../facemarketTerms.js';
 import { APPLY_START_FAQ } from '../applyStartFaq.js';
+import { PhotoPlanSummary } from '../../model/PhotoGuide.jsx';
 import s from './ApplyStartPage.module.css';
 
-const FACES = ['/models/women/w1.webp', '/models/men/m1.webp', '/models/women/w2.webp', '/models/men/m3.webp'];
+const FACES = ['/models/women/w1.webp', '/models/men/m1.webp', '/models/women/w3.webp', '/models/men/m3.webp'];
 const QUALIFICATIONS = ['만 19세 이상이어야 해요', '소속 에이전시가 없어야 해요', '본인이 직접 지원해야 하며, 이미지 권리를 갖고 있어야 해요'];
 const sharePercent = MODEL_SHARE * 100;
 const perCutShare = FACEMARKET_PRICING.perCut * MODEL_SHARE;
 
 export function ApplyStartPage() {
   return (
-    <LandingShell title="모델 지원 | FaceMarket" description="사진 한 장이면 시작해요. 경력 없이도 지원해요." variant="apply">
+    <LandingShell title="모델 지원 | FaceMarket" description="경력 없이도 지원해요. 승인 후 밝은 야외에서 촬영한 사진 18장으로 내 모델을 등록해요." variant="apply">
       {() => (
         <div className={s.wrap}>
           <div className={s.dashboard}>
@@ -31,18 +32,19 @@ export function ApplyStartPage() {
               <blockquote className={s.earningsQuote}>
                 10명의 셀러가 나를 한번씩만 써도, <b>10만원</b>의 수익이 자동으로.
               </blockquote>
+              <p className={s.preparationNote}>승인 후 <b>등록 사진 18장</b>을 준비해요. 야외 촬영은 약 15분이에요.</p>
               <Link className={s.primary} to="/model/apply">지원서 쓰기</Link>
               <div className={s.faces} aria-label="모델 프로필 사진">
                 {FACES.map((src, index) => <img key={src} src={src} alt={`모델 프로필 사진 ${index + 1}`} decoding="async" />)}
               </div>
-              <div className={s.footnote}><span>사진 한 장이면 시작해요</span><span>경력 없이도 지원해요</span></div>
+              <div className={s.footnote}><span>승인 후 등록 사진 18장</span><span>경력 없이도 지원해요</span></div>
             </section>
             <div className={s.side}>
               <section className={s.benefits} aria-labelledby="apply-benefits">
                 <h2 id="apply-benefits">지금 시작하면</h2>
                 <ol>
                   <li><span>01</span><p>증서 발급료, <b className={s.emphasis}>무료</b>예요</p></li>
-                  <li><span>02</span><p><b>3분</b>이면 제출 가능해요</p></li>
+                  <li><span>02</span><p>지원서 작성은 <b>약 3분</b>이에요</p></li>
                   <li><span>03</span><p>24시간 안에 승인 여부를 알려드려요</p></li>
                 </ol>
               </section>
@@ -67,6 +69,7 @@ export function ApplyStartPage() {
               </section>
             </div>
           </div>
+          <PhotoPlanSummary />
           <section className={s.faq} aria-labelledby="apply-faq">
             <h2 id="apply-faq">자주 묻는 질문</h2>
             <div className={s.faqCards}>

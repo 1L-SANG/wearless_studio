@@ -37,10 +37,10 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket model applications
 
 # 지원서 카테고리(활동하고 싶은 모델 분야). 앱 레벨 검증(DB 는 jsonb).
 CATEGORY_VALUES = {"fashion", "commercial", "fitness", "lifestyle"}
-# 지원 사진 4종(레퍼런스 정합): 프로필(정면 헤드샷)·클로즈업(측면/3/4)·상반신·전신. 전부 필수.
-# 'profile' 이 관리자 썸네일·카탈로그 커버(profile_image_r2_key)로 승격된다.
+# 지원 심사용 사진 종류. 등록 사진 18장은 승인 후 enrollment에서 별도로 받는다.
+# profile은 지원서의 관리자 썸네일(profile_image_r2_key)로 사용한다.
 PHOTO_KINDS = ("profile", "closeup", "waist_up", "full_length")
-# 제출에 필수인 종류 — 프로필 1장만(2026-09-02 사용자 결정). 나머지는 올리면 저장하되 요구하지 않는다.
+# 지원서에는 심사용 프로필이 필수다. 나머지 지원 사진 종류는 선택이다.
 REQUIRED_PHOTO_KINDS = ("profile",)
 EXPERIENCE_LEVELS = {"none", "beginner", "intermediate", "professional"}
 # 제출 시 확인 서명 5종. 모두 true 여야 한다.
@@ -721,7 +721,7 @@ async def submit_application(
             if missing:
                 raise _err(
                     "profile_image_required",
-                    "프로필 사진을 올려 주세요.",
+                    "지원 심사용 프로필 사진을 올려 주세요. 등록 사진 18장은 승인 후 별도로 올려요.",
                     missing=missing,
                 )
             photo_keys: dict[str, str] = {}

@@ -127,7 +127,7 @@ export function ModelWithdraw() {
       <div className="surface">
         <div className={s.dangerCard}>
           <div className={s.dangerTitle}>얼굴·신체 데이터 전체 삭제</div>
-          <div className={s.dangerDesc}>원본 사진 3장, 얼굴 임베딩, 생성된 산출물이 전부 파기돼요. 백업은 보존기간 경과 후 소멸돼요. 되돌릴 수 없어요.</div>
+          <div className={s.dangerDesc}>등록한 원본 사진 전체, 얼굴 임베딩, 생성된 산출물이 전부 파기돼요. 백업은 보존기간 경과 후 소멸돼요. 되돌릴 수 없어요.</div>
           <button type="button" className={s.dangerBtn} onClick={onWithdrawAll} disabled={purgingAll}>
             {purgingAll ? '삭제 중…' : '전체 삭제'}
           </button>

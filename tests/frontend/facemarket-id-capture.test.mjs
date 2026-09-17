@@ -928,8 +928,8 @@ test('review 스텝은 수동 새로고침과 취소 탈출구를 준다', () =>
   const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("} else if (step === '2') {", start));
   assert.match(block, /action: refreshReview/, '새로고침 동작이 없다');
   assert.match(block, /action: cancelReview/, '취소 동작이 없다');
-  assert.match(block, /결과는 메일로 알려 드려요/, '메일 통지 약속 문구가 사라졌다');
-  assert.match(block, /\$\{REVIEW_DEADLINE_DAYS\}일이 지나면 자동으로 종료/, '심사 기한 안내가 없다');
+  assert.match(block, /이메일로 결과를 알려드려요/, '메일 통지 약속 문구가 사라졌다');
+  assert.match(block, /\$\{REVIEW_DEADLINE_DAYS\}일이 지나면 자동 종료/, '심사 기한 안내가 없다');
   // review_pending 을 '끝났다'로 해석하면 증서도 없이 축하 화면이 뜬다.
   const slots = readFileSync(
     new URL('../../src/features/model/registerSlots.js', import.meta.url), 'utf8',

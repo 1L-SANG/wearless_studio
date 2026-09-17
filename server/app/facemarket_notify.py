@@ -11,6 +11,8 @@ import logging
 
 import httpx
 
+from .facemarket_photos import PHOTO_SLOTS
+
 logger = logging.getLogger(__name__)
 
 _RESEND_URL = "https://api.resend.com/emails"
@@ -94,6 +96,7 @@ def _email_content(
     """
     hub = f"{public_base}/status"
     apply = f"{public_base}/model/apply"
+    guide = f"{public_base}/photo-guide"
     if email_type == "test_cuts_ready":
         confirm = f"{public_base}/model/confirm"
         subject = "[FaceMarket] 테스트컷이 도착했어요"
@@ -121,14 +124,21 @@ def _email_content(
         html = _shell(
             public_base=public_base,
             heading="모델 지원이 승인됐어요",
-            body_html="신분증 인증부터 모델 등록을 이어가 주세요. 아래 버튼을 누르면 "
-                      "로그인 후 지금 단계로 바로 이동해요.",
+            body_html=(
+                f"본인확인 후 등록 사진 {len(PHOTO_SLOTS)}장을 올리고, 사용 조건을 정해 증서를 발급받아요. "
+                "촬영은 밝은 야외에서 도와줄 사람과 함께 약 15분 걸려요. "
+                f'<a href="{_escape(guide)}">18장 촬영 가이드 보기</a><br><br>'
+                "사진 검수 후 테스트컷을 보내드려요. 직접 확인·확정한 뒤에 모델이 공개돼요."
+            ),
             cta=("모델 등록 계속하기", hub),
             footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
         )
         text = (
             "모델 지원이 승인됐어요.\n\n"
-            "신분증 인증부터 모델 등록을 이어가 주세요.\n"
+            f"본인확인 후 등록 사진 {len(PHOTO_SLOTS)}장을 올리고, 사용 조건을 정해 증서를 발급받아요.\n"
+            "촬영은 밝은 야외에서 도와줄 사람과 함께 약 15분 걸려요.\n"
+            f"촬영 가이드: {guide}\n\n"
+            "사진 검수 후 테스트컷을 보내드려요. 직접 확인·확정한 뒤에 모델이 공개돼요.\n"
             f"{hub}\n\n"
             "이 메일은 발신 전용이에요."
         )
@@ -140,14 +150,15 @@ def _email_content(
         html = _shell(
             public_base=public_base,
             heading="본인 확인이 완료됐어요",
-            body_html="제출하신 신분증과 얼굴 사진 확인이 끝났어요. 이제 모델 이미지를 "
-                      "만들고 있어요 — 준비되면 다시 알려 드릴게요.",
+            body_html="신분증과 등록 사진 확인을 마쳤어요. 마이페이지에서 남은 등록 절차를 "
+                      "이어가 주세요. 테스트컷을 직접 확인·확정한 뒤에 모델이 공개돼요.",
             cta=("등록 상태 보기", hub),
             footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
         )
         text = (
             "본인 확인이 완료됐어요.\n\n"
-            "제출하신 신분증과 얼굴 사진 확인이 끝났어요. 이제 모델 이미지를 만들고 있어요.\n"
+            "신분증과 등록 사진 확인을 마쳤어요. 마이페이지에서 남은 등록 절차를 이어가 주세요.\n"
+            "테스트컷을 직접 확인·확정한 뒤에 모델이 공개돼요.\n"
             f"{hub}\n\n"
             "이 메일은 발신 전용이에요."
         )
@@ -279,14 +290,16 @@ async def send_license_issued_email(
         heading="라이선스 증서가 발급됐어요",
         body_html=(
             f"{safe_name}님의 라이선스 증서가 발급됐어요. "
-            "로그인 후 마이페이지에서 확인할 수 있어요."
+            "마이페이지에서 증서를 확인할 수 있어요. "
+            "모델 공개는 테스트컷을 직접 확인·확정한 뒤 시작돼요."
         ),
         cta=("마이페이지 열기", status_url),
         footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {status_url}",
     )
     text = (
         f"{display_name}님의 라이선스 증서가 발급됐어요.\n\n"
-        "로그인 후 마이페이지에서 확인할 수 있어요.\n"
+        "마이페이지에서 증서를 확인할 수 있어요.\n"
+        "모델 공개는 테스트컷을 직접 확인·확정한 뒤 시작돼요.\n"
         f"{status_url}\n"
     )
     return await _send_email(settings, to=to, subject=subject, html=html, text=text)

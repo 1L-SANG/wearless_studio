@@ -13,11 +13,11 @@ import { isMobileLike, SIMPLE_AUTH_DEVICE_REASON } from './identityMethodConfig.
 const METHOD_COPY = Object.freeze({
   mid: {
     label: '모바일 신분증으로 확인',
-    hint: '모바일 신분증 앱이 있으면 가장 빠릅니다',
+    hint: '모바일 신분증 앱으로 인증해요.',
   },
   simple_auth: {
     label: '간편인증으로 확인',
-    hint: 'PASS·카카오·네이버 등. 신분증을 찍어 올리는 단계가 있습니다',
+    hint: 'PASS·카카오·네이버 등으로 인증 후 신분증을 올려요.',
   },
 });
 
@@ -53,12 +53,6 @@ export default function IdentityMethodStep({ methods, onPick, simpleAuthUnavaila
 
   return (
     <div className="surface">
-      <div className={s.stepHead}>
-        <div>
-          <div className={s.stepEyebrow}>본인 확인</div>
-          <h2 className={s.stateTitle}>본인 확인 방법을 골라 주세요</h2>
-        </div>
-      </div>
       <div className={s.methodChoices}>
         {methods.includes('mid') && (
           <button type="button" className={s.methodChoice} onClick={() => onPick('mid')}>

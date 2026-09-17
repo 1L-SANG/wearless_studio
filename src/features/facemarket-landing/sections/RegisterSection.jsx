@@ -11,11 +11,12 @@
    "본인확인에 실패했어요." 로 1단계가 전원 차단된다. 그 값을 지우려면 여기도 같이 봐라.
    ============================================================= */
 import { Icon } from '@/components/ui.jsx';
+import { PhotoPlanSummary } from '../../model/PhotoGuide.jsx';
 import s from '../FacemarketLanding.module.css';
 
 const STEPS = [
-  { label: '본인확인', note: '동의 3건과 모바일 신분증 인증' },
-  { label: '사진', note: '밝은 야외에서 네 단계, 얼굴 18장' },
+  { label: '본인확인', note: '필수 동의와 본인확인' },
+  { label: '사진', note: '얼굴·옆모습·뒷모습 총 18장' },
   { label: '조건', note: '쓸 수 있는 옷 종류' },
   { label: '증서', note: '얼굴 사용 증서 발급' },
 ];
@@ -24,10 +25,9 @@ export function RegisterSection({ ctaLabel, onPrimary }) {
   return (
     <section className={s.section} id="register">
       <p className={s.eyebrow}>모델 등록</p>
-      <h2 className={s.sectionTitle}>네 단계면 끝납니다</h2>
+      <h2 className={s.sectionTitle}>4단계로 등록해요</h2>
       <p className={s.sectionLead}>
-        본인 확인이 필요한 절차라 순서대로 진행합니다. 체형은 선택이고,
-        중간에 나갔다가 이어서 할 수 있습니다.
+        순서대로 진행해 주세요. 중간에 멈춰도 이어서 할 수 있어요.
       </p>
 
       <ol className={s.rail}>
@@ -39,13 +39,13 @@ export function RegisterSection({ ctaLabel, onPrimary }) {
           </li>
         ))}
       </ol>
+      <PhotoPlanSummary />
 
       {/* 증서 발급(4단계)은 opendid holder 콜드부트로 몇 분 걸릴 수 있다(PRD §7.3).
           예고가 없으면 멈춘 줄 알고 탭을 닫고, 등록이 vc_pending 으로 남는다.
           PRD §13-2 "대기 화면이 제품의 일부다"를 랜딩에서도 지키는 문장이라 지우지 마라. */}
       <p className={s.sectionLead}>
-        증서 발급에는 몇 분이 걸릴 수 있어요. 기다리면 됩니다.
-        등록을 마치면 우리가 사진을 검수하고 테스트컷을 보내요.
+        증서 발급은 몇 분 걸려요. 등록 후 사진을 검수하고 테스트컷을 보내드려요. 직접 확인·확정한 뒤에 모델이 공개돼요.
       </p>
 
       <button className={s.heroCta} onClick={onPrimary} type="button">

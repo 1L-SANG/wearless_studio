@@ -788,7 +788,7 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
             )
             row = await cur.fetchone()
             if (row["n"] if row else 0) < 3:
-                raise _err("face_photos_incomplete", "얼굴 사진 3장을 먼저 업로드해 주세요.", 400)
+                raise _err("face_photos_incomplete", "등록 화면에서 필수 사진을 모두 올려 주세요.", 400)
             await cur.execute(
                 "select id::text as id from jobs where kind = 'fm_model_asset_build' "
                 "and payload->>'modelId' = %s and status in ('pending', 'running') limit 1",

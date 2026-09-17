@@ -25,6 +25,8 @@ export function FooterSection({ compact = false }) {
       <p className={s.footerNote}>
         <Link className={s.footerLink} to="/register">모델 등록 안내</Link>
         {' · '}
+        <Link className={s.footerLink} to="/photo-guide">18장 촬영 가이드</Link>
+        {' · '}
         <Link className={s.footerLink} to="/model-info">내 얼굴이 어떻게 다뤄지나요</Link>
       </p>
       <hr className={s.footerDivider} />
