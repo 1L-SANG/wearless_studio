@@ -32,8 +32,6 @@ export function HowItWorksSection() {
           <Link className={s.stepGuideLink} to="/photo-guide">촬영 가이드 보기 <ArrowRight size={16} aria-hidden="true" /></Link>
         </li>
       </ol>
-      <p className={s.stepFoot}><strong>테스트컷을 확인한 뒤 공개돼요.</strong> 등록 후 사진을 검수하고 테스트컷을 보내드려요. 직접 확인·확정하기 전에는 공개되지 않아요.</p>
-      <p className={s.stepFoot}><strong>승인은 그대로 남아요.</strong> 등록을 하다 멈춰도 지원서를 다시 낼 필요 없이 이어서 하면 돼요.</p>
     </section>
   );
 }
