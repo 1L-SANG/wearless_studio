@@ -72,7 +72,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   };
 
   return (
-    <header className={s.header}>
+    <header className={`${s.header} ${primaryLabel && onPrimary ? s.headerWithCta : ''}`}>
       {/* 브랜드는 홈('/') 링크다. 예전엔 같은 문서 안 앵커(#top)였는데, 이제 상단바가
           다른 라우트로 넘어가므로 앵커면 현재 페이지 맨 위로만 가고 홈으로 못 돌아온다. */}
       {/* facemarket 전용 워드마크(2026-09-03 오너 지급 SVG). 공유 로고(/assets/brand/logo.svg)는
@@ -107,9 +107,18 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
             <Icon name="logOut" size={16} stroke={1.8} />
             <span className={s.headerQuietLabel}>로그아웃</span>
           </button>
-        ) : !primaryLabel || !onPrimary ? (
-          <button className={s.headerQuiet} disabled={loading} onClick={() => openLogin(`${pathname}${search}`)} type="button">로그인</button>
-        ) : null}
+        ) : (
+          <button
+            aria-label="로그인/회원가입"
+            className={`${s.headerQuiet} ${primaryLabel && onPrimary ? s.headerAuthWithCta : ''}`}
+            disabled={loading}
+            onClick={() => openLogin(`${pathname}${search}`)}
+            type="button"
+          >
+            <span className={s.headerAccountDesktopLabel}>로그인</span>
+            <span className={s.headerAccountMobileLabel}>로그인/회원가입</span>
+          </button>
+        )}
       </div>
 
     </header>

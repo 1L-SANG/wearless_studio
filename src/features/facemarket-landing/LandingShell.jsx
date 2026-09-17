@@ -206,7 +206,7 @@ export function LandingShell({ title, description, children, variant = 'landing'
     /* 띠를 닫으면 그 높이를 0 으로 돌려준다 — 첫 화면 그리드가 '뷰포트 − 상단바 − 띠'로
        높이를 잡으므로(FacemarketLanding.module.css .screen), 안 돌려주면 캐러셀과 메타 바가
        사라진 띠 높이만큼 아래로 밀린 채 남는다. */
-    <div className={`${s.shell} ${variant === 'apply' ? s.applyShell : ''} ${!noticeOpen || variant === 'apply' ? s.noticeClosed : ''}`} id="top">
+    <div className={`${s.shell} ${variant === 'apply' ? s.applyShell : ''} ${!noticeOpen || variant === 'apply' ? s.noticeClosed : ''} ${primaryLabel ? s.shellWithHeaderCta : ''}`} id="top">
       {/* 맨 위 안내 띠 — 왼쪽 '**모델을 위한** 안내 페이지입니다.', 오른쪽 셀러용 스튜디오 링크
           (문구는 2026-09-02 사용자 지시). 셀러가 facemarket 도메인에 잘못 들어와도 첫 줄에서
           갈라진다. 랜딩 네 페이지(이 셸)에만 있고 /model/* 은 없다 — 거긴 이미 모델이 서 있는

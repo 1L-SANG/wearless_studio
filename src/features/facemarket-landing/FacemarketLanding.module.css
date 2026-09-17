@@ -188,6 +188,8 @@
 }
 
 .headerActions { display: inline-flex; align-items: center; justify-self: end; gap: 0.6rem; }
+.headerAccountMobileLabel { display: none; }
+.headerQuiet.headerAuthWithCta { display: none; }
 
 .headerCta,
 .heroCta {
@@ -208,7 +210,6 @@
 /* 작은 폰에서도 계정 액션과 로고가 같은 줄에 들어가게 한다. */
 @media (max-width: 26rem) {
   .brandWordmark { height: 1.55rem; }
-  .headerQuietLabel { display: none; }
 }
 /* 2026-09-03 오너 지시: 호버를 셀러 앱 분석 페이지의 CTA(app.css .btn-primary + .fx-sheen)와
    같게. 그쪽 동작 = ① 배경이 150ms 에 한 단계 어두워짐(--cta-bg → --cta-bg-hover)
@@ -1192,7 +1193,7 @@ button.foundingSlot { cursor: pointer; }
   .header {
     box-sizing: border-box;
     grid-template-rows: minmax(0, 1fr) 44px;
-    gap: 0 1rem;
+    gap: 0 0.5rem;
     padding-block: 4px;
   }
   .brand { grid-column: 1; grid-row: 1; }
@@ -1213,9 +1214,24 @@ button.foundingSlot { cursor: pointer; }
     white-space: nowrap;
     font-size: 0.875rem;
   }
-  .headerActions { grid-column: 2; grid-row: 1; }
-  .headerCta { display: none; }
-  .headerQuiet { min-height: 44px; }
+  .headerActions { grid-column: 2; grid-row: 1; gap: 0.25rem; }
+  .headerCta {
+    min-height: 40px;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--fm-ink);
+    font-size: 0.875rem;
+    white-space: nowrap;
+  }
+  .headerCta:hover:not([disabled]) { background: transparent; box-shadow: none; color: var(--fm-accent); }
+  .headerCta:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
+  .headerCta::after, .headerCta svg, .headerQuiet svg { display: none; }
+  .headerActions .headerQuiet { min-height: 40px; padding: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
+  .headerQuiet.headerAuthWithCta { display: inline-flex; }
+  .headerAccountDesktopLabel { display: none; }
+  .headerAccountMobileLabel { display: inline; }
   .foundingHead { align-items: flex-start; flex-direction: column; }
   .foundingRemaining { text-align: left; }
   .foundingSlots { grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
@@ -1229,6 +1245,16 @@ button.foundingSlot { cursor: pointer; }
 
   .faqHead { grid-template-columns: 1fr; gap: 1rem; }
   .faqGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 22.5rem) {
+  .shellWithHeaderCta { --fm-header-h: 8.25rem; }
+  .headerWithCta { grid-template-rows: 36px 40px 44px; }
+  .headerWithCta .brand { grid-row: 1; }
+  .headerWithCta .headerActions { display: contents; }
+  .headerWithCta .headerCta { grid-column: 1; grid-row: 2; justify-self: start; }
+  .headerWithCta .headerQuiet { grid-column: 2; grid-row: 1; justify-self: end; }
+  .headerWithCta .nav { grid-row: 3; }
 }
 
 /* ---- 푸터 ---- */
