@@ -21,7 +21,6 @@ from .image_cost import estimate_cost
 SUNBURST_MODEL = "gpt-image-2.5-sunburst"
 PROMPT_HEAD = "Use case: precise-object-edit. This is a surgical photo restoration, not a new photograph. The input is a square crop of an existing studio fashion photograph. Keep the exact crop, subject placement, scale, geometry and camera view. Only repair the damaged neck/collar compositing inside the transparent mask.\n\n"
 PROMPT_TAIL = "\n\nCopy every intact feature exactly. Preserve the person's identity, face, jawline, hair, expression, pose, body proportions, clothing, lighting, texture, sharpness and neutral background. Match existing skin and cloth texture; no beauty retouch, no smoothing, no new detail or design. Eliminate abrupt cutouts, discontinuous edges, duplicated cloth fragments and pasted-skin seams. Make this look like the same unedited photograph with only the neck compositing defects corrected. All opaque mask areas must remain unchanged. Return a single square photograph, same framing. No text or borders."
-DIRECT_REPAIR_INSTRUCTION = "Repair only artificial broken neck/garment seams so the existing neck meets the existing garment naturally. Remove jagged cutout notches, pasted-skin transitions, stray cloth shards and duplicated binding at the neck. Preserve the EXISTING garment opening exactly: the same collar positions, tips and stand, neckline width and depth, scoop shape, binding width, placket alignment and button states. Leave an unbuttoned shirt OPEN with the same exposed chest area and the same buttons unfastened. Never close a normal opening, fasten a button, add an undershirt, raise the neckline or redesign the garment. Reconnect the broken edge locally within this unchanged geometry. For a gap caused by missing neck skin, extend the neck edge to meet the fixed collar instead of moving the collar or shoulders. Preserve the existing neck proportions, skin tone, skin texture and all intact face, jawline, hair, garment weave, lighting, background and crop geometry."
 log = logging.getLogger(__name__)
 
 
@@ -36,6 +35,8 @@ class FaceSeamContext:
     references: Any = None
     model_dir: str | None = None
     neck_offset: float | None = None
+    base_crop: Image.Image | None = field(default=None, repr=False)
+    base_crop_box: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class RepairCrop:
     face_box: tuple[float, float, float, float]
     final_size: tuple[int, int]
     crop_pad: tuple[int, int, int, int] = (0, 0, 0, 0)
+    base: Image.Image | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,8 @@ class RepairPlan:
     composition_polygons: list[list[tuple[float, float]]] = field(default_factory=list)
     align: bool = True
     feather: int = 7
+    observations: list[str] = field(default_factory=list)
+    neck_collar_gap: bool = False
 
 
 @dataclass(frozen=True)
@@ -128,17 +132,35 @@ def _clamp_square(left: float, top: float, side: float, width: int, height: int)
     return (int(np.clip(round(left), 0, width - side_i)), int(np.clip(round(top), 0, height - side_i)), side_i)
 
 
-def prepare_repair_crop(qwen: Image.Image, context: FaceSeamContext) -> RepairCrop:
-    plan = context.plan
-    pad_l, pad_t, _pad_r, _pad_b = _pad_ltrb(context.crop_pad)
+def repair_crop_box(final_size, plan, crop_pad=None):
+    pad_l, pad_t, *_ = _pad_ltrb(crop_pad)
     bx, by, bw, bh = (float(v) for v in plan.box)
     bx -= pad_l
     by -= pad_t
-    cx = bx + bw / 2.0
     side = max(3.2 * bw, 2.8 * bh)
-    left, top, side_i = _clamp_square(cx - side / 2.0, by - 0.1 * bh, side, qwen.width, qwen.height)
-    face_box = (bx - left, by - top, bw, bh)
-    return RepairCrop(qwen.convert("RGB").crop((left, top, left + side_i, top + side_i)), (left, top, side_i), face_box, qwen.size, _pad_ltrb(context.crop_pad))
+    return _clamp_square(bx + bw / 2 - side / 2, by - .1 * bh, side, *final_size)
+
+
+def capture_repair_context(original, plan, *, crop_pad=None, references=None, model_dir=None, neck_offset=None):
+    """Retain only the aligned neck ROI; never retain the full original image."""
+    pl, pt, pr, pb = _pad_ltrb(crop_pad)
+    box = repair_crop_box((original.width - pl - pr, original.height - pt - pb), plan, crop_pad)
+    x, y, side = box
+    base = original.crop((x + pl, y + pt, x + pl + side, y + pt + side)).convert("RGB")
+    return dict(plan=plan, crop_pad=crop_pad, references=references, model_dir=model_dir,
+                neck_offset=neck_offset, base_crop=base, base_crop_box=box)
+
+
+def prepare_repair_crop(qwen: Image.Image, context: FaceSeamContext) -> RepairCrop:
+    left, top, side = repair_crop_box(qwen.size, context.plan, context.crop_pad)
+    pad_l, pad_t, *_ = _pad_ltrb(context.crop_pad)
+    bx, by, bw, bh = (float(v) for v in context.plan.box)
+    base = context.base_crop
+    if base is not None and (context.base_crop_box != (left, top, side) or base.size != (side, side)):
+        raise SeamRepairUnavailable("base_crop_mismatch")
+    return RepairCrop(qwen.convert("RGB").crop((left, top, left + side, top + side)),
+                      (left, top, side), (bx - pad_l - left, by - pad_t - top, bw, bh),
+                      qwen.size, _pad_ltrb(context.crop_pad), base)
 
 
 
@@ -147,50 +169,9 @@ def _face_protected_mask(crop: RepairCrop) -> np.ndarray:
     mask = Image.new("L", crop.current.size, 0)
     box = (fx + 0.12 * fw, fy - 0.06 * fh, fx + 0.88 * fw, fy + 1.03 * fh)
     ImageDraw.Draw(mask).ellipse(box, fill=255)
-    return np.asarray(mask) > 0
-
-
-def _rounded_box_polygon(left: float, top: float, right: float, bottom: float, radius: float) -> list[tuple[float, float]]:
-    radius = max(0.0, min(radius, (right - left) / 2.0, (bottom - top) / 2.0))
-    return [
-        (left + radius, top),
-        (right - radius, top),
-        (right, top + radius),
-        (right, bottom - radius),
-        (right - radius, bottom),
-        (left + radius, bottom),
-        (left, bottom - radius),
-        (left, top + radius),
-    ]
-
-
-def _neck_bounds(crop: RepairCrop, *, half_width: float, top_mul: float, bottom_mul: float) -> tuple[float, float, float, float]:
-    fx, fy, fw, fh = crop.face_box
-    w, h = crop.current.size
-    cx = fx + fw / 2.0
-    return (
-        float(np.clip(cx - half_width * fw, 0, w - 1)),
-        float(np.clip(fy + top_mul * fh, 0, h - 1)),
-        float(np.clip(cx + half_width * fw, 0, w - 1)),
-        float(np.clip(fy + bottom_mul * fh, 0, h - 1)),
-    )
-
-
-def build_neck_repair_plan(crop: RepairCrop) -> RepairPlan:
-    # ponytail: fixed neck bounds include intact collar; keep off until visual preservation passes.
-    damage_box = _neck_bounds(crop, half_width=0.85, top_mul=0.70, bottom_mul=1.85)
-    comp_box = _neck_bounds(crop, half_width=1.05, top_mul=0.65, bottom_mul=2.00)
-    _fx, _fy, fw, fh = crop.face_box
-    damage_radius = max(6.0, min(fw * 0.22, fh * 0.18))
-    comp_radius = max(8.0, min(fw * 0.28, fh * 0.22))
-    return RepairPlan(
-        has_defect=True,
-        instruction=DIRECT_REPAIR_INSTRUCTION,
-        damage_polygons=[_rounded_box_polygon(*damage_box, damage_radius)],
-        composition_polygons=[_rounded_box_polygon(*comp_box, comp_radius)],
-        align=True,
-        feather=7,
-    )
+    protected = np.asarray(mask) > 0
+    protected[:max(0, int(fy + .55 * fh)), :] = True
+    return protected
 
 
 def _raster(size: tuple[int, int], polygons: list[list[tuple[float, float]]]) -> np.ndarray:
@@ -345,7 +326,7 @@ async def call_sunburst_edit(settings, prompt: str, crop: RepairCrop, masks: Rep
 
 
 def _safe_meta(meta: dict) -> dict:
-    allowed = {"mode", "attempted", "accepted", "reason", "crop", "feather", "align", "changed_pixels", "outside_changed", "latency_ms", "usage", "cost_usd", "identity_before", "identity_after", "prompt_sha", "neck_offset"}
+    allowed = {"mode", "attempted", "accepted", "reason", "crop", "feather", "align", "changed_pixels", "outside_changed", "latency_ms", "usage", "cost_usd", "identity_before", "identity_after", "prompt_sha", "neck_offset", "planning", "visual_check", "neck_collar_gap"}
     return {k: cleaned for k, v in meta.items() if k in allowed and (cleaned := _json_safe(v)) is not None}
 
 
@@ -379,7 +360,7 @@ def _context_from_result(result, context: FaceSeamContext | None) -> FaceSeamCon
     raw = getattr(result, "context", None)
     if not isinstance(raw, dict) or raw.get("plan") is None:
         return None
-    return FaceSeamContext(raw["plan"], raw.get("crop_pad"), raw.get("references"), raw.get("model_dir"), raw.get("neck_offset"))
+    return FaceSeamContext(raw["plan"], raw.get("crop_pad"), raw.get("references"), raw.get("model_dir"), raw.get("neck_offset"), raw.get("base_crop"), raw.get("base_crop_box"))
 
 
 async def repair_after_face_pass(settings, result, context: FaceSeamContext | None = None, *, request_context: dict | None = None, edit=None, identity_score=None):
@@ -401,8 +382,12 @@ async def repair_after_face_pass(settings, result, context: FaceSeamContext | No
         qwen = await run_cpu_bound(lambda: Image.open(BytesIO(result.image)).convert("RGB"))
         crop = await run_cpu_bound(prepare_repair_crop, qwen, context)
         meta["neck_offset"] = context.neck_offset
-        plan = build_neck_repair_plan(crop)
-        masks = build_repair_masks(crop, plan)
+        from .face_seam_vision import plan_repair, verify_repair
+        planning = {}
+        meta["planning"] = planning
+        plan = await plan_repair(settings, crop, metadata=planning)
+        meta["neck_collar_gap"] = plan.neck_collar_gap
+        masks = await run_cpu_bound(build_repair_masks, crop, plan)
         prompt = PROMPT_HEAD + plan.instruction.strip() + PROMPT_TAIL
         meta["prompt_sha"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
         meta["attempted"] = True
@@ -424,6 +409,13 @@ async def repair_after_face_pass(settings, result, context: FaceSeamContext | No
             return replace(result, meta={**base_meta, "face_seam": _safe_meta(meta)})
         if round(float(before) - float(after), 6) > 0.02:
             meta["reason"] = "identity_drop"
+            return replace(result, meta={**base_meta, "face_seam": _safe_meta(meta)})
+        visual_check = {}
+        meta["visual_check"] = visual_check
+        x, y, side = crop.box
+        candidate_crop = await run_cpu_bound(repaired.crop, (x, y, x + side, y + side))
+        if not await verify_repair(settings, crop, candidate_crop, metadata=visual_check):
+            meta["reason"] = "visual_reject"
             return replace(result, meta={**base_meta, "face_seam": _safe_meta(meta)})
         encoded = await run_cpu_bound(_png_roundtrip_bytes, repaired)
         if mode == "shadow":

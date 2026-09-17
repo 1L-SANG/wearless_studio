@@ -61,28 +61,32 @@ def test_repair_plan_is_dataclass_json_shape():
     assert data["feather"] == 7
 
 
-def test_build_neck_repair_plan_is_deterministic_and_face_protected():
+def test_capture_repair_context_preserves_aligned_base_pixels():
     from app.agents import face_seam_repair as sr
+    image = _image()
+    context = _context(image)
+    padded = Image.new("RGB", (image.width + 20, image.height + 28))
+    padded.paste(image, (7, 11))
+    padded_plan = SimpleNamespace(box=(93, 89, 50, 70))
+    raw = sr.capture_repair_context(padded, padded_plan, crop_pad=(7, 11, 13, 17))
+    crop = sr.prepare_repair_crop(image, sr.FaceSeamContext(**raw))
+    assert np.array_equal(np.asarray(crop.current), np.asarray(crop.base))
+    assert crop.base.size != image.size
+    assert "PIL" not in repr(sr.FaceSeamContext(**raw))
+    raw["base_crop_box"] = (0, 0, 16)
+    with pytest.raises(sr.SeamRepairUnavailable, match="base_crop_mismatch"):
+        sr.prepare_repair_crop(image, sr.FaceSeamContext(**raw))
 
-    crop = sr.prepare_repair_crop(_image(), _context())
-    plan = sr.build_neck_repair_plan(crop)
-    assert asdict(plan) == asdict(sr.build_neck_repair_plan(crop))
-    assert plan.has_defect is True
-    assert plan.align is True
-    assert plan.feather == 7
 
-    masks = sr.build_repair_masks(crop, plan)
-    rgba = np.asarray(masks.api_mask_rgba)
-    fx, fy, fw, fh = crop.face_box
-    face_center = (int(round(fx + fw / 2)), int(round(fy + fh * 0.45)))
-    high_rear_collar = (int(round(fx + fw * 0.08)), int(round(fy + fh * 0.74)))
-    low_binding = (int(round(fx + fw / 2)), int(round(fy + fh * 1.45)))
-    assert rgba[face_center[1], face_center[0], 3] == 255
-    assert rgba[high_rear_collar[1], high_rear_collar[0], 3] == 0
-    assert rgba[low_binding[1], low_binding[0], 3] == 0
-    api_damage = rgba[:, :, 3] == 0
-    assert not (api_damage & ~masks.composition_mask).any()
-    assert masks.composition_mask.sum() > api_damage.sum()
+@pytest.fixture
+def visual_calls(monkeypatch):
+    from app.agents import face_seam_vision as vision
+    async def plan(*args, **kwargs):
+        return _repair_plan()
+    async def verify(*args, **kwargs):
+        return True
+    monkeypatch.setattr(vision, "plan_repair", plan)
+    monkeypatch.setattr(vision, "verify_repair", verify)
 
 
 def test_build_masks_make_transparent_edit_region_and_preserve_rear_collar_margin():
@@ -225,7 +229,7 @@ def test_call_sunburst_edit_rejects_non_1024_image_and_static_http_reason():
         asyncio.run(sr.call_sunburst_edit(_settings(), "prompt", crop, masks, http_post=fake_429))
 
 
-def test_repair_modes_fail_closed_and_identity_rollback():
+def test_repair_modes_fail_closed_and_identity_rollback(visual_calls):
     from app.agents import face_seam_repair as sr
 
     qwen = _png(_image())
@@ -259,7 +263,7 @@ def test_repair_modes_fail_closed_and_identity_rollback():
     assert out.image != qwen and out.meta["face_seam"]["accepted"] is True
 
 
-def test_repair_rejects_nonfinite_identity_and_shadow_png_mismatch(monkeypatch):
+def test_repair_rejects_nonfinite_identity_and_shadow_png_mismatch(monkeypatch, visual_calls):
     from app.agents import face_seam_repair as sr
 
     qwen = _png(_image())
@@ -281,7 +285,7 @@ def test_repair_rejects_nonfinite_identity_and_shadow_png_mismatch(monkeypatch):
     assert out.meta["face_seam"]["reason"] == "repair_unavailable"
 
 
-def test_provider_errors_keep_qwen_without_secret_metadata():
+def test_provider_errors_keep_qwen_without_secret_metadata(visual_calls):
     from app.agents import face_seam_repair as sr
 
     async def bad_edit(*_args, **_kwargs):
@@ -351,3 +355,91 @@ def test_worker_asset_metadata_copies_face_seam_outcome():
         text = (root / rel).read_text(encoding="utf-8")
         assert '"face_seam": face_pass_outcome["face_seam"]' in text
     assert '"face_recipe": face_pass_outcome["face_recipe"]' in (root / "app/workers/editor_image_job.py").read_text(encoding="utf-8")
+
+class _SeamCaptureBackend:
+    def render(self, control, prompt, seed):
+        return control.copy()
+
+
+def _run_face_pass_for_seam_capture(monkeypatch, *, helper):
+    from app.agents import face_seam_repair as sr
+
+    image = _image((600, 800))
+    det = fi.FaceDetection(
+        box=(250.0, 260.0, 130.0, 170.0),
+        yaw_proxy=0.04,
+        eye_dist=64.0,
+        score=0.95,
+        landmarks=((0.0, 0.0),) * 5,
+    )
+    monkeypatch.setattr(fi, "detect_face", lambda *_args, **_kwargs: det)
+    monkeypatch.setattr(fi, "estimate_expression", lambda *_args, **_kwargs: ("neutral", {}))
+    monkeypatch.setattr(fi, "evaluate_gate", lambda *_args, **_kwargs: fi.GateResult(True, "ok", 120.0, 0.0, 0.0, identity=0.91))
+    monkeypatch.setattr(fi, "neck_offset_meta", lambda *_args, **_kwargs: 0.123)
+    monkeypatch.setattr(sr, "capture_repair_context", helper, raising=False)
+    return fi.run_face_pass(
+        _png(image),
+        _SeamCaptureBackend(),
+        seeds=(7,),
+        references=((1.0, 0.0),),
+        model_dir="/tmp/model-dir",
+        crop_pad=True,
+        capture_seam_context=True,
+    )
+
+
+def test_run_face_pass_capture_seam_context_uses_helper_result(monkeypatch):
+    calls = []
+
+    def helper(original, plan, *, crop_pad, references, model_dir, neck_offset):
+        calls.append((original.size, plan.box, crop_pad, references, model_dir, neck_offset))
+        return {
+            "plan": plan,
+            "crop_pad": crop_pad,
+            "references": references,
+            "model_dir": model_dir,
+            "neck_offset": neck_offset,
+            "base_crop": "sentinel-crop",
+            "base_crop_box": (1, 2, 3),
+        }
+
+    result = _run_face_pass_for_seam_capture(monkeypatch, helper=helper)
+
+    assert result.applied is True
+    assert result.context["base_crop"] == "sentinel-crop"
+    assert result.context["base_crop_box"] == (1, 2, 3)
+    assert result.context["neck_offset"] == 0.123
+    assert calls and calls[0][2] == result.meta["crop_pad"]
+    assert calls[0][3] == ((1.0, 0.0),)
+    assert calls[0][4] == "/tmp/model-dir"
+
+
+def test_run_face_pass_capture_seam_context_failure_keeps_applied_result(monkeypatch):
+    def helper(*_args, **_kwargs):
+        raise RuntimeError("helper failed with private image data")
+
+    result = _run_face_pass_for_seam_capture(monkeypatch, helper=helper)
+
+    assert result.applied is True
+    assert result.context is None
+    assert result.meta["reason"] == "ok"
+    assert result.image
+
+
+def test_visual_rejection_never_replaces_qwen(monkeypatch, visual_calls):
+    from app.agents import face_seam_repair as sr, face_seam_vision as vision
+    calls = []
+    async def edit(_settings, _prompt, crop, _masks):
+        calls.append("edit")
+        return sr.SunburstResult(Image.new("RGB", crop.current.size, "red"), None, 1)
+    async def reject(_settings, crop, candidate, **kwargs):
+        calls.append("verify")
+        assert candidate.size == crop.current.size
+        return False
+    monkeypatch.setattr(vision, "verify_repair", reject)
+    qwen = _png(_image())
+    base = fi.FacePassResult(qwen, "image/png", True, {})
+    out = asyncio.run(sr.repair_after_face_pass(_settings(), base, _context(), edit=edit, identity_score=lambda _: .8))
+    assert out.image == qwen and out.applied
+    assert out.meta["face_seam"]["reason"] == "visual_reject"
+    assert calls == ["edit", "verify"]

@@ -1652,13 +1652,19 @@ def run_face_pass(
                 unpad_edges(result, meta.get("crop_pad")).save(buf, "PNG")
                 context = None
                 if capture_seam_context:
-                    context = {
-                        "plan": plan,
-                        "crop_pad": meta.get("crop_pad"),
-                        "references": references,
-                        "model_dir": model_dir,
-                        "neck_offset": meta.get("neck_offset"),
-                    }
+                    try:
+                        from . import face_seam_repair
+
+                        context = face_seam_repair.capture_repair_context(
+                            original,
+                            plan,
+                            crop_pad=meta.get("crop_pad"),
+                            references=references,
+                            model_dir=model_dir,
+                            neck_offset=meta.get("neck_offset"),
+                        )
+                    except Exception:  # noqa: BLE001 - seam context is optional and must not break Qwen adoption.
+                        context = None
                 return FacePassResult(buf.getvalue(), "image/png", True, meta, context)
         meta["reason"] = "gate_failed"
         meta["stopped_early"] = False

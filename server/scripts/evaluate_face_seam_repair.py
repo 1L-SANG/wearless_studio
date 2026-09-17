@@ -1,7 +1,7 @@
 """Local-only neck repair evaluation. Never uploads originals or writes a database.
 
-Pass explicit local directories. --prepare-only saves neck crops and masks locally;
---live permits one Sunburst edit per cut; --replay-dir uses cached
+Pass explicit local directories. --prepare-only saves current/base neck crops locally;
+--plan-only runs crop-only visual planning; --live permits one Sunburst edit per cut; --replay-dir uses cached
 original six-cut plans/responses with zero outbound requests.
 """
 from __future__ import annotations
@@ -76,6 +76,8 @@ def parser() -> argparse.ArgumentParser:
     mode = result.add_mutually_exclusive_group(required=True)
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--live", action="store_true")
+    mode.add_argument("--plan-only", action="store_true", help="vision planning only; no image edits")
+    result.add_argument("--plans-dir", type=Path, help="reuse verified plans with identical current/base neck crops")
     mode.add_argument("--replay-dir", type=Path, help="original jobs.json/composition.json/raw/final directory")
     mode.add_argument("--responses-dir", type=Path, help="reuse prior live neck inputs/responses for local composition; no API calls")
     return result
@@ -101,11 +103,10 @@ def prepare_inputs(args):
             raise ValueError("original_face_plan_unavailable")
         if fi.unpad_edges(base, meta.get("crop_pad")).size != current.size:
             raise ValueError("original_qwen_dimensions_mismatch")
-        context = seam.FaceSeamContext(
-            plan=plan, crop_pad=meta.get("crop_pad"), references=refs,
-            model_dir=str(args.model_dir),
-            neck_offset=fi.neck_offset_meta(base, plan),
-        )
+        context = seam.FaceSeamContext(**seam.capture_repair_context(
+            base, plan, crop_pad=meta.get("crop_pad"), references=refs,
+            model_dir=str(args.model_dir), neck_offset=fi.neck_offset_meta(base, plan),
+        ))
         inputs[name] = (current, context)
     return inputs
 
@@ -125,6 +126,16 @@ def validate_output_dir(path: Path) -> Path:
             raise ValueError("output_must_be_outside_git_or_ignored")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
+
+
+def validate_cache_paths(output: Path, *sources: Path | None) -> None:
+    output = output.expanduser().resolve()
+    for source in sources:
+        if source is None:
+            continue
+        source = source.expanduser().resolve()
+        if output.is_relative_to(source) or source.is_relative_to(output):
+            raise ValueError("output_overlaps_cache")
 
 
 def original_plan_inputs(source: Path, inputs):
@@ -170,14 +181,16 @@ def measure_result(current, repaired, context, meta):
 async def evaluate(args):
     from app.agents.gemini_image import run_cpu_bound
     from app.agents.image_cost import estimate_cost
+    from app.agents.face_seam_vision import plan_repair, verify_repair, _reject_gross_polygon
 
+    validate_cache_paths(args.output_dir, args.plans_dir, args.responses_dir, args.replay_dir)
     output = validate_output_dir(args.output_dir)
     load_api_env(args.env_file)
     settings = replace(load_settings(), face_seam_repair="on", fm_face_qc_dir=str(args.model_dir))
     image_usage.configure(pool=None, persist=False)
     inputs = await run_cpu_bound(prepare_inputs, args)
     report = {
-        "evaluation": "cached_manual_replay" if args.replay_dir else "cached_direct_replay" if args.responses_dir else "local_mask_preparation" if args.prepare_only else "direct_live",
+        "evaluation": "cached_manual_replay" if args.replay_dir else "cached_automatic_replay" if args.responses_dir else "local_mask_preparation" if args.prepare_only else "automatic_plan" if args.plan_only else "automatic_live",
         "human_review": "not_performed",
         "image_model": seam.SUNBURST_MODEL, "rows": [],
     }
@@ -199,7 +212,26 @@ async def evaluate(args):
                     raise ValueError("response_exists_use_responses_dir")
                 crop.current.save(case_dir / "neck-input.png")
                 row["crop"] = list(crop.box)
-                repair = repair or seam.build_neck_repair_plan(crop)
+                if crop.base is not None:
+                    crop.base.save(case_dir / "neck-base.png")
+                if args.prepare_only:
+                    row["status"] = "prepared"
+                    return
+                if repair is None:
+                    cached = args.plans_dir or args.responses_dir
+                    if cached:
+                        for filename, expected in (("neck-input.png", crop.current), ("neck-base.png", crop.base)):
+                            if expected is None or not np.array_equal(np.asarray(Image.open(cached / name / filename).convert("RGB")), np.asarray(expected)):
+                                raise ValueError("cached_plan_input_mismatch")
+                        repair = seam.RepairPlan(**json.loads((cached / name / "repair-plan.json").read_text()))
+                        for polygon in repair.damage_polygons + repair.composition_polygons:
+                            _reject_gross_polygon(polygon, crop.current.size, crop)
+                    else:
+                        row["vision_calls"] += 1
+                        row["planning"] = {}
+                        repair = await plan_repair(settings, crop, metadata=row["planning"])
+                row["neck_collar_gap"] = repair.neck_collar_gap
+                row["observations"] = repair.observations
                 prompt = seam.PROMPT_HEAD + repair.instruction + seam.PROMPT_TAIL
                 row["prompt_sha"] = hashlib.sha256(prompt.encode()).hexdigest()[:16]
                 save_json(case_dir / "repair-plan.json", asdict(repair))
@@ -207,8 +239,8 @@ async def evaluate(args):
                 masks = seam.build_repair_masks(crop, repair)
                 masks.api_mask_rgba.save(case_dir / "edit-mask.png")
                 Image.fromarray(masks.composition_mask.astype(np.uint8) * 255).save(case_dir / "composition-mask.png")
-                if args.prepare_only:
-                    row["status"] = "prepared"
+                if args.plan_only:
+                    row["status"] = "planned"
                 else:
                     if args.replay_dir:
                         generated = Image.open(args.replay_dir / "raw" / f"{job['id']}.png").convert("RGB")
@@ -230,6 +262,12 @@ async def evaluate(args):
                     repaired, meta = await run_cpu_bound(seam.composite_repair, current, crop, repair, generated)
                     row.update(await run_cpu_bound(measure_result, current, repaired, context, meta))
                     row["status"] = "numeric_pass" if row["numeric_checks_passed"] else "numeric_reject"
+                    if args.live and row["numeric_checks_passed"]:
+                        row["vision_calls"] += 1
+                        row["visual_check"] = {}
+                        x, y, side = crop.box
+                        accepted = await verify_repair(settings, crop, repaired.crop((x, y, x + side, y + side)), metadata=row["visual_check"])
+                        row["status"] = "automatic_accept" if accepted else "visual_reject"
                     repaired.save(case_dir / "candidate.png")
                     save_pair(case_dir / "before-after-native.png", current, repaired, crop.box)
                     if args.replay_dir:
@@ -246,15 +284,16 @@ async def evaluate(args):
                     reason = str(exc)
                     if reason.isascii() and reason.replace("_", "").isalnum() and len(reason) < 60:
                         row["reason"] = reason
-            report["rows"].append(row)
-            report["rows"].sort(key=lambda item: item["cut"])
-            save_json(output / "report.json", report)
-            print(json.dumps({"cut": name, "status": row["status"], "image_edit_calls": row["image_edit_calls"]}, ensure_ascii=False), flush=True)
+            finally:
+                report["rows"].append(row)
+                report["rows"].sort(key=lambda item: item["cut"])
+                save_json(output / "report.json", report)
+                print(json.dumps({"cut": name, "status": row["status"], "image_edit_calls": row["image_edit_calls"]}, ensure_ascii=False), flush=True)
 
     await asyncio.gather(*(one(item) for item in items))
     report.update(vision_calls=sum(r["vision_calls"] for r in report["rows"]), image_edit_calls=sum(r["image_edit_calls"] for r in report["rows"]))
     save_json(output / "report.json", report)
-    return 1 if any(r["status"] in {"failed", "numeric_reject"} for r in report["rows"]) else 0
+    return 1 if any(r["status"] in {"failed", "numeric_reject", "visual_reject"} for r in report["rows"]) else 0
 
 
 if __name__ == "__main__":

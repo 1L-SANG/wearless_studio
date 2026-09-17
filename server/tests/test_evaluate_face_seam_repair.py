@@ -26,3 +26,12 @@ def test_evaluator_limits_environment_and_refuses_versioned_image_outputs(tmp_pa
     with pytest.raises(ValueError, match="output_must_be_outside_git_or_ignored"):
         module.validate_output_dir(script.parents[2] / "docs" / "unsafe-face-results")
     assert module.validate_output_dir(tmp_path / "local-results").is_dir()
+
+
+def test_cache_provenance_cannot_be_overwritten_by_output(tmp_path):
+    module = evaluator()
+    cache = tmp_path / "cache"
+    for output in (cache, cache / "cut", tmp_path):
+        with pytest.raises(ValueError, match="output_overlaps_cache"):
+            module.validate_cache_paths(output, cache)
+    module.validate_cache_paths(tmp_path / "new-run", cache)
