@@ -78,9 +78,66 @@ test('인증 스크립트가 응답하지 않으면 제한 시간 뒤 정리하�
     const pending=h.widget.loadCxWidget();assert.equal(timers.length,1,'스크립트 로딩에도 제한 시간이 필요해요');
     timers[0]();await assert.rejects(pending,/불러오지 못했어요/);
     assert.equal(elements.filter(el=>el.tag==='script').every(el=>el.removed),true);
+    assert.equal(elements.find(el => el.tag === 'link').media, 'not all', '로딩 실패 뒤 위젯 CSS가 페이지 글자 크기를 바꾸면 안 돼요');
     globalThis.window.OACX={};await h.widget.loadCxWidget();
   }finally{Object.assign(globalThis,{window:saved.window,document:saved.document,setTimeout:saved.setTimeout,clearTimeout:saved.clearTimeout});await h.close();}
 });
+
+for (const outcome of ['success', 'cancel', 'timeout', 'invalid', 'throw', 'abort']) {
+  test(`인증 위젯 ${outcome} 뒤에는 전역 CSS와 호스트를 정리해요`, async t => {
+    const h = await apiHarness();
+    const saved = { window: globalThis.window, document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame };
+    const sheet = { media: 'not all' };
+    const host = { children: [], replaceChildren() { this.children = []; }, appendChild(el) { this.children.push(el); } };
+    const events = new Map();
+    const callbacks = [];
+    let timeout;
+    const controller = new AbortController();
+    const realTimeout = globalThis.setTimeout;
+    t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+      if (delay === 180000) { timeout = callback; return undefined; }
+      return realTimeout(callback, delay, ...args);
+    });
+    globalThis.document = {
+      getElementById: id => id === 'oacx-ux-css' ? sheet : id === 'oacxHost' ? host : null,
+      createElement: () => ({}),
+      addEventListener: (name, listener) => events.set(name, listener),
+      removeEventListener: (name, listener) => { if (events.get(name) === listener) events.delete(name); },
+    };
+    globalThis.requestAnimationFrame = callback => callback();
+    globalThis.window = { OACX: { LOAD_MODULE(_url, _options, callback) {
+      callbacks.push(callback);
+      if (outcome === 'throw') throw new Error('widget failed');
+    } } };
+    let pending;
+    try {
+      pending = h.widget.runIdentityWidget({ signal: controller.signal });
+      const result = pending.then(token => ({ token }), error => ({ error }));
+      for (let i = 0; i < 10 && !callbacks.length; i++) await Promise.resolve();
+      if (outcome !== 'throw') assert.equal(sheet.media, 'all', '열린 인증창은 자체 스타일을 사용해요');
+      if (outcome === 'success') callbacks[0]({ token: 'token' });
+      if (outcome === 'invalid') callbacks[0]({});
+      if (outcome === 'cancel') events.get('click')({ target: { closest: () => ({}) } });
+      if (outcome === 'timeout') timeout();
+      if (outcome === 'abort') controller.abort();
+      const returned = await result;
+      if (outcome === 'success') assert.equal(returned.token, 'token');
+      else assert.ok(returned.error);
+      assert.equal(sheet.media, 'not all');
+      assert.equal(host.children.length, 0);
+      assert.equal(events.size, 0);
+      // 이전 인증의 늦은 콜백이 새 인증창의 CSS를 끄지 않아야 해요.
+      sheet.media = 'all';
+      callbacks[0]({ token: 'late-token' });
+      assert.equal(sheet.media, 'all');
+    } finally {
+      controller.abort();
+      await pending?.catch(() => {});
+      Object.assign(globalThis, saved);
+      await h.close();
+    }
+  });
+}
 
 test('인증 준비 시간 초과는 기존 스크립트를 보존하고 새 스크립트만 다시 불러와요', async t => {
   const h = await apiHarness();

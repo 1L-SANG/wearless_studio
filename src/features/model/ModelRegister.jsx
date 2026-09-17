@@ -55,6 +55,7 @@ export function ModelRegister() {
   const [priceAgreed, setPriceAgreed] = useState(false);
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
   const [editingPhotos, setEditingPhotos] = useState(false);
+  const [identityReturn, setIdentityReturn] = useState(0);
   const mounted = useRef(true);
   const operation = useRef(null);
   const previewUrls = useRef({});
@@ -113,7 +114,10 @@ export function ModelRegister() {
   }, [restore]);
 
   useEffect(() => { if (enrollment?.id) saveRegisterDraft(enrollment.id, terms); }, [enrollment?.id, terms]);
-  useEffect(() => { if (typeof document !== 'undefined') document.querySelector?.('[data-registration] h1')?.focus?.({ preventScroll: true }); }, [step, sub]);
+  useEffect(() => {
+    globalThis.window?.scrollTo?.({ top: 0, left: 0, behavior: 'instant' });
+    if (typeof document !== 'undefined') document.querySelector?.('[data-registration] h1')?.focus?.({ preventScroll: true });
+  }, [step, sub, identityReturn]);
 
   // 새로고침 뒤에도 본인 사진은 인증된 비공개 경로로만 읽어요.
   useEffect(() => {
@@ -182,7 +186,10 @@ export function ModelRegister() {
       setStep(screen.step); setSub(screen.sub);
     } catch (requestError) {
       if (mounted.current && !controller.signal.aborted) { setError(requestError.message || '본인 확인에 실패했어요.'); }
-    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) { setBusy(false); setIdentityReturn(value => value + 1); }
+    }
   };
 
   // identityMethod: 인증 수단 선택 화면(step 'method')이 넘겨주는 값. 'mid'(또는 미지정)면
