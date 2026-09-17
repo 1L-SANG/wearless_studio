@@ -72,7 +72,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   };
 
   return (
-    <header className={`${s.header} ${primaryLabel && onPrimary ? s.headerWithCta : ''}`}>
+    <header className={s.header}>
       {/* 브랜드는 홈('/') 링크다. 예전엔 같은 문서 안 앵커(#top)였는데, 이제 상단바가
           다른 라우트로 넘어가므로 앵커면 현재 페이지 맨 위로만 가고 홈으로 못 돌아온다. */}
       {/* facemarket 전용 워드마크(2026-09-03 오너 지급 SVG). 공유 로고(/assets/brand/logo.svg)는

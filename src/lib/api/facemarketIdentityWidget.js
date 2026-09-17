@@ -26,6 +26,8 @@ export function loadCxWidget() {
     if (!document.getElementById('oacx-ux-css')) {
       const link = document.createElement('link');
       link.id = 'oacx-ux-css'; link.rel = 'stylesheet'; link.href = `${CX_ORIGIN}/ent/esign/oacx-ux.css`;
+      // 위젯 CSS의 html { font-size: 62.5% }가 앱 전체를 축소하므로 인증창 안에서만 켜요.
+      link.media = 'not all';
       document.head.appendChild(link);
     }
     await addScript('oacx-vendor', `${CX_ORIGIN}/ent/esign/oacx-vendor.js`);
@@ -56,33 +58,46 @@ export async function runIdentityWidget({ identityMethod = 'mid', signal } = {})
   await loadCxWidget();
   if (signal?.aborted) throw new Error('인증이 중단됐어요.');
   await new Promise((resolve) => requestAnimationFrame(resolve));
+  if (signal?.aborted) throw new Error('인증이 중단됐어요.');
   // React 가 그린 빈 호스트 안에 #oacxDiv 를 새로 만들어 넣는다. React 가 #oacxDiv 를
   // 직접 그리면 Vue 가 그 노드를 교체할 때 형제 앵커가 깨져 앱이 죽는다(oacxHost.js 참고).
-  mountOacxHost(document.getElementById(OACX_HOST_ID));
-  return new Promise((resolve, reject) => {
-    const finish = (error, token) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
-      document.removeEventListener('click', close, true);
-      if (error) reject(error); else resolve(token);
-    };
-    const abort = () => finish(new Error('인증이 중단됐어요. 다시 인증해 주세요.'));
-    const close = (event) => { if (event.target?.closest?.('.popup-close')) abort(); };
-    const timer = setTimeout(() => finish(new Error('인증 대기 시간이 지났어요. 다시 인증해 주세요.')), 180000);
-    signal?.addEventListener('abort', abort, { once: true });
-    document.addEventListener('click', close, true);
-    const options = isSimpleAuth
-      ? { contentInfo: { signType: 'ENT_SIMPLE_AUTH' }, compareCI: false, isBirth: true }
-      : { contentInfo: { signType: 'ENT_MID' }, compareCI: false, isBirth: true, useConvertor: false };
-    const configUrl = isSimpleAuth ? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;
-    try {
-      window.OACX.LOAD_MODULE(configUrl, options, (response) => {
-        try {
-          const token = (typeof response === 'string' ? JSON.parse(response) : response)?.token;
-          if (!token) throw new Error('본인 확인 정보를 받지 못했어요. 다시 시도해 주세요.');
-          finish(null, token);
-        } catch (error) { finish(error); }
-      });
-    } catch (error) { finish(error); }
-  });
+  const host = document.getElementById(OACX_HOST_ID);
+  mountOacxHost(host);
+  const stylesheet = document.getElementById('oacx-ux-css');
+  if (stylesheet) stylesheet.media = 'all';
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error, token) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        document.removeEventListener('click', close, true);
+        if (error) reject(error); else resolve(token);
+      };
+      const abort = () => finish(new Error('인증이 중단됐어요. 다시 인증해 주세요.'));
+      const close = (event) => { if (event.target?.closest?.('.popup-close')) abort(); };
+      const timer = setTimeout(() => finish(new Error('인증 대기 시간이 지났어요. 다시 인증해 주세요.')), 180000);
+      signal?.addEventListener('abort', abort, { once: true });
+      document.addEventListener('click', close, true);
+      const options = isSimpleAuth
+        ? { contentInfo: { signType: 'ENT_SIMPLE_AUTH' }, compareCI: false, isBirth: true }
+        : { contentInfo: { signType: 'ENT_MID' }, compareCI: false, isBirth: true, useConvertor: false };
+      const configUrl = isSimpleAuth ? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;
+      try {
+        window.OACX.LOAD_MODULE(configUrl, options, (response) => {
+          try {
+            const token = (typeof response === 'string' ? JSON.parse(response) : response)?.token;
+            if (!token) throw new Error('본인 확인 정보를 받지 못했어요. 다시 시도해 주세요.');
+            finish(null, token);
+          } catch (error) { finish(error); }
+        });
+      } catch (error) { finish(error); }
+    });
+  } finally {
+    // 성공·취소·시간 초과·언마운트 모두 같은 정리를 거쳐 원래 페이지 크기로 돌아가요.
+    if (stylesheet) stylesheet.media = 'not all';
+    host?.replaceChildren();
+  }
 }
