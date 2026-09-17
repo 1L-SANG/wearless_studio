@@ -1,9 +1,9 @@
-.guide, .plan, .preparation, .referenceNote { color: var(--fm-ink); font-family: var(--font-body); word-break: keep-all; overflow-wrap: anywhere; }
+.guide, .preparation, .referenceNote { color: var(--fm-ink); font-family: var(--font-body); word-break: keep-all; overflow-wrap: anywhere; }
 .guide { max-width: 1040px; margin: 0 auto; padding: 44px 0 36px; }
 .guideAction { display: flex; justify-content: center; padding-bottom: 48px; }
-.guide *, .plan *, .preparation * { box-sizing: border-box; }
-.guide h1, .guide h2, .guide h3, .guide p, .plan h2, .plan p, .preparation h2, .preparation p, .referenceNote p { margin: 0; }
-.guide h1, .guide h2, .plan h2 { text-wrap: balance; }
+.guide *, .preparation * { box-sizing: border-box; }
+.guide h1, .guide h2, .guide h3, .guide p, .preparation h2, .preparation p, .referenceNote p { margin: 0; }
+.guide h1, .guide h2 { text-wrap: balance; }
 .eyebrow { color: var(--fm-muted); font-size: 12px; font-weight: 500; letter-spacing: .02em; }
 .header { padding-bottom: 32px; }
 .header h1 { margin: 16px 0; font-size: clamp(32px, 4.5vw, 52px); line-height: 1.2; letter-spacing: -.045em; font-weight: 600; }
@@ -53,18 +53,8 @@
 .checklist strong { display: block; font-size: 15px; font-weight: 600; }
 .checklist small { display: block; margin-top: 6px; font-size: 13px; line-height: 1.7; color: var(--fm-muted); }
 .guide .finishNote { margin-top: 32px; padding: 20px; background: var(--fm-card-bg); border-radius: var(--r-4); font-size: 14px; line-height: 1.8; color: var(--fm-muted); }
-.plan { padding: 28px 0; margin: 20px 0; border-block: 1px solid var(--fm-line); }
-.planHead { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.plan h2 { font-size: clamp(20px, 2.8vw, 28px); line-height: 1.45; font-weight: 600; margin-top: 6px; }
-.guideLink { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--fm-ink); text-underline-offset: 4px; font-size: 14px; flex-shrink: 0; }
-.route { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 24px 0 16px; padding: 0; list-style: none; }
-.route li { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-left: 1px solid var(--fm-line); font-size: 14px; }
-.route li:first-child { padding-left: 0; border: 0; }
-.routeNumber { font-size: 11px; color: var(--fm-muted); }
-.route b { white-space: nowrap; font-weight: 600; margin-left: auto; }
-.plan .planNote { color: var(--fm-muted); font-size: 13px; line-height: 1.8; }
-.guide a:focus-visible, .plan a:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
-.guide a, .plan a { touch-action: manipulation; }
+.guide a:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
+.guide a { touch-action: manipulation; }
 @media (max-width: 700px) {
   .guide { padding-top: 28px; }
   .header > p:last-child { font-size: 14px; }
@@ -88,8 +78,4 @@
   .checklist > li { padding: 14px; gap: 10px; }
   .checkIcon { width: 68px; height: 68px; }
   .checklist strong { font-size: 14px; }
-  .planHead { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .route { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin-top: 12px; }
-  .route li { padding: 12px 0; border-left: 0; border-bottom: 1px solid var(--fm-line); gap: 8px; font-size: 13px; }
-  .route li:first-child { border-bottom: 1px solid var(--fm-line); }
 }

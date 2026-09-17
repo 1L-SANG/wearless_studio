@@ -1148,6 +1148,20 @@ button.foundingSlot { cursor: pointer; }
   color: var(--fm-muted);
   font: 400 0.96875rem/1.7 var(--font-body);
 }
+.stepGuideLink {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  min-height: 44px;
+  margin: 0.75rem 0 0 auto;
+  color: var(--fm-ink);
+  font: 500 0.875rem/1.5 var(--font-body);
+  text-underline-offset: 4px;
+  touch-action: manipulation;
+}
+.stepGuideLink:hover { color: var(--fm-accent); }
+.stepGuideLink:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
 .stepFoot {
   margin: 1.625rem 0 0;
   color: var(--fm-muted);

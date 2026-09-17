@@ -11,7 +11,6 @@
    "본인확인에 실패했어요." 로 1단계가 전원 차단된다. 그 값을 지우려면 여기도 같이 봐라.
    ============================================================= */
 import { Icon } from '@/components/ui.jsx';
-import { PhotoPlanSummary } from '../../model/PhotoGuide.jsx';
 import s from '../FacemarketLanding.module.css';
 
 const STEPS = [
@@ -39,7 +38,6 @@ export function RegisterSection({ ctaLabel, onPrimary }) {
           </li>
         ))}
       </ol>
-      <PhotoPlanSummary />
 
       {/* 증서 발급(4단계)은 opendid holder 콜드부트로 몇 분 걸릴 수 있다(PRD §7.3).
           예고가 없으면 멈춘 줄 알고 탭을 닫고, 등록이 vc_pending 으로 남는다.

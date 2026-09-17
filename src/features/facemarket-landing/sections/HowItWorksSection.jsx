@@ -1,7 +1,8 @@
 /* 지원 절차는 /apply 와 서버에 구현돼 있다. */
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { APPLY_TIME_MINUTES, REGISTRATION_TIME_MINUTES } from '../data/landingTiming.js';
 import { REVIEW_SLA_LABEL } from '../facemarketTerms.js';
-import { PhotoPlanSummary } from '../../model/PhotoGuide.jsx';
 import { SHOOTING_TIME_MINUTES } from '../../model/registerSlots.js';
 import s from '../FacemarketLanding.module.css';
 
@@ -28,10 +29,10 @@ export function HowItWorksSection() {
           <h3>등록</h3>
           <span className={s.stepTime}>촬영 약 {SHOOTING_TIME_MINUTES}분</span>
           <p>본인확인 후 사진 18장을 올리고, 사용 조건을 정해 증서를 발급받아요. 촬영 외 절차는 약 {REGISTRATION_TIME_MINUTES}분이며, 간편인증은 담당자 확인 시간이 더해져요.</p>
+          <Link className={s.stepGuideLink} to="/photo-guide">촬영 가이드 보기 <ArrowRight size={16} aria-hidden="true" /></Link>
         </li>
       </ol>
       <p className={s.stepFoot}><strong>테스트컷을 확인한 뒤 공개돼요.</strong> 등록 후 사진을 검수하고 테스트컷을 보내드려요. 직접 확인·확정하기 전에는 공개되지 않아요.</p>
-      <PhotoPlanSummary />
       <p className={s.stepFoot}><strong>승인은 그대로 남아요.</strong> 등록을 하다 멈춰도 지원서를 다시 낼 필요 없이 이어서 하면 돼요.</p>
     </section>
   );

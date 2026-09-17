@@ -4,7 +4,6 @@ import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import { LandingShell } from '../LandingShell.jsx';
 import { MODEL_SHARE, MIN_PAYOUT_KRW, SETTLEMENT_DAY, formatKrw } from '../facemarketTerms.js';
 import { APPLY_START_FAQ } from '../applyStartFaq.js';
-import { PhotoPlanSummary } from '../../model/PhotoGuide.jsx';
 import s from './ApplyStartPage.module.css';
 
 const FACES = ['/models/women/w1.webp', '/models/men/m1.webp', '/models/women/w3.webp', '/models/men/m3.webp'];
@@ -69,7 +68,6 @@ export function ApplyStartPage() {
               </section>
             </div>
           </div>
-          <PhotoPlanSummary />
           <section className={s.faq} aria-labelledby="apply-faq">
             <h2 id="apply-faq">자주 묻는 질문</h2>
             <div className={s.faqCards}>
