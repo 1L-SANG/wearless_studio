@@ -66,6 +66,7 @@ def test_an_older_consent_still_completes_at_sixteen():
 def test_the_new_consent_requires_all_eighteen():
     assert required_slots_for_consent(BIOMETRIC_CONSENT_VERSION) == fp.PHOTO_SLOTS
     assert len(required_slots_for_consent("2026-09-v3")) == 18
+    assert len(required_slots_for_consent("2026-09-v4")) == 18  # 동의문만 바뀌었다. 칸 수는 그대로 18.
 
 
 def test_old_consent_versions_are_never_dropped_from_the_accept_lists():

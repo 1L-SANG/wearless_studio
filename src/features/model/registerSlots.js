@@ -59,7 +59,7 @@ export const REGISTER_BODIES = Object.freeze([
   { value: 'regular', label: '보통', width: 1.06 },
   { value: 'plump', label: '통통', width: 1.25 },
 ]);
-export const CONSENT_VERSION = '2026-09-v3';
+export const CONSENT_VERSION = '2026-09-v4';
 // 옛 등록(3각도 · 16칸)이 돌려주는 이름 → 지금 슬롯. 서버 facemarket_photos.SLOT_CANDIDATES 와 같아요.
 export const LEGACY_PHOTO_SLOTS = Object.freeze({
   front: 'sh_front', angle45: 'sh_34', side: 'sh_side',
