@@ -37,7 +37,8 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
       <div className={s.consentCard}>{check(0, 'FaceMarket 모델 이용약관에 동의하고 개인정보 처리방침을 확인했어요.')}<div className={s.legalLinks}>{legalLink('/terms', '이용약관 전문 보기')}{legalLink('/privacy', '처리방침 전문 보기')}</div></div>
       <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<div className={s.legalSummary}>
         <p><b>수집:</b> 얼굴·옆모습·뒷모습 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
-        <p><b>목적:</b> 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
+        <p><b>목적:</b> 같은 사람인지 확인, 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
+        <p><b>학습:</b> 18장 중 12장으로 FaceMarket이 직접 학습해요. 외부 AI에 맡기거나 밖으로 내보내지 않아요.</p>
         <p><b>확인:</b> 학습 전 담당자가 사진 품질을 확인해요. 열람 기록은 남아요.</p>
         <p><b>사용 시점:</b> 테스트컷을 확인·승인한 뒤부터 착용컷 생성에 써요.</p>
         <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>

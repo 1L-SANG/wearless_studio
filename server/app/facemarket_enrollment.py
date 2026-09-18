@@ -53,28 +53,31 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollme
 # 2026-09-v2 는 수집 항목이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌면서 올렸다
 # (#298). 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
 # 2026-09-v3 은 수집 항목에 옆모습 2장·뒷모습 1장이 더해지면서 올렸다(16장 → 18장).
-BIOMETRIC_CONSENT_VERSION = "2026-09-v3"
+# 2026-09-v4 는 학습 가중치를 회사가 직접 학습한다는 것, 얼굴 부분 생성 GPU 서버(RunPod) 위탁,
+# 보관·유출 방지 항과 학습 사본·가중치 파기 범위가 동의문에 더해지면서 올렸다(2026-09-18).
+BIOMETRIC_CONSENT_VERSION = "2026-09-v4"
 # ⚠️ **판정에는 이 목록을 쓴다(단일 상수를 바인딩하지 마라).**
 # 옛 버전에 동의하고 이미 passed 인 등록은 그 문자열을 그대로 들고 있고 백필 마이그레이션은
 # 없다. 카탈로그 자격(`facemarket.py` `_CURRENT_CARD_ELIGIBILITY`)·cutover legacy 스코프가
 # 단일 상수를 바인딩하던 시절에는, 이 상수를 올리는 순간 **라이브 카탈로그가 비고** 기존
 # 모델이 cutover 파기 대상으로 분류됐다. 그래서 그 자리들은 전부 `= any(%s)` 로 바꿨다.
 # 새 버전을 추가할 때 옛 버전을 지우면 그 순간 같은 사고가 난다.
-ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2", "2026-09-v3")
+ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v2", "2026-09-v3", "2026-09-v4")
 # 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
 # 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
 # 이 안내 본문도 #298 에서 이전 항목이 바뀌었다("얼굴·전신 사진" → "얼굴 사진") — 게시본이
 # 바뀌었으면 기록되는 버전도 같이 올린다. 이 값은 기록·표시 전용이라 자격 판정에 쓰이지 않는다.
 # 2026-09-v3: 이전 항목이 "얼굴 사진" → "등록 사진(얼굴·옆모습·뒷모습)" 으로 바뀌었다.
-OVERSEAS_NOTICE_VERSION = "2026-09-v3"
+# 2026-09-v4: 이전받는 자에 RunPod(얼굴 부분 생성 GPU 서버), 이전 항목에 학습 가중치가 더해졌다.
+OVERSEAS_NOTICE_VERSION = "2026-09-v4"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-ACCEPTED_CONSENT_VERSIONS = ("2026-09-v3", "2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
+ACCEPTED_CONSENT_VERSIONS = ("2026-09-v4", "2026-09-v3", "2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")
 
 #: 이 동의 버전으로 시작한 등록은 **18칸**을 채워야 한다. 그 앞 버전은 그때 받은 16칸으로 완료다.
 #: ★ 칸이 늘었다고 이미 통과한 등록을 미완료로 되돌리면 그 모델이 카탈로그에서 사라진다
 #:   (운영 05caa497 은 v1·18칸 이름으로 passed 다). 그래서 **모르는 버전은 16칸**으로 본다.
-CONSENT_VERSIONS_WITH_ANGLES: frozenset[str] = frozenset({"2026-09-v3"})
+CONSENT_VERSIONS_WITH_ANGLES: frozenset[str] = frozenset({"2026-09-v3", "2026-09-v4"})
 
 
 def required_slots_for_consent(consent_version: str | None) -> tuple[str, ...]:

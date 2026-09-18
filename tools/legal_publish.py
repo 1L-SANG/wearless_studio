@@ -19,7 +19,14 @@ DOC_REVISIONS = {
     # v1.2 간편인증 경로의 신분증 촬영본 수집·보유·파기 고지 추가(§2 수집항목 표 · §5 고유식별정보).
     # v1.3 등록 사진이 "얼굴 8·상반신 5·전신 5" → "얼굴 16장"으로 바뀌어 §2 수집항목을 고쳤다(#298).
     # v1.4 좌·우 옆모습과 뒷모습이 더해져 §2 수집항목이 18장이 됐다.
-    "privacy-model": ("v1.4", "2026-09-15"),
+    # v1.5 학습 가중치의 학습 주체·장소(§13), 얼굴 생성 GPU 서버 위탁(§5·6), 학습 사본·가중치의
+    #      보관·파기 범위(§7·10·14)를 구체화하고 받지 않는 사이즈·스타일을 뺐다(§2·4).
+    "privacy-model": ("v1.5", "2026-09-18"),
+    # v1.2 디지털 DNA 정의·허용 변형(피부 결 보정)·학습 장소·학습 사본 파기 범위(02), 만료 표기 제거(05),
+    #      학습 주체·GPU 서버 문답(06). 세 문서가 같은 날 같은 사유로 올라간다.
+    "license-agreement": ("v1.2", "2026-09-18"),
+    "seller-license-terms": ("v1.2", "2026-09-18"),
+    "answers": ("v1.2", "2026-09-18"),
 }
 DEFAULT_VERSION = "v1.1"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
@@ -43,9 +50,11 @@ CONSENT_DOCUMENTS = [
     # 2026-09-v3: 수집 항목에 좌·우 옆모습과 뒷모습이 더해져 18장이 됐고(학습·참조용 수집),
     #   "사진 확인"(담당자 열람·기록)과 "쓰기 시작하는 때"(테스트컷 승인 이후) 두 항이 생겼다.
     #   국외 이전 안내도 이전 항목이 "얼굴 사진" → "등록 사진(얼굴·옆모습·뒷모습)" 으로 바뀌어 같이 올린다.
+    # 2026-09-v4: 학습 가중치를 회사가 직접 학습한다는 것, 얼굴 부분 생성 GPU 서버(RunPod) 위탁, 보관·유출 방지
+    #   항(5번)과 학습 사본·가중치 파기 범위가 더해졌다. 국외 이전 안내도 이전받는 자·항목·목적이 같이 늘었다.
     # 같은 버전 문자열에 다른 본문을 게시하면 누가 어느 본문에 동의했는지 증명할 수 없다.
-    {"slug": "biometric-consent", "app": "facemarket", "title": "얼굴 정보 수집·생성·이용 동의", "version": "2026-09-v3", "effectiveDate": "2026-09-15", "source": "04_facemarket_biometric_consent_forms_v1.md"},
-    {"slug": "overseas-transfer", "app": "facemarket", "title": "얼굴 정보의 국외 이전 안내", "version": "2026-09-v3", "effectiveDate": "2026-09-15", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+    {"slug": "biometric-consent", "app": "facemarket", "title": "얼굴 정보 수집·생성·이용 동의", "version": "2026-09-v4", "effectiveDate": "2026-09-18", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+    {"slug": "overseas-transfer", "app": "facemarket", "title": "얼굴 정보의 국외 이전 안내", "version": "2026-09-v4", "effectiveDate": "2026-09-18", "source": "04_facemarket_biometric_consent_forms_v1.md"},
 ]
 LANDING_DOCUMENTS = {
     "terms-seller": ("/terms", "이용약관"),

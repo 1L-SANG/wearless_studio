@@ -67,10 +67,16 @@ test('publisher uses the actual price launch date in both metadata and document 
   // 바뀌면서 세 문서의 수집 항목 문구가 같이 바뀌었다(#298).
   // 2026-09-v3 · privacy-model v1.4: 좌·우 옆모습과 뒷모습이 더해져 "등록 사진 18장"이 됐고,
   // 동의서에 사진 확인(담당자 열람·기록)과 사용 시점(테스트컷 승인 이후) 두 항이 생겼다.
+  // 2026-09-v4 · privacy-model v1.5 · license-agreement/seller-license-terms/answers v1.2(9/18):
+  // 학습 가중치를 회사가 직접 학습한다는 것, 얼굴 부분 생성 GPU 서버(RunPod) 위탁, 학습 사본·
+  // 가중치의 보관·파기 범위가 더해졌고, 받지 않는 사이즈·스타일과 "만료" 표기를 뺐다.
   const revised = {
-    'privacy-model': { version: 'v1.4', effectiveDate: '2026-09-15' },
-    'biometric-consent': { version: '2026-09-v3', effectiveDate: '2026-09-15' },
-    'overseas-transfer': { version: '2026-09-v3', effectiveDate: '2026-09-15' },
+    'privacy-model': { version: 'v1.5', effectiveDate: '2026-09-18' },
+    'biometric-consent': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
+    'overseas-transfer': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
+    'license-agreement': { version: 'v1.2', effectiveDate: '2026-09-18' },
+    'seller-license-terms': { version: 'v1.2', effectiveDate: '2026-09-18' },
+    'answers': { version: 'v1.2', effectiveDate: '2026-09-18' },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };
@@ -81,7 +87,7 @@ test('publisher uses the actual price launch date in both metadata and document 
   }
 
   const agreement = readFileSync(join(f.root, 'public/legal/license-agreement.md'), 'utf8');
-  assert.match(agreement, /2026년 9월 11일부터 적용한다/);
+  assert.match(agreement, /2026년 9월 18일부터 적용한다/);
   assert.doesNotMatch(agreement, /2026년 9월 7일부터 적용한다/);
 
   const datedSellerDocuments = [
