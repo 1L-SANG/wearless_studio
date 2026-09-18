@@ -125,6 +125,9 @@ async def render_variant(settings, spec, image: bytes, mime: str, skin_finish: s
     backend = face_identity.resolve_backend(settings, live)
     if backend is None:
         return None
+    seam_mode = str(getattr(settings, "face_seam_repair", "off") or "off").lower()
+    seam_enabled = seam_mode in {"shadow", "on"}
+    seam_kwargs = {"capture_seam_context": True, "capture_tone_context": getattr(settings, "face_tone_fix", "off") == "on"} if seam_enabled else {}
     result = await asyncio.to_thread(
         face_identity.run_face_pass, image, backend,
         token=live.token,
@@ -136,11 +139,19 @@ async def render_variant(settings, spec, image: bytes, mime: str, skin_finish: s
         mask_lock=bool(getattr(settings, "face_mask_lock", True)),
         skin_finish=skin_finish,
         skin_negative=str(getattr(settings, "face_skin_negative_prompt", "") or ""),
+        **seam_kwargs,
     )
     if not result.applied:
         log.info("test_cut_build: %s 한 장이 채택되지 않았다 — %s",
                  skin_finish, result.meta.get("reason") or "gate_failed")
         return None
+    try:
+        if seam_enabled:
+            from ..agents import face_seam_repair
+
+            result = await face_seam_repair.repair_after_face_pass(settings, result)
+    except Exception:  # noqa: BLE001 - test-cut generation keeps the face-pass contract.
+        pass
     return result.image, result.mime
 
 

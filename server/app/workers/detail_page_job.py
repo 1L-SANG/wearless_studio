@@ -681,6 +681,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                      # 다른 그림이라 픽셀로는 못 되짚는다(agents/face_recipe.py).
                      **({"face_recipe": face_pass_outcome["face_recipe"]}
                         if face_pass_outcome.get("face_recipe") else {}),
+                     **({"face_seam": face_pass_outcome["face_seam"]}
+                        if face_pass_outcome.get("face_seam") else {}),
                  }},
                 has_face,
                 garment_qc,
