@@ -63,8 +63,8 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true) {
 test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
   const html = render(plans);
   assert.doesNotMatch(html, /상세페이지 한 개에 13,000원/);
-  for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩79,900', '₩159,000',
-    '200 크레딧 추가 증정', '600 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
+  for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩69,900', '₩119,000',
+    '200 크레딧 추가 증정', '400 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
   assert.equal((html.match(/구매하기/g) || []).length, 3);
@@ -123,10 +123,10 @@ test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량�
 // 상품 코드별 수량과 Seller 카드의 취소선/보너스를 함께 검증한다.
 test('개정 환율 카탈로그와 Seller 카드 지급량이 일치한다', () => {
   for (const [code, credits] of [
-    ['starter', 600], ['seller', 1800], ['pro', 3800],
+    ['starter', 600], ['seller', 1600], ['pro', 2800],
     ['topup_finish', 180], ['topup_start', 470], ['topup_repeat', 1380],
     ['topup_season', 3050], ['topup_bulk', 6400],
   ]) assert.equal(plans.find((plan) => plan.code === code)?.credits, credits, code);
   const html = render(plans.filter((plan) => plan.code === 'seller'));
-  for (const text of ['1,600', '1,800', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);
+  for (const text of ['1,400', '1,600', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);
 });
