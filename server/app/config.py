@@ -62,6 +62,8 @@ class Settings:
     # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
     # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
     model_editor_cut: str = ""
+    # GPT로 생성하고 Qwen 얼굴 교체까지 성공한 REAL 호리존 최종본만 한 번 보정한다.
+    real_horizon_neck_repair_enabled: bool = True
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
@@ -884,6 +886,9 @@ def load_settings() -> Settings:
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
         fm_normalized_max_edge=int(os.getenv("FM_NORMALIZED_MAX_EDGE") or "4096"),
         face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
+        real_horizon_neck_repair_enabled=(
+            os.getenv("REAL_HORIZON_NECK_REPAIR_ENABLED", "true").lower() == "true"
+        ),
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
         face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,

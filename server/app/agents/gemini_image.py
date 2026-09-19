@@ -367,10 +367,22 @@ class GeminiImageClient:
             return cls._OPENAI_2K_SIZE[ratio]
         return cls._OPENAI_SIZE.get(ratio, "1024x1536")
 
+    async def edit_image(
+        self, model: str, prompt: str, image: InlineImage,
+        *, size: str = "auto", quality: str = "high", timeout: float = 180.0,
+    ) -> GeminiImageResult:
+        """원본 한 장을 그대로 편집한다. 후처리 호출은 재시도하지 않는다."""
+        return await self._openai_generate(
+            model, prompt, [image], size, None, timeout,
+            preserve_input_bytes=True, size_override=size, quality=quality,
+            max_attempts=1,
+        )
+
     async def _openai_generate(
         self, model: str, prompt: str, images: list[InlineImage],
         image_size: str, aspect_ratio: str | None, timeout: float,
-        *, preserve_input_bytes: bool,
+        *, preserve_input_bytes: bool, size_override: str | None = None,
+        quality: str = "medium", max_attempts: int = _OPENAI_MAX_ATTEMPTS,
     ) -> GeminiImageResult:
         """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
 
@@ -379,7 +391,7 @@ class GeminiImageClient:
         """
         if not self._openai_key:
             raise GeminiError("OPENAI_API_KEY 미설정")
-        size = self._openai_size(image_size, aspect_ratio)
+        size = size_override or self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
         if preserve_input_bytes:
             # 과거 오너 확정 실험의 요청은 각 참조 이미지의 원본 bytes/MIME까지 봉인했다.
@@ -408,7 +420,7 @@ class GeminiImageClient:
             "model": model,
             "prompt": prompt,
             "size": size,
-            "quality": "medium",
+            "quality": quality,
             "output_format": "png",
             "n": "1",
         }
@@ -416,7 +428,7 @@ class GeminiImageClient:
         # 429 백오프. 상세페이지 컷은 전부 이 경로라, 없으면 레이트리밋에 걸린 컷이
         # 그대로 빈 슬롯이 된다(2026-08-28: 14컷 중 4컷 유실). 대기 시간은 프로바이더가
         # 알려주는 값을 그대로 쓴다 — 임의 백오프보다 정확하고 짧다.
-        for attempt in range(_OPENAI_MAX_ATTEMPTS):
+        for attempt in range(max_attempts):
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     res = await client.post(
@@ -434,10 +446,10 @@ class GeminiImageClient:
                     f"OpenAI request failed: {type(exc).__name__}: {exc}",
                     billable=billable) from exc
             delay = openai_retry_delay(res)
-            if delay is None or attempt == _OPENAI_MAX_ATTEMPTS - 1:
+            if delay is None or attempt == max_attempts - 1:
                 break
             log.warning("OpenAI 429 — %.1fs 대기 후 재시도 (%d/%d)",
-                        delay, attempt + 1, _OPENAI_MAX_ATTEMPTS - 1)
+                        delay, attempt + 1, max_attempts - 1)
             await asyncio.sleep(delay)
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:

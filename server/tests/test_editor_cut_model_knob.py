@@ -61,7 +61,18 @@ def test_editor_worker_uses_editor_settings_for_generation_calls():
     src = pathlib.Path(__file__).resolve().parents[1] / "app" / "workers" / "editor_image_job.py"
     text = src.read_text()
     assert "editor_settings = replace(s, model_image_high=resolve_editor_cut_model(s))" in text
-    import re
-    bare = re.findall(r"(?<!editor_settings)(?<![\w])s, app\.state\.gemini", text)
-    assert not bare, f"생성 호출이 s 를 그대로 쓰고 있다: {bare}"
-    assert text.count("editor_settings, app.state.gemini") == 5
+    import ast
+    calls = [
+        node for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in {"cut_generator", "cut_variator"}
+        and node.func.attr in {"generate", "vary"}
+    ]
+    # 별도 모델을 쓰는 목선 후처리는 일반 생성 노브의 검사 대상이 아니다.
+    assert len(calls) == 5
+    for call in calls:
+        assert isinstance(call.args[0], ast.Name)
+        assert call.args[0].id == "editor_settings"
+        assert ast.unparse(call.args[1]) == "app.state.gemini"
