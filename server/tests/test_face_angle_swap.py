@@ -214,3 +214,79 @@ def test_swap_rejects_front_cuts(no_face):
     with pytest.raises(ValueError):
         asyncio.run(angle.swap(png(studio_cut()), "image/png", direction="front",
                                photos=angle.AnglePhotos(back=b"x"), backend=FakeBackend()))
+
+
+# ── 피부톤 보정 ───────────────────────────────────────────────────────────────
+#
+# 등록자 사진과 베이스 컷의 조명이 다르면 목 이음선에서 밝기가 튄다. 2026-09-20 실측
+# (보정 없음): 오른쪽 옆 9.2 · 왼쪽 옆 12.3 · 뒤 7.1. 얼굴 패스의 운영 컷은 보정 후 0.1~2.9 라
+# 옆·뒤만 3~4배 어긋난 채 나가고 있었다.
+
+def test_tone_shift_measures_the_gap_between_new_head_and_original_neck(no_face):
+    base = studio_cut()
+    p = angle.plan(base, direction="back")
+    left, top, side = p.box
+    out = p.base[top:top + side, left:left + side].astype(np.float32).copy()
+    # 머리 안쪽을 통째로 +20 밝게 = 참고 사진이 베이스보다 밝은 상황.
+    out[p.head[top:top + side, left:left + side]] += 20.0
+    shift = angle.tone_shift(p, out, p.box)
+    assert shift is not None
+    # 되돌리는 방향이어야 한다(= 음수), 크기는 그 차이에 가깝다.
+    assert all(v < 0 for v in shift) and 15.0 < abs(shift).max() < 25.0
+
+
+def test_tone_shift_is_none_without_enough_skin_to_sample(no_face):
+    """표본이 적으면 그 평균은 목이 아니라 잡음이다 — 그럴 땐 보정하지 않는다."""
+    base = studio_cut(garment=70)
+    p = angle.plan(base, direction="back")
+    left, top, side = p.box
+    dark = np.zeros((side, side, 3), np.float32)      # 피부 밝기 범위에 아무것도 없다
+    assert angle.tone_shift(p, dark, p.box) is None
+
+
+def test_tone_sampling_ignores_the_wall_shadow(no_face):
+    """★ 밝기 창만으로 고르면 벽 그림자가 피부로 들어온다 — 2026-09-20 합성 컷에서 바깥 링
+    평균이 199(그림자)로 나왔다. 전경 마스크로 먼저 잘라야 목만 남는다."""
+    base = studio_cut()                               # 그림자 218 · 벽 232 · 목 150
+    p = angle.plan(base, direction="back")
+    left, top, side = p.box
+    out = p.base[top:top + side, left:left + side].astype(np.float32).copy()
+    out[p.head[top:top + side, left:left + side]] += 20.0
+    shift = angle.tone_shift(p, out, p.box)
+    # 그림자(218)를 표본했다면 목(150)과의 차이가 섞여 +29 쯤이 나온다(그때 실제 값).
+    assert shift is None or abs(shift).max() < 25.0
+
+
+def test_tone_is_applied_to_the_person_and_never_to_the_background():
+    """★ 머리 마스크는 머리카락 여유분만큼 배경 위로 넘어간다. 전역으로 걸면 벽에 머리 모양
+    자국이 남는다(2026-09-20 실측에서 세 컷 모두 그랬다)."""
+    bg_color = np.array([BG, BG, BG], np.float32)
+    out = np.full((200, 200, 3), BG, np.float32)
+    out[60:140, 60:140] = 150.0                        # 사람(피부)
+    shifted = angle.apply_tone(out, np.array([-9.0, -9.0, -9.0]), bg_color)
+    assert abs(shifted[100, 100] - (150.0 - 9.0)).max() < 0.5      # 사람은 보정된다
+    assert abs(shifted[5, 5] - BG).max() < 0.5                     # 배경은 그대로다
+
+
+def test_composite_records_the_tone_shift_for_review(no_face):
+    base = studio_cut()
+    p = angle.plan(base, direction="back")
+    out = np.zeros((angle.CROP_PX, angle.CROP_PX, 3), np.uint8)
+    out[:, :] = (160, 150, 145)
+    meta: dict = {}
+    angle.composite(p, out, meta=meta)
+    assert "toneShift" in meta
+
+
+def test_swap_refuses_a_reference_whose_lighting_is_hopeless(no_face, monkeypatch):
+    """보정량이 게이트를 넘으면 컷을 버린다 — 억지로 붙이면 목만 물든 사람이 나간다.
+    얼굴 패스의 lighting_off(GATE_COLOR_MAX 35.0)와 같은 자리·같은 값이다."""
+    from app.agents import face_identity
+
+    assert angle.TONE_MAX_SHIFT == face_identity.GATE_COLOR_MAX
+    monkeypatch.setattr(angle, "tone_shift", lambda *_a, **_k: np.array([99.0, 0.0, 0.0]))
+    photos = angle.AnglePhotos(back=png(np.full((300, 300, 3), 120, np.uint8)))
+    with pytest.raises(angle.AngleSwapUnavailable) as err:
+        asyncio.run(angle.swap(png(studio_cut()), "image/png", direction="back",
+                               photos=photos, backend=FakeBackend()))
+    assert err.value.reason == "tone_off"

@@ -166,6 +166,7 @@ class Plan:
     head: np.ndarray                 # 머리 마스크(bool, 머리카락 여유 포함) — 이 안만 다시 그린다
     head_core: np.ndarray            # 여유 주기 전 머리 — 크롭 기준
     garment: np.ndarray              # 옷·몸 보호 마스크(bool) — 원본 픽셀로 되돌린다
+    person: np.ndarray               # 원본 전경(사람) — 톤 표본을 여기 안에서만 고른다
     box: tuple[int, int, int]        # (left, top, side) 정사각 크롭
     crop1k: np.ndarray               # 1024 크롭 RGB
     mask1k: np.ndarray               # 1024 머리 마스크(bool)
@@ -173,11 +174,18 @@ class Plan:
     metadata: dict = field(default_factory=dict)
 
 
+def background_color(image: np.ndarray) -> np.ndarray:
+    """배경색 = 위·좌·우 테두리의 중앙값. **전체 이미지**에서만 구한다 —
+    머리 크롭 테두리로 구하면 그 테두리가 사람·옷이라 판정이 통째로 뒤집힌다."""
+    a = image.astype(np.float32)
+    border = np.concatenate([a[:6].reshape(-1, 3), a[:, :6].reshape(-1, 3), a[:, -6:].reshape(-1, 3)])
+    return np.median(border, axis=0)
+
+
 def foreground(image: np.ndarray) -> np.ndarray:
     """배경(위·좌·우 테두리 색)과 다른 픽셀 전부. 벽 그림자는 BG_THRESHOLD 로 떨어진다."""
     a = image.astype(np.float32)
-    border = np.concatenate([a[:6].reshape(-1, 3), a[:, :6].reshape(-1, 3), a[:, -6:].reshape(-1, 3)])
-    bg = np.median(border, axis=0)
+    bg = background_color(image)
     m = (np.abs(a - bg).max(axis=2) > BG_THRESHOLD).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
     return cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8)).astype(bool)
@@ -313,7 +321,8 @@ def crop_box(core: np.ndarray, size: tuple[int, int]) -> tuple[int, int, int]:
 def plan(image: np.ndarray, *, direction: str, model_dir=None) -> Plan:
     """원본 → 크롭·마스크. 사람·머리를 못 찾으면 AngleSwapUnavailable."""
     height, width = image.shape[:2]
-    if foreground(image).sum() < MIN_PERSON_FRACTION * height * width:
+    person = foreground(image)
+    if person.sum() < MIN_PERSON_FRACTION * height * width:
         raise AngleSwapUnavailable("no_person")
     core, nose_right = head_region(image, direction=direction, model_dir=model_dir)
     garment = garment_region(image, core)
@@ -325,8 +334,8 @@ def plan(image: np.ndarray, *, direction: str, model_dir=None) -> Plan:
                       interpolation=cv2.INTER_NEAREST) > 0
     if not mask.any():
         raise AngleSwapUnavailable("no_head")
-    return Plan(base=image, head=head, head_core=core, garment=garment, box=(left, top, side), crop1k=crop,
-                mask1k=mask, nose_right=nose_right,
+    return Plan(base=image, head=head, head_core=core, garment=garment, person=person,
+                box=(left, top, side), crop1k=crop, mask1k=mask, nose_right=nose_right,
                 metadata={"headPx": int(head.sum()), "garmentPx": int(garment.sum()),
                           "crop": [left, top, side], "noseRight": nose_right,
                           "maskCropPct": round(100.0 * float(mask.mean()), 1)})
@@ -371,10 +380,96 @@ def graph(crop_name: str, ref_name: str, mask_name: str, prompt: str, *, seed: i
     }
 
 
-def composite(p: Plan, out1k: np.ndarray) -> np.ndarray:
-    """마스크 안만 원본 해상도에 섞고, 옷은 원본 픽셀로 되돌린다(경계 2px 만 섞음)."""
+#: 톤 보정에 쓰는 링 폭(px, 마스크 바깥). 목이 들어올 만큼은 넓고 배경까지 가지는 않을 만큼 좁다.
+TONE_RING_PX = 6
+#: 사람 안에서 **피부만** 고르는 밝기 하한. 머리카락(어둡다)을 뺀다. 위쪽 한계는 두지 않는다 —
+#: 벽·그림자는 전경 마스크가 이미 걸러 주고, 밝은 피부를 상한으로 자르면 표본이 편향된다.
+#: 2026-09-20 실측 3컷의 목 평균 밝기 117~184, 머리카락 40 안팎.
+TONE_SKIN_MIN = 90.0
+#: 이만큼은 표본이 있어야 보정한다. 적으면 그 평균이 목이 아니라 잡음이다.
+TONE_MIN_SAMPLES = 200
+#: 보정량 |RGB| 최대가 이 값을 넘으면 **컷을 버린다**(tone_off). 조명이 근본적으로 어긋난
+#: 참고 사진이라는 뜻이고, 억지로 맞추면 목만 물든다. 얼굴 패스의 GATE_COLOR_MAX(35.0)와
+#: 같은 자리·같은 값으로 둔다 — 두 경로가 다른 기준을 쓰면 같은 사진이 한쪽만 통과한다.
+TONE_MAX_SHIFT = 35.0
+
+
+def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarray | None:
+    """새로 그린 머리의 톤을 **원본 목**에 맞추는 전역 RGB 이동량. 표본이 없으면 None.
+
+    ★ 얼굴 패스처럼 타원 안쪽 링을 쓸 수 없다. 저쪽 마스크는 얼굴이라 링이 곧 얼굴 주변
+      피부지만, 여기 마스크는 **머리 전체**라 바깥 링에 배경 벽·그림자·옷이 같이 들어온다.
+      벽을 표본에 넣으면 목이 벽 색으로 끌려간다 — 얼굴 패스에서 국소 보정이 실패한 것과
+      같은 이유다(face_identity.paste_back 주석: 링이 밝은 벽을 표본해 목·턱이 노랗게 과보정).
+
+    ★ 그래서 **전경 마스크로 먼저 자르고**(벽·그림자가 통째로 빠진다) 그 안에서 밝기로
+      머리카락만 뺀다. 밝기 창만으로 고르면 벽 그림자가 피부로 들어온다 — 2026-09-20
+      합성 컷에서 바깥 링 평균이 199(그림자)로 나왔다. 실사진에서 안 걸린 건 그 벽이
+      우연히 상한 위였기 때문이다.
+
+    ★ 전역 이동만 한다. 국소 차분 필드는 얼굴 패스에서 이미 되돌렸다(신원 붕괴·과보정).
+
+    2026-09-20 실측(보정 전): 오른쪽 옆 9.2 · 왼쪽 옆 12.3 · 뒤 7.1. 세 컷 다 RGB 가 거의
+    같은 양으로 어긋난 **밝기** 차이였다 — 참고 사진이 베이스 컷보다 밝았다.
+    """
+    left, top, side = box
+    head = p.head[top:top + side, left:left + side]
+    if not head.any():
+        return None
+    k = 2 * TONE_RING_PX + 1
+    ring_out = cv2.dilate(head.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool) & ~head
+    ring_in = head & ~cv2.erode(head.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
+    base = p.base[top:top + side, left:left + side].astype(np.float32)
+    person = p.person[top:top + side, left:left + side]
+    bg = background_color(p.base)
+
+    def skin(mask, image, is_person):
+        return mask & is_person & (image.mean(axis=2) > TONE_SKIN_MIN)
+
+    # 바깥 = 원본의 목(전경). 안쪽 = 새로 그린 얼굴·목 — 원본에서 배경이던 자리로 나올 수
+    # 있으므로 **생성 결과**로 사람을 판정한다.
+    outside = skin(ring_out, base, person)
+    inside = skin(ring_in, out, np.abs(out - bg).max(axis=2) > BG_THRESHOLD)
+    if outside.sum() < TONE_MIN_SAMPLES or inside.sum() < TONE_MIN_SAMPLES:
+        return None
+    return base[outside].mean(axis=0) - out[inside].mean(axis=0)
+
+
+#: 톤 가중치를 부드럽게 만드는 흐림(px). 실루엣에서 뚝 끊기지 않을 만큼만.
+TONE_FEATHER = 2.0
+
+
+def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    """톤 보정을 **사람 픽셀에만** 건다. 배경은 건드리지 않는다.
+
+    ★ 머리 마스크는 머리카락이 새로 날 자리까지 포함해 **배경 위로 넘어간다**(grow_hair).
+      전역으로 걸면 그 배경도 같이 밝아져서 벽에 머리 모양 자국이 남는다 — 2026-09-20
+      실측에서 세 컷 모두 머리 옆 벽에 실루엣이 찍혔다. 얼굴 패스는 타원이 전부 얼굴이라
+      이 문제가 없다(face_identity.paste_back).
+
+    ★ 사람 판정은 **생성 결과**에서 한다. 원본 전경으로 가리면 새로 나온 목·턱(원본에서는
+      배경이던 자리)이 보정을 못 받아 이음선이 그대로 남는다 — 2026-09-20 왼쪽 옆 컷이
+      12.3 → 10.3 밖에 안 줄었던 이유다.
+    ★ 배경색은 **전체 원본** 테두리에서 온다(background_color). 크롭 테두리는 사람·옷이다.
+    """
+    person = (np.abs(out - bg).max(axis=2) > BG_THRESHOLD).astype(np.float32)
+    weight = cv2.GaussianBlur(person, (0, 0), TONE_FEATHER)[..., None]
+    return np.clip(out + shift * weight, 0, 255)
+
+
+def composite(p: Plan, out1k: np.ndarray, *, meta: dict | None = None) -> np.ndarray:
+    """마스크 안만 원본 해상도에 섞고, 옷은 원본 픽셀로 되돌린다(경계 2px 만 섞음).
+
+    섞기 전에 톤을 원본 목에 맞춘다(tone_shift) — 등록자 사진과 베이스 컷의 조명이 다르면
+    목 이음선에서 밝기가 튄다. meta 를 주면 보정량을 적어 둔다(검수·게이트용).
+    """
     left, top, side = p.box
     out = np.asarray(Image.fromarray(out1k).resize((side, side), Image.LANCZOS), np.float32)
+    shift = tone_shift(p, out, p.box)
+    if shift is not None:
+        out = apply_tone(out, shift, background_color(p.base))
+    if meta is not None:
+        meta["toneShift"] = ([round(float(v), 2) for v in shift] if shift is not None else None)
     region = p.head[top:top + side, left:left + side].astype(np.float32)
     blur = cv2.GaussianBlur(region, (0, 0), 1.5 * max(1.0, side / CROP_PX))
     alpha = np.maximum(blur * (cv2.dilate(region, np.ones((3, 3), np.uint8)) > 0), region)[..., None]
@@ -469,7 +564,13 @@ async def swap(image: bytes, mime: str, *, direction: str, photos: AnglePhotos, 
     except Exception as exc:
         log.warning("angle swap backend failed: %s", type(exc).__name__)
         raise AngleSwapUnavailable("backend_error") from exc
-    final = await asyncio.to_thread(composite, p, out1k)
+    final = await asyncio.to_thread(composite, p, out1k, meta=meta)
+    # 톤을 못 맞출 만큼 조명이 어긋난 참고 사진이면 **컷을 버린다**. 억지로 붙이면 목만
+    # 물든 사람이 상품 페이지에 실린다 — 얼굴 패스의 lighting_off 와 같은 판단이다.
+    shift = meta.get("toneShift")
+    if shift and max(abs(v) for v in shift) > TONE_MAX_SHIFT:
+        log.warning("angle swap tone off: %s", shift)
+        raise AngleSwapUnavailable("tone_off")
     meta["garmentChangedPx"] = changed_garment_px(p, final)
     stream = io.BytesIO()
     Image.fromarray(final).save(stream, "PNG")
