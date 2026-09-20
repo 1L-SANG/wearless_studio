@@ -444,15 +444,24 @@ def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarra
 
 #: 톤 가중치를 부드럽게 만드는 흐림(px). 실루엣에서 뚝 끊기지 않을 만큼만.
 TONE_FEATHER = 2.0
+#: 이 밝기 아래는 머리카락으로 보고 **보정하지 않는다**. 위는 피부로 보고 전부 건다.
+#: 사이는 선형으로 섞어 경계를 안 만든다(TONE_HAIR_MAX ~ TONE_SKIN_MIN).
+#: 실측 밝기: 머리카락 40 안팎 · 목 117~184.
+TONE_HAIR_MAX = 60.0
 
 
 def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray:
-    """톤 보정을 **사람 픽셀에만** 건다. 배경은 건드리지 않는다.
+    """톤 보정을 **사람의 피부에만** 건다. 배경도 머리카락도 건드리지 않는다.
 
     ★ 머리 마스크는 머리카락이 새로 날 자리까지 포함해 **배경 위로 넘어간다**(grow_hair).
       전역으로 걸면 그 배경도 같이 밝아져서 벽에 머리 모양 자국이 남는다 — 2026-09-20
       실측에서 세 컷 모두 머리 옆 벽에 실루엣이 찍혔다. 얼굴 패스는 타원이 전부 얼굴이라
       이 문제가 없다(face_identity.paste_back).
+
+    ★ **머리카락은 뺀다.** 보정량은 목 피부를 기준으로 재는데 그걸 머리카락에까지 걸면
+      머리색이 같이 밝아진다 — 2026-09-21 뒷모습 컷이 이음선 1.6 으로 제일 잘 맞았는데도
+      머리가 갈색기를 띠었다. 뒷모습은 보이는 피부가 목·귀뿐이고 이음선도 거기 있으므로,
+      머리카락을 빼도 맞춰야 할 곳은 다 맞는다.
 
     ★ 사람 판정은 **생성 결과**에서 한다. 원본 전경으로 가리면 새로 나온 목·턱(원본에서는
       배경이던 자리)이 보정을 못 받아 이음선이 그대로 남는다 — 2026-09-20 왼쪽 옆 컷이
@@ -460,7 +469,9 @@ def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray
     ★ 배경색은 **전체 원본** 테두리에서 온다(background_color). 크롭 테두리는 사람·옷이다.
     """
     person = (np.abs(out - bg).max(axis=2) > BG_THRESHOLD).astype(np.float32)
-    weight = cv2.GaussianBlur(person, (0, 0), TONE_FEATHER)[..., None]
+    lum = out.mean(axis=2)
+    skin = np.clip((lum - TONE_HAIR_MAX) / (TONE_SKIN_MIN - TONE_HAIR_MAX), 0.0, 1.0)
+    weight = cv2.GaussianBlur(person * skin, (0, 0), TONE_FEATHER)[..., None]
     return np.clip(out + shift * weight, 0, 255)
 
 
@@ -517,12 +528,17 @@ class ServerlessBackend:
     ★ 동시성은 워커 수가 알아서 맡는다 — 파드 하나가 한 컷씩 처리하던 제약이 없다.
     """
 
-    def __init__(self, endpoint_id: str, api_key: str, *, timeout: float = 900.0):
+    def __init__(self, endpoint_id: str, api_key: str, *, timeout: float = 900.0,
+                 poll_seconds: float = 5.0):
         import httpx
 
         self.base = f"{SERVERLESS_BASE}/{endpoint_id.strip()}"
-        self._client = httpx.Client(base_url=self.base, timeout=timeout,
+        #: HTTP 한 번의 제한과 **잡 전체의 제한**은 다르다. 앞은 짧게(요청 하나), 뒤(_timeout)는
+        #: 컷 길이만큼 길게. 한 값으로 묶으면 폴링 한 번이 컷 전체 시간을 기다리게 된다.
+        self._client = httpx.Client(base_url=self.base, timeout=60.0,
                                     headers={"Authorization": f"Bearer {api_key}"})
+        self._timeout = timeout
+        self._poll = poll_seconds
         self._images: list[dict] = []
 
     def upload(self, array: np.ndarray, name: str, mode: str = "RGB") -> str:
@@ -538,17 +554,23 @@ class ServerlessBackend:
     def run(self, workflow: dict) -> np.ndarray:
         import base64
 
-        res = self._client.post("/runsync",
+        # ★ **/runsync 를 쓰면 안 된다.** 그 호출은 90초쯤에서 잘리고 IN_PROGRESS 를 돌려준다
+        #   (2026-09-21 실측: 세 컷 모두 93초에 끊겼다). 한 컷은 190초 안팎이라 동기 호출로는
+        #   받을 수 없다. 비동기로 넣고(/run) 상태를 폴링한다(/status/<id>).
+        res = self._client.post("/run",
                                 json={"input": {"workflow": workflow, "images": self._images}})
         self._images = []
         if res.status_code != 200:
             log.warning("angle swap serverless http %s", res.status_code)
             raise AngleSwapUnavailable("backend_error")
-        body = res.json() or {}
+        job_id = str((res.json() or {}).get("id") or "")
+        if not job_id:
+            log.warning("angle swap serverless returned no job id")
+            raise AngleSwapUnavailable("backend_error")
+        body = self._await(job_id)
         status = str(body.get("status") or "")
         if status != "COMPLETED":
-            # IN_QUEUE·IN_PROGRESS 는 runsync 가 제한 시간 안에 못 끝냈다는 뜻이고,
-            # FAILED 는 워커가 죽었다는 뜻이다. 둘 다 컷을 만들지 못한 것이다.
+            # FAILED·CANCELLED·TIMED_OUT — 워커가 컷을 만들지 못했다.
             log.warning("angle swap serverless status=%s error=%s",
                         status, str(body.get("error"))[:200])
             raise AngleSwapUnavailable("backend_error")
@@ -564,6 +586,22 @@ class ServerlessBackend:
             raise AngleSwapUnavailable("backend_error")
         with Image.open(io.BytesIO(base64.b64decode(first["data"]))) as opened:
             return np.asarray(opened.convert("RGB"))
+
+    def _await(self, job_id: str) -> dict:
+        """끝날 때까지 상태를 묻는다. 제한 시간을 넘기면 마지막 상태를 그대로 돌려준다 —
+        호출자가 COMPLETED 아님으로 보고 컷을 버린다(남의 머리를 내보내지 않는다)."""
+        deadline = time.monotonic() + self._timeout
+        body: dict = {}
+        while time.monotonic() < deadline:
+            res = self._client.get(f"/status/{job_id}")
+            if res.status_code != 200:
+                log.warning("angle swap serverless status http %s", res.status_code)
+                return {"status": "STATUS_HTTP_ERROR"}
+            body = res.json() or {}
+            if str(body.get("status") or "") not in ("IN_QUEUE", "IN_PROGRESS"):
+                return body
+            time.sleep(self._poll)
+        return body or {"status": "TIMED_OUT"}
 
 
 class ComfyBackend:
