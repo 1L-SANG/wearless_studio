@@ -456,6 +456,12 @@ class Settings:
     face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
     face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
     face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    # 옆·뒷모습 컷 머리 교체(agents/face_angle_swap.py) — 등록자 각도 사진 + ComfyUI(2511+BFS Head V5).
+    # 얼굴 패스와 **다른 파드**다(ComfyUI). 주소가 없으면 켜도 동작하지 않는다.
+    face_angle_swap_enabled: bool = False
+    face_angle_backend_url: str | None = None
+    face_angle_backend_token: str | None = None
+    face_angle_seed: int = 42
     # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
     # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
     face_autoscale: str = "off"
@@ -892,6 +898,10 @@ def load_settings() -> Settings:
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
         face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
+        face_angle_swap_enabled=(os.getenv("FACE_ANGLE_SWAP_ENABLED", "false").lower() == "true"),
+        face_angle_backend_url=(os.getenv("FACE_ANGLE_BACKEND_URL") or "").rstrip("/") or None,
+        face_angle_backend_token=os.getenv("FACE_ANGLE_BACKEND_TOKEN") or None,
+        face_angle_seed=_int_env("FACE_ANGLE_SEED", 42),
         face_autoscale=_flag("FACE_AUTOSCALE", "off", {"off", "on"}),
         face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
         face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
