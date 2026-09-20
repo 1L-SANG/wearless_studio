@@ -397,3 +397,28 @@ def test_ping_is_skipped_while_the_feature_is_off(monkeypatch):
     cur = Cur()
     asyncio.run(facemarket._record_angle_warm_ping(request, cur, user_id="u", model_id="m"))
     assert cur.sql == []            # 꺼져 있으면 질의도 안 한다
+
+
+# ── 각도 칸은 옛 이름을 받지 않는다 ──────────────────────────────────────────
+
+def test_angle_slots_never_resolve_through_legacy_aliases():
+    """★ sh_side 의 옛 별칭은 face05(얼굴 중심 측면)인데 각도 교체가 쓰는 건 90도 옆모습이다.
+    별칭을 풀면 옛 등록자의 왼쪽 옆 컷이 **빈 컷이 아니라 엉뚱한 머리로** 채워진다 —
+    실패보다 나쁘다(2026-09-21 운영에서 실제로 face05 가 잡히고 있었다)."""
+    from app.agents import identity_source
+
+    legacy = [{"angle": "face05", "r2_key": "old/side.jpg"},
+              {"angle": "face01", "r2_key": "old/front.jpg"}]
+    assert identity_source.angle_photos_from_rows(legacy) == {}
+
+    exact = legacy + [{"angle": "sh_side", "r2_key": "new/left90.png"},
+                      {"angle": "sh_back", "r2_key": "new/back.png"}]
+    assert identity_source.angle_photos_from_rows(exact) == {
+        "sh_side": "new/left90.png", "sh_back": "new/back.png"}
+
+
+def test_angle_slots_ignore_rows_without_a_key():
+    from app.agents import identity_source
+
+    rows = [{"angle": "sh_back", "r2_key": "  "}, {"angle": "sh_side_right", "r2_key": None}]
+    assert identity_source.angle_photos_from_rows(rows) == {}
