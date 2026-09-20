@@ -456,6 +456,24 @@ class Settings:
     face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
     face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
     face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    # 옆·뒷모습 컷 머리 교체(agents/face_angle_swap.py) — 등록자 각도 사진 + ComfyUI(2511+BFS Head V5).
+    # 얼굴 패스와 **다른 파드**다(ComfyUI). 주소가 없으면 켜도 동작하지 않는다.
+    face_angle_swap_enabled: bool = False
+    face_angle_backend_url: str | None = None
+    face_angle_backend_token: str | None = None
+    face_angle_seed: int = 42
+    #: RunPod Serverless 엔드포인트 id. **있으면 이쪽이 우선**이다 — 유휴 요금이 없고 동시성을
+    #: 워커 수가 맡는다. API 키는 얼굴 파드와 같은 것을 쓴다(face_runpod_api_key).
+    #: 비어 있으면 파드 경로로 간다(서버리스를 세우기 전·검증 중의 다리).
+    face_angle_endpoint_id: str | None = None
+    # 각도 교체 GPU 온디맨드(services/angle_autoscale.py) — 얼굴 파드와 같은 기계, 다른 프로필.
+    # 수요 = 옆·뒤를 만드는 잡만. 켜지면 파드 주소는 DB 의 파드 id 에서 나오고
+    # FACE_ANGLE_BACKEND_URL 은 폴백(파드가 아직 없을 때)으로만 쓰인다.
+    angle_autoscale: str = "off"
+    angle_autoscale_idle_minutes: int = 20
+    angle_runpod_pod_id: str | None = None
+    #: 콜드스타트가 얼굴 파드보다 길다 — ComfyUI 설치 + 가중치 내려받기(2026-09-20 실측 ~10분).
+    angle_autoscale_start_grace_minutes: int = 20
     # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
     # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
     face_autoscale: str = "off"
@@ -892,6 +910,20 @@ def load_settings() -> Settings:
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
         face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
+        face_angle_swap_enabled=(os.getenv("FACE_ANGLE_SWAP_ENABLED", "false").lower() == "true"),
+        face_angle_backend_url=(os.getenv("FACE_ANGLE_BACKEND_URL") or "").rstrip("/") or None,
+        # 각도 파드도 **같은 RunPod 시크릿**(face_render_token)을 물고 뜬다 — 파드 번들의
+        # auth_proxy 가 FACE_RENDER_TOKEN 으로 검사한다. 그래서 값이 따로 없으면 얼굴 쪽
+        # 토큰으로 떨어진다: 새 SSM 시크릿을 만들 이유가 없고, 빈 토큰으로 배포돼 파드가
+        # 전부 401 을 주는 흔한 사고도 같이 막는다.
+        face_angle_backend_token=(os.getenv("FACE_ANGLE_BACKEND_TOKEN")
+                                  or os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None),
+        face_angle_seed=_int_env("FACE_ANGLE_SEED", 42),
+        face_angle_endpoint_id=os.getenv("FACE_ANGLE_ENDPOINT_ID") or None,
+        angle_autoscale=_flag("ANGLE_AUTOSCALE", "off", {"off", "on"}),
+        angle_autoscale_idle_minutes=_int_env("ANGLE_AUTOSCALE_IDLE_MINUTES", 20),
+        angle_runpod_pod_id=os.getenv("ANGLE_RUNPOD_POD_ID") or None,
+        angle_autoscale_start_grace_minutes=_int_env("ANGLE_AUTOSCALE_START_GRACE_MINUTES", 20),
         face_autoscale=_flag("FACE_AUTOSCALE", "off", {"off", "on"}),
         face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
         face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,

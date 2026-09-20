@@ -13,7 +13,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "server/scripts/face_render_bundle.sh"
+ANGLE_BUNDLE = ROOT / "server/scripts/comfy_angle_bundle.sh"
 WORKFLOW = ROOT / ".github/workflows/deploy-server.yml"
+#: 업로드 단계 이름. 얼굴 렌더와 각도 교체(ComfyUI) 묶음을 **한 단계에서 같은 커밋 sha 로** 올린다.
+UPLOAD_STEP = "파드 코드 묶음 업로드 (R2 · 얼굴 렌더 + 각도 교체)"
+
+
+def upload_step() -> str:
+    return WORKFLOW.read_text(encoding="utf-8").split(
+        "- name: " + UPLOAD_STEP)[1].split("- name: ")[0]
 
 
 def test_bundle_contains_only_what_the_pod_needs(tmp_path):
@@ -83,12 +91,12 @@ def test_ci_uploads_to_the_private_bucket_with_the_commit_sha():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "face_render_bundle.sh" in text
     assert 'KEY="face_render/$GITHUB_SHA.tgz"' in text
-    assert 's3://$R2_FACE_BUCKET/$KEY' in text
+    assert 's3://$R2_FACE_BUCKET/$2' in text          # put <파일> <키> <내용sha>
     # 올렸다는 응답만 믿지 않는다 — 실제로 그 키가 있는지 확인한다
     assert "head-object" in text
     # 공개 URL 을 만들지 않는다(비공개 버킷 + presigned 만)
-    assert "public" not in text.split("얼굴 렌더 코드 묶음 업로드")[1][:1200]
-    step = text.split("- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    assert "public" not in text.split(UPLOAD_STEP)[1][:1600]
+    step = upload_step()
     # 배포는 막지 않되(continue-on-error) 실패는 **빨갛게** 보여야 한다 — 이전 판은 exit 0 이라
     # 업로드가 0건인데도 초록불이었다.
     assert "continue-on-error: true" in step
@@ -110,8 +118,7 @@ def test_sync_script_is_marked_dev_only():
 def test_r2_calls_drop_the_oidc_session_token():
     """★ PutObject … InvalidArgument: X-Amz-Security-Token — OIDC 로 받은 AWS_SESSION_TOKEN 이
     env 에 남아 있으면 R2 가 거부한다. SSM 읽기는 그 토큰이 있어야 하므로 **R2 호출만** 지운다."""
-    step = WORKFLOW.read_text(encoding="utf-8").split(
-        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    step = upload_step()
     assert "env -u AWS_SESSION_TOKEN" in step
     # ssm 읽기는 그대로(토큰 필요)
     ssm_line = [ln for ln in step.splitlines() if "aws ssm get-parameter" in ln][0]
@@ -128,8 +135,7 @@ def test_r2_calls_force_the_auto_region():
     AWS_DEFAULT_REGION=auto 만 두면 R2 호출이 InvalidRegionName 'ap-northeast-2' 로 죽는다
     (2026-09-11 run 34567423982 실측). 헬퍼가 **두 변수 모두** auto 로 덮어야 한다.
     """
-    step = WORKFLOW.read_text(encoding="utf-8").split(
-        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
+    step = upload_step()
     helper = step.split("r2() {")[1].split("}")[0]
     assert "AWS_REGION=auto" in helper
     assert "AWS_DEFAULT_REGION=auto" in helper
@@ -140,18 +146,19 @@ def test_r2_calls_force_the_auto_region():
 
 def test_upload_attaches_the_content_hash_and_verifies_it():
     """키는 커밋 sha 라 내용과 다르다 — 서버가 파드에 줄 검증값은 이 메타에서 읽는다."""
-    step = WORKFLOW.read_text(encoding="utf-8").split(
-        "- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
-    assert '--metadata "sha256=$SHA"' in step
+    step = upload_step()
+    assert '--metadata "sha256=$3"' in step
     assert "--query 'Metadata.sha256'" in step
-    assert 'if [ "$GOT" != "$SHA" ]' in step
+    assert 'if [ "$GOT" != "$3" ]' in step
+    # 두 묶음 다 자기 내용 해시로 올라간다 — 하나만 올라가면 그 파드만 코드를 못 받는다.
+    assert 'put dist/face_render.tgz "$KEY" "$SHA"' in step
+    assert 'put dist/comfy_angle.tgz "comfy_angle/$GITHUB_SHA.tgz" "$ANGLE_SHA"' in step
 
 
 def test_upload_runs_before_the_ecs_deploy_and_never_blocks_it():
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert text.index("얼굴 렌더 코드 묶음 업로드") < text.index("배포 (이미지 빌드→ECR→ECS 롤링)")
-    step = text.split("- name: 얼굴 렌더 코드 묶음 업로드")[1].split("- name: ")[0]
-    assert "continue-on-error: true" in step
+    assert text.index(UPLOAD_STEP) < text.index("배포 (이미지 빌드→ECR→ECS 롤링)")
+    assert "continue-on-error: true" in upload_step()
 
 
 # ── PR 실행이 대기 중 배포를 취소하지 않게 ──
@@ -200,3 +207,45 @@ def test_config_reads_the_build_sha_file(tmp_path, monkeypatch):
             build_sha.unlink(missing_ok=True)
     monkeypatch.delenv("FACE_RENDER_CODE_VERSION", raising=False)
     assert config._build_sha() is None
+
+
+# ── 각도 교체(ComfyUI) 묶음 ──
+def test_angle_bundle_layout_matches_the_pod_boot_contract(tmp_path):
+    """묶음 안의 **자리**가 곧 부팅 계약이다(face_autoscale.POD_BOOT_SCRIPT).
+
+    부팅 스크립트는 `deploy/*.sh` 를 $R/ 로 복사한 뒤 $R/pre_start.sh 를 /pre_start.sh 로 만든다.
+    그 pre_start.sh 는 /root/face_render/comfy_setup.sh 를 절대경로로 부르고, comfy_setup.sh 는
+    같은 자리의 auth_proxy.py 를 띄운다. 하나라도 자리가 어긋나면 파드는 켜지고 ComfyUI 만
+    영영 안 뜬다 — 증상은 "파드가 안 떴다" 뿐이라 원인이 안 보인다.
+    """
+    import subprocess as sp
+    import tarfile as tf
+
+    out = sp.run([str(ANGLE_BUNDLE), str(tmp_path)], capture_output=True, text=True, check=True)
+    digest = out.stdout.strip().splitlines()[-1]
+    tgz = tmp_path / "comfy_angle.tgz"
+    assert len(digest) == 64
+    assert hashlib.sha256(tgz.read_bytes()).hexdigest() == digest
+    names = set(tf.open(tgz).getnames())
+    assert "deploy/pre_start.sh" in names            # → /pre_start.sh 가 된다
+    assert "comfy_setup.sh" in names                 # pre_start 가 절대경로로 부른다
+    assert "auth_proxy.py" in names                  # comfy_setup 이 같은 자리에서 띄운다
+    body = tf.open(tgz).extractfile("deploy/pre_start.sh").read().decode()
+    assert "/root/face_render/comfy_setup.sh" in body
+
+
+def test_angle_bundle_is_reproducible(tmp_path):
+    import subprocess as sp
+
+    a = sp.run([str(ANGLE_BUNDLE), str(tmp_path / "a")], capture_output=True, text=True, check=True)
+    b = sp.run([str(ANGLE_BUNDLE), str(tmp_path / "b")], capture_output=True, text=True, check=True)
+    assert a.stdout.strip().splitlines()[-1] == b.stdout.strip().splitlines()[-1]
+
+
+def test_comfy_proxy_is_closed_without_a_real_token(tmp_path):
+    """ComfyUI 에는 인증이 없다. 프록시 토큰이 비거나 시크릿 자리표시자 그대로면 전부 401 이어야
+    한다 — 프록시 주소는 파드 id 만 알면 누구나 때릴 수 있다."""
+    proxy = (ROOT / "server/deploy/comfy_angle/auth_proxy.py").read_text(encoding="utf-8")
+    assert 'TOKEN.startswith("{{")' in proxy         # RunPod 시크릿이 안 풀렸을 때
+    assert "hmac.compare_digest" in proxy            # 타이밍 비교
+    assert "127.0.0.1" in proxy                      # ComfyUI 는 바깥에 안 연다

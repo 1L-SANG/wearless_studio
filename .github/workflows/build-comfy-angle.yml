@@ -1,0 +1,79 @@
+name: build-comfy-angle
+
+# 각도 교체(옆·뒷모습 머리 바꾸기) Serverless 워커 이미지.
+#
+# **메인 배포(deploy-server.yml)에 붙이지 않는다.** 이 이미지는 Dockerfile 이 바뀔 때만 다시
+# 구우면 되는데, 서버 배포마다 수 GB 짜리를 빌드하면 배포가 느려지고 도커 문제 하나로 서버
+# 배포가 통째로 빨간불이 된다. 두 일의 주기가 다르므로 워크플로도 나눈다.
+#
+# **왜 GHCR 인가**: RunPod 이 이미지를 당기려면 레지스트리 자격증명을 저장해야 하는데 ECR
+# 토큰은 12시간마다 만료된다 — 그다음부터 워커가 못 뜬다. GHCR 공개 패키지는 당길 때 인증이
+# 필요 없다. 이미지에 비밀은 없다(공식 ComfyUI + LanPaint 만, 가중치는 네트워크 볼륨).
+#
+# ★ 첫 푸시 뒤 **패키지를 public 으로 바꿔야 한다** — GitHub > Packages > comfy-angle >
+#   Package settings > Change visibility. 비공개로 두면 RunPod 이 못 당기고 워커가 안 뜬다.
+
+on:
+    push:
+        branches: [main]
+        paths:
+            - "server/deploy/comfy_angle/Dockerfile"
+            - ".github/workflows/build-comfy-angle.yml"
+    pull_request:
+        branches: [main]
+        paths:
+            - "server/deploy/comfy_angle/Dockerfile"
+            - ".github/workflows/build-comfy-angle.yml"
+    workflow_dispatch: {} # 수동 빌드 버튼
+
+concurrency:
+    group: build-comfy-angle-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+    packages: write # GHCR 푸시
+
+env:
+    IMAGE: ghcr.io/${{ github.repository_owner }}/comfy-angle
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            # 베이스 이미지(ComfyUI + CUDA)가 수 GB 라 러너 기본 디스크로는 빠듯하다.
+            # 쓰지 않는 사전 설치 도구를 비워 자리를 만든다.
+            - name: 러너 디스크 비우기
+              run: |
+                  set -euo pipefail
+                  df -h / | tail -1
+                  sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                              /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+                  df -h / | tail -1
+
+            - uses: docker/setup-buildx-action@v3
+
+            - uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # PR 에서는 빌드만 하고 푸시하지 않는다 — Dockerfile 이 깨졌는지 먼저 본다.
+            - uses: docker/build-push-action@v6
+              with:
+                  context: server/deploy/comfy_angle
+                  push: ${{ github.event_name != 'pull_request' }}
+                  tags: |
+                      ${{ env.IMAGE }}:${{ github.sha }}
+                      ${{ env.IMAGE }}:latest
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: 쓸 이미지 주소
+              if: github.event_name != 'pull_request'
+              run: |
+                  echo "::notice::RunPod Serverless 템플릿에 넣을 이미지: ${IMAGE}:${GITHUB_SHA}"
+                  echo "::notice::패키지가 public 인지 확인하세요 — 비공개면 워커가 못 뜹니다."

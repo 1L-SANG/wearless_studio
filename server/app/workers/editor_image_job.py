@@ -418,6 +418,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 게이트 이후 해지 레이스 방어). 가상모델('mA' 등)은 기존 VIRTUAL 경로 그대로.
             selected_model_id = requested_model_id
             real_refs = None
+            real_angle_keys: dict[str, str] = {}
+            real_angle_photos: dict[str, bytes] = {}
             try:
                 uuid.UUID(str(selected_model_id))
             except (TypeError, ValueError):
@@ -458,6 +460,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                             "현재 모델 자산을 사용할 수 없습니다.",
                             status=409,
                         )
+                    # 옆·뒷모습 컷의 머리 교체용 각도 사진. **선택 자산** — 조회가 실패해도
+                    # 잡을 죽이지 않고, 사진이 없는 각도의 컷만 실패한다.
+                    try:
+                        real_angle_keys = await identity_source.resolve_angle_photos(
+                            conn, str(fm_license_row["current_enrollment_id"]))
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("angle photos unavailable job %s: %r", job_id, exc)
+                        real_angle_keys = {}
                 fm_source = identity_source.select_source(
                     selected_model_id=selected_model_id, license_row=fm_license_row,
                     has_real_assets=real_refs is not None, has_license_face=False)
@@ -501,6 +511,12 @@ async def run_editor_image_job(app, job: dict) -> None:
                         model_images.append(
                             InlineImage(ref["mime"],
                                         await asyncio.to_thread(client.get_bytes, ref["key"])))
+                for _slot, _key in (real_angle_keys or {}).items():
+                    try:
+                        real_angle_photos[_slot] = await asyncio.to_thread(
+                            app.state.r2_face.get_bytes, _key)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("angle photo unavailable job %s slot %s: %r", job_id, _slot, exc)
             except Exception as e:
                 if fm_source == "REAL":
                     await _fail("모델 자산을 불러오지 못했어요. 다시 시도해 주세요.",
@@ -740,6 +756,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["face_shape_profile"] = face_shape_profile
             if fm_lora_spec is not None:
                 generate_kwargs["face_identity_spec"] = fm_lora_spec
+            # 옆·뒷모습 컷은 얼굴 패스 대신 각도 교체로 간다(ComfyUI + 등록자 각도 사진).
+            # 사진이나 파드 주소가 없으면 키를 안 넣는다 = 기존 동작 그대로.
+            if real_angle_photos:
+                from ..agents import face_angle_swap as _angle
+                from ..agents import identity_source as _angle_source
+
+                # 주소의 정본은 지금 살아 있는 ComfyUI 파드다(위 얼굴 파드와 같은 이유).
+                _angle_pod = await _angle_source.active_angle_pod_id(pool)
+                _angle_spec = _angle.spec_from(editor_settings, _angle.AnglePhotos(
+                    side_nose_left=real_angle_photos.get("sh_side"),
+                    side_nose_right=real_angle_photos.get("sh_side_right"),
+                    back=real_angle_photos.get("sh_back")), pod_id=_angle_pod)
+                if _angle_spec is not None:
+                    generate_kwargs["angle_swap"] = _angle_spec
             # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product·VIRTUAL·NONE
             # 소스는 body_profile 이 이미 None) — 키 자체를 생략해 기존 generate() 목(mock) 중
             # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(has_face와 동일 관례).

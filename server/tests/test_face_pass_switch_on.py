@@ -213,7 +213,10 @@ def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=Tr
 def test_status_false_for_a_real_model_without_a_lora(monkeypatch):
     """★ 이 버그가 핵심이다 — 파드는 켜질 이유가 없는데 '준비 중'이 영원히 뜨던 경우."""
     body, cur = _status(monkeypatch, has_lora=False)
-    assert body == {"ready": False, "enabled": False, "state": "offline", "etaMinutes": None}
+    assert {k: body[k] for k in ("ready", "enabled", "state", "etaMinutes")} == {
+        "ready": False, "enabled": False, "state": "offline", "etaMinutes": None}
+    # 옆·뒷모습(각도 교체)은 다른 파드라 따로 답한다 — 플래그가 꺼져 있으면 전부 offline.
+    assert body["angle"] == {"enabled": False, "ready": False, "state": "offline", "slots": []}
     assert cur.params[-1] == (REAL,)
 
 

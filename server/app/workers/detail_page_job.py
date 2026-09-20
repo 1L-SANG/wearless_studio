@@ -197,7 +197,8 @@ async def _normalize_detail_openai_refs(prepared, model: str):
 
 
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
-                    hair_profile=None, face_shape_profile=None, face_identity_spec=None):
+                    hair_profile=None, face_shape_profile=None, face_identity_spec=None,
+                    angle_photos=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -339,6 +340,23 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     generate_kwargs["face_pass_url_provider"] = (
                         lambda: _identity_source.active_face_backend_url(
                             app.state.pool, selected_model_id))
+                # 옆·뒷모습 컷은 얼굴 패스 대신 각도 교체로 간다(ComfyUI + 등록자 각도 사진).
+                # 사진이나 파드 주소가 없으면 키를 안 넣는다 = 기존 동작 그대로.
+                if real_identity_attached and angle_photos:
+                    from ..agents import face_angle_swap as _angle
+                    # 위 얼굴 패스 블록에도 같은 import 가 있지만 그 블록은 안 탈 수 있다
+                    # (얼굴 패스 없이 각도 사진만 있는 잡) — 여기서 따로 가져온다.
+                    from ..agents import identity_source as _angle_source
+
+                    # 주소의 정본은 지금 살아 있는 ComfyUI 파드다(자동 기동이 재고 때문에
+                    # 파드를 갈아치우면 id 가 바뀐다). 없으면 설정값으로 떨어진다.
+                    _angle_pod = await _angle_source.active_angle_pod_id(app.state.pool)
+                    _angle_spec = _angle.spec_from(s, _angle.AnglePhotos(
+                        side_nose_left=angle_photos.get("sh_side"),
+                        side_nose_right=angle_photos.get("sh_side_right"),
+                        back=angle_photos.get("sh_back")), pod_id=_angle_pod)
+                    if _angle_spec is not None:
+                        generate_kwargs["angle_swap"] = _angle_spec
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
@@ -1029,6 +1047,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             from ..agents import identity_source
             license_row = None
             real_refs = None
+            real_angle_keys: dict[str, str] = {}
             if selected_is_real and uses_real_identity:
                 snapshot = payload.get("_facemarket")
                 if (
@@ -1062,6 +1081,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                         "현재 모델 자산을 사용할 수 없습니다.",
                         status=409,
                     )
+                # 옆·뒷모습 컷 전용 각도 사진(sh_side·sh_side_right·sh_back). **선택 자산이다** —
+                # 조회가 실패해도 잡을 죽이지 않는다. 사진이 없는 각도의 컷만 실패한다.
+                try:
+                    real_angle_keys = await identity_source.resolve_angle_photos(
+                        conn, str(license_row["current_enrollment_id"]))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("angle photos unavailable job %s: %r", job_id, exc)
+                    real_angle_keys = {}
             elif (
                 not selected_model_id
                 and uses_real_identity
@@ -1283,6 +1310,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             return _confirmed_model_cache[model_id]
 
         real_model_images: list[InlineImage] = []
+        real_angle_photos: dict[str, bytes] = {}
         if source == "REAL":
             try:
                 r2_face = getattr(app.state, "r2_face", None)
@@ -1301,6 +1329,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                     "현재 모델 자산을 사용할 수 없습니다.",
                     status=409,
                 ) from exc
+            # 옆·뒷모습 컷의 머리 교체용 각도 사진. **읽기 실패는 잡을 죽이지 않는다** — 그 각도
+            # 컷만 실패하고 나머지 컷은 그대로 나간다(얼굴 자산과 달리 필수가 아니다).
+            for _slot, _key in (real_angle_keys or {}).items():
+                try:
+                    real_angle_photos[_slot] = await asyncio.to_thread(
+                        app.state.r2_face.get_bytes, _key)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("angle photo unavailable job %s slot %s: %r", job_id, _slot, exc)
 
         # 착장 컷 프롬프트의 SUBJECT BUILD 근거 — 잡 전체가 모델 1인 선택이라 여기서 1회만
         # 뽑아 _gen_cuts 에 넘긴다(REAL이 아니면 license_row 가 None → body_profile None).
@@ -1834,6 +1870,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             _gen_cuts_kwargs["face_shape_profile"] = face_shape_profile
         if fm_lora_spec is not None:
             _gen_cuts_kwargs["face_identity_spec"] = fm_lora_spec
+        # 옆·뒷모습 컷용 등록자 각도 사진(위에서 읽어 둔 바이트). 없으면 키를 생략한다.
+        if real_angle_photos:
+            _gen_cuts_kwargs["angle_photos"] = real_angle_photos
         (
             cut_results,
             cut_assets,

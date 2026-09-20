@@ -402,6 +402,35 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # A-5 콜드스타트 중앙값(≈8.5분) × 2, 최소 8 → 17.
   FACE_AUTOSCALE_START_GRACE_MINUTES: "17"
 
+  # ── 옆·뒷모습 컷 머리 교체(각도 교체) — **꺼진 채로 커밋한다** ────────────────
+  # 얼굴 패스(2509 diffusers)와 **다른 파드**다(ComfyUI 2511 + BFS Head). 둘 다 8000 포트를
+  # 쓰기 때문에 한 파드에 못 얹는다 — 얼굴은 POST /render, 각도는 POST /prompt.
+  #
+  # 켜기 전에 필요한 것:
+  #   ① 등록자에게 각도 사진 3칸(sh_side·sh_side_right·sh_back)이 있을 것.
+  #      동의서 2026-09-v3 부터 필수라 그 이후 등록은 자동으로 채워져 있다. 그 전(v1·v2) 등록은
+  #      비어 있고, 그 경우 옆·뒤 컷만 no_angle_photo 로 실패한다(다른 컷은 그대로).
+  #   ② comfy_angle/<커밋 sha>.tgz 가 R2 에 있을 것 — CI 가 배포 때 올린다(deploy-server.yml).
+  #   ③ ANGLE_AUTOSCALE=on. 그러면 첫 파드는 어댑터가 만든다.
+  # FACE_ANGLE_BACKEND_URL·ANGLE_RUNPOD_POD_ID 는 여기 두지 않는다 — 얼굴 파드와 같은 이유로
+  # 정본은 DB(fm_angle_render_pod)다.
+  # 토큰(FACE_ANGLE_BACKEND_TOKEN)도 두지 않는다: 각도 파드는 얼굴 파드와 **같은 RunPod
+  # 시크릿**을 물고 뜨므로 값이 없으면 FACE_IDENTITY_BACKEND_TOKEN 으로 떨어진다(config.py).
+  FACE_ANGLE_SWAP_ENABLED: "false"
+  # RunPod Serverless 엔드포인트 id. **넣으면 이쪽이 우선**이고 아래 파드 설정은 안 쓰인다 —
+  # 유휴 요금이 없고 동시성을 워커 수가 맡는다. API 키는 얼굴 파드와 같은 것을 쓴다.
+  # 세우는 법은 documents/face_angle_swap.md 의 "서버리스" 절.
+  FACE_ANGLE_ENDPOINT_ID: ""
+  # 파드 온디맨드. **서버리스 엔드포인트가 있으면 이 아래는 안 쓴다.** off 면 RunPod 를 아예
+  # 호출하지 않는다. 수요는 **옆·뒤를 만드는 잡만** 센다 —
+  # 정면 컷만 만드는 잡은 이 파드를 켜지 않는다(그 파드가 정면에 할 일이 없다).
+  ANGLE_AUTOSCALE: "off"
+  # 얼굴 파드(10분)보다 길게 잡는다: 콜드스타트가 ~10분이라 다시 물면 손해가 크다.
+  ANGLE_AUTOSCALE_IDLE_MINUTES: "20"
+  # 켠 뒤 이 시간까지 /healthz 의 comfy 가 true 가 아니면 내린다(요금 방지).
+  # 2026-09-20 실측 콜드스타트 ≈10분(ComfyUI 설치 + 2511·2509 가중치) × 2.
+  ANGLE_AUTOSCALE_START_GRACE_MINUTES: "20"
+
   # ── 인물 LoRA 학습 큐 (workers/lora_training_reconciler.py) ──────────────────
   # 한 건이 GPU 파드를 3~4시간, 약 $11 쓴다. 동시 1건은 DB 인덱스가 지키고
   # (fm_lora_training_runs_one_active), 여기서는 큐를 돌릴지만 정한다.

@@ -239,7 +239,7 @@ jobs:
             # R2 자격증명은 **SSM 에서 읽는다**(이 워크플로에 R2 GitHub 시크릿이 없다).
             # 읽지 못하면 배포를 막지 않고 경고만 남긴다 — 그 경우 자동 생성된 파드는 코드를 받지
             # 못하고, 어댑터가 그 사실을 CRITICAL 로 알린다.
-            - name: 얼굴 렌더 코드 묶음 업로드 (R2)
+            - name: 파드 코드 묶음 업로드 (R2 · 얼굴 렌더 + 각도 교체)
               continue-on-error: true      # R2 문제로 API 배포를 막지는 않는다(단계는 빨갛게 보인다)
               env:
                   # R2_ENDPOINT·R2_FACE_BUCKET 은 **SSM 이 아니라 매니페스트 평문**이다
@@ -254,7 +254,8 @@ jobs:
               run: |
                   set -euo pipefail
                   SHA="$(server/scripts/face_render_bundle.sh dist)"
-                  echo "bundle sha256=$SHA"
+                  ANGLE_SHA="$(server/scripts/comfy_angle_bundle.sh dist)"
+                  echo "bundle sha256=$SHA  angle=$ANGLE_SHA"
                   for key in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
                     value="$(aws ssm get-parameter --with-decryption --region "$SSM_REGION" \
                       --name "$SSM_PREFIX/$key" --query Parameter.Value --output text 2>/dev/null || true)"
@@ -278,20 +279,27 @@ jobs:
                     env -u AWS_SESSION_TOKEN AWS_REGION=auto AWS_DEFAULT_REGION=auto \
                       aws "$@" --endpoint-url "$R2_ENDPOINT"
                   }
-                  if ! r2 s3 cp dist/face_render.tgz "s3://$R2_FACE_BUCKET/$KEY" \
-                       --metadata "sha256=$SHA" --only-show-errors; then
-                    echo "::error::R2 업로드 실패: $KEY"
-                    exit 1
-                  fi
-                  # 올렸다는 응답만 믿지 않는다 — 키가 실제로 있고 **내용 해시 메타**까지 맞는지 본다.
-                  # 서버는 키를 커밋 sha 로 찾고, 파드에 넘길 CODE_SHA256 은 이 메타에서 읽는다.
-                  GOT="$(r2 s3api head-object --bucket "$R2_FACE_BUCKET" --key "$KEY" \
-                         --query 'Metadata.sha256' --output text 2>/dev/null || true)"
-                  if [ "$GOT" != "$SHA" ]; then
-                    echo "::error::업로드 후 확인 실패: $KEY (metadata sha256=$GOT)"
-                    exit 1
-                  fi
-                  echo "uploaded and verified $KEY"
+                  # 묶음 두 개가 **같은 커밋 sha 로** 올라간다: 얼굴 렌더 파드와 각도 교체
+                  # (ComfyUI) 파드. 서버는 자기 빌드 sha 로 둘 다 지목하므로 하나만 올라가면
+                  # 그 종류의 파드만 코드를 못 받는다(어댑터가 CRITICAL 로 알린다).
+                  put() {   # <로컬 파일> <R2 키> <내용 sha256>
+                    if ! r2 s3 cp "$1" "s3://$R2_FACE_BUCKET/$2" \
+                         --metadata "sha256=$3" --only-show-errors; then
+                      echo "::error::R2 업로드 실패: $2"
+                      exit 1
+                    fi
+                    # 올렸다는 응답만 믿지 않는다 — 키가 실제로 있고 **내용 해시 메타**까지 맞는지 본다.
+                    # 서버는 키를 커밋 sha 로 찾고, 파드에 넘길 CODE_SHA256 은 이 메타에서 읽는다.
+                    GOT="$(r2 s3api head-object --bucket "$R2_FACE_BUCKET" --key "$2" \
+                           --query 'Metadata.sha256' --output text 2>/dev/null || true)"
+                    if [ "$GOT" != "$3" ]; then
+                      echo "::error::업로드 후 확인 실패: $2 (metadata sha256=$GOT)"
+                      exit 1
+                    fi
+                    echo "uploaded and verified $2"
+                  }
+                  put dist/face_render.tgz "$KEY" "$SHA"
+                  put dist/comfy_angle.tgz "comfy_angle/$GITHUB_SHA.tgz" "$ANGLE_SHA"
 
             # API가 detail_page claim을 끊기 전에 desiredCount=0 서비스를 먼저 만든다.
             # 역순이면 첫 detail 잡이 아무도 claim하지 않는 배포 공백이 생긴다.
