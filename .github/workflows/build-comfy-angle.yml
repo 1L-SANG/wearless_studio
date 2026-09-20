@@ -34,14 +34,20 @@ permissions:
     contents: read
     packages: write # GHCR 푸시
 
-env:
-    IMAGE: ghcr.io/${{ github.repository_owner }}/comfy-angle
+# ★ 도커 레포 이름은 **소문자만** 받는다. 소유자에 대문자가 있으면(1L-SANG) 태그가
+# "repository name must be lowercase" 로 거부된다 — 2026-09-20 첫 빌드가 그렇게 죽었다.
+# 소유자는 job 안에서 소문자로 바꿔 IMAGE 에 넣는다.
 
 jobs:
     build:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+
+            - name: 이미지 주소 정하기 (소유자를 소문자로)
+              run: |
+                  owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+                  echo "IMAGE=ghcr.io/$owner/comfy-angle" >> "$GITHUB_ENV"
 
             # 베이스 이미지(ComfyUI + CUDA)가 수 GB 라 러너 기본 디스크로는 빠듯하다.
             # 쓰지 않는 사전 설치 도구를 비워 자리를 만든다.
