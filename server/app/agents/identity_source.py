@@ -202,13 +202,26 @@ ANGLE_PHOTO_SQL = (
 
 
 def angle_photos_from_rows(rows) -> dict[str, str]:
-    """등록 사진 행 → {칸 이름: r2_key}. 옛 이름(face05·side)도 SLOT_CANDIDATES 로 풀린다."""
+    """등록 사진 행 → {칸 이름: r2_key}. **옛 이름은 받지 않는다 — 칸 이름이 정확히 맞아야 한다.**
+
+    ★ 다른 자리(자산 소스·기준 얼굴)는 SLOT_CANDIDATES 로 옛 이름을 풀어 준다. 여기서는
+      그러면 안 된다: `sh_side` 의 옛 별칭은 `face05`(얼굴 중심 측면 컷)인데, 각도 교체가
+      요구하는 건 **코가 화면 왼쪽인 90도 옆모습**이다. 다른 사진이다.
+
+      별칭을 풀면 옛 등록자의 왼쪽 옆 컷이 **빈 컷이 아니라 엉뚱한 머리로 채워진다** —
+      실패보다 나쁘다. 남의 머리를 내보내지 않는다는 이 경로의 계약과도 어긋난다
+      (2026-09-21: 실제로 face05 가 sh_side 로 풀리고 있었다).
+
+      각도 3칸은 동의서 2026-09-v3 부터 필수이므로, 그 뒤 등록은 정확한 이름으로 들어온다.
+      그 전 등록은 해당 방향 컷만 no_angle_photo 로 비는 것이 맞다.
+    """
+    wanted = set(ANGLE_PHOTO_SLOTS)
     out: dict[str, str] = {}
-    for slot in ANGLE_PHOTO_SLOTS:
-        for row in resolve_photo_rows(rows, (slot,)):
-            key = str(row.get("r2_key") or "").strip()
-            if key:
-                out[canonical_photo_slot(slot)] = key
+    for row in rows:
+        slot = str(row.get("angle") or "")
+        key = str(row.get("r2_key") or "").strip()
+        if slot in wanted and key:
+            out[slot] = key
     return out
 
 
