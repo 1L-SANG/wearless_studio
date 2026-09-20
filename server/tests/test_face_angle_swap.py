@@ -150,8 +150,8 @@ def test_graph_uses_2511_with_bfs_lora_and_the_mask():
     wf = angle.graph("crop.png", "ref.png", "mask.png", angle.prompt_for("back"), seed=7)
     assert wf["1"]["inputs"]["unet_name"] == angle.UNET
     assert wf["16"]["inputs"]["lora_name"] == angle.BFS_LORA
-    # 2026-09-20 스윕에서 1.2 가 가장 본인에 가까웠다(1.0 보다 코·입술, 1.4 는 오히려 멀어짐).
-    assert wf["16"]["inputs"]["strength_model"] == angle.BFS_STRENGTH == 1.2
+    # 2026-09-20 육안 판정: 1.0. 합격한 옆 4컷·뒤 4컷이 전부 이 강도다(1.2 는 머리가 부푼다).
+    assert wf["16"]["inputs"]["strength_model"] == angle.BFS_STRENGTH == 1.0
     assert wf["5"]["inputs"]["image"] == "mask.png" and wf["15"]["inputs"]["image"] == "ref.png"
     assert wf["11"]["class_type"] == "SetLatentNoiseMask"
     assert wf["12"]["inputs"]["seed"] == 7 and wf["12"]["inputs"]["steps"] == angle.STEPS
