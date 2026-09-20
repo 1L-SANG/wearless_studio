@@ -32,6 +32,7 @@ from ..agents import (
     mannequin,
     page_assembler,
     page_output_qc,
+    real_horizon_neck_repair,
     space_set_assets,
 )
 from ..agents.gemini_image import InlineImage, normalize_openai_images
@@ -627,6 +628,27 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     )
                     garment_warnings.append({"code": "cut_output_qc_unavailable"})
 
+            # 후보 선택과 Stage2까지 끝난 채택본에만 한 번 적용한다. 그 뒤 Qwen을
+            # 다시 실행하면 같은 목선 경계가 생기므로 API 결과를 그대로 저장한다.
+            selected_outcome = outcome_by_image.get(hashlib.sha256(img).hexdigest(), {})
+            neck_repair_metadata = None
+            if (
+                face_identity_spec is not None
+                and not cut_generator.is_signature_cut(b)
+                and real_horizon_neck_repair.eligible(
+                    s, b, generation_model=detail_model,
+                    real_identity_attached=real_identity_attached,
+                    outcome=selected_outcome,
+                )
+            ):
+                chosen, neck_repair_metadata = await real_horizon_neck_repair.repair(
+                    s, gemini, InlineImage(mime, img), face_identity_spec,
+                )
+                img, mime = chosen.data, chosen.mime
+                _remember_outcome(img, selected_outcome)
+                if not neck_repair_metadata["applied"]:
+                    garment_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
+
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -675,6 +697,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
                      "cut_type": b.get("cutType"),
+                     **({"neck_repair": neck_repair_metadata}
+                        if neck_repair_metadata is not None else {}),
                      **({"face_pass": face_pass_outcome["face_pass"]}
                         if face_pass_outcome.get("face_pass") else {}),
                      # 레시피 해시 — "이 컷이 어떤 상수로 나왔나". GPU 가 다르면 같은 시드도

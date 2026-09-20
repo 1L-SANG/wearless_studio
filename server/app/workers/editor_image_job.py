@@ -23,6 +23,7 @@ from ..agents import (
     cut_variator,
     identity_source,
     image_qc,
+    real_horizon_neck_repair,
     mannequin,
     space_set_assets,
 )
@@ -105,6 +106,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
+    neck_repair_metadata: dict | None = None
 
     async def _fail(
         message: str,
@@ -866,6 +868,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                         e,
                     )
                     example_warnings.append({"code": "cut_output_qc_unavailable"})
+            if (
+                fm_lora_spec is not None
+                and real_horizon_neck_repair.eligible(
+                    s, cut_spec, generation_model=editor_settings.model_image_high,
+                    real_identity_attached=fm_face_injected,
+                    outcome=face_pass_outcome,
+                )
+            ):
+                chosen, neck_repair_metadata = await real_horizon_neck_repair.repair(
+                    s, app.state.gemini, chosen, fm_lora_spec,
+                )
+                image, mime = chosen.data, chosen.mime
+                if not neck_repair_metadata["applied"]:
+                    example_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
             group = normalized["colorId"] or None
             cut_type = normalized["cutType"]
 
@@ -917,6 +933,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"neck_repair": neck_repair_metadata}
+                   if neck_repair_metadata is not None else {}),
                 # 이 컷의 얼굴이 LoRA 로 바뀐 것인지, 폴백으로 생성 모델 얼굴 그대로인지.
                 # 셀러 화면은 달라지지 않는다 — 사후에 "왜 이 컷만 다른가"를 우리가 찾기 위한 기록.
                 **({"face_pass": face_pass_outcome["face_pass"]}
