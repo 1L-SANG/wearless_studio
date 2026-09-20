@@ -444,15 +444,24 @@ def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarra
 
 #: 톤 가중치를 부드럽게 만드는 흐림(px). 실루엣에서 뚝 끊기지 않을 만큼만.
 TONE_FEATHER = 2.0
+#: 이 밝기 아래는 머리카락으로 보고 **보정하지 않는다**. 위는 피부로 보고 전부 건다.
+#: 사이는 선형으로 섞어 경계를 안 만든다(TONE_HAIR_MAX ~ TONE_SKIN_MIN).
+#: 실측 밝기: 머리카락 40 안팎 · 목 117~184.
+TONE_HAIR_MAX = 60.0
 
 
 def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray:
-    """톤 보정을 **사람 픽셀에만** 건다. 배경은 건드리지 않는다.
+    """톤 보정을 **사람의 피부에만** 건다. 배경도 머리카락도 건드리지 않는다.
 
     ★ 머리 마스크는 머리카락이 새로 날 자리까지 포함해 **배경 위로 넘어간다**(grow_hair).
       전역으로 걸면 그 배경도 같이 밝아져서 벽에 머리 모양 자국이 남는다 — 2026-09-20
       실측에서 세 컷 모두 머리 옆 벽에 실루엣이 찍혔다. 얼굴 패스는 타원이 전부 얼굴이라
       이 문제가 없다(face_identity.paste_back).
+
+    ★ **머리카락은 뺀다.** 보정량은 목 피부를 기준으로 재는데 그걸 머리카락에까지 걸면
+      머리색이 같이 밝아진다 — 2026-09-21 뒷모습 컷이 이음선 1.6 으로 제일 잘 맞았는데도
+      머리가 갈색기를 띠었다. 뒷모습은 보이는 피부가 목·귀뿐이고 이음선도 거기 있으므로,
+      머리카락을 빼도 맞춰야 할 곳은 다 맞는다.
 
     ★ 사람 판정은 **생성 결과**에서 한다. 원본 전경으로 가리면 새로 나온 목·턱(원본에서는
       배경이던 자리)이 보정을 못 받아 이음선이 그대로 남는다 — 2026-09-20 왼쪽 옆 컷이
@@ -460,7 +469,9 @@ def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray
     ★ 배경색은 **전체 원본** 테두리에서 온다(background_color). 크롭 테두리는 사람·옷이다.
     """
     person = (np.abs(out - bg).max(axis=2) > BG_THRESHOLD).astype(np.float32)
-    weight = cv2.GaussianBlur(person, (0, 0), TONE_FEATHER)[..., None]
+    lum = out.mean(axis=2)
+    skin = np.clip((lum - TONE_HAIR_MAX) / (TONE_SKIN_MIN - TONE_HAIR_MAX), 0.0, 1.0)
+    weight = cv2.GaussianBlur(person * skin, (0, 0), TONE_FEATHER)[..., None]
     return np.clip(out + shift * weight, 0, 255)
 
 

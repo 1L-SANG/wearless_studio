@@ -268,6 +268,29 @@ def test_tone_is_applied_to_the_person_and_never_to_the_background():
     assert abs(shifted[5, 5] - BG).max() < 0.5                     # 배경은 그대로다
 
 
+def test_tone_leaves_hair_alone():
+    """★ 보정량은 **목 피부**를 기준으로 잰다. 그걸 머리카락에까지 걸면 머리색이 같이 밝아진다
+    — 2026-09-21 뒷모습 컷이 이음선 1.6 으로 제일 잘 맞았는데도 머리가 갈색기를 띠었다."""
+    bg_color = np.array([BG, BG, BG], np.float32)
+    out = np.full((200, 200, 3), BG, np.float32)
+    out[60:140, 60:100] = 40.0                        # 머리카락(어둡다)
+    out[60:140, 100:140] = 150.0                      # 피부
+    shifted = angle.apply_tone(out, np.array([12.0, 12.0, 12.0]), bg_color)
+    assert abs(shifted[100, 120] - (150.0 + 12.0)).max() < 0.5      # 피부는 보정된다
+    assert abs(shifted[100, 70] - 40.0).max() < 0.5                 # 머리카락은 그대로다
+    assert abs(shifted[5, 5] - BG).max() < 0.5                      # 배경도 그대로다
+
+
+def test_tone_ramps_between_hair_and_skin_without_a_hard_edge():
+    """머리카락과 피부 사이 밝기는 섞어서 건다 — 딱 잘라내면 경계선이 보인다."""
+    bg_color = np.array([BG, BG, BG], np.float32)
+    mid = (angle.TONE_HAIR_MAX + angle.TONE_SKIN_MIN) / 2.0
+    out = np.full((50, 50, 3), mid, np.float32)
+    shifted = angle.apply_tone(out, np.array([10.0, 10.0, 10.0]), bg_color)
+    applied = float(shifted[25, 25].mean() - mid)
+    assert 3.0 < applied < 7.0                        # 절반쯤 걸린다
+
+
 def test_composite_records_the_tone_shift_for_review(no_face):
     base = studio_cut()
     p = angle.plan(base, direction="back")
