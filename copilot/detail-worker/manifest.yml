@@ -76,6 +76,8 @@ variables:
   # ComfyUI 주소도 DB(fm_angle_render_pod)의 현재 파드에서 유도한다 — 잡마다 다시 묻는다.
   # 토큰은 FACE_IDENTITY_BACKEND_TOKEN 으로 떨어진다(같은 RunPod 시크릿 — config.py).
   FACE_ANGLE_SWAP_ENABLED: "false"
+  # 서버리스 엔드포인트 id — api 와 **같은 값**이어야 한다. 갈리면 워커가 다른 곳으로 컷을 보낸다.
+  FACE_ANGLE_ENDPOINT_ID: ""
   GENEXAMPLE_BG_ENABLED: "true"
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"

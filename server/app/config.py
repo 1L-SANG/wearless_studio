@@ -462,6 +462,10 @@ class Settings:
     face_angle_backend_url: str | None = None
     face_angle_backend_token: str | None = None
     face_angle_seed: int = 42
+    #: RunPod Serverless 엔드포인트 id. **있으면 이쪽이 우선**이다 — 유휴 요금이 없고 동시성을
+    #: 워커 수가 맡는다. API 키는 얼굴 파드와 같은 것을 쓴다(face_runpod_api_key).
+    #: 비어 있으면 파드 경로로 간다(서버리스를 세우기 전·검증 중의 다리).
+    face_angle_endpoint_id: str | None = None
     # 각도 교체 GPU 온디맨드(services/angle_autoscale.py) — 얼굴 파드와 같은 기계, 다른 프로필.
     # 수요 = 옆·뒤를 만드는 잡만. 켜지면 파드 주소는 DB 의 파드 id 에서 나오고
     # FACE_ANGLE_BACKEND_URL 은 폴백(파드가 아직 없을 때)으로만 쓰인다.
@@ -915,6 +919,7 @@ def load_settings() -> Settings:
         face_angle_backend_token=(os.getenv("FACE_ANGLE_BACKEND_TOKEN")
                                   or os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None),
         face_angle_seed=_int_env("FACE_ANGLE_SEED", 42),
+        face_angle_endpoint_id=os.getenv("FACE_ANGLE_ENDPOINT_ID") or None,
         angle_autoscale=_flag("ANGLE_AUTOSCALE", "off", {"off", "on"}),
         angle_autoscale_idle_minutes=_int_env("ANGLE_AUTOSCALE_IDLE_MINUTES", 20),
         angle_runpod_pod_id=os.getenv("ANGLE_RUNPOD_POD_ID") or None,

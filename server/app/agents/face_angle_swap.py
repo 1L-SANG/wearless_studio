@@ -104,20 +104,27 @@ class AngleSwapSpec:
 
 
 def spec_from(settings, photos: AnglePhotos, *, pod_id: str | None = None) -> AngleSwapSpec | None:
-    """파드 주소가 있으면 백엔드를 만든다. 없으면 None(=이 경로를 안 탄다).
+    """부를 백엔드를 만든다. 부를 곳이 없으면 None(=이 경로를 안 탄다).
 
-    주소의 정본은 **지금 살아 있는 파드**다(pod_id). 자동 기동이 재고를 못 잡아 파드를 새로
-    만들면 id 가 바뀌는데, 설정값을 앞에 두면 죽은 주소를 계속 찌른다 — 얼굴 패스가 같은
-    순서를 쓴다(face_identity.resolve_backend). 설정값은 파드가 아직 없을 때의 폴백이다.
+    **서버리스가 우선이다.** 엔드포인트가 설정돼 있으면 그쪽으로 간다 — 유휴 요금이 없고
+    동시성을 워커 수가 맡는다. 파드 경로는 서버리스를 세우기 전·검증 중에만 쓰는 다리다.
+
+    파드로 갈 때 주소의 정본은 **지금 살아 있는 파드**다(pod_id). 자동 기동이 재고를 못 잡아
+    파드를 새로 만들면 id 가 바뀌는데, 설정값을 앞에 두면 죽은 주소를 계속 찌른다 — 얼굴
+    패스가 같은 순서를 쓴다(face_identity.resolve_backend).
     """
     if not getattr(settings, "face_angle_swap_enabled", False):
         return None
+    seed = int(getattr(settings, "face_angle_seed", SEED))
+    endpoint = (getattr(settings, "face_angle_endpoint_id", None) or "").strip()
+    api_key = (getattr(settings, "face_runpod_api_key", None) or "").strip()
+    if endpoint and api_key:
+        return AngleSwapSpec(photos=photos, backend=ServerlessBackend(endpoint, api_key), seed=seed)
     url = pod_backend_url(pod_id) or getattr(settings, "face_angle_backend_url", None)
     if not url:
         return None
     token = getattr(settings, "face_angle_backend_token", "") or ""
-    return AngleSwapSpec(photos=photos, backend=ComfyBackend(url, token),
-                         seed=int(getattr(settings, "face_angle_seed", SEED)))
+    return AngleSwapSpec(photos=photos, backend=ComfyBackend(url, token), seed=seed)
 
 
 def pod_backend_url(pod_id: str | None) -> str | None:
@@ -492,6 +499,73 @@ def changed_garment_px(p: Plan, final: np.ndarray) -> int:
     return int((diff > 0).sum())
 
 
+#: RunPod Serverless API. 엔드포인트 id 로 주소가 정해진다.
+SERVERLESS_BASE = "https://api.runpod.ai/v2"
+#: 출력 노드 번호(graph 의 SaveImage). 서버리스 응답에는 노드 번호가 없어 첫 이미지를 쓴다.
+SAVE_NODE = "14"
+
+
+class ServerlessBackend:
+    """RunPod Serverless(runpod/worker-comfyui) 호출 — /runsync 한 번으로 끝난다.
+
+    파드 경로와 표면이 같다(upload → run) — `graph()` 가 만드는 워크플로 JSON 은 그대로
+    들어간다. 다른 건 **어디에 올리는가**뿐이다: 파드는 ComfyUI 의 /upload/image 에 실제로
+    올리고 이름으로 참조하지만, 여기서는 요청 본문의 `images` 배열에 담아 보낸다. 워커가
+    그 이름으로 ComfyUI 입력 폴더에 풀어 주므로 워크플로에서 보는 이름은 같다.
+
+    ★ 유휴 요금이 없다. 파드는 일이 없어도 유휴 시간만큼 GPU 를 물고 있었다.
+    ★ 동시성은 워커 수가 알아서 맡는다 — 파드 하나가 한 컷씩 처리하던 제약이 없다.
+    """
+
+    def __init__(self, endpoint_id: str, api_key: str, *, timeout: float = 900.0):
+        import httpx
+
+        self.base = f"{SERVERLESS_BASE}/{endpoint_id.strip()}"
+        self._client = httpx.Client(base_url=self.base, timeout=timeout,
+                                    headers={"Authorization": f"Bearer {api_key}"})
+        self._images: list[dict] = []
+
+    def upload(self, array: np.ndarray, name: str, mode: str = "RGB") -> str:
+        """실제로 올리지 않고 요청 본문에 담아 둔다. 이름은 워크플로가 참조하는 그 이름이다."""
+        import base64
+
+        stream = io.BytesIO()
+        Image.fromarray(array).convert(mode).save(stream, "PNG")
+        self._images.append({"name": name,
+                             "image": base64.b64encode(stream.getvalue()).decode()})
+        return name
+
+    def run(self, workflow: dict) -> np.ndarray:
+        import base64
+
+        res = self._client.post("/runsync",
+                                json={"input": {"workflow": workflow, "images": self._images}})
+        self._images = []
+        if res.status_code != 200:
+            log.warning("angle swap serverless http %s", res.status_code)
+            raise AngleSwapUnavailable("backend_error")
+        body = res.json() or {}
+        status = str(body.get("status") or "")
+        if status != "COMPLETED":
+            # IN_QUEUE·IN_PROGRESS 는 runsync 가 제한 시간 안에 못 끝냈다는 뜻이고,
+            # FAILED 는 워커가 죽었다는 뜻이다. 둘 다 컷을 만들지 못한 것이다.
+            log.warning("angle swap serverless status=%s error=%s",
+                        status, str(body.get("error"))[:200])
+            raise AngleSwapUnavailable("backend_error")
+        images = ((body.get("output") or {}).get("images") or [])
+        if not images or not images[0].get("data"):
+            log.warning("angle swap serverless returned no image: %s",
+                        str((body.get("output") or {}).get("errors"))[:200])
+            raise AngleSwapUnavailable("graph_error")
+        first = images[0]
+        if str(first.get("type")) != "base64":
+            # S3 업로드를 켜면 여기로 온다. 우리는 안 켠다 — 컷 바이트가 우리 버킷 밖으로 나간다.
+            log.warning("angle swap serverless returned %s, expected base64", first.get("type"))
+            raise AngleSwapUnavailable("backend_error")
+        with Image.open(io.BytesIO(base64.b64decode(first["data"]))) as opened:
+            return np.asarray(opened.convert("RGB"))
+
+
 class ComfyBackend:
     """ComfyUI 파드 호출. upload → /prompt → /history → /view."""
 
@@ -534,9 +608,26 @@ class ComfyBackend:
             time.sleep(self._poll)
 
 
+#: 참고 사진을 보낼 때의 긴 변 상한(px). 모델은 1024 에서 도는데 등록 사진은 아이폰 원본
+#: (8064×6048, 수 MB)일 수 있다. 서버리스 요청에는 크기 상한이 있어(/runsync 20MB) 원본을
+#: 그대로 실으면 큰 사진 하나로 요청이 막힌다. 줄여도 참고로 쓰는 머리는 그대로 담긴다.
+REFERENCE_MAX_PX = 2048
+
+
+def shrink(array: np.ndarray, limit: int = REFERENCE_MAX_PX) -> np.ndarray:
+    """긴 변이 limit 을 넘으면 비율을 지켜 줄인다. 작으면 그대로."""
+    height, width = array.shape[:2]
+    longest = max(height, width)
+    if longest <= limit:
+        return array
+    scale = limit / float(longest)
+    size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+    return np.asarray(Image.fromarray(array).resize(size, Image.LANCZOS))
+
+
 def _run(backend, p: Plan, reference: np.ndarray, direction: str, seed: int) -> np.ndarray:
     crop_name = backend.upload(p.crop1k, "angle_crop.png")
-    ref_name = backend.upload(reference, "angle_ref.png")
+    ref_name = backend.upload(shrink(reference), "angle_ref.png")
     mask_name = backend.upload((p.mask1k * 255).astype(np.uint8), "angle_mask.png", "L")
     return backend.run(graph(crop_name, ref_name, mask_name, prompt_for(direction), seed=seed))
 

@@ -98,7 +98,52 @@
 | `ANGLE_AUTOSCALE_START_GRACE_MINUTES` | 20 | 켠 뒤 이 안에 안 뜨면 내린다(요금 방지) |
 | `ANGLE_RUNPOD_POD_ID` | 없음 | 파드 id 초기값. 정본은 `fm_angle_render_pod` |
 
-## 파드 운영 (services/angle_autoscale.py)
+## 서버리스 (기본 경로)
+
+`FACE_ANGLE_ENDPOINT_ID` 가 있으면 RunPod Serverless 로 간다. 유휴 요금이 없고 동시성을 워커
+수가 맡는다 — 파드는 한 대가 한 컷씩 처리하고 일이 없어도 유휴 시간만큼 GPU 를 물었다.
+
+워크플로는 **한 글자도 안 바뀐다**. `graph()` 가 만드는 ComfyUI API JSON 을 RunPod 공식
+`worker-comfyui` 가 그대로 받는다. 바뀌는 건 **어디에 올리는가**뿐이다:
+
+| | 파드 | 서버리스 |
+|---|---|---|
+| 입력 이미지 | `POST /upload/image` 3회 | 요청 본문 `images` 배열(base64) |
+| 실행 | `/prompt` → `/history` 폴링 → `/view` | `POST /runsync` 한 번 |
+| 주소 | `https://<pod>-8000.proxy.runpod.net` | `https://api.runpod.ai/v2/<endpoint>` |
+| 요금 | 유휴 포함 시간당 | 실행한 초만큼 |
+
+요청 크기 상한이 있어(`/runsync` 20MB) 참고 사진은 긴 변 2048px 로 줄여 보낸다
+(`REFERENCE_MAX_PX`) — 등록 사진은 아이폰 원본(8064×6048)일 수 있다. 모델은 1024 에서 돈다.
+
+### 세우는 순서
+
+1. **이미지**를 빌드·푸시한다 — `server/deploy/comfy_angle/Dockerfile`.
+   공식 `worker-comfyui:<버전>-base` 에 **LanPaint 만** 굽는다. 커스텀 노드는 네트워크 볼륨에
+   못 올린다(RunPod 문서: 볼륨은 모델 전용). 가중치는 굽지 않아 이미지가 작다.
+2. **네트워크 볼륨**(50GB 권장)을 만들고 가중치 4개를 넣는다. 서버리스에서는
+   `/runpod-volume/models/...` 로 마운트되고 ComfyUI 가 알아서 읽는다.
+
+   | 파일 | 자리 | 크기 |
+   |---|---|---|
+   | `qwen_image_edit_2511_fp8mixed.safetensors` | `models/diffusion_models/` | ~20GB |
+   | `qwen_2.5_vl_7b_fp8_scaled.safetensors` | `models/text_encoders/` | ~8GB |
+   | `qwen_image_vae.safetensors` | `models/vae/` | ~250MB |
+   | `bfs_head_v5_2511_merged_version_rank_16_fp16.safetensors` | `models/loras/` | ~200MB |
+
+   ★ 이름이 `face_angle_swap.py` 의 `UNET`·`CLIP`·`VAE`·`BFS_LORA` 와 **글자까지 같아야** 한다.
+     하나라도 어긋나면 컷이 `graph_error` 로 끝난다.
+3. **엔드포인트**를 만들고 그 이미지와 볼륨을 붙인다. 카드는 80GB 이상(2511 fp8mixed 기준).
+4. 엔드포인트 id 를 `FACE_ANGLE_ENDPOINT_ID` 에 넣고 `FACE_ANGLE_SWAP_ENABLED` 를 켠다.
+   API 키는 새로 만들지 않는다 — 얼굴 파드와 같은 `RUNPOD_API_KEY` 를 쓴다.
+
+### 실패
+
+`/runsync` 가 `COMPLETED` 가 아니면 컷을 버린다. `IN_QUEUE`·`IN_PROGRESS` 는 제한 시간 안에
+못 끝났다는 뜻이고 `FAILED` 는 워커가 죽었다는 뜻이다. 출력이 `s3_url` 로 오면 그것도 버린다 —
+S3 업로드는 켜지 않는다(컷 바이트가 우리 버킷 밖으로 나간다).
+
+## 파드 경로 (services/angle_autoscale.py) — 서버리스 전까지의 다리
 
 얼굴 패스 파드(2509 diffusers 렌더 서비스)와 **다른 파드**다. 둘 다 8000 포트를 쓰기 때문에
 한 파드에 못 얹는다 — 얼굴은 `POST /render`, 각도는 ComfyUI 의 `POST /prompt` 다.

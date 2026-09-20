@@ -417,7 +417,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 토큰(FACE_ANGLE_BACKEND_TOKEN)도 두지 않는다: 각도 파드는 얼굴 파드와 **같은 RunPod
   # 시크릿**을 물고 뜨므로 값이 없으면 FACE_IDENTITY_BACKEND_TOKEN 으로 떨어진다(config.py).
   FACE_ANGLE_SWAP_ENABLED: "false"
-  # 파드 온디맨드. off 면 RunPod 를 아예 호출하지 않는다. 수요는 **옆·뒤를 만드는 잡만** 센다 —
+  # RunPod Serverless 엔드포인트 id. **넣으면 이쪽이 우선**이고 아래 파드 설정은 안 쓰인다 —
+  # 유휴 요금이 없고 동시성을 워커 수가 맡는다. API 키는 얼굴 파드와 같은 것을 쓴다.
+  # 세우는 법은 documents/face_angle_swap.md 의 "서버리스" 절.
+  FACE_ANGLE_ENDPOINT_ID: ""
+  # 파드 온디맨드. **서버리스 엔드포인트가 있으면 이 아래는 안 쓴다.** off 면 RunPod 를 아예
+  # 호출하지 않는다. 수요는 **옆·뒤를 만드는 잡만** 센다 —
   # 정면 컷만 만드는 잡은 이 파드를 켜지 않는다(그 파드가 정면에 할 일이 없다).
   ANGLE_AUTOSCALE: "off"
   # 얼굴 파드(10분)보다 길게 잡는다: 콜드스타트가 ~10분이라 다시 물면 손해가 크다.

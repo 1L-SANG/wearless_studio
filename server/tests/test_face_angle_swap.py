@@ -290,3 +290,95 @@ def test_swap_refuses_a_reference_whose_lighting_is_hopeless(no_face, monkeypatc
         asyncio.run(angle.swap(png(studio_cut()), "image/png", direction="back",
                                photos=photos, backend=FakeBackend()))
     assert err.value.reason == "tone_off"
+
+
+# ── RunPod Serverless 백엔드 ─────────────────────────────────────────────────
+#
+# 파드와 표면이 같다(upload → run) — graph() 가 만드는 워크플로 JSON 은 그대로 들어간다.
+# 다른 건 어디에 올리는가뿐이다: 파드는 /upload/image, 서버리스는 요청 본문의 images 배열.
+
+class FakeServerlessHTTP:
+    def __init__(self, body, status=200):
+        self.body, self.status, self.sent = body, status, None
+
+    def post(self, path, json=None):
+        self.sent = (path, json)
+        return SimpleNamespace(status_code=self.status, json=lambda: self.body)
+
+
+def serverless(body, status=200):
+    backend = angle.ServerlessBackend.__new__(angle.ServerlessBackend)
+    backend.base = "https://api.runpod.ai/v2/ep1"
+    backend._client = FakeServerlessHTTP(body, status)
+    backend._images = []
+    return backend
+
+
+def one_pixel_png_b64():
+    import base64
+
+    stream = BytesIO()
+    Image.fromarray(np.full((4, 4, 3), 7, np.uint8)).save(stream, "PNG")
+    return base64.b64encode(stream.getvalue()).decode()
+
+
+def test_serverless_sends_the_workflow_and_the_images_in_one_request():
+    backend = serverless({"status": "COMPLETED",
+                          "output": {"images": [{"type": "base64", "data": one_pixel_png_b64()}]}})
+    backend.upload(np.full((8, 8, 3), 3, np.uint8), "angle_crop.png")
+    backend.upload(np.full((8, 8), 255, np.uint8), "angle_mask.png", "L")
+    out = backend.run({"14": {"class_type": "SaveImage"}})
+    path, payload = backend._client.sent
+    assert path == "/runsync"
+    assert payload["input"]["workflow"] == {"14": {"class_type": "SaveImage"}}
+    # 이름은 워크플로가 참조하는 그 이름이어야 한다 — 어긋나면 ComfyUI 가 입력을 못 찾는다.
+    assert [i["name"] for i in payload["input"]["images"]] == ["angle_crop.png", "angle_mask.png"]
+    assert all(i["image"] for i in payload["input"]["images"])
+    assert out.shape == (4, 4, 3)
+    # 다음 호출에 이전 이미지가 딸려 가면 안 된다.
+    assert backend._images == []
+
+
+@pytest.mark.parametrize("body,status,reason", [
+    ({"status": "FAILED", "error": "worker died"}, 200, "backend_error"),
+    ({"status": "IN_QUEUE"}, 200, "backend_error"),          # runsync 가 제한 시간 안에 못 끝냈다
+    ({}, 500, "backend_error"),
+    ({"status": "COMPLETED", "output": {"images": []}}, 200, "graph_error"),
+    ({"status": "COMPLETED", "output": {"images": [{"type": "s3_url", "data": "https://x"}]}},
+     200, "backend_error"),                                   # S3 업로드는 안 켠다
+])
+def test_serverless_failures_never_return_someone_elses_head(body, status, reason):
+    backend = serverless(body, status)
+    with pytest.raises(angle.AngleSwapUnavailable) as err:
+        backend.run({"14": {}})
+    assert err.value.reason == reason
+
+
+def test_reference_photo_is_shrunk_before_it_goes_on_the_wire():
+    """서버리스 요청에는 크기 상한이 있다(/runsync 20MB). 아이폰 원본을 그대로 실으면
+    큰 사진 하나로 요청이 막힌다."""
+    big = np.full((6048, 8064, 3), 120, np.uint8)
+    small = angle.shrink(big)
+    assert max(small.shape[:2]) == angle.REFERENCE_MAX_PX
+    assert small.shape[0] / small.shape[1] == pytest.approx(6048 / 8064, rel=0.01)
+    # 이미 작으면 그대로 둔다(같은 객체).
+    tiny = np.full((300, 200, 3), 9, np.uint8)
+    assert angle.shrink(tiny) is tiny
+
+
+def test_spec_prefers_serverless_over_the_pod():
+    photos = angle.AnglePhotos(back=b"b")
+    base = dict(face_angle_swap_enabled=True, face_angle_seed=42,
+                face_angle_backend_url="https://pod.example", face_angle_backend_token="t")
+    with_endpoint = angle.spec_from(
+        SimpleNamespace(face_angle_endpoint_id="ep1", face_runpod_api_key="k", **base), photos)
+    assert isinstance(with_endpoint.backend, angle.ServerlessBackend)
+    assert with_endpoint.backend.base.endswith("/v2/ep1")
+    # 엔드포인트가 없으면 파드로 — 서버리스를 세우기 전·검증 중의 다리.
+    pod = angle.spec_from(
+        SimpleNamespace(face_angle_endpoint_id=None, face_runpod_api_key="k", **base), photos)
+    assert isinstance(pod.backend, angle.ComfyBackend)
+    # 엔드포인트만 있고 키가 없으면 서버리스로 못 간다 — 파드로 떨어진다.
+    keyless = angle.spec_from(
+        SimpleNamespace(face_angle_endpoint_id="ep1", face_runpod_api_key=None, **base), photos)
+    assert isinstance(keyless.backend, angle.ComfyBackend)
