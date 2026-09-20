@@ -118,11 +118,27 @@
 
 ### 세우는 순서
 
-1. **이미지**를 빌드·푸시한다 — `server/deploy/comfy_angle/Dockerfile`.
-   공식 `worker-comfyui:<버전>-base` 에 **LanPaint 만** 굽는다. 커스텀 노드는 네트워크 볼륨에
-   못 올린다(RunPod 문서: 볼륨은 모델 전용). 가중치는 굽지 않아 이미지가 작다.
-2. **네트워크 볼륨**(50GB 권장)을 만들고 가중치 4개를 넣는다. 서버리스에서는
+1. **이미지**는 CI 가 굽는다 — `.github/workflows/build-comfy-angle.yml`.
+   공식 `worker-comfyui:<버전>-base` 에 **LanPaint 만** 굽는다(커스텀 노드는 네트워크 볼륨에
+   못 올린다 — RunPod 문서: 볼륨은 모델 전용). 가중치는 굽지 않아 이미지가 작다.
+   `server/deploy/comfy_angle/Dockerfile` 이 바뀔 때만 돈다 — 메인 배포와 주기가 다르고,
+   도커 문제 하나로 서버 배포가 빨간불이 되면 안 된다.
+
+   **GHCR 로 간다**(`ghcr.io/<소유자>/comfy-angle`). ECR 은 쓸 수 없다: RunPod 이 이미지를
+   당기려면 레지스트리 자격증명을 저장해야 하는데 ECR 토큰은 12시간마다 만료되고, 그다음부터
+   워커가 안 뜬다. GHCR **공개** 패키지는 당길 때 인증이 없다. 이미지에 비밀은 없다.
+
+   ★ 첫 푸시 뒤 패키지를 **public 으로 바꿔야 한다**(GitHub > Packages > comfy-angle >
+     Package settings > Change visibility). 비공개로 두면 RunPod 이 못 당긴다.
+2. **네트워크 볼륨**(50GB)을 만들고 가중치 4개를 넣는다. 서버리스에서는
    `/runpod-volume/models/...` 로 마운트되고 ComfyUI 가 알아서 읽는다.
+   `~/Downloads/pr336_side_back/angle_volume_setup.py` 가 볼륨 생성 → 임시 파드로 내려받기 →
+   확인 → 파드 삭제까지 한다(파드는 받는 동안만, 약 $0.05).
+
+   **데이터센터는 US-CA-2 다. 볼륨은 데이터센터에 묶이고 나중에 못 옮긴다.** 검증된 H100 이
+   있고(2026-09-20 옆·뒤 실측이 전부 H100) H200 이 예비로 같이 있어 한 카드가 동나도 워커가
+   뜬다. PRO 6000 단독 데이터센터가 시간당 $2.09 로 더 싸지만 그 카드로 이 워크플로를 아직
+   안 돌려 봤다 — 되돌릴 수 없는 선택에 미검증 카드를 걸지 않는다.
 
    | 파일 | 자리 | 크기 |
    |---|---|---|
