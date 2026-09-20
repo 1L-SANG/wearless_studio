@@ -160,10 +160,10 @@ def test_demand_counts_only_side_and_back_work():
                      {"active_angle_jobs": 3, "last_angle_finished_at": None}])
     snap = asyncio.run(angle.angle_demand_snapshot(conn))
     assert snap.active_sam_jobs == 3
-    sql = conn.cur.sql[-1]
+    idx, sql = next((i, s) for i, s in enumerate(conn.cur.sql) if "angle_jobs" in s)
     # 정면 컷 하나가 GPU 를 켜지 않게 — 방향 조건이 SQL 에 있어야 한다.
     assert "payload ->> 'direction' = any(%s)" in sql
-    assert conn.cur.params[-1][1] == ["side", "back"]
+    assert conn.cur.params[idx][1] == ["side", "back"]
     # 등록자(켜진 LoRA)의 잡만 — 가상모델 잡은 각도 교체를 안 쓴다.
     assert "fm_model_loras" in sql and "enabled" in sql
 
@@ -298,3 +298,102 @@ def test_pod_exists_but_comfyui_has_not_finished_installing(monkeypatch):
     """설치 10분 동안 프록시는 200 을 주지만 comfy 는 false 다 — 그동안은 starting."""
     body = angle_status(monkeypatch, photos={"sh_back": "k"}, pod="p1", healthy=False)
     assert body["state"] == "starting" and body["ready"] is False
+
+
+# ── 준비 판정: 설치가 끝나야 준비다 ──────────────────────────────────────────
+#
+# 2026-09-20 실측에서 comfy=true 가 123초에 떴는데 번들은 그 뒤에도 2511 을 받고 있었다.
+# 그 창에 잡이 들어오면 /prompt 가 모델 없음으로 죽는다(컷은 backend_error).
+
+def test_comfy_answering_is_not_enough_while_setup_is_still_running():
+    installing = {"comfy": True, "stages": ["10:00:01 comfy_started", "10:00:02 edit2509_ok"]}
+    assert angle.angle_ready(installing) is False
+    done = {"comfy": True, "stages": ["10:00:02 edit2509_ok", "10:08:31 all_done"]}
+    assert angle.angle_ready(done) is True
+
+
+def test_setup_done_without_comfy_is_not_ready_either():
+    """설치 로그만 있고 ComfyUI 가 죽어 있으면 준비가 아니다 — 둘 다 필요하다."""
+    assert angle.angle_ready({"comfy": False, "stages": ["all_done"]}) is False
+    assert angle.angle_ready({"comfy": True, "stages": []}) is False
+    assert angle.angle_ready({"comfy": True}) is False
+
+
+# ── 워밍 핑: 모델 선택 순간 얼굴 파드와 같이 깨운다 ──────────────────────────
+
+def test_warm_ping_feeds_the_angle_demand():
+    conn = FakeConn([{"t": "jobs"},
+                     {"active_angle_jobs": 0, "last_angle_finished_at": None},
+                     {"t": "fm_angle_warm_pings"},
+                     {"at": "2026-09-20T22:00:00Z"}])
+    snap = asyncio.run(angle.angle_demand_snapshot(conn))
+    # 잡은 아직 0이지만 핑이 있으면 reconciler 가 미리 켠다(sam_autoscale.want_running).
+    assert snap.active_sam_jobs == 0 and snap.last_upload_at == "2026-09-20T22:00:00Z"
+    assert "fm_angle_warm_pings" in conn.cur.sql[-1]
+
+
+def test_missing_ping_table_is_not_an_error():
+    conn = FakeConn([{"t": "jobs"},
+                     {"active_angle_jobs": 1, "last_angle_finished_at": None},
+                     {"t": None}])
+    assert asyncio.run(angle.angle_demand_snapshot(conn)).last_upload_at is None
+
+
+def test_ping_is_only_recorded_for_registrants_who_have_angle_photos(monkeypatch):
+    """옛 등록(동의서 v1·v2)은 각도 사진이 없다 — 그 선택이 파드를 켜면 그냥 요금이다."""
+    import types
+
+    from app import facemarket
+    from app.agents import identity_source
+
+    class Cur:
+        def __init__(self, photos):
+            self.photos, self.sql, self.inserted = photos, [], False
+
+        async def execute(self, sql, params=None):
+            self.sql.append(" ".join(sql.split()))
+            if "insert into fm_angle_warm_pings" in sql:
+                self.inserted = True
+
+        async def fetchone(self):
+            last = self.sql[-1]
+            if "to_regclass" in last:
+                return {"t": "fm_angle_warm_pings"}
+            if "current_enrollment_id" in last:
+                return {"e": "enr1"}
+            return None              # 중복 핑 없음
+
+        async def fetchall(self):
+            return self.photos
+
+    monkeypatch.setattr(identity_source, "angle_photos_from_rows",
+                        lambda rows: {"sh_back": "k"} if rows else {})
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=SimpleNamespace(face_angle_swap_enabled=True))))
+
+    has = Cur([{"angle": "sh_back", "r2_key": "k"}])
+    asyncio.run(facemarket._record_angle_warm_ping(request, has, user_id="u", model_id="m"))
+    assert has.inserted is True
+
+    empty = Cur([])
+    asyncio.run(facemarket._record_angle_warm_ping(request, empty, user_id="u", model_id="m"))
+    assert empty.inserted is False
+
+
+def test_ping_is_skipped_while_the_feature_is_off(monkeypatch):
+    import types
+
+    from app import facemarket
+
+    class Cur:
+        def __init__(self):
+            self.sql = []
+
+        async def execute(self, sql, params=None):
+            self.sql.append(sql)
+
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=SimpleNamespace(face_angle_swap_enabled=False))))
+    cur = Cur()
+    asyncio.run(facemarket._record_angle_warm_ping(request, cur, user_id="u", model_id="m"))
+    assert cur.sql == []            # 꺼져 있으면 질의도 안 한다

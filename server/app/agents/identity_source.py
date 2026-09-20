@@ -190,10 +190,19 @@ async def resolve_angle_photos(conn, enrollment_id: str) -> dict[str, str]:
     한다는 fail-closed 규칙을 걸지 않는다(칸이 빈 각도의 컷만 실패로 끝난다).
     """
     async with conn.cursor() as cur:
-        await cur.execute(
-            "select angle, r2_key from fm_biometric_enrollment_photos where enrollment_id = %s",
-            (enrollment_id,))
+        await cur.execute(ANGLE_PHOTO_SQL, (enrollment_id,))
         rows = await cur.fetchall()
+    return angle_photos_from_rows(rows)
+
+
+#: 등록 사진 행 조회. 커서를 이미 들고 있는 호출자(워밍 핑)가 같은 질의를 쓰도록 빼 둔다 —
+#: 연결 안에서 커서를 겹쳐 열지 않게 한다.
+ANGLE_PHOTO_SQL = (
+    "select angle, r2_key from fm_biometric_enrollment_photos where enrollment_id = %s")
+
+
+def angle_photos_from_rows(rows) -> dict[str, str]:
+    """등록 사진 행 → {칸 이름: r2_key}. 옛 이름(face05·side)도 SLOT_CANDIDATES 로 풀린다."""
     out: dict[str, str] = {}
     for slot in ANGLE_PHOTO_SLOTS:
         for row in resolve_photo_rows(rows, (slot,)):

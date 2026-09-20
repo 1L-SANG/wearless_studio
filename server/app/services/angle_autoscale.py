@@ -10,9 +10,9 @@ ComfyUI + Qwen-Image-Edit-2511 + BFS Head LoRA 에서 돈다 — 얼굴 패스 �
 
 ★ 수요 = "지금 옆·뒷모습 컷이 필요한 잡". 켜진 LoRA 가 있는 등록자의 잡 중에서도
   **옆·뒤를 만드는 잡만** 센다. 이 조건이 없으면 정면 컷 하나가 시간당 $2 짜리 GPU 를 켠다.
-★ 준비 판정은 /healthz 의 `comfy` 필드다(파드 번들의 auth_proxy.py). 설치가 10분 넘게
-  걸리는 동안 포트는 열려 있고 ComfyUI 만 아직 없다 — 그 상태를 "떴다"로 읽으면
-  워커가 곧장 연결 실패로 컷을 버린다.
+★ 준비 판정은 /healthz 의 `comfy` **와** 설치 완료 단계 둘 다다(angle_ready 주석).
+★ 셀러가 실존 모델을 고르면 얼굴 파드와 **같이** 깨어난다(워밍 핑) — 첫 옆·뒤 컷이
+  콜드스타트를 물지 않게. 단, 각도 사진이 있는 등록자일 때만이다.
 """
 
 from __future__ import annotations
@@ -51,12 +51,26 @@ def angle_health_url(backend_url) -> str | None:
     return backend_url.strip().rstrip("/") + "/healthz"
 
 
-def angle_ready(payload: dict) -> bool:
-    """준비 = ComfyUI 가 /system_stats 에 답한다(번들 auth_proxy 가 대신 확인해 준 값).
+#: 설치가 끝났다는 마지막 단계(번들 comfy_setup.sh 가 /root/setup_status.txt 에 적는다).
+SETUP_DONE_STAGE = "all_done"
 
-    stages 는 설치 진행 로그라 판정에 쓰지 않는다 — 사람이 읽는 자리다.
+
+def angle_ready(payload: dict) -> bool:
+    """준비 = ComfyUI 가 답하고 **설치가 끝났다**. 둘 다 필요하다.
+
+    ★ comfy 만 보면 이르다(2026-09-20 실측: 123초에 comfy=true, 실제 설치는 그 뒤에도 진행).
+      번들은 ComfyUI 를 **2511 다운로드 전에** 띄운다 — 2509·BFS 를 받고 서버를 올린 다음
+      qwen_image_edit_2511_fp8mixed(워크플로가 실제로 쓰는 모델)를 받는다. 그 사이에 잡이
+      들어오면 /prompt 가 모델 없음으로 죽고, 컷은 backend_error 로 끝난다. 그날은 첫 컷이
+      늦게 와서 우연히 피했을 뿐이다.
     """
-    return bool(isinstance(payload, dict) and payload.get("comfy"))
+    if not isinstance(payload, dict) or not payload.get("comfy"):
+        return False
+    stages = payload.get("stages")
+    if not isinstance(stages, list):
+        return False
+    # 단계 줄은 "HH:MM:SS all_done" 꼴이다 — 시각이 붙어 있어 정확히 같지 않다.
+    return any(SETUP_DONE_STAGE in str(line) for line in stages)
 
 
 #: 각도 교체 파드(ComfyUI + LanPaint + BFS). 이미지·부팅 스크립트·토큰 주입은 얼굴 파드와 같다.
@@ -106,10 +120,18 @@ async def angle_demand_snapshot(conn) -> DemandSnapshot:
             (list(ANGLE_KINDS), list(ANGLE_DIRECTIONS)),
         )
         row = await cur.fetchone() or {}
-    # 워밍 핑은 두지 않는다 — 셀러가 모델을 고르는 순간에는 옆·뒤를 만들지 알 수 없다.
-    # 얼굴 파드만 그 신호로 미리 뜨고, 각도 파드는 실제 잡이 들어올 때 뜬다.
+    # 세 번째 신호 = **워밍 핑**(셀러가 실존 모델을 고른 순간). 얼굴 파드와 **같은 순간**에
+    # 깨어나야 첫 옆·뒤 컷이 콜드스타트를 물지 않는다 — 안 그러면 셀러는 정면 컷만 먼저
+    # 나오고 옆·뒤만 늦게 채워지는 화면을 본다. 핑은 **각도 사진이 있는 모델만** 남는다
+    # (조건 판정은 라우트에서 한 번, facemarket._record_angle_warm_ping).
+    ping = None
+    async with conn.cursor() as cur:
+        await cur.execute("select to_regclass('public.fm_angle_warm_pings') as t")
+        if (await cur.fetchone() or {}).get("t"):
+            await cur.execute("select max(pinged_at) as at from fm_angle_warm_pings")
+            ping = (await cur.fetchone() or {}).get("at")
     return DemandSnapshot(
         active_sam_jobs=int(row.get("active_angle_jobs") or 0),
         last_sam_finished_at=row.get("last_angle_finished_at"),
-        last_upload_at=None,
+        last_upload_at=ping,
     )
