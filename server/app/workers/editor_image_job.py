@@ -760,11 +760,14 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 사진이나 파드 주소가 없으면 키를 안 넣는다 = 기존 동작 그대로.
             if real_angle_photos:
                 from ..agents import face_angle_swap as _angle
+                from ..agents import identity_source as _angle_source
 
+                # 주소의 정본은 지금 살아 있는 ComfyUI 파드다(위 얼굴 파드와 같은 이유).
+                _angle_pod = await _angle_source.active_angle_pod_id(pool)
                 _angle_spec = _angle.spec_from(editor_settings, _angle.AnglePhotos(
                     side_nose_left=real_angle_photos.get("sh_side"),
                     side_nose_right=real_angle_photos.get("sh_side_right"),
-                    back=real_angle_photos.get("sh_back")))
+                    back=real_angle_photos.get("sh_back")), pod_id=_angle_pod)
                 if _angle_spec is not None:
                     generate_kwargs["angle_swap"] = _angle_spec
             # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product·VIRTUAL·NONE

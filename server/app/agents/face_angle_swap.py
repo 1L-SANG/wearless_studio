@@ -103,14 +103,29 @@ class AngleSwapSpec:
     seed: int = SEED
 
 
-def spec_from(settings, photos: AnglePhotos) -> AngleSwapSpec | None:
-    """설정에 파드 주소가 있으면 백엔드를 만든다. 없으면 None(=이 경로를 안 탄다)."""
-    url = getattr(settings, "face_angle_backend_url", None)
-    if not getattr(settings, "face_angle_swap_enabled", False) or not url:
+def spec_from(settings, photos: AnglePhotos, *, pod_id: str | None = None) -> AngleSwapSpec | None:
+    """파드 주소가 있으면 백엔드를 만든다. 없으면 None(=이 경로를 안 탄다).
+
+    주소의 정본은 **지금 살아 있는 파드**다(pod_id). 자동 기동이 재고를 못 잡아 파드를 새로
+    만들면 id 가 바뀌는데, 설정값을 앞에 두면 죽은 주소를 계속 찌른다 — 얼굴 패스가 같은
+    순서를 쓴다(face_identity.resolve_backend). 설정값은 파드가 아직 없을 때의 폴백이다.
+    """
+    if not getattr(settings, "face_angle_swap_enabled", False):
+        return None
+    url = pod_backend_url(pod_id) or getattr(settings, "face_angle_backend_url", None)
+    if not url:
         return None
     token = getattr(settings, "face_angle_backend_token", "") or ""
     return AngleSwapSpec(photos=photos, backend=ComfyBackend(url, token),
                          seed=int(getattr(settings, "face_angle_seed", SEED)))
+
+
+def pod_backend_url(pod_id: str | None) -> str | None:
+    """파드 id → ComfyUI 주소. services/angle_autoscale 의 같은 이름과 한 몸이어야 한다 —
+    어댑터는 이 주소로 /healthz 를 보고 워커는 이 주소로 컷을 만든다. 갈리면 둘이 다른 파드를
+    본다. 순환 import 를 피하려고 여기서 다시 쓰되, 계약 테스트가 두 값을 맞춰 둔다."""
+    pod_id = (pod_id or "").strip()
+    return f"https://{pod_id}-8000.proxy.runpod.net" if pod_id else None
 
 
 def direction_of(spec: dict) -> str | None:
@@ -388,7 +403,9 @@ class ComfyBackend:
     def __init__(self, base_url: str, token: str, *, timeout: float = 900.0, poll_seconds: float = 5.0):
         import httpx
 
-        self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout,
+        #: 어느 파드를 보고 있는가. 파드가 재고 때문에 갈릴 수 있어 로그·검증에서 읽는다.
+        self.base = base_url.rstrip("/")
+        self._client = httpx.Client(base_url=self.base, timeout=timeout,
                                     headers={"Authorization": f"Bearer {token}"})
         self._poll = poll_seconds
 

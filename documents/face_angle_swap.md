@@ -56,15 +56,44 @@
 | 이름 | 기본 | 뜻 |
 |---|---|---|
 | `FACE_ANGLE_SWAP_ENABLED` | false | 이 경로를 켠다 |
-| `FACE_ANGLE_BACKEND_URL` | 없음 | ComfyUI 파드 주소. 비면 켜도 동작 안 함 |
+| `FACE_ANGLE_BACKEND_URL` | 없음 | ComfyUI 파드 주소 **폴백**. 살아 있는 파드가 있으면 그쪽이 이긴다 |
 | `FACE_ANGLE_BACKEND_TOKEN` | 없음 | 파드 Bearer 토큰 |
 | `FACE_ANGLE_SEED` | 42 | 렌더 시드 |
+| `ANGLE_AUTOSCALE` | off | 파드 온디맨드 기동/종료 |
+| `ANGLE_AUTOSCALE_IDLE_MINUTES` | 20 | 이만큼 일이 없으면 끈다 |
+| `ANGLE_AUTOSCALE_START_GRACE_MINUTES` | 20 | 켠 뒤 이 안에 안 뜨면 내린다(요금 방지) |
+| `ANGLE_RUNPOD_POD_ID` | 없음 | 파드 id 초기값. 정본은 `fm_angle_render_pod` |
 
-얼굴 패스 파드(2509 diffusers)와 **다른 파드**다(ComfyUI 2511). 운영에 켜려면 ComfyUI 파드를 띄우고
-주소·토큰을 넣어야 한다.
+## 파드 운영 (services/angle_autoscale.py)
+
+얼굴 패스 파드(2509 diffusers 렌더 서비스)와 **다른 파드**다. 둘 다 8000 포트를 쓰기 때문에
+한 파드에 못 얹는다 — 얼굴은 `POST /render`, 각도는 ComfyUI 의 `POST /prompt` 다.
+
+기동·종료·재고 폴백·알림은 얼굴 파드와 **같은 어댑터**(`face_autoscale.RunpodAutoscaleAdapter`)가
+한다. 다른 것만 `PodProfile` 에 담아 끼운다:
+
+| | 얼굴 렌더 | 각도 교체 |
+|---|---|---|
+| 코드 묶음 | `face_render/<sha>.tgz` | `comfy_angle/<sha>.tgz` |
+| 주소 | `https://<pod>-8000.proxy.runpod.net/render` | `https://<pod>-8000.proxy.runpod.net` |
+| 준비 판정 | `/healthz` 의 `base_loaded` | `/healthz` 의 `comfy` |
+| 파드 표 | `fm_face_render_pod` | `fm_angle_render_pod` |
+| 수요 | 켜진 LoRA 등록자의 착장 컷 잡 | 그중 **옆·뒤를 만드는 잡만** |
+
+파드 이미지·부팅 스크립트·토큰 주입(RunPod Secret 참조)은 같다. 묶음은
+`server/deploy/comfy_angle/` 이고 CI 가 커밋 sha 로 R2 에 올린다(deploy-server.yml).
+
+수요에서 방향을 가리는 이유: 정면 컷만 만드는 잡이 시간당 $2 짜리 GPU 를 켜면 그 파드는
+아무것도 하지 않는다. `detail_page` 는 컷 묶음이라 옆·뒤가 섞였다고 보고 세고, `editor_image` 는
+페이로드의 `direction` 이 side·back 일 때만 센다.
+
+콜드스타트는 얼굴 파드보다 길다 — ComfyUI 설치 + 2511/2509 가중치 내려받기로 2026-09-20 실측
+약 10분이다. 워밍 핑은 두지 않았다: 셀러가 모델을 고르는 순간에는 옆·뒤를 만들지 알 수 없다.
 
 ## 남은 일
 
-- 운영 파드 등록(주소·토큰)과 자동 켜기 판단.
+- `ANGLE_AUTOSCALE=on` 으로 켜기 전에 **파드 1대로 실측 1회** — 자동 생성된 파드가 묶음을 받아
+  ComfyUI 까지 뜨는지, `/healthz` 의 `comfy` 가 true 로 바뀌는지. 손으로 만든 파드로는 통과했지만
+  묶음을 R2 에서 받는 경로는 아직 안 돌려 봤다.
 - 왼쪽 옆모습은 참고 사진의 앞머리가 눈을 덮어 결과도 그렇게 나온다 — 촬영 안내에 반영할지 결정.
 - 턱선은 어느 설정에서도 본인보다 날렵하다(베이스 몸이 가상모델). 개선하려면 베이스 컷 단계가 필요하다.

@@ -442,6 +442,27 @@ async def _active_face_backend_url(conn, model_id: str | None = None) -> str | N
     return pod_backend_url((row or {}).get("pod_id"))
 
 
+async def active_angle_pod_id(pool) -> str | None:
+    """지금 등록된 각도 교체(ComfyUI) 파드 id. 없으면 None → 설정값 폴백.
+
+    얼굴 파드와 달리 **모델을 가리지 않는다** — 각도 교체는 등록자별 LoRA 를 물지 않아
+    (BFS Head 는 사람과 무관한 일반 LoRA) 어느 잡이든 같은 파드를 쓴다.
+    """
+    try:
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_angle_render_pod') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return None
+            await cur.execute(
+                "select pod_id from fm_angle_render_pod where retired_at is null "
+                "order by created_at desc limit 1")
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 설정값으로 간다
+        log.warning("angle pod lookup failed: %r", exc)
+        return None
+    return str((row or {}).get("pod_id") or "").strip() or None
+
+
 def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:
     """LoRA 행 → (hair_profile, face_shape_profile). 값이 없으면 None 을 돌려 프롬프트를 그대로 둔다."""
     if not row:

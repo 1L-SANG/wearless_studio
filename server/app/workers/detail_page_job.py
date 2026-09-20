@@ -344,11 +344,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 # 사진이나 파드 주소가 없으면 키를 안 넣는다 = 기존 동작 그대로.
                 if real_identity_attached and angle_photos:
                     from ..agents import face_angle_swap as _angle
+                    # 위 얼굴 패스 블록에도 같은 import 가 있지만 그 블록은 안 탈 수 있다
+                    # (얼굴 패스 없이 각도 사진만 있는 잡) — 여기서 따로 가져온다.
+                    from ..agents import identity_source as _angle_source
 
+                    # 주소의 정본은 지금 살아 있는 ComfyUI 파드다(자동 기동이 재고 때문에
+                    # 파드를 갈아치우면 id 가 바뀐다). 없으면 설정값으로 떨어진다.
+                    _angle_pod = await _angle_source.active_angle_pod_id(app.state.pool)
                     _angle_spec = _angle.spec_from(s, _angle.AnglePhotos(
                         side_nose_left=angle_photos.get("sh_side"),
                         side_nose_right=angle_photos.get("sh_side_right"),
-                        back=angle_photos.get("sh_back")))
+                        back=angle_photos.get("sh_back")), pod_id=_angle_pod)
                     if _angle_spec is not None:
                         generate_kwargs["angle_swap"] = _angle_spec
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
