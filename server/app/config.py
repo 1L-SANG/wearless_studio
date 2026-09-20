@@ -908,7 +908,12 @@ def load_settings() -> Settings:
         face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
         face_angle_swap_enabled=(os.getenv("FACE_ANGLE_SWAP_ENABLED", "false").lower() == "true"),
         face_angle_backend_url=(os.getenv("FACE_ANGLE_BACKEND_URL") or "").rstrip("/") or None,
-        face_angle_backend_token=os.getenv("FACE_ANGLE_BACKEND_TOKEN") or None,
+        # 각도 파드도 **같은 RunPod 시크릿**(face_render_token)을 물고 뜬다 — 파드 번들의
+        # auth_proxy 가 FACE_RENDER_TOKEN 으로 검사한다. 그래서 값이 따로 없으면 얼굴 쪽
+        # 토큰으로 떨어진다: 새 SSM 시크릿을 만들 이유가 없고, 빈 토큰으로 배포돼 파드가
+        # 전부 401 을 주는 흔한 사고도 같이 막는다.
+        face_angle_backend_token=(os.getenv("FACE_ANGLE_BACKEND_TOKEN")
+                                  or os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None),
         face_angle_seed=_int_env("FACE_ANGLE_SEED", 42),
         angle_autoscale=_flag("ANGLE_AUTOSCALE", "off", {"off", "on"}),
         angle_autoscale_idle_minutes=_int_env("ANGLE_AUTOSCALE_IDLE_MINUTES", 20),

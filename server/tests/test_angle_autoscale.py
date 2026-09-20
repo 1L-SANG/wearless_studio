@@ -204,3 +204,97 @@ def test_spec_falls_back_to_the_configured_address_when_no_pod_exists():
     assert spec.backend.base == "https://fallback.example"
     # 파드도 설정값도 없으면 이 경로를 아예 안 탄다.
     assert face_angle_swap.spec_from(settings(), photos, pod_id=None) is None
+
+
+# ── QA 창구: 상태 라우트의 각도 블록 ──────────────────────────────────────────
+#
+# 배포 뒤 "옆·뒤 컷이 지금 되는가"를 한 번의 호출로 읽는 자리다. 셋이 모두 맞아야 된다:
+# 플래그 · 등록자 각도 사진 · ComfyUI 파드. 하나라도 빠지면 어디가 빠졌는지 보여야 한다.
+
+def angle_status(monkeypatch, *, flag=True, photos=None, pod=None, healthy=True,
+                 autoscale=True, enrollment="e1", model_id="11111111-1111-1111-1111-111111111111"):
+    import contextlib
+    import types
+
+    from app import facemarket
+    from app.agents import identity_source
+
+    class Cur:
+        def __init__(self):
+            self.params = []
+
+        async def execute(self, sql, params=None):
+            self.params.append(params)
+
+        async def fetchone(self):
+            return {"e": enrollment}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return Cur()
+
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield Conn()
+
+    async def fake_photos(_conn, _enrollment_id):
+        return photos if photos is not None else {}
+
+    async def fake_pod(_pool):
+        return pod
+
+    monkeypatch.setattr(facemarket, "get_conn", fake_conn)
+    monkeypatch.setattr(identity_source, "resolve_angle_photos", fake_photos)
+    monkeypatch.setattr(identity_source, "active_angle_pod_id", fake_pod)
+    monkeypatch.setattr(facemarket, "_probe_angle_pod", lambda url, ready: bool(url) and healthy)
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=SimpleNamespace(face_angle_swap_enabled=flag, face_angle_backend_url=None),
+        pool=object(),
+        angle_autoscaler=types.SimpleNamespace(
+            adapter=types.SimpleNamespace(enabled=autoscale)))))
+    return asyncio.run(facemarket._angle_status(request, model_id))
+
+
+def test_qa_sees_ready_only_when_photos_and_pod_are_both_there(monkeypatch):
+    body = angle_status(monkeypatch, photos={"sh_side": "k1", "sh_back": "k2"}, pod="p1")
+    assert body == {"enabled": True, "ready": True, "state": "ready",
+                    "slots": ["sh_back", "sh_side"]}
+
+
+def test_qa_sees_which_slots_the_registrant_actually_has(monkeypatch):
+    """'오른쪽 옆모습만 안 된다'를 바로 읽는 자리 — 옛 등록(v1·v2)은 칸이 비어 있다."""
+    body = angle_status(monkeypatch, photos={"sh_side": "k1"}, pod="p1")
+    assert body["slots"] == ["sh_side"]
+
+
+def test_no_angle_photos_reads_as_offline_not_starting(monkeypatch):
+    """사진이 없으면 파드를 아무리 띄워도 안 된다 — '준비 중'이 영원히 뜨면 안 된다."""
+    assert angle_status(monkeypatch, photos={}, pod="p1") == {
+        "enabled": False, "ready": False, "state": "offline", "slots": []}
+
+
+def test_flag_off_reads_as_offline(monkeypatch):
+    assert angle_status(monkeypatch, flag=False, photos={"sh_back": "k"}, pod="p1")["state"] \
+        == "offline"
+
+
+def test_pod_not_up_yet_reads_as_starting_when_autoscale_will_make_one(monkeypatch):
+    body = angle_status(monkeypatch, photos={"sh_back": "k"}, pod=None, autoscale=True)
+    assert body == {"enabled": True, "ready": False, "state": "starting", "slots": ["sh_back"]}
+
+
+def test_nobody_will_make_a_pod_reads_as_offline(monkeypatch):
+    body = angle_status(monkeypatch, photos={"sh_back": "k"}, pod=None, autoscale=False)
+    assert body["state"] == "offline" and body["ready"] is False
+
+
+def test_pod_exists_but_comfyui_has_not_finished_installing(monkeypatch):
+    """설치 10분 동안 프록시는 200 을 주지만 comfy 는 false 다 — 그동안은 starting."""
+    body = angle_status(monkeypatch, photos={"sh_back": "k"}, pod="p1", healthy=False)
+    assert body["state"] == "starting" and body["ready"] is False
