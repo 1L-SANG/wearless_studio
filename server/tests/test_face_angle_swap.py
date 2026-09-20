@@ -298,19 +298,32 @@ def test_swap_refuses_a_reference_whose_lighting_is_hopeless(no_face, monkeypatc
 # 다른 건 어디에 올리는가뿐이다: 파드는 /upload/image, 서버리스는 요청 본문의 images 배열.
 
 class FakeServerlessHTTP:
-    def __init__(self, body, status=200):
-        self.body, self.status, self.sent = body, status, None
+    """/run 으로 넣고 /status 로 받는 대역. statuses 를 여러 개 주면 폴링을 흉내낸다."""
+
+    def __init__(self, statuses, status=200, run_body=None):
+        self.statuses = list(statuses)
+        self.status = status
+        self.sent = None
+        self.run_body = run_body if run_body is not None else {"id": "job1"}
+        self.status_calls = 0
 
     def post(self, path, json=None):
         self.sent = (path, json)
-        return SimpleNamespace(status_code=self.status, json=lambda: self.body)
+        return SimpleNamespace(status_code=self.status, json=lambda: self.run_body)
+
+    def get(self, path):
+        self.status_calls += 1
+        body = self.statuses[0] if len(self.statuses) == 1 else self.statuses.pop(0)
+        return SimpleNamespace(status_code=200, json=lambda: body)
 
 
-def serverless(body, status=200):
+def serverless(final, status=200, statuses=None, run_body=None):
     backend = angle.ServerlessBackend.__new__(angle.ServerlessBackend)
     backend.base = "https://api.runpod.ai/v2/ep1"
-    backend._client = FakeServerlessHTTP(body, status)
+    backend._client = FakeServerlessHTTP(statuses or [final], status, run_body)
     backend._images = []
+    backend._timeout = 30.0
+    backend._poll = 0.0
     return backend
 
 
@@ -329,7 +342,9 @@ def test_serverless_sends_the_workflow_and_the_images_in_one_request():
     backend.upload(np.full((8, 8), 255, np.uint8), "angle_mask.png", "L")
     out = backend.run({"14": {"class_type": "SaveImage"}})
     path, payload = backend._client.sent
-    assert path == "/runsync"
+    # ★ /runsync 는 90초쯤에서 잘린다(2026-09-21 실측: 세 컷 모두 93초에 IN_PROGRESS).
+    #   한 컷은 190초 안팎이라 **비동기로 넣고 폴링**해야 한다.
+    assert path == "/run"
     assert payload["input"]["workflow"] == {"14": {"class_type": "SaveImage"}}
     # 이름은 워크플로가 참조하는 그 이름이어야 한다 — 어긋나면 ComfyUI 가 입력을 못 찾는다.
     assert [i["name"] for i in payload["input"]["images"]] == ["angle_crop.png", "angle_mask.png"]
@@ -341,7 +356,8 @@ def test_serverless_sends_the_workflow_and_the_images_in_one_request():
 
 @pytest.mark.parametrize("body,status,reason", [
     ({"status": "FAILED", "error": "worker died"}, 200, "backend_error"),
-    ({"status": "IN_QUEUE"}, 200, "backend_error"),          # runsync 가 제한 시간 안에 못 끝냈다
+    ({"status": "TIMED_OUT"}, 200, "backend_error"),
+    ({"status": "CANCELLED"}, 200, "backend_error"),
     ({}, 500, "backend_error"),
     ({"status": "COMPLETED", "output": {"images": []}}, 200, "graph_error"),
     ({"status": "COMPLETED", "output": {"images": [{"type": "s3_url", "data": "https://x"}]}},
@@ -382,3 +398,36 @@ def test_spec_prefers_serverless_over_the_pod():
     keyless = angle.spec_from(
         SimpleNamespace(face_angle_endpoint_id="ep1", face_runpod_api_key=None, **base), photos)
     assert isinstance(keyless.backend, angle.ComfyBackend)
+
+
+def test_serverless_waits_through_queue_and_progress():
+    """★ 한 컷은 190초 안팎이다. 큐·진행 중을 만나면 끝날 때까지 다시 묻는다."""
+    done = {"status": "COMPLETED",
+            "output": {"images": [{"type": "base64", "data": one_pixel_png_b64()}]}}
+    backend = serverless(None, statuses=[{"status": "IN_QUEUE"}, {"status": "IN_PROGRESS"}, done])
+    out = backend.run({"14": {}})
+    assert out.shape == (4, 4, 3)
+    assert backend._client.status_calls == 3
+
+
+def test_serverless_gives_up_when_the_job_never_finishes():
+    """제한 시간을 넘기면 마지막 상태로 실패시킨다 — 영원히 기다리면 잡이 lease 를 잃는다."""
+    backend = serverless(None, statuses=[{"status": "IN_PROGRESS"}])
+    backend._timeout = 0.0
+    with pytest.raises(angle.AngleSwapUnavailable) as err:
+        backend.run({"14": {}})
+    assert err.value.reason == "backend_error"
+
+
+def test_serverless_needs_a_job_id_to_poll():
+    backend = serverless(None, run_body={})
+    with pytest.raises(angle.AngleSwapUnavailable) as err:
+        backend.run({"14": {}})
+    assert err.value.reason == "backend_error"
+
+
+def test_http_timeout_is_per_request_not_per_job():
+    """한 값으로 묶으면 폴링 한 번이 컷 전체 시간을 기다린다 — 요청과 잡의 제한은 다르다."""
+    backend = angle.ServerlessBackend("ep1", "k", timeout=1800.0)
+    assert backend._timeout == 1800.0
+    assert backend._client.timeout.read == 60.0
