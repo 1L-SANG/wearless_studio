@@ -3275,7 +3275,12 @@ async def warm_face_render(request: Request, response: Response,
             if is_verified_real:
                 _wake_opendid(request.app)
                 await _record_holder_warm_ping(cur, user_id=user_id, model_id=model_id)
-            # ② 얼굴 렌더 파드 — 켜진 LoRA 가 있는 모델만(동작을 바꾸지 않는다).
+                # ② 각도 교체 파드 — **등록자 각도 사진이 있는 모델만**. 얼굴 파드와 조건이
+                # 다르다(얼굴은 켜진 LoRA, 각도는 사진). 같이 깨워야 첫 옆·뒤 컷이 콜드스타트를
+                # 물지 않는다 — 안 그러면 셀러는 정면만 먼저 나오고 옆·뒤만 늦는 화면을 본다.
+                await _record_angle_warm_ping(
+                    request, cur, user_id=user_id, model_id=model_id)
+            # ③ 얼굴 렌더 파드 — 켜진 LoRA 가 있는 모델만(동작을 바꾸지 않는다).
             await cur.execute("select to_regclass('public.fm_face_warm_pings') as t")
             if not (await cur.fetchone() or {}).get("t"):
                 await conn.commit()
@@ -3296,6 +3301,46 @@ async def warm_face_render(request: Request, response: Response,
                     (user_id, model_id))
         await conn.commit()
     return Response(status_code=204)
+
+
+async def _record_angle_warm_ping(request: Request, cur, *, user_id: str,
+                                  model_id: str) -> None:
+    """각도 파드 수요 신호 한 줄. 조건이 안 맞거나 표가 없으면 조용히 넘어간다.
+
+    **조건 판정은 여기서만 한다.** 수요 판정(60초 주기 reconciler)은 이 표의 max(pinged_at)
+    하나만 읽으므로, 사진이 없는 등록자의 선택이 파드를 켜는 일이 없다 — 그 파드는 각도
+    사진 없이는 할 일이 없다(no_angle_photo 로 컷만 실패한다).
+    """
+    settings = request.app.state.settings
+    if not getattr(settings, "face_angle_swap_enabled", False):
+        return
+    await cur.execute("select to_regclass('public.fm_angle_warm_pings') as t")
+    if not (await cur.fetchone() or {}).get("t"):
+        return                                   # 마이그 미적용 — 조용히 무시
+    await cur.execute("select current_enrollment_id::text as e from fm_models where id = %s",
+                      (model_id,))
+    enrollment_id = str((await cur.fetchone() or {}).get("e") or "")
+    if not enrollment_id:
+        return
+    from .agents import identity_source
+
+    try:
+        # 이 커서를 그대로 쓴다 — 연결 안에서 커서를 겹쳐 열지 않는다.
+        await cur.execute(identity_source.ANGLE_PHOTO_SQL, (enrollment_id,))
+        photos = identity_source.angle_photos_from_rows(await cur.fetchall())
+    except Exception as exc:  # noqa: BLE001 — 부가 신호다. 실패해도 선택 흐름을 막지 않는다.
+        logger.info("angle warm ping skipped for %s: %r", model_id, exc)
+        return
+    if not photos:
+        return                                   # 옛 등록(동의서 v1·v2) — 옆·뒤를 못 만든다
+    await cur.execute(
+        "select 1 from fm_angle_warm_pings where seller_id = %s "
+        "and pinged_at > now() - make_interval(secs => %s) limit 1",
+        (user_id, FACE_WARM_PING_WINDOW_SECONDS))
+    if await cur.fetchone() is None:             # 60초 안 중복이면 건너뛴다
+        await cur.execute(
+            "insert into fm_angle_warm_pings (seller_id, model_id) values (%s, %s)",
+            (user_id, model_id))
 
 
 async def _record_holder_warm_ping(cur, *, user_id: str, model_id: str) -> None:
@@ -3380,4 +3425,70 @@ async def face_render_status(
         "etaMinutes": (
             face_autoscale.COLD_START_ETA_MINUTES if state == "starting" else None
         ),
+        # 옆·뒷모습 컷은 **다른 파드**를 쓴다(ComfyUI). 한 번의 호출로 둘 다 답한다 —
+        # 갈라 두면 QA 가 "얼굴은 준비됐는데 옆·뒤는 왜 안 되지"를 눈으로 못 본다.
+        "angle": await _angle_status(request, model_id),
     }
+
+
+async def _angle_status(request: Request, model_id: str | None) -> dict:
+    """옆·뒷모습 컷이 지금 가능한가 — 플래그 · 등록자 각도 사진 · ComfyUI 파드.
+
+    enabled 는 플래그만으로 정하지 않는다(얼굴 쪽과 같은 함정): 각도 교체는 **등록자의 각도
+    사진**이 있어야 걸린다. 동의서 2026-09-v3 부터 3칸이 필수라 그 이후 등록은 채워져 있지만,
+    그 전 등록은 비어 있고 그러면 옆·뒤 컷만 no_angle_photo 로 실패한다. 플래그만 보면 그
+    모델에서 "준비 중"이 영영 뜬다.
+
+    slots 는 실제로 올라와 있는 칸이다 — QA 가 "오른쪽 옆모습만 안 된다"를 바로 읽는 자리다.
+    """
+    settings = request.app.state.settings
+    off = {"enabled": False, "ready": False, "state": "offline", "slots": []}
+    if not getattr(settings, "face_angle_swap_enabled", False) or not is_real_model_id(model_id):
+        return off
+
+    from .agents import face_angle_swap, identity_source
+
+    async with get_conn(request) as conn, conn.cursor() as cur:
+        await cur.execute("select current_enrollment_id::text as e from fm_models where id = %s",
+                          (str(model_id),))
+        enrollment_id = str((await cur.fetchone() or {}).get("e") or "")
+        if not enrollment_id:
+            return off
+        try:
+            photos = await identity_source.resolve_angle_photos(conn, enrollment_id)
+        except Exception as exc:  # noqa: BLE001 — 조회 실패는 "아직 없음"으로 본다
+            logger.warning("angle photo lookup failed for %s: %r", model_id, exc)
+            return off
+    if not photos:
+        return off
+
+    pool = getattr(request.app.state, "pool", None)
+    pod_id = await identity_source.active_angle_pod_id(pool) if pool else None
+    url = face_angle_swap.pod_backend_url(pod_id) or getattr(
+        settings, "face_angle_backend_url", None)
+    ready = False
+    if url:
+        from .services.angle_autoscale import angle_health_url, angle_ready
+
+        ready = await asyncio.to_thread(_probe_angle_pod, angle_health_url(url), angle_ready)
+    if ready:
+        state = "ready"
+    else:
+        adapter = getattr(request.app.state, "angle_autoscaler", None)
+        autoscale_on = adapter is not None and getattr(adapter.adapter, "enabled", False)
+        # 파드가 없거나 아직 안 떴다 — 자동 켜기가 켜져 있으면 곧 만들어진다.
+        state = "starting" if (url or autoscale_on) else "offline"
+    return {"enabled": True, "ready": ready, "state": state, "slots": sorted(photos)}
+
+
+def _probe_angle_pod(health_url: str | None, ready_fn) -> bool:
+    """ComfyUI 파드 /healthz 한 번. 실패는 '안 떠 있다'이지 에러가 아니다."""
+    if not health_url:
+        return False
+    try:
+        import httpx
+
+        res = httpx.get(health_url, timeout=5.0)
+        return res.status_code == 200 and ready_fn(res.json())
+    except Exception:  # noqa: BLE001
+        return False

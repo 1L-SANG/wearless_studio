@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -128,17 +129,66 @@ def pod_backend_url(pod_id: str | None) -> str | None:
     return f"https://{pod_id}-8000.proxy.runpod.net/render" if pod_id else None
 
 
+def _face_ready(payload: dict) -> bool:
+    """얼굴 렌더 서비스의 준비 판정 — 베이스 가중치가 올라왔는가."""
+    from app.agents.face_identity import healthz_ready
+
+    return healthz_ready(payload)
+
+
+@dataclass(frozen=True)
+class PodProfile:
+    """한 종류의 파드가 **무엇이 다른가**만 모아 둔 것. 기동·종료·생성·알림 로직은 전부 같다.
+
+    얼굴 렌더(diffusers 렌더 서비스)와 각도 교체(ComfyUI)는 파드 이미지·부팅 스크립트·
+    토큰 주입 방식이 같고, 다른 건 **코드 묶음 · 서비스 주소 · 준비 판정 · 설정 이름**뿐이다.
+    그래서 어댑터를 복사하지 않고 이 프로필만 갈아 끼운다.
+    """
+
+    #: RunPod 파드 이름. 계정 콘솔에서 무엇인지 알아볼 수 있게.
+    name: str
+    #: 로그 접두사. 같은 줄을 두 파드가 쓰면 어느 쪽인지 못 읽는다.
+    log_prefix: str
+    #: 자동 켜기 스위치 · 파드 id 초기값 · 서비스 주소 폴백 · 코드 묶음 sha 의 설정 이름.
+    enabled_attr: str
+    pod_id_attr: str
+    backend_url_attr: str
+    code_version_attr: str
+    #: 코드 묶음 R2 키. CI 가 배포할 때마다 그 커밋 sha 로 올린다(deploy-server.yml).
+    code_key_fmt: str
+    #: 파드에 토큰을 넣어 줄 env 이름. 값은 언제나 RunPod Secret 참조다.
+    token_env: str
+    #: 파드 id → 서비스 주소. None 이면 그 파드로는 부를 수 없다.
+    url_for: Callable[[str | None], str | None]
+    #: 서비스 주소 → /healthz 주소.
+    health_url: Callable[[object], str | None]
+    #: /healthz 응답 → 진짜 준비됐는가. 워커의 대기 규칙과 같아야 한다.
+    ready: Callable[[dict], bool]
+    #: 파드 id 를 적어 두는 표. 어댑터가 아니라 표가 정본이다.
+    pod_table: str = "fm_face_render_pod"
+
+
 @dataclass(frozen=True)
 class RunpodTarget:
     pod_id: str
 
 
 class FaceRenderPodStore:
-    """현재 파드 id 의 DB 정본(fm_face_render_pod). 실패는 삼키지 않고 올린다 —
-    어댑터가 그걸 보고 설정값으로 폴백할지 정한다."""
+    """현재 파드 id 의 DB 정본(기본 fm_face_render_pod). 실패는 삼키지 않고 올린다 —
+    어댑터가 그걸 보고 설정값으로 폴백할지 정한다.
 
-    def __init__(self, pool):
+    표 이름은 **코드가 정한 값만** 받는다(아래 _TABLES). 여기로 오는 문자열이 곧 SQL 이라,
+    설정·요청에서 온 이름을 그대로 끼우면 그 자리가 주입 구멍이 된다.
+    """
+
+    #: 이 저장소가 다룰 수 있는 표. 스키마가 같아야 한다(pod_id·gpu_type·model_id·retired_at).
+    _TABLES = frozenset({"fm_face_render_pod", "fm_angle_render_pod"})
+
+    def __init__(self, pool, table: str = "fm_face_render_pod"):
+        if table not in self._TABLES:
+            raise ValueError(f"unknown pod table: {table!r}")
         self._pool = pool
+        self._table = table
 
     async def get_active(self, model_id: str | None = None) -> str | None:
         """이 모델의 살아 있는 파드. **파드 하나 = LoRA 하나**(2026-09-14).
@@ -147,11 +197,11 @@ class FaceRenderPodStore:
         떨어진다. 남의 모델 파드는 고르지 않는다 — 그 파드는 다른 LoRA 를 물고 있어 409 만 준다.
         """
         async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute("select to_regclass('public.fm_face_render_pod') as t")
+            await cur.execute("select to_regclass(%s) as t", (f"public.{self._table}",))
             if not (await cur.fetchone() or {}).get("t"):
                 return None            # 마이그 미적용 환경 — 설정값으로 간다
             await cur.execute(
-                "select pod_id from fm_face_render_pod where retired_at is null "
+                f"select pod_id from {self._table} where retired_at is null "  # noqa: S608 — _TABLES 고정값
                 "and (model_id = %s or model_id is null) "
                 "order by (model_id is null), created_at desc limit 1",
                 (model_id,))
@@ -163,11 +213,12 @@ class FaceRenderPodStore:
         전부 퇴역시키면 모델별 파드를 나란히 못 쓴다."""
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(
-                "update fm_face_render_pod set retired_at = now() "
+                f"update {self._table} set retired_at = now() "  # noqa: S608 — _TABLES 고정값
                 "where retired_at is null and pod_id <> %s "
                 "and coalesce(model_id, '') = coalesce(%s, '')", (pod_id, model_id))
             await cur.execute(
-                "insert into fm_face_render_pod (pod_id, gpu_type, model_id) values (%s, %s, %s) "
+                f"insert into {self._table} (pod_id, gpu_type, model_id) "  # noqa: S608
+                "values (%s, %s, %s) "
                 "on conflict (pod_id) do update set retired_at = null, "
                 "gpu_type = excluded.gpu_type, model_id = excluded.model_id",
                 (pod_id, gpu_type, model_id))
@@ -176,7 +227,7 @@ class FaceRenderPodStore:
     async def retire(self, pod_id: str) -> None:
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(
-                "update fm_face_render_pod set retired_at = now() "
+                f"update {self._table} set retired_at = now() "  # noqa: S608 — _TABLES 고정값
                 "where pod_id = %s and retired_at is null", (pod_id,))
             await conn.commit()
 
@@ -225,6 +276,22 @@ async def face_demand_snapshot(conn) -> DemandSnapshot:
     )
 
 
+#: 얼굴 패스 파드(diffusers 렌더 서비스). 이 파일의 상수들이 원래 가리키던 그 파드다.
+FACE_PROFILE = PodProfile(
+    name="face-render",
+    log_prefix="face autoscale",
+    enabled_attr="face_autoscale",
+    pod_id_attr="face_runpod_pod_id",
+    backend_url_attr="face_identity_backend_url",
+    code_version_attr="face_render_code_version",
+    code_key_fmt=CODE_TARBALL_KEY_FMT,
+    token_env="FACE_RENDER_TOKEN",
+    url_for=pod_backend_url,
+    health_url=lambda url: _health_url(url),
+    ready=_face_ready,
+)
+
+
 class RunpodAutoscaleAdapter:
     """SamAutoscaleAdapter 와 같은 표면(discover/describe/set_desired/notify)의 RunPod 판.
 
@@ -232,19 +299,23 @@ class RunpodAutoscaleAdapter:
     자기 맥락에서 삼킨다(sam 어댑터와 같은 계약).
     """
 
-    def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None,
-                 pod_store=None, code_url_provider=None, code_head_provider=None):
+    def __init__(self, settings, *, profile=None, enabled_attr=None, client=None,
+                 health_client=None, pod_store=None, code_url_provider=None,
+                 code_head_provider=None):
         self._settings = settings
-        self.enabled = getattr(settings, enabled_attr, "off") == "on"
-        self._pod_id = (getattr(settings, "face_runpod_pod_id", None) or "").strip() or None
+        self._profile = profile if profile is not None else FACE_PROFILE
+        # enabled_attr 은 프로필보다 우선한다 — 호출자가 스위치만 바꿔 쓰던 기존 계약을 남긴다.
+        self.enabled = getattr(settings, enabled_attr or self._profile.enabled_attr, "off") == "on"
+        self._pod_id = (getattr(settings, self._profile.pod_id_attr, None) or "").strip() or None
         self._api_key = (getattr(settings, "face_runpod_api_key", None) or "").strip() or None
         self._client = client
         self._health_client = health_client
-        #: 현재 파드 id 의 정본. 없으면 설정값(FACE_RUNPOD_POD_ID)으로 폴백한다.
+        #: 현재 파드 id 의 정본. 없으면 설정값(<프로필>_POD_ID)으로 폴백한다.
         self._pod_store = pod_store
         self._created_this_cycle = False
         #: 파드에 넣어 줄 코드 묶음(키, sha). 없으면 파드가 코드를 못 받는다 → 알림 대상.
-        self._code_sha = (getattr(settings, "face_render_code_version", None) or "").strip() or None
+        self._code_sha = (
+            getattr(settings, self._profile.code_version_attr, None) or "").strip() or None
         self._code_url_provider = code_url_provider
         self._code_head_provider = code_head_provider
         self._last_code_alert: float | None = None
@@ -304,7 +375,7 @@ class RunpodAutoscaleAdapter:
         if self._target is not None:
             return self._target
         if not self._api_key:
-            log.error("face autoscale: RUNPOD_API_KEY not configured")
+            log.error("%s: RUNPOD_API_KEY not configured", self._profile.log_prefix)
             return None
         pod_id = None
         if self._pod_store is not None:
@@ -315,7 +386,7 @@ class RunpodAutoscaleAdapter:
             # 여기서 None 을 주면 공용 reconciler 가 ECS 의 "서비스 없음" 으로 읽고 자동 켜기를
             # 영구 비활성한다 — 2026-09-11 운영에서 실제로 그렇게 꺼졌다(파드 행 0개).
             # 그래서 **빈 타깃**을 준다: describe 는 0/0, set_desired(1) 이 그때 만든다.
-            log.info("face autoscale: 등록된 파드가 없다 — 수요가 생기면 새로 만든다")
+            log.info("%s: 등록된 파드가 없다 — 수요가 생기면 새로 만든다", self._profile.log_prefix)
             self._target = RunpodTarget("")
             return self._target
         self._target = RunpodTarget(pod_id)
@@ -353,8 +424,9 @@ class RunpodAutoscaleAdapter:
         워커도 같은 순서다(face_identity.resolve_backend: spec.backend_url → 설정값).
         어댑터만 env 를 앞에 두면 파드를 갈아탄 뒤 헬스와 렌더가 서로 다른 파드를 보게 된다.
         """
-        derived = pod_backend_url(pod_id)
-        return _health_url(derived or getattr(self._settings, "face_identity_backend_url", None))
+        derived = self._profile.url_for(pod_id)
+        fallback = getattr(self._settings, self._profile.backend_url_attr, None)
+        return self._profile.health_url(derived or fallback)
 
     async def health_ok(self, health_url: str | None = None) -> bool:
         """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음).
@@ -382,9 +454,7 @@ class RunpodAutoscaleAdapter:
             return False
         # 준비 = 베이스가 올라옴(base_loaded). 워커의 wait_for_backend 와 같은 규칙이어야 한다 —
         # 갈리면 워커는 렌더하는데 여기서는 "안 떴다"고 보고 파드를 새로 만든다.
-        from app.agents.face_identity import healthz_ready
-
-        return healthz_ready(res.json())
+        return self._profile.ready(res.json())
 
     async def set_desired(self, target: RunpodTarget | None, count: int) -> None:
         """0 이면 stop(terminate 아님 — 같은 호스트에 자리가 남아 있으면 stop→start 가 제일 빠르다).
@@ -397,7 +467,7 @@ class RunpodAutoscaleAdapter:
             if target is None or not target.pod_id:
                 return          # 없는 파드는 끌 것도 없다
             await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/stop")
-            log.info("face autoscale: pod %s stop", target.pod_id)
+            log.info("%s: pod %s stop", self._profile.log_prefix, target.pod_id)
             return
         if target is not None and target.pod_id:
             try:
@@ -406,13 +476,13 @@ class RunpodAutoscaleAdapter:
                     # 켜기 직전에 코드 URL 을 새로 넣는다 — 이전 URL 은 이미 만료됐을 수 있다.
                     await asyncio.to_thread(
                         self._patch_sync, f"/pods/{target.pod_id}",
-                        {"env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **code_env}})
+                        {"env": {self._profile.token_env: POD_TOKEN_REF, **code_env}})
                 await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/start")
-                log.info("face autoscale: pod %s start", target.pod_id)
+                log.info("%s: pod %s start", self._profile.log_prefix, target.pod_id)
                 return
             except Exception as exc:  # noqa: BLE001 — 재고 문제면 아래에서 새로 만든다
-                log.warning("face autoscale: start failed for %s (%r) — 새 파드로 간다",
-                            target.pod_id, exc)
+                log.warning("%s: start failed for %s (%r) — 새 파드로 간다",
+                            self._profile.log_prefix, target.pod_id, exc)
         if self._created_this_cycle:
             raise RuntimeError("pod create already attempted this cycle")
         self._created_this_cycle = True
@@ -432,7 +502,7 @@ class RunpodAutoscaleAdapter:
         if not self._code_sha or self._code_url_provider is None:
             self._alert_code_missing("코드 묶음 sha/공급자가 없다")
             return {}
-        key = code_tarball_key(self._code_sha)
+        key = self._profile.code_key_fmt.format(sha=self._code_sha)
         content_sha = self._code_content_sha(key)
         if not content_sha:
             self._alert_code_missing(f"R2 에 코드 묶음이 없거나 메타가 없다 ({key})")
@@ -484,7 +554,7 @@ class RunpodAutoscaleAdapter:
         try:
             meta = head(key) or {}
         except Exception as exc:  # noqa: BLE001 — 없으면 코드 env 를 안 넣는다(지어내지 않는다)
-            log.info("face autoscale: 코드 묶음 head 실패 (%s)", type(exc).__name__)
+            log.info("%s: 코드 묶음 head 실패 (%s)", self._profile.log_prefix, type(exc).__name__)
             return None
         value = str(meta.get("sha256") or "").strip().lower()
         return value or None
@@ -496,8 +566,8 @@ class RunpodAutoscaleAdapter:
                 and now - self._last_code_alert < CODE_ALERT_DEBOUNCE_SECONDS):
             return
         self._last_code_alert = now
-        log.critical("face autoscale: %s — 새로 만드는 파드는 코드를 받지 못한다. "
-                     "배포의 '얼굴 렌더 코드 묶음 업로드' 단계를 확인하세요.", detail)
+        log.critical("%s: %s — 새로 만드는 파드는 코드를 받지 못한다. "
+                     "배포의 코드 묶음 업로드 단계를 확인하세요.", self._profile.log_prefix, detail)
 
     def begin_cycle(self) -> None:
         """reconciler 한 주기의 시작 — 생성 1회 제한을 리셋한다."""
@@ -508,7 +578,7 @@ class RunpodAutoscaleAdapter:
         errors: list[str] = []
         for gpu_type, price in GPU_PRIORITY:
             body = {
-                "name": "face-render",
+                "name": self._profile.name,
                 "imageName": POD_IMAGE,
                 "cloudType": "SECURE",
                 "containerDiskInGb": POD_DISK_GB,
@@ -517,7 +587,7 @@ class RunpodAutoscaleAdapter:
                 "gpuTypeIds": [gpu_type],
                 "gpuCount": 1,
                 "dockerStartCmd": list(POD_ARGS),
-                "env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **self._code_env()},
+                "env": {self._profile.token_env: POD_TOKEN_REF, **self._code_env()},
             }
             try:
                 created = await asyncio.to_thread(self._post_json_sync, "/pods", body)
@@ -528,7 +598,7 @@ class RunpodAutoscaleAdapter:
             if not pod_id:
                 errors.append(f"{gpu_type}: id 없음")
                 continue
-            log.info("face autoscale: 새 파드 %s (%s, $%.2f/h)", pod_id, gpu_type, price)
+            log.info("%s: 새 파드 %s (%s, $%.2f/h)", self._profile.log_prefix, pod_id, gpu_type, price)
             if self._pod_store is not None:
                 await self._pod_store.set_active(
                     pod_id, gpu_type, getattr(self, "_lora_model_id", None))
@@ -543,7 +613,8 @@ class RunpodAutoscaleAdapter:
         try:
             await asyncio.to_thread(self._delete_sync, f"/pods/{pod_id}")
         except Exception:  # noqa: BLE001
-            log.warning("face autoscale: 이전 파드 %s terminate 실패", pod_id, exc_info=False)
+            log.warning("%s: 이전 파드 %s terminate 실패", self._profile.log_prefix, pod_id,
+                        exc_info=False)
         if self._pod_store is not None:
             await self._pod_store.retire(pod_id)
 

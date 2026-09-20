@@ -35,6 +35,11 @@ from .services.face_autoscale import (
     RunpodAutoscaleAdapter,
     face_demand_snapshot,
 )
+from .services.angle_autoscale import (
+    ANGLE_PROFILE,
+    POD_TABLE as ANGLE_POD_TABLE,
+    angle_demand_snapshot,
+)
 from .services.sam_autoscale import SamAutoscaleAdapter
 from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
@@ -143,6 +148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         opendid_autoscaler = None
         detail_worker_autoscaler = None
         face_autoscaler = None
+        angle_autoscaler = None
         subscription_biller = None
         subscription_expirer = None
         if pool is not None:
@@ -269,6 +275,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if face_adapter.enabled:
                     face_autoscaler = app.state.face_autoscaler
                     await face_autoscaler.start()
+                # 각도 교체 GPU(ComfyUI 파드) — 같은 어댑터에 프로필만 갈아 끼운다.
+                # 수요 = 옆·뒤를 만드는 잡만(정면 컷은 이 파드를 켜지 않는다).
+                # 코드 묶음 키만 다르다(comfy_angle/<sha>.tgz) — 공급자는 얼굴 쪽과 같다.
+                angle_adapter = RunpodAutoscaleAdapter(
+                    settings,
+                    profile=ANGLE_PROFILE,
+                    pod_store=(FaceRenderPodStore(pool, ANGLE_POD_TABLE)
+                               if pool is not None else None),
+                    code_url_provider=(
+                        (lambda key: _face_r2.preview_url(key, expires=900))
+                        if _face_r2 is not None else None),
+                    code_head_provider=(
+                        (lambda key: (_face_r2.head(key) or {}).get("metadata"))
+                        if _face_r2 is not None else None),
+                )
+                app.state.angle_autoscaler = SamAutoscaler(
+                    app, angle_adapter,
+                    demand_fn=lambda repo, conn: angle_demand_snapshot(conn),
+                    idle_attr="angle_autoscale_idle_minutes",
+                    name="comfy-angle", lock_key="angle_autoscaler",
+                    start_grace_attr="angle_autoscale_start_grace_minutes")
+                if angle_adapter.enabled:
+                    angle_autoscaler = app.state.angle_autoscaler
+                    await angle_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -296,6 +326,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await detail_worker_autoscaler.stop()
         if face_autoscaler is not None:
             await face_autoscaler.stop()
+        if angle_autoscaler is not None:
+            await angle_autoscaler.stop()
         if subscription_biller is not None:
             await subscription_biller.stop()
         if subscription_expirer is not None:
@@ -368,6 +400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.dispatcher = None
     app.state.detail_worker_autoscaler = None
     app.state.face_autoscaler = None
+    app.state.angle_autoscaler = None
     # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
     # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
     from .services.canonical_reference import load as _canonical_load

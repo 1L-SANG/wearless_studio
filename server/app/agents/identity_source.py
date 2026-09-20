@@ -25,7 +25,8 @@ import contextlib
 import logging
 import uuid
 
-from ..facemarket_photos import ASSET_SOURCE_SLOTS, REFSET_SLOTS, resolve_photo_rows
+from ..facemarket_photos import (ASSET_SOURCE_SLOTS, REFSET_SLOTS,
+                                 canonical_photo_slot, resolve_photo_rows)
 
 
 log = logging.getLogger("wearless.identity_source")
@@ -173,6 +174,41 @@ async def resolve_real_model_assets(
         if ref is None:
             return None
         out.append(ref)
+    return out
+
+
+#: 옆·뒷모습 컷의 머리 교체에 쓸 등록 사진 칸. 얼굴 자산(fm_model_assets)이 아니라 등록 사진
+#: (fm_biometric_enrollment_photos) 에서 바로 읽는다 — 이 각도는 얼굴 그리드에 안 들어간다.
+#: sh_side 는 "코가 화면 왼쪽", sh_side_right 는 그 반대다(facemarket_photos 주석).
+ANGLE_PHOTO_SLOTS = ("sh_side", "sh_side_right", "sh_back")
+
+
+async def resolve_angle_photos(conn, enrollment_id: str) -> dict[str, str]:
+    """등록 사진에서 옆·뒤 칸의 R2 키를 찾는다 — {칸 이름: r2_key}. 없는 칸은 빠진다.
+
+    얼굴 패스와 달리 여기서는 **한 장이라도 있으면 그 각도는 만들 수 있다.** 그래서 전부 있어야
+    한다는 fail-closed 규칙을 걸지 않는다(칸이 빈 각도의 컷만 실패로 끝난다).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(ANGLE_PHOTO_SQL, (enrollment_id,))
+        rows = await cur.fetchall()
+    return angle_photos_from_rows(rows)
+
+
+#: 등록 사진 행 조회. 커서를 이미 들고 있는 호출자(워밍 핑)가 같은 질의를 쓰도록 빼 둔다 —
+#: 연결 안에서 커서를 겹쳐 열지 않게 한다.
+ANGLE_PHOTO_SQL = (
+    "select angle, r2_key from fm_biometric_enrollment_photos where enrollment_id = %s")
+
+
+def angle_photos_from_rows(rows) -> dict[str, str]:
+    """등록 사진 행 → {칸 이름: r2_key}. 옛 이름(face05·side)도 SLOT_CANDIDATES 로 풀린다."""
+    out: dict[str, str] = {}
+    for slot in ANGLE_PHOTO_SLOTS:
+        for row in resolve_photo_rows(rows, (slot,)):
+            key = str(row.get("r2_key") or "").strip()
+            if key:
+                out[canonical_photo_slot(slot)] = key
     return out
 
 
@@ -413,6 +449,27 @@ async def _active_face_backend_url(conn, model_id: str | None = None) -> str | N
         log.warning("face render pod lookup failed: %r", exc)
         return None
     return pod_backend_url((row or {}).get("pod_id"))
+
+
+async def active_angle_pod_id(pool) -> str | None:
+    """지금 등록된 각도 교체(ComfyUI) 파드 id. 없으면 None → 설정값 폴백.
+
+    얼굴 파드와 달리 **모델을 가리지 않는다** — 각도 교체는 등록자별 LoRA 를 물지 않아
+    (BFS Head 는 사람과 무관한 일반 LoRA) 어느 잡이든 같은 파드를 쓴다.
+    """
+    try:
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_angle_render_pod') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return None
+            await cur.execute(
+                "select pod_id from fm_angle_render_pod where retired_at is null "
+                "order by created_at desc limit 1")
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 설정값으로 간다
+        log.warning("angle pod lookup failed: %r", exc)
+        return None
+    return str((row or {}).get("pod_id") or "").strip() or None
 
 
 def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:

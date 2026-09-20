@@ -32,7 +32,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import face_identity, pose_crop
+from . import face_angle_swap, face_identity, pose_crop
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -1394,6 +1394,8 @@ async def generate(
     face_pass_outcome: dict | None = None,
     # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.
     face_pass_url_provider=None,
+    # 옆·뒷모습 컷 전용 — 등록자 각도 사진 + ComfyUI 백엔드(face_angle_swap.spec_from). 없으면 기존 동작.
+    angle_swap: face_angle_swap.AngleSwapSpec | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1437,7 +1439,9 @@ async def generate(
             hair_profile=hair_profile,
             face_shape_profile=face_shape_profile,
             qc_corrections=qc_corrections,
-            face_pass=_face_identity_spec(settings, spec, clothing_type, face_identity_spec) is not None,
+            # 각도 교체 컷은 얼굴 패스를 안 탄다 — 옆모습을 3/4 로 바꾸지 않고 진짜 옆모습을 주문한다.
+            face_pass=(_face_identity_spec(settings, spec, clothing_type, face_identity_spec) is not None
+                       and _angle_swap_direction(spec, clothing_type, angle_swap) is None),
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
     if confirmed_prompt_input is not None:
@@ -1454,16 +1458,39 @@ async def generate(
     image, mime = res.image, res.mime
     # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
     # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
-    identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
-    if identity is not None:
-        image, mime = await face_identity.apply_face_pass(
-            settings, image, mime, identity, outcome=face_pass_outcome,
-            url_provider=face_pass_url_provider)
+    angle_direction = _angle_swap_direction(spec, clothing_type, angle_swap)
+    if angle_direction is not None:
+        # 옆·뒤 — Qwen LoRA 는 이 각도를 못 한다(옆 yaw>0.65 건너뜀 · 뒤 얼굴 없음).
+        image, mime = await face_angle_swap.swap(
+            image, mime, direction=angle_direction, photos=angle_swap.photos,
+            backend=angle_swap.backend, seed=angle_swap.seed,
+            model_dir=getattr(settings, "fm_face_qc_dir", None), outcome=face_pass_outcome)
+    else:
+        identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
+        if identity is not None:
+            image, mime = await face_identity.apply_face_pass(
+                settings, image, mime, identity, outcome=face_pass_outcome,
+                url_provider=face_pass_url_provider)
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
             settings, image, mime, clothing_type
         )
     return image, mime
+
+
+def _angle_swap_direction(spec: dict, clothing_type, angle_swap) -> str | None:
+    """이 컷을 각도 교체 경로로 보낼까 — 착용컷 · 옆/뒷모습 · 각도 사진 준비됨."""
+    if angle_swap is None:
+        return None
+    if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
+        return None
+    direction = face_angle_swap.direction_of(spec)
+    if direction is None:
+        return None
+    # 하의 medium 처럼 머리가 프레임 밖인 컷은 바꿀 머리가 없다.
+    if spec.get("shot") == "medium" and _is_bottom(clothing_type) or spec.get("faceExposure") is None:
+        return None
+    return direction
 
 
 def _face_identity_spec(settings, spec: dict, clothing_type,

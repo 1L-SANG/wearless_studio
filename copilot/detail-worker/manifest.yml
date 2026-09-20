@@ -71,6 +71,13 @@ variables:
   FACE_IDENTITY_ENABLED: "true"
   # 렌더 URL 은 DB(fm_face_render_pod)의 현재 파드에서 유도한다 — 워커는 잡마다 그 값을 받는다
   # (FaceIdentitySpec.backend_url). 여기 박아 두면 파드를 갈아탄 뒤 죽은 주소로 렌더를 보낸다.
+  # ── 옆·뒷모습 컷 머리 교체 — 꺼진 채로 커밋. api 와 **같이** 켜야 한다.
+  # 파드 기동/종료는 api 쪽 reconciler 한 곳이 맡는다(여기엔 ANGLE_AUTOSCALE 를 두지 않는다).
+  # ComfyUI 주소도 DB(fm_angle_render_pod)의 현재 파드에서 유도한다 — 잡마다 다시 묻는다.
+  # 토큰은 FACE_IDENTITY_BACKEND_TOKEN 으로 떨어진다(같은 RunPod 시크릿 — config.py).
+  FACE_ANGLE_SWAP_ENABLED: "false"
+  # 서버리스 엔드포인트 id — api 와 **같은 값**이어야 한다. 갈리면 워커가 다른 곳으로 컷을 보낸다.
+  FACE_ANGLE_ENDPOINT_ID: ""
   GENEXAMPLE_BG_ENABLED: "true"
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"
