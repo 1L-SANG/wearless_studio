@@ -198,7 +198,7 @@ async def _normalize_detail_openai_refs(prepared, model: str):
 
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
-                    angle_photos=None):
+                    angle_photos=None, selected_model_id=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -337,9 +337,14 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     from ..agents import identity_source as _identity_source
 
                     # 파드 하나 = LoRA 하나다 — **이 모델의 파드**를 묻는다(남의 파드는 409 만 준다).
+                    # ★ selected_model_id 는 **인자로 받는다**. 예전에는 이 람다가 바깥 함수의
+                    #   이름을 잡는 것처럼 쓰여 있었는데 그 이름은 여기(_gen_cuts)에 없다 —
+                    #   람다가 실제로 불리는 순간 NameError 로 컷이 죽었다(2026-09-21 운영:
+                    #   이미지를 다 만든 뒤 터져서 컷 6장이 요금만 쓰고 버려졌다).
+                    _model_id = selected_model_id
                     generate_kwargs["face_pass_url_provider"] = (
                         lambda: _identity_source.active_face_backend_url(
-                            app.state.pool, selected_model_id))
+                            app.state.pool, _model_id))
                 # 옆·뒷모습 컷은 얼굴 패스 대신 각도 교체로 간다(ComfyUI + 등록자 각도 사진).
                 # 사진이나 파드 주소가 없으면 키를 안 넣는다 = 기존 동작 그대로.
                 if real_identity_attached and angle_photos:
@@ -1870,6 +1875,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             _gen_cuts_kwargs["face_shape_profile"] = face_shape_profile
         if fm_lora_spec is not None:
             _gen_cuts_kwargs["face_identity_spec"] = fm_lora_spec
+            # 얼굴 패스가 물을 파드는 **이 모델의 것**이어야 한다(파드 하나 = LoRA 하나).
+            _gen_cuts_kwargs["selected_model_id"] = selected_model_id
         # 옆·뒷모습 컷용 등록자 각도 사진(위에서 읽어 둔 바이트). 없으면 키를 생략한다.
         if real_angle_photos:
             _gen_cuts_kwargs["angle_photos"] = real_angle_photos
