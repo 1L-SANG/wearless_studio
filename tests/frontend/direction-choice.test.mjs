@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
+import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
 import {
   DIRECTION_CHOICES,
   directionChoiceFromSpec,
@@ -61,5 +62,43 @@ test('sideStyle 없는 옛 side 카드는 옆모습으로 읽는다', () => {
 test('방향이 없는 카드는 정면으로 읽는다', () => {
   for (const block of [{}, null, undefined, { direction: 'mirror' }]) {
     assert.equal(directionChoiceFromSpec(block), 'front');
+  }
+});
+
+test('예시 방향 호환은 side 의 하위 갈래까지 본다', () => {
+  // 사선 카드가 90도 옆모습 사진의 포즈를 물려받으면 베이스가 90도로 나오고, 사선은
+  // 각도 교체를 건너뛰므로 얼굴 패스가 90도 머리에 얼굴을 그린다. direction 만으로는
+  // 둘이 구분되지 않는다 — 둘 다 'side' 다.
+  const profile = { cutType: 'horizon', direction: 'side', sideStyle: 'profile' };
+  const threeQuarter = { cutType: 'horizon', direction: 'side', sideStyle: 'threeQuarter' };
+  const card = (sideStyle) => ({ cutType: 'horizon', direction: 'side', sideStyle });
+
+  assert.equal(poseExampleDirectionCompatible(threeQuarter, card('threeQuarter')), true);
+  assert.equal(poseExampleDirectionCompatible(profile, card('profile')), true);
+  assert.equal(poseExampleDirectionCompatible(profile, card('threeQuarter')), false);
+  assert.equal(poseExampleDirectionCompatible(threeQuarter, card('profile')), false);
+});
+
+test('sideStyle 없는 옛 side 예시는 옆모습으로 읽는다', () => {
+  // 이 값이 생기기 전 발행분은 전부 완전 옆모습이었다. 서버 _side_style_of 와 같은 기본값.
+  const legacy = { cutType: 'horizon', direction: 'side' };
+  assert.equal(poseExampleDirectionCompatible(legacy, {
+    cutType: 'horizon', direction: 'side', sideStyle: 'profile',
+  }), true);
+  assert.equal(poseExampleDirectionCompatible(legacy, {
+    cutType: 'horizon', direction: 'side', sideStyle: 'threeQuarter',
+  }), false);
+  // sideStyle 을 아예 안 넘긴 호출부도 옆모습으로 본다.
+  assert.equal(poseExampleDirectionCompatible(legacy, {
+    cutType: 'horizon', direction: 'side',
+  }), true);
+});
+
+test('front·back 은 sideStyle 과 무관하다', () => {
+  for (const direction of ['front', 'back']) {
+    assert.equal(poseExampleDirectionCompatible(
+      { cutType: 'horizon', direction, sideStyle: null },
+      { cutType: 'horizon', direction, sideStyle: 'threeQuarter' },
+    ), true, direction);
   }
 });

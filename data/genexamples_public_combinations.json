@@ -132,6 +132,48 @@
       "shot": "detail",
       "clothingType": "outer",
       "gender": null
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "top",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "bottom",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "outer",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "dress",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "top",
+      "gender": "men"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "bottom",
+      "gender": "men"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "full",
+      "clothingType": "outer",
+      "gender": "men"
     }
   ]
 }

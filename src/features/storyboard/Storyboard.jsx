@@ -1174,7 +1174,7 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
+export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
   const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
@@ -1187,11 +1187,12 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
       clothingType,
       gender,
       direction,
+      sideStyle,
       appendSetOnly: cut !== 'product',
       appendMirror: includeMirrorExamples && galleryCut === 'styling',
     }), identityKind,
-    { cutType: galleryCut, direction, shot: shotVal, refScope, pose: 'auto' },
-  ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction,
+    { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope, pose: 'auto' },
+  ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, sideStyle,
     includeMirrorExamples, identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
@@ -1203,6 +1204,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
     && poseExampleDirectionCompatible(selectedExample, {
       cutType: selectedExample?.cutType || cut,
       direction,
+      sideStyle,
     });
   const selectedStatus = conditionStatus === 'valid'
     && refScope === 'pose' && !selectedPoseCompatible
@@ -1230,7 +1232,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   const selectFirstAvailable = () => {
     const first = refScope === 'pose'
       ? examples.find((example) => (example.variants || []).includes('pose')
-        && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction }))
+        && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction, sideStyle }))
       : examples[0];
     if (first) onExampleChange?.(first.id, refScope);
   };
@@ -1240,6 +1242,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
     const poseCompatible = poseExampleDirectionCompatible(example, {
       cutType: example.cutType || cut,
       direction,
+      sideStyle,
     });
     const poseRequired = refScope === 'pose';
     const poseUnavailable = poseRequired && (!variants.includes('pose') || !poseCompatible);
@@ -1314,6 +1317,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
                 clothingType,
                 gender,
                 direction,
+                sideStyle,
                 appendSetOnly: true,
                 appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
@@ -1579,7 +1583,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   // 변환은 lib/directionChoice 한 곳에서만 한다 — 에디터도 같은 모듈을 쓴다.
   const onDirectionChange = (choice) => onChange((current) => {
     const patch = specFromDirectionChoice(choice);
-    const { direction } = patch;
+    const { direction, sideStyle } = patch;
     if (!current.exampleId) return patch;
     if (!current.spaceGroupId && current.refScope !== 'pose') return patch;
     const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
@@ -1587,6 +1591,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       && poseExampleDirectionCompatible(example, {
         cutType: current.cutType,
         direction,
+        sideStyle,
       });
     if (compatible) {
       return {
@@ -1654,7 +1659,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
             <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
-              direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
+              direction={pendingRecipe.cutType === 'mirror' ? null : block.direction}
+              sideStyle={pendingRecipe.cutType === 'mirror' ? null : (block.sideStyle ?? null)}
+              shot={pendingRecipe.shot}
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
               clothingType={clothingType} gender={exampleGender}
@@ -1688,7 +1695,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               refImages: [], refAssetIds: [],
               spaceGroupId: null, spaceVariation: null,
             })} catalogs={catalogs} cut={block.cutType} blockCutType={block.cutType}
-              direction={block.direction} shot={block.shot}
+              direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
               onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
               includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
@@ -2843,6 +2850,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       || !poseExampleDirectionCompatible(droppedExample, {
         cutType: droppedCutType,
         direction: droppedExample.direction,
+        sideStyle: droppedExample.sideStyle ?? null,
       }))) {
       toast.push('이 장소 세트에는 포즈 참조가 가능한 예시만 넣을 수 있어요');
       return;
