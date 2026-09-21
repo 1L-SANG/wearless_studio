@@ -117,6 +117,12 @@ secrets:
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
   # ★ SSM 값 없이 배포되면 ECS 기동 실패 → 롤백. 배포 전 copilot secret init 필수.
   FACE_IDENTITY_BACKEND_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FACE_IDENTITY_BACKEND_TOKEN
+  # 각도 교체(옆·뒷모습)가 서버리스 엔드포인트를 부르는 데 쓴다 — **이 워커에서 돈다.**
+  # api 에만 있고 여기 없으면 face_angle_swap.spec_from 이 조용히 None 을 돌려주고
+  # (FACE_ANGLE_ENDPOINT_ID 는 있는데 키가 없으니 서버리스로 못 가고, 파드도 없다),
+  # 옆·뒷모습 컷이 **실패가 아니라 원본 머리 그대로** 나간다. 2026-09-21 첫 QA 에서
+  # 뒷모습 컷이 그렇게 나왔다 — env 만 양쪽에 넣고 secret 을 안 넣어서 생긴 일이다.
+  RUNPOD_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RUNPOD_API_KEY
   OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
   FM_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_RPC_URL
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
