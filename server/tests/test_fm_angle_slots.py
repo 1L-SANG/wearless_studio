@@ -130,6 +130,21 @@ def test_the_alt_slot_is_not_required_and_does_not_move_the_completion_bar():
         assert "sh_side_left" not in required_slots_for_consent(version)
 
 
+def test_the_alt_slot_stays_out_of_the_upload_path_and_the_cut_labels():
+    """촬영 화면에 없는 칸이다 — 업로드로도 안 받고 컷 라벨도 안 준다.
+
+    tests/frontend/facemarket-register-v3 가 마법사 9칸과 CUT_LABELS 키가 **같아야 한다**고
+    건다. 여기에 라벨을 주면 10 vs 9 로 그 계약이 깨진다(2026-09-21 에 실제로 깼다).
+    넣는 길은 운영 스크립트뿐이고, DB 제약만 그 이름을 허용한다.
+    """
+    from app.facemarket_enrollment import ACCEPTED_PHOTO_SLOTS
+
+    assert "sh_side_left" not in ACCEPTED_PHOTO_SLOTS
+    assert len(fp.CUT_LABELS) == 9
+    assert "side_left" not in fp.CUT_LABELS
+    assert fp.cut_of("sh_side_left") is None
+
+
 def test_the_alt_slot_never_touches_the_asset_source_hash():
     """★ 사고 지점. 왼쪽 옆모습이 들어와도 자산 소스 3장은 그대로여야 한다.
 

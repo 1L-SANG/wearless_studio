@@ -43,7 +43,6 @@ CUT_LABELS: dict[str, tuple[str, str]] = {
     "gaze_left": ("시선만 왼쪽", "시선_왼쪽"),
     "gaze_right": ("시선만 오른쪽", "시선_오른쪽"),
     "side": ("옆모습 · 왼쪽", "측면_왼쪽"),
-    "side_left": ("옆모습 · 왼쪽(보조)", "측면_왼쪽_보조"),
     "side_right": ("옆모습 · 오른쪽", "측면_오른쪽"),
     "back": ("뒷모습", "뒷모습"),
 }
@@ -74,6 +73,10 @@ ANGLE_SLOTS: tuple[str, ...] = ("sh_side_right", "sh_back")
 #:
 #: 그래서 옛 등록의 왼쪽 옆모습은 이 칸에 넣는다. 각도 교체만 읽고 자산 소스 계산에는 안 들어간다.
 #: 필수 칸(PHOTO_SLOTS)이 아니라 완료 판정도 건드리지 않는다.
+#:
+#: 업로드 API 로는 안 받는다(ACCEPTED_PHOTO_SLOTS 에 없다) — 촬영 화면에 없는 칸이라
+#: 마법사 9칸과 CUT_LABELS 가 같아야 한다는 계약(tests/frontend/facemarket-register-v3)도
+#: 깨진다. 옛 등록 한 건을 메우는 탈출구이고, 넣는 길은 운영 스크립트뿐이다.
 ANGLE_ALT_SLOTS: tuple[str, ...] = ("sh_side_left",)
 
 #: 2026-09-14~15 사이에 시작한 등록이 채운 16칸. **이미 통과한 등록을 미완료로 되돌리지 않으려고**
@@ -96,10 +99,10 @@ PHOTO_SLOTS: tuple[str, ...] = (
 
 #: 정면 계열 — 눈간격 검사를 적용하고 3/4 각도 검사는 하지 않는 슬롯.
 FRONTAL_CUTS: frozenset[str] = frozenset({"front", "smile", "front2", "gaze_left", "gaze_right"})
-#: 옆모습 칸. 얼굴 미검출을 허용하고(YuNet 이 옆얼굴을 자주 놓친다) 각도·방향만 본다.
-PROFILE_CUTS: frozenset[str] = frozenset({"side", "side_left", "side_right"})
+#: 옆모습 두 칸. 얼굴 미검출을 허용하고(YuNet 이 옆얼굴을 자주 놓친다) 각도·방향만 본다.
+PROFILE_CUTS: frozenset[str] = frozenset({"side", "side_right"})
 #: 코가 향해야 하는 쪽(화면 기준). None 이면 방향을 안 본다.
-PROFILE_NOSE_SIDE: dict[str, str] = {"side": "left", "side_left": "left", "side_right": "right"}
+PROFILE_NOSE_SIDE: dict[str, str] = {"side": "left", "side_right": "right"}
 
 #: 옛 이름 → 새 슬롯. 한 슬롯의 후보는 **선호 순서**다(새 이름 먼저, 그다음 18칸, 그다음 3장 시절).
 #: 여기 없는 옛 슬롯(face02·face04·torso*·full* 등)은 새 스펙에 자리가 없다 — 완료 판정에서 무시되고

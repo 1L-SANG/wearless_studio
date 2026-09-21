@@ -30,9 +30,7 @@ def test_the_layout_is_twelve_training_and_three_reference():
     # 여기서 train 에 섞이면 12장 학습 구성이 조용히 바뀐다.
     angles = [slot for group, slot in ex.EXPORTS if group == "angles"]
     assert angles == list(ex.ANGLE_EXPORT_SLOTS)
-    # sh_side_left 는 v3 이전 등록만 채우는 보조 칸이다(sh_side 와 같은 90도 왼쪽 옆모습).
-    # 대부분의 등록에는 없고 OPTIONAL_GROUPS 라 비어도 내보내기를 막지 않는다.
-    assert set(angles) == {"sh_side", "sh_side_left", "sh_side_right", "sh_back"}
+    assert set(angles) == {"sh_side", "sh_side_right", "sh_back"}
     assert not set(angles) & {slot for group, slot in ex.EXPORTS if group != "angles"}
 
 
@@ -157,13 +155,13 @@ def test_apply_writes_the_v7_layout_and_nothing_else(monkeypatch, tmp_path, caps
     train = sorted(path.name for path in (out / "train").iterdir())
     refset = sorted(path.name for path in (out / "refset").iterdir())
     angles = sorted(path.name for path in (out / "angles").iterdir())
-    assert len(train) == 12 and len(refset) == 3 and len(angles) == 4
+    assert len(train) == 12 and len(refset) == 3 and len(angles) == 3
     assert "해가왼쪽__3:4_무표정.png" in train
     assert refset == sorted(f"{fp.export_name(slot)}.png" for slot in fp.REFSET_SLOTS)
     # 옆모습·뒷모습은 angles/ 안에만 있다 — train 에 섞이면 학습 구성이 바뀐다.
     assert angles == sorted(f"{fp.export_name(slot)}.png" for slot in ex.ANGLE_EXPORT_SLOTS)
     assert sorted(path.name for path in out.iterdir()) == ["angles", "refset", "train"]
-    assert len(r2.reads) == 19
+    assert len(r2.reads) == 18
     # 키는 여전히 출력에 안 나온다
     assert "facemarket/enrollments/" not in capsys.readouterr().out
 

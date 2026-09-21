@@ -25,7 +25,7 @@ import contextlib
 import logging
 import uuid
 
-from ..facemarket_photos import (ASSET_SOURCE_SLOTS, REFSET_SLOTS,
+from ..facemarket_photos import (ANGLE_ALT_SLOTS, ASSET_SOURCE_SLOTS, REFSET_SLOTS,
                                  canonical_photo_slot, resolve_photo_rows)
 
 
@@ -187,7 +187,7 @@ async def resolve_real_model_assets(
 #: sh_side_left 에 넣고, v3 이후 등록은 sh_side 로 그대로 들어온다. 두 칸 모두 정의상
 #: **코가 화면 왼쪽인 90도 옆모습**이라 섞여도 같은 사진이다.
 ANGLE_PHOTO_CANDIDATES: dict[str, tuple[str, ...]] = {
-    "sh_side": ("sh_side_left", "sh_side"),
+    "sh_side": ANGLE_ALT_SLOTS + ("sh_side",),
     "sh_side_right": ("sh_side_right",),
     "sh_back": ("sh_back",),
 }
