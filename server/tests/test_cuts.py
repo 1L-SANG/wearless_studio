@@ -1308,6 +1308,17 @@ def test_a_pose_the_storyboard_chose_always_wins():
     assert out[1]["pose"] == "leaning on a wall"
 
 
+def test_the_frontend_auto_default_is_not_a_choice():
+    """★ 프런트가 카드마다 pose:'auto' 를 써 넣는다(Storyboard.jsx). 그걸 선택으로 읽으면
+    셀러가 콘티보드를 한 번 저장하는 순간 변주가 통째로 사라진다."""
+    blocks = [{"sectionRole": "studio", "cutType": "horizon", "pose": "auto"} for _ in range(5)]
+    out = content_roles.canonicalize_storyboard(blocks)
+    poses = [b.get("pose") for b in out]
+    assert poses[0] in (None, "", "auto"), "기준 컷은 그대로"
+    assert all(p and p != "auto" for p in poses[1:]), poses
+    assert len(set(poses[1:])) == len(poses[1:])
+
+
 def test_seller_cards_keep_their_pose():
     out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
     assert all(not b.get("pose") for b in out)

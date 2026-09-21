@@ -310,11 +310,18 @@ _STUDIO_POSE_ROTATION = (
 )
 
 
+#: "포즈를 안 정했다"로 보는 값. **"auto" 를 여기 넣는 게 핵심이다** — 프런트가 카드를
+#: 만들 때 `pose: 'auto'` 를 명시적으로 써 넣는다(Storyboard.jsx 세 곳). 그걸 셀러의 선택으로
+#: 읽으면 콘티보드를 한 번이라도 저장한 순간 변주가 통째로 사라진다. "auto" 는 선택이 아니라
+#: 기본값이고, cut_generator 도 그 값을 POSE:auto(변주 없음)로 읽는다.
+_POSE_UNSET = ("", "auto")
+
+
 def _spread_studio_poses(raw: list) -> None:
     """핏 확인 섹션의 **포즈를 안 정한** AI 컷에 포즈를 돌려 가며 넣는다(제자리 수정).
 
     첫 컷은 건드리지 않는다 — 그 섹션의 기준 컷이고, 기준은 POSE:auto 가 맞다.
-    콘티가 pose 를 줬으면 그대로 둔다. 셀러 카드도 안 건드린다.
+    콘티가 **이름 있는 포즈**를 줬으면 그대로 둔다. 셀러 카드도 안 건드린다.
     """
     open_slots = [
         block for block in raw
@@ -323,7 +330,7 @@ def _spread_studio_poses(raw: list) -> None:
         and (block.get("sectionRole") or block.get("section_role")
              or resolve_section_role(block)) == "studio"
         and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
-        and not str(block.get("pose") or "").strip()
+        and str(block.get("pose") or "").strip().lower() in _POSE_UNSET
     ]
     for index, block in enumerate(open_slots[1:]):
         block["pose"] = _STUDIO_POSE_ROTATION[index % len(_STUDIO_POSE_ROTATION)]
