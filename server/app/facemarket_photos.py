@@ -62,6 +62,23 @@ ASSET_SOURCE_SLOTS: tuple[str, ...] = ("sh_front", "sh_34", "sh_side")
 #: 각도 수집 2칸(2026-09-15). 학습에도 기준에도 안 들어간다 — 모아 두고 쓰임새는 뒤에 정한다.
 ANGLE_SLOTS: tuple[str, ...] = ("sh_side_right", "sh_back")
 
+#: 왼쪽 90도 옆모습을 담는 **보조 칸**(2026-09-21). 정식 등록(동의 2026-09-v3)은 그 사진을
+#: sh_side 로 받고 끝낸다 — 그 등록에서 이 칸은 비어 있다.
+#:
+#: 왜 따로 두는가: sh_side 는 자산 소스 3칸(ASSET_SOURCE_SLOTS)이기도 하다. v3 이전에 통과한
+#: 등록은 자산이 옛 이름(face05)으로 이미 만들어져 assets_source_hash 가 그 다이제스트에 묶여
+#: 있는데, 뒤늦게 sh_side 행을 넣으면 SLOT_CANDIDATES 가 face05 대신 그 행을 집어 해시가
+#: 어긋난다. 그러면 그 모델의 실사 컷이 통째로 model_assets_unavailable 로 막힌다 —
+#: 2026-09-21 운영 05caa497 에서 실제로 났고 상세페이지 2건이 죽었다.
+#:
+#: 그래서 옛 등록의 왼쪽 옆모습은 이 칸에 넣는다. 각도 교체만 읽고 자산 소스 계산에는 안 들어간다.
+#: 필수 칸(PHOTO_SLOTS)이 아니라 완료 판정도 건드리지 않는다.
+#:
+#: 업로드 API 로는 안 받는다(ACCEPTED_PHOTO_SLOTS 에 없다) — 촬영 화면에 없는 칸이라
+#: 마법사 9칸과 CUT_LABELS 가 같아야 한다는 계약(tests/frontend/facemarket-register-v3)도
+#: 깨진다. 옛 등록 한 건을 메우는 탈출구이고, 넣는 길은 운영 스크립트뿐이다.
+ANGLE_ALT_SLOTS: tuple[str, ...] = ("sh_side_left",)
+
 #: 2026-09-14~15 사이에 시작한 등록이 채운 16칸. **이미 통과한 등록을 미완료로 되돌리지 않으려고**
 #: 그대로 남긴다(완료 판정은 동의 버전으로 갈린다 — facemarket_enrollment.required_slots_for_consent).
 PHOTO_SLOTS_V2: tuple[str, ...] = (

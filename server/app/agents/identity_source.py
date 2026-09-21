@@ -25,7 +25,7 @@ import contextlib
 import logging
 import uuid
 
-from ..facemarket_photos import (ASSET_SOURCE_SLOTS, REFSET_SLOTS,
+from ..facemarket_photos import (ANGLE_ALT_SLOTS, ASSET_SOURCE_SLOTS, REFSET_SLOTS,
                                  canonical_photo_slot, resolve_photo_rows)
 
 
@@ -180,7 +180,18 @@ async def resolve_real_model_assets(
 #: 옆·뒷모습 컷의 머리 교체에 쓸 등록 사진 칸. 얼굴 자산(fm_model_assets)이 아니라 등록 사진
 #: (fm_biometric_enrollment_photos) 에서 바로 읽는다 — 이 각도는 얼굴 그리드에 안 들어간다.
 #: sh_side 는 "코가 화면 왼쪽", sh_side_right 는 그 반대다(facemarket_photos 주석).
-ANGLE_PHOTO_SLOTS = ("sh_side", "sh_side_right", "sh_back")
+#:
+#: 값 = 그 방향에 쓸 수 있는 칸 이름들(앞이 우선). 왼쪽만 후보가 둘인 이유는 sh_side 가 자산
+#: 소스이기도 해서다 — v3 이전 등록은 sh_side 에 행을 넣는 순간 assets_source_hash 가 어긋나
+#: 실사 컷이 통째로 막힌다(facemarket_photos.ANGLE_ALT_SLOTS 주석). 그런 등록은 보조 칸
+#: sh_side_left 에 넣고, v3 이후 등록은 sh_side 로 그대로 들어온다. 두 칸 모두 정의상
+#: **코가 화면 왼쪽인 90도 옆모습**이라 섞여도 같은 사진이다.
+ANGLE_PHOTO_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "sh_side": ANGLE_ALT_SLOTS + ("sh_side",),
+    "sh_side_right": ("sh_side_right",),
+    "sh_back": ("sh_back",),
+}
+ANGLE_PHOTO_SLOTS = tuple(ANGLE_PHOTO_CANDIDATES)
 
 
 async def resolve_angle_photos(conn, enrollment_id: str) -> dict[str, str]:
@@ -202,7 +213,9 @@ ANGLE_PHOTO_SQL = (
 
 
 def angle_photos_from_rows(rows) -> dict[str, str]:
-    """등록 사진 행 → {칸 이름: r2_key}. **옛 이름은 받지 않는다 — 칸 이름이 정확히 맞아야 한다.**
+    """등록 사진 행 → {방향 칸 이름: r2_key}. 없는 방향은 빠진다.
+
+    받는 이름은 ANGLE_PHOTO_CANDIDATES 에 적힌 것뿐이고, **옛 이름은 안 받는다.**
 
     ★ 다른 자리(자산 소스·기준 얼굴)는 SLOT_CANDIDATES 로 옛 이름을 풀어 준다. 여기서는
       그러면 안 된다: `sh_side` 의 옛 별칭은 `face05`(얼굴 중심 측면 컷)인데, 각도 교체가
@@ -212,16 +225,20 @@ def angle_photos_from_rows(rows) -> dict[str, str]:
       실패보다 나쁘다. 남의 머리를 내보내지 않는다는 이 경로의 계약과도 어긋난다
       (2026-09-21: 실제로 face05 가 sh_side 로 풀리고 있었다).
 
-      각도 3칸은 동의서 2026-09-v3 부터 필수이므로, 그 뒤 등록은 정확한 이름으로 들어온다.
-      그 전 등록은 해당 방향 컷만 no_angle_photo 로 비는 것이 맞다.
+      왼쪽만 후보가 둘인 것(sh_side_left · sh_side)은 별칭 해소가 아니다 — 둘 다 정의상
+      같은 사진이고, 옛 등록이 sh_side 를 못 쓰는 사정 때문에 갈린 것뿐이다.
     """
-    wanted = set(ANGLE_PHOTO_SLOTS)
-    out: dict[str, str] = {}
+    by_slot = {}
     for row in rows:
         slot = str(row.get("angle") or "")
         key = str(row.get("r2_key") or "").strip()
-        if slot in wanted and key:
-            out[slot] = key
+        if slot and key:
+            by_slot[slot] = key
+    out: dict[str, str] = {}
+    for direction, candidates in ANGLE_PHOTO_CANDIDATES.items():
+        key = next((by_slot[name] for name in candidates if name in by_slot), None)
+        if key:
+            out[direction] = key
     return out
 
 
