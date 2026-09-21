@@ -118,8 +118,16 @@ const catalogs = {
     { value: 'slim', label: '슬림핏' }, { value: 'regular', label: '정핏' },
     { value: 'semi_over', label: '세미오버' }, { value: 'over', label: '오버핏' },
   ],
+  // 서버 계약(_WORN_DIRECTIONS)은 front/side/back 셋 그대로다. 화면에서만 '사이드'를
+  // 둘로 갈라 보여준다 — 같은 side 주문이 두 가지 다른 그림이 되기 때문이다.
+  //   사선     몸만 옆, 얼굴은 카메라 쪽 3/4 → 얼굴 패스(LoRA)가 그린다
+  //   옆모습   완전 옆모습                   → 각도 교체가 등록 실사진 머리를 붙인다
+  // 화면 값 ↔ 서버 값 변환은 lib/directionChoice.js 한 곳에서만 한다.
   directions: [
-    { value: 'front', label: '정면' }, { value: 'back', label: '뒷면' }, { value: 'side', label: '사이드' },
+    { value: 'front', label: '정면' },
+    { value: 'threeQuarter', label: '사선' },
+    { value: 'profile', label: '옆모습' },
+    { value: 'back', label: '뒷면' },
   ],
   shotTypes: [
     { value: 'full', label: '풀샷' }, { value: 'medium', label: '미디움샷' },

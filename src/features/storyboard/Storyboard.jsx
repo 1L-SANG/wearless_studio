@@ -34,6 +34,7 @@ import {
   sectionRoleForContentRole,
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
+import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
@@ -1572,9 +1573,15 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     });
     return undefined;
   };
-  const onDirectionChange = (direction) => onChange((current) => {
-    if (!current.exampleId) return { direction };
-    if (!current.spaceGroupId && current.refScope !== 'pose') return { direction };
+  // 제품컷은 사람이 없어 앞/뒷면 둘뿐이고 sideStyle 개념도 없다 — 서버 값 그대로 보낸다.
+  const onProductDirectionChange = (direction) => onChange(() => ({ direction }));
+  // 착용컷은 화면 칩이 4개(정면·사선·옆모습·뒷면)지만 서버 계약은 front/side/back 셋이다.
+  // 변환은 lib/directionChoice 한 곳에서만 한다 — 에디터도 같은 모듈을 쓴다.
+  const onDirectionChange = (choice) => onChange((current) => {
+    const patch = specFromDirectionChoice(choice);
+    const { direction } = patch;
+    if (!current.exampleId) return patch;
+    if (!current.spaceGroupId && current.refScope !== 'pose') return patch;
     const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
     const compatible = (example?.variants || []).includes('pose')
       && poseExampleDirectionCompatible(example, {
@@ -1583,7 +1590,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       });
     if (compatible) {
       return {
-        direction,
+        ...patch,
         ...(current.spaceGroupId ? { refScope: 'pose' } : {}),
       };
     }
@@ -1591,7 +1598,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     // "준비하지 못했어요" 빈 카드를 만들지 않는다). 캡션의 방향 표시만 바뀌고,
     // 서버는 방향 비호환 시 포즈 권한만 내려놓고 생성한다(reference_direction_compatible).
     return {
-      direction,
+      ...patch,
       ...(current.spaceGroupId ? {} : { refScope: 'all' }),
     };
   });
@@ -1716,9 +1723,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           내부적으로 결정한다(2026-08-07 오너 결정, generationExampleSelectionPatch). */}
       {!isMirror && !isDetail && (
         <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
+          {/* 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다. 착용컷만 4칩으로 갈린다. */}
           <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
-            value={(isProduct ? catalogs.productDirections : catalogs.directions).some((d) => d.value === block.direction) ? block.direction : 'front'}
-            onChange={onDirectionChange} /></div>
+            value={isProduct
+              ? (catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front')
+              : directionChoiceFromSpec(block)}
+            onChange={isProduct ? onProductDirectionChange : onDirectionChange} /></div>
       )}
 
       {showOuterClosure && (
