@@ -454,3 +454,55 @@ def test_http_timeout_is_per_request_not_per_job():
     backend = angle.ServerlessBackend("ep1", "k", timeout=1800.0)
     assert backend._timeout == 1800.0
     assert backend._client.timeout.read == 60.0
+
+
+# ── 톤 보정 경계 (2026-09-21) ───────────────────────────────────────────────
+#
+# 45degree_view/4.png 실측: 보정량 27.5 를 2px 흐림으로 가렸더니 목에 직각으로 잘린
+# 밝기 계단이 생겼다(가중치 경사 × 보정량 = 화소당 40.1). 게이트(35.0)는 "톤이 너무
+# 어긋나면 버린다"만 보므로 통과한 컷에서도 그 계단이 남는다.
+def test_a_small_shift_keeps_the_old_feather():
+    """한 자리 보정은 예전 그대로여야 한다 — 옆모습 실측이 1.06 이었다."""
+    assert angle.tone_feather(None) == angle.TONE_FEATHER
+    assert angle.tone_feather(np.array([1.06, 0.92, 0.55])) < 2.5
+
+
+def test_a_big_shift_widens_the_feather():
+    """뒷모습 실측 27.5 · 32.0 — 2px 로는 못 가린다."""
+    assert angle.tone_feather(np.array([27.49, 24.94, 14.11])) > 10.0
+    assert angle.tone_feather(np.array([31.95, 31.32, 28.7])) > 12.0
+
+
+def test_the_feather_grows_with_the_shift():
+    previous = 0.0
+    for magnitude in (0.0, 5.0, 15.0, 27.5, 35.0):
+        value = angle.tone_feather(np.array([magnitude, 0.0, 0.0]))
+        assert value >= previous
+        previous = value
+
+
+def test_the_feather_is_capped():
+    """상한이 없으면 목 보정이 얼굴·옷까지 번진다."""
+    assert angle.tone_feather(np.array([200.0, 0.0, 0.0])) == angle.TONE_FEATHER_MAX
+    # 게이트 최대치에서도 상한 아래여야 한다 — 상한에 먼저 닿으면 비례가 무의미해진다.
+    assert angle.tone_feather(np.array([angle.TONE_MAX_SHIFT, 0.0, 0.0])) < angle.TONE_FEATHER_MAX
+
+
+def test_the_sign_of_the_shift_does_not_change_the_feather():
+    """운영 실패분은 [-35.34, -7.54, 3.85] 였다 — 음수도 같은 크기로 봐야 한다."""
+    assert (angle.tone_feather(np.array([-27.5, 0.0, 0.0]))
+            == angle.tone_feather(np.array([27.5, 0.0, 0.0])))
+
+
+def test_a_wider_feather_flattens_the_boundary_step():
+    """★ 고치려는 그 계단이 실제로 줄어드는가 — 합성 경계로 직접 잰다."""
+    raw = np.zeros((200, 200), np.float32)
+    raw[:, 100:] = 1.0                      # 목 한가운데서 뚝 끊기는 가중치
+    shift = 27.5
+
+    def step(feather):
+        weight = cv2.GaussianBlur(raw, (0, 0), feather)
+        gx = cv2.Sobel(weight, cv2.CV_32F, 1, 0, ksize=3)
+        return float(np.abs(gx).max()) * shift
+
+    assert step(angle.tone_feather(np.array([shift, 0.0, 0.0]))) < step(angle.TONE_FEATHER) / 3
