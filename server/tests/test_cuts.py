@@ -1151,3 +1151,82 @@ def test_render_raises_on_stray_section_marker():
 def test_wardrobe_route_requires_db(client, make_token):
     res = client.get("/v1/projects/any-id/wardrobe", headers=_auth(make_token))
     assert res.status_code == 503
+
+
+# ── 핏 확인 섹션의 방향 배분 (2026-09-21) ──────────────────────────────────
+#
+# 2026-09-21 첫 운영 QA: studio 7컷이 **전부 정면**으로 나왔다(요각 -4.0~+0.6).
+# 옆모습 0장, 뒷모습 1장. 옆·뒷모습 머리 교체를 다 배선해 놓고도 쓰이질 않았다.
+# 원인은 _CONTENT_ROLE_RECIPES 의 일곱 역할이 전부 direction="front" 라, 콘티가
+# 블록마다 명시하지 않으면 상세페이지가 통째로 정면이 되는 것이었다.
+
+
+def _studio(n, **extra):
+    return [{"sectionRole": "studio", "cutType": "horizon", **extra} for _ in range(n)]
+
+
+def test_the_fit_section_gets_one_side_and_one_back():
+    out = content_roles.canonicalize_storyboard(_studio(5))
+    directions = [b["direction"] for b in out]
+    assert directions[0] == "front", "기준 컷은 정면으로 남는다"
+    assert directions.count("side") == 1
+    assert directions.count("back") == 1
+    assert directions.count("front") == 3
+
+
+def test_a_direction_the_storyboard_chose_always_wins():
+    """★ 콘티가 정한 값을 덮으면 연출 의도가 조용히 사라진다."""
+    blocks = _studio(1) + [
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "back"},
+    ]
+    out = content_roles.canonicalize_storyboard(blocks)
+    assert [b["direction"] for b in out] == ["front", "front", "front", "back"]
+
+
+def test_a_short_fit_section_keeps_every_cut_frontal():
+    """두 컷짜리 섹션을 옆·뒤로 채우면 정면이 사라진다."""
+    for n in (1, 2):
+        out = content_roles.canonicalize_storyboard(_studio(n))
+        assert {b["direction"] for b in out} == {"front"}, n
+
+
+def test_seller_cards_are_never_reassigned():
+    out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
+    assert all(b.get("direction") in (None, "front") for b in out)
+
+
+def test_changing_the_direction_drops_an_auto_picked_example():
+    """정면 예시 포즈는 옆 컷에 못 쓴다(cut_generator.pose_direction_compatible)."""
+    blocks = _studio(3)
+    for b in blocks:
+        b["exampleId"] = "ex_front_1"
+        b["exampleSelectionOrigin"] = "auto"
+    out = content_roles.canonicalize_storyboard(blocks)
+    turned = [b for b in out if b["direction"] != "front"]
+    assert len(turned) == 2
+    assert all(b["exampleId"] is None for b in turned)
+    assert out[0]["exampleId"] == "ex_front_1", "안 돌린 컷의 예시는 그대로 둔다"
+
+
+def test_an_example_the_seller_picked_pins_the_direction():
+    blocks = _studio(4)
+    for b in blocks:
+        b["exampleId"] = "ex_front_1"
+        b["exampleSelectionOrigin"] = "user"
+    out = content_roles.canonicalize_storyboard(blocks)
+    assert {b["direction"] for b in out} == {"front"}
+    assert all(b["exampleId"] == "ex_front_1" for b in out)
+
+
+def test_the_caller_list_is_not_mutated():
+    blocks = _studio(4)
+    content_roles.canonicalize_storyboard(blocks)
+    assert all("direction" not in b for b in blocks)
+
+
+def test_other_sections_are_left_alone():
+    blocks = [{"sectionRole": "styling", "cutType": "styling"} for _ in range(5)]
+    out = content_roles.canonicalize_storyboard(blocks)
+    assert {b["direction"] for b in out} == {"front"}

@@ -258,6 +258,58 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
     return _canonicalize_example_selection(out)
 
 
+#: 핏 확인(studio) 섹션에서 방향을 안 정한 AI 컷에 채워 넣는 순서.
+#:
+#: 왜 필요한가: 일곱 역할의 레시피가 전부 direction="front" 라(_CONTENT_ROLE_RECIPES),
+#: 콘티가 블록마다 명시하지 않으면 상세페이지가 통째로 정면만 나온다. 2026-09-21 첫 운영
+#: QA 가 그랬다 — studio 7컷 중 옆모습 0장, 뒷모습 1장. 옆·뒷모습 머리 교체를 다 배선해
+#: 놓고도 쓰이질 않았다.
+#:
+#: 왜 한 장씩만인가: 옆·뒷모습 컷은 각도 교체가 성공해야만 나온다. 실패하면 그 컷은
+#: **빈 컷**이다(남의 머리를 내보내지 않는다는 계약). 그 경로는 아직 운영에서 성공한
+#: 적이 없으므로, 처음부터 절반을 걸면 실패했을 때 셀러의 핏 섹션이 반토막 난다.
+#: 한 장씩 넣어 두고, 운영에서 붙는 것을 보고 늘린다.
+_STUDIO_DIRECTION_SPREAD = ("side", "back")
+#: 이보다 적으면 건드리지 않는다 — 두 컷짜리 섹션을 옆·뒤로만 채우면 정면이 사라진다.
+_STUDIO_SPREAD_MIN_CUTS = 3
+
+
+def _spread_studio_directions(raw: list) -> None:
+    """핏 확인 섹션의 **방향을 안 정한** AI 컷에 옆·뒤를 한 장씩 준다(제자리 수정).
+
+    정규화 **전의** 블록을 받는다 — 그래야 콘티가 정한 direction 과 레시피 기본값을
+    구분할 수 있다. sectionRole 도 아직 안 붙어 있을 수 있어 resolve_section_role 로 푼다.
+
+    건드리지 않는 것:
+      · 셀러 카드(source == "mine") — 셀러가 고른 구성은 정본이다.
+      · 콘티가 direction 을 명시한 블록 — 명시값이 언제나 이긴다.
+      · horizon 이 아닌 컷(product·mirror) — 그쪽은 direction 의 뜻이 다르다.
+
+    방향을 바꾸면 그 블록에 붙어 있던 예시 포즈는 더 이상 맞지 않는다
+    (cut_generator.pose_direction_compatible 가 정면 예시를 옆 컷에 못 쓰게 막는다).
+    그래서 자동으로 고른 예시(exampleSelectionOrigin == "auto")는 같이 비운다.
+    셀러가 직접 고른 예시("user")는 남기고 방향도 건드리지 않는다.
+    """
+    open_slots = [
+        block for block in raw
+        if isinstance(block, dict)
+        and block.get("source") != "mine"
+        and (block.get("sectionRole") or block.get("section_role")
+             or resolve_section_role(block)) == "studio"
+        and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
+        and block.get("direction") not in _WORN_DIRECTIONS
+        and block.get("exampleSelectionOrigin") != "user"
+    ]
+    if len(open_slots) < _STUDIO_SPREAD_MIN_CUTS:
+        return
+    # 첫 컷은 정면으로 남긴다 — 핏 섹션의 기준 컷이고, 정면이 하나도 없으면 안 된다.
+    for block, direction in zip(open_slots[1:], _STUDIO_DIRECTION_SPREAD):
+        block["direction"] = direction
+        if block.get("exampleId"):
+            block["exampleId"] = None
+            block["exampleSelectionOrigin"] = None
+
+
 def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
     """Canonicalize blocks and assign hidden roles from section/card order.
 
@@ -318,7 +370,12 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             updated["baseThumb"] = None
         return _canonicalize_example_selection(updated)
 
-    canonical = [canonicalize_for_storyboard(block) for block in (blocks or [])]
+    # ★ 방향 배분은 **정규화 전에** 해야 한다. canonicalize_storyboard_block 이 레시피
+    #   기본값으로 direction="front" 를 채우고 나면 "콘티가 정면으로 정했다" 와 "아무것도
+    #   안 정했다" 가 구분되지 않는다. 호출자의 리스트는 안 건드리도록 복사본에 쓴다.
+    raw = [dict(block) if isinstance(block, dict) else block for block in (blocks or [])]
+    _spread_studio_directions(raw)
+    canonical = [canonicalize_for_storyboard(block) for block in raw]
     # Custom/mine cards without a semantic section inherit the preceding
     # section; leading cards inherit the next valid section (or hooking when
     # the board has no section at all). This mirrors frontend normalization.
