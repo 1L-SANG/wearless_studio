@@ -47,6 +47,16 @@ CUT_TYPES = ("styling", "horizon", "product", "mirror")
 _PERSON_SHOTS = ("full", "medium")
 _PRODUCT_SHOTS = ("ghost", "detail")
 _DIRECTIONS = ("front", "side", "back")
+#: direction="side" 컷을 어느 얼굴 경로로 보낼지. 같은 "옆모습" 주문이 두 가지 다른 그림이 된다.
+#:
+#:   profile      — 진짜 옆모습. 각도 교체(face_angle_swap)가 등록자 실사진을 머리째 붙인다.
+#:   threeQuarter — 사선 3/4. DIR:side_identity 로 몸만 옆으로 두고 얼굴은 카메라를 보게
+#:                  주문한 뒤, 얼굴 패스(LoRA)가 그 얼굴을 바꾼다. 두 눈이 다 보인다.
+#:
+#: 2026-09-21: 각도 교체를 켜기 전에는 옆모습 주문이 **전부** 3/4 로 갔다(각도 교체가 없으니
+#: face_pass 가 참). 09-17 에 잘 나왔던 사선 4컷이 그것이다. 각도 교체가 붙자 같은 주문이
+#: 진짜 옆모습으로 넘어가면서 사선이 사라졌다 — 둘은 다른 컷이고 핏 섹션에는 둘 다 필요하다.
+SIDE_STYLES = ("profile", "threeQuarter")
 _WORN_CUTS = ("styling", "horizon", "mirror")
 _OUTER_CLOSURE_STATES = ("open", "partial", "closed")
 _CUT_LABELS = {  # ${cutLabel} — 프롬프트 첫 줄의 짧은 명사구 (값이지 규칙 문장이 아님)
@@ -117,6 +127,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         direction = direction if direction in _DIRECTIONS else "front"
         shot = shot if shot in _PERSON_SHOTS else "full"
         face = face if face in ("same", "show", "hide") else "same"
+    # 옆모습 컷을 어느 얼굴 경로로 보낼지. direction 이 side 가 아니면 뜻이 없다.
+    side_style = raw.get("sideStyle") or raw.get("side_style")
+    side_style = side_style if side_style in SIDE_STYLES and direction == "side" else None
     variation = raw.get("spaceVariation") or raw.get("space_variation")
     closure = raw.get("outerClosureState") or raw.get("outer_closure_state")
     raw_color_id = raw.get("colorId")
@@ -138,6 +151,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "shot": shot,
         "colorId": _sanitize(raw_color_id) or None,
         "pose": _sanitize(pose)[:40] or "auto",
+        "sideStyle": side_style,
         "faceExposure": face,
         "matchIds": [str(m) for m in (raw.get("matchIds") or raw.get("match_ids") or [])][:2],
         "refAssetIds": [str(a) for a in (raw.get("refAssetIds") or raw.get("ref_asset_ids") or [])][:3],
@@ -1479,8 +1493,14 @@ async def generate(
 
 
 def _angle_swap_direction(spec: dict, clothing_type, angle_swap) -> str | None:
-    """이 컷을 각도 교체 경로로 보낼까 — 착용컷 · 옆/뒷모습 · 각도 사진 준비됨."""
+    """이 컷을 각도 교체 경로로 보낼까 — 착용컷 · 옆/뒷모습 · 각도 사진 준비됨.
+
+    sideStyle="threeQuarter" 면 각도 교체를 **일부러 안 쓴다** — 그 컷은 진짜 옆모습이
+    아니라 사선(DIR:side_identity)이고, 얼굴은 얼굴 패스가 바꾼다(SIDE_STYLES 주석).
+    """
     if angle_swap is None:
+        return None
+    if spec.get("sideStyle") == "threeQuarter":
         return None
     if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
         return None
