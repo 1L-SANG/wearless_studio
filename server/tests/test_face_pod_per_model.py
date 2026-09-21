@@ -7,6 +7,7 @@
 남의 파드는 다른 LoRA 를 물고 있어 409 만 돌려주고, 그 컷은 #309 규칙대로 실패한다(원본 미출고).
 """
 
+import ast
 import asyncio
 import pathlib
 
@@ -111,7 +112,6 @@ def test_the_query_filters_by_model_and_prefers_the_exact_row():
 
 
 @pytest.mark.parametrize("path,needle", [
-    ("app/workers/detail_page_job.py", "active_face_backend_url(\n                            app.state.pool, selected_model_id)"),
     ("app/workers/editor_image_job.py", "active_face_backend_url(pool, _vary_model_id)"),
     ("app/workers/editor_image_job.py", "active_face_backend_url(\n                        pool, str(selected_model_id))"),
     ("app/facemarket.py", "active_face_backend_url(pool, model_id)"),
@@ -120,6 +120,26 @@ def test_every_caller_asks_for_its_own_model(path, needle):
     """모델을 안 주고 부르는 자리가 남으면 그 컷만 조용히 남의 파드로 간다."""
     root = pathlib.Path(__file__).resolve().parents[1]
     assert needle in (root / path).read_text(encoding="utf-8")
+
+
+def test_detail_worker_takes_the_model_as_an_argument():
+    """★ 상세 워커의 파드 조회는 **인자로 받은** 모델을 써야 한다.
+
+    예전에는 람다가 `selected_model_id` 를 그냥 참조했는데 그 이름은 _gen_cuts 에 없다
+    (1000행대 다른 함수의 지역 변수다). 람다는 늦게 평가되므로 import 도 테스트도 통과했고,
+    **실제로 불리는 순간** NameError 로 컷이 죽었다 — 2026-09-21 운영에서 이미지를 다 만든
+    뒤에 터져 컷 6장이 요금만 쓰고 버려졌다.
+
+    소스 문자열 검사는 이걸 못 잡는다(문자열은 그대로 있었다). 그래서 **시그니처**를 본다.
+    """
+    import inspect
+
+    from app.workers import detail_page_job
+
+    params = inspect.signature(detail_page_job._gen_cuts).parameters
+    assert "selected_model_id" in params, (
+        "_gen_cuts 가 모델을 인자로 받아야 한다 — 바깥 이름을 잡으면 호출 순간 NameError 다")
+    assert params["selected_model_id"].default is None
 
 
 def test_the_migration_adds_the_column_and_one_pod_per_model():
