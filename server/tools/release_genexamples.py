@@ -40,6 +40,12 @@ _CLOTHING_TYPES = {"top", "bottom", "outer", "dress"}
 _WORN_CUTS = {"styling", "horizon", "mirror"}
 _GENDERS = {"women", "men"}
 _DIRECTIONS = {"front", "side", "back"}
+#: side 는 direction 하나로 같은 그림이 되지 않는다 — 사선(threeQuarter)과 완전
+#: 옆모습(profile)이 둘 다 'side' 다. 카드 레시피가 두 갈래를 가르므로(cut_generator.
+#: SIDE_STYLES) 예시 메타도 같이 갈라야 사선 카드가 90도 사진의 포즈를 물려받지 않는다.
+#: 새 릴리스는 direction=="side" 면 이 값을 반드시 적는다. 이 값이 생기기 전에 발행된
+#: 자산은 레지스트리에 키가 없고, 소비자는 그것을 profile 로 읽는다(전수조사: 사선 0장).
+_SIDE_STYLES = {"threeQuarter", "profile"}
 _DETAIL_SUBJECTS = {"원단·봉제", "단추·지퍼", "포켓"}
 _PRESENTATION_METHODS = {"ghost", "flatlay"}
 _VARIANT_ORDER = ("all", "pose", "bg", "thumb")
@@ -196,6 +202,36 @@ def generation_example_coverage(
     return dict(counts), missing, undeclared
 
 
+def _service_group_key(item: dict) -> str:
+    """카탈로그 항목에서 serviceGroupKey 를 되살린다(계약 §1: cutType:gender:clothingType:shot[:mood])."""
+    parts = [
+        str(item.get("cutType")),
+        "null" if item.get("gender") is None else str(item.get("gender")),
+        str(item.get("clothingType")),
+        str(item.get("shot")),
+    ]
+    if item.get("mood"):
+        parts.append(str(item["mood"]))
+    if item.get("detailSubject"):
+        parts.append(str(item["detailSubject"]))
+    return ":".join(parts)
+
+
+def load_base_release(
+    registry_path: Path = DEFAULT_REGISTRY_PATH,
+    catalog_path: Path = DEFAULT_CATALOG_PATH,
+) -> tuple[dict[str, dict], list[dict]]:
+    """이미 발행된 레지스트리·카탈로그를 추가 발행의 바탕으로 읽는다.
+
+    두 문서는 계약 검증을 통과해야 한다 — 깨진 바탕 위에 새 항목을 얹으면 이번 릴리스가
+    기존 고장을 그대로 안고 배포된다. 읽기만 하고 절대 고치지 않는다.
+    """
+    catalog = _read_json_any(catalog_path)
+    registry = _read_json_any(registry_path)
+    _validate_release_documents(catalog, registry, label="기존 생성예시 배포본")
+    return dict(registry["assets"]), list(catalog)
+
+
 def _resolved_asset_path(asset_root: Path, file_value: object) -> Path | None:
     if not isinstance(file_value, str) or not file_value.strip():
         return None
@@ -311,6 +347,7 @@ def validate_manifest(
     asset_root: Path,
     *,
     manifest_path: Path | None = None,
+    base_examples: list[dict] | None = None,
 ) -> tuple[list[dict], dict[tuple[str, str], Path], list[str]]:
     """manifest 전체를 검증한다. 실패 시 위반 목록 전체를 담아 예외를 낸다."""
     root = asset_root.resolve()
@@ -382,6 +419,14 @@ def validate_manifest(
             violations.append(f"{prefix}.gender는 성별 공용 제품컷에서 null이어야 합니다")
         if direction is not None and direction not in _DIRECTIONS:
             violations.append(f"{prefix}.direction이 허용값이 아닙니다: {direction}")
+        side_style = example.get("sideStyle")
+        if direction == "side":
+            if side_style not in _SIDE_STYLES:
+                violations.append(
+                    f"{prefix}.sideStyle은 direction=side에서 threeQuarter|profile이어야 합니다"
+                )
+        elif side_style is not None:
+            violations.append(f"{prefix}.sideStyle은 side 외 방향에서 null이어야 합니다")
         if source_type not in _CLOTHING_TYPES:
             violations.append(f"{prefix}.sourceClothingType이 허용값이 아닙니다: {source_type}")
         if cut_type == "product":
@@ -479,6 +524,27 @@ def validate_manifest(
             except (OSError, UnidentifiedImageError) as exc:
                 violations.append(f"{prefix}.variants.thumb 결정성 검증에 실패했습니다: {exc}")
 
+    # 이번 manifest 가 실제로 건드리는 그룹에만 기존 rank 를 합친다. 카탈로그 항목에는
+    # serviceGroupKey 가 저장되지 않아 분류 축에서 되살리는데, 되살린 키가 발행 당시의
+    # 키와 100% 같다고 보장할 수 없다(제품 detail 처럼 축이 더 있는 계열). 손대지 않는
+    # 그룹까지 그 추정으로 판정하면 멀쩡한 릴리스가 남의 옛 데이터 때문에 거부된다.
+    touched_groups = set(groups)
+    for item in base_examples or []:
+        if not isinstance(item, dict):
+            continue
+        group = item.get("serviceGroupKey") or _service_group_key(item)
+        rank = item.get("rank")
+        if group in touched_groups and isinstance(rank, int) and not isinstance(rank, bool):
+            groups[group].append(rank)
+
+    base_ids = {
+        str(item.get("id")) for item in (base_examples or []) if isinstance(item, dict)
+    }
+    for collision in sorted(seen_ids & base_ids):
+        violations.append(
+            f"이미 발행된 id 입니다(자산·ID는 불변 — 새 id 를 쓰세요): {collision}"
+        )
+
     for group, ranks in sorted(groups.items()):
         if len(ranks) > 6:
             violations.append(f"serviceGroupKey '{group}'는 6개를 초과합니다: {len(ranks)}")
@@ -493,7 +559,13 @@ def validate_manifest(
     except ReleaseValidationError as exc:
         violations.extend(exc.violations)
     else:
-        _counts, missing, undeclared = generation_example_coverage(examples, public_combinations)
+        # 추가 발행(--additive)에서는 이번 manifest 만으로 커버리지를 재지 않는다.
+        # 12장짜리 추가분을 전체 공개표와 대조하면 손대지도 않은 조합이 전부 "0장"으로
+        # 잡혀 릴리스가 거부된다. 커버리지는 합쳐진 카탈로그의 성질이지 한 릴리스의
+        # 성질이 아니다. 전체 릴리스(base 없음)에서는 예전과 완전히 같다.
+        _counts, missing, undeclared = generation_example_coverage(
+            list(base_examples or []) + examples, public_combinations
+        )
         violations.extend(
             f"공개 선언 조합에 all 발행 예시가 0장입니다: {label}" for label in missing
         )
@@ -582,12 +654,14 @@ def stage_release(
     *,
     public_base_url: str,
     output_dir: Path | None = None,
+    base: tuple[dict[str, dict], list[dict]] | None = None,
 ) -> ReleaseResult:
     manifest_path = manifest_path.resolve()
     asset_root = asset_root.resolve()
     manifest = _read_json(manifest_path)
+    base_registry_assets, base_catalog = base or ({}, [])
     examples, source_files, warnings = validate_manifest(
-        manifest, asset_root, manifest_path=manifest_path
+        manifest, asset_root, manifest_path=manifest_path, base_examples=base_catalog
     )
     base = public_base_url.rstrip("/")
     if urlsplit(base).scheme not in {"http", "https"} or not urlsplit(base).netloc:
@@ -601,8 +675,11 @@ def stage_release(
     build_dir = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
     assets: list[AssetFile] = []
     try:
-        registry_assets: dict[str, dict] = {}
-        catalog: list[dict] = []
+        # 추가 발행이면 이미 발행된 항목을 그대로 안고 간다. 도구는 원래 manifest 만으로
+        # 두 문서를 통째로 다시 쓴다 — 그 상태로 12장짜리 manifest 를 적용하면 기존
+        # 107장이 사라진다. 기존 항목의 URL·해시·메타는 손대지 않는다(자산 불변).
+        registry_assets: dict[str, dict] = dict(base_registry_assets)
+        catalog: list[dict] = list(base_catalog)
         thumb_dir = build_dir / "assets" / "thumb"
         thumb_dir.mkdir(parents=True, exist_ok=True)
         for example in sorted(examples, key=lambda item: item["id"]):
@@ -635,6 +712,8 @@ def stage_release(
                 "gender": example["gender"],
                 "direction": example["direction"],
             })
+            if example["direction"] == "side":
+                entry["sideStyle"] = example["sideStyle"]
             registry_assets[example_id] = entry
             catalog.append({
                 "id": example_id,
@@ -645,6 +724,7 @@ def stage_release(
                 "applicableClothingTypes": example["applicableClothingTypes"],
                 "shot": example["shot"],
                 "direction": example["direction"],
+                "sideStyle": example.get("sideStyle"),
                 "mood": example.get("mood"),
                 "detailSubject": example.get("detailSubject"),
                 "presentationMethod": example.get("presentationMethod"),
@@ -764,6 +844,7 @@ _CATALOG_REQUIRED_FIELDS = {
     "applicableClothingTypes",
     "shot",
     "direction",
+    "sideStyle",
     "mood",
     "detailSubject",
     "presentationMethod",
@@ -773,6 +854,9 @@ _CATALOG_REQUIRED_FIELDS = {
 _CATALOG_NULLABLE_FIELDS = {
     "gender",
     "direction",
+    # side 가 아닌 항목과, 이 값이 생기기 전에 발행된 항목은 null 이다. 소비자는 null 을
+    # 옆모습으로 읽는다(cut_generator._side_style_of / storyboardTaxonomy.sideStyleOf).
+    "sideStyle",
     "mood",
     "detailSubject",
     "presentationMethod",
@@ -890,7 +974,15 @@ def _validate_catalog_registry_pair(
     남았다. 두 파일이 서로를 검증하면 최소한 '한쪽만 바뀐' 부류는 적용 전에 걸린다.
     """
     catalog_ids = {item["id"] for item in catalog}
-    registry_ids = set(registry["assets"])
+    # 시그니처 컷은 첫 화면 전용 풀이라 서버 레지스트리에만 산다 — 생성예시 갤러리
+    # 카탈로그에 없는 것이 정상이다(프론트 storyboardExampleStaleness 도 sig_* 를
+    # "카탈로그에 없어도 낡지 않음"으로 따로 뺀다). 그래서 한쪽만 갱신됐는지 보는
+    # 이 검사에서 registry-only 를 무조건 사고로 볼 수 없다. 대신 registry-only 는
+    # signature 만 허용해, 진짜 사고(일반 예시가 한쪽에만 있음)는 그대로 잡는다.
+    registry_ids = {
+        example_id for example_id, record in registry["assets"].items()
+        if not (isinstance(record, dict) and record.get("cutType") == "signature")
+    }
     if catalog_ids != registry_ids:
         only_catalog = sorted(catalog_ids - registry_ids)[:5]
         only_registry = sorted(registry_ids - catalog_ids)[:5]
@@ -1003,6 +1095,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("R2_PUBLIC_BASE"),
         help="R2 공개 서빙 URL (기본: R2_PUBLIC_BASE)",
     )
+    parser.add_argument(
+        "--additive",
+        action="store_true",
+        help="이미 발행된 레지스트리·카탈로그 위에 이번 manifest를 더한다(기존 항목 보존)",
+    )
     parser.add_argument("--apply", action="store_true", help="스테이징 JSON을 저장소 정식 위치에 적용")
     parser.add_argument("--upload", action="store_true", help="R2 업로드 목록 출력(기본 dry-run)")
     parser.add_argument("--execute", action="store_true", help="--upload를 실제 R2 쓰기로 전환")
@@ -1029,6 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
             args.asset_root,
             public_base_url=args.public_base_url or "",
             output_dir=args.out,
+            base=load_base_release() if args.additive else None,
         )
         for warning in result.warnings:
             print(f"WARNING: {warning}")

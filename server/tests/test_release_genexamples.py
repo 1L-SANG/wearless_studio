@@ -53,6 +53,7 @@ def _fixture(tmp_path: Path, *, count: int = 1) -> tuple[Path, Path, dict]:
             "detailSubject": None,
             "presentationMethod": None,
             "direction": "front",
+            "sideStyle": None,
             "sourceClothingType": "top",
             "applicableClothingTypes": ["top"],
             "variants": {"all": all_spec, "pose": pose_spec},
@@ -235,6 +236,8 @@ def test_direction_observation_metadata_is_cut_type_independent(
             "mood": "daily" if cut_type == "styling" else None,
             "direction": direction,
         })
+    # side 는 하위 갈래까지 적어야 한다 — 사선과 90도 옆모습이 같은 'side' 라서.
+    example["sideStyle"] = "profile" if direction == "side" else None
 
     examples, _files, _warnings = release.validate_manifest(
         manifest, root, manifest_path=manifest_path
@@ -571,6 +574,7 @@ def _catalog_item(example_id="ex_a", base="https://images.example.test", **over)
         "applicableClothingTypes": ["top"],
         "shot": "full",
         "direction": "front",
+        "sideStyle": None,
         "mood": None,
         "detailSubject": None,
         "presentationMethod": None,
@@ -780,3 +784,165 @@ def test_validate_rejects_registry_asset_without_all_or_thumb():
     del registry["assets"]["ex_a"]["all"]
     with pytest.raises(RuntimeError, match="variant_missing"):
         release._validate_registry_document(registry, label="테스트")
+
+
+def test_side_requires_a_sub_kind_and_other_directions_reject_one(tmp_path):
+    """side 는 direction 만으로 같은 그림이 아니다 — 새 발행은 갈래를 반드시 적는다."""
+    manifest_path, root, manifest = _fixture(tmp_path)
+    manifest["examples"][0]["direction"] = "side"
+    manifest["examples"][0]["sideStyle"] = None
+    _write_manifest(manifest_path, manifest)
+    with pytest.raises(release.ReleaseValidationError) as excinfo:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+    assert any("sideStyle" in violation for violation in excinfo.value.violations)
+
+    manifest["examples"][0]["direction"] = "front"
+    manifest["examples"][0]["sideStyle"] = "threeQuarter"
+    _write_manifest(manifest_path, manifest)
+    with pytest.raises(release.ReleaseValidationError) as excinfo:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+    assert any("side 외 방향" in violation for violation in excinfo.value.violations)
+
+
+def test_side_style_reaches_both_published_documents(tmp_path):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    manifest["examples"][0].update({"direction": "side", "sideStyle": "threeQuarter"})
+    _write_manifest(manifest_path, manifest)
+    result = release.stage_release(
+        manifest_path, root,
+        public_base_url="https://images.example.test",
+        output_dir=tmp_path / "staged",
+    )
+    registry = json.loads(result.registry_path.read_text())
+    catalog = json.loads(result.catalog_path.read_text())
+    example_id = manifest["examples"][0]["id"]
+    assert registry["assets"][example_id]["sideStyle"] == "threeQuarter"
+    assert catalog[0]["sideStyle"] == "threeQuarter"
+
+
+def test_non_side_examples_carry_a_null_side_style_in_the_catalog(tmp_path):
+    """카탈로그 필드 집합은 정확히 일치해야 한다 — null 이라도 키는 있어야 한다."""
+    manifest_path, root, manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path, root,
+        public_base_url="https://images.example.test",
+        output_dir=tmp_path / "staged",
+    )
+    catalog = json.loads(result.catalog_path.read_text())
+    assert catalog[0]["sideStyle"] is None
+    registry = json.loads(result.registry_path.read_text())
+    assert "sideStyle" not in registry["assets"][catalog[0]["id"]]
+
+
+def _published_pair(tmp_path, base="https://images.example.test"):
+    """이미 발행돼 있는 레지스트리·카탈로그 한 쌍(추가 발행의 바탕)."""
+    registry = {
+        "_meta": {
+            "schemaVersion": 2,
+            "releaseId": "old-release-01",
+            "releasedAt": "2026-07-20T00:00:00Z",
+            "defaultBaseUrl": base,
+        },
+        "assets": {
+            "ex_old": {
+                "all": f"{base}/all/ex_old.png",
+                "thumb": f"{base}/thumb/ex_old.webp",
+                "applicableClothingTypes": ["top"],
+                "cutType": "styling", "shot": "full",
+                "gender": "women", "direction": "front",
+            },
+            # 시그니처 컷은 첫 화면 전용이라 서버에만 있다 — 짝 검증이 이걸 사고로 보면 안 된다.
+            "sig_women_01": {
+                "all": f"{base}/signature/all/sig_women_01.png",
+                "thumb": f"{base}/signature/thumb/sig_women_01.webp",
+                "applicableClothingTypes": ["top", "bottom", "outer", "dress"],
+                "cutType": "signature", "shot": "full",
+                "gender": "women", "direction": "front",
+            },
+        },
+    }
+    catalog = [_catalog_item("ex_old", base=base)]
+    registry_path = tmp_path / "published_registry.json"
+    catalog_path = tmp_path / "published_catalog.json"
+    registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    return registry_path, catalog_path, registry, catalog
+
+
+def test_signature_cuts_live_only_in_the_registry_and_do_not_fail_the_pair_check(tmp_path):
+    _registry_path, _catalog_path, registry, catalog = _published_pair(tmp_path)
+    release._validate_release_documents(catalog, registry, label="테스트")
+
+
+def test_additive_release_keeps_every_already_published_entry(tmp_path):
+    """도구는 원래 manifest 만으로 두 문서를 통째로 다시 쓴다.
+
+    추가 발행에서 그대로 두면 기존 항목이 통째로 사라진다 — 12장짜리 manifest 를 올리면
+    이미 발행된 107장이 지워진다. 바탕을 읽어 더해야 한다.
+    """
+    registry_path, catalog_path, _registry, _catalog = _published_pair(tmp_path)
+    base = release.load_base_release(registry_path, catalog_path)
+    manifest_path, root, _manifest = _fixture(tmp_path)
+
+    result = release.stage_release(
+        manifest_path, root,
+        public_base_url="https://images.example.test",
+        output_dir=tmp_path / "staged",
+        base=base,
+    )
+    staged_registry = json.loads(result.registry_path.read_text())
+    staged_catalog = json.loads(result.catalog_path.read_text())
+
+    assert "ex_old" in staged_registry["assets"]
+    assert "sig_women_01" in staged_registry["assets"]
+    assert {item["id"] for item in staged_catalog} == {
+        "ex_old", "ex_styling_women_top_full_daily_01",
+    }
+    # 기존 항목은 한 글자도 안 바뀐다 — 자산은 불변이다.
+    assert staged_registry["assets"]["ex_old"]["all"].endswith("/all/ex_old.png")
+    # 올리는 건 새 자산뿐이다.
+    assert {asset.example_id for asset in result.assets} == {
+        "ex_styling_women_top_full_daily_01",
+    }
+
+
+def test_additive_release_refuses_to_reuse_an_already_published_id(tmp_path):
+    registry_path, catalog_path, _registry, _catalog = _published_pair(tmp_path)
+    base = release.load_base_release(registry_path, catalog_path)
+    manifest_path, root, manifest = _fixture(tmp_path)
+    manifest["examples"][0]["id"] = "ex_old"
+    _write_manifest(manifest_path, manifest)
+    with pytest.raises(release.ReleaseValidationError) as excinfo:
+        release.validate_manifest(
+            manifest, root, manifest_path=manifest_path, base_examples=base[1]
+        )
+    assert any("이미 발행된 id" in violation for violation in excinfo.value.violations)
+
+
+def test_additive_coverage_counts_the_merged_catalog_not_this_manifest(tmp_path, monkeypatch):
+    """추가분만으로 커버리지를 재면 손대지도 않은 조합이 전부 0장으로 잡혀 거부된다."""
+    monkeypatch.setattr(release, "load_public_combinations", _LOAD_PUBLIC_COMBINATIONS)
+    monkeypatch.setattr(release, "generation_example_coverage", _GENERATION_EXAMPLE_COVERAGE)
+    monkeypatch.setattr(
+        release, "load_public_combinations",
+        lambda path=None: [
+            {"cutType": "styling", "shot": "full", "clothingType": "outer", "gender": "women"},
+            {"cutType": "styling", "shot": "full", "clothingType": "top", "gender": "women"},
+        ],
+    )
+    registry_path, catalog_path, _registry, catalog = _published_pair(tmp_path)
+    catalog[0]["applicableClothingTypes"] = ["outer"]
+    catalog[0]["clothingType"] = "outer"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    manifest_path, root, manifest = _fixture(tmp_path)
+
+    # 바탕 없이는 outer 조합이 0장이라 거부된다.
+    with pytest.raises(release.ReleaseValidationError) as excinfo:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+    assert any("0장" in violation for violation in excinfo.value.violations)
+
+    # 바탕을 합치면 둘 다 채워진다.
+    base = release.load_base_release(registry_path, catalog_path)
+    release.validate_manifest(
+        manifest, root, manifest_path=manifest_path, base_examples=base[1]
+    )

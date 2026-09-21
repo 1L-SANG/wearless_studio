@@ -745,6 +745,91 @@ def test_pose_direction_preflight_matches_worn_and_mirror_rules(tmp_path, monkey
         cut.load_example_asset_registry.cache_clear()
 
 
+def test_side_example_must_match_the_side_sub_kind_not_just_the_direction(
+    tmp_path, monkeypatch
+):
+    """사선 카드가 90도 옆모습 사진을 "같은 방향"으로 물면 안 된다.
+
+    둘 다 direction='side' 라 direction 만 보면 양립으로 판정되고, 프롬프트가 그 사진의
+    body-direction family 를 보존하라고 지시한다. 그러면 베이스가 90도로 나오는데
+    사선은 각도 교체를 건너뛰므로 얼굴 패스가 90도 머리에 얼굴을 그리게 된다.
+    """
+    registry = {
+        "_meta": {"defaultBaseUrl": "https://images.example.test"},
+        "assets": {
+            "profile": {
+                "all": "profile.png", "pose": "profile_pose.png",
+                "cutType": "horizon", "direction": "side", "sideStyle": "profile",
+            },
+            "threeQuarter": {
+                "all": "tq.png", "pose": "tq_pose.png",
+                "cutType": "horizon", "direction": "side", "sideStyle": "threeQuarter",
+            },
+            # sideStyle 이 생기기 전에 발행된 자산 — 실제로는 전부 완전 옆모습이다.
+            "legacySide": {
+                "all": "legacy.png", "pose": "legacy_pose.png",
+                "cutType": "horizon", "direction": "side",
+            },
+        },
+    }
+    path = tmp_path / "example_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
+    cut.load_example_asset_registry.cache_clear()
+
+    def compat(example_id, side_style):
+        spec = cut.normalize_spec({
+            "cutType": "horizon", "direction": "side", "sideStyle": side_style,
+            "refScope": "all", "exampleId": example_id,
+        })
+        return cut.apply_reference_compatibility(spec)["_referenceDirectionCompatible"]
+
+    try:
+        assert compat("threeQuarter", "threeQuarter") is True
+        assert compat("profile", "profile") is True
+        # 핵심: 갈래가 다르면 양립이 아니다.
+        assert compat("profile", "threeQuarter") is False
+        assert compat("threeQuarter", "profile") is False
+        # 미기재 레거시는 옆모습으로 읽는다.
+        assert compat("legacySide", "profile") is True
+        assert compat("legacySide", "threeQuarter") is False
+
+        # pose 전용 자산의 사전 게이트도 같은 규칙을 쓴다.
+        assert not cut.pose_direction_compatible("profile", cut.normalize_spec({
+            "cutType": "horizon", "direction": "side", "sideStyle": "threeQuarter",
+        }))
+        assert cut.pose_direction_compatible("threeQuarter", cut.normalize_spec({
+            "cutType": "horizon", "direction": "side", "sideStyle": "threeQuarter",
+        }))
+    finally:
+        cut.load_example_asset_registry.cache_clear()
+
+
+def test_non_side_directions_ignore_side_style(tmp_path, monkeypatch):
+    """front·back 은 하위 갈래가 없다 — sideStyle 때문에 갈라지면 안 된다."""
+    registry = {
+        "_meta": {"defaultBaseUrl": "https://images.example.test"},
+        "assets": {
+            "front": {
+                "all": "front.png", "cutType": "horizon",
+                "direction": "front", "sideStyle": None,
+            },
+        },
+    }
+    path = tmp_path / "example_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
+    cut.load_example_asset_registry.cache_clear()
+    try:
+        spec = cut.normalize_spec({
+            "cutType": "horizon", "direction": "front",
+            "refScope": "all", "exampleId": "front",
+        })
+        assert cut.apply_reference_compatibility(spec)["_referenceDirectionCompatible"] is True
+    finally:
+        cut.load_example_asset_registry.cache_clear()
+
+
 def test_example_asset_resolution_uses_registry_and_base_override(dev_example_registry):
     resolved = cut.resolve_example_asset(
         "ex_styling_top_full_1", "https://assets.example.test/generated-examples")

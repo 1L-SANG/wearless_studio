@@ -286,6 +286,10 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
                 value.get("direction") is None or value.get("direction") in _DIRECTIONS
             ):
                 entry["direction"] = value.get("direction")
+            # side 의 하위 갈래. 키가 없는 구 레지스트리 항목은 옆모습으로 읽힌다
+            # (_side_style_of) — 이 값이 생기기 전 자산은 전부 완전 옆모습이었다.
+            if value.get("sideStyle") in SIDE_STYLES:
+                entry["sideStyle"] = value["sideStyle"]
             # 제품 생성예시는 성별 공용이라 v2 레지스트리에 명시된 null도 메타데이터다.
             # 키 자체가 없는 구 레지스트리와 구분해 그대로 보존한다.
             if "gender" in value and (
@@ -325,6 +329,34 @@ def example_asset_status(
     return "available"
 
 
+def _side_style_of(source: dict) -> str:
+    """side 계열의 하위 갈래를 읽는다. 미기재는 옆모습으로 본다.
+
+    사선(threeQuarter)은 2026-09-21에 생긴 값이다. 그 전에 발행된 side 예시는 전부
+    완전 옆모습이었으므로(카탈로그 전수조사: 사선 0장) 미기재를 profile 로 읽는 것이
+    실제 자산과 일치한다. 프론트 directionChoiceFromSpec 의 기본값과도 같다.
+    """
+    value = source.get("sideStyle") or source.get("side_style")
+    return value if value in SIDE_STYLES else "profile"
+
+
+def direction_family_matches(entry: dict, spec: dict) -> bool:
+    """예시의 관찰 방향과 카드 레시피 방향이 같은 그림인지 판정한다.
+
+    direction 만으로는 부족하다 — 사선과 90도 옆모습은 direction 이 똑같이 'side' 라
+    direction 만 보면 사선 카드가 완전 옆모습 사진을 "양립"으로 물고, 프롬프트가 그
+    사진의 body-direction family 를 보존하라고 지시한다. 그러면 베이스가 90도로 나오고,
+    사선은 각도 교체를 건너뛰므로(_angle_swap_direction) 얼굴 패스가 90도 머리에 얼굴을
+    그리게 된다. side 일 때는 하위 갈래까지 같아야 같은 그림이다.
+    """
+    example_direction = entry.get("direction")
+    if example_direction != spec.get("direction"):
+        return False
+    if example_direction != "side":
+        return True
+    return _side_style_of(entry) == _side_style_of(spec)
+
+
 def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     """pose 전용 자산과 현재 카드의 방향 계열이 같은지 API 호출 전에 판정한다.
 
@@ -343,7 +375,7 @@ def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     return (
         example_cut in ("styling", "horizon")
         and entry.get("direction") in _DIRECTIONS
-        and entry.get("direction") == spec.get("direction")
+        and direction_family_matches(entry, spec)
     )
 
 
@@ -388,9 +420,7 @@ def apply_reference_compatibility(spec: dict) -> dict:
         return resolved
     example_direction = entry.get("direction")
     if example_cut in ("styling", "horizon") and example_direction in _DIRECTIONS:
-        resolved["_referenceDirectionCompatible"] = (
-            example_direction == spec.get("direction")
-        )
+        resolved["_referenceDirectionCompatible"] = direction_family_matches(entry, spec)
     return resolved
 
 

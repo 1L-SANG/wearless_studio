@@ -119,7 +119,7 @@ function flatCombinationIsPublished({ cutType, shot, clothingType, gender }) {
 
 function matchesMainSelection(example, options, flatCombinationPublished) {
   const {
-    cutType, shot, clothingType, gender, spaceGroupId, direction,
+    cutType, shot, clothingType, gender, spaceGroupId, direction, sideStyle = null,
     includeSetOnly, appendSetOnly,
   } = options;
   return matchesSharedEligibility(example, {
@@ -130,7 +130,7 @@ function matchesMainSelection(example, options, flatCombinationPublished) {
     && example?.shot === shot
     && (!spaceGroupId || (
       example.variants.includes('pose')
-      && poseExampleDirectionCompatible(example, { cutType, direction })
+      && poseExampleDirectionCompatible(example, { cutType, direction, sideStyle })
     ));
 }
 
@@ -220,6 +220,7 @@ function candidatesForBlock(block, catalog, product, gender, identityKind = null
     gender,
     spaceGroupId: block.spaceGroupId,
     direction: block.direction,
+    sideStyle: block.sideStyle ?? null,
     mixMoodBuckets: block.cutType === 'styling',
   }), identityKind, block);
 }
@@ -257,6 +258,7 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
       || !poseExampleDirectionCompatible(example, {
         cutType: block.cutType,
         direction: block.direction,
+        sideStyle: block.sideStyle ?? null,
       })
     ) continue;
 

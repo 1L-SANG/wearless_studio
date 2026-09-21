@@ -152,14 +152,24 @@ export const sectionRoleForContentRole = (role) => contentTemplate(role).section
 export const defaultContentRoleForSection = (sectionRole) =>
   contentTemplatesForSection(sectionRole)[0]?.value || CONTENT_ROLES.CUSTOM;
 
-export function poseExampleDirectionCompatible(example, { cutType, direction }) {
+/* side 의 하위 갈래. 미기재는 옆모습 — 사선(threeQuarter)은 2026-09-21에 생긴 값이고
+   그 전에 발행된 side 예시는 전수조사 결과 전부 완전 옆모습이다. 서버
+   cut_generator._side_style_of 와 같은 기본값을 쓴다. */
+const sideStyleOf = (source) => (
+  (source && source.sideStyle) === 'threeQuarter' ? 'threeQuarter' : 'profile'
+);
+
+export function poseExampleDirectionCompatible(example, { cutType, direction, sideStyle = null }) {
   if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
   if (cutType === 'mirror' || example.cutType === 'mirror') {
     return cutType === 'mirror' && example.cutType === 'mirror';
   }
-  return ['styling', 'horizon'].includes(example.cutType)
-    && ['front', 'back', 'side'].includes(example.direction)
-    && example.direction === direction;
+  if (!['styling', 'horizon'].includes(example.cutType)) return false;
+  if (!['front', 'back', 'side'].includes(example.direction)) return false;
+  if (example.direction !== direction) return false;
+  // side 는 direction 만으로 같은 그림이 아니다 — 사선과 90도 옆모습이 같은 'side' 다.
+  // 갈라 보지 않으면 사선 카드가 완전 옆모습 사진의 포즈를 물려받는다.
+  return direction !== 'side' || sideStyleOf(example) === sideStyleOf({ sideStyle });
 }
 
 /* 디테일 역할도 항상 포함 — 2026-08-07 개편(구조 확대 모드)으로 디테일 사진 유무는
