@@ -1284,3 +1284,45 @@ def test_an_unknown_side_style_falls_back_to_the_swap_path():
     spec = _side_spec("diagonal")
     assert spec["sideStyle"] is None
     assert cut._angle_swap_direction(spec, "top", object()) == "side"
+
+
+# ── 핏 확인 섹션 포즈 변주 (2026-09-21) ────────────────────────────────────
+#
+# 운영 QA 에서 studio 7컷이 거의 같은 그림으로 나왔다. 콘티가 pose 를 안 주면
+# POSE:auto 한 줄로 가는데, 같은 상품·같은 모델·같은 프롬프트면 같은 포즈가 나온다.
+def test_the_fit_section_varies_the_pose():
+    out = content_roles.canonicalize_storyboard(_studio(6))
+    poses = [b.get("pose") for b in out]
+    assert not poses[0], "기준 컷은 POSE:auto 로 남는다"
+    assert all(poses[1:]), "나머지는 포즈가 붙는다"
+    assert len(set(poses[1:])) == len(poses[1:]), "서로 달라야 변주다"
+
+
+def test_a_pose_the_storyboard_chose_always_wins():
+    blocks = _studio(1) + [
+        {"sectionRole": "studio", "cutType": "horizon", "pose": "leaning on a wall"},
+        {"sectionRole": "studio", "cutType": "horizon"},
+        {"sectionRole": "studio", "cutType": "horizon"},
+    ]
+    out = content_roles.canonicalize_storyboard(blocks)
+    assert out[1]["pose"] == "leaning on a wall"
+
+
+def test_seller_cards_keep_their_pose():
+    out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
+    assert all(not b.get("pose") for b in out)
+
+
+def test_the_poses_survive_normalize_and_reach_the_prompt():
+    """★ 실제로 POSE:named 로 가는지 — 여기서 끊기면 변주가 조용히 사라진다."""
+    out = content_roles.canonicalize_storyboard(_studio(4))
+    turned = out[1]
+    spec = cut.normalize_spec({**turned, "modelId": "m1"}, clothing_type="top")
+    assert spec["pose"] == turned["pose"] != "auto"
+
+
+def test_every_pose_keeps_the_garment_visible_and_fits_the_limit():
+    """핏 확인 섹션이라 앞섶을 가리는 포즈는 안 쓴다. 문구는 40자에서 잘린다."""
+    for pose in content_roles._STUDIO_POSE_ROTATION:
+        assert len(pose) <= 40, pose
+        assert "arms crossed" not in pose and "팔짱" not in pose, pose

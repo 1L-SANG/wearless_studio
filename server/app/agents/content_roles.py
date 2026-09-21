@@ -291,6 +291,43 @@ _STUDIO_DIRECTION_SPREAD = (
 #: 기준 컷 1장 + 배분 3장.
 _STUDIO_SPREAD_MIN_CUTS = 4
 
+#: 핏 확인 섹션에서 포즈를 안 정한 AI 컷에 돌려 가며 넣는 포즈.
+#:
+#: 왜 필요한가: 2026-09-21 운영 QA 에서 studio 7컷이 **거의 같은 그림**으로 나왔다.
+#: 콘티가 pose 를 안 주면 cut_generator 가 POSE:auto 한 줄("natural and unforced")로
+#: 가는데, 같은 상품·같은 모델·같은 프롬프트면 같은 포즈가 나온다. 예시(exampleId)가
+#: 붙어야 도는 EXNUANCE·EXREPEAT 변주도 안 걸리고, 포즈 변주 전용인 cut_variator(AG-07)는
+#: 에디터에서만 쓴다. 즉 상세페이지에는 변주 장치가 하나도 안 걸려 있었다.
+#:
+#: 고르는 기준은 **옷이 계속 보이는 것**이다. 핏 확인 섹션이라 팔짱처럼 앞섶을 가리는
+#: 포즈는 넣지 않는다. 문구는 _sanitize 를 거쳐 40자에서 잘리므로 그 안에 맞춘다.
+_STUDIO_POSE_ROTATION = (
+    "weight on one leg, hands at sides",
+    "one hand in a pocket, shoulders relaxed",
+    "both hands in pockets, chin level",
+    "one hand adjusting a cuff",
+    "arms relaxed, one small step forward",
+)
+
+
+def _spread_studio_poses(raw: list) -> None:
+    """핏 확인 섹션의 **포즈를 안 정한** AI 컷에 포즈를 돌려 가며 넣는다(제자리 수정).
+
+    첫 컷은 건드리지 않는다 — 그 섹션의 기준 컷이고, 기준은 POSE:auto 가 맞다.
+    콘티가 pose 를 줬으면 그대로 둔다. 셀러 카드도 안 건드린다.
+    """
+    open_slots = [
+        block for block in raw
+        if isinstance(block, dict)
+        and block.get("source") != "mine"
+        and (block.get("sectionRole") or block.get("section_role")
+             or resolve_section_role(block)) == "studio"
+        and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
+        and not str(block.get("pose") or "").strip()
+    ]
+    for index, block in enumerate(open_slots[1:]):
+        block["pose"] = _STUDIO_POSE_ROTATION[index % len(_STUDIO_POSE_ROTATION)]
+
 
 def _spread_studio_directions(raw: list) -> None:
     """핏 확인 섹션의 **방향을 안 정한** AI 컷에 옆·뒤를 한 장씩 준다(제자리 수정).
@@ -395,6 +432,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
     #   안 정했다" 가 구분되지 않는다. 호출자의 리스트는 안 건드리도록 복사본에 쓴다.
     raw = [dict(block) if isinstance(block, dict) else block for block in (blocks or [])]
     _spread_studio_directions(raw)
+    _spread_studio_poses(raw)
     canonical = [canonicalize_for_storyboard(block) for block in raw]
     # Custom/mine cards without a semantic section inherit the preceding
     # section; leading cards inherit the next valid section (or hooking when
