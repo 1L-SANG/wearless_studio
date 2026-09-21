@@ -443,7 +443,28 @@ def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarra
 
 
 #: 톤 가중치를 부드럽게 만드는 흐림(px). 실루엣에서 뚝 끊기지 않을 만큼만.
+#:
+#: ★ 보정량에 비례해 키운다(2026-09-21). 2.0 은 보정량이 한 자리일 때 고른 값인데,
+#:   뒷모습은 등록 사진과 스튜디오 조명이 많이 달라 보정량이 30 언저리까지 간다.
+#:   그 크기를 2px 로 가리면 가중치가 0→1 로 넘어가는 자리가 **눈에 보이는 단차**가 된다 —
+#:   45degree_view/4.png 실측에서 목에 직각으로 잘린 밝기 계단이 생겼다. 게이트(35.0)는
+#:   "톤이 너무 어긋나면 버린다"만 보므로 통과한 컷에서도 그 계단이 남는다.
+#:
+#:   경계를 넘는 밝기 차이는 shift 크기에 비례하니 흐림도 같이 키운다. 기울기는
+#:   "보정량 1 당 몇 px" 로 두고, 위는 머리 상자(1024px)에서 과해지지 않게 막는다.
 TONE_FEATHER = 2.0
+#: 보정량 1 당 더할 흐림(px). shift 27 → 2.0 + 27×0.35 ≈ 11.5px.
+TONE_FEATHER_PER_SHIFT = 0.35
+#: 흐림 상한(px). 이보다 크면 목 보정이 얼굴·옷까지 번진다.
+TONE_FEATHER_MAX = 16.0
+
+
+def tone_feather(shift: np.ndarray | None) -> float:
+    """보정량에 맞춘 흐림 반경(px). 작은 보정은 예전 그대로 2.0."""
+    if shift is None:
+        return TONE_FEATHER
+    magnitude = float(max(abs(float(v)) for v in shift))
+    return min(TONE_FEATHER + magnitude * TONE_FEATHER_PER_SHIFT, TONE_FEATHER_MAX)
 #: 이 밝기 아래는 머리카락으로 보고 **보정하지 않는다**. 위는 피부로 보고 전부 건다.
 #: 사이는 선형으로 섞어 경계를 안 만든다(TONE_HAIR_MAX ~ TONE_SKIN_MIN).
 #: 실측 밝기: 머리카락 40 안팎 · 목 117~184.
@@ -471,7 +492,7 @@ def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray
     person = (np.abs(out - bg).max(axis=2) > BG_THRESHOLD).astype(np.float32)
     lum = out.mean(axis=2)
     skin = np.clip((lum - TONE_HAIR_MAX) / (TONE_SKIN_MIN - TONE_HAIR_MAX), 0.0, 1.0)
-    weight = cv2.GaussianBlur(person * skin, (0, 0), TONE_FEATHER)[..., None]
+    weight = cv2.GaussianBlur(person * skin, (0, 0), tone_feather(shift))[..., None]
     return np.clip(out + shift * weight, 0, 255)
 
 
