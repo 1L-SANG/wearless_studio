@@ -51,6 +51,9 @@ _CONTENT_ROLE_RECIPES = {
 }
 
 _WORN_DIRECTIONS = ("front", "side", "back")
+#: direction="side" 의 두 갈래 — cut_generator.SIDE_STYLES 와 같은 값이어야 한다.
+#: 순환 import 를 피하려고 여기서 다시 쓰고, 계약 시험이 두 값을 맞춰 둔다.
+_SIDE_STYLES = ("profile", "threeQuarter")
 _WORN_SHOTS = ("full", "medium")
 _PRODUCT_DIRECTIONS = ("front", "back")
 _PRODUCT_OVERVIEW_SHOTS = ("ghost",)
@@ -246,6 +249,11 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         "direction": direction,
         "shot": shot,
     })
+    # 옆모습 컷의 얼굴 경로(진짜 옆모습 ↔ 사선). 옆이 아니면 뜻이 없으니 지운다 —
+    # 남겨 두면 방향을 바꾼 카드에 옛 값이 따라다닌다(cut_generator.SIDE_STYLES).
+    side_style = block.get("sideStyle") or block.get("side_style")
+    out.pop("side_style", None)
+    out["sideStyle"] = side_style if (direction == "side" and side_style in _SIDE_STYLES) else None
     if cut_type == "product":
         out["faceExposure"] = None
         out["matchIds"] = []
@@ -266,12 +274,22 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
 #: 놓고도 쓰이질 않았다.
 #:
 #: 왜 한 장씩만인가: 옆·뒷모습 컷은 각도 교체가 성공해야만 나온다. 실패하면 그 컷은
-#: **빈 컷**이다(남의 머리를 내보내지 않는다는 계약). 그 경로는 아직 운영에서 성공한
-#: 적이 없으므로, 처음부터 절반을 걸면 실패했을 때 셀러의 핏 섹션이 반토막 난다.
-#: 한 장씩 넣어 두고, 운영에서 붙는 것을 보고 늘린다.
-_STUDIO_DIRECTION_SPREAD = ("side", "back")
-#: 이보다 적으면 건드리지 않는다 — 두 컷짜리 섹션을 옆·뒤로만 채우면 정면이 사라진다.
-_STUDIO_SPREAD_MIN_CUTS = 3
+#: **빈 컷**이다(남의 머리를 내보내지 않는다는 계약). 처음부터 절반을 걸면 실패했을 때
+#: 셀러의 핏 섹션이 반토막 난다. 한 장씩 넣어 두고, 운영에서 붙는 것을 보고 늘린다.
+#:
+#: 옆이 두 칸인 이유(2026-09-21): 같은 "옆모습" 주문이 두 가지 다른 그림이 된다.
+#:   profile      — 진짜 옆모습. 각도 교체가 등록자 실사진을 머리째 붙인다.
+#:   threeQuarter — 사선 3/4. 몸만 옆으로 두고 얼굴은 카메라를 본다. 얼굴 패스가 그린다.
+#: 각도 교체를 켜기 전에는 옆모습 주문이 전부 후자로 갔다(09-17 사선 4컷). 각도 교체가
+#: 붙자 전부 전자로 넘어가면서 사선이 사라졌다 — 핏 섹션에는 둘 다 있어야 한다.
+_STUDIO_DIRECTION_SPREAD = (
+    ("side", "profile"),
+    ("side", "threeQuarter"),
+    ("back", None),
+)
+#: 이보다 적으면 건드리지 않는다 — 짧은 섹션을 옆·뒤로만 채우면 정면이 사라진다.
+#: 기준 컷 1장 + 배분 3장.
+_STUDIO_SPREAD_MIN_CUTS = 4
 
 
 def _spread_studio_directions(raw: list) -> None:
@@ -303,8 +321,10 @@ def _spread_studio_directions(raw: list) -> None:
     if len(open_slots) < _STUDIO_SPREAD_MIN_CUTS:
         return
     # 첫 컷은 정면으로 남긴다 — 핏 섹션의 기준 컷이고, 정면이 하나도 없으면 안 된다.
-    for block, direction in zip(open_slots[1:], _STUDIO_DIRECTION_SPREAD):
+    for block, (direction, side_style) in zip(open_slots[1:], _STUDIO_DIRECTION_SPREAD):
         block["direction"] = direction
+        if side_style:
+            block["sideStyle"] = side_style
         if block.get("exampleId"):
             block["exampleId"] = None
             block["exampleSelectionOrigin"] = None

@@ -1165,13 +1165,30 @@ def _studio(n, **extra):
     return [{"sectionRole": "studio", "cutType": "horizon", **extra} for _ in range(n)]
 
 
-def test_the_fit_section_gets_one_side_and_one_back():
-    out = content_roles.canonicalize_storyboard(_studio(5))
-    directions = [b["direction"] for b in out]
-    assert directions[0] == "front", "기준 컷은 정면으로 남는다"
-    assert directions.count("side") == 1
-    assert directions.count("back") == 1
-    assert directions.count("front") == 3
+def test_the_fit_section_gets_a_profile_a_three_quarter_and_a_back():
+    """옆이 두 칸인 건 같은 "옆모습" 주문이 두 가지 다른 그림이기 때문이다.
+
+    profile      = 진짜 옆모습(각도 교체가 실사진 머리를 붙인다)
+    threeQuarter = 사선 3/4(얼굴 패스가 그린다) — 09-17 에 잘 나왔던 그 컷
+    """
+    out = content_roles.canonicalize_storyboard(_studio(6))
+    plan = [(b["direction"], b.get("sideStyle")) for b in out]
+    assert plan[0] == ("front", None), "기준 컷은 정면으로 남는다"
+    assert plan[1:4] == [("side", "profile"), ("side", "threeQuarter"), ("back", None)]
+    assert plan[4:] == [("front", None), ("front", None)]
+
+
+def test_the_side_style_is_dropped_when_the_cut_is_not_a_side():
+    """방향을 바꾼 카드에 옛 값이 따라다니면 안 된다."""
+    out = content_roles.canonicalize_storyboard(
+        [{"sectionRole": "studio", "cutType": "horizon",
+          "direction": "front", "sideStyle": "threeQuarter"}])
+    assert out[0]["sideStyle"] is None
+
+
+def test_both_modules_agree_on_the_side_styles():
+    """cut_generator 와 content_roles 가 갈리면 한쪽이 조용히 값을 버린다."""
+    assert content_roles._SIDE_STYLES == cut.SIDE_STYLES
 
 
 def test_a_direction_the_storyboard_chose_always_wins():
@@ -1186,8 +1203,8 @@ def test_a_direction_the_storyboard_chose_always_wins():
 
 
 def test_a_short_fit_section_keeps_every_cut_frontal():
-    """두 컷짜리 섹션을 옆·뒤로 채우면 정면이 사라진다."""
-    for n in (1, 2):
+    """짧은 섹션을 옆·뒤로 채우면 정면이 사라진다. 기준 1장 + 배분 3장이 최소다."""
+    for n in (1, 2, 3):
         out = content_roles.canonicalize_storyboard(_studio(n))
         assert {b["direction"] for b in out} == {"front"}, n
 
@@ -1199,13 +1216,13 @@ def test_seller_cards_are_never_reassigned():
 
 def test_changing_the_direction_drops_an_auto_picked_example():
     """정면 예시 포즈는 옆 컷에 못 쓴다(cut_generator.pose_direction_compatible)."""
-    blocks = _studio(3)
+    blocks = _studio(4)
     for b in blocks:
         b["exampleId"] = "ex_front_1"
         b["exampleSelectionOrigin"] = "auto"
     out = content_roles.canonicalize_storyboard(blocks)
     turned = [b for b in out if b["direction"] != "front"]
-    assert len(turned) == 2
+    assert len(turned) == 3
     assert all(b["exampleId"] is None for b in turned)
     assert out[0]["exampleId"] == "ex_front_1", "안 돌린 컷의 예시는 그대로 둔다"
 
@@ -1230,3 +1247,40 @@ def test_other_sections_are_left_alone():
     blocks = [{"sectionRole": "styling", "cutType": "styling"} for _ in range(5)]
     out = content_roles.canonicalize_storyboard(blocks)
     assert {b["direction"] for b in out} == {"front"}
+
+
+# ── 옆모습 두 갈래가 실제로 다른 경로로 가는가 ─────────────────────────────
+def _side_spec(style):
+    return cut.normalize_spec(
+        {"cutType": "horizon", "direction": "side", "shot": "full",
+         "faceExposure": "same", "sideStyle": style, "modelId": "m1"},
+        clothing_type="top")
+
+
+def test_a_profile_side_goes_to_the_angle_swap():
+    spec = _side_spec("profile")
+    assert spec["sideStyle"] == "profile"
+    assert cut._angle_swap_direction(spec, "top", object()) == "side"
+
+
+def test_a_three_quarter_side_skips_the_angle_swap():
+    """★ 이게 사선을 되살리는 자리다. 각도 교체를 피해야 face_pass 가 참이 되고,
+    그래야 프롬프트가 DIR:side_identity(3/4)로 간다."""
+    spec = _side_spec("threeQuarter")
+    assert spec["sideStyle"] == "threeQuarter"
+    assert cut._angle_swap_direction(spec, "top", object()) is None
+
+
+def test_the_side_style_is_ignored_on_a_front_cut():
+    spec = cut.normalize_spec(
+        {"cutType": "horizon", "direction": "front", "shot": "full",
+         "faceExposure": "same", "sideStyle": "threeQuarter", "modelId": "m1"},
+        clothing_type="top")
+    assert spec["sideStyle"] is None
+
+
+def test_an_unknown_side_style_falls_back_to_the_swap_path():
+    """콘티가 오타를 주면 조용히 사선으로 새지 않는다 — 기본은 진짜 옆모습이다."""
+    spec = _side_spec("diagonal")
+    assert spec["sideStyle"] is None
+    assert cut._angle_swap_direction(spec, "top", object()) == "side"
