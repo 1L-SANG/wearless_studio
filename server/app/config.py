@@ -456,6 +456,11 @@ class Settings:
     face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
     face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
     face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    #: RunPod Serverless 엔드포인트 id. **있으면 파드 URL 보다 우선**이다 — 유휴 요금이 없고,
+    #: 파드가 파이프라인을 한 벌만 올려 "한 번에 한 사람"이던 제약이 사라진다(워커 수가 동시성을 맡는다).
+    #: 비어 있으면 파드 경로로 간다(서버리스를 세우기 전·검증 중의 다리). 각도 교체와 같은 구조다.
+    #: API 키는 각도·파드와 같은 것을 쓴다(face_runpod_api_key) — 키를 늘리면 만료를 늘리는 것이다.
+    face_identity_endpoint_id: str | None = None
     # 옆·뒷모습 컷 머리 교체(agents/face_angle_swap.py) — 등록자 각도 사진 + ComfyUI(2511+BFS Head V5).
     # 얼굴 패스와 **다른 파드**다(ComfyUI). 주소가 없으면 켜도 동작하지 않는다.
     face_angle_swap_enabled: bool = False
@@ -908,6 +913,7 @@ def load_settings() -> Settings:
             os.getenv("REAL_HORIZON_NECK_REPAIR_ENABLED", "true").lower() == "true"
         ),
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
+        face_identity_endpoint_id=os.getenv("FACE_IDENTITY_ENDPOINT_ID") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
         face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
         face_angle_swap_enabled=(os.getenv("FACE_ANGLE_SWAP_ENABLED", "false").lower() == "true"),

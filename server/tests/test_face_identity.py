@@ -7,7 +7,9 @@ build_v4c.py 가 같은 6장으로 만든 학습 표본 control(v4c_ckpt/samples
 """
 
 import asyncio
+import base64
 import os
+from io import BytesIO
 from types import SimpleNamespace
 
 from unittest import mock
@@ -578,6 +580,151 @@ def test_resolve_backend_prefers_url_then_local_lora(tmp_path, monkeypatch):
     local = fi.resolve_backend(SimpleNamespace(face_identity_backend_url=None, face_identity_lora_path=str(tmp_path)), spec)
     assert isinstance(local, fi.QwenLocalBackend) and local.lora_path == str(tmp_path / "v5.safetensors")
     assert local.steps == 25 and local.guidance_scale == 4.0 and local.negative_prompt == ""
+
+
+def test_resolve_backend_prefers_the_endpoint_over_a_live_pod(tmp_path, monkeypatch):
+    """엔드포인트가 파드보다 앞이어야 한다.
+
+    spec.backend_url 은 DB 의 **지금 떠 있는 파드**에서 나온다 — 파드가 살아 있으면 항상 값이
+    있으므로, 파드를 먼저 보면 서버리스로 넘어갈 수가 없다.
+    """
+    monkeypatch.setattr(fi, "_BACKENDS", {})
+    spec = fi.FaceIdentitySpec("v7.safetensors", backend_url="http://pod/render")
+    settings = SimpleNamespace(face_identity_endpoint_id="ep123",
+                               face_runpod_api_key="key",
+                               face_identity_backend_url=None,
+                               face_identity_lora_path=None)
+    backend = fi.resolve_backend(settings, spec)
+    assert isinstance(backend, fi.ServerlessFaceBackend)
+    assert backend.endpoint_id == "ep123" and backend.lora == "v7.safetensors"
+    # 워커는 이미지에 구운 코드가 곧 자기 코드라 마스크 잠금을 항상 안다(파드는 물어봐야 했다).
+    assert backend.supports_mask_lock() is True
+
+
+def test_endpoint_without_an_api_key_falls_back_to_the_pod(tmp_path, monkeypatch):
+    """키 없이 엔드포인트만 있으면 요청이 한 건도 못 간다 — 조용히 죽지 말고 파드로 간다."""
+    monkeypatch.setattr(fi, "_BACKENDS", {})
+    spec = fi.FaceIdentitySpec("v7.safetensors")
+    backend = fi.resolve_backend(
+        SimpleNamespace(face_identity_endpoint_id="ep123", face_runpod_api_key=None,
+                        face_identity_backend_url="http://gpu/face",
+                        face_identity_lora_path=None,
+                        face_identity_backend_token=None),
+        spec)
+    assert isinstance(backend, fi.HttpFaceBackend)
+
+
+def test_the_endpoint_skips_the_pod_wait(monkeypatch):
+    """서버리스에는 기다릴 파드가 없다 — 대기는 잡 큐 안에 있다.
+
+    이 단축이 없으면 url_provider 가 영원히 None 을 주고(파드가 없으니 당연하다) 예산을 다
+    태운 뒤 pod_not_ready 로 컷을 죽인다.
+    """
+    settings = SimpleNamespace(face_identity_endpoint_id="ep123", face_runpod_api_key="key")
+    spec = fi.FaceIdentitySpec("v7.safetensors")
+
+    async def never() -> None:          # 파드는 끝내 안 생긴다
+        return None
+
+    async def go():
+        return await fi.wait_for_backend(settings, spec, never, budget_seconds=0)
+
+    got = asyncio.run(go())
+    # None 이 아니어야 호출부가 통과하고, 거짓값이라 spec.backend_url 을 덮어쓰지 않는다.
+    assert got == "" and got is not None
+
+
+def test_serverless_render_posts_a_job_and_reads_the_output(monkeypatch):
+    """파드와 같은 그림을 같은 필드로 주고받는가 — /run 제출 → /status 폴링 → output."""
+    from PIL import Image as _Image
+
+    sent: dict = {}
+
+    class _Res:
+        def __init__(self, payload, status=200):
+            self._payload, self.status_code = payload, status
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def post(self, path, json=None):
+            sent["path"], sent["body"] = path, json
+            return _Res({"id": "job-1"})
+
+        def get(self, path):
+            sent["status_path"] = path
+            buf = BytesIO()
+            _Image.new("RGB", (8, 8), (7, 8, 9)).save(buf, "PNG")
+            return _Res({"status": "COMPLETED",
+                         "output": {"image_png": base64.b64encode(buf.getvalue()).decode(),
+                                    "seed": 42, "lora": "v7.safetensors", "ms": 33}})
+
+    backend = fi.ServerlessFaceBackend("ep123", "key", lora="v7.safetensors",
+                                       lora_sha256="abc", url_provider=lambda key: "https://presigned")
+    backend._client = _Client()
+    out = backend.render(_Image.new("RGB", (8, 8), (1, 2, 3)), "prompt", 42)
+
+    assert sent["path"] == "/run" and sent["status_path"] == "/status/job-1"
+    body = sent["body"]["input"]
+    assert body["op"] == "render" and body["seed"] == 42 and body["prompt"] == "prompt"
+    assert body["lora"] == "v7.safetensors" and body["lora_sha256"] == "abc"
+    assert body["lora_url"] == "https://presigned"
+    assert body["steps"] == 25 and body["guidance_scale"] == 4.0
+    assert out.size == (8, 8) and out.getpixel((0, 0)) == (7, 8, 9)
+
+
+def test_serverless_handler_error_becomes_a_render_failure_not_a_silent_image():
+    """핸들러가 사유를 실어 주면 예외로 올린다 — 조용히 원본이 나가면 남의 얼굴이 팔린다."""
+    from PIL import Image as _Image
+
+    class _Res:
+        def __init__(self, payload):
+            self._payload, self.status_code = payload, 200
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def post(self, path, json=None):
+            return _Res({"id": "job-2"})
+
+        def get(self, path):
+            return _Res({"status": "COMPLETED", "output": {"error": "CUDA out of memory"}})
+
+    backend = fi.ServerlessFaceBackend("ep123", "key")
+    backend._client = _Client()
+    with pytest.raises(RuntimeError, match="serverless_handler"):
+        backend.render(_Image.new("RGB", (8, 8)), "p", 1)
+
+
+def test_serverless_upscale_gives_up_once_and_stops_asking():
+    """확대는 마감 개선이라 실패가 컷을 막지 않는다. 다만 컷마다 잡을 버리지도 않는다."""
+    from PIL import Image as _Image
+
+    calls = {"n": 0}
+
+    class _Res:
+        def __init__(self, payload, status=200):
+            self._payload, self.status_code = payload, status
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def post(self, path, json=None):
+            calls["n"] += 1
+            return _Res({"id": "job-3"})
+
+        def get(self, path):
+            return _Res({"status": "COMPLETED",
+                         "output": {"error": "esrgan unavailable"}})
+
+    backend = fi.ServerlessFaceBackend("ep123", "key")
+    backend._client = _Client()
+    assert backend.upscale(_Image.new("RGB", (8, 8)), 2) is None
+    assert backend.upscale(_Image.new("RGB", (8, 8)), 2) is None
+    assert calls["n"] == 1        # 두 번째는 묻지도 않는다
 
 
 # ---------------------------------------------------------------- generate() 배선

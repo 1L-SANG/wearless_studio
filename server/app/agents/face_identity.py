@@ -1487,6 +1487,176 @@ class HttpFaceBackend:
             return im.convert("RGB")
 
 
+#: RunPod Serverless 주소. 각도 교체(face_angle_swap.SERVERLESS_BASE)와 같은 값이지만 거기서
+#: 가져오지 않는다 — 두 모듈은 서로를 임포트하지 않는다(얼굴 패스는 cv2·PIL 만, 각도는 numpy 까지).
+SERVERLESS_BASE = "https://api.runpod.ai/v2"
+#: 잡 하나(한 컷)의 상한. 렌더 실측 33.5초 + 콜드 워커의 베이스 적재를 덮는다.
+SERVERLESS_TIMEOUT = 900.0
+#: 상태 폴링 간격. 렌더가 30초대라 촘촘히 찌를 이유가 없다.
+SERVERLESS_POLL_SECONDS = 3.0
+#: 워커가 도는 중에도 status 가 잠깐 안 올 수 있다(RunPod 5xx). 연속으로 이만큼이면 포기한다.
+SERVERLESS_STATUS_RETRIES = 3
+
+
+class ServerlessFaceBackend:
+    """RunPod Serverless 얼굴 렌더. 파드(HttpFaceBackend)와 **표면이 같다.**
+
+    파드와 다른 것은 어디로 보내는가뿐이다:
+
+        파드        POST <proxy>/render            → {image_png}
+        서버리스     POST /run {"input": {...}}     → job id → GET /status/<id> → {output: {image_png}}
+
+    ★ **/runsync 를 쓰지 않는다.** 각도 교체에서 실측했다(2026-09-21): 그 호출은 90초쯤에서
+      잘리고 IN_PROGRESS 를 돌려준다. 얼굴 렌더는 웜 33.5초라 보통은 들어오지만, 콜드 워커가
+      걸리면 베이스 적재까지 물어 넘긴다. 한 번이라도 잘리면 컷이 죽으므로 비동기로 넣고 편다.
+
+    ★ 유휴 요금이 없고 동시성을 워커 수가 맡는다. 파드는 파이프라인을 한 벌만 올릴 수 있어
+      **한 번에 한 사람**이었다(LoRA fuse). 워커가 여럿이면 그 제약이 사라진다 — LoRA 를
+      GPU 에서 합치는 비용은 0.2초다(face_identity_qwen.py 상단 실측).
+
+    ★ presigned LoRA URL 은 요청 본문에만 싣는다. 로그·예외 메시지에 남기지 않는다(파드와 동일).
+    """
+
+    def __init__(self, endpoint_id: str, api_key: str, *, lora: str | None = None,
+                 lora_sha256: str | None = None, url_provider=None,
+                 timeout: float = SERVERLESS_TIMEOUT,
+                 poll_seconds: float = SERVERLESS_POLL_SECONDS):
+        import httpx
+
+        self.endpoint_id = endpoint_id.strip()
+        self.lora = lora
+        self.lora_sha256 = lora_sha256
+        self.url_provider = url_provider
+        # HTTP 한 번의 제한과 잡 전체의 제한은 다르다. 앞은 짧게(요청 하나), 뒤는 컷 길이만큼.
+        self._client = httpx.Client(base_url=f"{SERVERLESS_BASE}/{self.endpoint_id}",
+                                    timeout=60.0,
+                                    headers={"Authorization": f"Bearer {api_key}"})
+        self._timeout = timeout
+        self._poll = poll_seconds
+        #: 워커에 /upscale 이 없을 수 있다(가중치 미설치) — 한 번 겪고 그 뒤로는 묻지 않는다.
+        self._upscale_supported = True
+
+    # 워커는 항상 마스크 잠금을 안다 — 파드처럼 "옛 코드가 볼륨에 남아 있을" 수 없다.
+    # 이미지에 구운 코드가 곧 그 워커의 코드이고, 이미지 태그가 곧 버전이다.
+    def supports_mask_lock(self) -> bool:
+        return True
+
+    def _job(self, payload: dict, *, what: str) -> dict:
+        """잡 하나를 넣고 결과 output 을 돌려준다. 실패는 RuntimeError."""
+        res = self._client.post("/run", json={"input": payload})
+        if res.status_code != 200:
+            log.warning("face_identity: serverless %s submit http %s", what, res.status_code)
+            raise RuntimeError(f"serverless_submit_{res.status_code}")
+        job_id = str((res.json() or {}).get("id") or "")
+        if not job_id:
+            log.warning("face_identity: serverless %s returned no job id", what)
+            raise RuntimeError("serverless_no_job_id")
+        body = self._await(job_id, what=what)
+        status = str(body.get("status") or "")
+        if status != "COMPLETED":
+            log.warning("face_identity: serverless %s status=%s", what, status)
+            raise RuntimeError(f"serverless_{status.lower() or 'unknown'}")
+        output = body.get("output")
+        if not isinstance(output, dict):
+            log.warning("face_identity: serverless %s returned no output", what)
+            raise RuntimeError("serverless_no_output")
+        if output.get("error"):
+            # 핸들러가 사유를 실어 준다(파드의 4xx/5xx 자리). 그 사유는 얼굴 바이트를 담지 않는다.
+            log.warning("face_identity: serverless %s error: %s", what, str(output["error"])[:120])
+            raise RuntimeError(f"serverless_handler:{str(output['error'])[:60]}")
+        return output
+
+    def _await(self, job_id: str, *, what: str) -> dict:
+        """끝날 때까지 상태를 묻는다. 시간을 넘기면 마지막 상태를 그대로 돌려준다 —
+        호출자가 COMPLETED 아님으로 보고 폴백한다(남의 얼굴을 내보내지 않는다)."""
+        deadline = time.monotonic() + self._timeout
+        body: dict = {}
+        misses = 0
+        while time.monotonic() < deadline:
+            res = self._client.get(f"/status/{job_id}")
+            if res.status_code != 200:
+                misses += 1
+                log.warning("face_identity: serverless %s status http %s (%s/%s)",
+                            what, res.status_code, misses, SERVERLESS_STATUS_RETRIES)
+                if misses >= SERVERLESS_STATUS_RETRIES:
+                    return {"status": "STATUS_HTTP_ERROR"}
+                time.sleep(self._poll)
+                continue
+            misses = 0
+            body = res.json() or {}
+            if str(body.get("status") or "") not in ("IN_QUEUE", "IN_PROGRESS"):
+                return body
+            time.sleep(self._poll)
+        return body or {"status": "TIMED_OUT"}
+
+    def _lora_fields(self) -> dict:
+        fields: dict = {"lora": self.lora, "lora_sha256": self.lora_sha256}
+        if self.url_provider is not None and self.lora:
+            try:
+                fields["lora_url"] = self.url_provider(self.lora)
+            except Exception:  # noqa: BLE001 — URL 을 못 만들면 워커 캐시에 기대고 계속 간다
+                log.warning("face_identity: presigned lora url unavailable; relying on worker cache",
+                            exc_info=False)
+        return fields
+
+    def render(self, control: Image.Image, prompt: str, seed: int,
+               base: Image.Image | None = None,
+               gen_mask: Image.Image | None = None,
+               negative_prompt: str | None = None) -> Image.Image:
+        payload = {
+            "op": "render",
+            "control_png": _png_b64(control.convert("RGB")),
+            "prompt": prompt,
+            "seed": int(seed),
+            "steps": RENDER_STEPS,
+            "guidance_scale": RENDER_GUIDANCE,
+            # 파드와 같은 이유로 보정 단계가 주는 값이 정본이다(백엔드는 프로세스당 캐시라
+            # 인스턴스에 심어 두면 컷끼리 섞인다).
+            "negative_prompt": RENDER_NEGATIVE if negative_prompt is None else negative_prompt,
+            **self._lora_fields(),
+        }
+        if base is not None and gen_mask is not None:
+            payload["base_png"] = _png_b64(base)
+            payload["gen_mask_png"] = _png_b64(gen_mask)
+        output = self._job(payload, what="render")
+        data = base64.b64decode(output["image_png"])
+        with Image.open(BytesIO(data)) as im:
+            im.load()
+            return im.convert("RGB")
+
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image | None:
+        """얼굴 **크롭만** 워커에서 ESRGAN 으로 키운다. 못 하면 None → 호출자가 Lanczos 로 간다.
+
+        확대 실패는 컷을 막지 않는다 — 마감 개선이지 필수 경로가 아니다(파드와 같은 계약).
+        """
+        if not self._upscale_supported:
+            return None
+        try:
+            output = self._job({"op": "upscale",
+                                "image_png": _png_b64(image.convert("RGB")),
+                                "scale": int(scale)}, what="upscale")
+            data = base64.b64decode(output["image_png"])
+        except Exception as exc:  # noqa: BLE001 — 확대 실패는 폴백으로 흡수한다
+            # 가중치가 없는 워커는 매번 같은 이유로 실패한다. 한 번 겪고 다시 묻지 않는다 —
+            # 컷마다 잡 하나를 버리면 상세페이지 한 장에서 그게 수십 번이다.
+            self._upscale_supported = False
+            log.info("face_identity: 서버리스 확대 불가(%s) — 이 백엔드는 Lanczos 로 간다",
+                     type(exc).__name__)
+            return None
+        with Image.open(BytesIO(data)) as im:
+            im.load()
+            return im.convert("RGB")
+
+    def healthz(self) -> dict:
+        """워커 상태. 준비 대기(wait_for_backend)가 이걸 본다.
+
+        ★ 파드의 /healthz 와 의미가 다르다. 파드는 "그 한 대가 떠 있는가"였지만 서버리스는
+          **잡을 넣어 봐야** 워커가 뜬다. 즉 이 호출 자체가 콜드스타트를 일으키고, 돌아왔다는
+          것은 이미 준비됐다는 뜻이다. 그래서 결과는 항상 base_loaded 를 담는다.
+        """
+        return self._job({"op": "healthz"}, what="healthz")
+
+
 # ---------------------------------------------------------------- 실행기
 
 
@@ -1730,26 +1900,54 @@ def _presigned_lora_url(settings):
 
 
 def resolve_backend(settings, spec: FaceIdentitySpec) -> FaceBackend | None:
-    """설정에 따라 백엔드 1개(프로세스당 캐시). url → Http, 아니면 lora 파일 → QwenLocal, 둘 다 없으면 None."""
+    """설정에 따라 백엔드 1개(프로세스당 캐시).
+
+    고르는 순서: **엔드포인트 → 파드 URL → 로컬 LoRA 파일 → None**.
+
+    엔드포인트가 맨 앞인 이유는 파드가 "지금 떠 있는 한 대"라서다 — spec.backend_url 은 DB 의
+    현재 파드에서 유도되므로 파드가 살아 있으면 항상 값이 있고, 그걸 먼저 보면 서버리스로
+    넘어갈 수가 없다. 서버리스를 세운 뒤에도 파드 경로는 남는다(엔드포인트 id 를 비우면 그리로
+    돌아간다 — 되돌릴 길 없는 전환을 하지 않는다).
+    """
+    endpoint = (getattr(settings, "face_identity_endpoint_id", None) or "").strip() or None
+    api_key = getattr(settings, "face_runpod_api_key", None)
     # spec 의 URL(= DB 의 현재 파드에서 유도) 이 정본. 설정값은 그게 없을 때의 폴백이다.
     url = spec.backend_url or getattr(settings, "face_identity_backend_url", None)
     base = getattr(settings, "face_identity_lora_path", None)
-    if url:
+
+    if endpoint and not api_key:
+        # 키 없이 엔드포인트만 있으면 요청이 한 건도 못 간다. 조용히 파드로 흘리면 "서버리스로
+        # 바꿨는데 왜 파드 요금이 나오지"가 되므로 한 줄 남기고 아래 파드 경로로 간다.
+        log.warning("face_identity: FACE_IDENTITY_ENDPOINT_ID 는 있는데 RUNPOD_API_KEY 가 없다 "
+                    "— 파드 경로로 간다")
+        endpoint = None
+
+    if endpoint:
+        key = ("serverless", endpoint, spec.lora_path)
+    elif url:
         key = ("http", url, spec.lora_path)
     else:
         lora_file = resolve_lora_file(spec, base)
         if not os.path.exists(lora_file):
             return None
         key = ("qwen", lora_file)
+
     with _BACKEND_LOCK:
         backend = _BACKENDS.get(key)
         if backend is None:
-            token = getattr(settings, "face_identity_backend_token", None) if url else None
-            backend = (HttpFaceBackend(url, lora=spec.lora_path, token=token,
-                                       lora_sha256=spec.sha256,
-                                       url_provider=_presigned_lora_url(settings),
-                                       expected_version=getattr(settings, "face_render_code_version", None))
-                       if url else QwenLocalBackend(key[1]))
+            if endpoint:
+                backend = ServerlessFaceBackend(
+                    endpoint, api_key, lora=spec.lora_path, lora_sha256=spec.sha256,
+                    url_provider=_presigned_lora_url(settings))
+            elif url:
+                backend = HttpFaceBackend(
+                    url, lora=spec.lora_path,
+                    token=getattr(settings, "face_identity_backend_token", None),
+                    lora_sha256=spec.sha256,
+                    url_provider=_presigned_lora_url(settings),
+                    expected_version=getattr(settings, "face_render_code_version", None))
+            else:
+                backend = QwenLocalBackend(key[1])
             _BACKENDS[key] = backend
         return backend
 
@@ -1850,6 +2048,17 @@ async def wait_for_backend(settings, spec: FaceIdentitySpec, url_provider=None,
     있어서, 잡 시작 때 한 번 읽은 주소를 붙들면 죽은 파드를 끝까지 찌르거나 파드가 생기기도
     전에 폴백한다.
     """
+    # 서버리스에는 **기다릴 파드가 없다.** 잡을 넣는 것 자체가 워커를 깨우는 일이고, RunPod 이
+    # 큐에서 들고 있다가 워커가 뜨면 처리한다 — 즉 대기는 ServerlessFaceBackend._await 안에 있다.
+    # 여기서 파드 주소를 찾으려 하면 url_provider 가 영원히 None 을 주고(파드가 없으니 당연하다)
+    # 예산을 다 태운 뒤 pod_not_ready 로 컷을 죽인다.
+    #
+    # 빈 문자열을 돌려준다 — None 이 아니어야 호출부가 통과하고, 거짓값이라 spec.backend_url 을
+    # 덮어쓰지 않는다(resolve_backend 는 어차피 엔드포인트를 먼저 본다).
+    if (getattr(settings, "face_identity_endpoint_id", None) or "").strip() \
+            and getattr(settings, "face_runpod_api_key", None):
+        return ""
+
     budget = int(
         budget_seconds
         if budget_seconds is not None
@@ -2127,6 +2336,7 @@ __all__ = [
     "GateResult",
     "HttpFaceBackend",
     "NullBackend",
+    "ServerlessFaceBackend",
     "QwenLocalBackend",
     "FacePassUnavailable",
     "apply_face_pass",
