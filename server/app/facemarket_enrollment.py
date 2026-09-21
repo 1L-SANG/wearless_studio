@@ -27,8 +27,8 @@ from .config import Settings
 from .db import get_conn
 from .models import CamelModel
 from .facemarket_photos import (
-    ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, PHOTO_SLOTS_V2, REFSET_SLOTS,
-    canonical_photo_slot, photo_slot_candidates, resolve_photo_rows,
+    ANGLE_ALT_SLOTS, ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, PHOTO_SLOTS_V2,
+    REFSET_SLOTS, canonical_photo_slot, photo_slot_candidates, resolve_photo_rows,
 )
 from .facemarket_photo_normalize import (
     NORMALIZED_MIME,
@@ -98,7 +98,7 @@ REQUIRED_SLOT_COUNT = len(PHOTO_SLOTS)
 # 업로드가 받아 주는 이름 = 정식 16칸 + 그 16칸으로 **올려 줄 수 있는** 옛 이름뿐이다
 # (face01/face03/face05 · front/angle45/side). 새 스펙에 자리가 없는 옛 이름(face02·torso*·full* …)은
 # 여기서 invalid_slot 으로 막힌다 — 이미 올라간 행은 남아 있고(파기가 쓸어 담는다) 완료 판정에서만 빠진다.
-ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + tuple(LEGACY_SLOT_ALIASES)
+ACCEPTED_PHOTO_SLOTS = PHOTO_SLOTS + ANGLE_ALT_SLOTS + tuple(LEGACY_SLOT_ALIASES)
 # 등록 사진은 **원본 그대로** 받는다(프런트가 다시 인코딩하지 않는다) — 등록 사진이 곧
 # LoRA 학습셋이라, 셀러 상품 사진용 축소 규칙(4000px·JPEG 0.85)이 학습 화질을 깎고 있었다.
 # 실측(아이폰 48MP, 8064×6048): HEIC 8.6MB · JPEG 최고화질 26.6MB. 25MB 상한으로는 JPEG

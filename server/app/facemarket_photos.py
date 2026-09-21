@@ -43,6 +43,7 @@ CUT_LABELS: dict[str, tuple[str, str]] = {
     "gaze_left": ("시선만 왼쪽", "시선_왼쪽"),
     "gaze_right": ("시선만 오른쪽", "시선_오른쪽"),
     "side": ("옆모습 · 왼쪽", "측면_왼쪽"),
+    "side_left": ("옆모습 · 왼쪽(보조)", "측면_왼쪽_보조"),
     "side_right": ("옆모습 · 오른쪽", "측면_오른쪽"),
     "back": ("뒷모습", "뒷모습"),
 }
@@ -61,6 +62,19 @@ ASSET_SOURCE_SLOTS: tuple[str, ...] = ("sh_front", "sh_34", "sh_side")
 
 #: 각도 수집 2칸(2026-09-15). 학습에도 기준에도 안 들어간다 — 모아 두고 쓰임새는 뒤에 정한다.
 ANGLE_SLOTS: tuple[str, ...] = ("sh_side_right", "sh_back")
+
+#: 왼쪽 90도 옆모습을 담는 **보조 칸**(2026-09-21). 정식 등록(동의 2026-09-v3)은 그 사진을
+#: sh_side 로 받고 끝낸다 — 그 등록에서 이 칸은 비어 있다.
+#:
+#: 왜 따로 두는가: sh_side 는 자산 소스 3칸(ASSET_SOURCE_SLOTS)이기도 하다. v3 이전에 통과한
+#: 등록은 자산이 옛 이름(face05)으로 이미 만들어져 assets_source_hash 가 그 다이제스트에 묶여
+#: 있는데, 뒤늦게 sh_side 행을 넣으면 SLOT_CANDIDATES 가 face05 대신 그 행을 집어 해시가
+#: 어긋난다. 그러면 그 모델의 실사 컷이 통째로 model_assets_unavailable 로 막힌다 —
+#: 2026-09-21 운영 05caa497 에서 실제로 났고 상세페이지 2건이 죽었다.
+#:
+#: 그래서 옛 등록의 왼쪽 옆모습은 이 칸에 넣는다. 각도 교체만 읽고 자산 소스 계산에는 안 들어간다.
+#: 필수 칸(PHOTO_SLOTS)이 아니라 완료 판정도 건드리지 않는다.
+ANGLE_ALT_SLOTS: tuple[str, ...] = ("sh_side_left",)
 
 #: 2026-09-14~15 사이에 시작한 등록이 채운 16칸. **이미 통과한 등록을 미완료로 되돌리지 않으려고**
 #: 그대로 남긴다(완료 판정은 동의 버전으로 갈린다 — facemarket_enrollment.required_slots_for_consent).
@@ -82,10 +96,10 @@ PHOTO_SLOTS: tuple[str, ...] = (
 
 #: 정면 계열 — 눈간격 검사를 적용하고 3/4 각도 검사는 하지 않는 슬롯.
 FRONTAL_CUTS: frozenset[str] = frozenset({"front", "smile", "front2", "gaze_left", "gaze_right"})
-#: 옆모습 두 칸. 얼굴 미검출을 허용하고(YuNet 이 옆얼굴을 자주 놓친다) 각도·방향만 본다.
-PROFILE_CUTS: frozenset[str] = frozenset({"side", "side_right"})
+#: 옆모습 칸. 얼굴 미검출을 허용하고(YuNet 이 옆얼굴을 자주 놓친다) 각도·방향만 본다.
+PROFILE_CUTS: frozenset[str] = frozenset({"side", "side_left", "side_right"})
 #: 코가 향해야 하는 쪽(화면 기준). None 이면 방향을 안 본다.
-PROFILE_NOSE_SIDE: dict[str, str] = {"side": "left", "side_right": "right"}
+PROFILE_NOSE_SIDE: dict[str, str] = {"side": "left", "side_left": "left", "side_right": "right"}
 
 #: 옛 이름 → 새 슬롯. 한 슬롯의 후보는 **선호 순서**다(새 이름 먼저, 그다음 18칸, 그다음 3장 시절).
 #: 여기 없는 옛 슬롯(face02·face04·torso*·full* 등)은 새 스펙에 자리가 없다 — 완료 판정에서 무시되고

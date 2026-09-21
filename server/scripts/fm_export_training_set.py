@@ -54,14 +54,16 @@ import os  # noqa: E402
 
 from app.config import load_settings  # noqa: E402
 from app.facemarket_photos import (  # noqa: E402
-    ANGLE_SLOTS, ASSET_SOURCE_SLOTS, REFSET_SLOTS, TRAINING_SLOTS, export_name, resolve_photo_rows,
+    ANGLE_ALT_SLOTS, ANGLE_SLOTS, ASSET_SOURCE_SLOTS, REFSET_SLOTS, TRAINING_SLOTS, export_name,
+    resolve_photo_rows,
 )
 from app.r2 import R2Client  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: 내보낼 슬롯과 그 하위 디렉터리. 각도 3장(옆모습 좌·우 · 뒷모습)은 학습에 안 쓴다 —
 #: 모아 두고 쓰임새는 뒤에 정한다. sh_side 는 공개 자산 소스이기도 하다.
-ANGLE_EXPORT_SLOTS: tuple[str, ...] = ("sh_side",) + ANGLE_SLOTS
+#: 보조 칸(sh_side_left)도 같이 담는다 — v3 이전 등록은 왼쪽 옆모습이 거기에만 있다.
+ANGLE_EXPORT_SLOTS: tuple[str, ...] = ("sh_side",) + ANGLE_SLOTS + ANGLE_ALT_SLOTS
 EXPORTS: tuple[tuple[str, str], ...] = (
     tuple(("train", slot) for slot in TRAINING_SLOTS)
     + tuple(("refset", slot) for slot in REFSET_SLOTS)
