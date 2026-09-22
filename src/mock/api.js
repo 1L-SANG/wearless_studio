@@ -47,7 +47,12 @@ import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// 가짜 지연 배율. 테스트는 MOCK_API_LATENCY_SCALE=0 으로 돌린다 — 지연을 실제로 기다리면
+// 프론트 테스트 한 바퀴가 CI 에서 4분 41초 걸리고, 그중 89% 가 이 setTimeout 이었다(2026-09-22).
+// 0 이어도 setTimeout(…, 0) 은 남겨 매크로태스크 순서(await 뒤에 상태가 바뀌는 것)는 그대로 둔다.
+// 브라우저 번들엔 process 가 없으니 배율 1 로 돈다.
+const LATENCY_SCALE = Number(globalThis.process?.env?.MOCK_API_LATENCY_SCALE ?? 1);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms * LATENCY_SCALE));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
 const jobCancelledError = () => {
@@ -127,6 +132,9 @@ function joinable(slot, start) {
 function runJob({ duration = 2600, onProgress, result, stall = false, cancellableJob }) {
   return new Promise((resolve, reject) => {
     const start = performance.now();
+    // 배율은 wait() 과 같은 이유로 여기도 건다 — 9초짜리 마네킹 시뮬을 테스트가 진짜로 기다렸다.
+    duration *= LATENCY_SCALE;
+    const stallMs = 1200 * LATENCY_SCALE;
     let id = null;
     const cancel = () => {
       if (id != null) clearInterval(id);
@@ -143,7 +151,7 @@ function runJob({ duration = 2600, onProgress, result, stall = false, cancellabl
     id = setInterval(() => {
       const elapsed = performance.now() - start;
       let pct = Math.min(100, Math.round((elapsed / duration) * 100));
-      if (stall && pct >= 95 && elapsed < duration + 1200) pct = 95; // PRD §7.2 stall at 95%
+      if (stall && pct >= 95 && elapsed < duration + stallMs) pct = 95; // PRD §7.2 stall at 95%
       onProgress && onProgress(pct);
       if (pct >= 100) {
         clearInterval(id);
