@@ -103,7 +103,7 @@ def test_default_thresholds_pass_observed_production_scores():
     """기본 임계가 실측 분포에서 아무것도 통과시키지 못하면 안 된다.
 
     2026-07-31 로컬 실컷 30건 캘리브레이션 중앙값(fidelity 58 · natural 78 · quality 80).
-    초기 추측값 90/75 는 통과 0/30 이었다 — MANNEQUIN_QC_ENABLED 가 pass율 0% 로 전 생성을
+    초기 추측값 90/75 는 통과 0/30 이었다 — Pillow QC 가 pass율 0% 로 전 생성을
     막았던 2026-07-07 사고와 같은 조건이다. 임계를 다시 올릴 때는 이 테스트를 근거와 함께
     갱신하라(무의식적 상향만 막는다).
     """
@@ -130,38 +130,38 @@ def test_enforce_scores_win_over_stale_verdict():
 
 
 def test_off_never_gates():
-    s = make_settings(image_qc="off", mannequin_qc_enabled=False)
+    s = make_settings(image_qc="off")
     assert gate_decision(s, "fail", {"verdict": "retry"}) == (False, False)
     assert gate_decision(s, "pass", None) == (False, False)
 
 
 def test_shadow_never_gates():
     # shadow 는 AG-P2 판정을 계산·로그만, 게이트는 안 함
-    s = make_settings(image_qc="shadow", mannequin_qc_enabled=False)
+    s = make_settings(image_qc="shadow")
     assert gate_decision(s, "pass", {"verdict": "retry"}) == (False, False)
 
 
 def test_enforce_rejects_on_p2_retry():
-    s = make_settings(image_qc="enforce", mannequin_qc_enabled=False)
+    s = make_settings(image_qc="enforce")
     assert gate_decision(s, "pass", {"verdict": "retry"}) == (False, True)
     assert gate_decision(s, "pass", {"verdict": "pass"}) == (False, False)
 
 
 def test_enforce_graceful_when_no_p2():
     # 키 미설정/판정 실패 → p2=None → 게이트 미적용
-    s = make_settings(image_qc="enforce", mannequin_qc_enabled=False)
+    s = make_settings(image_qc="enforce")
     assert gate_decision(s, "pass", None) == (False, False)
 
 
 def test_pillow_hard_shadow_even_when_enabled():
     # 재캘리브 전 강제 shadow 계약(2026-07-12 prod 사고): env 가 true 여도 Pillow 는 게이트 금지.
     # 오탐(pass율 0%)인 휴리스틱이 env 하나로 전 생성을 차단하는 사고의 회귀 방지.
-    s = make_settings(image_qc="off", mannequin_qc_enabled=True)
+    s = make_settings(image_qc="off")
     assert gate_decision(s, "fail", None)[0] is False
     assert gate_decision(s, "pass", None)[0] is False
 
 
 def test_p2_gate_unaffected_by_pillow_shadow():
-    s = make_settings(image_qc="enforce", mannequin_qc_enabled=True)
+    s = make_settings(image_qc="enforce")
     assert gate_decision(s, "fail", {"verdict": "retry"}) == (False, True)
     assert gate_decision(s, "pass", {"verdict": "pass"}) == (False, False)

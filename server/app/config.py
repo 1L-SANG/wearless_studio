@@ -136,7 +136,6 @@ class Settings:
     # bg 편집 컷의 장소일치 QC 재시도 총 시도 상한 — 생성은 샘플링이라 프롬프트만으로는
     # 결정적이지 않다(2026-07-20 실측). 시도당 생성 1회 + 판정 1회.
     bg_scene_qc_attempts: int = 3
-    mannequin_qc_enabled: bool = False  # False=shadow(판정 로그만) — 캘리브레이션 후 True
     # AG-P2 이미지 동일성 검수(vision LLM "같은 옷인가"). off | shadow(판정 로그만) |
     # enforce(불일치 시 correctionPrompt로 재생성 — 마네킹 재시도 루프 재사용, max_attempts 내).
     # 키 미설정/판정 실패는 게이트 미적용(graceful). 기본 off.
@@ -149,8 +148,8 @@ class Settings:
     #   07-24 구컷 26건: product_fidelity 중앙 56.5 · critical 16/26
     #   07-30 컷   4건: 중앙 82.5 · critical 1/4
     #   07-31 신규 8건: 중앙 80.0 · critical 0/8   ← 현재 파이프라인의 실제 분포
-    # 초기 추측값 90/75 는 신규 분포(75~85)에서도 통과 0 이라 폐기했다. MANNEQUIN_QC_ENABLED 가
-    # pass율 0% 로 전 생성을 막았던 2026-07-07 사고와 같은 조건이다.
+    # 초기 추측값 90/75 는 신규 분포(75~85)에서도 통과 0 이라 폐기했다. Pillow QC 가 pass율
+    # 0% 로 전 생성을 막았던 2026-07-07 사고와 같은 조건이다.
     # 80/65 는 신규 분포에서 상위 절반이 통과하고 75점 미만만 재생성으로 간다.
     # 주의: 구컷 기준 재생성률(~55%)을 현재 품질로 읽지 말 것 — 신규 8건의 critical 은 0 이다.
     qc_score_auto_pass: int = 80   # 이상 → 자동 통과
@@ -755,7 +754,6 @@ def load_settings() -> Settings:
         detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
         detail_cut_stagger_ms=int(os.getenv("DETAIL_CUT_STAGGER_MS", "3000")),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
-        mannequin_qc_enabled=(os.getenv("MANNEQUIN_QC_ENABLED", "false").lower() == "true"),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),

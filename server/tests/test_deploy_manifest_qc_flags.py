@@ -26,7 +26,6 @@ DETAIL_WORKER_MANIFEST = (
 QC_FLAGS = [
     ("IMAGE_QC", "image_qc"),
     ("MANNEQUIN_AXIS_QC", "mannequin_axis_qc"),
-    ("MANNEQUIN_QC_ENABLED", "mannequin_qc_enabled"),
     # 편집 패스 3종도 같은 사고 경로다 — 미선언이면 config 기본 off 로 조용히 안 돈다.
     ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
     ("MANNEQUIN_FABRIC_PASS", "mannequin_fabric_pass"),

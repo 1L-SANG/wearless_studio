@@ -365,7 +365,7 @@ def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):
 
 
 def test_axis_qc_never_unshadows_pillow_gate():
-    s = make_settings(mannequin_axis_qc="enforce", mannequin_qc_enabled=True)
+    s = make_settings(mannequin_axis_qc="enforce")
     pillow_reject, _ = mannequin_job.gate_decision(s, "fail", None)
     assert pillow_reject is False  # G9 하드 섀도 불변
 
