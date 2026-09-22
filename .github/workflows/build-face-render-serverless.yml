@@ -77,7 +77,12 @@ jobs:
             #   네임스페이스로 밀려면 그 계정 PAT 가 있어야 한다. classic PAT `write:packages`
             #   를 만들어 저장소 시크릿 GHCR_PAT 로 넣는다. 없으면 이 단계에서 로그인이
             #   실패하고(빌드 빨간불) 이미지가 안 밀린다 — 조용히 옛 이미지로 가지 않는다.
+            #
+            # ★ PR 에서는 로그인하지 않는다 — 아래 build-push 가 push:false 라 레지스트리에
+            #   안 미므로 자격증명이 필요 없다. fork PR 에는 시크릿이 아예 안 실려서, 로그인을
+            #   조건 없이 두면 모든 PR 이 "Password required" 로 깨진다.
             - uses: docker/login-action@v3
+              if: github.event_name != 'pull_request'
               with:
                   registry: ghcr.io
                   username: wjddns0122
