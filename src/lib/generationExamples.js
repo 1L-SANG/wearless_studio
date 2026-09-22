@@ -1,6 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
-import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { exampleDirectionFamilyMatches, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
 import { detailDirectionFromExample } from './storyboardExampleSelection.js';
 import {
   exampleMoodBucket,
@@ -161,6 +161,20 @@ export function hasSelectableGenerationExamples(catalog, rawOptions) {
     && source.some((example) => matchesMirrorSelection(example, options));
 }
 
+/* 갤러리·자동배정은 **카드와 같은 방향 가족**(정면·사선·옆모습·뒷면)을 **앞에** 둔다.
+   숨기지는 않는다 — 셀러는 분위기 예시에서 아무거나 고를 수 있어야 한다(2026-09-22 오너).
+   2026-09-22 운영 실측: 사선 카드에 정면 예시가 붙어 갤러리가 여섯 방향을 한 통에 섞어 보였다.
+   같은 방향이 먼저 오면 자동배정(앞에서 셋을 뽑는다)도 자연히 같은 방향을 고른다. */
+function partitionByDirectionFamily(list, { cutType, direction, sideStyle }) {
+  if (!direction || !['styling', 'horizon'].includes(cutType)) return { same: list, rest: [] };
+  const same = [];
+  const rest = [];
+  for (const example of list) {
+    (exampleDirectionFamilyMatches(example, { direction, sideStyle }) ? same : rest).push(example);
+  }
+  return { same, rest };
+}
+
 export function selectGenerationExamples(catalog, rawOptions) {
   const options = {
     spaceGroupId: null,
@@ -181,6 +195,12 @@ export function selectGenerationExamples(catalog, rawOptions) {
   const matched = source.filter((example) => (
     matchesMainSelection(example, options, flatCombinationPublished)
   ));
+  // 같은 방향 → 나머지 순서로 **그룹마다** 정렬·제한한다. 한 번에 정렬하면 6장 제한이 같은
+  // 방향을 잘라낼 수 있고, 정렬 뒤에 나누면 무드 순서가 그룹 안에서 깨진다.
+  const grouped = (list, opts) => {
+    const { same, rest } = partitionByDirectionFamily(list, options);
+    return [...orderGenerationExamples(same, opts), ...orderGenerationExamples(rest, opts)];
+  };
   if (appendSetOnly) {
     const ordinary = matched.filter((example) => !example.setOnly);
     const setMembers = matched.filter((example) => example.setOnly);
@@ -191,16 +211,40 @@ export function selectGenerationExamples(catalog, rawOptions) {
       )).sort(byRankThenId)
       : [];
     return [
-      ...orderGenerationExamples(ordinary, { cutType, shot }),
-      ...orderGenerationExamples(setMembers, {
-        cutType, shot, limit: setMembers.length, groupByMood: false,
-      }),
+      ...grouped(ordinary, { cutType, shot }),
+      ...grouped(setMembers, { cutType, shot, limit: setMembers.length, groupByMood: false }),
       ...mirrorExamples,
     ];
   }
-  return orderGenerationExamples(matched, {
+  return grouped(matched, {
     cutType, shot, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
   });
+}
+
+/** 방향 칩을 바꿨을 때 **자동배정** 예시가 새 방향과 안 맞으면 같은 방향 예시로 갈아 끼운다.
+    돌려주는 건 블록 패치(없으면 null). 셀러가 직접 고른(origin=user) 예시와 장소세트 멤버는
+    건드리지 않는다 — 그건 "변경됨" 표시가 맞는 자리다. assignGenerationExamples 가 교체 때
+    쓰는 필드(exampleId·refScope·thumb·baseThumb)를 그대로 쓴다. */
+export function repickExampleForDirection(block, catalog, {
+  clothingType, gender, identityKind = null, direction, sideStyle = null,
+}) {
+  if (!block || block.source !== 'ai' || block.spaceGroupId) return null;
+  if (block.exampleSelectionOrigin !== 'auto' || !block.exampleId) return null;
+  const source = Array.isArray(catalog) ? catalog : [];
+  const current = source.find((example) => example.id === block.exampleId);
+  if (current && exampleDirectionFamilyMatches(current, { direction, sideStyle })) return null;
+  const pool = filterExamplesForModel(selectGenerationExamples(source, {
+    cutType: block.cutType, shot: block.shot, clothingType, gender,
+    direction, sideStyle, mixMoodBuckets: block.cutType === 'styling',
+  }), identityKind, { ...block, direction, sideStyle });
+  const next = pool.find((example) => exampleDirectionFamilyMatches(example, { direction, sideStyle }));
+  if (!next || next.id === block.exampleId) return null;
+  return {
+    exampleId: next.id,
+    refScope: 'all',
+    baseThumb: block.baseThumb ?? block.thumb ?? null,
+    thumb: next.thumb,
+  };
 }
 
 /** 이 컷을 '다시 뽑을' 수 있는가 — 후보가 2개 이상이어야 다른 예시로 바뀔 수 있다.
@@ -401,6 +445,15 @@ export function storedExampleConditionStatus(example, {
 
 export function directionBadgeLabel(direction) {
   return { front: '정면', side: '사이드', back: '뒷면' }[direction] || '방향 없음';
+}
+
+/** 예시 카드 배지 — 방향 가족 4개(정면·사선·옆모습·뒷면). 미기재 side 는 옆모습이다. */
+export function exampleDirectionFamilyLabel(example) {
+  const direction = example?.direction;
+  if (direction === 'front') return '정면';
+  if (direction === 'back') return '뒷면';
+  if (direction === 'side') return example?.sideStyle === 'threeQuarter' ? '사선' : '옆모습';
+  return '방향 없음';
 }
 
 export function exampleSelectionFingerprintFields(block) {

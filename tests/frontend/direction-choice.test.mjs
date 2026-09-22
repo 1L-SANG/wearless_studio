@@ -10,6 +10,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
+import { repickExampleForDirection, selectGenerationExamples } from '../../src/lib/generationExamples.js';
 import {
   DIRECTION_CHOICES,
   directionChoiceFromSpec,
@@ -101,4 +102,62 @@ test('front·back 은 sideStyle 과 무관하다', () => {
       { cutType: 'horizon', direction, sideStyle: 'threeQuarter' },
     ), true, direction);
   }
+});
+
+test('갤러리·자동배정은 카드와 같은 방향 가족을 앞에 둔다 — 숨기지는 않는다', () => {
+  // 2026-09-22 오너: 셀러는 분위기 예시에서 아무거나 고를 수 있어야 한다. 같은 방향이 먼저 오면
+  // 자동배정(앞에서 셋)도 자연히 같은 방향을 고른다.
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const catalog = [
+    ex('front'), ex('tq', { direction: 'side', sideStyle: 'threeQuarter' }),
+    ex('prof', { direction: 'side', sideStyle: 'profile' }), ex('back', { direction: 'back' }),
+  ];
+  const pick = (direction, sideStyle = null) => selectGenerationExamples(catalog, {
+    cutType: 'horizon', shot: 'full', clothingType: 'top', gender: 'men', direction, sideStyle,
+  }).map((e) => e.id);
+  assert.equal(pick('front')[0], 'front');
+  assert.equal(pick('side', 'threeQuarter')[0], 'tq');
+  assert.equal(pick('side', 'profile')[0], 'prof');
+  assert.equal(pick('back')[0], 'back');
+  // sideStyle 없는 side 카드는 옆모습이다 — 서버 _side_style_of 와 같은 기본값.
+  assert.equal(pick('side')[0], 'prof');
+  // 나머지도 전부 남아 있다 — 필터가 아니라 정렬이다.
+  assert.deepEqual([...pick('back')].sort(), ['back', 'front', 'prof', 'tq']);
+});
+
+test('같은 방향이 0장이어도 갤러리는 비지 않는다', () => {
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const catalog = [ex('a'), ex('b', { direction: 'back' })];
+  const shown = selectGenerationExamples(catalog, {
+    cutType: 'horizon', shot: 'full', clothingType: 'top', gender: 'men', direction: 'side', sideStyle: 'threeQuarter',
+  });
+  assert.deepEqual(shown.map((e) => e.id), ['a', 'b']);
+});
+
+test('방향을 바꾸면 자동배정 예시를 새 방향으로 갈아 끼우고, 셀러가 고른 예시는 둔다', () => {
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const catalog = [ex('front'), ex('tq', { direction: 'side', sideStyle: 'threeQuarter' })];
+  const base = { id: 'blk', source: 'ai', cutType: 'horizon', shot: 'full', direction: 'front', exampleId: 'front', thumb: 't/front' };
+  const opts = { clothingType: 'top', gender: 'men', direction: 'side', sideStyle: 'threeQuarter' };
+
+  const auto = repickExampleForDirection({ ...base, exampleSelectionOrigin: 'auto' }, catalog, opts);
+  assert.equal(auto.exampleId, 'tq');
+  assert.equal(auto.thumb, 't/tq');
+  assert.equal(auto.baseThumb, 't/front');
+
+  // 이미 맞는 예시면 손대지 않는다.
+  assert.equal(repickExampleForDirection({ ...base, exampleSelectionOrigin: 'auto', exampleId: 'tq' }, catalog, opts), null);
+  // 셀러가 직접 고른 예시는 그대로 — 그건 "변경됨" 표시가 맞는 자리다.
+  assert.equal(repickExampleForDirection({ ...base, exampleSelectionOrigin: 'user' }, catalog, opts), null);
+  // 장소세트 멤버는 세트가 정한 자리라 건드리지 않는다.
+  assert.equal(repickExampleForDirection({ ...base, exampleSelectionOrigin: 'auto', spaceGroupId: 'g1' }, catalog, opts), null);
 });

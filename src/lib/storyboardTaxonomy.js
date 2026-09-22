@@ -159,17 +159,24 @@ const sideStyleOf = (source) => (
   (source && source.sideStyle) === 'threeQuarter' ? 'threeQuarter' : 'profile'
 );
 
+/* 예시와 카드가 **같은 그림**(방향 가족)인가 — 정면 / 사선 / 옆모습 / 뒷면.
+   side 는 direction 만으로 같은 그림이 아니다 — 사선과 90도 옆모습이 같은 'side' 다.
+   갈라 보지 않으면 사선 카드가 완전 옆모습 사진의 포즈를 물려받는다.
+   방향이 없는 예시(direction=null — 제품·거울·옛 항목)는 어느 가족에도 안 속한다. */
+export function exampleDirectionFamilyMatches(example, { direction, sideStyle = null }) {
+  if (!example || !direction) return false;
+  if (!['front', 'back', 'side'].includes(example.direction)) return false;
+  if (example.direction !== direction) return false;
+  return direction !== 'side' || sideStyleOf(example) === sideStyleOf({ sideStyle });
+}
+
 export function poseExampleDirectionCompatible(example, { cutType, direction, sideStyle = null }) {
   if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
   if (cutType === 'mirror' || example.cutType === 'mirror') {
     return cutType === 'mirror' && example.cutType === 'mirror';
   }
   if (!['styling', 'horizon'].includes(example.cutType)) return false;
-  if (!['front', 'back', 'side'].includes(example.direction)) return false;
-  if (example.direction !== direction) return false;
-  // side 는 direction 만으로 같은 그림이 아니다 — 사선과 90도 옆모습이 같은 'side' 다.
-  // 갈라 보지 않으면 사선 카드가 완전 옆모습 사진의 포즈를 물려받는다.
-  return direction !== 'side' || sideStyleOf(example) === sideStyleOf({ sideStyle });
+  return exampleDirectionFamilyMatches(example, { direction, sideStyle });
 }
 
 /* 디테일 역할도 항상 포함 — 2026-08-07 개편(구조 확대 모드)으로 디테일 사진 유무는

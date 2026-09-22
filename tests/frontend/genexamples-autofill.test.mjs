@@ -89,16 +89,31 @@ test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 
-test('eligibility uses cut, shot, clothing, gender and all publication, not direction or matchIds', () => {
+test('eligibility uses cut, shot, clothing, gender and all publication — and the card direction family', () => {
+  // 2026-09-22: 갤러리·자동배정은 카드와 같은 방향 가족만 보여준다. 사선 카드에 정면 예시가
+  // 붙어 갤러리가 여섯 방향을 섞어 보이고 캡션이 영원히 "변경됨"이던 것을 고쳤다.
   const catalog = [
     example('front-ok'), example('back-ok', { direction: 'back', rank: 2 }),
     example('wrong-shot', { shot: 'medium' }), example('wrong-gender', { gender: 'men' }),
     example('wrong-clothing', { applicableClothingTypes: ['bottom'] }),
     example('pose-only', { variants: ['pose'] }),
   ];
+  // 같은 방향이 앞으로 온다 — 숨기지는 않는다(셀러는 아무거나 고를 수 있다).
   assert.deepEqual(selectGenerationExamples(catalog, {
     cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
     direction: 'back', matchIds: ['ignored'],
+  }).map((item) => item.id), ['back-ok', 'front-ok']);
+  assert.deepEqual(selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women', direction: 'front',
+  }).map((item) => item.id), ['front-ok', 'back-ok']);
+  // 같은 방향이 0장이어도 비지 않는다.
+  assert.deepEqual(selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
+    direction: 'side', sideStyle: 'threeQuarter',
+  }).map((item) => item.id), ['front-ok', 'back-ok']);
+  // 방향을 안 주면(옛 호출부) 예전처럼 방향을 안 본다.
+  assert.deepEqual(selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
   }).map((item) => item.id), ['front-ok', 'back-ok']);
   const products = [example('product-ok', {
     cutType: 'product', shot: 'ghost', gender: null, mood: null, applicableClothingTypes: ['top'],

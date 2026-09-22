@@ -7,7 +7,7 @@
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
@@ -35,6 +35,7 @@ import {
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
 import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
+import { repickExampleForDirection } from '@/lib/generationExamples.js';
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
@@ -308,36 +309,39 @@ function StoryboardInsertControl({
 
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
+  // 착용컷 방향 목록은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 블록은 서버 값 셋을 든다.
+  // 그대로 찾으면 'side' 가 목록에 없어 캡션이 '—' 로 뜬다 — 그래서 화면 값으로 바꿔 찾는다.
   const direction = isProduct
     ? (catalogs.productDirections.find((item) => item.value === block.direction)?.label || '앞면')
-    : (catalogs.directions.find((item) => item.value === block.direction)?.label || '—');
+    : (catalogs.directions.find((item) => item.value === directionChoiceFromSpec(block))?.label || '—');
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
   return { direction, shot, isProduct };
 }
 
+/* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
+   기준은 이 페이지를 열었을 때 그 카드가 물고 있던 예시다. 원래 것으로 되돌리면 꺼진다.
+   방향·샷은 바꿔도 표시하지 않는다 — 예전엔 붙은 예시의 방향과 다르면 파랬는데(2026-08-16),
+   사선 카드에 정면 예시가 붙어 있는 한 무엇을 눌러도 켜져 있어 아무 정보가 없었다.
+   새로 추가한 컷은 처음 본 값이 기준. 자동저장 보드라 "저장 뒤 리셋"은 없다 — 세션 안에서만 산다. */
+const LoadedRecipeContext = React.createContext(null);
+
 function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
+  const loadedRecipes = useContext(LoadedRecipeContext);
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
     .map((id) => colorOpts.find((color) => color.id === id))
     .filter(Boolean);
-  const example = block.exampleId
-    ? (catalogs.genExamples || []).find((item) => item.id === block.exampleId)
-    : null;
   const { direction, shot } = cardLabels(block, catalogs);
   /* 셀러가 방향·샷을 원래 값에서 바꿨으면 그 값을 색으로 표시한다(2026-08-16 오너).
      기준(원래 값)은 컷의 성격에 따라 다르다:
      · 장소세트 멤버 — 세트가 정해 둔 그 자리의 컷(예시는 포즈 참조라 기준이 못 된다)
      · 그 밖 — 물고 있는 생성예시의 컷(예시 = 이 컷이 원래 따라가려던 그림) */
-  const setMemberSpec = block.spaceGroupId
-    ? (inferStoryboardSpaceSet(block.spaceGroupId)?.members || [])
-      .find((member) => (member.order ?? null) === (block.spaceSetMemberOrder ?? null))
-    : null;
-  const baseline = block.spaceGroupId ? setMemberSpec : example;
-  const directionDiffers = !!baseline?.direction && !!block.direction && baseline.direction !== block.direction;
-  const shotDiffers = !!baseline?.shot && !!block.shot && baseline.shot !== block.shot;
+  const loaded = loadedRecipes?.get(block.id) || null;
+  // 방향·샷은 표시하지 않는다. 예시만 — 열었을 때 예시가 있었고 지금 다른 예시면 "변경".
+  const exampleDiffers = !!loaded && !!loaded.exampleId && (block.exampleId || null) !== loaded.exampleId;
   const closureOptions = catalogs.outerClosureStates || [];
   const closure = closureOptions.find((option) => option.value === block.outerClosureState)?.label || '전체 열림';
   const showClosure = clothingType === 'outer' && WORN_CUT_TYPES.has(block.cutType);
@@ -359,12 +363,11 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
-        {block.cutType !== 'mirror' && (
-          <span className={directionDiffers ? 'sb-val-changed' : undefined}>{direction}</span>
-        )}
+        {block.cutType !== 'mirror' && <span>{direction}</span>}
         {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
-        <span className={shotDiffers ? 'sb-val-changed' : undefined}>{shot}</span>
+        <span>{shot}</span>
         {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
+        {exampleDiffers && <span className="sb-val-changed" title="열었을 때와 다른 예시"> · 예시 변경</span>}
       </span>
       {colors.map((color) => (
         <span key={color.id} className="sb-caption-dot" style={{ background: color.hex }} title={color.label} />
@@ -1585,7 +1588,15 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     const patch = specFromDirectionChoice(choice);
     const { direction, sideStyle } = patch;
     if (!current.exampleId) return patch;
-    if (!current.spaceGroupId && current.refScope !== 'pose') return patch;
+    if (!current.spaceGroupId && current.refScope !== 'pose') {
+      // 자동배정 예시가 새 방향과 안 맞으면 같은 방향 예시로 갈아 끼운다 — 안 그러면 사선
+      // 카드에 정면 예시가 남아 캡션이 영원히 "변경됨"이고 갤러리 선택도 어긋난다.
+      // 셀러가 직접 고른 예시는 그대로 둔다(그건 "변경됨"이 맞다).
+      const repick = repickExampleForDirection(current, catalogs.genExamples, {
+        clothingType, gender: exampleGender, identityKind, direction, sideStyle,
+      });
+      return repick ? { ...patch, ...repick } : patch;
+    }
     const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
     const compatible = (example?.variants || []).includes('pose')
       && poseExampleDirectionCompatible(example, {
@@ -1731,7 +1742,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {!isMirror && !isDetail && (
         <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
           {/* 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다. 착용컷만 4칩으로 갈린다. */}
-          <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
+          {/* allowDeselect=false — 선택된 칩을 다시 누르면 null 이 가고, null 은 정면으로
+              떨어진다(specFromDirectionChoice). 사선에서 사선을 한 번 더 누르면 조용히 정면이
+              됐다(2026-09-22 실측). 방향은 항상 하나가 선택돼 있어야 한다. */}
+          <Chips className="direction-chips" options={isProduct ? catalogs.productDirections : catalogs.directions}
+            allowDeselect={false}
             value={isProduct
               ? (catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front')
               : directionChoiceFromSpec(block)}
@@ -2483,6 +2498,20 @@ export function Storyboard({ toastOverride = null } = {}) {
     .catch(() => setAutosaveFailed(true));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
+  }, [blocks]);
+  // 캡션 "변경됨"의 기준값 — 페이지를 연 시점의 {direction, sideStyle, shot}. 새 컷은 처음 본 값.
+  const [loadedRecipes, setLoadedRecipes] = useState(() => new Map());
+  useEffect(() => {
+    if (!Array.isArray(blocks)) return;
+    setLoadedRecipes((current) => {
+      let next = null;
+      for (const b of blocks) {
+        if (!b?.id || current.has(b.id)) continue;
+        if (!next) next = new Map(current);
+        next.set(b.id, { exampleId: b.exampleId ?? null, direction: b.direction ?? null, sideStyle: b.sideStyle ?? null, shot: b.shot ?? null });
+      }
+      return next || current;
+    });
   }, [blocks]);
   const sbSkipFirstSave = useRef(true);
   useEffect(() => {
@@ -4064,6 +4093,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     });
   };
   return (
+    <LoadedRecipeContext.Provider value={loadedRecipes}>
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
@@ -4120,6 +4150,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         </div>
       </div>
     </div>
+    </LoadedRecipeContext.Provider>
   );
 }
 
