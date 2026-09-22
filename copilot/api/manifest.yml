@@ -379,6 +379,13 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 행이 0개면 프롬프트도 컷도 지금과 바이트 단위로 같고(테스트로 고정), 워밍 핑도 무시돼
   # 파드가 켜지지 않는다. 즉 이 값을 켜는 것 자체로는 동작이 바뀌지 않는다.
   FACE_IDENTITY_ENABLED: "true"
+  # RunPod Serverless 엔드포인트 id. **넣으면 이쪽이 우선**이고 아래 파드(FACE_AUTOSCALE)는
+  # 안 쓰인다 — 각도 교체(FACE_ANGLE_ENDPOINT_ID)와 같은 구조다. 유휴 요금이 없고, 파드가
+  # 파이프라인을 한 벌만 올려 "한 번에 한 사람"이던 제약이 사라진다. API 키는 각도·파드와
+  # 같은 것(RUNPOD_API_KEY). 2026-09-22 생성: US-CA-2 · H100/H200 · workersMin=0 ·
+  # 볼륨 d9pu262eag(가중치 53.75GiB). 콜드 151초 · 웜 6초 · 실렌더 3/3 검증.
+  # 비우면 파드로 되돌아간다(그때 FACE_AUTOSCALE 를 다시 on 으로).
+  FACE_IDENTITY_ENDPOINT_ID: "yicylasmsqauee"
   # FACE_IDENTITY_BACKEND_URL·FACE_RUNPOD_POD_ID 는 여기 두지 않는다.
   # **파드 id 와 렌더 URL 의 정본은 DB(fm_face_render_pod)** 다 — 파드는 재고 때문에 바뀌고
   # (2026-09-10·11 실측: start "not enough free GPUs", create "no instances"), 바뀔 때마다
@@ -399,7 +406,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   들어갔고, 같은 날 마지막 수동 파드가 퇴역했다. 그 뒤로 실존 모델 컷이 전부 실패했다
   #   (마네킹·상세 모두 all_candidates_failed). 6일간 아무도 파드를 만들지 않았기 때문이다.
   #   수요가 있을 때만 켜지고 유휴 10분이면 꺼지므로, 안 쓰면 요금도 안 나간다.
-  FACE_AUTOSCALE: "on"
+  #
+  # ★ 2026-09-22 **off**. FACE_IDENTITY_ENDPOINT_ID(서버리스)가 파드를 대신하므로 reconciler
+  #   가 파드를 띄울 이유가 없다 — 띄우면 서버리스로 갈 컷 때문에 파드가 헛돈다. 각도 교체가
+  #   ANGLE_AUTOSCALE=off 로 같은 선택을 한 것과 같다. 엔드포인트 id 를 비워 파드로 되돌릴
+  #   때는 이 값도 on 으로 되돌린다(둘은 짝이다).
+  FACE_AUTOSCALE: "off"
   # detail-worker 와 같은 근거로 10분: 셀러가 컷을 연속으로 만들면 같은 파드를 다시 쓴다.
   # 깨어날 때마다 드는 비용 = 콜드스타트 + 10분 × $2.09/h.
   # 콜드스타트 실측(2026-09-10, RTX PRO 6000 96GB + 네트워크 볼륨): 파이프라인 적재만 472초,

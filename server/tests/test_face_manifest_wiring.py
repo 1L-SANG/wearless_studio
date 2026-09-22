@@ -109,3 +109,25 @@ def test_the_endpoint_id_matches_between_the_two_services():
     """서로 다른 엔드포인트를 보면 api 의 상태 표시와 워커의 실제 호출이 갈린다."""
     assert (API["variables"]["FACE_ANGLE_ENDPOINT_ID"]
             == WORKER["variables"]["FACE_ANGLE_ENDPOINT_ID"])
+
+
+@pytest.mark.parametrize("manifest,name", [(API, "api"), (WORKER, "detail-worker")])
+def test_the_face_identity_endpoint_is_wired_on_both(manifest, name):
+    """얼굴 패스도 서버리스로 간다 — 엔드포인트 id 가 양쪽에 있어야 한다.
+
+    한쪽만 있으면 그 서비스만 서버리스로 가고 다른 쪽은 파드를 찾는다(resolve_backend 순서).
+    각도 교체(FACE_ANGLE_ENDPOINT_ID)와 같은 규칙.
+    """
+    assert str(manifest["variables"].get("FACE_IDENTITY_ENDPOINT_ID") or "").strip(), name
+
+
+def test_the_face_identity_endpoint_matches_between_the_two_services():
+    assert (API["variables"]["FACE_IDENTITY_ENDPOINT_ID"]
+            == WORKER["variables"]["FACE_IDENTITY_ENDPOINT_ID"])
+
+
+def test_the_face_pod_autoscaler_is_off_when_the_endpoint_is_wired():
+    """엔드포인트가 파드를 대신하면 reconciler 는 파드를 띄우지 말아야 한다 — 안 그러면
+    서버리스로 갈 컷 때문에 파드가 헛돈다(각도 ANGLE_AUTOSCALE=off 와 같은 짝)."""
+    if str(API["variables"].get("FACE_IDENTITY_ENDPOINT_ID") or "").strip():
+        assert API["variables"]["FACE_AUTOSCALE"] == "off"
