@@ -637,6 +637,13 @@ export function getPublicationPreviewUrl(publicationId) {
   return http(`/v1/facemarket/model/publications/${encodeURIComponent(publicationId)}/preview-url`, { suppressErrorLog: true });
 }
 
+// GET /v1/facemarket/model/settlements/{id}/preview-url — 정산 한 건의 그림.
+// → { url, expiresIn, source:'publication'|'cut' }. 셀러가 발행(다운로드 공증)한 상세페이지가
+// 있으면 그것, 없으면 그 잡이 만든 생성 컷. 발행이 0건이던 운영에서 목록이 전부 빈 그림이었다.
+export function getSettlementPreviewUrl(settlementId) {
+  return http(`/v1/facemarket/model/settlements/${encodeURIComponent(settlementId)}/preview-url`, { suppressErrorLog: true });
+}
+
 // GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
 // → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
 // 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).

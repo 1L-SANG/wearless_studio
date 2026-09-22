@@ -780,6 +780,8 @@ def summary_db(fmset, monkeypatch):
         create table fm_publication_records (
             id text, project_id text, model_id text, kind text, revoked_at text, r2_key text, created_at text
         );
+        create table assets (id text, r2_key text, deleted_at text);
+        create table fm_output_records (id text, asset_id text, job_id text, model_id text, created_at text);
         create table fm_settlements (
             id text, payment_id text, license_id text, job_id text, model_ref text default '',
             total_amount integer default 0, model_amount integer, platform_amount integer default 0,
@@ -799,9 +801,10 @@ def summary_db(fmset, monkeypatch):
 
         async def execute(self, sql, params):
             # SQLite에는 LATERAL이 없어 같은 SELECT를 상관 스칼라 서브쿼리로 실행해요.
-            lateral = re.search(r"left join lateral \((.*?)\) publication on true", sql, re.S)
-            if lateral:
-                sql = sql.replace(lateral.group(0), "").replace("publication.id::text", f"({lateral.group(1)})")
+            # 각 lateral 은 한 컬럼만 고르므로 `이름.컬럼` 참조를 그 서브쿼리로 바꿔도 같은 값이다.
+            for lateral in re.finditer(r"left join lateral \((.*?)\) (\w+) on true", sql, re.S):
+                sql = sql.replace(lateral.group(0), "")
+                sql = re.sub(rf"\b{lateral.group(2)}\.\w+(::text)?", f"({lateral.group(1)})", sql)
             params = tuple(
                 value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else value
                 for value in params
@@ -809,7 +812,8 @@ def summary_db(fmset, monkeypatch):
             self.result = db.execute(sql.replace('%s', '?').replace('::text', ''), params)
 
         async def fetchone(self):
-            return dict(self.result.fetchone())
+            row = self.result.fetchone()
+            return dict(row) if row is not None else None
 
         async def fetchall(self):
             return [dict(row) for row in self.result.fetchall()]
@@ -931,3 +935,77 @@ def test_settlement_labels_and_report_flag_follow_safe_relations(summary_db):
     assert response.json()[0]['reported'] is True
     assert response.json()[0]['publicationId'] == 'latest'
     assert response.json()[0]['projectId'] == 'project-1'
+
+
+SETTLEMENT_UUID = '55555555-5555-4555-8555-555555555555'
+
+
+def _seed_settlement_with_cut(db, *, owner_model='mine'):
+    """정산 1건 + 그 잡이 만든 생성 컷 2장(최신 것이 이겨야 한다) + 지워진 컷 1장."""
+    db.execute("insert into jobs (id, project_id) values ('job-1', 'project-1')")
+    db.execute("insert into projects (id, user_id, title) values ('project-1', 'seller-1', '제목')")
+    db.execute(
+        """insert into fm_settlements (id, payment_id, license_id, job_id, model_amount, created_at)
+           values (?, 'job:job-1', 'active', 'job-1', 7000, '2026-09-11T00:00:00+00:00')""",
+        (SETTLEMENT_UUID,),
+    )
+    db.executemany(
+        "insert into assets (id, r2_key, deleted_at) values (?, ?, ?)",
+        [('asset-old', 'cut-old', None), ('asset-new', 'cut-new', None),
+         ('asset-gone', 'cut-gone', '2026-09-12')],
+    )
+    db.executemany(
+        "insert into fm_output_records (id, asset_id, job_id, model_id, created_at) values (?, ?, ?, ?, ?)",
+        [('r1', 'asset-old', 'job-1', owner_model, '2026-09-11T01:00:00'),
+         ('r2', 'asset-new', 'job-1', owner_model, '2026-09-11T02:00:00'),
+         ('r3', 'asset-gone', 'job-1', owner_model, '2026-09-11T03:00:00')],
+    )
+
+
+def _sign(client):
+    calls = []
+    client.app.state.r2 = SimpleNamespace(
+        preview_url=lambda key, expires: calls.append((key, expires)) or f'https://preview.test/{key}')
+    return calls
+
+
+def test_settlement_preview_query_picks_latest_live_cut_when_nothing_published(summary_db):
+    client, db = summary_db
+    _seed_settlement_with_cut(db)
+    calls = _sign(client)
+
+    response = client.get(f'/v1/facemarket/model/settlements/{SETTLEMENT_UUID}/preview-url')
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {'url': 'https://preview.test/cut-new', 'expiresIn': 600, 'source': 'cut'}
+    assert calls == [('cut-new', 600)]
+
+
+def test_settlement_preview_query_prefers_live_signed_publication(summary_db):
+    client, db = summary_db
+    _seed_settlement_with_cut(db)
+    db.executemany(
+        "insert into fm_publication_records values (?, ?, ?, ?, ?, ?, ?)",
+        [('revoked', 'project-1', 'mine', 'long_png', '2026-09-04', 'signed-revoked', '2026-09-04'),
+         ('page', 'project-1', 'mine', 'long_png', None, 'signed-page', '2026-09-02'),
+         ('block', 'project-1', 'mine', 'block_png', None, 'signed-block', '2026-09-05')],
+    )
+    calls = _sign(client)
+
+    response = client.get(f'/v1/facemarket/model/settlements/{SETTLEMENT_UUID}/preview-url')
+
+    assert response.status_code == 200, response.text
+    assert response.json()['source'] == 'publication'
+    assert calls == [('signed-page', 600)]
+
+
+def test_settlement_preview_query_hides_other_models_settlement(summary_db):
+    client, db = summary_db
+    _seed_settlement_with_cut(db, owner_model='other')
+    db.execute("update fm_settlements set license_id = 'foreign' where id = ?", (SETTLEMENT_UUID,))
+    calls = _sign(client)
+
+    response = client.get(f'/v1/facemarket/model/settlements/{SETTLEMENT_UUID}/preview-url')
+
+    assert response.status_code == 404, response.text
+    assert calls == []
