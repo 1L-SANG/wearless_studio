@@ -257,7 +257,7 @@ def test_shadow_never_rerolls_even_on_worst_scores(monkeypatch):
     """**배포되는 설정(IMAGE_QC=shadow)의 안전 계약.**
 
     manifest 가 싣는 값이 shadow 다. 여기서 재생성이 발화하면 관측만 켠 배포가 조용히
-    생성 비용을 늘리고, 최악의 경우 MANNEQUIN_QC_ENABLED 사고처럼 파이프라인을 흔든다.
+    생성 비용을 늘리고, 최악의 경우 2026-07 Pillow QC 사고처럼 파이프라인을 흔든다.
     점수가 바닥이고 치명 오류가 있어도 생성은 1회, 저장은 1건이어야 한다.
     """
     import test_mannequin_axis_qc as harness

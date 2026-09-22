@@ -2,7 +2,8 @@
 
 정상(positive) 표본과 실패모드 합성(negative) 표본으로 `app.services.qc`의
 판정을 실측한다. 게이트: 정상 차단(false positive) 0건 + 실패모드 검출률 리포트.
-통과하면 MANNEQUIN_QC_ENABLED=true 로 게이팅을 켠다 (qc.py 주석의 '워커 결정').
+통과하면 mannequin_job.gate_decision 의 pillow_reject 를 되살려 게이팅을 켠다
+(스위치 MANNEQUIN_QC_ENABLED 는 켜도 코드가 안 봐서 2026-09-22 에 없앴다).
 
 사용:
     uv run python -m scripts.qc_calibrate --positives <dir> [--out <dir>]
@@ -129,7 +130,8 @@ def main() -> int:
         print(f"  FN {label}: {metrics}")
 
     gate_ok = not fp
-    print("게이트:", "통과 — MANNEQUIN_QC_ENABLED=true 켜도 됨" if gate_ok else "실패 — 임계값 조정 필요")
+    print("게이트:", "통과 — gate_decision 의 pillow_reject 를 되살려도 됨"
+          if gate_ok else "실패 — 임계값 조정 필요")
     return 0 if gate_ok else 1
 
 

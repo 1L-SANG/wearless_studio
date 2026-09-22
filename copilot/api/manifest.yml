@@ -100,7 +100,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
   # 0%(missing_lower_body 오탐 — 임계가 합성 프리셋 캘리브라 실 프레이밍/종횡비와 미스매치)라 게이팅이
   # 전 생성 차단. 워커 step emit 이 이제 metrics 도 남기니 shadow 로 실측 분포 모아 재캘리브 후 다시 true.
-  MANNEQUIN_QC_ENABLED: "false"
   # P1 축 인지 QC + 편집 교정(§I): 미달 컷 출고 방지가 오발화 비용(내부 생성 1콜)보다 우선
   # (2026-07-14 사용자 결정). 판정 실패는 fail-open — 생성을 절대 막지 않음. 발화율·판정
   # 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브는 켠 상태로 병행.
@@ -227,6 +226,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   DETAIL_CUT_STAGGER_MS: "1000"
   # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
   DETAIL_CUT_MAX_ATTEMPTS: "1"
+  # 구 best-of(컷마다 후보 2장 추가 생성 후 비전으로 고르기). IMAGE_QC·PANTS_QC·AXIS_QC
+  # 하드게이트가 같은 일을 하게 되면서 2026-08-17 부터 off — 중복 비용이라 **되살릴 계획 없다**.
+  # ⚠️ 이 줄을 지우면 코드 기본값 "bestof" 로 떨어져 되살아난다. 지우려면 image_qc.best_of
+  # 와 호출부까지 같이 — 테스트 90개가 그 함수를 주입 지점으로 쓴다(발표 뒤 작업).
   GARMENT_QC_MODE: "off"
   # 관리자 콘솔 기기 게이트. 코드 기본 shadow. 2026-09-11 관리자 2명이 콘솔에서 서로 기기를
   # 승인한 뒤 enforce 로 올렸다. 락아웃 복구 = shadow 로 내렸다 다시 enforce. 런북 docs/runbooks/admin-device-gate.md
@@ -316,9 +319,16 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # AWS Face Liveness off. OACX 모바일신분증(실시간 폰 인증)이 본인확인+내재적 라이브니스를
   # 담당하고, 얼굴 스왑방지는 업로드 사진 ↔ 신분증 초상 SFace 매칭으로 한다. AWS 라이브니스는
   # 프레임 품질에 따라 매칭이 불안정(신분증 초상↔실물 0.46 vs 라이브프레임 0.25 실측)했고
-  # 애드온이라 제거. 되돌리려면 "true"(브라우저 role·리전·confidence 임계 SSM/설정 필요).
+  # 애드온이라 제거.
+  # 2026-09-22 오너 확정: **다시 켤 계획 없다** — 관리자 사진 심사(FM_ENROLLMENT_REVIEW)가
+  # 이 역할을 대신한다. 코드·의존성(aws-amplify 3종)·IAM 역할·DB 컬럼까지 걷어내는 건
+  # 서버 96 + 테스트 218 + 프론트 23 곳을 건드리는 일이라 9/30 발표 뒤로 미뤘다.
+  # 그때까지 이 줄은 "쓰지 않는 기능"이라는 표시다 — 켜지 말 것.
   FM_LIVENESS_ENABLED: "false"
-  # Phase C에서는 얼굴 대조를 끄고 표준가를 사용해요.
+  # 신분증 초상 ↔ 등록 사진 기계 대조. 2026-09-22 오너 확정: **다시 켤 계획 없다** —
+  # 관리자가 사진을 직접 본다. 끈 상태에서는 심사 카드에 faceMatch="disabled" 로 남는다.
+  # 딸린 임계값(FM_ID_LIVE_THRESHOLD·FM_SIDE_LIVE_THRESHOLD·FM_RETOUCHED_LIVE_THRESHOLD)
+  # 과 FM_MATCH_POLICY_VERSION 도 이 스위치가 켜져야만 쓰인다. 코드 제거는 발표 뒤.
   FM_FACE_MATCH_ENABLED: "false"
   FM_STANDARD_UNIT_PRICE: "14900"
   # 회사 정보와 개인정보 처리방침에 명시된 문의 수신 주소예요.
@@ -464,6 +474,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   401 이다. 잔액 조회가 fail-closed 라(못 읽으면 시작 안 함) 키가 살아 있지 않으면
   #   큐는 켜도 한 건도 안 돈다 — CRITICAL 알림만 쌓인다.
   #   되돌리기: 이 값을 "off". 그러면 RunPod 를 아예 호출하지 않는다.
+  # off 는 "안 쓰는 기능"이 아니라 **돈이 새는 걸 막는 안전장치**다 — 켤 예정이니 지우지 말 것.
   FM_LORA_TRAINING: "off"
   # 파드를 만들기 전에 보는 최소 잔액(USD). 1800 스텝 한 번이 RTX PRO 6000 에서 약 $11 이라
   # 그 위로 잡는다. 0 이하면 검사 자체를 끈다 — RunPod 가 잔액 API 를 바꿔도 빠져나갈 길.
@@ -475,6 +486,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 학습이 끝나 ready LoRA 행이 붙는 순간 큐에 한 건 들어간다. 컷 생성(gpt-image)은 하지
   # 않는다 — 고정 기준 원본 4장에 얼굴만 세 번 다시 그린다(생성 비용 0, 얼굴 렌더 12회).
   # ★ 켜기 전에 아래 기준 원본 두 줄이 채워져 있어야 한다. 비어 있으면 런이 시작조차 안 한다.
+  # 학습 큐와 같은 성격의 안전장치 — 켤 예정이니 지우지 말 것.
   FM_TEST_CUT_BUILD: "off"
   # 기준 원본 — **사람이 바뀌어도 그대로인 고정 자산**이다(얼굴 전용 비공개 R2 키, 쉼표로 2장씩).
   # 사람 간 비교가 되려면 입력이 같아야 한다. 갈아 끼우면 다음 생성부터 새 원본을 쓴다.

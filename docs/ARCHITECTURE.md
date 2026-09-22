@@ -387,7 +387,6 @@ graph TB
 | `MANNEQUIN_AXIS_QC` (AG-P1) | **enforce** | 미달 컷 출고 방지 > 오발화 비용 |
 | `MANNEQUIN_BASE_FIDELITY_QC` | **enforce** | 게이팅 축은 `poseFrameMatch` 하나뿐, `wearGeometry`는 기록만 |
 | `MANNEQUIN_PANTS_QC` | **enforce** | 하드게이트 4종(색·종류·통·구조), 기존 예산 안에서 재롤 |
-| `MANNEQUIN_QC_ENABLED` | **false(shadow)** | `missing_lower_body` 오탐으로 pass율 0% → 재캘리브 대기 |
 | `CUT_OUTPUT_QC_MODE` | `repair` | |
 | `GARMENT_QC_MODE` | `off` | 신규 hard-gate가 커버, 구 best-of 중복비용 제거 |
 
@@ -718,7 +717,6 @@ graph LR
 | | `FM_ENROLLMENT_REVIEW` | `simple_auth_only` (mid 경로는 관리자 육안 심사 대상 아님) |
 | | `FM_OACX_SIMPLE_AUTH_CONTRACT` | `disabled` (간편인증 응답 계약 미확정) |
 | **QC** | `IMAGE_QC` / `MANNEQUIN_AXIS_QC` / `MANNEQUIN_BASE_FIDELITY_QC` / `MANNEQUIN_PANTS_QC` | `enforce` |
-| | `MANNEQUIN_QC_ENABLED` | `false` (shadow) |
 | | `GARMENT_QC_MODE` | `off` |
 | | `CUT_OUTPUT_QC_MODE` | `repair` |
 | **편집 패스** | `MANNEQUIN_UNTUCK_PASS` / `_GATE` | `on` |

@@ -786,15 +786,15 @@ def final_decision(s, scores: dict | None) -> str:
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
-    - Pillow QC(휴리스틱): **재캘리브 전까지 코드에서 강제 shadow** — 실측 분포에서
-      missing_lower_body 오탐이 상수(다리가 있어도 bboxBottom 0.93 에서 오탐, pass율 0%)라,
-      MANNEQUIN_QC_ENABLED=true 인 어떤 배포/체크아웃이 큐를 클레임하든 전 생성이 죽는
-      사고가 된다(2026-07-12 prod 실사고 — 공유 DB 를 폴링하던 QC=true env 프로세스가
-      사용자 잡을 가로채 전멸). services/qc.py 임계 재캘리브 후 이 가드를 되살릴 것.
+    - Pillow QC(휴리스틱): **게이트하지 않는다(관측 전용)**. 실측 분포에서
+      missing_lower_body 오탐이 상수(다리가 있어도 bboxBottom 0.93 에서 오탐, pass율 0%)라
+      켜면 전 생성이 죽는다(2026-07-12 prod 실사고 — 공유 DB 를 폴링하던 스위치 켠 프로세스가
+      사용자 잡을 가로채 전멸). 스위치로도 못 켜게 2026-09-22 에 MANNEQUIN_QC_ENABLED 를
+      없앴다 — services/qc.py 임계를 재캘리브(scripts/qc_calibrate.py)한 뒤 여기서 되살릴 것.
     - AG-P2(vision 동일성): image_qc=='enforce' 且 p2.verdict=='retry' → reject.
       off/shadow 는 게이트 안 함(항상 통과 — 기존 동작 불변). p2 없음(키미설정·판정실패)도 통과.
     """
-    pillow_reject = False  # 강제 shadow — s.mannequin_qc_enabled 는 재캘리브 전까지 게이트에 미사용
+    pillow_reject = False  # 관측 전용 — 재캘리브 전까지 Pillow 판정은 게이트에 쓰지 않는다
     if s.image_qc != "enforce":
         return pillow_reject, False  # off/shadow 는 항상 통과 — 기존 동작 불변
     # 점수 신호가 있으면 그쪽이 정본(3분기). 없으면 기존 이진 verdict 로 폴백한다 —
