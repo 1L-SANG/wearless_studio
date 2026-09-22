@@ -2244,7 +2244,6 @@
 /* 한 페이지 = 3×2 콘텐츠 6칸. 이동 컨트롤은 아래에 두어 격자 폭을 잠식하지 않는다. */
 .sb-exgallery { position: relative; padding-inline: 0; outline: none; }
 .sb-exgallery:focus-visible { border-radius: 10px; box-shadow: 0 0 0 2px var(--link); }
-.sb-exgallery.moodonly { opacity: .55; }
 .sb-exgrid {
   display: flex; gap: 10px; transition: opacity .15s;
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
@@ -2252,8 +2251,14 @@
 }
 .sb-exgrid::-webkit-scrollbar { display: none; }
 .sb-expage {
+  display: flex; flex-direction: column; gap: 6px;
+  flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always;
+}
+/* 방향 묶음 이름 — 한 페이지가 곧 한 방향(정면·사선·옆모습·뒷면)이다. */
+.sb-expage-label { color: var(--fg-2); font-size: 11px; letter-spacing: .02em; }
+.sb-expage-cells {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, auto);
-  flex: 0 0 100%; min-width: 0; gap: 8px; scroll-snap-align: start; scroll-snap-stop: always;
+  min-width: 0; gap: 8px;
 }
 .sb-exempty {
   grid-column: 1 / 3; grid-row: 1 / 3; min-width: 0; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
@@ -2276,12 +2281,11 @@
 .sb-excell::after { content: ''; position: absolute; z-index: 2; inset: 0; border-radius: inherit; pointer-events: none;
   box-shadow: inset 0 0 0 1px rgba(23, 25, 31, .42); background: rgba(255, 255, 255, .08); opacity: 0; transition: opacity .16s; }
 .sb-excell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .16s, opacity .16s; }
-.sb-excell:not(.sel):not(.unavailable):hover img,
-.sb-excell:not(.sel):not(.unavailable):focus-visible img { transform: scale(1.035); opacity: .94; }
-.sb-excell:not(.sel):not(.unavailable):hover::after,
-.sb-excell:not(.sel):not(.unavailable):focus-visible::after { opacity: 1; }
+.sb-excell:not(.sel):hover img,
+.sb-excell:not(.sel):focus-visible img { transform: scale(1.035); opacity: .94; }
+.sb-excell:not(.sel):hover::after,
+.sb-excell:not(.sel):focus-visible::after { opacity: 1; }
 .sb-excell.sel { border-color: var(--link); }
-.sb-excell.unavailable { opacity: .42; cursor: not-allowed; }
 .sb-excell .ck {
   position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border-radius: 99px;
   background: var(--link); color: #fff; display: flex; align-items: center; justify-content: center;
@@ -3226,8 +3230,8 @@
   .sb-deck.open .sb-deck-collapse { animation: none; }
   .sb-selection-ring i { animation: none; opacity: 0; will-change: auto; }
   .sb-excell, .sb-excell img, .sb-excell::after { transition: none; }
-  .sb-excell:not(.sel):not(.unavailable):hover img,
-  .sb-excell:not(.sel):not(.unavailable):focus-visible img { transform: none; }
+  .sb-excell:not(.sel):hover img,
+  .sb-excell:not(.sel):focus-visible img { transform: none; }
   .sb-selection-ring i:first-child { opacity: 1; }
   .sb-undo-bar, .sb-undo-bar.exiting { animation: none; }
   .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) .sb-cutcard,

@@ -40,6 +40,7 @@ import {
   assignGenerationExamples,
   canRerollGenerationExample,
   generationExampleImageSources,
+  groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
   paginateGenerationGalleryItems,
@@ -1228,10 +1229,6 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
   useEffect(() => {
     if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
   }, [galleryPage, galleryPageCount]);
-  const poseDirectionReason = (example) => {
-    const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
-    return `이 예시의 포즈는 ${label} 전용이에요`;
-  };
   const selectFirstAvailable = () => {
     const first = refScope === 'pose'
       ? examples.find((example) => (example.variants || []).includes('pose')
@@ -1248,10 +1245,8 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       sideStyle,
     });
     const poseRequired = refScope === 'pose';
-    const poseUnavailable = poseRequired && (!variants.includes('pose') || !poseCompatible);
-    const poseUnavailableReason = !variants.includes('pose')
-      ? '이 예시는 아직 포즈 전용 자산이 없어요'
-      : poseDirectionReason(example);
+    // 어떤 칸도 잠그지 않는다 — 포즈 자산이 없거나 방향이 달라도 '분위기(all)'로 고를 수 있다.
+    // (2026-09-22 오너: 회색으로 막아 두면 왜 못 고르는지 알 수 없고, 실제로는 눌리기도 했다.)
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
@@ -1271,9 +1266,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
           onExampleDrag(example.id);
         }}
         onDragEnd={() => onExampleDrag?.(null)}
-        disabled={poseUnavailable}
-        title={poseUnavailable ? poseUnavailableReason : undefined}
-        className={`sb-excell${on ? ' sel' : ''}${poseUnavailable ? ' unavailable' : ''}`}
+        className={`sb-excell${on ? ' sel' : ''}`}
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}
@@ -1283,7 +1276,21 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
   };
   const exampleCells = examples.map(renderExampleCell);
   const galleryItems = exampleCells;
-  const galleryPages = paginateGenerationGalleryItems(galleryItems);
+  // 갤러리 한 페이지 = **방향 하나**(정면·사선·옆모습·뒷면). 카드가 보고 있는 방향이 첫 페이지고,
+  // 한 방향에 6장이 넘으면 같은 이름으로 다음 장을 만든다. 방향 라벨이 없는 컷(제품·거울)은
+  // 묶음이 하나뿐이라 라벨 없이 예전처럼 6칸씩 넘어간다.
+  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle });
+  const labelledSections = gallerySections.length > 1;
+  const galleryPages = gallerySections.length
+    ? gallerySections.flatMap((section) => {
+      const cells = section.examples.map((example) => exampleCells[examples.indexOf(example)]);
+      return paginateGenerationGalleryItems(cells).map((items, index) => ({
+        key: `${section.key}:${index}`,
+        label: labelledSections ? `${section.label}${index ? ` ${index + 1}` : ''}` : null,
+        items,
+      }));
+    })
+    : [{ key: 'empty:0', label: null, items: [] }];
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
@@ -1339,7 +1346,9 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
           )}
         </div>
       )}
-      <div className={`sb-exgallery${moodOnly ? ' moodonly' : ''}`}
+      {/* 정면이 아닌 방향에서 갤러리를 흐리게 덮던 처리를 걷어냈다 — 방향별 묶음이 생긴 뒤로는
+          "왜 회색인데 눌리지?"만 남았다(2026-09-22 오너). moodOnly 는 기본 범위 판정에만 쓴다. */}
+      <div className="sb-exgallery"
         role="region" aria-label="생성예시 갤러리" tabIndex={0}
         onKeyDown={(event) => {
           if (event.key === 'ArrowLeft') {
@@ -1352,16 +1361,19 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
             페이지 넘김은 가로 스크롤·넘김 버튼·←→ 키만 (2026-08-16 오너). */}
         <div ref={galleryRef} className="sb-exgrid"
           onScroll={updateGalleryPageFromScroll}>
-          {galleryPages.map((pageItems, pageIndex) => (
-            <div className="sb-expage" key={`page:${pageIndex}`}>
-              {pageItems}
-              {!galleryItems.length && (
-                <div className="sb-exempty">
-                  {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
-                    ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
-                  <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
-                </div>
-              )}
+          {galleryPages.map((page) => (
+            <div className="sb-expage" key={`page:${page.key}`}>
+              {page.label && <div className="sb-expage-label">{page.label}</div>}
+              <div className="sb-expage-cells">
+                {page.items}
+                {!galleryItems.length && (
+                  <div className="sb-exempty">
+                    {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+                      ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+                    <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>

@@ -456,6 +456,46 @@ export function exampleDirectionFamilyLabel(example) {
   return '방향 없음';
 }
 
+/** 갤러리 섹션 정의 — 셀러가 보는 방향 4가지. 순서는 정면 → 사선 → 옆모습 → 뒷면. */
+export const GENERATION_DIRECTION_SECTIONS = Object.freeze([
+  Object.freeze({ key: 'front', label: '정면', direction: 'front', sideStyle: null }),
+  Object.freeze({ key: 'threeQuarter', label: '사선', direction: 'side', sideStyle: 'threeQuarter' }),
+  Object.freeze({ key: 'profile', label: '옆모습', direction: 'side', sideStyle: 'profile' }),
+  Object.freeze({ key: 'back', label: '뒷면', direction: 'back', sideStyle: null }),
+]);
+
+const OTHER_SECTION_KEY = 'other';
+
+/** 갤러리를 **방향 가족별 묶음**으로 자른다 — 정면 사진은 정면 칸, 사선은 사선 칸에 모인다.
+    카드가 보고 있는 방향의 묶음이 맨 앞이라 갤러리를 열면 그 방향 사진부터 나온다.
+    방향이 없는 예시(아직 라벨이 안 붙은 스냅)는 마지막 '기타' 묶음에 남는다 — 숨기지 않는다.
+    어떤 묶음도 잠그지 않는다: 셀러는 어느 방향 사진이든 골라 쓸 수 있다(2026-09-22 오너). */
+export function groupGenerationExamplesByDirection(list, { direction = null, sideStyle = null } = {}) {
+  const source = Array.isArray(list) ? list : [];
+  const buckets = new Map(GENERATION_DIRECTION_SECTIONS.map((section) => [section.key, []]));
+  const other = [];
+  for (const example of source) {
+    const section = GENERATION_DIRECTION_SECTIONS.find((item) => (
+      exampleDirectionFamilyMatches(example, { direction: item.direction, sideStyle: item.sideStyle })
+    ));
+    (section ? buckets.get(section.key) : other).push(example);
+  }
+  const current = direction
+    ? GENERATION_DIRECTION_SECTIONS.find((item) => (
+      item.direction === direction
+      && (direction !== 'side' || item.sideStyle === (sideStyle === 'threeQuarter' ? 'threeQuarter' : 'profile'))
+    ))
+    : null;
+  const ordered = current
+    ? [current, ...GENERATION_DIRECTION_SECTIONS.filter((item) => item.key !== current.key)]
+    : [...GENERATION_DIRECTION_SECTIONS];
+  const sections = ordered
+    .map((section) => ({ key: section.key, label: section.label, examples: buckets.get(section.key) }))
+    .filter((section) => section.examples.length);
+  if (other.length) sections.push({ key: OTHER_SECTION_KEY, label: '기타', examples: other });
+  return sections;
+}
+
 export function exampleSelectionFingerprintFields(block) {
   const automatic = block?.exampleSelectionOrigin === 'auto';
   return {

@@ -10,7 +10,11 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
-import { repickExampleForDirection, selectGenerationExamples } from '../../src/lib/generationExamples.js';
+import {
+  groupGenerationExamplesByDirection,
+  repickExampleForDirection,
+  selectGenerationExamples,
+} from '../../src/lib/generationExamples.js';
 import {
   DIRECTION_CHOICES,
   directionChoiceFromSpec,
@@ -160,4 +164,62 @@ test('방향을 바꾸면 자동배정 예시를 새 방향으로 갈아 끼우�
   assert.equal(repickExampleForDirection({ ...base, exampleSelectionOrigin: 'user' }, catalog, opts), null);
   // 장소세트 멤버는 세트가 정한 자리라 건드리지 않는다.
   assert.equal(repickExampleForDirection({ ...base, exampleSelectionOrigin: 'auto', spaceGroupId: 'g1' }, catalog, opts), null);
+});
+
+test('갤러리는 방향 묶음으로 잘린다 — 카드 방향이 첫 묶음, 나머지도 뒤에 남는다', () => {
+  // 2026-09-22 오너: "정면·사선·옆모습·뒷면별로 실제 사진 나오게 하고 거기서 고를 수 있게."
+  // 정렬만 해서는 화면이 그대로라 방향이 보이지 않았다 — 묶음마다 이름을 붙인다.
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const list = [
+    ex('f1'), ex('f2'), ex('tq', { direction: 'side', sideStyle: 'threeQuarter' }),
+    ex('prof', { direction: 'side', sideStyle: 'profile' }), ex('back', { direction: 'back' }),
+    ex('none', { direction: null }),
+  ];
+  const sections = groupGenerationExamplesByDirection(list, { direction: 'side', sideStyle: 'threeQuarter' });
+  assert.deepEqual(sections.map((section) => section.label), ['사선', '정면', '옆모습', '뒷면', '기타']);
+  assert.deepEqual(sections[0].examples.map((e) => e.id), ['tq']);
+  assert.deepEqual(sections[1].examples.map((e) => e.id), ['f1', 'f2']);
+  // 라벨이 안 붙은 예시도 숨기지 않는다 — 마지막 '기타' 묶음에 남는다.
+  assert.deepEqual(sections.at(-1).examples.map((e) => e.id), ['none']);
+  // 전체 장수는 그대로 — 묶는 것이지 거르는 것이 아니다.
+  assert.equal(sections.reduce((sum, section) => sum + section.examples.length, 0), list.length);
+});
+
+test('방향 묶음은 sideStyle 없는 side 를 옆모습으로 읽는다 — 서버 기본값과 같다', () => {
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const sections = groupGenerationExamplesByDirection(
+    [ex('side_unlabelled', { direction: 'side' })], { direction: 'side', sideStyle: null },
+  );
+  assert.deepEqual(sections.map((section) => section.label), ['옆모습']);
+});
+
+test('방향이 없는 컷(제품)은 묶음이 하나뿐이라 라벨이 붙지 않는다', () => {
+  const ex = (id) => ({
+    id, cutType: 'product', shot: 'detail', gender: null, applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`,
+  });
+  const sections = groupGenerationExamplesByDirection([ex('p1'), ex('p2')], {});
+  assert.equal(sections.length, 1);
+});
+
+test('분위기 예시 칸은 잠기지 않는다 — 회색 비활성·not-allowed 가 없다', () => {
+  // 2026-09-22 오너: 포즈 자산이 없거나 방향이 달라도 셀러가 고를 수 있어야 한다.
+  // 회색으로 덮으면 왜 못 고르는지 알 수 없었고, 실제로는 눌리는 칸도 있어 더 헷갈렸다.
+  const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
+  assert.doesNotMatch(moodGuide, /disabled=\{poseUnavailable\}/);
+  assert.doesNotMatch(moodGuide, /sb-excell\$\{[^}]*unavailable/);
+  assert.doesNotMatch(moodGuide, /moodonly/, '정면이 아닌 방향이라고 갤러리를 흐리게 덮지 않는다');
+  const css = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.sb-exgallery\.moodonly/);
+  assert.doesNotMatch(css, /\.sb-excell\.unavailable/);
+  // 묶음 이름 자리는 있어야 한다.
+  assert.match(moodGuide, /sb-expage-label/);
+  assert.match(css, /\.sb-expage-label/);
 });
