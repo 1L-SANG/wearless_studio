@@ -426,14 +426,19 @@ async def replace_card(
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
+            # 카드 교체끼리, 현재 행을 잡은 청구·만료 워커와 직렬화한다.
+            # 잠금 없이 옛 키를 읽으면 다른 요청이 방금 저장한 키를 삭제할 수 있다.
             await cur.execute(
-                "select public.wl_billing_decrypt(billing_key_enc, %s) as billing_key "
-                "from subscriptions where user_id = %s and status <> 'ended'",
+                "select public.wl_billing_decrypt(billing_key_enc, %s) as billing_key, "
+                "status, grace_until > clock_timestamp() as grace_open "
+                "from subscriptions where user_id = %s and status <> 'ended' for update",
                 (kek, user_id),
             )
             row = await cur.fetchone()
             if row is None:
                 raise _err("subscription_not_found", "구독이 없어요.", 404)
+            if row["status"] == "past_due" and not row["grace_open"]:
+                raise _err("subscription_grace_expired", "결제 유예기간이 끝났어요.", 409)
             old_key = row["billing_key"]
 
         try:
@@ -446,12 +451,23 @@ async def replace_card(
             await cur.execute(
                 "update subscriptions set billing_key_enc = public.wl_billing_encrypt(%s, %s), "
                 "pay_method = %s, method_label = %s, method_last4 = %s, "
-                "billing_key_invalid = false "
-                "where user_id = %s returning id::text as id",
+                "billing_key_invalid = false, "
+                "next_billing_at = case when status = 'past_due' then clock_timestamp() "
+                "else next_billing_at end "
+                "where user_id = %s and (status <> 'past_due' or grace_until > clock_timestamp()) "
+                "returning id::text as id",
                 (issued["billingKey"], kek, issued["method"], issued.get("label"),
                  issued.get("last4"), user_id),
             )
-            await cur.fetchone()
+            updated = await cur.fetchone()
+        if updated is None:
+            # PG 응답을 기다리는 사이 유예가 끝날 수 있다. 트랜잭션 시작 시각인 now()
+            # 대신 실제 시각으로 확인하고, 저장하지 않은 새 키만 폐기한다.
+            await conn.rollback()
+            await toss_billing.delete_billing_key(settings, billing_key=issued["billingKey"])
+            raise _err("subscription_grace_expired", "결제 유예기간이 끝났어요.", 409)
+        # 직접 청구하지 않고 기존 워커에 맡긴다. fail_count와 grace_until은 유지하므로
+        # 새 카드도 거절되면 기존 재시도 제한을 따르고 유예가 늘어나지 않는다.
         await conn.commit()
 
     # 새 키가 확정 저장된 뒤에 옛 키를 지운다(순서가 반대면 둘 다 잃는다).

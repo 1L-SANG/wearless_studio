@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
+import { QueryClient } from '@tanstack/react-query';
 
 const required = { terms: 'v1.0', privacy: 'v1.0' };
 const missing = { required, accepted: null, needsConsent: true };
@@ -25,7 +26,7 @@ const submit = (tree) => nodes(tree, (node) => node.type === 'Button')[0];
 // harness, hooks retain state/dependencies between renders; cleanup runs before a
 // changed effect. Only browser rendering, Supabase, and HTTP are replaced.
 async function harness(t, { storage = new Map(), user = null, realHttp = false,
-  reviewLogin = true, facemarket = false, admin = false, localSupabase = false } = {}) {
+  reviewLogin = true, facemarket = false, admin = false, localSupabase = false, realAccountStore = false } = {}) {
   const key = `__signupTest${Math.random().toString(36).slice(2)}`;
   const previousStorage = globalThis.sessionStorage;
   const previousWindow = globalThis.window;
@@ -43,6 +44,11 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
     password: async () => ({ error: null }),
     get: async (user) => user === 'existing-A' ? accepted : missing,
     post: async () => accepted,
+    queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  };
+  runtime.api = {
+    getAccount: async () => ({ id: runtime.user, plan: runtime.user === 'A' ? 'seller' : 'free', credits: 0 }),
+    resetInputDraft: async () => {},
   };
   runtime.supabase = { auth: {
     getSession: async () => ({ data: { session: runtime.user ? { user: { id: runtime.user }, access_token: runtime.user } : null } }),
@@ -91,7 +97,9 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
           '@/lib/supabase.js': 'supabase', ...(!realHttp ? { '@/lib/api/httpAdapter.js': 'http' } : {}),
           '@/lib/api/index.js': 'mode', '@/components/ui.jsx': 'ui', '@/lib/host.js': 'host',
           '@/lib/tossKeys.js': 'toss',
-          '@/lib/draftSlot.js': 'draft', '@/lib/appOrigin.js': 'origin', '@/store/useAppStore.js': 'store',
+          '@tanstack/react-query': 'query',
+          '@/lib/draftSlot.js': 'draft', '@/lib/appOrigin.js': 'origin',
+          ...(!realAccountStore ? { '@/store/useAppStore.js': 'store' } : {}),
         };
         if (stubs[id]) return `\0signup-test-${stubs[id]}`;
         if (id.endsWith('.module.css')) return '\0signup-test-css';
@@ -125,15 +133,16 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
         `;
         if (id === '\0signup-test-jsx') return "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment='Fragment';";
         if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase;`;
-        if (id === '\0signup-test-http') return `export const http=(...args)=>${access}.http(...args);`;
-        if (id === '\0signup-test-mode') return 'export const isMockMode=false;';
+        if (id === '\0signup-test-http') return `export const http=(...args)=>${access}.http(...args); export const resetAnalysisCache=()=>{};`;
+        if (id === '\0signup-test-mode') return `export const isMockMode=false; export const api=${access}.api;`;
+        if (id === '\0signup-test-query') return `export const useQueryClient=()=>${access}.queryClient;`;
         if (id === '\0signup-test-host') return `export const IS_ADMIN=${admin}; export const IS_FACEMARKET=${facemarket};`;
         if (id === '\0signup-test-toss') return `export const PG_REVIEW_LOGIN_ENABLED=${reviewLogin};`;
         if (id === '\0signup-test-ui') return "export const Modal='Modal';export const Button='Button';export const Icon='Icon';";
         if (id === '\0signup-test-css') return 'export default new Proxy({}, {get: (_, key) => key});';
         if (id === '\0signup-test-draft') return 'export const draftSlot={resetIdentity(){}};';
         if (id === '\0signup-test-origin') return 'export const stampAppOrigin=()=>{};';
-        if (id === '\0signup-test-store') return 'export const useAppStore={getState:()=>({beginProject:async()=>{}})};';
+        if (id === '\0signup-test-store') return 'export const useAppStore={getState:()=>({beginProject:async()=>{},setAccountIdentity:()=>false})};';
       },
     }],
   });
@@ -142,6 +151,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   const { SignupCompletion } = await server.ssrLoadModule('/src/features/auth/SignupCompletion.jsx');
   const consent = await server.ssrLoadModule('/src/lib/signupConsent.js');
   const http = realHttp ? (await server.ssrLoadModule('/src/lib/api/httpAdapter.js')).http : null;
+  const store = realAccountStore ? (await server.ssrLoadModule('/src/store/useAppStore.js')).useAppStore : null;
   const frames = new Map();
   function render(name, component) {
     const frame = frames.get(name) || { hooks: [] };
@@ -153,7 +163,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
     return tree;
   }
   const h = {
-    runtime, consent, memory, http,
+    runtime, consent, memory, http, store,
     isLoginOpen: () => Boolean(render('auth', AuthProvider).props.children[1]),
     login: () => render('login', LoginGate),
     reopenLogin() {
@@ -181,6 +191,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
     },
   };
   t.after(async () => {
+    runtime.queryClient.clear();
     for (const frame of frames.values()) for (const hook of frame.hooks) hook?.cleanup?.();
     await server.close(); delete globalThis[key];
     globalThis.sessionStorage = previousStorage; globalThis.window = previousWindow;
@@ -189,6 +200,70 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   await h.flush();
   return h;
 }
+
+test('email account switch reloads the account and discards the previous subscription cache', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  await h.store.getState().loadAccount();
+  h.runtime.queryClient.setQueryData(['subscription'], { userId: 'A', planCode: 'seller' });
+  await h.runtime.auth.signOut();
+  await h.flush();
+  assert.equal(h.store.getState().account, null);
+  assert.equal(h.runtime.queryClient.getQueryData(['subscription']), undefined);
+  h.runtime.password = async () => { await h.user('B'); return { error: null }; };
+  await h.runtime.auth.signInWithPassword({ email: 'b@example.test', password: 'test-only' });
+  await h.store.getState().loadAccount();
+  assert.equal(h.store.getState().account.id, 'B');
+  assert.equal(h.store.getState().account.plan, 'free');
+});
+
+test('an old account response cannot replace the new account after a direct session switch', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const oldRequest = deferred();
+  h.runtime.api.getAccount = () => h.runtime.user === 'A'
+    ? oldRequest.promise : Promise.resolve({ id: 'B', plan: 'free', credits: 0 });
+  const oldLoad = h.store.getState().loadAccount();
+  await h.user('B');
+  await h.store.getState().loadAccount();
+  oldRequest.resolve({ id: 'A', plan: 'seller', credits: 1600 });
+  assert.equal(await oldLoad, null);
+  assert.equal(h.store.getState().account.id, 'B');
+});
+
+test('token refresh for the same user keeps the current account and subscription cache', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const account = await h.store.getState().loadAccount();
+  h.runtime.queryClient.setQueryData(['subscription'], { userId: 'A' });
+  h.runtime.listener('TOKEN_REFRESHED', { user: { id: 'A' }, access_token: 'renewed' });
+  await h.flush();
+  assert.equal(h.store.getState().account, account);
+  assert.deepEqual(h.runtime.queryClient.getQueryData(['subscription']), { userId: 'A' });
+});
+
+test('a subscription request started by the previous user cannot repopulate the new user cache', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const oldRequest = deferred();
+  const client = h.runtime.queryClient;
+  const oldLoad = client.fetchQuery({ queryKey: ['subscription'], queryFn: () => oldRequest.promise })
+    .catch(() => null);
+  await h.user('B');
+  await client.fetchQuery({ queryKey: ['subscription'], queryFn: async () => ({ userId: 'B', planCode: null }) });
+  oldRequest.resolve({ userId: 'A', planCode: 'seller' });
+  await oldLoad;
+  assert.deepEqual(client.getQueryData(['subscription']), { userId: 'B', planCode: null });
+});
+
+test('a failed account request from a signed-out user is ignored after the next login', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const oldRequest = deferred();
+  h.runtime.api.getAccount = () => h.runtime.user === 'A'
+    ? oldRequest.promise : Promise.resolve({ id: 'B', plan: 'free', credits: 0 });
+  const oldLoad = h.store.getState().loadAccount();
+  await h.user('B');
+  await h.store.getState().loadAccount();
+  oldRequest.reject(new Error('old session expired'));
+  assert.equal(await oldLoad, null);
+  assert.equal(h.store.getState().account.id, 'B');
+});
 
 test('review password login preserves the purchase destination and does not grant signup consent', async t => {
   const h = await harness(t);
