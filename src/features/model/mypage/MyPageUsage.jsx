@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Image as ImageIcon } from 'lucide-react';
-import { getPublicationPreviewUrl, reportUsage } from '@/lib/api/facemarket.js';
+import { getSettlementPreviewUrl, reportUsage } from '@/lib/api/facemarket.js';
 import { formatKrw } from '../../facemarket-landing/facemarketTerms.js';
 import { MyPageDialog } from './MyPageDialog.jsx';
 import { EmptyPanel, MonthSelect } from './MyPageParts.jsx';
@@ -19,45 +19,49 @@ export function MyPageUsage({ data, month, onMonthChange }) {
   const dispatch = action => setReport(previous => usageReportReducer(previous, action));
   const rows = rowsForMonth(data.rows, month);
   const selected = data.rows.find(row => row.id === selectedId);
-  const loadPreview = useCallback(async publicationId => {
-    if (!publicationId) return;
-    const version = (previewVersion.current[publicationId] || 0) + 1;
-    previewVersion.current[publicationId] = version;
+  // 미리보기는 정산 id 로 묻는다 — 발행본이 있든 없든 서버가 고른다(발행본 > 생성 컷).
+  // 발행(셀러 다운로드 공증)만 보던 예전 방식은 운영에서 발행이 0건이라 전부 빈 그림이었다.
+  const loadPreview = useCallback(async settlementId => {
+    if (!settlementId) return;
+    const version = (previewVersion.current[settlementId] || 0) + 1;
+    previewVersion.current[settlementId] = version;
     try {
-      const payload = await getPublicationPreviewUrl(publicationId);
+      const payload = await getSettlementPreviewUrl(settlementId);
       if (!payload?.url) throw new Error('preview unavailable');
-      if (alive.current && previewVersion.current[publicationId] === version) {
-        setPreviews(previous => ({ ...previous, [publicationId]: payload.url }));
+      if (alive.current && previewVersion.current[settlementId] === version) {
+        setPreviews(previous => ({ ...previous, [settlementId]: { url: payload.url, source: payload.source } }));
       }
     } catch {
-      if (alive.current && previewVersion.current[publicationId] === version) {
+      if (alive.current && previewVersion.current[settlementId] === version) {
         setPreviews(previous => {
-          if (!previous[publicationId]) return previous;
+          if (!previous[settlementId]) return previous;
           const next = { ...previous };
-          delete next[publicationId];
+          delete next[settlementId];
           return next;
         });
       }
     }
   }, []);
+  // 보이는 달의 행만 묻는다 — 정산은 최대 200행이라 전부 물으면 화면 하나가 요청 200개다.
+  // 달을 바꾸면 그 달 것을 새로 받는다(서명 URL 은 10분짜리라 다시 받는 게 맞다).
   useEffect(() => {
     alive.current = true;
-    for (const row of data.rows) if (row.publicationId) loadPreview(row.publicationId);
+    for (const row of rowsForMonth(data.rows, month)) loadPreview(row.id);
     return () => {
       alive.current = false;
-      for (const publicationId of Object.keys(previewVersion.current)) previewVersion.current[publicationId] += 1;
+      for (const settlementId of Object.keys(previewVersion.current)) previewVersion.current[settlementId] += 1;
     };
-  }, [data.rows, loadPreview]);
-  const hidePreview = publicationId => setPreviews(previous => {
-    if (!previous[publicationId]) return previous;
+  }, [data.rows, month, loadPreview]);
+  const hidePreview = settlementId => setPreviews(previous => {
+    if (!previous[settlementId]) return previous;
     const next = { ...previous };
-    delete next[publicationId];
+    delete next[settlementId];
     return next;
   });
   const openDetail = async (row, opener) => {
     detailOpener.current = opener;
     setSelectedId(row.id);
-    await loadPreview(row.publicationId);
+    await loadPreview(row.id);
   };
   const submitReport = async event => {
     event.preventDefault();
@@ -83,7 +87,7 @@ export function MyPageUsage({ data, month, onMonthChange }) {
       : rows.length ? <>
         <div className={s.usageColumnLabels} aria-hidden="true"><span>상세페이지</span><span>링크</span><span>사용일</span></div>
         <ul className={s.usageList}>{rows.map(row => <li className={s.usageRow} key={row.id}>
-          {previews[row.publicationId] ? <img className={s.usageThumb} src={previews[row.publicationId]} alt="" loading="lazy" onError={() => hidePreview(row.publicationId)} /> : <span className={s.usageThumb} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
+          {previews[row.id] ? <img className={s.usageThumb} src={previews[row.id].url} alt="" loading="lazy" onError={() => hidePreview(row.id)} /> : <span className={s.usageThumb} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
           <div className={s.usageCopy}><span className={s.usageTitle}>{row.productName || '상품명 미제공'}</span>
             <span className={s.usageMeta}>{row.sellerName || '셀러명 미제공'}{row.billingType === 'monthly' && ' · 월정액'}</span>
             {row.reported && <span className={s.usageMeta}>신고됨</span>}
@@ -94,8 +98,9 @@ export function MyPageUsage({ data, month, onMonthChange }) {
       </> : <EmptyPanel image title="아직 사용된 상세페이지가 없어요." description="첫 사용이 생기면 여기에서 확인할 수 있어요." />}
     {selected && report.phase === 'closed' && <MyPageDialog title="사용된 상세페이지" returnFocusRef={detailOpener} onClose={() => setSelectedId(null)}>
       <div className={s.usagePreview}>
-        {previews[selected.publicationId] ? <img className={s.previewImage} src={previews[selected.publicationId]} alt={`${selected.productName || '사용된 상세페이지'} 미리보기`} onError={() => hidePreview(selected.publicationId)} />
+        {previews[selected.id] ? <img className={s.previewImage} src={previews[selected.id].url} alt={`${selected.productName || '사용된 상세페이지'} 미리보기`} onError={() => hidePreview(selected.id)} />
           : <span className={`${s.previewImage} ${s.previewPlaceholder}`} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
+        {previews[selected.id]?.source === 'cut' && <p className={s.usageMeta}>셀러가 아직 상세페이지를 발행 전이라 내 얼굴이 쓰인 생성 컷을 보여드려요.</p>}
         <h3 className={s.previewTitle}>{selected.productName || '상품명 미제공'}</h3>
         <dl><div className={s.detailPair}><dt>셀러</dt><dd>{selected.sellerName || '셀러명 미제공'}</dd></div>
           <div className={s.detailPair}><dt>사용일</dt><dd>{usageDate(selected.createdAt)}</dd></div>

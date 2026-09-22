@@ -26,9 +26,11 @@ test('선택 미리보기 실패만 네트워크와 HTTP 오류를 콘솔에 남
   const api = await server.ssrLoadModule('/src/lib/api/facemarket.js');
 
   await assert.rejects(api.getPublicationPreviewUrl('publication-1'));
+  await assert.rejects(api.getSettlementPreviewUrl('settlement-1'));
   assert.equal(logs.length, 0);
   globalThis[key].mode = 'network';
   await assert.rejects(api.getPublicationPreviewUrl('publication-1'));
+  await assert.rejects(api.getSettlementPreviewUrl('settlement-1'));
   assert.equal(logs.length, 0);
 
   await assert.rejects(api.getPayoutStatements());
