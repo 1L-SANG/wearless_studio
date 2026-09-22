@@ -63,6 +63,8 @@ variables:
   DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "1000"
   DETAIL_CUT_MAX_ATTEMPTS: "1"
+  # 구 best-of. 되살릴 계획 없음 — 근거·제거 방법은 copilot/api/manifest.yml 의 같은 줄 주석.
+  # ⚠️ 지우면 코드 기본값 "bestof" 로 되살아난다.
   GARMENT_QC_MODE: "off"
   CUT_OUTPUT_QC_MODE: repair
   # ── 얼굴 패스(인물 LoRA) — 꺼진 채로 커밋. 상세페이지 워커도 같은 렌더 서비스를 쓴다.
