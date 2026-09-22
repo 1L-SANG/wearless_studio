@@ -26,6 +26,7 @@ from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_e
 from .config import Settings
 from .db import get_conn
 from .models import CamelModel
+from .legal_versions import DRAFT_SPONSORSHIP_CONSENTS
 from .facemarket_photos import (
     ASSET_SOURCE_SLOTS, LEGACY_SLOT_ALIASES, PHOTO_SLOTS, PHOTO_SLOTS_V2, REFSET_SLOTS,
     canonical_photo_slot, photo_slot_candidates, resolve_photo_rows,
@@ -70,6 +71,11 @@ ACCEPTED_BIOMETRIC_CONSENT_VERSIONS: tuple[str, ...] = ("2026-09-v1", "2026-09-v
 # 2026-09-v3: 이전 항목이 "얼굴 사진" → "등록 사진(얼굴·옆모습·뒷모습)" 으로 바뀌었다.
 # 2026-09-v4: 이전받는 자에 RunPod(얼굴 부분 생성 GPU 서버), 이전 항목에 학습 가중치가 더해졌다.
 OVERSEAS_NOTICE_VERSION = "2026-09-v4"
+# 선택 동의 배선용 설계 상수만 둬요. 기존 등록·카탈로그·VC 판정에는 쓰지 않아요.
+DRAFT_OPTIONAL_CONSENT_VERSIONS = {
+    consent_type: spec["version"]
+    for consent_type, spec in DRAFT_SPONSORSHIP_CONSENTS.items()
+}
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
 ACCEPTED_CONSENT_VERSIONS = ("2026-09-v4", "2026-09-v3", "2026-09-v2", "2026-09-v1", "2026-08-v2", "2026-08-v1")

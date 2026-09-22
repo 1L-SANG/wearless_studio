@@ -73,12 +73,16 @@ test('publisher keeps each document revision date consistent in metadata and bod
   const revised = {
     'terms-seller': { version: 'v1.2', effectiveDate: '2026-09-29' },
     'refund': { version: 'v1.2', effectiveDate: '2026-09-29' },
-    'privacy-model': { version: 'v1.5', effectiveDate: '2026-09-18' },
+    'privacy-model': { version: 'v1.6-draft', effectiveDate: null },
+    'terms-model': { version: 'v1.2-draft', effectiveDate: null },
     'biometric-consent': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
     'overseas-transfer': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
     'license-agreement': { version: 'v1.2', effectiveDate: '2026-09-18' },
     'seller-license-terms': { version: 'v1.2', effectiveDate: '2026-09-18' },
-    'answers': { version: 'v1.2', effectiveDate: '2026-09-18' },
+    'answers': { version: 'v1.3-draft', effectiveDate: null },
+    'license-agreement-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
+    'seller-license-terms-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
+    'sponsorship-consent': { version: '2026-09-sponsorship-v1-draft', effectiveDate: null },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };
