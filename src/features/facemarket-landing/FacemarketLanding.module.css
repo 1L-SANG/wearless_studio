@@ -1257,6 +1257,16 @@ button.foundingSlot { cursor: pointer; }
 .footerCompany a:hover { color: var(--fm-ink); }
 .footerCompact { margin-top: 2.5rem; padding: 1.5rem 0 1.75rem; }
 
+/* /models 전용 바탕. 그 페이지는 목록이 중립 회색 판(BrowseModels.module.css `.browse`,
+   #f5f6f7)을 전폭으로 깔고 그 판이 푸터를 4rem 끌어올려 겹친다. 푸터 자신은 배경이
+   없어 셸이 비치는데, 기본 셸 배경은 파란 기가 도는 그라데이션이라 판이 끝나는 자리에서
+   색이 갈렸다(실측 245,246,247 → 238,243,248). 그래서 이 페이지만 셸을 같은 회색
+   **단색**으로 둔다 — 그라데이션으로 맞추면 페이지 길이에 따라 푸터가 닿는 지점의 색이
+   달라져 길이가 짧은 화면에서 다시 갈린다.
+   ※ 이 값은 `.browse` 와 한 쌍이다. 한쪽만 바꾸면 tests/frontend/
+   facemarket-models-footer-surface.test.mjs 가 잡는다. */
+.plainSurface { background: #f5f6f7; }
+
 @media (max-width: 767px) {
   .rightsGrid { grid-template-columns: 1fr; }
   .rightsCuts { position: static; }
