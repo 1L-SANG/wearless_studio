@@ -2,16 +2,18 @@
 import re
 import uuid
 from datetime import date, datetime, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import Field
 
-from . import admin_guard
+from . import admin_guard, facemarket_notify
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel
+from .services import payout_provider
 
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket payouts"])
 
@@ -178,7 +180,8 @@ def _parse_month(value):
 
 
 _CONFIRMATION_FIELDS = """id::text, model_id::text, period_month, responsible_admin, amount, count,
-    bank_code, holder_name, account_last4, account_version::text, status, created_at, started_at, paid_at, cancelled_at"""
+    bank_code, holder_name, account_last4, account_version::text, status, provider, provider_ref,
+    failure_reason, created_at, started_at, paid_at, cancelled_at"""
 
 
 def _history_sql(model, month):
@@ -395,6 +398,11 @@ def _confirmation_view(row, user_id=None):
         "accountMasked": f"***-****-{row['account_last4']}",
         "createdAt": row["created_at"], "startedAt": row.get("started_at"),
         "paidAt": row.get("paid_at"), "cancelledAt": row.get("cancelled_at"),
+        # 이 건을 무엇이 처리했는지. simulated 면 화면·알림이 "입금됐다"고 말하면 안 된다.
+        "provider": row.get("provider") or "manual",
+        "simulated": (row.get("provider") or "manual") != "manual",
+        "providerRef": row.get("provider_ref"),
+        "failureReason": row.get("failure_reason"),
     }
 
 
@@ -492,6 +500,86 @@ async def _locked_confirmation(conn, confirmation_id, user_id):
     if row["responsible_admin"] != user_id:
         raise _err("payout_confirmation_owner", "이 지급 건을 확인한 관리자만 처리할 수 있어요.", 403)
     return row
+
+
+# ⚠️ 이 라우트는 아래 `/{action}` 와일드카드보다 **먼저** 서야 한다 — FastAPI 는 등록
+# 순서로 매칭해서, 뒤에 두면 /simulate 가 action='simulate' 로 잡혀 400 이 된다.
+class PayoutSimulateRequest(CamelModel):
+    """데모에서 고르는 결과. 실패도 고를 수 있어야 한다 — 성공만 보여주면 실패 경로가
+    있는지 아무도 모른다."""
+
+    outcome: Literal["paid", "account_error", "limit_exceeded"] = "paid"
+
+
+@router.post("/admin/payout-confirmations/{confirmation_id}/simulate")
+async def simulate_payout_confirmation(
+    confirmation_id: str, body: PayoutSimulateRequest, request: Request,
+    response: Response, user_id: str = Depends(require_user),
+):
+    """지급 시뮬레이션 — **돈을 옮기지 않고** 기존 상태머신을 그대로 걷는다(데모 전용).
+
+    실물 지급대행을 붙일 수 없어서 만든 자리다(services/payout_provider.py 의 배경 참고).
+    수동 경로(manual)는 손대지 않는다 — 프로덕션 기본값이라 여기로 들어오면 409 로 막힌다.
+
+    성공: prepared → transfer_started → paid. 실패: prepared → cancelled + 사유, 그리고
+    정산 항목을 풀어 다음 달에 다시 지급할 수 있게 한다. 실패를 '송금 시작 뒤'로 두지 않는
+    이유는 스키마다 — started_at 이 찍힌 뒤 cancelled 는 CHECK 제약이 금지한다
+    (20260911170000). 실물 지급대행도 계좌 오류·한도 초과는 요청 시점에 거절하므로 맞다."""
+    response.headers["Cache-Control"] = "no-store"
+    provider = payout_provider.resolve_provider(
+        request.app.state.settings.fm_payout_provider)
+    if not provider.simulated:
+        raise _err(
+            "payout_provider_manual",
+            "지금은 수동 지급 모드예요. 시뮬레이션은 데모 설정에서만 쓸 수 있어요.", 409)
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        row = await _locked_confirmation(conn, confirmation_id, user_id)
+        if row["status"] != "prepared":
+            raise _err("payout_invalid_transition",
+                       "아직 송금하지 않은 확인 건에서만 시뮬레이션할 수 있어요.", 409)
+        try:
+            outcome = provider.execute(amount=int(row["amount"]), outcome=body.outcome)
+        except payout_provider.ProviderUnsupported as exc:
+            raise _err("payout_provider_unsupported", str(exc), 409) from None
+
+        async with conn.cursor() as cur:
+            if outcome.paid:
+                await cur.execute(
+                    f"""update fm_payout_confirmations set status = 'transfer_started',
+                        started_at = now() where id = %s returning {_CONFIRMATION_FIELDS}""",
+                    (row["id"],))
+                await cur.fetchone()
+                await cur.execute(
+                    f"""update fm_payout_confirmations set status = 'paid', paid_at = now(),
+                        provider_ref = %s where id = %s returning {_CONFIRMATION_FIELDS}""",
+                    (outcome.reference, row["id"]))
+            else:
+                await cur.execute(
+                    f"""update fm_payout_confirmations set status = 'cancelled',
+                        cancelled_at = now(), failure_reason = %s
+                        where id = %s returning {_CONFIRMATION_FIELDS}""",
+                    (outcome.failure_reason, row["id"]))
+            result = await cur.fetchone()
+            if not outcome.paid:
+                await cur.execute(
+                    """update fm_payout_confirmation_entries set released_at = now()
+                       where confirmation_id = %s and released_at is null""", (row["id"],))
+        await admin_guard.write_audit(
+            conn, actor_user_id=user_id, action="payout_confirmation.simulate",
+            target_type="model", target_id=row["model_id"],
+            before={"confirmationId": row["id"], "status": row["status"]},
+            after={"confirmationId": row["id"], "provider": provider.name,
+                   "outcome": body.outcome, "amount": int(row["amount"])})
+        await conn.commit()
+
+    view = _confirmation_view(result or row, user_id)
+    # 알림은 커밋 뒤에. 실패해도 상태 전이는 이미 끝났다(알림이 원장을 되돌리지 않는다).
+    await facemarket_notify.notify_slack_payout_simulated(
+        request.app.state.settings, period_month=view["periodMonth"],
+        amount=view["amount"], count=view["count"], paid=outcome.paid,
+        failure_reason=outcome.failure_reason, reference=outcome.reference)
+    return view
 
 
 @router.post("/admin/payout-confirmations/{confirmation_id}/{action}")

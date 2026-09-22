@@ -40,7 +40,8 @@ async function harness(api, { confirm = true, storage = new Map() } = {}) {
         export const adminConfirmPayoutStatement=(...args)=>api.adminConfirmPayoutStatement(...args);
         export const adminAdvancePayoutConfirmation=(...args)=>api.adminAdvancePayoutConfirmation(...args);
         export const adminRevealPayoutConfirmation=(...args)=>api.adminRevealPayoutConfirmation(...args);
-        export const adminRevealPayoutAccount=(...args)=>api.adminRevealPayoutAccount(...args);`;
+        export const adminRevealPayoutAccount=(...args)=>api.adminRevealPayoutAccount(...args);
+        export const adminSimulatePayoutConfirmation=(...args)=>api.adminSimulatePayoutConfirmation(...args);`;
     }}],
   });
   const oldWindow = globalThis.window; const oldNavigator = globalThis.navigator;
@@ -172,5 +173,72 @@ test('지급 명세 API는 월과 식별자를 인코딩하고 상태 본문을 
       { path: '/v1/facemarket/admin/payout-confirmations/confirmation%2F1/account', options: undefined },
       { path: '/v1/facemarket/admin/payout-statements/model%2F1/2026-08/status', options: { method: 'POST', body: { status: 'held', expectedConfirmationId: 'confirmation-1' } } },
     ]);
+  } finally { await h.close(); }
+});
+
+
+/* ---- 지급 시뮬레이션(데모) ----------------------------------------------
+   스텁은 돈을 옮기지 않는다. 화면이 그 사실을 말하지 않으면 우리 팀이 실제로
+   송금된 줄 안다 — 목이 만드는 가장 큰 사고가 그거라 배지를 테스트로 박는다. */
+
+const prepared = {
+  id: 'confirmation-1', modelId: row.modelId, periodMonth: row.periodMonth, status: 'prepared',
+  amount: row.amount, count: row.count, canManage: true, bankName: row.bankName,
+  holderName: row.holderName, accountMasked: row.accountMasked, provider: 'stub', simulated: true,
+};
+
+test('시뮬레이션 건은 실제 이체가 없다고 화면이 말해요', async () => {
+  const listed = { ...row, status: 'processing', confirmations: [prepared] };
+  const h = await harness({ adminListPayoutStatements: async () => ({ items: [listed] }), adminRevealPayoutAccount: async () => ({}) });
+  try {
+    h.render(); await flush(); const tree = h.render();
+    assert.match(text(tree), /시뮬레이션/);
+    assert.match(text(tree), /실제 이체 없음|실제로 송금되지 않아요/);
+  } finally { await h.close(); }
+});
+
+test('수동 건에는 시뮬레이션 표시도 버튼도 없어요', async () => {
+  const manual = { ...prepared, provider: 'manual', simulated: false };
+  const listed = { ...row, status: 'processing', confirmations: [manual] };
+  const h = await harness({ adminListPayoutStatements: async () => ({ items: [listed] }), adminRevealPayoutAccount: async () => ({}) });
+  try {
+    h.render(); await flush(); const tree = h.render();
+    assert.doesNotMatch(text(tree), /시뮬레이션/);
+    assert.equal(button(tree, '지급 시뮬레이션'), null);
+    assert.ok(button(tree, '송금 시작'), '수동 경로는 그대로 남아야 해요');
+  } finally { await h.close(); }
+});
+
+test('시뮬레이션은 고른 결과를 그대로 보내고 실패도 고를 수 있어요', async () => {
+  const calls = [];
+  let listed = { ...row, status: 'processing', confirmations: [prepared] };
+  const h = await harness({
+    adminListPayoutStatements: async () => ({ items: [listed] }),
+    adminRevealPayoutAccount: async () => ({}),
+    adminSimulatePayoutConfirmation: async (...args) => { calls.push(args); return { ...prepared, status: 'paid' }; },
+  });
+  try {
+    h.render(); await flush(); let tree = h.render();
+    const picker = findTree(tree, node => node.type === 'select' && /outcome/i.test(node.props?.['aria-label'] || node.props?.name || ''));
+    assert.ok(picker, '결과를 고를 수 있어야 해요 — 성공만 보여주면 실패 경로가 있는지 모른다');
+    const options = [];
+    const walk = node => { if (!node || typeof node !== 'object') return; if (node.type === 'option') options.push(node.props?.value); [].concat(node.props?.children ?? []).forEach(walk); };
+    walk(picker);
+    assert.ok(options.includes('paid') && options.includes('account_error') && options.includes('limit_exceeded'), `결과 목록: ${options}`);
+    picker.props.onChange({ target: { value: 'account_error' } });
+    tree = h.render();
+    await button(tree, '지급 시뮬레이션').props.onClick(); await flush();
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], ['confirmation-1', 'account_error']);
+  } finally { await h.close(); }
+});
+
+test('시뮬레이션 실패는 사유를 화면에 남겨요', async () => {
+  const failed = { ...prepared, status: 'cancelled', failureReason: 'account_error' };
+  const listed = { ...row, status: 'processing', confirmations: [failed] };
+  const h = await harness({ adminListPayoutStatements: async () => ({ items: [listed] }), adminRevealPayoutAccount: async () => ({}) });
+  try {
+    h.render(); await flush(); const tree = h.render();
+    assert.match(text(tree), /계좌 정보가 맞지 않아|계좌 오류/);
   } finally { await h.close(); }
 });

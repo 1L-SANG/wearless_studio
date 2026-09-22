@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation } from '@/lib/api/facemarket.js';
+import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation, adminSimulatePayoutConfirmation } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent } from '@/components/admin-ui/card.jsx';
@@ -12,6 +12,16 @@ import { actualPayoutDate } from '../model/mypage/payoutStatements.js';
 const won = value => `${Number(value || 0).toLocaleString('ko-KR')}원`;
 const rowKey = item => `${item.modelId}:${item.periodMonth}`;
 
+const SIMULATE_OUTCOMES = [
+  { value: 'paid', label: '지급 완료' },
+  { value: 'account_error', label: '계좌 오류로 거절' },
+  { value: 'limit_exceeded', label: '한도 초과로 거절' },
+];
+const SIMULATE_FAILURES = {
+  account_error: '계좌 정보가 맞지 않아 지급이 거절됐어요.',
+  limit_exceeded: '지급 한도를 넘어 거절됐어요.',
+};
+
 export function AdminPayoutStatements() {
   const [month, setMonth] = useState(previousSeoulMonth);
   const [items, setItems] = useState(null);
@@ -19,6 +29,8 @@ export function AdminPayoutStatements() {
   const [busyId, setBusyId] = useState(null);
   const [rowError, setRowError] = useState(null);
   const [revealed, setRevealed] = useState(null);
+  // 시뮬레이션에서 고른 결과. 데모에서 실패도 보여줘야 해서 성공만 두지 않는다.
+  const [outcome, setOutcome] = useState('paid');
   const alive = useRef(false);
   const listVersion = useRef(0);
   const listing = useRef(false);
@@ -98,6 +110,13 @@ export function AdminPayoutStatements() {
       saving.current = false;
       if (alive.current) setBusyId(null);
     }
+  };
+
+  /* 🔴 스텁은 돈을 옮기지 않는다. 이 화면이 그 사실을 말하지 않으면 우리 팀이 실제로
+     송금된 줄 안다 — 목이 만드는 가장 큰 사고가 그거다. simulated 배지를 지우지 마라. */
+  const simulate = (item, confirmation) => {
+    if (!window.confirm(`${won(confirmation.amount)} 지급을 '${SIMULATE_OUTCOMES.find(row => row.value === outcome)?.label}' 결과로 시뮬레이션할까요? 실제 이체는 일어나지 않아요.`)) return;
+    return mutate(item, () => adminSimulatePayoutConfirmation(confirmation.id, outcome));
   };
 
   const prepare = item => mutate(item, async () => {
@@ -184,12 +203,20 @@ export function AdminPayoutStatements() {
               {item.open && <span>이번 달은 집계 중이에요.</span>}
               {confirmations.map(confirmation => <div key={confirmation.id} className="flex flex-col gap-1 border-t pt-2">
                 <span>{won(confirmation.amount)} · {confirmation.count}건 · {payoutAdminStatus(confirmation.status).label}</span>
+                {confirmation.simulated && <span className="text-xs font-medium text-amber-700">시뮬레이션 · 실제 이체 없음</span>}
+                {confirmation.failureReason && <span className="text-xs text-destructive">{SIMULATE_FAILURES[confirmation.failureReason] || '지급이 거절됐어요.'}</span>}
                 {confirmation.status === 'paid' && <span>지급일 {actualPayoutDate(confirmation.paidAt)}</span>}
                 {confirmation.status !== 'cancelled' && accountCell(item, confirmation)}
                 {!confirmation.canManage && ['prepared', 'transfer_started'].includes(confirmation.status) && <span>확인한 담당 관리자가 처리 중이에요.</span>}
                 {confirmation.canManage && confirmation.status === 'prepared' && <div className="flex gap-1">
                   <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => advance(item, confirmation, 'start')}>송금 시작</Button>
                   <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => advance(item, confirmation, 'cancel')}>확인 취소</Button>
+                </div>}
+                {confirmation.canManage && confirmation.simulated && confirmation.status === 'prepared' && <div className="flex items-center gap-1">
+                  <select aria-label="시뮬레이션 outcome" className="h-8 rounded-md border px-2 text-xs" value={outcome} onChange={event => setOutcome(event.target.value)}>
+                    {SIMULATE_OUTCOMES.map(row => <option key={row.value} value={row.value}>{row.label}</option>)}
+                  </select>
+                  <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => simulate(item, confirmation)}>지급 시뮬레이션</Button>
                 </div>}
                 {confirmation.status === 'transfer_started' && <><span>송금 여부가 불확실하면 은행 내역을 확인해 주세요. 다시 송금하지 마세요.</span>
                   {confirmation.canManage && <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => advance(item, confirmation, 'paid')}>지급 완료 기록</Button>}</>}

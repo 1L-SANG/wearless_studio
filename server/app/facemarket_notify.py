@@ -429,3 +429,29 @@ async def notify_slack_admin_device_requested(settings, *, email: str | None, la
         f"{_slack_escape(label)}\n<{admin_link}|관리자 관리 열기>"
     )
     await _post_slack(settings, text)
+
+
+async def notify_slack_payout_simulated(
+    settings, *, period_month: str, amount: int, count: int, paid: bool,
+    failure_reason: str | None = None, reference: str | None = None,
+) -> None:
+    """지급 **시뮬레이션** 결과 알림(데모). 돈은 움직이지 않았다.
+
+    🔴 배지를 빼지 마라. 이 알림을 보는 사람은 우리 팀이고, 배지가 없으면 실제로 돈이 나갔다고
+    읽는다 — 목이 만드는 가장 큰 사고가 바로 그거다. 모델에게 가는 알림은 여기서 만들지 않는다
+    (돈이 안 갔는데 "입금됐다"고 말하는 순간 목이 거짓말이 된다).
+
+    관리자가 버튼을 누를 때마다 한 건씩 보낸다 — 자동 스윕이 아니라 사람의 동작이라 도배되지
+    않는다. 실패는 무해: 상태 전이는 이미 커밋됐다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    head = ":test_tube: [시뮬레이션] 지급 " + ("완료" if paid else "실패")
+    text = (
+        f"{head} · {_slack_escape(period_month)} · {amount:,}원 · {count}건"
+        "\n:warning: 실제 이체 없음(데모용 스텁)"
+    )
+    if paid and reference:
+        text += f" · 참조 {_slack_escape(reference)}"
+    if not paid:
+        text += f"\n사유: {_slack_escape(failure_reason or '-')}"
+    await _post_slack(settings, text)
