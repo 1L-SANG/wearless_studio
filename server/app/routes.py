@@ -539,7 +539,7 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
     return row
 
 
-def _consent_payload(row: dict | None) -> dict:
+def _consent_payload(row: dict | None, *, today=None) -> dict:
     required = legal_versions.required_versions()
     accepted = None
     if row is not None:
@@ -551,7 +551,9 @@ def _consent_payload(row: dict | None) -> dict:
         }
     needs = (
         accepted is None
-        or accepted["termsVersion"] != required["terms"]
+        or legal_versions.terms_consent_required(
+            accepted["termsVersion"] if accepted else None, today=today,
+        )
         or accepted["privacyVersion"] != required["privacy"]
         or not accepted["ageAttested"]
     )

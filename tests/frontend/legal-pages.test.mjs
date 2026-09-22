@@ -206,9 +206,14 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
           React.createElement(AuthProvider, null, element)),
         '/pricing',
       );
-      assert.doesNotMatch(html, /구독은 해지할 때까지|청약철회|전액 환불/);
+      assert.match(html, /구독 유지 중 다음 달로 이월/);
+      assert.match(html, /이월분을 포함해 모두 소멸/);
+      assert.match(html, /7일 이내/);
+      assert.match(html, /미제공 부분의 법령상 환불 권리는 제한하지 않습니다/);
+      assert.ok(html.indexOf('구독 크레딧 및 환불 안내') < html.indexOf('로그인하고 시작하기'));
       assert.match(html, /결제하면/);
       assert.deepEqual(hrefs(html), [
+        'mailto:contact@wearless.kr', 'https://wearless.kr/refund',
         'https://wearless.kr/terms', 'https://wearless.kr/refund',
       ]);
     }

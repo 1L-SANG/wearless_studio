@@ -184,21 +184,37 @@ let flowValidationInflight = null;
 // 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
 let composeModePatchChain = Promise.resolve();
 let copywritingPatchChain = Promise.resolve();
+let accountGeneration = 0;
 
 const persistedFlow = loadPersistedFlow();
 
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
   account: null,
+  accountUserId: undefined,
   catalogs: null,
   accountLoaded: false,
   catalogsLoaded: false,
 
+  setAccountIdentity(userId) {
+    if (get().accountUserId === userId) return false;
+    accountGeneration += 1;
+    set({ accountUserId: userId, account: null, accountLoaded: false });
+    return true;
+  },
   async loadAccount() {
     if (get().accountLoaded) return get().account;
-    const account = await api.getAccount();
-    set({ account, accountLoaded: true });
-    return account;
+    const generation = accountGeneration;
+    try {
+      const account = await api.getAccount();
+      // 계정 전환 전에 시작한 요청이 늦게 도착해도 새 계정의 캐시를 덮지 않는다.
+      if (generation !== accountGeneration) return null;
+      set({ account, accountLoaded: true });
+      return account;
+    } catch (error) {
+      if (generation !== accountGeneration) return null;
+      throw error;
+    }
   },
   async loadCatalogs() {
     if (get().catalogsLoaded) return get().catalogs;

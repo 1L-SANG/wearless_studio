@@ -173,6 +173,20 @@ def test_retry_stops_after_max_attempts(state, monkeypatch):
     assert any("next_billing_at = null" in u["sql"] for u in state["sub_updates"])
 
 
+def test_replacement_card_rejection_does_not_restart_automatic_attempts(state, monkeypatch):
+    # 카드 교체가 3회 실패 후 한 번 더 예약한 경우. 새 카드도 실패하면 다시 멈춘다.
+    state["due"][0].update(status="past_due", fail_count=3, billing_key="bk-replacement")
+    out = _tick(state, monkeypatch,
+                charge_error=tb.TossBillingError("REJECT_CARD_COMPANY", "잔액부족",
+                                                 retryable=False))
+    assert out["failed"] == 1
+    update = state["sub_updates"][0]
+    assert update["params"][0] == 4
+    assert "next_billing_at = null" in update["sql"]
+    assert "grace_until = coalesce(grace_until," in update["sql"]
+    assert state["grants"] == []
+
+
 def test_unknown_result_does_not_count_as_failure(state, monkeypatch):
     """5xx·전송실패는 승인 여부 미상이다. fail_count 를 올리면 카드가 멀쩡한 사람이
     통신 장애 3번으로 해지된다."""

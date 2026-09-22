@@ -1,14 +1,30 @@
-"""셀러 법무 문서의 현재 버전 — 동의 게이트의 기준값.
+"""셀러 법무 문서의 발행 버전과 동의 게이트 적용 시점.
 
 `public/legal/manifest.json`(발행 스크립트 tools/legal_publish.py 산출물)의 version 과
 같아야 한다. 서버는 프론트 public 디렉터리를 갖지 않으므로 여기 상수로 둔다.
-tests/test_seller_consents.py 가 두 값의 일치를 검사한다 — 문서를 개정해 발행하면
-여기도 함께 올려야 하고, 그러면 기존 셀러에게 재동의 게이트가 한 번 뜬다.
+tests/test_seller_consents.py 가 발행본과 버전 일치를 검사한다. 개정본은 미리 공개할 수
+있지만 기존 셀러의 재동의는 문서 시행일부터 요구한다.
 """
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
-SELLER_TERMS_VERSION = "v1.1"
+# 공개된 최신 개정본. 신규 회원은 이 버전에 동의한다.
+SELLER_TERMS_VERSION = "v1.2"
 SELLER_PRIVACY_VERSION = "v1.1"
+PREVIOUS_SELLER_TERMS_VERSION = "v1.1"
+SELLER_TERMS_EFFECTIVE_DATE = date(2026, 9, 29)
+_SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def required_versions() -> dict[str, str]:
     return {"terms": SELLER_TERMS_VERSION, "privacy": SELLER_PRIVACY_VERSION}
+
+
+def terms_consent_required(accepted_version: str | None, *, today: date | None = None) -> bool:
+    """기존 v1.1 회원은 공지기간 동안 유지하고 시행일부터 v1.2 재동의를 받는다."""
+    if accepted_version == SELLER_TERMS_VERSION:
+        return False
+    if accepted_version != PREVIOUS_SELLER_TERMS_VERSION:
+        return True
+    current = today or datetime.now(_SEOUL).date()
+    return current >= SELLER_TERMS_EFFECTIVE_DATE

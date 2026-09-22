@@ -1,6 +1,6 @@
 /* =============================================================
-   AuthProvider — Supabase 세션을 앱 전역에 제공 (소셜 로그인 전용).
-   이메일/비번 로그인은 두지 않는다 (제품 결정: 구글·카카오만).
+   AuthProvider — Supabase 세션을 앱 전역에 제공.
+   일반 회원은 구글·카카오, 이메일 로그인은 로컬 QA와 임시 PG 심사용이다.
    - 마운트 시 현재 세션 조회 + onAuthStateChange 구독
    - signInWithOAuth(google|kakao) / signOut 노출
    - openLogin(redirect)/closeLogin: 분석 CTA·상단바에서 로그인 모달(LoginGate)을 띄운다.
@@ -14,6 +14,7 @@
    토큰을 컴포넌트로 흘리지 않는다 — API 호출은 httpAdapter 가 supabase 에서 직접 읽는다.
    ============================================================= */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { supabase } from '@/lib/supabase.js';
 import { LoginGate } from './Login.jsx';
@@ -93,10 +94,20 @@ function exchangeOAuthCodeOnce(code) {
 }
 
 export function AuthProvider({ children }) {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+
+  const publishSession = useCallback((next) => {
+    // 새 세션이 화면에 보이기 전에 이전 계정 정보와 진행 중 조회를 버린다.
+    // 같은 사용자의 토큰 갱신은 캐시를 유지한다.
+    if (useAppStore.getState().setAccountIdentity(next?.user?.id ?? null)) {
+      queryClient.clear();
+    }
+    setSession(next);
+  }, [queryClient]);
 
   useEffect(() => {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
@@ -104,7 +115,7 @@ export function AuthProvider({ children }) {
     if (MOCK_FACEMARKET) {
       import('../../mock/facemarket.js').then(({ getMockSession }) => {
         if (!alive) return;
-        setSession(getMockSession());
+        publishSession(getMockSession());
         setLoading(false);
       });
       return () => { alive = false; };
@@ -130,16 +141,16 @@ export function AuthProvider({ children }) {
         }
         const { data } = await supabase.auth.getSession();
         if (!alive) return;
-        setSession(data.session);
+        publishSession(data.session);
         const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
           if (!alive) return;
-          setSession(next);
+          publishSession(next);
         });
         subscription = sub.subscription;
       } catch (error) {
         console.error('[auth] bootstrap failed', error);
         if (!alive) return;
-        setSession(null);
+        publishSession(null);
       } finally {
         if (alive) setLoading(false);
       }
@@ -148,7 +159,7 @@ export function AuthProvider({ children }) {
       alive = false;
       subscription?.unsubscribe();
     };
-  }, []);
+  }, [publishSession]);
 
   /* 로그인된 계정이 어느 앱에서 왔는지 서버에 한 번 알린다(lib/appOrigin.js).
      세션 부트스트랩·OAuth 복귀·토큰 갱신이 전부 여기 session 을 지나므로 배선 지점이
@@ -166,9 +177,11 @@ export function AuthProvider({ children }) {
       options: { redirectTo: window.location.origin },
     });
 
+  const signInWithPassword = (credentials) => supabase.auth.signInWithPassword(credentials);
+
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
-    if (MOCK_FACEMARKET) { setSession(null); return; }
+    if (MOCK_FACEMARKET) { publishSession(null); return; }
     clearSignupConsent();
     forgetPostLogin();
     setSigningOut(true);
@@ -193,13 +206,13 @@ export function AuthProvider({ children }) {
   // 다시 열리는" 모달이 됐다(closeLogin → 리렌더 → 새 openLogin → effect 재실행).
   const openLogin = useCallback((redirect = null) => {
     if (MOCK_FACEMARKET) {
-      import('../../mock/facemarket.js').then(({ signInMock }) => { setSession(signInMock()); });
+      import('../../mock/facemarket.js').then(({ signInMock }) => { publishSession(signInMock()); });
       return;
     }
     if (redirect) rememberPostLogin(redirect);
     else forgetPostLogin();
     setLoginOpen(true);
-  }, []);
+  }, [publishSession]);
 
   // 사용자가 **취소**로 모달을 닫으면 이번 로그인 시도의 복귀 의도도 같이 버린다.
   // 남겨두면 그 플래그가 다음 '/' 진입을 소비해, 랜딩 대신 로그인 벽으로 튕긴다
@@ -207,7 +220,7 @@ export function AuthProvider({ children }) {
   //
   // 성공까지 같이 지우면 ai 도메인이 깨진다. "성공 경로는 여기를 지나지 않는다"는 앞선
   // 주석의 단정은 틀렸다 — 실제 호출부가 둘 있다.
-  //   1) Login.jsx 의 로컬 이메일 로그인(handleLocal)은 페이지 이동이 없어서, 성공 직후
+  //   1) Login.jsx 의 이메일 로그인(handleEmail)은 페이지 이동이 없어서, 성공 직후
   //      이 함수로 모달을 닫는다.
   //   2) ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어, 프로바이더 클릭 뒤 리다이렉트가
   //      커밋되기 전에 Esc 를 눌러도 여기를 지난다(로그인은 그대로 진행된다).
@@ -220,7 +233,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signOut, openLogin, closeLogin }}>
+    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signOut, openLogin, closeLogin }}>
       {children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

@@ -33,7 +33,8 @@ class _Cur:
                               "last4": params[4]}
             self._row = {"id": "sub-1"}
         elif "wl_billing_decrypt" in q:
-            self._row = {"billing_key": "bk-old"} if self.s["sub"] else None
+            self._row = {"billing_key": "bk-old", "status": self.s["sub"]["status"],
+                         "grace_open": True} if self.s["sub"] else None
         elif "from subscriptions" in q:
             self._row = self.s["sub"]
         else:

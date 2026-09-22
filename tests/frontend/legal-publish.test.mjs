@@ -53,7 +53,7 @@ test('publisher does not export unresolved internal placeholders into landing co
   assert.match(result.stdout, /담당자 미확정/);
 });
 
-test('publisher uses the actual price launch date in both metadata and document bodies', (t) => {
+test('publisher keeps each document revision date consistent in metadata and body', (t) => {
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -71,6 +71,8 @@ test('publisher uses the actual price launch date in both metadata and document 
   // 학습 가중치를 회사가 직접 학습한다는 것, 얼굴 부분 생성 GPU 서버(RunPod) 위탁, 학습 사본·
   // 가중치의 보관·파기 범위가 더해졌고, 받지 않는 사이즈·스타일과 "만료" 표기를 뺐다.
   const revised = {
+    'terms-seller': { version: 'v1.2', effectiveDate: '2026-09-29' },
+    'refund': { version: 'v1.2', effectiveDate: '2026-09-29' },
     'privacy-model': { version: 'v1.5', effectiveDate: '2026-09-18' },
     'biometric-consent': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
     'overseas-transfer': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
@@ -91,9 +93,9 @@ test('publisher uses the actual price launch date in both metadata and document 
   assert.doesNotMatch(agreement, /2026년 9월 7일부터 적용한다/);
 
   const datedSellerDocuments = [
-    ['terms-seller.md', /2026년 9월 11일\*\*부터 시행합니다/],
+    ['terms-seller.md', /2026년 9월 29일\*\*부터 시행합니다/],
     ['privacy-seller.md', /2026년 9월 11일\*\*부터 적용됩니다/],
-    ['refund.md', /2026년 9월 11일\*\*부터 시행합니다/],
+    ['refund.md', /2026년 9월 29일\*\*부터 시행합니다/],
   ];
   for (const [file, effectiveCopy] of datedSellerDocuments) {
     assert.match(readFileSync(join(f.root, `public/legal/${file}`), 'utf8'), effectiveCopy, file);
