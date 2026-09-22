@@ -12,7 +12,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 TYPES = {
     "sponsorship_participation",
     "sponsorship_profile_collection",
-    "sponsorship_profile_disclosure",
     "sponsorship_shipping_collection",
     "sponsorship_shipping_disclosure",
 }

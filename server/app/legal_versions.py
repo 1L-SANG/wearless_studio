@@ -27,10 +27,6 @@ DRAFT_SPONSORSHIP_CONSENTS = {
         "section": "E-2b", "required_for_enrollment": False,
         "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
     },
-    "sponsorship_profile_disclosure": {
-        "section": "E-2c", "required_for_enrollment": False,
-        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
-    },
     "sponsorship_shipping_collection": {
         "section": "E-2d-1", "required_for_enrollment": False,
         "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
