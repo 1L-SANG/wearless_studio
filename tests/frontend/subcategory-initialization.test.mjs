@@ -54,7 +54,7 @@ test('public AI responses are normalized before the input form receives them', a
   const server = await createServer({
     configFile: false, root, logLevel: 'silent',
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, watch: null, hmr: false },
     plugins: [{
       name: 'subcategory-api-test', enforce: 'pre',
       resolveId(id) {

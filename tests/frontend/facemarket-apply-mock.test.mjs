@@ -41,7 +41,7 @@ test('the API facade in explicit development mock mode completes the application
   const server = await createServer({
     configFile: false,
     root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true, hmr: false, ws: false },
+    server: { middlewareMode: true, watch: null, hmr: false, ws: false },
     appType: 'custom',
     define: { 'import.meta.env.DEV': 'true', 'import.meta.env.VITE_API_MODE': '"mock"' },
     plugins: [{

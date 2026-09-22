@@ -19,7 +19,7 @@ before(async () => {
     configFile: false,
     root: pathFor('.'),
     logLevel: 'silent',
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     resolve: { alias: { '@': pathFor('src') } },
     esbuild: { jsx: 'automatic' },
     define: {

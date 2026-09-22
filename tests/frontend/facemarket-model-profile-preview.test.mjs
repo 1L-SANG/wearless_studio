@@ -16,7 +16,7 @@ async function apiHarness() {
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     plugins: [{
       name: 'facemarket-model-profile-api-test-harness',
       enforce: 'pre',
@@ -59,7 +59,7 @@ async function adminModelsHarness() {
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     esbuild: { jsx: 'automatic' },
     plugins: [{
       name: 'facemarket-admin-models-test-harness',

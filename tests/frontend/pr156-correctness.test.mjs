@@ -8,7 +8,7 @@ import { createServer } from 'vite';
 test('F1 Storyboard 첫 렌더는 업로드 훅을 실행해도 ReferenceError 없이 로딩 화면을 그린다', async (t) => {
   const vite = await createServer({
     root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     appType: 'custom',
   });
   t.after(() => vite.close());
@@ -317,7 +317,7 @@ test('정리1 상품 사진 total은 시작 인자가 아니라 실제 진행률
 test('정리2·3 업로드 로딩은 공용 ProgressBar와 결합된 status 영역을 실제로 렌더한다', async (t) => {
   const vite = await createServer({
     root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     appType: 'custom',
   });
   t.after(() => vite.close());

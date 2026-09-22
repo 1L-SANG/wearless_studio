@@ -55,7 +55,7 @@ before(async () => {
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
     appType: 'custom',
     logLevel: 'silent',
   });
