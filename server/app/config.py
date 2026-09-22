@@ -545,6 +545,24 @@ class Settings:
     # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
     image_usage_krw_per_usd: float = 1400.0
 
+    # ---- 카카오 OpenID Connect 직접 로그인(app/kakao_oidc.py) ----
+    # 왜 Supabase 의 카카오 OAuth 가 아니라 OIDC 인가: GoTrue 가 scope 에 account_email 을
+    # 하드코딩해 붙이는데 우리 카카오 앱은 그 항목이 "권한 없음"이라 인가 요청이 전부
+    # KOE205 로 거절됐다(2026-09-22). 자세한 경위는 kakao_oidc.py 머리말.
+    #
+    # 🔴 kakao_rest_api_key 는 **Supabase 대시보드 Kakao provider 의 client_id 와 같은 값**
+    #    이어야 한다. GoTrue 가 id_token 의 aud 를 그 값과 대조한다(token_oidc.go).
+    #    두 값이 갈리면 signInWithIdToken 이 전부 실패한다. 공개값이라 variables 로 둔다.
+    kakao_rest_api_key: str | None = None
+    # secret 등급. 카카오 콘솔에서 'Client Secret 사용함'일 때만 필요하다 — 안 쓰면
+    # PKCE(S256)가 그 자리를 대신하고 SSM/secrets 블록 자체가 불필요해진다.
+    kakao_client_secret: str | None = None
+    kakao_auth_base: str = "https://kauth.kakao.com"   # 테스트에서 스텁 서버로 오버라이드
+    kakao_token_timeout: float = 10.0                  # cx_trans_timeout 과 같은 눈금
+    # 화이트리스트 **추가분**. 기본 4개(프로덕션 3호스트 + localhost:5173)는 코드 상수라
+    # 여기 안 적어도 된다 — 이 값은 병렬 워크트리(5174)·터널 같은 임시 QA 주소용이다.
+    kakao_extra_redirect_uris: tuple[str, ...] = ()
+
 
 def _image_usage_persist(app_env: str) -> bool:
     """운영 원장에 쓰는 것은 운영 배포뿐. 다른 환경은 명시적으로 켜야 한다.
@@ -964,4 +982,14 @@ def load_settings() -> Settings:
         public_web_origin=(
             os.getenv("PUBLIC_WEB_ORIGIN") or "https://ai.wearless.kr"
         ).rstrip("/"),
+        kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY") or None,
+        kakao_client_secret=os.getenv("KAKAO_CLIENT_SECRET") or None,
+        kakao_auth_base=(
+            os.getenv("KAKAO_AUTH_BASE") or "https://kauth.kakao.com"
+        ).rstrip("/"),
+        kakao_token_timeout=float(os.getenv("KAKAO_TOKEN_TIMEOUT") or "10"),
+        kakao_extra_redirect_uris=tuple(
+            uri.strip() for uri in (os.getenv("KAKAO_REDIRECT_URIS") or "").split(",")
+            if uri.strip()
+        ),
     )

@@ -11,6 +11,7 @@
 import dataclasses
 import os
 import pathlib
+import re
 
 import pytest
 import yaml
@@ -506,3 +507,46 @@ def test_workflows_pin_copilot_and_deploy_server_watches_addons():
         assert "copilot --version" in text, f"{wf}: 설치 검증 누락"
     server_wf = (root / ".github/workflows/deploy-server.yml").read_text(encoding="utf-8")
     assert server_wf.count("copilot/api/addons/**") >= 3, "push·pull_request·filters 세 곳"
+
+
+def test_kakao_rest_api_key_is_declared_as_a_plain_variable(manifest_vars):
+    """카카오 OIDC 로그인의 client_id 가 매니페스트에 명시돼 있는가.
+
+    미선언이면 `os.getenv(...) or None` 이 조용히 None 이 되고 /v1/auth/kakao/token 이
+    503 만 뱉는다 — 2026-09-22 의 KOE205 사고(카카오 로그인 전원 실패)와 증상이 똑같아
+    원인 판별이 어려워진다. QC 플래그와 같은 사고 경로라 같은 방식으로 잠근다.
+
+    🔴 이 값은 Supabase 대시보드 Kakao provider 의 client_id 와 **같은 값**이어야 한다
+    (GoTrue token_oidc.go 가 id_token 의 aud 를 그 값과 대조한다). 여기서는 값 자체를
+    복제하지 않고 '카카오 REST API 키 모양인가'만 본다 — 값을 두 곳에 적으면 회전할 때
+    한쪽만 바뀐다.
+    """
+    key = str(manifest_vars.get("KAKAO_REST_API_KEY", ""))
+    assert key, "매니페스트에 KAKAO_REST_API_KEY 미선언 — 카카오 로그인이 조용히 503 이 된다"
+    assert re.fullmatch(r"[0-9a-f]{32}", key), (
+        f"KAKAO_REST_API_KEY={key!r} — 카카오 REST API 키는 32자리 소문자 16진수다. "
+        "JavaScript 키·Admin 키를 잘못 넣지 않았는지 확인하라"
+    )
+
+
+def test_kakao_client_secret_is_wired_as_a_secret_not_a_variable(manifest_vars):
+    """Client Secret 은 secrets(SSM SecureString) 에만 있고 평문 variables 에는 없어야 한다.
+
+    카카오 콘솔에서 'Client Secret 사용함' 상태라 토큰 교환에 필수다(끄면 PKCE 가 대신한다).
+    순서가 생명이다 — SSM 값을 먼저 만들고 이 줄을 배포한다. 거꾸로면 ECS 태스크가 기동에
+    실패하고 롤백된다(TOSS_SECRET_KEY 주석의 2026-07-17 실경험).
+    값은 2026-09-23 `copilot-aws secret init --name KAKAO_CLIENT_SECRET` 로 use1 에 생성했고
+    SecureString 존재를 확인했다. 이 테스트는 그 뒤에 뒤집은 것이다.
+
+    평문 variables 쪽도 같이 잠근다 — 시크릿을 태스크 정의에 그대로 박으면 콘솔·CLI 로
+    태스크 정의를 읽을 수 있는 누구에게나 노출된다.
+    """
+    doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    secrets = doc.get("secrets") or {}
+    assert "KAKAO_CLIENT_SECRET" in secrets, (
+        "카카오 콘솔이 'Client Secret 사용함'이라 교환에 필수다 — secrets 블록에서 빠지면 401 로 죽는다"
+    )
+    assert secrets["KAKAO_CLIENT_SECRET"].endswith("/secrets/KAKAO_CLIENT_SECRET"), (
+        "다른 시크릿과 같은 SSM 경로 규칙을 따라야 한다"
+    )
+    assert "KAKAO_CLIENT_SECRET" not in manifest_vars, "시크릿을 평문 variables 에 두지 마라"
