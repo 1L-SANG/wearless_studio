@@ -21,7 +21,7 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { seoulDate } from '@/lib/datetime.js';
 import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
-import { SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
+import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
   from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
 
@@ -149,6 +149,12 @@ export function SubscriptionManage() {
     queryKey: ['subscription'],
     queryFn: () => api.getMySubscription(),
   });
+  // 계좌이체 1개월 이용권(PG 심사 전). 토스 구독이 없거나 토스 라우트가 없을 때도 이 값으로 그린다.
+  const { data: manual } = useQuery({
+    queryKey: ['manualEntitlement'],
+    queryFn: () => api.getManualEntitlement(),
+    enabled: BANK_TRANSFER_ENABLED,
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['subscription'] });
   const onError = (e) => setActionError(e?.message || '요청을 처리하지 못했어요.');
@@ -179,6 +185,30 @@ export function SubscriptionManage() {
   }
 
   if (isLoading) return <div className="wizard"><Skeleton h={220} r={16} /></div>;
+  if (manual?.active && (isError || data?.status === 'none')) {
+    return (
+      <div className="wizard">
+        <div className={s.head}>
+          <h1 className={s.title}>구독 관리</h1>
+        </div>
+        <div className="surface">
+          <dl className={s.rows}>
+            <div className={s.row}><dt>상태</dt><dd>계좌이체 이용권</dd></div>
+            <div className={s.row}><dt>요금제</dt><dd>{manual.planCode}</dd></div>
+            <div className={s.row}><dt>이용 종료일</dt><dd>{seoulDate(manual.endsAt)} · 자동 갱신 없음</dd></div>
+            <div className={s.row}><dt>구독 크레딧</dt><dd>{num(manual.credits)}</dd></div>
+          </dl>
+          <div className={s.actions}>
+            <Link to="/pricing"><Button variant="primary">1개월 연장 신청</Button></Link>
+          </div>
+        </div>
+        <div className={s.note}>
+          이용권이 끝나면 남은 구독 크레딧 <strong>{num(manual.credits)}</strong>이 소멸하고 요금제가 무료로 돌아가요.
+          연장하려면 종료 전에 요금제에서 같은 요금제로 다시 신청해 주세요. 추가 구매한 크레딧은 소멸하지 않아요.
+        </div>
+      </div>
+    );
+  }
   if (isError) {
     return (
       <div className="wizard">

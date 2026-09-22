@@ -67,18 +67,18 @@ test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 
     '200 크레딧 추가 증정', '400 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
-  assert.equal((html.match(/구매하기/g) || []).length, 3);
-  // 계좌이체는 우리 MID 에서 아직 안 열려 숨겨 둔다(SUBSCRIPTION_TRANSFER_ENABLED=false).
-  assert.doesNotMatch(html, /계좌이체로 구독하기/);
-  // '준비 중'(기능 미구현)이 아니라 '구매하기'다.
-  assert.doesNotMatch(html, /준비 중/);
-  // 비활성 여부는 VITE_TOSS_BILLING_CLIENT_KEY 유무에 달렸다(로컬에 .env 가 있으면 활성,
-  // CI 처럼 없으면 비활성). 환경에 따라 갈리는 값을 고정하면 테스트가 환경을 검사하게 된다 —
-  // 여기서 지킬 계약은 '비활성이라면 그 사유가 결제 키 부재'라는 것뿐이다.
+  // 2026-09-22: PG 심사 전에는 계좌이체 신청 창이 결제창을 대신한다(lib/tossKeys.js
+  // BANK_TRANSFER_ENABLED). 토스 결제 버튼('구매하기')은 스위치를 끄면 그대로 돌아온다 —
+  // 그 경로의 계약은 bank-transfer.test.mjs 와 이 파일의 다른 테스트가 나눠 본다.
+  assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
+  assert.doesNotMatch(html, /구매하기|준비 중|계좌이체로 구독하기/);
+  // 이 하네스는 계좌 정보(/v1/bank-transfer/info)를 채우지 않는다 → 세 버튼 모두 잠기고,
+  // 잠긴 사유는 '계좌 미설정' 하나여야 한다(결제 키 유무와 무관).
   const disabled = (html.match(/disabled=""/g) || []).length;
-  const keyNotice = (html.match(/결제 키가 설정되지 않았어요/g) || []).length;
-  assert.equal(disabled, keyNotice, '비활성 사유가 결제 키 부재로 설명돼야 한다');
-  assert.ok(disabled === 0 || disabled === 3, `구독 버튼 비활성 수가 이상하다: ${disabled}`);
+  const notice = (html.match(/계좌이체 신청을 잠시 받지 않아요/g) || []).length;
+  assert.equal(disabled, 3);
+  assert.equal(notice, 3);
+  assert.doesNotMatch(html, /결제 키가 설정되지 않았어요/);
   assert.equal((html.match(/<li\b/g) || []).length, 12);
 });
 

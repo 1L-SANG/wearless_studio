@@ -791,6 +791,23 @@ export const httpAdapter = {
   async replaceSubscriptionCard({ authKey, customerKey }) {
     return http('/v1/subscriptions/card', { method: 'PUT', body: { authKey, customerKey } });
   },
+  // ---- 계좌이체(무통장입금) 신청 — PG 심사 전 결제 경로. 계좌 정보는 서버가 준다. ----
+  // 지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md
+  async getBankTransferInfo() {
+    return http('/v1/bank-transfer/info');
+  },
+  async createBankTransferRequest(body) {
+    return http('/v1/bank-transfer/requests', { method: 'POST', body });
+  },
+  async getOpenBankTransferRequests() {
+    return http('/v1/bank-transfer/requests/open');
+  },
+  async cancelBankTransferRequest(requestId) {
+    return http(`/v1/bank-transfer/requests/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' });
+  },
+  async getManualEntitlement() {
+    return http('/v1/bank-transfer/entitlement');
+  },
   // ---- 마네킹 (PRD §7) — generate/getMannequins/adjust 는 배포된 라우트로 실배선 ----
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
   async getMannequins(projectId) {

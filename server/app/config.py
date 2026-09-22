@@ -399,6 +399,13 @@ class Settings:
     # 웹훅 경로 시크릿 — 토스 일반 웹훅은 서명 헤더가 없어 경로 지식이 인증 대용이다.
     toss_webhook_path_secret: str | None = None
     subscription_billing_enabled: bool = False
+    # ---- 계좌이체(무통장입금) — PG 심사 전 결제 경로(docs/superpowers/plans/2026-09-22-bank-transfer-payments.md) ----
+    # 판매 스위치. 꺼도 만료 워커는 돈다(이미 준 이용권은 정리해야 한다). 계좌 3종이 비면 신청 라우트가 503.
+    bank_transfer_enabled: bool = True
+    bank_transfer_bank: str | None = None
+    bank_transfer_account: str | None = None
+    bank_transfer_holder: str | None = None
+    bank_transfer_notify_email: str = "contact@wearless.kr"
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -892,6 +899,12 @@ def load_settings() -> Settings:
         toss_webhook_path_secret=os.getenv("TOSS_WEBHOOK_PATH_SECRET") or None,
         subscription_billing_enabled=(
             os.getenv("SUBSCRIPTION_BILLING_ENABLED", "false").lower() == "true"),
+        bank_transfer_enabled=(os.getenv("BANK_TRANSFER_ENABLED", "true").lower() == "true"),
+        bank_transfer_bank=(os.getenv("BANK_TRANSFER_BANK") or "").strip() or None,
+        bank_transfer_account=(os.getenv("BANK_TRANSFER_ACCOUNT") or "").strip() or None,
+        bank_transfer_holder=(os.getenv("BANK_TRANSFER_HOLDER") or "").strip() or None,
+        bank_transfer_notify_email=(os.getenv("BANK_TRANSFER_NOTIFY_EMAIL") or "").strip()
+        or "contact@wearless.kr",
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),

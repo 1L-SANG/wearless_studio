@@ -97,6 +97,15 @@ async def start_subscription(
             existing = await cur.fetchone()
             if existing is not None and existing["status"] in ("active", "past_due", "canceled"):
                 raise _err("subscription_exists", "이미 구독 중이에요.", 409)
+            # 계좌이체 1개월 이용권과 정기결제는 동시에 갖지 못한다(bank_transfer_service ④).
+            await cur.execute(
+                "select id::text as id from manual_plan_grants "
+                "where user_id = %s and status = 'active'",
+                (user_id,),
+            )
+            if await cur.fetchone() is not None:
+                raise _err("manual_plan_active",
+                           "계좌이체 이용권이 진행 중이에요. 이용권이 끝난 뒤 정기결제를 시작할 수 있어요.", 409)
             plan = await _load_plan(cur, body.plan_code)
 
         # 빌링키 발급 — 이 응답을 잃으면 영구 분실이므로(조회 API 없음) 곧바로 저장한다.

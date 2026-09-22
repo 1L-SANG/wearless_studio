@@ -1,0 +1,38 @@
+/* 계좌이체 신청 창 — 색·간격은 tokens.css. */
+.wrap { display: flex; flex-direction: column; gap: var(--sp-12); }
+.form { display: flex; flex-direction: column; gap: var(--sp-12); }
+.title { margin: 0; font-family: var(--font-body); font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg-1); }
+.desc { margin: 0; font-size: 14px; line-height: 1.6; color: var(--fg-1); }
+.doneHead { display: flex; align-items: center; gap: var(--sp-8); }
+.doneIcon {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  border-radius: 50%; background: var(--fg-1); color: var(--bg-1);
+}
+
+.summary { padding: var(--sp-12) var(--sp-16); background: var(--bg-2); border-radius: var(--r-4); }
+.summaryRow { display: flex; justify-content: space-between; gap: var(--sp-12); font-size: 14px; color: var(--fg-2); }
+.summaryRow + .summaryRow { margin-top: var(--sp-4); }
+.summaryRow strong { color: var(--fg-1); font-weight: 600; }
+.summaryHint { margin-top: var(--sp-8); font-size: 12px; color: var(--fg-3); }
+
+.account {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12);
+  padding: var(--sp-12) var(--sp-16); border: 1.5px solid var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1);
+}
+.accountBank { font-size: 13px; color: var(--fg-2); }
+.accountNumber { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; color: var(--fg-1); }
+.accountHolder { font-size: 13px; color: var(--fg-2); }
+
+.field { display: flex; flex-direction: column; gap: var(--sp-4); font-size: 13px; color: var(--fg-2); }
+.field em { font-style: normal; color: var(--fg-3); margin-left: var(--sp-4); }
+.field input, .field textarea {
+  font: inherit; font-size: 14px; color: var(--fg-1); padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--ring-strong); border-radius: var(--r-3); background: var(--bg-1);
+}
+.field input:focus-visible, .field textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.check { display: flex; align-items: center; gap: var(--sp-8); font-size: 14px; color: var(--fg-1); cursor: pointer; }
+.taxBox { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-12); border-radius: var(--r-4); background: var(--bg-2); }
+.hint { margin: 0; font-size: 12px; color: var(--fg-3); }
+.notice { margin: 0; font-size: 12px; line-height: 1.6; color: var(--fg-2); }
+.error { margin: 0; font-size: 13px; color: var(--danger, #c0392b); }
+.actions { display: flex; justify-content: flex-end; gap: var(--sp-8); margin-top: var(--sp-4); }

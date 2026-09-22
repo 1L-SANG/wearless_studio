@@ -11,6 +11,7 @@ import { RequireAuth } from '../guards.jsx';
 import { RequireDevice } from './RequireDevice.jsx';
 import { AdminShell } from '@/features/admin/AdminShell.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
+import { AdminBankTransfers } from '@/features/admin/AdminBankTransfers.jsx';
 import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
 import { AdminEnrollmentReview } from '@/features/admin/AdminEnrollmentReview.jsx';
 import { AdminModels } from '@/features/admin/AdminModels.jsx';
@@ -44,6 +45,7 @@ export default function AppAdmin() {
             <Route path="review" element={<AdminEnrollmentReview />} />
             <Route path="usage-reports" element={<AdminUsageReports />} />
             <Route path="payout-statements" element={<AdminPayoutStatements />} />
+            <Route path="bank-transfers" element={<AdminBankTransfers />} />
             <Route path="models" element={<AdminModels />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="staff" element={<AdminStaff />} />
