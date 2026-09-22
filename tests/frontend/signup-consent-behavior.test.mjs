@@ -21,6 +21,13 @@ function nodes(tree, predicate) {
 const checkbox = (tree) => nodes(tree, (node) => node.props?.type === 'checkbox')[0];
 const google = (tree) => nodes(tree, (node) => node.props?.className?.includes('google'))[0];
 const submit = (tree) => nodes(tree, (node) => node.type === 'Button')[0];
+// 심사용 이메일 로그인은 토글이 아니라 '이메일로 로그인하기' 링크를 누른 뒤에만 폼이 그려진다(2026-09-22).
+const emailLink = (tree) => nodes(tree, (node) => node.type === 'button' && node.props?.children === '이메일로 로그인하기')[0];
+const forms = (tree) => nodes(tree, (node) => node.type === 'form');
+function openEmail(h) {
+  emailLink(h.login()).props.onClick();
+  return h.login();
+}
 
 // Execute the real three auth components and consent adapter. As in the enrollment
 // harness, hooks retain state/dependencies between renders; cleanup runs before a
@@ -269,6 +276,12 @@ test('review password login preserves the purchase destination and does not gran
   const h = await harness(t);
   h.runtime.auth.openLogin('/pricing');
   h.consent.markSignupConsent();
+  // 누르기 전엔 폼이 없고 링크만 있다. 누르면 링크가 사라지고 폼 하나가 그 자리에 온다.
+  assert.equal(forms(h.login()).length, 0);
+  assert.ok(emailLink(h.login()));
+  openEmail(h);
+  assert.equal(emailLink(h.login()), undefined);
+  assert.equal(forms(h.login()).length, 1);
   const input = type => nodes(h.login(), node => node.type === 'input' && node.props.type === type)[0];
   assert.equal(input('email').props.value, '');
   input('email').props.onChange({ target: { value: ' reviewer@example.test ' } });
@@ -294,7 +307,9 @@ for (const failsWithThrow of [false, true]) {
     h.runtime.auth.openLogin('/pricing');
     const request = deferred();
     h.runtime.password = () => request.promise;
-    const pending = nodes(h.login(), node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+    assert.equal(forms(h.login()).length, 0);
+    openEmail(h);
+    const pending = forms(h.login())[0].props.onSubmit({ preventDefault() {} });
     assert.equal(google(h.login()).props.disabled, true);
     assert.equal(nodes(h.login(), node => node.props?.type === 'submit')[0].props.disabled, true);
     if (failsWithThrow) request.reject(new Error('network unavailable'));
@@ -312,16 +327,19 @@ for (const failsWithThrow of [false, true]) {
 for (const options of [{ reviewLogin: false }, { facemarket: true }, { admin: true }]) {
   test(`review email login stays hidden outside its enabled seller scope: ${JSON.stringify(options)}`, async t => {
     const h = await harness(t, options);
-    assert.equal(nodes(h.login(), node => node.type === 'form').length, 0);
+    assert.equal(forms(h.login()).length, 0);
+    assert.equal(emailLink(h.login()), undefined);
     assert.ok(google(h.login()));
   });
 }
 
 test('review login has no email signup, and switching off review preserves local QA', async t => {
   const h = await harness(t, { reviewLogin: false, localSupabase: true });
-  assert.equal(nodes(h.login(), node => node.type === 'form').length, 1);
+  // 로컬 QA 는 링크 없이 처음부터 폼이 펼쳐져 있다.
+  assert.equal(forms(h.login()).length, 1);
+  assert.equal(emailLink(h.login()), undefined);
   nodes(h.login(), node => node.props?.role === 'tab')[1].props.onClick();
-  assert.equal(nodes(h.login(), node => node.type === 'form').length, 0);
+  assert.equal(forms(h.login()).length, 0);
 });
 
 test('existing account signup, logout, then unchecked new account never records consent', async (t) => {
