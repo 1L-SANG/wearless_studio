@@ -1,1 +1,6 @@
-.application:global(.fm-theme-page) { background: var(--bg-1); }
+/* 본문이 흰 바탕을 칠하는 화면(지원서·등록 위저드)에서는 셸도 같은 흰색이어야 한다.
+   셸의 기본 바탕은 facemarket 의 파란 기 도는 그라데이션이라, 그냥 두면 본문이 끝나는
+   자리에서 흰색 → 파랑으로 색이 갈린다(등록 위저드 푸터에서 실제로 그랬다).
+   ※ 이 토큰은 ModelRegister/ModelApply 의 `.page` 배경과 한 쌍이다 — 한쪽만 바꾸면
+   tests/frontend/facemarket-model-footer-surface.test.mjs 가 잡는다. */
+.plainSurface:global(.fm-theme-page) { background: var(--bg-1); }
