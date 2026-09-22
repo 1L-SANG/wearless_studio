@@ -7,6 +7,7 @@
 
 import contextlib
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from conftest import make_settings
@@ -49,6 +50,9 @@ class Cursor:
 
     async def fetchone(self):
         return self.conn.rows.pop(0) if self.conn.rows else None
+
+    async def fetchall(self):
+        return self.conn.rows.pop(0) if self.conn.rows else []
 
 
 class Conn:
@@ -169,3 +173,31 @@ def test_every_simulated_run_tells_slack_it_was_a_simulation(outcome, keypair, m
     assert len(sent) == 1
     assert sent[0]["paid"] is (outcome == "paid")
     assert sent[0]["amount"] == 52150
+
+
+def test_confirmation_is_born_with_the_configured_provider(keypair, make_token, monkeypatch):
+    """확인서를 만들 때 provider 를 박아야 한다.
+
+    DB 기본값은 manual 이다. 여기서 안 넣으면 서버를 stub 으로 띄워도 확인서가 manual 로
+    남아 시뮬레이션 버튼이 영영 안 뜬다(화면은 confirmation.simulated 를 본다). 단위
+    테스트가 provider 를 손으로 넣어 준 탓에 안 잡혔고, 실제 DB 로 한 번 걸어 보고서야
+    드러났다."""
+    account = {"bank_code": "shinhan", "holder_name": "데모", "account_number_enc": "enc",
+               "account_last4": "6789", "account_version": "version-1"}
+    entries = [{"id": "settlement-1", "model_amount": 10430}]
+    # 라우트가 차례로 받아가는 행들: 모델 잠금 → 기존 확인서(둘) → 정산서 → 계좌 → 항목 → INSERT
+    rows = [{"id": MODEL_ID}, None, None, None, account, entries,
+            _confirmation(status="prepared")]
+    client, conn, _sent = _client_with_key(keypair, monkeypatch, _confirmation(), rows)
+    monkeypatch.setattr(facemarket_payout, "_cipher", lambda _r: SimpleNamespace(decrypt=lambda _v: b"110"))
+
+    response = client.post(
+        f"/v1/facemarket/admin/payout-statements/{MODEL_ID}/2026-08/confirm",
+        json={"confirmationId": CONFIRMATION_ID}, headers=_auth(make_token))
+
+    assert response.status_code == 200, response.text
+    insert = next((sql, params) for sql, params in conn.executed
+                  if sql.lower().startswith("insert into fm_payout_confirmations"))
+    columns = insert[0].split("(", 1)[1].split(")", 1)[0]
+    assert "provider" in columns, columns  # RETURNING 이 아니라 INSERT 컬럼 목록이어야 한다
+    assert "stub" in insert[1], insert[1]
