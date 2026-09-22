@@ -410,6 +410,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .public_routes import PublicAnalysisRateLimiter
 
     app.state.public_analysis_limiter = PublicAnalysisRateLimiter()
+    # 카카오 OIDC 인가코드 교환도 미인증 공개 라우트라 같은 안전밸브를 단다(IP 기준).
+    # 공개 분석보다 한도를 넉넉히 둔다 — 로그인은 실패하고 다시 누르는 게 정상 행동이고,
+    # 한 IP 뒤에 사무실·모바일 캐리어 NAT 가 통째로 있을 수 있다.
+    app.state.kakao_login_limiter = PublicAnalysisRateLimiter(hourly_limit=30, daily_limit=120)
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
@@ -577,6 +581,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .public_routes import router as public_router
 
     app.include_router(public_router)
+
+    # 카카오 OpenID Connect 직접 로그인 — 인가코드 → id_token 교환(app/kakao_oidc.py).
+    # 토스와 같은 이유로 **플래그 없이 항상 등록**한다: 키가 없으면 라우트를 숨기는 대신
+    # 503 kakao_login_not_configured 로 말해 준다. 로그인이 죽었을 때 404('프론트가
+    # 새 경로를 부르는데 서버가 아직 안 나갔다')와 503('나갔는데 키가 없다')을 구분하지
+    # 못하면 원인 판별에 하루가 든다 — 지금 겪은 KOE205 사고와 증상이 똑같아진다.
+    from .kakao_oidc import router as kakao_auth_router
+
+    app.include_router(kakao_auth_router)
 
     # 토스 크레딧 추가구매(WS3) — 라우터는 항상 등록하고, 키 미설정이면 checkout 이 503 으로
     # 거절한다(플래그로 라우트를 숨기면 프론트가 404 를 '미배포'와 구분 못 해 디버깅이 어렵다).

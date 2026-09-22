@@ -9,6 +9,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { RequireAuth } from '../guards.jsx';
 import { RequireDevice } from './RequireDevice.jsx';
+import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { AdminShell } from '@/features/admin/AdminShell.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
@@ -50,6 +51,13 @@ export default function AppAdmin() {
           </Route>
         </Route>
       </Route>
+      {/* 카카오 OIDC 로그인 착지점 — **RequireAuth·RequireDevice 밖**이다.
+          이 콘솔은 원래 모든 화면이 두 가드 안에 있는데, 콜백은 정의상 아직 로그인 전이라
+          가드 안에 두면 guards.jsx 의 FacemarketLoginPrompt 가 떠서 로그인 모달이 다시
+          열리고 인가코드는 소비되지 않는다. catch-all 보다 앞에 둔다.
+          ⚠️ 위 RequireAuth → RequireDevice → AdminShell 세 줄의 **등장 순서는 건드리지
+          마라** — tests/frontend/admin-device.test.mjs 가 indexOf 로 그 순서를 본다. */}
+      <Route path="auth/kakao/callback" element={<KakaoCallback />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

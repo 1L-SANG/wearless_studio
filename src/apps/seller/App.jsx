@@ -34,6 +34,7 @@ import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthPro
 import { IS_FACEMARKET, domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { RequireAuth } from '../guards.jsx';
 import { SignupCompletion } from '@/features/auth/SignupCompletion.jsx';
+import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -670,6 +671,12 @@ export default function App() {
         {/* 배포본 공개 검증(step07) — C2PA 매니페스트의 verifyUrl 종착지. 위와 같은 이유로
             RequireAuth 밖·크롬 밖(PublicVerifyPublication 주석). */}
         <Route path="verify/p/:publicationId" element={<PublicVerifyPublication />} />
+        {/* 카카오 OIDC 로그인 착지점 — **RequireAuth 밖·ChromeLayout 밖**이다.
+            여기 도착하는 사람은 정의상 아직 로그인 전이라 가드 안에 두면 로그인 벽으로
+            튕기면서 인가코드가 소비되지 않는다. 크롬(TopNav·크레딧 배지)도 전환 화면에는
+            잡음이다. catch-all 보다 **앞**에 둬야 한다 — 뒤면 /create/input 으로 replace
+            되면서 code 가 통째로 날아간다(경위: features/auth/KakaoCallback.jsx). */}
+        <Route path="auth/kakao/callback" element={<KakaoCallback />} />
         <Route path="*" element={<Navigate to="/create/input" replace />} />
       </Routes>
     </>

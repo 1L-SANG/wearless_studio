@@ -25,6 +25,15 @@ test('FaceMarket landing routes stay put', () => {
   assert.equal(host.domainRouteRedirect('/biometric-consent', true), null);
 });
 
+/* 카카오 OIDC 콜백이 이 목록에서 빠지면, 카카오에서 돌아온 사람이 라우터에 닿기도 전에
+   /model/register 로 튕겨 **인가코드가 URL 째 사라진다**. 화면은 멀쩡하고 '카카오 로그인만
+   안 됨'으로만 보여서 눈으로는 원인을 못 찾는 종류의 사고다. */
+test('카카오 OIDC 콜백은 facemarket 에서도 라우터까지 도달한다', () => {
+  assert.equal(host.domainRouteRedirect('/auth/kakao/callback', true), null);
+  // 셀러·admin 쪽은 이 함수로 막히지 않는다(/model 접두사만 본다).
+  assert.equal(host.domainRouteRedirect('/auth/kakao/callback', false), null);
+});
+
 test('shared and domain-owned routes stay on their current host', () => {
   for (const pathname of ['/', '/model', '/model/register', '/pricing', '/credits/history', '/payments/success', '/verify/license-1']) {
     assert.equal(host.domainRouteRedirect(pathname, true), null);

@@ -34,6 +34,7 @@ import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { LegalPage } from '@/features/legal/LegalPage.jsx';
 import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublication.jsx';
 import { RequireAuth } from '../guards.jsx';
+import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
 import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
@@ -89,6 +90,13 @@ export default function AppFacemarket() {
       <Route path="license-agreement" element={<LegalPage slug="license-agreement" />} />
       <Route path="seller-terms" element={<LegalPage slug="seller-license-terms" />} />
       <Route path="answers" element={<LegalPage slug="answers" />} />
+
+      {/* 카카오 OIDC 로그인 착지점 — 공개 구역(RequireAuth·FacemarketModelLayout 밖)이다.
+          여기 도착하는 사람은 정의상 아직 로그인 전이다. RequireAuth 안에 두면
+          FacemarketLoginPrompt 가 떠서 openLogin 이 다시 돌고 로그인 모달이 열린다
+          (무한 루프에 가깝다). host.js 의 FACEMARKET_ROUTES 에 '/auth' 가 함께 있어야
+          이 라우트까지 도달한다 — 없으면 라우터 전에 /model/register 로 튕긴다. */}
+      <Route path="auth/kakao/callback" element={<KakaoCallback />} />
 
       {/* /model/* 과 결제·크레딧은 랜딩 상단바를 입는다. 이 도메인에 온 사람은 얼굴을
           등록하러 온 모델이고, 셀러 TopNav 의 크레딧 배지·요금제·플로우 스테퍼는 전부

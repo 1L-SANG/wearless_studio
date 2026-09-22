@@ -131,6 +131,10 @@ const FACEMARKET_ROUTES = [
   '/apply', '/models', '/status', '/license', '/payout', '/register', '/photo-guide', '/model-info', '/licensing',
   '/terms', '/privacy', '/biometric-consent', '/license-agreement', '/seller-terms', '/answers',
   '/model', '/pricing', '/credits/history', '/payments', '/verify',
+  /* 카카오 OIDC 로그인 착지점(/auth/kakao/callback). 이게 빠지면 카카오에서 돌아온 사람이
+     라우터에 닿기도 전에 /model/register 로 튕겨 **인가코드가 URL 째 사라진다** —
+     화면은 멀쩡하고 '카카오 로그인만 안 됨'으로만 보이는 종류의 사고다. */
+  '/auth',
 ];
 
 export function domainRouteRedirect(pathname, isFacemarket = IS_FACEMARKET) {
