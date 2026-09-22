@@ -18,6 +18,10 @@
 .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
+.billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }
+.billingNotice p + p { margin-top: var(--sp-8); }
+.billingNotice a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.billingNotice a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .purchaseConsent a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .purchaseConsent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }

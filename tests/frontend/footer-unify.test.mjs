@@ -64,7 +64,7 @@ test('두 푸터와 법무 화면은 같은 회사 정보 7행과 연락처 링�
     '대표자: 정일상',
     '연락처: 010-9592-0333',
     '이메일: contact@wearless.kr',
-    '사업자주소: 서울특별시 노원구 석계로 98-2 광운대역 3층 스타트업스테이션',
+    '사업자주소: 서울특별시 노원구 석계로 98-2 광운대역 3층 A-4호 스타트업스테이션',
   ];
   for (const [name, html, selector] of [
     ['셀러 푸터', render(SiteFooter), 'site-footer__company'],

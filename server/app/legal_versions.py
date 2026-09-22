@@ -6,7 +6,8 @@ tests/test_seller_consents.py 가 두 값의 일치를 검사한다 — 문서�
 여기도 함께 올려야 하고, 그러면 기존 셀러에게 재동의 게이트가 한 번 뜬다.
 """
 
-SELLER_TERMS_VERSION = "v1.1"
+# 공개 개정본의 시행과 함께 배포한다. tools/legal_publish.py의 버전과 일치시킨다.
+SELLER_TERMS_VERSION = "v1.2"
 SELLER_PRIVACY_VERSION = "v1.1"
 
 

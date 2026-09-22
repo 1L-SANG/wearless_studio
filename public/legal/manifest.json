@@ -3,8 +3,8 @@
     "slug": "terms-seller",
     "app": "seller",
     "title": "Wearless 이용약관",
-    "version": "v1.1",
-    "effectiveDate": "2026-09-11",
+    "version": "v1.2",
+    "effectiveDate": "2026-09-29",
     "source": "10_wearless_terms_of_service_v1.md"
   },
   {
@@ -19,8 +19,8 @@
     "slug": "refund",
     "app": "seller",
     "title": "Wearless 환불 정책",
-    "version": "v1.1",
-    "effectiveDate": "2026-09-11",
+    "version": "v1.2",
+    "effectiveDate": "2026-09-29",
     "source": "12_wearless_refund_policy_v1.md"
   },
   {

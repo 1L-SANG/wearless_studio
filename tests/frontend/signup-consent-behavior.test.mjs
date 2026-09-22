@@ -24,7 +24,8 @@ const submit = (tree) => nodes(tree, (node) => node.type === 'Button')[0];
 // Execute the real three auth components and consent adapter. As in the enrollment
 // harness, hooks retain state/dependencies between renders; cleanup runs before a
 // changed effect. Only browser rendering, Supabase, and HTTP are replaced.
-async function harness(t, { storage = new Map(), user = null, realHttp = false } = {}) {
+async function harness(t, { storage = new Map(), user = null, realHttp = false,
+  reviewLogin = true, facemarket = false, admin = false, localSupabase = false } = {}) {
   const key = `__signupTest${Math.random().toString(36).slice(2)}`;
   const previousStorage = globalThis.sessionStorage;
   const previousWindow = globalThis.window;
@@ -39,6 +40,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
   const runtime = {
     frame: null, auth: null, user, listener: null, records: [], requests: [],
     oauth: async () => ({ error: null }),
+    password: async () => ({ error: null }),
     get: async (user) => user === 'existing-A' ? accepted : missing,
     post: async () => accepted,
   };
@@ -46,6 +48,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
     getSession: async () => ({ data: { session: runtime.user ? { user: { id: runtime.user }, access_token: runtime.user } : null } }),
     onAuthStateChange: (listener) => { runtime.listener = listener; return { data: { subscription: { unsubscribe() {} } } }; },
     signInWithOAuth: (...args) => runtime.oauth(...args),
+    signInWithPassword: (...args) => runtime.password(...args),
     signOut: async () => { runtime.user = null; runtime.listener?.('SIGNED_OUT', null); return { error: null }; },
   } };
   runtime.http = (path, options = {}) => {
@@ -79,6 +82,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
     configFile: false, root, logLevel: 'silent', appType: 'custom',
     server: { middlewareMode: true, hmr: false }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },
+    define: { 'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(localSupabase ? 'http://127.0.0.1:54321' : 'https://auth.example.test') },
     plugins: [{
       name: 'signup-consent-component-harness', enforce: 'pre',
       resolveId(id) {
@@ -86,6 +90,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
           react: 'react', 'react/jsx-runtime': 'jsx', 'react/jsx-dev-runtime': 'jsx',
           '@/lib/supabase.js': 'supabase', ...(!realHttp ? { '@/lib/api/httpAdapter.js': 'http' } : {}),
           '@/lib/api/index.js': 'mode', '@/components/ui.jsx': 'ui', '@/lib/host.js': 'host',
+          '@/lib/tossKeys.js': 'toss',
           '@/lib/draftSlot.js': 'draft', '@/lib/appOrigin.js': 'origin', '@/store/useAppStore.js': 'store',
         };
         if (stubs[id]) return `\0signup-test-${stubs[id]}`;
@@ -122,7 +127,8 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
         if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase;`;
         if (id === '\0signup-test-http') return `export const http=(...args)=>${access}.http(...args);`;
         if (id === '\0signup-test-mode') return 'export const isMockMode=false;';
-        if (id === '\0signup-test-host') return 'export const IS_ADMIN=false; export const IS_FACEMARKET=false;';
+        if (id === '\0signup-test-host') return `export const IS_ADMIN=${admin}; export const IS_FACEMARKET=${facemarket};`;
+        if (id === '\0signup-test-toss') return `export const PG_REVIEW_LOGIN_ENABLED=${reviewLogin};`;
         if (id === '\0signup-test-ui') return "export const Modal='Modal';export const Button='Button';export const Icon='Icon';";
         if (id === '\0signup-test-css') return 'export default new Proxy({}, {get: (_, key) => key});';
         if (id === '\0signup-test-draft') return 'export const draftSlot={resetIdentity(){}};';
@@ -148,6 +154,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
   }
   const h = {
     runtime, consent, memory, http,
+    isLoginOpen: () => Boolean(render('auth', AuthProvider).props.children[1]),
     login: () => render('login', LoginGate),
     reopenLogin() {
       for (const hook of frames.get('login')?.hooks || []) hook?.cleanup?.();
@@ -182,6 +189,65 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
   await h.flush();
   return h;
 }
+
+test('review password login preserves the purchase destination and does not grant signup consent', async t => {
+  const h = await harness(t);
+  h.runtime.auth.openLogin('/pricing');
+  h.consent.markSignupConsent();
+  const input = type => nodes(h.login(), node => node.type === 'input' && node.props.type === type)[0];
+  assert.equal(input('email').props.value, '');
+  input('email').props.onChange({ target: { value: ' reviewer@example.test ' } });
+  input('password').props.onChange({ target: { value: 'test-only-password' } });
+  const calls = [];
+  h.runtime.password = async credentials => {
+    calls.push(credentials);
+    await h.user('reviewer');
+    return { error: null };
+  };
+  await nodes(h.login(), node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(calls, [{ email: 'reviewer@example.test', password: 'test-only-password' }]);
+  assert.equal(h.runtime.auth.user.id, 'reviewer');
+  assert.equal(h.isLoginOpen(), false);
+  assert.equal(h.memory.get('wl_postLogin'), '/pricing');
+  assert.equal(h.consent.hasFreshSignupConsent(), false);
+  assert.deepEqual(h.runtime.records, []);
+});
+
+for (const failsWithThrow of [false, true]) {
+  test(`review password failure permits retry and keeps purchase intent (throw=${failsWithThrow})`, async t => {
+    const h = await harness(t);
+    h.runtime.auth.openLogin('/pricing');
+    const request = deferred();
+    h.runtime.password = () => request.promise;
+    const pending = nodes(h.login(), node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+    assert.equal(google(h.login()).props.disabled, true);
+    assert.equal(nodes(h.login(), node => node.props?.type === 'submit')[0].props.disabled, true);
+    if (failsWithThrow) request.reject(new Error('network unavailable'));
+    else request.resolve({ error: { message: 'Invalid login credentials' } });
+    await pending;
+    assert.equal(h.isLoginOpen(), true);
+    assert.equal(google(h.login()).props.disabled, false);
+    assert.equal(nodes(h.login(), node => node.props?.type === 'submit')[0].props.disabled, false);
+    assert.ok(nodes(h.login(), node => node.props?.role === 'alert')[0]);
+    assert.equal(h.memory.get('wl_postLogin'), '/pricing');
+    assert.equal(h.runtime.auth.session, null);
+  });
+}
+
+for (const options of [{ reviewLogin: false }, { facemarket: true }, { admin: true }]) {
+  test(`review email login stays hidden outside its enabled seller scope: ${JSON.stringify(options)}`, async t => {
+    const h = await harness(t, options);
+    assert.equal(nodes(h.login(), node => node.type === 'form').length, 0);
+    assert.ok(google(h.login()));
+  });
+}
+
+test('review login has no email signup, and switching off review preserves local QA', async t => {
+  const h = await harness(t, { reviewLogin: false, localSupabase: true });
+  assert.equal(nodes(h.login(), node => node.type === 'form').length, 1);
+  nodes(h.login(), node => node.props?.role === 'tab')[1].props.onClick();
+  assert.equal(nodes(h.login(), node => node.type === 'form').length, 0);
+});
 
 test('existing account signup, logout, then unchecked new account never records consent', async (t) => {
   const h = await harness(t);

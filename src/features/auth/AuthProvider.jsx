@@ -1,6 +1,6 @@
 /* =============================================================
-   AuthProvider — Supabase 세션을 앱 전역에 제공 (소셜 로그인 전용).
-   이메일/비번 로그인은 두지 않는다 (제품 결정: 구글·카카오만).
+   AuthProvider — Supabase 세션을 앱 전역에 제공.
+   일반 회원은 구글·카카오, 이메일 로그인은 로컬 QA와 임시 PG 심사용이다.
    - 마운트 시 현재 세션 조회 + onAuthStateChange 구독
    - signInWithOAuth(google|kakao) / signOut 노출
    - openLogin(redirect)/closeLogin: 분석 CTA·상단바에서 로그인 모달(LoginGate)을 띄운다.
@@ -166,6 +166,8 @@ export function AuthProvider({ children }) {
       options: { redirectTo: window.location.origin },
     });
 
+  const signInWithPassword = (credentials) => supabase.auth.signInWithPassword(credentials);
+
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
     if (MOCK_FACEMARKET) { setSession(null); return; }
@@ -207,7 +209,7 @@ export function AuthProvider({ children }) {
   //
   // 성공까지 같이 지우면 ai 도메인이 깨진다. "성공 경로는 여기를 지나지 않는다"는 앞선
   // 주석의 단정은 틀렸다 — 실제 호출부가 둘 있다.
-  //   1) Login.jsx 의 로컬 이메일 로그인(handleLocal)은 페이지 이동이 없어서, 성공 직후
+  //   1) Login.jsx 의 이메일 로그인(handleEmail)은 페이지 이동이 없어서, 성공 직후
   //      이 함수로 모달을 닫는다.
   //   2) ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어, 프로바이더 클릭 뒤 리다이렉트가
   //      커밋되기 전에 Esc 를 눌러도 여기를 지난다(로그인은 그대로 진행된다).
@@ -220,7 +222,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signOut, openLogin, closeLogin }}>
+    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signOut, openLogin, closeLogin }}>
       {children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

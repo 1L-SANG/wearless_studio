@@ -7,7 +7,19 @@
   flex-direction: column;
   align-items: center;
   gap: var(--sp-16);
-  padding: var(--sp-8) var(--sp-8) var(--sp-4);
+  /* 이메일 폼을 펼쳐도 작은 화면에서 제출 버튼까지 닿을 수 있게 카드 안쪽만 스크롤한다.
+     공용 modal 패딩을 음수 마진으로 걷고 같은 값을 다시 더해, 평소 여백과 카드 모양은 유지한다.
+     SignupCompletion 의 다음 장과 같은 스크롤 경계다. */
+  margin: -26px;
+  padding:
+    calc(26px + var(--sp-8))
+    calc(26px + var(--sp-8))
+    calc(26px + var(--sp-4));
+  max-height: calc(100dvh - 48px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--r-6);
 }
 
 /* 브랜드 락업(세로): 심볼 위, 그 아래 wearless 워드마크 + Studio 디스크립터 */
@@ -186,3 +198,26 @@
   text-align: center;
   margin: 0;
 }
+
+/* 임시 심사용 폼. 기존 로그인창의 글자·간격·버튼 토큰을 재사용한다. */
+.emailLogin { width: 100%; font-size: 12px; color: var(--fg-2); }
+.emailLogin summary { cursor: pointer; padding: var(--sp-8) 0; }
+.emailForm { display: grid; gap: var(--sp-12); margin-top: var(--sp-8); }
+.emailForm label { display: grid; gap: var(--sp-4); }
+.emailForm input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--ring-strong);
+  border-radius: var(--r-4);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font: inherit;
+  font-size: 16px;
+}
+.emailLogin summary:focus-visible,
+.emailForm input:focus-visible,
+.emailSubmit:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.emailSubmit { background: var(--fg-1); color: var(--bg-1); }
+.emailError { margin: 0; color: var(--fg-1); line-height: 1.5; }

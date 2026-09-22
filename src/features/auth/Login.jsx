@@ -1,5 +1,5 @@
 /* =============================================================
-   LoginGate — 분석 CTA·상단바에서 띄우는 로그인 모달(팝업). 구글·카카오만.
+   LoginGate — 구글·카카오 로그인과 토스 심사용 임시 이메일 로그인.
    프로바이더 클릭 → supabase OAuth 리다이렉트(전체 페이지 이동) → 복귀 시 세션 생성.
    복귀 경로(sessionStorage 'wl_postLogin')는 openLogin 이 심고, ai 도메인은 App 의 RootRedirect,
    facemarket 도메인은 FacemarketRoot 가 '/' 복귀 시 그 경로로 이동.
@@ -9,14 +9,13 @@
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthProvider.jsx';
-import { supabase } from '@/lib/supabase.js';
+import { PG_REVIEW_LOGIN_ENABLED } from '@/lib/tossKeys.js';
 import { Modal } from '@/components/ui.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import { clearSignupConsent, markSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import styles from './Login.module.css';
 
-/* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
-   운영은 소셜 OAuth 만 쓰므로 prod 에서는 절대 렌더되지 않는다(로컬 QA 전용). */
+/* 로컬 QA 이메일 로그인은 심사용 표시 설정과 독립적으로 유지한다. */
 const IS_LOCAL_SUPABASE = /127\.0\.0\.1|localhost/.test(
   import.meta.env.VITE_SUPABASE_URL || '',
 );
@@ -44,6 +43,7 @@ const FACEMARKET_LOCKUP = IS_FACEMARKET || IS_ADMIN;
    모델(FaceMarket)은 등록 위저드 1단계에서 따로 받고, 관리자는 셀러 약관의 당사자가 아니다 —
    그 둘은 탭 없이 지금까지의 단일 화면 그대로다. */
 const IS_SELLER = !IS_FACEMARKET && !IS_ADMIN;
+const EMAIL_LOGIN_ENABLED = IS_LOCAL_SUPABASE || (IS_SELLER && PG_REVIEW_LOGIN_ENABLED);
 
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
 function GoogleIcon() {
@@ -65,11 +65,11 @@ function KakaoIcon() {
 }
 
 export function LoginGate() {
-  const { session, signIn, closeLogin } = useAuth();
-  const [pending, setPending] = useState(null); // 'google' | 'kakao' | null
-  const [email, setEmail] = useState('qa@local.test');
+  const { session, signIn, signInWithPassword, closeLogin } = useAuth();
+  const [pending, setPending] = useState(null); // 'google' | 'kakao' | 'email' | null
+  const [email, setEmail] = useState(IS_LOCAL_SUPABASE ? 'qa@local.test' : '');
   const [password, setPassword] = useState('');
-  const [localErr, setLocalErr] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
   const [signupConsent, setSignupConsent] = useState(false);
   const oauthAttempt = useRef(null);
@@ -135,15 +135,26 @@ export function LoginGate() {
     closeLogin({ cancelled: false });
   }, [session, closeLogin]);
 
-  const handleLocal = async (e) => {
+  const handleEmail = async (e) => {
     e.preventDefault();
+    if (!EMAIL_LOGIN_ENABLED || mode !== 'login' || pending !== null) return;
     clearSignupConsent();
-    setPending('local'); setLocalErr('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) { setLocalErr(error.message || '로그인 실패'); setPending(null); }
-    // 성공 — 세션은 AuthProvider 의 onAuthStateChange 가 반영한다. 이 경로는 페이지 이동이
-    // 없어서 닫기가 실제로 실행되므로, 취소가 아니라고 분명히 알려 복귀 목표를 지킨다.
-    else closeLogin({ cancelled: false });
+    setPending('email');
+    setEmailError('');
+    try {
+      const { error } = await signInWithPassword({ email: email.trim(), password });
+      if (error) {
+        setEmailError('로그인하지 못했어요. 이메일과 비밀번호를 확인해 주세요.');
+        setPending(null);
+        return;
+      }
+      // 세션과 복귀 경로는 기존 AuthProvider 흐름을 그대로 사용한다.
+      setPassword('');
+      closeLogin({ cancelled: false });
+    } catch {
+      setEmailError('연결하지 못했어요. 잠시 후 다시 시도해 주세요.');
+      setPending(null);
+    }
   };
 
   // 복귀 지점(sessionStorage 'wl_postLogin')은 openLogin 이 이미 심어둠 — 여기선 redirect 만.
@@ -257,21 +268,26 @@ export function LoginGate() {
           </p>
         )}
 
-        {IS_LOCAL_SUPABASE && (
-          <form onSubmit={handleLocal} style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-            <div style={{ fontSize: 12, opacity: 0.6, textAlign: 'center' }}>로컬 QA 전용 · 이메일 로그인</div>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              placeholder="이메일" autoComplete="username"
-              style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6 }} />
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호" autoComplete="current-password"
-              style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6 }} />
-            {localErr && <div style={{ color: '#c0392b', fontSize: 12 }}>{localErr}</div>}
-            <button type="submit" disabled={pending !== null}
-              style={{ padding: '9px 12px', borderRadius: 6, cursor: 'pointer' }}>
-              {pending === 'local' ? '로그인 중…' : '이메일로 로그인'}
-            </button>
-          </form>
+        {EMAIL_LOGIN_ENABLED && mode === 'login' && (
+          <details className={styles.emailLogin} open={IS_LOCAL_SUPABASE || undefined}>
+            <summary>{IS_LOCAL_SUPABASE ? '로컬 QA 전용 · 이메일 로그인' : '이메일 로그인'}</summary>
+            <form className={styles.emailForm} onSubmit={handleEmail} aria-label="이메일 로그인" aria-busy={pending === 'email'}>
+              <label>
+                이메일
+                <input type="email" name="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username" autoCapitalize="none" spellCheck={false} required disabled={pending !== null} />
+              </label>
+              <label>
+                비밀번호
+                <input type="password" name="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password" required disabled={pending !== null} />
+              </label>
+              {emailError && <p className={styles.emailError} role="alert">{emailError}</p>}
+              <button type="submit" className={`${styles.btn} ${styles.emailSubmit}`} disabled={pending !== null}>
+                {pending === 'email' ? '로그인 중…' : '이메일로 로그인'}
+              </button>
+            </form>
+          </details>
         )}
 
         {/* 약관 고지. 셀러는 위 명시적 체크박스로 대체한다.

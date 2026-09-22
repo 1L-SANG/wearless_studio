@@ -7,14 +7,13 @@ const src = readFileSync(
   'utf8',
 );
 
-test('login offers a local-only email/password path via signInWithPassword', () => {
+test('login uses the shared auth provider for password sign-in', () => {
   assert.match(src, /signInWithPassword/);
+  assert.doesNotMatch(src, /supabase\.auth\./);
 });
 
-test('the email/password form is gated to local supabase (127.0.0.1 / localhost)', () => {
-  // only shown when VITE_SUPABASE_URL points at a local supabase — never in prod
+test('local QA remains available independently of the temporary seller review switch', () => {
   assert.match(src, /VITE_SUPABASE_URL/);
   assert.match(src, /127\.0\.0\.1|localhost/);
-  // the form render is guarded by the local flag
-  assert.match(src, /IS_LOCAL_SUPABASE &&/);
+  assert.match(src, /IS_LOCAL_SUPABASE \|\| \(IS_SELLER && PG_REVIEW_LOGIN_ENABLED\)/);
 });

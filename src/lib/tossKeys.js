@@ -36,3 +36,7 @@ export const SUBSCRIPTION_TRANSFER_ENABLED = false;
    TOSS_SECRET_KEY 가 없으면 이미 503 이고, 계약이 생기면 이 값만 true 로 바꾸면 된다.
    크레딧이 부족한 사용자는 요금제 업그레이드(즉시 비례결제)로 간다. */
 export const TOPUP_ENABLED = false;
+
+// 토스 심사용 임시 이메일 로그인. 심사 종료 후 false로 바꾸고 재배포한다.
+// 화면 노출만 제어한다. 사용한 심사 계정과 세션도 별도로 비활성화해야 한다.
+export const PG_REVIEW_LOGIN_ENABLED = true;
