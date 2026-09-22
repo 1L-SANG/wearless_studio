@@ -79,11 +79,11 @@ jobs:
               working-directory: server
               run: uv sync --frozen
 
+            # 파일별 벽시계를 찍는 러너 — 어느 파일이 느린지 로그에 남는다(샤드 균형 조정 근거).
             - name: 테스트 (샤드 ${{ matrix.shard }}/3)
               run: |
                   files=$(ls tests/frontend/*.test.mjs | awk -v s=${{ matrix.shard }} 'NR % 3 == s - 1')
-                  echo "$files" | wc -l | xargs echo "files in shard:"
-                  MOCK_API_LATENCY_SCALE=0 node --test $files
+                  CONC=3 scripts/ci/run-frontend-tests.sh $files
             # 빌드는 한 샤드만 — 세 번 할 이유가 없다.
             - run: pnpm build
               if: matrix.shard == 1
