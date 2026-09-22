@@ -449,6 +449,14 @@ export function adminConfirmPayoutStatement(modelId, periodMonth, confirmationId
   });
 }
 
+// POST .../simulate — 데모 전용. 서버가 stub 제공자일 때만 동작하고(아니면 409),
+// **돈은 움직이지 않는다.** outcome 으로 실패도 고를 수 있다.
+export function adminSimulatePayoutConfirmation(confirmationId, outcome) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/simulate`, {
+    method: 'POST', body: { outcome },
+  });
+}
+
 export function adminAdvancePayoutConfirmation(confirmationId, action) {
   return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, { method: 'POST' });
 }

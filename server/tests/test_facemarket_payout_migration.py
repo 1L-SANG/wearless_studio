@@ -34,3 +34,19 @@ def test_statements_have_one_row_per_model_month_and_valid_amounts():
     assert "alter table public.fm_payout_statements enable row level security" in sql
     assert "create policy" not in sql
     assert "execute function public.set_updated_at()" in sql
+
+
+def test_confirmations_record_which_provider_paid_and_why_it_failed():
+    """스텁(데모)으로 처리한 건은 원장에서 구분돼야 한다 — 화면·알림이 그걸 보고 표시한다."""
+    sql = " ".join(
+        (ROOT / "20260922120000_fm_payout_provider.sql").read_text().lower().split()
+    )
+    assert "alter table public.fm_payout_confirmations" in sql
+    # 기본값이 manual 이라 기존 행·기존 코드 경로는 그대로 수동으로 남는다.
+    assert "provider text not null default 'manual'" in sql
+    assert "check (provider in ('manual','stub'))" in sql
+    assert "provider_ref text" in sql
+    assert "failure_reason text" in sql
+    # 불변 트리거는 컬럼을 명시 나열한다(20260911170000) — 목록을 건드리면 안 된다.
+    assert "create trigger" not in sql and "create function" not in sql
+    assert "drop" not in sql
