@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -118,3 +119,22 @@ def test_the_image_carries_the_render_code(needed):
     """파드는 R2 묶음으로 코드를 받았다. 워커는 이미지에 구워 간다 — 빠지면 임포트에서 죽는다."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert needed in dockerfile
+
+
+def test_the_image_points_esrgan_at_the_volume():
+    """확대기 가중치는 볼륨에 있다 — face_esrgan 의 파드 기본 경로는 워커에 없다.
+
+    안 가리키면 upscale 잡이 매번 실패하고 Lanczos 로 떨어진다(2026-09-22 실측). 이미지가
+    가리키는 자리와 face_esrgan 이 읽는 env 이름이 어긋나면 조용히 옛 증상으로 돌아가므로,
+    실물 모듈의 env 이름으로 대조한다.
+    """
+    import face_esrgan
+
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    # face_esrgan.weights_path() 가 읽는 그 env 를 Dockerfile 이 볼륨 자리로 정해야 한다.
+    assert "FACE_RENDER_ESRGAN_WEIGHTS=/runpod-volume/esrgan/" in dockerfile
+    with mock.patch.dict(
+        "os.environ",
+        {"FACE_RENDER_ESRGAN_WEIGHTS": "/runpod-volume/esrgan/RealESRGAN_x4plus.pth"},
+    ):
+        assert face_esrgan.weights_path().startswith("/runpod-volume/esrgan/")

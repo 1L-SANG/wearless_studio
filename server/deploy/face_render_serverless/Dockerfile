@@ -33,9 +33,15 @@ RUN pip install --no-cache-dir \
 # xet 전송은 기본으로 꺼 둔다 — hub 1.x 의 기본 경로인데 54GB 수신에서 35파일 중 29개가
 # `File reconstruction error` 로 터졌다(파드 실측). handler.py 도 같은 값을 넣지만, 볼륨을
 # 채우러 이 이미지로 들어오는 사람이 핸들러를 안 거칠 수 있어 여기에도 둔다.
+#
+# ★ 얼굴 크롭 확대기(RealESRGAN) 가중치는 볼륨에 있다 — face_esrgan.weights_path() 의 파드
+#   기본값(/root/face_render/weights/…)은 워커에 없어서, 안 주면 upscale 잡이 매번 실패하고
+#   Lanczos 로 떨어진다(2026-09-22 실측). 볼륨 자리를 가리켜 확대기를 켠다. 파일이 없어도
+#   컷은 나온다(face_esrgan.get() 이 None → Lanczos) — 필수 경로가 아니다.
 ENV HF_HUB_DISABLE_XET=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    FACE_RENDER_ESRGAN_WEIGHTS=/runpod-volume/esrgan/RealESRGAN_x4plus.pth
 
 WORKDIR /app
 # 렌더에 필요한 것만. app/ 은 face_identity_qwen 하나 때문에 들어가지만 순수 파이썬이라 가볍다.
