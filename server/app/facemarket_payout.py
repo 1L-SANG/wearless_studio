@@ -475,12 +475,18 @@ async def confirm_payout_statement(model_id: str, period_month: str, body: Payou
             amount = sum(int(entry["model_amount"]) for entry in entries)
             if not entries or amount <= 0:
                 raise _err("payout_nothing_due", "새로 지급할 정산 내역이 없어요.", 409)
+            # provider 는 **확인서가 태어날 때** 박힌다. 여기서 안 넣으면 DB 기본값 manual 로
+            # 남아, 서버를 stub 으로 띄워도 화면의 시뮬레이션 버튼이 영영 안 뜬다
+            # (화면은 confirmation.simulated 를 본다). 실제로 그렇게 빠뜨렸다.
+            provider = payout_provider.resolve_provider(
+                request.app.state.settings.fm_payout_provider).name
             await cur.execute(f"""insert into fm_payout_confirmations
                 (id, model_id, period_month, responsible_admin, amount, count,
-                 bank_code, holder_name, account_number_enc, account_last4, account_version)
-                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning {_CONFIRMATION_FIELDS}""",
+                 bank_code, holder_name, account_number_enc, account_last4, account_version, provider)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning {_CONFIRMATION_FIELDS}""",
                 (confirmation_id, model_id, month, user_id, amount, len(entries), account["bank_code"],
-                 account["holder_name"], account["account_number_enc"], account["account_last4"], account["account_version"]))
+                 account["holder_name"], account["account_number_enc"], account["account_last4"],
+                 account["account_version"], provider))
             result = await cur.fetchone()
             await cur.execute("""insert into fm_payout_confirmation_entries (confirmation_id, settlement_id, amount)
                 select %s::uuid, entry_id, amount from unnest(%s::uuid[], %s::bigint[]) as selected(entry_id, amount)""",
