@@ -233,10 +233,10 @@ test('다음 지급 문구와 월별 지급 상태를 정산 화면에 보여줘
 
 test('미리보기 실패와 이미지 오류는 자리표시로 돌아가고 상세 창을 열 때 URL을 새로 받아요',async()=>{
   let calls=0;
-  const harness=await loadEarningsHarness({reportUsage:async()=>{},getPublicationPreviewUrl:async()=>{calls++;if(calls!==2)throw new Error('expired');return{url:'https://preview.test/fresh.png',expiresIn:600};}});
+  const harness=await loadEarningsHarness({reportUsage:async()=>{},getSettlementPreviewUrl:async()=>{calls++;if(calls!==2)throw new Error('expired');return{url:'https://preview.test/fresh.png',expiresIn:600,source:'publication'};}});
   try{
     const {MyPageUsage}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
-    const data={rows:[{...row,publicationId:'pub-1'}],loading:false,rowsError:false,markReported:()=>{}};
+    const data={rows:[row],loading:false,rowsError:false,markReported:()=>{}};
     const render=()=>harness.render(MyPageUsage,{data,month:'2026-09',onMonthChange:()=>{}});
     let tree=render(); for(const effect of harness.runtime.effects)effect(); await new Promise(resolve=>setImmediate(resolve)); tree=render();
     assert.equal(findTree(tree,node=>node.type==='img'),null);
@@ -245,6 +245,50 @@ test('미리보기 실패와 이미지 오류는 자리표시로 돌아가고 �
     image.props.onError(); tree=render(); assert.equal(findTree(tree,node=>node.type==='img'),null);
     await findTree(tree,node=>node.props?.['aria-haspopup']==='dialog').props.onClick({currentTarget:{}}); await new Promise(resolve=>setImmediate(resolve));
     assert.equal(findTree(render(),node=>node.type==='img'),null); assert.equal(calls,3);
+  }finally{await harness.close();}
+});
+
+test('발행본이 없는 정산 행도 정산 id 로 미리보기를 받아 생성 컷을 보여줘요',async()=>{
+  const asked=[];
+  const harness=await loadEarningsHarness({reportUsage:async()=>{},getSettlementPreviewUrl:async id=>{asked.push(id);return{url:'https://preview.test/cut.png',expiresIn:600,source:'cut'};}});
+  try{
+    const {MyPageUsage}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
+    const data={rows:[row],loading:false,rowsError:false,markReported:()=>{}};
+    const render=()=>harness.render(MyPageUsage,{data,month:'2026-09',onMonthChange:()=>{}});
+    let tree=render(); for(const effect of harness.runtime.effects)effect(); await new Promise(resolve=>setImmediate(resolve)); tree=render();
+    assert.deepEqual(asked,['s1'],'미리보기는 발행 여부와 무관하게 정산 id 로 묻는다');
+    assert.equal(findTree(tree,node=>node.type==='img').props.src,'https://preview.test/cut.png');
+    assert.doesNotMatch(textContent(tree),/발행 전/,'목록에는 출처 설명을 붙이지 않는다');
+    await findTree(tree,node=>node.props?.['aria-haspopup']==='dialog').props.onClick({currentTarget:{}}); await new Promise(resolve=>setImmediate(resolve)); tree=render();
+    const dialog=component(tree,'MyPageDialog');
+    assert.match(textContent(dialog),/발행 전/,'상세 창은 생성 컷임을 말한다');
+  }finally{await harness.close();}
+});
+
+test('미리보기는 보고 있는 달의 정산 행만 물어요',async()=>{
+  const asked=[];
+  const harness=await loadEarningsHarness({reportUsage:async()=>{},getSettlementPreviewUrl:async id=>{asked.push(id);return{url:`https://preview.test/${id}.png`,expiresIn:600,source:'cut'};}});
+  try{
+    const {MyPageUsage}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
+    const august={...row,id:'s0',paymentId:'p0',createdAt:'2026-08-15T00:00:00Z'};
+    const data={rows:[row,august],loading:false,rowsError:false,markReported:()=>{}};
+    const render=()=>harness.render(MyPageUsage,{data,month:'2026-09',onMonthChange:()=>{}});
+    render(); for(const effect of harness.runtime.effects)effect(); await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(asked,['s1'],'다른 달 행은 요청하지 않는다');
+  }finally{await harness.close();}
+});
+
+test('발행본 미리보기의 상세 창에는 생성 컷 안내가 없어요',async()=>{
+  const harness=await loadEarningsHarness({reportUsage:async()=>{},getSettlementPreviewUrl:async()=>({url:'https://preview.test/page.png',expiresIn:600,source:'publication'})});
+  try{
+    const {MyPageUsage}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
+    const data={rows:[row],loading:false,rowsError:false,markReported:()=>{}};
+    const render=()=>harness.render(MyPageUsage,{data,month:'2026-09',onMonthChange:()=>{}});
+    let tree=render(); for(const effect of harness.runtime.effects)effect(); await new Promise(resolve=>setImmediate(resolve));
+    await findTree(render(),node=>node.props?.['aria-haspopup']==='dialog').props.onClick({currentTarget:{}}); await new Promise(resolve=>setImmediate(resolve)); tree=render();
+    const dialog=component(tree,'MyPageDialog');
+    assert.equal(findTree(dialog,node=>node.type==='img').props.src,'https://preview.test/page.png');
+    assert.doesNotMatch(textContent(dialog),/발행 전/);
   }finally{await harness.close();}
 });
 

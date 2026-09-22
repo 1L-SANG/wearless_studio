@@ -27,7 +27,7 @@ before(async () => {
   vite = await createServer({
     appType: 'custom',
     logLevel: 'silent',
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
   });
   ({ buildEditorBlocksFromStoryboard, buildStoryboard } = await vite.ssrLoadModule('/src/mock/db.js'));
 });

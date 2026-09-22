@@ -86,7 +86,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   const root = new URL('../..', import.meta.url).pathname;
   const server = await createServer({
     configFile: false, root, logLevel: 'silent', appType: 'custom',
-    server: { middlewareMode: true, hmr: false }, ssr: { noExternal: true },
+    server: { middlewareMode: true, watch: null, hmr: false }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },
     define: { 'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(localSupabase ? 'http://127.0.0.1:54321' : 'https://auth.example.test') },
     plugins: [{

@@ -2153,13 +2153,13 @@
     "detailSubject": null,
     "direction": "back",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_back_01",
+    "id": "ex_horizon_men_top_full_back_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 6,
     "shot": "full",
     "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_back_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_back_02.webp",
     "variants": [
       "all"
     ]
@@ -2175,13 +2175,13 @@
     "detailSubject": null,
     "direction": "front",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_front_01",
+    "id": "ex_horizon_men_top_full_front_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 1,
     "shot": "full",
     "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_front_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_front_02.webp",
     "variants": [
       "all"
     ]
@@ -2197,13 +2197,13 @@
     "detailSubject": null,
     "direction": "side",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_profile_01",
+    "id": "ex_horizon_men_top_full_profile_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 4,
     "shot": "full",
     "sideStyle": "profile",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_profile_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_profile_02.webp",
     "variants": [
       "all"
     ]
@@ -2219,13 +2219,13 @@
     "detailSubject": null,
     "direction": "side",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_profile_right_01",
+    "id": "ex_horizon_men_top_full_profile_right_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 5,
     "shot": "full",
     "sideStyle": "profile",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_profile_right_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_profile_right_02.webp",
     "variants": [
       "all"
     ]
@@ -2241,13 +2241,13 @@
     "detailSubject": null,
     "direction": "side",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_side_01",
+    "id": "ex_horizon_men_top_full_side_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 2,
     "shot": "full",
     "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_side_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_side_02.webp",
     "variants": [
       "all"
     ]
@@ -2263,13 +2263,13 @@
     "detailSubject": null,
     "direction": "side",
     "gender": "men",
-    "id": "ex_horizon_men_top_full_side_right_01",
+    "id": "ex_horizon_men_top_full_side_right_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 3,
     "shot": "full",
     "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_men_top_full_side_right_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_men_top_full_side_right_02.webp",
     "variants": [
       "all"
     ]
@@ -2281,18 +2281,18 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "back",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_back_01",
+    "id": "ex_horizon_women_top_full_back_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 6,
     "shot": "full",
     "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_back_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_back_02.webp",
     "variants": [
       "all"
     ]
@@ -2304,18 +2304,18 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "front",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_front_01",
+    "id": "ex_horizon_women_top_full_front_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 1,
     "shot": "full",
     "sideStyle": null,
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_front_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_front_02.webp",
     "variants": [
       "all"
     ]
@@ -2327,18 +2327,18 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "side",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_profile_01",
+    "id": "ex_horizon_women_top_full_profile_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 4,
     "shot": "full",
     "sideStyle": "profile",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_profile_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_profile_02.webp",
     "variants": [
       "all"
     ]
@@ -2350,18 +2350,18 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "side",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_profile_right_01",
+    "id": "ex_horizon_women_top_full_profile_right_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 5,
     "shot": "full",
     "sideStyle": "profile",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_profile_right_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_profile_right_02.webp",
     "variants": [
       "all"
     ]
@@ -2373,18 +2373,18 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "side",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_side_01",
+    "id": "ex_horizon_women_top_full_side_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 2,
     "shot": "full",
     "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_side_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_side_02.webp",
     "variants": [
       "all"
     ]
@@ -2396,18 +2396,150 @@
       "outer",
       "dress"
     ],
-    "clothingType": "dress",
+    "clothingType": "top",
     "cutType": "horizon",
     "detailSubject": null,
     "direction": "side",
     "gender": "women",
-    "id": "ex_horizon_women_top_full_side_right_01",
+    "id": "ex_horizon_women_top_full_side_right_02",
     "mood": null,
     "presentationMethod": null,
     "rank": 3,
     "shot": "full",
     "sideStyle": "threeQuarter",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-21-horizon-rotation-6cuts-01/thumb/ex_horizon_women_top_full_side_right_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_full_side_right_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "back",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_back_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "sideStyle": null,
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_back_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_front_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "sideStyle": null,
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_front_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_profile_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "sideStyle": "profile",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_profile_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_profile_right_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "sideStyle": "profile",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_profile_right_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_side_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "sideStyle": "threeQuarter",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_side_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_side_right_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "sideStyle": "threeQuarter",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-09-22-horizon-rotation-18cuts-01/thumb/ex_horizon_women_top_medium_side_right_01.webp",
     "variants": [
       "all"
     ]

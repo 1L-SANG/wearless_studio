@@ -131,7 +131,14 @@ def test_transport_error_is_wrapped_as_gemini_error(monkeypatch):
         async def post(self, *args, **kwargs):
             raise httpx.ConnectError("offline")
 
+    # 재시도 backoff(5초 → 10초)를 실제로 자면 이 테스트 하나가 15초 — 스위트 최장이었다.
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
     monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.asyncio, "sleep", fake_sleep)
     client = gemini_image.GeminiImageClient(settings())
     with pytest.raises(gemini_image.GeminiError, match="ConnectError") as raised:
         asyncio.run(
@@ -144,6 +151,7 @@ def test_transport_error_is_wrapped_as_gemini_error(monkeypatch):
         )
 
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
+    assert sleeps == [5, 10]  # 3회 시도 사이 backoff 는 그대로 — 자지만 않는다
 
 
 def _wire_response(monkeypatch, response):

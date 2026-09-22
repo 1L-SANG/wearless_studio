@@ -4,7 +4,7 @@ import { createServer } from 'vite';
 async function apiHarness() {
   const key=`__c2api${Math.random().toString(36).slice(2)}`;
   const calls=[];globalThis[key]=calls;
-  const server=await createServer({configFile:false,logLevel:'silent',root:new URL('../..',import.meta.url).pathname,server:{middlewareMode:true},plugins:[{
+  const server=await createServer({configFile:false,logLevel:'silent',root:new URL('../..',import.meta.url).pathname,server:{middlewareMode:true,watch:null},plugins:[{
     name:'c2-api-test',enforce:'pre',resolveId(id){if(id==='@/lib/api/httpAdapter.js')return '\0c2-http';if(id==='@/lib/supabase.js')return '\0c2-auth';},
     load(id){if(id==='\0c2-http')return `export const http=async(path,options)=>{globalThis[${JSON.stringify(key)}].push({path,options});return {};};`;if(id==='\0c2-auth')return `export const supabase={auth:{getSession:async()=>({data:{session:{access_token:'local-test'}}})}};`;}
   }]});

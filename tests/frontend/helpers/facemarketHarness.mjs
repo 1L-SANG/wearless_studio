@@ -60,7 +60,11 @@ export async function modelComponentHarness({
     configFile: false,
     logLevel: 'silent',
     root: new URL('../../..', import.meta.url).pathname,
-    server: { middlewareMode: true },
+    // 이 harness 는 테스트마다 vite 서버를 새로 띄운다(facemarket-register-v3 만 38번).
+    // 워처를 켜 두면 chokidar 가 그때마다 프로젝트 루트를 훑는데, CI 에는 조립 정본 대조용
+    // server/.venv(7천 파일)가 같이 있어 리눅스 inotify 로 그게 통째로 비용이 된다 —
+    // 이 파일 하나가 CI 에서 155초(전체 473초의 3분의 1)였다.
+    server: { middlewareMode: true, hmr: false, watch: null },
     ssr: { noExternal: true, external: ['lucide-react'] },
     esbuild: { jsx: 'automatic' },
     appType: 'custom',

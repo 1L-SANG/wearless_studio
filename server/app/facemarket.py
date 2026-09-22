@@ -2410,6 +2410,58 @@ async def model_publication_preview_url(
     return {"url": r2.preview_url(row["r2_key"], 600), "expiresIn": 600}
 
 
+@router.get("/model/settlements/{settlement_id}/preview-url")
+async def model_settlement_preview_url(
+    settlement_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    """정산 한 건이 가리키는 그림 — 발행본이 있으면 발행본, 없으면 그 잡이 만든 생성 컷.
+
+    상세페이지는 브라우저가 DOM 을 캡처해 만들므로 서버가 그 픽셀을 갖는 순간은 셀러가
+    다운로드하며 공증 업로드할 때뿐이다(fm_publication_records). 셀러가 한 번도 내려받지
+    않으면 정산 행은 있는데 발행본이 영영 없다 — 운영에서 실제로 그랬다(2026-09-22, 0행).
+    그래서 서버가 이미 가진 생성 컷(fm_output_records → assets)으로 폴백한다. 어느 쪽을
+    돌려줬는지 source 로 알려 UI 가 "발행 전" 임을 말할 수 있게 한다."""
+    try:
+        settlement_id = str(uuid.UUID(settlement_id))
+    except (ValueError, TypeError, AttributeError):
+        raise _err("not_found", "정산 기록을 찾을 수 없어요.", status=404) from None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select publication.r2_key as publication_key, cut.r2_key as cut_key
+                     from fm_settlements st
+                     join fm_licenses l on l.id = st.license_id
+                     join fm_models m on m.id = l.model_id
+                     left join jobs j on j.id = st.job_id
+                     left join lateral (
+                        select pub.r2_key from fm_publication_records pub
+                         where pub.project_id = j.project_id and pub.model_id = m.id
+                           and pub.kind = 'long_png' and pub.revoked_at is null
+                           and pub.r2_key is not null
+                         order by pub.created_at desc, pub.id desc limit 1
+                     ) publication on true
+                     left join lateral (
+                        select a.r2_key from fm_output_records r
+                          join assets a on a.id = r.asset_id and a.deleted_at is null
+                         where r.job_id = st.job_id and r.model_id = m.id
+                         order by r.created_at desc, r.id desc limit 1
+                     ) cut on true
+                    where st.id = %s and m.user_id = %s""",
+                (settlement_id, user_id),
+            )
+            row = await cur.fetchone()
+    if row is None or not (row.get("publication_key") or row.get("cut_key")):
+        raise _err("not_found", "정산 기록을 찾을 수 없어요.", status=404)
+    r2 = getattr(request.app.state, "r2", None)
+    if r2 is None:
+        raise _err("storage_unconfigured", "미리보기를 준비 중이에요.", status=503)
+    source = "publication" if row.get("publication_key") else "cut"
+    key = row["publication_key"] if source == "publication" else row["cut_key"]
+    response.headers["Cache-Control"] = "no-store"
+    return {"url": r2.preview_url(key, 600), "expiresIn": 600, "source": source}
+
+
 @router.get(
     "/settlements/summary",
     response_model=SettlementSummary,

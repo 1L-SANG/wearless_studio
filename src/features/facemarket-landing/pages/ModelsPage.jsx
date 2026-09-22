@@ -15,7 +15,7 @@ const DESCRIPTION =
 
 export function ModelsPage() {
   return (
-    <LandingShell description={DESCRIPTION} title={TITLE}>
+    <LandingShell description={DESCRIPTION} surface="plain" title={TITLE}>
       {() => <BrowseSection />}
     </LandingShell>
   );

@@ -24,7 +24,7 @@ async function harness(t, profile) {
   const root = new URL('../..', import.meta.url).pathname;
   const server = await createServer({
     configFile: false, root, logLevel: 'silent',
-    server: { middlewareMode: true, hmr: false }, ssr: { noExternal: true },
+    server: { middlewareMode: true, watch: null, hmr: false }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },
     plugins: [{
       name: 'confirmation-unavailable-test', enforce: 'pre',

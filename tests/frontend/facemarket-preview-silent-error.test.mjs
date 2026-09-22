@@ -7,7 +7,7 @@ test('선택 미리보기 실패만 네트워크와 HTTP 오류를 콘솔에 남
   globalThis[key] = { mode: 'http' };
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({ configFile: false, envDir: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
-    server: { middlewareMode: true }, resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
+    server: { middlewareMode: true, watch: null }, resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
     ssr: { noExternal: true }, appType: 'custom', plugins: [{ name: 'preview-silent-http', enforce: 'pre', resolveId(id) {
       // Vite's alias plugin can resolve @ before this plugin sees the import.
       // Never load the real auth client or depend on the developer's .env files.
@@ -26,9 +26,11 @@ test('선택 미리보기 실패만 네트워크와 HTTP 오류를 콘솔에 남
   const api = await server.ssrLoadModule('/src/lib/api/facemarket.js');
 
   await assert.rejects(api.getPublicationPreviewUrl('publication-1'));
+  await assert.rejects(api.getSettlementPreviewUrl('settlement-1'));
   assert.equal(logs.length, 0);
   globalThis[key].mode = 'network';
   await assert.rejects(api.getPublicationPreviewUrl('publication-1'));
+  await assert.rejects(api.getSettlementPreviewUrl('settlement-1'));
   assert.equal(logs.length, 0);
 
   await assert.rejects(api.getPayoutStatements());
