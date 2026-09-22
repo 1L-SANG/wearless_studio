@@ -82,7 +82,13 @@ test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드�
   assert.match(aiPanel, /direction=\{galleryDirectionVal\} shot=\{galleryShotVal\}/);
   assert.match(aiPanel, /includeMirrorExamples=\{galleryCutType === 'styling'\}/);
   assert.match(aiPanel, /contentRole: effectiveRecipe\.contentRole/);
-  assert.match(aiPanel, /cutType: effectiveCutType, direction: isMirror \? null : effectiveDirectionVal, shot: effectiveShotVal/);
+  // 거울은 방향이 없고(null), 그 외에는 **화면 값이 아니라 컷 스펙**이 나간다 —
+  // 방향 칩은 4개(정면·사선·옆모습·뒷면)인데 서버 계약은 front/side/back 셋이다.
+  // 화면 값을 그대로 보내면 'threeQuarter' 가 direction 으로 날아간다.
+  assert.match(aiPanel, /cutType: effectiveCutType,/);
+  assert.match(aiPanel, /direction: isMirror \? null : directionSpec\.direction,/);
+  assert.match(aiPanel, /sideStyle: isMirror \? null : directionSpec\.sideStyle,/);
+  assert.match(aiPanel, /shot: effectiveShotVal/);
   assert.match(aiPanel, /appendMirror: cut === 'styling'/);
   assert.doesNotMatch(aiPanel, /setCutType\('mirror'\)/, '거울 선택은 원래 컷 탭 상태를 덮어쓰지 않는다');
 });

@@ -141,7 +141,7 @@ sharpen them; pick an element whose shape the reference clearly proves
 [[DIR:front]]Camera angle: front-facing. A slight natural turn of the body (up to about 30 degrees) is acceptable and welcome.
 [[DIR:side]]Camera angle: a clear side profile of the model.
 [[DIR:side_identity]]Camera angle: the model's body is turned to the side, but the head is turned back toward the camera in a three-quarter view — BOTH eyes visible, the far eye never hidden by the nose. Not a full side profile.
-[[DIR:back]]Camera angle: from behind — the back of the garment is the subject.
+[[DIR:back]]Camera angle: from behind — the back of the garment is the subject. The model faces straight away from the camera and the head is turned fully away too: NO face visible at all — no eye, nose, mouth or cheek, not even a partial profile or a glance over the shoulder. Only the back of the head and the nape show. (An angle swap pastes the registered back-of-head photo here; any turned head leaves the face and the pasted nape mismatched.)
 [[DIR:front_product]]Show the front side of the garment.
 [[DIR:back_product]]Show the back side of the garment.
 

@@ -363,6 +363,7 @@ def _spread_studio_directions(raw: list) -> None:
         and block.get("exampleSelectionOrigin") != "user"
     ]
     if len(open_slots) < _STUDIO_SPREAD_MIN_CUTS:
+        _fill_missing_side_styles(raw)
         return
     # 첫 컷은 정면으로 남긴다 — 핏 섹션의 기준 컷이고, 정면이 하나도 없으면 안 된다.
     for block, (direction, side_style) in zip(open_slots[1:], _STUDIO_DIRECTION_SPREAD):
@@ -372,6 +373,39 @@ def _spread_studio_directions(raw: list) -> None:
         if block.get("exampleId"):
             block["exampleId"] = None
             block["exampleSelectionOrigin"] = None
+    _fill_missing_side_styles(raw)
+
+
+def _fill_missing_side_styles(raw: list) -> None:
+    """direction="side" 인데 sideStyle 이 빈 핏 확인 컷에 갈래를 채운다(제자리 수정).
+
+    ★ 이게 없으면 **사선이 영영 안 나온다.** 위 배분은 "방향을 안 정한" 컷만 건드리는데,
+      콘티 AI 는 direction 을 직접 주면서 sideStyle 은 모른다(그 개념이 콘티 스키마에 없다).
+      그러면 배분이 통째로 건너뛰고 side 컷은 sideStyle=None 으로 남는데, 소비자는 미기재를
+      옆모습으로 읽으므로(cut_generator._side_style_of) 전부 90도로 나간다.
+      2026-09-22 운영 실측: 콘티가 front 6·back 2·side 1 을 직접 배정해 사선이 0장이었다.
+
+    side 가 여러 장이면 옆모습·사선을 번갈아 준다. 한 장뿐이면 **사선**을 준다 —
+    90도 옆모습은 얼굴이 거의 안 보여 정면 컷과 구분이 덜 가고, 사선은 등록 인물의 얼굴이
+    보이는 컷이라 핏 확인 섹션에서 값이 더 크다.
+    """
+    side_blocks = [
+        block for block in raw
+        if isinstance(block, dict)
+        and block.get("source") != "mine"
+        and (block.get("sectionRole") or block.get("section_role")
+             or resolve_section_role(block)) == "studio"
+        and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
+        and block.get("direction") == "side"
+        and not block.get("sideStyle")
+    ]
+    if not side_blocks:
+        return
+    if len(side_blocks) == 1:
+        side_blocks[0]["sideStyle"] = "threeQuarter"
+        return
+    for index, block in enumerate(side_blocks):
+        block["sideStyle"] = "profile" if index % 2 == 0 else "threeQuarter"
 
 
 def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:

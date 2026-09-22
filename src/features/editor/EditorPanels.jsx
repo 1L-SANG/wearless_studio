@@ -21,6 +21,7 @@ import {
   generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
@@ -315,7 +316,14 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   };
   // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
   // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
-  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
+  // 방향 칩은 **화면 값**(정면·사선·옆모습·뒷면)이다. 서버는 front/side/back 셋만 알므로
+  // 나가기 전에 컷 스펙으로 되돌린다 — 안 하면 'threeQuarter' 가 direction 으로 날아간다.
+  // 제품컷은 앞/뒷면 둘뿐이라 화면 값이 곧 서버 값이다(변환하면 오히려 망가진다).
+  const generateWithPicks = () => runGenerate(chips.map((c) => {
+    if (c.type !== 'direction' || isProduct) return { type: c.type, value: c.value, label: c.label };
+    const spec = specFromDirectionChoice(c.value);
+    return { type: c.type, value: spec.direction, sideStyle: spec.sideStyle, label: c.label };
+  }));
   const generateAuto = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
@@ -425,8 +433,19 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
   const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const effectiveDirectionVal = effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
-    ? effectiveRecipe.direction : effectiveDirectionOptions[0].value;
+  // 착용컷 방향 칩은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 서버 계약은 셋이다.
+  // 변환은 lib/directionChoice.js 한 곳 — 콘티보드와 같은 규칙을 써야 한 화면에서 고른 값이
+  // 다른 화면에서 다른 컷이 되지 않는다. 이 변환이 없으면 서버 값 'side' 가 칩 목록에 없어서
+  // 옆 컷이 "정면"으로 보이고, 고른 'threeQuarter' 가 그대로 direction 으로 날아간다.
+  // 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다.
+  const effectiveDirectionVal = isProduct
+    ? (effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
+      ? effectiveRecipe.direction : effectiveDirectionOptions[0].value)
+    : directionChoiceFromSpec(effectiveRecipe);
+  // 서버로 보낼 조각 — 화면 값을 컷 스펙으로 되돌린다.
+  const directionSpec = isProduct
+    ? { direction: effectiveDirectionVal, sideStyle: null }
+    : specFromDirectionChoice(effectiveDirectionVal);
   const effectiveShotVal = effectiveShotOptions.some((option) => option.value === effectiveRecipe.shot)
     ? effectiveRecipe.shot : effectiveShotOptions[0].value;
   const [modelOpen, setModelOpen] = useState(false);
@@ -638,7 +657,11 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           <Button variant="primary" block icon="sparkles" className="btn-glowring"
             disabled={brandUseCategoryBlocked} onClick={() => onGenerate({
             contentRole: effectiveRecipe.contentRole,
-            colorId: colorVal, cutType: effectiveCutType, direction: isMirror ? null : effectiveDirectionVal, shot: effectiveShotVal, modelId: model, exampleId, refScope,
+            colorId: colorVal, cutType: effectiveCutType,
+            // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
+            direction: isMirror ? null : directionSpec.direction,
+            sideStyle: isMirror ? null : directionSpec.sideStyle,
+            shot: effectiveShotVal, modelId: model, exampleId, refScope,
             outerClosureState: showOuterClosure ? outerClosure : null,
             matchIds: isProduct ? [] : matchIds,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
