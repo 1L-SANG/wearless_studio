@@ -1,3 +1,4 @@
+import { SponsorshipFields } from './SponsorshipSettings.jsx';
 import { Camera, ImagePlus, Info, RefreshCw, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
@@ -134,7 +135,7 @@ export function renderReshoot({ enrollment, previews, busy, onFile }) {
   </>;
 }
 
-export function renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed }) {
+export function renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading }) {
   const descriptions = ['상의, 하의, 아우터, 원피스 같은 평상복이에요.', '운동복, 레깅스, 요가복이에요.', '라운지웨어, 파자마예요.'];
   return <>
     {heading('사용 조건을 정해요', '내 얼굴을 사용할 옷 종류를 골라 주세요.')}
@@ -149,6 +150,7 @@ export function renderConditions({ terms, setTerms, body, setBody, busy, priceAg
       <li>셀러 이용료: 1회 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 {formatKrw(MONTHLY_PASS_PRICE_KRW)} (월 {MONTHLY_PASS_CUTS}회)</li>
       <li>결제 금액의 {MODEL_SHARE * 100}%를 정산받아요.</li>
     </ul></div>
+    {sponsorship && <SponsorshipFields value={sponsorship} onChange={setSponsorship} disabled={busy || sponsorshipLoading} />}
     <div className={s.contractLink}>{legalLink('/license-agreement', '계약 요약과 전문 보기')}</div>
     <label className={`${s.consentLabel} ${s.priceConsent}`} htmlFor="price-agreed"><input id="price-agreed" type="checkbox" checked={priceAgreed} disabled={busy} onChange={(event) => setPriceAgreed(event.target.checked)} /><span>셀러 사용료 규칙에 동의해요<span className={s.required}> (필수)</span></span></label>
   </>;

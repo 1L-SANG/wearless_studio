@@ -1,3 +1,5 @@
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { getSponsorshipInterest, requestSponsorshipInterest } from '@/lib/api/facemarket.js';
 /* =============================================================
    모델 상세 서랍 — 카드를 누르면 **오른쪽에서** 나온다(사용자 지시: "팝업처럼이 아니라 우측에서
    기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다. 서랍 자체는 검정 바탕.
@@ -16,7 +18,7 @@
    접근성: 열릴 때 포커스를 창 안으로 들이고, Esc·바깥 클릭으로 닫고, 닫을 때 원래 있던 곳으로
    포커스를 되돌린다. Tab 은 창 안에서만 돈다.
    ============================================================= */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { sellerStudioUrl } from '../data/publicModels.js';
 import { pricingParts } from '@/lib/facemarketPricing.js';
@@ -41,6 +43,42 @@ function Pair({ cells }) {
 }
 
 export function ModelDetailDialog({ model, onClose }) {
+  const { session, loading, openLogin } = useAuth();
+  const [interested, setInterested] = useState(false);
+  const [interestBusy, setInterestBusy] = useState(false);
+  const [interestError, setInterestError] = useState('');
+  const submittingInterest = useRef(false);
+  const interestVersion = useRef(0);
+  const userId = session?.user?.id;
+  const sponsorship = model.kind === 'real' ? model.sponsorship : null;
+  useEffect(() => {
+    const version = ++interestVersion.current;
+    submittingInterest.current = false;
+    setInterested(false); setInterestBusy(false); setInterestError('');
+    if (!userId || !sponsorship?.enabled) return undefined;
+    let alive = true;
+    getSponsorshipInterest(model.id).then(result => {
+      if (alive && interestVersion.current === version) setInterested(result.interested === true);
+    }).catch(() => {
+      if (alive && interestVersion.current === version) setInterestError('알림 신청 상태를 확인하지 못했어요. 다시 신청해도 중복되지 않아요.');
+    });
+    return () => { alive = false; interestVersion.current += 1; };
+  }, [userId, model.id, sponsorship?.enabled]);
+  const requestInterest = async () => {
+    if (loading || submittingInterest.current || interested) return;
+    if (!session) { onClose(); openLogin(`/models?model=${encodeURIComponent(model.id)}`); return; }
+    // 신청을 시작하면 그 전에 보낸 조회 응답은 더 이상 화면을 바꾸지 않아요.
+    const version = ++interestVersion.current;
+    submittingInterest.current = true; setInterestBusy(true); setInterestError('');
+    try {
+      await requestSponsorshipInterest(model.id);
+      if (interestVersion.current === version) setInterested(true);
+    } catch (error) {
+      if (interestVersion.current === version) setInterestError(error.message || '알림 신청을 저장하지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      if (interestVersion.current === version) { submittingInterest.current = false; setInterestBusy(false); }
+    }
+  };
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   // 창을 열기 직전에 포커스를 쥐고 있던 요소. 닫을 때 여기로 돌려준다.
@@ -165,6 +203,25 @@ export function ModelDetailDialog({ model, onClose }) {
               </dl>
             </div>
           )}
+
+          {sponsorship?.enabled && <section className={s.dialogSponsorship} aria-label="의류 협찬">
+            <h3>의류 협찬</h3>
+            <dl className={s.dialogRows}>
+              {/* 비로그인에는 계정·팔로워·사이즈를 보이지 않아요(프로필 정보 수집 동의 범위). */}
+              {!sponsorship.masked && <Pair cells={[{ dt: '인스타 계정', dd: <a href={sponsorship.instagramUrl} target="_blank" rel="noopener noreferrer">@{sponsorship.instagramHandle}</a> },
+                { dt: '팔로워 수', dd: `${sponsorship.instagramFollowers.toLocaleString('ko-KR')}명` }]} />}
+              {!sponsorship.masked && <Pair cells={[{ dt: '상의', dd: sponsorship.sizeTop }, { dt: '하의 허리', dd: `${sponsorship.sizeBottomWaist}인치` }]} />}
+              <Pair cells={[{ dt: '게시 조건', dd: '옷 받은 뒤 3일 이내 1회 · 30일 유지' }]} />
+            </dl>
+            {sponsorship.masked && <p className={s.dialogSponsorshipNote}>로그인하면 인스타 계정, 팔로워 수, 사이즈를 볼 수 있어요.</p>}
+            {!sponsorship.masked && <p className={s.dialogSponsorshipNote}>팔로워 수는 본인 입력이에요.{sponsorship.reportedAt && !Number.isNaN(Date.parse(sponsorship.reportedAt)) ? ` ${new Date(sponsorship.reportedAt).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })} 기준이에요.` : ''}</p>}
+            <p className={s.dialogSponsorshipNote}>옷 증정에 대한 본인 인스타 피드 게시예요. 현금 보상은 없어요. 게시물 재사용은 별도 합의가 필요해요.</p>
+            <button type="button" className={s.interestButton} onClick={requestInterest} disabled={loading || interestBusy || interested}>
+              {interested ? '알림 신청됨' : interestBusy ? '알림 신청 중이에요…' : '협찬 요청하기 · 준비 중, 알림 받기'}
+            </button>
+            <p className={s.dialogSponsorshipNote} role="status">{interested ? '이 모델의 협찬 요청 기능이 준비되면 알려드릴게요.' : '지금은 알림 신청만 받아요. 실제 협찬 요청이나 배송은 시작되지 않아요.'}</p>
+            {interestError && <p className={s.dialogSponsorshipNote} role="alert">{interestError}</p>}
+          </section>}
 
           {model.verified && (
             <p className={s.dialogVerify}>

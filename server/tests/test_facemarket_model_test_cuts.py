@@ -110,6 +110,12 @@ class FakeCursor:
                         "cover_image_url": model.get("cover_image_url"),
                         "fullbody_image_url": model.get("fullbody_image_url"),
                         "confirmed_at": model.get("confirmed_at"),
+                        "sponsorship_enabled": model.get("sponsorship_enabled", False),
+                        "instagram_handle": model.get("instagram_handle"),
+                        "instagram_followers": model.get("instagram_followers"),
+                        "instagram_followers_reported_at": model.get("instagram_followers_reported_at"),
+                        "size_top": model.get("size_top"),
+                        "size_bottom_waist": model.get("size_bottom_waist"),
                     }
                     self.many = [self.one]
             else:
@@ -1024,6 +1030,27 @@ async def _noop_notify(_settings, *, display_name, admin_link):
     return None
 
 
+def test_owner_test_cut_profile_retains_disabled_sponsorship(test_cut_api):
+    client, store, _face_r2, _public_r2, make_token = test_cut_api
+    store["model"].update(
+        sponsorship_enabled=False,
+        instagram_handle="saved.model",
+        instagram_followers=1200,
+        instagram_followers_reported_at=NOW,
+        size_top="M",
+        size_bottom_waist=28,
+    )
+    response = client.get("/v1/facemarket/model/test-cuts", headers=_auth(make_token))
+    assert response.status_code == 200, response.text
+    profile = response.json()["profile"]
+    assert profile["sponsorshipEnabled"] is False
+    assert profile["instagramHandle"] == "saved.model"
+    assert profile["instagramFollowers"] == 1200
+    assert profile["instagramFollowersReportedAt"] == "2026-09-07T03:00:00Z"
+    assert profile["sizeTop"] == "M"
+    assert profile["sizeBottomWaist"] == 28
+
+
 def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
     test_cut_api, monkeypatch
 ):
@@ -1048,6 +1075,13 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
     assert {cut["kind"] for cut in mine.json()["cuts"]} == {"closeup", "fullbody"}
     monkeypatch.setattr(facemarket_admin_models, "_today", lambda: date(2026, 9, 7))
     assert mine.json()["profile"] == {
+        "sponsorshipEnabled": False,
+        "instagramHandle": None,
+        "instagramFollowers": None,
+        "instagramFollowersReportedAt": None,
+        "sizeTop": None,
+        "sizeBottomWaist": None,
+        "sponsorshipProfileConsentAt": None,
         "displayName": "정일상",
         "gender": "male",
         "ageBand": "20대 초반",
@@ -1188,12 +1222,19 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api, 
     response = client.get("/v1/facemarket/public/models")
 
     assert response.status_code == 200, response.text
-    assert response.headers["cache-control"] == "public, max-age=60"
+    assert response.headers["cache-control"] == "no-store"
     assert len(response.json()["items"]) == 1
     item = response.json()["items"][0]
     # 공개 후보 대역에는 생년월일이 없다 → 나이대 None. 구간 계산은 test_age_band_* 가 따로 본다.
     assert "birthdate" not in response.text
     assert item == {
+        "sponsorshipEnabled": False,
+        "instagramHandle": None,
+        "instagramFollowers": None,
+        "instagramFollowersReportedAt": None,
+        "sizeTop": None,
+        "sizeBottomWaist": None,
+        "sponsorshipProfileConsentAt": None,
         "id": MODEL_ID,
         "displayName": "정일상",
         "gender": "male",

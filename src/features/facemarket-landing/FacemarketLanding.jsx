@@ -11,6 +11,7 @@
 import { LandingShell } from './LandingShell.jsx';
 import { HeroSection } from './sections/HeroSection.jsx';
 import { GallerySection } from './sections/GallerySection.jsx';
+import { SponsorshipSection } from './sections/SponsorshipSection.jsx';
 import { FoundingSection } from './sections/FoundingSection.jsx';
 import { RightsSection } from './sections/RightsSection.jsx';
 import { HowItWorksSection } from './sections/HowItWorksSection.jsx';
@@ -48,6 +49,7 @@ export function FacemarketLanding() {
             <GallerySection />
           </div>
           <div className={s.landingFlow}>
+            <SponsorshipSection />
             <FoundingSection onPrimary={onPrimary} />
             <RightsSection />
             <HowItWorksSection />

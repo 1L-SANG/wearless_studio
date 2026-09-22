@@ -64,7 +64,7 @@ let noticeDismissed = false;
 export function LandingShell({ title, description, children, variant = 'landing', surface }) {
   const { session, loading, openLogin } = useAuth();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, hash, key: locationKey } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null, { scope: 'landing' }));
   const [statusPill, setStatusPill] = useState(null);
   const [ctaResolvedFor, setCtaResolvedFor] = useState(null);
@@ -84,6 +84,12 @@ export function LandingShell({ title, description, children, variant = 'landing'
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
+
+  useEffect(() => {
+    if (pathname === '/' && hash === '#sponsorship') {
+      document.getElementById('sponsorship')?.scrollIntoView({ block: 'start' });
+    }
+  }, [pathname, hash, locationKey]);
 
   useEffect(() => {
     const restoreHead = applyHead(title, description);

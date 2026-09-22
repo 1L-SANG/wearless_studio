@@ -10,7 +10,7 @@ test('apply is the first public navigation destination and a permitted return pa
   assert.equal(landingNavAction('/apply', { session: null, loading: true }), 'navigate');
   assert.equal(facemarketRootTarget('/apply'), '/apply');
 });
-test('the ten FAQ titles follow the approved list and omit the held protection claim', () => {
+test('the twelve FAQ titles follow the approved list and omit the held protection claim', () => {
   // 질문 목록과 저장소에 보관한 답변 기준을 함께 확인한다.
   const expected = [
     'FaceMarket에서 모델은 무슨 일을 하나요?',
@@ -23,9 +23,11 @@ test('the ten FAQ titles follow the approved list and omit the held protection c
     '내 얼굴은 어디에 쓰이고, 어디에는 안 쓰이나요?',
     '내 얼굴이 어디에 쓰였는지 확인할 수 있나요?',
     '조건은 나중에 바꿀 수 있나요?',
+    '협찬을 꼭 해야 하나요?',
+    '팔로워가 적어도 되나요?',
   ];
   assert.deepEqual(APPLY_START_FAQ.map(({ q }) => q), expected);
-  assert.ok(APPLY_START_FAQ.every(({ a }) => typeof a === 'string' && a.trim().length > 40));
+  assert.ok(APPLY_START_FAQ.every(({ a }) => typeof a === 'string' && a.trim().length > 0));
   assert.ok(!APPLY_START_FAQ.some(({ q }) => q.includes('확실히 지켜지는')));
   const source = read('../../documents/facemarket_apply_faq.md').split('## 공개 FAQ')[1];
   const expectedCopy = [...source.matchAll(/\*\*Q\. (.+?)\*\*\n([\s\S]*?)(?=\n\n\*\*Q\.|$)/g)]

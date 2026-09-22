@@ -17,9 +17,10 @@ from pydantic import Field
 
 from . import admin_guard, facemarket_notify, repo
 from .agents.face_identity import SKIN_FINISH_CODES, SKIN_FINISH_DEFAULT
-from .auth import require_user
+from .auth import require_user, optional_user
 from .db import get_conn
-from .facemarket import _cover_serving_url
+from .facemarket import _assert_account_open, _cover_serving_url, _model_id_or_404
+from .facemarket_sponsorship import SponsorshipFields, sponsorship_view
 from .models import CamelModel
 from .personalization import CONSENT_DOC_VERSION
 from .r2 import (
@@ -116,7 +117,7 @@ class ProfileLicenseView(CamelModel):
     valid_days: int | None
 
 
-class ModelProfileView(CamelModel):
+class ModelProfileView(SponsorshipFields):
     display_name: str
     gender: str | None = None
     #: "20대 초반"처럼 구간만. 생년월일·정확한 나이는 절대 내보내지 않는다(명세 §3.4).
@@ -227,7 +228,10 @@ select m.id::text as id, m.display_name, m.gender,
        l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until,
        round(extract(epoch from (l.license_valid_until - l.created_at)) / 86400.0)::integer
          as license_valid_days,
-       m.cover_image_url, m.fullbody_image_url, m.confirmed_at
+       m.cover_image_url, m.fullbody_image_url, m.confirmed_at,
+       m.sponsorship_enabled, m.instagram_handle, m.instagram_followers,
+       m.instagram_followers_reported_at, m.size_top, m.size_bottom_waist,
+       m.sponsorship_profile_consent_at
   from fm_models m
   join fm_biometric_enrollments e
     on e.id = m.current_enrollment_id and e.model_id = m.id
@@ -241,7 +245,8 @@ select m.id::text as id, m.display_name, m.gender,
 
 
 async def _load_model_profiles(
-    conn, *, model_id: str | None = None, public_only: bool = False
+    conn, *, model_id: str | None = None, public_only: bool = False,
+    for_update: bool = False,
 ) -> list[dict]:
     """현재 enrollment의 활성 라이선스가 붙은 공개 프로필 원천만 읽는다.
 
@@ -271,6 +276,8 @@ async def _load_model_profiles(
         )
         params = params + (catalog_prefix, catalog_prefix)
     suffix = "order by m.confirmed_at desc limit 200" if public_only else "limit 1"
+    if for_update:
+        suffix += " for update of m, l"
     async with conn.cursor() as cur:
         await cur.execute(
             _MODEL_PROFILE_SELECT + " where " + " and ".join(clauses) + " " + suffix,
@@ -301,8 +308,9 @@ def _age_band(birthdate) -> str | None:
     return f"{decade}대 {part}"
 
 
-def _profile_view(row: dict) -> dict:
+def _profile_view(row: dict, *, owner: bool = False, details: bool = True) -> dict:
     return {
+        **sponsorship_view(row, owner=owner, details=details),
         "display_name": row["display_name"],
         "gender": row.get("gender"),
         "age_band": _age_band(row.get("birthdate")),
@@ -879,12 +887,15 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
         "confirm_requested_at": model.get("confirm_requested_at"),
         "confirmed_at": model.get("confirmed_at"),
         "cuts": [_cut_view(row, model_side=True) for row in cuts],
-        "profile": _profile_view(profiles[0]) if profiles else None,
+        "profile": _profile_view(profiles[0], owner=True) if profiles else None,
     }
 
 
 @router.get("/public/models", response_model=PublicModelsResult)
-async def public_models(request: Request, response: Response):
+async def public_models(
+    request: Request, response: Response, user_id: str | None = Depends(optional_user),
+):
+    """무인증 공개 목록. 협찬 상세(계정·팔로워·사이즈)는 로그인한 사용자에게만 실어요(E-2b 동의 범위)."""
     async with get_conn(request) as conn:
         rows = await _load_model_profiles(conn, public_only=True)
     items = []
@@ -892,7 +903,7 @@ async def public_models(request: Request, response: Response):
         items.append(
             {
                 "id": row["id"],
-                **_profile_view(row),
+                **_profile_view(row, details=user_id is not None),
                 "closeup_image_url": _cover_serving_url(
                     request, row["cover_image_url"]
                 ),
@@ -902,8 +913,58 @@ async def public_models(request: Request, response: Response):
                 "confirmed_at": row["confirmed_at"],
             }
         )
-    response.headers["Cache-Control"] = "public, max-age=60"
+    response.headers["Cache-Control"] = "no-store"
     return {"items": items}
+
+
+class SponsorshipInterestResult(CamelModel):
+    interested: bool
+
+
+async def _sponsorship_target(conn, model_id: str) -> None:
+    rows = await _load_model_profiles(conn, model_id=model_id, public_only=True, for_update=True)
+    if not rows or not rows[0].get("sponsorship_enabled"):
+        raise _err("not_found", "협찬을 받는 공개 모델을 찾을 수 없습니다.", status=404)
+
+
+@router.get("/models/{model_id}/sponsorship-interest", response_model=SponsorshipInterestResult)
+async def get_sponsorship_interest(
+    model_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        await _sponsorship_target(conn, model_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select exists (select 1 from fm_sponsorship_interest
+                    where seller_user_id = %s and model_id = %s) as interested""",
+                (user_id, model_id),
+            )
+            result = await cur.fetchone()
+    response.headers["Cache-Control"] = "no-store, private"
+    return result
+
+
+@router.post("/models/{model_id}/sponsorship-interest", response_model=SponsorshipInterestResult)
+async def create_sponsorship_interest(
+    model_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        await _sponsorship_target(conn, model_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """insert into fm_sponsorship_interest (seller_user_id, model_id)
+                    values (%s, %s) on conflict (seller_user_id, model_id) do nothing""",
+                (user_id, model_id),
+            )
+        await conn.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"interested": True}
 
 
 @router.get("/model/test-cuts/{cut_id}/image")

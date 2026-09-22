@@ -1,0 +1,116 @@
+"""Model-owned sponsorship fields, independent of license and VC claims."""
+
+import re
+from datetime import datetime
+from typing import Literal
+
+from pydantic import ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
+
+from .models import CamelModel
+
+
+SPONSORSHIP_COLUMNS = (
+    "sponsorship_enabled", "instagram_handle", "instagram_followers",
+    "instagram_followers_reported_at", "size_top", "size_bottom_waist",
+    "sponsorship_profile_consent_at",
+)
+# 셀러에게 보이는 상세. 동의 시각은 본인에게만 돌려줘요.
+SPONSORSHIP_DETAIL_COLUMNS = SPONSORSHIP_COLUMNS[1:-1]
+
+
+class SponsorshipFields(CamelModel):
+    sponsorship_enabled: bool = False
+    instagram_handle: str | None = None
+    instagram_followers: int | None = None
+    instagram_followers_reported_at: datetime | None = None
+    size_top: str | None = None
+    size_bottom_waist: int | None = None
+    sponsorship_profile_consent_at: datetime | None = None
+
+
+class SponsorshipResult(SponsorshipFields):
+    id: str
+
+
+class SponsorshipPatch(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sponsorship_enabled: StrictBool = False
+    instagram_handle: StrictStr | None = None
+    instagram_followers: StrictInt | None = Field(default=None, ge=0, le=2147483647)
+    size_top: Literal["XS", "S", "M", "L", "XL", "FREE"] | None = None
+    size_bottom_waist: StrictInt | None = Field(default=None, ge=24, le=34)
+    # 프로필 정보 수집 동의(E-2b). 켤 때 True 를 보내야 하고, 기록은 서버가 시각으로 남겨요.
+    profile_consent: StrictBool | None = None
+
+    @field_validator("instagram_handle")
+    @classmethod
+    def instagram_username(cls, value):
+        if value is None:
+            return None
+        value = value.strip().removeprefix("@")
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_.]{1,30}", value)
+            or value.startswith(".") or value.endswith(".") or ".." in value
+        ):
+            raise ValueError("올바른 인스타 계정을 입력해 주세요.")
+        return value
+
+
+def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True) -> dict:
+    """협찬 필드의 노출 규칙.
+
+    owner: 본인은 켜짐과 무관하게 전부 본다(동의 시각 포함).
+    details: 로그인한 셀러만 계정·팔로워·사이즈를 본다. 비로그인 공개 화면은 켜짐 여부만.
+    """
+    enabled = bool(row.get("sponsorship_enabled"))
+    show = owner or (enabled and details)
+    return {
+        "sponsorship_enabled": enabled,
+        **{field: row.get(field) if show else None for field in SPONSORSHIP_DETAIL_COLUMNS},
+        "sponsorship_profile_consent_at": row.get("sponsorship_profile_consent_at") if owner else None,
+    }
+
+
+async def record_sponsorship_consents(cur, request, user_id, model_id, *, enabled, previous_enabled, profile_consent):
+    """설정과 같은 트랜잭션에 실제 고지 문구의 버전·해시를 기록해요."""
+    import hashlib
+    import ipaddress
+    import json
+    import uuid
+    from .legal_versions import DRAFT_SPONSORSHIP_CONSENTS
+
+    if enabled == previous_enabled and profile_consent is not True:
+        return
+    notices = {
+        'sponsorship_participation': {
+            'title': '의류 협찬 받기',
+            'notice': '켜 두면 셀러가 바로 협찬을 요청할 수 있어요. 옷을 받으면 입고 찍어서 피드에 올려요. 옷은 내 것, 현금은 없어요. 언제든 끌 수 있어요.',
+            'rules': ['옷을 받은 뒤 3일 이내, 본인 인스타그램 피드에 1회 게시해요.', '게시물은 30일 유지해요.', '옷은 반납하지 않아요.'],
+            'availability': '협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.',
+        },
+        'sponsorship_profile_collection': {
+            'title': '프로필 정보 수집에 동의합니다',
+            'refusal': '동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.',
+            'notice': '협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄면 이 정보는 지워요.',
+        },
+    }
+    try:
+        address = str(ipaddress.ip_address(request.client.host)) if request.client else None
+    except ValueError:
+        address = None
+    screen = request.headers.get('x-facemarket-screen', 'sponsorship_settings')
+    if screen not in {'model_register', 'model_mypage', 'sponsorship_settings'}:
+        screen = 'sponsorship_settings'
+    event_key = str(uuid.uuid4())
+    for consent_type, notice in notices.items():
+        snapshot = json.dumps(notice, ensure_ascii=False, sort_keys=True)
+        await cur.execute(
+            """insert into fm_sponsorship_consent_events
+               (user_id, model_id, actor_user_id, consent_type, action, doc_version,
+                document_sha256, ip_address, screen_id, notice_snapshot, idempotency_key, reason)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'model_toggle')""",
+            (user_id, model_id, user_id, consent_type, 'granted' if enabled else 'withdrawn',
+             DRAFT_SPONSORSHIP_CONSENTS[consent_type]['version'],
+             hashlib.sha256(snapshot.encode()).hexdigest(), address, screen, snapshot, event_key),
+        )

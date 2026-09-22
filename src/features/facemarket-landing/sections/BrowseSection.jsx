@@ -17,6 +17,9 @@
    볼 길이 사라진다.
    ============================================================= */
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { SPONSORSHIP_CHANGED, filterSponsorshipModels, formatFollowers } from '../../model/sponsorshipOptions.js';
 import { Icon } from '@/components/ui.jsx';
 import { BROWSE_MODELS } from '../data/browseModels.js';
 import { fetchPublicModels, fromExampleModel } from '../data/publicModels.js';
@@ -32,21 +35,40 @@ const TABS = [
 ];
 
 export function BrowseSection() {
-  const [openId, setOpenId] = useState(null);
+  const [searchParams] = useSearchParams();
+  const requestedModelId = searchParams.get('model');
+  const [openId, setOpenId] = useState(requestedModelId);
+  const [sponsorshipOnly, setSponsorshipOnly] = useState(false);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => { if (requestedModelId) setOpenId(requestedModelId); }, [requestedModelId]);
+  useEffect(() => {
+    const refresh = () => setRevision(value => value + 1);
+    window.addEventListener(SPONSORSHIP_CHANGED, refresh);
+    window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener(SPONSORSHIP_CHANGED, refresh); window.removeEventListener('focus', refresh); };
+  }, []);
   const [realModels, setRealModels] = useState([]);
   const [tab, setTab] = useState('all');
+  // 로그인한 사용자에게만 협찬 상세가 오므로 세션이 바뀌면 다시 불러요.
+  const { session } = useAuth();
+  const accessToken = session?.access_token || null;
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchPublicModels({ signal: controller.signal })
+    fetchPublicModels({ signal: controller.signal, accessToken })
       .then((items) => { if (!controller.signal.aborted) setRealModels(items); })
       .catch(() => { /* 실패해도 예시 카드는 남는다 — 위 머리말 */ });
     return () => controller.abort();
-  }, []);
+  }, [revision, accessToken]);
 
   const hasReal = realModels.length > 0;
-  const all = hasReal ? [...realModels, ...EXAMPLE_MODELS] : EXAMPLE_MODELS;
-  const models = tab === 'all' ? all : all.filter((model) => model.gender === tab);
+  // 로그아웃 직후 새 응답이 늦어도 이전 계정의 상세는 즉시 숨겨요.
+  const visibleModels = accessToken ? realModels : realModels.map(model => ({
+    ...model, sponsorship: model.sponsorship?.enabled ? { enabled: true, masked: true } : null,
+  }));
+  const all = hasReal ? [...visibleModels, ...EXAMPLE_MODELS] : EXAMPLE_MODELS;
+  const genderModels = tab === 'all' ? all : all.filter((model) => model.gender === tab);
+  const models = filterSponsorshipModels(genderModels, sponsorshipOnly);
   const openModel = all.find((model) => model.id === openId) || null;
 
   return (
@@ -80,6 +102,7 @@ export function BrowseSection() {
             </button>
           ))}
         </div>
+        <label className={s.sponsorshipFilter}><input type="checkbox" checked={sponsorshipOnly} onChange={event => setSponsorshipOnly(event.target.checked)} />협찬 받는 중</label>
         <span className={s.browseCount}>{models.length}명</span>
       </div>
 
@@ -107,9 +130,12 @@ export function BrowseSection() {
                 <p className={s.cardSpec}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
               )}
             </div>
+            {model.kind === 'real' && model.sponsorship?.enabled && <p className={s.sponsorshipBadge}>{model.sponsorship.masked ? '협찬 받는 중' : `협찬 받는 중 · @${model.sponsorship.instagramHandle} · 팔로워 ${formatFollowers(model.sponsorship.instagramFollowers)}`}</p>}
           </li>
         ))}
       </ul>
+
+      {models.length === 0 && <p className={s.browseEmpty}>조건에 맞는 모델이 아직 없어요. 필터를 바꿔서 확인해 주세요.</p>}
 
       {/* 고지는 격자 아래. 실모델이 하나라도 서면 "전부 예시"는 거짓이 되므로 문구를 바꾼다. */}
       <p className={s.browseNotice}>

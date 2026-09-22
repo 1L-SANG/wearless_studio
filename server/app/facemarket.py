@@ -42,6 +42,10 @@ from .db import get_conn
 from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
+from .facemarket_sponsorship import (
+    SPONSORSHIP_COLUMNS, SponsorshipFields, SponsorshipPatch, SponsorshipResult,
+    sponsorship_view, record_sponsorship_consents,
+)
 from .models import CamelModel, ErrorResponse
 from .r2 import MIME_EXT
 
@@ -74,7 +78,7 @@ class IdentityVerifyResult(CamelModel):
     name_masked: str  # 마스킹된 이름만 반환 — 원문 PII는 응답에도 싣지 않음
 
 
-class ModelCard(CamelModel):
+class ModelCard(SponsorshipFields):
     """카탈로그/마이페이지 카드 — 공개 화이트리스트 컬럼만(PII·ci_hash 제외).
 
     카탈로그(list_models)는 현재 생체 등록·VC·라이선스·비공개 자산 증거가 모두 유효한 모델만
@@ -486,7 +490,8 @@ async def identity_verify(
 # uuid 컬럼은 ::text 캐스트해 반환(repo.py 관례). psycopg 는 uuid 를 uuid.UUID 로 로드하는데
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
-                    "(assets_status = 'ready') as assets_ready, redo_count")
+                    "(assets_status = 'ready') as assets_ready, redo_count, "
+                    + ", ".join(SPONSORSHIP_COLUMNS))
 
 _CURRENT_CARD_JOINS = f"""
 join fm_biometric_enrollments e
@@ -547,7 +552,8 @@ _MODEL_CARD_COLS_ENRICHED = (
     "coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false) as opt_location_cuts, "
     "coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false) "
     "  as opt_lookbook_person_replace, "
-    "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri"
+    "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri, "
+    + ", ".join(f"m.{column}" for column in SPONSORSHIP_COLUMNS)
 )
 
 _MODEL_PLACEHOLDER_SVG = (
@@ -621,6 +627,7 @@ async def list_models(
             rows = await cur.fetchall()
     for row in rows:
         row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
+        row.update(sponsorship_view(row))
     response.headers["Cache-Control"] = "no-store, private"
     return rows
 
@@ -678,6 +685,60 @@ def _model_id_or_404(model_id: str) -> str:
         return str(uuid.UUID(str(model_id)))
     except (TypeError, ValueError):
         raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+
+
+@router.patch("/models/{model_id}/sponsorship", response_model=SponsorshipResult)
+async def update_model_sponsorship(
+    model_id: str, body: SponsorshipPatch, request: Request,
+    user_id: str = Depends(require_user),
+):
+    model_id = _model_id_or_404(model_id)
+    patch = body.model_dump(exclude_unset=True)
+    profile_consent = patch.pop("profile_consent", None)
+    columns = ", ".join(SPONSORSHIP_COLUMNS)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""select id::text as id, {columns} from fm_models
+                    where id = %s and user_id = %s for update""",
+                (model_id, user_id),
+            )
+            current = await cur.fetchone()
+            if current is None:
+                raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+            merged = {**current, **patch}
+            now = datetime.now(timezone.utc)
+            if merged["sponsorship_enabled"]:
+                required = ("instagram_handle", "instagram_followers", "size_top", "size_bottom_waist")
+                if any(merged.get(field) is None for field in required):
+                    raise _err("sponsorship_incomplete", "인스타 계정, 팔로워 수와 사이즈를 모두 입력해 주세요.", status=422)
+                # 프로필 정보 수집 동의(E-2b)는 켤 때 필수예요. 이미 기록된 동의가 있으면 그대로 써요.
+                if profile_consent is True:
+                    merged["sponsorship_profile_consent_at"] = now
+                elif profile_consent is False or merged.get("sponsorship_profile_consent_at") is None:
+                    raise _err("sponsorship_consent_required", "프로필 정보 수집에 동의해 주세요.", status=422)
+                if "instagram_followers" in patch:
+                    merged["instagram_followers_reported_at"] = now if patch["instagram_followers"] is not None else None
+            else:
+                # 끄면 프로필 정보와 동의 기록을 함께 지워요(법무 파기 원칙). 다시 켤 때 새로 받아요.
+                for field in SPONSORSHIP_COLUMNS[1:]:
+                    merged[field] = None
+            await cur.execute(
+                f"""update fm_models set sponsorship_enabled = %s, instagram_handle = %s,
+                           instagram_followers = %s, instagram_followers_reported_at = %s,
+                           size_top = %s, size_bottom_waist = %s,
+                           sponsorship_profile_consent_at = %s
+                     where id = %s and user_id = %s returning id::text as id, {columns}""",
+                tuple(merged.get(field) for field in SPONSORSHIP_COLUMNS) + (model_id, user_id),
+            )
+            updated = await cur.fetchone()
+            await record_sponsorship_consents(
+                cur, request, user_id, model_id, enabled=merged['sponsorship_enabled'],
+                previous_enabled=current['sponsorship_enabled'], profile_consent=profile_consent,
+            )
+        await conn.commit()
+    return updated
 
 
 @router.post(

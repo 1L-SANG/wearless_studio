@@ -456,7 +456,12 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         # 모델의 선택 동의 — 셀러 화면이 "이 모델을 장소 컷에 쓸 수 있는가"를 이 값으로 판단한다.
         # PII 가 아니라 그 모델이 스스로 정한 사용 조건이다(허용 품목·가격과 같은 성격).
         "optLocationCuts", "optLookbookPersonReplace",
+        "sponsorshipEnabled", "instagramHandle", "instagramFollowers",
+        "instagramFollowersReportedAt", "sizeTop", "sizeBottomWaist",
+        # 동의 시각은 본인에게만 값이 실리고 카탈로그에서는 항상 None 이다.
+        "sponsorshipProfileConsentAt",
     }
+    assert card["sponsorshipProfileConsentAt"] is None
     assert card["optLocationCuts"] is False          # 기본값 = 스튜디오 전용
     assert card["optLookbookPersonReplace"] is False
     assert card["status"] == "verified"

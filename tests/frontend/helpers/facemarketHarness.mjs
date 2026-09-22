@@ -110,6 +110,7 @@ export async function modelComponentHarness({
             return runtime.callbacks[index].value;
           };
           export const useMemo = (factory) => factory();
+          export const useId = () => 'fm-test-field';
           export const useState = (initial) => {
             const index = runtime.stateCursor++;
             if (!(index in runtime.states)) runtime.states[index] = typeof initial === 'function' ? initial() : initial;
@@ -185,6 +186,11 @@ export async function modelComponentHarness({
               : Promise.reject(Object.assign(new Error('no application'), { status: 404 }))
           );
           export const updateLicenseTerms = (...args) => api.updateLicenseTerms(...args);
+          export const updateModelSponsorship = (id, body) => (
+            api.updateModelSponsorship ? api.updateModelSponsorship(id, body) : Promise.resolve({ id, ...body })
+          );
+          export const getSponsorshipInterest = (...args) => api.getSponsorshipInterest(...args);
+          export const requestSponsorshipInterest = (...args) => api.requestSponsorshipInterest(...args);
           export const pauseMyModel = (...args) => api.pauseMyModel(...args);
           export const resumeMyModel = (...args) => api.resumeMyModel(...args);
           export const reportUsage = (...args) => api.reportUsage(...args);

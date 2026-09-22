@@ -141,7 +141,7 @@ test('HowItWorksSection은 세 시간 알약을 보여주고 기존 rail을 렌�
   assert.ok(!styles.rail || nodesBy(tree, (node) => node.props?.className === styles.rail).length === 0);
 });
 
-test('FaqSection은 details 없이 질문 여섯 개와 항상 보이는 답을 렌더해요', async () => {
+test('FaqSection은 details 없이 질문 여덟 개와 항상 보이는 답을 렌더해요', async () => {
   const [FaqSection, styles] = await Promise.all([
     loadExport('/src/features/facemarket-landing/sections/FaqSection.jsx', 'FaqSection'),
     load('/src/features/facemarket-landing/FacemarketLanding.module.css').then((module) => module.default),
@@ -155,9 +155,11 @@ test('FaqSection은 details 없이 질문 여섯 개와 항상 보이는 답을 
     '내 얼굴은 어디에 쓰이나요?',
     '등록할 때 무엇이 필요한가요?',
     '조건은 나중에 바꿀 수 있나요?',
+    '협찬을 꼭 해야 하나요?',
+    '팔로워가 적어도 되나요?',
   ]);
   assert.equal(nodesBy(tree, (node) => node.type === 'details').length, 0);
-  assert.equal(nodesBy(tree, (node) => node.props?.className === styles.faqAnswerText).length, 6);
+  assert.equal(nodesBy(tree, (node) => node.props?.className === styles.faqAnswerText).length, 8);
 });
 
 async function renderWithPricing(entry, exportName, pricing) {
@@ -191,9 +193,9 @@ async function renderWithPricing(entry, exportName, pricing) {
   }
 }
 
-test('RightsSection과 FAQ 금액은 pricing 상수가 바뀌면 함께 바뀌어요', async () => {
+test('RightsSection과 FAQ와 협찬 안내 금액은 pricing 상수가 바뀌면 함께 바뀌어요', async () => {
   const pricing = { perCut: 12345, monthly: 67890 };
-  const [rights, faq] = await Promise.all([
+  const [rights, faq, sponsorship] = await Promise.all([
     renderWithPricing(
       '/src/features/facemarket-landing/sections/RightsSection.jsx',
       'RightsSection',
@@ -204,8 +206,14 @@ test('RightsSection과 FAQ 금액은 pricing 상수가 바뀌면 함께 바뀌�
       'FaqSection',
       pricing,
     ),
+    renderWithPricing(
+      '/src/features/facemarket-landing/sections/SponsorshipSection.jsx',
+      'SponsorshipSection',
+      pricing,
+    ),
   ]);
   assert.match(rights, /12,345원을 내면 8,642원이 내 몫으로 쌓여요/);
   assert.match(faq, /화면에 보이는 12,345원과 67,890원은 셀러가 내는 금액이에요/);
   assert.match(faq, /한 건이면 8,642원이고/);
+  assert.match(sponsorship, /12,345원의 매출이 발생해요/);
 });

@@ -65,7 +65,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
       ref={element => { tabRefs.current[item.id] = element; }} onKeyDown={keyTab} onClick={() => chooseTab(item.id)}>{item.label}</button>)}</div>
     <section className={s.tabContent} id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
       {tab === 'license' ? <MyPageConditions license={license} model={model} revoked={journey.flag === 'revoked'} registering={registering}
-        onLicenseChange={onLicenseChange} onCertificate={() => setCertificate(true)} onManage={() => setActivityDialog('manage')} />
+        onLicenseChange={onLicenseChange} onModelChange={onModelChange} onCertificate={() => setCertificate(true)} onManage={() => setActivityDialog('manage')} />
         : registering ? <RegistrationProgress journey={journey} enrollment={enrollment} />
         : tab === 'usage' ? <MyPageUsage data={data} month={month} onMonthChange={setMonth} />
         : <MyPageEarnings data={data} month={month} onMonthChange={setMonth}><BankSection bank={bank} onOpen={openAccount} /></MyPageEarnings>}

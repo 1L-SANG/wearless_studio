@@ -200,6 +200,7 @@ class FakeDB:
             "fm_model_assets": [],
             "fm_model_test_cuts": [],
             "fm_models": [],
+            "fm_sponsorship_interest": [],
             "fm_publication_records": [],
             "fm_biometric_purge_manifests": [],
             "fm_biometric_purge_receipts": [],
@@ -850,6 +851,12 @@ class FakeDB:
             return _delete_where_in(self.tables["fm_model_asset_cleanup"], "model_id", params[0])
         if q.startswith("delete from fm_model_test_cuts"):
             return _delete_where_in(self.tables["fm_model_test_cuts"], "model_id", params[0])
+        if q.startswith("delete from fm_sponsorship_interest"):
+            if "where model_id = any" in q:
+                return _delete_where_in(self.tables["fm_sponsorship_interest"], "model_id", params[0])
+            if "where seller_user_id=%s" in q:
+                return _delete_where_eq(self.tables["fm_sponsorship_interest"], "seller_user_id", params[0])
+            raise AssertionError(f"Unexpected sponsorship deletion: {q}")
         if q.startswith("update fm_models set"):
             count = 0
             for row in self.tables["fm_models"]:
@@ -857,6 +864,14 @@ class FakeDB:
                     row.update({"assets_status": "none", "qc_score": None, "assets_source_hash": None, "current_enrollment_id": None})
                     if "cover_image_url=null" in q:
                         row["cover_image_url"] = None
+                    if "sponsorship_enabled=false" in q:
+                        row["sponsorship_enabled"] = False
+                    for column in (
+                        "instagram_handle", "instagram_followers", "instagram_followers_reported_at",
+                        "size_top", "size_bottom_waist",
+                    ):
+                        if f"{column}=null" in q:
+                            row[column] = None
                     if "display_name='삭제된 모델'" in q:
                         row.update({
                             "status": "suspended",
@@ -1615,6 +1630,60 @@ def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(ca
     for secret in (ctx.user, ctx.model, ctx.profile, ctx.enrollment, "ci-a", "did:a", "vc-a"):
         assert secret not in receipt_blob
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
+@pytest.mark.parametrize("reason", ["withdrawal", "account_delete", "reverification"])
+def test_sponsorship_follows_model_withdrawal_but_survives_reverification(reason):
+    ctx = _fake_case()
+    model = ctx.db.tables["fm_models"][0]
+    sponsorship = {
+        "sponsorship_enabled": True,
+        "instagram_handle": "saved.model",
+        "instagram_followers": 1200,
+        "instagram_followers_reported_at": datetime(2026, 9, 22, tzinfo=timezone.utc),
+        "size_top": "M",
+        "size_bottom_waist": 28,
+    }
+    model.update(sponsorship)
+    ctx.db.columns["fm_models"].update(sponsorship)
+    ctx.db.add("fm_sponsorship_interest", id="target", seller_user_id=ctx.other, model_id=ctx.model)
+    ctx.db.add("fm_sponsorship_interest", id="seller", seller_user_id=ctx.user, model_id=ctx.other_model)
+    ctx.db.add("fm_sponsorship_interest", id="unrelated", seller_user_id=ctx.other, model_id=ctx.other_model)
+    ctx.db.add("fm_vc_revocation_jobs", vc_id="vc-a", license_id=ctx.license, model_id=ctx.model)
+
+    scope = {"batch_id": ctx.batch} if reason == "reverification" else {"user_id": ctx.user}
+    result = _run(ctx, reason=reason, **scope)
+
+    assert result.complete is True
+    expected_fields = sponsorship if reason == "reverification" else {
+        "sponsorship_enabled": False,
+        "instagram_handle": None,
+        "instagram_followers": None,
+        "instagram_followers_reported_at": None,
+        "size_top": None,
+        "size_bottom_waist": None,
+    }
+    assert {field: model[field] for field in sponsorship} == expected_fields
+    expected_interest = {
+        "withdrawal": {"seller", "unrelated"},
+        "account_delete": {"unrelated"},
+        "reverification": {"target", "seller", "unrelated"},
+    }
+    assert {row["id"] for row in ctx.db.tables["fm_sponsorship_interest"]} == expected_interest[reason]
+
+
+def test_account_delete_removes_seller_interest_without_a_model_or_profile():
+    db = FakeDB()
+    db.add("fm_sponsorship_interest", id="owned", seller_user_id="seller-a", model_id="model-other")
+    db.add("fm_sponsorship_interest", id="other", seller_user_id="seller-b", model_id="model-other")
+    app = _app(pool=FakePool(db), r2=StrictFakeR2(), r2_face=StrictFakeR2())
+
+    result = asyncio.run(purge_biometric_scope(app, user_id="seller-a", reason="account_delete"))
+
+    assert result.complete is True
+    assert result.model_count == 0
+    assert result.profile_count == 0
+    assert [row["id"] for row in db.tables["fm_sponsorship_interest"]] == ["other"]
 
 
 def test_fake_account_delete_erases_ownership_scoped_biometrics_without_personalization_profile(caplog):

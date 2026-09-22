@@ -285,7 +285,12 @@ test('사진 그룹이 비어 있으면 다음 버튼이 잠겨요', async () =>
   } finally { await harness.close(); }
 });
 
-const agreePrice = (harness) => findTree(harness.render(), node => node.type === 'input' && node.props.id === 'price-agreed').props.onChange({ target: { checked: true } });
+const agreePrice = (harness) => {
+  // 기존 조건 시나리오는 설정을 불러온 상태에서 시작해요. 실제 조회와 실패 차단은
+  // facemarket-sponsorship-settings.test.mjs에서 효과를 실행해 검증해요.
+  harness.runtime.states[17] = harness.runtime.states[1]?.modelId;
+  findTree(harness.render(), node => node.type === 'input' && node.props.id === 'price-agreed').props.onChange({ target: { checked: true } });
+};
 
 test('발급 실패 뒤 조건이 남고 재시도로 완료돼요', async () => {
   let attempts = 0;

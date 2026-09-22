@@ -28,3 +28,10 @@ def terms_consent_required(accepted_version: str | None, *, today: date | None =
         return True
     current = today or datetime.now(_SEOUL).date()
     return current >= SELLER_TERMS_EFFECTIVE_DATE
+
+# 선택 협찬의 별도 기록 버전이에요. 기존 모델 등록 필수 동의에는 추가하지 않아요.
+DRAFT_SPONSORSHIP_CONSENT_VERSION = '2026-09-sponsorship-v1-draft'
+DRAFT_SPONSORSHIP_CONSENTS = {
+    'sponsorship_participation': {'section': 'E-2a', 'required_for_enrollment': False, 'version': DRAFT_SPONSORSHIP_CONSENT_VERSION},
+    'sponsorship_profile_collection': {'section': 'E-2b', 'required_for_enrollment': False, 'version': DRAFT_SPONSORSHIP_CONSENT_VERSION},
+}

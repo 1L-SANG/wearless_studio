@@ -38,11 +38,12 @@ test("로그인 사용자는 모델 상태가 확인되기 전에 모델 지원�
     try {
         const pending = harness.render();
         harness.runtime.effects.forEach((effect) => effect());
-        assert.deepEqual(navLabels(pending), ["모델 리스트", "마이페이지"]);
+        assert.deepEqual(navLabels(pending), ["협찬 안내", "모델 리스트", "마이페이지"]);
 
         finishLookup([{ id: "m1", status: "verified" }]);
         await new Promise((resolve) => setImmediate(resolve));
         assert.deepEqual(navLabels(harness.render()), [
+            "협찬 안내",
             "모델 리스트",
             "마이페이지",
         ]);
@@ -57,6 +58,7 @@ test("인증 상태가 확인되기 전에는 모델 지원을 보이지 않아�
         harness.runtime.session = null;
         harness.runtime.loading = true;
         assert.deepEqual(navLabels(harness.render()), [
+            "협찬 안내",
             "모델 리스트",
             "마이페이지",
         ]);
@@ -74,6 +76,7 @@ test("모델 조회가 실패해도 로그인 사용자에게 모델 지원을 �
         harness.runtime.effects.forEach((effect) => effect());
         await new Promise((resolve) => setImmediate(resolve));
         assert.deepEqual(navLabels(harness.render()), [
+            "협찬 안내",
             "모델 리스트",
             "마이페이지",
         ]);
@@ -94,6 +97,7 @@ test("로그인 사용자가 미등록으로 확인되면 모델 지원을 보�
         }, "model application nav must appear after confirming no registered model");
         assert.deepEqual(navLabels(rendered), [
             "모델 지원",
+            "협찬 안내",
             "모델 리스트",
             "마이페이지",
         ]);

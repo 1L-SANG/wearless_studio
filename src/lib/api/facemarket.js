@@ -742,3 +742,20 @@ export function pauseMyModel(modelId) {
 export function resumeMyModel(modelId) {
   return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/resume`, { method: 'POST' });
 }
+
+// 협찬 프로필은 초상 라이선스와 별도로 저장해요. 사용자 ID와 기준일은 서버가 정해요.
+export async function updateModelSponsorship(modelId, settings, screen = 'sponsorship_settings') {
+  const fields = ['sponsorshipEnabled', 'instagramHandle', 'instagramFollowers', 'sizeTop', 'sizeBottomWaist', 'profileConsent'];
+  const body = Object.fromEntries(fields.filter(key => Object.hasOwn(settings, key)).map(key => [key, settings[key]]));
+  const updated = await http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/sponsorship`, { method: 'PATCH', body, headers: { 'X-Facemarket-Screen': screen } });
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('facemarket:sponsorship-changed', { detail: { modelId } }));
+  return updated;
+}
+
+export function getSponsorshipInterest(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/sponsorship-interest`);
+}
+
+export function requestSponsorshipInterest(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/sponsorship-interest`, { method: 'POST', body: {} });
+}
