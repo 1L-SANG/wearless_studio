@@ -479,6 +479,17 @@ def _recipe_id() -> str | None:
 @app.post("/upscale", response_model=UpscaleResponse)
 def upscale(req: UpscaleRequest, authorization: str | None = Header(default=None)) -> UpscaleResponse:
     _authorize(authorization)
+    return run_upscale(req)
+
+
+def run_upscale(req: UpscaleRequest) -> UpscaleResponse:
+    """확대 본체 — **인증 없이** 부르는 자리. 서버리스 핸들러가 이걸 쓴다.
+
+    RunPod Serverless 는 엔드포인트 앞에서 계정 API 키로 막는다. 그 안쪽에 또 Bearer 를
+    두면 비밀이 두 군데가 되고, 하나가 틀려도 증상이 같아서(둘 다 "안 된다") 못 가른다.
+    그래서 파드 라우트만 _authorize 를 지나고 본체는 갈라 둔다 — 서버리스가 가짜 토큰을
+    지어내거나 구현을 복제하지 않게.
+    """
     esr = face_esrgan.get(DEVICE)
     if esr is None:
         # 503 = "이 파드는 못 한다". 호출자는 다시 묻지 않고 Lanczos 로 간다.
@@ -507,6 +518,11 @@ def upscale(req: UpscaleRequest, authorization: str | None = Header(default=None
 @app.post("/", response_model=RenderResponse)
 def render(req: RenderRequest, authorization: str | None = Header(default=None)) -> RenderResponse:
     _authorize(authorization)
+    return run_render(req)
+
+
+def run_render(req: RenderRequest) -> RenderResponse:
+    """렌더 본체 — **인증 없이** 부르는 자리(근거는 run_upscale 주석)."""
     try:
         raw = base64.b64decode(req.control_png, validate=True)
     except Exception as exc:  # noqa: BLE001
