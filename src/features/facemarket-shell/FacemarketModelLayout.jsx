@@ -21,8 +21,11 @@ import { FooterSection } from '@/features/facemarket-landing/sections/FooterSect
 export function FacemarketModelLayout() {
   const { pathname } = useLocation();
   const application = pathname === '/model/apply';
+  /* 흰 바탕 화면에서는 셸도 흰색이어야 푸터에서 색이 갈리지 않는다. 푸터를 감추는 조건
+     (지원서 하나)과는 **다른 조건**이다 — 등록 위저드는 흰 바탕이지만 푸터는 보여준다. */
+  const plainSurface = application || pathname === '/model/register';
   return (
-    <div className={`fm-theme fm-theme-page ${application ? s.application : ''}`}>
+    <div className={`fm-theme fm-theme-page ${plainSurface ? s.plainSurface : ''}`}>
       {/* 상단바는 좌우 여백을 바깥에서 받는다(랜딩에서는 .shell 이 준다). */}
       <div className="fm-theme-inset">
         <LandingHeader />
