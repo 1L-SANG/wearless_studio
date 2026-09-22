@@ -49,12 +49,18 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            # ★ 도커 레포 이름은 소문자만 받는다. 소유자에 대문자가 있으면(1L-SANG) 태그가
-            #   "repository name must be lowercase" 로 거부된다 — 각도 워커 첫 빌드가 그렇게 죽었다.
-            - name: 이미지 주소 정하기 (소유자를 소문자로)
-              run: |
-                  owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-                  echo "IMAGE=ghcr.io/$owner/face-render" >> "$GITHUB_ENV"
+            # ★ **저장소 소유자(1L-SANG) 네임스페이스가 아니라 개인 네임스페이스로 굽는다.**
+            #   1L-SANG 은 개인 계정이라 그 아래 GHCR 패키지의 공개 전환은 **계정 주인만**
+            #   할 수 있다(collaborator 는 못 한다). 워커가 이미지를 당기려면 패키지가 public
+            #   이어야 하는데(RunPod 에 만료 없는 자격증명을 심지 않는 게 comfy-angle 부터의
+            #   규율이다), 주인이 그 버튼을 못 눌러 주면 1L-SANG 네임스페이스로는 막힌다.
+            #   그래서 배포 담당자 개인 네임스페이스로 굽고 그 사람이 public 으로 연다.
+            #   레포 이름은 소문자만 받으므로 소유자도 소문자로 둔다.
+            - name: 이미지 주소 정하기
+              run: echo "IMAGE=ghcr.io/${GHCR_NAMESPACE}/face-render" >> "$GITHUB_ENV"
+              env:
+                  # 개인 네임스페이스(소문자). 다른 사람이 이어받으면 이 한 줄만 바꾼다.
+                  GHCR_NAMESPACE: wjddns0122
 
             # 베이스(pytorch+cu128)가 수 GB 라 러너 기본 디스크로는 빠듯하다.
             - name: 러너 디스크 비우기
@@ -67,11 +73,20 @@ jobs:
 
             - uses: docker/setup-buildx-action@v3
 
+            # ★ GITHUB_TOKEN 은 저장소 소유자(1L-SANG) 네임스페이스에만 쓸 수 있다 — 개인
+            #   네임스페이스로 밀려면 그 계정 PAT 가 있어야 한다. classic PAT `write:packages`
+            #   를 만들어 저장소 시크릿 GHCR_PAT 로 넣는다. 없으면 이 단계에서 로그인이
+            #   실패하고(빌드 빨간불) 이미지가 안 밀린다 — 조용히 옛 이미지로 가지 않는다.
+            #
+            # ★ PR 에서는 로그인하지 않는다 — 아래 build-push 가 push:false 라 레지스트리에
+            #   안 미므로 자격증명이 필요 없다. fork PR 에는 시크릿이 아예 안 실려서, 로그인을
+            #   조건 없이 두면 모든 PR 이 "Password required" 로 깨진다.
             - uses: docker/login-action@v3
+              if: github.event_name != 'pull_request'
               with:
                   registry: ghcr.io
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
+                  username: wjddns0122
+                  password: ${{ secrets.GHCR_PAT }}
 
             # PR 에서는 빌드만 하고 푸시하지 않는다 — Dockerfile 이 깨졌는지 먼저 본다.
             - uses: docker/build-push-action@v6
@@ -89,5 +104,5 @@ jobs:
               if: github.event_name != 'pull_request'
               run: |
                   echo "::notice::RunPod Serverless 템플릿에 넣을 이미지: ${IMAGE}:${GITHUB_SHA}"
-                  echo "::notice::패키지가 public 인지 확인하세요 — 비공개면 워커가 못 뜹니다."
+                  echo "::notice::패키지 wjddns0122/face-render 를 public 으로 바꾸세요 — 개인 네임스페이스라 본인이 직접 할 수 있습니다."
                   echo "::notice::볼륨에 Qwen/Qwen-Image-Edit-2509 가 있어야 합니다(HF_HOME=/runpod-volume/hf)."
