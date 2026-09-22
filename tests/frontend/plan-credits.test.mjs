@@ -71,7 +71,7 @@ test('mock credit quote matches the server read contract', async (t) => {
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, watch: null, hmr: false },
   });
   t.after(() => server.close());
   const { api: mockApi } = await server.ssrLoadModule('/src/mock/api.js');
@@ -101,7 +101,7 @@ test('mock mannequin execution charges the snapshotted quote and preserves a fre
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, watch: null, hmr: false },
   });
   t.after(() => server.close());
   const { api: mockApi } = await server.ssrLoadModule('/src/mock/api.js');

@@ -7,7 +7,8 @@
     "dev": "vite",
     "dev:mock": "VITE_API_MODE=mock vite",
     "dev:http": "vite --mode http",
-    "test:frontend": "node --test tests/frontend/*.test.mjs",
+    "test:frontend": "MOCK_API_LATENCY_SCALE=0 node --test tests/frontend/*.test.mjs",
+    "test:frontend:files": "scripts/ci/run-frontend-tests.sh tests/frontend/*.test.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

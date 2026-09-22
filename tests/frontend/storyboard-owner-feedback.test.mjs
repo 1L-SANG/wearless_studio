@@ -96,7 +96,7 @@ test('the mock API runtime migrates an HMR-stale three-member styling seed on re
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-    server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent',
   });
   t.after(() => vite.close());
   const { DB, reseedDraft } = await vite.ssrLoadModule('/src/mock/db.js');

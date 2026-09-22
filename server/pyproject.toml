@@ -42,4 +42,5 @@ embeddings = [
 dev = [
     "pytest>=8",
     "httpx>=0.28",
+    "pytest-xdist>=3.6",
 ]
