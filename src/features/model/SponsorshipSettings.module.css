@@ -22,7 +22,6 @@
 .consent small { display: block; color: var(--fm-muted); font-size: .78rem; line-height: 1.6; word-break: keep-all; }
 .required { margin-left: .3rem; color: var(--fm-accent); font-style: normal; font-size: .76rem; font-weight: 600; }
 .consent input:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
-.notice { margin: 1.1rem 0 0; padding-top: 1rem; border-top: 1px solid var(--fm-line); color: var(--fm-muted); font-size: .8rem; line-height: 1.7; }
 .settings { margin-block: 1.5rem; }
 .settings .card { margin-bottom: .8rem; }
 .actions { display: flex; justify-content: flex-end; }

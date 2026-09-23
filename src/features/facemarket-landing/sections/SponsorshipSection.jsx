@@ -45,7 +45,6 @@ export function SponsorshipSection() {
             </div>
             <p className={s.exampleFootnote}>내가 허용한 옷 종류 안에서만 협찬받아요. 게시물의 광고 재사용은 별도 동의 후 진행돼요.</p>
           </div>
-          <p className={s.launchNote}>협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.</p>
         </article>
       </div>
     </section>

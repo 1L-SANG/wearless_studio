@@ -38,7 +38,6 @@
 .exampleTerms dt { color: var(--fm-muted); }
 .exampleTerms dd { margin: 0; color: var(--fm-ink); font-weight: 500; word-break: keep-all; }
 .card .exampleFootnote { padding: 0.75rem 1rem; border-top: 1px solid var(--fm-line); font-size: 0.75rem; line-height: 1.6; word-break: keep-all; }
-.card .launchNote { margin-top: 1rem; font-size: 0.8125rem; line-height: 1.65; }
 
 @media (max-width: 767px) {
   .cards { grid-template-columns: 1fr; gap: 1rem; }

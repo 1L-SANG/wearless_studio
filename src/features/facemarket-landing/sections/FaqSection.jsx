@@ -51,7 +51,7 @@ export function FaqSection() {
         </article>
         <article className={s.faqEntry}>
           <h3>협찬을 꼭 해야 하나요?</h3>
-          <p className={s.faqAnswerText}>아니요. 등록할 때 켠 사람만 요청을 받아요. 언제든 끌 수 있고, 셀러가 요청한 피드만 업로드한다면 의류를 무료로 받아볼 수 있어요. 협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.</p>
+          <p className={s.faqAnswerText}>아니요. 등록할 때 켠 사람만 요청을 받아요. 언제든 끌 수 있고, 셀러가 요청한 피드만 업로드한다면 의류를 무료로 받아볼 수 있어요.</p>
         </article>
         <article className={s.faqEntry}>
           <h3>팔로워가 적어도 되나요?</h3>

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { updateModelSponsorship } from '@/lib/api/facemarket.js';
-import { BOTTOM_WAIST_SIZES, SPONSORSHIP_NOTICE, TOP_SIZES, sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
+import { BOTTOM_WAIST_SIZES, TOP_SIZES, sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
 import s from './SponsorshipSettings.module.css';
 
 export function SponsorshipFields({ value, onChange, disabled = false }) {
@@ -38,7 +38,6 @@ export function SponsorshipFields({ value, onChange, disabled = false }) {
           <small>협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄거나 탈퇴하면 이 정보는 바로 지워요.</small><small>동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.</small></span>
       </label>
     </div>}
-    <p className={s.notice}>{SPONSORSHIP_NOTICE}</p>
   </section>;
 }
 
