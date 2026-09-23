@@ -302,17 +302,59 @@ def test_composite_records_the_tone_shift_for_review(no_face):
 
 
 def test_swap_refuses_a_reference_whose_lighting_is_hopeless(no_face, monkeypatch):
-    """보정량이 게이트를 넘으면 컷을 버린다 — 억지로 붙이면 목만 물든 사람이 나간다.
-    얼굴 패스의 lighting_off(GATE_COLOR_MAX 35.0)와 같은 자리·같은 값이다."""
-    from app.agents import face_identity
+    """보정을 **끝낸 뒤에도** 이음선 차이가 남으면 컷을 버린다.
 
-    assert angle.TONE_MAX_SHIFT == face_identity.GATE_COLOR_MAX
-    monkeypatch.setattr(angle, "tone_shift", lambda *_a, **_k: np.array([99.0, 0.0, 0.0]))
+    2026-09-23 오너: "베이스 컷이 나오면 거기에 사진 톤을 맞춰야지". 그래서 보정 전
+    차이가 크다는 것만으로는 안 버린다 — 맞춰 보고, 그래도 안 맞으면 버린다.
+    여기서는 링 표본을 고정해 보정이 통하지 않는 사진을 흉내 낸다.
+    """
+    hopeless = (np.array([200.0, 200.0, 200.0]), np.array([90.0, 90.0, 90.0]))
+    monkeypatch.setattr(angle, "tone_means", lambda *_a, **_k: hopeless)
     photos = angle.AnglePhotos(back=png(np.full((300, 300, 3), 120, np.uint8)))
     with pytest.raises(angle.AngleSwapUnavailable) as err:
         asyncio.run(angle.swap(png(studio_cut()), "image/png", direction="back",
                                photos=photos, backend=FakeBackend()))
     assert err.value.reason == "tone_off"
+
+
+def test_a_big_lighting_gap_is_matched_by_gain_instead_of_being_dropped(no_face, monkeypatch):
+    """조명이 크게 어긋나도 보정으로 이음선이 맞으면 컷은 나간다.
+
+    2026-09-23 운영: 새 통일 촬영 베이스와 등록 옆모습 사진이 [22.9, 33.0, 42.6] 으로
+    벌어져 옆모습 컷이 통째로 tone_off 로 버려졌다. 덧셈으로는 못 맞추는 크기라
+    비율(gain)로 맞춘다.
+    """
+    calls = {"n": 0}
+
+    def means(*_a, **_k):
+        calls["n"] += 1
+        # 첫 호출 = 보정 전(크게 어긋남), 그 뒤 = 보정 후(맞음)
+        return ((np.array([200.0, 190.0, 180.0]), np.array([160.0, 150.0, 135.0]))
+                if calls["n"] == 1
+                else (np.array([200.0, 190.0, 180.0]), np.array([197.0, 188.0, 179.0])))
+
+    monkeypatch.setattr(angle, "tone_means", means)
+    photos = angle.AnglePhotos(back=png(np.full((300, 300, 3), 120, np.uint8)))
+    data, mime = asyncio.run(angle.swap(png(studio_cut()), "image/png", direction="back",
+                                        photos=photos, backend=FakeBackend()))
+    assert mime == "image/png" and data
+
+
+def test_small_gaps_still_use_the_tuned_additive_path():
+    """작은 차이는 예전 그대로 덧셈이다 — 2026-09-20 실측(7~12)이 그 범위에서 튜닝됐다."""
+    assert angle.TONE_GAIN_FROM > 12.0
+    assert angle.TONE_GAIN_MIN < 1.0 < angle.TONE_GAIN_MAX
+
+
+def test_gain_matches_the_head_to_the_base_neck():
+    neck = np.array([200.0, 190.0, 180.0])
+    head = np.array([160.0, 150.0, 135.0])
+    gain = angle.tone_gain(neck, head)
+    matched = head * gain
+    assert np.allclose(matched, neck, atol=1.0)
+    # 한계 밖은 잘라 낸다 — 억지로 맞추지 않고 잔차로 판단한다.
+    clipped = angle.tone_gain(np.array([250.0, 250.0, 250.0]), np.array([20.0, 20.0, 20.0]))
+    assert float(clipped.max()) == pytest.approx(angle.TONE_GAIN_MAX, abs=1e-5)
 
 
 # ── RunPod Serverless 백엔드 ─────────────────────────────────────────────────
