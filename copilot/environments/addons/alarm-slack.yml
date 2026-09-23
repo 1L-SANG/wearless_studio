@@ -1,0 +1,252 @@
+# CloudWatch 알람 → Slack.
+#
+# ── 왜 따로 있나 ──────────────────────────────────────────────────────────
+# log-slack-alerts.yml 은 **로그에 찍힌 글자**(ERROR·CRITICAL·Traceback)를 본다. 앱이 조용히
+# 느려지거나 붙을 서버가 없어지면 로그에는 아무것도 안 남는다 — 2026-08-26 장애가 그랬다
+# (동기 이미지 작업이 이벤트루프를 얼려 healthz 가 37초 공백, ALB 가 서버를 죽은 것으로 판정).
+# 그건 **숫자**로만 보인다. 그래서 이 파일은 지표 알람을 건다.
+#
+# 램다를 하나 더 두는 이유: 기존 log-slack-alert 의 인라인 소스가 4,060/4,096 바이트라
+# 여유가 36바이트다. 거기에 SNS 처리를 얹을 수 없다(그 파일 주석의 경고 그대로).
+# 이쪽은 알람 JSON 한 개만 다루므로 훨씬 작다.
+#
+# ── 임계는 실측으로 잡았다 (2026-09-23, prod 3시간) ───────────────────────
+#   요청 3,283건 · Target 5xx 0건 · TargetResponseTime p95 0.69초
+#   ELB 503 43건(1.3%) — **이건 우리 장애가 아니다.** ALB 뒤 기본 타깃그룹(타깃 0대)에
+#   호스트명 없이 IP 로 직접 들어오는 봇 스캔이 떨어져서 나는 값이고, 5분당 1~7건이 바닥이다.
+#   그래서 503 임계를 30 으로 잡았다 — 바닥의 4배 위. api 가 실제로 내려가면 사용자 요청이
+#   전부 503 이 되므로 이 선을 금방 넘는다. Cloudflare 원본 잠금이 붙으면 바닥이 0 으로
+#   내려가니 그때 임계를 10 쯤으로 조이면 된다.
+#
+# ── 못 건 것: ECS CPU ─────────────────────────────────────────────────────
+#   AWS/ECS CPUUtilization 은 (ClusterName, ServiceName) 차원으로만 온다. 서비스 이름은
+#   `wearless-use1-api-Service-QliObqw9TgGI` 처럼 뒤에 난수가 붙고 Copilot 이 export 하지 않아
+#   환경 애드온에서 지목할 수가 없다(클러스터 차원만으로는 지표 자체가 안 온다 — 확인함).
+#   포화는 응답시간으로 먼저 보인다(부하 실측: 65 rps 에서 CPU 17%, 응답 8ms) — 아래
+#   TargetResponseTime 알람이 그 역할을 한다. 진짜 CPU 알람이 필요해지면 서비스 이름을
+#   런타임에 찾아 알람을 만드는 커스텀 리소스가 필요하다.
+#
+# 되돌리기: 이 파일을 지우고 `copilot env deploy --name use1`. 앱 재배포는 무관하다.
+Parameters:
+  App:
+    Type: String
+  Env:
+    Type: String
+
+Resources:
+  # 알람이 울 때 들어오는 창구. 알람 → SNS → 램다 → Slack.
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${App}-${Env}-alarms'
+      DisplayName: !Sub '${App} ${Env} alarms'
+
+  AlarmSlackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: alarm-slack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # 웹훅은 로그 알림과 같은 파라미터를 읽는다 — 채널도 같다.
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/copilot/${App}/${Env}/secrets/SLACK_ALERT_WEBHOOK_URL'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${App}-${Env}-alarm-slack:*'
+
+  # 램다가 자기 로그그룹을 스스로 만들면 보관기간이 '영구'로 잡힌다. 미리 만들어 14일로 둔다.
+  AlarmSlackOwnLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${App}-${Env}-alarm-slack'
+      RetentionInDays: 14
+
+  AlarmSlackFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AlarmSlackOwnLogGroup
+    Properties:
+      FunctionName: !Sub '${App}-${Env}-alarm-slack'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt AlarmSlackRole.Arn
+      Timeout: 20
+      MemorySize: 256
+      # 폭주 상한. 알람은 드물게 오지만 플래핑하면 연속으로 들어온다.
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          WEBHOOK_PARAM: !Sub '/copilot/${App}/${Env}/secrets/SLACK_ALERT_WEBHOOK_URL'
+      Code:
+        # ⚠️ 인라인 소스는 CloudFormation 한도가 4,096바이트다. 지금 여유가 넉넉하지만
+        # 기능을 더 얹을 거면 그 한도를 먼저 확인할 것(log-slack-alerts.yml 이 그 한도에 걸렸다).
+        ZipFile: |
+          import json, os, urllib.request, urllib.error
+          import boto3
+
+          _cache = {}
+
+          def _webhook():
+              if "url" not in _cache:
+                  ssm = boto3.client("ssm")
+                  got = ssm.get_parameter(Name=os.environ["WEBHOOK_PARAM"], WithDecryption=True)
+                  _cache["url"] = got["Parameter"]["Value"]
+              return _cache["url"]
+
+          def handler(event, context):
+              for rec in event.get("Records", []):
+                  try:
+                      msg = json.loads(rec["Sns"]["Message"])
+                  except Exception:
+                      print("unparseable sns message")
+                      continue
+                  state = msg.get("NewStateValue", "")
+                  # OK 로 돌아온 것도 보낸다 — 울고 끝나면 복구됐는지 사람이 모른다.
+                  icon = ":rotating_light:" if state == "ALARM" else ":white_check_mark:"
+                  name = msg.get("AlarmName", "(unnamed)")
+                  desc = msg.get("AlarmDescription") or ""
+                  reason = msg.get("NewStateReason", "")
+                  region = msg.get("Region", os.environ.get("AWS_REGION", ""))
+                  url = ("https://console.aws.amazon.com/cloudwatch/home?region=%s#alarmsV2:alarm/%s"
+                         % (os.environ.get("AWS_REGION", ""), urllib.request.quote(name)))
+                  blocks = [
+                      {"type": "section", "text": {"type": "mrkdwn",
+                       "text": "%s *%s* — %s" % (icon, name, state)}},
+                  ]
+                  if desc:
+                      blocks.append({"type": "context", "elements": [
+                          {"type": "mrkdwn", "text": desc}]})
+                  blocks.append({"type": "context", "elements": [
+                      {"type": "mrkdwn", "text": "```%s```" % reason[:900]}]})
+                  blocks.append({"type": "actions", "elements": [
+                      {"type": "button", "text": {"type": "plain_text", "text": "CloudWatch 에서 보기"},
+                       "url": url}]})
+                  body = json.dumps({
+                      "text": "%s %s: %s (%s)" % (icon, name, state, region),
+                      "blocks": blocks,
+                  }).encode("utf-8")
+                  req = urllib.request.Request(_webhook(), data=body,
+                                               headers={"Content-Type": "application/json"})
+                  try:
+                      with urllib.request.urlopen(req, timeout=10) as resp:
+                          resp.read()
+                  except urllib.error.HTTPError as exc:
+                      print("slack_post_failed status=%s body=%r" % (exc.code, exc.read()[:200]))
+
+  AlarmSlackPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AlarmSlackFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref AlarmTopic
+
+  AlarmSlackSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: lambda
+      Endpoint: !GetAtt AlarmSlackFunction.Arn
+
+  # SNS 는 기본적으로 자기 계정의 알람만 받아도 되지만, 정책을 명시해 두지 않으면
+  # CloudWatch 가 publish 하지 못하는 계정 설정이 있다.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlarmTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudwatch.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+
+  # ── 알람 셋 ───────────────────────────────────────────────────────────
+  # 모두 LoadBalancer 차원만 쓴다. 타깃그룹 ARN 은 서비스 스택이 만들어서 환경 애드온이
+  # 지목할 수 없다(확인함). LB 차원으로도 "사용자가 무엇을 받았나"는 다 보인다.
+
+  # ① 앱이 5xx 를 뱉는다 = 사용자가 에러 화면을 보는 중. 3시간 실측 0건이라 10 이면 확실한 신호.
+  Alarm5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${App}-${Env}-target-5xx'
+      AlarmDescription: '앱이 5xx 를 반환하고 있어요. 사용자가 에러 화면을 보는 중입니다.'
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !ImportValue
+            'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      # 트래픽이 없는 시간대에는 데이터포인트 자체가 없다. missing 을 정상으로 읽어야
+      # 새벽마다 우는 걸 막는다.
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # ② 느려짐·이벤트루프 동결. 실측 p95 0.69초라 3초는 네 배 위 — 오발화 여지가 적다.
+  #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다.
+  AlarmLatency:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${App}-${Env}-slow-response'
+      AlarmDescription: '응답이 느려졌어요(p95 3초 초과 10분). 2026-08-26 이벤트루프 동결과 같은 신호입니다.'
+      Namespace: AWS/ApplicationELB
+      MetricName: TargetResponseTime
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !ImportValue
+            'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # ③ 붙을 서버가 없다. 바닥(봇 스캔) 이 5분당 1~7건이라 30 으로 잡고 2회 연속을 요구한다.
+  #    api 가 내려가면 사용자 요청이 전부 여기로 떨어져 금방 넘는다.
+  Alarm503:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${App}-${Env}-no-healthy-target'
+      AlarmDescription: 'ALB 가 붙을 서버를 못 찾고 있어요(503 급증). 서비스가 내려갔는지 확인하세요.'
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_503_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !ImportValue
+            'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+Outputs:
+  AlarmTopicArn:
+    Description: 알람이 들어오는 SNS 토픽. 새 알람을 만들면 AlarmActions 에 이걸 준다.
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${App}-${Env}-AlarmTopicArn'
