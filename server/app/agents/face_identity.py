@@ -127,6 +127,11 @@ GRAIN_MIN_RATIO = 0.85
 #: 같은 게이트 사유가 이만큼 연속되면 남은 시드를 포기하고 폴백한다. 시드를 바꿔도 같은 사유로
 #: 막히는 것은 그 컷의 구조적 문제라 더 뽑아도 낭비다(2026-09-09: c9_1 이 center_off 로 6시드 630초).
 GATE_SAME_REASON_STOP = 3
+#: 조기 포기에서 **빼는** 사유. 컷 구조가 아니라 시드에 따라 갈리는 실패다.
+#: yaw_flatten = LoRA 가 사선 얼굴을 정면으로 펴는 것. 2026-09-23 운영: 같은 사선 4컷 중
+#: 2컷은 통과하고 2컷은 42·43·44 세 시드에서 연달아 걸려 3연속 규칙으로 버려졌다.
+#: 구조적 문제가 아니므로 남은 시드(102·103·104)까지 써 본다 — 최악 +3회(약 90초).
+GATE_STOCHASTIC_REASONS = frozenset({"yaw_flatten"})
 #: identity_low — 결과 얼굴의 SFace 코사인(기준셋 중앙값)이 이 값 미만이면 실패 → 시드 재시도.
 #:
 #: ★ 0.60 → **0.45** (2026-09-13). 0.60 은 2026-09-10 에 **v6 + 같은 날 촬영한 기준셋 8장** 으로 정한
@@ -1763,8 +1768,12 @@ def run_face_pass(
                 "color_max": gate.color_max,
                 "ms": round((time.perf_counter() - t1) * 1000),
             })
-            streak = streak + 1 if gate.reason == streak_reason else 1
-            streak_reason = gate.reason
+            if gate.reason in GATE_STOCHASTIC_REASONS:
+                # 시드 운에 달린 실패는 연속으로 세지 않는다 — 남은 시드를 다 써 본다.
+                streak, streak_reason = 0, None
+            else:
+                streak = streak + 1 if gate.reason == streak_reason else 1
+                streak_reason = gate.reason
             if gate.passed:
                 meta.update(cmeta)
                 meta.update({

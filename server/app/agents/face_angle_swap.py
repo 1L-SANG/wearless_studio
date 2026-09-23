@@ -293,6 +293,37 @@ def head_region(image: np.ndarray, *, direction: str, model_dir=None) -> tuple[n
     return _connected_to(near | hair, hair), None
 
 
+#: 끄면 예전처럼 목 중간에서 끊는다 — 검수 대조용.
+NECK_TO_COLLAR = True
+#: 머리 마스크를 드러난 목 피부를 따라 칼라까지 내린다(2026-09-23). 머리 높이 대비 최대 길이.
+NECK_EXTEND_MAX = 0.6
+
+
+def extend_to_collar(image: np.ndarray, core: np.ndarray, person: np.ndarray) -> np.ndarray:
+    """머리 마스크 아래로 이어진 **맨 목 피부**를 마스크에 넣는다 — 이음선을 칼라로 보낸다.
+
+    왜(09-23 운영 뒷면 E2E): 마스크가 목 중간에서 끝나면 위는 새로 그린 목, 아래는 원래 목이라
+    피부 결·그늘까지 달라 색만 맞춰서는 가로 줄이 남는다(색 차 57 → 6 으로 줄여도 부자연).
+    목을 통째로 새로 그리게 하면 경계가 칼라 선(옷 경계)으로 가서 원래부터 있는 선이 된다.
+
+    열마다 마스크 바닥에서 아래로 내려가며 **끊김 없이 피부인 동안만** 넣는다. 덩어리로 이으면
+    물 빠진 데님(붉은기 조금)이 피부로 붙어 셔츠 어깨까지 딸려 온다(09-23 옆모습 미리보기).
+    """
+    a = image.astype(np.float32)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    skin = (r - b >= 25.0) & (r - g >= 10.0) & (a.mean(axis=2) > TONE_HAIR_MAX) & person
+    ys = np.where(core.any(axis=1))[0]
+    limit = int(NECK_EXTEND_MAX * max(1, int(ys.max()) - int(ys.min())))
+    out = core.copy()
+    for x in np.where(core.any(axis=0))[0]:
+        y = int(np.nonzero(core[:, x])[0].max()) + 1
+        stop = min(core.shape[0], y + limit)
+        while y < stop and skin[y, x]:
+            out[y, x] = True
+            y += 1
+    return out
+
+
 def garment_region(image: np.ndarray, core: np.ndarray) -> np.ndarray:
     """머리 아래 전경 전부 = 옷·몸 보호 영역."""
     garment = foreground(image)
@@ -332,6 +363,8 @@ def plan(image: np.ndarray, *, direction: str, model_dir=None) -> Plan:
     if person.sum() < MIN_PERSON_FRACTION * height * width:
         raise AngleSwapUnavailable("no_person")
     core, nose_right = head_region(image, direction=direction, model_dir=model_dir)
+    if NECK_TO_COLLAR:
+        core = extend_to_collar(image, core, person)
     garment = garment_region(image, core)
     head = grow_hair(core, direction) & ~garment
     left, top, side = crop_box(core, (width, height))
@@ -563,6 +596,102 @@ def apply_tone_gain(out: np.ndarray, gain: np.ndarray, bg: np.ndarray,
     return np.clip(out * (1.0 - weight) + scaled * weight, 0, 255)
 
 
+#: 목 이음선 색 맞춤 — **끔**(2026-09-23). NECK_TO_COLLAR 로 목을 칼라까지 새로 그리면 이을 목이
+#: 없어서, 남은 표본(목 옆·칼라 가)으로 비율을 구하면 오히려 목을 회녹색으로 뺀다(실측 R×0.81).
+#: 마스크를 칼라까지 못 내린 컷을 다시 볼 때 켜는 스위치로 남긴다.
+NECK_SEAM_MATCH = False
+#: 이음선 위·아래로 표본을 뜨는 띠 두께(원본 px, 크롭 한 변 기준 비율).
+NECK_BAND_FRAC = 0.035
+#: 보정이 위로 번지는 높이(크롭 한 변 비율). 목 길이 정도 — 여기서 0 으로 사라져 턱·얼굴은 안 건드린다.
+NECK_RAMP_FRAC = 0.16
+#: 목 맞춤 비율의 한계. 밖이면 표본이 이상한 것이라 자른다.
+NECK_GAIN_MIN = 0.70
+NECK_GAIN_MAX = 1.40
+NECK_MIN_SAMPLES = 120
+
+
+def _true_skin(image: np.ndarray) -> np.ndarray:
+    """피부 판정 — 밝기만 보면 회색 옷도 피부로 잡힌다. R>G>B 이고 붉은기가 있는 픽셀만."""
+    r, g, b = image[..., 0], image[..., 1], image[..., 2]
+    lum = image.mean(axis=2)
+    return (r > g) & (g > b) & ((r - b) >= 12.0) & (lum > TONE_SKIN_MIN) & (lum < 245.0)
+
+
+def _neck_pixels(image: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    """붙인 머리 쪽 목 판정 — **색조는 안 본다**. 문제가 되는 목은 회색으로 빠져 있어서
+    (2026-09-23 운영 뒷면: 칼라 위 목이 회색 띠) _true_skin 으로 거르면 고칠 대상이 표본에서
+    빠진다. 머리카락(어둡다)·배경(bg 와 가깝다)·하이라이트만 뺀다."""
+    lum = image.mean(axis=2)
+    not_bg = np.abs(image - bg).max(axis=2) > 18.0  # 회색으로 빠진 목은 배경과 30~45 차이뿐이다
+    # 따뜻한 쪽만(R>B) — 목 옆 배경의 푸른 번짐·칼라 데님은 R<=B 라 빠진다. 안 빼면 그 번짐까지
+    # 살구색으로 칠해져 목 옆에 빛이 뜬다(09-23 재현).
+    warm = (image[..., 0] - image[..., 2]) >= 8.0
+    return (lum > TONE_HAIR_MAX + 30.0) & (lum < 245.0) & not_bg & warm
+
+
+def match_neck_seam(p: Plan, out: np.ndarray, *, meta: dict | None = None) -> np.ndarray:
+    """붙인 머리의 **목 아래쪽**을 원래 몸 목 색에 맞춘다 — 이음선 가로 줄을 없앤다.
+
+    왜 따로 하는가(2026-09-23 운영 E2E 실측): 머리 영역이 목 **중간에서** 끝나서, 경계 위는
+    등록 사진 피부·아래는 베이스(생성) 피부다. 둘은 밝기만이 아니라 **색조**도 다르다
+    (06 뒷면: 위 [164,121,107] 분홍기 → 아래 [187,154,130] 살구색, 경계 Δ21~28).
+    tone_means 는 머리 둘레 전체(볼·귀·턱·목) 평균이라 **그 한 줄**에서는 안 맞는다.
+
+    그래서 경계 바로 안쪽·바깥쪽 띠만 표본으로 떠서 채널별 비율을 구하고, 경계에서 1 →
+    위로 NECK_RAMP_FRAC 만큼 올라가며 0 이 되게 건다. 얼굴·머리카락은 안 건드린다.
+    """
+    left, top, side = p.box
+    region = p.head[top:top + side, left:left + side]
+    if not region.any():
+        return out
+    base = p.base[top:top + side, left:left + side].astype(np.float32)
+    person = p.person[top:top + side, left:left + side]
+    band = max(3, int(round(side * NECK_BAND_FRAC)))
+    k = 2 * band + 1
+    kernel = np.ones((k, k), np.uint8)
+    ring_out = cv2.dilate(region.astype(np.uint8), kernel).astype(bool) & ~region
+    ring_in = region & ~cv2.erode(region.astype(np.uint8), kernel).astype(bool)
+    ys = np.nonzero(region)[0]
+    y_top, y_bot = int(ys.min()), int(ys.max())
+    # 목은 머리 영역의 아래쪽이다 — 위 45% 는 머리·얼굴이라 표본에서 뺀다.
+    lower = np.zeros_like(region)
+    lower[y_top + int(0.45 * (y_bot - y_top)):, :] = True
+    outside = ring_out & lower & person & _true_skin(base)
+    bg = background_color(p.base)
+    inside = ring_in & lower & _neck_pixels(out, bg)
+    # 표본은 **이음선 바로 위아래 줄**만 — 링 전체면 귀 밑·머리선의 어두운 피부가 섞여
+    # 비율이 모자란다(09-23 뒷면 재현: 링 전체 잔차 21 → 줄만 쓰면 한 자릿수).
+    near = np.zeros_like(region)
+    near[max(0, y_bot - 3 * band):min(side, y_bot + 3 * band), :] = True
+    if (inside & near).sum() >= NECK_MIN_SAMPLES and (outside & near).sum() >= NECK_MIN_SAMPLES:
+        inside, outside = inside & near, outside & near
+    if outside.sum() < NECK_MIN_SAMPLES or inside.sum() < NECK_MIN_SAMPLES:
+        if meta is not None:
+            meta["neckSeam"] = None
+        return out
+    neck = base[outside].mean(axis=0)
+    head = np.maximum(out[inside].mean(axis=0), 1.0)
+    gain = np.clip(neck / head, NECK_GAIN_MIN, NECK_GAIN_MAX).astype(np.float32)
+    # 경계 높이 = 안쪽 띠의 평균 y. 거기서 1, 위로 ramp 만큼 올라가며 0.
+    seam_y = float(np.nonzero(inside)[0].mean())
+    ramp = max(8.0, side * NECK_RAMP_FRAC)
+    yy = np.arange(side, dtype=np.float32)[:, None]
+    vertical = np.clip(1.0 - (seam_y - yy) / ramp, 0.0, 1.0)
+    # 영역(region)으로 먼저 자르고 흐리면 경계에서 가중치가 절반으로 떨어져 **바로 그 줄**이
+    # 덜 맞는다(09-23 재현 잔차 21). 흐린 뒤에 쓰는 건 어차피 composite 의 영역 안뿐이다.
+    weight = vertical * _neck_pixels(out, bg).astype(np.float32)
+    weight = cv2.GaussianBlur(weight, (0, 0), max(2.0, band / 4.0))[..., None]
+    fixed = np.clip(out * (1.0 - weight) + out * gain * weight, 0, 255)
+    if meta is not None:
+        after = fixed[inside].mean(axis=0)
+        meta["neckSeam"] = {
+            "gain": [round(float(v), 3) for v in gain],
+            "before": round(float(np.abs(neck - head).max()), 2),
+            "after": round(float(np.abs(neck - after).max()), 2),
+        }
+    return fixed
+
+
 def composite(p: Plan, out1k: np.ndarray, *, meta: dict | None = None) -> np.ndarray:
     """마스크 안만 원본 해상도에 섞고, 옷은 원본 픽셀로 되돌린다(경계 2px 만 섞음).
 
@@ -595,6 +724,8 @@ def composite(p: Plan, out1k: np.ndarray, *, meta: dict | None = None) -> np.nda
             None if after is None
             else round(float(max(abs(float(v)) for v in (after[0] - after[1]))), 2)
         )
+    if NECK_SEAM_MATCH:
+        out = match_neck_seam(p, out, meta=meta)
     region = p.head[top:top + side, left:left + side].astype(np.float32)
     blur = cv2.GaussianBlur(region, (0, 0), 1.5 * max(1.0, side / CROP_PX))
     alpha = np.maximum(blur * (cv2.dilate(region, np.ones((3, 3), np.uint8)) > 0), region)[..., None]
