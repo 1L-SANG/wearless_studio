@@ -308,8 +308,15 @@ def validate(
     return out
 
 
-def edit_accepted(result: dict | None) -> bool:
-    """편집 목표 해결과 비수정 영역 보존을 모두 확인한 경우만 채택한다."""
+def edit_accepted(result: dict | None, *, matching_blocks: bool = True) -> bool:
+    """편집 목표 해결과 비수정 영역 보존을 모두 확인한 경우만 채택한다.
+
+    matching_blocks=False 는 **잡을 실패시키는 마지막 관문**(최종 수정본·조정 편집 결과)
+    전용이다(2026-09-23 오너 원칙: 매칭 아이템이 상품 출고를 막지 않는다). 그때는 매칭
+    하드 게이트(matching_critical_errors)만으로 거절하지 않고 호출측이 경고로 남긴다.
+    상품 쪽 판정(치명 오류·구조 위험·보존·목표 해결)은 그대로 엄격하다. 편집 전 사진으로
+    되돌릴 수 있는 중간 편집(축·가슴·untuck)은 기본값(True)으로 지금처럼 되돌린다.
+    """
     if not isinstance(result, dict):
         return False
     if result.get("role_policy_conflict") is True:
@@ -320,7 +327,9 @@ def edit_accepted(result: dict | None) -> bool:
         return False
     if result.get("regression_reasons") != [] or result.get("verdict") != "pass":
         return False
-    if mannequin_quality.blocking_issues(result) or result.get("matching_critical_errors"):
+    if mannequin_quality.blocking_issues(result):
+        return False
+    if matching_blocks and result.get("matching_critical_errors"):
         return False
     if "product_risks" in result and not mannequin_quality.review_complete(result):
         return False

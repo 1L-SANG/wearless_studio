@@ -252,6 +252,10 @@ class Settings:
     # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
     # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
     mannequin_pants_qc: str = "off"  # off | shadow | enforce
+    # 실패한 마네킹 잡의 유료 최선본을 24시간 초안으로 남기고, 같은 입력의 다음 잡이 그 초안을
+    # 편집 경로로 이어 쓴다(2026-09-23 오너 원칙: 이미 만든 결과가 있으면 그대로 쓴다).
+    # 초안 조회·저장은 전부 best-effort — 어떤 실패도 새 생성으로 폴백한다. 끄려면 "off".
+    mannequin_draft_reuse: str = "on"  # off | on
     # flat-lay 재렌더 모델 티어. 프롬프트는 스파이크 전략 B(정체성 고정) 원문 고정이고,
     # 모델만 이 노브로 고른다.
     # **사실관계**: 리포트(flatlay-spike-inputs/out/report.html)는 두 모델의 정체성 보존을
@@ -791,6 +795,7 @@ def load_settings() -> Settings:
         mannequin_bust_gate=_flag("MANNEQUIN_BUST_GATE", "off", {"off", "on"}),
         mannequin_bust_gate_model=os.getenv("MANNEQUIN_BUST_GATE_MODEL", ""),
         mannequin_pants_qc=_flag("MANNEQUIN_PANTS_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_draft_reuse=_default_on_flag("MANNEQUIN_DRAFT_REUSE"),
         matching_flatlay_tier=_flag(
             "MATCHING_FLATLAY_TIER", "image_high", {"image_light", "image_high"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,

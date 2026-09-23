@@ -464,6 +464,85 @@ async def claim_unpublished_ai_output_cleanup_intents(
         return await cur.fetchall()
 
 
+# ---------- 마네킹 유료 초안 보존 (2026-09-23) ----------
+# 오너 원칙: "생성 비용을 최대한 아껴야 한다. 이미 만든 결과가 있으면 그대로 쓴다."
+# 품질·인프라 사유로 실패한 마네킹 잡의 최선 1장을 R2 에 남기고, 정리 원장
+# (ai_output_cleanup_intents)의 not_before 를 TTL 로 쓴다. assets 행을 만들지 않으므로
+# 셀러 화면·보관함에는 보이지 않고, TTL 이 지나면 DraftAssetReclaimer 가 지운다.
+# 새 테이블 없이 기존 정리 원장을 그대로 쓴다 — 키가 입력 지문으로 결정되므로 조회가 정확 일치다.
+
+
+async def save_mannequin_draft_intent(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    r2_key: str,
+    retain_seconds: int,
+) -> str | None:
+    """초안 R2 키의 정리 소유권을 **쓰기 전에** 남긴다. not_before = 지금 + 보존 시간.
+
+    같은 키(같은 입력 지문)를 다시 저장하면 최신 잡이 소유하고 보존 시간이 다시 시작된다.
+    """
+    if not hasattr(conn, "cursor"):
+        return None
+    retain = max(0, int(retain_seconds))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into ai_output_cleanup_intents (job_id, r2_key, not_before)
+            values (%s, %s, now() + (%s * interval '1 second'))
+            on conflict (r2_key) do update
+            set job_id = excluded.job_id, status = 'pending',
+                not_before = excluded.not_before, updated_at = now()
+            returning id::text as id
+            """,
+            (job_id, r2_key, retain),
+        )
+        return (await cur.fetchone())["id"]
+
+
+async def get_live_mannequin_draft_intent(
+    conn: AsyncConnection, r2_key: str, *, min_remaining_seconds: int = 60
+) -> dict | None:
+    """아직 보존 기간 안에 있는 초안만 돌려준다. 정리 대상이 됐거나 곧 될 것은 None.
+
+    여유(min_remaining_seconds)를 두는 이유: 조회 직후 정리 작업이 R2 객체를 지우면 읽기가
+    실패한다. 실패해도 새 생성으로 넘어가지만 불필요한 폴백을 줄인다.
+    """
+    if not hasattr(conn, "cursor"):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, job_id::text as job_id, r2_key
+            from ai_output_cleanup_intents
+            where r2_key = %s and status = 'pending'
+              and not_before > now() + (%s * interval '1 second')
+            """,
+            (r2_key, max(0, int(min_remaining_seconds))),
+        )
+        return await cur.fetchone()
+
+
+async def expire_mannequin_draft_intent(conn: AsyncConnection, r2_key: str) -> None:
+    """초안을 더 쓰지 않게 한다 — 다음 정리 주기에 R2 객체가 지워진다.
+
+    성공한 잡(새 컷이 생김)과 초안을 이미 한 번 이어 쓴 잡이 부른다. 같은 초안을 두 번
+    이어 편집하면 편집이 누적돼 옷이 흐트러질 수 있어서다.
+    """
+    if not hasattr(conn, "cursor"):
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update ai_output_cleanup_intents
+            set not_before = now(), updated_at = now()
+            where r2_key = %s and status = 'pending'
+            """,
+            (r2_key,),
+        )
+
+
 async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
