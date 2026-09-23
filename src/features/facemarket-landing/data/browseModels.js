@@ -24,6 +24,10 @@ import { FACEMARKET_PRICING } from '../../../lib/facemarketPricing.js';
 const OWN_EXAMPLES = {
   m3: ['thin', 'lean-muscular', 'solid-build']
     .map((name) => `/models/men/m3-body-types/${name}.webp`),
+  /* 2026-09-23 오너: 소윤(w7)·유나(w8) 본인 착장컷 — 흰 나시 + 그레이 와이드 팬츠, 정면·90도 측면.
+     같은 가상 모델 얼굴 시트(seed/models/mJ·mK)로 만든 본인 사진이라 위 규칙(남의 전신 금지)에 맞는다. */
+  w7: ['front', 'side'].map((view) => `/models/women/w7-looks/${view}.webp`),
+  w8: ['front', 'side'].map((view) => `/models/women/w8-looks/${view}.webp`),
 };
 
 /* 허용 품목은 brandUseCategories.js 의 ALLOWED 에서 그대로 골라 쓴다 — 지어낸 품목명이
