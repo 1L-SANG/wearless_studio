@@ -901,7 +901,11 @@ class CatalogAccessResult(CamelModel):
 async def get_catalog_access(
     request: Request, response: Response, user_id: str = Depends(require_user),
 ):
-    """이 계정이 모델 리스트를 볼 수 있는지. 화면(/models)이 목록과 안내 중 무엇을 그릴지 정한다."""
+    """이 계정이 모델 리스트를 볼 수 있는지. 화면(/models)이 목록과 안내 중 무엇을 그릴지 정한다.
+
+    볼 수 있는 계정 = 관리자, 셀러 약관 동의 계정, 2차 등록(라이선스 발급)까지 마친 모델.
+    정의와 근거는 facemarket_catalog_access 모듈 설명에 있다.
+    """
     async with get_conn(request) as conn:
         access = await catalog_access(conn, user_id)
     response.headers["Cache-Control"] = "no-store"
@@ -912,7 +916,8 @@ async def get_catalog_access(
 async def public_models(
     request: Request, response: Response, user_id: str = Depends(require_user),
 ):
-    """모델 리스트. 등록된 셀러와 모델만 본다(2026-09-23 오너 결정, facemarket_catalog_access 참고).
+    """모델 리스트. 등록된 셀러와 2차 등록까지 마친 모델만 본다(2026-09-23 오너 결정,
+    facemarket_catalog_access 참고).
     비로그인은 401, 로그인했지만 자격이 없으면 403 이다. 주소의 public 은 역사적 이름이다.
 
     협찬 상세(계정·팔로워·사이즈)는 그중 **셀러**에게만 실어요(E-2b 동의 범위).

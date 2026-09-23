@@ -51,9 +51,10 @@ class Cursor:
         if "ready_for_identity_delete" in query:
             self.one = {"closed": self.store["closed"]}
         elif "catalog_is_admin" in query:
-            # 모델 리스트 열람 판정. 셀러 약관 동의 계정과 모델 본인(OWNER)만 자격이 있어요.
+            # 모델 리스트 열람 판정. 셀러 약관 동의 계정과, 라이선스가 발급된(2차 등록 완료) 모델 본인만.
             self.one = {"catalog_is_admin": False, "catalog_is_seller": params[0] in self.store["sellers"],
-                        "catalog_is_model": params[0] == model["user_id"]}
+                        "catalog_is_model": params[0] == model["user_id"]
+                        and model["license_status"] in ("active", "reverification_required")}
         elif query.startswith("update fm_models set sponsorship_enabled"):
             values, model_id, owner_id = params[:-2], params[-2], params[-1]
             if model_id == model["id"] and owner_id == model["user_id"]:

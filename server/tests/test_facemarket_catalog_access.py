@@ -1,7 +1,8 @@
-"""모델 리스트는 등록된 셀러와 모델만 본다(2026-09-23 오너 결정).
+"""모델 리스트는 등록된 셀러와 2차 등록까지 마친 모델만 본다(2026-09-23 오너 결정).
 
-판정 = 관리자, 셀러 약관 동의 기록(seller_consents), 모델 기록(fm_models) 또는 심사 중·승인된
-지원서(fm_model_applications). 로그인만 한 계정은 화면 판정(catalog-access)도 목록 API 도 막힌다.
+판정 = 관리자, 셀러 약관 동의 기록(seller_consents), 본인 모델에 발급된 라이선스
+(active 또는 재등록 중 reverification_required). 지원서만 낸 사람, 2차 등록 중인 사람,
+로그인만 한 계정은 화면 판정(catalog-access)도 목록 API 도 막힌다.
 """
 
 import contextlib
@@ -17,16 +18,16 @@ from conftest import assert_query_binds, make_settings
 ADMIN = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 SELLER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 MODEL = "cccccccc-cccc-cccc-cccc-cccccccccccc"
-APPLICANT = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+APPLICANT = "dddddddd-dddd-dddd-dddd-dddddddddddd"  # 지원서만 냈거나 2차 등록 진행 중
 STRANGER = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 ADMIN_SELLER = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
-# 흉내 DB 의 계정별 기록. 지원자는 심사 중인 지원서만 있다.
+# 흉내 DB 의 계정별 기록. 지원자는 발급된 라이선스가 없어 모델로 치지 않는다.
 FLAGS = {
     ADMIN: {"catalog_is_admin": True, "catalog_is_seller": False, "catalog_is_model": False},
     SELLER: {"catalog_is_admin": False, "catalog_is_seller": True, "catalog_is_model": False},
     MODEL: {"catalog_is_admin": False, "catalog_is_seller": False, "catalog_is_model": True},
-    APPLICANT: {"catalog_is_admin": False, "catalog_is_seller": False, "catalog_is_model": True},
+    APPLICANT: {"catalog_is_admin": False, "catalog_is_seller": False, "catalog_is_model": False},
     ADMIN_SELLER: {"catalog_is_admin": True, "catalog_is_seller": True, "catalog_is_model": False},
 }
 
@@ -87,7 +88,7 @@ def api(monkeypatch, keypair, make_token):
 
 
 @pytest.mark.parametrize("user, role", [
-    (ADMIN, "admin"), (SELLER, "seller"), (MODEL, "model"), (APPLICANT, "model"), (ADMIN_SELLER, "admin"),
+    (ADMIN, "admin"), (SELLER, "seller"), (MODEL, "model"), (ADMIN_SELLER, "admin"),
 ])
 def test_registered_sellers_models_and_admins_may_see_the_list(api, user, role):
     client, _store, as_user = api
@@ -100,12 +101,14 @@ def test_registered_sellers_models_and_admins_may_see_the_list(api, user, role):
     assert listing.json() == {"items": []}
 
 
-def test_logged_in_account_without_records_is_turned_away(api):
+@pytest.mark.parametrize("user", [STRANGER, APPLICANT])
+def test_accounts_without_seller_consent_or_finished_registration_are_turned_away(api, user):
+    """로그인만 한 계정, 지원서만 냈거나 2차 등록 중인 사람은 목록을 못 봐요."""
     client, _store, as_user = api
-    access = client.get("/v1/facemarket/catalog-access", headers=as_user(STRANGER))
+    access = client.get("/v1/facemarket/catalog-access", headers=as_user(user))
     assert access.status_code == 200, access.text
     assert access.json() == {"allowed": False, "role": None}
-    listing = client.get("/v1/facemarket/public/models", headers=as_user(STRANGER))
+    listing = client.get("/v1/facemarket/public/models", headers=as_user(user))
     assert listing.status_code == 403, listing.text
     assert listing.json()["error"]["code"] == "members_only"
 
@@ -133,7 +136,14 @@ def test_access_query_checks_each_record_for_the_same_account():
     query = " ".join(CATALOG_ACCESS_SQL.split()).lower()
     assert "from profiles where user_id = %s and role = 'admin'" in query
     assert "from seller_consents where user_id = %s" in query
-    assert "from fm_models where user_id = %s" in query
-    # 반려·취소된 지원서만 있는 계정은 모델이 아니에요.
-    assert "from fm_model_applications where user_id = %s and status in ('under_review', 'approved')" in query
-    assert query.count("%s") == 4
+    # 모델 = 2차 등록 완료 = 본인 모델에 발급된 라이선스. 발급 대기(pending)·취소(revoked)는 아니에요.
+    assert ("from fm_licenses l join fm_models m on m.id = l.model_id "
+            "where m.user_id = %s and l.status in ('active', 'reverification_required')") in query
+    assert "fm_model_applications" not in query, "지원서만으로는 모델로 치지 않아요"
+    assert query.count("%s") == 3
+
+
+def test_registered_statuses_match_the_query():
+    from app.facemarket_catalog_access import REGISTERED_MODEL_LICENSE_STATUSES
+    statuses = ", ".join(f"'{status}'" for status in REGISTERED_MODEL_LICENSE_STATUSES)
+    assert f"l.status in ({statuses})" in " ".join(CATALOG_ACCESS_SQL.split())

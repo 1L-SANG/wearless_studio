@@ -130,8 +130,8 @@ export function listMyModels() {
   return http('/v1/facemarket/models/me');
 }
 
-// 모델 리스트(/models) 열람 자격. 등록된 셀러(셀러 약관 동의)와 모델(모델 기록, 심사 중이거나 승인된 지원서),
-// 관리자만 allowed 다(2026-09-23 오너 결정). 목 모드는 로그인 계정을 모델로 본다.
+// 모델 리스트(/models) 열람 자격. 등록된 셀러(셀러 약관 동의)와 2차 등록(라이선스 발급)까지 마친 모델,
+// 관리자만 allowed 다(2026-09-23 오너 결정, server/app/facemarket_catalog_access.py). 목 모드는 로그인 계정을 모델로 본다.
 export function getCatalogAccess() {
   if (MOCK) return Promise.resolve({ allowed: true, role: 'model' });
   return http('/v1/facemarket/catalog-access');
