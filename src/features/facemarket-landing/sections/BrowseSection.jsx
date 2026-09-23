@@ -102,7 +102,7 @@ export function BrowseSection() {
             </button>
           ))}
         </div>
-        <label className={s.sponsorshipFilter}><input type="checkbox" checked={sponsorshipOnly} onChange={event => setSponsorshipOnly(event.target.checked)} />협찬 받는 중</label>
+        <label className={s.sponsorshipFilter}><input type="checkbox" checked={sponsorshipOnly} onChange={event => setSponsorshipOnly(event.target.checked)} />협찬 활성화</label>
         <span className={s.browseCount}>{models.length}명</span>
       </div>
 
@@ -130,7 +130,7 @@ export function BrowseSection() {
                 <p className={s.cardSpec}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
               )}
             </div>
-            {model.kind === 'real' && model.sponsorship?.enabled && <p className={s.sponsorshipBadge}>{model.sponsorship.masked ? '협찬 받는 중' : `협찬 받는 중 · @${model.sponsorship.instagramHandle} · 팔로워 ${formatFollowers(model.sponsorship.instagramFollowers)}`}</p>}
+            {model.kind === 'real' && model.sponsorship?.enabled && <p className={s.sponsorshipBadge}>{model.sponsorship.masked ? '협찬 활성화' : `협찬 활성화 · @${model.sponsorship.instagramHandle} · 팔로워 ${formatFollowers(model.sponsorship.instagramFollowers)}`}</p>}
           </li>
         ))}
       </ul>
