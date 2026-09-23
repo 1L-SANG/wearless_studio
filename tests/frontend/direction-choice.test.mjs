@@ -223,3 +223,48 @@ test('분위기 예시 칸은 잠기지 않는다 — 회색 비활성·not-allo
   assert.match(moodGuide, /sb-expage-label/);
   assert.match(css, /\.sb-expage-label/);
 });
+
+test('스튜디오 갤러리는 같은 방향에 낱개가 있으면 세트 멤버를 빼서 같은 사진을 두 번 안 보여준다', () => {
+  // 2026-09-22 오너 실측: 남성 미디움 뒷면 칸에 새 낱개 예시와, 그 예시를 뽑을 때 베이스로 쓴
+  // 공간 묶음 멤버가 나란히 떴다 — 같은 사람·같은 옷·같은 포즈라 두 장이 똑같아 보였다.
+  const ex = (id, over = {}) => ({
+    id, cutType: 'horizon', shot: 'medium', gender: 'men', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const catalog = [
+    ex('flat_front'), ex('flat_back', { direction: 'back', rank: 2 }),
+    ex('set_front', { setOnly: true }), ex('set_back', { direction: 'back', setOnly: true }),
+    ex('set_profile', { direction: 'side', setOnly: true }),
+  ];
+  const shown = selectGenerationExamples(catalog, {
+    cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'men',
+    direction: 'front', sideStyle: null, appendSetOnly: true,
+  }).map((e) => e.id);
+  // 정면·뒷면은 낱개가 덮으므로 세트 멤버가 빠지고, 낱개가 없는 옆모습은 그대로 남는다.
+  assert.deepEqual(shown, ['flat_front', 'flat_back', 'set_profile']);
+});
+
+test('스냅(스타일링)은 장소가 다 다르므로 세트 멤버를 빼지 않는다', () => {
+  const ex = (id, over = {}) => ({
+    id, cutType: 'styling', shot: 'full', gender: 'women', applicableClothingTypes: ['top'],
+    variants: ['all'], rank: 1, direction: 'front', sideStyle: null, thumb: `t/${id}`, ...over,
+  });
+  const catalog = [ex('flat_front'), ex('set_front', { setOnly: true })];
+  const shown = selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women',
+    direction: 'front', sideStyle: null, appendSetOnly: true,
+  }).map((e) => e.id);
+  assert.deepEqual(shown, ['flat_front', 'set_front']);
+});
+
+test('갤러리는 방향 묶음을 한 화면에 쌓는다 — 페이지 넘김·점 네비가 없다', () => {
+  // 2026-09-22 오너: "분류했으면 여러 창 옮기게 하지 말고 하나만 있으면 되잖아".
+  const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
+  assert.doesNotMatch(moodGuide, /galleryPage/);
+  assert.doesNotMatch(moodGuide, /sb-expage-hit/);
+  assert.doesNotMatch(moodGuide, /paginateGenerationGalleryItems/);
+  assert.match(moodGuide, /sb-exsection/);
+  // 한 방향이 길어져 다른 방향을 밀어내지 않게 묶음마다 6장으로 자른다.
+  assert.match(moodGuide, /section\.examples\.slice\(0, 6\)/);
+});

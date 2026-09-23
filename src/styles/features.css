@@ -2242,18 +2242,11 @@
 .sb-pending-recipe { padding: 10px; border-radius: 10px; background: var(--bg-2); }
 
 /* 한 페이지 = 3×2 콘텐츠 6칸. 이동 컨트롤은 아래에 두어 격자 폭을 잠식하지 않는다. */
-.sb-exgallery { position: relative; padding-inline: 0; outline: none; }
+.sb-exgallery { position: relative; padding-inline: 0; outline: none; display: flex; flex-direction: column; }
 .sb-exgallery:focus-visible { border-radius: 10px; box-shadow: 0 0 0 2px var(--link); }
-.sb-exgrid {
-  display: flex; gap: 10px; transition: opacity .15s;
-  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
-  scroll-snap-type: x mandatory; scrollbar-width: none;
-}
-.sb-exgrid::-webkit-scrollbar { display: none; }
-.sb-expage {
-  display: flex; flex-direction: column; gap: 6px;
-  flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always;
-}
+/* 방향 묶음을 세로로 쌓는다 — 페이지 넘김 없음(2026-09-22 오너). */
+.sb-exsection { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sb-exsection + .sb-exsection { margin-top: 12px; }
 /* 방향 묶음 이름 — 한 페이지가 곧 한 방향(정면·사선·옆모습·뒷면)이다. */
 .sb-expage-label { color: var(--fg-2); font-size: 11px; letter-spacing: .02em; }
 .sb-expage-cells {

@@ -84,8 +84,12 @@ test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'top', gender: 'men' }), true);
   // 남성 원피스는 계약상 존재하지 않는다 — 풀샷을 열어도 이 조합은 계속 닫혀 있다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);
-  // 미디움은 여전히 여성만 — 이번 발행은 풀샷만 건드렸다.
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'men' }), false);
+  // 2026-09-22: 남성 미디움(상의·아우터)을 열었다 — 그 칸은 낱개 예시가 0장이라 세트 멤버만 보였고
+  // 사선은 한 장도 없었다. 통일 촬영 6컷(정면·사선 좌우·옆모습 좌우·뒷면)을 발행하며 함께 연다.
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'men' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
+  // 남성 미디움 하의는 아직 사진이 없어 닫혀 있다.
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'bottom', gender: 'men' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 

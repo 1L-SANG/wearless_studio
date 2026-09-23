@@ -175,6 +175,23 @@ function partitionByDirectionFamily(list, { cutType, direction, sideStyle }) {
   return { same, rest };
 }
 
+/* 스튜디오(호리존)는 방향마다 **한 가지 촬영**만 보이면 된다 — 같은 방향에 낱개 예시가 있으면
+   같은 그림이 두 장 뜨던 공간 묶음 멤버를 갤러리에서 뺀다(2026-09-22 오너: "똑같은 사진 2개").
+   멤버는 공간 묶음을 고를 때 그대로 쓰이고, 낱개가 없는 방향에서는 여전히 갤러리를 채운다.
+   스냅(스타일링)은 장소가 다 다른 게 값이라 그대로 둔다. */
+function directionFamilyKey(example) {
+  const direction = example?.direction || null;
+  if (direction !== 'side') return direction;
+  return example?.sideStyle === 'threeQuarter' ? 'side:threeQuarter' : 'side:profile';
+}
+
+function dedupeHorizonSetMembers(setMembers, ordinary, cutType) {
+  if (cutType !== 'horizon') return setMembers;
+  const covered = new Set(ordinary.map(directionFamilyKey).filter(Boolean));
+  if (!covered.size) return setMembers;
+  return setMembers.filter((example) => !covered.has(directionFamilyKey(example)));
+}
+
 export function selectGenerationExamples(catalog, rawOptions) {
   const options = {
     spaceGroupId: null,
@@ -203,7 +220,9 @@ export function selectGenerationExamples(catalog, rawOptions) {
   };
   if (appendSetOnly) {
     const ordinary = matched.filter((example) => !example.setOnly);
-    const setMembers = matched.filter((example) => example.setOnly);
+    const setMembers = dedupeHorizonSetMembers(
+      matched.filter((example) => example.setOnly), ordinary, cutType,
+    );
     const mirrorExamples = appendMirror && cutType === 'styling'
       ? source.filter((example) => (
         matchesMirrorSelection(example, options)

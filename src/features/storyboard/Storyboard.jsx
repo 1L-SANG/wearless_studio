@@ -43,7 +43,6 @@ import {
   groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
-  paginateGenerationGalleryItems,
   repeatedAllExampleVariationIds,
   selectGenerationExamples,
   storedExampleConditionStatus,
@@ -1214,21 +1213,12 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     && refScope === 'pose' && !selectedPoseCompatible
     ? 'changed' : conditionStatus;
   const galleryRef = useRef(null);
-  const [galleryPage, setGalleryPage] = useState(0);
   const [mineTab, setMineTab] = useState(false);
-  const galleryPageCount = Math.max(1, Math.ceil(examples.length / 6));
-  const scrollToGalleryPage = (page, behavior = 'smooth') => {
-    const targetPage = Math.max(0, Math.min(page, galleryPageCount - 1));
-    const element = galleryRef.current?.querySelectorAll('.sb-expage')[targetPage];
-    if (element) galleryRef.current.scrollTo({ left: element.offsetLeft, behavior });
-    setGalleryPage(targetPage);
-  };
+  // 갤러리는 방향 묶음을 세로로 쌓아 한 화면에 보여준다 — 페이지 넘김을 없앴다(2026-09-22 오너:
+  // "분류했으면 여러 창 옮기게 하지 말고"). 인스펙터 세로 스크롤이 그대로 이어진다.
   useEffect(() => {
-    scrollToGalleryPage(0, 'auto');
+    galleryRef.current?.scrollTo?.({ top: 0 });
   }, [cut, shotVal, clothingType, gender, direction]);
-  useEffect(() => {
-    if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
-  }, [galleryPage, galleryPageCount]);
   const selectFirstAvailable = () => {
     const first = refScope === 'pose'
       ? examples.find((example) => (example.variants || []).includes('pose')
@@ -1275,37 +1265,16 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     );
   };
   const exampleCells = examples.map(renderExampleCell);
-  const galleryItems = exampleCells;
-  // 갤러리 한 페이지 = **방향 하나**(정면·사선·옆모습·뒷면). 카드가 보고 있는 방향이 첫 페이지고,
-  // 한 방향에 6장이 넘으면 같은 이름으로 다음 장을 만든다. 방향 라벨이 없는 컷(제품·거울)은
-  // 묶음이 하나뿐이라 라벨 없이 예전처럼 6칸씩 넘어간다.
-  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle });
+  // 방향 묶음마다 최대 6장 — 페이지 넘김을 없앴으니 한 방향이 스냅 26장처럼 길어지면
+  // 다른 방향이 화면 밖으로 밀린다. 순서는 이미 rank·무드로 정렬돼 있다.
+  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle })
+    .map((section) => ({ ...section, examples: section.examples.slice(0, 6) }));
   const labelledSections = gallerySections.length > 1;
-  const galleryPages = gallerySections.length
-    ? gallerySections.flatMap((section) => {
-      const cells = section.examples.map((example) => exampleCells[examples.indexOf(example)]);
-      return paginateGenerationGalleryItems(cells).map((items, index) => ({
-        key: `${section.key}:${index}`,
-        label: labelledSections ? `${section.label}${index ? ` ${index + 1}` : ''}` : null,
-        items,
-      }));
-    })
-    : [{ key: 'empty:0', label: null, items: [] }];
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
       ? onPickRef()
       : api.pickRefImage(useAppStore.getState().projectId);
-  };
-  const updateGalleryPageFromScroll = () => {
-    const pages = [...(galleryRef.current?.querySelectorAll('.sb-expage') || [])];
-    if (!pages.length) return;
-    const left = galleryRef.current.scrollLeft;
-    let closest = 0;
-    pages.forEach((page, index) => {
-      if (Math.abs(page.offsetLeft - left) < Math.abs(pages[closest].offsetLeft - left)) closest = index;
-    });
-    setGalleryPage(closest);
   };
   return (
     <div className="insp-sec">
@@ -1348,48 +1317,20 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       )}
       {/* 정면이 아닌 방향에서 갤러리를 흐리게 덮던 처리를 걷어냈다 — 방향별 묶음이 생긴 뒤로는
           "왜 회색인데 눌리지?"만 남았다(2026-09-22 오너). moodOnly 는 기본 범위 판정에만 쓴다. */}
-      <div className="sb-exgallery"
-        role="region" aria-label="생성예시 갤러리" tabIndex={0}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowLeft') {
-            event.preventDefault(); scrollToGalleryPage(galleryPage - 1);
-          } else if (event.key === 'ArrowRight') {
-            event.preventDefault(); scrollToGalleryPage(galleryPage + 1);
-          }
-        }}>
-        {/* 세로 휠은 갤러리가 먹지 않는다 — 인스펙터 세로 스크롤이 그대로 이어진다.
-            페이지 넘김은 가로 스크롤·넘김 버튼·←→ 키만 (2026-08-16 오너). */}
-        <div ref={galleryRef} className="sb-exgrid"
-          onScroll={updateGalleryPageFromScroll}>
-          {galleryPages.map((page) => (
-            <div className="sb-expage" key={`page:${page.key}`}>
-              {page.label && <div className="sb-expage-label">{page.label}</div>}
-              <div className="sb-expage-cells">
-                {page.items}
-                {!galleryItems.length && (
-                  <div className="sb-exempty">
-                    {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
-                      ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
-                    <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
-                  </div>
-                )}
-              </div>
+      <div className="sb-exgallery" ref={galleryRef}
+        role="region" aria-label="생성예시 갤러리">
+        {gallerySections.length ? gallerySections.map((section) => (
+          <div className="sb-exsection" key={`sec:${section.key}`}>
+            {labelledSections && <div className="sb-expage-label">{section.label}</div>}
+            <div className="sb-expage-cells">
+              {section.examples.map((example) => exampleCells[examples.indexOf(example)])}
             </div>
-          ))}
-        </div>
-        {galleryPageCount > 1 && (
-          <div className="sb-excontrols">
-            <button type="button" className="sb-expage-hit prev" aria-label="이전 예시 페이지"
-              disabled={galleryPage === 0} onClick={() => scrollToGalleryPage(galleryPage - 1)}>‹</button>
-            <div className="sb-expages" aria-label={`${galleryPageCount}페이지 중 ${galleryPage + 1}페이지`}>
-              {galleryPages.map((_page, index) => (
-                <button type="button" key={index} className={index === galleryPage ? 'on' : ''}
-                  aria-label={`${index + 1}페이지`} aria-current={index === galleryPage ? 'page' : undefined}
-                  onClick={() => scrollToGalleryPage(index)} />
-              ))}
-            </div>
-            <button type="button" className="sb-expage-hit next" aria-label="다음 예시 페이지"
-              disabled={galleryPage === galleryPageCount - 1} onClick={() => scrollToGalleryPage(galleryPage + 1)}>›</button>
+          </div>
+        )) : (
+          <div className="sb-exempty">
+            {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+              ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+            <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
           </div>
         )}
       </div>

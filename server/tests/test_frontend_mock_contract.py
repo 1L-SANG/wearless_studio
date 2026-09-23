@@ -183,9 +183,17 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         assert item["applicableClothingTypes"] == expected, item["id"]
 
 
-def test_storyboard_pose_direction_tooltip_matches_service_copy():
+def test_storyboard_gallery_locks_no_example_cell():
+    """분위기 예시 갤러리는 어떤 칸도 잠그지 않는다 (2026-09-22 오너).
+
+    포즈 자산이 없거나 방향이 다른 칸을 disabled 로 덮고 "이 예시의 포즈는 … 전용이에요"
+    툴팁을 달던 처리를 걷어냈다. 회색이라 왜 못 고르는지 알 수 없었고 실제로는 눌리는
+    칸도 있었다. 지금은 어느 칸이든 분위기(all) 범위로 고를 수 있다.
+    """
     source = (REPO_ROOT / "src/features/storyboard/Storyboard.jsx").read_text(encoding="utf-8")
-    assert "이 예시의 포즈는 ${label} 전용이에요" in source
+    assert "전용이에요" not in source
+    assert "disabled={poseUnavailable}" not in source
+    assert "sb-exgallery moodonly" not in source
 
 
 def test_committed_catalog_and_registry_cover_the_single_public_combination_table():
