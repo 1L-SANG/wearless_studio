@@ -10,7 +10,7 @@ import contextlib
 import pytest
 from fastapi.testclient import TestClient
 
-from app import facemarket_admin_models
+from app import facemarket, facemarket_admin_models
 from app.facemarket_catalog_access import CATALOG_ACCESS_SQL
 from app.main import create_app
 from conftest import assert_query_binds, make_settings
@@ -47,7 +47,9 @@ class Cursor:
         assert_query_binds(sql, params)
         query = " ".join(sql.split()).lower()
         self.store["queries"].append((query, params))
-        if "catalog_is_admin" in query:
+        if "ready_for_identity_delete" in query:
+            self.one = {"closed": False}   # 셀러 카탈로그의 계정 열림 확인
+        elif "catalog_is_admin" in query:
             self.one = FLAGS.get(params[0], {
                 "catalog_is_admin": False, "catalog_is_seller": False, "catalog_is_model": False,
             })
@@ -80,6 +82,7 @@ def api(monkeypatch, keypair, make_token):
         yield Conn(store)
 
     monkeypatch.setattr(facemarket_admin_models, "get_conn", get_conn)
+    monkeypatch.setattr(facemarket, "get_conn", get_conn)
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda _token: keypair[1]
     client = TestClient(app)
@@ -115,7 +118,7 @@ def test_accounts_without_seller_consent_or_finished_registration_are_turned_awa
 
 def test_anonymous_visitors_get_nothing(api):
     client, store, _as_user = api
-    for url in ("/v1/facemarket/catalog-access", "/v1/facemarket/public/models"):
+    for url in ("/v1/facemarket/catalog-access", "/v1/facemarket/public/models", "/v1/facemarket/models"):
         assert client.get(url).status_code == 401
         bad = client.get(url, headers={"Authorization": "Bearer not-a-token"})
         assert bad.status_code == 401
@@ -147,3 +150,23 @@ def test_registered_statuses_match_the_query():
     from app.facemarket_catalog_access import REGISTERED_MODEL_LICENSE_STATUSES
     statuses = ", ".join(f"'{status}'" for status in REGISTERED_MODEL_LICENSE_STATUSES)
     assert f"l.status in ({statuses})" in " ".join(CATALOG_ACCESS_SQL.split())
+
+
+@pytest.mark.parametrize("user", [STRANGER, APPLICANT])
+def test_seller_catalog_is_not_a_side_door(api, user):
+    """셀러 카탈로그(GET /v1/facemarket/models)도 같은 모델과 대표 사진을 내준다. 여기가 로그인만
+    요구하면 자격 없는 계정이 이 주소로 우회해 목록을 받는다(2026-09-23 리뷰에서 재현)."""
+    client, store, as_user = api
+    res = client.get("/v1/facemarket/models", headers=as_user(user))
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "members_only"
+    # 판정에서 멈추고 목록은 읽지 않아요.
+    assert not [q for q, _ in store["queries"] if "from fm_models m" in q and "catalog_is_admin" not in q]
+
+
+@pytest.mark.parametrize("user", [ADMIN, SELLER, MODEL])
+def test_seller_catalog_serves_registered_members(api, user):
+    client, _store, as_user = api
+    res = client.get("/v1/facemarket/models", headers=as_user(user))
+    assert res.status_code == 200, res.text
+    assert res.json() == []

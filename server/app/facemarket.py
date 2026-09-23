@@ -39,6 +39,7 @@ from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
+from .facemarket_catalog_access import catalog_access
 from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_license_issued_email, send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
@@ -613,12 +614,19 @@ async def list_models(
     카드 얼굴은 모델이 올린 대표 이미지(cover) — 비공개 R2 키를 presigned GET(1h)으로 변환해
     싣는다(my_models·list_licenses 와 동일 처리). cover 가 없는 모델은 None 이 되고 프론트가
     face_thumb_uri placeholder 로 강등한다.
+
+    모델 리스트(GET /public/models)와 **같은 열람 판정**을 쓴다(facemarket_catalog_access, 2026-09-23).
+    같은 모델·대표 사진을 내주는 창구라, 여기가 로그인만 요구하면 자격 없는 계정이 이 주소로 우회해
+    목록을 받는다. 셀러 앱 사용자는 셀러 약관 동의 기록이 있어(SignupCompletion 이 받는다) 영향이 없다.
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
+        access = await catalog_access(conn, user_id)
+        if not access["allowed"]:
+            raise _err("members_only", "모델 리스트는 등록된 셀러와 모델만 볼 수 있어요.", status=403)
         # 협찬 상세(계정·팔로워·사이즈)는 E-2b 동의문대로 셀러 약관에 동의한 계정에게만.
-        # 이 카탈로그는 로그인만 요구하므로 모델 계정도 부를 수 있다.
-        seller = await repo.get_seller_consent(conn, user_id) is not None
+        # 모델 계정도 이 카탈로그를 볼 수 있지만 협찬 상세는 배지만 간다.
+        seller = access["seller"]
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {_MODEL_CARD_COLS_ENRICHED} from fm_models m

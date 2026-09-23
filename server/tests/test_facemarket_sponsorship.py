@@ -329,7 +329,8 @@ def test_logged_in_non_seller_sees_only_the_badge(sponsorship_api):
         assert item["sponsorshipEnabled"] is True
         assert item["instagramHandle"] is None and item["instagramFollowers"] is None
         assert item["sizeTop"] is None and item["sizeBottomWaist"] is None
-    assert any("from seller_consents" in q and p == (OWNER,) for q, p in store["queries"])
+    # 셀러 여부는 열람 판정 조회(facemarket_catalog_access) 안에서 이 계정으로 확인해요.
+    assert any("from seller_consents where user_id = %s" in q and OWNER in p for q, p in store["queries"])
 
 
 def test_sponsorship_patch_preflight_allows_screen_header(sponsorship_api):
