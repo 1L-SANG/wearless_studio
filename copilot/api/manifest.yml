@@ -69,6 +69,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 토스 문서: 자동결제 승인은 최대 60초. 일반결제 값(15초)을 재사용하면 정상 승인이
   # 타임아웃으로 뒤집혀 '결과 미상' 재시도만 쌓인다.
   TOSS_BILLING_TIMEOUT: "60"
+  # 계좌이체(무통장입금) 입금 계좌 — PG 심사 전 결제 경로(PR #368). 손님 요금제 화면에 그대로
+  # 보인다. 셋 중 하나라도 비면 화면의 계좌이체 버튼이 "잠시 받지 않아요"로 잠긴다(사고 없음).
+  BANK_TRANSFER_BANK: "농축협"
+  BANK_TRANSFER_ACCOUNT: "352-2407-2408-13"
+  BANK_TRANSFER_HOLDER: "정일상(데일리모먼트)"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
