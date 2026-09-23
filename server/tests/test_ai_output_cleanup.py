@@ -194,3 +194,75 @@ def test_success_finalizers_clear_cleanup_intent_inside_publish_transaction():
         job_done = source.index("update jobs set status = 'done'")
 
         assert asset_insert < intent_clear < job_done
+
+
+# ── 상세 컷 체크포인트 표식(2026-09-23) — 새 테이블 없이 not_before 를 TTL 로 쓴다 ──
+class _SqlCursor:
+    def __init__(self, log, row=None, rows=None):
+        self.log, self.row, self.rows = log, row, rows or []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def execute(self, sql, params=None):
+        self.log.append((" ".join(sql.split()), params))
+
+    async def fetchone(self):
+        return self.row
+
+    async def fetchall(self):
+        return self.rows
+
+
+class _SqlConn:
+    def __init__(self, row=None, rows=None):
+        self.log = []
+        self.row, self.rows = row, rows
+
+    def cursor(self):
+        return _SqlCursor(self.log, self.row, self.rows)
+
+
+def test_checkpoint_intent_is_due_after_the_ttl_not_now():
+    conn = _SqlConn(row={"id": "intent-1"})
+    got = asyncio.run(repo.create_ai_checkpoint_intent(
+        conn, job_id="j1", r2_key="users/u1/projects/p1/ai/j1/ckpt/x/base.bin",
+        ttl_seconds=86400))
+    sql, params = conn.log[0]
+    assert got == "intent-1"
+    assert "insert into ai_output_cleanup_intents" in sql
+    assert "now() + make_interval(secs => %s)" in sql
+    assert params[-1] == 86400
+    # 리클레이머는 not_before 가 지난 표식만 집는다 — TTL 이 곧 "24시간 뒤 삭제"다
+    assert "i.not_before <= now()" in " ".join(
+        inspect.getsource(repo.claim_unpublished_ai_output_cleanup_intents).split())
+
+
+def test_checkpoint_lookup_only_sees_failed_jobs_of_the_same_project():
+    conn = _SqlConn(rows=[{"id": "i1", "r2_key": "k", "job_id": "j1"}])
+    rows = asyncio.run(repo.list_detail_cut_checkpoints(
+        conn, user_id="u1", project_id="p1", key_pattern="users/u1/projects/p1/ai/%/ckpt/%"))
+    sql, params = conn.log[0]
+    assert rows == [{"id": "i1", "r2_key": "k", "job_id": "j1"}]
+    assert "j.user_id = %s" in sql and "j.project_id = %s" in sql
+    assert "j.kind = 'detail_page'" in sql and "j.status = 'error'" in sql
+    assert "i.not_before > now()" in sql and "i.status = 'pending'" in sql
+    assert params[:3] == ("u1", "p1", "users/u1/projects/p1/ai/%/ckpt/%")
+    # 커서 없는 커넥션(스텁)은 None — 호출자가 이어하기를 끈다
+    assert asyncio.run(repo.list_detail_cut_checkpoints(
+        object(), user_id="u1", project_id="p1", key_pattern="x")) is None
+
+
+def test_checkpoint_expiry_expires_now_or_extends_only():
+    conn = _SqlConn()
+    asyncio.run(repo.set_ai_checkpoint_expiry(conn, ["k1"], ttl_seconds=0))
+    asyncio.run(repo.set_ai_checkpoint_expiry(conn, ["k1"], ttl_seconds=86400, extend_only=True))
+    asyncio.run(repo.set_ai_checkpoint_expiry(conn, [], ttl_seconds=0))       # 빈 목록은 쿼리 없음
+    (expire_sql, expire_params), (extend_sql, extend_params) = conn.log
+    assert "set not_before = now() + make_interval(secs => %s)" in expire_sql
+    assert expire_params == (0, ["k1"])
+    assert "greatest(not_before, now() + make_interval(secs => %s))" in extend_sql
+    assert extend_params == (86400, ["k1"])

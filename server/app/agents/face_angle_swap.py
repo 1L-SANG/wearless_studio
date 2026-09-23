@@ -30,7 +30,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import face_identity
+from . import face_identity, runpod_jobs
 
 log = logging.getLogger("wearless.face_angle_swap")
 
@@ -792,6 +792,10 @@ class ServerlessBackend:
     def run(self, workflow: dict) -> np.ndarray:
         import base64
 
+        if runpod_jobs.abandoned():
+            # 호출자가 이미 손을 뗐다(잡 취소·워커 종료) — 새 잡을 넣지 않는다(2026-09-23).
+            self._images = []
+            raise AngleSwapUnavailable("backend_error")
         # ★ **/runsync 를 쓰면 안 된다.** 그 호출은 90초쯤에서 잘리고 IN_PROGRESS 를 돌려준다
         #   (2026-09-21 실측: 세 컷 모두 93초에 끊겼다). 한 컷은 190초 안팎이라 동기 호출로는
         #   받을 수 없다. 비동기로 넣고(/run) 상태를 폴링한다(/status/<id>).
@@ -827,18 +831,26 @@ class ServerlessBackend:
 
     def _await(self, job_id: str) -> dict:
         """끝날 때까지 상태를 묻는다. 제한 시간을 넘기면 마지막 상태를 그대로 돌려준다 —
-        호출자가 COMPLETED 아님으로 보고 컷을 버린다(남의 머리를 내보내지 않는다)."""
+        호출자가 COMPLETED 아님으로 보고 컷을 버린다(남의 머리를 내보내지 않는다).
+
+        손을 떼는 세 자리(제한 시간 초과 · 상태 조회 실패 · 호출자 포기)에서는 RunPod 잡도
+        끈다(2026-09-23). 한 컷이 190초 안팎의 GPU 라, 버릴 결과를 끝까지 만들게 두면 그만큼 낸다."""
         deadline = time.monotonic() + self._timeout
         body: dict = {}
         while time.monotonic() < deadline:
+            if runpod_jobs.abandoned():
+                runpod_jobs.cancel(self._client, job_id, what="angle swap")
+                return {"status": "ABANDONED"}
             res = self._client.get(f"/status/{job_id}")
             if res.status_code != 200:
                 log.warning("angle swap serverless status http %s", res.status_code)
+                runpod_jobs.cancel(self._client, job_id, what="angle swap")
                 return {"status": "STATUS_HTTP_ERROR"}
             body = res.json() or {}
             if str(body.get("status") or "") not in ("IN_QUEUE", "IN_PROGRESS"):
                 return body
-            time.sleep(self._poll)
+            runpod_jobs.wait(self._poll)
+        runpod_jobs.cancel(self._client, job_id, what="angle swap")
         return body or {"status": "TIMED_OUT"}
 
 
@@ -868,6 +880,9 @@ class ComfyBackend:
             raise AngleSwapUnavailable("backend_error")
         prompt_id = r.json()["prompt_id"]
         while True:
+            if runpod_jobs.abandoned():
+                # 호출자가 손을 뗐다 — 스레드가 혼자 영원히 폴링하지 않게 빠져나온다(2026-09-23).
+                raise AngleSwapUnavailable("backend_error")
             entry = (self._client.get(f"/history/{prompt_id}").json() or {}).get(prompt_id)
             if entry:
                 if (entry.get("status") or {}).get("status_str") == "error":
@@ -881,7 +896,7 @@ class ComfyBackend:
                     view.raise_for_status()
                     with Image.open(io.BytesIO(view.content)) as opened:
                         return np.asarray(opened.convert("RGB"))
-            time.sleep(self._poll)
+            runpod_jobs.wait(self._poll)
 
 
 #: 참고 사진을 보낼 때의 긴 변 상한(px). 모델은 1024 에서 도는데 등록 사진은 아이폰 원본
@@ -925,7 +940,9 @@ async def swap(image: bytes, mime: str, *, direction: str, photos: AnglePhotos, 
     with Image.open(io.BytesIO(reference_bytes)) as opened:
         reference = np.asarray(opened.convert("RGB"))
     try:
-        out1k = await asyncio.to_thread(_run, backend, p, reference, direction, seed)
+        # runpod_jobs.to_thread — 이 컷이 취소되면 폴링 스레드가 RunPod 잡을 끄고 빠져나온다
+        # (asyncio.to_thread 였을 때는 900초 동안 혼자 폴링했다, 2026-09-23).
+        out1k = await runpod_jobs.to_thread(_run, backend, p, reference, direction, seed)
     except AngleSwapUnavailable:
         raise
     except Exception as exc:

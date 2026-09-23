@@ -39,6 +39,7 @@ from ..agents.gemini_image import InlineImage, normalize_openai_images
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
+from . import cut_checkpoints as _cut_checkpoints
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -198,7 +199,7 @@ async def _normalize_detail_openai_refs(prepared, model: str):
 
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
-                    angle_photos=None, selected_model_id=None):
+                    angle_photos=None, selected_model_id=None, cut_checkpoints=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -207,7 +208,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
     실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공. 스펙 위반(unknown cutType)도
-    같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
+    같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004).
+    cut_checkpoints(workers/cut_checkpoints.CutCheckpointStore)가 오면 앞선 실패 잡이 남긴
+    완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
     # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
@@ -242,6 +245,72 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             "spaceGroupId": normalized.get("spaceGroupId"),
             "productTruthIndexes": product_truth_indexes,
         }
+
+    async def _store_cut(b, img, mime, chosen, *, has_face, real_identity_attached, garment_qc,
+                         cut_qc, garment_warnings, neck_repair_metadata, face_pass_outcome):
+        """채택본 1장을 R2 에 올리고 컷 결과 튜플을 만든다. 새로 그린 컷과 체크포인트에서 이어 받은
+        완성 컷이 **같은 길**로 나간다 — 자산 키·정리 표식·이벤트·정산 단위(cut_assets)가 같다
+        (2026-09-23 _one_impl 꼬리에서 떼어 냄, 내용은 그대로). face_pass_outcome = 채택본을 만든 호출의 결과."""
+        ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
+        asset_id = str(uuid.uuid4())
+        key = ai_key(user_id, project_id, job_id, asset_id, ext)
+        img_sha256 = hashlib.sha256(img).hexdigest()
+        async with app.state.pool.connection() as conn:
+            cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
+                conn,
+                job_id=job_id,
+                r2_key=key,
+            )
+            await conn.commit()
+        await asyncio.to_thread(
+            r2.put_bytes,
+            key,
+            img,
+            mime,
+            # 얼굴 노출 배지(`has_face`)가 꺼진 mirror/back도 REAL identity 두 장을
+            # 생성 근거로 쓴다. 본문 민감도는 노출 추정이 아니라 입력 증거로 분류한다.
+            cache=PRIVATE_NO_STORE if real_identity_attached else IMMUTABLE_CACHE,
+        )
+        w, h = _dims(img)
+        # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
+        # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
+        if face_pass_outcome.get("face_pass"):
+            # 셀러 화면은 그대로다 — "그 컷 얼굴이 어디서 왔나"를 원장에 남기는 한 줄.
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": b.get("id"), "status": "face_pass",
+                         "result": face_pass_outcome["face_pass"]})
+        step = {"blockId": b.get("id"), "status": "cut_done",
+                "width": w, "height": h}
+        if not real_identity_attached:
+            step["previewUrl"] = r2.preview_url(key)
+        await _emit(app.state.pool, job_id, "step", step)
+        return (
+            # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
+            # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
+            {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
+             "width": w, "height": h},
+            {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
+             "size": len(img), "width": w, "height": h,
+             "cleanup_intent_id": cleanup_intent_id,
+             "sha256": img_sha256,
+             "metadata": {
+                 "facemarket_real_derived": real_identity_attached,
+                 "cut_type": b.get("cutType"),
+                 **({"neck_repair": neck_repair_metadata}
+                    if neck_repair_metadata is not None else {}),
+                 **({"face_pass": face_pass_outcome["face_pass"]}
+                    if face_pass_outcome.get("face_pass") else {}),
+                 # 레시피 해시 — "이 컷이 어떤 상수로 나왔나". GPU 가 다르면 같은 시드도
+                 # 다른 그림이라 픽셀로는 못 되짚는다(agents/face_recipe.py).
+                 **({"face_recipe": face_pass_outcome["face_recipe"]}
+                    if face_pass_outcome.get("face_recipe") else {}),
+             }},
+            has_face,
+            garment_qc,
+            cut_qc,
+            garment_warnings,
+            chosen if s.page_output_qc_mode == "shadow" else None,
+        )
 
     async def _one_impl(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
@@ -362,6 +431,61 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         back=angle_photos.get("sh_back")), pod_id=_angle_pod)
                     if _angle_spec is not None:
                         generate_kwargs["angle_swap"] = _angle_spec
+            # 결정적 실패는 베이스 값을 내기 **전에** 끝낸다(2026-09-23). 각도 교체로 갈 컷인데
+            # 쓸 등록 사진이 없으면 swap 이 베이스를 다 그린 뒤 no_angle_photo 로 떨어진다 —
+            # 결과는 같고 gpt-image 값만 나간다. 같은 사유·같은 빈 슬롯(미차감)으로 닫는다.
+            missing_angle = cut_generator.angle_swap_missing_photo(
+                b, product, generate_kwargs.get("angle_swap"))
+            if missing_angle is not None:
+                log.warning("AG-06 cut skipped before generation (%s) job %s block %s",
+                            missing_angle, job_id, b.get("id"))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_failed",
+                             "reason": missing_angle})
+                return None
+            # 체크포인트(2026-09-23) — 앞선 실패 잡이 같은 컷을 끝까지 만들어 뒀으면 provider·QC 를
+            # 한 번도 부르지 않고 그대로 싣는다. 베이스만 있으면 베이스 값은 건너뛰고 후처리만 한다.
+            ckpt = None
+            if cut_checkpoints is not None:
+                ckpt = await cut_checkpoints.for_cut(
+                    b, generation_settings, product, qc_images, generate_kwargs,
+                    real_identity_attached=real_identity_attached)
+            if ckpt is not None and ckpt.final is not None:
+                log.info("cut checkpoint reused: final job %s block %s", job_id, b.get("id"))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_checkpoint_reused",
+                             "stage": "final"})
+                final = ckpt.final
+                return await _store_cut(
+                    b, final.image, final.mime, InlineImage(final.mime, final.image),
+                    has_face=has_face, real_identity_attached=real_identity_attached,
+                    garment_qc=final.meta.get("garmentQc"), cut_qc=final.meta.get("cutQc"),
+                    garment_warnings=list(final.meta.get("warnings") or []),
+                    neck_repair_metadata=final.meta.get("neckRepair"),
+                    face_pass_outcome=dict(final.meta.get("facePass") or {}))
+            if ckpt is not None and ckpt.base_reused:
+                log.info("cut checkpoint reused: base job %s block %s", job_id, b.get("id"))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_checkpoint_reused",
+                             "stage": "base"})
+            # 첫 생성에만 베이스 자리를 건다 — 장소 QC 재생성·후보·재생성 보정은 일부러 새 그림이다.
+            primary_kwargs = (
+                generate_kwargs if ckpt is None
+                else {**generate_kwargs, "base_checkpoint": ckpt.base}
+            )
+
+            async def _primary_generate():
+                try:
+                    return await cut_generator.generate(
+                        generation_settings, gemini, b, product, images, **primary_kwargs)
+                except Exception as e:
+                    # 후처리(얼굴 패스·각도 교체)에서 실패했으면 베이스를 남길지 정한다 — 파드·서버리스
+                    # 탓이면 남겨 다음 시도가 후처리만 다시 하고, 그림 탓이면 버려 새로 그린다
+                    # (cut_checkpoints.base_survives). 실패 처리 자체는 아래 분기가 그대로 한다.
+                    if ckpt is not None:
+                        await ckpt.after_failure(e)
+                    raise
+
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
@@ -376,8 +500,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             )
             for attempt in range(1, max_attempts + 1):
                 try:
-                    img, mime = await cut_generator.generate(
-                        generation_settings, gemini, b, product, images, **generate_kwargs)
+                    img, mime = await _primary_generate()
                     _remember_outcome(img)
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
@@ -395,6 +518,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                 {"blockId": b.get("id"), "status": "cut_failed"})
                     return None
                 except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
+                    # 각도 교체의 backend_error 처럼 후처리만 실패했으면 다음 시도는 남은 베이스로
+                    # 후처리만 다시 한다(_primary_generate) — 베이스 값을 두 번 내지 않는다.
                     spent = time.monotonic() - cut_started
                     # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504)는 여기서도
                     # 다시 보내지 않는다 — 아래층이 안 보내기로 한 이유가 위층에서 무효가 되면
@@ -672,69 +797,26 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 if not neck_repair_metadata["applied"]:
                     garment_warnings.append({"code": "real_horizon_neck_repair_unavailable"})
 
-            ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
-            asset_id = str(uuid.uuid4())
-            key = ai_key(user_id, project_id, job_id, asset_id, ext)
             img_sha256 = hashlib.sha256(img).hexdigest()
             # 원장·자산 메타의 face_pass = **채택본**을 만든 호출의 결과(마지막 호출의 것이 아니라).
             face_pass_outcome.clear()
             face_pass_outcome.update(outcome_by_image.get(img_sha256, {}))
-            async with app.state.pool.connection() as conn:
-                cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
-                    conn,
-                    job_id=job_id,
-                    r2_key=key,
-                )
-                await conn.commit()
-            await asyncio.to_thread(
-                r2.put_bytes,
-                key,
-                img,
-                mime,
-                # 얼굴 노출 배지(`has_face`)가 꺼진 mirror/back도 REAL identity 두 장을
-                # 생성 근거로 쓴다. 본문 민감도는 노출 추정이 아니라 입력 증거로 분류한다.
-                cache=PRIVATE_NO_STORE if real_identity_attached else IMMUTABLE_CACHE,
-            )
-            w, h = _dims(img)
-            # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
-            # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
-            if face_pass_outcome.get("face_pass"):
-                # 셀러 화면은 그대로다 — "그 컷 얼굴이 어디서 왔나"를 원장에 남기는 한 줄.
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "face_pass",
-                             "result": face_pass_outcome["face_pass"]})
-            step = {"blockId": b.get("id"), "status": "cut_done",
-                    "width": w, "height": h}
-            if not real_identity_attached:
-                step["previewUrl"] = r2.preview_url(key)
-            await _emit(app.state.pool, job_id, "step", step)
-            return (
-                # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
-                # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
-                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
-                 "width": w, "height": h},
-                {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
-                 "size": len(img), "width": w, "height": h,
-                 "cleanup_intent_id": cleanup_intent_id,
-                 "sha256": img_sha256,
-                 "metadata": {
-                     "facemarket_real_derived": real_identity_attached,
-                     "cut_type": b.get("cutType"),
-                     **({"neck_repair": neck_repair_metadata}
-                        if neck_repair_metadata is not None else {}),
-                     **({"face_pass": face_pass_outcome["face_pass"]}
-                        if face_pass_outcome.get("face_pass") else {}),
-                     # 레시피 해시 — "이 컷이 어떤 상수로 나왔나". GPU 가 다르면 같은 시드도
-                     # 다른 그림이라 픽셀로는 못 되짚는다(agents/face_recipe.py).
-                     **({"face_recipe": face_pass_outcome["face_recipe"]}
-                        if face_pass_outcome.get("face_recipe") else {}),
-                 }},
-                has_face,
-                garment_qc,
-                cut_qc,
-                garment_warnings,
-                chosen if s.page_output_qc_mode == "shadow" else None,
-            )
+            if ckpt is not None:
+                # 완성 컷을 남긴다 — 이 잡이 저장·정산 전에 죽어도(배포·lease·DB 오류) 다음 시도가
+                # provider·QC 없이 그대로 싣는다. 저장 실패는 이 컷을 막지 않는다.
+                await ckpt.save_final(img, mime, {
+                    "garmentQc": garment_qc,
+                    "cutQc": cut_qc,
+                    "warnings": garment_warnings,
+                    "neckRepair": neck_repair_metadata,
+                    "facePass": {k: face_pass_outcome[k] for k in ("face_pass", "face_recipe")
+                                 if face_pass_outcome.get(k)},
+                })
+            return await _store_cut(
+                b, img, mime, chosen,
+                has_face=has_face, real_identity_attached=real_identity_attached,
+                garment_qc=garment_qc, cut_qc=cut_qc, garment_warnings=garment_warnings,
+                neck_repair_metadata=neck_repair_metadata, face_pass_outcome=face_pass_outcome)
 
     # 같은 설정 복제 컷은 생성에서 접는다 — 원본만 생성하고 결과를 복제 위치에 복사
     # (2026-08-14 오너 확정: "같은 컷 복제는 1장만 생성"). 진행 분모도 실제 생성 수.
@@ -753,11 +835,30 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 제출 간격 — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다(전부 병렬의 안전판).
         if idx and _stagger_s:
             await asyncio.sleep(idx * _stagger_s)
-        r = await _one_impl(item)
+        # 한 컷의 예상 밖 예외는 **그 컷만** 빈 슬롯으로 만든다(2026-09-23). 예전에는 아래
+        # gather 가 첫 예외로 페이지 전체를 실패시켰고, 이미 값을 치르고 끝난 다른 컷까지
+        # 정리 작업이 지웠다(R2 저장 오류·DB PoolTimeout·장소 QC 의 VisionError 아닌 예외 등).
+        # 모양은 기존 실패 컷과 같다 — None + cut_failed 이벤트(미차감).
+        # CancelledError 는 BaseException 이라 여기서 잡히지 않는다 — 워커 종료 신호는 그대로 올라간다.
+        try:
+            r = await _one_impl(item)
+        except Exception as e:
+            log.warning("AG-06 cut crashed for job %s block %s: %r — only this cut fails",
+                        job_id, item[0].get("id"), e)
+            r = None
+            try:
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": item[0].get("id"), "status": "cut_failed"})
+            except Exception as emit_error:
+                log.warning("AG-06 cut_failed event lost for job %s: %r", job_id, emit_error)
         _done_counter["n"] += 1
-        await _emit(app.state.pool, job_id, "progress",
-                    {"progress": 20 + round(60 * _done_counter["n"] / _total_cuts),
-                     "phase": "cut", "done": _done_counter["n"], "total": _total_cuts})
+        try:
+            await _emit(app.state.pool, job_id, "progress",
+                        {"progress": 20 + round(60 * _done_counter["n"] / _total_cuts),
+                         "phase": "cut", "done": _done_counter["n"], "total": _total_cuts})
+        except Exception as e:
+            # 진행 표시는 화면 편의다 — 이 한 줄 때문에 끝난 컷을 버리지 않는다.
+            log.warning("AG-06 progress event lost for job %s: %r", job_id, e)
         return r
 
     # gather 는 입력 순서를 보존 — 원본 컷만 생성한 뒤 복제 컷 자리에 결과를 복사한다.
@@ -993,6 +1094,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 await repo.clear_ai_output_cleanup_intent(conn, intent_id)
                 await conn.commit()
 
+    # 상세 컷 체크포인트 창구(2026-09-23) — 컷 생성 직전에 연다. except 경로가 라이선스 철회일 때
+    # 이 잡의 체크포인트를 지우려면 try 밖에 이름이 있어야 한다.
+    cut_store = None
     try:
         # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
         #    + 블록 색상별 상품 슬롯 이미지 + 모든 착용컷의 매칭 의류 + 무드 레퍼런스
@@ -1880,6 +1984,17 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 옆·뒷모습 컷용 등록자 각도 사진(위에서 읽어 둔 바이트). 없으면 키를 생략한다.
         if real_angle_photos:
             _gen_cuts_kwargs["angle_photos"] = real_angle_photos
+        # 이미 값을 치른 컷 이어 쓰기(2026-09-23 오너: "이미 만든 베이스컷이 있으면 그대로 쓴다").
+        # 신원(REAL 라이선스·등록·LoRA·각도 사진 / VIRTUAL / NONE)이 digest 에 들어가므로 신원이 다른
+        # 잡끼리는 절대 섞이지 않는다. 창구를 못 열면(설정 off·DB 스텁·조회 실패) 오늘처럼 생성한다.
+        cut_store = await _cut_checkpoints.CutCheckpointStore.open(
+            app, job, identity=_cut_checkpoints.job_identity(
+                source, selected_model_id=selected_model_id, license_row=license_row,
+                lora_spec=fm_lora_spec, angle_photos=real_angle_photos),
+            # 이 잡이 지은 상품명(needs_name)은 시도마다 달라진다 — 지문에서 뺀다.
+            auto_named=needs_name)
+        if cut_store is not None:
+            _gen_cuts_kwargs["cut_checkpoints"] = cut_store
         (
             cut_results,
             cut_assets,
@@ -1991,9 +2106,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 metadata=success_metadata, product_name=generated_name)
             await conn.commit()
         if out is None:  # lease 상실 → 방금 올린 R2 객체 best-effort 정리
+            # 체크포인트는 남긴다 — lease 를 잃은 상세 잡은 error 로 끝나고(recover_stale_leases),
+            # 다음 시도가 그걸 이어 쓴다. TTL(24시간) 뒤에는 리클레이머가 지운다.
             for c in cut_assets:
                 await _delete_output_candidate(c)
         else:
+            if cut_store is not None:
+                # 성공 — 컷은 이미 셀러에게 나갔다. 체크포인트를 지금 지워 같은 그림이 다음 잡에
+                # 다시 실리지 않게 한다(조회도 error 잡만 보지만 이중으로 막는다).
+                try:
+                    await cut_store.discard_all()
+                except Exception as e:  # noqa: BLE001 — 정리 실패는 TTL 이 대신 지운다
+                    log.warning("cut checkpoint cleanup failed for job %s: %r", job_id, e)
             # FaceMarket 온체인 정산 훅(선택과제2). 이 잡이 얼굴 라이선스를 소비했으면
             # 성공 종결 지점에서 70/20/10 을 온체인 기록. 프로젝트에 과거 잠금이 남아도
             # 이번 잡의 소스가 VIRTUAL/NONE 이면 라이선스를 소비하지 않았으므로 기록하지 않는다.
@@ -2030,6 +2154,18 @@ async def run_detail_page_job(app, job: dict) -> None:
         fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None
         fm_message = fm_detail.get("message") if isinstance(fm_detail, dict) else None
+        if (
+            cut_store is not None
+            and isinstance(e, facemarket.HTTPException)
+            and fm_code not in _INTERNAL_FAILURE_CODES
+        ):
+            # 라이선스·모델 권한 문제(철회·만료·정지 — 마감 재검증 포함)면 그 얼굴로 만든 체크포인트도
+            # **바로** 지운다(감사 9번: 철회는 지금처럼 삭제가 맞다). DB·인프라 오류는 남긴다 —
+            # 다음 시도가 이어 쓰고, 못 쓰면 TTL(24시간) 뒤 리클레이머가 지운다.
+            try:
+                await cut_store.discard_all()
+            except Exception as cleanup_error:  # noqa: BLE001 — 아래 실패 종결을 막지 않는다
+                log.warning("cut checkpoint delete failed for job %s: %r", job_id, cleanup_error)
         if fm_code in _INTERNAL_FAILURE_CODES:
             # 라이선스 확인 서비스가 켜지는 중이라는 건 우리 인프라 사정이다 — 셀러 화면에는
             # 일반 실패로 보이고 사유는 로그에만 남는다(2026-09-14 제품 결정).

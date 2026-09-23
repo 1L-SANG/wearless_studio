@@ -962,3 +962,94 @@ def test_detail_cancel_after_put_clears_cleanup_intent_after_confirmed_delete(mo
     assert events[:2] == ["intent", "put"]
     assert main_r2.puts and main_r2.deletes == main_r2.puts
     assert events[-1] == "clear:intent-1"
+
+
+# ── 컷 체크포인트 정리 규칙(2026-09-23) ──────────────────────────────────────
+# 실패·중단된 잡의 체크포인트는 바로 지우지 않는다(TTL 24시간 — 다음 시도가 이어 쓴다).
+# 라이선스 철회는 예외다 — 그 얼굴로 만든 것은 지금 지운다(감사 9번). 성공해도 지금 지운다.
+class _FakeCheckpointStore:
+    def __init__(self):
+        self.calls = []
+
+    async def for_cut(self, *_a, **_kw):
+        return None          # 이 테스트들은 정리 규칙만 본다 — 생성 경로는 기존 그대로
+
+    async def discard_all(self):
+        self.calls.append("discard_all")
+
+
+def _install_store(monkeypatch):
+    store = _FakeCheckpointStore()
+    seen = {}
+
+    async def fake_open(app, job, *, identity, auto_named=False):
+        seen["identity"] = identity
+        seen["auto_named"] = auto_named
+        return store
+
+    monkeypatch.setattr(dpj._cut_checkpoints.CutCheckpointStore, "open", fake_open)
+    return store, seen
+
+
+def test_checkpoints_are_deleted_now_when_the_license_is_revoked(monkeypatch):
+    captured = {"resolve": 0}
+    _patch_inputs(monkeypatch, captured, project={"copywriting": False},
+                  storyboard=[{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}])
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        return _license_row(status="active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, license_row, **kwargs):
+        return None
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [{"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+                {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"}]
+
+    async def fake_lock(conn):
+        return None
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", fake_lock)
+    store, seen = _install_store(monkeypatch)
+    app, _main_r2 = _app(_license_row())
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=1)))
+
+    assert captured["failure"]["code"] == "license_revoked"
+    assert store.calls == ["discard_all"]
+    # REAL 신원이 digest 에 들어간다 — VIRTUAL 잡과 절대 섞이지 않는다
+    assert seen["identity"] != dpj._cut_checkpoints.job_identity("VIRTUAL", selected_model_id=MODEL_ID)
+
+
+def test_checkpoints_survive_an_infrastructure_failure(monkeypatch):
+    """마감 DB 오류 같은 인프라 실패 — 체크포인트는 남긴다(다음 시도가 이어 쓰고, TTL 이 지운다)."""
+    captured = {}
+    _patch_inputs(monkeypatch, captured, project={"copywriting": False})
+
+    async def broken_finalize(conn, **kw):
+        raise RuntimeError("db connection lost")
+
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", broken_finalize)
+    store, _seen = _install_store(monkeypatch)
+    app, _main_r2 = _app(_license_row())
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert captured["failure"]["code"] == "generation_failed"
+    assert store.calls == []
+
+
+def test_checkpoints_expire_when_the_page_succeeds(monkeypatch):
+    captured = {}
+    _patch_inputs(monkeypatch, captured, project={"copywriting": False})
+    store, _seen = _install_store(monkeypatch)
+    app, _main_r2 = _app(_license_row())
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert captured["charge"] == 1              # 정산 규칙은 그대로
+    assert store.calls == ["discard_all"]
