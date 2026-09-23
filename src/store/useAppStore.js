@@ -202,8 +202,9 @@ export const useAppStore = create((set, get) => ({
     set({ accountUserId: userId, account: null, accountLoaded: false });
     return true;
   },
-  async loadAccount() {
-    if (get().accountLoaded) return get().account;
+  // force: 관리자가 지급한 뒤(계좌이체 확인) 열어 둔 화면이 새 등급·잔액을 보게 다시 읽는다.
+  async loadAccount({ force = false } = {}) {
+    if (get().accountLoaded && !force) return get().account;
     const generation = accountGeneration;
     try {
       const account = await api.getAccount();

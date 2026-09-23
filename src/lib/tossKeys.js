@@ -37,6 +37,13 @@ export const SUBSCRIPTION_TRANSFER_ENABLED = false;
    크레딧이 부족한 사용자는 요금제 업그레이드(즉시 비례결제)로 간다. */
 export const TOPUP_ENABLED = false;
 
+/* 계좌이체(무통장입금) 신청 노출 여부 — PG 심사 전 결제 경로.
+   지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md. 사용자가 사업자 통장으로
+   입금하고 관리자가 확인해 지급한다(충전 팩 + 구독 플랜 1개월 이용권). 켜져 있으면 요금제
+   버튼이 토스 결제창 대신 신청 창을 열고, 충전 탭도 보인다(계좌이체로는 충전을 팔 수 있다).
+   토스가 열리면 false 로 바꾼다. 코드는 남긴다. 계좌 정보는 서버(/v1/bank-transfer/info)가 준다. */
+export const BANK_TRANSFER_ENABLED = true;
+
 // 토스 심사용 임시 이메일 로그인. 심사 종료 후 false로 바꾸고 재배포한다.
 // 화면 노출만 제어한다. 사용한 심사 계정과 세션도 별도로 비활성화해야 한다.
 export const PG_REVIEW_LOGIN_ENABLED = true;

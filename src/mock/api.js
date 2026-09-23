@@ -85,6 +85,7 @@ const mockSwatchSuggestions = (product) => {
 };
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
+const mockBankTransfer = { requests: [] };
 const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
 const saveMockCheckout = (order) => {
   try { sessionStorage.setItem(MOCK_CHECKOUT_KEY, JSON.stringify(order)); } catch { /* same-page Map fallback */ }
@@ -268,6 +269,42 @@ export const api = {
     mockCheckoutOrders.set(orderId, order);
     saveMockCheckout(order);
     return clone(order);
+  },
+  // ---- 계좌이체(무통장입금) 신청 — 메모리 저장. 관리자 확인은 실서버에서만 한다. ----
+  async getBankTransferInfo() {
+    await wait(40);
+    return { enabled: true, bank: '목은행', account: '000-0000-0000', holder: '데일리모먼트', expiresInDays: 3 };
+  },
+  async createBankTransferRequest(body) {
+    await wait(120);
+    const plan = (await api.getPricingPlans()).find((p) => p.code === body.planCode);
+    if (!plan) throw new Error('판매 중인 상품이 아니에요.');
+    if (mockBankTransfer.requests.some((r) => r.kind === plan.kind && r.status === 'requested')) {
+      throw new Error('확인 중인 신청이 있어요.');
+    }
+    const request = {
+      id: uid('btr'), planCode: plan.code, kind: plan.kind, amount: plan.price, credits: plan.credits,
+      payerName: body.payerName, phone: body.phone || null, taxInvoice: Boolean(body.taxInvoice),
+      note: body.note || null, status: 'requested',
+      expiresAt: new Date(Date.now() + 3 * 864e5).toISOString(), createdAt: new Date().toISOString(),
+    };
+    mockBankTransfer.requests.unshift(request);
+    return { request: clone(request), bank: await api.getBankTransferInfo() };
+  },
+  async getOpenBankTransferRequests() {
+    await wait(40);
+    return { open: clone(mockBankTransfer.requests.filter((r) => r.status === 'requested')), recent: null };
+  },
+  async cancelBankTransferRequest(requestId) {
+    await wait(60);
+    const request = mockBankTransfer.requests.find((r) => r.id === requestId && r.status === 'requested');
+    if (!request) throw new Error('취소할 수 있는 신청이 없어요.');
+    request.status = 'canceled';
+    return clone(request);
+  },
+  async getManualEntitlement() {
+    await wait(40);
+    return { active: false };
   },
   async confirmTossPayment({ orderId, amount }) {
     await wait(120);

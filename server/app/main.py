@@ -151,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         angle_autoscaler = None
         subscription_biller = None
         subscription_expirer = None
+        bank_transfer_expirer = None
         if pool is not None:
             await pool.open()
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
@@ -202,6 +203,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await subscription_biller.start()
                 subscription_expirer = SubscriptionExpirer(app)
                 await subscription_expirer.start()
+            # 계좌이체 신청·수동 이용권 만료 — 토스 설정과 독립이다(판매를 꺼도 준 이용권은 정리한다).
+            if not detail_worker_only:
+                from .workers.bank_transfer_expirer import BankTransferExpirer
+
+                bank_transfer_expirer = BankTransferExpirer(app)
+                await bank_transfer_expirer.start()
             # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
             # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
             # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
@@ -332,6 +339,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await subscription_biller.stop()
         if subscription_expirer is not None:
             await subscription_expirer.stop()
+        if bank_transfer_expirer is not None:
+            await bank_transfer_expirer.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:
@@ -410,6 +419,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .public_routes import PublicAnalysisRateLimiter
 
     app.state.public_analysis_limiter = PublicAnalysisRateLimiter()
+    # 카카오 OIDC 인가코드 교환도 미인증 공개 라우트라 같은 안전밸브를 단다(IP 기준).
+    # 공개 분석보다 한도를 넉넉히 둔다 — 로그인은 실패하고 다시 누르는 게 정상 행동이고,
+    # 한 IP 뒤에 사무실·모바일 캐리어 NAT 가 통째로 있을 수 있다.
+    app.state.kakao_login_limiter = PublicAnalysisRateLimiter(hourly_limit=30, daily_limit=120)
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
@@ -582,11 +595,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(public_router)
 
+    # 카카오 OpenID Connect 직접 로그인 — 인가코드 → id_token 교환(app/kakao_oidc.py).
+    # 토스와 같은 이유로 **플래그 없이 항상 등록**한다: 키가 없으면 라우트를 숨기는 대신
+    # 503 kakao_login_not_configured 로 말해 준다. 로그인이 죽었을 때 404('프론트가
+    # 새 경로를 부르는데 서버가 아직 안 나갔다')와 503('나갔는데 키가 없다')을 구분하지
+    # 못하면 원인 판별에 하루가 든다 — 지금 겪은 KOE205 사고와 증상이 똑같아진다.
+    from .kakao_oidc import router as kakao_auth_router
+
+    app.include_router(kakao_auth_router)
+
     # 토스 크레딧 추가구매(WS3) — 라우터는 항상 등록하고, 키 미설정이면 checkout 이 503 으로
     # 거절한다(플래그로 라우트를 숨기면 프론트가 404 를 '미배포'와 구분 못 해 디버깅이 어렵다).
     from .payments import router as payments_router
 
     app.include_router(payments_router)
+
+    # 계좌이체(무통장입금) 신청 — PG 심사 전 결제 경로. 항상 등록하고, 계좌 미설정이면 신청이 503.
+    # 지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md
+    from .bank_transfer import router as bank_transfer_router
+
+    app.include_router(bank_transfer_router)
 
     # 정기결제(빌링) — 플래그 on일 때만 등록. off면 라우트 미존재 → 기존 결제 흐름 무영향.
     # 계획서 docs/plans/2026-09-09-toss-billing-subscription.md
@@ -620,6 +648,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_admin import router as admin_console_router
 
         app.include_router(admin_console_router)
+        # 계좌이체 신청 확인·거절. 콘솔 라우터와 같은 prefix·같은 플래그 아래 산다.
+        from .bank_transfer_admin import router as bank_transfer_admin_router
+
+        app.include_router(bank_transfer_admin_router)
         # 관리자 기기 게이트의 등록·승인 라우트. 콘솔 라우터와 같은 플래그 아래 산다.
         from .facemarket_admin_devices import router as admin_devices_router
 

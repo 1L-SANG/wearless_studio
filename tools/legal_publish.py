@@ -32,6 +32,19 @@ DOC_REVISIONS = {
     "answers": ("v1.2", "2026-09-18"),
 }
 DEFAULT_VERSION = "v1.1"
+# 협찬 개정안은 로컬 공개 검토본만 만들어요. 시행일이나 동의 게이트를 활성화하지 않아요.
+# 시행 중인 문서(terms-model v1.1·privacy-model v1.5·answers v1.2)는 그대로 두고, 개정안은 전부
+# 별도 슬러그(*-sponsorship-draft)로 내보내요. 시행본 슬러그를 초안으로 덮으면 /terms·/privacy·/answers 에서
+# 지금 효력이 있는 문서가 사라지고, 등록·지원 화면의 필수 동의 링크가 "적용하지 않는 초안"을 가리켜요.
+DRAFT_REVISIONS = {
+    "terms-model-sponsorship-draft": "v1.2-draft",
+    "privacy-model-sponsorship-draft": "v1.6-draft",
+    "answers-sponsorship-draft": "v1.3-draft",
+    "license-agreement-sponsorship-draft": "v3-draft",
+    "seller-license-terms-sponsorship-draft": "v3-draft",
+    "sponsorship-consent": "2026-09-sponsorship-v1-draft",
+}
+DRAFT_DATE = "2026-09-22"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
 CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
           addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
@@ -45,6 +58,12 @@ DOCS = [
     ("02_facemarket_likeness_license_agreement_v1.md", "license-agreement", "facemarket", "FaceMarket 초상 라이선스 표준계약서"),
     ("03_facemarket_privacy_policy_v1.md", "privacy-model", "facemarket", "FaceMarket 개인정보 처리방침"),
     ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
+    ("01_facemarket_terms_of_service_model_v1_2_draft.md", "terms-model-sponsorship-draft", "facemarket", "모델 이용약관 협찬 개정안"),
+    ("03_facemarket_privacy_policy_v1_6_draft.md", "privacy-model-sponsorship-draft", "facemarket", "개인정보 처리방침 협찬 개정안"),
+    ("06_facemarket_legal_faq_v1_3_draft.md", "answers-sponsorship-draft", "facemarket", "법적 FAQ 협찬 개정안"),
+    ("02_facemarket_likeness_license_agreement_v3_draft.md", "license-agreement-sponsorship-draft", "facemarket", "초상 라이선스 협찬 개정안"),
+    ("05_facemarket_seller_license_terms_v3_draft.md", "seller-license-terms-sponsorship-draft", "both", "셀러 협찬 요청 조건 개정안"),
+    ("04_facemarket_biometric_consent_forms_v1.md", "sponsorship-consent", "facemarket", "의류 협찬 참여 동의 개정안"),
 ]
 SELLER, FM = "https://wearless.kr", "https://facemarket.wearless.kr"
 # 04 동의서에서 손으로 옮긴 공개본. 버전은 서버 facemarket_enrollment.BIOMETRIC_CONSENT_VERSION 과 같이 올린다.
@@ -70,7 +89,7 @@ ROUTES = {"10_": ("/terms", f"{SELLER}/terms"), "11_": ("/privacy", f"{SELLER}/p
           "05_": ("/model-license-terms", "/seller-terms"), "01_": (f"{FM}/terms", "/terms"), "02_": (f"{FM}/license-agreement", "/license-agreement"),
           "03_": (f"{FM}/privacy", "/privacy"), "06_": (f"{FM}/answers", "/answers"), "00_": (None, None), "04_": (None, None)}
 DROP_HEADINGS = [r"^##+ 회사에서 채워야 하는 값", r"^##+ 회사가 채워야 하는 값", r"^##+ 변호사 검토", r"^##+ 초기 화면 하단에 게시",
-                 r"^##+ 계약 요지 \(모델 화면", r"^##+ 셀러 화면에 표시하는 요지", r"^##+ 부록\. `llms\.txt`"]
+                 r"^##+ 계약 요지 \(모델 화면", r"^##+ 셀러 화면에 표시하는 요지", r"^##+ 부록\. `llms\.txt`", r"^## 시행 전 확인 사항"]
 SUBS = [
     (r"\[회사명\]", CO["name"]), (r"\[시행일\]", EFFECTIVE), (r"\[대표자\]", CO["ceo"]), (r"\[주소\]", CO["addr"]),
     (r"\[CPO 성명\]", COMPANY["privacyOfficer"]), (r"\[CPO 직책\]", "대표(CEO)"), (r"\[CPO 전화\]", CO["tel"]), (r"\[CPO 이메일\]", CO["email"]),
@@ -144,15 +163,47 @@ def broken_bold(text):
         if close_fail or open_fail: found.append(m.group(0) + after)
     return found
 
+def sponsorship_conditions():
+    """협찬 숫자는 00 부록 C에서만 읽고, 누락·중복 키는 발행을 막아요."""
+    table = (SRC / "00_facemarket_legal_notice_map_v1.md").read_text().split("## 부록 C.", 1)[1]
+    values = {}
+    for key, value in re.findall(r"(?m)^\| [^\n|]+ `(sponsorship_\w+)` \| ([^|]+) \|", table):
+        if key in values:
+            raise ValueError(f"중복 협찬 조건: {key}")
+        values[key] = value.strip()
+    return values
+
+
+def render_sponsorship_conditions(text, values):
+    def replace(match):
+        key = match.group(1)
+        if key not in values:
+            raise ValueError(f"미확정 협찬 조건: {key}")
+        return values[key]
+    return re.sub(r"\{\{(sponsorship_\w+)\}\}", replace, text)
+
+
 def publish():
     manifest, leftovers = [], {}
+    conditions = sponsorship_conditions()
     for fn, slug, app, title in DOCS:
         version, iso_date = DOC_REVISIONS.get(slug, (DEFAULT_VERSION, EFFECTIVE_DATE))
         effective = _korean_date(iso_date)
         text = (SRC / fn).read_text()
+        if slug == "sponsorship-consent":
+            section = text.split("### E-2. ", 1)[1].split("\n## F.", 1)[0].rsplit("\n---", 1)[0]
+            text = "# 의류 협찬 참여 동의 개정안\n\n### E-2. " + section
+            # 필수·선택 표시는 자리표시자가 아니므로 공개본에서는 괄호로 표시해요.
+            text = re.sub(r"(?m)^(#{2,} [^\n]*?)\[([^\]\n]+)\]", r"\1(\2)", text)
         lines = drop_sections(strip_head_block(text.splitlines()))
         text = "\n".join(lines)
         text = drop_revision_notes(text)
+        text = render_sponsorship_conditions(text, conditions)
+        if slug in DRAFT_REVISIONS:
+            version, iso_date = DRAFT_REVISIONS[slug], None
+            effective = "별도로 공지하는 시행일"
+            heading, _, body = text.partition("\n")
+            text = heading + "\n\n> **법률 검토 전 초안, 시행일 미확정.** 검토·공지·동의 절차를 마치기 전에는 적용하지 않아요. 요청·배송·게시 확인 기능은 준비 중이에요.\n\n" + body
         for pat, rep in SUBS:
             # 시행일 치환만 문서별 값을 쓴다(나머지 치환은 회사 정보라 문서 공통).
             text = re.sub(pat, effective if rep == EFFECTIVE else rep, text)
@@ -165,8 +216,11 @@ def publish():
         bold = broken_bold(text)
         if bold: leftovers[slug] = leftovers.get(slug, []) + [f"굵게 미인식 {b}" for b in bold]
         (OUT / f"{slug}.md").write_text(text)
-        manifest.append({"slug": slug, "app": app, "title": title, "version": version,
-                         "effectiveDate": iso_date, "source": fn})
+        metadata = {"slug": slug, "app": app, "title": title, "version": version,
+                    "effectiveDate": iso_date, "source": fn}
+        if slug in DRAFT_REVISIONS:
+            metadata.update(status="draft", revisionDate=DRAFT_DATE)
+        manifest.append(metadata)
     # 등록 위저드 동의·안내 문서(04 동의서에서 손으로 뽑아 둔 공개본)는 DOCS 로 생성하지 않으므로
     # 여기서 항목을 유지한다. 빠뜨리면 /biometric-consent, /overseas-transfer 화면이 manifest 를 못 찾는다.
     manifest += CONSENT_DOCUMENTS
@@ -202,7 +256,7 @@ if __name__ == "__main__":
     if args.landing_root and not (args.landing_root / "package.json").is_file():
         parser.error("--landing-root에는 package.json이 있는 랜딩 저장소를 지정하세요.")
     manifest, leftovers = publish()
-    print(f"published {len(manifest)} docs → public/legal/ (+ public/llms.txt)")
+    print(f"published {len(manifest)} docs to public/legal/ (+ public/llms.txt)")
     for d in manifest: print(f"  {d['slug']:22s} {d['app']:10s} {d['title']}")
     if leftovers:
         print("\n남은 자리표시자·미인식 강조 (공개 전 해결):")

@@ -3,6 +3,8 @@
    일반 회원은 구글·카카오, 이메일 로그인은 로컬 QA와 임시 PG 심사용이다.
    - 마운트 시 현재 세션 조회 + onAuthStateChange 구독
    - signInWithOAuth(google|kakao) / signOut 노출
+     **카카오만 예외다**: VITE_KAKAO_OIDC_ENABLED 가 켜지면 Supabase OAuth 대신 카카오
+     OpenID Connect 로 직접 로그인한다(lib/kakaoOidc.js 머리말에 KOE205 경위). 구글은 그대로.
    - openLogin(redirect)/closeLogin: 분석 CTA·상단바에서 로그인 모달(LoginGate)을 띄운다.
      OAuth 는 풀페이지 리다이렉트라 모달은 redirectTo 를 origin 으로 두고,
      로그인 후 복귀 지점은 sessionStorage('wl_postLogin') 플래그로 전달한다
@@ -22,6 +24,7 @@ import { draftSlot } from '@/lib/draftSlot.js';
 import { stampAppOrigin } from '@/lib/appOrigin.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { clearSignupConsent } from '@/lib/signupConsent.js';
+import { KAKAO_OIDC_ENABLED, isKakaoCallbackPath as isKakaoCallback, startKakaoLogin } from '@/lib/kakaoOidc.js';
 
 const MOCK_FACEMARKET = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock' && IS_FACEMARKET;
 const AuthCtx = createContext(null);
@@ -74,6 +77,19 @@ function isPaymentResultPath() {
   return PAYMENT_RESULT_PATHS.includes(window.location.pathname);
 }
 
+/* 카카오 OIDC 콜백도 같은 이유로 제외한다 — 여기 붙는 `?code=` 는 **카카오 인가코드**이지
+   Supabase PKCE 코드가 아니다. 그대로 두면 위 결제 경로와 똑같은 두 가지가 벌어진다:
+     ① 카카오 코드로 supabase.exchangeCodeForSession 을 시도해 실패 로그만 남기고
+     ② finally 의 cleanOAuthCodeFromUrl 이 **주소창에서 code 를 지워** 정작 콜백 화면이
+        읽기 전에 날려버린다(StrictMode 재마운트·리렌더에서 빈손이 된다).
+   콜백 화면(KakaoCallback.jsx)이 code 의 유일한 소비자다. 여기서는 손대지 않는다.
+   window 가드를 같이 복제하는 것도 위와 같은 이유다 — SSR 테스트 하네스가 이 코드를
+   노드에서 돌리고, 그 하네스의 window 스텁에는 location.pathname 이 없다. */
+function isKakaoCallbackPath() {
+  if (typeof window === 'undefined') return false;
+  return isKakaoCallback(window.location.pathname);
+}
+
 function cleanOAuthCodeFromUrl(code) {
   const url = new URL(window.location.href);
   if (url.searchParams.get('code') !== code) return;
@@ -120,7 +136,11 @@ export function AuthProvider({ children }) {
       });
       return () => { alive = false; };
     }
-    const code = isPaymentResultPath()
+    /* 두 제외 경로의 **순서는 의미가 있다**(바꾸지 마라): tests/frontend/subscription.test.mjs
+       가 `isPaymentResultPath() ? null` 이라는 모양을 소스 텍스트로 단언한다. 결제 경로에서
+       code 를 건드려 멀쩡한 세션이 로그아웃되던 사고의 회귀 가드라, 리팩터링으로 그 모양을
+       깨면 이 변경과 무관해 보이는 이유로 CI 가 빨개진다. */
+    const code = isKakaoCallbackPath() || isPaymentResultPath()
       ? null
       : new URLSearchParams(window.location.search).get('code');
     (async () => {
@@ -171,13 +191,32 @@ export function AuthProvider({ children }) {
     if (userId && !MOCK_FACEMARKET) stampAppOrigin(userId);
   }, [userId]);
 
-  const signIn = (provider) =>
-    supabase.auth.signInWithOAuth({
+  /* 카카오만 다른 길로 간다 — 자세한 경위는 lib/kakaoOidc.js 머리말.
+     한 줄 요약: Supabase GoTrue 가 카카오 scope 에 account_email 을 하드코딩해 붙이는데
+     우리 앱은 그 항목이 "권한 없음"이라 인가 요청이 전부 KOE205 로 거절된다.
+
+     **기존 signInWithOAuth 분기를 지우지 마라.** VITE_KAKAO_OIDC_ENABLED 한 줄로 되돌릴
+     수 있게 남겨 둔 롤백 경로다(코드를 지우면 되돌릴 때 다시 만들어야 한다 — tossKeys.js
+     의 기능 스위치와 같은 판단). 카카오 콘솔의 Supabase 콜백 URI 와 대시보드의 Kakao
+     provider 도 같은 이유로 살아 있어야 한다.
+     **구글은 이 분기에 들어오지 않는다** — 손대지 않는다. */
+  const signIn = (provider) => {
+    if (provider === 'kakao' && KAKAO_OIDC_ENABLED) return startKakaoLogin();
+    return supabase.auth.signInWithOAuth({
       provider, // 'google' | 'kakao'
       options: { redirectTo: window.location.origin },
     });
+  };
 
   const signInWithPassword = (credentials) => supabase.auth.signInWithPassword(credentials);
+
+  /* 카카오 OIDC 콜백이 쓰는 유일한 세션 생성 경로. 화면 컴포넌트는 supabase 를 직접 부르지
+     않는다는 이 레포의 경계를 지키려고 여기로 뺐다(Login.jsx 가 지키는 것과 같은 규율).
+     nonce 는 authorize 때 심은 값이다 — 빠지면 GoTrue 가 nonce 클레임 대조에서 거절한다.
+     access_token 은 넘기지 않는다: 카카오 discovery 의 claims_supported 에 at_hash 가
+     없어 대조할 것이 없고, 넘기려면 브라우저로 내보내야 해서 더 위험하다. */
+  const signInWithKakaoIdToken = ({ token, nonce }) =>
+    supabase.auth.signInWithIdToken({ provider: 'kakao', token, nonce });
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
@@ -233,7 +272,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signOut, openLogin, closeLogin }}>
+    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin }}>
       {children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

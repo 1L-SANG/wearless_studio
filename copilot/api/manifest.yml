@@ -69,6 +69,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 토스 문서: 자동결제 승인은 최대 60초. 일반결제 값(15초)을 재사용하면 정상 승인이
   # 타임아웃으로 뒤집혀 '결과 미상' 재시도만 쌓인다.
   TOSS_BILLING_TIMEOUT: "60"
+  # 계좌이체(무통장입금) 입금 계좌 — PG 심사 전 결제 경로(PR #368). 손님 요금제 화면에 그대로
+  # 보인다. 셋 중 하나라도 비면 화면의 계좌이체 버튼이 "잠시 받지 않아요"로 잠긴다(사고 없음).
+  BANK_TRANSFER_BANK: "농축협"
+  BANK_TRANSFER_ACCOUNT: "352-2407-2408-13"
+  BANK_TRANSFER_HOLDER: "정일상(데일리모먼트)"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -496,6 +501,23 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 수요라 face_autoscale 이 보고 켠다. 넘으면 실패로 남기고 관리자가 본다.
   FM_TEST_CUT_POD_WAIT_SECONDS: "1200"
 
+  # ---- 카카오 OpenID Connect 직접 로그인(app/kakao_oidc.py) ----
+  # Supabase GoTrue 가 카카오 authorize 의 scope 에 account_email 을 **하드코딩**해 붙이는데
+  # 우리 앱은 그 항목이 "권한 없음"이라 인가 요청이 전부 KOE205 로 거절됐다(2026-09-22,
+  # 카카오 로그인 전원 실패). 그래서 카카오만 OIDC 로 직접 로그인하고 api 가 인가코드를
+  # id_token 으로 교환한다. 런북: docs/runbooks/kakao-oidc-login.md
+  #
+  # 🔴 이 값은 **Supabase 대시보드 Kakao provider 의 client_id 와 같은 값**이다.
+  #    GoTrue 가 signInWithIdToken 에서 id_token 의 aud 를 그 값과 대조한다(token_oidc.go).
+  #    한쪽만 바꾸면 카카오 로그인이 전부 실패한다. 공개값(브라우저의 authorize URL 에
+  #    그대로 실린다)이라 시크릿이 아니라 여기 평문으로 둔다.
+  # ⚠️ 이 줄이 빠지면 라우트가 조용히 503 으로만 떨어진다 — 지금 겪은 사고와 증상이
+  #    똑같아 원인 판별이 어려워진다. 미선언은 test_deploy_manifest_qc_flags.py 가 잡는다.
+  KAKAO_REST_API_KEY: "7b78ab8b674afa91063744476ab946e9"
+  # 짝이 되는 KAKAO_CLIENT_SECRET 은 아래 secrets 블록에 있다. 카카오 콘솔의 Client Secret
+  # 이 '사용함'이라 토큰 교환에 필수다(끄면 PKCE 가 그 자리를 대신하지만, 끄는 순간
+  # Supabase provider 에 저장된 값도 같이 무의미해져 롤백 경로가 흔들린다 — 켠 채로 간다).
+
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   # 입금 계좌번호 Fernet 암호화 키. 2026-09-11 SSM(us-east-1)에 저장함. 바꾸면 저장된 계좌를 못 읽으니 회전 금지.
   FM_PAYOUT_ACCOUNT_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PAYOUT_ACCOUNT_KEY
@@ -571,3 +593,10 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #     copilot-aws secret init --name SAM_INTERNAL_TOKEN
   #   raw `aws ssm put-parameter` 는 태그가 없어 태스크가 못 읽는다 — sam2 첫 배포가 그걸로 죽었다.
   SAM_INTERNAL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SAM_INTERNAL_TOKEN
+  # 카카오 OIDC 인가코드 교환용 Client Secret(app/kakao_oidc.py). 콘솔의 'Client Secret
+  # 사용함' 상태와 한 몸이다 — 콘솔에서 재발급하면 이 SSM 값도 같이 갱신해야 한다.
+  # 미설정이면 교환이 401 로 죽는다(코드는 값이 없으면 안 보내고 PKCE 로만 간다).
+  # ★ 값을 먼저 만들고 이 줄을 배포한다 — 순서가 바뀌면 ECS 기동 실패 후 롤백된다.
+  #     copilot-aws secret init --name KAKAO_CLIENT_SECRET
+  #   2026-09-23 use1 에 SecureString 생성 확인(prod 환경은 미생성 — 서울 롤백용이라 배포 시 먼저 넣을 것).
+  KAKAO_CLIENT_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/KAKAO_CLIENT_SECRET

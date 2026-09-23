@@ -199,9 +199,10 @@
   margin: 0;
 }
 
-/* 임시 심사용 폼. 기존 로그인창의 글자·간격·버튼 토큰을 재사용한다. */
-.emailLogin { width: 100%; font-size: 12px; color: var(--fg-2); }
-.emailLogin summary { cursor: pointer; padding: var(--sp-8) 0; }
+/* 임시 심사용 폼. '이메일로 로그인하기' 링크(.notice + .linkBtn)를 누르면 이 자리에 펼쳐진다.
+   기존 로그인창의 글자·간격·버튼 토큰을 재사용한다. */
+.notice + .notice { margin-top: var(--sp-4); }
+.emailLogin { width: 100%; font-size: 12px; color: var(--fg-2); margin-top: var(--sp-4); }
 .emailForm { display: grid; gap: var(--sp-12); margin-top: var(--sp-8); }
 .emailForm label { display: grid; gap: var(--sp-4); }
 .emailForm input {
@@ -216,7 +217,6 @@
   font: inherit;
   font-size: 16px;
 }
-.emailLogin summary:focus-visible,
 .emailForm input:focus-visible,
 .emailSubmit:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .emailSubmit { background: var(--fg-1); color: var(--bg-1); }

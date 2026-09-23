@@ -79,6 +79,13 @@ test('publisher keeps each document revision date consistent in metadata and bod
     'license-agreement': { version: 'v1.2', effectiveDate: '2026-09-18' },
     'seller-license-terms': { version: 'v1.2', effectiveDate: '2026-09-18' },
     'answers': { version: 'v1.2', effectiveDate: '2026-09-18' },
+    // 협찬 개정안(2026-09-22)은 시행본을 건드리지 않고 별도 슬러그로만 나간다 — 시행일 미정.
+    'terms-model-sponsorship-draft': { version: 'v1.2-draft', effectiveDate: null },
+    'privacy-model-sponsorship-draft': { version: 'v1.6-draft', effectiveDate: null },
+    'answers-sponsorship-draft': { version: 'v1.3-draft', effectiveDate: null },
+    'license-agreement-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
+    'seller-license-terms-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
+    'sponsorship-consent': { version: '2026-09-sponsorship-v1-draft', effectiveDate: null },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };

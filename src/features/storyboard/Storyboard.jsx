@@ -7,7 +7,7 @@
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
@@ -35,13 +35,14 @@ import {
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
 import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
+import { repickExampleForDirection } from '@/lib/generationExamples.js';
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
   generationExampleImageSources,
+  groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
-  paginateGenerationGalleryItems,
   repeatedAllExampleVariationIds,
   selectGenerationExamples,
   storedExampleConditionStatus,
@@ -308,36 +309,39 @@ function StoryboardInsertControl({
 
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
+  // 착용컷 방향 목록은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 블록은 서버 값 셋을 든다.
+  // 그대로 찾으면 'side' 가 목록에 없어 캡션이 '—' 로 뜬다 — 그래서 화면 값으로 바꿔 찾는다.
   const direction = isProduct
     ? (catalogs.productDirections.find((item) => item.value === block.direction)?.label || '앞면')
-    : (catalogs.directions.find((item) => item.value === block.direction)?.label || '—');
+    : (catalogs.directions.find((item) => item.value === directionChoiceFromSpec(block))?.label || '—');
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
   return { direction, shot, isProduct };
 }
 
+/* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
+   기준은 이 페이지를 열었을 때 그 카드가 물고 있던 예시다. 원래 것으로 되돌리면 꺼진다.
+   방향·샷은 바꿔도 표시하지 않는다 — 예전엔 붙은 예시의 방향과 다르면 파랬는데(2026-08-16),
+   사선 카드에 정면 예시가 붙어 있는 한 무엇을 눌러도 켜져 있어 아무 정보가 없었다.
+   새로 추가한 컷은 처음 본 값이 기준. 자동저장 보드라 "저장 뒤 리셋"은 없다 — 세션 안에서만 산다. */
+const LoadedRecipeContext = React.createContext(null);
+
 function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
+  const loadedRecipes = useContext(LoadedRecipeContext);
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
     .map((id) => colorOpts.find((color) => color.id === id))
     .filter(Boolean);
-  const example = block.exampleId
-    ? (catalogs.genExamples || []).find((item) => item.id === block.exampleId)
-    : null;
   const { direction, shot } = cardLabels(block, catalogs);
   /* 셀러가 방향·샷을 원래 값에서 바꿨으면 그 값을 색으로 표시한다(2026-08-16 오너).
      기준(원래 값)은 컷의 성격에 따라 다르다:
      · 장소세트 멤버 — 세트가 정해 둔 그 자리의 컷(예시는 포즈 참조라 기준이 못 된다)
      · 그 밖 — 물고 있는 생성예시의 컷(예시 = 이 컷이 원래 따라가려던 그림) */
-  const setMemberSpec = block.spaceGroupId
-    ? (inferStoryboardSpaceSet(block.spaceGroupId)?.members || [])
-      .find((member) => (member.order ?? null) === (block.spaceSetMemberOrder ?? null))
-    : null;
-  const baseline = block.spaceGroupId ? setMemberSpec : example;
-  const directionDiffers = !!baseline?.direction && !!block.direction && baseline.direction !== block.direction;
-  const shotDiffers = !!baseline?.shot && !!block.shot && baseline.shot !== block.shot;
+  const loaded = loadedRecipes?.get(block.id) || null;
+  // 방향·샷은 표시하지 않는다. 예시만 — 열었을 때 예시가 있었고 지금 다른 예시면 "변경".
+  const exampleDiffers = !!loaded && !!loaded.exampleId && (block.exampleId || null) !== loaded.exampleId;
   const closureOptions = catalogs.outerClosureStates || [];
   const closure = closureOptions.find((option) => option.value === block.outerClosureState)?.label || '전체 열림';
   const showClosure = clothingType === 'outer' && WORN_CUT_TYPES.has(block.cutType);
@@ -359,12 +363,11 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
-        {block.cutType !== 'mirror' && (
-          <span className={directionDiffers ? 'sb-val-changed' : undefined}>{direction}</span>
-        )}
+        {block.cutType !== 'mirror' && <span>{direction}</span>}
         {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
-        <span className={shotDiffers ? 'sb-val-changed' : undefined}>{shot}</span>
+        <span>{shot}</span>
         {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
+        {exampleDiffers && <span className="sb-val-changed" title="열었을 때와 다른 예시"> · 예시 변경</span>}
       </span>
       {colors.map((color) => (
         <span key={color.id} className="sb-caption-dot" style={{ background: color.hex }} title={color.label} />
@@ -1210,25 +1213,12 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     && refScope === 'pose' && !selectedPoseCompatible
     ? 'changed' : conditionStatus;
   const galleryRef = useRef(null);
-  const [galleryPage, setGalleryPage] = useState(0);
   const [mineTab, setMineTab] = useState(false);
-  const galleryPageCount = Math.max(1, Math.ceil(examples.length / 6));
-  const scrollToGalleryPage = (page, behavior = 'smooth') => {
-    const targetPage = Math.max(0, Math.min(page, galleryPageCount - 1));
-    const element = galleryRef.current?.querySelectorAll('.sb-expage')[targetPage];
-    if (element) galleryRef.current.scrollTo({ left: element.offsetLeft, behavior });
-    setGalleryPage(targetPage);
-  };
+  // 갤러리는 방향 묶음을 세로로 쌓아 한 화면에 보여준다 — 페이지 넘김을 없앴다(2026-09-22 오너:
+  // "분류했으면 여러 창 옮기게 하지 말고"). 인스펙터 세로 스크롤이 그대로 이어진다.
   useEffect(() => {
-    scrollToGalleryPage(0, 'auto');
+    galleryRef.current?.scrollTo?.({ top: 0 });
   }, [cut, shotVal, clothingType, gender, direction]);
-  useEffect(() => {
-    if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
-  }, [galleryPage, galleryPageCount]);
-  const poseDirectionReason = (example) => {
-    const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
-    return `이 예시의 포즈는 ${label} 전용이에요`;
-  };
   const selectFirstAvailable = () => {
     const first = refScope === 'pose'
       ? examples.find((example) => (example.variants || []).includes('pose')
@@ -1245,10 +1235,8 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       sideStyle,
     });
     const poseRequired = refScope === 'pose';
-    const poseUnavailable = poseRequired && (!variants.includes('pose') || !poseCompatible);
-    const poseUnavailableReason = !variants.includes('pose')
-      ? '이 예시는 아직 포즈 전용 자산이 없어요'
-      : poseDirectionReason(example);
+    // 어떤 칸도 잠그지 않는다 — 포즈 자산이 없거나 방향이 달라도 '분위기(all)'로 고를 수 있다.
+    // (2026-09-22 오너: 회색으로 막아 두면 왜 못 고르는지 알 수 없고, 실제로는 눌리기도 했다.)
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
@@ -1268,9 +1256,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
           onExampleDrag(example.id);
         }}
         onDragEnd={() => onExampleDrag?.(null)}
-        disabled={poseUnavailable}
-        title={poseUnavailable ? poseUnavailableReason : undefined}
-        className={`sb-excell${on ? ' sel' : ''}${poseUnavailable ? ' unavailable' : ''}`}
+        className={`sb-excell${on ? ' sel' : ''}`}
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}
@@ -1279,23 +1265,16 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     );
   };
   const exampleCells = examples.map(renderExampleCell);
-  const galleryItems = exampleCells;
-  const galleryPages = paginateGenerationGalleryItems(galleryItems);
+  // 방향 묶음마다 최대 6장 — 페이지 넘김을 없앴으니 한 방향이 스냅 26장처럼 길어지면
+  // 다른 방향이 화면 밖으로 밀린다. 순서는 이미 rank·무드로 정렬돼 있다.
+  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle })
+    .map((section) => ({ ...section, examples: section.examples.slice(0, 6) }));
+  const labelledSections = gallerySections.length > 1;
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
       ? onPickRef()
       : api.pickRefImage(useAppStore.getState().projectId);
-  };
-  const updateGalleryPageFromScroll = () => {
-    const pages = [...(galleryRef.current?.querySelectorAll('.sb-expage') || [])];
-    if (!pages.length) return;
-    const left = galleryRef.current.scrollLeft;
-    let closest = 0;
-    pages.forEach((page, index) => {
-      if (Math.abs(page.offsetLeft - left) < Math.abs(pages[closest].offsetLeft - left)) closest = index;
-    });
-    setGalleryPage(closest);
   };
   return (
     <div className="insp-sec">
@@ -1336,45 +1315,22 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
           )}
         </div>
       )}
-      <div className={`sb-exgallery${moodOnly ? ' moodonly' : ''}`}
-        role="region" aria-label="생성예시 갤러리" tabIndex={0}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowLeft') {
-            event.preventDefault(); scrollToGalleryPage(galleryPage - 1);
-          } else if (event.key === 'ArrowRight') {
-            event.preventDefault(); scrollToGalleryPage(galleryPage + 1);
-          }
-        }}>
-        {/* 세로 휠은 갤러리가 먹지 않는다 — 인스펙터 세로 스크롤이 그대로 이어진다.
-            페이지 넘김은 가로 스크롤·넘김 버튼·←→ 키만 (2026-08-16 오너). */}
-        <div ref={galleryRef} className="sb-exgrid"
-          onScroll={updateGalleryPageFromScroll}>
-          {galleryPages.map((pageItems, pageIndex) => (
-            <div className="sb-expage" key={`page:${pageIndex}`}>
-              {pageItems}
-              {!galleryItems.length && (
-                <div className="sb-exempty">
-                  {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
-                    ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
-                  <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
-                </div>
-              )}
+      {/* 정면이 아닌 방향에서 갤러리를 흐리게 덮던 처리를 걷어냈다 — 방향별 묶음이 생긴 뒤로는
+          "왜 회색인데 눌리지?"만 남았다(2026-09-22 오너). moodOnly 는 기본 범위 판정에만 쓴다. */}
+      <div className="sb-exgallery" ref={galleryRef}
+        role="region" aria-label="생성예시 갤러리">
+        {gallerySections.length ? gallerySections.map((section) => (
+          <div className="sb-exsection" key={`sec:${section.key}`}>
+            {labelledSections && <div className="sb-expage-label">{section.label}</div>}
+            <div className="sb-expage-cells">
+              {section.examples.map((example) => exampleCells[examples.indexOf(example)])}
             </div>
-          ))}
-        </div>
-        {galleryPageCount > 1 && (
-          <div className="sb-excontrols">
-            <button type="button" className="sb-expage-hit prev" aria-label="이전 예시 페이지"
-              disabled={galleryPage === 0} onClick={() => scrollToGalleryPage(galleryPage - 1)}>‹</button>
-            <div className="sb-expages" aria-label={`${galleryPageCount}페이지 중 ${galleryPage + 1}페이지`}>
-              {galleryPages.map((_page, index) => (
-                <button type="button" key={index} className={index === galleryPage ? 'on' : ''}
-                  aria-label={`${index + 1}페이지`} aria-current={index === galleryPage ? 'page' : undefined}
-                  onClick={() => scrollToGalleryPage(index)} />
-              ))}
-            </div>
-            <button type="button" className="sb-expage-hit next" aria-label="다음 예시 페이지"
-              disabled={galleryPage === galleryPageCount - 1} onClick={() => scrollToGalleryPage(galleryPage + 1)}>›</button>
+          </div>
+        )) : (
+          <div className="sb-exempty">
+            {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+              ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+            <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
           </div>
         )}
       </div>
@@ -1585,7 +1541,15 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     const patch = specFromDirectionChoice(choice);
     const { direction, sideStyle } = patch;
     if (!current.exampleId) return patch;
-    if (!current.spaceGroupId && current.refScope !== 'pose') return patch;
+    if (!current.spaceGroupId && current.refScope !== 'pose') {
+      // 자동배정 예시가 새 방향과 안 맞으면 같은 방향 예시로 갈아 끼운다 — 안 그러면 사선
+      // 카드에 정면 예시가 남아 캡션이 영원히 "변경됨"이고 갤러리 선택도 어긋난다.
+      // 셀러가 직접 고른 예시는 그대로 둔다(그건 "변경됨"이 맞다).
+      const repick = repickExampleForDirection(current, catalogs.genExamples, {
+        clothingType, gender: exampleGender, identityKind, direction, sideStyle,
+      });
+      return repick ? { ...patch, ...repick } : patch;
+    }
     const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
     const compatible = (example?.variants || []).includes('pose')
       && poseExampleDirectionCompatible(example, {
@@ -1731,7 +1695,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {!isMirror && !isDetail && (
         <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
           {/* 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다. 착용컷만 4칩으로 갈린다. */}
-          <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
+          {/* allowDeselect=false — 선택된 칩을 다시 누르면 null 이 가고, null 은 정면으로
+              떨어진다(specFromDirectionChoice). 사선에서 사선을 한 번 더 누르면 조용히 정면이
+              됐다(2026-09-22 실측). 방향은 항상 하나가 선택돼 있어야 한다. */}
+          <Chips className="direction-chips" options={isProduct ? catalogs.productDirections : catalogs.directions}
+            allowDeselect={false}
             value={isProduct
               ? (catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front')
               : directionChoiceFromSpec(block)}
@@ -2483,6 +2451,20 @@ export function Storyboard({ toastOverride = null } = {}) {
     .catch(() => setAutosaveFailed(true));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
+  }, [blocks]);
+  // 캡션 "변경됨"의 기준값 — 페이지를 연 시점의 {direction, sideStyle, shot}. 새 컷은 처음 본 값.
+  const [loadedRecipes, setLoadedRecipes] = useState(() => new Map());
+  useEffect(() => {
+    if (!Array.isArray(blocks)) return;
+    setLoadedRecipes((current) => {
+      let next = null;
+      for (const b of blocks) {
+        if (!b?.id || current.has(b.id)) continue;
+        if (!next) next = new Map(current);
+        next.set(b.id, { exampleId: b.exampleId ?? null, direction: b.direction ?? null, sideStyle: b.sideStyle ?? null, shot: b.shot ?? null });
+      }
+      return next || current;
+    });
   }, [blocks]);
   const sbSkipFirstSave = useRef(true);
   useEffect(() => {
@@ -4064,6 +4046,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     });
   };
   return (
+    <LoadedRecipeContext.Provider value={loadedRecipes}>
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
@@ -4120,6 +4103,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         </div>
       </div>
     </div>
+    </LoadedRecipeContext.Provider>
   );
 }
 

@@ -402,6 +402,15 @@ class Settings:
     # 웹훅 경로 시크릿 — 토스 일반 웹훅은 서명 헤더가 없어 경로 지식이 인증 대용이다.
     toss_webhook_path_secret: str | None = None
     subscription_billing_enabled: bool = False
+    # ---- 계좌이체(무통장입금) — PG 심사 전 결제 경로(docs/superpowers/plans/2026-09-22-bank-transfer-payments.md) ----
+    # 판매 스위치. 꺼도 만료 워커는 돈다(이미 준 이용권은 정리해야 한다). 계좌 3종이 비면 신청 라우트가 503.
+    bank_transfer_enabled: bool = True
+    bank_transfer_bank: str | None = None
+    bank_transfer_account: str | None = None
+    bank_transfer_holder: str | None = None
+    bank_transfer_notify_email: str = "contact@wearless.kr"
+    # 계좌이체 안내 메일 발신자. 인증된 도메인(wearless.kr)이어야 실제 발송된다.
+    bank_transfer_from_email: str = "Wearless <noreply@wearless.kr>"
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -544,6 +553,24 @@ class Settings:
     image_usage_persist: bool = False
     # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
     image_usage_krw_per_usd: float = 1400.0
+
+    # ---- 카카오 OpenID Connect 직접 로그인(app/kakao_oidc.py) ----
+    # 왜 Supabase 의 카카오 OAuth 가 아니라 OIDC 인가: GoTrue 가 scope 에 account_email 을
+    # 하드코딩해 붙이는데 우리 카카오 앱은 그 항목이 "권한 없음"이라 인가 요청이 전부
+    # KOE205 로 거절됐다(2026-09-22). 자세한 경위는 kakao_oidc.py 머리말.
+    #
+    # 🔴 kakao_rest_api_key 는 **Supabase 대시보드 Kakao provider 의 client_id 와 같은 값**
+    #    이어야 한다. GoTrue 가 id_token 의 aud 를 그 값과 대조한다(token_oidc.go).
+    #    두 값이 갈리면 signInWithIdToken 이 전부 실패한다. 공개값이라 variables 로 둔다.
+    kakao_rest_api_key: str | None = None
+    # secret 등급. 카카오 콘솔에서 'Client Secret 사용함'일 때만 필요하다 — 안 쓰면
+    # PKCE(S256)가 그 자리를 대신하고 SSM/secrets 블록 자체가 불필요해진다.
+    kakao_client_secret: str | None = None
+    kakao_auth_base: str = "https://kauth.kakao.com"   # 테스트에서 스텁 서버로 오버라이드
+    kakao_token_timeout: float = 10.0                  # cx_trans_timeout 과 같은 눈금
+    # 화이트리스트 **추가분**. 기본 4개(프로덕션 3호스트 + localhost:5173)는 코드 상수라
+    # 여기 안 적어도 된다 — 이 값은 병렬 워크트리(5174)·터널 같은 임시 QA 주소용이다.
+    kakao_extra_redirect_uris: tuple[str, ...] = ()
 
 
 def _image_usage_persist(app_env: str) -> bool:
@@ -895,6 +922,14 @@ def load_settings() -> Settings:
         toss_webhook_path_secret=os.getenv("TOSS_WEBHOOK_PATH_SECRET") or None,
         subscription_billing_enabled=(
             os.getenv("SUBSCRIPTION_BILLING_ENABLED", "false").lower() == "true"),
+        bank_transfer_enabled=(os.getenv("BANK_TRANSFER_ENABLED", "true").lower() == "true"),
+        bank_transfer_bank=(os.getenv("BANK_TRANSFER_BANK") or "").strip() or None,
+        bank_transfer_account=(os.getenv("BANK_TRANSFER_ACCOUNT") or "").strip() or None,
+        bank_transfer_holder=(os.getenv("BANK_TRANSFER_HOLDER") or "").strip() or None,
+        bank_transfer_from_email=(os.getenv("BANK_TRANSFER_FROM_EMAIL") or "").strip()
+        or "Wearless <noreply@wearless.kr>",
+        bank_transfer_notify_email=(os.getenv("BANK_TRANSFER_NOTIFY_EMAIL") or "").strip()
+        or "contact@wearless.kr",
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),
@@ -964,4 +999,14 @@ def load_settings() -> Settings:
         public_web_origin=(
             os.getenv("PUBLIC_WEB_ORIGIN") or "https://ai.wearless.kr"
         ).rstrip("/"),
+        kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY") or None,
+        kakao_client_secret=os.getenv("KAKAO_CLIENT_SECRET") or None,
+        kakao_auth_base=(
+            os.getenv("KAKAO_AUTH_BASE") or "https://kauth.kakao.com"
+        ).rstrip("/"),
+        kakao_token_timeout=float(os.getenv("KAKAO_TOKEN_TIMEOUT") or "10"),
+        kakao_extra_redirect_uris=tuple(
+            uri.strip() for uri in (os.getenv("KAKAO_REDIRECT_URIS") or "").split(",")
+            if uri.strip()
+        ),
     )

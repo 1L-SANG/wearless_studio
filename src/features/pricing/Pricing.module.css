@@ -18,6 +18,20 @@
 .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
+/* 계좌이체 안내·열린 신청 띠(PG 심사 전) */
+.bankNotice { margin: -6px 0 var(--sp-16); padding: var(--sp-12) var(--sp-16); font-size: 13px; line-height: 1.6; color: var(--fg-1); background: var(--bg-2); border-radius: var(--r-4); }
+.openRequest {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); flex-wrap: wrap;
+  margin-bottom: var(--sp-12); padding: var(--sp-12) var(--sp-16); font-size: 13px; color: var(--fg-1);
+  border: 1.5px solid var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1);
+}
+.openRequestCancel {
+  padding: var(--sp-4) var(--sp-12); border: 1px solid var(--ring-strong); border-radius: var(--r-3);
+  background: var(--bg-1); font-family: var(--font-body); font-size: 12px; color: var(--fg-2); cursor: pointer;
+}
+.openRequestAccount { flex-basis: 100%; font-size: 12px; color: var(--fg-2); }
+.openRequestCancel:hover { color: var(--fg-1); }
+.openRequestCancel:disabled { opacity: 0.5; cursor: default; }
 .billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }
 .billingNotice p + p { margin-top: var(--sp-8); }
 .billingNotice a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }

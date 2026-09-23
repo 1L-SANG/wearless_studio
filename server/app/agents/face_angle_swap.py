@@ -395,10 +395,23 @@ TONE_RING_PX = 6
 TONE_SKIN_MIN = 90.0
 #: 이만큼은 표본이 있어야 보정한다. 적으면 그 평균이 목이 아니라 잡음이다.
 TONE_MIN_SAMPLES = 200
-#: 보정량 |RGB| 최대가 이 값을 넘으면 **컷을 버린다**(tone_off). 조명이 근본적으로 어긋난
-#: 참고 사진이라는 뜻이고, 억지로 맞추면 목만 물든다. 얼굴 패스의 GATE_COLOR_MAX(35.0)와
-#: 같은 자리·같은 값으로 둔다 — 두 경로가 다른 기준을 쓰면 같은 사진이 한쪽만 통과한다.
+#: 덧셈 보정으로 맞출 수 있는 상한. 여기까지는 예전 그대로 더해서 맞춘다(2026-09-20 실측
+#: 3컷이 7~12 였고 그 범위에서 튜닝된 값이다). 얼굴 패스의 GATE_COLOR_MAX(35.0)와 같은 값.
 TONE_MAX_SHIFT = 35.0
+
+#: 이 값을 넘는 차이는 **비율(gain)로** 맞춘다(2026-09-23 오너: "베이스 컷이 나오면 거기에
+#: 사진 톤을 맞춰야지"). 왜 갈라 쓰는가: 덧셈은 차이가 커지면 밝은 쪽이 상한에 눌려 목만
+#: 뜨고 얼굴은 안 따라온다. 조명 세기 차이는 본래 곱셈이라 비율이 맞는 모형이다.
+#: 실측 2026-09-23: 새 통일 촬영 베이스(238/236/234) vs 등록 옆모습 사진이 [22.9, 33.0, 42.6]
+#: 으로 벌어져 컷이 통째로 버려졌다(tone_off).
+TONE_GAIN_FROM = 18.0
+#: 비율 보정의 한계. 이 밖으로 나가면 사진이 근본적으로 다른 조명이라 억지로 맞추지 않는다.
+TONE_GAIN_MIN = 0.55
+TONE_GAIN_MAX = 1.85
+#: 보정을 **끝낸 뒤** 이음선에 남은 차이의 상한. 컷을 버릴지는 이 값으로 정한다 —
+#: 보정 전 차이가 크다는 것만으로는 버리지 않는다. 남은 차이가 이만큼이면 목 이음선이
+#: 눈에 띈다(2026-09-20 실측: 보정 후 1.6~10.3 이 "잘 맞은" 범위였다).
+TONE_MAX_RESIDUAL = 14.0
 
 
 def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarray | None:
@@ -440,6 +453,44 @@ def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarra
     if outside.sum() < TONE_MIN_SAMPLES or inside.sum() < TONE_MIN_SAMPLES:
         return None
     return base[outside].mean(axis=0) - out[inside].mean(axis=0)
+
+
+def tone_means(p: Plan, out: np.ndarray, box: tuple[int, int, int]):
+    """이음선 링의 (원본 목 평균, 새 머리 평균). 표본이 모자라면 None.
+
+    tone_shift 가 두 평균의 **차이**만 돌려주던 것을 갈라 둔다 — 비율 보정은 두 값이
+    따로 필요하고, 보정 뒤 남은 차이를 다시 재는 데도 같은 표본을 써야 한다.
+    """
+    left, top, side = box
+    head = p.head[top:top + side, left:left + side]
+    if not head.any():
+        return None
+    k = 2 * TONE_RING_PX + 1
+    ring_out = cv2.dilate(head.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool) & ~head
+    ring_in = head & ~cv2.erode(head.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
+    base = p.base[top:top + side, left:left + side].astype(np.float32)
+    person = p.person[top:top + side, left:left + side]
+    bg = background_color(p.base)
+
+    def skin(mask, image, is_person):
+        return mask & is_person & (image.mean(axis=2) > TONE_SKIN_MIN)
+
+    outside = skin(ring_out, base, person)
+    inside = skin(ring_in, out, np.abs(out - bg).max(axis=2) > BG_THRESHOLD)
+    if outside.sum() < TONE_MIN_SAMPLES or inside.sum() < TONE_MIN_SAMPLES:
+        return None
+    return base[outside].mean(axis=0), out[inside].mean(axis=0)
+
+
+def tone_gain(neck: np.ndarray, head: np.ndarray) -> np.ndarray:
+    """새 머리를 **베이스 컷의 목**에 맞추는 채널별 비율. 조명 세기 차이는 곱셈이다.
+
+    덧셈(tone_shift)은 차이가 작을 때만 맞는다 — 20 이 넘어가면 밝은 채널이 255 에 눌려
+    목만 뜨고 얼굴은 안 따라온다. 한계(TONE_GAIN_MIN/MAX)를 벗어나면 그 값으로 자른다:
+    억지로 다 맞추는 것보다 남은 차이를 residual 로 재서 판단하는 편이 안전하다.
+    """
+    safe = np.maximum(head, 1.0)
+    return np.clip(neck / safe, TONE_GAIN_MIN, TONE_GAIN_MAX).astype(np.float32)
 
 
 #: 톤 가중치를 부드럽게 만드는 흐림(px). 실루엣에서 뚝 끊기지 않을 만큼만.
@@ -496,6 +547,22 @@ def apply_tone(out: np.ndarray, shift: np.ndarray, bg: np.ndarray) -> np.ndarray
     return np.clip(out + shift * weight, 0, 255)
 
 
+def apply_tone_gain(out: np.ndarray, gain: np.ndarray, bg: np.ndarray,
+                    *, feather_shift: np.ndarray | None = None) -> np.ndarray:
+    """비율 보정판 apply_tone. 거는 자리(사람 피부만·머리카락 제외·배경 제외)는 같다.
+
+    흐림 반경은 **밝기가 실제로 얼마나 움직이는지**로 잡는다 — 비율 1.3 은 목(≈150)에서
+    45 만큼 움직이고 어두운 곳에서는 덜 움직인다. 덧셈 경로와 같은 기준(tone_feather)을
+    쓰려고 등가 이동량을 넘겨받는다.
+    """
+    person = (np.abs(out - bg).max(axis=2) > BG_THRESHOLD).astype(np.float32)
+    lum = out.mean(axis=2)
+    skin = np.clip((lum - TONE_HAIR_MAX) / (TONE_SKIN_MIN - TONE_HAIR_MAX), 0.0, 1.0)
+    weight = cv2.GaussianBlur(person * skin, (0, 0), tone_feather(feather_shift))[..., None]
+    scaled = out * gain
+    return np.clip(out * (1.0 - weight) + scaled * weight, 0, 255)
+
+
 def composite(p: Plan, out1k: np.ndarray, *, meta: dict | None = None) -> np.ndarray:
     """마스크 안만 원본 해상도에 섞고, 옷은 원본 픽셀로 되돌린다(경계 2px 만 섞음).
 
@@ -504,11 +571,30 @@ def composite(p: Plan, out1k: np.ndarray, *, meta: dict | None = None) -> np.nda
     """
     left, top, side = p.box
     out = np.asarray(Image.fromarray(out1k).resize((side, side), Image.LANCZOS), np.float32)
-    shift = tone_shift(p, out, p.box)
+    # 베이스 컷이 기준이다 — 새 머리를 거기에 맞춘다. 작은 차이는 예전처럼 더해서,
+    # 큰 차이는 비율로(조명 세기 차이는 곱셈이다). 맞추고 나서 남은 차이를 다시 재고,
+    # 버릴지는 **그 잔차**로 정한다(2026-09-23 오너).
+    means = tone_means(p, out, p.box)
+    shift = None if means is None else (means[0] - means[1])
+    mode = None
     if shift is not None:
-        out = apply_tone(out, shift, background_color(p.base))
+        if float(max(abs(float(v)) for v in shift)) <= TONE_GAIN_FROM:
+            out = apply_tone(out, shift, background_color(p.base))
+            mode = "shift"
+        else:
+            gain = tone_gain(means[0], means[1])
+            out = apply_tone_gain(out, gain, background_color(p.base), feather_shift=shift)
+            mode = "gain"
+            if meta is not None:
+                meta["toneGain"] = [round(float(v), 3) for v in gain]
     if meta is not None:
         meta["toneShift"] = ([round(float(v), 2) for v in shift] if shift is not None else None)
+        meta["toneMode"] = mode
+        after = tone_means(p, out, p.box)
+        meta["toneResidual"] = (
+            None if after is None
+            else round(float(max(abs(float(v)) for v in (after[0] - after[1]))), 2)
+        )
     region = p.head[top:top + side, left:left + side].astype(np.float32)
     blur = cv2.GaussianBlur(region, (0, 0), 1.5 * max(1.0, side / CROP_PX))
     alpha = np.maximum(blur * (cv2.dilate(region, np.ones((3, 3), np.uint8)) > 0), region)[..., None]
@@ -717,9 +803,12 @@ async def swap(image: bytes, mime: str, *, direction: str, photos: AnglePhotos, 
     final = await asyncio.to_thread(composite, p, out1k, meta=meta)
     # 톤을 못 맞출 만큼 조명이 어긋난 참고 사진이면 **컷을 버린다**. 억지로 붙이면 목만
     # 물든 사람이 상품 페이지에 실린다 — 얼굴 패스의 lighting_off 와 같은 판단이다.
-    shift = meta.get("toneShift")
-    if shift and max(abs(v) for v in shift) > TONE_MAX_SHIFT:
-        log.warning("angle swap tone off: %s", shift)
+    # 보정 **뒤** 이음선에 남은 차이로 판단한다. 보정 전 차이가 크다는 것만으로는 버리지
+    # 않는다 — 베이스 컷이 기준이고, 맞출 수 있으면 맞춰서 내보낸다(2026-09-23 오너).
+    residual = meta.get("toneResidual")
+    if residual is not None and residual > TONE_MAX_RESIDUAL:
+        log.warning("angle swap tone off: shift=%s mode=%s residual=%s",
+                    meta.get("toneShift"), meta.get("toneMode"), residual)
         raise AngleSwapUnavailable("tone_off")
     meta["garmentChangedPx"] = changed_garment_px(p, final)
     stream = io.BytesIO()
