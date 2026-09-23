@@ -29,7 +29,6 @@ const ALLOWED_ROOTS = ['/apply', '/photo-guide', '/model', '/models', '/status',
 
 const LANDING_NAV = Object.freeze([
   Object.freeze({ to: '/apply', label: '모델 지원', protected: false }),
-  Object.freeze({ to: '/#sponsorship', label: '협찬 안내', protected: false }),
   Object.freeze({ to: '/models', label: '모델 리스트', protected: false }),
   Object.freeze({ to: '/status', label: '마이페이지', protected: true }),
 ]);
