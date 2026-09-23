@@ -17,14 +17,33 @@ export function SponsorshipSection() {
         </article>
         <article className={s.card}>
           <h3>의류 협찬 <span className={s.optional}>(선택)</span></h3>
-          <p>셀러가 보내준 옷을 입고 사진을 찍어서 피드에 올리면 돼요. 옷은 내 것. 등록할 때 켜 둔 사람만 요청을 받고, 언제든 끌 수 있어요.</p>
-          <div className={s.example} aria-label="협찬 요청 예시">
-            <div className={s.exampleHead}><span>요청 예시 · ○○몰</span><strong>니트 1벌</strong></div>
-            <ul className={s.conditions}>
-              <li><span>옷 받은 뒤 3일 이내 피드 1회</span><span>30일 유지</span></li>
-              <li><span>내 허용 품목 안에서만</span><span>현금 없음</span></li>
-            </ul>
-            <p className={s.sequence}>요청이 오면, 옷을 받은 뒤 게시해요.</p>
+          <p>셀러가 보내준 옷을 직접 입고 찍어서, 내 인스타그램 피드에 올려요. 참여 여부는 등록할 때 정하고 언제든 끌 수 있어요.</p>
+          <div className={s.example} aria-label="의류 협찬 진행 예시">
+            <div className={s.exampleTopline}><span>협찬 진행 예시</span><span>실제 모집 상품 아님</span></div>
+            <div className={s.exampleMain}>
+              <div className={s.exampleMedia}>
+                <img
+                  alt="모델이 입지 않은 아이보리 니트의 협찬 예시 상품 이미지"
+                  className={s.exampleImage}
+                  loading="lazy"
+                  src="/assets/sponsorship-knit-ivory-ghost.webp"
+                />
+              </div>
+              <div className={s.exampleDetails}>
+                <span className={s.exampleBadge}>의류 협찬</span>
+                <strong className={s.exampleProduct}>아이보리 니트 1벌</strong>
+                <div className={s.examplePrice} aria-label="예시 상품 가격 49,900원, 협찬으로 받으면 무료">
+                  <del>49,900원</del>
+                  <strong>무료</strong>
+                </div>
+                <dl className={s.exampleTerms}>
+                  <div><dt>올릴 콘텐츠</dt><dd>착용 사진 인스타그램 피드 1회</dd></div>
+                  <div><dt>게시 기한</dt><dd>수령 후 3일 이내</dd></div>
+                  <div><dt>게시 유지</dt><dd>30일</dd></div>
+                </dl>
+              </div>
+            </div>
+            <p className={s.exampleFootnote}>내가 허용한 옷 종류 안에서만 협찬받아요. 게시물의 광고 재사용은 별도 동의 후 진행돼요.</p>
           </div>
           <p className={s.launchNote}>협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.</p>
         </article>

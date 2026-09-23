@@ -27,18 +27,16 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
-test('상단바는 협찬 안내를 공개하고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+test('상단바는 모델 지원과 리스트를 공개하고 마이페이지만 로그인 의도로 바꾼다', () => {
   assert.equal(typeof landingRouting.landingNavItems, 'function');
   assert.equal(typeof landingRouting.landingNavAction, 'function');
 
   assert.deepEqual(landingRouting.landingNavItems(), [
     { to: '/apply', label: '모델 지원', protected: false },
-    { to: '/#sponsorship', label: '협찬 안내', protected: false },
     { to: '/models', label: '모델 리스트', protected: false },
     { to: '/status', label: '마이페이지', protected: true },
   ]);
   assert.equal(landingRouting.landingNavAction('/models', { session: null, loading: false }), 'navigate');
-  assert.equal(landingRouting.landingNavAction('/#sponsorship', { session: null, loading: true }), 'navigate');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: true }), 'wait');
@@ -117,6 +115,6 @@ test('접두사만 겹치는 경로는 화이트리스트를 통과하지 못한
 });
 
 test('확정 모델은 상단바에서 모델 지원을 숨겨요', () => {
-  assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/#sponsorship', '/models', '/status']);
+  assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/models', '/status']);
   assert.equal(landingRouting.landingNavItems({ verified: false })[0].to, '/apply');
 });

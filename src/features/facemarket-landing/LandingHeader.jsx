@@ -85,11 +85,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
       </Link>
 
       <nav aria-label="랜딩 내비게이션" className={s.nav}>
-        {nav.map((item) => item.to === '/#sponsorship' ? (
-          <Link className={s.navLink} key={item.to} to={item.to}>
-            {item.label}
-          </Link>
-        ) : (
+        {nav.map((item) => (
           <NavLink aria-current={applicationActive(item) ? 'page' : undefined} className={linkClass(item)} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
             {item.label}
           </NavLink>
