@@ -386,7 +386,8 @@ graph TB
 | `IMAGE_QC` (AG-P2 의류 동일성) | **enforce** | 임계 실측 재캘리브 후 승격. 판정 실패는 fail-open |
 | `MANNEQUIN_AXIS_QC` (AG-P1) | **enforce** | 미달 컷 출고 방지 > 오발화 비용 |
 | `MANNEQUIN_BASE_FIDELITY_QC` | **enforce** | 게이팅 축은 `poseFrameMatch` 하나뿐, `wearGeometry`는 기록만 |
-| `MANNEQUIN_PANTS_QC` | **enforce** | 하드게이트 4종(색·종류·통·구조), 기존 예산 안에서 재롤 |
+| `MANNEQUIN_PANTS_QC` | **enforce** | 하드게이트 4종(색·종류·통·구조). 2026-09-23부터 매칭만 틀리면 경고(needs_review)로 출고 — 재롤·수정은 셀러가 매칭 핏을 고른 경우(matchingFit·matchCut)만 |
+| `MANNEQUIN_DRAFT_REUSE` | `on` | 실패 잡의 유료 최선본을 24시간 초안으로 남기고 같은 입력의 다음 잡이 편집 경로로 1회 이어 씀 (2026-09-23) |
 | `CUT_OUTPUT_QC_MODE` | `repair` | |
 | `GARMENT_QC_MODE` | `off` | 신규 hard-gate가 커버, 구 best-of 중복비용 제거 |
 

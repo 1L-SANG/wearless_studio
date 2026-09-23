@@ -62,7 +62,8 @@ async def _no_series(**kwargs):
 
 def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="enforce",
          with_match=True, max_attempts=2, bust="off", untuck="off",
-         compare=None, base_fidelity_axes=None, mannequin_verdicts=None, gemini=None, r2=None):
+         compare=None, base_fidelity_axes=None, mannequin_verdicts=None, gemini=None, r2=None,
+         fit_profile=None):
     emits = []
     verdict_calls = {"n": 0, "match_seen": []}
     p2s = list(p2_by_attempt)
@@ -118,8 +119,13 @@ def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="e
         prod_imgs=[mannequin_job.InlineImage("image/png", b"prod")],
         match_img=(mannequin_job.InlineImage("image/png", b"bottom") if with_match else None),
         product_count=1, template="${baseGender} ${clothingType} ${imageManifest}",
-        product={}, analysis={}, clothing_type="top"))
+        product={}, analysis={}, clothing_type="top", fit_profile=fit_profile))
     return result, gemini, r2, emits, verdict_calls
+
+
+#: 셀러가 매칭 핏을 직접 고른 프로필 — 이때만 매칭 하드 게이트가 재롤·최종 수정을 부른다(2026-09-23).
+_DECLARED_MATCHING = {"category": "top", "gender": "women", "version": 2, "source": "seller",
+                      "axes": {}, "matchingFit": {"fitCategory": "pants", "axes": {"cut": "wide"}}}
 
 
 def _status(emits, status):
@@ -253,13 +259,41 @@ def test_restored_candidate_keeps_its_confirmed_base_failure_and_is_repaired(mon
             _p2(matching_critical=["matching bottom type changed"]),
             {**assessment(), **_p2(matching_critical=[])},
         ],
-        outputs=[b"clean-1", b"bad-2", b"repaired"], base_fidelity_axes=fake_bf)
+        outputs=[b"clean-1", b"bad-2", b"repaired"], base_fidelity_axes=fake_bf,
+        fit_profile=_DECLARED_MATCHING)
     assert result is not None, "깨끗한 후보가 있으면 드롭하지 않는다"
     assert r2.puts[0][1] == b"repaired"
     assert len(gemini.generation_calls) == 3
     assert "poseFrameMatch" in gemini.generation_calls[-1]
     salvaged = _status(emits, "qc_salvaged")
     assert any(e.get("reason") == "matching_identity_dropped" for e in salvaged)
+
+
+def test_undeclared_matching_only_on_last_attempt_ships_that_cut_with_warning(monkeypatch):
+    """2026-09-23: 자동 코디의 매칭 문제만 남은 컷은 상품이 통과했으면 그대로 낸다.
+
+    예전엔 앞선(베이스 결함) 후보로 되돌려 유료 수정을 한 장 더 샀다. 지금은 상품·베이스가
+    통과한 bad-2 가 경고(needs_review)와 함께 출고되고 추가 생성은 없다.
+    """
+    axes = iter([["poseFrameMatch"], [], []])
+
+    def fake_bf(s, base_fidelity):
+        return next(axes, [])
+
+    result, gemini, r2, emits, vc = _run(
+        monkeypatch,
+        p2_by_attempt=[
+            {**assessment(), **_p2(matching_critical=[])},
+            {**assessment(), **_p2(matching_critical=["matching bottom type changed"])},
+        ],
+        outputs=[b"clean-1", b"bad-2", b"repaired"], base_fidelity_axes=fake_bf)
+    assert result is not None
+    assert r2.puts[0][1] == b"bad-2"
+    assert len(gemini.generation_calls) == 2, "매칭 단독 문제로 유료 수정을 사지 않는다"
+    assert result["qc_scores"]["matching_review_only"] is True
+    assert result["qc_scores"]["outcome"] == "needs_review"
+    assert _status(emits, "matching_warning")
+    assert _status(emits, "candidate_dropped") == []
 
 
 @pytest.mark.parametrize("repair_base_failed", [False, True])

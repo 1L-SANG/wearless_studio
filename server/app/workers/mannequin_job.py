@@ -51,7 +51,7 @@ from ..agents.prompts import (
     build_mirrored_source_block,
 )
 from ..agents.product_reference import ProductReference
-from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ..services import canonical_reference, editor_garment_mask, mannequin_display, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
@@ -388,6 +388,7 @@ async def _apply_axis_qc(
     prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
     cancel_check=None,
     confirmed_repair_reasons=None,
+    clothing_type=None,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -409,14 +410,21 @@ async def _apply_axis_qc(
         "profile_hash": profile_hash,
     }
 
+    # 매칭 참조는 AG-P2 와 같은 규칙으로만 붙인다(2026-09-23): 매칭이 하의이고 바지 QC 가 켜진
+    # 경우뿐. 예전엔 조건 없이 붙였고, 하의 상품이면 매칭 '상의'를 "MATCHING BOTTOM" 으로 불렀다.
+    # 붙더라도 판정은 matchingIdentityPass 로 분리돼 identityPass(주상품)에 섞이지 않는다.
+    fit_match_img = _pants_qc_ref(s, match_img, clothing_type)
+
     async def _judge(image):
         return await mannequin_fit_qc.verdict(
-            s, prod_imgs, InlineImage(image.mime, image.image), fit_profile, match_img)
+            s, prod_imgs, InlineImage(image.mime, image.image), fit_profile, fit_match_img)
 
     async def _emit_qc(subject, image_hash, v, outcome, err=None):
         payload = {**base_event, "status": "axis_qc", "subject": subject,
                    "image_hash": image_hash,
                    "identity_pass": None if v is None else v["identityPass"],
+                   # 매칭(코디) 정체성은 경고 전용 관측값이다 — 편집 채택·출고를 막지 않는다.
+                   "matching_identity_pass": None if v is None else v.get("matchingIdentityPass"),
                    "axis_pass": [] if v is None else [
                        {"axis": x["axis"], "target": x["target"], "pass": x["pass"],
                         "visible": x["visible"],
@@ -1368,7 +1376,7 @@ async def _apply_edits(
         model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
         fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent,
         image_size=image_size, cancel_check=cancel_check,
-        confirmed_repair_reasons=confirmed_repair_reasons)
+        confirmed_repair_reasons=confirmed_repair_reasons, clothing_type=clothing_type)
     await _cancel_checkpoint(cancel_check)
     calls_spent += axis_spent
     post_axis_res = res
@@ -1575,6 +1583,204 @@ class MannequinQualityError(RuntimeError):
     """추가 한 장까지 검증하지 못한 품질 종료. 화면 자동 재시도 대상이 아니다."""
 
 
+# ── 과금 없는 일시 장애 1회 재시도 (2026-09-23) ─────────────────────────────────
+# 운영(2026-09-23): 마네킹 잡 5연속 실패 중 2건이 OpenAI 500 한 번으로 끝났다. 500·503 과
+# 연결 실패는 프로바이더가 그림을 그리지 않은 거절이라(GeminiError.transient) 같은 호출을
+# **한 번만** 다시 보낸다. billable(읽기 타임아웃·502/504·200 파싱 실패)은 이미 그려졌을 수
+# 있어 절대 다시 보내지 않는다 — 같은 컷을 두 번 사고 원장에도 안 남는다(2026-08-17 규칙).
+_TRANSIENT_RETRY_DELAY_SECONDS = 3.0
+
+
+def _is_unbilled_transient(error) -> bool:
+    return (isinstance(error, GeminiError) and getattr(error, "transient", False) is True
+            and not getattr(error, "billable", False))
+
+
+async def _generate_with_transient_retry(
+    gemini, model, prompt, images, image_size, *, aspect_ratio, pool, job_id, candidate,
+    phase, cancel_check=None,
+):
+    """이미지 호출 1회 + 과금 없는 일시 장애일 때만 같은 호출 1회 재시도.
+
+    예산(calls_spent)은 늘리지 않는다 — 첫 호출은 그림 없이 거절됐으므로 실제로 나간 이미지
+    호출은 여전히 1회다. 두 번째도 실패하면 그 예외를 그대로 올려 기존 처리에 맡긴다.
+    """
+    try:
+        return await gemini.generate_content_image(
+            model, prompt, images, image_size, aspect_ratio=aspect_ratio)
+    except GeminiError as error:
+        if not _is_unbilled_transient(error):
+            raise
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "status": "transient_retry", "phase": phase,
+            "model": model, "message": str(error)[:200],
+            "delay_seconds": _TRANSIENT_RETRY_DELAY_SECONDS})
+    await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+    await _cancel_checkpoint(cancel_check)
+    return await gemini.generate_content_image(
+        model, prompt, images, image_size, aspect_ratio=aspect_ratio)
+
+
+# ── 유료 최선본 초안 보존·재사용 (2026-09-23) ──────────────────────────────────
+# 오너 원칙: "생성 비용을 최대한 아껴야 한다. 이미 만든 결과가 있으면 그대로 쓴다."
+# 품질 관문에서 잡이 실패하면 1차본·수정본(각 ~$0.1)과 QC 호출을 통째로 버렸다. 그중 최선 1장을
+# R2 초안으로 24시간 남기고, 같은 입력(프로젝트·상품 사진·매칭·핏 프로필·베이스·프롬프트 버전)의
+# 다음 잡은 새로 그리지 않고 그 초안을 기존 편집 경로(parent_cut_img)로 이어 쓴다.
+# 보수적으로: 지문이 하나라도 다르면, 조회·읽기·디코드가 하나라도 실패하면 지금처럼 새로 그린다.
+# 초안은 한 번만 이어 쓴다(편집 누적으로 옷이 흐트러지는 것을 막는다) — 이어 쓴 잡은 초안을
+# 소모 처리하고 자기 결과를 새 초안으로 남기지 않는다.
+_DRAFT_VERSION = "mannequin_draft_v1"
+_DRAFT_TTL_SECONDS = 24 * 3600
+#: 셧다운(SIGTERM) 중 초안 저장 상한. StopTimeout 안에서 끝나야 하므로 짧게 둔다.
+_SHUTDOWN_DRAFT_TIMEOUT_SECONDS = 5.0
+#: 초안을 이어 쓸 때의 고정 지시(셀러 텍스트 없음). 편집 프롬프트의 P0(원본 사진이 정체성
+#: 기준)과 같은 말이다. 선언 핏 축이 있으면 그 축 지시가 뒤에 붙는다.
+_DRAFT_REUSE_DIRECTIVE = (
+    "- MAIN PRODUCT — identity: keep every fit axis exactly as it appears in the current cut "
+    "unless a directive below names it; correct only clear, source-proven contradictions "
+    "against the PRODUCT PHOTOS (color, construction, seams, closures, trims, logos, prints) "
+    "and keep every already-correct area unchanged."
+)
+
+
+class _PaidDraftSink:
+    """이번 잡에서 값을 치른 이미지 중 최선 1장과 그 판정을 기억한다(메모리만, I/O 없음).
+
+    우열은 구제 후보 비교와 같은 `_is_better_candidate` 로 가린다 — 판정 규칙을 두 벌로 두지
+    않는다. 저장은 잡 종결 지점(run_mannequin_job)이 한다.
+    """
+
+    def __init__(self, settings):
+        self._s = settings
+        self.best = None  # (res, scores, stage)
+
+    def offer(self, res, scores, stage: str) -> None:
+        if res is None or not getattr(res, "image", None):
+            return
+        if self.best is None or _is_better_candidate(self._s, scores, self.best[1]):
+            self.best = (res, scores, stage)
+
+
+def mannequin_draft_fingerprint(
+    *, clothing_type, base_asset_id, product_assets, match_asset_id, match_item_id,
+    fit_profile, source_mirrored, prompt_version,
+) -> str:
+    """초안을 이어 써도 되는 '같은 입력'의 지문 (순수).
+
+    상품 사진(슬롯·에셋 id)·매칭·핏 프로필(canonical 해시)·베이스·프롬프트 버전 중 하나라도
+    바뀌면 지문이 달라져 초안을 찾지 못한다 → 새 생성. 셀러 텍스트는 들어가지 않는다.
+    """
+    payload = {
+        "v": _DRAFT_VERSION,
+        "clothingType": str(clothing_type or ""),
+        "baseAssetId": str(base_asset_id or ""),
+        "products": [[str(slot or ""), str(asset_id or "")] for slot, asset_id in product_assets],
+        "matchAssetId": str(match_asset_id or ""),
+        "matchItemId": str(match_item_id or ""),
+        "fitProfile": _canonical_profile_hash(fit_profile),
+        "sourceMirrored": source_mirrored is True,
+        "promptVersion": str(prompt_version or ""),
+    }
+    return hashlib.sha256(json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+
+
+def mannequin_draft_key(user_id, project_id, fingerprint: str) -> str:
+    """초안 R2 키. 지문으로 결정되므로 다음 잡이 정확 일치로 찾는다(목록 조회 없음)."""
+    return f"users/{user_id}/projects/{project_id}/ai/mannequin-drafts/{fingerprint}"
+
+
+def _draft_reuse_directives(fit_profile) -> str:
+    """초안 이어 쓰기용 편집 지시 — 고정 문구 + 선언된 핏 축 전부(카탈로그 문구만)."""
+    lines = [_DRAFT_REUSE_DIRECTIVE]
+    if isinstance(fit_profile, dict):
+        axes = fit_profile.get("axes") if isinstance(fit_profile.get("axes"), dict) else {}
+        declared = build_adjust_directives(fit_profile, tuple(axes))
+        if declared:
+            lines.append(declared)
+    return "\n".join(lines)
+
+
+_DRAFT_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+
+
+def _sniff_image_mime(data: bytes) -> str | None:
+    """초안 바이트가 실제로 디코드되는 이미지인지 확인하고 MIME 을 돌려준다."""
+    try:
+        with Image.open(BytesIO(data)) as im:
+            im.load()
+            return _DRAFT_MIME.get(im.format or "")
+    except Exception:
+        return None
+
+
+async def _load_mannequin_draft(app, key: str):
+    """살아 있는 초안을 읽는다. 어떤 실패도 None(= 새 생성) — 예외를 올리지 않는다."""
+    try:
+        async with app.state.pool.connection() as conn:
+            row = await repo.get_live_mannequin_draft_intent(conn, key)
+        if not row:
+            return None
+        data = await asyncio.to_thread(app.state.r2.get_bytes, key)
+        mime = _sniff_image_mime(data) if data else None
+        if mime is None:
+            return None
+        return InlineImage(mime, data)
+    except Exception as error:  # noqa: BLE001 - 초안은 보조 경로다
+        log.warning("mannequin draft load failed key=%s: %r", key, error)
+        return None
+
+
+async def _save_mannequin_draft(app, *, job_id, key, best, reason: str) -> bool:
+    """최선본을 초안으로 남긴다. 정리 소유권(TTL)을 먼저 기록하고 그다음 R2 에 쓴다.
+
+    소유권 기록이 안 되면 R2 에 쓰지 않는다 — 정리 원장에 없는 객체는 영구 고아가 된다.
+    """
+    res, scores, stage = best
+    async with app.state.pool.connection() as conn:
+        intent_id = await repo.save_mannequin_draft_intent(
+            conn, job_id=job_id, r2_key=key, retain_seconds=_DRAFT_TTL_SECONDS)
+        await conn.commit()
+    if not intent_id:
+        return False
+    await asyncio.to_thread(
+        app.state.r2.put_bytes, key, res.image, res.mime, cache=PRIVATE_NO_STORE)
+    s = app.state.settings
+    await _emit(app.state.pool, job_id, "step", {
+        "status": "draft_saved", "reason": reason, "stage": stage,
+        "image_hash": hashlib.sha256(res.image).hexdigest(),
+        "retain_hours": _DRAFT_TTL_SECONDS // 3600, "draft_version": _DRAFT_VERSION,
+        "outcome": score_outcome(s, scores) if isinstance(scores, dict) else None,
+        "qcScores": scores,
+    })
+    return True
+
+
+async def _expire_mannequin_draft(app, key: str) -> None:
+    try:
+        async with app.state.pool.connection() as conn:
+            await repo.expire_mannequin_draft_intent(conn, key)
+            await conn.commit()
+    except Exception as error:  # noqa: BLE001 - TTL 이 결국 지운다
+        log.warning("mannequin draft expire failed key=%s: %r", key, error)
+
+
+def _matching_warning_scores(scores, phase: str) -> dict:
+    """매칭(코디) 문제만 남은 컷을 막지 않고 검수 표시로 내보낸다(2026-09-23 오너 원칙).
+
+    `matching_review_only` 는 기존 키다 — score_outcome 이 needs_review 로 읽는다. 어느 관문에서
+    경고가 났는지만 덧붙인다. 상품 점수·치명 오류는 건드리지 않는다.
+    """
+    out = dict(scores or {})
+    out["matching_review_only"] = True
+    phases = list(out.get("matching_warning_phases") or [])
+    if phase not in phases:
+        phases.append(phase)
+    out["matching_warning_phases"] = phases
+    return out
+
+
 async def _source_backed_edit_request(
     res, product_refs, prod_imgs, match_img, fit_profile, edit_goal, *,
     source_mirrored=False, template_path=None, clothing_type=None,
@@ -1633,9 +1839,13 @@ async def _run_candidate(
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     cancel_check=None, canonical_refs=None, product_refs=None,
-    source_mirrored=False, match_is_custom=False,
+    source_mirrored=False, match_is_custom=False, draft_sink=None,
 ) -> dict | None:
-    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
+    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
+
+    draft_sink(선택): 값을 치른 이미지마다 판정과 함께 넘긴다. 잡이 실패하면 호출측이 그중
+    최선 1장을 초안으로 남긴다(2026-09-23). 여기서는 I/O 를 하지 않는다.
+    """
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
@@ -1732,9 +1942,25 @@ async def _run_candidate(
     canonical_refs = canonical_refs or {}
     sam_fallback_used = False
     profile_hash = _canonical_profile_hash(fit_profile)
+    # 셀러가 매칭 의류의 핏을 직접 고른 경우(matchingFit·matchCut)는 매칭도 셀러 요구사항이다.
+    # 그때만 매칭 하드 게이트가 기존처럼 재롤·최종 수정 1회를 부른다(첫 컷 자동 보존도 이
+    # 경우를 제외한다 — 아래 matching_review_only 조건과 같은 기준). 자동 코디(선언 없음)의
+    # 매칭 문제는 추가 유료 호출 없이 경고로 내보낸다(2026-09-23 오너 원칙). 어느 쪽이든
+    # 최종 관문은 매칭 문제만으로 잡을 실패시키지 않는다.
+    seller_declared_matching = isinstance(fit_profile, dict) and bool(
+        fit_profile.get("matchingFit") or fit_profile.get("matchCut"))
+
+    def matching_requires_repair(scores) -> bool:
+        return seller_declared_matching and pants_gate(s, scores)
+
     observed_scores = []
     confirmed_repair_reasons: list[str] = []
     bf_axes: list[str] = []
+
+    def offer_draft(res, scores, stage):
+        # 유료 이미지가 생길 때마다 최선본 후보로 기억만 한다(저장은 잡 종결 지점).
+        if draft_sink is not None:
+            draft_sink.offer(res, scores, stage)
 
     def bind_candidate(res, scores, series, p2, base_fidelity):
         return (res, scores, series, p2, base_fidelity,
@@ -1788,10 +2014,23 @@ async def _run_candidate(
                                                "mode": specialist_mode, "assessment": report})
             return report
 
+        # 2026-09-23 오너 원칙: 매칭(코디) 아이템 문제만으로는 유료 수정을 부르지 않는다.
+        # 운영에서 회색 니트(상품)는 이미지 QC 를 통과했는데 코디 카펜터 팬츠의 주머니 스티치
+        # 판정 때문에 수정 1장을 사고, 그 수정본도 매칭 판정으로 거절돼 잡 전체를 버렸다(5연속).
+        # 상품 쪽 수정 사유(구조 위험·확인 결함·전문 검수)는 지금처럼 엄격하다.
         needs_repair = (
             (s.image_qc == "enforce" and mannequin_quality.repairable_issues(scores))
-            or pants_gate(s, scores) or bool(confirmed_repair_reasons))
-        if untuck and not needs_repair:
+            or matching_requires_repair(scores) or bool(confirmed_repair_reasons))
+        matching_only = pants_gate(s, scores) and not needs_repair
+        if matching_only:
+            scores = _matching_warning_scores(scores, "final_gate")
+            await _emit(pool, job_id, "step", {
+                "status": "matching_warning", "candidate": candidate, "attempt": attempt,
+                "phase": "final_gate", "outcome": "proceeded_without_repair",
+                "matchingCriticalErrors": list((scores or {}).get("matching_critical_errors") or [])[:5]})
+        # 매칭 경고 컷은 untuck 도 건너뛴다 — untuck 사후 검수가 이미 있던 매칭 오류를
+        # "회귀"로 읽어 되돌리므로 호출만 버린다. 추가 유료 편집 없이 그대로 내보낸다.
+        if untuck and not needs_repair and not matching_only:
             res, scores = await _apply_checked_untuck_postpass(
                 app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
                 project_id=project_id, candidate=candidate, attempt=attempt,
@@ -1801,12 +2040,14 @@ async def _run_candidate(
                 clothing_type=clothing_type, image_size=image_size,
                 cancel_check=cancel_check, product_refs=product_refs,
                 source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+            offer_draft(res, scores, "untuck_checked")
         specialist = await inspect(res)
         specialist_failed = specialist_mode == "enforce" and bool(mannequin_specialist_qc.blocking_issues(specialist))
         if specialist_mode == "enforce" and not specialist_failed and not mannequin_specialist_qc.repair_accepted(specialist):
             raise MannequinQualityError("specialist_review_unavailable")
         important = s.image_qc == "enforce" and mannequin_quality.repairable_issues(scores)
-        if important or pants_gate(s, scores) or specialist_failed or confirmed_repair_reasons:
+        if (important or matching_requires_repair(scores) or specialist_failed
+                or confirmed_repair_reasons):
             # 최종 한 번은 랜덤 재생성이 아니라 현재 컷의 확인 결함만 고친다.
             # 원본 사진과 크롭은 정체성 근거이고 현재 컷이 포즈·프레임·비수정 영역의 기준이다.
             diagnostics = list(dict.fromkeys(
@@ -1834,9 +2075,14 @@ async def _run_candidate(
             })
             await _cancel_checkpoint(cancel_check)
             try:
-                repaired = await gemini.generate_content_image(
-                    repair_model, repair_prompt, repair_images, image_size,
-                    aspect_ratio=s.mannequin_aspect_ratio)
+                # 과금 없는 일시 장애(500·503·연결 실패)면 같은 수정 호출을 한 번 더 보낸다.
+                # 예전엔 500 한 번에 1차본과 QC 비용까지 통째로 버렸다(2026-09-23).
+                repaired = await _generate_with_transient_retry(
+                    gemini, repair_model, repair_prompt, repair_images, image_size,
+                    aspect_ratio=s.mannequin_aspect_ratio, pool=pool, job_id=job_id,
+                    candidate=candidate, phase="final_repair", cancel_check=cancel_check)
+            except _MannequinJobCancelled:
+                raise
             except Exception as error:
                 raise MannequinQualityError("final_generation_failed") from error
             await _cancel_checkpoint(cancel_check)
@@ -1854,17 +2100,22 @@ async def _run_candidate(
                 base_img=base_img, product=product, analysis=analysis,
                 before_image=InlineImage(res.mime, res.image), edit_goal=repair_goal,
                 source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+            offer_draft(repaired, merge_qc_scores(post_p2, None), "repaired")
             await _cancel_checkpoint(cancel_check)
-            if (not image_qc.edit_accepted(post_p2)
+            # 최종 관문의 매칭(코디) 판정은 경고로만 남긴다(2026-09-23). 상품 쪽 관문은 그대로다.
+            matching_warnings: list[str] = []
+            if (not image_qc.edit_accepted(post_p2, matching_blocks=False)
                     and not mannequin_quality.review_only_surface_edit_accepted(
-                        scores, post_p2)):
+                        scores, post_p2, matching_blocks=False)):
                 raise MannequinQualityError("final_edit_preservation_rejected")
             if s.image_qc == "enforce" and not mannequin_quality.review_complete(post_p2):
                 raise MannequinQualityError("final_review_unavailable")
             if _matching_review_unavailable(s, post_p2, match_img, clothing_type):
-                raise MannequinQualityError("final_matching_unavailable")
-            if (s.image_qc == "enforce" and mannequin_quality.repairable_issues(post_p2)) or pants_gate(s, post_p2):
+                matching_warnings.append("final_matching_unavailable")
+            if s.image_qc == "enforce" and mannequin_quality.repairable_issues(post_p2):
                 raise MannequinQualityError("final_product_rejected")
+            if pants_gate(s, post_p2):
+                matching_warnings.append("final_matching_rejected")
             if base_fidelity_retry_axes(s, base_fidelity):
                 raise MannequinQualityError("final_base_rejected")
             if (getattr(s, "mannequin_base_fidelity_qc", "off") == "enforce"
@@ -1873,12 +2124,17 @@ async def _run_candidate(
             axis_spec = mannequin_fit_qc.declared_axis_spec(fit_profile)
             if _effective_axis_qc_mode(s) == "enforce" and axis_spec:
                 try:
+                    # 매칭 참조는 하의 매칭·바지 QC 켜짐일 때만(_pants_qc_ref), 판정은 분리.
                     fit = await mannequin_fit_qc.verdict(
-                        s, prod_imgs, InlineImage(repaired.mime, repaired.image), fit_profile, match_img)
+                        s, prod_imgs, InlineImage(repaired.mime, repaired.image), fit_profile,
+                        _pants_qc_ref(s, match_img, clothing_type))
                 except Exception as error:
                     raise MannequinQualityError("final_fit_unavailable") from error
+                # identityPass 는 이제 주상품만 본다. 매칭 정체성은 경고로만 남긴다.
                 if not fit["identityPass"] or mannequin_fit_qc.failed_axis_specs(axis_spec, fit):
                     raise MannequinQualityError("final_fit_rejected")
+                if fit.get("matchingIdentityPass") is False:
+                    matching_warnings.append("final_fit_matching_identity")
             post_series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=attempt + 1, res=repaired,
@@ -1890,6 +2146,13 @@ async def _run_candidate(
             scores = dict(scores or {})
             scores["quality_repair_used"] = True
             scores["quality_repair_kind"] = "targeted_edit"
+            for phase in matching_warnings:
+                scores = _matching_warning_scores(scores, phase)
+            if matching_warnings:
+                await _emit(pool, job_id, "step", {
+                    "status": "matching_warning", "candidate": candidate, "attempt": attempt + 1,
+                    "phase": "final_repair", "outcome": "proceeded", "warnings": matching_warnings,
+                    "matchingCriticalErrors": list((post_p2 or {}).get("matching_critical_errors") or [])[:5]})
             specialist = post_specialist
             await _emit(pool, job_id, "step", {
                 "status": "quality_repair", "candidate": candidate, "outcome": "accepted",
@@ -1926,9 +2189,12 @@ async def _run_candidate(
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         generation_calls += 1
         try:
-            res = await gemini.generate_content_image(
-                model, prompt, images, image_size,
-                aspect_ratio=s.mannequin_aspect_ratio)
+            # 과금 없는 일시 장애(500·503·연결 실패)만 같은 호출을 1회 더 보낸다(2026-09-23).
+            # 두 번째 호출은 첫 호출이 그림 없이 거절된 자리라 예산을 새로 쓰지 않는다.
+            res = await _generate_with_transient_retry(
+                gemini, model, prompt, images, image_size,
+                aspect_ratio=s.mannequin_aspect_ratio, pool=pool, job_id=job_id,
+                candidate=candidate, phase="generation", cancel_check=cancel_check)
         except GeminiError as e:
             await _cancel_checkpoint(cancel_check)
             await _emit(pool, job_id, "step", {
@@ -1983,6 +2249,7 @@ async def _run_candidate(
             before_image=parent_cut_img if generation_path == "edit" else None,
             edit_goal=adjustment_goal, source_mirrored=source_mirrored,
             match_is_custom=match_is_custom)
+        offer_draft(res, merge_qc_scores(p2, None), "generated")
         if eff_image_qc == "enforce" and image_qc.role_policy_conflict(p2, clothing_type, fit_profile):
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "attempt": attempt, "status": "qc_role_conflict",
@@ -1994,7 +2261,9 @@ async def _run_candidate(
         confirmed_repair_reasons.extend(
             f"Base fidelity axis {axis} is confirmed unresolved."
             for axis in bf_axes)
-        if generation_path == "edit" and not image_qc.edit_accepted(p2):
+        # 편집 경로(조정·초안 이어 쓰기) 결과가 매칭 하드 게이트에만 걸리면 잡을 실패시키지
+        # 않는다(2026-09-23) — 아래 최종 관문이 경고로 남긴다. 보존·목표·상품 판정은 그대로다.
+        if generation_path == "edit" and not image_qc.edit_accepted(p2, matching_blocks=False):
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "attempt": attempt,
                 "status": "adjustment_postcheck", "outcome": "rejected"})
@@ -2124,13 +2393,14 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            offer_draft(res, qc_scores, "edited")
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
             # 베이스 충실도는 **재시도 사유를 하나 더 대는 것**이지 별도 루프가 아니다.
             # 기존 판정과 OR 로 합류하고, 예산·구제·SAM 폴백은 아래 분기가 그대로 소유한다.
-            # 매칭 하의 하드 게이트도 재롤 사유에 OR 합류 — 단 **기존 예산 안에서만**
-            # (budget_left 그대로). 바지만으로 전신 재생성 슬롯을 새로 만들지 않는다(요구 6).
-            needs_retry = (final_decision(s, qc_scores) == "retry" or bool(bf_axes)
-                           or pants_gate(s, p2))
+            # 매칭 하의 하드 게이트는 2026-09-23 부터 재롤 사유가 **아니다**(오너 원칙: 매칭
+            # 아이템이 상품 출고를 막지 않는다). 매칭만 틀린 컷은 finish 가 경고로 내보낸다.
+            product_retry = final_decision(s, qc_scores) == "retry" or bool(bf_axes)
+            needs_retry = product_retry or matching_requires_repair(p2)
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if needs_retry and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
@@ -2158,11 +2428,11 @@ async def _run_candidate(
                     images, base_prompt = augmented
                     sam_fallback_used = True
                 continue
-            # 매칭 하의 최종 방어(enforce): 출고 직전 res 에 바지 하드 게이트가 남아 있으면 이
-            # 컷은 못 나간다. **salvaged 여부와 무관하게** 본다 — 구제본을 재편집(_apply_edits)하면
-            # 재판정에서 바지-critical 이 새로 생길 수 있고, 그때도 출고돼선 안 된다(리뷰 HIGH).
-            # 깨끗한 final_reject(바지-critical 이미 제외)로 구제하고, 없으면 드롭한다(요구 6).
-            if pants_gate(s, p2):
+            # 매칭 하의 + 상품 문제가 **함께** 남은 경우만 기존 구제·최종 수정 경로를 탄다.
+            # 상품이 통과한 매칭 단독 문제는 여기서 막지 않고 finish 가 경고로 내보낸다
+            # (2026-09-23 오너 원칙). 상품 문제가 있으면 깨끗한 final_reject 로 구제하거나
+            # 원본 기반 최종 수정 1회로 넘긴다(기존 동작).
+            if pants_gate(s, p2) and (product_retry or seller_declared_matching):
                 if final_reject:
                     res, qc_scores, series, p2, base_fidelity = restore_candidate(final_reject)
                     qc_scores = {**(qc_scores or {}), "salvaged": True}
@@ -2239,8 +2509,10 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
         # 매칭 하의 최종 방어(loop-exhaust, enforce): pre_reject 재편집이 바지-critical 을
-        # 되살렸으면 출고 불가 → 드롭(요구 6). final_reject 는 admission 에서 제외돼 깨끗하다(무해).
-        if pants_gate(s, p2):
+        # 되살렸고 **상품 쪽도 재시도 판정**이면 최종 수정 1회로 넘긴다. 매칭 단독이면
+        # 막지 않고 아래 구제 경로(finish 가 경고 기록)로 간다(2026-09-23 오너 원칙).
+        if pants_gate(s, p2) and (final_decision(s, qc_scores) == "retry" or bool(bf_axes)
+                                  or seller_declared_matching):
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "status": "candidate_dropped",
                 "reason": "matching_identity",
@@ -2313,6 +2585,51 @@ async def run_mannequin_job(app, job: dict) -> None:
                 message=message, metadata=meta,
                 **({"code": code} if code != "generation_failed" else {}))
             await conn.commit()
+
+    # 값을 치른 이미지 중 최선 1장(메모리). 실패 종결 때 초안으로 남긴다(2026-09-23).
+    draft_sink = _PaidDraftSink(s)
+    draft_state = {"key": None, "reused": False}
+
+    async def _preserve_draft(reason: str) -> None:
+        """실패 종결 직전 — 최선본을 24시간 초안으로 남긴다. 절대 예외를 올리지 않는다.
+
+        초안을 이어 쓴 잡은 새 초안을 만들지 않고 쓴 초안을 소모 처리만 한다(한 번만 이어 쓴다).
+        """
+        key = draft_state["key"]
+        if key is None or draft_sink.best is None:
+            return
+        if draft_state["reused"]:
+            await _expire_mannequin_draft(app, key)
+            return
+        if getattr(s, "mannequin_draft_reuse", "off") != "on":
+            return
+        try:
+            await _save_mannequin_draft(
+                app, job_id=job_id, key=key, best=draft_sink.best, reason=reason)
+        except Exception as error:  # noqa: BLE001 - 초안 저장 실패가 실패 종결을 막지 않는다
+            log.warning("mannequin draft save failed for job %s: %r", job_id, error)
+
+    async def _finalize_worker_shutdown() -> None:
+        """배포·스케일인으로 드레인 시간이 지나 취소됐을 때의 종결(detail_page 와 같은 규칙).
+
+        예전엔 CancelledError 를 잡지 않아 잡이 running 으로 남았고, 900초 뒤 lease 복구가
+        pending 으로 되돌려 **처음부터 다시 그리고 다시 과금**했다(2026-09-23 감사 5번).
+        여기서 error(worker_shutdown)로 닫고 예약 크레딧을 풀어 준다. 이미 산 이미지는 초안으로
+        남겨(짧은 상한) 셀러의 재시도가 그걸 이어 쓰게 한다.
+        """
+        try:
+            await _fail(
+                "작업 서버가 종료되어 생성이 중단됐어요. 다시 시도해 주세요.",
+                {"error": "worker_shutdown"}, code="worker_shutdown")
+        except _MannequinJobCancelled:
+            return
+        except Exception as error:  # noqa: BLE001 - 종료 중에는 로그만 남긴다
+            log.warning("mannequin worker_shutdown finalize failed for job %s: %r", job_id, error)
+        try:
+            await asyncio.wait_for(
+                _preserve_draft("worker_shutdown"), timeout=_SHUTDOWN_DRAFT_TIMEOUT_SECONDS)
+        except Exception as error:  # noqa: BLE001
+            log.warning("mannequin shutdown draft save skipped for job %s: %r", job_id, error)
 
     try:
         # 1) 입력 로드
@@ -2451,6 +2768,30 @@ async def run_mannequin_job(app, job: dict) -> None:
                         generation_path = "edit"
                         parent_cut_id = parent["id"]
 
+        # 유료 초안 이어 쓰기(2026-09-23 오너 원칙: 이미 만든 결과가 있으면 그대로 쓴다).
+        # 셀러가 명시한 조정 편집(위)이 우선이고, 그게 아니면 같은 입력 지문의 초안을 찾는다.
+        # 찾으면 새로 그리지 않고 그 초안을 기존 편집 경로(parent_cut_img)로 이어 쓴다.
+        # 지문이 다르거나 조회·읽기·디코드가 하나라도 실패하면 지금처럼 새로 그린다.
+        draft_state["key"] = mannequin_draft_key(user_id, project_id, mannequin_draft_fingerprint(
+            clothing_type=clothing_type, base_asset_id=base_asset_id,
+            product_assets=[(a.get("slot"), a.get("id")) for a in prod_assets],
+            match_asset_id=(match_asset or {}).get("id") if match_img is not None else None,
+            match_item_id=resolved_match_id, fit_profile=fit_profile,
+            source_mirrored=source_mirrored, prompt_version=s.mannequin_prompt_version))
+        if generation_path == "fresh" and getattr(s, "mannequin_draft_reuse", "off") == "on":
+            draft_img = await _load_mannequin_draft(app, draft_state["key"])
+            if draft_img is not None:
+                generation_path = "edit"
+                parent_cut_img = draft_img
+                parent_cut_id = None
+                parent_edit_depth = 0
+                adjust_directives = _draft_reuse_directives(fit_profile)
+                draft_state["reused"] = True
+                await _emit(pool, job_id, "step", {
+                    "status": "draft_reused", "draft_version": _DRAFT_VERSION,
+                    "image_hash": hashlib.sha256(draft_img.data).hexdigest(),
+                    "generation_path": "edit"})
+
         # Fresh 생성에만 유사 성공 컷을 STYLE REFERENCE 로 첨부한다. Edit 입력은 v2 계약의
         # [parent, products..., match?] 정확한 순서를 유지해야 하므로 검색 자체를 건너뛴다.
         ref_imgs, ref_ids = [], []
@@ -2513,7 +2854,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
                     adjust_directives=adjust_directives, cancel_check=_cancel_check,
                     canonical_refs=canonical_refs, product_refs=product_refs,
-                    source_mirrored=source_mirrored, match_is_custom=match_is_custom)
+                    source_mirrored=source_mirrored, match_is_custom=match_is_custom,
+                    draft_sink=draft_sink)
             except _MannequinJobCancelled:
                 raise
             except MannequinQualityError:
@@ -2539,6 +2881,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         passed = [r for r in results if isinstance(r, dict)]
 
         if not passed:
+            await _preserve_draft("all_candidates_failed")
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
             return
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
@@ -2559,6 +2902,9 @@ async def run_mannequin_job(app, job: dict) -> None:
             "promptVersion": (ADJUST_PROMPT_VERSION if generation_path == "edit"
                               else s.mannequin_prompt_version),
         }
+        if draft_state["reused"] and generation_path == "edit":
+            # 부모가 컷이 아니라 실패 잡의 초안이다(parentCutId 없음). 계보 추적용 표시만 남긴다.
+            cut_generation_metadata["draftReused"] = True
         for candidate_result in passed:
             candidate_result["generation_metadata"] = {
                 **(candidate_result.get("generation_metadata") or {}),
@@ -2596,6 +2942,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                     except Exception:
                         log.warning("orphan R2 cleanup failed: %s", key)
         else:
+            # 새 컷이 확정됐으니 같은 입력의 초안은 더 쓰지 않는다 — 다음 재생성이 옛 실패본을
+            # 이어 쓰지 않게 곧바로 정리 대상으로 돌린다(2026-09-23).
+            if draft_state["key"]:
+                await _expire_mannequin_draft(app, draft_state["key"])
             # 톤 에디터 마스크는 **커밋 뒤에** 별도 트랜잭션으로 건다. 컷은 이미 확정됐고
             # 셀러 화면에도 떴다 — 전처리 큐잉이 실패해도 생성 결과는 그대로 성공이다.
             await _enqueue_editor_garment_mask(
@@ -2604,7 +2954,13 @@ async def run_mannequin_job(app, job: dict) -> None:
     except _MannequinJobCancelled:
         # 취소 라우트가 status/event/차감까지 종결한다. 워커는 error/done을 추가하지 않는다.
         return
+    except asyncio.CancelledError:
+        # 배포 드레인 시간 초과 → error(worker_shutdown) + 예약 해제. shield 로 종결 쓰기가
+        # 두 번째 취소에 끊기지 않게 하고, 취소 자체는 다시 올려 태스크가 취소로 끝나게 한다.
+        await asyncio.shield(_finalize_worker_shutdown())
+        raise
     except MannequinQualityError as error:
+        await _preserve_draft(f"quality:{error}")
         try:
             await _fail(
                 "상품이 제대로 재현된 결과를 확인하지 못했어요. 크레딧은 차감하지 않았어요. 다시 시도해 주세요.",
@@ -2613,6 +2969,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         except _MannequinJobCancelled:
             return
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
+        await _preserve_draft("unexpected_error")
         try:
             await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
         except _MannequinJobCancelled:
