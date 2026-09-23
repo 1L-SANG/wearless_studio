@@ -133,6 +133,10 @@ class Settings:
     # 컷 제출 간격(ms) — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다.
     # 13컷 × 3000ms = 마지막 컷이 36초 뒤 시작(제출 속도 20건/분). 0 = 간격 없음.
     detail_cut_stagger_ms: int = 3000
+    # 상세 컷 체크포인트(2026-09-23, workers/cut_checkpoints) — 실패·중단된 잡이 이미 값을 치른
+    # 베이스컷·완성 컷을 24시간 남기고, 다음 시도가 그걸 이어 쓴다. 문제 시 env 로 끈다
+    # (DETAIL_CUT_CHECKPOINT=off → 오늘까지와 같이 매번 처음부터 생성).
+    detail_cut_checkpoint_enabled: bool = True
     # bg 편집 컷의 장소일치 QC 재시도 총 시도 상한 — 생성은 샘플링이라 프롬프트만으로는
     # 결정적이지 않다(2026-07-20 실측). 시도당 생성 1회 + 판정 1회.
     bg_scene_qc_attempts: int = 3
@@ -784,6 +788,7 @@ def load_settings() -> Settings:
         detail_cut_retry_delay_seconds=float(os.getenv("DETAIL_CUT_RETRY_DELAY_SECONDS", "2")),
         detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
         detail_cut_stagger_ms=int(os.getenv("DETAIL_CUT_STAGGER_MS", "3000")),
+        detail_cut_checkpoint_enabled=(os.getenv("DETAIL_CUT_CHECKPOINT", "on").lower() != "off"),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),

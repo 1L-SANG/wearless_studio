@@ -10,10 +10,12 @@ server/prompts/cut_generate_v1.txt 의 [[섹션]]에 있다 — 코드에 규칙
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -1416,12 +1418,48 @@ def _detail_image_size(settings: Settings) -> str:
     return getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size
 
 
-async def generate(
+class BaseCheckpoint:
+    """베이스컷 체크포인트 자리 — 워커가 만들어 generate(base_checkpoint=...) 로 넘긴다(2026-09-23).
+
+    베이스컷 = provider(gpt-image/Gemini)가 그린 원본. 값은 여기서 나간다. 그 뒤의 얼굴 패스·
+    각도 교체는 실패하거나 잡이 죽을 수 있는데, 예전에는 그때 베이스가 어디에도 남지 않아
+    "다시 시도"가 베이스 값부터 또 냈다(감사 1·2번). 오너 원칙: "이미 만든 베이스컷이 있으면
+    그대로 쓴다."
+
+      · image 가 있으면 generate() 는 provider 를 **부르지 않고** 그 바이트로 후처리만 한다.
+      · 없으면 provider 를 부르고, 받은 베이스를 후처리 **전에** keep() 으로 넘긴다 — 워커가
+        저장을 끝낸 뒤에야 얼굴 패스가 시작된다.
+
+    이 기본 클래스는 메모리에만 둔다. R2 저장은 워커 쪽(workers/cut_checkpoints)이 keep 을
+    덮어써서 한다. 반환값을 늘리지 않고 인자를 하나 더 받는 이유는 face_pass_outcome 과 같다 —
+    generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다. 워커는 체크포인트를 쓸 때만 이 키를 넘긴다.
+    """
+
+    def __init__(self, image: tuple[bytes, str] | None = None):
+        self.image = image
+
+    async def keep(self, image: bytes, mime: str) -> None:
+        """새로 그린 베이스를 후처리 전에 받는다. 예외를 올리지 않는다(저장 실패가 컷을 막지 않는다)."""
+        self.image = (image, mime)
+
+
+@dataclass(frozen=True)
+class _BaseRequest:
+    """provider 호출 1회를 정하는 값 전부 — generate() 와 base_fingerprint() 가 같이 쓴다."""
+
+    spec: dict
+    clothing_type: str
+    model: str
+    prompt: str
+    image_size: str
+    provider_kwargs: dict
+    crop_pose_medium: bool
+
+
+def _base_request(
     settings: Settings,
-    gemini: GeminiImageClient,
     cut_spec: dict,
     product: dict,
-    images: list[InlineImage],
     *,
     analysis: dict | None = None,
     manifest: str | None = None,
@@ -1433,22 +1471,12 @@ async def generate(
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
-    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "skipped:<reason>" | "fallback:<reason>".
-    # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
-    face_pass_outcome: dict | None = None,
-    # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.
-    face_pass_url_provider=None,
-    # 옆·뒷모습 컷 전용 — 등록자 각도 사진 + ComfyUI 백엔드(face_angle_swap.spec_from). 없으면 기존 동작.
     angle_swap: face_angle_swap.AngleSwapSpec | None = None,
-) -> tuple[bytes, str]:
-    """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
-    스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
-    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
+) -> _BaseRequest:
+    """generate() 의 provider 호출 앞부분(스펙 정규화 · 모델 선택 · 프롬프트 조립).
 
-    has_face=True 는 '호출자가 images 에 FaceMarket 라이선스 MODEL FACE를
-    매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET
-    identity pair는 has_face와 독립적으로 매니페스트에서 판정한다 — 첨부와
-    매니페스트가 어긋나면 라벨이 밀린다."""
+    체크포인트 키(base_fingerprint)가 **실제로 보낼 요청**과 어긋나지 않게 두 곳이 이 함수 하나를
+    쓴다(2026-09-23 분리 — 내용은 예전 generate() 앞부분 그대로)."""
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
@@ -1492,14 +1520,110 @@ async def generate(
         # 과거 확정 실험은 역할·순서뿐 아니라 provider가 받은 참조 바이트/MIME도
         # 봉인했다. 일반 OpenAI 호환용 PNG 정규화를 이 exact 경로에 적용하지 않는다.
         provider_kwargs["openai_preserve_input_bytes"] = True
-    res = await gemini.generate_content_image(
-        model,
-        prompt,
-        images,
-        _detail_image_size(settings),
-        **provider_kwargs,
+    return _BaseRequest(spec, clothing_type, model, prompt, _detail_image_size(settings),
+                        provider_kwargs, crop_pose_medium)
+
+
+#: 체크포인트 지문 규칙의 버전. 지문에 넣는 값이나 베이스의 뜻(후처리 앞 원본)이 바뀌면 올린다 —
+#: 옛 규칙으로 저장한 베이스가 새 코드에서 다른 뜻으로 읽히지 않게.
+BASE_FINGERPRINT_VERSION = "cut-base-v1"
+#: generate() 인자 중 provider 요청을 바꾸는 것만 — 나머지(결과 기록 dict·파드 주소 공급자)는 뺀다.
+_REQUEST_KWARGS = frozenset({
+    "analysis", "manifest", "has_face", "directing_profile", "body_profile", "hair_profile",
+    "face_shape_profile", "face_identity_spec", "qc_corrections", "confirmed_prompt_input",
+    "angle_swap",
+})
+
+
+def base_fingerprint(settings: Settings, cut_spec: dict, product: dict,
+                     images: list[InlineImage], **generate_kwargs) -> str:
+    """이 generate() 호출이 provider 에 보낼 요청의 지문(sha256 hex) — 베이스 체크포인트 키의 근거.
+
+    넣는 것: 정규화된 컷 스펙(블록 id 제외) · 모델 · 해상도 · provider 옵션 · 프롬프트 전문의
+    해시 · 참고 이미지 바이트 해시(순서 포함). 하나라도 다르면 다른 베이스다 — 셀러가 상품
+    사진을 바꿨거나 프롬프트 템플릿이 배포로 바뀌었으면 옛 베이스를 쓰지 않는다.
+    images 는 워커가 정규화 **전** 원본을 준다(PNG 변환은 같은 원본의 결정적 함수라 원본이 더
+    안정적이다). 계약 위반은 generate() 와 같은 ValueError 다.
+    """
+    request = _base_request(settings, cut_spec, product, **{
+        key: value for key, value in generate_kwargs.items() if key in _REQUEST_KWARGS})
+    spec = {key: value for key, value in request.spec.items() if key not in {"id", "blockId"}}
+    material = {
+        "v": BASE_FINGERPRINT_VERSION,
+        "spec": spec,
+        "model": request.model,
+        "imageSize": request.image_size,
+        "provider": request.provider_kwargs,
+        "prompt": hashlib.sha256(request.prompt.encode("utf-8")).hexdigest(),
+        "images": [[image.mime, hashlib.sha256(image.data).hexdigest()] for image in images],
+    }
+    raw = json.dumps(material, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def generate(
+    settings: Settings,
+    gemini: GeminiImageClient,
+    cut_spec: dict,
+    product: dict,
+    images: list[InlineImage],
+    *,
+    analysis: dict | None = None,
+    manifest: str | None = None,
+    has_face: bool = False,
+    directing_profile: dict | None = None,
+    body_profile: dict | None = None,
+    hair_profile: dict | None = None,
+    face_shape_profile: dict | None = None,
+    face_identity_spec: face_identity.FaceIdentitySpec | None = None,
+    qc_corrections: tuple[str, ...] = (),
+    confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "skipped:<reason>" | "fallback:<reason>".
+    # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
+    face_pass_outcome: dict | None = None,
+    # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.
+    face_pass_url_provider=None,
+    # 옆·뒷모습 컷 전용 — 등록자 각도 사진 + ComfyUI 백엔드(face_angle_swap.spec_from). 없으면 기존 동작.
+    angle_swap: face_angle_swap.AngleSwapSpec | None = None,
+    # 베이스컷 체크포인트(BaseCheckpoint). 없으면 기존 동작 그대로 — provider 1콜 + 후처리.
+    base_checkpoint: BaseCheckpoint | None = None,
+) -> tuple[bytes, str]:
+    """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
+    스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
+    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
+
+    has_face=True 는 '호출자가 images 에 FaceMarket 라이선스 MODEL FACE를
+    매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET
+    identity pair는 has_face와 독립적으로 매니페스트에서 판정한다 — 첨부와
+    매니페스트가 어긋나면 라벨이 밀린다.
+
+    두 단계다: ① provider 가 베이스를 그린다(값이 나가는 곳) ② 얼굴 패스·각도 교체·포즈 크롭.
+    base_checkpoint 가 오면 ①을 건너뛰거나(이미 낸 베이스), ①의 결과를 ② 전에 넘긴다."""
+    request = _base_request(
+        settings, cut_spec, product,
+        analysis=analysis, manifest=manifest, has_face=has_face,
+        directing_profile=directing_profile, body_profile=body_profile,
+        hair_profile=hair_profile, face_shape_profile=face_shape_profile,
+        face_identity_spec=face_identity_spec, qc_corrections=qc_corrections,
+        confirmed_prompt_input=confirmed_prompt_input, angle_swap=angle_swap,
     )
-    image, mime = res.image, res.mime
+    spec, clothing_type = request.spec, request.clothing_type
+    if base_checkpoint is not None and base_checkpoint.image is not None:
+        # 이미 값을 치른 베이스 — provider 를 부르지 않고 후처리만 다시 한다.
+        image, mime = base_checkpoint.image
+    else:
+        res = await gemini.generate_content_image(
+            request.model,
+            request.prompt,
+            images,
+            request.image_size,
+            **request.provider_kwargs,
+        )
+        image, mime = res.image, res.mime
+        if base_checkpoint is not None:
+            # 후처리(얼굴 패스·각도 교체)는 수십 초~수 분이고 실패하거나 잡이 죽을 수 있다.
+            # 그 전에 베이스를 남겨야 다음 시도가 베이스 값을 다시 내지 않는다.
+            await base_checkpoint.keep(image, mime)
     # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
     # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
     angle_direction = _angle_swap_direction(spec, clothing_type, angle_swap)
@@ -1515,7 +1639,7 @@ async def generate(
             image, mime = await face_identity.apply_face_pass(
                 settings, image, mime, identity, outcome=face_pass_outcome,
                 url_provider=face_pass_url_provider)
-    if crop_pose_medium:
+    if request.crop_pose_medium:
         return await pose_crop.crop_pose_medium(
             settings, image, mime, clothing_type
         )
@@ -1541,6 +1665,38 @@ def _angle_swap_direction(spec: dict, clothing_type, angle_swap) -> str | None:
     if spec.get("shot") == "medium" and _is_bottom(clothing_type) or spec.get("faceExposure") is None:
         return None
     return direction
+
+
+def angle_swap_missing_photo(cut_spec: dict, product: dict, angle_swap) -> str | None:
+    """generate() 가 이 컷을 각도 교체로 보낼 텐데 쓸 등록 사진이 **확실히** 없으면
+    face_angle_swap.swap 이 낼 그 사유("no_angle_photo")를, 아니면 None.
+
+    왜 미리 보나(2026-09-23): swap 은 베이스컷을 다 그린 **뒤에야** 사진이 없다는 걸 알아챈다
+    (face_angle_swap.swap → AnglePhotos.for_direction). 뒷모습 사진이 없는 모델이면 결과가 이미
+    정해져 있는데도 gpt-image 베이스 값을 먼저 냈다.
+
+    판정은 generate() 와 똑같이 한다 — 같은 정규화(normalize_spec)와 같은 경로 판정
+    (_angle_swap_direction), 같은 사진 고르기(for_direction). 옆모습은 코가 어느 쪽을 보는지가
+    그림을 봐야 정해지므로(plan → nose_right) 두 장이 **모두** 없을 때만 미리 안다. 한 장만
+    있으면 그림에 따라 갈리므로 기존대로 생성한다.
+    """
+    if angle_swap is None:
+        return None
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    try:
+        spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    except ValueError:
+        return None          # 계약 위반은 generate() 가 기존대로 ValueError 로 처리한다
+    direction = _angle_swap_direction(spec, clothing_type, angle_swap)
+    if direction is None:
+        return None
+    photos = angle_swap.photos
+    if direction == "back":
+        reference, _slot = photos.for_direction("back", None)
+        return None if reference else "no_angle_photo"
+    left, _slot = photos.for_direction(direction, False)
+    right, _slot = photos.for_direction(direction, True)
+    return None if (left or right) else "no_angle_photo"
 
 
 def _face_identity_spec(settings, spec: dict, clothing_type,

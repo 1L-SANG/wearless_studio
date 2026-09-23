@@ -41,6 +41,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from . import runpod_jobs
 from .face_identity_qwen import RENDER_GUIDANCE, RENDER_NEGATIVE, RENDER_STEPS, QwenLocalBackend
 
 log = logging.getLogger("wearless.face_identity")
@@ -1548,6 +1549,9 @@ class ServerlessFaceBackend:
 
     def _job(self, payload: dict, *, what: str) -> dict:
         """잡 하나를 넣고 결과 output 을 돌려준다. 실패는 RuntimeError."""
+        if runpod_jobs.abandoned():
+            # 호출자가 이미 손을 뗐다(잡 취소·워커 종료) — 다음 시드를 새로 넣지 않는다(2026-09-23).
+            raise RuntimeError("serverless_abandoned")
         res = self._client.post("/run", json={"input": payload})
         if res.status_code != 200:
             log.warning("face_identity: serverless %s submit http %s", what, res.status_code)
@@ -1573,25 +1577,33 @@ class ServerlessFaceBackend:
 
     def _await(self, job_id: str, *, what: str) -> dict:
         """끝날 때까지 상태를 묻는다. 시간을 넘기면 마지막 상태를 그대로 돌려준다 —
-        호출자가 COMPLETED 아님으로 보고 폴백한다(남의 얼굴을 내보내지 않는다)."""
+        호출자가 COMPLETED 아님으로 보고 폴백한다(남의 얼굴을 내보내지 않는다).
+
+        손을 떼는 세 자리(제한 시간 초과 · 상태 조회 연속 실패 · 호출자 포기)에서는 RunPod 잡도
+        끈다(2026-09-23). 안 끄면 우리가 버린 결과를 만드느라 GPU 요금이 끝까지 나간다."""
         deadline = time.monotonic() + self._timeout
         body: dict = {}
         misses = 0
         while time.monotonic() < deadline:
+            if runpod_jobs.abandoned():
+                runpod_jobs.cancel(self._client, job_id, what=f"face {what}")
+                return {"status": "ABANDONED"}
             res = self._client.get(f"/status/{job_id}")
             if res.status_code != 200:
                 misses += 1
                 log.warning("face_identity: serverless %s status http %s (%s/%s)",
                             what, res.status_code, misses, SERVERLESS_STATUS_RETRIES)
                 if misses >= SERVERLESS_STATUS_RETRIES:
+                    runpod_jobs.cancel(self._client, job_id, what=f"face {what}")
                     return {"status": "STATUS_HTTP_ERROR"}
-                time.sleep(self._poll)
+                runpod_jobs.wait(self._poll)
                 continue
             misses = 0
             body = res.json() or {}
             if str(body.get("status") or "") not in ("IN_QUEUE", "IN_PROGRESS"):
                 return body
-            time.sleep(self._poll)
+            runpod_jobs.wait(self._poll)
+        runpod_jobs.cancel(self._client, job_id, what=f"face {what}")
         return body or {"status": "TIMED_OUT"}
 
     def _lora_fields(self) -> dict:
@@ -2214,7 +2226,9 @@ async def apply_face_pass(
         backend = resolve_backend(settings, live_spec)
         if backend is None:
             return None
-        return asyncio.to_thread(
+        # runpod_jobs.to_thread — 이 컷이 취소되면(워커 종료 등) 폴링 스레드가 RunPod 잡을 끄고
+        # 빠져나온다. asyncio.to_thread 였을 때는 스레드가 900초 동안 혼자 폴링했다(2026-09-23).
+        return runpod_jobs.to_thread(
             run_face_pass, image, backend, expression,
             token=live_spec.token,
             model_dir=getattr(settings, "fm_face_qc_dir", None),

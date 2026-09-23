@@ -27,8 +27,11 @@ cp "$HERE/face_render_service.py" "$HERE/face_esrgan.py" "$STAGE/code/"
 #   이게 빠지면 파드가 face_recipe 를 import 하는 순간 ModuleNotFoundError 로 죽는다 —
 #   /healthz 가 아예 안 뜨니 "파드가 600초 안에 안 떴다"로만 보인다. 이 파일도 cv2·numpy·PIL
 #   + face_identity 만 쓴다.
+# runpod_jobs: face_identity 가 모듈 최상단에서 import 한다(서버리스 잡 취소·폴링 중단, 2026-09-23).
+#   표준 라이브러리만 쓴다. 빠지면 face_mask_lock 과 같은 이유로 파드가 부팅에서 죽는다.
 cp "$HERE/app/agents/face_identity_qwen.py" "$HERE/app/agents/face_identity.py" \
    "$HERE/app/agents/face_recipe.py" "$HERE/app/agents/face_mask_lock.py" \
+   "$HERE/app/agents/runpod_jobs.py" \
    "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/__init__.py"
 : > "$STAGE/code/app/agents/__init__.py"

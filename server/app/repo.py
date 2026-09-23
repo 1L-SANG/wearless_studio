@@ -413,6 +413,99 @@ async def clear_ai_output_cleanup_intent(conn: AsyncConnection, intent_id: str) 
         )
 
 
+# ---- 상세 컷 체크포인트(2026-09-23) ------------------------------------------------------
+# 이미 값을 치른 베이스컷·완성 컷을 다음 시도가 이어 쓰게 남겨 둔다(workers/cut_checkpoints).
+# 새 테이블을 만들지 않는다 — 정리 표식(ai_output_cleanup_intents)의 not_before 가 곧 TTL 이다:
+# 리클레이머(DraftAssetReclaimer)는 not_before 가 지나고 원 잡이 끝난 표식만 지운다. 그래서
+# 체크포인트는 "바로 지우지 않고 24시간 뒤에 지운다"가 기존 경로 그대로 된다.
+
+
+async def create_ai_checkpoint_intent(
+    conn: AsyncConnection, *, job_id: str, r2_key: str, ttl_seconds: int
+) -> str | None:
+    """체크포인트 객체의 정리 표식 — 올리기 **전에** 만든다(create_ai_output_cleanup_intent 와
+    같은 순서). not_before = 지금 + TTL. 표식을 못 만들면 None — 호출자는 객체를 올리지 않는다
+    (표식 없는 객체는 아무도 지우지 않는다)."""
+    if not hasattr(conn, "cursor"):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into ai_output_cleanup_intents
+              (job_id, r2_key, not_before)
+            values (%s, %s, now() + make_interval(secs => %s))
+            on conflict (r2_key) do update
+            set status = 'pending', not_before = excluded.not_before, updated_at = now()
+            returning id::text as id
+            """,
+            (job_id, r2_key, int(ttl_seconds)),
+        )
+        row = await cur.fetchone()
+        return row["id"] if row else None
+
+
+async def list_detail_cut_checkpoints(
+    conn: AsyncConnection,
+    *,
+    user_id: str,
+    project_id: str,
+    key_pattern: str,
+    limit: int = 400,
+) -> list[dict] | None:
+    """이 프로젝트의 **실패한** 상세페이지 잡이 남긴, 아직 살아 있는 체크포인트 표식.
+
+    · 같은 사용자·같은 프로젝트의 detail_page 잡만 본다 — 프로젝트를 넘어 쓰지 않는다.
+    · 원 잡이 error 인 것만 — 성공한 잡의 컷은 이미 셀러에게 나갔다. 그걸 새 잡이 집으면
+      같은 그림을 한 번 더 팔게 된다.
+    · not_before 가 아직 미래(TTL 안)이고 pending 인 것만 — 리클레이머가 집는 것과 겹치지 않는다.
+    커서가 없는 커넥션(테스트 스텁)은 None — 호출자는 이어하기 없이 기존대로 생성한다.
+    """
+    if not hasattr(conn, "cursor"):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            r"""
+            select i.id::text as id, i.r2_key, i.job_id::text as job_id
+              from jobs j
+              join ai_output_cleanup_intents i on i.job_id = j.id
+             where j.user_id = %s
+               and j.project_id = %s
+               and j.kind = 'detail_page'
+               and j.status = 'error'
+               and i.status = 'pending'
+               and i.not_before > now()
+               and i.r2_key like %s escape '\'
+             order by i.created_at desc
+             limit %s
+            """,
+            (user_id, project_id, key_pattern, max(1, min(int(limit), 1000))),
+        )
+        return list(await cur.fetchall() or [])
+
+
+async def set_ai_checkpoint_expiry(
+    conn: AsyncConnection, r2_keys: list[str], *, ttl_seconds: int, extend_only: bool = False
+) -> None:
+    """체크포인트 표식의 TTL 을 다시 잡는다. ttl_seconds=0 은 "지금 만료" — 조회에서 빠지고
+    원 잡이 끝나 있으면 다음 리클레이머 주기에 지워진다. extend_only 면 늘리기만 한다(재사용 시)."""
+    keys = [key for key in r2_keys if key]
+    if not keys or not hasattr(conn, "cursor"):
+        return
+    target = (
+        "greatest(not_before, now() + make_interval(secs => %s))"
+        if extend_only else "now() + make_interval(secs => %s)"
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            update ai_output_cleanup_intents
+               set not_before = {target}, updated_at = now()
+             where r2_key = any(%s) and status = 'pending'
+            """,
+            (int(ttl_seconds), keys),
+        )
+
+
 async def claim_unpublished_ai_output_cleanup_intents(
     conn: AsyncConnection, *, limit: int = 200
 ) -> list[dict]:

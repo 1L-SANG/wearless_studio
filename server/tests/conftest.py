@@ -168,6 +168,9 @@ def make_settings(**overrides) -> Settings:
         # 운영 기본은 bestof. 관련 없는 기존 워커 테스트는 외부 vision 판정을 호출하지 않게
         # 테스트 기본만 명시적으로 off로 두고 QC 테스트에서 모드를 개별 활성화한다.
         garment_qc_mode="off",
+        # 상세 컷 체크포인트(운영 기본 on)도 테스트 기본은 off — 기존 워커 테스트의 generate 목
+        # 상당수가 고정 시그니처라 base_checkpoint 키를 모른다. 체크포인트 테스트만 켠다.
+        detail_cut_checkpoint_enabled=False,
         # 관리자 기기 게이트도 같은 이유로 테스트 기본 off — 기존 admin 라우트 테스트는 FakeConn
         # 큐에 role 행 하나만 넣고 도는데, shadow 도 기기 조회를 실행한다. 기기 테스트만 켠다.
         admin_device_gate="off",
