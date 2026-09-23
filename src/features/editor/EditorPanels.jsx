@@ -578,7 +578,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
           {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
-          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
+          {/* allowDeselect=false — 재클릭이 null 을 보내면 방향이 정면으로 떨어진다(콘티보드와 같은 이유). */}
+          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline direction-chips" allowDeselect={false} options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
 
           {showOuterClosure && (
             <div className="insp-sec outer-closure-field">
