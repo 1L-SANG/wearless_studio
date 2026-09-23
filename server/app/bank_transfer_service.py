@@ -15,11 +15,13 @@
 
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from . import repo
 from .repo import CreditError
 
 log = logging.getLogger("wearless.bank_transfer")
+_SEOUL = ZoneInfo("Asia/Seoul")
 
 REQUEST_TTL_DAYS = 3
 #: 이 상태의 토스 구독이 있으면 수동 구독 이용권을 신청·지급하지 않는다. canceled 는 아직
@@ -105,7 +107,8 @@ async def _active_manual_grant(cur, user_id: str, *, lock: bool = False) -> dict
 
 def _plan_change_error(grant: dict) -> CreditError:
     ends = grant.get("ends_at")
-    when = ends.astimezone().strftime("%m/%d") if isinstance(ends, datetime) else str(ends)
+    # 컨테이너는 UTC 라 astimezone() 기본값이면 새벽에 끝나는 이용권이 하루 이른 날짜로 보인다.
+    when = ends.astimezone(_SEOUL).strftime("%m/%d") if isinstance(ends, datetime) else str(ends)
     return CreditError(
         "plan_change_not_supported",
         f"지금 이용권({grant['plan_code']})이 끝난 뒤 다른 요금제를 신청할 수 있어요. 종료일 {when}",
@@ -118,9 +121,12 @@ async def create_request(
     tax_invoice: bool, business_no: str | None, business_name: str | None,
     representative_name: str | None, invoice_email: str | None, note: str | None,
 ) -> dict:
-    """신청 생성. 같은 종류의 기한 지난 requested 는 먼저 expired 로 닫는다."""
+    """신청 생성. 같은 종류의 기한 지난 requested 는 먼저 expired 로 닫는다.
+
+    잠금 순서는 신청 행 → 계정이다. confirm_request 가 신청 → 이용권 → 계정 순이라, 계정을 먼저 잡은
+    채 기한 지난 신청 행을 갱신하면 관리자가 마침 그 신청을 늦게 확인하는 순간 서로 교착한다.
+    """
     async with conn.cursor() as cur:
-        await _lock_account(cur, user_id)
         await cur.execute(
             "select id::text as id, kind, price, credits from pricing_plans "
             "where code = %s and is_active",
@@ -129,6 +135,12 @@ async def create_request(
         plan = await cur.fetchone()
         if plan is None:
             raise CreditError("unknown_plan", "판매 중인 상품이 아니에요.", 404)
+        await cur.execute(
+            "update bank_transfer_requests set status = 'expired' "
+            "where user_id = %s and kind = %s and status = 'requested' and expires_at <= now()",
+            (user_id, plan["kind"]),
+        )
+        await _lock_account(cur, user_id)
         if plan["kind"] == "subscription":
             toss = await _toss_subscription_status(cur, user_id)
             if toss in TOSS_BLOCKING_STATUSES:
@@ -140,11 +152,6 @@ async def create_request(
             grant = await _active_manual_grant(cur, user_id)
             if grant is not None and grant["plan_code"] != plan_code:
                 raise _plan_change_error(grant)
-        await cur.execute(
-            "update bank_transfer_requests set status = 'expired' "
-            "where user_id = %s and kind = %s and status = 'requested' and expires_at <= now()",
-            (user_id, plan["kind"]),
-        )
         await cur.execute(
             "select id::text as id from bank_transfer_requests "
             "where user_id = %s and kind = %s and status = 'requested'",
@@ -438,19 +445,50 @@ async def expire_stale_requests(conn) -> int:
         return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
 
 
+#: 같은 플랜의 연장 신청이 열려 있으면(신청 후 3일) 이용권 만료를 미룬다. 화면이 "종료 전에 다시
+#: 신청하면 이어진다"고 약속하는데, 관리자 확인이 주말을 넘기면 이월 크레딧이 먼저 사라졌다.
+#: **종료일 전에 낸 신청만** 사유로 친다. 종료 뒤에 낸 신청까지 치면 입금 없이 3일마다 신청만 다시
+#: 내서 이용권을 무한정 붙들 수 있다.
+_OPEN_RENEWAL = (
+    "exists (select 1 from bank_transfer_requests r where r.user_id = g.user_id "
+    "and r.kind = 'subscription' and r.plan_code = g.plan_code and r.status = 'requested' "
+    "and r.created_at < g.ends_at and r.expires_at > now())"
+)
+
+
 async def expire_manual_grants(conn) -> dict:
     """종료일이 지난 수동 이용권을 정리한다. 사용자마다 따로 커밋하고, 하나가 실패해도
-    (진행 중 예약 때문에 reserved <= balance 가 깨지는 경우) 다음 사용자를 계속 본다."""
+    (진행 중 예약 때문에 reserved <= balance 가 깨지는 경우) 다음 사용자를 계속 본다.
+
+    행마다 **자기 트랜잭션에서 다시 잠그고 조건을 확인**한다. 후보 50건을 한 번에 잠그던 방식은
+    첫 commit 이 나머지 행 잠금까지 풀어서, 그 틈에 관리자가 확인한 같은 플랜 연장(늘어난 ends_at 과
+    새 버킷)을 다음 차례에서 지워 버릴 수 있었다. 잠금 순서는 이용권 → 계정으로
+    confirm_request(신청 → 이용권 → 계정)와 같은 방향이라 교착이 없다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id::text as id, user_id::text as user_id, plan_code from manual_plan_grants "
-            "where status = 'active' and ends_at <= now() limit %s for update skip locked",
+            "select g.id::text as id from manual_plan_grants g "
+            f"where g.status = 'active' and g.ends_at <= now() and not {_OPEN_RENEWAL} "
+            "order by g.ends_at limit %s",
             (_EXPIRE_BATCH,),
         )
-        rows = await cur.fetchall()
+        candidates = [row["id"] for row in await cur.fetchall()]
+    await conn.rollback()  # 후보 조회는 잠금이 없다 — 열린 트랜잭션만 닫는다.
     ended = skipped = 0
-    for row in rows:
+    for grant_id in candidates:
         try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select g.id::text as id, g.user_id::text as user_id, g.plan_code "
+                    "from manual_plan_grants g where g.id = %s and g.status = 'active' "
+                    f"and g.ends_at <= now() and not {_OPEN_RENEWAL} for update of g skip locked",
+                    (grant_id,),
+                )
+                row = await cur.fetchone()
+            if row is None:
+                # 그 사이 연장됐거나(ends_at 이 미래), 연장 신청이 열렸거나, 다른 워커가 잡았다.
+                await conn.rollback()
+                continue
             # 상호배제(④) 덕분에 이 사용자의 활성 구독 버킷은 전부 수동 이용권 것이다.
             await repo.expire_subscription_buckets(
                 conn, user_id=row["user_id"], reason="manual_plan_expired")
@@ -468,7 +506,7 @@ async def expire_manual_grants(conn) -> dict:
             await conn.commit()
             ended += 1
         except Exception:
-            log.exception("manual plan grant expire failed grant=%s", row["id"])
+            log.exception("manual plan grant expire failed grant=%s", grant_id)
             await conn.rollback()
             skipped += 1
     return {"ended": ended, "skipped": skipped}

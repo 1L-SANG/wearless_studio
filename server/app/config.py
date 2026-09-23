@@ -406,6 +406,8 @@ class Settings:
     bank_transfer_account: str | None = None
     bank_transfer_holder: str | None = None
     bank_transfer_notify_email: str = "contact@wearless.kr"
+    # 계좌이체 안내 메일 발신자. 인증된 도메인(wearless.kr)이어야 실제 발송된다.
+    bank_transfer_from_email: str = "Wearless <noreply@wearless.kr>"
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -903,6 +905,8 @@ def load_settings() -> Settings:
         bank_transfer_bank=(os.getenv("BANK_TRANSFER_BANK") or "").strip() or None,
         bank_transfer_account=(os.getenv("BANK_TRANSFER_ACCOUNT") or "").strip() or None,
         bank_transfer_holder=(os.getenv("BANK_TRANSFER_HOLDER") or "").strip() or None,
+        bank_transfer_from_email=(os.getenv("BANK_TRANSFER_FROM_EMAIL") or "").strip()
+        or "Wearless <noreply@wearless.kr>",
         bank_transfer_notify_email=(os.getenv("BANK_TRANSFER_NOTIFY_EMAIL") or "").strip()
         or "contact@wearless.kr",
         cx_trans_base_url=(

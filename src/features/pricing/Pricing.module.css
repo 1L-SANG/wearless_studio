@@ -29,6 +29,7 @@
   padding: var(--sp-4) var(--sp-12); border: 1px solid var(--ring-strong); border-radius: var(--r-3);
   background: var(--bg-1); font-family: var(--font-body); font-size: 12px; color: var(--fg-2); cursor: pointer;
 }
+.openRequestAccount { flex-basis: 100%; font-size: 12px; color: var(--fg-2); }
 .openRequestCancel:hover { color: var(--fg-1); }
 .openRequestCancel:disabled { opacity: 0.5; cursor: default; }
 .billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }

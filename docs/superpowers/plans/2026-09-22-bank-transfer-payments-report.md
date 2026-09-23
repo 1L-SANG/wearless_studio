@@ -5,7 +5,7 @@
 ## 바뀐 파일과 이유
 
 **DB**
-- `supabase/migrations/20260922120000_bank_transfer_requests.sql` (새 파일): `bank_transfer_requests`(신청·스냅샷·세금계산서 정보·지급 참조 3개), `manual_plan_grants`(구독 1개월 수동 이용권). 종류당 열린 신청 1건 부분 유니크, 사용자당 활성 이용권 1건 부분 유니크, RLS(service_role만), updated_at 트리거.
+- `supabase/migrations/20260923090000_bank_transfer_requests.sql` (새 파일): `bank_transfer_requests`(신청·스냅샷·세금계산서 정보·지급 참조 3개), `manual_plan_grants`(구독 1개월 수동 이용권). 종류당 열린 신청 1건 부분 유니크, 사용자당 활성 이용권 1건 부분 유니크, RLS(service_role만), updated_at 트리거.
 
 **서버**
 - `server/app/bank_transfer_service.py` (새): 신청 생성·열린 신청·취소·이용권 조회·관리자 목록·**확인(지급)**·거절·만료의 DB 로직. 커밋은 호출자가. 지급은 신청 스냅샷으로, 신청 ID 로 멱등, 잠금 순서 신청 → 이용권 → 계정.

@@ -61,6 +61,18 @@ class Store:
         self.rollbacks = 0
         self.seq = {}
         self.fail_expire_for = set()     # 이 사용자의 버킷 만료는 제약 위반처럼 실패시킨다
+        self.after_candidates = None     # 만료 후보 조회 직후 실행할 훅(동시 확인 흉내)
+
+    def due_for_expiry(self, g):
+        """만료 워커의 WHERE 절: 활성 + 종료일 지남 + 같은 플랜 연장 신청이 열려 있지 않음."""
+        if g["status"] != "active" or g["ends_at"] > self.now:
+            return False
+        return not any(
+            r["user_id"] == g["user_id"] and r.get("kind") == "subscription"
+            and r.get("plan_code") == g["plan_code"] and r["status"] == "requested"
+            and r["created_at"] < g["ends_at"] and r["expires_at"] > self.now
+            for r in self.requests.values()
+        )
 
     def next_id(self, prefix):
         self.seq[prefix] = self.seq.get(prefix, 0) + 1
@@ -134,9 +146,15 @@ class Cursor:
             g = s.grants.get(p[0])
             if g and g["status"] == "active":
                 g.update({"status": "ended", "ended_reason": "expired"})
-        elif "from manual_plan_grants where status = 'active' and ends_at <= now()" in q:
-            self._set([{"id": g["id"], "user_id": g["user_id"], "plan_code": g["plan_code"]}
-                       for g in s.grants.values() if g["status"] == "active" and g["ends_at"] <= s.now])
+        elif q.startswith("select g.id::text as id from manual_plan_grants g"):
+            # 만료 후보(잠금 없음). 같은 플랜 연장 신청이 열려 있으면 빠진다.
+            self._set([{"id": g["id"]} for g in s.grants.values() if s.due_for_expiry(g)])
+            if s.after_candidates:
+                s.after_candidates()      # 후보 조회와 행 잠금 사이에 끼어드는 확인(연장)을 흉내 낸다
+        elif q.startswith("select g.id::text as id, g.user_id::text as user_id, g.plan_code from manual_plan_grants g where g.id = %s"):
+            g = s.grants.get(p[0])
+            self._set([{"id": g["id"], "user_id": g["user_id"], "plan_code": g["plan_code"]}]
+                      if g and s.due_for_expiry(g) else [])
         # ---- 신청 ----
         elif q.startswith("update bank_transfer_requests set status = 'expired' where user_id"):
             for r in s.requests.values():
@@ -670,9 +688,80 @@ async def test_expire_manual_grants_skips_failing_user_and_continues(store):
     store.fail_expire_for.add(USER)
     stats = await service.expire_manual_grants(store)
     assert stats == {"ended": 1, "skipped": 1}
-    assert store.rollbacks == 1 and store.commits == 1
+    # 롤백 2 = 후보 조회 트랜잭션 닫기 1 + 실패한 사용자 1. 커밋은 성공한 사용자 1.
+    assert store.rollbacks == 2 and store.commits == 1
     assert store.grants[f"g-{USER}"]["status"] == "active" and store.profiles[USER]["plan"] == "seller"
     assert store.grants[f"g-{OTHER}"]["status"] == "ended" and store.profiles[OTHER]["plan"] == "free"
+
+
+def _expired_seller_grant(store, uid=USER):
+    store.grants[f"g-{uid}"] = {"id": f"g-{uid}", "user_id": uid, "plan_code": "seller",
+                                "request_id": None, "starts_at": NOW - MONTH,
+                                "ends_at": NOW - timedelta(hours=1), "status": "active"}
+    store.sources[f"s-{uid}"] = {"id": f"s-{uid}", "user_id": uid, "plan_id": "plan-seller",
+                                 "initial": 1600, "remaining": 700, "status": "active",
+                                 "type": "subscription", "period_end": NOW, "payment_id": None}
+    store.profiles[uid]["plan"] = "seller"
+    store.accounts[uid]["balance"] = 700
+
+
+@pytest.mark.anyio
+async def test_expire_waits_while_same_plan_renewal_request_is_open(store):
+    """화면 약속: 종료 전에 같은 요금제로 다시 신청하면 이어진다. 관리자 확인이 종료일을 넘겨도(주말)
+    열린 연장 신청이 있는 동안(신청 후 3일)은 이월 크레딧과 등급을 지우지 않는다."""
+    _expired_seller_grant(store)
+    # 종료(NOW-1h) 전에 낸 연장 신청, 아직 기한 안.
+    store.requests["r1"] = {"id": "r1", "user_id": USER, "kind": "subscription", "plan_code": "seller",
+                            "status": "requested", "expires_at": NOW + timedelta(days=2),
+                            "created_at": NOW - timedelta(hours=3)}
+    assert await service.expire_manual_grants(store) == {"ended": 0, "skipped": 0}
+    assert store.grants[f"g-{USER}"]["status"] == "active"
+    assert store.sources[f"s-{USER}"]["status"] == "active" and store.accounts[USER]["balance"] == 700
+    assert store.profiles[USER]["plan"] == "seller"
+    # 다른 플랜 신청이나 충전 신청은 미루는 사유가 아니다.
+    store.requests["r1"]["plan_code"] = "starter"
+    assert await service.expire_manual_grants(store) == {"ended": 1, "skipped": 0}
+    assert store.grants[f"g-{USER}"]["status"] == "ended" and store.profiles[USER]["plan"] == "free"
+
+
+@pytest.mark.anyio
+async def test_expire_ignores_renewal_requests_made_after_the_end_date(store):
+    """종료 뒤에 낸 신청은 사유가 아니다 — 아니면 입금 없이 3일마다 신청만 내서 이용권을 붙들 수 있다."""
+    _expired_seller_grant(store)
+    store.requests["r1"] = {"id": "r1", "user_id": USER, "kind": "subscription", "plan_code": "seller",
+                            "status": "requested", "expires_at": NOW + timedelta(days=2),
+                            "created_at": NOW - timedelta(minutes=30)}      # 종료(NOW-1h) 뒤
+    assert await service.expire_manual_grants(store) == {"ended": 1, "skipped": 0}
+    assert store.grants[f"g-{USER}"]["status"] == "ended" and store.profiles[USER]["plan"] == "free"
+
+
+@pytest.mark.anyio
+async def test_expire_waits_for_open_renewal_then_expires_when_request_lapses(store):
+    _expired_seller_grant(store)
+    store.requests["r1"] = {"id": "r1", "user_id": USER, "kind": "subscription", "plan_code": "seller",
+                            "status": "requested", "expires_at": NOW - timedelta(minutes=1), "created_at": NOW}
+    # 신청 기한이 지났으면(입금 안 함) 더는 기다리지 않는다.
+    assert await service.expire_manual_grants(store) == {"ended": 1, "skipped": 0}
+    assert store.grants[f"g-{USER}"]["status"] == "ended"
+
+
+@pytest.mark.anyio
+async def test_expire_rechecks_each_grant_under_its_own_lock(store):
+    """후보 조회 뒤, 행을 잠그기 전에 관리자가 같은 플랜 연장을 확인한 경우(ends_at 이 미래로 밀림).
+    옛 코드는 후보 목록만 믿고 새 버킷과 등급을 지웠다. 이제는 행마다 다시 확인해 건너뛴다."""
+    _expired_seller_grant(store)
+
+    def extend():
+        store.grants[f"g-{USER}"]["ends_at"] = NOW + MONTH
+        store.sources["s-new"] = {"id": "s-new", "user_id": USER, "plan_id": "plan-seller",
+                                  "initial": 1600, "remaining": 1600, "status": "active",
+                                  "type": "subscription", "period_end": NOW + MONTH, "payment_id": None}
+    store.after_candidates = extend
+    assert await service.expire_manual_grants(store) == {"ended": 0, "skipped": 0}
+    assert store.grants[f"g-{USER}"]["status"] == "active"
+    assert store.sources["s-new"]["status"] == "active" and store.sources[f"s-{USER}"]["status"] == "active"
+    assert store.profiles[USER]["plan"] == "seller"
+    assert store.commits == 0
 
 
 @pytest.mark.anyio

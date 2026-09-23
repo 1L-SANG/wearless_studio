@@ -32,7 +32,7 @@
 
 ## 2. 데이터
 
-### 2.1 새 테이블 `bank_transfer_requests` (마이그레이션 `20260922120000_bank_transfer_requests.sql`, append-only)
+### 2.1 새 테이블 `bank_transfer_requests` (마이그레이션 `20260923090000_bank_transfer_requests.sql`, append-only)
 ```
 id uuid pk, user_id uuid fk auth.users on delete cascade,
 plan_code text not null, kind text not null check (kind in ('subscription','topup')),

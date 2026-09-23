@@ -103,6 +103,8 @@ test('열린 구독 신청이 있으면 띠를 보여주고 구독 CTA 를 잠�
   const html = renderPricing({ open: [OPEN_SUB] });
   assert.match(html, /입금 확인 중<\/strong> · seller 1개월 · ₩69,900 · 입금자 홍길동 · 9\/25까지 입금/);
   assert.match(html, /신청 취소/);
+  // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2).
+  assert.match(html, /입금 계좌 국민은행 123-456-789 \(예금주 정일상\) · 입금액 ₩69,900/);
   const buttons = html.match(/<button[^>]*>계좌이체로 시작하기<\/button>/g) || [];
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((b) => /disabled=""/.test(b) && /확인 중인 신청이 있어요/.test(b)));
@@ -113,6 +115,16 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
   const buttons = html.match(/<button[^>]*>계좌이체로 시작하기<\/button>/g) || [];
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((b) => /disabled=""/.test(b) && /잠시 받지 않아요/.test(b)));
+  // 잠긴 이유가 툴팁에만 있으면 막다른 길이다 — 안내 띠가 문의처를 말한다(리뷰 368F-3).
+  assert.match(html, /잠시 받지 않아요<\/strong>\. 결제가 필요하면 <a href="mailto:contact@wearless\.kr">/);
+  assert.doesNotMatch(html, /계좌이체<\/strong>로 신청을 받아요/);
+});
+
+test('계좌이체 모드에서는 지급 코드가 없는 충전 보너스 약속을 카드에 적지 않는다', () => {
+  const html = renderPricing();
+  assert.doesNotMatch(html, /충전할 때마다 크레딧/);
+  assert.match(html, /입금 확인까지\(신청 후 3일\) 이용권과 크레딧이 유지/);
+  assert.doesNotMatch(html, /갱신 결제 실패 시 3일의 유예기간/);
 });
 
 test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => {

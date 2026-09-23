@@ -4,7 +4,7 @@
    지급은 신청 ID 로 멱등이다. 응답을 못 받았으면 같은 행의 '입금 확인'을 그대로 다시 눌러도
    두 번 지급되지 않는다(서버가 저장된 결과를 돌려준다). 세금계산서는 여기서 발행하지 않는다 —
    필요 표시와 사업자 정보를 보여주고, 발행은 운영자가 홈택스에서 한 뒤 메모에 남긴다. */
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   adminConfirmBankTransfer, adminListBankTransfers, adminRejectBankTransfer,
 } from '@/lib/api/facemarket.js';
@@ -227,8 +227,8 @@ export function AdminBankTransfers() {
               </TableHeader>
               <TableBody>
                 {items.map((item) => (
-                  <>
-                    <TableRow key={item.id}>
+                  <Fragment key={item.id}>
+                    <TableRow>
                       <TableCell className="whitespace-nowrap">{day(item.createdAt)}</TableCell>
                       <TableCell className="max-w-[220px] break-all">
                         <div>{item.email || '이메일 없음'}</div>
@@ -259,7 +259,7 @@ export function AdminBankTransfers() {
                       </TableCell>
                     </TableRow>
                     {action?.id === item.id && (
-                      <TableRow key={`${item.id}-form`}>
+                      <TableRow>
                         <TableCell colSpan={7} className="bg-muted/40">
                           {action.kind === 'confirm'
                             ? <ConfirmForm item={item} onDone={done} onClose={() => setAction(null)} />
@@ -267,7 +267,7 @@ export function AdminBankTransfers() {
                         </TableCell>
                       </TableRow>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
