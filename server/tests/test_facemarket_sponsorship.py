@@ -50,6 +50,11 @@ class Cursor:
         model = self.store["model"]
         if "ready_for_identity_delete" in query:
             self.one = {"closed": self.store["closed"]}
+        elif "catalog_is_admin" in query:
+            # 모델 리스트 열람 판정. 셀러 약관 동의 계정과, 라이선스가 발급된(2차 등록 완료) 모델 본인만.
+            self.one = {"catalog_is_admin": False, "catalog_is_seller": params[0] in self.store["sellers"],
+                        "catalog_is_model": params[0] == model["user_id"]
+                        and model["license_status"] in ("active", "reverification_required")}
         elif query.startswith("update fm_models set sponsorship_enabled"):
             values, model_id, owner_id = params[:-2], params[-2], params[-1]
             if model_id == model["id"] and owner_id == model["user_id"]:
@@ -301,21 +306,14 @@ def test_public_and_catalog_hide_disabled_details_but_owner_keeps_them(sponsorsh
     assert owner.json()[0]["sponsorshipProfileConsentAt"] == "2026-09-22T00:00:00Z"
 
 
-def test_public_list_shows_only_the_badge_without_login(sponsorship_api):
-    """비로그인 공개 목록은 '협찬 받는 중'만 알리고 계정·팔로워·사이즈는 감춰요(E-2b 동의 범위)."""
+def test_public_list_needs_login(sponsorship_api):
+    """모델 리스트는 등록된 셀러와 모델만 봐요(2026-09-23). 비로그인은 배지조차 받지 못해요."""
     client, store, _ = sponsorship_api
     store["model"]["sponsorship_enabled"] = True
     client.headers.pop("Authorization")
-    public = client.get("/v1/facemarket/public/models")
-    assert public.status_code == 200, public.text
-    item = public.json()["items"][0]
-    assert item["sponsorshipEnabled"] is True
-    assert item["instagramHandle"] is None and item["instagramFollowers"] is None
-    assert item["sizeTop"] is None and item["sizeBottomWaist"] is None
-    assert item["instagramFollowersReportedAt"] is None
-    # 잘못된 토큰도 비로그인과 같아요.
+    assert client.get("/v1/facemarket/public/models").status_code == 401
     bad = client.get("/v1/facemarket/public/models", headers={"Authorization": "Bearer not-a-token"})
-    assert bad.status_code == 200 and bad.json()["items"][0]["instagramHandle"] is None
+    assert bad.status_code == 401
 
 
 def test_logged_in_non_seller_sees_only_the_badge(sponsorship_api):
@@ -331,7 +329,8 @@ def test_logged_in_non_seller_sees_only_the_badge(sponsorship_api):
         assert item["sponsorshipEnabled"] is True
         assert item["instagramHandle"] is None and item["instagramFollowers"] is None
         assert item["sizeTop"] is None and item["sizeBottomWaist"] is None
-    assert any("from seller_consents" in q and p == (OWNER,) for q, p in store["queries"])
+    # 셀러 여부는 열람 판정 조회(facemarket_catalog_access) 안에서 이 계정으로 확인해요.
+    assert any("from seller_consents where user_id = %s" in q and OWNER in p for q, p in store["queries"])
 
 
 def test_sponsorship_patch_preflight_allows_screen_header(sponsorship_api):

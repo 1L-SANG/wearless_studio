@@ -83,9 +83,10 @@ class FakeCursor:
                 raise UniqueViolation("duplicate cx_tx_id")
             self.store["tx"].add(cx_tx_id)
             self._result = None
-        elif s.startswith("select terms_version, privacy_version, age_attested, accepted_at from seller_consents"):
-            # 카탈로그의 협찬 상세 노출 여부(셀러 약관 동의 기록). 이 테스트의 계정은 셀러가 아니다.
-            self._result = None
+        elif "catalog_is_admin" in s:
+            # 모델 리스트 열람 판정(facemarket_catalog_access). 셀러 카탈로그를 부르는 이 테스트의 계정은
+            # 셀러 약관에 동의한 셀러다(자격 없는 계정의 403 은 test_facemarket_catalog_access 가 본다).
+            self._result = {"catalog_is_admin": False, "catalog_is_seller": True, "catalog_is_model": False}
         elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at"):
             # /models/me — 본인 소유(모든 상태). 기본 카드 컬럼(+assets_ready 파생).
             rows = [r for r in models if r["user_id"] == params[0]]
