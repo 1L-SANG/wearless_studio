@@ -30,12 +30,27 @@ before(async () => {
       name: 'capture-legal-redirect-effect',
       enforce: 'pre',
       transform(source, id) {
+        if (id.endsWith('/LegalPage.jsx')) {
+          return source.replace("from 'react'", "from 'virtual:legal-page-react'");
+        }
         if (!id.endsWith('/LegalRedirect.jsx')) return;
         return source.replace("from 'react'", "from 'virtual:legal-effect'");
       },
-      resolveId(id) { if (id === 'virtual:legal-effect') return '\0legal-effect'; },
+      resolveId(id) {
+        if (id === 'virtual:legal-effect') return '\0legal-effect';
+        if (id === 'virtual:legal-page-react') return '\0legal-page-react';
+      },
       load(id) {
         if (id === '\0legal-effect') return 'export const effects = []; export const useEffect = (effect) => effects.push(effect);';
+        if (id === '\0legal-page-react') return `
+          export { useEffect, useMemo } from 'react';
+          import { useState as realUseState } from 'react';
+          let loadedState;
+          export const setLoadedState = (state) => { loadedState = state; };
+          export const useState = (initial) => realUseState(
+            initial?.phase === 'loading' && loadedState ? loadedState : initial
+          );
+        `;
       },
     }],
   });
@@ -70,6 +85,27 @@ test('manifest의 모든 공개 법무 문서는 제목으로 시작한다', () 
     const pathname = `public/legal/${slug}.md`;
     assert.equal(existsSync(pathFor(pathname)), true, `${pathname} 파일이 필요해요`);
     assert.match(read(pathname).split(/\r?\n/, 1)[0], /^# /, `${pathname} 첫 줄은 제목이어야 해요`);
+  }
+});
+
+test('시행일 미정인 공개 검토본도 법무 화면에서 읽을 수 있다', async () => {
+  const { LegalPage } = await load('src/features/legal/LegalPage.jsx');
+  const { setLoadedState } = await vite.ssrLoadModule('virtual:legal-page-react');
+  const manifest = JSON.parse(read('public/legal/manifest.json'));
+  try {
+    for (const document of manifest.filter((item) => item.status === 'draft')) {
+      setLoadedState({ phase: 'ready', document, markdown: read(`public/legal/${document.slug}.md`) });
+      const html = render(React.createElement(LegalPage, { slug: document.slug }));
+      assert.match(html, /법률 검토 전 초안/);
+      assert.match(html, /시행일 미정/);
+      assert.doesNotMatch(html, /NaN|undefined/);
+    }
+    const document = manifest.find((item) => item.slug === 'license-agreement');
+    setLoadedState({ phase: 'ready', document, markdown: read('public/legal/license-agreement.md') });
+    const html = render(React.createElement(LegalPage, { slug: document.slug }));
+    assert.match(html, /시행일 2026년 9월 18일/);
+  } finally {
+    setLoadedState(null);
   }
 });
 

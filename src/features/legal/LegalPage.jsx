@@ -93,7 +93,10 @@ export function LegalPage({ slug }) {
 
   const relatedDocuments = (IS_FACEMARKET ? FACEMARKET_DOCUMENTS : SELLER_DOCUMENTS)
     .filter((item) => item.slug !== slug);
-  const [year, month, day] = state.document.effectiveDate.split('-').map(Number);
+  const [year, month, day] = (state.document.effectiveDate || '').split('-').map(Number);
+  const effectiveDateLabel = state.document.effectiveDate
+    ? `시행일 ${year}년 ${month}월 ${day}일`
+    : '법률 검토 전 초안 · 시행일 미정';
 
   return (
     <main className="legal-page">
@@ -101,7 +104,7 @@ export function LegalPage({ slug }) {
         <header className="legal-header">
           <p className="legal-eyebrow">법적 고지</p>
           <h1>{state.document.title}</h1>
-          <p className="legal-meta">시행일 {year}년 {month}월 {day}일 · {state.document.version}</p>
+          <p className="legal-meta">{effectiveDateLabel} · {state.document.version}</p>
           <nav className="legal-related" aria-label="다른 법적 고지">
             {relatedDocuments.map((item, index) => (
               <span key={item.slug}>

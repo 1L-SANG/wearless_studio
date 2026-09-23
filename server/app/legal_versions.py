@@ -15,6 +15,37 @@ PREVIOUS_SELLER_TERMS_VERSION = "v1.1"
 SELLER_TERMS_EFFECTIVE_DATE = date(2026, 9, 29)
 _SEOUL = ZoneInfo("Asia/Seoul")
 
+# 법률 검토용 초안이에요. required_versions()나 등록 게이트에 연결하지 않아요.
+# 본문·시행일·동의 화면을 함께 확정한 뒤 화면 트랙에서 활성 버전으로 승격해요.
+DRAFT_SPONSORSHIP_CONSENT_VERSION = "2026-09-sponsorship-v1-draft"
+DRAFT_SPONSORSHIP_CONSENTS = {
+    "sponsorship_participation": {
+        "section": "E-2a", "required_for_enrollment": False,
+        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+    },
+    "sponsorship_profile_collection": {
+        "section": "E-2b", "required_for_enrollment": False,
+        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+    },
+    "sponsorship_shipping_collection": {
+        "section": "E-2d-1", "required_for_enrollment": False,
+        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+    },
+    "sponsorship_shipping_disclosure": {
+        "section": "E-2d-2", "required_for_enrollment": False,
+        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+    },
+}
+# 시행본 슬러그(terms-model·privacy-model·answers)는 건드리지 않고 개정안은 별도 슬러그로만 발행해요.
+DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS = {
+    "terms-model-sponsorship-draft": "v1.2-draft",
+    "privacy-model-sponsorship-draft": "v1.6-draft",
+    "answers-sponsorship-draft": "v1.3-draft",
+    "license-agreement-sponsorship-draft": "v3-draft",
+    "seller-license-terms-sponsorship-draft": "v3-draft",
+    "sponsorship-consent": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+}
+
 
 def required_versions() -> dict[str, str]:
     return {"terms": SELLER_TERMS_VERSION, "privacy": SELLER_PRIVACY_VERSION}
