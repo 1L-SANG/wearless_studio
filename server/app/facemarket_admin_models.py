@@ -17,9 +17,10 @@ from pydantic import Field
 
 from . import admin_guard, facemarket_notify, repo
 from .agents.face_identity import SKIN_FINISH_CODES, SKIN_FINISH_DEFAULT
-from .auth import require_user, optional_user
+from .auth import require_user
 from .db import get_conn
 from .facemarket import _assert_account_open, _cover_serving_url, _model_id_or_404
+from .facemarket_catalog_access import CatalogRole, catalog_access
 from .facemarket_sponsorship import SponsorshipFields, sponsorship_view
 from .models import CamelModel
 from .personalization import CONSENT_DOC_VERSION
@@ -891,18 +892,38 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
     }
 
 
+class CatalogAccessResult(CamelModel):
+    allowed: bool
+    role: CatalogRole | None = None
+
+
+@router.get("/catalog-access", response_model=CatalogAccessResult)
+async def get_catalog_access(
+    request: Request, response: Response, user_id: str = Depends(require_user),
+):
+    """이 계정이 모델 리스트를 볼 수 있는지. 화면(/models)이 목록과 안내 중 무엇을 그릴지 정한다."""
+    async with get_conn(request) as conn:
+        access = await catalog_access(conn, user_id)
+    response.headers["Cache-Control"] = "no-store"
+    return {"allowed": access["allowed"], "role": access["role"]}
+
+
 @router.get("/public/models", response_model=PublicModelsResult)
 async def public_models(
-    request: Request, response: Response, user_id: str | None = Depends(optional_user),
+    request: Request, response: Response, user_id: str = Depends(require_user),
 ):
-    """무인증 공개 목록. 협찬 상세(계정·팔로워·사이즈)는 로그인한 **셀러**에게만 실어요(E-2b 동의 범위).
+    """모델 리스트. 등록된 셀러와 모델만 본다(2026-09-23 오너 결정, facemarket_catalog_access 참고).
+    비로그인은 401, 로그인했지만 자격이 없으면 403 이다. 주소의 public 은 역사적 이름이다.
 
-    셀러 = 셀러 약관 동의 기록(seller_consents)이 있는 계정. 로그인만으로 열면 모델 계정과
-    이메일 가입만 한 사람에게도 보여 동의문("로그인 셀러")의 범위를 넘어요.
+    협찬 상세(계정·팔로워·사이즈)는 그중 **셀러**에게만 실어요(E-2b 동의 범위).
+    셀러 = 셀러 약관 동의 기록(seller_consents)이 있는 계정. 모델 계정에게는 배지만 가요.
     """
     async with get_conn(request) as conn:
+        access = await catalog_access(conn, user_id)
+        if not access["allowed"]:
+            raise _err("members_only", "모델 리스트는 등록된 셀러와 모델만 볼 수 있어요.", status=403)
         rows = await _load_model_profiles(conn, public_only=True)
-        seller = user_id is not None and await repo.get_seller_consent(conn, user_id) is not None
+    seller = access["seller"]
     items = []
     for row in rows:
         items.append(

@@ -176,6 +176,7 @@ export async function modelComponentHarness({
             api.getFacemarketConfig ? api.getFacemarketConfig(...args) : Promise.resolve({ livenessRequired: true })
           );
           export const getCurrentEnrollment = (...args) => api.getCurrentEnrollment(...args);
+          export const getCatalogAccess = (...args) => api.getCatalogAccess(...args);
           // 지원서 리뉴얼(2026-09-02) — ModelHub 가 설정·지원서를 함께 조회한다. 테스트가 안 주면
           // "게이트 꺼짐 · 지원서 없음(404)" 으로 떨어져 종전 등록 여정만 검사한다.
           export const getApplicationConfig = (...args) => (

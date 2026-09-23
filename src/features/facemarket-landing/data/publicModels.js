@@ -175,8 +175,8 @@ function apiBase() {
 }
 
 /**
- * 공개 모델 목록. 로그인 없이 부른다. 실패하면 던진다 — 부르는 쪽(BrowseSection)이 조용히
- * 예시만 남기는 걸로 처리한다(공개 페이지가 서버 사정으로 비어 보이면 안 된다).
+ * 등록 모델 목록. 등록된 셀러와 모델만 받는다(2026-09-23, 비로그인 401, 자격 없음 403).
+ * 실패하면 던진다 — 부르는 쪽(BrowseSection)이 조용히 예시만 남기는 걸로 처리한다.
  */
 export async function fetchPublicModels({ signal, fetchImpl = globalThis.fetch, accessToken = null } = {}) {
   // 토큰이 있으면 같이 보내요. 서버는 로그인한 사용자에게만 협찬 상세(계정·팔로워·사이즈)를 실어요.

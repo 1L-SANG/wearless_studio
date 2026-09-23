@@ -1,0 +1,119 @@
+/* 뒤: 목록 화면(BrowseModels.module.css 의 .browse 판 그대로)을 깔고 어둡게 덮는다.
+   앞: 404 화면(components/NotFound.module.css)과 같은 눈금의 안내 카드. */
+.stage {
+  position: relative;
+  overflow: hidden;
+  min-height: max(calc(100vh - var(--fm-header-h)), 48rem);
+}
+
+/* 세션을 확인하는 동안 같은 높이를 잡아 둔다. 안 잡으면 푸터가 올라왔다 내려간다. */
+.pending { min-height: max(calc(100vh - var(--fm-header-h)), 48rem); }
+
+.listBehind {
+  pointer-events: none;
+  user-select: none;
+}
+.mediaStill { cursor: default; }
+
+/* 캔버스는 12×16 칸이다. 늘려 그릴 때 번지지 않고 네모 칸이 그대로 커져야 모자이크가 된다. */
+.mosaic {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--fm-line);
+  image-rendering: pixelated;
+}
+
+/* 이름 모자이크. 10×3 칸을 이름 한 줄 크기로 키운다. 색은 글자색을 따라 그린다. */
+.mosaicText {
+  display: block;
+  width: 4.4rem;
+  height: 1.32rem;
+  color: var(--fm-ink);
+  image-rendering: pixelated;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--fm-ink) 52%, transparent) 0%,
+    color-mix(in srgb, var(--fm-ink) 70%, transparent) 100%
+  );
+}
+
+.front {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: clamp(2rem, 8vh, 5rem) 20px;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 27rem);
+  padding: clamp(1.75rem, 4vw, 2.5rem) clamp(1.25rem, 4vw, 2.25rem);
+  border-radius: 1.75rem;
+  background: var(--bg-1);
+  box-shadow: 0 30px 80px -30px color-mix(in srgb, var(--fm-ink) 70%, transparent);
+  text-align: center;
+}
+
+/* 그림 배경이 단색 연파랑이라 둥근 판처럼 보이게 모서리만 깎는다. */
+.art {
+  display: block;
+  width: min(100%, 14.5rem);
+  height: auto;
+  margin-bottom: 1.5rem;
+  border-radius: 1.4rem;
+  animation: float 5.2s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .art { animation: none; }
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--fm-accent, var(--link));
+  font: 600 0.7rem/1 var(--font-mono);
+  letter-spacing: 0.16em;
+}
+.title {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 700 clamp(1.3rem, 4.4vw, 1.6rem)/1.36 var(--font-body);
+  letter-spacing: -0.022em;
+  word-break: keep-all;
+  text-wrap: balance;
+}
+.desc {
+  margin: 0.75rem 0 0;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.9rem/1.7 var(--font-body);
+  word-break: keep-all;
+  text-wrap: pretty;
+}
+
+.actions {
+  display: grid;
+  justify-items: center;
+  gap: 0.9rem;
+  width: min(100%, 19rem);
+  margin-top: 1.5rem;
+}
+.secondary {
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.85rem/1.4 var(--font-body);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.secondary:hover { color: var(--fm-ink, var(--fg-1)); }

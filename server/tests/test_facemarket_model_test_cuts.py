@@ -91,7 +91,11 @@ class FakeCursor:
         cuts = self.store["cuts"]
         loras = self.store.setdefault("loras", [])
 
-        if "as license_valid_days" in query and "from fm_models m" in query:
+        if "catalog_is_admin" in query:
+            # 모델 리스트 열람 판정(facemarket_catalog_access). 이 대역에서는 셀러 계정 하나만 자격이 있다.
+            self.one = {"catalog_is_admin": False, "catalog_is_seller": params[0] == "seller-1",
+                        "catalog_is_model": False}
+        elif "as license_valid_days" in query and "from fm_models m" in query:
             if "where m.id = %s" in query:
                 if model["id"] == str(params[0]):
                     self.one = {
@@ -1219,7 +1223,8 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api, 
     }
     store["public_candidates"] = [no_fullbody, expired, eligible]
 
-    response = client.get("/v1/facemarket/public/models")
+    # 모델 리스트는 등록된 셀러와 모델만 본다(2026-09-23). 셀러 계정으로 부른다.
+    response = client.get("/v1/facemarket/public/models", headers=_auth(_make_token, "seller-1"))
 
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
