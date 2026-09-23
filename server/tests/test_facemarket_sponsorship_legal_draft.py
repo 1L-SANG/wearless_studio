@@ -52,24 +52,18 @@ def test_draft_versions_match_review_manifest_without_an_effective_date():
     assert manifest["overseas-transfer"]["version"] == enrollment.OVERSEAS_NOTICE_VERSION
 
 
-def test_migration_is_non_executable_draft_with_separate_evidence():
-    path = ROOT / "supabase/migration_drafts/20260922120000_facemarket_sponsorship_consents.sql.draft"
-    assert path.is_file()
-    assert not list((ROOT / "supabase/migrations").glob("*sponsorship*consents*"))
-    sql = path.read_text()
-    for consent_type in TYPES:
-        assert f"'{consent_type}'" in sql
-    for field in ("user_id", "occurred_at", "doc_version", "ip_address", "screen_id",
-                  "request_id", "recipient_id", "notice_snapshot", "document_sha256",
-                  "idempotency_key", "reason", "actor_user_id"):
-        assert field in sql
-    assert "enable row level security" in sql.lower()
-    assert "on delete cascade" not in sql.lower()
-    assert "'granted', 'withdrawn'" in sql
-    assert "sponsorship_profile_collection'" in sql
-    # 프로필 컬럼 추가와 기존 동의 백필은 화면 트랙의 소유예요.
-    assert "alter table public.fm_models" not in sql.lower()
-    assert "insert into" not in sql.lower()
+def test_live_documents_keep_their_effective_versions():
+    """개정안은 별도 슬러그로만 나가요. 시행본 슬러그가 초안으로 바뀌면 /terms·/privacy·/answers 에서
+    지금 효력이 있는 문서가 사라지고, 필수 동의 링크가 '적용하지 않는 초안'을 가리켜요."""
+    manifest = {d["slug"]: d for d in json.loads(
+        (ROOT / "public/legal/manifest.json").read_text()
+    )}
+    for slug, version in (("terms-model", "v1.1"), ("privacy-model", "v1.5"), ("answers", "v1.2")):
+        assert manifest[slug]["version"] == version, slug
+        assert manifest[slug]["effectiveDate"], slug
+        assert "status" not in manifest[slug], slug
+        assert "법률 검토 전 초안" not in (ROOT / f"public/legal/{slug}.md").read_text(), slug
+    assert not set(legal_versions.DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS) & {"terms-model", "privacy-model", "answers"}
 
 
 @pytest.fixture
@@ -94,7 +88,8 @@ def test_publisher_uses_conditions_and_preserves_draft_warning(publisher):
     table.write_text(table.read_text().replace("옷 수령 후 3일 이내", "옷 수령 후 4일 이내"))
     result = run()
     assert result.returncode == 0, result.stdout + result.stderr
-    for slug in ("sponsorship-consent", "terms-model", "answers", "seller-license-terms-sponsorship-draft"):
+    for slug in ("sponsorship-consent", "terms-model-sponsorship-draft", "answers-sponsorship-draft",
+                 "seller-license-terms-sponsorship-draft"):
         path = root / f"public/legal/{slug}.md"
         assert path.is_file(), slug
         text = path.read_text()

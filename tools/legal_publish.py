@@ -33,11 +33,13 @@ DOC_REVISIONS = {
 }
 DEFAULT_VERSION = "v1.1"
 # 협찬 개정안은 로컬 공개 검토본만 만들어요. 시행일이나 동의 게이트를 활성화하지 않아요.
-# 02·05의 현행 본문과 v2 델타를 보존하고 v3는 별도 파일로 내보내요.
+# 시행 중인 문서(terms-model v1.1·privacy-model v1.5·answers v1.2)는 그대로 두고, 개정안은 전부
+# 별도 슬러그(*-sponsorship-draft)로 내보내요. 시행본 슬러그를 초안으로 덮으면 /terms·/privacy·/answers 에서
+# 지금 효력이 있는 문서가 사라지고, 등록·지원 화면의 필수 동의 링크가 "적용하지 않는 초안"을 가리켜요.
 DRAFT_REVISIONS = {
-    "terms-model": "v1.2-draft",
-    "privacy-model": "v1.6-draft",
-    "answers": "v1.3-draft",
+    "terms-model-sponsorship-draft": "v1.2-draft",
+    "privacy-model-sponsorship-draft": "v1.6-draft",
+    "answers-sponsorship-draft": "v1.3-draft",
     "license-agreement-sponsorship-draft": "v3-draft",
     "seller-license-terms-sponsorship-draft": "v3-draft",
     "sponsorship-consent": "2026-09-sponsorship-v1-draft",
@@ -56,6 +58,9 @@ DOCS = [
     ("02_facemarket_likeness_license_agreement_v1.md", "license-agreement", "facemarket", "FaceMarket 초상 라이선스 표준계약서"),
     ("03_facemarket_privacy_policy_v1.md", "privacy-model", "facemarket", "FaceMarket 개인정보 처리방침"),
     ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
+    ("01_facemarket_terms_of_service_model_v1_2_draft.md", "terms-model-sponsorship-draft", "facemarket", "모델 이용약관 협찬 개정안"),
+    ("03_facemarket_privacy_policy_v1_6_draft.md", "privacy-model-sponsorship-draft", "facemarket", "개인정보 처리방침 협찬 개정안"),
+    ("06_facemarket_legal_faq_v1_3_draft.md", "answers-sponsorship-draft", "facemarket", "법적 FAQ 협찬 개정안"),
     ("02_facemarket_likeness_license_agreement_v3_draft.md", "license-agreement-sponsorship-draft", "facemarket", "초상 라이선스 협찬 개정안"),
     ("05_facemarket_seller_license_terms_v3_draft.md", "seller-license-terms-sponsorship-draft", "both", "셀러 협찬 요청 조건 개정안"),
     ("04_facemarket_biometric_consent_forms_v1.md", "sponsorship-consent", "facemarket", "의류 협찬 참여 동의 개정안"),

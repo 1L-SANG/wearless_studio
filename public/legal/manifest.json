@@ -35,11 +35,9 @@
     "slug": "terms-model",
     "app": "facemarket",
     "title": "FaceMarket 모델 이용약관",
-    "version": "v1.2-draft",
-    "effectiveDate": null,
-    "source": "01_facemarket_terms_of_service_model_v1.md",
-    "status": "draft",
-    "revisionDate": "2026-09-22"
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
+    "source": "01_facemarket_terms_of_service_model_v1.md"
   },
   {
     "slug": "license-agreement",
@@ -53,19 +51,45 @@
     "slug": "privacy-model",
     "app": "facemarket",
     "title": "FaceMarket 개인정보 처리방침",
-    "version": "v1.6-draft",
-    "effectiveDate": null,
-    "source": "03_facemarket_privacy_policy_v1.md",
-    "status": "draft",
-    "revisionDate": "2026-09-22"
+    "version": "v1.5",
+    "effectiveDate": "2026-09-18",
+    "source": "03_facemarket_privacy_policy_v1.md"
   },
   {
     "slug": "answers",
     "app": "facemarket",
     "title": "FaceMarket 법적 FAQ",
+    "version": "v1.2",
+    "effectiveDate": "2026-09-18",
+    "source": "06_facemarket_legal_faq_v1.md"
+  },
+  {
+    "slug": "terms-model-sponsorship-draft",
+    "app": "facemarket",
+    "title": "모델 이용약관 협찬 개정안",
+    "version": "v1.2-draft",
+    "effectiveDate": null,
+    "source": "01_facemarket_terms_of_service_model_v1_2_draft.md",
+    "status": "draft",
+    "revisionDate": "2026-09-22"
+  },
+  {
+    "slug": "privacy-model-sponsorship-draft",
+    "app": "facemarket",
+    "title": "개인정보 처리방침 협찬 개정안",
+    "version": "v1.6-draft",
+    "effectiveDate": null,
+    "source": "03_facemarket_privacy_policy_v1_6_draft.md",
+    "status": "draft",
+    "revisionDate": "2026-09-22"
+  },
+  {
+    "slug": "answers-sponsorship-draft",
+    "app": "facemarket",
+    "title": "법적 FAQ 협찬 개정안",
     "version": "v1.3-draft",
     "effectiveDate": null,
-    "source": "06_facemarket_legal_faq_v1.md",
+    "source": "06_facemarket_legal_faq_v1_3_draft.md",
     "status": "draft",
     "revisionDate": "2026-09-22"
   },

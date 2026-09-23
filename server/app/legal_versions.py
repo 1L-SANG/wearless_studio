@@ -36,10 +36,11 @@ DRAFT_SPONSORSHIP_CONSENTS = {
         "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
     },
 }
+# 시행본 슬러그(terms-model·privacy-model·answers)는 건드리지 않고 개정안은 별도 슬러그로만 발행해요.
 DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS = {
-    "terms-model": "v1.2-draft",
-    "privacy-model": "v1.6-draft",
-    "answers": "v1.3-draft",
+    "terms-model-sponsorship-draft": "v1.2-draft",
+    "privacy-model-sponsorship-draft": "v1.6-draft",
+    "answers-sponsorship-draft": "v1.3-draft",
     "license-agreement-sponsorship-draft": "v3-draft",
     "seller-license-terms-sponsorship-draft": "v3-draft",
     "sponsorship-consent": DRAFT_SPONSORSHIP_CONSENT_VERSION,
