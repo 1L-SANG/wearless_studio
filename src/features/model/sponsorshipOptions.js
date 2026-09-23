@@ -1,7 +1,6 @@
 export const TOP_SIZES = Object.freeze(['XS', 'S', 'M', 'L', 'XL', 'FREE']);
 export const BOTTOM_WAIST_SIZES = Object.freeze(Array.from({ length: 11 }, (_, i) => 24 + i));
 export const SPONSORSHIP_CHANGED = 'facemarket:sponsorship-changed';
-export const SPONSORSHIP_NOTICE = '협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.';
 
 export function normalizeInstagramHandle(value) {
   return String(value ?? '').trim().replace(/^@/, '');
