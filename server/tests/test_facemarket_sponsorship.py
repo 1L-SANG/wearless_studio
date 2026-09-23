@@ -379,7 +379,7 @@ def test_sponsorship_records_separate_versioned_grants_and_withdrawals(sponsorsh
     for p in grants:
         assert p[0] == OWNER and p[1] == MODEL_ID and p[2] == OWNER
         assert p[4] == 'granted'
-        assert p[5] == '2026-09-sponsorship-v1-draft'
+        assert p[5] == '2026-09-sponsorship-v1'
         assert len(p[6]) == 64
         assert 'model.name' not in p[9]
     assert client.patch(url, json={'sponsorshipEnabled': False}).status_code == 200

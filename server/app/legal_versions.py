@@ -15,35 +15,36 @@ PREVIOUS_SELLER_TERMS_VERSION = "v1.1"
 SELLER_TERMS_EFFECTIVE_DATE = date(2026, 9, 29)
 _SEOUL = ZoneInfo("Asia/Seoul")
 
-# 법률 검토용 초안이에요. required_versions()나 등록 게이트에 연결하지 않아요.
-# 본문·시행일·동의 화면을 함께 확정한 뒤 화면 트랙에서 활성 버전으로 승격해요.
-DRAFT_SPONSORSHIP_CONSENT_VERSION = "2026-09-sponsorship-v1-draft"
-DRAFT_SPONSORSHIP_CONSENTS = {
+# 선택 의류 협찬 동의(04 동의서 E-2). 2026-09-23 시행. required_versions()나 등록 게이트에 연결하지 않아요
+# (선택 동의라 등록 필수가 아니에요). E-2d 배송 동의 2종은 요청 기능이 열릴 때 쓰기 시작해요.
+SPONSORSHIP_CONSENT_VERSION = "2026-09-sponsorship-v1"
+SPONSORSHIP_CONSENTS = {
     "sponsorship_participation": {
         "section": "E-2a", "required_for_enrollment": False,
-        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+        "version": SPONSORSHIP_CONSENT_VERSION,
     },
     "sponsorship_profile_collection": {
         "section": "E-2b", "required_for_enrollment": False,
-        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+        "version": SPONSORSHIP_CONSENT_VERSION,
     },
     "sponsorship_shipping_collection": {
         "section": "E-2d-1", "required_for_enrollment": False,
-        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+        "version": SPONSORSHIP_CONSENT_VERSION,
     },
     "sponsorship_shipping_disclosure": {
         "section": "E-2d-2", "required_for_enrollment": False,
-        "version": DRAFT_SPONSORSHIP_CONSENT_VERSION,
+        "version": SPONSORSHIP_CONSENT_VERSION,
     },
 }
-# 시행본 슬러그(terms-model·privacy-model·answers)는 건드리지 않고 개정안은 별도 슬러그로만 발행해요.
+# 협찬 개정 시행본(2026-09-23). tests/test_facemarket_sponsorship_legal_draft.py 가 manifest 와 대조해요.
+SPONSORSHIP_DOCUMENT_VERSIONS = {
+    "terms-model": "v1.2", "privacy-model": "v1.6", "answers": "v1.3",
+    "sponsorship-consent": SPONSORSHIP_CONSENT_VERSION,
+}
+# 요청·배송 기능용 델타는 아직 초안(요청 기능 개시 때 승격).
 DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS = {
-    "terms-model-sponsorship-draft": "v1.2-draft",
-    "privacy-model-sponsorship-draft": "v1.6-draft",
-    "answers-sponsorship-draft": "v1.3-draft",
     "license-agreement-sponsorship-draft": "v3-draft",
     "seller-license-terms-sponsorship-draft": "v3-draft",
-    "sponsorship-consent": DRAFT_SPONSORSHIP_CONSENT_VERSION,
 }
 
 

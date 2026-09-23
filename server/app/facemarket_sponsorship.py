@@ -103,7 +103,7 @@ async def record_sponsorship_consents(cur, request, user_id, model_id, *, enable
     import ipaddress
     import json
     import uuid
-    from .legal_versions import DRAFT_SPONSORSHIP_CONSENTS
+    from .legal_versions import SPONSORSHIP_CONSENTS
 
     if enabled == previous_enabled and profile_consent is not True:
         return
@@ -125,6 +125,6 @@ async def record_sponsorship_consents(cur, request, user_id, model_id, *, enable
                 document_sha256, ip_address, screen_id, notice_snapshot, idempotency_key, reason)
                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'model_toggle')""",
             (user_id, model_id, user_id, consent_type, 'granted' if enabled else 'withdrawn',
-             DRAFT_SPONSORSHIP_CONSENTS[consent_type]['version'],
+             SPONSORSHIP_CONSENTS[consent_type]['version'],
              hashlib.sha256(snapshot.encode()).hexdigest(), address, screen, snapshot, event_key),
         )
