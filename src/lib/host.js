@@ -120,28 +120,21 @@ export function redirectToOwnDocumentHost(expected) {
 
 const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
 
-/* facemarket 도메인에서 열리는 경로.
-     · 랜딩 — '/' 와 상단바 세 항목(/models·/status·/payout), 상단바에서 내려왔지만 살아
-       있는 두 화면(/register·/model-info), 옛 주소 /license·/licensing(→ /status).
-     · 등록·라이선스 — /model/*
-     · 공유 경로 — 결제·크레딧·공개 검증.
-   ⚠️ 랜딩 라우트를 추가하면 **여기에도 같이 넣어라.** 안 넣으면 그 주소는 곧바로
-   /model/register 로 튕겨 상단바가 죽는다 — 화면은 잘 만들어 놓고 링크만 안 열린다. */
-const FACEMARKET_ROUTES = [
-  '/apply', '/models', '/status', '/license', '/payout', '/register', '/photo-guide', '/model-info', '/licensing',
-  '/terms', '/privacy', '/biometric-consent', '/license-agreement', '/seller-terms', '/answers',
-  '/model', '/pricing', '/credits/history', '/payments', '/verify',
-  /* 카카오 OIDC 로그인 착지점(/auth/kakao/callback). 이게 빠지면 카카오에서 돌아온 사람이
-     라우터에 닿기도 전에 /model/register 로 튕겨 **인가코드가 URL 째 사라진다** —
-     화면은 멀쩡하고 '카카오 로그인만 안 됨'으로만 보이는 종류의 사고다. */
-  '/auth',
+/* facemarket 도메인에서 열면 모델 등록으로 돌려보내는 셀러(ai) 전용 주소.
+   셀러 앱에만 있는 화면(상품 입력·에디터·보관함·정기결제와 셀러 법무 링크)이다.
+   그 밖의 모르는 주소는 막지 않고 라우터로 보낸다. 라우터에 없으면 404 화면이 뜬다
+   (2026-09-23 이전에는 허용 목록 밖을 전부 /model/register 로 보냈다. 그래서 랜딩
+   라우트를 추가하고 목록에 안 넣으면 링크가 말없이 등록 화면으로 튕기는 사고가 났다). */
+const WEARLESS_ONLY_ROUTES = [
+  '/create', '/editor', '/library', '/subscription', '/price', '/refund', '/model-license-terms',
 ];
 
 export function domainRouteRedirect(pathname, isFacemarket = IS_FACEMARKET) {
   if (isFacemarket) {
-    const allowed = pathname === '/'
-      || FACEMARKET_ROUTES.some((route) => matchesRoute(pathname, route));
-    return allowed ? null : '/model/register';
+    return WEARLESS_ONLY_ROUTES.some((route) => matchesRoute(pathname, route)) ? '/model/register' : null;
   }
-  return matchesRoute(pathname, '/model') ? '/create/input' : null;
+  // 셀러 도메인에서 /model/* 을 열면 셀러 라우터에 그 경로가 없어 404 화면이 뜬다(2026-09-23 이전에는
+  // /create/input 으로 말없이 보냈다). FaceMarket 쪽과 같은 방식이다. 셀러 번들에는 등록 화면이 없으니
+  // 도메인 경계(#214)는 그대로다.
+  return null;
 }

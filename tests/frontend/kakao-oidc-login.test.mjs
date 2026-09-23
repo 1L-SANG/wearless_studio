@@ -185,8 +185,8 @@ test('콜백 경로 상수는 한 곳에서만 나온다', () => {
 test('세 앱 모두 콜백 라우트를 인증 가드 밖·catch-all 앞에 둔다', () => {
   const ROUTE = '<Route path="auth/kakao/callback" element={<KakaoCallback />} />';
   for (const [app, catchAll] of [
-    ['src/apps/seller/App.jsx', '<Route path="*" element={<Navigate to="/create/input" replace />} />'],
-    ['src/apps/facemarket/App.jsx', '<Route path="*" element={<Navigate to="/" replace />} />'],
+    ['src/apps/seller/App.jsx', '<Route path="*" element={<NotFound brand="WEARLESS" />} />'],
+    ['src/apps/facemarket/App.jsx', '<Route path="*" element={<NotFound brand="FACEMARKET"'],
     ['src/apps/admin/App.jsx', '<Route path="*" element={<Navigate to="/" replace />} />'],
   ]) {
     const src = read(app);
