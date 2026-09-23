@@ -57,6 +57,7 @@ import {
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
 import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
+import { NotFound } from '@/components/NotFound.jsx';
 import {
   draftSlot,
   formatDraftRelativeTime,
@@ -674,10 +675,15 @@ export default function App() {
         {/* 카카오 OIDC 로그인 착지점 — **RequireAuth 밖·ChromeLayout 밖**이다.
             여기 도착하는 사람은 정의상 아직 로그인 전이라 가드 안에 두면 로그인 벽으로
             튕기면서 인가코드가 소비되지 않는다. 크롬(TopNav·크레딧 배지)도 전환 화면에는
-            잡음이다. catch-all 보다 **앞**에 둬야 한다 — 뒤면 /create/input 으로 replace
-            되면서 code 가 통째로 날아간다(경위: features/auth/KakaoCallback.jsx). */}
+            잡음이다. 예전 catch-all 은 /create/input 으로 replace 하면서 code 를 통째로
+            날렸다(경위: features/auth/KakaoCallback.jsx). 지금 catch-all 은 404 화면이다. */}
         <Route path="auth/kakao/callback" element={<KakaoCallback />} />
-        <Route path="*" element={<Navigate to="/create/input" replace />} />
+        {/* 없는 주소는 404 화면으로. 예전에는 /create/input 으로 말없이 보내서 사용자가
+            왜 입력 화면에 와 있는지 몰랐다. 상단바를 입히려고 크롬 레이아웃으로 감싸고,
+            카카오 콜백 같은 공개 경로보다 뒤에 둔다. */}
+        <Route element={<ChromeLayout />}>
+          <Route path="*" element={<NotFound brand="WEARLESS" />} />
+        </Route>
       </Routes>
     </>
   );

@@ -36,6 +36,7 @@ import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublicati
 import { RequireAuth } from '../guards.jsx';
 import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
+import { NotFound } from '@/components/NotFound.jsx';
 import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 
@@ -94,8 +95,7 @@ export default function AppFacemarket() {
       {/* 카카오 OIDC 로그인 착지점 — 공개 구역(RequireAuth·FacemarketModelLayout 밖)이다.
           여기 도착하는 사람은 정의상 아직 로그인 전이다. RequireAuth 안에 두면
           FacemarketLoginPrompt 가 떠서 openLogin 이 다시 돌고 로그인 모달이 열린다
-          (무한 루프에 가깝다). host.js 의 FACEMARKET_ROUTES 에 '/auth' 가 함께 있어야
-          이 라우트까지 도달한다 — 없으면 라우터 전에 /model/register 로 튕긴다. */}
+          (무한 루프에 가깝다). */}
       <Route path="auth/kakao/callback" element={<KakaoCallback />} />
 
       {/* /model/* 과 결제·크레딧은 랜딩 상단바를 입는다. 이 도메인에 온 사람은 얼굴을
@@ -112,6 +112,9 @@ export default function AppFacemarket() {
           <Route path="payments/success" element={<PaymentSuccess />} />
           <Route path="payments/fail" element={<PaymentFail />} />
         </Route>
+        {/* 없는 주소는 404 화면으로. 랜딩 상단바와 푸터를 입히려고 이 레이아웃 안에 두되,
+            로그인 없이 보여야 하므로 RequireAuth 밖이다. */}
+        <Route path="*" element={<NotFound brand="FACEMARKET" secondary={{ to: '/models', label: '모델 리스트 보기' }} />} />
       </Route>
 
       {/* 얼굴 라이선스 공개 검증(step02 QR 대상) — **RequireAuth 밖**. 심사위원·구매자가
@@ -122,7 +125,6 @@ export default function AppFacemarket() {
       {/* 배포본 공개 검증(step07) — C2PA 매니페스트의 verifyUrl 종착지. 위와 같은 이유로
           RequireAuth 밖·앱 크롬 밖(PublicVerifyPublication 주석). */}
       <Route path="verify/p/:publicationId" element={<PublicVerifyPublication />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

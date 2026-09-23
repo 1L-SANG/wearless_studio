@@ -5,8 +5,16 @@ import * as host from '../../src/lib/host.js';
 
 test('FaceMarket redirects Wearless-only routes to model registration', () => {
   assert.equal(typeof host.domainRouteRedirect, 'function');
-  for (const pathname of ['/create/input', '/library', '/editor/project-1', '/unknown']) {
+  for (const pathname of ['/create/input', '/library', '/editor/project-1', '/subscription', '/price']) {
     assert.equal(host.domainRouteRedirect(pathname, true), '/model/register');
+  }
+});
+
+/* 모르는 주소는 등록 화면으로 튕기지 않고 라우터까지 간다. 라우터의 catch-all 이 404 화면을 띄운다. */
+test('모르는 주소는 두 도메인 모두 라우터의 404 화면까지 간다', () => {
+  for (const pathname of ['/unknown', '/models-typo', '/pricingx', '/created']) {
+    assert.equal(host.domainRouteRedirect(pathname, true), null, pathname);
+    assert.equal(host.domainRouteRedirect(pathname, false), null, pathname);
   }
 });
 

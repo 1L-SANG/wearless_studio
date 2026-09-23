@@ -1,0 +1,85 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: min(72vh, 44rem);
+  padding: clamp(2.5rem, 7vh, 4.5rem) 20px;
+  text-align: center;
+}
+
+.art {
+  display: block;
+  width: min(100%, 15rem);
+  height: auto;
+  margin-bottom: 1.5rem;
+  overflow: visible;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 600 0.7rem/1 var(--font-mono);
+  letter-spacing: 0.16em;
+}
+.title {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 700 clamp(1.4rem, 4.6vw, 1.75rem)/1.36 var(--font-body);
+  letter-spacing: -0.022em;
+  word-break: keep-all;
+  text-wrap: balance;
+}
+.desc {
+  margin: 0.75rem 0 0;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.92rem/1.7 var(--font-body);
+  word-break: keep-all;
+  text-wrap: pretty;
+}
+
+.actions {
+  display: grid;
+  justify-items: center;
+  gap: 0.9rem;
+  width: min(100%, 19rem);
+  margin-top: 1.75rem;
+}
+.secondary {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.85rem/1.4 var(--font-body);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.secondary:hover { color: var(--fm-ink, var(--fg-1)); }
+
+/* ── 태그 그림 ── */
+.stroke { fill: none; stroke: var(--fm-ink, var(--fg-1)); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.thin { stroke-width: 1.5; }
+.care { stroke-width: 1.3; }
+.dashed { stroke-dasharray: 3 4; stroke-opacity: 0.5; }
+.paper { fill: var(--bg-1); }
+.hole { fill: var(--bg-2); }
+.inkFill { fill: var(--fm-ink, var(--fg-1)); }
+.mutedFill { fill: var(--fm-muted, var(--fg-2)); }
+.accentFill { fill: var(--fm-accent, var(--link)); }
+.mono { font-family: var(--font-mono); font-weight: 600; }
+.display { font-family: var(--font-display); }
+
+/* 태그가 실에 매달려 천천히 흔들린다. 기준점은 실 끝(140, 4). */
+.sway {
+  transform-box: view-box;
+  transform-origin: 140px 4px;
+  animation: sway 4.4s ease-in-out infinite;
+}
+@keyframes sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(3deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sway { animation: none; }
+}
