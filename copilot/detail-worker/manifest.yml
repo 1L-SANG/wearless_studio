@@ -73,7 +73,7 @@ variables:
   FACE_IDENTITY_ENABLED: "true"
   # 서버리스 엔드포인트 id — api 와 **같은 값**이어야 한다. 갈리면 워커가 다른 곳으로 컷을
   # 보낸다(각도 FACE_ANGLE_ENDPOINT_ID 와 같은 규칙). 넣으면 파드 대신 이쪽으로 간다.
-  FACE_IDENTITY_ENDPOINT_ID: "yicylasmsqauee"
+  FACE_IDENTITY_ENDPOINT_ID: "f5nmg1fycih4gk"
   # 렌더 URL 은 DB(fm_face_render_pod)의 현재 파드에서 유도한다 — 워커는 잡마다 그 값을 받는다
   # (FaceIdentitySpec.backend_url). 여기 박아 두면 파드를 갈아탄 뒤 죽은 주소로 렌더를 보낸다.
   # (엔드포인트 id 가 있으면 이 파드 경로는 안 쓴다.)
@@ -84,7 +84,7 @@ variables:
   # 2026-09-21 켠다(api 와 같은 근거 — 각도 사진이 있는 모델만 걸린다).
   FACE_ANGLE_SWAP_ENABLED: "true"
   # 서버리스 엔드포인트 id — api 와 **같은 값**이어야 한다. 갈리면 워커가 다른 곳으로 컷을 보낸다.
-  FACE_ANGLE_ENDPOINT_ID: "2nss3tsrf7ft87"
+  FACE_ANGLE_ENDPOINT_ID: "jiw5v9ow8462al"
   GENEXAMPLE_BG_ENABLED: "true"
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"
