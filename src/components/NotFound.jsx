@@ -2,6 +2,7 @@
    문구는 두 사이트가 같고(2026-09-23 오너 결정), 태그에 찍히는 브랜드 이름과 버튼 아래
    보조 링크만 다르다. 색은 --fm-* 토큰을 따른다. FaceMarket 에서는 .fm-theme 값이,
    Wearless 에서는 facemarketTheme.css :root 의 앱 기본값이 들어온다. */
+import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import s from './NotFound.module.css';
 
@@ -40,6 +41,12 @@ export function NotFound({ brand, secondary }) {
   // 사이트 안에서 넘어왔을 때만 뒤로 가기를 준다. 주소를 직접 쳐서 들어왔으면 뒤로 가기가
   // 사이트 밖으로 나가 버린다. react-router 가 history.state.idx 에 사이트 안 이동 횟수를 적는다.
   const canGoBack = (globalThis.window?.history?.state?.idx ?? 0) > 0;
+  // 탭 제목도 404 라고 말한다 — 탭 목록·검색엔진에서 정상 화면과 구분되게. 떠나면 되돌린다.
+  useEffect(() => {
+    const previous = document.title;
+    document.title = '페이지를 찾을 수 없어요';
+    return () => { document.title = previous; };
+  }, []);
   return (
     <section className={s.page} aria-labelledby="not-found-title">
       <HangTag brand={brand} />

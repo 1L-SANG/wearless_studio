@@ -557,9 +557,9 @@ function RootRedirect() {
 
 /* 모델 섹션(/model/*)은 이 앱에 없다. facemarket 도메인 전용이고, 그쪽 진입점
    (src/AppFacemarket.jsx)이 src/routes/modelSectionRoutes.jsx 를 문다.
-   ai 에서 /model/* 은 domainRouteRedirect 가 라우터보다 먼저 /create/input 으로 돌리므로
-   (host.js, #214) 여기 등록해 두던 서브트리는 도달 불가능한 죽은 가지였다 — 번들만
-   무겁게 했다. 되살리지 마라. */
+   ai 에서 /model/* 은 이 라우터에 경로가 없어 404 화면으로 떨어진다(2026-09-23 이전에는
+   domainRouteRedirect 가 라우터보다 먼저 /create/input 으로 돌렸다, host.js·#214). 여기
+   등록해 두던 서브트리는 도달 불가능한 죽은 가지였다 — 번들만 무겁게 했다. 되살리지 마라. */
 
 export default function App() {
   const { pathname } = useLocation();

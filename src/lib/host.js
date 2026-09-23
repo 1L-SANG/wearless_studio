@@ -133,5 +133,8 @@ export function domainRouteRedirect(pathname, isFacemarket = IS_FACEMARKET) {
   if (isFacemarket) {
     return WEARLESS_ONLY_ROUTES.some((route) => matchesRoute(pathname, route)) ? '/model/register' : null;
   }
-  return matchesRoute(pathname, '/model') ? '/create/input' : null;
+  // 셀러 도메인에서 /model/* 을 열면 셀러 라우터에 그 경로가 없어 404 화면이 뜬다(2026-09-23 이전에는
+  // /create/input 으로 말없이 보냈다). FaceMarket 쪽과 같은 방식이다. 셀러 번들에는 등록 화면이 없으니
+  // 도메인 경계(#214)는 그대로다.
+  return null;
 }

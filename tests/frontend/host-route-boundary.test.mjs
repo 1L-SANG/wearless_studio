@@ -18,9 +18,11 @@ test('모르는 주소는 두 도메인 모두 라우터의 404 화면까지 간
   }
 });
 
-test('Wearless redirects FaceMarket-only routes to product input', () => {
+/* 셀러 도메인의 /model/* 은 말없이 상품 입력으로 보내지 않고 셀러 라우터의 404 화면까지 간다
+   (셀러 번들에 등록 화면이 없으니 도메인 경계는 그대로다). */
+test('Wearless lets FaceMarket-only routes fall through to the 404 screen', () => {
   for (const pathname of ['/model', '/model/register', '/model/license']) {
-    assert.equal(host.domainRouteRedirect(pathname, false), '/create/input');
+    assert.equal(host.domainRouteRedirect(pathname, false), null, pathname);
   }
 });
 
