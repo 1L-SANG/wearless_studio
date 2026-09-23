@@ -409,6 +409,26 @@ export function adminGrantCredits(userId, body, idempotencyKey) {
   });
 }
 
+/* 계좌이체 신청 확인 — 지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md.
+   status: requested(기본)|paid|rejected|canceled|expired|all. 확인은 신청 ID 로 멱등이라
+   응답을 못 받았으면 같은 신청에 그대로 다시 눌러도 된다. */
+export function adminListBankTransfers({ status = 'requested', limit = 100 } = {}) {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  return http(`/v1/facemarket/admin/bank-transfers?${params.toString()}`);
+}
+
+export function adminConfirmBankTransfer(requestId, { paidAt, adminNote }) {
+  return http(`/v1/facemarket/admin/bank-transfers/${encodeURIComponent(requestId)}/confirm`, {
+    method: 'POST', body: { paidAt, adminNote: adminNote || null },
+  });
+}
+
+export function adminRejectBankTransfer(requestId, reason) {
+  return http(`/v1/facemarket/admin/bank-transfers/${encodeURIComponent(requestId)}/reject`, {
+    method: 'POST', body: { reason },
+  });
+}
+
 export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (targetType) params.set('targetType', targetType);

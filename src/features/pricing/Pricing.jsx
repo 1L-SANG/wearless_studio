@@ -14,18 +14,21 @@
          로그인 뒤 이 화면으로 돌려보낸다(openLogin('/pricing')).
      결제 자체를 공개로 푼 게 아니다. 공개된 건 '얼마인가' 뿐이다.
    ============================================================= */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
-import { SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED, TOSS_BILLING_CLIENT_KEY,
-  TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
+import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
+  TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
+import { BankTransferModal } from './BankTransferModal.jsx';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
+// '9/25' 꼴 — ko-KR 은 '9. 25.' 로 찍혀 문장 안에서 어색하다.
+const seoulDay = (iso) => new Date(iso).toLocaleDateString('en-US', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' });
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
 // 충전과 구독은 계약 MID 가 달라 클라이언트 키도 다르다 — lib/tossKeys.js 참고.
 // 하나로 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로 깨진다.
@@ -38,12 +41,16 @@ const PLAN_DETAILS = {
   seller: {
     baseCredits: 1400,
     bonusNote: '200 크레딧 추가 증정',
-    features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능', '충전할 때마다 크레딧 5% 보너스'],
+    features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능'],
+    // 충전 보너스는 아직 지급 코드가 없다. 토스 경로에서는 충전 탭이 닫혀 있어 약속이 깨질 일이
+    // 없지만, 계좌이체 모드는 충전을 실제로 팔므로 그 동안은 이 줄을 숨긴다(2026-09-23 리뷰 368F-6).
+    topupBonus: '충전할 때마다 크레딧 5% 보너스',
   },
   pro: {
     baseCredits: 2400,
     bonusNote: '400 크레딧 추가 증정',
-    features: ['Seller의 모든 기능 제공', '마네킹컷 2회 무료 수정 가능', '모든 AI 모델 무료 제공', '충전할 때마다 크레딧 10% 보너스'],
+    features: ['Seller의 모든 기능 제공', '마네킹컷 2회 무료 수정 가능', '모든 AI 모델 무료 제공'],
+    topupBonus: '충전할 때마다 크레딧 10% 보너스',
   },
 };
 
@@ -52,8 +59,37 @@ export function Pricing() {
   const [buying, setBuying] = useState(null);     // 결제창 여는 중인 planCode
   const [payError, setPayError] = useState('');
   const account = useAppStore((a) => a.account);
+  const loadAccount = useAppStore((a) => a.loadAccount);
   const currentPlan = (account?.plan || '').toLowerCase();
   const { session, openLogin } = useAuth();
+  const qc = useQueryClient();
+  // 계좌이체(무통장입금) — PG 심사 전 결제 경로(lib/tossKeys.js BANK_TRANSFER_ENABLED).
+  // 켜져 있으면 결제창 대신 신청 창을 연다. 계좌 정보와 열린 신청은 서버가 준다.
+  const bankTransfer = BANK_TRANSFER_ENABLED;
+  const [transferPlan, setTransferPlan] = useState(null);   // 신청 창을 연 상품
+  const { data: bankInfo } = useQuery({
+    queryKey: ['bankTransferInfo'],
+    queryFn: () => api.getBankTransferInfo(),
+    enabled: bankTransfer && Boolean(session),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: openRequests } = useQuery({
+    queryKey: ['bankTransferOpen'],
+    queryFn: () => api.getOpenBankTransferRequests(),
+    enabled: bankTransfer && Boolean(session),
+  });
+  const invalidateOpen = () => qc.invalidateQueries({ queryKey: ['bankTransferOpen'] });
+  const cancelTransfer = useMutation({
+    mutationFn: (id) => api.cancelBankTransferRequest(id),
+    onSuccess: invalidateOpen,
+    onError: (e) => setPayError(e?.message || '신청을 취소하지 못했어요.'),
+  });
+  // 관리자가 지급한 뒤 열어 둔 화면이 새 등급을 보게 진입 때 계정을 다시 읽는다.
+  useEffect(() => {
+    if (bankTransfer && session) loadAccount?.({ force: true })?.catch?.(() => {});
+  }, [bankTransfer, session, loadAccount]);
+  const openByKind = (kind) => (openRequests?.open || []).find((r) => r.kind === kind);
+  const bankReady = bankTransfer && bankInfo?.enabled === true;
   // 비로그인 방문자(랜딩에서 넘어온 사람)는 가격까지만 본다. 복귀 목표를 이 화면으로 심어
   // 로그인 뒤 요금제로 돌아오게 한다 — 기본값(/create/input)으로 두면 결제하러 로그인한
   // 사람이 입력 화면에 떨어져 요금제를 다시 찾아 들어와야 한다.
@@ -125,8 +161,9 @@ export function Pricing() {
   });
 
   // 충전 탭이 없으면 tab 이 'topup' 이 될 길은 없지만, 상태가 남아 있어도
-  // 빈 화면을 그리지 않게 구독으로 되돌린다.
-  const activeTab = TOPUP_ENABLED ? tab : 'subscription';
+  // 빈 화면을 그리지 않게 구독으로 되돌린다. 계좌이체가 켜져 있으면 충전도 판다.
+  const topupVisible = TOPUP_ENABLED || bankTransfer;
+  const activeTab = topupVisible ? tab : 'subscription';
   const shown = plans.filter((p) => p.kind === activeTab);
   const recurring = activeTab === 'subscription';
 
@@ -139,7 +176,7 @@ export function Pricing() {
       {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
           탭 자체를 숨긴다(lib/tossKeys.js TOPUP_ENABLED). 누르면 실패할 버튼을
           남겨 두면 사용자가 결제 실패를 겪는다. 탭이 하나뿐이면 탭 줄도 안 그린다. */}
-      {TOPUP_ENABLED && (
+      {topupVisible && (
         <div className={s.tabs} role="group" aria-label="요금제 유형">
           <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
           <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
@@ -147,15 +184,46 @@ export function Pricing() {
       )}
 
       {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
+      {bankTransfer && (
+        <div className={s.bankNotice}>
+          {bankInfo && bankInfo.enabled === false ? (
+            // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼 8개만 두면 막다른 길이라 이유를 적는다.
+            <>지금은 계좌이체 신청을 <strong>잠시 받지 않아요</strong>. 결제가 필요하면 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 알려 주세요.</>
+          ) : (
+            <>지금은 결제 심사 중이라 <strong>계좌이체</strong>로 신청을 받아요. 입금이 확인되면 크레딧을 지급해 드리고,
+            구독 상품은 <strong>1개월 이용권</strong>으로 드려요(자동 갱신 없음).</>
+          )}
+        </div>
+      )}
+      {(openRequests?.open || []).map((r) => (
+        <div key={r.id} className={s.openRequest} role="status">
+          <span>
+            <strong>입금 확인 중</strong> · {r.planCode}{r.kind === 'subscription' ? ' 1개월' : ' 충전'} · {won(r.amount)}
+            {' '}· 입금자 {r.payerName} · {seoulDay(r.expiresAt)}까지 입금
+          </span>
+          <button type="button" className={s.openRequestCancel} onClick={() => cancelTransfer.mutate(r.id)}
+            disabled={cancelTransfer.isPending}>신청 취소</button>
+          {/* 신청 창을 닫은 뒤 은행 앱을 열면 계좌를 다시 볼 곳이 여기뿐이다. */}
+          {bankInfo?.enabled && (
+            <span className={s.openRequestAccount}>
+              입금 계좌 {bankInfo.bank} {bankInfo.account} (예금주 {bankInfo.holder}) · 입금액 {won(r.amount)}
+            </span>
+          )}
+        </div>
+      ))}
       <p className={s.tabDesc}>
         {recurring
-          ? '월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.'
+          ? (bankTransfer
+            ? '입금이 확인되면 바로 이용을 시작하며, 이용기간은 1개월입니다. 자동 갱신은 없고, 계속 쓰려면 종료 전에 같은 요금제로 연장을 신청하면 됩니다. 연장을 신청하면 입금 확인까지(신청 후 3일 안) 이용권이 유지됩니다. 표시 금액은 부가가치세를 포함합니다.'
+            : '월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.')
           : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
       </p>
 
       {recurring && (
         <div className={s.billingNotice} aria-label="구독 크레딧 및 환불 안내">
-          <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>
+          {bankTransfer
+            ? <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 종료일 전에 같은 요금제로 연장을 신청하면 입금 확인까지(신청 후 3일) 이용권과 크레딧이 유지되고, 연장하지 않으면 종료일에 이월분을 포함해 모두 소멸합니다.</p>
+            : <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>}
           <p>결제일부터 7일 이내에 해당 결제로 지급된 크레딧을 사용하지 않았다면 전액 환불을 신청할 수 있습니다. 사용한 부분의 청약철회는 제한될 수 있지만, 미제공 부분의 법령상 환불 권리는 제한하지 않습니다. 환불 및 중도해지는 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 신청해 주세요. <a href={WEARLESS_LEGAL_URLS.refund}>환불정책 보기</a></p>
         </div>
       )}
@@ -203,7 +271,7 @@ export function Pricing() {
                       </div>
                     </div>
                     {details && <ul className={s.features}>
-                      {details.features.map((feature) => <li key={feature}>
+                      {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
                         <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
                         <span>{feature}</span>
                       </li>)}
@@ -225,6 +293,18 @@ export function Pricing() {
                       {!session ? (
                         <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} onClick={requireLogin}>
                           로그인하고 시작하기
+                        </button>
+                      ) : bankTransfer ? (
+                        // 계좌이체: 토스 키를 보지 않는다. 같은 종류의 열린 신청이 있으면 잠근다.
+                        // 현재 플랜과 같으면 1개월 연장 신청이다.
+                        <button
+                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                          disabled={!bankReady || Boolean(openByKind('subscription'))}
+                          title={openByKind('subscription') ? '확인 중인 신청이 있어요'
+                            : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
+                          onClick={() => setTransferPlan(p)}
+                        >
+                          {isCurrent ? '1개월 연장 신청' : '계좌이체로 시작하기'}
                         </button>
                       ) : (
                         <>
@@ -254,15 +334,27 @@ export function Pricing() {
                     </div>
                   ) : (
                     <div className={!session ? s.buttonRing : undefined}>
-                      <button
-                        type="button" className={s.purchaseButton}
-                        disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
-                        title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
-                        onClick={() => buyTopup(p.code)}
-                      >
-                        {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
-                        {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
-                      </button>
+                      {session && bankTransfer ? (
+                        <button
+                          type="button" className={s.purchaseButton}
+                          disabled={!bankReady || Boolean(openByKind('topup'))}
+                          title={openByKind('topup') ? '확인 중인 신청이 있어요'
+                            : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
+                          onClick={() => setTransferPlan(p)}
+                        >
+                          계좌이체로 충전하기
+                        </button>
+                      ) : (
+                        <button
+                          type="button" className={s.purchaseButton}
+                          disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
+                          title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                          onClick={() => buyTopup(p.code)}
+                        >
+                          {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
+                          {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
+                        </button>
+                      )}
                     </div>
                   )}
                   <p className={s.purchaseConsent}>
@@ -273,6 +365,15 @@ export function Pricing() {
             );
           })}
         </div>
+      )}
+
+      {transferPlan && (
+        <BankTransferModal
+          plan={transferPlan} info={bankInfo} defaultEmail={session?.user?.email}
+          extend={transferPlan.kind === 'subscription' && transferPlan.code === currentPlan}
+          onClose={() => setTransferPlan(null)}
+          onSubmitted={invalidateOpen}
+        />
       )}
     </div>
   );

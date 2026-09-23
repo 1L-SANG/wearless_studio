@@ -53,9 +53,12 @@ test('구독 관리는 결제수단 종류를 구분해 표시한다', () => {
    서버 라우트는 살려 두고 화면만 닫는다 — 계약이 생기면 플래그만 켜면 된다. */
 test('충전 탭은 계약 전까지 닫아 둔다', () => {
   assert.match(KEYS, /TOPUP_ENABLED = false/);
-  assert.match(PRICING, /\{TOPUP_ENABLED && \(/);
+  // 2026-09-22: 계좌이체(BANK_TRANSFER_ENABLED)가 켜져 있으면 충전도 팔 수 있어 탭이 보인다.
+  // 토스 일반결제 계약 전이라는 사실은 그대로다 — 두 스위치가 모두 꺼지면 탭이 닫힌다.
+  assert.match(PRICING, /const topupVisible = TOPUP_ENABLED \|\| bankTransfer;/);
+  assert.match(PRICING, /\{topupVisible && \(/);
   // 상태가 남아도 빈 화면을 그리지 않게 구독으로 되돌린다
-  assert.match(PRICING, /TOPUP_ENABLED \? tab : 'subscription'/);
+  assert.match(PRICING, /topupVisible \? tab : 'subscription'/);
 });
 
 test('충전 서버 라우트는 지우지 않는다', () => {

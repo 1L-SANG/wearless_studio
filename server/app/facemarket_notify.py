@@ -336,12 +336,13 @@ async def send_usage_report_email(
 
 
 async def _send_email(
-    settings, *, to: str, subject: str, html: str, text: str
+    settings, *, to: str, subject: str, html: str, text: str, sender: str | None = None,
 ) -> tuple[bool, str | None, str | None]:
     if not settings.resend_api_key:
         return False, None, "not_configured"
     payload = {
-        "from": settings.fm_application_from_email,
+        # sender 는 FaceMarket 이 아닌 이름으로 보내야 하는 메일(계좌이체 결제 안내)용.
+        "from": sender or settings.fm_application_from_email,
         "to": [to],
         "subject": subject,
         "html": html,

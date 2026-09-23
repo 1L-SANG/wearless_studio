@@ -3151,8 +3151,12 @@ async def grant_subscription(
     credits: int | None = None,
     period_end_sql: str = "now() + interval '1 month'",
     period_end_params: tuple = (),
+    allow_inactive: bool = False,
 ) -> dict:
     """구독 크레딧 지급 — **이월**(계획서 docs/plans/2026-09-09-toss-billing-subscription.md §0.1).
+
+    allow_inactive: 계좌이체 확인처럼 **신청 시점 스냅샷**으로 지급하는 경로만 True. 확인 사이에
+      상품이 비활성화돼도 입금한 사람의 거래 조건은 보장한다(credits 도 함께 넘긴다).
 
     2026-09-09 정책 변경: 예전에는 갱신 때 기존 구독 버킷을 만료시키고 새로 줬다(소멸).
     이제 소멸은 해지·유예만료라는 사건에서만 일어난다(expire_subscription_buckets).
@@ -3168,7 +3172,7 @@ async def grant_subscription(
     async with conn.cursor() as cur:
         await cur.execute(
             "select id::text as id, credits from pricing_plans "
-            "where code = %s and kind = 'subscription' and is_active",
+            "where code = %s and kind = 'subscription'" + ("" if allow_inactive else " and is_active"),
             (plan_code,),
         )
         plan = await cur.fetchone()
