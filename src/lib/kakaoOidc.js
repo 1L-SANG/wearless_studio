@@ -13,6 +13,8 @@
    그래서 카카오만 길을 바꾼다:
      로그인 버튼 → kauth authorize(scope=openid) → 우리 콜백 라우트 → 우리 서버가 code 를
      id_token 으로 교환 → supabase.auth.signInWithIdToken({provider:'kakao', token, nonce}).
+     ⚠️ 그 nonce 는 **원본**이고, 카카오 인가 요청에는 그 값의 **sha256 해시**가 들어간다.
+     같은 값을 양쪽에 쓰면 마지막 단계에서 `Nonces mismatch` 로만 죽는다(sha256Hex 주석).
 
    GoTrue 의 id_token 경로는 그대로 살아 있다(internal/api/token_oidc.go 가
    `p.Provider === kakao || p.Issuer === 'https://kauth.kakao.com'` 로 분기한다).
@@ -145,8 +147,12 @@ export function buildKakaoAuthorizeUrl({ clientId, redirectUri, state, nonce, co
     // 🔴 account_email 을 더하지 마라 — 그게 KOE205 다(머리말).
     scope: KAKAO_SCOPE,
     state,
-    nonce,
   });
+  /* 🔴 여기 들어가는 nonce 는 **원본이 아니라 sha256 해시**다(hashedNonce 주석 참고).
+     해시를 못 만든 브라우저에서는 아예 넣지 않는다 — GoTrue 는 "id_token 에 nonce 가 있으면
+     파라미터에도 있어야 하고, 없으면 양쪽 다 없어야 한다"를 강제한다(token_oidc.go 298-299).
+     한쪽만 있으면 "Passed nonce and nonce in id_token should either both exist or not." 로 거절된다. */
+  if (nonce) params.set('nonce', nonce);
   if (codeChallenge) {
     params.set('code_challenge', codeChallenge);
     params.set('code_challenge_method', 'S256');
@@ -171,6 +177,27 @@ function randomHex(byteLength) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/* 🔴 nonce 는 **원본을 그대로 카카오에 보내면 안 된다.**
+
+   GoTrue 의 id_token 그랜트는 우리가 준 nonce 를 sha256 해서 id_token 의 nonce 클레임과
+   맞춘다(token_oidc.go 301-305):
+
+       hash := fmt.Sprintf("%x", sha256.Sum256([]byte(params.Nonce)))
+       if hash != idToken.Nonce { return ... "Nonces mismatch" }
+
+   즉 계약은 **인가 요청에는 sha256 해시를, Supabase 에는 원본을** 보내는 것이다(Apple·구글
+   네이티브 로그인과 같은 형태). 양쪽에 같은 값을 보내면 교환까지 다 성공한 뒤 마지막
+   signInWithIdToken 에서만 `Nonces mismatch` 로 죽는다 — 2026-09-22 프로덕션에서 그렇게 걸렸다.
+   Go 의 `%x` 는 소문자 16진수 64자라 여기서도 같은 표기로 만든다. */
+async function sha256Hex(value) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  try {
+    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  } catch { return null; }
+}
+
 /* PKCE code_challenge. crypto.subtle 은 **보안 컨텍스트에서만** 산다 — https 와 localhost 는
    되지만 폰 QA 용 LAN IP(http://192.168.x.x)에서는 없다. 그때는 null 을 돌려주고 PKCE 없이
    진행한다(카카오는 PKCE 를 요구하지 않는다). 조용히 죽는 것보다 낫다. */
@@ -188,14 +215,17 @@ async function pkceChallenge(verifier) {
 /**
  * 카카오 인가 화면으로 **전체 페이지 이동**한다.
  *
+ * `clientId` 는 테스트가 갈아끼우는 이음매다 — node:test 에는 import.meta.env 가 없어
+ * 기본값이 빈 문자열이라, 주입점이 없으면 nonce 해시 계약을 단위 테스트할 수 없다.
+ *
  * 반환 형태를 `{ error }` 로 맞춘 이유: LoginGate 의 handle() 이 `const { error } =
  * await signIn(provider)` 로 받고, 에러가 없으면 "리다이렉트되어 언마운트될 것"을 전제로
  * 그대로 return 한다(pending 을 일부러 안 내린다). 그 6단계 계약 — 가입 동의 marker 롤백,
  * pending 유지, 레이스 가드 — 을 그대로 물려받으려면 여기서도 같은 모양을 돌려줘야 한다.
  */
-export async function startKakaoLogin() {
+export async function startKakaoLogin({ clientId = KAKAO_REST_API_KEY } = {}) {
   try {
-    if (!KAKAO_REST_API_KEY) {
+    if (!clientId) {
       return { error: new Error('카카오 로그인이 아직 설정되지 않았어요.') };
     }
     const state = randomHex(16);
@@ -205,19 +235,25 @@ export async function startKakaoLogin() {
       return { error: new Error('이 브라우저에서는 카카오 로그인을 시작할 수 없어요. 다른 브라우저로 시도해 주세요.') };
     }
     const codeChallenge = await pkceChallenge(codeVerifier);
+    /* 카카오에 보낼 값은 해시, 우리가 들고 있을 값은 원본이다(sha256Hex 주석).
+       해시를 못 만들면(보안 컨텍스트 아님) nonce 를 **양쪽 다** 포기한다 — 한쪽만 있으면
+       GoTrue 가 거절한다. state 는 그대로라 CSRF 방어는 남는다. */
+    const hashedNonce = await sha256Hex(nonce);
     const redirectUri = kakaoRedirectUri();
     // 저장에 실패하면 **시작하지 않는다.** nonce 가 왕복을 못 넘기면 돌아와서
     // signInWithIdToken 이 어차피 실패하는데, 그때는 이미 인가 화면을 지나온 뒤라
     // 사용자에겐 "로그인했는데 안 된다"로만 보인다.
     const stored = writeKakaoAuthRequest({
-      state, nonce, redirectUri,
+      state, redirectUri,
+      nonce: hashedNonce ? nonce : null,     // 저장은 **원본**(signInWithIdToken 이 받을 값)
       codeVerifier: codeChallenge ? codeVerifier : null,
     });
     if (!stored) {
       return { error: new Error('브라우저 저장소가 막혀 있어 카카오 로그인을 시작할 수 없어요. 시크릿 모드나 쿠키 차단 설정을 확인해 주세요.') };
     }
     window.location.assign(buildKakaoAuthorizeUrl({
-      clientId: KAKAO_REST_API_KEY, redirectUri, state, nonce, codeChallenge,
+      clientId, redirectUri, state, codeChallenge,
+      nonce: hashedNonce,                    // 인가 요청에 실리는 건 **해시**
     }));
     return { error: null };
   } catch (error) {

@@ -82,8 +82,13 @@ export async function runKakaoCallbackFlow({ search, http, signInWithKakaoIdToke
     return kakaoFailure('id_token_missing', '카카오 로그인 응답이 올바르지 않아요. 잠시 후 다시 시도해 주세요.');
   }
 
+  /* 여기 넘기는 nonce 는 **원본**이다 — 카카오 인가 요청에 실린 건 그 값의 sha256 해시고,
+     GoTrue 가 우리가 준 원본을 해시해서 id_token 의 클레임과 맞춘다(kakaoOidc.js sha256Hex).
+     해시를 못 만든 브라우저에서는 저장된 nonce 가 null 이고 인가 요청에도 nonce 가 없었다 —
+     그때는 **보내지 않는다**(둘 중 하나만 있으면 GoTrue 가 거절한다). */
   const { error } = await signInWithKakaoIdToken({
-    token: payload.id_token, nonce: request.nonce,
+    token: payload.id_token,
+    ...(request.nonce ? { nonce: request.nonce } : {}),
   });
   if (error) {
     /* 여기서 실패하는 가장 흔한 원인은 **Supabase 대시보드의 Kakao provider 가 꺼졌거나
