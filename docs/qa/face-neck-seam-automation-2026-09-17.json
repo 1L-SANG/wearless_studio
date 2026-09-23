@@ -1,0 +1,213 @@
+{
+  "evaluation": "automatic_planning_preflight",
+  "result": "rejected",
+  "stop_reason": "tank_front_gap_false_positive_and_invalid_normal_tank_mask",
+  "vision_model": "gpt-5.4",
+  "vision_calls": 12,
+  "image_edit_calls": 0,
+  "live_image_qc_tested": false,
+  "held_out_photos_tested": false,
+  "human_image_review": "not_performed_no_new_candidate_generated",
+  "rows": [
+    {
+      "cut": "그레이셔츠_호리존",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 61183,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 4485,
+          "total_tokens": 7638
+        }
+      },
+      "neck_collar_gap": true,
+      "status": "planned"
+    },
+    {
+      "cut": "그레이셔츠_호리존_1",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 73593,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 5337,
+          "total_tokens": 8490
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "그레이셔츠_호리존_2",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 83057,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 6113,
+          "total_tokens": 9266
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "나시_호리존",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 67501,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 5158,
+          "total_tokens": 8311
+        }
+      },
+      "neck_collar_gap": true,
+      "status": "planned"
+    },
+    {
+      "cut": "나시_호리존_1",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 62116,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 4804,
+          "total_tokens": 7957
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "failed",
+      "reason": "damage_outside_composition"
+    },
+    {
+      "cut": "나시_호리존_2",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 50007,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 3666,
+          "total_tokens": 6819
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "스트라이프셔츠_호리존",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 50753,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 3999,
+          "total_tokens": 7152
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "스트라이프셔츠_호리존_1",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 71651,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 5862,
+          "total_tokens": 9015
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "스트라이프셔츠_호리존_2",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 75801,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 5950,
+          "total_tokens": 9103
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "청자켓_호리존",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 55727,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 4187,
+          "total_tokens": 7340
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "청자켓_호리존1",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 79254,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 6533,
+          "total_tokens": 9686
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    },
+    {
+      "cut": "청자켓_호리존2",
+      "vision_calls": 1,
+      "image_edit_calls": 0,
+      "planning": {
+        "duration_ms": 66840,
+        "requested_model": "gpt-5.4",
+        "usage": {
+          "prompt_tokens": 3153,
+          "completion_tokens": 4963,
+          "total_tokens": 8116
+        }
+      },
+      "neck_collar_gap": false,
+      "status": "planned"
+    }
+  ],
+  "source_revision": "a37c3c8 plus uncommitted automation implementation before final neck-envelope/cache guards",
+  "final_guard_changes": "local synthetic regression tests only; no extra image or vision requests",
+  "usage": {
+    "prompt_tokens": 37836,
+    "completion_tokens": 61057,
+    "total_tokens": 98893
+  }
+}

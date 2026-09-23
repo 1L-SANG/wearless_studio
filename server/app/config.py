@@ -67,6 +67,10 @@ class Settings:
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
+    face_seam_repair: str = "off"  # off | shadow | on
+    face_seam_repair_model: str = "gpt-image-2.5-sunburst"
+    face_tone_fix: str = "off"  # off | on
+    face_seam_vision_model: str = "gpt-5.4"
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
     # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
     model_text_gemini: str = "gemini-3.7-flash"
@@ -750,6 +754,10 @@ def load_settings() -> Settings:
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
+        face_seam_repair=_flag("FACE_SEAM_REPAIR", "off", {"off", "shadow", "on"}),
+        face_seam_repair_model=(os.getenv("FACE_SEAM_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
+        face_tone_fix=_flag("FACE_TONE_FIX", "off", {"off", "on"}),
+        face_seam_vision_model=(os.getenv("FACE_SEAM_VISION_MODEL") or "gpt-5.4").strip() or "gpt-5.4",
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
             "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
