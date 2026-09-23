@@ -550,3 +550,36 @@ def test_kakao_client_secret_is_wired_as_a_secret_not_a_variable(manifest_vars):
         "다른 시크릿과 같은 SSM 경로 규칙을 따라야 한다"
     )
     assert "KAKAO_CLIENT_SECRET" not in manifest_vars, "시크릿을 평문 variables 에 두지 마라"
+
+
+OPENDID_MANIFEST = (
+    pathlib.Path(__file__).resolve().parents[2] / "copilot/opendid/manifest.yml"
+)
+
+
+def test_opendid_manifest_declares_setup_path():
+    """엔티티 등록이 읽는 DID 문서 경로가 매니페스트에 선언돼 있는가.
+
+    TAS 의 `ta/register-simple` 은 `${setup.path}/TA/tas.did` 를, `entities/register-simple`
+    은 `${setup.path}/{CA,Issuer,Verifier,Wallet}/<name>.did` 를 파일로 읽는다. 비어 있으면
+    `SSRVTRA0000 Failed to find file` 로 400 이다(2026-09-23 실측).
+
+    이 값이 없어도 **평상시에는 아무 증상이 없다** — 등록이 끝난 스택은 DB 만 보기 때문이다.
+    터지는 날은 DB 를 새로 만드는 날, 즉 복구하는 날이다. 그날 원인을 다시 찾지 않도록
+    여기서 잠근다. 경로는 EFS(holder-state) 안이어야 태스크가 죽어도 .did 가 남는다.
+    """
+    doc = yaml.safe_load(OPENDID_MANIFEST.read_text(encoding="utf-8"))
+    variables = doc.get("variables") or {}
+
+    setup_path = str(variables.get("SETUP_PATH", ""))
+    assert setup_path, "SETUP_PATH 미선언 — 등록 API 가 'Failed to find file' 로 죽는다"
+    assert setup_path.startswith("/opt/opendid/data"), (
+        f"SETUP_PATH={setup_path!r} — EFS 마운트(/opt/opendid/data) 밖이면 태스크가 죽을 때 "
+        ".did 가 같이 사라진다"
+    )
+    assert variables.get("SETUP_BASE_URL"), "SETUP_BASE_URL 미선언 — 엔티티 URL 조립 실패"
+
+    mount = {v.get("path") for v in (doc.get("storage") or {}).get("volumes", {}).values()}
+    assert "/opt/opendid/data" in mount, (
+        "holder-state EFS 마운트가 사라졌다 — SETUP_PATH 가 tmpfs 를 가리키게 된다"
+    )

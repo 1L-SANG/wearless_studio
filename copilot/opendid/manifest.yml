@@ -74,6 +74,20 @@ variables:
   # OMNIONE_CHAIN_RPC_URL / OMNIONE_DID_CONTRACT_ADDRESS 는 배포 시 값 확정(유저 OmniOne 배포 후).
   # 비밀 아니면 여기로, 키는 secrets 로. 우선 secret 로 둔다(토큰 포함 RPC 대비).
 
+  # ---- 엔티티 등록(register-simple)이 읽는 DID 문서 위치 ----
+  # TAS 의 `ta/register-simple` 은 `${setup.path}/TA/tas.did` 를, `entities/register-simple` 은
+  # `${setup.path}/{CA,Issuer,Verifier,Wallet}/<name>.did` 를 **파일로** 읽는다
+  # (did-ta-server TaManagementService/EntityManagementService). 이 둘이 비어 있으면
+  # 등록 API 가 `SSRVTRA0000 Failed to find file` 로 400 을 뱉는다 — 2026-09-23 실측.
+  #
+  # 평소에는 쓰이지 않는다(등록이 끝나면 서비스는 DB 만 본다). 그래서 없어도 몇 달간
+  # 아무 증상이 없다가, **DB 를 새로 만드는 날에만** 터진다. 그날이 하필 복구하는 날이다.
+  # 경로는 EFS(holder-state) 안이라 태스크가 죽어도 .did 파일이 남는다.
+  SETUP_PATH: /opt/opendid/data/setup
+  # 엔티티 URL 조립용(`base-url + ":" + port + "/" + entityName`). 4개 서버가 한 컨테이너에
+  # 있으므로 localhost 가 맞다.
+  SETUP_BASE_URL: http://localhost
+
 secrets:
   # RDS 접속(addons/rds.yml 산출) + 체인 키 + 월렛 pw + holder pepper + RPC(토큰 포함).
   OPENDID_DB_HOST: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_DB_HOST
