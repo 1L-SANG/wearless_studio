@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
+import { Button, ErrorState, useToast } from '@/components/ui.jsx';
 import {
   confirmMyModelTestCuts,
   fetchMyModelTestCutUrl,
@@ -97,20 +97,6 @@ function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
     <aside className={s.previewPanel} aria-labelledby="public-profile-preview-title">
       <h2 className={s.previewTitle} id="public-profile-preview-title">모델 리스트에 이렇게 보여요</h2>
 
-      <section className={s.listCard} aria-label="모델 리스트 카드 미리보기">
-        <PreviewImage
-          cut={closeupCut}
-          className={s.listImage}
-          alt={`${displayName} 확대샷`}
-          placeholder="확대샷 준비 중"
-          eager
-        />
-        <div className={s.listMeta}>
-          <strong>{displayName}</strong>
-          <span>{physique}</span>
-        </div>
-      </section>
-
       <section className={s.detailCard} aria-label="모델 상세 미리보기">
         <div className={s.detailImages}>
           <figure className={s.detailFigure}>
@@ -119,6 +105,7 @@ function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
               className={s.detailImage}
               alt={`${displayName} 확대샷 상세 미리보기`}
               placeholder="확대샷 준비 중"
+              eager
             />
             <figcaption>확대샷</figcaption>
           </figure>
@@ -165,6 +152,9 @@ export function ModelConfirm() {
   const [selection, setSelection] = useState({ closeupCutId: null, fullbodyCutId: null });
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
+  // "이 사진으로는 만들고 싶지 않아요" 를 누르면 사유 입력 창이 열리고, 사유와 함께 재생성을 요청해요.
+  const [redoOpen, setRedoOpen] = useState(false);
+  const [redoReason, setRedoReason] = useState('');
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -208,16 +198,16 @@ export function ModelConfirm() {
   }, [agreed, closeupCutId, data?.profile, fullbodyCutId, load, navigate, push]);
 
   const redo = useCallback(async () => {
-    if (data?.redoCount >= 1 || busy) return;
-    if (!window.confirm('재생성은 1회만 요청할 수 있어요. 다시 만들어 달라고 요청할까요?')) return;
+    const reason = redoReason.trim();
+    if (data?.redoCount >= 1 || busy || !reason) return;
     setBusy(true);
     try {
-      await requestMyModelTestCutRedo();
+      await requestMyModelTestCutRedo(reason);
       push?.('다시 만들어 달라고 요청했어요.', { icon: 'check' });
       navigate('/status', { replace: true });
     } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
     finally { setBusy(false); }
-  }, [busy, data?.redoCount, navigate, push]);
+  }, [busy, data?.redoCount, navigate, push, redoReason]);
 
   const grouped = splitTestCutsByKind(data?.cuts || []);
   const closeupCut = grouped.closeup.find((cut) => cut.id === closeupCutId) || null;
@@ -276,12 +266,34 @@ export function ModelConfirm() {
               {busy ? '확정 중…' : '프로필 확정 완료'}
             </Button>
             <span className={s.redoWrap} title={redoUsed ? '재생성은 1회까지예요' : undefined}>
-              <Button variant="secondary" block disabled={busy || redoUsed} onClick={redo}>
-                <Icon name="refresh" size={16} />
-                다시 만들어 주세요
+              <Button variant="secondary" block disabled={busy || redoUsed} aria-expanded={redoOpen} aria-controls="redo-reason-panel" onClick={() => setRedoOpen((open) => !open)}>
+                이 사진으로는 만들고 싶지 않아요.
               </Button>
             </span>
             {redoUsed && <p className={s.limit}>재생성은 1회까지예요</p>}
+            {redoOpen && !redoUsed && (
+              <form
+                id="redo-reason-panel"
+                className={s.redoPanel}
+                aria-labelledby="redo-reason-title"
+                onSubmit={(event) => { event.preventDefault(); redo(); }}
+              >
+                <label id="redo-reason-title" htmlFor="redo-reason">어떤 점이 마음에 안 드는지 적어 주세요</label>
+                <textarea
+                  id="redo-reason"
+                  value={redoReason}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="예: 확대샷 얼굴이 실제보다 각져 보여요. 전신샷 자세가 어색해요."
+                  onChange={(event) => setRedoReason(event.target.value)}
+                />
+                <p className={s.redoHint}>재생성은 1회만 요청할 수 있어요. 요청하면 담당자가 사유를 보고 테스트컷을 다시 만들어요.</p>
+                <div className={s.redoButtons}>
+                  <Button variant="secondary" type="button" disabled={busy} onClick={() => setRedoOpen(false)}>취소</Button>
+                  <Button variant="primary" type="submit" disabled={busy || !redoReason.trim()}>{busy ? '보내는 중…' : '요청 보내기'}</Button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
 
