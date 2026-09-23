@@ -300,8 +300,11 @@ def mannequin_repair_feedback(scores) -> str:
     )
 
 
-def review_only_surface_edit_accepted(before, after) -> bool:
-    """Accept a resolved targeted edit when only unchanged surface review risk remains."""
+def review_only_surface_edit_accepted(before, after, *, matching_blocks=True) -> bool:
+    """Accept a resolved targeted edit when only unchanged surface review risk remains.
+
+    matching_blocks=False: 최종 관문에서 매칭(코디) 하드 게이트는 경고로만 남긴다(2026-09-23).
+    """
     if not isinstance(after, dict):
         return False
     if (
@@ -311,7 +314,7 @@ def review_only_surface_edit_accepted(before, after) -> bool:
         or after.get('regression_reasons') != []
         or after.get('verdict') != 'pass'
         or actionable_critical_errors(after)
-        or after.get('matching_critical_errors')
+        or (matching_blocks and after.get('matching_critical_errors'))
         or repairable_issues(after)
         or not surface_review_issues(after)
         or not review_complete(after)

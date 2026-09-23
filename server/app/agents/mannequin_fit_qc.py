@@ -81,18 +81,29 @@ def declared_axis_spec(profile: dict | None) -> list[dict]:
     return spec
 
 
-def qc_schema(axis_spec: list[dict]) -> dict:
+def qc_schema(axis_spec: list[dict], *, matching: bool = False) -> dict:
     """캠페인 스키마의 프로덕션 서브셋 — axis/target enum을 선언 축으로 제한.
 
     Gemini 스키마 변환이 배열 길이 제약을 보존하지 않으므로 정확 커버리지는 validate()가 강제.
+
+    matching=True(매칭 참조 첨부)면 matchingIdentityPass 를 **따로** 받는다(2026-09-23).
+    예전엔 매칭 하의의 정체성이 identityPass 에 섞여, 상품은 멀쩡한데 코디 바지 주머니
+    스티치 하나로 final_fit_rejected 가 나고 유료 이미지가 통째로 버려졌다(운영 5연속 실패).
+    매칭 없는 요청은 필드도 바이트도 그대로다.
     """
     axes = sorted({e["axis"] for e in axis_spec})
     targets = sorted({e["value"] for e in axis_spec})
+    required = ["identityPass", "axisPass", "mismatches"]
+    extra = {}
+    if matching:
+        required.append("matchingIdentityPass")
+        extra["matchingIdentityPass"] = {"type": "boolean"}
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["identityPass", "axisPass", "mismatches"],
+        "required": required,
         "properties": {
+            **extra,
             "identityPass": {"type": "boolean"},
             "axisPass": {"type": "array", "items": {
                 "type": "object",
@@ -111,18 +122,34 @@ def qc_schema(axis_spec: list[dict]) -> dict:
     }
 
 
-def build_prompt(product_count: int, has_match_image: bool, axis_spec: list[dict]) -> str:
+def build_prompt(product_count: int, has_match_image: bool, axis_spec: list[dict],
+                 *, match_role: str = "bottom") -> str:
+    """판정 프롬프트. match_role 은 매칭 아이템의 역할(주상품이 하의면 매칭은 상의).
+
+    예전엔 매칭 이미지를 무조건 "MATCHING BOTTOM" 이라 불렀다 — 하의 상품에 붙은 매칭 상의를
+    하의라고 단언한 채 판정하게 된다(_build_manifest 는 2026-08-01 에 이미 고쳤다). 워커는
+    지금 하의 매칭일 때만 참조를 붙이지만(_pants_qc_ref) 라벨 자체도 역할을 따르게 둔다.
+    """
     import json
 
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
     n = max(1, product_count)
+    role = "TOP" if str(match_role or "").strip().lower() == "top" else "BOTTOM"
     order = f"{n} SOURCE PRODUCT photo(s)"
     if has_match_image:
-        order += ", then one MATCHING BOTTOM photo"
+        order += f", then one MATCHING {role} photo"
     order += ", and finally ONE GENERATED image (always the LAST image)"
-    match_rule = (" If a matching bottom photo is provided, the generated image must contain it "
-                  "and preserve its visible identity." if has_match_image else "")
+    # 매칭(코디) 아이템은 identityPass 에 넣지 않는다(2026-09-23 오너 원칙: 매칭 아이템이 상품
+    # 출고를 막지 않는다). 따로 matchingIdentityPass 로 받아 워커가 경고로만 남긴다.
+    match_rule = (
+        f" The MATCHING {role} photo shows a separate coordination garment, not the main product."
+        " identityPass judges ONLY the main product; never set identityPass false because of the"
+        " coordination garment. Report the coordination garment separately in"
+        f" matchingIdentityPass: true only when the generated image contains the matching"
+        f" {role.lower()} and preserves its visible identity (colour family, garment type,"
+        " silhouette and major structure)."
+        if has_match_image else "")
     payload = json.dumps(
         [{"axis": e["axis"], "target": e["value"], "observableTarget": e["observableTarget"]}
          for e in axis_spec],
@@ -132,10 +159,12 @@ def build_prompt(product_count: int, has_match_image: bool, axis_spec: list[dict
             .replace("${axisSpec}", payload))
 
 
-def validate(raw: dict, axis_spec: list[dict]) -> dict:
+def validate(raw: dict, axis_spec: list[dict], *, matching: bool = False) -> dict:
     """(axis,target) 쌍의 정확·유일 커버리지 강제. 누락/여분/중복/스왑/비불리언 → VisionError.
 
     fail-open 처리는 워커 소관 — 여기서는 계약 위반을 시끄럽게 올린다.
+    matching=True 면 matchingIdentityPass 를 bool 또는 None(판독 불가)으로 싣는다. 매칭 판정은
+    경고 전용이라 형식 위반으로 상품 판정까지 버리지 않는다.
     """
     raw = raw or {}
     expected = {(e["axis"], e["value"]) for e in axis_spec}
@@ -165,7 +194,11 @@ def validate(raw: dict, axis_spec: list[dict]) -> dict:
     if not isinstance(raw.get("identityPass"), bool):
         raise VisionError("axis_qc: identityPass 비불리언")
     mismatches = [m for m in (clean_text(x, 300) for x in (raw.get("mismatches") or [])) if m][:10]
-    return {"identityPass": raw["identityPass"], "axisPass": cleaned, "mismatches": mismatches}
+    out = {"identityPass": raw["identityPass"], "axisPass": cleaned, "mismatches": mismatches}
+    if matching:
+        value = raw.get("matchingIdentityPass")
+        out["matchingIdentityPass"] = value if isinstance(value, bool) else None
+    return out
 
 
 async def verdict(
@@ -174,19 +207,24 @@ async def verdict(
     generated_image: InlineImage,
     fit_profile: dict,
     match_image: InlineImage | None = None,
+    *,
+    match_role: str = "bottom",
 ) -> dict:
-    """소스 상품(+매칭 하의) 대비 생성 이미지의 선언 축 반영을 판정. 실패는 VisionError 전파.
+    """소스 상품(+매칭 참조) 대비 생성 이미지의 선언 축 반영을 판정. 실패는 VisionError 전파.
 
     베이스 마네킹은 첨부하지 않는다(캠페인 검증 구성) — 포즈/배경 보존은 프롬프트 불변조항.
+    매칭 참조가 붙으면 identityPass 는 주상품만, matchingIdentityPass 는 매칭만 본다.
     """
     axis_spec = declared_axis_spec(fit_profile)
     if not axis_spec:
         raise VisionError("axis_qc: 선언 축 없음")
-    images = [*product_images] + ([match_image] if match_image else []) + [generated_image]
-    prompt = build_prompt(len(product_images), match_image is not None, axis_spec)
+    matching = match_image is not None
+    images = [*product_images] + ([match_image] if matching else []) + [generated_image]
+    prompt = build_prompt(len(product_images), matching, axis_spec, match_role=match_role)
     raw, _provider = await analyze_with_fallback(
-        settings, prompt, images, qc_schema(axis_spec), require_complete_envelope=True)
-    return validate(raw, axis_spec)
+        settings, prompt, images, qc_schema(axis_spec, matching=matching),
+        require_complete_envelope=True)
+    return validate(raw, axis_spec, matching=matching)
 
 
 def failed_axis_specs(axis_spec: list[dict], verdict: dict) -> list[dict]:

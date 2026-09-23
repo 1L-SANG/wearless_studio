@@ -244,7 +244,23 @@ def test_unavailable_retry_cannot_erase_previously_confirmed_defect(monkeypatch,
     assert 'logo_graphic' in seen.prompts[-1]
 
 
+# 2026-09-23 오너 원칙(매칭 아이템이 상품 출고를 막지 않는다) 이후, 매칭 문제로 최종 수정을
+# 부르는 것은 셀러가 매칭 핏을 직접 고른 경우(matchingFit·matchCut)뿐이다. 아래 세 테스트는
+# 그 경우의 기존 계약(확인된 매칭 결함이 뒤 실패에 지워지지 않고 최종 수정 1회로 간다)을 지킨다.
+DECLARED_MATCHING_PROFILE = {
+    "category": "top", "gender": "women", "version": 2, "source": "seller",
+    "axes": {"length": "basic"},
+    "matchingFit": {"fitCategory": "pants", "axes": {"cut": "wide"}},
+}
+
+
+def _declare_matching(monkeypatch):
+    import test_mannequin_final_untuck_qc as harness
+    monkeypatch.setattr(harness, "PROFILE", DECLARED_MATCHING_PROFILE)
+
+
 def test_matching_reject_survives_later_definite_provider_failure_for_final_repair(monkeypatch):
+    _declare_matching(monkeypatch)
     _, seen = run_worker(monkeypatch, pants_mode='enforce',
         generated=(b'first', GeminiError('request rejected', billable=False), b'final'), p2={
             b'first': {**rated(), 'matching_critical_errors': ['trousers color changed']},
@@ -257,6 +273,7 @@ def test_matching_reject_survives_later_definite_provider_failure_for_final_repa
 @pytest.mark.parametrize('mode', ['enforce', 'shadow'])
 @pytest.mark.parametrize('second', [RuntimeError('judge down'), {**rated(), 'matching_fidelity': None}])
 def test_unavailable_matching_retry_cannot_erase_previously_confirmed_defect(monkeypatch, mode, second):
+    _declare_matching(monkeypatch)
     _, seen = run_worker(monkeypatch, mode=mode, pants_mode='enforce',
         settings_overrides={'mannequin_untuck_pass': 'off'},
         generated=(b'first', b'second', b'final'), p2={
@@ -268,6 +285,7 @@ def test_unavailable_matching_retry_cannot_erase_previously_confirmed_defect(mon
 
 
 def test_main_shadow_does_not_block_matching_repair_on_main_uncertainty(monkeypatch):
+    _declare_matching(monkeypatch)
     seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
     with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
         run_worker(monkeypatch, mode='shadow', pants_mode='enforce', captures=seen,
@@ -276,6 +294,57 @@ def test_main_shadow_does_not_block_matching_repair_on_main_uncertainty(monkeypa
                 b'second': {**rated(), 'matching_critical_errors': ['wrong trousers']},
                 b'final': rated(color='uncertain')})
     assert seen.puts == []
+
+
+@pytest.mark.parametrize('mode', ['enforce', 'shadow'])
+def test_undeclared_matching_defect_ships_first_cut_with_warning_without_paid_repair(monkeypatch, mode):
+    """2026-09-23: 자동 코디의 매칭 문제만 남으면 추가 생성·수정 없이 첫 컷을 경고와 함께 낸다.
+
+    예전엔 이 경우 재롤 + 최종 수정까지 이미지 3장을 사고, 수정본이 매칭 판정에 또 걸리면
+    전부 버렸다(운영 5연속 실패). 상품 판정은 통과했으므로 첫 컷이 출고본이다.
+    """
+    result, seen = run_worker(monkeypatch, mode=mode, pants_mode='enforce',
+        generated=(b'first', b'second', b'final'), p2={
+            b'first': {**rated(), 'matching_critical_errors': ['wrong trousers']}})
+    assert seen.image_calls == ['generate']
+    assert seen.puts == [b'first']
+    assert result['qc_scores']['matching_review_only'] is True
+    assert result['qc_scores']['outcome'] == 'needs_review'
+    assert result['qc_scores']['matching_critical_errors'] == ['wrong trousers']
+    warnings = [e for e in seen.events if e.get('status') == 'matching_warning']
+    assert warnings and warnings[0]['phase'] == 'final_gate'
+    assert not any(e.get('status') == 'quality_repair' for e in seen.events)
+
+
+def test_undeclared_matching_plus_product_defect_still_repairs_and_checks_product(monkeypatch):
+    """상품 결함이 함께 있으면 기존처럼 최종 수정 1회 — 상품 관문은 그대로 엄격하다."""
+    seen = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    # 수정본에 상품 결함(logo major)이 남으면 상품 관문(편집 보존 판정)이 그대로 거절한다.
+    with pytest.raises(job.MannequinQualityError, match='final_edit_preservation_rejected'):
+        run_worker(monkeypatch, pants_mode='enforce', captures=seen,
+            settings_overrides={'mannequin_max_attempts': 1},
+            generated=(b'first', b'final'), p2={
+                b'first': {**rated(logo_graphic='critical'),
+                           'matching_critical_errors': ['wrong trousers']},
+                b'final': {**rated(logo_graphic='major'),
+                           'matching_critical_errors': ['wrong trousers']}})
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == []
+
+
+def test_final_repair_matching_only_rejection_is_a_warning_not_a_failure(monkeypatch):
+    """상품 수정은 성공했는데 수정본에 매칭 하드 게이트만 남으면 잡을 버리지 않는다(2026-09-23)."""
+    result, seen = run_worker(monkeypatch, pants_mode='enforce',
+        settings_overrides={'mannequin_max_attempts': 1},
+        generated=(b'first', b'final'), p2={
+            b'first': rated(logo_graphic='critical'),
+            b'final': {**rated(), 'matching_critical_errors': ['matching bottom structure changed']}})
+    assert seen.image_calls == ['generate', 'generate']
+    assert seen.puts == [b'final']
+    assert result['qc_scores']['quality_repair_used'] is True
+    assert result['qc_scores']['matching_review_only'] is True
+    assert 'final_matching_rejected' in result['qc_scores']['matching_warning_phases']
+    assert result['qc_scores']['outcome'] == 'needs_review'
 
 
 def test_shadow_main_risks_do_not_revert_observed_edit(monkeypatch):

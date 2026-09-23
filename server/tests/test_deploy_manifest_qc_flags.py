@@ -41,6 +41,8 @@ QC_FLAGS = [
     ("SAM_AUTOSCALE", "sam_autoscale"),
     # 콜드스타트 직결 폴백(2026-08-27). 미선언이면 87초를 그대로 기다린다.
     ("SAM_DIRECT_ENDPOINT", "sam_direct_endpoint"),
+    # 마네킹 유료 초안 이어 쓰기(2026-09-23). 오타면 _default_on_flag 가 off 로 눕힌다.
+    ("MANNEQUIN_DRAFT_REUSE", "mannequin_draft_reuse"),
 ]
 
 
@@ -107,6 +109,22 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert overrides.get("ContainerDefinitions[0].StopTimeout") == 60
     # 0 이면 잡마다 콜드스타트를 다시 물고, 스케일다운과 claim 이 겹치면 그 잡이 죽는다.
     assert int(manifest_vars["DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES"]) >= 5
+
+
+def test_api_stop_timeout_covers_dispatcher_drain_and_shutdown_finalize():
+    """api 도 SIGTERM 후 마네킹 잡을 worker_shutdown 으로 닫을 시간이 있어야 한다(2026-09-23).
+
+    기본 30s 면 dispatcher.stop()(10s + 드레인 45s) 중에 SIGKILL 이 와서 잡이 running 으로
+    남고, lease 복구가 다시 큐에 넣어 처음부터 다시 과금한다. detail-worker 와 같은
+    taskdef_overrides 방식이어야 실제 태스크 정의에 들어간다.
+    """
+    doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    assert "stop_timeout" not in doc, "Copilot 이 무시하는 필드 — taskdef_overrides 를 쓸 것"
+    overrides = {o["path"]: o["value"] for o in doc.get("taskdef_overrides", [])}
+    stop_timeout = overrides.get("ContainerDefinitions[0].StopTimeout")
+    assert isinstance(stop_timeout, int)
+    # 드레인(10 + 45s)보다 길고 Fargate 상한(120s) 이하. detail-worker(60s) 보다 짧으면 안 된다.
+    assert 60 <= stop_timeout <= 120
 
 
 @pytest.mark.parametrize("env_name,attr", QC_FLAGS)

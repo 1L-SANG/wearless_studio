@@ -61,6 +61,10 @@ _OPENAI_RETRY_FALLBACK_SECONDS = 5.0
 #: 기다려도 안 풀리는 429. 잔액 소진은 재시도가 잡만 길게 만든다
 #: (2026-08-27 프로덕션에서 실제로 겪었다).
 _OPENAI_TERMINAL_429_CODES = ("credit_balance_exhausted", "insufficient_quota")
+#: 프로바이더가 요청을 **거절**한 5xx — 그림이 안 그려졌고 원장에도 과금이 없다(2026-09-23).
+#: 502/504 는 게이트웨이가 답을 못 받은 것이라 이미 그려졌을 수 있어 넣지 않는다.
+#: 2026-09-23 운영: 마네킹 잡 5건 중 2건이 OpenAI 500 한 번에 잡 전체를 잃었다.
+_UNBILLED_TRANSIENT_STATUS = (500, 503)
 
 
 def openai_retry_delay(res) -> float | None:
@@ -114,9 +118,14 @@ class GeminiError(RuntimeError):
     더 만들고 요금이 두 번 나가는데 추가 호출은 비용 원장에도 안 남는다(2026-08-17 리뷰).
     """
 
-    def __init__(self, message: str, *, billable: bool = False) -> None:
+    def __init__(self, message: str, *, billable: bool = False, transient: bool = False) -> None:
         super().__init__(message)
         self.billable = billable
+        # transient=True 는 "과금되지 않은 일시 장애"다(2026-09-23): 프로바이더가 요청을 거절한
+        # 500·503, 연결 자체가 안 선 ConnectError·ConnectTimeout. 그림이 그려지지 않았으므로
+        # 호출자가 **같은 호출을 한 번** 다시 보내도 이중 과금이 없다. billable 과 동시에 참일
+        # 수 없다 — 읽기 타임아웃·502/504·200 파싱 실패는 이미 그려졌을 수 있어 여기서 빠진다.
+        self.transient = transient and not billable
 
 
 def _as_openai_png(image: "InlineImage") -> bytes:
@@ -270,7 +279,7 @@ class GeminiImageClient:
                         _record_unbilled_failure(model, image_size, t0, f"{type(exc).__name__}")
                     raise GeminiError(
                         f"Gemini request failed: {type(exc).__name__}: {exc}",
-                        billable=billable,
+                        billable=billable, transient=retryable,
                     ) from exc
                 await asyncio.sleep(5 * (attempt + 1))
                 continue
@@ -285,7 +294,8 @@ class GeminiImageClient:
             billable = res.status_code in (502, 504)
             if billable:
                 _record_unbilled_failure(model, image_size, t0, f"http_{res.status_code}")
-            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}", billable=billable)
+            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}", billable=billable,
+                              transient=res.status_code in _UNBILLED_TRANSIENT_STATUS)
         parse_error = None
         usage = None
         parts = []
@@ -444,7 +454,7 @@ class GeminiImageClient:
                     _record_unbilled_failure(model, size, t0, type(exc).__name__)
                 raise GeminiError(
                     f"OpenAI request failed: {type(exc).__name__}: {exc}",
-                    billable=billable) from exc
+                    billable=billable, transient=not billable) from exc
             delay = openai_retry_delay(res)
             if delay is None or attempt == max_attempts - 1:
                 break
@@ -456,7 +466,8 @@ class GeminiImageClient:
             billable = res.status_code in (502, 504)
             if billable:
                 _record_unbilled_failure(model, size, t0, f"http_{res.status_code}")
-            raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}", billable=billable)
+            raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}", billable=billable,
+                              transient=res.status_code in _UNBILLED_TRANSIENT_STATUS)
         payload = None
         usage = None
         img = None
