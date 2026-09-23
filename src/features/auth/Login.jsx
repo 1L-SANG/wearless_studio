@@ -1,5 +1,8 @@
 /* =============================================================
    LoginGate — 구글·카카오 로그인과 토스 심사용 임시 이메일 로그인.
+   이메일 로그인은 토글이 아니라 '이메일로 로그인하기' 링크 문구를 누르면 그 자리에 폼이
+   펼쳐진다('Wearless가 처음이라면? 회원가입' 과 같은 모양, 2026-09-22 오너). 랜딩(wearless.kr)의
+   로그인 모달도 같은 화면이다.
    프로바이더 클릭 → supabase OAuth 리다이렉트(전체 페이지 이동) → 복귀 시 세션 생성.
    복귀 경로(sessionStorage 'wl_postLogin')는 openLogin 이 심고, ai 도메인은 App 의 RootRedirect,
    facemarket 도메인은 FacemarketRoot 가 '/' 복귀 시 그 경로로 이동.
@@ -70,6 +73,7 @@ export function LoginGate() {
   const [email, setEmail] = useState(IS_LOCAL_SUPABASE ? 'qa@local.test' : '');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [emailOpen, setEmailOpen] = useState(IS_LOCAL_SUPABASE); // 로컬 QA 는 처음부터 펼친다
   const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
   const [signupConsent, setSignupConsent] = useState(false);
   const oauthAttempt = useRef(null);
@@ -268,9 +272,16 @@ export function LoginGate() {
           </p>
         )}
 
-        {EMAIL_LOGIN_ENABLED && mode === 'login' && (
-          <details className={styles.emailLogin} open={IS_LOCAL_SUPABASE || undefined}>
-            <summary>{IS_LOCAL_SUPABASE ? '로컬 QA 전용 · 이메일 로그인' : '이메일 로그인'}</summary>
+        {EMAIL_LOGIN_ENABLED && mode === 'login' && !emailOpen && (
+          <p className={styles.notice}>
+            이메일로 로그인하고 싶다면? <button type="button" className={styles.linkBtn}
+              onClick={() => setEmailOpen(true)}>이메일로 로그인하기</button>
+          </p>
+        )}
+
+        {EMAIL_LOGIN_ENABLED && mode === 'login' && emailOpen && (
+          <div className={styles.emailLogin}>
+            {IS_LOCAL_SUPABASE && <p className={styles.hint}>로컬 QA 전용 · 이메일 로그인</p>}
             <form className={styles.emailForm} onSubmit={handleEmail} aria-label="이메일 로그인" aria-busy={pending === 'email'}>
               <label>
                 이메일
@@ -287,7 +298,7 @@ export function LoginGate() {
                 {pending === 'email' ? '로그인 중…' : '이메일로 로그인'}
               </button>
             </form>
-          </details>
+          </div>
         )}
 
         {/* 약관 고지. 셀러는 위 명시적 체크박스로 대체한다.
