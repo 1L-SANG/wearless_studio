@@ -7,6 +7,7 @@
      ④ AuthProvider 가 콜백 경로의 `?code=` 를 지우지 않는다.
      ⑤ 플래그는 기본 OFF 이고, 기존 signInWithOAuth 경로가 롤백용으로 살아 있다.
      ⑥ 콜백 라우트가 세 앱 모두에서 인증 가드 밖·catch-all 앞에 있다.
+     ⑦ nonce 는 **카카오에 해시, Supabase 에 원본**을 보낸다(같은 값이면 Nonces mismatch).
 
    순수 함수는 lib 모듈을 그대로 import 해 확인하고(host-route-boundary 와 같은 방식),
    배선(라우트 위치·플래그 분기)은 소스 텍스트로 확인한다(login-local-password 와 같은 방식).
@@ -21,6 +22,7 @@ import {
   KAKAO_SCOPE,
   buildKakaoAuthorizeUrl,
   consumeKakaoAuthRequest,
+  startKakaoLogin,
   isKakaoCallbackPath,
   readKakaoCallbackParams,
   safeInternalPath,
@@ -349,4 +351,101 @@ test('실패한 시도는 가입 동의 표시를 버리고, 성공은 남긴다
     // 성공 경로에서는 남긴다 — SignupCompletion 이 그걸 보고 서버에 동의를 기록한다.
     assert.equal(hasFreshSignupConsent(), true);
   });
+});
+
+/* ── ⑦ nonce 해시 계약 — 이걸 어기면 마지막 한 걸음에서만 죽는다 ─────────────────
+   GoTrue 는 우리가 준 nonce 를 sha256 해서 id_token 의 nonce 클레임과 맞춘다
+   (token_oidc.go 301-305: `hash := fmt.Sprintf("%x", sha256.Sum256([]byte(params.Nonce)))`).
+   그래서 **인가 요청에는 해시, signInWithIdToken 에는 원본**을 보내야 한다. 양쪽에 같은 값을
+   보내면 KOE205 도 통과하고 토큰 교환도 성공한 뒤 마지막 단계에서만 `Nonces mismatch` 로
+   죽는다 — 2026-09-22 프로덕션에서 실제로 그렇게 걸렸다. */
+
+/* sessionStorage 스텁은 동기 버전이 이미 있지만(withSessionStorage) 여기서는 await 가
+   필요하다 — 동기 버전의 finally 는 프라미스를 기다리지 않고 스텁을 걷어간다. */
+async function withAsyncSessionStorage(run) {
+  const previous = globalThis.sessionStorage;
+  const memory = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => (memory.has(key) ? memory.get(key) : null),
+    setItem: (key, value) => memory.set(key, String(value)),
+    removeItem: (key) => memory.delete(key),
+  };
+  try { return await run(memory); } finally { globalThis.sessionStorage = previous; }
+}
+
+/** startKakaoLogin 을 돌리고 인가 화면으로 넘긴 URL 들을 돌려준다. */
+async function startAndCapture() {
+  const previous = globalThis.window;
+  const assigned = [];
+  globalThis.window = {
+    location: { origin: 'https://ai.wearless.kr', assign: (url) => assigned.push(url) },
+  };
+  try {
+    // clientId 를 주입한다 — node 에는 import.meta.env 가 없어 기본값이 빈 문자열이다.
+    const result = await startKakaoLogin({ clientId: 'rest-key' });
+    return { assigned, result };
+  } finally { globalThis.window = previous; }
+}
+
+const sha256Hex = async (value) => {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+test('인가 요청의 nonce 는 저장한 원본의 sha256 해시다', async () => {
+  await withAsyncSessionStorage(async () => {
+    const { assigned, result } = await startAndCapture();
+    assert.equal(result.error, null);
+    assert.equal(assigned.length, 1, '인가 화면으로 한 번 이동한다');
+    const sent = new URL(assigned[0]).searchParams.get('nonce');
+    const stored = JSON.parse(globalThis.sessionStorage.getItem('wl_kakaoOidc'));
+
+    assert.ok(stored.nonce, '원본 nonce 를 저장해 둔다 — signInWithIdToken 이 받을 값이다');
+    assert.notEqual(sent, stored.nonce, '같은 값을 보내면 GoTrue 가 Nonces mismatch 로 거절한다');
+    assert.equal(sent, await sha256Hex(stored.nonce));
+    assert.match(sent, /^[0-9a-f]{64}$/, 'Go 의 %x 와 같은 소문자 16진수 64자');
+  });
+});
+
+test('해시를 못 만들면 nonce 를 양쪽 다 포기한다 — 한쪽만 있으면 GoTrue 가 거절한다', async () => {
+  const realCrypto = globalThis.crypto;
+  // 보안 컨텍스트가 아닌 브라우저(LAN IP QA)에는 crypto.subtle 이 없다.
+  Object.defineProperty(globalThis, 'crypto', {
+    value: { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) },
+    configurable: true,
+  });
+  try {
+    await withAsyncSessionStorage(async () => {
+      const { assigned } = await startAndCapture();
+      const url = new URL(assigned[0]);
+      assert.equal(url.searchParams.get('nonce'), null, '인가 요청에 nonce 가 없다');
+      const stored = JSON.parse(globalThis.sessionStorage.getItem('wl_kakaoOidc'));
+      assert.equal(stored.nonce, null, '저장에도 없다 — 콜백이 signInWithIdToken 에 안 싣는다');
+    });
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', { value: realCrypto, configurable: true });
+  }
+});
+
+test('nonce 없이 시작했으면 signInWithIdToken 에도 nonce 를 싣지 않는다', async () => {
+  await withAsyncSessionStorage(async () => {
+    writeKakaoAuthRequest({ state: 'st', nonce: null, redirectUri: STORED.redirectUri, codeVerifier: null });
+    let seen = null;
+    const result = await runKakaoCallbackFlow({
+      search: '?code=abc&state=st',
+      http: async () => ({ id_token: 'id-token-9' }),
+      signInWithKakaoIdToken: async (payload) => { seen = payload; return { error: null }; },
+    });
+    assert.equal(result.ok, true);
+    assert.equal('nonce' in seen, false, 'nonce 키 자체가 없어야 한다');
+  });
+});
+
+test('buildKakaoAuthorizeUrl 은 nonce 가 없으면 파라미터를 아예 안 붙인다', () => {
+  const url = new URL(buildKakaoAuthorizeUrl({
+    clientId: 'k', redirectUri: 'https://ai.wearless.kr/auth/kakao/callback',
+    state: 's', nonce: null, codeChallenge: null,
+  }));
+  assert.equal(url.searchParams.get('nonce'), null);
+  assert.equal(url.searchParams.get('state'), 's');
 });

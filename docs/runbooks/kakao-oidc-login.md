@@ -158,7 +158,7 @@ AWS_PROFILE=wearless aws ssm get-parameter --region us-east-1 \
 | 2 | 서버 배포 (`deploy-server.yml`) | `curl -s -o /dev/null -w '%{http_code}' -X POST https://api.wearless.kr/v1/auth/kakao/token -H 'content-type: application/json' -d '{"code":"x","redirectUri":"https://ai.wearless.kr/auth/kakao/callback"}'` → **400**(`kakao_token_exchange_failed`)이면 배선 OK. **503** 이면 키 미설정, **404** 면 아직 안 나갔다 |
 | 3 | 카카오 콘솔 — OIDC ON + Redirect URI 4개 등록 (§2) | discovery URL 이 열리는지 |
 | 4 | 프런트 머지 (Vercel 자동 배포). 이때 플래그는 아직 OFF | `/auth/kakao/callback` 직접 열면 "로그인 정보를 찾지 못했어요" 화면 |
-| 5 | Vercel 환경변수 `VITE_KAKAO_OIDC_ENABLED=true` + `VITE_KAKAO_REST_API_KEY=<client_id>` → **Redeploy** | 빌드타임 인라인이라 재배포 필수 |
+| 5 | Vercel 환경변수 `VITE_KAKAO_OIDC_ENABLED=true` + `VITE_KAKAO_REST_API_KEY=<client_id>` (스코프 **Production**) → **Redeploy** | 빌드타임 인라인이라 재배포 필수. 확인은 번들 grep: `curl -s https://ai.wearless.kr/ | grep -o '/assets/AppProviders-[^"]*\.js'` 로 청크를 찾아 받고 `grep -c '<client_id>'` 가 1 이어야 한다. 값이 안 박히면 `import.meta.env` 자리가 `{}` 로 남는다 — 2026-09-22 실제로 그 상태로 한 번 배포됐다 |
 | 6 | §4 검증 | |
 
 ### 롤백
@@ -239,6 +239,8 @@ select count(*) from auth.identities where provider = 'kakao';
 | 서버 **400 `kakao_token_exchange_failed`** | 만료·재사용된 인가코드(뒤로가기·새로고침) | 정상 동작이다. 처음부터 다시 로그인 |
 | 화면 **"로그인 요청이 만료됐어요"** | state 불일치 — 다른 탭에서 시작했거나 sessionStorage 가 비워졌다 | 사파리 프라이빗·쿠키 차단이면 로그인 시작 단계에서 먼저 막힌다 |
 | 화면 **"카카오 계정으로 로그인하지 못했어요"** | `signInWithIdToken` 거절 — **대시보드 provider 가 꺼졌거나 client_id 가 갈렸다** | §1 의 세 값 대조. 브라우저 콘솔에 GoTrue 메시지가 남는다 |
+| 콘솔에 **`Nonces mismatch`** | 인가 요청에 원본 nonce 를 보냈다 | GoTrue 는 우리가 준 nonce 를 **sha256** 해서 id_token 클레임과 맞춘다(`token_oidc.go` 301-305) ⇒ 카카오엔 해시, Supabase 엔 원본. `lib/kakaoOidc.js` 의 `sha256Hex`, 회귀 가드는 `kakao-oidc-login.test.mjs` §⑦ |
+| 콘솔에 **`Passed nonce and nonce in id_token should either both exist or not.`** | 한쪽에만 nonce 가 있다 | 해시를 못 만드는 컨텍스트(비보안 오리진)에서는 **양쪽 다** 생략해야 한다 |
 | 카카오 로그인 뒤 **엉뚱한 화면**(facemarket 에서 랜딩) | `host.js` 의 `FACEMARKET_ROUTES` 에서 `/auth` 가 빠졌다 | 빠지면 콜백이 라우터에 닿기 전에 `/model/register` 로 튕겨 인가코드가 사라진다 |
 
 로그에서는 **code·id_token·access_token·client_secret 을 절대 찾을 수 없다**(그렇게 만들었다 — `test_secrets_never_reach_the_logs`). 남는 것은 status 와 카카오가 준 error code 뿐이다. 그 둘로 위 표를 짚어라.
