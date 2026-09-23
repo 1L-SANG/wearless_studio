@@ -10,6 +10,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
+import { generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
 import {
   groupGenerationExamplesByDirection,
   repickExampleForDirection,
@@ -267,4 +268,48 @@ test('갤러리는 방향 묶음을 한 화면에 쌓는다 — 페이지 넘김
   assert.match(moodGuide, /sb-exsection/);
   // 한 방향이 길어져 다른 방향을 밀어내지 않게 묶음마다 6장으로 자른다.
   assert.match(moodGuide, /section\.examples\.slice\(0, 6\)/);
+});
+
+test('예시를 고르면 카드 방향이 그 예시의 방향이 된다 — 첫 선택도, 교체도', () => {
+  // 2026-09-23 운영 실측: 셀러가 사선·옆모습·뒷면 예시를 골랐는데 13블록 전부
+  // direction=front 로 저장돼 생성이 정면으로만 나갔다. 첫 선택 경로에 방향 패치가
+  // 없었고, 교체 경로에는 sideStyle 이 빠져 사선이 옆모습(90도)으로 읽혔다.
+  const ex = (id, direction, sideStyle = null) => ({
+    id, cutType: 'horizon', shot: 'full', gender: 'men', direction, sideStyle,
+    applicableClothingTypes: ['top'], variants: ['all'],
+  });
+  const card = (over = {}) => ({
+    id: 'blk', source: 'ai', cutType: 'horizon', shot: 'full', direction: 'front', sideStyle: null, ...over,
+  });
+  const pick = (block, example) => generationExampleSelectionPatch(block, example).patch;
+
+  const firstTq = pick(card(), ex('tq', 'side', 'threeQuarter'));
+  assert.equal(firstTq.direction, 'side');
+  assert.equal(firstTq.sideStyle, 'threeQuarter');
+
+  const firstProfile = pick(card(), ex('pr', 'side', 'profile'));
+  assert.equal(firstProfile.sideStyle, 'profile');
+
+  const firstBack = pick(card(), ex('bk', 'back'));
+  assert.equal(firstBack.direction, 'back');
+  assert.equal(firstBack.sideStyle, null);
+
+  // 교체도 같다 — 사선으로 갈아타면 sideStyle 이 따라붙는다.
+  const swapped = pick(card({ exampleId: 'front1' }), ex('tq', 'side', 'threeQuarter'));
+  assert.equal(swapped.direction, 'side');
+  assert.equal(swapped.sideStyle, 'threeQuarter');
+
+  // 사선 카드에서 정면 예시로 되돌리면 sideStyle 이 떨어진다 — 남으면 서버가 side 로 읽는다.
+  const back = pick(card({ exampleId: 'tq', direction: 'side', sideStyle: 'threeQuarter' }), ex('fr', 'front'));
+  assert.equal(back.direction, 'front');
+  assert.equal(back.sideStyle, null);
+});
+
+test('제품 디테일 방향 규칙은 그대로다 — 예시 라벨이 정본, sideStyle 개념 없음', () => {
+  const patch = generationExampleSelectionPatch(
+    { id: 'b', cutType: 'product', shot: 'detail', direction: 'front' },
+    { id: 'd', cutType: 'product', shot: 'detail', direction: 'back' },
+  ).patch;
+  assert.equal(patch.direction, 'back');
+  assert.equal(patch.sideStyle, undefined, '제품컷에는 sideStyle 을 심지 않는다');
 });

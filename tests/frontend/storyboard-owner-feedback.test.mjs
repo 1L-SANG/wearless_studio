@@ -35,7 +35,9 @@ test('replacing a generation example resets per-cut settings but preserves its s
   }, {
     sectionRole: 'styling', contentRole: 'coordination', cutType: 'styling', shot: 'medium',
     exampleId: 'new', exampleChoice: null, exampleSelectionOrigin: 'user', refScope: 'pose',
-    direction: 'front', colorId: 'base', colorIds: [], pose: 'auto', poseLabel: 'AI 자동',
+    // 2026-09-23: 착용컷은 고른 예시의 방향이 카드 방향이다. 정면 예시라 sideStyle 은 떨어진다
+    // — 남겨 두면 서버가 side 로 읽어 사선/옆모습이 뒤섞인다.
+    direction: 'front', sideStyle: null, colorId: 'base', colorIds: [], pose: 'auto', poseLabel: 'AI 자동',
     angle: 'same', matchIds: [], refImages: [], refAssetIds: [], faceExposure: 'same',
     outerClosureState: 'open',
   });
