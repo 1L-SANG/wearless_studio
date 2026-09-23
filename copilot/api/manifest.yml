@@ -400,7 +400,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 같은 것(RUNPOD_API_KEY). 2026-09-22 생성: US-CA-2 · H100/H200 · workersMin=0 ·
   # 볼륨 d9pu262eag(가중치 53.75GiB). 콜드 151초 · 웜 6초 · 실렌더 3/3 검증.
   # 비우면 파드로 되돌아간다(그때 FACE_AUTOSCALE 를 다시 on 으로).
-  FACE_IDENTITY_ENDPOINT_ID: "yicylasmsqauee"
+  FACE_IDENTITY_ENDPOINT_ID: "f5nmg1fycih4gk"
   # FACE_IDENTITY_BACKEND_URL·FACE_RUNPOD_POD_ID 는 여기 두지 않는다.
   # **파드 id 와 렌더 URL 의 정본은 DB(fm_face_render_pod)** 다 — 파드는 재고 때문에 바뀌고
   # (2026-09-10·11 실측: start "not enough free GPUs", create "no instances"), 바뀔 때마다
@@ -459,7 +459,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 유휴 요금이 없고 동시성을 워커 수가 맡는다. API 키는 얼굴 파드와 같은 것을 쓴다.
   # 세우는 법은 documents/face_angle_swap.md 의 "서버리스" 절.
   # 2026-09-21 생성: US-CA-2 · H100/H200 · workersMin=0 · 볼륨 x9gfingbu2(가중치 30.5GB).
-  FACE_ANGLE_ENDPOINT_ID: "2nss3tsrf7ft87"
+  FACE_ANGLE_ENDPOINT_ID: "jiw5v9ow8462al"
   # 파드 온디맨드. **서버리스 엔드포인트가 있으면 이 아래는 안 쓴다.** off 면 RunPod 를 아예
   # 호출하지 않는다. 수요는 **옆·뒤를 만드는 잡만** 센다 —
   # 정면 컷만 만드는 잡은 이 파드를 켜지 않는다(그 파드가 정면에 할 일이 없다).
