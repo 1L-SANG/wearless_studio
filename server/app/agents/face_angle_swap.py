@@ -488,6 +488,17 @@ def tone_shift(p: Plan, out: np.ndarray, box: tuple[int, int, int]) -> np.ndarra
     return base[outside].mean(axis=0) - out[inside].mean(axis=0)
 
 
+def _warm_skin(image: np.ndarray) -> np.ndarray:
+    """톤 표본용 피부 — 붉은기(R-B≥25, R-G≥10)가 있고 머리카락·하이라이트가 아닌 픽셀.
+
+    extend_to_collar 와 같은 기준이다. 물 빠진 데님(R-B 10~15)이 여기서 빠진다.
+    """
+    a = image.astype(np.float32)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    lum = a.mean(axis=2)
+    return (r - b >= 25.0) & (r - g >= 10.0) & (lum > TONE_SKIN_MIN) & (lum < 245.0)
+
+
 def tone_means(p: Plan, out: np.ndarray, box: tuple[int, int, int]):
     """이음선 링의 (원본 목 평균, 새 머리 평균). 표본이 모자라면 None.
 
@@ -506,12 +517,24 @@ def tone_means(p: Plan, out: np.ndarray, box: tuple[int, int, int]):
     bg = background_color(p.base)
 
     def skin(mask, image, is_person):
-        return mask & is_person & (image.mean(axis=2) > TONE_SKIN_MIN)
+        # 붉은기가 뚜렷한 픽셀만 피부로 본다. 밝기만 보면 칼라 데님·회색 셔츠(밝기 120~140)가
+        # 피부 표본의 대부분을 차지해 머리를 셔츠 색에 맞추고, 그 잔차로 멀쩡한 컷을 떨어뜨렸다
+        # (2026-09-23 운영: 목을 칼라까지 내린 뒤 링 바깥 표본의 95% 가 셔츠 → 잔차 17.8 tone_off).
+        return mask & is_person & _warm_skin(image)
 
     outside = skin(ring_out, base, person)
     inside = skin(ring_in, out, np.abs(out - bg).max(axis=2) > BG_THRESHOLD)
     if outside.sum() < TONE_MIN_SAMPLES or inside.sum() < TONE_MIN_SAMPLES:
-        return None
+        # 목을 칼라까지 새로 그리면 머리 둘레에 맞닿은 원래 피부가 거의 없다. 그때는 **새로
+        # 그리는 자리의 원래 피부**(마스크 아래쪽 = 원래 목·귀·턱)와 새 머리의 같은 자리를
+        # 비교한다 — 몸과 이어지는 피부색이 기준이라는 뜻은 같다.
+        ys = np.nonzero(head)[0]
+        lower = np.zeros_like(head)
+        lower[int(ys.min()) + int(0.45 * (int(ys.max()) - int(ys.min()))):, :] = True
+        outside = head & lower & person & _warm_skin(base)
+        inside = head & lower & _warm_skin(out)
+        if outside.sum() < TONE_MIN_SAMPLES or inside.sum() < TONE_MIN_SAMPLES:
+            return None
     return base[outside].mean(axis=0), out[inside].mean(axis=0)
 
 
