@@ -34,7 +34,8 @@ export function SponsorshipFields({ value, onChange, disabled = false }) {
       <label className={s.consent} htmlFor={`${id}-consent`}>
         <input id={`${id}-consent`} type="checkbox" checked={value.profileConsent === true} disabled={disabled} onChange={event => field('profileConsent', event.target.checked)} />
         <span><strong>프로필 정보 수집에 동의합니다</strong> <em className={s.required}>필수</em>
-          <small>협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄면 이 정보는 지워요.</small><small>동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.</small></span>
+          {/* 이 두 문장은 서버 facemarket_sponsorship.SPONSORSHIP_NOTICES 와 글자 그대로 같아야 해요(동의 이력 해시). */}
+          <small>협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄거나 탈퇴하면 이 정보는 바로 지워요.</small><small>동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.</small></span>
       </label>
     </div>}
     <p className={s.notice}>{SPONSORSHIP_NOTICE}</p>

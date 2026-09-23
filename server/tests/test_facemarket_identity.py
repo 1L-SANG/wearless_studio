@@ -83,6 +83,9 @@ class FakeCursor:
                 raise UniqueViolation("duplicate cx_tx_id")
             self.store["tx"].add(cx_tx_id)
             self._result = None
+        elif s.startswith("select terms_version, privacy_version, age_attested, accepted_at from seller_consents"):
+            # 카탈로그의 협찬 상세 노출 여부(셀러 약관 동의 기록). 이 테스트의 계정은 셀러가 아니다.
+            self._result = None
         elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at"):
             # /models/me — 본인 소유(모든 상태). 기본 카드 컬럼(+assets_ready 파생).
             rows = [r for r in models if r["user_id"] == params[0]]

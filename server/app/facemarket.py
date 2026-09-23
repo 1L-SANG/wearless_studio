@@ -616,6 +616,9 @@ async def list_models(
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
+        # 협찬 상세(계정·팔로워·사이즈)는 E-2b 동의문대로 셀러 약관에 동의한 계정에게만.
+        # 이 카탈로그는 로그인만 요구하므로 모델 계정도 부를 수 있다.
+        seller = await repo.get_seller_consent(conn, user_id) is not None
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {_MODEL_CARD_COLS_ENRICHED} from fm_models m
@@ -627,7 +630,7 @@ async def list_models(
             rows = await cur.fetchall()
     for row in rows:
         row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
-        row.update(sponsorship_view(row))
+        row.update(sponsorship_view(row, details=seller))
     response.headers["Cache-Control"] = "no-store, private"
     return rows
 
@@ -736,6 +739,7 @@ async def update_model_sponsorship(
             await record_sponsorship_consents(
                 cur, request, user_id, model_id, enabled=merged['sponsorship_enabled'],
                 previous_enabled=current['sponsorship_enabled'], profile_consent=profile_consent,
+                client_ip=_request_client_ip(request),
             )
         await conn.commit()
     return updated

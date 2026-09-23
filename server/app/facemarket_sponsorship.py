@@ -72,8 +72,33 @@ def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True) ->
     }
 
 
-async def record_sponsorship_consents(cur, request, user_id, model_id, *, enabled, previous_enabled, profile_consent):
-    """설정과 같은 트랜잭션에 실제 고지 문구의 버전·해시를 기록해요."""
+# 동의 이력에 남기는 고지 문구. 화면(src/features/model/SponsorshipSettings.jsx, sponsorshipOptions.js)이
+# 보여 주는 문장과 글자 그대로 같아야 해요 — 기록된 해시가 "모델이 본 문구"의 증빙이니까.
+# tests/test_facemarket_sponsorship.py 가 화면 소스와 대조해요. 한쪽만 고치면 그 테스트가 잡아요.
+SPONSORSHIP_NOTICES = {
+    'sponsorship_participation': {
+        'title': '의류 협찬 받기',
+        'notice': '켜 두면 셀러가 바로 협찬을 요청할 수 있어요. 옷을 받으면 입고 찍어서 피드에 올려요. 옷은 내 것, 현금은 없어요. 언제든 끌 수 있어요.',
+        'scope': '협찬 옷도 위에서 정한 허용 품목 안에서만 와요.',
+        'rules': ['옷을 받은 뒤 3일 이내, 본인 인스타그램 피드에 1회 게시해요.', '게시물은 30일 유지해요.', '옷은 반납하지 않아요.'],
+        'availability': '협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.',
+    },
+    'sponsorship_profile_collection': {
+        'title': '프로필 정보 수집에 동의합니다',
+        # 보유 기간(끄거나 탈퇴할 때까지)은 동의를 받을 때 알려야 하는 항목이라 문장에 넣어요(04 동의서 E-2b).
+        'notice': '협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄거나 탈퇴하면 이 정보는 바로 지워요.',
+        'refusal': '동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.',
+    },
+}
+
+
+async def record_sponsorship_consents(cur, request, user_id, model_id, *, enabled, previous_enabled,
+                                      profile_consent, client_ip=None):
+    """설정과 같은 트랜잭션에 실제 고지 문구의 버전·해시를 기록해요.
+
+    client_ip: 호출자가 ALB 의 X-Forwarded-For 를 푼 주소(facemarket._request_client_ip). 없으면 ASGI peer 를
+    쓰는데, 운영에서는 그게 ALB 내부 주소(10.x)라 증빙이 안 돼요.
+    """
     import hashlib
     import ipaddress
     import json
@@ -82,21 +107,10 @@ async def record_sponsorship_consents(cur, request, user_id, model_id, *, enable
 
     if enabled == previous_enabled and profile_consent is not True:
         return
-    notices = {
-        'sponsorship_participation': {
-            'title': '의류 협찬 받기',
-            'notice': '켜 두면 셀러가 바로 협찬을 요청할 수 있어요. 옷을 받으면 입고 찍어서 피드에 올려요. 옷은 내 것, 현금은 없어요. 언제든 끌 수 있어요.',
-            'rules': ['옷을 받은 뒤 3일 이내, 본인 인스타그램 피드에 1회 게시해요.', '게시물은 30일 유지해요.', '옷은 반납하지 않아요.'],
-            'availability': '협찬 요청 기능은 준비 중이에요. 지금은 참여 설정만 저장해요.',
-        },
-        'sponsorship_profile_collection': {
-            'title': '프로필 정보 수집에 동의합니다',
-            'refusal': '동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.',
-            'notice': '협찬 모델을 찾는 로그인 셀러에게 인스타 계정, 팔로워 수, 사이즈가 보여요. 배송지는 요청이 온 뒤에 받아요. 협찬을 끄면 이 정보는 지워요.',
-        },
-    }
+    notices = SPONSORSHIP_NOTICES
     try:
-        address = str(ipaddress.ip_address(request.client.host)) if request.client else None
+        raw_ip = client_ip or (request.client.host if request.client else None)
+        address = str(ipaddress.ip_address(raw_ip)) if raw_ip else None
     except ValueError:
         address = None
     screen = request.headers.get('x-facemarket-screen', 'sponsorship_settings')

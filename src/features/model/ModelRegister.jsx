@@ -65,6 +65,7 @@ export function ModelRegister() {
   const operation = useRef(null);
   const previewUrls = useRef({});
   const inFlight = useRef(false);
+  const errorRef = useRef(null);
   // "이전"으로 취소한 등록 id — 그 등록의 늦은 응답을 무시하는 데 써요(backFromIdCapture·finishIdDocument).
   const abandonedEnrollmentId = useRef(null);
   const savedSponsorshipEnabled = useRef(false);
@@ -170,6 +171,15 @@ export function ModelRegister() {
     })();
     return () => { active = false; clearTimeout(deadline); controller.abort(); };
   }, [step, enrollment?.id]);
+
+  // 오류 문구는 화면 맨 위에만 뜬다. 조건 단계는 길어서(협찬 카드가 가격 동의 위에 있다) 맨 아래
+  // 발급 버튼을 누른 사람은 오류를 못 보고 "버튼이 안 먹는다"고 느낀다 — 뜨면 그 자리로 데려간다.
+  // (테스트 하네스가 효과를 순번으로 부르므로 기존 효과들 뒤에 둔다.)
+  useEffect(() => {
+    if (!error || !errorRef.current) return;
+    errorRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    errorRef.current.focus?.({ preventScroll: true });
+  }, [error]);
 
   useEffect(() => {
     const modelId = enrollment?.modelId;
@@ -590,7 +600,7 @@ export function ModelRegister() {
   return <div className={s.page} data-registration data-step={step}>
     <div className={s.main}>
       {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span></li>)}</ol></nav>}
-      {error && step !== '4c' && <p className={s.error} role="alert">{error}</p>}
+      {error && step !== '4c' && <p className={s.error} role="alert" ref={errorRef} tabIndex={-1}>{error}</p>}
       {content}
       {/* 위젯이 붙을 빈 호스트. React 는 이 안을 절대 안 본다 — #oacxDiv 는
           facemarketIdentityWidget 이 직접 만들어 넣는다(oacxHost.js 참고).

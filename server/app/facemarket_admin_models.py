@@ -895,15 +895,20 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
 async def public_models(
     request: Request, response: Response, user_id: str | None = Depends(optional_user),
 ):
-    """무인증 공개 목록. 협찬 상세(계정·팔로워·사이즈)는 로그인한 사용자에게만 실어요(E-2b 동의 범위)."""
+    """무인증 공개 목록. 협찬 상세(계정·팔로워·사이즈)는 로그인한 **셀러**에게만 실어요(E-2b 동의 범위).
+
+    셀러 = 셀러 약관 동의 기록(seller_consents)이 있는 계정. 로그인만으로 열면 모델 계정과
+    이메일 가입만 한 사람에게도 보여 동의문("로그인 셀러")의 범위를 넘어요.
+    """
     async with get_conn(request) as conn:
         rows = await _load_model_profiles(conn, public_only=True)
+        seller = user_id is not None and await repo.get_seller_consent(conn, user_id) is not None
     items = []
     for row in rows:
         items.append(
             {
                 "id": row["id"],
-                **_profile_view(row, details=user_id is not None),
+                **_profile_view(row, details=seller),
                 "closeup_image_url": _cover_serving_url(
                     request, row["cover_image_url"]
                 ),

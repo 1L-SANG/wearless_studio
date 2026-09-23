@@ -476,6 +476,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # 관리자 콘솔 기기 토큰(admin_guard). 빠지면 admin.wearless.kr 의 모든 요청이
             # preflight 에서 죽는다 — 로그인은 되니 화면엔 "서버에 연결하지 못했어요" 만 남는다.
             "X-Admin-Device",
+            # 협찬 동의 이력의 화면 구분(facemarket.js updateModelSponsorship). 빠지면 브라우저가
+            # PATCH /models/{id}/sponsorship 을 preflight 에서 막아 협찬 저장이 전부 실패한다 —
+            # 켜 둔 모델은 등록 위저드의 증서 발급도 못 한다(2026-09-23 리뷰 375S-1).
+            "X-Facemarket-Screen",
         ],
     )
 

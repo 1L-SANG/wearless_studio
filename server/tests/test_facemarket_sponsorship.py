@@ -62,6 +62,10 @@ class Cursor:
             self.store["interests"].add(tuple(params))
         elif "from fm_sponsorship_interest" in query:
             self.one = {"interested": tuple(params) in self.store["interests"]}
+        elif "from seller_consents" in query:
+            # 셀러 약관 동의 기록 = 셀러 판정. 모델 계정(OWNER)에는 없어요.
+            self.one = ({"terms_version": "v1.2", "privacy_version": "v1.1", "age_attested": True,
+                         "accepted_at": NOW} if params[0] in self.store["sellers"] else None)
         elif "from fm_models" in query:
             eligible = True
             if "where id = %s and user_id = %s" in query:
@@ -118,7 +122,7 @@ def sponsorship_api(monkeypatch, keypair, make_token):
             "size_top": "M", "size_bottom_waist": 28,
             "sponsorship_profile_consent_at": NOW,
         },
-        "closed": False, "interests": set(), "queries": [],
+        "closed": False, "interests": set(), "queries": [], "sellers": {SELLER},
     }
 
     @contextlib.asynccontextmanager
@@ -275,12 +279,13 @@ def test_interest_requires_login_and_open_account(sponsorship_api):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_public_and_catalog_hide_disabled_details_but_owner_keeps_them(sponsorship_api, enabled):
-    client, store, _ = sponsorship_api
+    client, store, make_token = sponsorship_api
     store["model"]["sponsorship_enabled"] = enabled
-    public = client.get("/v1/facemarket/public/models")
+    seller = {"Authorization": f"Bearer {make_token(sub=SELLER)}"}
+    public = client.get("/v1/facemarket/public/models", headers=seller)
     assert public.status_code == 200, public.text
     assert public.headers["cache-control"] == "no-store"
-    catalog = client.get("/v1/facemarket/models")
+    catalog = client.get("/v1/facemarket/models", headers=seller)
     assert catalog.status_code == 200, catalog.text
     owner = client.get("/v1/facemarket/models/me")
     assert owner.status_code == 200, owner.text
@@ -311,6 +316,57 @@ def test_public_list_shows_only_the_badge_without_login(sponsorship_api):
     # 잘못된 토큰도 비로그인과 같아요.
     bad = client.get("/v1/facemarket/public/models", headers={"Authorization": "Bearer not-a-token"})
     assert bad.status_code == 200 and bad.json()["items"][0]["instagramHandle"] is None
+
+
+def test_logged_in_non_seller_sees_only_the_badge(sponsorship_api):
+    """동의문은 '로그인 셀러'에게 보인다고 해요. 셀러 약관 동의 기록이 없는 로그인 계정(다른 모델,
+    이메일 가입만 한 사람)에게는 공개 목록도 셀러 카탈로그도 배지만 실어요."""
+    client, store, _ = sponsorship_api
+    store["model"]["sponsorship_enabled"] = True
+    # 기본 헤더는 OWNER(모델 계정) 토큰 — seller_consents 에 없어요.
+    for url in ("/v1/facemarket/public/models", "/v1/facemarket/models"):
+        res = client.get(url)
+        assert res.status_code == 200, res.text
+        item = res.json()["items"][0] if url.endswith("public/models") else res.json()[0]
+        assert item["sponsorshipEnabled"] is True
+        assert item["instagramHandle"] is None and item["instagramFollowers"] is None
+        assert item["sizeTop"] is None and item["sizeBottomWaist"] is None
+    assert any("from seller_consents" in q and p == (OWNER,) for q, p in store["queries"])
+
+
+def test_sponsorship_patch_preflight_allows_screen_header(sponsorship_api):
+    """브라우저는 PATCH 전에 preflight 를 보내요. 화면이 붙이는 X-Facemarket-Screen 이 허용 목록에 없으면
+    실서버(api.wearless.kr 교차 출처)에서 협찬 저장이 전부 막혀요 — 켜 둔 모델은 증서 발급도 못 해요."""
+    client, _, _ = sponsorship_api
+    res = client.options(
+        f"/v1/facemarket/models/{MODEL_ID}/sponsorship",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "authorization,content-type,x-facemarket-screen",
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert "x-facemarket-screen" in res.headers["access-control-allow-headers"].lower()
+
+
+def test_consent_notice_text_matches_the_screen():
+    """동의 이력에 남는 해시는 '모델이 실제로 본 문구'의 증빙이에요. 서버 문구와 화면 문구가 한 글자라도
+    다르면 증빙이 깨져요. 화면 소스에서 태그를 걷어낸 뒤 서버 문장이 그대로 있는지 봐요."""
+    import pathlib
+    import re
+    from app.facemarket_sponsorship import SPONSORSHIP_NOTICES
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    source = "\n".join(
+        (root / path).read_text()
+        for path in ("src/features/model/SponsorshipSettings.jsx", "src/features/model/sponsorshipOptions.js")
+    )
+    screen = re.sub(r"</?strong>", "", source)
+    for consent_type, notice in SPONSORSHIP_NOTICES.items():
+        for key, value in notice.items():
+            for sentence in (value if isinstance(value, list) else [value]):
+                assert sentence in screen, f"{consent_type}.{key}: {sentence}"
 
 
 def test_sponsorship_records_separate_versioned_grants_and_withdrawals(sponsorship_api):
