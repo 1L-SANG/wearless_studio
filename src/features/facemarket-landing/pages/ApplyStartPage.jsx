@@ -31,6 +31,7 @@ export function ApplyStartPage() {
               <blockquote className={s.earningsQuote}>
                 10명의 셀러가 나를 한번씩만 써도, <b>10만원</b>의 수익이 자동으로.
               </blockquote>
+              <p className={s.sponsorshipNote}>협찬을 켜 두면 셀러가 옷을 보내줘요. 언제든 끌 수 있어요.</p>
               <p className={s.preparationNote}>승인 후 <b>등록 사진 18장</b>을 준비해요. 야외 촬영은 약 15분이에요.</p>
               <Link className={s.primary} to="/model/apply">지원서 쓰기</Link>
               <div className={s.faces} aria-label="모델 프로필 사진">
@@ -59,6 +60,10 @@ export function ApplyStartPage() {
                   </li>
                   <li>내 얼굴을 쓸 수 있는 옷의 종류를 선택할 수 있어요</li>
                   <li>내 얼굴이 어디 쓰였는지 전부 추적이 가능해요</li>
+                  <li>
+                    협찬을 켜 두면 셀러가 옷을 보내줘요
+                    <span className={s.benefitNote}>옷은 내 것이고, 현금 정산과 별개예요. 요청을 보장하지는 않아요.</span>
+                  </li>
                 </ul>
                 <p className={s.fine}>쌓인 몫이 {formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요</p>
               </section>

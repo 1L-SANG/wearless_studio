@@ -1,4 +1,8 @@
-"""협찬의 선택성, 미적용 초안과 공개 검토본을 검증해요. DB에는 적용하지 않아요."""
+"""협찬 동의의 선택성과 공개 법무 문서의 버전·시행일을 검증해요. DB에는 적용하지 않아요.
+
+2026-09-23 오너 결정으로 협찬 개정(약관 v1.2·처리방침 v1.6·FAQ v1.3·E-2 동의)이 시행됐어요.
+요청·배송 기능용 델타(02·05 v3)는 아직 초안이에요.
+"""
 import json
 import pathlib
 import shutil
@@ -17,13 +21,15 @@ TYPES = {
 }
 
 
-def test_sponsorship_draft_is_separate_from_required_enrollment():
-    registry = getattr(legal_versions, "DRAFT_SPONSORSHIP_CONSENTS", {})
+def test_sponsorship_consents_are_optional_and_separate_from_required_enrollment():
+    registry = legal_versions.SPONSORSHIP_CONSENTS
     assert set(registry) == TYPES
     assert all(item["required_for_enrollment"] is False for item in registry.values())
-    assert all(item["version"] == legal_versions.DRAFT_SPONSORSHIP_CONSENT_VERSION
+    assert legal_versions.SPONSORSHIP_CONSENT_VERSION == "2026-09-sponsorship-v1"
+    assert "draft" not in legal_versions.SPONSORSHIP_CONSENT_VERSION
+    assert all(item["version"] == legal_versions.SPONSORSHIP_CONSENT_VERSION
                for item in registry.values())
-    assert enrollment.DRAFT_OPTIONAL_CONSENT_VERSIONS == {
+    assert enrollment.OPTIONAL_CONSENT_VERSIONS == {
         key: item["version"] for key, item in registry.items()
     }
     assert enrollment.BIOMETRIC_CONSENT_VERSION == "2026-09-v4"
@@ -31,39 +37,42 @@ def test_sponsorship_draft_is_separate_from_required_enrollment():
     assert enrollment.ACCEPTED_BIOMETRIC_CONSENT_VERSIONS == (
         "2026-09-v1", "2026-09-v2", "2026-09-v3", "2026-09-v4",
     )
-    assert not set(enrollment.DRAFT_OPTIONAL_CONSENT_VERSIONS.values()).intersection(
+    assert not set(enrollment.OPTIONAL_CONSENT_VERSIONS.values()).intersection(
         enrollment.ACCEPTED_CONSENT_VERSIONS
     )
     # 협찬을 seller 가입 필수 문서로 추가하면 기존 회원에게 강제 동의가 생겨요.
     assert set(legal_versions.required_versions()) == {"terms", "privacy"}
 
 
-def test_draft_versions_match_review_manifest_without_an_effective_date():
+def test_effective_sponsorship_documents_match_manifest():
+    """시행본(약관·처리방침·FAQ·E-2 동의)은 시행일이 있고 초안 표시가 없어요. 서버가 동의 이력에
+    기록하는 버전이 공개된 동의문의 버전과 같아야 증빙이 돼요."""
     manifest = {d["slug"]: d for d in json.loads(
         (ROOT / "public/legal/manifest.json").read_text()
     )}
-    drafts = getattr(legal_versions, "DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS", {})
-    assert len(drafts) == 6
-    for slug, version in drafts.items():
-        assert manifest[slug]["version"] == version
-        assert manifest[slug]["status"] == "draft"
-        assert manifest[slug]["effectiveDate"] is None
+    for slug, version in legal_versions.SPONSORSHIP_DOCUMENT_VERSIONS.items():
+        assert manifest[slug]["version"] == version, slug
+        assert manifest[slug]["effectiveDate"] == "2026-09-23", slug
+        assert "status" not in manifest[slug], slug
+        text = (ROOT / f"public/legal/{slug}.md").read_text()
+        assert "법률 검토 전 초안" not in text and "시행일 미확정" not in text and "검토안" not in text, slug
+    assert manifest["sponsorship-consent"]["version"] == legal_versions.SPONSORSHIP_CONSENT_VERSION
     assert manifest["biometric-consent"]["version"] == enrollment.BIOMETRIC_CONSENT_VERSION
     assert manifest["overseas-transfer"]["version"] == enrollment.OVERSEAS_NOTICE_VERSION
 
 
-def test_live_documents_keep_their_effective_versions():
-    """개정안은 별도 슬러그로만 나가요. 시행본 슬러그가 초안으로 바뀌면 /terms·/privacy·/answers 에서
-    지금 효력이 있는 문서가 사라지고, 필수 동의 링크가 '적용하지 않는 초안'을 가리켜요."""
+def test_request_flow_deltas_stay_draft_without_an_effective_date():
     manifest = {d["slug"]: d for d in json.loads(
         (ROOT / "public/legal/manifest.json").read_text()
     )}
-    for slug, version in (("terms-model", "v1.1"), ("privacy-model", "v1.5"), ("answers", "v1.2")):
-        assert manifest[slug]["version"] == version, slug
-        assert manifest[slug]["effectiveDate"], slug
-        assert "status" not in manifest[slug], slug
-        assert "법률 검토 전 초안" not in (ROOT / f"public/legal/{slug}.md").read_text(), slug
-    assert not set(legal_versions.DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS) & {"terms-model", "privacy-model", "answers"}
+    drafts = legal_versions.DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS
+    assert set(drafts) == {"license-agreement-sponsorship-draft", "seller-license-terms-sponsorship-draft"}
+    for slug, version in drafts.items():
+        assert manifest[slug]["version"] == version
+        assert manifest[slug]["status"] == "draft"
+        assert manifest[slug]["effectiveDate"] is None
+    # 초안이 시행본 슬러그를 덮으면 /terms·/privacy·/answers 에서 효력 있는 문서가 사라져요.
+    assert not set(drafts) & {"terms-model", "privacy-model", "answers"}
 
 
 @pytest.fixture
@@ -88,15 +97,14 @@ def test_publisher_uses_conditions_and_preserves_draft_warning(publisher):
     table.write_text(table.read_text().replace("옷 수령 후 3일 이내", "옷 수령 후 4일 이내"))
     result = run()
     assert result.returncode == 0, result.stdout + result.stderr
-    for slug in ("sponsorship-consent", "terms-model-sponsorship-draft", "answers-sponsorship-draft",
-                 "seller-license-terms-sponsorship-draft"):
+    for slug in ("sponsorship-consent", "terms-model", "answers", "seller-license-terms-sponsorship-draft"):
         path = root / f"public/legal/{slug}.md"
         assert path.is_file(), slug
         text = path.read_text()
         assert "옷 수령 후 4일 이내" in text
         assert "{{sponsorship_" not in text
-        assert "법률 검토 전 초안" in text
-        assert "시행일 미확정" in text
+    draft = (root / "public/legal/seller-license-terms-sponsorship-draft.md").read_text()
+    assert "법률 검토 전 초안" in draft and "시행일 미확정" in draft
     # 검토되지 않은 v2 사용처 확장을 발행기가 자동 합본하지 않아요.
     agreement = (root / "public/legal/license-agreement.md").read_text()
     assert "사용처는 스튜디오·무지 배경" in agreement

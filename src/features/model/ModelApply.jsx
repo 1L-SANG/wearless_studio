@@ -368,7 +368,7 @@ export function ModelApply() {
           ))}</div></fieldset>
           {[{ key: 'portfolioUrl', label: '포트폴리오 링크', example: 'https://portfolio.com' }, { key: 'snsUrl', label: 'SNS 링크', example: 'https://instagram.com/계정' }].map(({ key, label, example }) => (
             <FormInput key={key} label={label} optional placeholder={example} inputMode="url" spellCheck={false} value={form[key]} onChange={(e) => set(key, e.target.value)}
-              error={linkErrors[key]} messageId={`${key}-message`} />
+              error={linkErrors[key]} hint={key === 'snsUrl' ? '협찬 참여를 원하는 경우, 인스타 계정을 적어주세요.' : undefined} messageId={`${key}-message`} />
           ))}
         </div>}
 

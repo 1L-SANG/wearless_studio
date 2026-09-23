@@ -99,7 +99,7 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
   // 서버가 실수로 더 보내도(이메일·실명·생년월일) 화면 모델에는 안 실린다.
   assert.deepEqual(
     Object.keys(model).sort(),
-    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizeParts', 'sizes', 'spec', 'verified', 'weight'],
+    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizeParts', 'sizes', 'spec', 'sponsorship', 'verified', 'weight'],
   );
 });
 

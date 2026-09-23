@@ -27,16 +27,18 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
-test('상단바는 세 메뉴를 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+test('상단바는 협찬 안내를 공개하고 보호 메뉴만 로그인 의도로 바꾼다', () => {
   assert.equal(typeof landingRouting.landingNavItems, 'function');
   assert.equal(typeof landingRouting.landingNavAction, 'function');
 
   assert.deepEqual(landingRouting.landingNavItems(), [
     { to: '/apply', label: '모델 지원', protected: false },
+    { to: '/#sponsorship', label: '협찬 안내', protected: false },
     { to: '/models', label: '모델 리스트', protected: false },
     { to: '/status', label: '마이페이지', protected: true },
   ]);
   assert.equal(landingRouting.landingNavAction('/models', { session: null, loading: false }), 'navigate');
+  assert.equal(landingRouting.landingNavAction('/#sponsorship', { session: null, loading: true }), 'navigate');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: true }), 'wait');
@@ -89,6 +91,8 @@ test('쿼리·해시가 붙어도 화이트리스트 판정은 경로로 한다'
   // openLogin 은 '/model/register' 같은 값을 심는다. 하드닝이 정상 경로를 막으면 안 된다.
   assert.equal(facemarketRootTarget('/model/register?step=2'), '/model/register?step=2');
   assert.equal(facemarketRootTarget('/model/license#issue'), '/model/license#issue');
+  assert.equal(facemarketRootTarget('/models?model=model-1'), '/models?model=model-1');
+  assert.equal(facemarketRootTarget('/models?model=model%2F1'), '/models?model=model%2F1');
 });
 
 test('셀러 스튜디오 경로는 통과시키지 않는다 — 등록 전용 도메인이다', () => {
@@ -113,6 +117,6 @@ test('접두사만 겹치는 경로는 화이트리스트를 통과하지 못한
 });
 
 test('확정 모델은 상단바에서 모델 지원을 숨겨요', () => {
-  assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/models', '/status']);
+  assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/#sponsorship', '/models', '/status']);
   assert.equal(landingRouting.landingNavItems({ verified: false })[0].to, '/apply');
 });

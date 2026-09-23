@@ -1,6 +1,7 @@
+import { sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
+import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, submitPhysique, updateModelSponsorship, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
 import { CX_AUTH_CONFIG_URL, runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toPreviewImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
@@ -56,12 +57,18 @@ export function ModelRegister() {
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
   const [editingPhotos, setEditingPhotos] = useState(false);
   const [identityReturn, setIdentityReturn] = useState(0);
+  const [sponsorship, setSponsorship] = useState(sponsorshipDraft);
+  const [sponsorshipReady, setSponsorshipReady] = useState(null);
+  const [sponsorshipRetry, setSponsorshipRetry] = useState(0);
+  const [sponsorshipError, setSponsorshipError] = useState('');
   const mounted = useRef(true);
   const operation = useRef(null);
   const previewUrls = useRef({});
   const inFlight = useRef(false);
+  const errorRef = useRef(null);
   // "이전"으로 취소한 등록 id — 그 등록의 늦은 응답을 무시하는 데 써요(backFromIdCapture·finishIdDocument).
   const abandonedEnrollmentId = useRef(null);
+  const savedSponsorshipEnabled = useRef(false);
 
   const showRecord = useCallback((record) => {
     setEnrollment(record);
@@ -164,6 +171,30 @@ export function ModelRegister() {
     })();
     return () => { active = false; clearTimeout(deadline); controller.abort(); };
   }, [step, enrollment?.id]);
+
+  // 오류 문구는 화면 맨 위에만 뜬다. 조건 단계는 길어서(협찬 카드가 가격 동의 위에 있다) 맨 아래
+  // 발급 버튼을 누른 사람은 오류를 못 보고 "버튼이 안 먹는다"고 느낀다 — 뜨면 그 자리로 데려간다.
+  // (테스트 하네스가 효과를 순번으로 부르므로 기존 효과들 뒤에 둔다.)
+  useEffect(() => {
+    if (!error || !errorRef.current) return;
+    errorRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    errorRef.current.focus?.({ preventScroll: true });
+  }, [error]);
+
+  useEffect(() => {
+    const modelId = enrollment?.modelId;
+    setSponsorshipReady(null); setSponsorshipError('');
+    if (!modelId) { setSponsorship(sponsorshipDraft()); return undefined; }
+    let alive = true;
+    listMyModels().then(models => {
+      if (!alive) return;
+      const model = models.find(item => item.id === modelId);
+      if (!model) throw new Error('모델 정보를 불러오지 못했어요.');
+      savedSponsorshipEnabled.current = model.sponsorshipEnabled === true;
+      setSponsorship(sponsorshipDraft(model)); setSponsorshipReady(modelId);
+    }).catch(error => { if (alive) setSponsorshipError(error.message || '협찬 설정을 불러오지 못했어요.'); });
+    return () => { alive = false; };
+  }, [enrollment?.modelId, sponsorshipRetry]);
 
   const runIdentity = async (record = enrollment) => {
     if (!record?.id || inFlight.current) return;
@@ -425,16 +456,21 @@ export function ModelRegister() {
   };
 
   const submitConditions = async () => {
-    if (!priceAgreed || !terms.allowedUse.length || !enrollment?.id || inFlight.current) return;
+    if (!priceAgreed || !terms.allowedUse.length || !enrollment?.id || sponsorshipReady !== enrollment.modelId || inFlight.current) return;
     inFlight.current = true; setBusy(true); setError('');
     try {
+      const payload = sponsorshipPayload(sponsorship);
       if (body !== (enrollment.bodyType || null)) {
         const record = await submitPhysique({ enrollmentId: enrollment.id, bodyType: body });
         if (!mounted.current) return;
         setEnrollment(record);
       }
+      if (payload.sponsorshipEnabled || savedSponsorshipEnabled.current) {
+        await updateModelSponsorship(enrollment.modelId, payload, 'model_register');
+        savedSponsorshipEnabled.current = payload.sponsorshipEnabled;
+      }
     } catch (requestError) {
-      if (mounted.current) setError(requestError.message || '체형 정보를 저장하지 못했어요.');
+      if (mounted.current) setError(requestError.message || '설정을 저장하지 못했어요.');
       return;
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
     if (mounted.current) await issueCertificate();
@@ -541,8 +577,8 @@ export function ModelRegister() {
     };
     previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === '3') {
-    content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
-    next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명돼요.' };
+    content = <>{renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading: sponsorshipReady !== enrollment?.modelId })}{sponsorshipReady !== enrollment?.modelId && !sponsorshipError && <p role="status" className={s.description}>저장된 협찬 설정을 불러오고 있어요.</p>}{sponsorshipError && <div role="alert"><p>{sponsorshipError}</p><button type="button" className={s.textLink} onClick={() => setSponsorshipRetry(value => value + 1)}>설정 다시 불러오기</button></div>}</>;
+    next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed || sponsorshipReady !== enrollment?.modelId, hint: '발급하기를 누르면 초상 라이선스 계약에 서명돼요.' };
     previous = { label: '이전', action: () => { setStep('2'); setSub(PHOTO_REVIEW_SUB); setEditingPhotos(false); } };
   } else if (step === '4b') {
     content = <>{heading('라이선스 증서를 발급하고 있어요', '약 3분 걸려요. 완료되면 이메일과 마이페이지에서 확인해요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />증서를 만들고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫아도 발급은 계속돼요.</p></>;
@@ -564,7 +600,7 @@ export function ModelRegister() {
   return <div className={s.page} data-registration data-step={step}>
     <div className={s.main}>
       {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span></li>)}</ol></nav>}
-      {error && step !== '4c' && <p className={s.error} role="alert">{error}</p>}
+      {error && step !== '4c' && <p className={s.error} role="alert" ref={errorRef} tabIndex={-1}>{error}</p>}
       {content}
       {/* 위젯이 붙을 빈 호스트. React 는 이 안을 절대 안 본다 — #oacxDiv 는
           facemarketIdentityWidget 이 직접 만들어 넣는다(oacxHost.js 참고).

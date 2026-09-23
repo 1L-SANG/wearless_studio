@@ -14,6 +14,8 @@
 // 상대 경로인 이유: node --test 가 '@/' 별칭을 모른다(tests/frontend 의 다른 어댑터와 같은 규칙).
 import { bodyTypeLabel, heightBucketLabel } from '../../../lib/facemarketPhysique.js';
 
+import { publicSponsorship } from '../../model/sponsorshipOptions.js';
+
 const GENDER_LABEL = Object.freeze({ male: '남성', female: '여성' });
 
 /** 기한이 없으면 철회 시까지, 기존 라이선스는 저장된 일수를 사람이 읽는 말로 표시한다. */
@@ -120,6 +122,7 @@ export function toBrowseModel(item) {
   return Object.freeze({
     id: String(item.id),
     kind: 'real',
+    sponsorship: publicSponsorship(item),
     name,
     alt: `${name} 확대샷`,
     closeup: item.closeupImageUrl,
@@ -142,6 +145,7 @@ export function fromExampleModel(model) {
   return Object.freeze({
     id: model.id,
     kind: 'example',
+    sponsorship: null,
     name: model.name,
     alt: model.alt,
     closeup: model.portrait,
@@ -174,8 +178,10 @@ function apiBase() {
  * 공개 모델 목록. 로그인 없이 부른다. 실패하면 던진다 — 부르는 쪽(BrowseSection)이 조용히
  * 예시만 남기는 걸로 처리한다(공개 페이지가 서버 사정으로 비어 보이면 안 된다).
  */
-export async function fetchPublicModels({ signal, fetchImpl = globalThis.fetch } = {}) {
-  const res = await fetchImpl(`${apiBase()}${PUBLIC_MODELS_PATH}`, { signal, headers: { Accept: 'application/json' } });
+export async function fetchPublicModels({ signal, fetchImpl = globalThis.fetch, accessToken = null } = {}) {
+  // 토큰이 있으면 같이 보내요. 서버는 로그인한 사용자에게만 협찬 상세(계정·팔로워·사이즈)를 실어요.
+  const headers = { Accept: 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) };
+  const res = await fetchImpl(`${apiBase()}${PUBLIC_MODELS_PATH}`, { signal, headers });
   if (!res.ok) throw new Error(`public models ${res.status}`);
   const payload = await res.json();
   const items = Array.isArray(payload?.items) ? payload.items : [];

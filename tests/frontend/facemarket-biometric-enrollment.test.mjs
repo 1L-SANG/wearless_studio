@@ -717,10 +717,21 @@ test('the female body matrix does not request removed photos', () => {
 test('조건 화면은 사용료 동의 뒤 같은 위저드에서 증서를 발급한다', async () => {
   const calls = [];
   const harness = await modelComponentHarness({
-    initialStates: ['3', { id: 'e1', status: 'license_pending' }],
-    api: { createLicense: async (body) => { calls.push(body); return { id: 'l1', vcId: 'vc-1', allowedUse: body.allowedUse }; } },
+    initialStates: [],
+    honorHookDependencies: true,
+    api: {
+      listMyModels: async () => [{ id: 'm1', sponsorshipEnabled: false }],
+      getCurrentEnrollment: async () => ({ id: 'e1', modelId: 'm1', status: 'license_pending', consentDocumentVersion: CONSENT_VERSION, termsConsentVersion: CONSENT_VERSION }),
+      createLicense: async (body) => { calls.push(body); return { id: 'l1', vcId: 'vc-1', allowedUse: body.allowedUse }; },
+    },
   });
   try {
+    await eventually(() => {
+      const rendered = harness.render();
+      harness.runtime.effects.forEach(effect => effect());
+      const fields = findTree(rendered, node => node.type?.name === 'SponsorshipFields');
+      return fields && !fields.props.disabled;
+    }, '저장된 협찬 설정까지 읽고 사용 조건을 열어요');
     let tree = harness.render();
     const issue = () => findTree(tree, (node) => node.type === 'button' && node.props.children === '라이선스 증서 발급하기');
     assert.equal(issue().props.disabled, true);

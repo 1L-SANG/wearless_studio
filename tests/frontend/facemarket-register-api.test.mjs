@@ -179,3 +179,18 @@ test('인증 준비 시간 초과는 기존 스크립트를 보존하고 새 스
     assert.ok(elements.has('oacx-ux'));
   } finally { Object.assign(globalThis, saved); await h.close(); }
 });
+
+test('협찬 저장은 증서 API와 분리하고 허용한 프로필 필드만 전송해요', async () => {
+  const h = await apiHarness();
+  try {
+    await h.api.updateModelSponsorship('model/1', { sponsorshipEnabled: false, userId: 'other', instagramFollowersReportedAt: 'forged', allowedUse: ['other'] });
+    assert.equal(h.calls[0].path, '/v1/facemarket/models/model%2F1/sponsorship');
+    assert.equal(h.calls[0].options.method, 'PATCH');
+    assert.deepEqual(h.calls[0].options.body, { sponsorshipEnabled: false });
+    await h.api.getSponsorshipInterest('model/1');
+    await h.api.requestSponsorshipInterest('model/1');
+    assert.equal(h.calls[1].path, '/v1/facemarket/models/model%2F1/sponsorship-interest');
+    assert.equal(h.calls[2].options.method, 'POST');
+    assert.deepEqual(h.calls[2].options.body, {});
+  } finally { await h.close(); }
+});

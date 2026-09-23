@@ -29,6 +29,7 @@ export function HowItWorksSection() {
           <h3>등록</h3>
           <span className={s.stepTime}>촬영 약 {SHOOTING_TIME_MINUTES}분</span>
           <p>본인확인 후 사진 18장을 올리고, 사용 조건을 정해 증서를 발급받아요. 촬영 외 절차는 약 {REGISTRATION_TIME_MINUTES}분이며, 간편인증은 담당자 확인 시간이 더해져요.</p>
+          <p>협찬을 켜 두면 셀러가 옷을 보내줘요</p>
           <Link className={s.stepGuideLink} to="/photo-guide">촬영 가이드 보기 <ArrowRight size={16} aria-hidden="true" /></Link>
         </li>
       </ol>

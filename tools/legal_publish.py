@@ -29,7 +29,11 @@ DOC_REVISIONS = {
     #      학습 주체·GPU 서버 문답(06). 세 문서가 같은 날 같은 사유로 올라간다.
     "license-agreement": ("v1.2", "2026-09-18"),
     "seller-license-terms": ("v1.2", "2026-09-18"),
-    "answers": ("v1.2", "2026-09-18"),
+    # v1.2/v1.6/v1.3 선택 의류 협찬(2026-09-23, 오너 결정으로 예고 기간 없이 시행. 이용자 0명 단계).
+    "terms-model": ("v1.2", "2026-09-23"),
+    "privacy-model": ("v1.6", "2026-09-23"),
+    "answers": ("v1.3", "2026-09-23"),
+    "sponsorship-consent": ("2026-09-sponsorship-v1", "2026-09-23"),
 }
 DEFAULT_VERSION = "v1.1"
 # 협찬 개정안은 로컬 공개 검토본만 만들어요. 시행일이나 동의 게이트를 활성화하지 않아요.
@@ -37,12 +41,8 @@ DEFAULT_VERSION = "v1.1"
 # 별도 슬러그(*-sponsorship-draft)로 내보내요. 시행본 슬러그를 초안으로 덮으면 /terms·/privacy·/answers 에서
 # 지금 효력이 있는 문서가 사라지고, 등록·지원 화면의 필수 동의 링크가 "적용하지 않는 초안"을 가리켜요.
 DRAFT_REVISIONS = {
-    "terms-model-sponsorship-draft": "v1.2-draft",
-    "privacy-model-sponsorship-draft": "v1.6-draft",
-    "answers-sponsorship-draft": "v1.3-draft",
     "license-agreement-sponsorship-draft": "v3-draft",
     "seller-license-terms-sponsorship-draft": "v3-draft",
-    "sponsorship-consent": "2026-09-sponsorship-v1-draft",
 }
 DRAFT_DATE = "2026-09-22"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
@@ -58,12 +58,9 @@ DOCS = [
     ("02_facemarket_likeness_license_agreement_v1.md", "license-agreement", "facemarket", "FaceMarket 초상 라이선스 표준계약서"),
     ("03_facemarket_privacy_policy_v1.md", "privacy-model", "facemarket", "FaceMarket 개인정보 처리방침"),
     ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
-    ("01_facemarket_terms_of_service_model_v1_2_draft.md", "terms-model-sponsorship-draft", "facemarket", "모델 이용약관 협찬 개정안"),
-    ("03_facemarket_privacy_policy_v1_6_draft.md", "privacy-model-sponsorship-draft", "facemarket", "개인정보 처리방침 협찬 개정안"),
-    ("06_facemarket_legal_faq_v1_3_draft.md", "answers-sponsorship-draft", "facemarket", "법적 FAQ 협찬 개정안"),
     ("02_facemarket_likeness_license_agreement_v3_draft.md", "license-agreement-sponsorship-draft", "facemarket", "초상 라이선스 협찬 개정안"),
     ("05_facemarket_seller_license_terms_v3_draft.md", "seller-license-terms-sponsorship-draft", "both", "셀러 협찬 요청 조건 개정안"),
-    ("04_facemarket_biometric_consent_forms_v1.md", "sponsorship-consent", "facemarket", "의류 협찬 참여 동의 개정안"),
+    ("04_facemarket_biometric_consent_forms_v1.md", "sponsorship-consent", "facemarket", "의류 협찬 참여 동의"),
 ]
 SELLER, FM = "https://wearless.kr", "https://facemarket.wearless.kr"
 # 04 동의서에서 손으로 옮긴 공개본. 버전은 서버 facemarket_enrollment.BIOMETRIC_CONSENT_VERSION 과 같이 올린다.
@@ -192,7 +189,7 @@ def publish():
         text = (SRC / fn).read_text()
         if slug == "sponsorship-consent":
             section = text.split("### E-2. ", 1)[1].split("\n## F.", 1)[0].rsplit("\n---", 1)[0]
-            text = "# 의류 협찬 참여 동의 개정안\n\n### E-2. " + section
+            text = "# 의류 협찬 참여 동의\n\n### E-2. " + section
             # 필수·선택 표시는 자리표시자가 아니므로 공개본에서는 괄호로 표시해요.
             text = re.sub(r"(?m)^(#{2,} [^\n]*?)\[([^\]\n]+)\]", r"\1(\2)", text)
         lines = drop_sections(strip_head_block(text.splitlines()))

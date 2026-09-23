@@ -1,3 +1,4 @@
+import { ModelSponsorshipSettings } from '../SponsorshipSettings.jsx';
 import { useRef, useState } from 'react';
 import { ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { updateLicenseTerms } from '@/lib/api/facemarket.js';
@@ -8,7 +9,7 @@ import { MyPageCertificate } from './MyPageCertificate.jsx';
 import { toggleAllowedCategory } from './conditionState.js';
 import s from './MyPage.module.css';
 
-export function MyPageConditions({ license, model, revoked = false, registering = false, onLicenseChange, onCertificate, onManage }) {
+export function MyPageConditions({ license, model, revoked = false, registering = false, onLicenseChange, onModelChange, onCertificate, onManage }) {
   const [editing, setEditing] = useState(false);
   const [allowed, setAllowed] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -54,6 +55,7 @@ export function MyPageConditions({ license, model, revoked = false, registering 
       </div>
     </div>
     {message && !editing && <p className={s.muted} role="status">{message}</p>}
+    {model?.id && <ModelSponsorshipSettings model={model} onModelChange={onModelChange} />}
     <section className={s.licenseManagement}><div><h3>활동 관리</h3>
       <p>{revoked ? '종료된 라이선스와 데이터를 확인해요.' : registering ? '등록 이후의 활동 설정을 확인해요.' : '잠시 쉬어가기와 라이선스 종료를 관리해요.'}</p></div>
       <button type="button" className={s.quietButton} onClick={onManage}><SlidersHorizontal className={s.icon} aria-hidden="true" />활동 설정<ChevronRight className={s.icon} aria-hidden="true" /></button>

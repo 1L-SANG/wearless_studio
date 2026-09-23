@@ -422,3 +422,16 @@
   .cardMedia:hover .cardImage,
   .cardMedia:focus-visible .cardImage { transform: none; }
 }
+
+.sponsorshipFilter { display: flex; align-items: center; gap: .45rem; margin-left: auto; color: var(--fm-ink); font-size: .85rem; cursor: pointer; }
+.sponsorshipFilter input { width: 1rem; height: 1rem; accent-color: var(--fm-ink); }
+.sponsorshipBadge { margin: -.2rem 0 0; color: var(--fm-muted); font-size: .76rem; line-height: 1.7; word-break: keep-all; overflow-wrap: anywhere; }
+.browseEmpty { max-width: 61rem; margin: 2rem auto; color: var(--fm-muted); font-size: .9rem; line-height: 1.7; }
+.dialogSponsorship { margin-top: 1.6rem; }
+.dialogSponsorship h3 { margin: 0 0 .75rem; font-size: 1rem; font-weight: 600; }
+.dialogSponsorship a { color: inherit; text-underline-offset: .2em; overflow-wrap: anywhere; }
+.dialogSponsorshipNote { margin: .65rem 0; font-size: .82rem; line-height: 1.7; opacity: .8; word-break: keep-all; }
+.interestButton { width: 100%; margin-top: .75rem; padding: .9rem 1rem; border: 1px solid currentColor; border-radius: .7rem; color: inherit; background: transparent; font: inherit; font-size: .9rem; cursor: pointer; }
+.interestButton:disabled { opacity: .6; cursor: default; }
+.interestButton:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+@media (max-width: 36rem) { .browseBar { flex-wrap: wrap; gap: .85rem; } .tabs { flex: 1 1 auto; } .sponsorshipFilter { font-size: .78rem; } .browseCount { flex: 0 0 auto; } }

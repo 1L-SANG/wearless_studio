@@ -942,6 +942,21 @@ async def _cleanup(
             ):
                 if _has(schema, "fm_models", column):
                     model_sets.append(f"{column}=null")
+            if reason in {"withdrawal", "account_delete"}:
+                if _has(schema, "fm_models", "sponsorship_enabled"):
+                    model_sets.append("sponsorship_enabled=false")
+                for column in (
+                    "instagram_handle", "instagram_followers", "instagram_followers_reported_at",
+                    "size_top", "size_bottom_waist", "sponsorship_profile_consent_at",
+                ):
+                    if _has(schema, "fm_models", column):
+                        model_sets.append(f"{column}=null")
+                # 모델 행은 유지하므로 알림 신청도 직접 지워요.
+                if _has(schema, "fm_sponsorship_interest", "model_id"):
+                    await cur.execute(
+                        "delete from fm_sponsorship_interest where model_id = any(%s)",
+                        (list(model_ids),),
+                    )
             await cur.execute(
                 "update fm_models set " + ", ".join(model_sets) + " where id = any(%s)",
                 (list(model_ids),),
@@ -1000,6 +1015,11 @@ async def _cleanup(
                 (ids,),
             )
         if reason == "account_delete" and scope["user_id"] is not None:
+            if _has(schema, "fm_sponsorship_interest", "seller_user_id"):
+                await cur.execute(
+                    "delete from fm_sponsorship_interest where seller_user_id=%s",
+                    (scope["user_id"],),
+                )
             if license_ids:
                 await cur.execute(
                     "update fm_licenses set status='revoked', face_image_key=null, "

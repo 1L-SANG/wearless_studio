@@ -9,6 +9,8 @@
 .intro .protection { display: grid; gap: 2px; margin: 12px 0 0; padding-left: 1.4em; color: var(--fm-muted); font-size: 14px; line-height: 1.45; }
 .earningsQuote { margin: 24px 0 0; padding-left: 16px; border-left: 3px solid var(--fm-accent); color: var(--fm-ink); font-size: 18px; line-height: 1.65; }
 .earningsQuote b { color: var(--fm-accent); }
+.intro .sponsorshipNote { margin-top: 14px; color: var(--fm-muted); font-size: 14px; line-height: 1.7; }
+.benefitNote { display: block; margin-top: 4px; color: var(--fm-muted); font-size: 13px; line-height: 1.65; }
 .intro .preparationNote { margin-top: 20px; color: var(--fm-muted); font-size: 14px; line-height: 1.7; }
 .preparationNote b { color: var(--fm-ink); }
 .primary { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; min-width: 200px; margin-top: 26px; padding: 0 24px; border-radius: var(--r-pill); background: var(--fm-ink); color: var(--bg-1); text-decoration: none; font-size: 16px; font-weight: 600; }
