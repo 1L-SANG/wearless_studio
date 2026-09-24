@@ -88,7 +88,9 @@ test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 충전 �
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기/);
   assert.match(html, /추가 구매/);                         // 충전 탭이 보인다
-  assert.match(html, /계좌이체<\/strong>로 신청을 받아요/);
+  assert.match(html, /카드 결제는 심사 중이에요\. 계좌이체로 입금이 확인되면 바로 크레딧을 드려요\./);
+  // 계좌이체 모드에서는 긴 고지문을 그리지 않는다(오너 9/24).
+  assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|부가가치세/);
   assert.match(html, /결제하면 <a/);
   assert.doesNotMatch(html, /입금 확인 중/);
 });
@@ -116,15 +118,14 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((b) => /disabled=""/.test(b) && /잠시 받지 않아요/.test(b)));
   // 잠긴 이유가 툴팁에만 있으면 막다른 길이다 — 안내 띠가 문의처를 말한다(리뷰 368F-3).
-  assert.match(html, /잠시 받지 않아요<\/strong>\. 결제가 필요하면 <a href="mailto:contact@wearless\.kr">/);
-  assert.doesNotMatch(html, /계좌이체<\/strong>로 신청을 받아요/);
+  assert.match(html, /잠시 받지 않아요\. 결제가 필요하면 <a href="mailto:contact@wearless\.kr">/);
+  assert.doesNotMatch(html, /카드 결제는 심사 중이에요/);
 });
 
 test('계좌이체 모드에서는 지급 코드가 없는 충전 보너스 약속을 카드에 적지 않는다', () => {
   const html = renderPricing();
   assert.doesNotMatch(html, /충전할 때마다 크레딧/);
-  assert.match(html, /입금 확인까지\(신청 후 3일\) 이용권과 크레딧이 유지/);
-  assert.doesNotMatch(html, /갱신 결제 실패 시 3일의 유예기간/);
+  assert.doesNotMatch(html, /갱신 결제 실패 시 3일의 유예기간|이월분을 포함해 모두 소멸/);
 });
 
 test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => {

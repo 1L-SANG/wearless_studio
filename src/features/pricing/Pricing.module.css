@@ -7,6 +7,8 @@
 
 .head { margin-top: 14px; margin-bottom: 22px; }
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
+.subtitle { margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: var(--fg-2); }
+.subtitle a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 
 .tabs { display: inline-flex; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: 22px; background: var(--bg-2); border-radius: var(--r-5); }
 .tab {
@@ -19,7 +21,6 @@
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
 /* 계좌이체 안내·열린 신청 띠(PG 심사 전) */
-.bankNotice { margin: -6px 0 var(--sp-16); padding: var(--sp-12) var(--sp-16); font-size: 13px; line-height: 1.6; color: var(--fg-1); background: var(--bg-2); border-radius: var(--r-4); }
 .openRequest {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); flex-wrap: wrap;
   margin-bottom: var(--sp-12); padding: var(--sp-12) var(--sp-16); font-size: 13px; color: var(--fg-1);

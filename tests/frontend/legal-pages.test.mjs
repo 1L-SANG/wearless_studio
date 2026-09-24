@@ -228,6 +228,7 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
   // SSR(renderToStaticMarkup)에서는 effect 가 돌지 않아 세션 부트스트랩·OAuth 교환은
   // 일어나지 않는다 — session=null(비로그인) 상태로 굳는다. 법무 링크는 세션과 무관하다.
   const { AuthProvider } = await load('src/features/auth/AuthProvider.jsx');
+  const { BANK_TRANSFER_ENABLED } = await load('src/lib/tossKeys.js');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], [{
     id: 'basic', code: 'basic', kind: 'subscription', name: '베이직', credits: 100, price: 10000,
@@ -242,16 +243,25 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
           React.createElement(AuthProvider, null, element)),
         '/pricing',
       );
-      assert.match(html, /구독 유지 중 다음 달로 이월/);
-      assert.match(html, /이월분을 포함해 모두 소멸/);
-      assert.match(html, /7일 이내/);
-      assert.match(html, /미제공 부분의 법령상 환불 권리는 제한하지 않습니다/);
-      assert.ok(html.indexOf('구독 크레딧 및 환불 안내') < html.indexOf('로그인하고 시작하기'));
-      assert.match(html, /결제하면/);
-      assert.deepEqual(hrefs(html), [
-        'mailto:contact@wearless.kr', 'https://wearless.kr/refund',
-        'https://wearless.kr/terms', 'https://wearless.kr/refund',
-      ]);
+      if (BANK_TRANSFER_ENABLED) {
+        // 계좌이체 모드(PG 심사 전)는 정기결제 고지문 대신 한 줄 안내만 둔다(오너 9/24).
+        // 약관·환불 링크는 카드의 동의 문장이 계속 책임진다.
+        assert.match(html, /카드 결제는 심사 중이에요/);
+        assert.doesNotMatch(html, /구독 크레딧 및 환불 안내/);
+        assert.match(html, /결제하면/);
+        assert.deepEqual(hrefs(html), ['https://wearless.kr/terms', 'https://wearless.kr/refund']);
+      } else {
+        assert.match(html, /구독 유지 중 다음 달로 이월/);
+        assert.match(html, /이월분을 포함해 모두 소멸/);
+        assert.match(html, /7일 이내/);
+        assert.match(html, /미제공 부분의 법령상 환불 권리는 제한하지 않습니다/);
+        assert.ok(html.indexOf('구독 크레딧 및 환불 안내') < html.indexOf('로그인하고 시작하기'));
+        assert.match(html, /결제하면/);
+        assert.deepEqual(hrefs(html), [
+          'mailto:contact@wearless.kr', 'https://wearless.kr/refund',
+          'https://wearless.kr/terms', 'https://wearless.kr/refund',
+        ]);
+      }
     }
   } finally { client.clear(); }
 });
