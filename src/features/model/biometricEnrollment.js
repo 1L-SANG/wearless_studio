@@ -63,8 +63,10 @@ export function nextEnrollmentStep(enrollment) {
   if (enrollment.status === 'photos_pending') return 'photos';
   if (enrollment.status === 'review_pending') return 'review';
   if (enrollment.status === 'liveness_pending') return 'liveness';
-  if (enrollment.status === 'processing' || enrollment.status === 'asset_building') return 'processing';
-  if (enrollment.status === 'license_pending' || enrollment.status === 'vc_pending') return 'terms';
+  // 사진을 다 올리면 모델 이미지를 만드는 동안에도 사용 조건을 먼저 정한다(9/25 흐름 변경).
+  if (['processing', 'asset_building', 'license_pending'].includes(enrollment.status)) return 'terms';
+  // 조건을 낸 뒤에는 신원 확인과 테스트컷을 기다린다. 증서는 테스트컷 확정 뒤에 알린다.
+  if (enrollment.status === 'vc_pending') return 'testcuts';
   if (enrollment.status === 'passed') return 'done';
   return 'failed';
 }

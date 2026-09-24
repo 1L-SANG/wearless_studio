@@ -58,12 +58,12 @@ test('18장 진행률은 저장된 사진을 복원하고 현재 묶음의 부�
     assert.equal(progress.props.max, 18);
     const input = findTree(tree, (node) => node.type === 'input' && node.props['aria-label'] === '10번 정면 · 무표정 다시 촬영하거나 사진 교체');
     assert.ok(input);
-    assert.ok(findTree(tree, (node) => node.props.id === input.props['aria-describedby']));
+    assert.equal(input.props['aria-describedby'], undefined);
     assert.ok(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === input.props.id && node.props.className === 'slotAction'));
     assert.ok(findTree(tree, (node) => node.type === 'button' && node.props['aria-label'] === '10번 사진 삭제'));
-    const emptyInput = findTree(tree, (node) => node.type === 'input' && node.props['aria-label'] === '11번 정면 · 미소 사진 찍기 또는 선택');
+    const emptyInput = findTree(tree, (node) => node.type === 'input' && node.props['aria-label'] === '11번 정면 · 미소 사진 올리기');
     assert.ok(emptyInput);
-    assert.ok(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === emptyInput.props.id && node.props.className === 'slotAction'));
+    assert.equal(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === emptyInput.props.id && node.props.className === 'slotAction'), null);
     const status = findTree(tree, (node) => node.props.role === 'status');
     assert.equal(status.props.children, '2장을 더 올려 주세요.');
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);

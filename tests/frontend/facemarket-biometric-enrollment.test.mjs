@@ -178,10 +178,10 @@ test('server status restores the next safe enrollment step', () => {
   assert.equal(nextEnrollmentStep(null), 'consent');
   assert.equal(nextEnrollmentStep({ status: 'photos_pending', photos: [] }), 'photos');
   assert.equal(nextEnrollmentStep({ status: 'liveness_pending', photos: [{}, {}, {}] }), 'liveness');
-  assert.equal(nextEnrollmentStep({ status: 'processing', photos: [{}, {}, {}] }), 'processing');
-  assert.equal(nextEnrollmentStep({ status: 'asset_building', photos: [{}, {}, {}] }), 'processing');
+  assert.equal(nextEnrollmentStep({ status: 'processing', photos: [{}, {}, {}] }), 'terms');
+  assert.equal(nextEnrollmentStep({ status: 'asset_building', photos: [{}, {}, {}] }), 'terms');
   assert.equal(nextEnrollmentStep({ status: 'license_pending', photos: [{}, {}, {}] }), 'terms');
-  assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'terms');
+  assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'testcuts');
   assert.equal(nextEnrollmentStep({ status: 'passed', photos: [{}, {}, {}] }), 'done');
   assert.equal(nextEnrollmentStep({ status: 'failed', reason: 'face_match_failed' }), 'failed');
 });
@@ -755,10 +755,10 @@ test('등록 완료 화면은 발급된 조건과 영구 유효 안내 및 마�
     const tree = harness.render();
     const text = collectText(tree);
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(text.includes('일반 의류, 액티브웨어에 쓸 수 있고 철회하기 전까지 유효해요.'));
-    assert.ok(text.includes('증서 번호 vc-1'));
+    assert.ok(text.includes('발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요.'));
+    assert.ok(!text.includes('증서 번호'));
     assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/status' && node.props.children === '마이페이지로'));
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
     assert.equal(findTree(tree, (node) => node.type === 'Chips'), null);
   } finally { await harness.close(); }
 });
@@ -780,7 +780,7 @@ test('등록 완료 화면은 발급 경로의 최소 체형 정보로 완료 �
     assert.equal(harness.runtime.states[0], 'done');
     assert.deepEqual(harness.runtime.states[1], handoff);
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
   } finally { await harness.close(); }
 });
 
@@ -789,9 +789,9 @@ test('등록 완료 조건이 없으면 증서 확인을 안내하고 기본 조
   try {
     const tree = harness.render();
     const text = collectText(tree);
-    assert.ok(text.includes('발급한 조건은 증서에서 확인할 수 있어요.'));
-    for (const value of ['14,900원', '49,900원', '철회하기 전까지 유효해요.', '증서 번호']) assert.ok(!text.includes(value), value);
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.ok(text.includes('모델님의 얼굴을 활용한 테스트컷은 2일 이내 보내드릴게요.'));
+    for (const value of ['14,900원', '49,900원', '증서 번호']) assert.ok(!text.includes(value), value);
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
   } finally { await harness.close(); }
 });
 

@@ -80,22 +80,19 @@ test('가이드 오버레이는 비디오 전용 래퍼 안에만 있다 — 다
   assert.ok(!/showManualHint/.test(wrapper), '15초 힌트 문단은 래퍼 밖에 있어야 한다');
 });
 
-test('paused 는 자동 판정 루프만 멈추고 수동 셔터는 막지 않는다(최종리뷰 I2b)', () => {
-  // 부모(IdDocumentStep)가 업로드 실패 뒤 세우는 일시정지 신호 — ~10fps 판정 루프
-  // 안에서 확인해야 한다. 자동은 편의이지 관문이 아니므로 수동 셔터의 disabled 는
-  // 여전히 busy 로만 결정돼야 한다(paused 로 잠기면 안 된다).
-  const intervalStart = code.indexOf('setInterval(');
-  assert.ok(intervalStart >= 0, '판정 루프(setInterval)를 찾을 수 없다');
-  const guardWindow = code.slice(intervalStart, intervalStart + 400);
-  assert.match(
-    guardWindow,
-    /pausedRef\.current/,
-    '판정 루프 초입에서 pausedRef 를 확인해야 업로드 실패 뒤 자동 촬영이 멈춘다',
-  );
-  assert.ok(
-    !/disabled=\{[^}]*paused/.test(code),
-    '수동 셔터가 paused 로도 잠기면 "자동은 편의이지 관문이 아니다"라는 이 파일의 원칙이 깨진다',
-  );
+test('R7 capture is manual only and the shutter is accessible', () => {
+  assert.doesNotMatch(code, /idCardDetector|setInterval|paused|showManualHint|sampleRef/);
+  assert.match(code, /aria-label="촬영하기"/);
+  assert.match(code, /신분증을 네모 안에 맞추고 촬영 버튼을 눌러 주세요./);
+  assert.doesNotMatch(code, /style=\{/);
+});
+
+// 9/25 오너 요청: 주민등록번호 뒷자리는 가리고 올려도 된다는 안내를 촬영 화면과 앨범 맞추기 화면에 둔다.
+test('촬영과 앨범 맞추기 화면 모두 뒷자리를 가려도 된다고 안내한다', () => {
+  assert.match(code, /주민등록번호 뒷자리는 가리고 찍어도 돼요./);
+  const fit = readFileSync(
+    fileURLToPath(new URL('../../src/features/model/IdGalleryFit.jsx', import.meta.url)), 'utf8');
+  assert.match(fit, /주민등록번호 뒷자리는 가리고 올려도 돼요./);
 });
 
 test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시 계산한다(최종리뷰 I3)', () => {
@@ -116,4 +113,42 @@ test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시
     /removeEventListener\('resize'/,
     'resize 리스너도 같은 클린업에서 정리해야 한다 — 안 하면 언마운트 뒤에도 setFrameSize 가 불릴 수 있다',
   );
+});
+
+import { modelComponentHarness, findTree, eventually } from './helpers/facemarketHarness.mjs';
+
+test('수동 셔터는 실제 프레임을 한 번만 굽고 완성된 사진을 넘겨요', async () => {
+  const h = await modelComponentHarness({ entry: '/src/features/model/IdCameraCapture.jsx', exportName: 'default', initialStates: [true, { width: 1920, height: 1080 }, false], api: {} });
+  const captured = [], calls = []; let encode;
+  const blob = new Blob(['masked'], { type: 'image/jpeg' });
+  try {
+    const tree = h.render({ onCaptured: value => captured.push(value), busy: false });
+    const video = { videoWidth: 1920, videoHeight: 1080 };
+    h.runtime.refs[0].current = video;
+    h.runtime.refs[1].current = { getContext: () => ({ drawImage: (...args) => calls.push(['draw', ...args]), fillRect: (...args) => calls.push(['mask', ...args]) }), toBlob: done => { encode = done; } };
+    const shutter = findTree(tree, n => n.props['aria-label'] === '촬영하기');
+    assert.equal(shutter.props.disabled, false);
+    assert.deepEqual(captured, []);
+    shutter.props.onClick(); shutter.props.onClick();
+    assert.deepEqual(calls.map(c => c[0]), ['draw', 'mask']);
+    assert.deepEqual(calls[0], ['draw', video, 0, 0, 1920, 1080]);
+    encode(blob);
+    await eventually(() => captured.length === 1, '완성된 사진을 전달해요');
+    assert.equal(captured[0], blob);
+  } finally { await h.close(); }
+});
+
+test('카메라 권한 응답이 화면을 닫은 뒤 도착하면 스트림을 바로 멈춰요', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let grant, stopped = 0;
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: { getUserMedia: () => new Promise(resolve => { grant = resolve; }) } } });
+  const h = await modelComponentHarness({ entry: '/src/features/model/IdCameraCapture.jsx', exportName: 'default', initialStates: [], api: {} });
+  try {
+    h.render();
+    const cleanup = h.runtime.effects[3]();
+    cleanup();
+    grant({ getTracks: () => [{ stop: () => { stopped++; } }] });
+    await eventually(() => stopped === 1, '늦게 도착한 스트림을 정리해요');
+    assert.equal(h.runtime.states[0], false);
+  } finally { await h.close(); if (previous) Object.defineProperty(globalThis, 'navigator', previous); else delete globalThis.navigator; }
 });

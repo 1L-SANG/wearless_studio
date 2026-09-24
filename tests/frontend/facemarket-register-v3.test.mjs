@@ -91,7 +91,7 @@ test('복원은 동의와 사진, 발급 대기와 완료 상태를 구분해요
   const review = module.PHOTO_REVIEW_SUB;
   assert.equal(review, 5, '조명 네 화면 다음이 확인 화면이다');
   assert.deepEqual(module.restoreRegisterScreen({ status: 'license_pending' }), { step: '3', sub: review });
-  assert.deepEqual(module.restoreRegisterScreen({ status: 'vc_pending' }), { step: '4b', sub: review });
+  assert.deepEqual(module.restoreRegisterScreen({ status: 'vc_pending' }), { step: 'done', sub: review });
   assert.deepEqual(module.restoreRegisterScreen({ status: 'passed' }), { step: 'done', sub: review });
 });
 
@@ -178,7 +178,7 @@ for (const sub of [1, 2, 4]) {
     const h = await modelComponentHarness({ initialStates: ['2', baseEnrollment, sub], api: {} });
     try {
       const tree = h.render(), text = textOf(tree);
-      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '등록 사진 18장을 올려요');
+      assert.equal(findTree(tree, node => node.type === 'h1').props.children, '온라인 모델 생성을 위해 필요한 이미지들을 업로드해요');
       assert.ok(text.includes('나중에 이어서 등록해도 돼요.'));
       const progress = findTree(tree, node => node.type === 'progress');
       assert.equal(progress.props.value, 0);
@@ -210,18 +210,18 @@ test('확인 화면은 조명 네 행이며 각 고치기는 사진과 미리보
   } finally { await h.close(); }
 });
 
-test('조건에는 옷, 몸의 두께, 사용료 규칙, 필수 동의가 차례로 있고 동의 전에는 발급하지 않아요', async () => {
-  const h = await modelComponentHarness({ initialStates: ['3', photoRecord(), module.PHOTO_REVIEW_SUB], api: { createLicense: () => assert.fail('동의 전 발급 금지') } });
+test('조건에는 옷, 사용료 규칙, 필수 동의가 있고 동의 전에는 발급하지 않아요', async () => {
+  const h = await modelComponentHarness({ initialStates: ['3', { ...photoRecord(), status: 'license_pending' }, module.PHOTO_REVIEW_SUB], api: { createLicense: () => assert.fail('동의 전 발급 금지') } });
   try {
     const tree = h.render(), text = textOf(tree);
     assert.equal(findTree(tree, node => node.type === 'h1').props.children, '사용 조건을 정해요');
     assert.ok(text.includes('내 얼굴을 사용할 옷 종류를 골라 주세요.'));
-    assert.ok(findTree(tree, node => node.props?.['aria-label'] === '몸의 두께, 선택 항목'));
-    assert.ok(text.indexOf('몸의 두께셀러가 옷을') < text.indexOf('셀러 사용료 규칙'));
-    assert.ok(text.indexOf('셀러 사용료 규칙') < text.indexOf('셀러 사용료 규칙에 동의해요'));
+    assert.equal(findTree(tree, node => node.props?.['aria-label'] === '몸의 두께, 선택 항목'), null);
+    assert.doesNotMatch(text, /몸의 두께/);
+    assert.ok(text.indexOf('셀러 사용료 규칙') < text.indexOf('증서 발급하기를 누르면 FaceMarket'));
     assert.ok(text.includes('셀러 이용료: 1회 14,900원, 월 49,900원 (월 10회)'));
     assert.ok(text.includes('결제 금액의 70%를 정산받아요.'));
-    assert.ok(text.includes('셀러 사용료 규칙에 동의해요 (필수)'));
+    assert.ok(text.includes('증서 발급하기를 누르면 FaceMarket의 사용료 분배 규정(모델 몫 70%)에 동의하며, 초상 라이선스 계약에 서명되는 것으로 간주합니다. (필수)'));
     assert.doesNotMatch(text, /지급은 아직 시작 전|마이페이지에서 내역 보기/);
     assert.ok(findTree(tree, node => node.type === 'Link' && node.props.to === '/license-agreement'));
     assert.equal(button(tree, '라이선스 증서 발급하기').props.disabled, true);
@@ -239,16 +239,6 @@ test('조건 초안에 사용료 동의가 있어도 새로고침 후 다시 동
     assert.equal(findTree(tree, node => node.props?.id === 'price-agreed').props.checked, false);
     assert.equal(button(tree, '라이선스 증서 발급하기').props.disabled, true);
   } finally { globalThis.sessionStorage = previous; await h.close(); }
-});
-
-test('발급 중에는 예상 시간과 이메일, 화면을 닫아도 계속된다는 안내를 보여요', async () => {
-  const h = await modelComponentHarness({ initialStates: ['4b', photoRecord(), module.PHOTO_REVIEW_SUB], api: {} });
-  try {
-    const text = textOf(h.render());
-    assert.ok(text.includes('라이선스 증서를 발급하고 있어요'));
-    assert.ok(text.includes('약 3분 걸려요. 완료되면 이메일과 마이페이지에서 확인해요.'));
-    assert.ok(text.includes('이 화면을 닫아도 발급은 계속돼요.'));
-  } finally { await h.close(); }
 });
 
 test('두 개 동의를 모두 받아야 인증을 시작하며 신분증 사진은 요청하지 않아요', async () => {
@@ -301,8 +291,8 @@ test('발급 실패 뒤 조건이 남고 재시도로 완료돼요', async () =>
   try {
     agreePrice(harness);
     await button(harness.render(), '라이선스 증서 발급하기').props.onClick();
-    assert.equal(harness.runtime.states[0], '4c');
-    await button(harness.render(), '다시 발급하기').props.onClick();
+    assert.equal(harness.runtime.states[0], '3');
+    await button(harness.render(), '라이선스 증서 발급하기').props.onClick();
     assert.equal(harness.runtime.states[0], 'done');
     assert.equal(requests.length, 2); assert.deepEqual(requests[0], { enrollmentId: 'enrollment-1', allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] });
   } finally { await harness.close(); }
@@ -327,17 +317,15 @@ test('모든 사진을 올리면 세션이나 초상 없이 완료 요청을 보
 });
 
 for (const bodyType of [null, 'plump']) {
-  test(`조건에서 체형 ${bodyType || '미선택'}을 저장한 뒤 미리보기 없이 발급해요`, async () => {
+  test(`조건 발급은 기존 체형 ${bodyType || '없음'}을 수정하지 않아요`, async () => {
     const calls = [];
-    const harness = await modelComponentHarness({ initialStates: ['3', photoRecord(), module.PHOTO_REVIEW_SUB], api: {
-      submitPhysique: async (body) => { calls.push(body); return { ...photoRecord(), bodyType: body.bodyType }; },
-      createLicense: async (body) => { calls.push(body); return { id: 'license-1', status: 'active' }; },
+    const harness = await modelComponentHarness({ initialStates: ['3', { ...photoRecord(), status: 'license_pending', bodyType }, module.PHOTO_REVIEW_SUB], api: {
+      submitPhysique: () => assert.fail('체형 저장을 요청하지 않아요'),
+      createLicense: async body => { calls.push(body); return { id: 'license-1', status: 'pending' }; },
     } });
     try {
-      if (bodyType) findTree(harness.render(), node => node.type === 'button' && node.props.children?.some?.(child => child?.props?.children === '통통')).props.onClick();
       agreePrice(harness);
       await button(harness.render(), '라이선스 증서 발급하기').props.onClick();
-      if (bodyType) assert.deepEqual(calls.shift(), { enrollmentId: 'enrollment-1', bodyType: 'plump' });
       assert.deepEqual(calls, [{ enrollmentId: 'enrollment-1', allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] }]);
       assert.equal(harness.runtime.states[0], 'done');
     } finally { await harness.close(); }
@@ -392,7 +380,7 @@ test('사진 삭제가 성공하면 다음 버튼이 잠기고 사진 개수가 
 
 for (const condition of ['일반 의류', '액티브웨어', '홈웨어·잠옷']) {
   test(`조건 화면에서 ${condition}만 남기면 마지막 스위치가 잠겨요`, async () => {
-    const harness = await modelComponentHarness({ initialStates: ['3', photoRecord(), module.PHOTO_REVIEW_SUB], api: {} });
+    const harness = await modelComponentHarness({ initialStates: ['3', { ...photoRecord(), status: 'license_pending' }, module.PHOTO_REVIEW_SUB], api: {} });
     try {
       for (const other of ['일반 의류', '액티브웨어', '홈웨어·잠옷'].filter((value) => value !== condition)) {
         findTree(harness.render(), (node) => node.props?.role === 'switch' && node.props['aria-label'] === `${other} 허용`).props.onClick();
@@ -404,7 +392,7 @@ for (const condition of ['일반 의류', '액티브웨어', '홈웨어·잠옷'
 }
 
 test('조건 화면에는 유효기간 선택 없이 허용 품목만 남아요', async () => {
-  const harness = await modelComponentHarness({ initialStates: ['3', photoRecord(), module.PHOTO_REVIEW_SUB], api: {} });
+  const harness = await modelComponentHarness({ initialStates: ['3', { ...photoRecord(), status: 'license_pending' }, module.PHOTO_REVIEW_SUB], api: {} });
   try {
     assert.equal(button(harness.render(), '1년'), null);
     assert.equal(button(harness.render(), '2년'), null);
@@ -494,7 +482,7 @@ test('라이선스 목록의 조건 폼도 기간 선택 없이 발급해요', a
   } finally { await harness.close(); }
 });
 
-for (const screen of ['loading','1','2','3','4b','4c','done','processing','poll_error','failed']) {
+for (const screen of ['loading','1','2','3','done','processing','poll_error','failed']) {
   test(`등록 ${screen} 화면에서 훅 개수가 같아요`, async () => {
     const harness=await modelComponentHarness({initialStates:['loading',photoRecord(),4],api:{}});
     try {
@@ -518,7 +506,7 @@ test('발급 중 같은 버튼을 두 번 눌러도 요청은 한 번만 보내�
 test('완료 조건 조회 실패 때 가격이나 유효기간을 실제 발급값처럼 표시하지 않아요', async () => {
   const harness=await modelComponentHarness({initialStates:['done',{modelId:'model-1'}],api:{}});
   try {
-    assert.ok(findTree(harness.render(),n=>n.type==='p'&&n.props.children==='발급한 조건은 증서에서 확인할 수 있어요.'));
+    assert.ok(findTree(harness.render(),n=>n.type==='p'&&n.props.children==='발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요.'));
     assert.ok(findTree(harness.render(),n=>n.type==='Link'&&n.props.to==='/status'&&n.props.children==='마이페이지로'));
   } finally {await harness.close();}
 });
@@ -541,14 +529,14 @@ test('이전 버전 등록을 이어갈 때 사진보다 새 필수 동의를 �
   finally {await harness.close();}
 });
 
-test('발급 중 새로고침하면 저장한 조건으로 발급을 이어가요', async () => {
+test('발급 대기 등록을 복원하면 재발급 없이 완료 화면으로 가요', async () => {
   const calls=[];
   const record={...photoRecord(),status:'vc_pending',licenseId:'license-1',licenseTerms:{allowedUse:['액티브웨어'],validDays:730}};
   const harness=await modelComponentHarness({initialStates:[],honorHookDependencies:true,api:{getCurrentEnrollment:async()=>record,createLicense:async body=>{calls.push(body);return {id:'license-1',status:'active',modelId:'model-1'};}}});
   try {
-    commit(harness);await flush();assert.equal(harness.runtime.states[0],'4b');
     commit(harness);await flush();assert.equal(harness.runtime.states[0],'done');
-    assert.deepEqual(calls,[{enrollmentId:'enrollment-1',allowedUse:['액티브웨어']}]);
+    commit(harness);await flush();assert.equal(harness.runtime.states[0],'done');
+    assert.deepEqual(calls,[]);
   } finally {await harness.close();}
 });
 
@@ -603,40 +591,6 @@ test('구버전 동의의 인증 대기자는 새 동의를 서버에 기록한 
     const tree = h.render();
     await findTree(tree, node => node.type === 'button' && node.props.className === 'primary').props.onClick();
     assert.deepEqual(calls, ['consent', 'identity']);
-  } finally { await h.close(); }
-});
-
-test('조건에서 기존 체형을 지우면 서버에 해제를 저장한 다음 발급해요', async () => {
-  const calls = [];
-  const record = { ...photoRecord(), status: 'license_pending', bodyType: 'plump' };
-  const h = await modelComponentHarness({ initialStates: [], honorHookDependencies: true, api: {
-    getCurrentEnrollment: async () => record,
-    submitPhysique: async body => { calls.push(body); return { ...record, bodyType: null }; },
-    createLicense: async () => { calls.push('issue'); return { id: 'license-1' }; },
-  } });
-  try {
-    commit(h); await flush();
-    button(h.render(), '선택 지우기').props.onClick();
-    agreePrice(h);
-    await button(h.render(), '라이선스 증서 발급하기').props.onClick();
-    assert.deepEqual(calls, [{ enrollmentId: 'enrollment-1', bodyType: null }, 'issue']);
-  } finally { await h.close(); }
-});
-
-test('체형 저장 실패는 조건 화면에서 재시도하며 저장 전에는 발급하지 않아요', async () => {
-  let attempts = 0, issues = 0;
-  const h = await modelComponentHarness({ initialStates: ['3', photoRecord(), module.PHOTO_REVIEW_SUB], api: {
-    submitPhysique: async () => { if (++attempts === 1) throw new Error('체형 저장 실패'); return { ...photoRecord(), bodyType: 'plump' }; },
-    createLicense: async () => { issues++; return { id: 'license-1' }; },
-  } });
-  try {
-    findTree(h.render(), node => node.type === 'button' && node.props.children?.some?.(child => child?.props?.children === '통통')).props.onClick();
-    agreePrice(h);
-    await button(h.render(), '라이선스 증서 발급하기').props.onClick();
-    assert.equal(issues, 0); assert.equal(h.runtime.states[0], '3');
-    assert.equal(findTree(h.render(), node => node.props?.role === 'alert').props.children, '체형 저장 실패');
-    await button(h.render(), '라이선스 증서 발급하기').props.onClick();
-    assert.equal(issues, 1); assert.equal(h.runtime.states[0], 'done');
   } finally { await h.close(); }
 });
 
@@ -700,7 +654,7 @@ test('18칸 전부 cut 이 있고 서버 CUT_LABELS 키와 같다', () => {
     assert.equal(slot.cut, slot.key.slice(slot.group.length + 1));
   }
   assert.deepEqual([...new Set(module.SLOTS.map((slot) => slot.cut))].sort(), [...keys].sort());
-  // framing/angle 은 지우지 않았다 — 체형 고르기 화면이 아직 RegisterIllustration 을 쓴다.
+  // 기존 호출부가 쓰는 framing과 angle 값은 유지해요.
   assert.ok(module.SLOTS.every((slot) => slot.framing && slot.angle));
 });
 
@@ -737,7 +691,7 @@ test('촬영 화면과 재촬영 화면은 같은 클레이 예시를 쓴다', (
   assert.equal(screens.split('<PhotoPoseIllustration').length - 1, 1);
   assert.match(screens, /slot=\{slot\}/);
   assert.match(screens, /renderPhotoCard\(\{ slot/);
-  assert.match(screens, /<PhotoPreparation/);
+  assert.match(screens, /<ShootChecklist/);
   const art = readFileSync(
     new URL('../../src/features/model/PhotoPoseIllustration.jsx', import.meta.url), 'utf8',
   );
