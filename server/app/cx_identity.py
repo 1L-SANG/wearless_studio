@@ -16,6 +16,7 @@ facemarket.py 의 동명 헬퍼와 소폭 중복되나 의도적이다 — 해�
 """
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -56,6 +57,11 @@ class OacxBiometricContract:
     birth_path: tuple[str, ...]
     portrait_encoding: Literal["hex"]
     max_portrait_bytes: int
+    # 신원 칸 이름. 파서와 지원서 대조(compare_identity_claim)가 **이 목록 하나**를 같이 읽는다
+    # (_claim_name·_claim_birth). 2026-09-25 사고: 간편인증 파서는 `birthday` 를 읽는데 대조는
+    # `birth` 만 봐서 지원서와 똑같이 적어도 매번 불일치였다. 칸 이름을 함수마다 따로 적지 않는다.
+    name_keys: tuple[str, ...] = ("name", "nm")
+    birth_fallback_keys: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -106,9 +112,26 @@ SIMPLE_AUTH_CONTRACT = OacxBiometricContract(
     birth_path=("birth",),
     portrait_encoding="hex",
     max_portrait_bytes=0,
+    # 2026-09-13 토스 실거래: 이름은 `name`, 생년월일은 **`birthday`**. 나머지는 다른 인증사
+    # 대비 폴백이다(카카오·네이버·PASS 실거래 칸 이름은 아직 미확인).
+    name_keys=("utf8Nm", "nm", "name", "userName"),
+    birth_fallback_keys=("birthdate", "birthday"),
 )
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _claim_name(trans: dict, contract: OacxBiometricContract):
+    """계약이 정한 칸에서 이름을 꺼낸다. 파서와 대조가 모두 이것만 쓴다."""
+    return dig(trans, *contract.name_keys)
+
+
+def _claim_birth(trans: dict, contract: OacxBiometricContract):
+    """계약 경로(birth_path)를 먼저, 없으면 계약의 대체 칸을 본다. 파서와 대조가 모두 이것만 쓴다."""
+    birth = dig_path(trans, contract.birth_path)
+    if birth is None and contract.birth_fallback_keys:
+        birth = dig(trans, *contract.birth_fallback_keys)
+    return birth
 
 
 def _mask_name(name: str) -> str:
@@ -134,14 +157,14 @@ def parse_oacx_biometric_evidence(
         # 실 OACX trans/{token} 응답은 신원 필드를 data/result 아래에 중첩하고 이름은 name,
         # 테스트 목은 flat 에 nm 을 쓴다 — dig() 로 두 구조·두 키 이름을 모두 흡수한다.
         ci = dig(trans, "ci")
-        name = dig(trans, "name", "nm")
+        name = _claim_name(trans, contract)
         transaction_id = dig(trans, "txId")
         if not all(isinstance(value, str) and value for value in (ci, name)):
             raise ValueError
         if transaction_id is not None and not isinstance(transaction_id, str):
             raise ValueError
 
-        birth = dig_path(trans, contract.birth_path)
+        birth = _claim_birth(trans, contract)
         if not isinstance(birth, str) or not birth:
             raise ValueError
         try:
@@ -178,7 +201,7 @@ def parse_simple_auth_evidence(
         ci = dig(trans, "ci")
         if not isinstance(ci, str) or not ci:
             raise OacxBiometricError("identity_ci_unavailable")
-        birth = dig(trans, *contract.birth_path, "birthdate", "birthday")
+        birth = _claim_birth(trans, contract)
         if not isinstance(birth, str) or not birth:
             raise OacxBiometricError("identity_birth_unavailable")
 
@@ -191,7 +214,7 @@ def parse_simple_auth_evidence(
         if not adult:
             raise OacxBiometricError("minor_blocked")
 
-        name = dig(trans, "utf8Nm", "nm", "name", "userName") or ""
+        name = _claim_name(trans, contract) or ""
         return OacxBiometricEvidence(
             ci=bytearray(ci.encode()),
             birth=birth,
@@ -215,11 +238,12 @@ class IdentityClaimMatch:
 
 
 def _normalize_name(name: str) -> str:
-    """대조용 이름 정규화: 모든 공백 제거 + casefold(라틴 대소문자 무시).
+    """대조용 이름 정규화: 한글 조합형 통일(NFC) + 모든 공백 제거 + casefold(라틴 대소문자 무시).
 
     'KIM MIN SU' == 'KimMinsu' (E13). 한글은 공백만 제거되고 casefold 는 무영향.
     """
-    return "".join(ch for ch in str(name or "") if not ch.isspace()).casefold()
+    composed = unicodedata.normalize("NFC", str(name or ""))
+    return "".join(ch for ch in composed if not ch.isspace()).casefold()
 
 
 def compare_identity_claim(
@@ -232,20 +256,21 @@ def compare_identity_claim(
     """OACX trans 의 이름·생년월일을 지원서 주장과 대조한다 — raw 는 이 함수 밖으로 나가지 않는다.
 
     E13(4A 의 안전한 구현): 기대값(지원서 이름·생년월일)을 파서에 넘기고 match 결과만 반환.
-    - 이름: 공백 제거 + casefold 후 완전일치(라틴 대소문자·공백 무시).
+    - 칸 이름: 파서와 같은 계약 목록(_claim_name·_claim_birth). 간편인증은 `birthday` 도 읽는다.
+    - 이름: NFC + 공백 제거 + casefold 후 완전일치(라틴 대소문자·공백·한글 조합형 무시).
     - 생년월일: 8자리면 연·월·일 전체 비교. 4자리(year-only, `cx_birth_year_only` 실존)면
       **이름 일치 + 연도 일치**만으로 통과(약한 보장, precision='year'). 미성년 차단은 파서가 담당.
     실패·형식오류는 matched=False 로 흡수(원문·birth 를 예외·로그로 흘리지 않는다).
     """
     try:
-        raw_name = dig(trans, "name", "nm")
-        raw_birth = dig_path(trans, contract.birth_path)
+        raw_name = _claim_name(trans, contract)
+        raw_birth = _claim_birth(trans, contract)
         if not isinstance(raw_name, str) or not raw_name:
-            return IdentityClaimMatch(False, False, "none")
-        if not isinstance(raw_birth, str) or not raw_birth:
             return IdentityClaimMatch(False, False, "none")
 
         name_matched = _normalize_name(raw_name) == _normalize_name(expected_name)
+        if not isinstance(raw_birth, str) or not raw_birth:
+            return IdentityClaimMatch(False, name_matched, "none")
 
         digits = "".join(ch for ch in raw_birth if ch.isdigit())
         expected = expected_birthdate
@@ -365,6 +390,16 @@ def dig(data: dict, *keys):
             if v not in (None, ""):
                 return v
     return None
+
+
+def field_names(data: dict) -> list[str]:
+    """응답의 칸 이름만 돌려준다(값 없음). flat 과 result/data 중첩을 함께 본다. 불일치 원인 로그 전용."""
+    names = [k for k in data if isinstance(k, str)]
+    for wrap in ("result", "data"):
+        inner = data.get(wrap)
+        if isinstance(inner, dict):
+            names.extend(f"{wrap}.{k}" for k in inner if isinstance(k, str))
+    return sorted(names)
 
 
 def dig_path(data: dict, path: tuple[str, ...]):

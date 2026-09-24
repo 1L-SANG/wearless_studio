@@ -1540,6 +1540,21 @@ async def verify_enrollment_identity(
                     )
                     if not claim.matched:
                         new_count = approw["identity_mismatch_count"] + 1
+                        # 원인 추적용. 값은 남기지 않고 판정 결과, 칸 이름, 인증사 코드만 남긴다.
+                        # 카카오·네이버·PASS 의 실거래 칸 이름이 아직 미확인이라, 다음 불일치가
+                        # 나면 이 한 줄로 '입력이 다른지, 칸을 못 읽는지'를 가를 수 있다.
+                        logger.warning(
+                            "facemarket_identity_claim_mismatch",
+                            extra={
+                                "enrollment_id": enrollment_id,
+                                "identity_method": method,
+                                "name_matched": claim.name_matched,
+                                "birth_precision": claim.birth_precision,
+                                "attempt": new_count,
+                                "provider": cx_identity.dig(trans, "provider", "pid"),
+                                "trans_keys": cx_identity.field_names(trans),
+                            },
+                        )
                         # 실패 token 소비(attempt ledger, E8): 같은 token 재전송은 replay 로 차단.
                         await cur.execute(
                             "update fm_biometric_enrollments set identity_tx_digest = %s "
