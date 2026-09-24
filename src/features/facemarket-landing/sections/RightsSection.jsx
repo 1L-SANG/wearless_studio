@@ -18,7 +18,7 @@ export function RightsSection() {
         </li>
         <li>
           <h3>쓰일 때마다 결제 금액의 <strong>{sharePercent}%</strong>가 내 몫이에요.</h3>
-          <p>셀러가 착용컷 한 장에 {formatKrw(FACEMARKET_PRICING.perCut)}을 내면 {formatKrw(perCutShare)}이 내 몫으로 쌓여요. {formatKrw(MIN_PAYOUT_KRW)}이 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요.</p>
+          <p>셀러가 {formatKrw(FACEMARKET_PRICING.perCut)}을 내면 {formatKrw(perCutShare)}이 내 몫으로 쌓여요. {formatKrw(MIN_PAYOUT_KRW)}이 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요.</p>
         </li>
         <li>
           <h3>어디에 쓰였는지 <strong>전부</strong> 볼 수 있어요.</h3>
