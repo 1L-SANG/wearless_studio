@@ -145,13 +145,55 @@ test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => 
   assert.doesNotMatch(html, /계좌이체로 시작하기/);
 });
 
-test('충전 탭 카드에는 계좌이체로 충전하기가 뜬다', async () => {
-  // 탭 상태는 내부 useState 라 SSR 로 못 바꾼다 — 목 카탈로그의 충전 상품 5종이 있음만 본다.
-  assert.equal(plans.filter((p) => p.kind === 'topup').length, 5);
-  const res = await api.createBankTransferRequest({ planCode: 'topup_finish', payerName: '홍길동' });
+// 추가 구매 탭은 URL(/pricing?tab=topup&need=N)로 연다 — 크레딧 부족 창이 그렇게 보낸다.
+// SSR 에는 window 가 없으니 이 테스트 동안만 location 을 흉내 낸다.
+function renderTopup(search, opts = {}) {
+  const prev = globalThis.window;
+  globalThis.window = { location: { search } };
+  try { return renderPricing(opts); } finally {
+    if (prev === undefined) delete globalThis.window; else globalThis.window = prev;
+  }
+}
+
+test('추가 구매 탭은 100·500 크레딧 두 팩과 구독 비교 카드만 보여준다', () => {
+  const html = renderTopup('?tab=topup');
+  assert.equal((html.match(/계좌이체로 충전하기/g) || []).length, 2);
+  assert.match(html, />100<\/span>/);
+  assert.match(html, />500<\/span>/);
+  assert.match(html, /₩5,500/);
+  assert.match(html, /₩26,000/);
+  assert.match(html, /55\.0원/);
+  assert.match(html, /52\.0원/);
+  // 세 번째 칸: 자주 쓰면 이용권이 크레딧당 싸다(숫자만)
+  assert.match(html, /자주 쓰신다면/);
+  for (const v of ['49.8원', '43.7원', '42.5원']) assert.ok(html.includes(v), v);
+  assert.match(html, />이용권 보기</);
+  // 부족분이 없으면 추천도, 부족 안내 줄도 없다
+  assert.doesNotMatch(html, />추천</);
+  assert.doesNotMatch(html, /크레딧이 부족해요/);
+  // 옛 팩 이름은 어디에도 없다
+  assert.doesNotMatch(html, /마무리 충전|시작 팩|반복 팩|시즌 팩|대량 팩/);
+});
+
+test('부족분이 있으면 그걸 채우는 가장 작은 팩에 추천을 붙인다', () => {
+  const need155 = renderTopup('?tab=topup&need=155');
+  assert.match(need155, /지금 155 크레딧이 부족해요/);
+  assert.equal((need155.match(/>추천</g) || []).length, 1);
+  // 추천 알약은 500 크레딧 카드 안에 있다(100 으로는 155 를 못 채운다)
+  assert.ok(need155.indexOf('>추천<') > need155.indexOf('>100</span>'));
+  const need80 = renderTopup('?tab=topup&need=80');
+  assert.ok(need80.indexOf('>추천<') < need80.indexOf('>500</span>'));
+  // 어느 팩으로도 못 채우면 가장 큰 팩
+  const need900 = renderTopup('?tab=topup&need=900');
+  assert.ok(need900.indexOf('>추천<') > need900.indexOf('>100</span>'));
+});
+
+test('충전 신청은 목 저장소에서도 종류당 한 건만 열린다', async () => {
+  assert.equal(plans.filter((p) => p.kind === 'topup').length, 2);
+  const res = await api.createBankTransferRequest({ planCode: 'topup_100', payerName: '홍길동' });
   assert.equal(res.request.kind, 'topup');
-  assert.equal(res.request.amount, 9900);
-  await assert.rejects(api.createBankTransferRequest({ planCode: 'topup_start', payerName: '홍길동' }), /확인 중인 신청/);
+  assert.equal(res.request.amount, 5500);
+  await assert.rejects(api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' }), /확인 중인 신청/);
   const open = await api.getOpenBankTransferRequests();
   assert.equal(open.open.length, 1);
   await api.cancelBankTransferRequest(res.request.id);

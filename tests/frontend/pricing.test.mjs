@@ -108,11 +108,11 @@ test('빈 요금제 목록은 준비 중 안내를 표시한다', () => {
   assert.match(render([]), /요금제를 준비 중이에요/);
 });
 
-test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량을 사용한다', async () => {
+// 2026-09-24 오너 결정: 충전 팩은 100·500 크레딧 두 종류뿐이다.
+test('목 결제 주문은 충전 팩 두 개의 가격과 지급량을 사용한다', async () => {
+  assert.deepEqual(plans.filter((p) => p.kind === 'topup').map((p) => p.code), ['topup_100', 'topup_500']);
   for (const [code, amount, credits] of [
-    ['topup_finish', 9900, 180], ['topup_start', 24900, 470],
-    ['topup_repeat', 69900, 1380], ['topup_season', 149000, 3050],
-    ['topup_bulk', 299000, 6400],
+    ['topup_100', 5500, 100], ['topup_500', 26000, 500],
   ]) {
     const order = await api.createTossCheckout(code);
     assert.equal(order.amount, amount);
@@ -126,8 +126,7 @@ test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량�
 test('개정 환율 카탈로그와 Seller 카드 지급량이 일치한다', () => {
   for (const [code, credits] of [
     ['starter', 600], ['seller', 1600], ['pro', 2800],
-    ['topup_finish', 180], ['topup_start', 470], ['topup_repeat', 1380],
-    ['topup_season', 3050], ['topup_bulk', 6400],
+    ['topup_100', 100], ['topup_500', 500],
   ]) assert.equal(plans.find((plan) => plan.code === code)?.credits, credits, code);
   const html = render(plans.filter((plan) => plan.code === 'seller'));
   for (const text of ['1,400', '1,600', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);

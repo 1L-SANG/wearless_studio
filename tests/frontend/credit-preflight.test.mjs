@@ -138,7 +138,9 @@ test('a known zero-AI-cut storyboard is a valid zero-cost entry', () => {
 test('the shared modal renders the exact owner copy and both enabled actions', () => {
   const modal = read('../../src/features/credits/CreditShortfallModal.jsx');
   assert.match(modal, /<p>\{shortfall\.message\}<\/p>/);
-  assert.match(modal, /navigate\('\/pricing'\)/);
+  // 2026-09-24: 추가 구매 탭으로 바로 열고 부족분을 넘긴다(요금제가 그걸 채우는 팩에 '추천'을 붙인다).
+  assert.match(modal, /\/pricing\?tab=topup&need=\$\{need\}/);
+  assert.match(modal, /shortfall\.requiredCredits\) - Number\(shortfall\.availableCredits\)/);
   assert.match(modal, />충전하러 가기<\/Button>/);
   assert.match(modal, />닫기<\/Button>/);
   assert.doesNotMatch(modal, /disabled/);

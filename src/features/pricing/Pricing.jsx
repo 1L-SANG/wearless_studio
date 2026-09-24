@@ -29,6 +29,16 @@ import s from './Pricing.module.css';
 
 // 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.
 const perCredit = (p) => (Number(p.price) / Number(p.credits)).toFixed(1);
+
+// 크레딧 부족 창(features/credits/CreditShortfallModal)이 /pricing?tab=topup&need=N 으로 보낸다.
+// 그러면 추가 구매 탭으로 열고, 부족분을 채우는 가장 작은 팩에 '추천'을 붙인다.
+// SSR 테스트에는 window 가 없으니 그때는 기본값으로.
+function readEntry() {
+  if (typeof window === 'undefined') return { tab: 'subscription', need: 0 };
+  const q = new URLSearchParams(window.location.search);
+  const need = Number.parseInt(q.get('need') || '', 10);
+  return { tab: q.get('tab') === 'topup' ? 'topup' : 'subscription', need: Number.isFinite(need) && need > 0 ? need : 0 };
+}
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
 // 충전과 구독은 계약 MID 가 달라 클라이언트 키도 다르다 — lib/tossKeys.js 참고.
 // 하나로 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로 깨진다.
@@ -55,7 +65,8 @@ const PLAN_DETAILS = {
 };
 
 export function Pricing() {
-  const [tab, setTab] = useState('subscription'); // 'subscription' | 'topup'
+  const [entry] = useState(readEntry);
+  const [tab, setTab] = useState(entry.tab); // 'subscription' | 'topup'
   const [buying, setBuying] = useState(null);     // 결제창 여는 중인 planCode
   const [payError, setPayError] = useState('');
   const account = useAppStore((a) => a.account);
@@ -166,6 +177,12 @@ export function Pricing() {
   const activeTab = topupVisible ? tab : 'subscription';
   const shown = plans.filter((p) => p.kind === activeTab);
   const recurring = activeTab === 'subscription';
+  const subscriptionPlans = plans.filter((p) => p.kind === 'subscription');
+  // 부족분이 있으면 그걸 채우는 가장 작은 팩, 어느 팩으로도 못 채우면 가장 큰 팩.
+  const recommendedCode = !recurring && entry.need > 0 && shown.length
+    ? ([...shown].sort((a, b) => a.credits - b.credits).find((p) => p.credits >= entry.need)
+      || [...shown].sort((a, b) => b.credits - a.credits)[0]).code
+    : null;
 
   return (
     <div className="wizard wide">
@@ -254,6 +271,10 @@ export function Pricing() {
         </div>
       )}
 
+      {!recurring && entry.need > 0 && (
+        <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
+      )}
+
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
       )}
@@ -271,9 +292,11 @@ export function Pricing() {
             return (
               <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}${recurring ? '' : ' ' + s.topupCard}`}>
                 {recurring && p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
+                {!recurring && p.code === recommendedCode && <span className={s.popular}>추천</span>}
                 {isCurrent && <span className={s.badge}>이용 중</span>}
-                {recurring && <span className={s.kind}>{bankTransfer ? '1개월 이용권' : '정기 구독'}</span>}
-                <h3 className={`${s.name}${recurring ? '' : ' ' + s.topupName}`}>{p.name}</h3>
+                <span className={s.kind}>{recurring ? (bankTransfer ? '1개월 이용권' : '정기 구독') : '1회 충전'}</span>
+                {/* 충전 팩은 이름이 곧 크레딧 수라 제목을 따로 두지 않고 큰 숫자가 제목 역할을 한다. */}
+                {recurring && <h3 className={s.name}>{p.name}</h3>}
                 {recurring ? (
                   <>
                     <div className={s.priceRow}>
@@ -303,10 +326,10 @@ export function Pricing() {
                 ) : (
                   // 충전 팩 — 구독 카드와 같은 뼈대에 크레딧 숫자가 주인공(시안 A, 오너 9/24).
                   <>
-                    <div className={s.bigRow}>
+                    <h3 className={s.bigRow} aria-label={p.name}>
                       <span className={s.big}><span className={s.plus}>+</span>{credits}</span>
                       <span className={s.creditUnit}>크레딧</span>
-                    </div>
+                    </h3>
                     <dl className={s.tsec}>
                       <div><dt>가격</dt><dd className={s.tprice}>{won(p.price)}</dd></div>
                       <div><dt>크레딧당</dt><dd>{perCredit(p)}원</dd></div>
@@ -389,6 +412,24 @@ export function Pricing() {
               </div>
             );
           })}
+          {/* 추가 구매 탭 세 번째 칸: 자주 쓰면 구독이 크레딧당 싸다는 걸 숫자로만 보여 준다. */}
+          {!recurring && subscriptionPlans.length > 0 && (
+            <div className={`${s.card} ${s.topupCard} ${s.compareCard}`}>
+              <span className={s.kind}>{bankTransfer ? '1개월 이용권' : '정기 구독'}</span>
+              <h3 className={`${s.name} ${s.topupName}`}>자주 쓰신다면</h3>
+              <p className={s.compareLead}>{bankTransfer ? '이용권' : '구독'}이 크레딧당 더 저렴해요</p>
+              <dl className={s.tsec}>
+                {subscriptionPlans.map((p) => (
+                  <div key={p.id}><dt>{p.name}</dt><dd>{perCredit(p)}원</dd></div>
+                ))}
+              </dl>
+              <div className={s.cta}>
+                <button type="button" className={s.ghostButton} onClick={() => setTab('subscription')}>
+                  {bankTransfer ? '이용권 보기' : '구독 보기'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
       {!isLoading && !isError && shown.length > 0 && (
