@@ -1,52 +1,232 @@
+/* 모델 활동 섹션.
+   위(첫 화면 캐러셀)는 연한 파란 페이지 배경이다. 이 섹션은 화면 가로 끝까지 흰 띠를 깔아 새 장이
+   시작되는 걸 보여 준다. 띠는 box-shadow + clip-path 로 그려 레이아웃 폭은 그대로 둔다
+   (100vw 로 넓히면 스크롤바 폭만큼 가로 스크롤이 생긴다).
+
+   구성(2026-09-24, '밋밋하다'는 오너 피드백 뒤): 카드 상자 대신 활동마다 큰 무대(stage)에 실제 화면
+   모형을 살짝 기울여 띄우고, 그 위에 알림(toast)을 겹친다. 사진이 앞장서고 글은 아래 아이콘 줄로
+   정리한다. 테두리 상자는 쓰지 않는다. 그림자는 모형과 알림에만 부드럽게 준다(피그마 드롭 섀도 결). */
 .section {
-  padding: clamp(2.75rem, 5vw, 4rem) 0 0;
-  scroll-margin-top: calc(var(--fm-header-h) + 1.25rem);
+  margin-top: clamp(2.5rem, 5vw, 3.5rem);
+  padding: clamp(3rem, 6vw, 5rem) 0 clamp(3.25rem, 6vw, 5rem);
+  background: var(--bg-1);
+  box-shadow: 0 0 0 100vmax var(--bg-1);
+  clip-path: inset(0 -100vmax);
+  scroll-margin-top: var(--fm-header-h);
 }
 
-.title {
-  margin: 0 0 1.5rem;
-  color: var(--fm-ink);
-  font-size: clamp(1.5rem, 2.25vw, 1.75rem);
+.head { max-width: 42rem; margin-bottom: clamp(2rem, 4vw, 3rem); }
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--fm-accent);
+  font-size: 0.8125rem;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.2;
+}
+.title {
+  margin: 0;
+  color: var(--fm-ink);
+  font-size: clamp(1.625rem, 3vw, 2.375rem);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+.lead { margin: 0.875rem 0 0; color: var(--fm-muted); font-size: 1.0625rem; line-height: 1.7; }
+
+/* 말덩이 묶음. 휴대폰 폭에서 '한 번', '내 얼굴', '수 있어요' 같은 말덩이가 줄 끝에서 갈라지지 않게 한다.
+   한 줄에 들어가면 묶음 안에서 끊지 않고 통째로 다음 줄로 넘긴다. 칸보다 길면(280px 폴드 화면 등)
+   묶음 안에서 줄을 바꿔 가로로 넘치지 않는다. white-space: nowrap 대신 inline-block 을 쓰는 이유가
+   이것이다. iOS Safari 16 과 안드로이드 크롬에서 그대로 동작한다. 묶음 앞뒤 띄어쓰기는 span 밖에 둔다. */
+.keep { display: inline-block; }
+
+.roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(2rem, 4vw, 3.5rem);
+  align-items: start;
+}
+.role { min-width: 0; }
+
+/* ---- 무대 ---- */
+/* 옅은 중성 회색 무대. 위쪽만 살짝 밝게 해 모형이 빛을 받는 느낌을 준다. 파란 기는 쓰지 않는다. */
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 5 / 4;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background: radial-gradient(120% 90% at 50% 0%, var(--bg-1) 0%, var(--bg-2) 72%);
+  isolation: isolate;
+}
+
+/* 모형과 알림의 그림자. 바로 아래 얇은 그림자가 윤곽을, 넓고 옅은 그림자가 떠 있는 느낌을 만든다. */
+.pdp,
+.post,
+.toast {
+  background: var(--bg-1);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--fm-ink) 8%, transparent),
+    0 10px 24px -8px color-mix(in srgb, var(--fm-ink) 14%, transparent),
+    0 32px 64px -24px color-mix(in srgb, var(--fm-ink) 20%, transparent);
+}
+
+/* 모형 + 알림 묶음. 알림 자리를 무대가 아니라 모형 기준으로 잡아, 폭이 바뀌어도 알림이
+   모형의 사진 위에 걸리고 가게 이름, 가격, 광고 문구 같은 글자는 가리지 않는다. */
+.device { position: relative; }
+.devicePdp { width: min(50%, 15rem); }
+.devicePost { width: min(52%, 15.5rem); }
+
+/* 01: 쇼핑몰 상세페이지 모형 */
+.pdp {
+  display: grid;
+  overflow: hidden;
+  border-radius: 1rem;
+  transform: rotate(-2.5deg) translateY(-2%);
+}
+.pdpMedia { aspect-ratio: 4 / 5; overflow: hidden; background: var(--bg-2); }
+.pdpMedia img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.pdpInfo { display: grid; gap: 0.15rem; padding: 0.7rem 0.85rem 0.85rem; }
+.pdpShop { color: var(--fm-muted); font-size: 0.5625rem; font-weight: 600; letter-spacing: 0.14em; }
+.pdpName { color: var(--fm-ink); font-size: 0.8125rem; font-weight: 600; line-height: 1.35; }
+
+/* 02: 인스타그램 게시물 모형 */
+.post {
+  overflow: hidden;
+  border-radius: 1rem;
+  transform: rotate(2.5deg) translateY(-3%);
+}
+.postHead { display: flex; align-items: center; gap: 0.45rem; padding: 0.6rem 0.75rem; }
+/* 프로필은 01 과 같은 모델 사진. 인스타 스토리 테두리처럼 흰 틈 + 얇은 파란 고리. */
+.avatar {
+  flex: none;
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 1.5px;
+  border: 1.5px solid var(--fm-accent);
+  border-radius: 50%;
+}
+.avatar img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; object-position: 50% 18%; }
+.handle { min-width: 0; overflow: hidden; color: var(--fm-ink); font-size: 0.75rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.postBadge {
+  flex: none;
+  margin-left: auto;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fm-accent) 9%, var(--bg-1));
+  color: var(--fm-accent);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+.postMedia { aspect-ratio: 1 / 1; background: var(--bg-2); }
+.postMedia img { display: block; width: 100%; height: 100%; padding: 9%; object-fit: contain; }
+.postActions { display: flex; align-items: center; gap: 0.35rem; padding: 0.6rem 0.75rem 0.8rem; color: var(--fm-ink); font-size: 0.6875rem; font-weight: 600; }
+.postActions svg { width: 0.95rem; height: 0.95rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+
+/* 알림. 모형 가장자리에 겹쳐 '방금 일어난 일'처럼 보이게 한다. */
+.toast {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 1rem 0.7rem 0.85rem;
+  border-radius: 1rem;
+  white-space: nowrap;
+  /* 알림 아이콘 색. ai.wearless.kr 계정 메뉴(app.css .profile-menu 의 --profile-icon-*)와 같은 값이다.
+     그 변수는 메뉴 안에서만 정의돼 랜딩에서 닿지 않아 여기 같은 값을 둔다. 메뉴 색이 바뀌면 같이 고친다. */
+  --icon-blue: #82b6f1;
+  --icon-amber: #edb55d;
+}
+.toastRight { top: 54%; right: -38%; }
+.toastLeft { top: 46%; left: -40%; }
+.toastIcon { display: block; flex: none; width: 1.75rem; height: 1.75rem; fill: currentColor; }
+.iconAmber { color: var(--icon-amber); }
+.iconBlue { color: var(--icon-blue); }
+.iconDetail { fill: color-mix(in srgb, currentColor 38%, var(--fg-1)); }
+.iconLine,
+.iconSeam,
+.iconCheck { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.iconLine { stroke: color-mix(in srgb, currentColor 38%, var(--fg-1)); stroke-width: 1.8; }
+.iconSeam { stroke: color-mix(in srgb, currentColor 38%, var(--fg-1)); stroke-width: 1.2; }
+.iconCutout { fill: var(--bg-1); }
+.iconCheck { stroke: var(--bg-1); stroke-width: 1.8; }
+.toastText { display: grid; gap: 0.1rem; min-width: 0; }
+.toastText small { color: var(--fm-muted); font-size: 0.6875rem; line-height: 1.3; }
+.toastText strong { color: var(--fm-ink); font-size: 1rem; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.toastRight .toastText strong { color: var(--fm-accent); }
+.toastText del { margin-right: 0.3rem; color: var(--fm-muted); font-size: 0.75rem; font-weight: 500; }
+
+/* ---- 본문 ----
+   글자 단계는 제목(20~24px 굵게) > 설명(16px 회색) > 항목(16px 검정, 휴대폰 15px) 세 층이다.
+   설명을 회색으로 한 단계 낮춰 제목과 항목이 먼저 읽히게 한다. 간격은 줄 높이 24px 의 절반인 8px 단위로
+   번호와 제목 8, 제목과 설명 8, 설명과 목록 24, 항목 사이 12 로 맞춘다. */
+.body { padding-top: 2rem; }
+.index {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: var(--fm-accent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.roleTitle {
+  margin: 0 0 0.5rem;
+  color: var(--fm-ink);
+  font-size: clamp(1.25rem, 1.8vw, 1.5rem);
+  font-weight: 700;
+  line-height: 1.35;
   letter-spacing: -0.02em;
 }
+.summary { margin: 0; color: var(--fm-muted); font-size: 1rem; line-height: 1.65; }
 
-.cards { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); align-items: start; gap: 1.25rem; }
-.card { min-width: 0; padding: clamp(1.25rem, 2.6vw, 2rem); border: 1px solid var(--fm-line); border-radius: 1rem; background: #fff; box-shadow: 0 16px 40px -34px rgba(16, 21, 26, 0.32); }
-.card h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; margin: 0 0 1rem; color: var(--fm-ink); font-size: 1.1875rem; font-weight: 600; line-height: 1.4; }
-.scope { color: var(--fm-muted); font-size: 0.8125rem; font-weight: 400; }
-.optional { color: var(--fm-muted); font-weight: 400; }
-.card p { margin: 0; color: var(--fm-muted); font-size: 0.96875rem; line-height: 1.75; }
-.card strong { color: var(--fm-ink); font-weight: 600; }
-.benefits { display: grid; gap: 0.625rem; margin: 1.5rem 0 0; padding-left: 1.25rem; color: var(--fm-ink); font-size: 0.9375rem; line-height: 1.6; }
-.benefits li::marker { color: var(--fm-muted); }
-.example { margin-top: 1.5rem; overflow: hidden; border: 1px solid var(--fm-line); border-radius: 0.875rem; background: #fff; }
-.exampleTopline { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 0.75rem; padding: 0.875rem 1rem; border-bottom: 1px solid var(--fm-line); color: var(--fm-muted); font-size: 0.75rem; line-height: 1.5; }
-.exampleTopline span:first-child { color: var(--fm-ink); font-weight: 600; }
-.exampleMain { display: grid; grid-template-columns: minmax(8rem, 38%) minmax(0, 1fr); gap: 1.125rem; padding: 1rem; }
-.exampleMedia { display: grid; place-items: center; min-height: 14rem; overflow: hidden; border-radius: 0.625rem; background: color-mix(in srgb, var(--fm-page-bg) 55%, #fff); }
-.exampleImage { display: block; width: 100%; height: 100%; max-height: 15rem; padding: 0.5rem; object-fit: contain; }
-.exampleDetails { min-width: 0; }
-.exampleBadge { display: inline-flex; align-items: center; min-height: 1.5rem; padding: 0.2rem 0.625rem; border: 1px solid color-mix(in srgb, var(--fm-accent) 20%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--fm-accent) 7%, #fff); color: var(--fm-accent); font-size: 0.6875rem; font-weight: 600; line-height: 1.2; }
-.exampleProduct { display: block; margin-top: 0.625rem; color: var(--fm-ink); font-size: 1.125rem; line-height: 1.3; }
-.examplePrice { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; margin-top: 0.375rem; font-variant-numeric: tabular-nums; }
-.examplePrice del { color: var(--fm-muted); font-size: 0.875rem; }
-.examplePrice strong { color: var(--fm-ink); font-size: 1.25rem; line-height: 1.3; }
-.exampleTerms { display: grid; gap: 0.55rem; margin: 1rem 0 0; }
-.exampleTerms div { display: grid; grid-template-columns: 4.75rem minmax(0, 1fr); gap: 0.5rem; padding-top: 0.55rem; border-top: 1px solid var(--fm-line); font-size: 0.8125rem; line-height: 1.5; }
-.exampleTerms dt { color: var(--fm-muted); }
-.exampleTerms dd { margin: 0; color: var(--fm-ink); font-weight: 500; word-break: keep-all; }
-.card .exampleFootnote { padding: 0.75rem 1rem; border-top: 1px solid var(--fm-line); font-size: 0.75rem; line-height: 1.6; word-break: keep-all; }
+/* 항목은 한 줄 글머리표. 이름표(파란 점 + 등록, 촬영 등) 옆에 내용을 이어 쓴다. 이름이 모두 두 글자라
+   이름표 폭이 같아 줄이 가지런하다. 이름표 높이(24px)를 내용 첫 줄 높이와 같게 해 둘의 가운데가 맞는다.
+   휴대폰에서 내용이 넘치면 이름표 아래가 아니라 내용 칸 안에서 줄을 바꾼다. */
+.points { display: grid; gap: 0.75rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+.point { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0.75rem; }
+.pointLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.5rem;
+  padding: 0 0.625rem 0 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--fm-ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+.pointLabel::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--fm-accent);
+}
+.pointText { color: var(--fm-ink); font-size: 1rem; line-height: 1.5; word-break: keep-all; }
+.pointText strong { font-weight: 700; }
+
+/* 두 열이 좁아지는 태블릿에서도 모형의 머리말과 설명, 회전 여백을 확보한다. */
+@media (min-width: 768px) {
+  .stage { width: 100%; min-height: 24rem; }
+}
 
 @media (max-width: 767px) {
-  .cards { grid-template-columns: 1fr; gap: 1rem; }
-  .title { margin-bottom: 1.125rem; }
-  .card { padding: 1.25rem; }
-  .card h3 { font-size: 1.125rem; }
-}
-@media (max-width: 480px) {
-  .exampleMain { grid-template-columns: 1fr; gap: 1rem; }
-  .exampleMedia { min-height: 11.5rem; }
-  .exampleImage { max-height: 11.5rem; }
+  .roles { grid-template-columns: 1fr; gap: 3rem; }
+  .lead { font-size: 1rem; }
+  /* 휴대폰은 무대를 세로로 조금 길게 해, 기울인 모형과 알림이 가장자리에 걸리지 않게 한다. */
+  .stage { aspect-ratio: 5 / 6; border-radius: 1.25rem; }
+  .devicePdp { width: min(56%, 13.5rem); }
+  .devicePost { width: min(58%, 14rem); }
+  .toast { padding: 0.6rem 0.85rem 0.6rem 0.75rem; }
+  .toastRight { right: -30%; }
+  .toastLeft { left: -30%; }
+  .toastIcon { width: 1.5rem; height: 1.5rem; }
+  .toastText strong { font-size: 0.9375rem; }
+  .body { padding-top: 1.5rem; }
+  .pointText { font-size: 0.9375rem; line-height: 1.6; }
 }

@@ -1,6 +1,6 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
@@ -215,5 +215,23 @@ test('RightsSection과 FAQ와 협찬 안내 금액은 pricing 상수가 바뀌�
   assert.match(rights, /12,345원을 내면 8,642원이 내 몫으로 쌓여요/);
   assert.match(faq, /화면에 보이는 12,345원과 67,890원은 셀러가 내는 금액이에요/);
   assert.match(faq, /한 건이면 8,642원이고/);
-  assert.match(sponsorship, /12,345원의 매출이 발생해요/);
+  // 모델 활동 섹션은 한 줄 글머리표라 모델 몫만 보여 줘요. 결제 금액의 70% 근거는 RightsSection 과 FAQ 에 있어요.
+  const sponsorshipText = sponsorship.replace(/<[^>]+>/g, '');
+  assert.match(sponsorshipText, /8,642원이 내 몫이에요/);
+  assert.match(sponsorshipText, /\+8,642원/);
+});
+
+test('모델 활동 섹션은 두 활동을 오너가 정한 이름으로 보여 주고, 협찬에 (선택)을 달지 않아요', async () => {
+  const html = await renderWithPricing(
+    '/src/features/facemarket-landing/sections/SponsorshipSection.jsx',
+    'SponsorshipSection',
+    { perCut: 14900, monthly: 49900 },
+  );
+  assert.match(html, /의류 쇼핑몰 상세페이지에 모델로서 활용/);
+  assert.match(html, /의류 협찬/);
+  assert.doesNotMatch(html, /\(선택\)/);
+  assert.doesNotMatch(html, /두 가지 일이 진행돼요/);
+  assert.doesNotMatch(html, /예시 화면/, '무대 안 예시 화면 표시는 오너 요청으로 뺐어요');
+  const source = readFileSync(new URL('../../src/features/facemarket-landing/sections/SponsorshipSection.jsx', import.meta.url), 'utf8');
+  assert.match(source, /id="sponsorship"/, '상단바 협찬 안내 링크(#sponsorship)가 이 섹션으로 와야 해요');
 });
