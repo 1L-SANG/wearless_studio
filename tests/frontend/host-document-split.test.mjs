@@ -95,7 +95,7 @@ test('facemarket 문서는 자기 아이콘을 SVG·PNG·ico 로 건다', () => 
 
 test('셀러 문서는 Wearless 아이콘 그대로다 — facemarket 아이콘이 새면 안 된다', () => {
   const html = read('seller.html');
-  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\/assets\/brand\/logo\.svg"/);
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\/assets\/brand\/favicon\.svg"/);
   assert.doesNotMatch(html, /facemarket-(icon|favicon)/);
 });
 
