@@ -35,7 +35,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError, field_validator
 
-from . import admin_guard, cx_identity, holder_client
+from . import admin_guard, cx_identity, facemarket_notify, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
@@ -3251,7 +3251,8 @@ async def revoke_license(
         await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status
+                """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status,
+                          m.display_name
                    from fm_licenses l join fm_models m on m.id = l.model_id
                    where l.id = %s and m.user_id = %s
                    for update of l""",
@@ -3260,6 +3261,7 @@ async def revoke_license(
             lic = await cur.fetchone()
         if not lic:
             raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        first_revocation = lic["status"] != "revoked"
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""update fm_licenses set status = 'revoked'
@@ -3267,6 +3269,16 @@ async def revoke_license(
                 (license_id,),
             )
             row = await cur.fetchone()
+        other_active_licenses = 0
+        if first_revocation:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """select count(*) as count from fm_licenses
+                       where model_id = %s and id <> %s
+                         and status in ('active', 'reverification_required')""",
+                    (lic["model_id"], lic["id"]),
+                )
+                other_active_licenses = int((await cur.fetchone() or {}).get("count") or 0)
         if lic.get("vc_id"):
             await enqueue_vc_revocation(
                 conn,
@@ -3275,6 +3287,24 @@ async def revoke_license(
                 vc_id=lic["vc_id"],
             )
         await conn.commit()
+    if first_revocation:
+        revoked_date = datetime.now(_KST).date()
+        settings = request.app.state.settings
+        admin_base = settings.fm_application_public_base.replace(
+            "facemarket.", "admin."
+        ).rstrip("/")
+        try:
+            await facemarket_notify.notify_slack_license_revoked(
+                settings,
+                model_id=lic["model_id"],
+                display_name=lic["display_name"],
+                revoked_on=revoked_date.isoformat(),
+                purge_due_on=(revoked_date + timedelta(days=30)).isoformat(),
+                other_active_licenses=other_active_licenses,
+                admin_link=f"{admin_base}/models",
+            )
+        except Exception:
+            logger.warning("license revocation slack dispatch failed", exc_info=True)
     return row
 
 

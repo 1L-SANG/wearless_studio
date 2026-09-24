@@ -418,6 +418,37 @@ async def notify_slack_model_confirmed(
     await _post_slack(settings, text)
 
 
+async def notify_slack_license_revoked(
+    settings,
+    *,
+    model_id: str,
+    display_name: str,
+    revoked_on: str,
+    purge_due_on: str,
+    other_active_licenses: int,
+    admin_link: str,
+) -> None:
+    """모델 라이선스 해지와 수동 파기 기한을 관리자에게 알린다.
+
+    display_name 은 본인확인에서 받은 가려진 실명(예: 홍*동)이라 같은 이름이 여럿일 수 있다.
+    파기할 모델을 정확히 찾도록 내부 모델 ID 를 함께 싣는다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    text = (
+        f":warning: 모델 라이선스 해지 · 모델: {_slack_escape(display_name)} · ID {model_id}\n"
+        f"해지일 {revoked_on} · 파기 기한 {purge_due_on}(30일)\n"
+        "원본 사진·특징정보·얼굴 참조 자산(학습 가중치·GPU 서버 사본·개발자 PC 학습 "
+        "사본 포함)·테스트컷을 지우고, 백업은 90일 안에 지운 뒤 모델에게 알려야 해요."
+    )
+    if other_active_licenses > 0:
+        text += (
+            f"\n주의: 이 모델에게 아직 유효한 라이선스가 {other_active_licenses}건 있어요. "
+            "파기 전에 확인하세요."
+        )
+    text += f"\n<{admin_link}|관리자 모델 콘솔 열기>"
+    await _post_slack(settings, text)
+
+
 async def notify_slack_admin_device_requested(settings, *, email: str | None, label: str) -> None:
     """관리자 콘솔에 새 기기가 승인을 요청했다. 승인은 다른 관리자가 콘솔에서 한다 — 이 알림이
     없으면 상대는 요청이 있는지도 모른다. 탈취된 계정의 요청도 이 알림으로 드러난다(요청한 적

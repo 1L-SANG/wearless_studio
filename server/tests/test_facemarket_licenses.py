@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from psycopg._queries import PostgresQuery
 from psycopg.adapt import Transformer
 
-from app import facemarket, holder_client
+from app import facemarket, facemarket_notify, holder_client
 from app import facemarket_enrollment
 from types import SimpleNamespace
 
@@ -629,6 +629,10 @@ class FakeCursor:
                 self._result = {k: row[k] for k in _LICENSE_KEYS}
                 self._result["enrollment_id"] = row.get("enrollment_id")
                 self._result["face_image_key"] = row.get("face_image_key")
+                if "m.display_name" in s:
+                    self._result["display_name"] = next(
+                        (m["display_name"] for m in models if m["id"] == row["model_id"]), ""
+                    )
                 self._result["consent_doc_version"] = next(
                     (e['consent_version'] for e in self.store['enrollments']
                      if e['id'] == row.get('enrollment_id')), None)
@@ -725,18 +729,41 @@ class FakeCursor:
                 self._result = None
                 self.rowcount = 0
         elif s.startswith("update fm_licenses set status = 'revoked'"):
-            # 재등록으로 갈아탄 옛 라이선스 정리(같은 모델, 자기 자신 제외).
-            model_id, keep_id = params[:2]
-            rows = [
-                r for r in licenses
-                if r["model_id"] == model_id
-                and r["id"] != keep_id
-                and r["status"] == "reverification_required"
-            ]
-            for r in rows:
-                r["status"] = "revoked"
-            self._many = [{"id": r["id"], "vc_id": r.get("vc_id")} for r in rows]
-            self.rowcount = len(rows)
+            if len(params) == 1:
+                license_id = params[0]
+                row = next((r for r in licenses if r["id"] == license_id), None)
+                if row:
+                    row["status"] = "revoked"
+                    self._result = {k: row[k] for k in _LICENSE_KEYS}
+                    self.rowcount = 1
+            else:
+                # 재등록으로 갈아탄 옛 라이선스 정리(같은 모델, 자기 자신 제외).
+                model_id, keep_id = params[:2]
+                rows = [
+                    r for r in licenses
+                    if r["model_id"] == model_id
+                    and r["id"] != keep_id
+                    and r["status"] == "reverification_required"
+                ]
+                for r in rows:
+                    r["status"] = "revoked"
+                self._many = [{"id": r["id"], "vc_id": r.get("vc_id")} for r in rows]
+                self.rowcount = len(rows)
+        elif (
+            s.startswith("select count(*) as count from fm_licenses")
+            and "id <> %s" in s
+            and "status in ('active', 'reverification_required')" in s
+        ):
+            model_id, excluded_id = params
+            self._result = {
+                "count": sum(
+                    1
+                    for row in licenses
+                    if row["model_id"] == model_id
+                    and row["id"] != excluded_id
+                    and row["status"] in {"active", "reverification_required"}
+                )
+            }
         elif s.startswith("update fm_models set did ="):
             user_did, body_type, model_id, enrollment_id = params[:4]
             if self.store.get("final_model_update_misses"):
@@ -1169,6 +1196,108 @@ def _seed_active_license(
     store["licenses"].append(row)
     r2.objects[key] = (data, "image/png")
     return {"id": license_id, "faceImageDigest": digest}
+
+
+def test_revoke_active_license_notifies_once_with_kst_dates_and_other_license_count(
+    fm, make_token, monkeypatch
+):
+    client, store, r2 = fm
+    target = _seed_active_license(store, r2)
+    other = dict(store["licenses"][0])
+    other.update(
+        id="55555555-5555-4555-8555-555555555555",
+        status="reverification_required",
+        vc_id="vc:other",
+    )
+    expired = dict(store["licenses"][0])
+    expired.update(
+        id="66666666-6666-4666-8666-666666666666",
+        status="expired",
+        vc_id="vc:expired",
+    )
+    store["licenses"].extend([other, expired])
+    notified = []
+
+    async def fake_notify(_settings, **kwargs):
+        notified.append(kwargs)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = datetime(2026, 9, 25, 16, 0, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(
+        facemarket_notify, "notify_slack_license_revoked", fake_notify, raising=False
+    )
+    monkeypatch.setattr(facemarket, "datetime", Clock)
+
+    response = client.post(
+        f"/v1/facemarket/licenses/{target['id']}/revoke",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "revoked"
+    assert store["licenses"][0]["status"] == "revoked"
+    assert notified == [
+        {
+            "model_id": "model-1",
+            "display_name": "홍*동",
+            "revoked_on": "2026-09-26",
+            "purge_due_on": "2026-10-26",
+            "other_active_licenses": 1,
+            "admin_link": "https://admin.wearless.kr/models",
+        }
+    ]
+
+
+def test_revoke_already_revoked_license_does_not_notify(fm, make_token, monkeypatch):
+    client, store, r2 = fm
+    target = _seed_active_license(store, r2)
+    store["licenses"][0]["status"] = "revoked"
+    notified = []
+
+    async def fake_notify(_settings, **kwargs):
+        notified.append(kwargs)
+
+    monkeypatch.setattr(facemarket_notify, "notify_slack_license_revoked", fake_notify)
+
+    response = client.post(
+        f"/v1/facemarket/licenses/{target['id']}/revoke",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "revoked"
+    assert store["licenses"][0]["status"] == "revoked"
+    assert notified == []
+
+
+def test_revoke_keeps_success_response_when_slack_notification_fails(
+    fm, make_token, monkeypatch
+):
+    client, store, r2 = fm
+    target = _seed_active_license(store, r2)
+    attempts = []
+
+    async def failing_notify(_settings, **kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError("slack unavailable")
+
+    monkeypatch.setattr(
+        facemarket_notify, "notify_slack_license_revoked", failing_notify
+    )
+
+    response = client.post(
+        f"/v1/facemarket/licenses/{target['id']}/revoke",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "revoked"
+    assert store["licenses"][0]["status"] == "revoked"
+    assert len(attempts) == 1
 
 
 def _seed_pending_license(

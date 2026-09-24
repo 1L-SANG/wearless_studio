@@ -473,7 +473,24 @@ class _RouteCur:
             lic = self.store["licenses"].get(params[0])
             # 스냅샷 반환(dict 복사) — 실제 DB fetchone 처럼 이후 UPDATE 변형과 격리.
             self._one = dict(lic) if (lic and lic["user_id"] == params[1]) else None
+            if self._one and "m.display_name" in normalized:
+                self._one["display_name"] = "홍*동"
             self.store["select_for_update"] += int("for update" in normalized)
+        elif (
+            normalized.startswith("select count(*) as count from fm_licenses")
+            and "id <> %s" in normalized
+            and "status in ('active', 'reverification_required')" in normalized
+        ):
+            model_id, excluded_id = params
+            self._one = {
+                "count": sum(
+                    1
+                    for license_id, license_row in self.store["licenses"].items()
+                    if license_id != excluded_id
+                    and license_row["model_id"] == model_id
+                    and license_row["status"] in {"active", "reverification_required"}
+                )
+            }
         elif normalized.startswith("update fm_licenses set status = 'revoked'"):
             lic = self.store["licenses"].get(params[0])
             if lic:
