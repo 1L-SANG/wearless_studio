@@ -177,7 +177,7 @@ export function Pricing() {
             {bankInfo && bankInfo.enabled === false
               // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
               ? <>지금은 계좌이체 신청을 잠시 받지 않아요. 결제가 필요하면 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 알려 주세요.</>
-              : '카드 결제는 심사 중이에요. 계좌이체로 입금이 확인되면 바로 크레딧을 드려요.'}
+              : '계좌이체를 상시 확인 후, 영업시간에는 10분 이내 크레딧 지급을 해드려요.'}
           </p>
         )}
       </div>

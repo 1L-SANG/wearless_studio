@@ -774,3 +774,26 @@ async def test_expirer_tick_expires_stale_requests_and_grants(store):
     stats = await worker.tick(store)
     assert stats == {"expiredRequests": 1, "ended": 0, "skipped": 0}
     assert store.requests["r1"]["status"] == "expired" and store.requests["r2"]["status"] == "requested"
+
+
+# ---------------------------------------------------------------- 슬랙 알림
+
+@pytest.mark.anyio
+async def test_new_request_posts_to_slack_even_without_resend(monkeypatch):
+    """슬랙 웹훅만 있어도(메일 키 없이) 신청 알림이 간다 — 오너 9/24 요청."""
+    from types import SimpleNamespace
+    posted = []
+
+    async def fake_post(settings, text):
+        posted.append(text)
+
+    monkeypatch.setattr(bank_transfer_notify, "_post_slack", fake_post)
+    settings = SimpleNamespace(fm_slack_webhook_url="https://hooks.slack.test/x", resend_api_key=None,
+                               bank_transfer_notify_email="contact@wearless.kr")
+    req = {"kind": "subscription", "plan_code": "seller", "amount": 69900, "credits": 1600,
+           "payer_name": "홍길동", "tax_invoice": True}
+    await bank_transfer_notify.notify_admin_new_request(settings, req, user_email="seller@example.com")
+    assert posted == [":bank: 계좌이체 신청 · seller 1개월 이용권 · 69,900원 · 입금자 홍길동 · seller@example.com · 세금계산서 필요"]
+    settings.fm_slack_webhook_url = None
+    await bank_transfer_notify.notify_admin_new_request(settings, req, user_email=None)
+    assert len(posted) == 1
