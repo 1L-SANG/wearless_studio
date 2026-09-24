@@ -56,7 +56,7 @@ test('충전 탭은 계약 전까지 닫아 둔다', () => {
   // 2026-09-22: 계좌이체(BANK_TRANSFER_ENABLED)가 켜져 있으면 충전도 팔 수 있어 탭이 보인다.
   // 토스 일반결제 계약 전이라는 사실은 그대로다 — 두 스위치가 모두 꺼지면 탭이 닫힌다.
   assert.match(PRICING, /const topupVisible = TOPUP_ENABLED \|\| bankTransfer;/);
-  assert.match(PRICING, /\{topupVisible && \(/);
+  assert.match(PRICING, /\{topupVisible \? \(/);
   // 상태가 남아도 빈 화면을 그리지 않게 구독으로 되돌린다
   assert.match(PRICING, /topupVisible \? tab : 'subscription'/);
 });

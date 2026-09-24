@@ -24,11 +24,11 @@ import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
   TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
+import { CopyButton, PIcon, num, seoulShort, won } from './bankTransferParts.jsx';
 import s from './Pricing.module.css';
 
-const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
-// '9/25' 꼴 — ko-KR 은 '9. 25.' 로 찍혀 문장 안에서 어색하다.
-const seoulDay = (iso) => new Date(iso).toLocaleDateString('en-US', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' });
+// 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.
+const perCredit = (p) => (Number(p.price) / Number(p.credits)).toFixed(1);
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
 // 충전과 구독은 계약 MID 가 달라 클라이언트 키도 다르다 — lib/tossKeys.js 참고.
 // 하나로 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로 깨진다.
@@ -171,44 +171,73 @@ export function Pricing() {
     <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
-        {/* 계좌이체 모드(PG 심사 전)에서는 긴 고지문 대신 이 한 줄만 둔다(오너 9/24). 상자 없이 제목 아래 문장으로. */}
-        {bankTransfer && (
-          <p className={s.subtitle}>
-            {bankInfo && bankInfo.enabled === false
-              // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
-              ? <>지금은 계좌이체 신청을 잠시 받지 않아요. 결제가 필요하면 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 알려 주세요.</>
-              : '계좌이체를 상시 확인 후, 영업시간에는 10분 이내 크레딧 지급을 해드려요.'}
-          </p>
-        )}
       </div>
 
-      {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
-          탭 자체를 숨긴다(lib/tossKeys.js TOPUP_ENABLED). 누르면 실패할 버튼을
-          남겨 두면 사용자가 결제 실패를 겪는다. 탭이 하나뿐이면 탭 줄도 안 그린다. */}
-      {topupVisible && (
-        <div className={s.tabs} role="group" aria-label="요금제 유형">
-          <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
-          <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+      {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
+
+      {/* 입금 확인 중 — 신청 창을 닫은 뒤 은행 앱을 열었을 때 금액·계좌를 다시 볼 곳이 여기다. */}
+      {(openRequests?.open || []).map((r) => (
+        <section key={r.id} className={s.status} role="status" aria-label="입금 확인 중인 신청">
+          <div className={s.statusHead}>
+            <span className={s.state}><span className={s.dotPending} aria-hidden="true" />입금 확인 중</span>
+            <span className={s.statusSep} aria-hidden="true" />
+            <span className={s.statusProduct}>
+              {plans.find((p) => p.code === r.planCode)?.name || r.planCode}
+              {r.kind === 'subscription' ? ' 1개월 이용권' : ' 1회 충전'}
+            </span>
+            <button type="button" className={s.textBtn} onClick={() => cancelTransfer.mutate(r.id)}
+              disabled={cancelTransfer.isPending}>신청 취소</button>
+          </div>
+          <dl className={s.statusGrid}>
+            <div className={`${s.sg} ${s.sgWide}`}>
+              <dt>입금 금액</dt>
+              <dd className={s.valLine}>
+                <span className={s.money}><span className={s.cur}>₩</span>{num(r.amount)}</span>
+                <CopyButton text={r.amount} ariaLabel="금액 복사" styles={s} />
+              </dd>
+            </div>
+            {bankInfo?.enabled && (
+              <div className={`${s.sg} ${s.sgWide}`}>
+                <dt>입금 계좌</dt>
+                <dd>
+                  <div className={s.valLine}>
+                    <span className={s.acctNo}>{bankInfo.bank} {bankInfo.account}</span>
+                    <CopyButton text={`${bankInfo.bank} ${bankInfo.account}`} ariaLabel="계좌 복사" styles={s} />
+                  </div>
+                  <p className={s.holder}>예금주 {bankInfo.holder}</p>
+                </dd>
+              </div>
+            )}
+            <div className={s.sg}><dt>입금자명</dt><dd>{r.payerName}</dd></div>
+            <div className={s.sg}><dt>입금 기한</dt><dd>{seoulShort(r.expiresAt)}까지</dd></div>
+          </dl>
+        </section>
+      ))}
+
+      {/* 탭 줄 오른쪽의 상태 배지 — 시안 C(오너 9/24). 숫자를 따로 키우지 않고 한 문장으로. */}
+      {(topupVisible || bankTransfer) && (
+        <div className={s.tabbar}>
+          {topupVisible ? (
+            <div className={s.tabs} role="group" aria-label="요금제 유형">
+              <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
+              <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+            </div>
+          ) : <span />}
+          {bankTransfer && (bankInfo && bankInfo.enabled === false ? (
+            // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
+            <div className={`${s.promise} ${s.promisePaused}`} role="note">
+              <span className={s.promiseLive}><span className={s.dotOff} aria-hidden="true" />잠시 중단</span>
+              <span className={s.promiseText}>지금은 계좌이체 신청을 잠시 받지 않아요. <a href="mailto:contact@wearless.kr">contact@wearless.kr</a></span>
+            </div>
+          ) : (
+            <div className={s.promise} role="note">
+              <span className={s.promiseLive}><span className={s.dotLive} aria-hidden="true" />상시 확인</span>
+              <span className={s.promiseText}>영업시간 10분 안에 크레딧 지급</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
-      {(openRequests?.open || []).map((r) => (
-        <div key={r.id} className={s.openRequest} role="status">
-          <span>
-            <strong>입금 확인 중</strong> · {r.planCode}{r.kind === 'subscription' ? ' 1개월' : ' 충전'} · {won(r.amount)}
-            {' '}· 입금자 {r.payerName} · {seoulDay(r.expiresAt)}까지 입금
-          </span>
-          <button type="button" className={s.openRequestCancel} onClick={() => cancelTransfer.mutate(r.id)}
-            disabled={cancelTransfer.isPending}>신청 취소</button>
-          {/* 신청 창을 닫은 뒤 은행 앱을 열면 계좌를 다시 볼 곳이 여기뿐이다. */}
-          {bankInfo?.enabled && (
-            <span className={s.openRequestAccount}>
-              입금 계좌 {bankInfo.bank} {bankInfo.account} (예금주 {bankInfo.holder}) · 입금액 {won(r.amount)}
-            </span>
-          )}
-        </div>
-      ))}
       {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 위 한 줄이 전부다. */}
       {!bankTransfer && (
         <p className={s.tabDesc}>
@@ -243,11 +272,8 @@ export function Pricing() {
               <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}${recurring ? '' : ' ' + s.topupCard}`}>
                 {recurring && p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
                 {isCurrent && <span className={s.badge}>이용 중</span>}
-                <span className={`${s.kind}${recurring ? '' : ' ' + s.kindTopup}`}>
-                  {!recurring && <Icon name="coins" size={13} />}
-                  {recurring ? '정기 구독' : '1회 충전'}
-                </span>
-                <h3 className={s.name}>{p.name}</h3>
+                {recurring && <span className={s.kind}>{bankTransfer ? '1개월 이용권' : '정기 구독'}</span>}
+                <h3 className={`${s.name}${recurring ? '' : ' ' + s.topupName}`}>{p.name}</h3>
                 {recurring ? (
                   <>
                     <div className={s.priceRow}>
@@ -275,12 +301,16 @@ export function Pricing() {
                     </ul>}
                   </>
                 ) : (
+                  // 충전 팩 — 구독 카드와 같은 뼈대에 크레딧 숫자가 주인공(시안 A, 오너 9/24).
                   <>
-                    <div className={s.priceRow}>
-                      <span className={s.creditBig}>+{credits}</span>
-                      <span className={s.unit}>크레딧</span>
+                    <div className={s.bigRow}>
+                      <span className={s.big}><span className={s.plus}>+</span>{credits}</span>
+                      <span className={s.creditUnit}>크레딧</span>
                     </div>
-                    <p className={s.credits}>{won(p.price)} · 1회 결제</p>
+                    <dl className={s.tsec}>
+                      <div><dt>가격</dt><dd className={s.tprice}>{won(p.price)}</dd></div>
+                      <div><dt>크레딧당</dt><dd>{perCredit(p)}원</dd></div>
+                    </dl>
                   </>
                 )}
                 <div className={s.cta}>
@@ -295,13 +325,14 @@ export function Pricing() {
                         // 계좌이체: 토스 키를 보지 않는다. 같은 종류의 열린 신청이 있으면 잠근다.
                         // 현재 플랜과 같으면 1개월 연장 신청이다.
                         <button
-                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}${bankReady && !openByKind('subscription') ? '' : ' ' + s.locked}`}
                           disabled={!bankReady || Boolean(openByKind('subscription'))}
                           title={openByKind('subscription') ? '확인 중인 신청이 있어요'
                             : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
                           onClick={() => setTransferPlan(p)}
                         >
-                          {isCurrent ? '1개월 연장 신청' : '계좌이체로 시작하기'}
+                          {openByKind('subscription') ? <><PIcon name="lock" size={16} />확인 중인 신청이 있어요</>
+                            : (isCurrent ? '1개월 연장 신청' : '계좌이체로 시작하기')}
                         </button>
                       ) : (
                         <>
@@ -330,16 +361,16 @@ export function Pricing() {
                       )}
                     </div>
                   ) : (
-                    <div className={!session ? s.buttonRing : undefined}>
+                    <div className={!session || bankTransfer ? s.buttonRing : undefined}>
                       {session && bankTransfer ? (
                         <button
-                          type="button" className={s.purchaseButton}
+                          type="button" className={`${s.purchaseButton} ${s.topupButton}${bankReady && !openByKind('topup') ? '' : ' ' + s.locked}`}
                           disabled={!bankReady || Boolean(openByKind('topup'))}
                           title={openByKind('topup') ? '확인 중인 신청이 있어요'
                             : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
                           onClick={() => setTransferPlan(p)}
                         >
-                          계좌이체로 충전하기
+                          {openByKind('topup') ? <><PIcon name="lock" size={16} />확인 중</> : '계좌이체로 충전하기'}
                         </button>
                       ) : (
                         <button
@@ -354,14 +385,16 @@ export function Pricing() {
                       )}
                     </div>
                   )}
-                  <p className={s.purchaseConsent}>
-                    결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
-                  </p>
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+      {!isLoading && !isError && shown.length > 0 && (
+        <p className={s.purchaseConsent}>
+          결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
+        </p>
       )}
 
       {transferPlan && (

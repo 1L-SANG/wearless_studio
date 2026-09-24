@@ -1,38 +1,186 @@
-/* 계좌이체 신청 창 — 색·간격은 tokens.css. */
-.wrap { display: flex; flex-direction: column; gap: var(--sp-12); }
-.form { display: flex; flex-direction: column; gap: var(--sp-12); }
-.title { margin: 0; font-family: var(--font-body); font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg-1); }
-.desc { margin: 0; font-size: 14px; line-height: 1.6; color: var(--fg-1); }
-.doneHead { display: flex; align-items: center; gap: var(--sp-8); }
-.doneIcon {
-  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
-  border-radius: 50%; background: var(--fg-1); color: var(--bg-1);
+/* 계좌이체 신청 창 — 시안 C(오너 9/24). 색·간격은 tokens.css, 검정 면 위 글자색만 지역 변수. */
+.overlay {
+  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px;
+  background: var(--ink-overlay); overflow-y: auto;
 }
-
-.summary { padding: var(--sp-12) var(--sp-16); background: var(--bg-2); border-radius: var(--r-4); }
-.summaryRow { display: flex; justify-content: space-between; gap: var(--sp-12); font-size: 14px; color: var(--fg-2); }
-.summaryRow + .summaryRow { margin-top: var(--sp-4); }
-.summaryRow strong { color: var(--fg-1); font-weight: 600; }
-.summaryHint { margin-top: var(--sp-8); font-size: 12px; color: var(--fg-3); }
-
-.account {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12);
-  padding: var(--sp-12) var(--sp-16); border: 1.5px solid var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1);
+.dialog {
+  --on-ink-1: var(--bg-1);
+  --on-ink-2: color-mix(in srgb, var(--bg-1) 72%, transparent);
+  --on-ink-3: color-mix(in srgb, var(--bg-1) 48%, transparent);
+  --on-ink-line: color-mix(in srgb, var(--bg-1) 14%, transparent);
+  --on-ink-fill: color-mix(in srgb, var(--bg-1) 8%, transparent);
+  --line-hover: color-mix(in srgb, var(--fg-1) 24%, transparent);
+  --dialog-radius: 20px;
+  position: relative; width: 100%; max-width: 880px;
+  display: grid; grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-areas: "sum head" "sum body"; grid-template-rows: auto 1fr;
+  background: var(--bg-1); border-radius: var(--dialog-radius); overflow: hidden;
+  box-shadow: 0 30px 70px -24px rgba(14, 13, 20, 0.55), 0 0 0 1px var(--ring);
+  font-family: var(--font-body); color: var(--fg-1);
 }
-.accountBank { font-size: 13px; color: var(--fg-2); }
-.accountNumber { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; color: var(--fg-1); }
-.accountHolder { font-size: 13px; color: var(--fg-2); }
+.grab { display: none; }
 
-.field { display: flex; flex-direction: column; gap: var(--sp-4); font-size: 13px; color: var(--fg-2); }
-.field em { font-style: normal; color: var(--fg-3); margin-left: var(--sp-4); }
-.field input, .field textarea {
-  font: inherit; font-size: 14px; color: var(--fg-1); padding: var(--sp-8) var(--sp-12);
-  border: 1px solid var(--ring-strong); border-radius: var(--r-3); background: var(--bg-1);
+/* 왼쪽: 검정 주문 요약 */
+.sum { grid-area: sum; display: flex; flex-direction: column; padding: 32px; background: var(--fg-1); color: var(--on-ink-1); }
+.sumEyebrow { margin: 0 0 18px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--on-ink-3); }
+.sumProduct { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.sumProduct strong { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; }
+.chipInk {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: var(--r-pill);
+  background: var(--on-ink-fill); box-shadow: inset 0 0 0 1px var(--on-ink-line);
+  font-size: 12px; font-weight: 600; color: var(--on-ink-2); white-space: nowrap;
 }
-.field input:focus-visible, .field textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.check { display: flex; align-items: center; gap: var(--sp-8); font-size: 14px; color: var(--fg-1); cursor: pointer; }
-.taxBox { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-12); border-radius: var(--r-4); background: var(--bg-2); }
-.hint { margin: 0; font-size: 12px; color: var(--fg-3); }
-.notice { margin: 0; font-size: 12px; line-height: 1.6; color: var(--fg-2); }
-.error { margin: 0; font-size: 13px; color: var(--danger, #c0392b); }
-.actions { display: flex; justify-content: flex-end; gap: var(--sp-8); margin-top: var(--sp-4); }
+.sumLabel { margin: 28px 0 4px; font-size: 13px; font-weight: 500; color: var(--on-ink-3); }
+.sumAmount { margin: 0; font-size: 46px; font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sumAmount .cur { color: var(--on-ink-2); }
+.cur { font-weight: 800; }
+.sumRows { margin: 24px 0 0; border-top: 1px solid var(--on-ink-line); }
+.sumRows > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--on-ink-line); font-size: 14px; }
+.sumRows dt { color: var(--on-ink-3); white-space: nowrap; }
+.sumRows dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: var(--on-ink-1); }
+.acctCard { margin-top: 28px; padding: 14px 14px 14px 16px; border-radius: var(--r-5); background: var(--on-ink-fill); box-shadow: inset 0 0 0 1px var(--on-ink-line); }
+.acctTop { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.acctLabel { margin: 0; font-size: 12px; font-weight: 500; color: var(--on-ink-3); }
+.acctNo { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: .01em; font-variant-numeric: tabular-nums; }
+.holder { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: var(--on-ink-3); }
+
+/* 오른쪽: 머리 */
+.head { grid-area: head; position: relative; padding: 28px 32px 0; }
+.title { margin: 0; padding-right: 48px; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.3; }
+.sub { margin: 6px 0 0; font-size: 15px; color: var(--fg-2); }
+.headIcon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 16px; border-radius: var(--r-5); background: var(--bg-2); color: var(--fg-1); }
+.close {
+  position: absolute; top: 20px; right: 20px; display: grid; place-items: center; width: 40px; height: 40px;
+  border: 0; border-radius: 50%; background: none; color: var(--fg-2); cursor: pointer; transition: background-color .15s, color .15s;
+}
+.close:hover { background: var(--bg-2); color: var(--fg-1); }
+.close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* 오른쪽: 입력 */
+.body { grid-area: body; display: flex; flex-direction: column; gap: 18px; padding: 24px 32px 28px; min-width: 0; }
+.field { min-width: 0; }
+.field label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--fg-1); }
+.req { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--r-pill); background: var(--bg-2); font-size: 11px; font-weight: 600; color: var(--fg-2); }
+.input {
+  display: block; width: 100%; height: 48px; padding: 0 16px; border-radius: var(--r-5);
+  border: 1.5px solid var(--ring-strong); background: var(--bg-1); color: var(--fg-1);
+  font: inherit; font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input::placeholder { color: var(--fg-3); font-weight: 400; }
+.input:hover { border-color: var(--line-hover); }
+.input:focus { outline: none; border-color: var(--fg-1); box-shadow: 0 0 0 4px var(--ring); }
+.inputError, .inputError:hover, .inputError:focus { border-color: var(--accent-error); box-shadow: 0 0 0 4px var(--accent-error-ring); }
+.help { margin: 8px 0 0; font-size: 13px; color: var(--fg-2); }
+.err { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--accent-error); }
+
+/* 아래 묶음: 세금계산서 발행 → (펼침) → 입금 기한 → 신청 */
+.foot { display: flex; flex-direction: column; gap: 12px; margin-top: auto; padding-top: 4px; }
+/* 세금계산서 발행은 바로 아래 '3일 안에 입금' 문구와 같은 크기·같은 무게의 한 줄이다(오너 9/24). 테두리 없음. */
+.taxToggle { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--fg-1); cursor: pointer; width: fit-content; }
+.taxToggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.box { display: grid; place-items: center; width: 16px; height: 16px; border-radius: var(--r-2); border: 1.5px solid var(--line-hover); background: var(--bg-1); color: var(--bg-1); transition: background-color .15s, border-color .15s; flex: none; }
+.box svg { opacity: 0; }
+.taxToggle input:checked + .box { background: var(--fg-1); border-color: var(--fg-1); }
+.taxToggle input:checked + .box svg { opacity: 1; }
+.taxToggle input:focus-visible + .box { outline: 2px solid var(--focus); outline-offset: 2px; }
+.taxBody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding: 4px 0 6px; }
+.taxBody .field label { font-size: 13px; }
+.taxBody .input { height: 44px; font-size: 15px; }
+.due { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 500; color: var(--fg-1); }
+.due svg { color: var(--fg-2); }
+.primary {
+  width: 100%; height: 52px; border: 0; border-radius: var(--r-pill); background: var(--cta-bg); color: var(--cta-fg);
+  font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: var(--cta-sheen-inset); transition: background-color .15s;
+}
+.primary:hover { background: var(--cta-bg-hover); }
+.primary:disabled { opacity: .6; cursor: default; }
+.primary:focus-visible { outline: none; box-shadow: var(--cta-focus-ring); }
+.consent { margin: 0; font-size: 12px; text-align: center; color: var(--fg-2); }
+.consent a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+
+/* 복사 알약 */
+.copy {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 10px;
+  border-radius: var(--r-pill); border: 1px solid var(--ring-strong); background: var(--bg-1); color: var(--fg-1);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; flex: none;
+  transition: background-color .15s, border-color .15s;
+}
+.copy:hover { background: var(--bg-2); border-color: var(--line-hover); }
+.copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.copied svg { color: var(--accent-success); }
+.copyOnInk { background: transparent; border-color: var(--on-ink-line); color: var(--on-ink-1); }
+.copyOnInk:hover { background: var(--on-ink-fill); border-color: var(--on-ink-line); }
+.copyOnInk.copied svg { color: color-mix(in srgb, var(--accent-success) 62%, var(--bg-1)); }
+
+/* 신청 완료 */
+.stateInk { display: inline-flex; align-items: center; gap: 12px; margin: 0 0 22px; font-size: 14px; font-weight: 700; }
+.dotPending { position: relative; width: 10px; height: 10px; border-radius: 50%; background: var(--on-ink-1); flex: none; }
+.dotPending::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--on-ink-1); animation: btPing 1.8s ease-out infinite; }
+.dotSm { width: 8px; height: 8px; }
+.sumSub { margin: 4px 0 0; font-size: 14px; color: var(--on-ink-3); font-variant-numeric: tabular-nums; }
+.steps { margin: 32px 0 0; padding: 0; list-style: none; }
+.steps li { position: relative; display: grid; grid-template-columns: 24px 1fr; gap: 14px; padding-bottom: 26px; }
+.steps li:last-child { padding-bottom: 0; }
+.steps li:not(:last-child)::before { content: ""; position: absolute; left: 11.25px; top: 30px; bottom: 4px; width: 1.5px; background: var(--on-ink-line); }
+.stDot { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--on-ink-3); }
+.stepDone .stDot { background: var(--on-ink-1); color: var(--fg-1); box-shadow: none; }
+.stepNow .stDot { box-shadow: inset 0 0 0 1.5px var(--on-ink-1); }
+.steps b { display: block; font-size: 15px; font-weight: 700; line-height: 24px; }
+.stepNext b { color: var(--on-ink-2); }
+.t { display: block; margin-top: 2px; font-size: 13px; color: var(--on-ink-3); font-variant-numeric: tabular-nums; }
+.stepNow .t { color: var(--on-ink-1); font-weight: 600; }
+
+.receipt { margin: 0; border: 1.5px solid var(--ring-strong); border-radius: var(--r-6); overflow: hidden; }
+.rRow { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 60px; padding: 14px 14px 14px 20px; border-top: 1px solid var(--ring); }
+.rRow:first-child { border-top: 0; }
+.rRow dt { font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.rRow dd { margin: 0; min-width: 0; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.money { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; white-space: nowrap; }
+.acctNoPlain { font-size: 16px; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
+.holderPlain { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.notes { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.notes li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg-2); }
+
+@keyframes btPing { 0% { transform: scale(.45); opacity: .9; } 75%, 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dotPending::after { animation: none; opacity: 0; } }
+
+/* 좁은 화면: 아래에서 올라오는 시트. 요약을 위로, 입력을 아래로 한 칸에 쌓는다. */
+@media (max-width: 760px) {
+  .overlay { place-items: end center; padding: 48px 0 0; }
+  .dialog {
+    grid-template-columns: 1fr; grid-template-areas: "head" "sum" "body"; grid-template-rows: auto;
+    max-width: none; max-height: calc(100dvh - 48px); overflow-y: auto; border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
+  }
+  .grab { display: block; width: 40px; height: 4px; margin: 0 auto 14px; border-radius: var(--r-pill); background: var(--ring-strong); }
+  .head { padding: 10px 16px 0; }
+  .title { font-size: 20px; }
+  .close { top: 18px; right: 8px; }
+  .headIcon { display: none; }
+  .sum { margin: 16px 16px 0; padding: 20px; border-radius: var(--r-6); }
+  .sumEyebrow { display: none; }
+  .sumProduct strong { font-size: 20px; }
+  .sumLabel { margin-top: 12px; }
+  .sumAmount { font-size: 34px; }
+  .sumRows { margin-top: 16px; }
+  .sumRows > div { padding: 9px 0; font-size: 13px; }
+  .acctCard { margin-top: 16px; }
+  .acctNo { font-size: 17px; }
+  .body { padding: 20px 16px; gap: 16px; }
+  .taxBody { grid-template-columns: 1fr; }
+  .foot { position: sticky; bottom: 0; margin: 0 -16px -20px; padding: 12px 16px 16px; background: var(--bg-1); box-shadow: 0 -1px 0 var(--ring); }
+  .steps { margin-top: 20px; }
+  .stateInk { margin-bottom: 14px; }
+  .isDone .sum { padding: 18px 16px 20px; }
+  .isDone .stateInk { margin-bottom: 10px; font-size: 13px; }
+  .isDone .sumProduct strong { font-size: 18px; }
+  .isDone .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }
+  .isDone .steps li { grid-template-columns: 1fr; align-content: start; gap: 8px; padding-bottom: 0; }
+  .isDone .steps li:not(:last-child)::before { left: 32px; right: -4px; top: 11.25px; bottom: auto; width: auto; height: 1.5px; }
+  .isDone .steps b { font-size: 14px; line-height: 1.3; }
+  .isDone .t { font-size: 12px; }
+  .rRow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "dt btn" "dd btn"; row-gap: 2px; padding: 12px 12px 12px 16px; }
+  .rRow dt { grid-area: dt; font-size: 12px; }
+  .rRow dd { grid-area: dd; }
+  .rRow .copy { grid-area: btn; }
+}

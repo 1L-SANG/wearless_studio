@@ -88,7 +88,10 @@ test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 충전 �
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기/);
   assert.match(html, /추가 구매/);                         // 충전 탭이 보인다
-  assert.match(html, /계좌이체를 상시 확인 후, 영업시간에는 10분 이내 크레딧 지급을 해드려요\./);
+  // 탭 줄 오른쪽 상태 배지(시안 C, 오너 9/24). '10분' 을 따로 키우지 않는다.
+  assert.match(html, /상시 확인/);
+  assert.match(html, /영업시간 10분 안에 크레딧 지급/);
+  assert.doesNotMatch(html, /<b>10분<\/b>/);
   // 계좌이체 모드에서는 긴 고지문을 그리지 않는다(오너 9/24).
   assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|부가가치세/);
   assert.match(html, /결제하면 <a/);
@@ -103,13 +106,20 @@ test('현재 플랜과 같은 카드는 1개월 연장 신청이다', () => {
 
 test('열린 구독 신청이 있으면 띠를 보여주고 구독 CTA 를 잠근다', () => {
   const html = renderPricing({ open: [OPEN_SUB] });
-  assert.match(html, /입금 확인 중<\/strong> · seller 1개월 · ₩69,900 · 입금자 홍길동 · 9\/25까지 입금/);
+  assert.match(html, /입금 확인 중/);
+  assert.match(html, /Seller 1개월 이용권/);
+  assert.match(html, /₩<\/span>69,900/);
+  assert.match(html, /홍길동/);
+  assert.match(html, /9\/25\(금\) 12:00까지/);
   assert.match(html, /신청 취소/);
-  // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2).
-  assert.match(html, /입금 계좌 국민은행 123-456-789 \(예금주 정일상\) · 입금액 ₩69,900/);
-  const buttons = html.match(/<button[^>]*>계좌이체로 시작하기<\/button>/g) || [];
+  // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2). 금액·계좌는 복사 버튼과 함께.
+  assert.match(html, /국민은행 123-456-789/);
+  assert.match(html, /예금주 정일상/);
+  assert.equal((html.match(/aria-label="(금액|계좌) 복사"/g) || []).length, 2);
+  // 구독 카드 버튼 3개는 잠기고, 버튼 글자 자체가 이유를 말한다.
+  const buttons = html.match(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*확인 중인 신청이 있어요<\/button>/g) || [];
   assert.equal(buttons.length, 3);
-  assert.ok(buttons.every((b) => /disabled=""/.test(b) && /확인 중인 신청이 있어요/.test(b)));
+  assert.doesNotMatch(html, />계좌이체로 시작하기</);
 });
 
 test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준다', () => {
@@ -118,8 +128,9 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((b) => /disabled=""/.test(b) && /잠시 받지 않아요/.test(b)));
   // 잠긴 이유가 툴팁에만 있으면 막다른 길이다 — 안내 띠가 문의처를 말한다(리뷰 368F-3).
-  assert.match(html, /잠시 받지 않아요\. 결제가 필요하면 <a href="mailto:contact@wearless\.kr">/);
-  assert.doesNotMatch(html, /계좌이체를 상시 확인 후/);
+  assert.match(html, /잠시 중단/);
+  assert.match(html, /지금은 계좌이체 신청을 잠시 받지 않아요\. <a href="mailto:contact@wearless\.kr">/);
+  assert.doesNotMatch(html, /영업시간 10분 안에 크레딧 지급/);
 });
 
 test('계좌이체 모드에서는 지급 코드가 없는 충전 보너스 약속을 카드에 적지 않는다', () => {
