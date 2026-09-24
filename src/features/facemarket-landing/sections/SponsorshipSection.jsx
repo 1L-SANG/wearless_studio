@@ -137,7 +137,6 @@ export function SponsorshipSection() {
                 </div>
                 <div className={s.postMedia}><img alt="" decoding="async" loading="lazy" src="/assets/sponsorship-knit-ivory-ghost.webp" /></div>
                 <div className={s.postActions}><Heart /><span>좋아요 128개</span></div>
-                <p className={s.postCaption}>○○몰에서 의류를 무상 제공받아 작성했어요</p>
               </div>
               <div className={`${s.toast} ${s.toastLeft}`}>
                 <ArrivedIcon />

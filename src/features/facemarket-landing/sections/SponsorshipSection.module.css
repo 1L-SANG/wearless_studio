@@ -120,9 +120,8 @@
 }
 .postMedia { aspect-ratio: 1 / 1; background: var(--bg-2); }
 .postMedia img { display: block; width: 100%; height: 100%; padding: 9%; object-fit: contain; }
-.postActions { display: flex; align-items: center; gap: 0.35rem; padding: 0.6rem 0.75rem 0; color: var(--fm-ink); font-size: 0.6875rem; font-weight: 600; }
+.postActions { display: flex; align-items: center; gap: 0.35rem; padding: 0.6rem 0.75rem 0.8rem; color: var(--fm-ink); font-size: 0.6875rem; font-weight: 600; }
 .postActions svg { width: 0.95rem; height: 0.95rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
-.postCaption { margin: 0; padding: 0.3rem 0.75rem 0.8rem; color: var(--fm-muted); font-size: 0.6875rem; line-height: 1.5; word-break: keep-all; }
 
 /* 알림. 모형 가장자리에 겹쳐 '방금 일어난 일'처럼 보이게 한다. */
 .toast {
@@ -210,6 +209,11 @@
 }
 .pointText { color: var(--fm-ink); font-size: 1rem; line-height: 1.5; word-break: keep-all; }
 .pointText strong { font-weight: 700; }
+
+/* 두 열이 좁아지는 태블릿에서도 모형의 머리말과 설명, 회전 여백을 확보한다. */
+@media (min-width: 768px) {
+  .stage { width: 100%; min-height: 24rem; }
+}
 
 @media (max-width: 767px) {
   .roles { grid-template-columns: 1fr; gap: 3rem; }
