@@ -69,10 +69,17 @@ def test_cta_is_a_button_and_the_url_also_appears_as_text():
 def test_approval_email_explains_current_registration_and_publication_flow():
     _subject, html, text = _content("approved")
     for part in (html, text):
-        for required in ("본인확인", "등록 사진 18장", "사용 조건", "증서", "테스트컷", "확인·확정한 뒤", f"{BASE}/photo-guide"):
+        for required in ("앞으로 최종 등록까지 진행될 과정을 알려드릴게요.", "본인확인",
+                         "AI 모델 생성을 위한 18장 사진 찍기 (낮 시간대)", "촬영을 도와줄 사람이 있어야 편해요",
+                         "사용 조건 정하기", "블록체인 기반 라이선스 증서 발급",
+                         "사진 검수 후, 프로필에 쓰일 테스트컷 선정 진행", "최종 등록 완료",
+                         "서둘러 2차 등록을 하여 1차 기수에 선정돼보세요!"):
             assert required in part
         assert "셀카 한 장" not in part
         assert "얼굴 사진 3장" not in part
+    # 텍스트 파트는 번호가 순서대로 붙는다(HTML 은 <ol> 이 번호를 붙인다).
+    assert text.index("1. 본인확인") < text.index("6. 최종 등록 완료")
+    assert html.count("<li") == 6
 
 
 def test_identity_review_approval_does_not_claim_publication_is_complete():
@@ -193,3 +200,38 @@ def test_usage_report_email_network_failure_returns_send_error(monkeypatch):
     ))
 
     assert result == (False, None, "send_error")
+
+
+def test_all_model_emails_use_owner_contact_footer():
+    contact = "문의가 있다면 010-9592-0333 또는 @facemarket_official로 부탁드려요."
+    for email_type in (*TYPES, "test_cuts_ready", "enrollment_review_approved",
+                       "enrollment_review_rejected", "enrollment_review_timeout"):
+        _subject, html, text = _content(email_type)
+        assert f"이 메일은 발신 전용이에요.<br>{contact}" in html
+        assert f"이 메일은 발신 전용이에요.\n{contact}" in text
+        assert "문의는 FaceMarket 안에서" not in html + text
+
+
+def test_completion_email_copy_and_operator_footer(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    captured = []
+    async def capture(_settings, **kwargs):
+        captured.append(kwargs)
+        return True, "message-1", None
+    monkeypatch.setattr(notify, "_send_email", capture)
+    settings = SimpleNamespace(resend_api_key="test", fm_application_public_base=BASE)
+    asyncio.run(notify.send_registration_completed_email(settings, to="model@example.com", display_name="모델A"))
+    message = captured.pop()
+    assert message["subject"] == "[FaceMarket] 등록이 최종 완료됐어요"
+    for part in (message["html"], message["text"]):
+        assert "모델A님의 프로필이 공개됐어요. 라이선스 증서도 발급됐어요." in part
+        assert "발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요." in part
+        assert "마이페이지에서 증서를 확인할 수 있어요." in part
+        assert "010-9592-0333" in part and "@facemarket_official" in part
+    assert f'href="{BASE}/status"' in message["html"]
+    assert "마이페이지 열기" in message["html"]
+    asyncio.run(notify.send_usage_report_email(settings, to="ops@example.com", payment_id="p1", reason=None))
+    operator = captured.pop()
+    assert "문의는 FaceMarket 안에서 남겨 주세요." in operator["html"]
+    assert "010-9592-0333" not in operator["html"] + operator["text"]

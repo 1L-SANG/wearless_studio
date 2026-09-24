@@ -41,7 +41,7 @@ from .auth import require_user
 from .db import get_conn
 from .facemarket_catalog_access import catalog_access
 from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
-from .facemarket_notify import send_license_issued_email, send_usage_report_email
+from .facemarket_notify import send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
 from .facemarket_sponsorship import (
     SPONSORSHIP_COLUMNS, SponsorshipFields, SponsorshipPatch, SponsorshipResult,
@@ -58,6 +58,14 @@ _SIMULATION_RATE_LIMIT_PER_MINUTE = 5
 _SETTLEMENT_SIGNER_LOCK_ID = 0x57464D5349474E52
 _SETTLEMENT_LOCK_RETRY_SECONDS = 0.05
 PLATFORM_UNIT_PRICE_KRW = 14_900
+
+# 신원 심사가 필요 없는 등록은 NULL이고, 사람 심사를 거친 등록은 approved예요.
+IDENTITY_CLEARED_SQL = "coalesce(e.review_status, 'approved') = 'approved'"
+
+
+def identity_cleared(review_status: str | None) -> bool:
+    return review_status is None or review_status == "approved"
+
 
 _FM_RESPONSES = {
     400: {"model": ErrorResponse, "description": "본인확인 실패 (토큰 무효·CI 누락)"},
@@ -1040,7 +1048,7 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select e.id::text as enrollment_id, e.status as enrollment_status,
-                      e.match_policy_version, m.id::text as model_id, m.status as model_status,
+                      e.match_policy_version, e.review_status, m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       p.r2_key as front_key, p.image_digest as front_digest,
                       p.storage_state as front_storage_state,
@@ -1332,10 +1340,7 @@ async def finalize_issued_face_vc(
 async def issue_and_activate_pending_face_vc(
     app, *, user_id: str, license_id: str, model_id: str, connect=None
 ) -> dict | None:
-    """한 pending 행을 잠근 채 VC 발급과 활성화를 끝내고 발급 메일을 보낸다."""
-    active = None
-    email = None
-    display_name = None
+    """신원 확인을 마친 pending 행을 잠근 채 VC 발급과 활성화를 끝내요."""
     connect = connect or app.state.pool.connection
     async with connect() as conn:
         locked = await _find_license_for_update(
@@ -1350,6 +1355,16 @@ async def issue_and_activate_pending_face_vc(
             await conn.rollback()
             return None
         enrollment_id = str(locked.get("enrollment_id") or "")
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select e.review_status from fm_biometric_enrollments e "
+                "where e.id = %s and e.user_id = %s",
+                (enrollment_id, user_id),
+            )
+            enrollment = await cur.fetchone()
+        if enrollment is None or not identity_cleared(enrollment["review_status"]):
+            await conn.rollback()
+            return None
         issued = await issue_face_vc(
             app,
             license_id=license_id,
@@ -1375,35 +1390,6 @@ async def issue_and_activate_pending_face_vc(
             enrollment_id=enrollment_id,
             issued=issued,
         )
-        try:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """select a.contact_email, m.display_name
-                         from fm_models m
-                         left join lateral (
-                             select contact_email from fm_model_applications
-                              where user_id = m.user_id
-                              order by created_at desc limit 1
-                         ) a on true
-                        where m.id = %s and m.user_id = %s""",
-                    (model_id, user_id),
-                )
-                recipient = await cur.fetchone()
-            if recipient:
-                email = recipient.get("contact_email")
-                display_name = recipient.get("display_name")
-        except Exception:
-            logger.warning("license issued email recipient lookup failed", exc_info=True)
-    if email:
-        ok, _message_id, error = await send_license_issued_email(
-            app.state.settings,
-            to=email,
-            display_name=display_name or "모델",
-        )
-        if not ok and error != "not_configured":
-            logger.warning("license issued email failed: %s", error)
-    else:
-        logger.info("license issued email skipped: contact_email missing")
     return active
 
 
@@ -1508,9 +1494,8 @@ async def create_license(
                 return _license_card(locked_pending)
             existing = locked_pending
 
-        model_id, key, digest = _checked_license_evidence(
-            await _load_license_evidence(conn, user_id, enrollment_id)
-        )
+        evidence = await _load_license_evidence(conn, user_id, enrollment_id)
+        model_id, key, digest = _checked_license_evidence(evidence)
         if existing:
             row = existing
             license_id = existing["id"]
@@ -1587,6 +1572,9 @@ async def create_license(
                 await conn.rollback()
                 raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
         await conn.commit()
+
+    if not identity_cleared(evidence["review_status"]):
+        return _license_card({**row, "unit_price": unit_price, "license_valid_until": valid_until})
 
     # opendid 가 scale-to-zero(0대)면 지금 깨운다 — reconciler 60초 대기를 앞당긴다. off/미설정이면
     # 무해. 콜드스타트(4 JVM ~2분)는 아래 vc_issue_delayed 재시도 UX 가 흡수한다.

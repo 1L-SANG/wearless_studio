@@ -79,6 +79,7 @@ def test_reconciler_claims_old_pending_license_and_issues(monkeypatch):
     }
     sql = reconciler.app.state.pool.conn.cursor_value.sql
     assert "e.status = 'vc_pending'" in sql
+    assert facemarket.IDENTITY_CLEARED_SQL in sql
     assert "l.status = 'pending'" in sql and "l.vc_id is null" in sql
     assert "l.updated_at < now() - interval '15 seconds'" in sql
     assert "for update of l skip locked" in sql
@@ -124,14 +125,14 @@ def test_reconciler_continues_to_next_candidate_after_one_failure(monkeypatch):
     assert "limit 20" in reconciler.app.state.pool.conn.cursor_value.sql
 
 
-def test_license_issued_email_without_resend_configuration_is_quiet():
+def test_registration_completed_email_without_resend_configuration_is_quiet():
     settings = SimpleNamespace(
         resend_api_key=None,
         fm_application_public_base="https://facemarket.example",
     )
 
     result = asyncio.run(
-        facemarket_notify.send_license_issued_email(
+        facemarket_notify.send_registration_completed_email(
             settings, to="model@example.com", display_name="모델"
         )
     )
@@ -139,7 +140,7 @@ def test_license_issued_email_without_resend_configuration_is_quiet():
     assert result == (False, None, "not_configured")
 
 
-def test_shared_issue_function_activates_and_emails_on_same_locked_connection(monkeypatch):
+def test_shared_issue_function_activates_without_email_on_same_locked_connection(monkeypatch):
     locked = {
         "status": "pending", "vc_id": None, "enrollment_id": "enroll-1",
         "allowed_use": ["일반 의류"], "unit_price": 14900,
@@ -178,13 +179,13 @@ def test_shared_issue_function_activates_and_emails_on_same_locked_connection(mo
     original_cursor = conn.cursor
     def recipient_cursor():
         cursor = original_cursor()
-        cursor.row = {"contact_email": "model@example.com", "display_name": "모델A"}
+        cursor.row = {"review_status": "approved", "contact_email": "model@example.com", "display_name": "모델A"}
         return cursor
     conn.cursor = recipient_cursor
     monkeypatch.setattr(facemarket, "_find_license_for_update", fake_find)
     monkeypatch.setattr(facemarket, "issue_face_vc", fake_issue)
     monkeypatch.setattr(facemarket, "finalize_issued_face_vc", fake_finalize)
-    monkeypatch.setattr(facemarket, "send_license_issued_email", fake_email)
+    monkeypatch.setattr(facemarket_notify, "_send_email", fake_email)
 
     result = asyncio.run(facemarket.issue_and_activate_pending_face_vc(
         app, user_id="user-1", license_id="lic-1", model_id="model-1"
@@ -193,5 +194,5 @@ def test_shared_issue_function_activates_and_emails_on_same_locked_connection(mo
     assert result["status"] == "active"
     assert calls == [
         ("lock", "user-1", "lic-1"), ("issue", "lic-1"),
-        ("activate", "vc-1"), ("email", "model@example.com", "모델A"),
+        ("activate", "vc-1"),
     ]

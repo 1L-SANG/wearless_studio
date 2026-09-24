@@ -437,6 +437,9 @@ class FakeCursor:
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
+        elif query.startswith("delete from fm_licenses where enrollment_id"):
+            self.store.licenses[:] = [r for r in self.store.licenses if not (
+                r.get("enrollment_id") == params[0] and r["status"] == "pending" and r.get("vc_id") is None)]
         elif (
             query.startswith("with due as ( select id from fm_biometric_enrollments")
             and "review_status = 'pending'" in query
@@ -451,7 +454,7 @@ class FakeCursor:
                 [
                     row
                     for row in self.store.enrollments
-                    if row["status"] == "review_pending"
+                    if row["status"] in ("review_pending", "asset_building", "license_pending", "vc_pending")
                     and row.get("review_status") == "pending"
                     and row.get("created_at", self.store.now) <= deadline
                 ],
@@ -5333,8 +5336,9 @@ def test_cancel_keeps_a_decided_review_status(enrollment_client, auth, enrollmen
     assert enrollment_store.enrollments[0]["review_status"] == "approved"
 
 
+@pytest.mark.parametrize("status", ["review_pending", "asset_building", "license_pending", "vc_pending"])
 def test_review_pending_expires_after_the_review_deadline(
-    enrollment_client, auth, enrollment_store, monkeypatch
+    enrollment_client, auth, enrollment_store, monkeypatch, status
 ):
     """심사 대기는 5일 뒤 failed('review_timeout') 로 닫히고 통지된다(최종리뷰 I3).
 
@@ -5354,7 +5358,8 @@ def test_review_pending_expires_after_the_review_deadline(
 
     enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
     row = enrollment_store.enrollments[0]
-    row["status"] = "review_pending"
+    row["status"] = status
+    enrollment_store.licenses.append({"id": "unissued", "enrollment_id": enrollment_id, "status": "pending", "vc_id": None})
     row["review_status"] = "pending"
     row["created_at"] = NOW - timedelta(days=facemarket_enrollment.REVIEW_DEADLINE_DAYS, hours=1)
 
@@ -5363,6 +5368,9 @@ def test_review_pending_expires_after_the_review_deadline(
     swept = enrollment_store.enrollments[0]
     assert swept["id"] == enrollment_id
     assert swept["status"] == "failed"
+    assert enrollment_store.licenses == []
+    assert swept["decision"] == "failed"
+    assert swept["raw_deletion_evidence"]["quarantineDeleted"] is True
     assert swept["reason"] == "review_timeout"
     # 관리자 대기 큐에서도 내려간다 — 처리할 수 없는 행이 큐에 남으면 안 된다.
     assert swept["review_status"] is None

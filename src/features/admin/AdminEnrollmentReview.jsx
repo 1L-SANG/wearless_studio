@@ -1,39 +1,8 @@
-/* =============================================================
-   관리자 등록 심사 콘솔 (admin.wearless.kr) — 간편인증(simple_auth) review_pending 큐.
-
-   앵커가 사용자가 손에 들고 촬영한 신분증이다 — 위조 가능한 증거라 기계 점수(match_scores)가
-   어느 방향으로도 신뢰 판정을 내리지 못한다(위조된 카드도 진짜 얼굴을 담고, 코팅 반사광
-   한 번에 진짜 카드의 점수가 떨어진다). 그래서 점수는 "정보"로만 보여준다 — 백분율 +
-   기준선(임계) + 배수 + 배지를 한 줄에 함께 내고, 배지는 승인/거절 버튼을 절대 막지
-   않는다(enrollmentReviewMath.js 의 scoreRow). 서버가 검증할 수 없는 유일한 항목
-   (주민등록번호 뒷자리 마스킹)만 체크박스로 승인을 막는다.
-
-   좌측 큐(review 필터: pending/approved/rejected) + 우측 카드(AdminModels.jsx 의
-   목록+상세 그리드 선례). 카드 선택이 바뀔 때마다 <EnrollmentDetail key={id}> 로
-   완전히 새로 마운트한다 — 마스킹 체크는 안전장치라 이전 카드에서 체크한 상태가 다음
-   카드로 새어 들어가면 안 된다.
-
-   이미지는 게이트 라우트(no-store, private)라 <img src> 로 못 건다 — 인증 fetch 로
-   받아 objectURL 을 만들고(adminFetchGatedImageUrl), 카드가 닫히면(언마운트)
-   즉시 해제한다. 경로는 서버가 카드 응답에 실어 준 `images` 맵을 그대로 쓴다 —
-   프런트가 URL 을 다시 조립하지 않는다(fix round 1, minor: 재조립은 서버가 라우트
-   프리픽스를 바꿀 때 두 곳을 나란히 고쳐야 하는 드리프트 위험이다). 생체 이미지를
-   앱 상태에 오래 남기지 않고, 어디에도 로그로 남기지 않는다.
-
-   지원서 프로필 사진(제3의 독립 얼굴 사진 — 지원~등록 사이 인물 스왑을 잡는 단서)은
-   기존 관리자 지원서 사진 라우트(adminFetchApplicationPhotoUrl, Task6/facemarket_applications.py)
-   를 그대로 재사용한다 — 새 이미지 라우트를 만들지 않는다(fix round 1, SPEC GAP 2).
-
-   지원서 이름·생년월일이 신분증과 몇 번 어긋났는지(identityMismatchCount)도 카드에
-   낸다 — mid 전용이 아니다: 게이트는 identity_method 가 아니라
-   `fm_application_required and application_id` 뿐이라(facemarket_enrollment.py :1170
-   근처) simple_auth 등록도 이 카운터가 오른다(fix round 1, SPEC GAP 1 — 리뷰가 이
-   전제를 잘못 짚었던 것도 정정됨).
-
-   승인·거절 직후 카드를 닫고 큐를 새로고침한다 — 신분증은 결정과 동시에 파기되므로
-   다시 불러오면 404 다.
-   ============================================================= */
-import { useCallback, useEffect, useState } from 'react';
+/* 신원 확인 뒤 증서 발급과 학습용 사진 확인을 진행하는 관리자 콘솔이에요.
+   대조 점수는 참고 정보로 보여주고, 동일인 확인과 사용 조건 제출 여부로 승인을 막아요.
+   카드 선택이 바뀌면 EnrollmentDetail을 새로 마운트해 확인 체크가 넘어가지 않게 해요.
+   생체 이미지는 인증된 게이트로 받아 사용한 뒤 objectURL을 해제해요. */
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@/components/ui.jsx';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -50,7 +19,8 @@ import {
 } from '@/lib/api/facemarket.js';
 import { PHOTO_GROUPS, SLOTS } from '@/features/model/registerSlots.js';
 import { seoulDateTime } from '@/lib/datetime.js';
-import { finalRejectReason, imageFailureLabel, scoreRow } from './enrollmentReviewMath.js';
+import styles from './AdminEnrollmentReview.module.css';
+import { finalRejectReason, imageFailureLabel, scoreRow, reviewActions } from './enrollmentReviewMath.js';
 
 // 마지막 탭만 다른 축이다 — 신원 심사가 아니라 **학습 전 사진 확인**이고, 표준인증(mid)
 // 등록까지 포함한다(그쪽은 review_status 가 null 이라 앞의 세 탭에 아예 안 뜬다).
@@ -62,6 +32,11 @@ const REVIEW_FILTERS = [
   { value: PHOTO_FILTER, label: '사진 확인' },
 ];
 const REVIEW_LABEL = { pending: '대기', approved: '승인됨', rejected: '거절됨' };
+const ENROLLMENT_STATUS_LABEL = {
+  review_pending: '기존 심사 대기', asset_building: '사진 정리 중',
+  license_pending: '사용 조건 대기', vc_pending: '신원 확인 대기',
+  passed: '증서 발급 완료', failed: '등록 종료',
+};
 
 // 학습 전 사진 확인 상태(fm_biometric_enrollments.photo_review_status).
 const PHOTO_REVIEW_LABEL = {
@@ -290,6 +265,7 @@ function PhotoReviewSection({ card, onChanged }) {
   const slots = card.photoSlots || [];
   const status = card.photoReviewStatus || 'pending';
   const visible = !!card.fullPhotosVisible;
+  const { identityCleared } = reviewActions(card);
   const pickedKeys = Object.keys(picked);
 
   const toggle = (slotKey, on) => setPicked((prev) => {
@@ -300,6 +276,7 @@ function PhotoReviewSection({ card, onChanged }) {
   });
 
   const approvePhotos = async () => {
+    if (!identityCleared || busy) return;
     setBusy(true);
     try {
       await adminApproveEnrollmentPhotos(card.id);
@@ -371,15 +348,18 @@ function PhotoReviewSection({ card, onChanged }) {
           {card.reshootSlots.map((item) => (
             <li key={item.slot}>
               {SLOT_BY_KEY.get(item.slot)?.title || item.slot}
-              {item.reason ? ` — ${item.reason}` : ''}
+              {item.reason ? `: ${item.reason}` : ''}
             </li>
           ))}
         </ul>
       )}
 
+      {visible && !identityCleared && (
+        <p className="mb-2 text-xs text-muted-foreground">신원 확인을 먼저 마쳐 주세요.</p>
+      )}
       {visible && !reshooting && (
-        <div className="flex gap-2">
-          <Button variant="default" size="sm" disabled={busy} onClick={approvePhotos}>사진 확인 완료</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="default" size="sm" disabled={busy || !identityCleared} onClick={approvePhotos}>사진 확인 완료</Button>
           <Button variant="outline" size="sm" disabled={busy} onClick={() => setReshooting(true)}>재촬영 요청</Button>
         </div>
       )}
@@ -427,27 +407,35 @@ function PhotoReviewSection({ card, onChanged }) {
   );
 }
 
-function EnrollmentDetail({ enrollmentId, onDecided }) {
+function EnrollmentDetail({ enrollmentId, refreshVersion, onDecided }) {
   const { push } = useToast();
   const [card, setCard] = useState(null);
   const [detailError, setDetailError] = useState(null);
-  const [maskOk, setMaskOk] = useState(false);
+  const [identityOk, setIdentityOk] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reasonPreset, setReasonPreset] = useState(REJECT_REASON_PRESETS[0].value);
   const [reasonFreeText, setReasonFreeText] = useState('');
   const [busy, setBusy] = useState(false);
+  const detailRequest = useRef(0);
 
   const load = useCallback(() => {
-    setCard(null);
+    const request = ++detailRequest.current;
     setDetailError(null);
     adminEnrollmentCard(enrollmentId)
-      .then(setCard)
-      .catch((e) => setDetailError(e.message || '등록 정보를 불러오지 못했어요.'));
+      .then((nextCard) => {
+        if (request === detailRequest.current) setCard(nextCard);
+      })
+      .catch((e) => {
+        if (request === detailRequest.current) setDetailError(e.message || '등록 정보를 불러오지 못했어요.');
+      });
   }, [enrollmentId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { detailRequest.current += 1; };
+  }, [load, refreshVersion]);
 
-  if (detailError) {
+  if (detailError && !card) {
     return (
       <Card>
         <CardHeader>
@@ -472,6 +460,7 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
   }
 
   const pending = card.reviewStatus === 'pending';
+  const { canApproveIdentity, approvalLabel, approvalHint } = reviewActions(card);
   const presetLabel = REJECT_REASON_PRESETS.find((r) => r.value === reasonPreset)?.label || '';
   // finalRejectReason 이 trim 을 전담한다(enrollmentReviewMath.js) — 공백만 입력해도
   // "   " 는 truthy 라 !finalReason 가드를 통과해 버리는 사고를 이 컴포넌트가 아니라
@@ -482,6 +471,7 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
   // 파기돼 다시 불러오면 404 다. 409(다른 관리자가 먼저 처리)도 같은 처리 — 지금 보고
   // 있는 카드는 이미 낡은 상태다.
   const approve = async () => {
+    if (!canApproveIdentity || !identityOk || busy) return;
     setBusy(true);
     try {
       const result = await adminApproveEnrollment(enrollmentId);
@@ -493,6 +483,8 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
           `승인은 됐지만 자산 생성을 다시 시작하지 못했어요 (${result.assetBuildError}). 운영팀에 알려주세요.`,
           { icon: 'alertCircle' },
         );
+      } else if (result?.status === 'vc_pending') {
+        push?.('신원 확인을 마쳤어요. 증서는 몇 분 안에 자동으로 발급돼요.', { icon: 'check' });
       } else {
         push?.('등록을 승인했어요.', { icon: 'check' });
       }
@@ -562,6 +554,12 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
         <CardDescription>{seoulDateTime(card.createdAt)} 제출</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5 text-sm">
+        <div className={`${styles.detailRefreshFeedback} flex items-center gap-3`}>
+          <p className={`${styles.detailRefreshMessage} text-destructive`} role="alert" tabIndex={detailError ? 0 : undefined}>
+            {detailError}
+          </p>
+          {detailError && <Button variant="outline" size="sm" onClick={load}>다시 시도</Button>}
+        </div>
         <section>
           <h4 className="mb-2 text-xs font-medium text-muted-foreground">신분증·등록 사진·지원서 사진</h4>
           <div className="flex flex-wrap gap-3">
@@ -625,27 +623,26 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
           )}
         </section>
 
-        {/* 학습 전 사진 확인 — 신원 심사가 끝난 뒤의 일이다. 아직 심사 중인 등록은
-            서버가 전체 칸을 안 열어 주므로(decision != 'passed') 구역 자체를 안 그린다. */}
+        {/* 사진은 미리 볼 수 있고, 확인 완료는 신원 승인 뒤에 할 수 있어요. */}
         {(card.fullPhotosVisible || card.photoReviewStatus !== 'pending') && (
           <PhotoReviewSection card={card} onChanged={load} />
         )}
 
         {pending && !rejecting && (
           <section className="border-t border-border pt-4">
-            {/* 서버는 마스킹 여부를 검증할 수 없다 — 이 체크가 그 자리를 메운다. 승인
-                버튼을 막는 유일한 게이트다(점수 배지는 절대 여기 쓰지 않는다). */}
+            {/* 신분증 사진과 등록 사진의 동일인 여부를 직접 확인해 주세요. */}
             <label className="mb-3 flex items-start gap-2">
               <input
                 type="checkbox"
-                checked={maskOk}
-                onChange={(e) => setMaskOk(e.target.checked)}
+                checked={identityOk}
+                onChange={(e) => setIdentityOk(e.target.checked)}
                 className="mt-0.5"
               />
-              주민등록번호 뒷자리가 가려져 있어요
+              신분증 사진과 등록 사진이 같은 사람이에요
             </label>
-            <div className="flex gap-2">
-              <Button variant="default" size="sm" disabled={!maskOk || busy} onClick={approve}>승인</Button>
+            {approvalHint && <p className="mb-3 text-xs text-muted-foreground">{approvalHint}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="default" size="sm" disabled={!identityOk || !canApproveIdentity || busy} onClick={approve}>{approvalLabel}</Button>
               <Button variant="outline" size="sm" disabled={busy} onClick={() => setRejecting(true)}>거절</Button>
             </div>
           </section>
@@ -705,10 +702,11 @@ export function AdminEnrollmentReview() {
   const [items, setItems] = useState(null);
   const [listError, setListError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   const load = useCallback(() => {
-    setItems(null);
     setListError(null);
+    setRefreshVersion((version) => version + 1);
     // '사진 확인' 탭만 다른 라우트다 — 필터 축(photo_review_status)도, 대상(mid 포함)도 다르다.
     const request = review === PHOTO_FILTER
       ? adminListPhotoReview('awaiting')
@@ -718,7 +716,7 @@ export function AdminEnrollmentReview() {
       .catch((e) => setListError(e.message || '심사 큐를 불러오지 못했어요.'));
   }, [review]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setItems(null); load(); }, [load]);
 
   // 승인·거절 직후 이 콜백이 카드를 닫고 큐를 새로고침한다 — 신분증이 결정과 동시에
   // 파기되므로, 닫지 않고 그대로 두면 다음 조회가 404 를 받는다.
@@ -728,18 +726,18 @@ export function AdminEnrollmentReview() {
   }, [load]);
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className={`${styles.page} flex flex-col gap-5`}>
       <header>
         <h1 className="text-lg font-semibold tracking-tight">등록 심사</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          간편인증으로 들어온 등록의 신분증·등록 사진·지원서를 보고 승인 또는 거절해요.
-          대조 점수는 참고용이에요 — 위조 신분증도 점수가 높게 나올 수 있고, 진짜
-          신분증도 반사광 때문에 낮게 나올 수 있어요.
+          간편인증으로 들어온 등록의 신분증과 등록 사진을 보고 신원을 확인해요.
+          등록자가 사용 조건까지 마치면 승인할 수 있고, 승인하면 라이선스 증서(VC)가 자동으로 발급돼요.
+          등록자는 기다리지 않아요. 5일 안에 결정하지 않으면 등록이 자동 종료돼요.
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
-          <strong className="font-medium">사진 확인</strong> 탭은 다른 일이에요 — 통과한 등록의
+          <strong className="font-medium">사진 확인</strong>은 신원 확인을 마친 뒤 진행해요. 등록한
           얼굴 사진 전부를 학습 전에 보고, 확인 완료를 찍거나 칸을 골라 재촬영을 요청해요.
-          확인 완료 전에는 학습 내보내기가 열리지 않아요.
+          신원 확인과 사진 확인을 모두 마쳐야 학습 내보내기가 열려요.
         </p>
       </header>
 
@@ -793,7 +791,18 @@ export function AdminEnrollmentReview() {
                       className={`cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selectedId === row.id ? 'bg-muted' : ''}`}
                     >
                       <TableCell className="font-mono text-xs">{row.id.slice(0, 8)}</TableCell>
-                      <TableCell>{IDENTITY_METHOD_LABEL[row.identityMethod] || row.identityMethod}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1">
+                          <span>{IDENTITY_METHOD_LABEL[row.identityMethod] || row.identityMethod}</span>
+                          {review !== PHOTO_FILTER && (
+                            <Badge variant="secondary">
+                              {row.status === 'vc_pending' && row.reviewStatus === 'approved'
+                                ? '증서 발급 대기'
+                                : ENROLLMENT_STATUS_LABEL[row.status] || row.status}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {review === PHOTO_FILTER ? (
                           <span>
@@ -821,7 +830,7 @@ export function AdminEnrollmentReview() {
 
         {/* key={selectedId} — 카드를 바꿀 때마다 완전히 새로 마운트한다. 마스킹 체크는
             안전장치라, 이전 카드에서 체크한 상태가 다음 카드로 새어 들어가면 안 된다. */}
-        {selectedId && <EnrollmentDetail key={selectedId} enrollmentId={selectedId} onDecided={handleDecided} />}
+        {selectedId && <EnrollmentDetail key={selectedId} enrollmentId={selectedId} refreshVersion={refreshVersion} onDecided={handleDecided} />}
       </div>
     </div>
   );

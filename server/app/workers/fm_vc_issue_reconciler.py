@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 
-from ..facemarket import issue_and_activate_pending_face_vc
+from ..facemarket import IDENTITY_CLEARED_SQL, issue_and_activate_pending_face_vc
 
 log = logging.getLogger("wearless.fm_vc_issue_reconciler")
 
@@ -53,13 +53,14 @@ class FaceVcIssueReconciler:
         async with self.app.state.pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """select l.id::text as license_id, l.model_id::text as model_id,
+                    f"""select l.id::text as license_id, l.model_id::text as model_id,
                               m.user_id::text as user_id
                          from fm_licenses l
                          join fm_models m on m.id = l.model_id
                          join fm_biometric_enrollments e on e.id = l.enrollment_id
                         where l.status = 'pending' and l.vc_id is null
                           and e.status = 'vc_pending'
+                          and {IDENTITY_CLEARED_SQL}
                           and e.user_id = m.user_id and e.model_id = m.id
                           and l.updated_at < now() - interval '15 seconds'
                         order by l.updated_at

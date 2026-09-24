@@ -432,7 +432,11 @@ class FakeCursor:
         self.rowcount = -1
         self.store.setdefault("sql", []).append(s)
 
-        if s.startswith("select pg_advisory_xact_lock"):
+        if s.startswith("select e.review_status from fm_biometric_enrollments e"):
+            enrollment_id, user_id = params
+            self._result = next(({"review_status": e.get("review_status")} for e in self.store["enrollments"]
+                                 if e["id"] == enrollment_id and e["user_id"] == user_id), None)
+        elif s.startswith("select pg_advisory_xact_lock"):
             self._result = {"?column?": None}
         elif s.startswith("select id from fm_biometric_enrollments"):
             enrollment_id, user_id = params
@@ -584,6 +588,7 @@ class FakeCursor:
             self._result = {
                 "enrollment_id": e["id"],
                 "enrollment_status": e["status"],
+                "review_status": e.get("review_status"),
                 "enrollment_body_type": e.get("body_type"),
                 "model_id": (m or {}).get("id"),
                 "model_status": (m or {}).get("status"),
@@ -2817,3 +2822,37 @@ def test_license_list_hides_revoked_cards(biometric_fm, make_token, holder_stub)
     assert created.json()["id"] in ids
     assert "11111111-1111-4111-8111-111111111111" not in ids, \
         "폐기된 라이선스는 카드 목록에 남지 않는다"
+
+
+@pytest.mark.parametrize("review_status", ["pending", "rejected"])
+def test_identity_review_blocks_every_issue_attempt(biometric_fm, make_token, holder_stub, monkeypatch, review_status):
+    client, store, _r2 = biometric_fm
+    _seed_license_pending_enrollment(store)
+    store["enrollments"][0]["review_status"] = review_status
+    wakes = []
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda app: wakes.append(app))
+    for _ in range(2):
+        response = client.post("/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+                               headers=_auth(make_token))
+        assert response.status_code == 201, response.text
+        assert response.json()["status"] == "pending"
+        assert response.json()["vcId"] is None
+    assert len(store["licenses"]) == 1
+    assert store["enrollments"][0]["status"] == "vc_pending"
+    assert holder_stub.calls == []
+    assert wakes == []
+    @contextlib.asynccontextmanager
+    async def connect():
+        yield FakeConn(store)
+    result = asyncio.run(facemarket.issue_and_activate_pending_face_vc(
+        client.app, user_id="user-1", license_id=store["licenses"][0]["id"],
+        model_id=MODEL_ID, connect=connect,
+    ))
+    assert result is None
+    assert holder_stub.calls == []
+    store["enrollments"][0]["review_status"] = "approved"
+    response = client.post("/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+                           headers=_auth(make_token))
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "active"
+    assert holder_stub.calls

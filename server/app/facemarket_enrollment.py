@@ -2855,7 +2855,8 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     f"""
                     with due as (
                         select id from fm_biometric_enrollments
-                        where status = 'review_pending' and review_status = 'pending'
+                        where review_status = 'pending'
+                          and status in ('review_pending', 'asset_building', 'license_pending', 'vc_pending')
                           and created_at <= now() - interval '{REVIEW_DEADLINE_DAYS} days'
                         order by created_at
                         for update skip locked
@@ -2870,6 +2871,12 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     (limit,),
                 )
                 timed_out = await cur.fetchall()
+                for row in timed_out:
+                    await cur.execute(
+                        "delete from fm_licenses where enrollment_id = %s "
+                        "and status = 'pending' and vc_id is null",
+                        (row["id"],),
+                    )
             await conn.commit()
         for row in timed_out:
             logger.warning("enrollment_review_timed_out enrollment=%s", row["id"])
@@ -3402,20 +3409,6 @@ async def process_enrollment_completion(
                     "set provider_versions = provider_versions || %s::jsonb where id = %s",
                     (Json({"refset": refset}), enrollment_id),
                 )
-                if match_required_review:
-                    # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
-                    # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
-                    await cur.execute(
-                        """
-                        update fm_biometric_enrollments
-                        set status = 'review_pending', review_status = 'pending',
-                            match_scores = %s
-                        where id = %s and status = 'processing'
-                        """,
-                        (Json(match_snapshot), enrollment_id),
-                    )
-                    await conn.commit()
-                    return EnrollmentDecision(False, False, None, "review_pending")
                 model_id = await bind_model_and_enqueue_asset_build(
                     cur,
                     user_id=user_id,
@@ -3429,6 +3422,15 @@ async def process_enrollment_completion(
                     ),
                     match_policy_version=settings.fm_match_policy_version,
                 )
+                if match_required_review:
+                    # 내부 자산은 준비하되 학습 내보내기와 증서 발급은 신원 확인을 기다려요.
+                    await cur.execute(
+                        """update fm_biometric_enrollments
+                           set review_status = 'pending', reviewed_by = null,
+                               reviewed_at = null, review_reason = null, match_scores = %s
+                           where id = %s""",
+                        (Json(match_snapshot), enrollment_id),
+                    )
             await conn.commit()
         return EnrollmentDecision(True, False, None, "asset_building", model_id)
     except EnrollmentExpiredError:

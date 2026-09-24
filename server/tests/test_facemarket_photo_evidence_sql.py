@@ -25,7 +25,7 @@ class Connection:
         self.db.executescript("""
             create table fm_biometric_enrollments (
                 id text, user_id text, model_id text, status text,
-                match_policy_version text, body_type text, created_at text);
+                match_policy_version text, body_type text, created_at text, review_status text);
             create table fm_models (
                 id text, user_id text, status text, did text, assets_status text,
                 current_enrollment_id text, reverification_batch_id text);
@@ -40,7 +40,7 @@ class Connection:
                 model_id text, view text, r2_key text, source_enrollment_id text,
                 evidence_version text);
             insert into fm_biometric_enrollments values
-                ('enrollment', 'owner', 'model', 'license_pending', 'policy', null, '2026-09-01');
+                ('enrollment', 'owner', 'model', 'license_pending', 'policy', null, '2026-09-01', null);
             insert into fm_models values
                 ('model', 'owner', 'pending', null, 'ready', 'enrollment', null);
             insert into fm_licenses values
@@ -161,5 +161,22 @@ def test_pending_canonical_photo_never_falls_back_to_old_approved_photo(evidence
         with pytest.raises(HTTPException) as failure:
             facemarket._checked_license_evidence(evidence)
         assert failure.value.detail["code"] == "approved_front_missing"
+    finally:
+        conn.db.close()
+
+
+@pytest.mark.parametrize("review_status,cleared", [(None, True), ("approved", True), ("pending", False), ("rejected", False), ("", False)])
+def test_identity_predicate_and_evidence_projection_agree(review_status, cleared):
+    conn = Connection()
+    try:
+        conn.db.execute("update fm_biometric_enrollments set review_status = ?", (review_status,))
+        conn.photo("face01")
+        evidence = asyncio.run(facemarket._load_license_evidence(conn, "owner", "enrollment"))
+        assert evidence["review_status"] == review_status
+        selected = conn.db.execute(
+            "select id from fm_biometric_enrollments e where " + facemarket.IDENTITY_CLEARED_SQL
+        ).fetchall()
+        assert bool(selected) is cleared
+        assert facemarket.identity_cleared(evidence["review_status"]) is cleared
     finally:
         conn.db.close()

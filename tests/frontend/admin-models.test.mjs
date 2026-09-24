@@ -165,3 +165,8 @@ test('모델 팝업은 프로필, 라이선스, 동의 이력을 순서대로 �
     }
   } finally { await h.close(); }
 });
+
+
+test('테스트컷 전송 대기는 신원 확인과 증서 발급을 안내한다', () => {
+  assert.ok(read('src/features/admin/AdminModels.jsx').includes('신원 확인과 증서 발급이 끝나야 보낼 수 있어요.'));
+});
