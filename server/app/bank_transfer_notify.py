@@ -3,7 +3,7 @@
 import logging
 from html import escape
 
-from .facemarket_notify import _send_email
+from .facemarket_notify import _post_slack, _send_email, _slack_escape
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,12 @@ def _product_label(req: dict) -> str:
 
 
 async def notify_admin_new_request(settings, req: dict, *, user_email: str | None) -> None:
+    # 슬랙(FM_SLACK_WEBHOOK_URL, 지원서 알림과 같은 채널). 메일과 별개로 best-effort.
+    if getattr(settings, "fm_slack_webhook_url", None):
+        await _post_slack(settings, _slack_escape(
+            f":bank: 계좌이체 신청 · {_product_label(req)} · {_won(req['amount'])} · 입금자 {req['payer_name']}"
+            f" · {user_email or '-'}" + (" · 세금계산서 필요" if req.get("tax_invoice") else "")
+        ))
     to = getattr(settings, "bank_transfer_notify_email", None)
     if not to or not getattr(settings, "resend_api_key", None):
         return
