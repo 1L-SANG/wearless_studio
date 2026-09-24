@@ -5,27 +5,17 @@
   inherits: false;
 }
 
-.head { margin-top: 14px; margin-bottom: 22px; }
+/* 제목 줄: 왼쪽 '요금제', 오른쪽 상태 배지(시안 C, 오너 9/24). */
+.head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; margin-top: 14px; margin-bottom: 28px; }
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
 
-/* 탭 줄: 밑줄 탭 + 오른쪽 상태 배지(시안 C, 오너 9/24) */
-.tabbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; margin-bottom: 28px; border-bottom: 1px solid var(--ring-strong); }
-.tabs { display: flex; gap: 32px; }
-.tab {
-  position: relative; padding: 0 0 16px; border: none; background: none;
-  font-family: var(--font-body); font-size: 17px; font-weight: 600; color: var(--fg-2); cursor: pointer; transition: color .15s;
-}
-.tab:hover { color: var(--fg-1); }
-.tab.active { color: var(--fg-1); font-weight: 700; }
-.tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--fg-1); }
-.tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: var(--r-2); }
 
 .promise {
   --on-ink-1: var(--bg-1);
   --on-ink-2: color-mix(in srgb, var(--bg-1) 78%, transparent);
   --on-ink-line: color-mix(in srgb, var(--bg-1) 14%, transparent);
   --on-ink-fill: color-mix(in srgb, var(--bg-1) 8%, transparent);
-  display: inline-flex; align-items: center; gap: 14px; margin-bottom: 12px;
+  display: inline-flex; align-items: center; gap: 14px;
   min-height: 48px; padding: 5px 20px 5px 5px; border-radius: var(--r-5);
   background: var(--fg-1); color: var(--on-ink-2);
   box-shadow: 0 10px 24px -14px rgba(14, 13, 20, 0.7);
@@ -142,30 +132,37 @@
 .features li { display: flex; align-items: flex-start; gap: var(--sp-12); color: var(--fg-2); font-size: 15px; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
 .featureCheck { display: flex; align-items: center; justify-content: center; flex: 0 0 18px; height: 18px; margin-top: var(--sp-2); border-radius: var(--r-pill); background: var(--pricing-check); color: var(--cta-fg); }
 
-/* 충전 팩 카드 — 구독 카드와 같은 3칸 폭·뼈대(테두리·반경·그림자), 크레딧 숫자가 주인공(시안 A).
-   팩 2개 + 세 번째 칸 '자주 쓰신다면' 비교 카드. */
-.topupGrid { grid-auto-rows: auto; }
-.topupName { margin-bottom: 12px; font-size: 22px; }
-.compareCard { box-shadow: none; background: var(--bg-2); border-color: transparent; }
-.compareLead { margin: -4px 0 0; font-size: 14px; color: var(--fg-2); }
-.ghostButton {
-  display: block; width: 100%; min-height: var(--cta-height); padding: var(--sp-12) var(--sp-16);
-  border: 1.5px solid var(--ring-strong); border-radius: 13px; background: var(--bg-1); color: var(--fg-1);
-  font-family: var(--font-body); font-size: 15px; font-weight: 600; cursor: pointer; transition: border-color .15s;
-}
-.ghostButton:hover { border-color: color-mix(in srgb, var(--fg-1) 24%, transparent); }
-.ghostButton:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
-.needLine { display: flex; align-items: center; gap: 8px; margin: -12px 0 20px; font-size: 15px; font-weight: 600; color: var(--fg-1); }
+/* 크레딧 충전 구역 — 구독 카드 아래. 같은 재질(흰 면·1.5px 테두리·20px 반경)이되 가로형으로 한 단계 가볍게. */
+.topupSection { margin-top: 56px; scroll-margin-top: 24px; }
+.topupHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 16px; }
+.topupTitle { margin: 0; font-family: var(--font-body); font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
+.topupMeta { font-size: 14px; color: var(--fg-2); }
+.needLine { display: flex; align-items: center; gap: 8px; margin: -4px 0 20px; font-size: 15px; font-weight: 600; color: var(--fg-1); }
 .needLine svg { color: var(--accent-error); }
-.bigRow { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 6px; margin: 0; }
-.big { font-family: var(--font-body); font-size: 34px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
-.plus { font-weight: 500; color: var(--fg-3); margin-right: -0.04em; }
-.tsec { display: grid; gap: 8px; margin: 22px 0 24px; padding: 16px 0; border-block: 1px solid var(--ring); }
-.tsec div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.tsec dt { font-size: 13px; color: var(--fg-2); }
-.tsec dd { margin: 0; font-size: 14px; font-weight: 500; color: var(--fg-1); font-variant-numeric: tabular-nums; }
-.tsec .tprice { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
-.topupButton { font-size: 15px; }
+.topupList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-24); }
+.topupRow {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px 24px;
+  padding: 24px 28px; background: var(--bg-1); border: 1.5px solid var(--ring-strong); border-radius: 20px; box-shadow: var(--elev-soft);
+}
+.topupRow.recommended { border-color: var(--fg-1); }
+.recommendPill {
+  position: absolute; top: -12px; left: 28px; padding: var(--sp-4) var(--sp-12); border-radius: var(--r-pill);
+  background: var(--fg-1); color: var(--cta-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap;
+}
+.topupInfo { min-width: 0; }
+.topupCredits { display: flex; align-items: baseline; gap: 6px; margin: 0; font-family: var(--font-body); font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.plus { font-weight: 500; color: var(--fg-3); margin-right: -4px; }
+.topupPrice { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.topupPrice strong { font-size: 17px; font-weight: 700; color: var(--fg-1); }
+.topupPrice span { font-size: 13px; color: var(--fg-2); }
+.topupButton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none;
+  min-height: var(--cta-height); padding: 0 22px; border: 0; border-radius: 11px; background: var(--cta-bg); color: var(--cta-fg);
+  font-family: var(--font-body); font-size: 15px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background-color var(--cta-transition);
+}
+.topupButton:hover { background: var(--cta-bg-hover); }
+.topupButton:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.topupButton:disabled { cursor: not-allowed; }
 .cta { margin-top: auto; }
 .buttonRing {
   padding: var(--sp-2); border-radius: 13px;
@@ -186,16 +183,14 @@
 .purchaseConsent { margin: 28px 0 0; text-align: center; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
 .purchaseButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 /* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 무지개 링도 멈춘다. */
-.purchaseButton.locked, .subscriptionButton.locked:disabled { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }
+.purchaseButton.locked, .subscriptionButton.locked:disabled, .topupButton.locked { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }
 .buttonRing:has(.locked) { background: var(--ring-strong); animation: none; }
 @keyframes pricingRingRotate { to { --pricing-ring-angle: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .buttonRing { animation: none; } .purchaseButton { transition: none; } .dotLive::after, .dotPending::after { animation: none; opacity: 0; } }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } .card { padding: var(--sp-28); } }
 @media (max-width: 760px) {
-  .tabbar { flex-direction: column-reverse; align-items: stretch; gap: 16px; }
-  .tabs { gap: 28px; }
-  .tab { padding-bottom: 14px; font-size: 16px; }
-  .promise { display: grid; gap: 4px; margin: 0; padding: 12px 16px 14px; }
+  .head { flex-direction: column; align-items: stretch; margin-bottom: 20px; }
+  .promise { display: grid; gap: 4px; padding: 12px 16px 14px; }
   .promiseLive { height: auto; padding: 0; background: none; box-shadow: none; color: var(--on-ink-2); font-size: 12px; }
   .promiseText { white-space: normal; font-size: 15px; }
   .promisePaused .promiseLive { background: none; }
@@ -208,17 +203,11 @@
   .sgWide { grid-column: 1 / -1; }
   .sg:last-child:not(.sgWide) { border-left: 1px solid var(--ring); }
   .money { font-size: 26px; }
-  .topupGrid { gap: 16px; }
-  .topupCard:not(.compareCard) { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "kind kind" "big sec" "cta cta"; column-gap: 12px; padding: 20px; }
-  .topupCard:not(.compareCard) .kind { grid-area: kind; }
-  .topupCard:not(.compareCard) .bigRow { grid-area: big; align-self: center; }
-  .topupCard:not(.compareCard) .big { font-size: 28px; }
-  .topupCard:not(.compareCard) .tsec { grid-area: sec; align-self: center; min-width: 124px; gap: 2px; margin: 0; padding: 0; border: 0; }
-  .topupCard:not(.compareCard) .tsec dt { font-size: 12px; }
-  .topupCard:not(.compareCard) .tprice { font-size: 16px; }
-  .topupCard:not(.compareCard) .cta { grid-area: cta; margin-top: 16px; }
-  .compareCard { padding: 20px; }
-  .compareCard .topupName { font-size: 17px; }
+  .topupSection { margin-top: 40px; }
+  .topupList { grid-template-columns: 1fr; gap: 16px; }
+  .topupRow { padding: 20px; }
+  .topupCredits { font-size: 26px; }
+  .topupButton { padding: 0 16px; font-size: 14px; }
   .needLine { margin: 0 0 16px; font-size: 14px; }
   .purchaseConsent { margin-top: 20px; font-size: 12px; }
 }

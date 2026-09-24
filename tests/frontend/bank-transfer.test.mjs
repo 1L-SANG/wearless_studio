@@ -83,12 +83,16 @@ test('스위치가 켜져 있다', () => {
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, true);
 });
 
-test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 충전 탭을 함께 보여준다', () => {
+test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에 크레딧 충전 구역을 보여준다', () => {
   const html = renderPricing();
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기/);
-  assert.match(html, /추가 구매/);                         // 충전 탭이 보인다
-  // 탭 줄 오른쪽 상태 배지(시안 C, 오너 9/24). '10분' 을 따로 키우지 않는다.
+  // 2026-09-24 오너: 충전 팩이 두 종류뿐이라 탭을 없애고 구독 카드 아래에 둔다.
+  assert.doesNotMatch(html, />추가 구매</);
+  assert.match(html, /id="topup"/);
+  assert.match(html, />크레딧 충전</);
+  assert.ok(html.indexOf('id="topup"') > html.lastIndexOf('계좌이체로 시작하기'));
+  // 제목 오른쪽 상태 배지(시안 C, 오너 9/24). '10분' 을 따로 키우지 않는다.
   assert.match(html, /상시 확인/);
   assert.match(html, /영업시간 10분 안에 크레딧 지급/);
   assert.doesNotMatch(html, /<b>10분<\/b>/);
@@ -145,7 +149,7 @@ test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => 
   assert.doesNotMatch(html, /계좌이체로 시작하기/);
 });
 
-// 추가 구매 탭은 URL(/pricing?tab=topup&need=N)로 연다 — 크레딧 부족 창이 그렇게 보낸다.
+// 크레딧 부족 창이 /pricing?tab=topup&need=N 으로 보낸다(충전 구역으로 내려가고 추천을 붙인다).
 // SSR 에는 window 가 없으니 이 테스트 동안만 location 을 흉내 낸다.
 function renderTopup(search, opts = {}) {
   const prev = globalThis.window;
@@ -155,19 +159,16 @@ function renderTopup(search, opts = {}) {
   }
 }
 
-test('추가 구매 탭은 100·500 크레딧 두 팩과 구독 비교 카드만 보여준다', () => {
-  const html = renderTopup('?tab=topup');
+test('크레딧 충전 구역은 100·500 크레딧 두 팩만 보여준다', () => {
+  const html = renderPricing();
   assert.equal((html.match(/계좌이체로 충전하기/g) || []).length, 2);
-  assert.match(html, />100<\/span>/);
-  assert.match(html, />500<\/span>/);
+  assert.match(html, /aria-label="100 크레딧"/);
+  assert.match(html, /aria-label="500 크레딧"/);
   assert.match(html, /₩5,500/);
   assert.match(html, /₩26,000/);
-  assert.match(html, /55\.0원/);
-  assert.match(html, /52\.0원/);
-  // 세 번째 칸: 자주 쓰면 이용권이 크레딧당 싸다(숫자만)
-  assert.match(html, /자주 쓰신다면/);
-  for (const v of ['49.8원', '43.7원', '42.5원']) assert.ok(html.includes(v), v);
-  assert.match(html, />이용권 보기</);
+  assert.match(html, /크레딧당 55\.0원/);
+  assert.match(html, /크레딧당 52\.0원/);
+  assert.match(html, /1회 결제 · 소멸 없음/);
   // 부족분이 없으면 추천도, 부족 안내 줄도 없다
   assert.doesNotMatch(html, />추천</);
   assert.doesNotMatch(html, /크레딧이 부족해요/);
@@ -179,13 +180,13 @@ test('부족분이 있으면 그걸 채우는 가장 작은 팩에 추천을 붙
   const need155 = renderTopup('?tab=topup&need=155');
   assert.match(need155, /지금 155 크레딧이 부족해요/);
   assert.equal((need155.match(/>추천</g) || []).length, 1);
-  // 추천 알약은 500 크레딧 카드 안에 있다(100 으로는 155 를 못 채운다)
-  assert.ok(need155.indexOf('>추천<') > need155.indexOf('>100</span>'));
+  // 추천 알약은 500 크레딧 줄 안에 있다(100 으로는 155 를 못 채운다)
+  assert.ok(need155.indexOf('>추천<') > need155.indexOf('aria-label="100 크레딧"'));
   const need80 = renderTopup('?tab=topup&need=80');
-  assert.ok(need80.indexOf('>추천<') < need80.indexOf('>500</span>'));
+  assert.ok(need80.indexOf('>추천<') < need80.indexOf('aria-label="100 크레딧"'));
   // 어느 팩으로도 못 채우면 가장 큰 팩
   const need900 = renderTopup('?tab=topup&need=900');
-  assert.ok(need900.indexOf('>추천<') > need900.indexOf('>100</span>'));
+  assert.ok(need900.indexOf('>추천<') > need900.indexOf('aria-label="100 크레딧"'));
 });
 
 test('충전 신청은 목 저장소에서도 종류당 한 건만 열린다', async () => {

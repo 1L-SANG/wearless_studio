@@ -72,12 +72,12 @@ test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 
   // 그 경로의 계약은 bank-transfer.test.mjs 와 이 파일의 다른 테스트가 나눠 본다.
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기|준비 중|계좌이체로 구독하기/);
-  // 이 하네스는 계좌 정보(/v1/bank-transfer/info)를 채우지 않는다 → 세 버튼 모두 잠기고,
-  // 잠긴 사유는 '계좌 미설정' 하나여야 한다(결제 키 유무와 무관).
+  // 이 하네스는 계좌 정보(/v1/bank-transfer/info)를 채우지 않는다 → 구독 3개와 충전 2개 버튼이
+  // 모두 잠기고, 잠긴 사유는 '계좌 미설정' 하나여야 한다(결제 키 유무와 무관).
   const disabled = (html.match(/disabled=""/g) || []).length;
   const notice = (html.match(/계좌이체 신청을 잠시 받지 않아요/g) || []).length;
-  assert.equal(disabled, 3);
-  assert.equal(notice, 3);
+  assert.equal(disabled, 5);
+  assert.equal(notice, 5);
   assert.doesNotMatch(html, /결제 키가 설정되지 않았어요/);
   // 계좌이체 모드에서는 Seller·Pro 의 '충전할 때마다 크레딧 5%/10% 보너스' 줄을 숨긴다 — 지급 코드가
   // 없는데 충전 탭이 열려 있어 약속을 못 지키기 때문(bank-transfer.test.mjs). 그래서 12 가 아니라 10.

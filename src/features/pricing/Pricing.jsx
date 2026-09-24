@@ -14,7 +14,7 @@
          로그인 뒤 이 화면으로 돌려보낸다(openLogin('/pricing')).
      결제 자체를 공개로 푼 게 아니다. 공개된 건 '얼마인가' 뿐이다.
    ============================================================= */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
@@ -31,7 +31,7 @@ import s from './Pricing.module.css';
 const perCredit = (p) => (Number(p.price) / Number(p.credits)).toFixed(1);
 
 // 크레딧 부족 창(features/credits/CreditShortfallModal)이 /pricing?tab=topup&need=N 으로 보낸다.
-// 그러면 추가 구매 탭으로 열고, 부족분을 채우는 가장 작은 팩에 '추천'을 붙인다.
+// 그러면 아래 '크레딧 충전' 구역으로 내려가고, 부족분을 채우는 가장 작은 팩에 '추천'을 붙인다.
 // SSR 테스트에는 window 가 없으니 그때는 기본값으로.
 function readEntry() {
   if (typeof window === 'undefined') return { tab: 'subscription', need: 0 };
@@ -66,7 +66,7 @@ const PLAN_DETAILS = {
 
 export function Pricing() {
   const [entry] = useState(readEntry);
-  const [tab, setTab] = useState(entry.tab); // 'subscription' | 'topup'
+  const topupRef = useRef(null);
   const [buying, setBuying] = useState(null);     // 결제창 여는 중인 planCode
   const [payError, setPayError] = useState('');
   const account = useAppStore((a) => a.account);
@@ -171,23 +171,41 @@ export function Pricing() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // 충전 탭이 없으면 tab 이 'topup' 이 될 길은 없지만, 상태가 남아 있어도
-  // 빈 화면을 그리지 않게 구독으로 되돌린다. 계좌이체가 켜져 있으면 충전도 판다.
+  // 충전 팩은 구독 카드 아래 '크레딧 충전' 구역에 둔다(오너 9/24: 두 종류뿐이라 탭을 나눌 이유가 없다).
+  // 토스 모드에서는 일반결제 계약 전이면(TOPUP_ENABLED=false) 구역 자체를 숨긴다.
   const topupVisible = TOPUP_ENABLED || bankTransfer;
-  const activeTab = topupVisible ? tab : 'subscription';
-  const shown = plans.filter((p) => p.kind === activeTab);
-  const recurring = activeTab === 'subscription';
-  const subscriptionPlans = plans.filter((p) => p.kind === 'subscription');
+  const subs = plans.filter((p) => p.kind === 'subscription');
+  const topups = topupVisible ? plans.filter((p) => p.kind === 'topup') : [];
   // 부족분이 있으면 그걸 채우는 가장 작은 팩, 어느 팩으로도 못 채우면 가장 큰 팩.
-  const recommendedCode = !recurring && entry.need > 0 && shown.length
-    ? ([...shown].sort((a, b) => a.credits - b.credits).find((p) => p.credits >= entry.need)
-      || [...shown].sort((a, b) => b.credits - a.credits)[0]).code
+  const recommendedCode = entry.need > 0 && topups.length
+    ? ([...topups].sort((a, b) => a.credits - b.credits).find((p) => p.credits >= entry.need)
+      || [...topups].sort((a, b) => b.credits - a.credits)[0]).code
     : null;
+  const ready = !isLoading && !isError;
+
+  // 부족 창에서 왔으면 충전 구역으로 내려 준다.
+  useEffect(() => {
+    if (!ready || !topups.length || (entry.tab !== 'topup' && !entry.need)) return;
+    topupRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [ready, topups.length, entry.tab, entry.need]);
 
   return (
     <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
+        {/* 제목 오른쪽 상태 배지 — 시안 C(오너 9/24). 숫자를 따로 키우지 않고 한 문장으로. */}
+        {bankTransfer && (bankInfo && bankInfo.enabled === false ? (
+          // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
+          <div className={`${s.promise} ${s.promisePaused}`} role="note">
+            <span className={s.promiseLive}><span className={s.dotOff} aria-hidden="true" />잠시 중단</span>
+            <span className={s.promiseText}>지금은 계좌이체 신청을 잠시 받지 않아요. <a href="mailto:contact@wearless.kr">contact@wearless.kr</a></span>
+          </div>
+        ) : (
+          <div className={s.promise} role="note">
+            <span className={s.promiseLive}><span className={s.dotLive} aria-hidden="true" />상시 확인</span>
+            <span className={s.promiseText}>영업시간 10분 안에 크레딧 지급</span>
+          </div>
+        ))}
       </div>
 
       {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
@@ -231,208 +249,168 @@ export function Pricing() {
         </section>
       ))}
 
-      {/* 탭 줄 오른쪽의 상태 배지 — 시안 C(오너 9/24). 숫자를 따로 키우지 않고 한 문장으로. */}
-      {(topupVisible || bankTransfer) && (
-        <div className={s.tabbar}>
-          {topupVisible ? (
-            <div className={s.tabs} role="group" aria-label="요금제 유형">
-              <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
-              <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
-            </div>
-          ) : <span />}
-          {bankTransfer && (bankInfo && bankInfo.enabled === false ? (
-            // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
-            <div className={`${s.promise} ${s.promisePaused}`} role="note">
-              <span className={s.promiseLive}><span className={s.dotOff} aria-hidden="true" />잠시 중단</span>
-              <span className={s.promiseText}>지금은 계좌이체 신청을 잠시 받지 않아요. <a href="mailto:contact@wearless.kr">contact@wearless.kr</a></span>
-            </div>
-          ) : (
-            <div className={s.promise} role="note">
-              <span className={s.promiseLive}><span className={s.dotLive} aria-hidden="true" />상시 확인</span>
-              <span className={s.promiseText}>영업시간 10분 안에 크레딧 지급</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 위 한 줄이 전부다. */}
+      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 배지 한 줄이 전부다. */}
       {!bankTransfer && (
         <p className={s.tabDesc}>
-          {recurring
-            ? '월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.'
-            : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
+          월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.
         </p>
       )}
-
-      {!bankTransfer && recurring && (
+      {!bankTransfer && (
         <div className={s.billingNotice} aria-label="구독 크레딧 및 환불 안내">
           <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>
           <p>결제일부터 7일 이내에 해당 결제로 지급된 크레딧을 사용하지 않았다면 전액 환불을 신청할 수 있습니다. 사용한 부분의 청약철회는 제한될 수 있지만, 미제공 부분의 법령상 환불 권리는 제한하지 않습니다. 환불 및 중도해지는 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 신청해 주세요. <a href={WEARLESS_LEGAL_URLS.refund}>환불정책 보기</a></p>
         </div>
       )}
 
-      {!recurring && entry.need > 0 && (
-        <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
-      )}
-
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
       )}
       {isError && <div className="surface"><ErrorState desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
-      {!isLoading && !isError && shown.length === 0 && (
+      {ready && subs.length === 0 && topups.length === 0 && (
         <div className="surface"><EmptyState icon="coins" title="요금제를 준비 중이에요" desc="잠시 후 다시 확인해 주세요." /></div>
       )}
 
-      {!isLoading && !isError && shown.length > 0 && (
-        <div className={`${s.grid}${recurring ? '' : ' ' + s.topupGrid}`}>
-          {shown.map((p) => {
-            const isCurrent = recurring && p.code === currentPlan;
+      {ready && subs.length > 0 && (
+        <div className={s.grid}>
+          {subs.map((p) => {
+            const isCurrent = p.code === currentPlan;
             const credits = Number(p.credits).toLocaleString('ko-KR');
-            const details = recurring && Object.hasOwn(PLAN_DETAILS, p.code) ? PLAN_DETAILS[p.code] : null;
+            const details = Object.hasOwn(PLAN_DETAILS, p.code) ? PLAN_DETAILS[p.code] : null;
             return (
-              <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}${recurring ? '' : ' ' + s.topupCard}`}>
-                {recurring && p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
-                {!recurring && p.code === recommendedCode && <span className={s.popular}>추천</span>}
+              <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}`}>
+                {p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
                 {isCurrent && <span className={s.badge}>이용 중</span>}
-                <span className={s.kind}>{recurring ? (bankTransfer ? '1개월 이용권' : '정기 구독') : '1회 충전'}</span>
-                {/* 충전 팩은 이름이 곧 크레딧 수라 제목을 따로 두지 않고 큰 숫자가 제목 역할을 한다. */}
-                {recurring && <h3 className={s.name}>{p.name}</h3>}
-                {recurring ? (
-                  <>
-                    <div className={s.priceRow}>
-                      <span className={s.price}>{won(p.price)}</span>
-                      <span className={s.unit}>/ 월</span>
-                    </div>
-                    <div className={s.creditSection}>
-                      <div className={s.creditLine}>
-                        {details?.baseCredits && <>
-                          <s className={s.baseCredits}>{details.baseCredits.toLocaleString('ko-KR')}</s>
-                          <span className={s.creditArrow} aria-hidden="true">→</span>
-                        </>}
-                        <span className={s.creditAmount}>
-                          {credits}
-                          {details?.bonusNote && <em className={s.bonusNote}>{details.bonusNote}</em>}
-                        </span>
-                        <span className={s.creditUnit}>크레딧</span>
-                      </div>
-                    </div>
-                    {details && <ul className={s.features}>
-                      {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
-                        <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
-                        <span>{feature}</span>
-                      </li>)}
-                    </ul>}
-                  </>
-                ) : (
-                  // 충전 팩 — 구독 카드와 같은 뼈대에 크레딧 숫자가 주인공(시안 A, 오너 9/24).
-                  <>
-                    <h3 className={s.bigRow} aria-label={p.name}>
-                      <span className={s.big}><span className={s.plus}>+</span>{credits}</span>
-                      <span className={s.creditUnit}>크레딧</span>
-                    </h3>
-                    <dl className={s.tsec}>
-                      <div><dt>가격</dt><dd className={s.tprice}>{won(p.price)}</dd></div>
-                      <div><dt>크레딧당</dt><dd>{perCredit(p)}원</dd></div>
-                    </dl>
-                  </>
-                )}
+                <span className={s.kind}>{bankTransfer ? '1개월 이용권' : '정기 구독'}</span>
+                <h3 className={s.name}>{p.name}</h3>
+                <div className={s.priceRow}>
+                  <span className={s.price}>{won(p.price)}</span>
+                  <span className={s.unit}>/ 월</span>
+                </div>
+                <div className={s.creditSection}>
+                  <div className={s.creditLine}>
+                    {details?.baseCredits && <>
+                      <s className={s.baseCredits}>{details.baseCredits.toLocaleString('ko-KR')}</s>
+                      <span className={s.creditArrow} aria-hidden="true">→</span>
+                    </>}
+                    <span className={s.creditAmount}>
+                      {credits}
+                      {details?.bonusNote && <em className={s.bonusNote}>{details.bonusNote}</em>}
+                    </span>
+                    <span className={s.creditUnit}>크레딧</span>
+                  </div>
+                </div>
+                {details && <ul className={s.features}>
+                  {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
+                    <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
+                    <span>{feature}</span>
+                  </li>)}
+                </ul>}
                 <div className={s.cta}>
-                  {recurring ? (
-                    // 구독과 로그인 버튼을 같은 그라데이션 링 안에 표시한다.
-                    <div className={s.buttonRing}>
-                      {!session ? (
-                        <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} onClick={requireLogin}>
-                          로그인하고 시작하기
-                        </button>
-                      ) : bankTransfer ? (
-                        // 계좌이체: 토스 키를 보지 않는다. 같은 종류의 열린 신청이 있으면 잠근다.
-                        // 현재 플랜과 같으면 1개월 연장 신청이다.
+                  {/* 구독과 로그인 버튼을 같은 그라데이션 링 안에 표시한다. */}
+                  <div className={s.buttonRing}>
+                    {!session ? (
+                      <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} onClick={requireLogin}>
+                        로그인하고 시작하기
+                      </button>
+                    ) : bankTransfer ? (
+                      // 계좌이체: 토스 키를 보지 않는다. 같은 종류의 열린 신청이 있으면 잠근다.
+                      // 현재 플랜과 같으면 1개월 연장 신청이다.
+                      <button
+                        type="button" className={`${s.purchaseButton} ${s.subscriptionButton}${bankReady && !openByKind('subscription') ? '' : ' ' + s.locked}`}
+                        disabled={!bankReady || Boolean(openByKind('subscription'))}
+                        title={openByKind('subscription') ? '확인 중인 신청이 있어요'
+                          : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
+                        onClick={() => setTransferPlan(p)}
+                      >
+                        {openByKind('subscription') ? <><PIcon name="lock" size={16} />확인 중인 신청이 있어요</>
+                          : (isCurrent ? '1개월 연장 신청' : '계좌이체로 시작하기')}
+                      </button>
+                    ) : (
+                      <>
                         <button
-                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}${bankReady && !openByKind('subscription') ? '' : ' ' + s.locked}`}
-                          disabled={!bankReady || Boolean(openByKind('subscription'))}
-                          title={openByKind('subscription') ? '확인 중인 신청이 있어요'
-                            : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
-                          onClick={() => setTransferPlan(p)}
+                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                          disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
+                          title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                          onClick={() => subscribe(p.code, 'CARD')}
                         >
-                          {openByKind('subscription') ? <><PIcon name="lock" size={16} />확인 중인 신청이 있어요</>
-                            : (isCurrent ? '1개월 연장 신청' : '계좌이체로 시작하기')}
+                          {isCurrent ? '이용 중'
+                            : (buying === p.code ? '등록 창 여는 중…' : '구매하기')}
                         </button>
-                      ) : (
-                        <>
+                        {/* 퀵계좌이체는 카드보다 수수료가 낮지만(토스 문서: 카드 대비 1%p 이상)
+                            우리 MID 에서는 아직 안 열린다(2026-09-10 실측). 플래그로 숨긴다 —
+                            서버·스키마는 이미 계좌를 다루므로 열리는 날 켜기만 하면 된다. */}
+                        {SUBSCRIPTION_TRANSFER_ENABLED && !isCurrent && (
                           <button
-                            type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
-                            disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
-                            title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
-                            onClick={() => subscribe(p.code, 'CARD')}
+                            type="button" className={s.altMethodButton}
+                            disabled={!TOSS_BILLING_CLIENT_KEY || buying !== null}
+                            onClick={() => subscribe(p.code, 'TRANSFER')}
                           >
-                            {isCurrent ? '이용 중'
-                              : (buying === p.code ? '등록 창 여는 중…' : '구매하기')}
+                            계좌이체로 구독하기
                           </button>
-                          {/* 퀵계좌이체는 카드보다 수수료가 낮지만(토스 문서: 카드 대비 1%p 이상)
-                              우리 MID 에서는 아직 안 열린다(2026-09-10 실측). 플래그로 숨긴다 —
-                              서버·스키마는 이미 계좌를 다루므로 열리는 날 켜기만 하면 된다. */}
-                          {SUBSCRIPTION_TRANSFER_ENABLED && !isCurrent && (
-                            <button
-                              type="button" className={s.altMethodButton}
-                              disabled={!TOSS_BILLING_CLIENT_KEY || buying !== null}
-                              onClick={() => subscribe(p.code, 'TRANSFER')}
-                            >
-                              계좌이체로 구독하기
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <div className={!session || bankTransfer ? s.buttonRing : undefined}>
-                      {session && bankTransfer ? (
-                        <button
-                          type="button" className={`${s.purchaseButton} ${s.topupButton}${bankReady && !openByKind('topup') ? '' : ' ' + s.locked}`}
-                          disabled={!bankReady || Boolean(openByKind('topup'))}
-                          title={openByKind('topup') ? '확인 중인 신청이 있어요'
-                            : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
-                          onClick={() => setTransferPlan(p)}
-                        >
-                          {openByKind('topup') ? <><PIcon name="lock" size={16} />확인 중</> : '계좌이체로 충전하기'}
-                        </button>
-                      ) : (
-                        <button
-                          type="button" className={s.purchaseButton}
-                          disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
-                          title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
-                          onClick={() => buyTopup(p.code)}
-                        >
-                          {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
-                          {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
-                        </button>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             );
           })}
-          {/* 추가 구매 탭 세 번째 칸: 자주 쓰면 구독이 크레딧당 싸다는 걸 숫자로만 보여 준다. */}
-          {!recurring && subscriptionPlans.length > 0 && (
-            <div className={`${s.card} ${s.topupCard} ${s.compareCard}`}>
-              <span className={s.kind}>{bankTransfer ? '1개월 이용권' : '정기 구독'}</span>
-              <h3 className={`${s.name} ${s.topupName}`}>자주 쓰신다면</h3>
-              <p className={s.compareLead}>{bankTransfer ? '이용권' : '구독'}이 크레딧당 더 저렴해요</p>
-              <dl className={s.tsec}>
-                {subscriptionPlans.map((p) => (
-                  <div key={p.id}><dt>{p.name}</dt><dd>{perCredit(p)}원</dd></div>
-                ))}
-              </dl>
-              <div className={s.cta}>
-                <button type="button" className={s.ghostButton} onClick={() => setTab('subscription')}>
-                  {bankTransfer ? '이용권 보기' : '구독 보기'}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
-      {!isLoading && !isError && shown.length > 0 && (
+
+      {/* 크레딧 충전 — 구독 카드보다 한 단계 가벼운 가로형 카드 두 장(구독이 주인공, 충전은 보조). */}
+      {ready && topups.length > 0 && (
+        <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
+          <div className={s.topupHead}>
+            <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
+            <span className={s.topupMeta}>1회 결제 · 소멸 없음</span>
+          </div>
+          {entry.need > 0 && (
+            <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
+          )}
+          <div className={s.topupList}>
+            {topups.map((p) => {
+              const locked = session && bankTransfer && (!bankReady || Boolean(openByKind('topup')));
+              return (
+                <div key={p.id} className={`${s.topupRow}${p.code === recommendedCode ? ' ' + s.recommended : ''}`}>
+                  {p.code === recommendedCode && <span className={s.recommendPill}>추천</span>}
+                  <div className={s.topupInfo}>
+                    <h3 className={s.topupCredits} aria-label={p.name}>
+                      <span className={s.plus}>+</span>{num(p.credits)}<span className={s.creditUnit}>크레딧</span>
+                    </h3>
+                    <p className={s.topupPrice}>
+                      <strong>{won(p.price)}</strong>
+                      <span>크레딧당 {perCredit(p)}원</span>
+                    </p>
+                  </div>
+                  {session && bankTransfer ? (
+                    <button
+                      type="button" className={`${s.topupButton}${locked ? ' ' + s.locked : ''}`}
+                      disabled={locked}
+                      title={openByKind('topup') ? '확인 중인 신청이 있어요'
+                        : (bankReady ? undefined : '계좌이체 신청을 잠시 받지 않아요')}
+                      onClick={() => setTransferPlan(p)}
+                    >
+                      {openByKind('topup') ? <><PIcon name="lock" size={16} />확인 중</> : '계좌이체로 충전하기'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button" className={s.topupButton}
+                      disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
+                      title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                      onClick={() => buyTopup(p.code)}
+                    >
+                      {!session ? '로그인하고 충전하기' : (buying === p.code ? '결제창 여는 중…' : '충전하기')}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {ready && (subs.length > 0 || topups.length > 0) && (
         <p className={s.purchaseConsent}>
           결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
         </p>
