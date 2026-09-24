@@ -17,8 +17,8 @@ test('탭 아이콘은 admin·facemarket 만 FaceMarket 심볼, 셀러는 Wearle
     const html = read(doc);
     assert.match(html, /rel="icon"[^>]*facemarket-mark\.svg/, `${doc} 의 탭 아이콘이 안 바뀌었다`);
   }
-  assert.match(read('seller.html'), /rel="icon"[^>]*\/assets\/brand\/logo\.svg/,
-    '셀러 탭 아이콘까지 바꾸면 안 된다');
+  assert.match(read('seller.html'), /rel="icon"[^>]*\/assets\/brand\/favicon\.svg/,
+    '셀러는 Wearless 전용 파비콘을 사용해야 한다');
 });
 
 test('탭 아이콘은 정사각 마크다 — 가로로 긴 워드마크를 걸면 16px 에서 뭉개진다', () => {
