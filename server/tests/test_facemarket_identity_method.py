@@ -447,3 +447,126 @@ def test_real_shape_minor_gate_uses_yyyymmdd():
     with pytest.raises(cx_identity.OacxBiometricError) as exc:
         cx_identity.parse_simple_auth_evidence(minor, contract=contract)
     assert exc.value.reason == "minor_blocked"
+
+
+# --- 지원서 대조 + 간편인증 실거래 응답 (2026-09-25 운영 사고) ---
+from dataclasses import replace
+
+# 운영은 FM_APPLICATION_REQUIRED=true 라 간편인증 직후 지원서 이름·생년월일 대조를 탄다.
+# 실거래 응답의 `birthday` 칸을 대조가 못 읽어, 지원서와 똑같이 적어도 매번 422 가 났다.
+
+def _attach_application(store, enrollment_id, monkeypatch, *, name, birthdate):
+    """등록을 승인된 지원서에 연결하고, 지원서 조회·실패 횟수 갱신을 가짜 커서에 흉내 낸다."""
+    import test_facemarket_biometric_enrollment as biometric_tests
+
+    row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+    row["application_id"] = "approved-application"
+    seen = {"mismatch_updates": 0}
+    FakeCursor = biometric_tests.FakeCursor
+    patched = FakeCursor.execute
+
+    async def execute(cursor, sql, params=None):
+        query = " ".join(sql.split())
+        if query.startswith("select applicant_name, birthdate"):
+            cursor.result = {
+                "applicant_name": name, "birthdate": birthdate,
+                "identity_mismatch_count": 0, "contact_email": "synthetic@example.invalid",
+            }
+        elif query.startswith("update fm_model_applications set identity_mismatch_count"):
+            seen["mismatch_updates"] += 1
+            cursor.result = None
+        elif query.startswith("update fm_biometric_enrollments set identity_tx_digest"):
+            row["identity_tx_digest"] = params[0]
+            cursor.result = None
+        else:
+            await patched(cursor, sql, params)
+
+    monkeypatch.setattr(FakeCursor, "execute", execute)
+    return seen
+
+
+def _real_shape_trans():
+    return {
+        "ci": "SYNTHETIC-CI-APP", "name": "홍길동", "birthday": "19900101",
+        "phone": "01000000000", "pid": "cotoss", "provider": "cotoss",
+    }
+
+
+def test_simple_auth_real_shape_passes_application_claim(enrollment_client_factory, monkeypatch):
+    from datetime import date
+
+    client, store, settings = enrollment_client_factory(
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_oacx_simple_auth_contract="simple-auth-v1",
+    )
+    enrollment_id = _create_simple_auth_enrollment(client, store)
+    # 등록 생성은 플래그 없이(지원서 조회 흉내를 줄이려고) 하고, 본인확인 시점에만 켠다.
+    # test_facemarket_photo_recovery 의 불일치 테스트와 같은 방식이다.
+    client.app.state.settings = replace(client.app.state.settings, fm_application_required=True)
+    seen = _attach_application(
+        store, enrollment_id, monkeypatch, name="홍길동", birthdate=date(1990, 1, 1)
+    )
+
+    async def fake_fetch(base_url, token):
+        return _real_shape_trans()
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity", json={"token": "tok-app-1"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "id_capture_pending"
+    assert seen["mismatch_updates"] == 0
+
+
+def test_simple_auth_real_shape_wrong_birthdate_still_counts_mismatch(
+    enrollment_client_factory, monkeypatch
+):
+    import logging
+    from datetime import date
+
+    # 앱 로깅 설정이 root 핸들러를 갈아 끼워 caplog 가 지워진다. 그래서 이름 있는 로거에
+    # 직접 붙인다(test_http_error_log 와 같은 방식).
+    class _Capture(logging.Handler):
+        def __init__(self):
+            super().__init__(level=logging.DEBUG)
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    capture = _Capture()
+    enrollment_logger = logging.getLogger("app.facemarket_enrollment")
+    # monkeypatch 가 원래 handlers 목록을 되돌려 준다. 단언이 실패해도 핸들러가 새지 않는다.
+    monkeypatch.setattr(enrollment_logger, "handlers", [*enrollment_logger.handlers, capture])
+
+    client, store, settings = enrollment_client_factory(
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_oacx_simple_auth_contract="simple-auth-v1",
+    )
+    enrollment_id = _create_simple_auth_enrollment(client, store)
+    # 등록 생성은 플래그 없이(지원서 조회 흉내를 줄이려고) 하고, 본인확인 시점에만 켠다.
+    # test_facemarket_photo_recovery 의 불일치 테스트와 같은 방식이다.
+    client.app.state.settings = replace(client.app.state.settings, fm_application_required=True)
+    seen = _attach_application(
+        store, enrollment_id, monkeypatch, name="홍길동", birthdate=date(1991, 1, 1)
+    )
+
+    async def fake_fetch(base_url, token):
+        return _real_shape_trans()
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity", json={"token": "tok-app-2"},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "identity_claim_mismatch"
+    assert seen["mismatch_updates"] == 1
+    # 원인 로그: 이름은 맞고 생년월일이 다르다는 판정·인증사·칸 이름만 남고, 값은 없다.
+    records = [r for r in capture.records if r.getMessage() == "facemarket_identity_claim_mismatch"]
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.name_matched is True and rec.birth_precision == "full"
+    assert rec.provider == "cotoss" and "birthday" in rec.trans_keys
+    logged = " ".join(str(v) for v in vars(rec).values())
+    assert "SYNTHETIC-CI-APP" not in logged and "19900101" not in logged and "홍길동" not in logged
