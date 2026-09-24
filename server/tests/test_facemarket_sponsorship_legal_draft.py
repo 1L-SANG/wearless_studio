@@ -25,7 +25,7 @@ def test_sponsorship_consents_are_optional_and_separate_from_required_enrollment
     registry = legal_versions.SPONSORSHIP_CONSENTS
     assert set(registry) == TYPES
     assert all(item["required_for_enrollment"] is False for item in registry.values())
-    assert legal_versions.SPONSORSHIP_CONSENT_VERSION == "2026-09-sponsorship-v1"
+    assert legal_versions.SPONSORSHIP_CONSENT_VERSION == "2026-09-sponsorship-v2"
     assert "draft" not in legal_versions.SPONSORSHIP_CONSENT_VERSION
     assert all(item["version"] == legal_versions.SPONSORSHIP_CONSENT_VERSION
                for item in registry.values())
@@ -52,7 +52,7 @@ def test_effective_sponsorship_documents_match_manifest():
     )}
     for slug, version in legal_versions.SPONSORSHIP_DOCUMENT_VERSIONS.items():
         assert manifest[slug]["version"] == version, slug
-        assert manifest[slug]["effectiveDate"] == "2026-09-23", slug
+        assert manifest[slug]["effectiveDate"] == ("2026-09-23" if slug == "privacy-model" else "2026-09-25"), slug
         assert "status" not in manifest[slug], slug
         text = (ROOT / f"public/legal/{slug}.md").read_text()
         assert "법률 검토 전 초안" not in text and "시행일 미확정" not in text and "검토안" not in text, slug
@@ -94,7 +94,7 @@ def publisher(tmp_path):
 def test_publisher_uses_conditions_and_preserves_draft_warning(publisher):
     root, run = publisher
     table = root / "documents/legal/00_facemarket_legal_notice_map_v1.md"
-    table.write_text(table.read_text().replace("옷 수령 후 3일 이내", "옷 수령 후 4일 이내"))
+    table.write_text(table.read_text().replace("옷 수령 후 7일 이내", "옷 수령 후 4일 이내"))
     result = run()
     assert result.returncode == 0, result.stdout + result.stderr
     for slug in ("sponsorship-consent", "terms-model", "answers", "seller-license-terms-sponsorship-draft"):
@@ -132,3 +132,19 @@ def test_shipping_consent_is_not_granted_to_unknown_sellers(publisher):
     assert "미표시 상태에서는 동의를 받지 않아요" in text
     assert "E-2d-1" in text and "E-2d-2" in text
     assert "건별 협찬 수락 버튼이 아니에요" in text
+
+
+def test_consent_source_version_table_tracks_published_sponsorship_revisions():
+    manifest = {d["slug"]: d for d in json.loads(
+        (ROOT / "public/legal/manifest.json").read_text()
+    )}
+    source = (ROOT / "documents/legal/04_facemarket_biometric_consent_forms_v1.md").read_text()
+    table = source.split("## 부록. 문서 버전 관리", 1)[1]
+    rows = {}
+    for line in table.splitlines():
+        if line.startswith("| "):
+            cells = [cell.strip() for cell in line.split("|")[1:-1]]
+            rows[cells[0]] = cells[1:]
+    assert rows["모델 이용약관"] == [manifest["terms-model"]["version"], manifest["terms-model"]["effectiveDate"]]
+    assert rows["초상 라이선스 협찬 델타"][0] == manifest["license-agreement-sponsorship-draft"]["version"]
+    assert rows["셀러 조건 협찬 델타"][0] == manifest["seller-license-terms-sponsorship-draft"]["version"]

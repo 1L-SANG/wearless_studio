@@ -1,12 +1,16 @@
 .card { margin-block: 1.5rem; padding: clamp(1.2rem, 3vw, 1.75rem); border: 1px solid var(--fm-line); border-radius: var(--fm-card-radius); background: var(--fm-card-bg); color: var(--fm-ink); }
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
-.heading h2 { margin: 0 0 .3rem; font-size: 1.1rem; font-weight: 600; }
+.heading h2 { text-wrap: balance; margin: 0 0 .3rem; font-size: 1.1rem; font-weight: 600; }
 .optional { color: var(--fm-muted); font-size: .8rem; font-weight: 400; }
-.description { margin: .5rem 0; font-size: .92rem; line-height: 1.8; word-break: keep-all; overflow-wrap: anywhere; }
+.description { text-wrap: pretty; margin: .5rem 0; font-size: .92rem; line-height: 1.8; word-break: keep-all; overflow-wrap: anywhere; }
 .description strong { font-weight: 600; }
-.rules { margin: 1rem 0 0; padding-left: 1.2rem; font-size: .9rem; line-height: 1.9; word-break: keep-all; }
+.rules { text-wrap: pretty; margin: 1rem 0 0; padding-left: 1.2rem; font-size: .9rem; line-height: 1.9; word-break: keep-all; overflow-wrap: anywhere; }
 .rules strong { font-weight: 600; }
-.toggle { flex: none; width: 2.8rem; height: 1.6rem; padding: .18rem; border: 1px solid var(--fm-line); border-radius: 999px; background: var(--fm-line); cursor: pointer; }
+/* 규칙 목록 뒤 허용 품목 안내는 한 칸 띄워 목록과 구분한다. */
+.rules + .description { margin-top: .9rem; color: var(--fm-muted); }
+.toggle { position: relative; flex: none; width: 2.8rem; height: 1.6rem; padding: .18rem; border: 1px solid var(--fm-line); border-radius: 999px; background: var(--fm-line); cursor: pointer; }
+/* 스위치 모양은 그대로 두고 누르는 영역만 44px 높이로 넓힌다. */
+.toggle::after { content: ""; position: absolute; inset: -.6rem -.2rem; }
 .toggle span { display: block; width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--fm-ink); transition: transform 160ms ease; }
 .toggle[aria-checked="true"] { background: var(--fm-ink); }
 .toggle[aria-checked="true"] span { background: var(--fm-page-bg); transform: translateX(1.05rem); }

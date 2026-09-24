@@ -17,7 +17,7 @@ _SEOUL = ZoneInfo("Asia/Seoul")
 
 # 선택 의류 협찬 동의(04 동의서 E-2). 2026-09-23 시행. required_versions()나 등록 게이트에 연결하지 않아요
 # (선택 동의라 등록 필수가 아니에요). E-2d 배송 동의 2종은 요청 기능이 열릴 때 쓰기 시작해요.
-SPONSORSHIP_CONSENT_VERSION = "2026-09-sponsorship-v1"
+SPONSORSHIP_CONSENT_VERSION = "2026-09-sponsorship-v2"
 SPONSORSHIP_CONSENTS = {
     "sponsorship_participation": {
         "section": "E-2a", "required_for_enrollment": False,
@@ -38,13 +38,13 @@ SPONSORSHIP_CONSENTS = {
 }
 # 협찬 개정 시행본(2026-09-23). tests/test_facemarket_sponsorship_legal_draft.py 가 manifest 와 대조해요.
 SPONSORSHIP_DOCUMENT_VERSIONS = {
-    "terms-model": "v1.2", "privacy-model": "v1.6", "answers": "v1.3",
+    "terms-model": "v1.3", "privacy-model": "v1.6", "answers": "v1.4",
     "sponsorship-consent": SPONSORSHIP_CONSENT_VERSION,
 }
 # 요청·배송 기능용 델타는 아직 초안(요청 기능 개시 때 승격).
 DRAFT_SPONSORSHIP_DOCUMENT_VERSIONS = {
     "license-agreement-sponsorship-draft": "v3-draft",
-    "seller-license-terms-sponsorship-draft": "v3-draft",
+    "seller-license-terms-sponsorship-draft": "v3-draft.1",
 }
 
 

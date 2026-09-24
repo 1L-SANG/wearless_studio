@@ -30,10 +30,11 @@ DOC_REVISIONS = {
     "license-agreement": ("v1.2", "2026-09-18"),
     "seller-license-terms": ("v1.2", "2026-09-18"),
     # v1.2/v1.6/v1.3 선택 의류 협찬(2026-09-23, 오너 결정으로 예고 기간 없이 시행. 이용자 0명 단계).
-    "terms-model": ("v1.2", "2026-09-23"),
+    # 2026-09-25 협찬 게시 기한은 수령 후 7일, 유지 기간은 게시일부터 90일로 개정해요.
+    "terms-model": ("v1.3", "2026-09-25"),
     "privacy-model": ("v1.6", "2026-09-23"),
-    "answers": ("v1.3", "2026-09-23"),
-    "sponsorship-consent": ("2026-09-sponsorship-v1", "2026-09-23"),
+    "answers": ("v1.4", "2026-09-25"),
+    "sponsorship-consent": ("2026-09-sponsorship-v2", "2026-09-25"),
 }
 DEFAULT_VERSION = "v1.1"
 # 협찬 개정안은 로컬 공개 검토본만 만들어요. 시행일이나 동의 게이트를 활성화하지 않아요.
@@ -42,9 +43,10 @@ DEFAULT_VERSION = "v1.1"
 # 지금 효력이 있는 문서가 사라지고, 등록·지원 화면의 필수 동의 링크가 "적용하지 않는 초안"을 가리켜요.
 DRAFT_REVISIONS = {
     "license-agreement-sponsorship-draft": "v3-draft",
-    "seller-license-terms-sponsorship-draft": "v3-draft",
+    "seller-license-terms-sponsorship-draft": "v3-draft.1",
 }
 DRAFT_DATE = "2026-09-22"
+DRAFT_REVISION_DATES = {"seller-license-terms-sponsorship-draft": "2026-09-25"}
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
 CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
           addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
@@ -216,7 +218,7 @@ def publish():
         metadata = {"slug": slug, "app": app, "title": title, "version": version,
                     "effectiveDate": iso_date, "source": fn}
         if slug in DRAFT_REVISIONS:
-            metadata.update(status="draft", revisionDate=DRAFT_DATE)
+            metadata.update(status="draft", revisionDate=DRAFT_REVISION_DATES.get(slug, DRAFT_DATE))
         manifest.append(metadata)
     # 등록 위저드 동의·안내 문서(04 동의서에서 손으로 뽑아 둔 공개본)는 DOCS 로 생성하지 않으므로
     # 여기서 항목을 유지한다. 빠뜨리면 /biometric-consent, /overseas-transfer 화면이 manifest 를 못 찾는다.

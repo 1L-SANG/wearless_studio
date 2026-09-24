@@ -159,7 +159,7 @@ export function SponsorshipSection() {
               </li>
               <li className={s.point}>
                 <span className={s.pointLabel}>기한</span>
-                <span className={s.pointText}>옷을 받은 뒤 <span className={s.keep}>3일 이내 올리고,</span> <span className={s.keep}>30일 유지해요</span></span>
+                <span className={s.pointText}>옷을 받은 뒤 <span className={s.keep}>7일 이내 올리고,</span> <span className={s.keep}>90일 유지해요</span></span>
               </li>
               <li className={s.point}>
                 <span className={s.pointLabel}>참여</span>

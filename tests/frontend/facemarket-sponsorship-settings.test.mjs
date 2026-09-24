@@ -188,3 +188,13 @@ test('마이페이지 라이선스 탭은 협찬 저장 결과를 상위 모델 
     assert.equal(settings.props.onModelChange, onModelChange);
   } finally { await h.close(); }
 });
+
+test('협찬 선택 화면은 게시 7일과 유지 90일을 포함한 오너 문구를 보여줘요', async () => {
+  const h = await modelComponentHarness({ entry: '/src/features/model/SponsorshipSettings.jsx', exportName: 'SponsorshipFields', initialStates: [], api: {} });
+  try {
+    const text = textOf(h.render({ value: sponsorshipDraft(), onChange() {} }));
+    for (const sentence of ['켜 두면 셀러에게 협찬 요청까지 받을 수 있어요.',
+      '옷을 받은 뒤 기본적으로 7일 이내, SNS 피드에 착용컷을 올리면 돼요.',
+      '게시물은 90일간만 유지하면 돼요.', '협찬 옷도 위에서 정한 허용 품목 안에서만 와요.']) assert.ok(text.includes(sentence));
+  } finally { await h.close(); }
+});
