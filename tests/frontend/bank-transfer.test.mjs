@@ -83,12 +83,19 @@ test('스위치가 켜져 있다', () => {
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, true);
 });
 
-test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 충전 탭을 함께 보여준다', () => {
+test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에 크레딧 충전 구역을 보여준다', () => {
   const html = renderPricing();
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기/);
-  assert.match(html, /추가 구매/);                         // 충전 탭이 보인다
-  assert.match(html, /계좌이체를 상시 확인 후, 영업시간에는 10분 이내 크레딧 지급을 해드려요\./);
+  // 2026-09-24 오너: 충전 팩이 두 종류뿐이라 탭을 없애고 구독 카드 아래에 둔다.
+  assert.doesNotMatch(html, />추가 구매</);
+  assert.match(html, /id="topup"/);
+  assert.match(html, />크레딧 충전</);
+  assert.ok(html.indexOf('id="topup"') > html.lastIndexOf('계좌이체로 시작하기'));
+  // 제목 오른쪽 상태 배지(시안 C, 오너 9/24). '10분' 을 따로 키우지 않는다.
+  assert.match(html, /상시 확인/);
+  assert.match(html, /영업시간 10분 안에 크레딧 지급/);
+  assert.doesNotMatch(html, /<b>10분<\/b>/);
   // 계좌이체 모드에서는 긴 고지문을 그리지 않는다(오너 9/24).
   assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|부가가치세/);
   assert.match(html, /결제하면 <a/);
@@ -103,13 +110,20 @@ test('현재 플랜과 같은 카드는 1개월 연장 신청이다', () => {
 
 test('열린 구독 신청이 있으면 띠를 보여주고 구독 CTA 를 잠근다', () => {
   const html = renderPricing({ open: [OPEN_SUB] });
-  assert.match(html, /입금 확인 중<\/strong> · seller 1개월 · ₩69,900 · 입금자 홍길동 · 9\/25까지 입금/);
+  assert.match(html, /입금 확인 중/);
+  assert.match(html, /Seller 1개월 이용권/);
+  assert.match(html, /₩<\/span>69,900/);
+  assert.match(html, /홍길동/);
+  assert.match(html, /9\/25\(금\) 12:00까지/);
   assert.match(html, /신청 취소/);
-  // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2).
-  assert.match(html, /입금 계좌 국민은행 123-456-789 \(예금주 정일상\) · 입금액 ₩69,900/);
-  const buttons = html.match(/<button[^>]*>계좌이체로 시작하기<\/button>/g) || [];
+  // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2). 금액·계좌는 복사 버튼과 함께.
+  assert.match(html, /국민은행 123-456-789/);
+  assert.match(html, /예금주 정일상/);
+  assert.equal((html.match(/aria-label="(금액|계좌) 복사"/g) || []).length, 2);
+  // 구독 카드 버튼 3개는 잠기고, 버튼 글자 자체가 이유를 말한다.
+  const buttons = html.match(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*확인 중인 신청이 있어요<\/button>/g) || [];
   assert.equal(buttons.length, 3);
-  assert.ok(buttons.every((b) => /disabled=""/.test(b) && /확인 중인 신청이 있어요/.test(b)));
+  assert.doesNotMatch(html, />계좌이체로 시작하기</);
 });
 
 test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준다', () => {
@@ -118,8 +132,9 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((b) => /disabled=""/.test(b) && /잠시 받지 않아요/.test(b)));
   // 잠긴 이유가 툴팁에만 있으면 막다른 길이다 — 안내 띠가 문의처를 말한다(리뷰 368F-3).
-  assert.match(html, /잠시 받지 않아요\. 결제가 필요하면 <a href="mailto:contact@wearless\.kr">/);
-  assert.doesNotMatch(html, /계좌이체를 상시 확인 후/);
+  assert.match(html, /잠시 중단/);
+  assert.match(html, /지금은 계좌이체 신청을 잠시 받지 않아요\. <a href="mailto:contact@wearless\.kr">/);
+  assert.doesNotMatch(html, /영업시간 10분 안에 크레딧 지급/);
 });
 
 test('계좌이체 모드에서는 지급 코드가 없는 충전 보너스 약속을 카드에 적지 않는다', () => {
@@ -134,13 +149,52 @@ test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => 
   assert.doesNotMatch(html, /계좌이체로 시작하기/);
 });
 
-test('충전 탭 카드에는 계좌이체로 충전하기가 뜬다', async () => {
-  // 탭 상태는 내부 useState 라 SSR 로 못 바꾼다 — 목 카탈로그의 충전 상품 5종이 있음만 본다.
-  assert.equal(plans.filter((p) => p.kind === 'topup').length, 5);
-  const res = await api.createBankTransferRequest({ planCode: 'topup_finish', payerName: '홍길동' });
+// 크레딧 부족 창이 /pricing?tab=topup&need=N 으로 보낸다(충전 구역으로 내려가고 추천을 붙인다).
+// SSR 에는 window 가 없으니 이 테스트 동안만 location 을 흉내 낸다.
+function renderTopup(search, opts = {}) {
+  const prev = globalThis.window;
+  globalThis.window = { location: { search } };
+  try { return renderPricing(opts); } finally {
+    if (prev === undefined) delete globalThis.window; else globalThis.window = prev;
+  }
+}
+
+test('크레딧 충전 구역은 100·500 크레딧 두 팩만 보여준다', () => {
+  const html = renderPricing();
+  assert.equal((html.match(/계좌이체로 충전하기/g) || []).length, 2);
+  assert.match(html, /aria-label="100 크레딧"/);
+  assert.match(html, /aria-label="500 크레딧"/);
+  assert.match(html, /₩5,500/);
+  assert.match(html, /₩26,000/);
+  assert.match(html, /크레딧당 55\.0원/);
+  assert.match(html, /크레딧당 52\.0원/);
+  assert.match(html, /1회 결제 · 소멸 없음/);
+  // 부족분이 없으면 추천도, 부족 안내 줄도 없다
+  assert.doesNotMatch(html, />추천</);
+  assert.doesNotMatch(html, /크레딧이 부족해요/);
+  // 옛 팩 이름은 어디에도 없다
+  assert.doesNotMatch(html, /마무리 충전|시작 팩|반복 팩|시즌 팩|대량 팩/);
+});
+
+test('부족분이 있으면 그걸 채우는 가장 작은 팩에 추천을 붙인다', () => {
+  const need155 = renderTopup('?tab=topup&need=155');
+  assert.match(need155, /지금 155 크레딧이 부족해요/);
+  assert.equal((need155.match(/>추천</g) || []).length, 1);
+  // 추천 알약은 500 크레딧 줄 안에 있다(100 으로는 155 를 못 채운다)
+  assert.ok(need155.indexOf('>추천<') > need155.indexOf('aria-label="100 크레딧"'));
+  const need80 = renderTopup('?tab=topup&need=80');
+  assert.ok(need80.indexOf('>추천<') < need80.indexOf('aria-label="100 크레딧"'));
+  // 어느 팩으로도 못 채우면 가장 큰 팩
+  const need900 = renderTopup('?tab=topup&need=900');
+  assert.ok(need900.indexOf('>추천<') > need900.indexOf('aria-label="100 크레딧"'));
+});
+
+test('충전 신청은 목 저장소에서도 종류당 한 건만 열린다', async () => {
+  assert.equal(plans.filter((p) => p.kind === 'topup').length, 2);
+  const res = await api.createBankTransferRequest({ planCode: 'topup_100', payerName: '홍길동' });
   assert.equal(res.request.kind, 'topup');
-  assert.equal(res.request.amount, 9900);
-  await assert.rejects(api.createBankTransferRequest({ planCode: 'topup_start', payerName: '홍길동' }), /확인 중인 신청/);
+  assert.equal(res.request.amount, 5500);
+  await assert.rejects(api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' }), /확인 중인 신청/);
   const open = await api.getOpenBankTransferRequests();
   assert.equal(open.open.length, 1);
   await api.cancelBankTransferRequest(res.request.id);

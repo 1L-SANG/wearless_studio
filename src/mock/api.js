@@ -232,11 +232,8 @@ export const api = {
       { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 600, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
       { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 1600, price: 69900, billingPeriod: 'monthly', sortOrder: 2 },
       { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 2800, price: 119000, billingPeriod: 'monthly', sortOrder: 3 },
-      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 180, price: 9900, billingPeriod: 'once', sortOrder: 11 },
-      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 470, price: 24900, billingPeriod: 'once', sortOrder: 12 },
-      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 1380, price: 69900, billingPeriod: 'once', sortOrder: 13 },
-      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 3050, price: 149000, billingPeriod: 'once', sortOrder: 14 },
-      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 6400, price: 299000, billingPeriod: 'once', sortOrder: 15 },
+      { id: 'm-topup-100', code: 'topup_100', kind: 'topup', name: '100 크레딧', credits: 100, price: 5500, billingPeriod: 'once', sortOrder: 11 },
+      { id: 'm-topup-500', code: 'topup_500', kind: 'topup', name: '500 크레딧', credits: 500, price: 26000, billingPeriod: 'once', sortOrder: 12 },
     ];
   },
   async getCreditHistory() {

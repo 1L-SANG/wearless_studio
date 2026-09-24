@@ -246,7 +246,7 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
       if (BANK_TRANSFER_ENABLED) {
         // 계좌이체 모드(PG 심사 전)는 정기결제 고지문 대신 한 줄 안내만 둔다(오너 9/24).
         // 약관·환불 링크는 카드의 동의 문장이 계속 책임진다.
-        assert.match(html, /계좌이체를 상시 확인 후/);
+        assert.match(html, /영업시간 10분 안에 크레딧 지급/);
         assert.doesNotMatch(html, /구독 크레딧 및 환불 안내/);
         assert.match(html, /결제하면/);
         assert.deepEqual(hrefs(html), ['https://wearless.kr/terms', 'https://wearless.kr/refund']);

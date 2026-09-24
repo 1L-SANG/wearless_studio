@@ -5,34 +5,80 @@
   inherits: false;
 }
 
-.head { margin-top: 14px; margin-bottom: 22px; }
+/* 제목 줄: 왼쪽 '요금제', 오른쪽 상태 배지(시안 C, 오너 9/24). */
+.head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; margin-top: 14px; margin-bottom: 28px; }
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
-.subtitle { margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: var(--fg-2); }
-.subtitle a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 
-.tabs { display: inline-flex; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: 22px; background: var(--bg-2); border-radius: var(--r-5); }
-.tab {
-  padding: var(--sp-8) var(--sp-20); border: none; background: none; border-radius: var(--r-4);
-  font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--fg-2); cursor: pointer;
+
+.promise {
+  --on-ink-1: var(--bg-1);
+  --on-ink-2: color-mix(in srgb, var(--bg-1) 78%, transparent);
+  --on-ink-line: color-mix(in srgb, var(--bg-1) 14%, transparent);
+  --on-ink-fill: color-mix(in srgb, var(--bg-1) 8%, transparent);
+  display: inline-flex; align-items: center; gap: 14px;
+  min-height: 48px; padding: 5px 20px 5px 5px; border-radius: var(--r-5);
+  background: var(--fg-1); color: var(--on-ink-2);
+  box-shadow: 0 10px 24px -14px rgba(14, 13, 20, 0.7);
 }
-.tab:hover { color: var(--fg-1); }
-.tab.active { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 1px 2px var(--ring); }
-.tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.promiseLive {
+  display: inline-flex; align-items: center; gap: 9px; height: 38px; padding: 0 14px 0 12px;
+  border-radius: var(--r-4); background: var(--on-ink-fill); box-shadow: inset 0 0 0 1px var(--on-ink-line);
+  color: var(--on-ink-1); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.promiseText { font-size: 15px; font-weight: 500; color: var(--on-ink-1); white-space: nowrap; letter-spacing: -0.01em; }
+.promiseText a { color: var(--link); }
+.promisePaused { background: var(--bg-1); color: var(--fg-1); box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
+.promisePaused .promiseLive { background: var(--bg-2); box-shadow: none; color: var(--fg-2); }
+.promisePaused .promiseText { color: var(--fg-1); white-space: normal; }
+.dotLive { position: relative; width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--accent-success) 62%, var(--bg-1)); flex: none; }
+.dotLive::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--accent-success) 62%, var(--bg-1)); animation: pricingPing 2.2s ease-out infinite; }
+.dotOff { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); flex: none; }
+@keyframes pricingPing { 0% { transform: scale(.45); opacity: .9; } 75%, 100% { transform: scale(1.5); opacity: 0; } }
+
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
-/* 계좌이체 안내·열린 신청 띠(PG 심사 전) */
-.openRequest {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); flex-wrap: wrap;
-  margin-bottom: var(--sp-12); padding: var(--sp-12) var(--sp-16); font-size: 13px; color: var(--fg-1);
-  border: 1.5px solid var(--ring-strong); border-radius: var(--r-4); background: var(--bg-1);
+
+/* 입금 확인 중 카드(시안 C) */
+.status {
+  margin-bottom: 32px; background: var(--bg-1); border: 1.5px solid var(--ring-strong);
+  border-radius: 20px; box-shadow: var(--elev-soft);
 }
-.openRequestCancel {
-  padding: var(--sp-4) var(--sp-12); border: 1px solid var(--ring-strong); border-radius: var(--r-3);
-  background: var(--bg-1); font-family: var(--font-body); font-size: 12px; color: var(--fg-2); cursor: pointer;
+.statusHead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 14px 16px 14px 24px; border-bottom: 1px solid var(--ring); }
+.state { display: inline-flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 700; white-space: nowrap; color: var(--fg-1); }
+.statusSep { width: 1px; height: 16px; background: var(--ring-strong); }
+.statusProduct { font-size: 15px; font-weight: 500; color: var(--fg-1); }
+.textBtn {
+  margin-left: auto; height: 36px; padding: 0 12px; border: 0; border-radius: var(--r-4); background: none;
+  font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--fg-2); cursor: pointer; transition: color .15s, background-color .15s;
 }
-.openRequestAccount { flex-basis: 100%; font-size: 12px; color: var(--fg-2); }
-.openRequestCancel:hover { color: var(--fg-1); }
-.openRequestCancel:disabled { opacity: 0.5; cursor: default; }
+.textBtn:hover { color: var(--fg-1); background: var(--bg-2); }
+.textBtn:disabled { opacity: .5; cursor: default; }
+.textBtn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.dotPending { position: relative; width: 10px; height: 10px; border-radius: 50%; background: var(--fg-1); flex: none; }
+.dotPending::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--fg-1); animation: pricingPing 1.8s ease-out infinite; }
+.statusGrid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) minmax(0, .8fr) minmax(0, 1fr); margin: 0; }
+.sg { padding: 20px 24px 22px; border-left: 1px solid var(--ring); min-width: 0; }
+.sg:first-child { border-left: 0; }
+.sg dt { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.sg dd { margin: 0; font-size: 16px; font-weight: 700; color: var(--fg-1); font-variant-numeric: tabular-nums; word-break: keep-all; }
+.valLine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.money { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cur { font-weight: 800; }
+.acctNo { font-size: 16px; font-weight: 700; letter-spacing: .01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.holder { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: var(--fg-2); }
+
+/* 복사 알약(신청 창과 같은 모양) */
+.copy {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 10px;
+  border-radius: var(--r-pill); border: 1px solid var(--ring-strong); background: var(--bg-1); color: var(--fg-1);
+  font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; flex: none;
+  transition: background-color .15s, border-color .15s;
+}
+.copy:hover { background: var(--bg-2); }
+.copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.copied svg { color: var(--accent-success); }
+.copyOnInk { background: transparent; }
+
 .billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }
 .billingNotice p + p { margin-top: var(--sp-8); }
 .billingNotice a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
@@ -42,7 +88,6 @@
 .purchaseConsent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
 
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: var(--sp-24); padding-top: var(--sp-12); }
-.topupGrid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .card {
   --pricing-check: #2F80ED;
   --pricing-bonus-bg: #eef5ff;
@@ -65,7 +110,6 @@
   background: var(--accent-success-ring); padding: var(--sp-3) 10px; border-radius: var(--r-pill);
 }
 .kind { display: inline-flex; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-4); font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--fg-2); }
-.kindTopup { color: var(--accent-success); }
 .name { margin: 0 0 var(--sp-16); font-family: var(--font-body); font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
 .priceRow { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-6); }
 .price { font-family: var(--font-body); font-size: 36px; font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
@@ -88,9 +132,37 @@
 .features li { display: flex; align-items: flex-start; gap: var(--sp-12); color: var(--fg-2); font-size: 15px; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
 .featureCheck { display: flex; align-items: center; justify-content: center; flex: 0 0 18px; height: 18px; margin-top: var(--sp-2); border-radius: var(--r-pill); background: var(--pricing-check); color: var(--cta-fg); }
 
-.topupCard { border-top: 3px solid var(--accent-success); }
-.creditBig { font-family: var(--font-body); font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent-success); font-variant-numeric: tabular-nums; }
-.credits { margin: var(--sp-12) 0 var(--sp-24); font-family: var(--font-body); font-size: 14px; color: var(--fg-2); }
+/* 크레딧 충전 구역 — 구독 카드 아래. 같은 재질(흰 면·1.5px 테두리·20px 반경)이되 가로형으로 한 단계 가볍게. */
+.topupSection { margin-top: 56px; scroll-margin-top: 24px; }
+.topupHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 16px; }
+.topupTitle { margin: 0; font-family: var(--font-body); font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
+.topupMeta { font-size: 14px; color: var(--fg-2); }
+.needLine { display: flex; align-items: center; gap: 8px; margin: -4px 0 20px; font-size: 15px; font-weight: 600; color: var(--fg-1); }
+.needLine svg { color: var(--accent-error); }
+.topupList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-24); }
+.topupRow {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px 24px;
+  padding: 24px 28px; background: var(--bg-1); border: 1.5px solid var(--ring-strong); border-radius: 20px; box-shadow: var(--elev-soft);
+}
+.topupRow.recommended { border-color: var(--fg-1); }
+.recommendPill {
+  position: absolute; top: -12px; left: 28px; padding: var(--sp-4) var(--sp-12); border-radius: var(--r-pill);
+  background: var(--fg-1); color: var(--cta-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap;
+}
+.topupInfo { min-width: 0; }
+.topupCredits { display: flex; align-items: baseline; gap: 6px; margin: 0; font-family: var(--font-body); font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.plus { font-weight: 500; color: var(--fg-3); margin-right: -4px; }
+.topupPrice { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.topupPrice strong { font-size: 17px; font-weight: 700; color: var(--fg-1); }
+.topupPrice span { font-size: 13px; color: var(--fg-2); }
+.topupButton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none;
+  min-height: var(--cta-height); padding: 0 22px; border: 0; border-radius: 11px; background: var(--cta-bg); color: var(--cta-fg);
+  font-family: var(--font-body); font-size: 15px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background-color var(--cta-transition);
+}
+.topupButton:hover { background: var(--cta-bg-hover); }
+.topupButton:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.topupButton:disabled { cursor: not-allowed; }
 .cta { margin-top: auto; }
 .buttonRing {
   padding: var(--sp-2); border-radius: 13px;
@@ -108,10 +180,37 @@
 .purchaseButton:disabled { cursor: not-allowed; }
 /* 구독 준비 상태도 랜딩의 검정 버튼과 손가락 커서를 유지한다. */
 .subscriptionButton:disabled { opacity: 1; cursor: pointer; }
-.purchaseConsent { margin: 9px var(--sp-2) 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; letter-spacing: 0.01em; }
+.purchaseConsent { margin: 28px 0 0; text-align: center; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
+.purchaseButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+/* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 무지개 링도 멈춘다. */
+.purchaseButton.locked, .subscriptionButton.locked:disabled, .topupButton.locked { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }
+.buttonRing:has(.locked) { background: var(--ring-strong); animation: none; }
 @keyframes pricingRingRotate { to { --pricing-ring-angle: 360deg; } }
-@media (prefers-reduced-motion: reduce) { .buttonRing { animation: none; } .purchaseButton { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .buttonRing { animation: none; } .purchaseButton { transition: none; } .dotLive::after, .dotPending::after { animation: none; opacity: 0; } }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } .card { padding: var(--sp-28); } }
+@media (max-width: 760px) {
+  .head { flex-direction: column; align-items: stretch; margin-bottom: 20px; }
+  .promise { display: grid; gap: 4px; padding: 12px 16px 14px; }
+  .promiseLive { height: auto; padding: 0; background: none; box-shadow: none; color: var(--on-ink-2); font-size: 12px; }
+  .promiseText { white-space: normal; font-size: 15px; }
+  .promisePaused .promiseLive { background: none; }
+  .statusHead { padding: 12px 8px 12px 16px; }
+  .statusSep { display: none; }
+  .statusProduct { flex-basis: 100%; order: 3; font-size: 14px; color: var(--fg-2); padding-left: 22px; margin-top: -4px; }
+  .statusGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sg { padding: 16px; border-left: 0; border-top: 1px solid var(--ring); }
+  .sg:first-child { border-top: 0; }
+  .sgWide { grid-column: 1 / -1; }
+  .sg:last-child:not(.sgWide) { border-left: 1px solid var(--ring); }
+  .money { font-size: 26px; }
+  .topupSection { margin-top: 40px; }
+  .topupList { grid-template-columns: 1fr; gap: 16px; }
+  .topupRow { padding: 20px; }
+  .topupCredits { font-size: 26px; }
+  .topupButton { padding: 0 16px; font-size: 14px; }
+  .needLine { margin: 0 0 16px; font-size: 14px; }
+  .purchaseConsent { margin-top: 20px; font-size: 12px; }
+}
 @media (max-width: 380px) { .card { padding: var(--sp-20); } .creditLine { gap: var(--sp-6); } }
 
 /* 계좌이체 구독 — 카드 버튼 아래 보조 선택지. 주 버튼(.subscriptionButton)과 경쟁하지

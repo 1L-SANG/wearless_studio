@@ -16,7 +16,9 @@ export function CreditShortfallModal({ shortfall, action, onClose }) {
       requiredCredits: shortfall.requiredCredits,
     });
     onClose();
-    navigate('/pricing');
+    // 추가 구매 탭으로 바로 열고 부족분을 넘긴다 — 요금제 화면이 그걸 채우는 팩에 '추천'을 붙인다.
+    const need = Math.max(0, Number(shortfall.requiredCredits) - Number(shortfall.availableCredits));
+    navigate(Number.isFinite(need) && need > 0 ? `/pricing?tab=topup&need=${need}` : '/pricing?tab=topup');
   };
 
   return (

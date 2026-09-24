@@ -72,12 +72,12 @@ test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 
   // 그 경로의 계약은 bank-transfer.test.mjs 와 이 파일의 다른 테스트가 나눠 본다.
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기|준비 중|계좌이체로 구독하기/);
-  // 이 하네스는 계좌 정보(/v1/bank-transfer/info)를 채우지 않는다 → 세 버튼 모두 잠기고,
-  // 잠긴 사유는 '계좌 미설정' 하나여야 한다(결제 키 유무와 무관).
+  // 이 하네스는 계좌 정보(/v1/bank-transfer/info)를 채우지 않는다 → 구독 3개와 충전 2개 버튼이
+  // 모두 잠기고, 잠긴 사유는 '계좌 미설정' 하나여야 한다(결제 키 유무와 무관).
   const disabled = (html.match(/disabled=""/g) || []).length;
   const notice = (html.match(/계좌이체 신청을 잠시 받지 않아요/g) || []).length;
-  assert.equal(disabled, 3);
-  assert.equal(notice, 3);
+  assert.equal(disabled, 5);
+  assert.equal(notice, 5);
   assert.doesNotMatch(html, /결제 키가 설정되지 않았어요/);
   // 계좌이체 모드에서는 Seller·Pro 의 '충전할 때마다 크레딧 5%/10% 보너스' 줄을 숨긴다 — 지급 코드가
   // 없는데 충전 탭이 열려 있어 약속을 못 지키기 때문(bank-transfer.test.mjs). 그래서 12 가 아니라 10.
@@ -108,11 +108,11 @@ test('빈 요금제 목록은 준비 중 안내를 표시한다', () => {
   assert.match(render([]), /요금제를 준비 중이에요/);
 });
 
-test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량을 사용한다', async () => {
+// 2026-09-24 오너 결정: 충전 팩은 100·500 크레딧 두 종류뿐이다.
+test('목 결제 주문은 충전 팩 두 개의 가격과 지급량을 사용한다', async () => {
+  assert.deepEqual(plans.filter((p) => p.kind === 'topup').map((p) => p.code), ['topup_100', 'topup_500']);
   for (const [code, amount, credits] of [
-    ['topup_finish', 9900, 180], ['topup_start', 24900, 470],
-    ['topup_repeat', 69900, 1380], ['topup_season', 149000, 3050],
-    ['topup_bulk', 299000, 6400],
+    ['topup_100', 5500, 100], ['topup_500', 26000, 500],
   ]) {
     const order = await api.createTossCheckout(code);
     assert.equal(order.amount, amount);
@@ -126,8 +126,7 @@ test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량�
 test('개정 환율 카탈로그와 Seller 카드 지급량이 일치한다', () => {
   for (const [code, credits] of [
     ['starter', 600], ['seller', 1600], ['pro', 2800],
-    ['topup_finish', 180], ['topup_start', 470], ['topup_repeat', 1380],
-    ['topup_season', 3050], ['topup_bulk', 6400],
+    ['topup_100', 100], ['topup_500', 500],
   ]) assert.equal(plans.find((plan) => plan.code === code)?.credits, credits, code);
   const html = render(plans.filter((plan) => plan.code === 'seller'));
   for (const text of ['1,400', '1,600', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);
