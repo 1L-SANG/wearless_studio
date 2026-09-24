@@ -815,6 +815,7 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
     api: { submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; } },
   });
   harness.runtime.navigate = (...args) => navigations.push(args);
+  harness.runtime.location = { pathname: '/model/apply', search: '', state: { applyStep: 3, applyEditing: false }, key: 'k3' };
   try {
     const form = harness.render();
     const submit = findTree(form, (node) => node.type === 'button' && node.props?.children === '지원 완료');
@@ -831,7 +832,8 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
       privacyConsent: { accepted: true, documentVersion: '2026-09-v1' },
     });
     assert.equal(harness.runtime.states[0], 'complete');
-    assert.deepEqual(navigations, []);
+    // 완료 화면은 지금 기록 항목을 바꿔 적어, 그 뒤 뒤로가기를 알아볼 수 있게 한다.
+    assert.deepEqual(navigations, [['/model/apply', { replace: true, state: { applyComplete: true } }]]);
     const complete = harness.render();
     assert.ok(findTree(complete, (node) => node.props?.children === '지원서가 접수 완료됐어요'));
     assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/status' && node.props.children === '지원 상태 보기'));
@@ -868,7 +870,7 @@ test('체크사항 하나가 비어 있으면 지원 완료가 잠기고 미동�
   try {
     const tree = harness.render();
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료').props.disabled, true);
-    assert.ok(findTree(tree, (node) => node.props.children === '아직 표시하지 않은 체크사항이 1개 있어요.'));
+    assert.ok(findTree(tree, (node) => node.props.children === '아직 확인하지 않은 항목이 1개 있어요.'));
     assert.ok(findTree(tree, (node) => node.type === 'a' && node.props.href === '/privacy' && node.props.target === '_blank'));
   } finally { await harness.close(); }
 });
@@ -1101,6 +1103,7 @@ test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알�
   try {
     for (const label of ['포트폴리오 링크', 'SNS 링크']) {
       const input = findTree(harness.render(), (node) => node.type?.name === 'FormInput' && node.props.label === label);
+      input.props.onBlur();
       // https:// is added before submission; it must count towards the server's limit.
       for (const invalid of ['example.com/' + 'a'.repeat(490), 'ftp://example.com/file']) {
         input.props.onChange({ target: { value: invalid } });

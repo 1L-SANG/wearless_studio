@@ -4,7 +4,7 @@ export const HUB_STEPS = Object.freeze([
   { key: 'application', label: '지원 접수' },
   { key: 'reviewApplication', label: '내부 검토' },
   { key: 'registration', label: '모델 등록' },
-  { key: 'review', label: '최종 검토' },
+  { key: 'review', label: '테스트컷 준비' },
   { key: 'confirm', label: '프로필 이미지 확정' },
 ]);
 const route = (label, to) => ({ label, kind: 'route', to });
@@ -62,12 +62,9 @@ export function resolveHubJourney({
   if (ownedModel?.status === 'awaiting_confirm' || enrollment?.status === 'confirm_pending') {
     return make('review', 4, 'todo', { sub: 'confirm', action: route('테스트컷 고르기', '/model/confirm') });
   }
-  if (enrollment?.status === 'review_pending') {
-    return make('review', 3, 'progress', { sub: 'review', action: reload('검수 상태 새로고침') });
-  }
-  if (['processing', 'asset_building', 'passed'].includes(enrollment?.status)
+  if (['review_pending', 'vc_pending', 'passed'].includes(enrollment?.status)
     || (ownedModel?.status === 'pending' && !enrollment && (ownedModel.redoCount > 0 || hasLicense))) {
-    return make('review', 3, 'progress', { sub: 'assets', action: reload('생성 상태 새로고침') });
+    return make('review', 3, 'progress', { sub: 'assets', action: reload('진행 상태 새로고침') });
   }
   if (enrollment && !['cancelled', 'failed'].includes(enrollment.status)) {
     // 조건·증서 단계도 등록 위저드(3·4단계)가 이어받아요. 위저드가 저장된 단계를 복원해요.

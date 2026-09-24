@@ -32,11 +32,11 @@ export function MyPage({ journey, application, enrollment, model, license, onAct
     description = `${reviewed ? `${reviewed}에 검토가 끝났어요. ` : ''}아래 사유를 보고 고쳐서 다시 지원할 수 있어요.`;
   } else if (journey.step === 0) {
     title = '지원서를 검토하고 있어요';
-    description = `${received ? `${received}에 받았어요. ` : ''}24시간 이내에 ${application?.contactEmail ? `${application.contactEmail}으로 ` : '메일로 '}결과를 알려드려요.`;
-    progressDescription = '지원서를 검토중이에요. 24시간 이내 결과를 전달해드릴게요.';
+    description = `${received ? `${received}에 받았어요. ` : ''}24시간 이내에 ${application?.contactEmail ? `${application.contactEmail} 주소로 ` : '메일로 '}결과를 알려드려요.`;
+    progressDescription = '담당자가 지원서를 확인하고 있어요.';
   } else {
     title = resuming ? '등록을 이어서 해요' : '승인됐어요. 이제 등록을 시작해요';
-    description = resuming ? (savedPhotos ? '지난번에 사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : '본인확인, 사진 18장, 조건, 증서 4단계예요. 밝은 야외에서 도와줄 사람과 촬영하는 데 약 15분, 나머지 절차는 약 10분이에요. 간편인증은 담당자 확인 시간이 더해져요.';
+    description = resuming ? (savedPhotos ? '지난번에 사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : <>축하드려요.<br />지금 당장 본인확인과 온라인 모델 생성을 위한 사진 촬영, 조건 설정, 라이선스 증서 발급까지 완료해보세요.</>;
     progressDescription = resuming ? (savedPhotos ? '사진 단계까지 저장돼 있어요. 그 자리부터 이어져요.' : '지난번에 저장한 단계부터 이어져요.') : '얼굴 구현을 위한 이미지들과, 라이선스 증서에 대한 설정이 필요해요.';
   }
   return <div className={s.page}>

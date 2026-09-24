@@ -15,7 +15,7 @@ async function harness(t, profile) {
   const key = `__confirmTest${Math.random().toString(36).slice(2)}`;
   const runtime = {
     states: ['ready', { ...active, profile }, { closeupCutId: 'close', fullbodyCutId: 'full' }, true, false],
-    cursor: 0, reads: 0, writes: 0,
+    cursor: 0, reads: 0, writes: 0, toasts: [], navigations: [],
     result: active,
     confirm: async () => {},
   };
@@ -47,8 +47,8 @@ async function harness(t, profile) {
           export const useEffect=()=>{};
           export const useCallback=f=>f;`;
         if (id === '\0confirm-jsx') return 'export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;';
-        if (id === '\0confirm-router') return 'export const useNavigate=()=>()=>{};';
-        if (id === '\0confirm-ui') return "export const Button='Button',ErrorState='ErrorState',Icon='Icon';export const useToast=()=>({push(){}});";
+        if (id === '\0confirm-router') return `export const useNavigate=()=>(...args)=>${r}.navigations.push(args);`;
+        if (id === '\0confirm-ui') return `export const Button='Button',ErrorState='ErrorState',Icon='Icon';export const useToast=()=>({push:(...args)=>${r}.toasts.push(args)});`;
         if (id === '\0confirm-css') return 'export default {};';
         if (id === '\0confirm-api') return `
           export const getMyModelTestCuts=async()=>{${r}.reads++;return ${r}.result;};
@@ -105,4 +105,12 @@ test('a permanent license keeps confirmation available and shows its withdrawal 
   const nodes = h.render();
   assert.ok(nodes.some(node => node.type === 'dd' && node.props.children === '철회 시까지'));
   assert.equal(nodes.find(node => node.type === 'Button' && node.props.variant === 'primary').props.disabled, false);
+});
+
+
+test('확정 성공은 증서 발급 완료도 안내하고 마이페이지로 이동해요', async t => {
+  const h = await harness(t, active.profile);
+  await h.render().find(node => node.type === 'Button' && node.props.variant === 'primary').props.onClick();
+  assert.equal(h.runtime.toasts[0][0], '프로필을 확정했어요. 라이선스 증서도 발급됐어요.');
+  assert.deepEqual(h.runtime.navigations, [['/status', { replace: true }]]);
 });

@@ -1,0 +1,29 @@
+/* 로그인 창을 닫은 뒤 보이는 가드 화면(FacemarketLoginPrompt).
+   바깥 .route-loading(app.css)은 그리드라, 문장과 버튼 줄을 .prompt 하나에 담아 한 행으로
+   붙여 가운데에 세운다. facemarket 은 fm-theme 안이라 --fm-muted 가 #5f6b76 이고,
+   admin 번들에는 facemarketTheme.css 가 없어 폴백 --fg-2 로 종전과 같은 색이다. */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-12);
+  padding-inline: var(--sp-20);
+  text-align: center;
+  word-break: keep-all;
+  color: var(--fm-muted, var(--fg-2));
+}
+.prompt p { margin: 0; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-12);
+  align-items: center;
+  justify-content: center;
+}
+/* 소개 링크도 44px 터치 높이를 갖게 한다. */
+.actions :global(.link) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}

@@ -39,7 +39,7 @@ export function GallerySection() {
         {/* 큰 인덱스는 aria-hidden 이다(숫자 두 덩이로 쪼개져 있어 그대로 읽히면 어수선하다).
             대신 위치 변화를 여기서 한 문장으로 알린다 — 드래그·키보드로 옮겨도 스크린리더
             사용자가 현재 위치를 안다. */}
-        <p className={s.srOnly} aria-live="polite" aria-atomic="true">
+        <p className={s.srOnly} aria-live={controller.autoplaying ? 'off' : 'polite'} aria-atomic="true">
           {`${LANDING_MODELS.length}장 중 ${controller.activeIndex + 1}번째 이미지`}
         </p>
       </section>

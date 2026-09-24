@@ -9,11 +9,12 @@
    닫기는 '취소'와 '성공'을 구분해서 AuthProvider 에 알린다 — 취소일 때만 복귀 경로를 버린다.
    두 도메인이 이 한 모달을 함께 쓴다(ai=셀러 스튜디오, facemarket=모델 얼굴 라이선스).
    도메인별로 다른 건 브랜드 디스크립터·부제·약관 고지 세 줄뿐이고, 분기는 IS_FACEMARKET 이다.
+   facemarket 에는 여기에 더해 닫기 버튼, 뒤로가기로 닫기, 인앱 브라우저 안내가 붙는다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { useAuth } from './AuthProvider.jsx';
+import { readPostLogin, useAuth } from './AuthProvider.jsx';
 import { PG_REVIEW_LOGIN_ENABLED } from '@/lib/tossKeys.js';
-import { Modal } from '@/components/ui.jsx';
+import { Icon, Modal } from '@/components/ui.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import { clearSignupConsent, markSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import styles from './Login.module.css';
@@ -48,6 +49,11 @@ const FACEMARKET_LOCKUP = IS_FACEMARKET || IS_ADMIN;
 const IS_SELLER = !IS_FACEMARKET && !IS_ADMIN;
 const EMAIL_LOGIN_ENABLED = IS_LOCAL_SUPABASE || (IS_SELLER && PG_REVIEW_LOGIN_ENABLED);
 
+/* 카카오톡·인스타그램·페이스북·네이버·라인의 앱 안 브라우저. 구글은 이런 웹뷰의 OAuth 를
+   403 disallowed_useragent 로 막는다. FaceMarket 링크가 주로 이 앱들로 퍼져서, 여기서는
+   카카오를 먼저 보여주고 다른 브라우저로 여는 길을 안내한다. */
+const IN_APP_UA = /KAKAOTALK|Instagram|FBAN|FBAV|NAVER\(inapp|Line\//i;
+
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
 function GoogleIcon() {
   return (
@@ -77,6 +83,7 @@ export function LoginGate() {
   const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
   const [signupConsent, setSignupConsent] = useState(false);
   const oauthAttempt = useRef(null);
+  const closeRef = useRef(null); // facemarket 닫기 버튼(셀러·admin 에는 없다)
 
   useEffect(() => {
     const resume = (event) => {
@@ -98,6 +105,22 @@ export function LoginGate() {
      리다이렉트가 커밋되기 전에도 살아 있는데, 그 순간의 Esc 를 취소로 처리하면 이미
      시작된 로그인의 복귀 목표(wl_postLogin)를 지워버린다(로그인 자체는 그대로 진행된다). */
   const dismiss = () => closeLogin({ cancelled: pending === null });
+
+  /* 열리면 닫기 버튼에 포커스를 둔다. 스크린리더가 가려진 배경을 다 읽고 나서야 창에
+     닿는 일을 막는다. 셀러·admin 은 버튼이 없어서 아무 일도 없다. */
+  useEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  /* 폰의 뒤로가기(안드로이드 뒤로, iOS 스와이프)로도 닫는다. 모달 상태는 라우터 밖
+     AuthProvider 에 있어서, 이게 없으면 주소만 바뀌고 창은 모든 화면 위에 남는다.
+     닫기 의미는 dismiss 와 같다(진행 중인 로그인이면 취소가 아니다). */
+  useEffect(() => {
+    if (!IS_FACEMARKET) return undefined;
+    const onPop = () => closeLogin({ cancelled: pending === null });
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [pending, closeLogin]);
 
   /* 열릴 때 세션이 없었는데 세션이 도착하면 스스로 닫는다 — 다른 탭에서 로그인한 경우,
      그리고 아래 로컬 폼 로그인. 열릴 때 이미 세션이 있었으면 닫지 않는다: Editor 의
@@ -184,9 +207,58 @@ export function LoginGate() {
     setPending(null);
   };
 
+  /* 앱 안 브라우저 판별은 facemarket 에서만 한다(셀러 화면은 그대로). 테스트가 이 모달을
+     node 에서 그리므로 navigator 가 없어도 안전해야 한다. */
+  const inApp = IS_FACEMARKET && typeof navigator !== 'undefined' && IN_APP_UA.test(navigator.userAgent || '')
+    ? (/KAKAOTALK/i.test(navigator.userAgent) ? 'kakaotalk' : 'other')
+    : null;
+  /* 다른 브라우저에서 열 주소. 이번 로그인의 복귀 경로(openLogin 이 심은 앱 내 경로)가 있으면
+     그리로, 없으면 지금 화면으로. 새 브라우저에서도 그 화면의 로그인 가드가 창을 다시 연다. */
+  const postLogin = inApp === 'kakaotalk' ? readPostLogin() : null;
+  const resumeUrl = inApp === 'kakaotalk'
+    ? window.location.origin + (postLogin && postLogin.startsWith('/') && !postLogin.startsWith('//')
+      ? postLogin
+      : window.location.pathname + window.location.search)
+    : null;
+
+  const googleButton = (
+    <button
+      key="google"
+      type="button"
+      className={`${styles.btn} ${styles.google}`}
+      onClick={() => handle('google')}
+      disabled={pending !== null || blocked}
+    >
+      <span className={styles.icon}><GoogleIcon /></span>
+      {pending === 'google' ? '이동 중…' : isSignup ? 'Google로 가입하기' : 'Google로 계속하기'}
+    </button>
+  );
+  const kakaoButton = (
+    <button
+      key="kakao"
+      type="button"
+      className={`${styles.btn} ${styles.kakao}`}
+      onClick={() => handle('kakao')}
+      disabled={pending !== null || blocked}
+    >
+      <span className={styles.icon}><KakaoIcon /></span>
+      {pending === 'kakao' ? '이동 중…' : isSignup ? '카카오로 가입하기' : '카카오로 계속하기'}
+    </button>
+  );
+
   return (
     <Modal onClose={dismiss}>
-      <div className={styles.gate}>
+      <div
+        className={`${styles.gate}${IS_FACEMARKET ? ' fm-theme' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="로그인"
+      >
+        {IS_FACEMARKET && (
+          <button ref={closeRef} type="button" className={styles.close} aria-label="닫기" onClick={dismiss}>
+            <Icon name="x" size={20} />
+          </button>
+        )}
         <div className={styles.brand}>
           {FACEMARKET_LOCKUP ? (
             /* 로고 한 장이 심볼과 워드마크를 다 담고 있어 오브를 따로 얹지 않는다. */
@@ -207,8 +279,7 @@ export function LoginGate() {
         </div>
         {/* 부제도 같은 이유로 도메인을 가른다. facemarket 에서 이 모달이 열리는 경로는
             셋 다 등록으로 향한다 — 랜딩 CTA·상단바 로그인(shell.jsx)·미인증 /model/*
-            진입(App.jsx FacemarketLoginPrompt, 그 화면 문구도 '모델 등록은 로그인이
-            필요해요'). 셀러 문구는 한 글자도 건드리지 않는다. */}
+            진입(guards.jsx FacemarketLoginPrompt). 셀러 문구는 한 글자도 건드리지 않는다. */}
         {IS_SELLER && (
           <div className={styles.tabs} role="tablist" aria-label="로그인 또는 회원가입">
             <button type="button" role="tab" aria-selected={mode === 'login'}
@@ -245,25 +316,21 @@ export function LoginGate() {
 
 
         <div className={styles.buttons}>
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.google}`}
-            onClick={() => handle('google')}
-            disabled={pending !== null || blocked}
-          >
-            <span className={styles.icon}><GoogleIcon /></span>
-            {pending === 'google' ? '이동 중…' : isSignup ? 'Google로 가입하기' : 'Google로 계속하기'}
-          </button>
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.kakao}`}
-            onClick={() => handle('kakao')}
-            disabled={pending !== null || blocked}
-          >
-            <span className={styles.icon}><KakaoIcon /></span>
-            {pending === 'kakao' ? '이동 중…' : isSignup ? '카카오로 가입하기' : '카카오로 계속하기'}
-          </button>
+          {inApp ? [kakaoButton, googleButton] : [googleButton, kakaoButton]}
         </div>
+
+        {inApp && (
+          <div className={styles.inAppNote}>
+            <p className={styles.hint}>
+              {inApp === 'kakaotalk'
+                ? '카카오톡 안에서는 구글 로그인이 막혀 있어요. 카카오로 계속하거나 다른 브라우저로 열어 주세요.'
+                : '앱 안에서는 구글 로그인이 막혀 있어요. 카카오로 계속하거나, 앱 메뉴에서 다른 브라우저로 열어 주세요.'}
+            </p>
+            {inApp === 'kakaotalk' && (
+              <a href={`kakaotalk://web/openExternal?url=${encodeURIComponent(resumeUrl)}`}>다른 브라우저로 열기</a>
+            )}
+          </div>
+        )}
 
         {IS_SELLER && mode === 'login' && (
           <p className={styles.notice}>

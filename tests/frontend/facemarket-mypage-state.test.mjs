@@ -137,7 +137,7 @@ test('등록 진행 화면은 등록 2단계와 검토 모드에만 적용해요
   assert.equal(isRegistrationJourney({ mode: 'active' }), false);
 });
 
-test('등록 진행 카드는 저장, 증서 발급, 검수, 프로필 확정 상태를 화면 문구와 단계에 매핑해요', () => {
+test('등록 진행 카드는 입력 중과 테스트컷 준비 및 확정 상태를 구분해요', () => {
   assert.deepEqual(registrationCard({ mode: 'onboarding', step: 2 }, { status: 'photos_pending' }), {
     title: '등록을 이어서 마쳐 주세요.',
     description: '얼굴 사진과 사용 조건을 확인하면 등록이 끝나요.',
@@ -145,16 +145,16 @@ test('등록 진행 카드는 저장, 증서 발급, 검수, 프로필 확정 �
     to: '/model/register',
     currentStep: 2,
   });
-  assert.deepEqual(registrationCard({ mode: 'onboarding', step: 2 }, { status: 'vc_pending' }), {
-    title: '라이선스 증서를 발급하고 있어요.',
-    description: '발급이 완료되면 내 증서 카드에서 확인할 수 있어요.',
-    label: '진행 상황 확인',
+  for (const status of ['license_pending', 'processing', 'asset_building']) assert.deepEqual(registrationCard({ mode: 'onboarding', step: 2 }, { status }), {
+    title: '사용 조건을 정해 주세요.',
+    description: '조건을 정하고 증서 발급하기를 누르면 등록 절차가 끝나요.',
+    label: '이어서 등록하기',
     to: '/model/register',
     currentStep: 3,
   });
-  assert.deepEqual(registrationCard({ mode: 'review', sub: 'assets' }, { status: 'asset_building' }), {
-    title: '사진을 검수하고 있어요.',
-    description: '검수가 끝나면 다음 단계를 알려드릴게요.',
+  assert.deepEqual(registrationCard({ mode: 'review', sub: 'assets' }, { status: 'vc_pending' }), {
+    title: '테스트컷을 준비하고 있어요.',
+    description: '모델님의 얼굴을 활용한 테스트컷은 2일 이내 보내드릴게요. 테스트컷을 확정하면 라이선스 증서 발급과 함께 등록이 끝나요.',
     label: '등록 내용 확인',
     to: '/model/register',
     currentStep: 4,

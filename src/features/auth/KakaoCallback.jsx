@@ -29,6 +29,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui.jsx';
 import { useAuth } from './AuthProvider.jsx';
 import { http } from '@/lib/api/httpAdapter.js';
+import { IS_FACEMARKET } from '@/lib/host.js';
 import { readKakaoCallbackParams, safeInternalPath } from '@/lib/kakaoOidc.js';
 import { runKakaoCallbackFlow } from '@/lib/kakaoCallbackFlow.js';
 
@@ -51,7 +52,7 @@ function runOnce(search, signInWithKakaoIdToken) {
 
 export function KakaoCallback() {
   const navigate = useNavigate();
-  const { signInWithKakaoIdToken, openLogin } = useAuth();
+  const { signInWithKakaoIdToken, openLogin, signIn } = useAuth();
   const [failed, setFailed] = useState(null);
   /* AuthProvider 는 context value 를 매 렌더 새로 만든다 — 세션이 도착해 리렌더되면
      signInWithKakaoIdToken 의 identity 가 바뀌어 아래 effect 가 다시 돈다. 교환 자체는
@@ -84,13 +85,19 @@ export function KakaoCallback() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {/* 모달은 AuthProvider 가 전역으로 그린다 — 어느 라우트에서든 열린다.
               먼저 '/' 로 옮긴 뒤 여는 이유: 이 주소에는 소비된 인가코드가 붙어 있어
-              새로고침·뒤로가기가 같은 실패를 반복한다. */}
+              새로고침·뒤로가기가 같은 실패를 반복한다.
+              FaceMarket 은 모달을 거치지 않고 카카오로 바로 다시 보낸다. 인자 없는 openLogin
+              은 복귀 경로를 지워서, 다시 로그인해도 지원서가 아니라 랜딩에 떨어진다.
+              여기서는 복귀 경로를 읽지도 지우지도 않는다. 성공하면 위의 '/' 이동에서
+              FacemarketRoot 가 그대로 이어 준다. 셀러는 가입 동의 탭이 모달에 있어 종전대로다. */}
           <Button
             variant="primary"
             size="sm"
-            onClick={() => { navigate('/', { replace: true }); openLogin?.(); }}
+            onClick={IS_FACEMARKET
+              ? () => signIn('kakao')
+              : () => { navigate('/', { replace: true }); openLogin?.(); }}
           >
-            로그인 다시 시도
+            {IS_FACEMARKET ? '카카오로 다시 로그인' : '로그인 다시 시도'}
           </Button>
           <Link className="link" to="/" replace>처음으로</Link>
         </div>

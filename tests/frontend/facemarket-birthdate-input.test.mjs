@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nextBirthdateSegments, backspaceBirthdateSegments, birthdateFromSegments, isAdultBirthdate } from '../../src/features/model/birthdateInput.js';
+import { nextBirthdateSegments, backspaceBirthdateSegments, birthdateFromSegments, birthdateProblem, isAdultBirthdate } from '../../src/features/model/birthdateInput.js';
 
 const today = new Date(2026, 8, 10);
 test('four year digits advance to month without mutating the input', () => {
@@ -43,4 +43,21 @@ test('invalid calendar dates, month and day ranges are rejected', () => {
     assert.equal(isAdultBirthdate(value, today), false, value);
   }
   assert.equal(isAdultBirthdate('2000-02-29', today), true);
+});
+test('a lone month digit that cannot start two digits is padded and advances to day', () => {
+  assert.deepEqual(nextBirthdateSegments(['1999', '', ''], 1, '4'), { segments: ['1999', '04', ''], focusIndex: 2 });
+});
+test('a lone day digit that cannot start two digits is padded', () => {
+  assert.equal(nextBirthdateSegments(['1999', '04', ''], 2, '7').segments[2], '07');
+});
+test('a month digit that can start two digits waits for the second', () => {
+  assert.deepEqual(nextBirthdateSegments(['1999', '', ''], 1, '1'), { segments: ['1999', '1', ''], focusIndex: 1 });
+});
+test('birthdateProblem names the short year, the missing calendar day and the minor', () => {
+  assert.equal(birthdateProblem(['99', '04', '12'], today), 'year');
+  assert.equal(birthdateProblem(['1999', '02', '30'], today), 'calendar');
+  assert.equal(birthdateProblem(['1999', '13', '01'], today), 'calendar');
+  assert.equal(birthdateProblem(['2010', '01', '01'], today), 'minor');
+  assert.equal(birthdateProblem(['1999', '04', '12'], today), null);
+  assert.equal(birthdateProblem(['1999', '4', ''], today), null);
 });

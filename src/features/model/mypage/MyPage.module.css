@@ -12,12 +12,12 @@
   --ink: #24272b;
   --canvas: #fff;
 }
-.page { max-width: 760px; width: 100%; min-width: 0; margin: 0 auto; padding: 40px 0 var(--sp-section-mobile); color: var(--fg-1); font-family: var(--font-body); overflow-wrap: anywhere; }
-.page h1 { font-size: 31px; font-weight: 600; line-height: 1.4; margin: 0; }
-.page h2, .dialog h2 { font-size: 18px; font-weight: 600; margin: 0 0 var(--sp-16); }
-.page p, .dialog p { line-height: 1.7; }
-.pageLabel { font-size: 13px; color: var(--fg-2); margin: 0 0 var(--sp-12); }
-.muted { color: var(--fg-2); font-size: 14px; }
+.page { max-width: 760px; width: 100%; min-width: 0; margin: 0 auto; padding: 40px 0 var(--sp-section-mobile); color: var(--fg-1); font-family: var(--font-body); overflow-wrap: anywhere; word-break: keep-all; }
+.page h1 { text-wrap: balance; font-size: 31px; font-weight: 600; line-height: 1.4; margin: 0; }
+.page h2, .dialog h2 { text-wrap: balance; font-size: 18px; font-weight: 600; margin: 0 0 var(--sp-16); }
+.page p, .dialog p { text-wrap: pretty; line-height: 1.7; }
+.pageLabel { font-size: 13px; color: var(--fm-muted); margin: 0 0 var(--sp-12); }
+.muted { color: var(--fm-muted); font-size: 14px; }
 .description { font-size: 16px; margin: var(--sp-12) 0 0; }
 .introWithIllus { display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; }
 .introWithIllus > div:first-child { min-width: 0; flex: 1 1 auto; }
@@ -33,15 +33,15 @@
 .timeline li:last-child { padding-bottom: 0; }
 .timeline li:not(:last-child)::before { content: ''; position: absolute; left: 13px; top: 34px; bottom: 4px; width: 1px; background: var(--ring-strong); }
 .timelineMarker { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--ring-strong); border-radius: 50%; color: var(--fg-2); font-size: 13px; margin-top: var(--sp-2); background: var(--bg-1); }
-.marker_done { background: var(--link); border-color: var(--link); color: var(--bg-1); }
+.marker_done { background: var(--fm-accent); border-color: var(--fm-accent); color: var(--bg-1); }
 .marker_progress, .marker_todo { background: var(--fg-1); border-color: var(--fg-1); color: var(--bg-1); }
 .timelineHeading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2) var(--sp-8); }
 .timelineHeading strong { font-size: 16px; font-weight: 600; }
-.timelineTag { font-size: 12px; color: var(--fg-2); }
-.tagDone { color: var(--link); font-weight: 500; }
+.timelineTag { font-size: 12px; color: var(--fm-muted); }
+.tagDone { color: var(--fm-accent); font-weight: 500; }
 .timeline p { margin: var(--sp-4) 0 0; font-size: 14px; }
-.timeline .timelineMeta { font-size: 13px; color: var(--fg-2); }
-.upcoming strong { font-weight: 500; color: var(--fg-2); }
+.timeline .timelineMeta { font-size: 13px; color: var(--fm-muted); }
+.upcoming strong { font-weight: 500; color: var(--fm-muted); }
 .timelineCard { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-20); border: 1px solid var(--link); border-radius: var(--r-5); padding: var(--sp-20); margin-top: calc(-1 * var(--sp-8)); }
 .timelineCard > div { min-width: 0; }
 .reasonCard { border: 1px solid var(--ring-strong); border-radius: var(--r-5); padding: var(--sp-16) var(--sp-20); margin: var(--sp-28) 0 var(--sp-20); white-space: pre-wrap; }
@@ -74,7 +74,7 @@
 .illus :global(.cx-silhouette) { fill: var(--fg-2); stroke: none; }
 @media (max-width: 700px) {
   .page { padding-top: var(--sp-24); }
-  .page h1 { font-size: 26px; }
+  .page h1 { text-wrap: balance; font-size: 26px; }
   .introWithIllus { flex-direction: column-reverse; gap: var(--sp-12); }
   .illusHero { width: 180px; margin-bottom: var(--sp-20); }
   .illusSide { width: 128px; margin: 0 0 var(--sp-4); }

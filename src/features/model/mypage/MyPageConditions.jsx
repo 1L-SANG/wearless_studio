@@ -15,7 +15,8 @@ export function MyPageConditions({ license, model, revoked = false, registering 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const saving = useRef(false);
-  const canEdit = !revoked && license?.status === 'active';
+  const canShowCertificate = !registering && Boolean(model?.confirmedAt);
+  const canEdit = !registering && !revoked && license?.status === 'active';
   const openEditor = () => { setAllowed(license?.allowedUse || []); setMessage(''); setEditing(true); };
   const toggle = category => {
     const next = toggleAllowedCategory(allowed, category);
@@ -44,8 +45,8 @@ export function MyPageConditions({ license, model, revoked = false, registering 
   return <>
     <div className={s.panelHeading}><div><h2>내 라이선스</h2><p className={s.panelCaption}>증서와 내가 정한 사용 범위를 한곳에서 확인해요.</p></div></div>
     <div className={s.licenseLayout}>
-      <div><MyPageCertificate license={license} model={model} revoked={revoked} />
-        <button type="button" className={s.certificateOpen} onClick={onCertificate}>내 증서 보기</button></div>
+      <div><MyPageCertificate license={canShowCertificate ? license : null} registering={!canShowCertificate} model={model} revoked={revoked} />
+        <button type="button" className={s.certificateOpen} onClick={onCertificate}>{canShowCertificate ? '내 증서 보기' : '테스트컷 준비 중'}</button></div>
       <div className={s.conditionsDetail}><h3>사용 조건</h3><dl>
         <div className={s.detailPair}><dt>허용한 의류</dt><dd>{license?.allowedUse?.join(' · ') || '아직 선택하지 않았어요'}</dd></div>
         <div className={s.detailPair}><dt>사용 범위</dt><dd>패션 상품의 상세페이지</dd></div>

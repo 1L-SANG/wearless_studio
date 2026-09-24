@@ -116,7 +116,8 @@
 .topNoticeLink:hover { color: #fff; text-decoration-color: #fff; }
 /* 폰은 한 줄에 안 들어간다(안내 190px + 링크 330px) — 두 줄로 쌓는다. */
 @media (max-width: 47.99rem) {
-  .topNotice { padding-block: 0.45rem; padding-right: 2.25rem; }   /* 닫기 버튼 자리 */
+  .topNotice { padding-block: 0.45rem; padding-right: 2.75rem; }   /* 닫기 버튼 자리 */
+  .topNoticeClose { width: 2.75rem; height: 2.75rem; right: 0; }
   .topNoticeInner { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
   .topNoticeLink { white-space: normal; }
 }
@@ -392,7 +393,8 @@
 /* 글자는 오브 위에. .hero 안에서 z-index 를 명시하지 않으면 오브(절대 위치, z 0)와
    같은 층에 놓여 그리는 순서에 따라 덮인다. */
 .kicker,
-.heroTitle { position: relative; z-index: 1; }
+.heroTitle,
+.heroLead { position: relative; z-index: 1; }
 
 /* 원본 .kicker — 양옆 헤어라인 사이 라틴 대문자. 자간 0.3em 은 라틴 대문자 전용이다. */
 .kicker {
@@ -934,6 +936,7 @@
   margin: 0;
   font: 600 clamp(1.5rem, 2.25vw, 1.75rem)/1.25 var(--font-body);
   letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 .foundingTitle strong { color: var(--fm-accent); font-weight: 600; }
 .foundingSub {
@@ -1173,6 +1176,13 @@ button.foundingSlot { cursor: pointer; }
   font: 400 0.9375rem/1.75 var(--font-body);
 }
 .faqAnswerText strong { color: var(--fm-ink); font-weight: 600; }
+.faqAnswerText a {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.faqAnswerText a:hover { color: var(--fm-accent); }
+.faqAnswerText a:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
 
 /* 마무리 CTA */
 .closingSection {
@@ -1217,7 +1227,7 @@ button.foundingSlot { cursor: pointer; }
   .headerActions { grid-column: 2; grid-row: 1; gap: 0.25rem; }
   .headerCta { display: none; }
   .headerQuiet svg { display: none; }
-  .headerActions .headerQuiet { min-height: 40px; padding: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
+  .headerActions .headerQuiet { min-height: 44px; padding: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
   .headerQuiet.headerAuthWithCta { display: inline-flex; }
   .headerAccountDesktopLabel { display: none; }
   .headerAccountMobileLabel { display: inline; }

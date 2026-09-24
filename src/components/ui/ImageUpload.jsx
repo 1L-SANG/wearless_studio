@@ -1,4 +1,4 @@
-import { ImagePlus, Trash2, Upload, X } from 'lucide-react';
+import { ImagePlus, Trash2 } from 'lucide-react';
 import { useImageUpload } from '@/components/hooks/use-image-upload.js';
 import s from './ImageUpload.module.css';
 
@@ -60,23 +60,19 @@ export function ImageUpload({
             <img src={previewUrl} alt={alt} />
             <span className={s.shade} aria-hidden="true" />
             <div className={s.actions}>
-              <button type="button" className={s.iconButton} aria-label="다른 사진 선택" disabled={disabled || uploading} onClick={upload.chooseFile}>
-                <Upload size={17} aria-hidden="true" />
-              </button>
               <button type="button" className={`${s.iconButton} ${s.deleteButton}`} aria-label="사진 삭제" disabled={disabled || uploading} onClick={onRemove}>
                 <Trash2 size={17} aria-hidden="true" />
               </button>
             </div>
-            {uploading && <span className={s.uploading} role="status">{busyLabel}</span>}
+            {uploading && <span className={s.uploading} aria-hidden="true">{busyLabel}</span>}
           </div>
           <div className={s.fileRow}>
             <span title={fileName || undefined}>{fileName || '선택한 사진'}</span>
-            <button type="button" aria-label="선택한 사진 지우기" disabled={disabled || uploading} onClick={onRemove}>
-              <X size={17} aria-hidden="true" />
-            </button>
+            <button type="button" className={s.changeButton} aria-label="다른 사진 선택" disabled={disabled || uploading} onClick={upload.chooseFile}>다른 사진 선택</button>
           </div>
         </div>
       )}
+      <span className={s.srOnly} role="status">{uploading ? busyLabel : previewUrl ? '사진을 올렸어요' : ''}</span>
     </div>
   );
 }

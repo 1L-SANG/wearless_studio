@@ -8,7 +8,7 @@ const model = { id: 'm1', status: 'verified' };
 const active = { id: 'l1', modelId: 'm1', status: 'active', licenseValidUntil: '2027-09-01T00:00:00Z' };
 
 test('진행표는 지원 접수부터 프로필 확정까지 다섯 단계를 표시해요', () => {
-  assert.deepEqual(hub.HUB_STEPS.map(row => row.label), ['지원 접수', '내부 검토', '모델 등록', '최종 검토', '프로필 이미지 확정']);
+  assert.deepEqual(hub.HUB_STEPS.map(row => row.label), ['지원 접수', '내부 검토', '모델 등록', '테스트컷 준비', '프로필 이미지 확정']);
 });
 
 const cases = [
@@ -17,9 +17,9 @@ const cases = [
   ['승인', { application: { status: 'approved' } }, 'onboarding', 1, undefined, 'none'],
   ['중간 저장', { enrollment: { id: 'e1', status: 'photos_pending' } }, 'onboarding', 2, undefined, 'none'],
   ['반려', { application: { status: 'rejected', rejectReason: '사진 확인' } }, 'onboarding', 3, undefined, 'none'],
-  ['사진 검수', { enrollment: { status: 'review_pending' } }, 'review', undefined, 'review', 'none'],
-  ['처리 중', { enrollment: { status: 'processing' } }, 'review', undefined, 'assets', 'none'],
-  ['자산 생성', { enrollment: { status: 'asset_building' } }, 'review', undefined, 'assets', 'none'],
+  ['사진 검수', { enrollment: { status: 'review_pending' } }, 'review', undefined, 'assets', 'none'],
+  ['처리 중', { enrollment: { status: 'processing' } }, 'onboarding', 2, undefined, 'none'],
+  ['자산 생성', { enrollment: { status: 'asset_building' } }, 'onboarding', 2, undefined, 'none'],
   ['사진 확정 대기', { ownedModel: { ...model, status: 'awaiting_confirm' } }, 'review', undefined, 'confirm', 'none'],
   ['활동', { ownedModel: model, license: active }, 'active', undefined, undefined, 'none'],
   ['철회', { ownedModel: model, license: { ...active, status: 'revoked' } }, 'active', undefined, undefined, 'revoked'],
@@ -27,7 +27,7 @@ const cases = [
   ['옛 만료일이 임박한 활동', { ownedModel: model, license: { ...active, licenseValidUntil: '2026-10-01T00:00:00Z' } }, 'active', undefined, undefined, 'none'],
   ['영구', { ownedModel: model, license: { ...active, licenseValidUntil: null } }, 'active', undefined, undefined, 'none'],
   ['라이선스 누락', { ownedModel: model }, 'onboarding', 2, undefined, 'none'],
-  ['발급 대기', { ownedModel: model, license: { ...active, status: 'pending' }, enrollment: { id: 'e1', status: 'vc_pending' } }, 'onboarding', 2, undefined, 'none'],
+  ['발급 대기', { ownedModel: model, license: { ...active, status: 'pending' }, enrollment: { id: 'e1', status: 'vc_pending' } }, 'review', undefined, 'assets', 'none'],
 ];
 for (const [name, input, mode, step, sub, flag] of cases) {
   test(`마이페이지 판정: ${name}`, () => {
@@ -59,7 +59,7 @@ test('진행표 시각은 서버 필드를 사용하고 없으면 생략해요',
 });
 
 test('발급 재시도와 테스트컷 확정의 실제 경로를 유지해요', () => {
-  assert.equal(hub.resolveHubJourney({ enrollment: { id: 'retry-vc', status: 'vc_pending' }, now }).action.to, '/model/register');
+  assert.deepEqual(hub.resolveHubJourney({ enrollment: { id: 'retry-vc', status: 'vc_pending' }, now }).action, { kind: 'reload', label: '진행 상태 새로고침' });
   assert.equal(hub.resolveHubJourney({ ownedModel: { status: 'awaiting_confirm' }, now }).action.to, '/model/confirm');
   assert.equal(hub.resolveHubJourney({ ownedModel: { status: 'pending', redoCount: 1 }, hasLicense: true, now }).sub, 'assets');
 });

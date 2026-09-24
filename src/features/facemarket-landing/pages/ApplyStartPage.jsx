@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import { LandingShell } from '../LandingShell.jsx';
 import { MODEL_SHARE, MIN_PAYOUT_KRW, SETTLEMENT_DAY, formatKrw } from '../facemarketTerms.js';
@@ -12,77 +13,92 @@ const sharePercent = MODEL_SHARE * 100;
 const perCutShare = FACEMARKET_PRICING.perCut * MODEL_SHARE;
 
 export function ApplyStartPage() {
+  const { session, loading, openLogin } = useAuth();
+  // 비로그인은 가드 화면으로 넘기지 않고 이 페이지에서 로그인 창을 연다. 확인 중이면 링크 그대로 둔다.
+  const startApplication = (event) => {
+    if (loading || session) return;
+    event.preventDefault();
+    openLogin('/model/apply');
+  };
   return (
     <LandingShell title="모델 지원 | FaceMarket" description="경력 없이도 지원해요. 승인 후 밝은 야외에서 촬영한 사진 18장으로 내 모델을 등록해요." variant="apply">
-      {() => (
-        <div className={s.wrap}>
-          <div className={s.dashboard}>
-            <section className={s.intro} aria-labelledby="apply-title">
-              <p className={s.eyebrow}>FaceMarket에서 모델로 시작해요</p>
-              <h1 id="apply-title">모델 지원</h1>
-              <p className={s.lead}>
-                내가 등록한 얼굴을 이용해서 셀러가 쇼핑몰에 쓸 상세페이지를 AI로 만들어요
-              </p>
-              <ol className={s.protection}>
-                <li>facemarket과 연계된 서비스에서만 안전하게 사용가능</li>
-                <li>블록체인을 통한 위조 불가 사용 기록</li>
-                <li>내가 쓰인 이미지 추적 가능</li>
-              </ol>
-              <blockquote className={s.earningsQuote}>
-                <span>10명의 셀러가 나를 한번씩만 써도, <b>10만원</b>의 수익이 자동으로.</span>
-                <span>옷 살 필요 없어요. <b>협찬까지</b> 해주니까요.</span>
-              </blockquote>
-              <p className={s.preparationNote}>승인 후 <b>등록 사진 18장</b>을 준비해요. 야외 촬영은 약 15분이에요.</p>
-              <Link className={s.primary} to="/model/apply">지원서 쓰기</Link>
-              <div className={s.faces} aria-label="모델 프로필 사진">
-                {FACES.map((src, index) => <img key={src} src={src} alt={`모델 프로필 사진 ${index + 1}`} decoding="async" />)}
-              </div>
-              <div className={s.footnote}><span>승인 후 등록 사진 18장</span><span>경력 없이도 지원해요</span></div>
-            </section>
-            <div className={s.side}>
-              <section className={s.benefits} aria-labelledby="apply-benefits">
-                <h2 id="apply-benefits">지금 시작하면</h2>
-                <ol>
-                  <li><span>01</span><p>증서 발급료, <b className={s.emphasis}>무료</b>예요</p></li>
-                  <li><span>02</span><p>지원서 작성은 <b>약 3분</b>이에요</p></li>
-                  <li><span>03</span><p>24시간 안에 승인 여부를 알려드려요</p></li>
+      {(slot) => {
+        const { ctaLabel, onPrimary } = slot || {};
+        // 지원 상태가 있으면(검토 중, 승인 등) 셸이 고른 다음 행동 버튼을, 없으면 지원서 링크를 둔다.
+        const cta = ctaLabel && onPrimary
+          ? <button type="button" className={s.primary} onClick={onPrimary}>{ctaLabel}</button>
+          : <Link className={s.primary} to="/model/apply" onClick={startApplication}>지원서 쓰기</Link>;
+        return (
+          <div className={s.wrap}>
+            <div className={s.dashboard}>
+              <section className={s.intro} aria-labelledby="apply-title">
+                <p className={s.eyebrow}>FaceMarket에서 모델로 시작해요</p>
+                <h1 id="apply-title">모델 지원</h1>
+                <p className={s.lead}>
+                  내가 등록한 얼굴을 이용해서 셀러가 쇼핑몰에 쓸 상세페이지를 AI로 만들어요
+                </p>
+                <ol className={s.protection}>
+                  <li>FaceMarket과 연계된 서비스에서만 안전하게 사용 가능</li>
+                  <li>블록체인을 통한 위조 불가 사용 기록</li>
+                  <li>내가 쓰인 이미지 추적 가능</li>
                 </ol>
+                <blockquote className={s.earningsQuote}>
+                  <span>10명의 셀러가 나를 한 번씩만 써도, <b>10만원</b>의 수익이 자동으로.</span>
+                  <span>옷 살 필요 없어요. <b>협찬까지</b> 해주니까요.</span>
+                </blockquote>
+                <p className={s.preparationNote}>지원서에는 얼굴이 잘 보이는 본인 사진 <b>1장</b>이 필요해요. 승인 후에는 <b>등록 사진 18장</b>을 준비해요. 야외 촬영은 약 15분이에요.</p>
+                {cta}
+                <div className={s.faces} aria-label="모델 프로필 사진">
+                  {FACES.map((src, index) => <img key={src} src={src} alt={`모델 프로필 사진 ${index + 1}`} decoding="async" />)}
+                </div>
+                <div className={s.footnote}><span>승인 후 등록 사진 18장</span><span>경력 없이도 지원해요</span></div>
               </section>
-              <section className={s.earnings} aria-labelledby="apply-earnings">
-                <h2 id="apply-earnings">등록하면 이런 게 달라져요</h2>
-                <ul>
-                  <li>
-                    셀러가 결제한 금액의 {sharePercent}%를 정산해드려요{' '}
-                    <span className={s.info} tabIndex={0} aria-label="정산 금액 안내" aria-describedby="apply-settlement-tooltip">
-                      <Icon name="info" size={16} />
-                      <span className={s.tooltip} id="apply-settlement-tooltip" role="tooltip">1건 기준 {formatKrw(FACEMARKET_PRICING.perCut)}의 {sharePercent}%, {formatKrw(perCutShare)}</span>
-                    </span>
-                  </li>
-                  <li>내 얼굴을 쓸 수 있는 옷의 종류를 선택할 수 있어요</li>
-                  <li>내 얼굴이 어디 쓰였는지 전부 추적이 가능해요</li>
-                  <li>협찬을 활성화해놓으면 셀러가 옷을 보내줄 수 있어요</li>
-                </ul>
-                <p className={s.fine}>쌓인 몫이 {formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요</p>
-              </section>
-              <section className={s.qualifications} aria-labelledby="apply-qualifications">
-                <h2 id="apply-qualifications">지원 자격</h2>
-                <ul>{QUALIFICATIONS.map((text) => <li key={text}><Icon name="check" size={16} /><span>{text}</span></li>)}</ul>
-              </section>
+              <div className={s.side}>
+                <section className={s.benefits} aria-labelledby="apply-benefits">
+                  <h2 id="apply-benefits">지금 시작하면</h2>
+                  <ol>
+                    <li><span>01</span><p>증서 발급료, <b className={s.emphasis}>무료</b>예요</p></li>
+                    <li><span>02</span><p>지원서 작성은 <b>약 3분</b>이에요</p></li>
+                    <li><span>03</span><p>24시간 안에 승인 여부를 알려드려요</p></li>
+                  </ol>
+                </section>
+                <section className={s.earnings} aria-labelledby="apply-earnings">
+                  <h2 id="apply-earnings">등록하면 이런 게 달라져요</h2>
+                  <ul>
+                    <li>
+                      셀러가 결제한 금액의 {sharePercent}%를 정산해드려요{' '}
+                      <span className={s.info} tabIndex={0} aria-label="정산 금액 안내" aria-describedby="apply-settlement-tooltip">
+                        <Icon name="info" size={16} />
+                        <span className={s.tooltip} id="apply-settlement-tooltip" role="tooltip">1건 기준 {formatKrw(FACEMARKET_PRICING.perCut)}의 {sharePercent}%, {formatKrw(perCutShare)}</span>
+                      </span>
+                    </li>
+                    <li>내 얼굴을 쓸 수 있는 옷의 종류를 선택할 수 있어요</li>
+                    <li>내 얼굴이 어디 쓰였는지 전부 추적이 가능해요</li>
+                    <li>협찬을 켜 두면 셀러가 옷을 보내 줄 수 있어요</li>
+                  </ul>
+                  <p className={s.fine}>쌓인 몫이 {formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요</p>
+                </section>
+                <section className={s.qualifications} aria-labelledby="apply-qualifications">
+                  <h2 id="apply-qualifications">지원 자격</h2>
+                  <ul>{QUALIFICATIONS.map((text) => <li key={text}><Icon name="check" size={16} /><span>{text}</span></li>)}</ul>
+                </section>
+              </div>
             </div>
+            <section className={s.faq} aria-labelledby="apply-faq">
+              <h2 id="apply-faq">자주 묻는 질문</h2>
+              <div className={s.faqCards}>
+                {APPLY_START_FAQ.map(({ q, a }) => (
+                  <details key={q} className={s.faqCard}>
+                    <summary>{q}</summary>
+                    <p>{a}</p>
+                  </details>
+                ))}
+              </div>
+              <div className={s.faqCta}>{cta}</div>
+            </section>
           </div>
-          <section className={s.faq} aria-labelledby="apply-faq">
-            <h2 id="apply-faq">자주 묻는 질문</h2>
-            <div className={s.faqCards}>
-              {APPLY_START_FAQ.map(({ q, a }) => (
-                <details key={q} className={s.faqCard}>
-                  <summary>{q}</summary>
-                  <p>{a}</p>
-                </details>
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
+        );
+      }}
     </LandingShell>
   );
 }

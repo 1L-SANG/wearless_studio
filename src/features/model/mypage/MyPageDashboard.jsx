@@ -14,7 +14,7 @@ import { isRegistrationJourney, registrationCard, tabFromHash } from './mypageSt
 import s from './MyPage.module.css';
 
 const tabs = [{ id: 'usage', label: '사용된 페이지' }, { id: 'payout', label: '정산' }, { id: 'license', label: '라이선스' }];
-const steps = ['본인 확인', '사진과 조건', '라이선스', '검수', '프로필 확정'];
+const steps = ['본인 확인', '사진과 조건', '라이선스', '테스트컷 준비', '프로필 확정'];
 
 export function RegistrationProgress({ journey, enrollment }) {
   const card = registrationCard(journey, enrollment);
@@ -35,6 +35,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
   const [activityDialog, setActivityDialog] = useState(null);
   const [accountDialog, setAccountDialog] = useState(false);
   const registering = isRegistrationJourney(journey);
+  const canShowCertificate = !registering && Boolean(model?.confirmedAt);
   const data = useMyPageSettlements(model?.id, !registering);
   const bank = usePayoutAccount(model?.id, !registering);
   const chooseTab = id => navigate({ hash: `#${id}` }, { replace: true });
@@ -52,7 +53,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
   };
   const openAccount = () => { if (PAYOUT_ACCOUNT_API_READY && bank.phase === 'ready') setAccountDialog(true); };
   return <>
-    <ProfileHero model={model} license={license} onCertificate={() => setCertificate(true)} />
+    <ProfileHero model={model} license={canShowCertificate ? license : null} registering={!canShowCertificate} onCertificate={() => setCertificate(true)} />
     <MyPageActivity journey={journey} model={model} license={license} dialog={activityDialog} onDialogChange={setActivityDialog}
       onModelChange={onModelChange} onLicenseChange={onLicenseChange} />
     {!registering && !data.loading && (data.summaryError || data.rowsError || data.statementsError) && <div className={s.stateMessage}><Info className={s.icon} aria-hidden="true" />
@@ -70,7 +71,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
         : tab === 'usage' ? <MyPageUsage data={data} month={month} onMonthChange={setMonth} />
         : <MyPageEarnings data={data} month={month} onMonthChange={setMonth}><BankSection bank={bank} onOpen={openAccount} /></MyPageEarnings>}
     </section>
-    {certificate && <MyPageDialog title="내 라이선스 증서" certificate onClose={() => setCertificate(false)}><MyPageCertificate model={model} license={license} revoked={journey.flag === 'revoked'} /></MyPageDialog>}
+    {certificate && <MyPageDialog title="내 라이선스 증서" certificate onClose={() => setCertificate(false)}><MyPageCertificate model={model} license={canShowCertificate ? license : null} registering={!canShowCertificate} revoked={journey.flag === 'revoked'} /></MyPageDialog>}
     {accountDialog && PAYOUT_ACCOUNT_API_READY && <PayoutAccountDialog model={model} account={bank.account} banks={bank.banks} onClose={() => setAccountDialog(false)} onSaved={value => {
       bank.setAccount(value); setAccountDialog(false); chooseTab('payout');
     }} />}
