@@ -171,6 +171,15 @@ export function Pricing() {
     <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
+        {/* 계좌이체 모드(PG 심사 전)에서는 긴 고지문 대신 이 한 줄만 둔다(오너 9/24). 상자 없이 제목 아래 문장으로. */}
+        {bankTransfer && (
+          <p className={s.subtitle}>
+            {bankInfo && bankInfo.enabled === false
+              // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼만 두면 막다른 길이라 이유와 문의처를 적는다.
+              ? <>지금은 계좌이체 신청을 잠시 받지 않아요. 결제가 필요하면 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 알려 주세요.</>
+              : '카드 결제는 심사 중이에요. 계좌이체로 입금이 확인되면 바로 크레딧을 드려요.'}
+          </p>
+        )}
       </div>
 
       {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
@@ -184,17 +193,6 @@ export function Pricing() {
       )}
 
       {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
-      {bankTransfer && (
-        <div className={s.bankNotice}>
-          {bankInfo && bankInfo.enabled === false ? (
-            // 서버에 계좌 정보가 없으면 버튼이 전부 잠긴다. 회색 버튼 8개만 두면 막다른 길이라 이유를 적는다.
-            <>지금은 계좌이체 신청을 <strong>잠시 받지 않아요</strong>. 결제가 필요하면 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 알려 주세요.</>
-          ) : (
-            <>지금은 결제 심사 중이라 <strong>계좌이체</strong>로 신청을 받아요. 입금이 확인되면 크레딧을 지급해 드리고,
-            구독 상품은 <strong>1개월 이용권</strong>으로 드려요(자동 갱신 없음).</>
-          )}
-        </div>
-      )}
       {(openRequests?.open || []).map((r) => (
         <div key={r.id} className={s.openRequest} role="status">
           <span>
@@ -211,19 +209,18 @@ export function Pricing() {
           )}
         </div>
       ))}
-      <p className={s.tabDesc}>
-        {recurring
-          ? (bankTransfer
-            ? '입금이 확인되면 바로 이용을 시작하며, 이용기간은 1개월입니다. 자동 갱신은 없고, 계속 쓰려면 종료 전에 같은 요금제로 연장을 신청하면 됩니다. 연장을 신청하면 입금 확인까지(신청 후 3일 안) 이용권이 유지됩니다. 표시 금액은 부가가치세를 포함합니다.'
-            : '월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.')
-          : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
-      </p>
+      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 위 한 줄이 전부다. */}
+      {!bankTransfer && (
+        <p className={s.tabDesc}>
+          {recurring
+            ? '월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.'
+            : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
+        </p>
+      )}
 
-      {recurring && (
+      {!bankTransfer && recurring && (
         <div className={s.billingNotice} aria-label="구독 크레딧 및 환불 안내">
-          {bankTransfer
-            ? <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 종료일 전에 같은 요금제로 연장을 신청하면 입금 확인까지(신청 후 3일) 이용권과 크레딧이 유지되고, 연장하지 않으면 종료일에 이월분을 포함해 모두 소멸합니다.</p>
-            : <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>}
+          <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>
           <p>결제일부터 7일 이내에 해당 결제로 지급된 크레딧을 사용하지 않았다면 전액 환불을 신청할 수 있습니다. 사용한 부분의 청약철회는 제한될 수 있지만, 미제공 부분의 법령상 환불 권리는 제한하지 않습니다. 환불 및 중도해지는 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 신청해 주세요. <a href={WEARLESS_LEGAL_URLS.refund}>환불정책 보기</a></p>
         </div>
       )}
