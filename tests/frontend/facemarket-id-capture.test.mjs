@@ -547,10 +547,12 @@ const findButton = (tree, label) => findTree(tree, n => n.type === 'button' && c
 const camera = tree => findTree(tree, n => n.type?.name === 'IdCameraCapture');
 const reviewBlob = new Blob(['masked'], { type: 'image/jpeg' });
 const testMaskRegion = { xr: .3, yr: .4, wr: .25, hr: .05 };
-const reviewStates = () => ['review', 'blob:raw', reviewBlob, false, '', true, 'blob:review', testMaskRegion, true];
+const maskStates = () => ['mask', 'blob:raw', false, ''];
+const maskEditor = tree => findTree(tree, n => n.type?.name === 'IdMaskEditor');
+const submitMask = tree => maskEditor(tree).props.onSubmit(reviewBlob, testMaskRegion);
 const idEnrollment = { id: 'e1', status: 'id_capture_pending', identityMethod: 'simple_auth', photos: [], consentDocumentVersion: CONSENT_VERSION, termsConsentVersion: CONSENT_VERSION };
 
-test('촬영 원본은 업로드할 수 없고 직접 가린 결과를 확인한 뒤에만 전송해요', async () => {
+test('촬영 원본은 전송하지 않고 가림 화면에서 제출한 결과만 바로 전송해요', async () => {
   const uploads = [];
   const h = await stepHarness({ entry: idEntry, api: { uploadIdDocument: async (...args) => uploads.push(args) } });
   const props = { enrollmentId: 'e1' };
@@ -563,22 +565,10 @@ test('촬영 원본은 업로드할 수 없고 직접 가린 결과를 확인한
     const editor = findTree(tree, n => n.type?.name === 'IdMaskEditor');
     assert.ok(editor, '촬영 뒤 필수 가림 단계를 열어야 해요');
     assert.equal(findButton(tree, '이 사진으로 확인 요청'), null);
-    assert.equal(h.runtime.states[2], null, '원본을 업로드할 blob에 담지 않아요');
-    editor.props.onMasked(masked, region);
-    tree = h.render(props);
-    findTree(tree, n => n.type === 'img').props.onLoad();
-    tree = h.render(props);
-    assert.equal(findButton(tree, '이 사진으로 확인 요청').props.disabled, true);
-    await findButton(tree, '이 사진으로 확인 요청').props.onClick();
     assert.deepEqual(uploads, []);
-    findTree(tree, n => n.props.id === 'id-mask-confirmed').props.onChange({ target: { checked: true } });
-    tree = h.render(props);
-    assert.equal(findButton(tree, '이 사진으로 확인 요청').props.disabled, false);
-    await findButton(tree, '이 사진으로 확인 요청').props.onClick();
+    assert.equal(typeof editor.props.onSubmit, 'function');
+    await editor.props.onSubmit(masked, region);
     assert.deepEqual(uploads, [['e1', { file: masked, documentType: 'rrc', maskedConfirmed: true, maskRegion: region }]]);
-    findButton(h.render(props), '다시 가리기').props.onClick();
-    assert.equal(findButton(h.render(props), '이 사진으로 확인 요청'), null);
-    assert.equal(h.runtime.states[2], null);
   } finally { await h.close(); }
 });
 
@@ -588,10 +578,10 @@ test('FIX1 신분증 업로드 응답으로 사진 화면을 열고 재조회 �
     getEnrollment: async () => { lookups++; throw new Error('등록 상태 조회 실패'); },
   } });
   const uploaded = { ...idEnrollment, status: 'photos_pending' };
-  const child = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: async () => uploaded } });
+  const child = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: async () => uploaded } });
   try {
     const props = findTree(parent.render(), n => n.type?.name === 'IdDocumentStep').props;
-    await findButton(child.render(props), '이 사진으로 확인 요청').props.onClick();
+    await submitMask(child.render(props));
     assert.equal(parent.runtime.states[0], '2');
     assert.deepEqual(parent.runtime.states[1], uploaded);
     assert.equal(parent.runtime.states[3], '');
@@ -605,19 +595,18 @@ for (const path of ['conflict', 'missing-response']) {
     const parent = await modelComponentHarness({ initialStates: ['id_capture', idEnrollment], api: {
       getEnrollment: async () => { lookups++; if (lookups === 1) throw new Error('등록 상태 조회 실패'); return { ...idEnrollment, status: 'photos_pending' }; },
     } });
-    const child = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: async () => {
+    const child = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: async () => {
       if (path === 'conflict') throw Object.assign(new Error('단계가 바뀌었어요'), { status: 409 });
     } } });
     try {
       const props = findTree(parent.render(), n => n.type?.name === 'IdDocumentStep').props;
-      await findButton(child.render(props), '이 사진으로 확인 요청').props.onClick();
+      await assert.rejects(() => submitMask(child.render(props)), /등록 상태 조회 실패/);
       const dialog = findTree(child.render(props), n => n.props.role === 'dialog');
       assert.ok(dialog);
-      assert.equal(collectText(findTree(dialog, n => n.props.role === 'alert')), '등록 상태 조회 실패');
       assert.equal(parent.runtime.states[0], 'id_capture');
       assert.equal(parent.runtime.states[3], '');
-      assert.equal(findButton(dialog, '이 사진으로 확인 요청').props.disabled, false);
-      await findButton(dialog, '이 사진으로 확인 요청').props.onClick();
+      assert.equal(child.runtime.states[2], false);
+      await submitMask(dialog);
       assert.equal(parent.runtime.states[0], '2');
       assert.equal(lookups, 2);
     } finally { await child.close(); await parent.close(); }
@@ -646,7 +635,7 @@ test('신분증 선택 전에는 가림 확인을 받지 않고 촬영 후 필�
   } finally { await h.close(); }
 });
 
-test('R6 기본은 전체 화면 카메라이고 촬영 후 검토 전에는 업로드하지 않아요', async () => {
+test('전체 화면 카메라에서 촬영 후에도 제출을 누르기 전에는 업로드하지 않아요', async () => {
   const uploads = [];
   const h = await stepHarness({ entry: idEntry, api: { uploadIdDocument: async (...args) => uploads.push(args) } });
   const props = { enrollmentId: 'e1' };
@@ -656,27 +645,21 @@ test('R6 기본은 전체 화면 카메라이고 촬영 후 검토 전에는 업
     camera(tree).props.onCaptured(reviewBlob);
     assert.equal(h.runtime.states[0], 'mask');
     assert.deepEqual(uploads, []);
-    findTree(h.render(props), n => n.type?.name === 'IdMaskEditor').props.onMasked(reviewBlob, testMaskRegion);
-    let review = h.render(props);
-    assert.ok(findButton(review, '다시 찍기')); assert.ok(findButton(review, '삭제'));
-    assert.equal(findButton(review, '이 사진으로 확인 요청').props.disabled, true);
-    findTree(review, n => n.type === 'img').props.onLoad();
-    findTree(h.render(props), n => n.props.id === 'id-mask-confirmed').props.onChange({ target: { checked: true } });
-    review = h.render(props);
-    await findButton(review, '이 사진으로 확인 요청').props.onClick();
+    await submitMask(h.render(props));
     assert.equal(uploads.length, 1);
     assert.deepEqual(uploads[0], ['e1', { file: reviewBlob, documentType: 'rrc', maskedConfirmed: true, maskRegion: testMaskRegion }]);
   } finally { await h.close(); }
 });
 
-for (const [label, phase] of [['다시 찍기', 'camera'], ['삭제', 'choose']]) {
+for (const [label, phase] of [['다시 찍기', 'camera'], ['촬영 닫기', 'choose']]) {
   test(`R6 ${label}는 업로드 없이 ${phase} 화면으로 가요`, async () => {
-    const h = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: () => assert.fail('올리지 않아요') } });
+    const h = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: () => assert.fail('올리지 않아요') } });
     try {
-      findButton(h.render(), label).props.onClick();
+      const tree = h.render();
+      if (phase === 'camera') maskEditor(tree).props.onRetake();
+      else findTree(tree, n => n.props['aria-label'] === label).props.onClick();
       assert.equal(h.runtime.states[0], phase);
       assert.equal(h.runtime.states[1], null);
-      assert.equal(h.runtime.states[2], null);
     } finally { await h.close(); }
   });
 }
@@ -712,34 +695,29 @@ test('R6 앨범을 열면 카메라를 닫고 HEIC 변환 후 안내 틀에 맞�
     assert.equal(h.runtime.states[0], 'fit');
     const fit = findTree(h.render(), n => n.type?.name === 'IdGalleryFit');
     assert.ok(fit); fit.props.onCaptured(reviewBlob);
-    assert.equal(h.runtime.states[0], 'mask'); assert.equal(h.runtime.states[2], null);
+    assert.equal(h.runtime.states[0], 'mask'); assert.equal(h.runtime.states[2], false);
     assert.ok(findTree(h.render(), n => n.type?.name === 'IdMaskEditor'));
   } finally { await h.close(); }
 });
 
-test('빈 촬영 결과와 미리보기 실패는 현장에서 오류를 보여요', async () => {
+test('빈 촬영 결과는 현장에서 오류를 보여요', async () => {
   const h = await stepHarness({ entry: idEntry });
   try {
     camera(h.render()).props.onCaptured(null);
     assert.equal(h.runtime.states[0], 'camera');
     assert.match(collectText(h.render()), /사진을 저장하지 못했어요/);
-    camera(h.render()).props.onCaptured(reviewBlob);
-    findTree(h.render(), n => n.type?.name === 'IdMaskEditor').props.onMasked(reviewBlob, testMaskRegion);
-    findTree(h.render(), n => n.type === 'img').props.onError();
-    assert.equal(findButton(h.render(), '이 사진으로 확인 요청').props.disabled, true);
-    assert.match(collectText(h.render()), /사진을 열지 못했어요/);
   } finally { await h.close(); }
 });
 
 for (const code of ['id_mask_not_applied', 'id_face_not_detected', 'qc_unavailable']) {
   test(`신분증 업로드 ${code} 오류는 검토 사진을 유지하고 재시도할 수 있어요`, async () => {
-    const h = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: async () => { throw Object.assign(new Error('다시 시도해 주세요.'), { code }); } } });
+    const h = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: async () => { throw Object.assign(new Error('다시 시도해 주세요.'), { code }); } } });
     try {
-      await findButton(h.render({ enrollmentId: 'e1' }), '이 사진으로 확인 요청').props.onClick();
+      await assert.rejects(() => submitMask(h.render({ enrollmentId: 'e1' })), /다시 시도해 주세요/);
       const tree = h.render({ enrollmentId: 'e1' });
-      assert.equal(h.runtime.states[0], 'review');
-      assert.ok(findTree(tree, n => n.props.role === 'alert'));
-      assert.equal(findButton(tree, '이 사진으로 확인 요청').props.disabled, false);
+      assert.equal(h.runtime.states[0], 'mask');
+      assert.ok(maskEditor(tree));
+      assert.equal(h.runtime.states[2], false);
     } finally { await h.close(); }
   });
 }
@@ -747,22 +725,22 @@ for (const code of ['id_mask_not_applied', 'id_face_not_detected', 'qc_unavailab
 test('신분증 409 오류는 부모 재조회로 돌려보내요', async () => {
   const conflict = Object.assign(new Error('단계가 바뀌었어요'), { status: 409 });
   const stale = [];
-  const h = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: async () => { throw conflict; } } });
+  const h = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: async () => { throw conflict; } } });
   try {
-    await findButton(h.render({ enrollmentId: 'e1', onStale: error => stale.push(error) }), '이 사진으로 확인 요청').props.onClick();
-    assert.deepEqual(stale, [conflict]); assert.equal(h.runtime.states[4], '');
+    await submitMask(h.render({ enrollmentId: 'e1', onStale: error => stale.push(error) }));
+    assert.deepEqual(stale, [conflict]); assert.equal(h.runtime.states[3], '');
   } finally { await h.close(); }
 });
 
 test('업로드 중 중복 클릭과 사진 변경을 막아요', async () => {
   let finish, calls = 0;
-  const h = await stepHarness({ entry: idEntry, initialStates: reviewStates(), api: { uploadIdDocument: () => { calls++; return new Promise(resolve => { finish = resolve; }); } } });
+  const h = await stepHarness({ entry: idEntry, initialStates: maskStates(), api: { uploadIdDocument: () => { calls++; return new Promise(resolve => { finish = resolve; }); } } });
   try {
-    const upload = findButton(h.render({ enrollmentId: 'e1' }), '이 사진으로 확인 요청').props.onClick;
-    const pending = upload(); await upload();
+    const upload = maskEditor(h.render({ enrollmentId: 'e1' })).props.onSubmit;
+    const pending = upload(reviewBlob, testMaskRegion); await upload(reviewBlob, testMaskRegion);
     assert.equal(calls, 1);
     const tree = h.render({ enrollmentId: 'e1' });
-    for (const label of ['다시 찍기', '삭제', '올리는 중이에요']) assert.equal(findButton(tree, label).props.disabled, true);
+    assert.equal(findTree(tree, n => n.props['aria-label'] === '촬영 닫기').props.disabled, true);
     finish(); await pending;
   } finally { await h.close(); }
 });
@@ -771,7 +749,7 @@ test('업로드 중 활성 버튼이 없어도 촬영 대화상자 밖으로 초
   const previous = globalThis.document;
   const listeners = new Map(); let focused = 0, prevented = 0;
   globalThis.document = { activeElement: {}, documentElement: { style: { overflow: 'auto' } }, addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: key => listeners.delete(key) };
-  const h = await stepHarness({ entry: idEntry, initialStates: ['review', 'blob:review', reviewBlob, true, '', true] });
+  const h = await stepHarness({ entry: idEntry, initialStates: ['mask', 'blob:raw', true, ''] });
   let cleanup;
   try {
     const tree = h.render();
@@ -785,4 +763,64 @@ test('업로드 중 활성 버튼이 없어도 촬영 대화상자 밖으로 초
     cleanup(); cleanup = null;
     assert.equal(document.documentElement.style.overflow, 'auto');
   } finally { cleanup?.(); globalThis.document = previous; await h.close(); }
+});
+
+test('가림 편집기는 박스 지정 후 직접 제출하며 실패해도 조절한 영역을 유지해요', async () => {
+  const priorDocument = globalThis.document;
+  const operations = [];
+  const blob = new Blob(['masked-pixels']);
+  globalThis.document = { createElement: () => ({
+    getContext: () => ({ drawImage: () => operations.push('draw'), fillRect: () => operations.push('mask') }),
+    toBlob: done => done(blob),
+  }) };
+  const box = { left: 20, top: 30, width: 300, height: 200 };
+  const h = await stepHarness({ entry: '/src/features/model/IdMaskEditor.jsx', initialStates: [true],
+    initialRefs: [{ naturalWidth: 600, naturalHeight: 400 }, { getBoundingClientRect: () => box }] });
+  let reject, calls = 0;
+  const props = { imageUrl: 'blob:raw', onSubmit: async (file, region) => {
+    calls++; assert.equal(file, blob); assert.equal(region.wr, .3);
+    if (calls === 1) return new Promise((_, fail) => { reject = fail; });
+  } };
+  try {
+    let tree = h.render(props);
+    assert.equal(findButton(tree, '제출하기').props.disabled, true);
+    assert.equal(findTree(tree, n => n.type === 'input' && n.props.type === 'range'), null);
+    findTree(tree, n => n.props['aria-label'] === '주민등록번호 가릴 위치 지정').props.onPointerDown({
+      clientX: 110, clientY: 110, currentTarget: {}, preventDefault() {}, stopPropagation() {},
+    });
+    tree = h.render(props);
+    const submit = findButton(tree, '제출하기').props.onClick;
+    const pending = submit(); await submit();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+    assert.deepEqual(operations, ['draw', 'mask']);
+    assert.equal(findButton(h.render(props), '제출 중이에요').props.disabled, true);
+    const selected = { ...h.runtime.states[1] };
+    reject(new Error('연결을 확인하고 다시 제출해 주세요.')); await pending;
+    assert.deepEqual(h.runtime.states[1], selected);
+    assert.match(collectText(h.render(props)), /연결을 확인하고/);
+    await findButton(h.render(props), '제출하기').props.onClick();
+    assert.equal(calls, 2);
+  } finally { globalThis.document = priorDocument; await h.close(); }
+});
+
+test('모바일 주소창으로 보이는 화면이 줄면 촬영 시트 높이를 따라 줄여요', async () => {
+  const oldWindow = globalThis.window, oldDocument = globalThis.document;
+  const listeners = new Map(), values = {};
+  const viewport = { height: 520, offsetTop: 12, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) };
+  globalThis.window = { innerHeight: 700, visualViewport: viewport, addEventListener() {}, removeEventListener() {} };
+  globalThis.document = { documentElement: { style: {} }, addEventListener() {}, removeEventListener() {} };
+  const h = await stepHarness({ entry: idEntry });
+  let cleanup;
+  try {
+    h.render();
+    h.runtime.refs[1].current = { style: { setProperty: (name, value) => { values[name] = value; } } };
+    cleanup = h.runtime.effects[2]();
+    assert.equal(values['--id-visible-height'], '520px');
+    assert.equal(values['--id-visible-top'], '12px');
+    viewport.height = 460; listeners.get('resize')();
+    assert.equal(values['--id-visible-height'], '460px');
+    cleanup(); cleanup = null;
+    assert.equal(listeners.size, 0);
+  } finally { cleanup?.(); globalThis.window = oldWindow; globalThis.document = oldDocument; await h.close(); }
 });

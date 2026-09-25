@@ -37,10 +37,7 @@ from .facemarket_photo_normalize import (
     normalize_png,
     sniff_image_mime,
 )
-from .facemarket_photo_check import (
-    PhotoCheckUnavailable, check_enrollment_photo, judge_refset, reject_message,
-)
-from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
+from .facemarket_photo_check import judge_refset, reject_message
 from .r2 import (
     enrollment_id_document_key, enrollment_normalized_key, enrollment_quarantine_key,
     ext_for_mime, normalized_sibling_key, sha256_sri,
@@ -285,6 +282,8 @@ class ReshootSlotView(CamelModel):
 class EnrollmentPhotoView(CamelModel):
     angle: str
     slot: str
+    # 기존 DB·API 계약의 passed는 디코딩 후 저장된 사진을 뜻한다. 촬영 품질은
+    # 등록의 photo_review_status로 별도 심사하며 본인확인 매칭 결과와도 구분한다.
     qc_status: str
     uploaded_at: datetime
 
@@ -1719,7 +1718,7 @@ async def upload_enrollment_photo(
             raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
         if len(data) > MAX_FACE_BYTES:
             raise _err("file_too_large", f"이미지는 {MAX_FACE_MB}MB 이하만 가능합니다.", status=413)
-        # 정규화본을 **먼저** 만든다. 검사도 열람도 학습도 전부 이걸 읽는다 — HEIC 는 cv2 가
+        # 정규화본을 **먼저** 만든다. 열람도 학습도 전부 이걸 읽는다. HEIC 는 cv2 가
         # 아예 못 읽고, JPEG 는 EXIF orientation 을 PIL 과 cv2 가 다르게 다룬다.
         # to_thread 필수: 48MP 한 장이 이 자리에서 수 초를 쓴다(2026-08-26 루프 동결 사고).
         try:
@@ -1731,49 +1730,8 @@ async def upload_enrollment_photo(
                 extra={"enrollment_id": enrollment_id, "angle": angle, "reason": str(exc)},
             )
             raise _err("photo_framing", reject_message("unreadable"), reasons=["unreadable"])
-        # 촬영 스펙 검사 — 등록 사진이 곧 학습셋이라 **항상** 본다(fm_face_match_enabled 와 무관).
-        # 여기서 막지 않으면 사용자는 촬영 자리를 떠난 뒤에야 못 쓰는 사진임을 알게 된다.
-        try:
-            shot_reason, shot = await asyncio.to_thread(
-                check_enrollment_photo, normalized, angle,
-                model_dir=request.app.state.settings.fm_face_qc_dir,
-            )
-        except PhotoCheckUnavailable:
-            raise _err(
-                "qc_unavailable",
-                "사진 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-                status=503,
-            )
-        if shot_reason:
-            logger.info(
-                "facemarket_enrollment_photo_rejected",
-                extra={"enrollment_id": enrollment_id, "angle": angle,
-                       "reason": shot_reason, **shot},
-            )
-            raise _err("photo_framing", reject_message(shot_reason), reasons=[shot_reason])
-        qc = None
-        if request.app.state.settings.fm_face_match_enabled:
-            try:
-                qc = await evaluate_face_qc(
-                    request.app.state.settings,
-                    image_bytes=normalized,
-                    mime=NORMALIZED_MIME,
-                    angle=angle,
-                )
-            except FaceQcUnavailable:
-                raise _err(
-                    "qc_unavailable",
-                    "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-                    status=503,
-                )
-        if qc is not None and not qc.passed:
-            # 차단 사유만 노출(angle_mismatch advisory 는 여기 도달 못하지만, 혼재 시에도
-            # 거절 카피에 각도 안내가 섞이지 않게 blocking_reasons 로 한정한다).
-            raise _err(
-                "face_quality",
-                qc_reason_message(qc.blocking_reasons),
-                reasons=qc.blocking_reasons,
-            )
+        # 업로드에서는 얼굴·구도 추론 없이 저장한다. 촬영 품질은 관리자 사진 심사와
+        # 재촬영 요청으로 확인한다. 완료 단계의 본인확인 매칭은 별도로 유지한다.
         # 원본의 확장자는 실제 형식을 따른다(HEIC 는 .heic). 정규화본은 같은 버전을 쓰는
         # 형제 키다 — 한 업로드가 만든 두 객체가 짝이라는 게 키에서 보여야 파기·정리가 쉽다.
         version = uuid.uuid4().hex
@@ -3623,9 +3581,8 @@ def validate_biometric_settings(settings: Settings) -> None:
             raise RuntimeError("FM_LIVENESS_CONFIDENCE_THRESHOLD is required")
     if not settings.fm_ci_pepper or not settings.fm_ci_pepper.strip():
         raise RuntimeError("FM_CI_PEPPER is required for biometric enrollment")
-    # 촬영 스펙 검사(facemarket_photo_check)는 fm_face_match_enabled 와 무관하게 **항상** 돈다.
-    # YuNet 가중치가 없으면 사진 업로드가 전부 503 이라 등록이 통째로 막힌다 — 그런 배포가
-    # 조용히 나가지 않게 부팅에서 막는다(가중치는 Dockerfile 이 빌드 때 받는다).
+    # 신분증 촬영본의 얼굴 추출은 fm_face_match_enabled와 무관하게 검출기를 사용한다.
+    # 등록사진 업로드에서는 쓰지 않지만 신분증 단계가 막히는 배포는 부팅에서 막는다.
     if not os.path.exists(weight_paths(settings)[0]):
         raise RuntimeError(
             "YuNet face detector weight file is required for biometric enrollment"

@@ -105,7 +105,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy, onGal
     </div>
     <div className={s.idCameraHint}>
       <p>주민등록증을 네모 안에 맞추고 촬영해 주세요.</p>
-      <p className={s.idCameraSubHint}>촬영 후 주민등록번호 뒤 7자리를 직접 가려요.</p>
+      <p className={s.idCameraSubHint}>촬영 후 화면을 터치해서 뒷자리를 가릴 가림막 박스를 만들어 주세요.</p>
       {captureError && <p className={s.idCaptureError} role="alert">사진을 저장하지 못했어요. 다시 찍어 주세요.</p>}
     </div>
     <div className={s.idCameraControls}>

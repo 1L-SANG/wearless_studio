@@ -349,7 +349,7 @@ test('확인 화면에서 역광 고치기로 사진을 교체하고 확인으�
     assert.equal(calls[0].slot, 'bl_34'); assert.equal(calls[0].fileBlob, file);
     tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.alt === '18번 내 사진'));
-    assert.ok(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === 'photo-input-bl_34' && textOf(node).includes('재촬영·교체')));
+    assert.ok(findTree(tree, (node) => node.type === 'label' && node.props.htmlFor === 'photo-input-bl_34' && textOf(node).trim() === '교체'));
     assert.ok(findTree(tree, (node) => node.type === 'button' && node.props.children?.[1] === '삭제'));
     await button(tree, '다음').props.onClick();
     assert.equal(harness.runtime.states[2], module.PHOTO_REVIEW_SUB);

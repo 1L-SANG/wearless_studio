@@ -44,29 +44,17 @@ def _face_qc_test_weights_dir() -> str:
 
 
 @pytest.fixture(autouse=True)
-def stub_enrollment_photo_check(request, monkeypatch):
-    """등록 사진 업로드 검사(YuNet)를 기본 '통과'로 둔다.
-
-    진짜 판정에는 onnx 가중치가 필요한데 그건 gitignore 라 저장소·CI 에 없고(Dockerfile 이
-    빌드 때 받는다), 테스트가 올리는 사진은 대부분 `b"image"` 같은 가짜 바이트다. 검사 자체는
-    tests/test_facemarket_photo_check.py 가 숫자 픽스처로 본다.
-    라우트 배선(400 photo_framing · 503)을 보는 테스트는 real_photo_check 마커로 이걸 끈다.
-    """
+def stub_enrollment_photo_normalize(monkeypatch):
+    """가짜 이미지 바이트를 쓰는 라우트 테스트에서 정규화만 생략한다."""
     from app import facemarket_enrollment, personalization
 
-    # 정규화(EXIF 적용 무손실 PNG)는 **항상** 통과시킨다 — real_photo_check 마커가 끄려는 건
-    # 검출기(YuNet)지 디코더가 아니고, 테스트가 올리는 건 `b"image"` 같은 가짜 바이트라
-    # 진짜 디코더는 무조건 실패한다. 바이트는 **그대로 흘린다**: 저장 바이트를 보는 테스트가
+    # 테스트가 올리는 건 `b"image"` 같은 가짜 바이트라 진짜 디코더는 실패한다.
+    # 바이트는 **그대로 흘린다**: 저장 바이트를 보는 테스트가
     # 여럿이라 여기서 바꾸면 그쪽이 거짓으로 통과한다.
     # 진짜 변환은 tests/test_face_photo_normalize.py 가 실제 이미지로 본다.
     for module in (facemarket_enrollment, personalization):
         monkeypatch.setattr(module, "normalize_png",
                             lambda data, max_edge=0: (data, (1200, 1600)))
-    if request.node.get_closest_marker("real_photo_check"):
-        return
-
-    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
-                        lambda data, slot, **kw: (None, {"stub": True}))
 
 
 def auth_headers(make_token):
