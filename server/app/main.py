@@ -25,6 +25,7 @@ from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
+from .workers.fm_license_revoke_alert_reconciler import LicenseRevokeAlertReconciler
 from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.lora_training_reconciler import LoraTrainingReconciler
 from .workers.test_cut_build_reconciler import TestCutBuildReconciler
@@ -139,6 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        license_revoke_alert_reconciler = None
         vc_issue_reconciler = None
         lora_training = None
         test_cut_build = None
@@ -169,6 +171,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await vc_revocation_reconciler.start()
                 vc_issue_reconciler = FaceVcIssueReconciler(app)
                 await vc_issue_reconciler.start()
+            if not detail_worker_only and settings.facemarket_enabled:
+                license_revoke_alert_reconciler = LicenseRevokeAlertReconciler(app)
+                await license_revoke_alert_reconciler.start()
             # 인물 LoRA 학습 큐. 기본 off(FM_LORA_TRAINING)이고, detail-worker 에서는 안 돈다 —
             # 한 건이 GPU 파드를 몇 시간 쓰는 일이라 도는 자리가 하나여야 한다.
             if not detail_worker_only:
@@ -349,6 +354,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:
             await vc_revocation_reconciler.stop()
+        if license_revoke_alert_reconciler is not None:
+            await license_revoke_alert_reconciler.stop()
         if vc_issue_reconciler is not None:
             await vc_issue_reconciler.stop()
         if lora_training is not None:

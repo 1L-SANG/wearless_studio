@@ -3251,7 +3251,8 @@ async def revoke_license(
         await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status
+                """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status,
+                          m.display_name
                    from fm_licenses l join fm_models m on m.id = l.model_id
                    where l.id = %s and m.user_id = %s
                    for update of l""",
@@ -3260,6 +3261,7 @@ async def revoke_license(
             lic = await cur.fetchone()
         if not lic:
             raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        first_revocation = lic["status"] != "revoked"
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""update fm_licenses set status = 'revoked'
@@ -3267,6 +3269,27 @@ async def revoke_license(
                 (license_id,),
             )
             row = await cur.fetchone()
+        other_active_licenses = 0
+        if first_revocation:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """select count(*) as count from fm_licenses
+                       where model_id = %s and id <> %s
+                         and status in ('active', 'reverification_required')""",
+                    (lic["model_id"], lic["id"]),
+                )
+                other_active_licenses = int((await cur.fetchone() or {}).get("count") or 0)
+            # Slack 장애와 프로세스 종료에도 파기 알림을 잃지 않도록 해지와 함께 적재한다.
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_license_revoke_alerts
+                         (license_id, model_id, display_name, revoked_on, other_active_licenses)
+                       values (%s, %s, %s, %s, %s)
+                       on conflict (license_id) do nothing""",
+                    (lic["id"], lic["model_id"],
+                     "*" if len(lic["display_name"].strip()) <= 1 else lic["display_name"],
+                     datetime.now(_KST).date(), other_active_licenses),
+                )
         if lic.get("vc_id"):
             await enqueue_vc_revocation(
                 conn,
