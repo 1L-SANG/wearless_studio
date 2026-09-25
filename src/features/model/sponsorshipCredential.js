@@ -5,12 +5,17 @@
    vite 없이 node 로 바로 읽어요. */
 import { seoulDateKey } from '../../lib/datetime.js';
 
-// 발급 중이거나 등록이 끝나길 기다리는 동안만 10초마다 다시 확인해요.
+// 발급 중이면 10초마다, 등록이 끝나길 기다리는 중이면 1분마다 다시 확인해요.
+// 등록은 며칠 걸릴 수도 있어서, 화면을 연 지 30분이 지나면 더 묻지 않아요(새로고침하면 다시 봐요).
 export const SPONSORSHIP_CREDENTIAL_POLL_MS = 10_000;
+export const SPONSORSHIP_CREDENTIAL_SLOW_POLL_MS = 60_000;
+export const SPONSORSHIP_CREDENTIAL_POLL_LIMIT_MS = 30 * 60_000;
 export const SPONSORSHIP_OFF_NOTICE = '협찬을 끄면 협찬 동의 증명서가 무효 처리돼요.';
 export const SPONSORSHIP_UNAVAILABLE_MESSAGE = '지금은 협찬 요청을 받을 수 없는 모델이에요.';
 
 const MODEL_COPY = {
+  // 협찬은 켜져 있는데 증서가 아직 없어요(기능을 켜기 전에 협찬을 켠 모델) — 서버가 곧 만들어요.
+  none: { tone: 'pending', text: '협찬 동의 증명서를 준비하고 있어요.' },
   waiting_license: { tone: 'waiting', text: '등록이 끝나면 협찬 동의 증명서가 발급돼요.' },
   pending: { tone: 'pending', text: '협찬 동의 증명서를 발급하고 있어요 (1~2분)' },
   active: { tone: 'active', text: '협찬 동의 증명서가 발급됐어요.' },
@@ -31,9 +36,18 @@ export function sponsorshipCredentialCopy(credential) {
   return { ...copy, vcId };
 }
 
-export function shouldPollSponsorshipCredential(credential) {
-  return credential?.featureEnabled === true
-    && (credential.status === 'pending' || credential.status === 'waiting_license');
+/** 다음 확인까지 기다릴 ms. 더 확인할 필요가 없으면 null.
+    sponsorshipEnabled: 모델이 협찬을 켜 둔 상태인지(꺼져 있으면 none 은 끝난 상태예요). */
+export function sponsorshipCredentialPollDelay(credential, { sponsorshipEnabled = false, elapsedMs = 0 } = {}) {
+  if (credential?.featureEnabled !== true || elapsedMs >= SPONSORSHIP_CREDENTIAL_POLL_LIMIT_MS) return null;
+  if (credential.status === 'pending') return SPONSORSHIP_CREDENTIAL_POLL_MS;
+  if (credential.status === 'waiting_license') return SPONSORSHIP_CREDENTIAL_SLOW_POLL_MS;
+  if (credential.status === 'none' && sponsorshipEnabled) return SPONSORSHIP_CREDENTIAL_POLL_MS;
+  return null;
+}
+
+export function shouldPollSponsorshipCredential(credential, options) {
+  return sponsorshipCredentialPollDelay(credential, options) !== null;
 }
 
 /** 끄기 전에 무효 처리 안내를 보여줄지. 이미 발급됐거나 발급 중일 때만이에요. */
@@ -51,7 +65,10 @@ export function sponsorshipInterestErrorMessage(error, fallback) {
 /** 공개 검증 페이지 한 줄. 개인정보 없이 동의 여부·동의일(KST)만 보여줘요. */
 export function verifySponsorshipLine(sponsorship) {
   if (!sponsorship || sponsorship.active !== true) return { active: false, text: '협찬 동의 없음', vcId: null };
-  const day = seoulDateKey(sponsorship.consentedAt, '');
+  // 서버가 KST 날짜(YYYY-MM-DD)로 잘라서 보내요. 옛 응답(consentedAt 시각)도 읽어요.
+  const day = typeof sponsorship.consentedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sponsorship.consentedOn)
+    ? sponsorship.consentedOn
+    : seoulDateKey(sponsorship.consentedAt, '');
   return {
     active: true,
     text: `협찬 동의 · 증명서 유효${day ? ` · 동의일 ${day} (KST)` : ''}`,

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -30,9 +30,13 @@ SPONSORSHIP_VC_PLAN = "fmsponsorship-v1"
 _HOLDER_TIMEOUT = 180.0
 #: 이 횟수부터 매 실패를 경고로 남긴다. 관리자 모델 상세의 lastErrorCode 로도 보인다.
 ALERT_ATTEMPTS = 10
+#: 이 횟수에 닿으면 더 집지 않는다(폐기 워커의 _MAX_ATTEMPTS 와 같은 값). 영구 실패 한 건이
+#: 5분마다 holder 를 깨우고, 수요에서 빠지면 내려가고, 다시 깨우는 진동을 막는다.
+MAX_ATTEMPTS = 50
 #: 발급 한 건을 잡고 있는 동안 다른 인스턴스가 같은 행을 다시 집지 않게 미뤄 두는 시간.
-#: holder 멱등키가 있어 겹쳐도 같은 VC 가 나오지만, 콜드부트 2분 동안 중복 호출을 줄인다.
-CLAIM_LEASE_SECONDS = 240
+#: 한 번의 발급은 holder 호출 3단계 × 요청당 180초 = 최대 540초라 그보다 길게 둔다.
+#: 겹쳐도 holder 멱등키가 같은 VC 를 주고, record_issued 가 그 경우를 폐기로 오인하지 않는다.
+CLAIM_LEASE_SECONDS = 600
 
 _PARTICIPATION = "sponsorship_participation"
 _PROFILE = "sponsorship_profile_collection"
@@ -141,40 +145,32 @@ async def owner_status(conn, model_id: str) -> dict:
     return {"status": status, "vc_id": row["vc_id"], "issued_at": row["issued_at"]}
 
 
-async def has_active_credential(conn, model_id: str) -> bool:
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """select 1 from fm_sponsorship_credentials
-                where model_id = %s and status = 'active' limit 1""",
-            (model_id,),
-        )
-        return await cur.fetchone() is not None
-
-
-#: 카탈로그 SQL 에 끼우는 조건 — 모델 별칭 `m` 기준. 증서가 active 인 모델만 협찬 노출.
+#: 카탈로그·셀러 게이트 SQL 에 끼우는 조건 — 모델 별칭 `m` 기준. 증서가 active 인 모델만 협찬 노출.
 ACTIVE_CREDENTIAL_SQL = (
     "exists (select 1 from fm_sponsorship_credentials sc "
     "where sc.model_id = m.id and sc.status = 'active')"
 )
 
+_KST = timezone(timedelta(hours=9))
 
-async def public_view(conn, model_id: str) -> dict | None:
-    """공개 검증용 — **개인정보 없음**. 유효 증서가 없으면 None."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """select vc_id, consented_at, consent_doc_version
-                 from fm_sponsorship_credentials
-                where model_id = %s and status = 'active' limit 1""",
-            (model_id,),
-        )
-        row = await cur.fetchone()
-    if row is None:
+
+def public_sponsorship(row: Mapping, *, license_valid: bool) -> dict | None:
+    """공개 검증의 협찬 블록 — **동의 사실만**. 라이선스가 무효면(철회·만료) 협찬도 싣지 않는다.
+
+    row 는 PUBLIC_VERIFY_SQL 의 sponsorship_* 칸. 동의 시각은 날짜(KST)로만 — 공개 화면에
+    초 단위 행동 시각을 남길 이유가 없다.
+    """
+    if not license_valid or not row.get("sponsorship_vc_id"):
         return None
+    consented = row.get("sponsorship_consented_at")
+    if isinstance(consented, datetime):
+        consented = (consented if consented.tzinfo else consented.replace(tzinfo=timezone.utc))
+        consented = consented.astimezone(_KST).date()
     return {
         "active": True,
-        "vc_id": row["vc_id"],
-        "consented_at": row["consented_at"],
-        "consent_doc_version": row["consent_doc_version"],
+        "vc_id": row["sponsorship_vc_id"],
+        "consented_on": consented,
+        "consent_doc_version": row.get("sponsorship_consent_doc_version"),
     }
 
 
@@ -276,6 +272,40 @@ async def request_holder_issue(settings, row: Mapping) -> str:
     return vc_id.strip()
 
 
+async def backfill_missing(pool, *, limit: int = 20) -> int:
+    """협찬은 켜져 있는데 열린 증서가 없는 모델에 pending 증서를 만든다.
+
+    증서는 off→on **전환**에서만 생긴다. 그래서 스위치(FM_SPONSORSHIP_VC)를 켜기 전에 — 또는
+    off 로 롤백해 둔 사이에 — 협찬을 켠 모델은 증서가 없고, 스위치를 켜는 순간 셀러에게서
+    조용히 숨겨진다. 워커가 스윕마다 그 틈을 메운다. 동의 증빙은 그 모델의 최신 granted
+    이벤트를 그대로 쓴다(open_credential 과 같은 경로).
+    """
+    opened = 0
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select m.id::text as model_id, m.user_id::text as user_id
+                     from fm_models m
+                    where m.sponsorship_enabled and m.user_id is not null
+                      and not exists (select 1 from fm_sponsorship_credentials c
+                                       where c.model_id = m.id
+                                         and c.status in ('pending', 'active'))
+                    order by m.id
+                    limit %s""",
+                (limit,),
+            )
+            models = await cur.fetchall()
+            for model in models:
+                try:
+                    if await open_credential(cur, **model):
+                        opened += 1
+                except RuntimeError:
+                    # 동의 기록이 없는 켜짐(동의 기록 도입 전 데이터) — 증서를 지어낼 근거가 없다.
+                    log.warning("sponsorship on without consent events: model=%s", model["model_id"])
+        await conn.commit()
+    return opened
+
+
 async def claim_pending(pool, *, limit: int = 10) -> list[dict]:
     """발급할 pending 행을 잡는다. 모델 DID 가 아직 없으면(라이선스 VC 전) 건너뛴다."""
     async with pool.connection() as conn:
@@ -285,6 +315,7 @@ async def claim_pending(pool, *, limit: int = 10) -> list[dict]:
                        select c.id from fm_sponsorship_credentials c
                          join fm_models m on m.id = c.model_id
                         where c.status = 'pending' and c.next_attempt_at <= now()
+                          and c.attempts < %s
                           and nullif(btrim(m.did), '') is not null
                         order by c.next_attempt_at
                         for update of c skip locked
@@ -297,7 +328,7 @@ async def claim_pending(pool, *, limit: int = 10) -> list[dict]:
                 returning c.id::text as id, c.model_id::text as model_id,
                           c.consent_doc_version, c.participation_doc_sha256,
                           c.profile_doc_sha256, c.consented_at, c.attempts""",
-                (limit,),
+                (MAX_ATTEMPTS, limit),
             )
             rows = await cur.fetchall()
         await conn.commit()
@@ -317,12 +348,19 @@ async def record_issued(pool, row: Mapping, vc_id: str) -> bool:
             )
             activated = cur.rowcount == 1
             if not activated:
+                # pending 이 아니었다 — 두 경우뿐이다.
+                #  · 다른 인스턴스가 같은 멱등키로 먼저 active 로 만들었다(같은 vc_id) → 할 일 없음.
+                #    여기서 폐기하면 DB 는 유효인데 holder·체인은 폐기된 증서가 된다.
+                #  · 발급 도중 협찬이 꺼져 revoked 가 됐다 → 방금 받은 VC 를 폐기 큐로.
                 await cur.execute(
                     """update fm_sponsorship_credentials set vc_id = coalesce(vc_id, %s)
-                        where id = %s""",
+                        where id = %s and status = 'revoked'
+                    returning status""",
                     (vc_id, row["id"]),
                 )
-                await enqueue_sponsorship_revocation(cur, model_id=row["model_id"], vc_id=vc_id)
+                if await cur.fetchone() is not None:
+                    await enqueue_sponsorship_revocation(
+                        cur, model_id=row["model_id"], vc_id=vc_id)
         await conn.commit()
     return activated
 

@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from ipaddress import ip_address
 from typing import Any, Literal
 from urllib.parse import quote
@@ -44,9 +44,11 @@ from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
 from .facemarket_sponsorship_vc import (
+    ACTIVE_CREDENTIAL_SQL as SPONSORSHIP_ACTIVE_CREDENTIAL_SQL,
     close_open_credentials as close_sponsorship_credentials,
     open_credential as open_sponsorship_credential,
     owner_status as sponsorship_credential_owner_status,
+    public_sponsorship,
     sponsorship_vc_enabled,
 )
 from .facemarket_sponsorship import (
@@ -644,9 +646,7 @@ async def list_models(
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {_MODEL_CARD_COLS_ENRICHED},
-                           exists (select 1 from fm_sponsorship_credentials sc
-                                    where sc.model_id = m.id and sc.status = 'active')
-                             as sponsorship_credential_active
+                           {SPONSORSHIP_ACTIVE_CREDENTIAL_SQL} as sponsorship_credential_active
                       from fm_models m
                     {_CURRENT_CARD_JOINS}
                     where {_CURRENT_CARD_ELIGIBILITY}
@@ -2000,25 +2000,49 @@ class PublicVerifyResult(CamelModel):
     vc_id: str | None = None
     model: PublicVerifyModel
     #: 2026-09-25 계약 확장(협찬 동의 VC). 동의 **사실**만 — 인스타·팔로워·사이즈는 절대 싣지 않는다.
-    #: 유효(active) 증서가 없으면 null.
+    #: FM_SPONSORSHIP_VC=off 면 키 자체가 없다(off = 지금과 같은 응답). on 이면 유효 증서가
+    #: 없거나 라이선스가 무효일 때 null.
     sponsorship: "PublicVerifySponsorship | None" = None
 
 
 class PublicVerifySponsorship(CamelModel):
-    """공개 검증의 협찬 동의 — 증서 id·동의 시각·동의서 버전뿐."""
+    """공개 검증의 협찬 동의 — 증서 id·동의일(KST 날짜)·동의서 버전뿐."""
 
     active: bool
     vc_id: str | None = None
-    consented_at: datetime | None = None
+    consented_on: date | None = None
     consent_doc_version: str | None = None
 
 
 PublicVerifyResult.model_rebuild()
 
 
+#: 공개 검증 SELECT — 방어 ① 화이트리스트. 얼굴(face_image_*)·식별자(user_id·model_id·ci_hash)는
+#: 조회조차 하지 않는다. birthYear 는 만 나이 파생에만 쓰고 응답에 싣지 않는다.
+#: 협찬은 유효(active) 증서만 조인한다(모델당 열린 증서는 하나 — 부분 유니크).
+PUBLIC_VERIFY_SQL = """
+select l.status, l.allowed_use, l.forbidden_use, l.unit_price,
+       l.license_valid_until, l.vc_id, m.display_name,
+       sc.vc_id as sponsorship_vc_id,
+       sc.consented_at as sponsorship_consented_at,
+       sc.consent_doc_version as sponsorship_consent_doc_version,
+       (select v.fields->>'birthYear' from fm_identity_verifications v
+         where v.model_id = m.id
+         order by v.verified_at desc limit 1) as birth_year
+  from fm_licenses l
+  join fm_models m on m.id = l.model_id
+  left join fm_sponsorship_credentials sc
+    on sc.model_id = m.id and sc.status = 'active'
+ where l.id = %s
+"""
+
+
 @router.get(
     "/verify/{license_id}",
     response_model=PublicVerifyResult,
+    # 선언했지만 채우지 않은 키(스위치 off 의 sponsorship)는 직렬화하지 않는다. 나머지 키는 전부
+    # 값(None 포함)을 명시해서 넘기므로 영향이 없다.
+    response_model_exclude_unset=True,
     responses={404: {"model": ErrorResponse, "description": "라이선스 없음/잘못된 id"}},
     tags=["FaceMarket"],
     summary="얼굴 라이선스 공개 검증 (QR — 무인증)",
@@ -2043,25 +2067,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
-            # 방어 ① — 화이트리스트 SELECT. 얼굴(face_image_*)·식별자(user_id·model_id·ci_hash)는
-            # 조회조차 하지 않는다. birthYear 는 만 나이 파생에만 쓰고 응답에 싣지 않는다.
-            await cur.execute(
-                """select l.status, l.allowed_use, l.forbidden_use, l.unit_price,
-                          l.license_valid_until, l.vc_id, m.display_name,
-                          sc.vc_id as sponsorship_vc_id,
-                          sc.consented_at as sponsorship_consented_at,
-                          sc.consent_doc_version as sponsorship_consent_doc_version,
-                          (select v.fields->>'birthYear' from fm_identity_verifications v
-                           where v.model_id = m.id
-                           order by v.verified_at desc limit 1) as birth_year
-                   from fm_licenses l
-                   join fm_models m on m.id = l.model_id
-                   -- 협찬 동의 VC — 유효(active) 증서만. 모델당 열린 증서는 하나(부분 유니크).
-                   left join fm_sponsorship_credentials sc
-                     on sc.model_id = m.id and sc.status = 'active'
-                   where l.id = %s""",
-                (lic_id,),
-            )
+            await cur.execute(PUBLIC_VERIFY_SQL, (lic_id,))
             row = await cur.fetchone()
     if row is None:
         return _public_not_found("라이선스를 찾을 수 없습니다.")
@@ -2073,7 +2079,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
 
     # 공개 캐시·CDN·브라우저 저장 금지 — 해지가 즉시 반영돼야 한다(캐시된 valid=true = 사고).
     response.headers["Cache-Control"] = "no-store"
-    return {
+    body = {
         "valid": status == "active",
         "status": status,
         "allowedUse": row["allowed_use"] or [],
@@ -2087,16 +2093,10 @@ async def verify_license_public(request: Request, license_id: str, response: Res
             "nameMasked": _mask_name(row["display_name"]),
             "age": _age_from_birth_year(row["birth_year"]),
         },
-        "sponsorship": (
-            {
-                "active": True,
-                "vcId": row["sponsorship_vc_id"],
-                "consentedAt": row.get("sponsorship_consented_at"),
-                "consentDocVersion": row.get("sponsorship_consent_doc_version"),
-            }
-            if row.get("sponsorship_vc_id") else None
-        ),
     }
+    if sponsorship_vc_enabled(request.app.state.settings):
+        body["sponsorship"] = public_sponsorship(row, license_valid=status == "active")
+    return body
 
 
 # ============================================================================

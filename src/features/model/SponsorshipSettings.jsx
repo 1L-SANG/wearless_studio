@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { getSponsorshipCredential, updateModelSponsorship } from '@/lib/api/facemarket.js';
 import { BOTTOM_WAIST_SIZES, TOP_SIZES, sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
 import {
-  SPONSORSHIP_CREDENTIAL_POLL_MS, SPONSORSHIP_OFF_NOTICE, shouldPollSponsorshipCredential,
+  SPONSORSHIP_OFF_NOTICE, sponsorshipCredentialPollDelay,
   sponsorshipCredentialCopy, sponsorshipOffNeedsNotice,
 } from './sponsorshipCredential.js';
 import s from './SponsorshipSettings.module.css';
@@ -82,22 +82,26 @@ export function ModelSponsorshipSettings({ model, onModelChange, disabled = fals
     if (!modelId) return undefined;
     let alive = true;
     let timer = null;
-    let polling = false;
-    const later = () => { if (alive) timer = setTimeout(check, SPONSORSHIP_CREDENTIAL_POLL_MS); };
+    let delay = null;
+    const startedAt = Date.now();
+    const later = () => { if (alive && delay !== null) timer = setTimeout(check, delay); };
     async function check() {
       timer = null;
       // 탭이 가려져 있으면 요청을 건너뛰고 다음 차례만 잡아요.
-      if (polling && typeof document !== 'undefined' && document.hidden) { later(); return; }
+      if (delay !== null && typeof document !== 'undefined' && document.hidden) { later(); return; }
       try {
         const next = await getSponsorshipCredential(modelId);
         if (!alive) return;
         setCredential({ modelId, data: next });
-        polling = shouldPollSponsorshipCredential(next);
+        delay = sponsorshipCredentialPollDelay(next, {
+          sponsorshipEnabled: latestModel.current?.sponsorshipEnabled === true,
+          elapsedMs: Date.now() - startedAt,
+        });
       } catch {
         // 상태 확인 실패는 조용히 넘겨요. 확인하던 중이었다면 다음 차례에 다시 봐요.
         if (!alive) return;
       }
-      if (polling) later();
+      later();
     }
     void check();
     return () => { alive = false; if (timer) clearTimeout(timer); };

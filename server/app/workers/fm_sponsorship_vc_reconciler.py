@@ -8,7 +8,7 @@ import asyncio
 import contextlib
 import logging
 
-from ..facemarket_sponsorship_vc import claim_pending, issue_one
+from ..facemarket_sponsorship_vc import backfill_missing, claim_pending, issue_one
 
 log = logging.getLogger("wearless.fm_sponsorship_vc_reconciler")
 
@@ -60,6 +60,7 @@ class FmSponsorshipVcReconciler:
                 scaler.prewarm_soon()
 
     async def _sweep_once(self) -> bool:
+        await backfill_missing(self.app.state.pool)
         rows = await claim_pending(self.app.state.pool)
         if not rows:
             return False

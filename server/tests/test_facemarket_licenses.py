@@ -2796,9 +2796,9 @@ def test_legacy_face_license_records_null_profile(fm, make_token):
 # ── step02: 공개 검증(QR — 무인증) ─────────────────────────────
 _PUBLIC_KEYS = {
     "valid", "status", "allowedUse", "forbiddenUse", "unitPrice", "validUntil", "vcId", "model",
-    # 2026-09-25 계약 확장: 협찬 동의 VC — 동의 사실만(없으면 null).
-    "sponsorship",
 }
+# FM_SPONSORSHIP_VC=on 일 때만 더해지는 키(협찬 동의 VC — 동의 사실만).
+_PUBLIC_KEYS_WITH_SPONSORSHIP = _PUBLIC_KEYS | {"sponsorship"}
 
 
 def _make_license(store, r2, **data):
@@ -3072,17 +3072,26 @@ def test_retake_blocks_holder_until_all_photos_are_rebuilt(
 
 
 def test_public_verify_sponsorship_shows_only_consent_fact(fm, make_token):
-    """협찬 동의 VC 가 유효하면 증서 id·동의 시각·동의서 버전만 싣는다. 없으면 null."""
+    """스위치 off 면 키 자체가 없다. on 이면 동의 사실만(증서 id·동의일 KST·동의서 버전),
+    유효 증서가 없거나 라이선스가 무효면 null."""
     client, store, r2 = fm
     card = _make_license(store, r2, allowed_use="광고", forbidden_use="")
-    assert client.get(f"/v1/facemarket/verify/{card['id']}").json()["sponsorship"] is None
+    url = f"/v1/facemarket/verify/{card['id']}"
+    assert "sponsorship" not in client.get(url).json()
+    settings = client.app.state.settings
+    client.app.state.settings = settings.__class__(**{**settings.__dict__, "fm_sponsorship_vc": "on"})
+    body = client.get(url).json()
+    assert set(body) == _PUBLIC_KEYS_WITH_SPONSORSHIP and body["sponsorship"] is None
     store["sponsorships"] = {"model-1": {
         "sponsorship_vc_id": "vc-sponsor-9",
-        "sponsorship_consented_at": datetime(2026, 9, 25, 3, 0, tzinfo=timezone.utc),
+        "sponsorship_consented_at": datetime(2026, 9, 25, 16, 0, tzinfo=timezone.utc),
         "sponsorship_consent_doc_version": "2026-09-sponsorship-v1",
     }}
-    body = client.get(f"/v1/facemarket/verify/{card['id']}").json()
+    body = client.get(url).json()
     assert body["sponsorship"] == {
         "active": True, "vcId": "vc-sponsor-9",
-        "consentedAt": "2026-09-25T03:00:00Z", "consentDocVersion": "2026-09-sponsorship-v1",
+        "consentedOn": "2026-09-26", "consentDocVersion": "2026-09-sponsorship-v1",
     }
+    # 라이선스가 철회되면 협찬도 싣지 않는다.
+    next(x for x in store["licenses"] if x["id"] == card["id"])["status"] = "revoked"
+    assert client.get(url).json()["sponsorship"] is None

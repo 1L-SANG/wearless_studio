@@ -232,3 +232,24 @@ def test_opendid_demand_adds_revocations_to_active_count():
     row = {"active": 1, "last_finished": None, "last_activity": None}
     snap = asyncio.run(repo_mod.opendid_demand_snapshot(_Conn(row)))
     assert snap.active_sam_jobs == 1
+
+
+def test_opendid_demand_counts_sponsorship_pending_only_when_switch_is_on():
+    """FM_SPONSORSHIP_VC=off 로 롤백하면 발급 워커가 멈춰 pending 이 영영 남는다 — 그 행을
+    수요로 세면 holder 가 24/7 켜진다."""
+    class _Cur:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def execute(self, sql, params=None): self.sql = sql
+        async def fetchone(self): return {}
+
+    class _C:
+        def __init__(self): self.curs = []
+        def cursor(self):
+            cur = _Cur(); self.curs.append(cur); return cur
+
+    for flag, expected in ((False, "where false"), (True, "where true")):
+        conn = _C()
+        asyncio.run(repo_mod.opendid_demand_snapshot(conn, sponsorship_vc=flag))
+        demand_sql = " ".join(conn.curs[-1].sql.split())
+        assert f"from fm_sponsorship_credentials c join fm_models m on m.id = c.model_id {expected} " in demand_sql

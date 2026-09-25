@@ -14,7 +14,7 @@ const cred = (status, extra = {}) => ({ featureEnabled: true, status, vcId: null
 test('증서 상태별 모델 화면 문구와 확인 주기를 골라요', () => {
   assert.equal(sponsorshipCredentialCopy(null), null);
   assert.equal(sponsorshipCredentialCopy({ ...cred('active'), featureEnabled: false }), null);
-  assert.equal(sponsorshipCredentialCopy(cred('none')), null);
+  assert.equal(sponsorshipCredentialCopy(cred('none')).text, '협찬 동의 증명서를 준비하고 있어요.');
   assert.equal(sponsorshipCredentialCopy(cred('waiting_license')).text, '등록이 끝나면 협찬 동의 증명서가 발급돼요.');
   assert.equal(sponsorshipCredentialCopy(cred('pending')).text, '협찬 동의 증명서를 발급하고 있어요 (1~2분)');
   const active = sponsorshipCredentialCopy(cred('active', { vcId: 'urn:uuid:12345678-aaaa-bbbb-cccc-1234567890ab' }));
@@ -147,4 +147,22 @@ test('발급 중이면 10초마다 다시 확인하고, 발급되면 멈춰요',
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(lookups, 3);
   } finally { cleanups.forEach(cleanup => cleanup()); await h.close(); }
+});
+
+test('poll delay: 발급 중 10초, 등록 대기 1분, 30분 뒤·끝난 상태는 멈춰요', async () => {
+  const { sponsorshipCredentialPollDelay, SPONSORSHIP_CREDENTIAL_POLL_LIMIT_MS } = await import('../../src/features/model/sponsorshipCredential.js');
+  const c = status => ({ featureEnabled: true, status, vcId: null, issuedAt: null });
+  assert.equal(sponsorshipCredentialPollDelay(c('pending')), 10_000);
+  assert.equal(sponsorshipCredentialPollDelay(c('waiting_license')), 60_000);
+  assert.equal(sponsorshipCredentialPollDelay(c('active')), null);
+  assert.equal(sponsorshipCredentialPollDelay(c('none')), null);
+  assert.equal(sponsorshipCredentialPollDelay(c('none'), { sponsorshipEnabled: true }), 10_000);
+  assert.equal(sponsorshipCredentialPollDelay(c('pending'), { elapsedMs: SPONSORSHIP_CREDENTIAL_POLL_LIMIT_MS }), null);
+});
+
+test('협찬은 켜졌는데 증서가 없으면 준비 중 문구, 검증 줄은 서버 날짜(consentedOn)를 그대로 써요', async () => {
+  const { sponsorshipCredentialCopy, verifySponsorshipLine } = await import('../../src/features/model/sponsorshipCredential.js');
+  assert.equal(sponsorshipCredentialCopy({ featureEnabled: true, status: 'none' }).text, '협찬 동의 증명서를 준비하고 있어요.');
+  const line = verifySponsorshipLine({ active: true, vcId: 'vc-1', consentedOn: '2026-09-26', consentDocVersion: 'v1' });
+  assert.equal(line.text, '협찬 동의 · 증명서 유효 · 동의일 2026-09-26 (KST)');
 });

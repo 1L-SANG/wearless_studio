@@ -11,7 +11,7 @@
    digest·CI·생년월일·user_id·model_id 를 애초에 응답에 싣지 않는다(화이트리스트).
    여기서 하는 건 그 화이트리스트 응답을 그대로 보여주는 것뿐이다.
 
-   협찬 동의(2026-09-25): 응답에 sponsorship {active, vcId, consentedAt, consentDocVersion}
+   협찬 동의(2026-09-25): FM_SPONSORSHIP_VC=on 일 때만 응답에 sponsorship {active, vcId, consentedOn(KST 날짜), consentDocVersion}
    | null 이 붙는다. 동의 여부·동의일·VC id 만 그린다 — 인스타 계정·팔로워·사이즈 같은
    협찬 프로필은 서버도 싣지 않고 여기서도 그리지 않는다.
    ============================================================= */

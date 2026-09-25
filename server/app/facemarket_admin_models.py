@@ -22,7 +22,7 @@ from .db import get_conn
 from .facemarket import _assert_account_open, _cover_serving_url, _model_id_or_404
 from .facemarket_catalog_access import CatalogRole, catalog_access
 from .facemarket_sponsorship import SponsorshipFields, sponsorship_view
-from .facemarket_sponsorship_vc import sponsorship_vc_enabled
+from .facemarket_sponsorship_vc import ACTIVE_CREDENTIAL_SQL, sponsorship_vc_enabled
 from .models import CamelModel
 from .personalization import CONSENT_DOC_VERSION
 from .r2 import (
@@ -234,8 +234,7 @@ select m.id::text as id, m.display_name, m.gender,
        m.sponsorship_enabled, m.instagram_handle, m.instagram_followers,
        m.instagram_followers_reported_at, m.size_top, m.size_bottom_waist,
        m.sponsorship_profile_consent_at,
-       exists (select 1 from fm_sponsorship_credentials sc
-                where sc.model_id = m.id and sc.status = 'active') as sponsorship_credential_active
+       """ + ACTIVE_CREDENTIAL_SQL + """ as sponsorship_credential_active
   from fm_models m
   join fm_biometric_enrollments e
     on e.id = m.current_enrollment_id and e.model_id = m.id

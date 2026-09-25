@@ -63,6 +63,9 @@ public class IssueVcService {
     private static final String ISSUER_DID = "did:omn:issuer";
     private static final String CAS_DID = "did:omn:cas";
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> MODEL_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private final TasClient tas;
     private final HolderWalletService wallets;
     private final CasKeyService casKey;
@@ -101,7 +104,19 @@ public class IssueVcService {
         return issue(modelId, null);
     }
 
+    /**
+     * 같은 모델의 발급은 한 번에 하나만 돈다. 라이선스(facelicense-v2)와 협찬(fmsponsorship-v1)이
+     * 같은 모델 did·pii 로 Issuer {@code /users/demo} 에 upsert 한 뒤 발급 시점에 그 행을 읽는다.
+     * Issuer 가 (pii, vcSchemaId) 로 행을 나눈다고 문서화돼 있지만 Issuer 소스로 확인하지 못했다 —
+     * 두 발급이 겹쳐 한 VC 에 다른 플랜의 클레임이 섞일 여지를 여기서 없앤다(holder 는 한 대).
+     */
     public IssueResult issue(String modelId, IssueVcDtos.IssueRequest request) throws Exception {
+        synchronized (MODEL_LOCKS.computeIfAbsent(modelId, key -> new Object())) {
+            return issueLocked(modelId, request);
+        }
+    }
+
+    private IssueResult issueLocked(String modelId, IssueVcDtos.IssueRequest request) throws Exception {
         ResolvedPlan plan = resolvePlan(request);
         if (!wallets.exists(modelId)) {
             throw new IllegalStateException("no wallet for model " + modelId + " (run POST /holder/models/{id}/wallet first)");

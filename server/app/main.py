@@ -244,7 +244,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     enabled_attr="opendid_autoscale", topic_attr="sam_alert_topic_arn")
                 app.state.opendid_autoscaler = SamAutoscaler(
                     app, opendid_adapter,
-                    demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(conn),
+                    demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(
+                        conn, sponsorship_vc=settings.fm_sponsorship_vc == "on"),
                     idle_attr="opendid_autoscale_idle_minutes",
                     name="opendid", lock_key="opendid_autoscaler")
                 if opendid_adapter.enabled:
