@@ -10,6 +10,10 @@
    생체정보는 한 픽셀도 실을 수 없다. 서버(GET /v1/facemarket/verify/{id})도 얼굴·
    digest·CI·생년월일·user_id·model_id 를 애초에 응답에 싣지 않는다(화이트리스트).
    여기서 하는 건 그 화이트리스트 응답을 그대로 보여주는 것뿐이다.
+
+   협찬 동의(2026-09-25): 응답에 sponsorship {active, vcId, consentedAt, consentDocVersion}
+   | null 이 붙는다. 동의 여부·동의일·VC id 만 그린다 — 인스타 계정·팔로워·사이즈 같은
+   협찬 프로필은 서버도 싣지 않고 여기서도 그리지 않는다.
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
@@ -17,6 +21,7 @@ import { Icon } from '@/components/ui.jsx';
 import { verifyLicensePublic } from '@/lib/api/facemarket.js';
 import s from './PublicVerify.module.css';
 import { seoulDate } from '@/lib/datetime.js';
+import { verifySponsorshipLine } from '@/features/model/sponsorshipCredential.js';
 
 const won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
 const fmtDate = (iso) => seoulDate(iso, iso);
@@ -74,6 +79,8 @@ export function PublicVerify() {
 
   const copy = STATUS_COPY[data.status] ?? STATUS_COPY.revoked;
   const ok = data.valid;
+  // 필드 자체가 없는 응답(이 기능 전 서버)이면 줄을 그리지 않아요. null 이면 "동의 없음"이에요.
+  const sponsorship = Object.hasOwn(data, 'sponsorship') ? verifySponsorshipLine(data.sponsorship) : null;
 
   return (
     <div className={s.page}>
@@ -117,6 +124,13 @@ export function PublicVerify() {
                 <dd><code className={s.vcid}>{data.vcId}</code></dd>
               </div>
             )}
+            {sponsorship && <div className={s.row}>
+              <dt>협찬</dt>
+              <dd>
+                {sponsorship.text}
+                {sponsorship.vcId && <><br /><code className={s.vcid}>{sponsorship.vcId}</code></>}
+              </dd>
+            </div>}
           </dl>
         </section>
 

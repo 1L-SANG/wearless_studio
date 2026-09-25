@@ -1,9 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { updateModelSponsorship } from '@/lib/api/facemarket.js';
+import { getSponsorshipCredential, updateModelSponsorship } from '@/lib/api/facemarket.js';
 import { BOTTOM_WAIST_SIZES, TOP_SIZES, sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
+import {
+  SPONSORSHIP_CREDENTIAL_POLL_MS, SPONSORSHIP_OFF_NOTICE, shouldPollSponsorshipCredential,
+  sponsorshipCredentialCopy, sponsorshipOffNeedsNotice,
+} from './sponsorshipCredential.js';
 import s from './SponsorshipSettings.module.css';
 
-export function SponsorshipFields({ value, onChange, disabled = false }) {
+export function SponsorshipFields({ value, onChange, disabled = false, notice = null }) {
   const id = useId();
   const field = (name, next) => onChange({ ...value, [name]: next });
   const moveSize = (event, name) => {
@@ -24,6 +28,7 @@ export function SponsorshipFields({ value, onChange, disabled = false }) {
       <div><h2 id={`${id}-title`}>의류 협찬 받기</h2><span className={s.optional}>선택 · 기본 꺼짐</span></div>
       {!value.sponsorshipEnabled && toggle}
     </div>
+    {notice}
     <p className={s.description}>켜 두면 셀러에게 협찬 요청까지 받을 수 있어요.</p>
     <ul className={s.rules}>
       <li>옷을 받은 뒤 기본적으로 <strong>7일 이내</strong>, SNS 피드에 착용컷을 올리면 돼요.</li>
@@ -68,7 +73,35 @@ export function ModelSponsorshipSettings({ model, onModelChange, disabled = fals
   const inFlight = useRef(false);
   const latestModel = useRef(model);
   const saved = useRef({ id: model?.id, values: sponsorshipDraft(model) });
+  // 협찬 동의 증명서 상태. 어느 모델 것인지 같이 들고 있어 모델이 바뀐 순간 옛 상태를 안 그려요.
+  const [credential, setCredential] = useState(null);
+  const [credentialCheck, setCredentialCheck] = useState(0);
   useEffect(() => { latestModel.current = model; }, [model]);
+  useEffect(() => {
+    const modelId = model?.id;
+    if (!modelId) return undefined;
+    let alive = true;
+    let timer = null;
+    let polling = false;
+    const later = () => { if (alive) timer = setTimeout(check, SPONSORSHIP_CREDENTIAL_POLL_MS); };
+    async function check() {
+      timer = null;
+      // 탭이 가려져 있으면 요청을 건너뛰고 다음 차례만 잡아요.
+      if (polling && typeof document !== 'undefined' && document.hidden) { later(); return; }
+      try {
+        const next = await getSponsorshipCredential(modelId);
+        if (!alive) return;
+        setCredential({ modelId, data: next });
+        polling = shouldPollSponsorshipCredential(next);
+      } catch {
+        // 상태 확인 실패는 조용히 넘겨요. 확인하던 중이었다면 다음 차례에 다시 봐요.
+        if (!alive) return;
+      }
+      if (polling) later();
+    }
+    void check();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [model?.id, credentialCheck]);
   useEffect(() => {
     const next = sponsorshipDraft(model);
     const previous = saved.current;
@@ -97,7 +130,10 @@ export function ModelSponsorshipSettings({ model, onModelChange, disabled = fals
       // 끄면 서버가 계정·팔로워·사이즈와 동의 기록을 지워요. 화면도 서버 값으로 맞춰요.
       setDraft(sponsorshipDraft(updatedModel));
       setRetryDraft(null);
-      setMessage(payload.sponsorshipEnabled ? '협찬 참여 설정을 저장했어요.' : '협찬을 껐어요. 계정과 사이즈 정보는 지웠어요.');
+      const revoked = !payload.sponsorshipEnabled && credential?.modelId === modelId && sponsorshipOffNeedsNotice(credential.data);
+      setMessage(payload.sponsorshipEnabled ? '협찬 참여 설정을 저장했어요.'
+        : `협찬을 껐어요. 계정과 사이즈 정보는 지웠어요.${revoked ? ' 협찬 동의 증명서도 무효 처리했어요.' : ''}`);
+      setCredentialCheck(value => value + 1);
     } catch (error) {
       if (latestModel.current?.id !== modelId) return;
       const enabled = saved.current.values.sponsorshipEnabled;
@@ -112,8 +148,14 @@ export function ModelSponsorshipSettings({ model, onModelChange, disabled = fals
     setDraft(next); setMessage(''); setFailed(false); setRetryDraft(null);
     if (!next.sponsorshipEnabled && saved.current.values.sponsorshipEnabled) void save(next);
   };
+  const current = credential?.modelId === model?.id ? credential.data : null;
+  const copy = draft.sponsorshipEnabled && saved.current.values.sponsorshipEnabled ? sponsorshipCredentialCopy(current) : null;
+  const notice = copy && <div className={s.credential} data-tone={copy.tone}>
+    <p role="status">{copy.text}{copy.vcId && <small className={s.credentialId}> {copy.vcId}</small>}</p>
+    {sponsorshipOffNeedsNotice(current) && <small>{SPONSORSHIP_OFF_NOTICE}</small>}
+  </div>;
   return <div className={s.settings}>
-    <SponsorshipFields value={draft} onChange={change} disabled={disabled || busy} />
+    <SponsorshipFields value={draft} onChange={change} disabled={disabled || busy} notice={notice} />
     {!disabled && <div className={s.actions}><button type="button" className={s.save} disabled={busy} onClick={() => save(retryDraft || draft)}>{busy ? '저장 중이에요…' : retryDraft ? '다시 저장하기' : '협찬 설정 저장'}</button></div>}
     {message && <p className={s.message} role={failed ? 'alert' : 'status'}>{message}</p>}
   </div>;

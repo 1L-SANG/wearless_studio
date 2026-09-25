@@ -192,6 +192,10 @@ export async function modelComponentHarness({
           export const updateModelSponsorship = (id, body) => (
             api.updateModelSponsorship ? api.updateModelSponsorship(id, body) : Promise.resolve({ id, ...body })
           );
+          export const getSponsorshipCredential = (...args) => (
+            api.getSponsorshipCredential ? api.getSponsorshipCredential(...args)
+              : Promise.resolve({ featureEnabled: false, status: 'none', vcId: null, issuedAt: null })
+          );
           export const getSponsorshipInterest = (...args) => api.getSponsorshipInterest(...args);
           export const requestSponsorshipInterest = (...args) => api.requestSponsorshipInterest(...args);
           export const pauseMyModel = (...args) => api.pauseMyModel(...args);
