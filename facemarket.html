@@ -44,10 +44,14 @@
          호스트에서만 나가므로 박아도 되지만, 프리뷰 배포(*.vercel.app)에서 공유하면
          카드가 프로덕션으로 튀어 무엇을 보고 있는지 헷갈린다.
 
-       ▶ og:image 는 index.html 과 같은 파일을 쓴다(temp-nav-logo.png, 256×260).
-         이 얼굴들(가상 모델)을 미리보기 썸네일로 쓰지 마라 — 공유 카드는 캐시되고
-         재배포·이미지 교체 뒤에도 남는다. 정식 1200×630 OG 이미지가 생기면 두 파일을
-         같이 바꾼다.
+       ▶ og:image 는 FaceMarket 전용 facemarket-og.png(1200×630)다. 심볼 위, 'facemarket'
+         글자 아래로 쌓은 로고를 가운데 정사각형(630×630) 안에만 둬서, 카카오톡처럼
+         가운데를 정사각형으로 잘라 보여주는 곳에서도 잘리지 않는다(2026-09-23 오너 요청).
+         전에는 셀러 문서와 같은 temp-nav-logo.png(Wearless 임시 로고)를 써서 FaceMarket
+         링크에 다른 브랜드 로고가 떴다. 셀러 문서(seller.html)는 그대로 둔다.
+         이 얼굴들(가상 모델)을 미리보기 썸네일로 쓰지 마라. 공유 카드는 캐시되고
+         재배포·이미지 교체 뒤에도 남는다. 이미지를 바꿀 때는 **파일 이름도 바꾼다**
+         (같은 이름이면 카카오·슬랙이 예전 그림을 계속 보여 준다).
        ============================================================ -->
   <meta name="description" content="얼굴을 등록하고, 플랫폼 표준가를 확인하고 어떤 품목에 얼마 동안 쓸 수 있는지 직접 정합니다. 정한 조건은 누구나 확인할 수 있는 라이선스로 남습니다." />
   <meta property="og:type" content="website" />
@@ -55,12 +59,12 @@
   <meta property="og:locale" content="ko_KR" />
   <meta property="og:title" content="FaceMarket — 내 얼굴을 라이선스로" />
   <meta property="og:description" content="얼굴을 등록하고, 플랫폼 표준가를 확인하고 어떤 품목에 얼마 동안 쓸 수 있는지 직접 정합니다. 정한 조건은 누구나 확인할 수 있는 라이선스로 남습니다." />
-  <meta property="og:image" content="https://facemarket.wearless.kr/assets/brand/temp-nav-logo.png" />
+  <meta property="og:image" content="https://facemarket.wearless.kr/assets/brand/facemarket-og.png" />
   <meta property="og:image:type" content="image/png" />
-  <meta property="og:image:width" content="256" />
-  <meta property="og:image:height" content="256" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="FaceMarket 로고" />
-  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:card" content="summary_large_image" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
