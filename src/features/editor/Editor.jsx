@@ -2331,6 +2331,7 @@ export function Editor() {
       wardrobeContext.current.storyboard,
       pendingSlot.sourceBlockId,
       analysis,
+      product,
     )
     : null;
   const retryFailedCut = async () => {
@@ -2929,7 +2930,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'ai': return <AIPanel product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}

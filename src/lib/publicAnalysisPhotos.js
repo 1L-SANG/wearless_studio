@@ -1,3 +1,9 @@
+const SOURCE_SLOT_ORDER = { Front: 0, Back: 1, Detail: 2, BackDetail: 3 };
+
+export function orderAnalysisPhotos(images) {
+  return [...(images || [])].sort((a, b) => (SOURCE_SLOT_ORDER[a.slot] ?? 99) - (SOURCE_SLOT_ORDER[b.slot] ?? 99));
+}
+
 export function selectPublicAnalysisPhotos(images, limit = 4) {
   const source = Array.isArray(images) ? images : [];
   const selected = [];
@@ -13,5 +19,5 @@ export function selectPublicAnalysisPhotos(images, limit = 4) {
     if (selected.length >= limit) break;
     if (!selected.includes(photo)) selected.push(photo);
   }
-  return selected.slice(0, limit);
+  return orderAnalysisPhotos(selected.slice(0, limit));
 }

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import contextlib
 import inspect
 import types
@@ -15,6 +16,68 @@ from conftest import auth_headers, fake_worker_app, make_settings, patch_route_d
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
+
+
+@pytest.mark.parametrize("reason", ["detail_qc_failed", "detail_qc_unknown"])
+def test_detail_rejection_keeps_other_cut_without_asset_preview_or_charge(monkeypatch, reason):
+    captured = {"writes": [], "events": []}
+
+    async def project(*args):
+        return {"copywriting": False}
+
+    async def storyboard(*args):
+        return [{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
+                 "cutType": "product", "shot": "detail", "direction": direction, "colorId": "base"}
+                for block_id, direction in [("rejected", "front"), ("accepted", "back")]]
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [
+            {"slot": "Front", "id": "front"}, {"slot": "Back", "id": "back"}]}]}
+
+    async def analysis(*args):
+        return {}
+
+    async def asset(conn, user_id, asset_id):
+        return {"mime_type": "image/png", "r2_key": f"k/{asset_id}"}
+
+    async def detail(app, job, spec, product, analysis):
+        if spec["id"] == "rejected":
+            raise dpj.DetailShotRejected(reason, {"passed": False, "attempts": 2})
+        return dpj.InlineImage("image/png", b"PASSED-IMAGE"), {"passed": True}
+
+    def assemble(storyboard, cuts, *args, **kwargs):
+        captured["cuts"] = cuts
+        return []
+
+    async def finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"editor_blocks": [], "available": 99}
+
+    async def emit(pool, job_id, event, payload):
+        captured["events"].append((event, payload))
+
+    monkeypatch.setattr(dpj.repo, "get_project", project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
+    monkeypatch.setattr(dpj, "_emit", emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.put_bytes = lambda key, data, *args, **kwargs: captured["writes"].append(data)
+    asyncio.run(dpj.run_detail_page_job(app, _job(reserved=2, per_cut=1)))
+
+    assert [cut["blockId"] for cut in captured["cuts"]] == ["accepted"]
+    assert captured["writes"] == [b"PASSED-IMAGE"]
+    assert len(captured["finalize"]["cut_assets"]) == 1
+    assert captured["finalize"]["charge"] == 1
+    assert captured["finalize"]["reserved"] == 2
+    done = [payload for event, payload in captured["events"] if payload.get("status") == "cut_done"]
+    assert [payload["blockId"] for payload in done] == ["accepted"]
+    failed = [payload for event, payload in captured["events"] if payload.get("status") == "cut_failed"]
+    assert any(payload["blockId"] == "rejected" and payload.get("reason") == reason for payload in failed)
 
 
 # ---------- 라우트 ----------
@@ -932,10 +995,15 @@ def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
     assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
 
 
-def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch):
+def test_gen_cuts_detail_publishes_only_dedicated_checked_output(monkeypatch):
     async def fake_emit(pool, job_id, et, payload):
         return None
 
+    async def fake_detail(app, job, block, product, analysis):
+        assert block["id"] == "detail-1"
+        return dpj.InlineImage("image/png", b"QC-PASSED"), {"passed": True}
+
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", fake_detail)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
     app = _app(_settings())
     app.state.gemini = _RecordingGemini()
@@ -955,10 +1023,11 @@ def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch)
         {"name": "니트", "clothingType": "top"}, {},
     ))
 
-    assert app.state.gemini.calls == 1
+    assert app.state.gemini.calls == 0
     assert len(cut_results) == len(cut_assets) == 1
     assert face_cuts == 0
-    assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
+    assert garment_qcs == [] and page_qc is None and warnings == []
+    assert len(cut_qcs) == 1 and cut_qcs[0]["passed"] is True
 
 
 def test_run_detail_page_job_partial_success(monkeypatch):
@@ -1204,9 +1273,10 @@ def test_run_detail_page_job_separates_detail_manifests_by_direction(monkeypatch
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
-        captured["manifests"][cut_spec["id"]] = manifest
-        return b"IMG", "image/png"
+    async def fake_gen(settings, gemini, sources, *, target, direction, progress, **kwargs):
+        captured["manifests"][direction] = [image.data for image in sources]
+        return dpj.InlineImage("image/png", b"IMG"), {"passed": True}
+
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return []
@@ -1222,20 +1292,22 @@ def test_run_detail_page_job_separates_detail_manifests_by_direction(monkeypatch
     monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
-    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate_verified", fake_gen)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
 
-    front_manifest = captured["manifests"]["front-detail"]
-    back_manifest = captured["manifests"]["back-detail"]
-    assert "front-side detail close-up" in front_manifest
-    assert "back-side detail close-up" not in front_manifest
-    assert "back-side detail close-up" in back_manifest
-    assert "front-side detail close-up" not in back_manifest
+    front_sources = captured["manifests"]["front"]
+    back_sources = captured["manifests"]["back"]
+    assert b"k/base-detail" in front_sources
+    assert b"k/base-backdetail" not in front_sources
+    assert b"k/base-backdetail" in back_sources
+    assert b"k/base-detail" not in back_sources
 
 
 def test_run_detail_page_job_fails_cut_when_any_matching_asset_is_missing(monkeypatch):
@@ -1373,6 +1445,13 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
         captured.setdefault("manifests", {})[cut_spec["id"]] = manifest
         return b"IMG", "image/png"
 
+    async def fake_detail(settings, gemini, sources, *, target, direction, progress, **kwargs):
+        block_id = "cross-color-detail" if target else "same-color-detail"
+        captured["generated_block_ids"].append(block_id)
+        captured.setdefault("targets", {})[block_id] = target
+        captured.setdefault("sources", {})[block_id] = [image.data for image in sources]
+        return dpj.InlineImage("image/png", b"DETAIL"), {"passed": True}
+
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["cut_results"] = cut_results
         return []
@@ -1390,28 +1469,32 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate_verified", fake_detail)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=3)))
 
-    assert captured["loaded_asset_ids"] == [
-        "zero-front", "green-front", "base-detail", "base-front", "base-detail",
-    ]
+    assert set(captured["loaded_asset_ids"]) == {
+        "zero-front", "green-front", "base-detail", "base-front",
+    }
     assert captured["generated_block_ids"] == [
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
     assert [result["blockId"] for result in captured["cut_results"]] == [
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
-    assert "PRODUCT — front-side detail close-up" in captured["manifests"]["cross-color-detail"]
-    assert "DETAIL COLORWAY TRANSFER" in captured["prompts"]["cross-color-detail"]
-    assert "Target color: 그린 (#3f7a4f)" in captured["prompts"]["cross-color-detail"]
-    assert "DETAIL COLORWAY TRANSFER" not in captured["prompts"]["same-color-detail"]
-    assert "잘못 저장된 색상" not in captured["prompts"]["same-color-detail"]
-    assert len(captured["manifests"]["cross-color-detail"].splitlines()) == 2
+    transfer = captured["targets"]["cross-color-detail"]
+    assert transfer["colorTransfer"] is True
+    assert transfer["sourceSha256"] == hashlib.sha256(b"k/base-detail").hexdigest()
+    assert transfer["colorSourceSha256"] == hashlib.sha256(b"k/green-front").hexdigest()
+    assert captured["targets"]["same-color-detail"] is None
+    assert captured["sources"]["cross-color-detail"] == [b"k/green-front", b"k/base-detail"]
+    assert captured["sources"]["same-color-detail"] == [b"k/base-front", b"k/base-detail"]
     assert captured["manifests"]["valid-fit"] == "1. PRODUCT — front view of the garment"
     assert captured["charge"] == 3
 
@@ -2328,6 +2411,11 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    async def checked_detail(app, job, spec, product, analysis):
+        captured["cut_spec"] = spec
+        return dpj.InlineImage("image/png", b"DETAIL-CHECKED"), {"passed": True}
+
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
     monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
@@ -2489,6 +2577,10 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    async def checked_detail(app, job, spec, product, analysis):
+        return dpj.InlineImage("image/png", b"DETAIL-CHECKED"), {"passed": True}
+
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
     monkeypatch.setattr(dpj.copy_qc, "review", fake_review)

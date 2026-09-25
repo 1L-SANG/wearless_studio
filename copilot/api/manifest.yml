@@ -236,6 +236,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
   # 개인화는 image_high(Gemini) 그대로다.
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
+  MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
+  DETAIL_CORE_TIMEOUT_SECONDS: 90
+  MODEL_DETAIL_SPECIALIST: gpt-5.4-2026-03-05
+  DETAIL_SPECIALIST_TIMEOUT_SECONDS: 90
   # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 그래서 여기에만 둔다.
   MODEL_ROUTING_EDITOR_CUT: gpt-image-2.5-flare
   # 상세페이지 컷 출고 해상도 4K → 2K (2026-08-26 오너 결정). GPT Image 2 에서 이 값은

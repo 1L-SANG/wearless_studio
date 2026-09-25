@@ -195,6 +195,8 @@ export const api = {
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
         matchClothing: DB.analysis.matchClothing,
+        detailRecommendations: DB.analysis.detailRecommendations,
+        sellingPoints: DB.analysis.sellingPoints,
         previewProductName: DB.product.name,
       });
       DB.storyboard = keepPairFrame ? applySeededHookStyle(seeded, 'pair', DB.product.colors) : seeded;
@@ -412,6 +414,14 @@ export const api = {
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
     const { matchClothing: matchPatch, ...rest } = normalizeAnalysisFit(patch);
     Object.assign(DB.analysis, rest);
+    if (!DB.storyboardDirty && ('detailRecommendations' in rest || 'sellingPoints' in rest)) {
+      DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
+        projectId: DB.project.id, clothingType: DB.product.clothingType,
+        targetGenders: DB.analysis.targetGenders, matchClothing: DB.analysis.matchClothing,
+        detailRecommendations: DB.analysis.detailRecommendations, sellingPoints: DB.analysis.sellingPoints,
+        previewProductName: DB.product.name,
+      });
+    }
     DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
       DB.product.clothingType,
       DB.analysis.targetGenders,

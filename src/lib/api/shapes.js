@@ -12,6 +12,7 @@
 
 // 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
 // mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
+import { recommendedDetailTargets } from '../detailRecommendations.js';
 import { uid } from '../ids.js';
 import { Placeholder as P } from '../../mock/placeholders.js';
 import { ensureSections } from '../sections.js';
@@ -91,9 +92,6 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
-  // 기본 구성 디테일 블록은 앞면 방향 — 앞면 디테일(Detail) 보유 색을 우선, 없으면 기준색
-  // (서버가 원본 구조 확대로 폴백, 2026-08-07 개편).
-  const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   const clothingType = context.clothingType || 'top';
   const matchClothing = context.matchClothing || [];
   const colorById = new Map(list.map((color) => [color.id, color]));
@@ -174,10 +172,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
     );
-    blocks.push(
-      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-    );
+
   } else {
     blocks.push(...(rotationSet
       ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
@@ -195,7 +190,12 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
         color.id,
       ));
     }
-    blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
+
+  }
+  for (const target of recommendedDetailTargets(context.detailRecommendations, mode, context.sellingPoints)) {
+    blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', target.direction, 'detail', base, {
+      detailTargetId: target.id, detailTargetOrigin: 'auto',
+    }));
   }
   return ensureSections(blocks.map((block) => (
     ['styling', 'horizon', 'mirror'].includes(block.cutType)
@@ -224,6 +224,8 @@ function storyboardTemplateFingerprint(blocks) {
     cutType: block.cutType ?? null,
     direction: block.direction ?? null,
     shot: block.shot ?? null,
+    detailTargetId: block.detailTargetId ?? null,
+    detailTargetOrigin: block.detailTargetOrigin ?? null,
     colorId: block.colorId ?? null,
     colorIds: block.colorIds || [],
     pose: block.pose ?? null,
@@ -299,6 +301,8 @@ export function defaultAnalysisShape(clothingType = 'top') {
     sourceMirrored: false,
     // 공개 AG-01이 발급한 서버 서명 handoff. 폼에는 노출하지 않고 로그인 승격 때만 소비한다.
     confirmedGptProductEvidenceHandoff: null,
+    detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
+    detailRecommendationsHandoff: null,
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: createMeasurementFields(clothingType),
     fitProfile: null,

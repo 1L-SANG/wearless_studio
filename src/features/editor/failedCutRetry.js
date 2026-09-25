@@ -1,3 +1,4 @@
+import { detailTargetPresentation } from '../../lib/detailRecommendations.js';
 import { isRealModelSelection } from '../analysis/modelSelection.js';
 
 const RETRY_FIELDS = Object.freeze([
@@ -6,6 +7,8 @@ const RETRY_FIELDS = Object.freeze([
   'cutType',
   'direction',
   'shot',
+  'detailTargetId',
+  'detailTargetOrigin',
   'faceExposure',
   'pose',
   'outerClosureState',
@@ -20,7 +23,7 @@ const RETRY_FIELDS = Object.freeze([
  * 일반 AI 패널의 기본값으로 재구성하면 시그니처 exampleId, 매칭 의류, 모델 같은
  * 생성 정본이 유실되므로 sourceBlockId로 원본 블록을 찾아 필요한 필드만 복사한다.
  */
-export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null) {
+export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null, product = null) {
   if (!sourceBlockId || !Array.isArray(storyboard)) return null;
   const block = storyboard.find((item) => item?.id === sourceBlockId);
   if (!block || block.source !== 'ai' || !block.cutType) return null;
@@ -47,7 +50,8 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
     request,
     sourceBlockId,
     title: block.title || '이 컷',
-    thumb: block.thumb || null,
+    thumb: detailTargetPresentation(block, product, modelSelection?.detailRecommendations)?.src || (block.shot === 'detail' ? null : block.thumb) || null,
+    detailLabel: detailTargetPresentation(block, product, modelSelection?.detailRecommendations)?.label || null,
     signature: typeof block.exampleId === 'string' && block.exampleId.startsWith('sig_'),
   };
 }

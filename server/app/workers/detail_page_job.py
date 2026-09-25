@@ -40,6 +40,8 @@ from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from . import cut_checkpoints as _cut_checkpoints
+from . import detail_shot_runtime
+from ..agents.detail_shot_pipeline import DetailShotRejected
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -296,6 +298,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
+                 **({"detail_recipe": detail_shot_runtime.recipe(b)}
+                    if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
                  **({"neck_repair": neck_repair_metadata}
                     if neck_repair_metadata is not None else {}),
                  **({"face_pass": face_pass_outcome["face_pass"]}
@@ -360,6 +364,23 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 False, None, None, passthrough_warnings, page_item,
             )
         async with sem:
+            if b.get("cutType") == "product" and b.get("shot") == "detail":
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_start"})
+                try:
+                    chosen, detail_report = await detail_shot_runtime.generate(
+                        app, job, b, product, analysis,
+                        **({'final_cache': cut_checkpoints} if cut_checkpoints is not None else {}))
+                except (DetailShotRejected, ValueError) as exc:
+                    await _emit(app.state.pool, job_id, "step", {
+                        "blockId": b.get("id"), "status": "cut_failed",
+                        "reason": getattr(exc, "reason", "detail_target_unavailable"),
+                    })
+                    return None
+                return await _store_cut(
+                    b, chosen.data, chosen.mime, chosen, has_face=False,
+                    real_identity_attached=False, garment_qc=None, cut_qc=detail_report,
+                    garment_warnings=[], neck_repair_metadata=None, face_pass_outcome={})
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
                 await _emit(app.state.pool, job_id, "step",
@@ -1300,6 +1321,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             fine_pattern = mannequin.has_fine_pattern(product, analysis)
 
             def _detail_passthrough(block: dict, asset_key) -> dict | None:
+                # Legacy source-photo reuse has no selected subject contract. A newly
+                # selected subject must pass source binding and framing verification.
+                if block.get("detailTargetId"):
+                    return None
                 if not (fine_pattern and _is_detail(block)):
                     return None
                 if detail_color_transfers.get(asset_key):   # 타색 전환 = 그 색 원본이 없다

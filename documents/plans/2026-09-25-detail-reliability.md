@@ -1,0 +1,52 @@
+# Detail recommendation and publication reliability
+
+## Approved scope
+
+Owner approved recommendation and QC together, after rejecting a narrow lace-strip photo as a useful standalone detail. Highlights are product facts and ranking signals, not one-photo-per-highlight instructions. Automatically seed at most 2 basic / 3 extended useful, distinct detail cuts (fabric included); do not fill a quota. Preserve manual additions, deletions, and edited boards. Never require new photos on storyboard entry.
+
+Frontend emphasis ranking counts distinct seller highlights matched against each eligible candidate's `label` and `featurePoints`. Matching removes whitespace/punctuation and uses normalized inclusion or an explicit small garment-subject synonym vocabulary (for example 지퍼/집업, 단추/버튼, 주머니/포켓, 골지/리브). Every recognized subject cue named in a highlight must appear in that candidate's text; a shared broad `kind` alone is never a match, and collar/button/zipper distinctions remain separate. Ties retain server rank. This changes ordering only: clear standalone eligibility, information-group deduplication and the 2/3 caps remain unchanged, and no candidate or region is created from highlight text.
+
+Source design stays faithful while incidental wrinkles, arrangement and lighting can be prepared attractively. Preserve intentional pleats, gathers, knit/lace structure, hardware and permanent labels. A label outside the planned crop is not a missing-label defect; unreadable source text must not become invented lettering.
+
+## Contract and ownership
+
+Analysis contains server-owned `detailRecommendations`: `{version:1,status:'ready'|'unavailable',candidates:[...]}`. Each candidate has stable `id`, closed-enum `kind`, `direction`, `sourceSlot`, `sourceIndex` (zero based), `sourceSha256`, normalized `region:{x,y,w,h}`, `photoUse:'standalone'|'context'|'unsupported'`, `visibility:'clear'|'uncertain'`, `rank`, Korean display `label`/`reason`, `informationGroup`, and `featurePoints` (display/ranking only). A server binding records the exact source bytes. Candidate UI text never becomes generation instructions.
+
+Kinds: `neckline`, `closure`, `pocket`, `waist`, `cuff`, `hem`, `construction`, `surface`, `fabric`, `label`. Direction front/back follows actual source slot. Cloth/category-specific observations drive ranking, not a lace blacklist or pixel-area importance rule. Model-invalid candidates cannot become auto recommendations. Ready empty differs from unavailable; unavailable produces no invented automatic detail targets. Existing boards are not backfilled or overwritten.
+
+Recommendation verification added `standaloneValue: construction|material|finish_quality|readable_identity|appearance_only`. Appearance-only observations are deterministically downgraded from standalone to context. A candidate must convey additional buyer information beyond the whole-product image; adjacent decorative trim and neckline may share one contextual upper-bodice view. This is not a fabric or crop-size blacklist. Analysis and public handoff use the same selected four-photo subset; target resolution verifies those source hashes against the current originals and maps the target to the loaded source index.
+
+Blocks persist `detailTargetId` and `detailTargetOrigin:'auto'|'user'`. The client may choose only an ID; generation resolves the immutable analysis contract, verifies source bytes/direction, and uses closed-enum instructions plus a pixel crop from that source. Invalid/stale IDs fail that slot, never silently use another target. Public pre-login analysis requires a signed handoff promoted against uploaded source bytes, following the existing evidence handoff pattern. Candidate contract is immutable on analysis save. Legacy/manual targetless details continue source-based framing with the new detail quality gate.
+
+Inspector retains the existing layout. Detail cards show the user's whole product image and a consistent subject label; no unrelated example is presented as the user's product. Region overlay is informational, no advanced crop editor. Candidate choice is separate from optional photographic example choice. Editor retry carries subject ID. Other product shots and horizon/styling remain unchanged.
+
+## QC and generation
+
+Dedicated product/detail policy; Sunburst only for this branch. Whole source + non-generative target crop are evidence. Max first generation + one correction, no best-of, no additional image on an unknown/ambiguous timeout. Corrected results are rechecked against original evidence. Only a fully passing result becomes an asset or `cut_done` preview. Failed/unknown results use existing failed-slot/refund paths, and other cuts continue. No 'use anyway' bypass.
+
+Detail QC observes target/framing, design/construction, color/material, permanent markings, temporary photography artifacts, and photographic preparation. Clear failures reject; insufficient evidence is unknown. Judge output is strictly validated, never copied as executable prompt instructions. Report requested model/provider accurately, source/result/contract/prompt hashes, attempts and all judgments. Do not claim provider name is actual model ID.
+
+Checkpoint reuse must include detail policy version and source/target binding. Reclaimed jobs cannot restart a spent two-attempt budget. Existing fine-pattern source passthrough remains unchanged; it is a source photo, not a generated candidate.
+
+## Tasks / verification
+
+1. Backend recommendation extraction, validation, immutable persistence and signed public promotion. Tests for meaningful candidate selection inputs, malformed evidence, forged/stale handoff, direction/source binding, unavailable vs empty. Owner: recommendation worker.
+2. Frontend service/mock/seed/inspector/editor wiring. Tests for 0/1/2/3 candidate limits, duplicate information, manual preservation, mode switching, and public promotion. Owner: frontend worker.
+3. Dedicated QC module/prompt, deterministic decision tests, small frozen image evaluation. Owner: QC worker. Calibration cases and SKU-disjoint held-out controls must be labeled independently; report false accepts, false rejects and unknown separately without claiming broad accuracy.
+4. Generation integration in detail-page and editor workers, source crop, Sunburst selector, attempt persistence/checkpoint and truthful publication. Owner: root. Tests for fail->fail, fail->pass, unknown/exception, timeout, final-cache policy, retry budget, duplicates and partial success.
+5. Independent code review, targeted tests, full baseline comparison, frontend build and real inspector smoke. PR, CI and normal deployment; no branch protection bypass or unrelated merge repairs.
+
+## Independent design comparison
+
+Codex and Claude Opus 5.5/max independently agree on usefulness before generation, source-bound targets, original-reference correction, SKU-separated evaluation, fail-closed publishing and maximum two image attempts. Claude's optional 'use anyway' UI is not adopted: it would bypass the intended quality guarantee and is outside scope. Its staged shadow-only rollout is not completion of the owner's both-features request; enforcement must be checked with actual evaluation before release. Current committed manifests already disable best-of and set initial attempts to one, so larger theoretical defaults are not reported as observed live costs. Existing failed-slot charging semantics are reused, not redesigned.
+
+## Execution ledger
+
+- Separate D-drive worktree from origin/main `7fe3641d`; conflicted main checkout untouched.
+- Baseline before product edits: frontend build passed. Full Windows server suite: 6266 passed, 25 failed, 88 skipped, 105 errors (local Postgres absent plus pre-existing platform/fixture failures). Full frontend baseline had pre-existing DOM failures and stopped producing output; terminated it rather than claim a pass.
+- Recommendation worker: secure AG08/public/analysis contract, 87 targeted tests; four text/vision calls, no image generation. V1 still selected the narrow trim; V2 added independent buyer-information classification and combined the pink upper-bodice features. Timings 7.5–8.3s versus existing 12s budget. These are case observations, not general accuracy.
+- Frontend worker: seeding, manual preservation, own overview preview, optional style reference, editor retry; 64 targeted frontend tests and build passed. Legacy server test migration plus new publication/provenance cases: 102 passed.
+- Root: dedicated detail pipeline, original+crop input, original-aware single correction, per-job durable claim/checkpoint states, fully-passing-only output, typed editor provenance. Fresh combined server scope: 511 passed / 1 skipped (local Postgres unavailable). DB-specific ledger test runs in CI's Postgres using a temporary table.
+- Browser smoke: real Vite mock app, isolated headless Chrome, actual AG08 outer contract fixture: three detail cards, whole original inspector preview, subject selection reflected on card, no page errors. Published example assets absent in isolated checkout are not part of this fixture's check.
+- Independent reviewer found no additional code issue; recommendation worker's direction/unsigned-extra source findings corrected and re-reviewed. Claude correctly distinguished detail-page new-job retry from editor same-job requeue; durable state prevents editor requeue duplication, and generic old final/base cache is not used for this branch. Ambiguous judging is not repeated to shop for PASS.
+- QC empirical evaluation: initial small temporary tag false acceptance found; release remains pending correction and frozen held-out checks. No production deployment yet.

@@ -71,9 +71,12 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
     let analysis = draft.analysis;
     const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
+    const detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
     if (analysis) {
       analysis = { ...analysis };
       delete analysis.confirmedGptProductEvidenceHandoff;
+      delete analysis.detailRecommendationsHandoff;
+      delete analysis.detailRecommendations;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
         delete analysis[k];
@@ -91,6 +94,9 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     await api.saveProduct(projectId, product);
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
+      if (detailHandoff) {
+        await api.promoteDetailRecommendations(projectId, detailHandoff);
+      }
       if (evidenceHandoff) {
         await api.promoteConfirmedGptEvidence(projectId, evidenceHandoff);
       }

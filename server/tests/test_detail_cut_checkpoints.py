@@ -340,6 +340,32 @@ async def _store(app, job_id, identity="id-1"):
     return await ckpts.CutCheckpointStore.open(app, _job(job_id), identity=identity)
 
 
+@pytest.mark.parametrize('verdict,expected', [
+    ({'passed': True, 'decision': 'PASS', 'fingerprint': 'source-target-policy'}, True),
+    ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy'}, False),
+    ({'passed': False, 'decision': 'UNKNOWN', 'fingerprint': 'source-target-policy'}, False),
+    ({'passed': True, 'decision': 'PASS'}, False),
+])
+def test_detail_final_reuse_requires_same_verified_policy(monkeypatch, verdict, expected):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    app = _app(_settings(), _R2())
+    async def exercise():
+        first = await _store(app, 'j1')
+        cut = await first.for_verified_detail('source-target-policy', 'detail1')
+        await cut.save_final(b'CHECKED', 'image/png', {
+            'garmentQc': None, 'cutQc': verdict, 'warnings': [], 'neckRepair': None, 'facePass': {},
+        })
+        db.error_jobs.add('j1')
+        next_store = await _store(app, 'j2')
+        same = await next_store.for_verified_detail('source-target-policy', 'detail1')
+        assert (same.final is not None) is expected
+        assert (await next_store.for_verified_detail('changed-policy', 'detail1')).final is None
+        assert (await next_store.for_verified_detail('source-target-policy', 'different-block')).final is None
+        assert same.base.image is None  # Never reuse an unjudged/rejected candidate.
+    asyncio.run(exercise())
+
+
 def test_store_is_off_without_the_flag_or_a_database(monkeypatch):
     app = _app(_settings(detail_cut_checkpoint_enabled=False))
     assert asyncio.run(_store(app, "j1")) is None

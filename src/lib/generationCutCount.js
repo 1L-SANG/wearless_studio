@@ -20,6 +20,7 @@ export function uniqueGenerationCutCount(blocks) {
     const key = JSON.stringify({
       cutType: block.cutType ?? null,
       shot: block.shot ?? null,
+      detailTargetId: block.detailTargetId ?? null,
       direction: block.direction ?? null,
       colorId: block.colorId ?? null,
       colorIds: block.colorIds || [],

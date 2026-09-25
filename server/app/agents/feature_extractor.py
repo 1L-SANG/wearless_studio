@@ -17,6 +17,7 @@ AG-01(분류)과 같은 분석 job 안에서 **병렬** 실행된다(analyze_job
 import os
 
 from ..config import Settings
+from . import detail_recommendations
 from .gemini_image import InlineImage
 from .prompts import _sanitize
 from .product_analyst import MAX_SELLING_POINTS, _is_keyword_phrase
@@ -68,8 +69,9 @@ def _schema() -> dict:
         "properties": {
             "candidates": {"type": "array", "items": candidate},
             "selected": {"type": "array", "items": {"type": "string"}},
+            "detailCandidates": detail_recommendations.candidate_schema(),
         },
-        "required": ["candidates", "selected"],
+        "required": ["candidates", "selected", "detailCandidates"],
     }
 
 
@@ -129,6 +131,14 @@ def validate(raw: dict) -> list[str]:
     return out[:MAX_SELLING_POINTS]
 
 
+class FeaturePoints(list):
+    """Keep tuple/list callers compatible while carrying the AG-08 observations."""
+
+    def __init__(self, points, detail_candidates=None):
+        super().__init__(points)
+        self.detail_candidates = detail_candidates
+
+
 async def extract(settings: Settings, product: dict, images: list[InlineImage],
                   slots: list[str] | None = None) -> tuple[list[str], str]:
     """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백).
@@ -137,4 +147,4 @@ async def extract(settings: Settings, product: dict, images: list[InlineImage],
     raw, provider = await analyze_with_fallback(
         settings, build_prompt(product or {}, slots), images, _schema(),
         thinking_level=_THINKING, models=models)
-    return validate(raw), provider
+    return FeaturePoints(validate(raw), raw.get("detailCandidates")), provider

@@ -30,6 +30,7 @@ from .agents import (
     mannequin,
     mannequin_base_fidelity_qc,
     product_evidence_contract,
+    detail_recommendations,
     product_analyst,
     space_set_assets,
     style_affinity,
@@ -1131,7 +1132,10 @@ async def save_analysis(
             analysis = {**analysis, "targetGenders": ["women"]}
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
-    return {"projectId": row["project_id"], **(row["payload"] or {})}
+    payload = dict(row["payload"] or {})
+    if detail_recommendations.PERSISTED_KEY in payload:
+        payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])
+    return {"projectId": row["project_id"], **payload}
 
 
 @router.post(
@@ -1165,7 +1169,7 @@ async def promote_confirmed_gpt_evidence(
         product = await repo.get_product(conn, project_id) or {}
         source_images: list[tuple[bytes, str]] = []
         slots: list[str] = []
-        for slot, asset_id in mannequin.base_color_images(product):
+        for slot, asset_id in detail_recommendations.analysis_source_entries(product):
             asset = await repo.get_asset_for_user(conn, user_id, asset_id)
             if asset is None:
                 raise _bad_request(
@@ -1195,6 +1199,51 @@ async def promote_confirmed_gpt_evidence(
     return {"promoted": True}
 
 
+@router.post(
+    "/projects/{project_id}/analysis/detail-recommendations:promote",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="공개 분석의 서버 소유 디테일 추천 승격",
+)
+async def promote_detail_recommendations(
+    request: Request,
+    project_id: str,
+    handoff: dict = Body(...),
+    user_id: str = Depends(require_user),
+):
+    try:
+        contract = detail_recommendations.verify_handoff(
+            handoff, request.app.state.settings.r2_secret_access_key
+        )
+    except detail_recommendations.DetailRecommendationError:
+        raise _bad_request("invalid_analysis_handoff", "분석 결과의 유효성을 확인하지 못했어요. 상품 분석을 다시 진행해 주세요.") from None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        source_images, slots = [], []
+        for slot, asset_id in detail_recommendations.analysis_source_entries(product):
+            asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+            if asset is None:
+                raise _bad_request("analysis_handoff_source_missing", "분석에 사용한 상품 사진을 찾지 못했어요. 상품 분석을 다시 진행해 주세요.")
+            source_images.append((await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"]), asset["mime_type"]))
+            slots.append(slot)
+        try:
+            matches = detail_recommendations.source_binding_matches(contract, source_images, slots)
+        except detail_recommendations.DetailRecommendationError:
+            matches = False
+        if not matches:
+            raise _bad_request("analysis_handoff_source_drift", "분석 후 상품 사진이 달라졌어요. 현재 사진으로 다시 분석해 주세요.")
+        try:
+            await repo.save_detail_recommendations(conn, project_id, contract)
+        except ValueError:
+            raise HTTPException(status_code=409, detail={
+                "code": "analysis_handoff_conflict", "message": "저장된 분석과 다른 결과예요. 현재 상품으로 다시 분석해 주세요.",
+            }) from None
+        await conn.commit()
+    return {"promoted": True, "detailRecommendations": detail_recommendations.public_summary(contract)}
+
+
 @router.get(
     "/projects/{project_id}/analysis",
     responses={**COMMON_RESPONSES},
@@ -1213,6 +1262,8 @@ async def get_analysis(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
+    if detail_recommendations.PERSISTED_KEY in (payload or {}):
+        payload = {**payload, detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])}
     return {"projectId": project_id, **(payload or {})}
 
 

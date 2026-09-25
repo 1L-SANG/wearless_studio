@@ -52,6 +52,14 @@ def _save(stored, incoming):
     return conn.saved
 
 
+def test_detail_recommendations_cannot_be_created_or_replaced_by_client():
+    original = {"version": 1, "status": "ready", "candidates": [{"id": "server"}]}
+    forged = {"version": 1, "status": "ready", "candidates": [{"id": "client"}]}
+    assert "detailRecommendations" not in _save(None, {"detailRecommendations": forged})
+    assert _save({"detailRecommendations": original}, {"detailRecommendations": forged})["detailRecommendations"] == original
+    assert _save({"detailRecommendations": original}, {"fit": "regular"})["detailRecommendations"] == original
+
+
 def test_source_mirrored_carried_when_client_omits_it():
     saved = _save({"sourceMirrored": True, "fit": "over"}, {"fit": "regular"})
     assert saved["sourceMirrored"] is True   # 이월됨
