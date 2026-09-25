@@ -132,7 +132,11 @@ public final class IssueIdempotencyStore {
                 ? "mdl"
                 : request.plan().trim().toLowerCase(Locale.ROOT);
         try {
-            return sha256Hex(mapper.writeValueAsBytes(new SemanticRequest(plan, request.claims())));
+            // 라이선스는 기존과 같은 바이트(Claims 레코드) → EFS 에 남은 기존 결과 바인딩이 그대로 맞는다.
+            Object claims = request.sponsorshipClaims() != null
+                    ? request.sponsorshipClaims()
+                    : request.claims();
+            return sha256Hex(mapper.writeValueAsBytes(new SemanticRequest(plan, claims)));
         } catch (IOException error) {
             throw unavailable();
         }
@@ -282,7 +286,8 @@ public final class IssueIdempotencyStore {
         }
     }
 
-    private record SemanticRequest(String plan, IssueVcDtos.Claims claims) {}
+    /** claims = 플랜별 클레임 레코드(Claims | SponsorshipClaims). 런타임 타입으로 직렬화된다. */
+    private record SemanticRequest(String plan, Object claims) {}
 
     private record Binding(String modelId, String requestDigest) {}
 

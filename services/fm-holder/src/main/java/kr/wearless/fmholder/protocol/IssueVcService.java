@@ -54,15 +54,11 @@ public class IssueVcService {
     private static final Logger log = LoggerFactory.getLogger(IssueVcService.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
-    // MDL(기존, non-ZKP)
-    private static final String MDL_PLAN = "vcplanid000000000001";
-    private static final String MDL_SCHEMA = "mdl";
-    private static final String MDL_NS = "org.iso.18013.5.1";
-    // FaceLicense(선택과제1 커스텀 VC) — scripts/issuer-provision-facelicense.sh 로 프로비저닝.
-    // vc_plan_id 컬럼 = varchar(20) → plan 은 정확히 20자.
-    private static final String FL_PLAN = "vcplanface0000000002";
-    private static final String FL_SCHEMA = "facelicense-v2";
-    private static final String FL_NS = "kr.wearless.facelicense.v2";
+    // 플랜별 vcPlanId·스키마·네임스페이스는 {@link IssuePlan} 레지스트리. 여기선 클레임 매핑만.
+    private static final String MDL_NS = IssuePlan.MDL.namespace();
+    private static final String FL_NS = IssuePlan.FACELICENSE_V2.namespace();
+    private static final String SP_NS = IssuePlan.FMSPONSORSHIP_V1.namespace();
+    private static final java.util.regex.Pattern SHA256_HEX = java.util.regex.Pattern.compile("[0-9a-f]{64}");
 
     private static final String ISSUER_DID = "did:omn:issuer";
     private static final String CAS_DID = "did:omn:cas";
@@ -89,8 +85,16 @@ public class IssueVcService {
     public record IssueResult(String vcId, String issuer, String txId, JsonNode vc, String status,
                               String note, String userDid) {}
 
-    /** 발급 플랜 해소 결과: vcPlanId(B1/B2/B4) + vcSchemaId(user upsert) + userInfo(user.data). */
-    private record ResolvedPlan(String vcPlanId, String vcSchemaId, Map<String, String> userInfo, String label) {}
+    /**
+     * 발급 플랜 해소 결과: vcPlanId(B1/B2/B4) + vcSchemaId(user upsert) + userInfo(user.data).
+     * claimedModelDid = 클레임의 modelDid(있으면 실제 지갑 USER DID 와 일치해야 발급).
+     */
+    private record ResolvedPlan(String vcPlanId, String vcSchemaId, Map<String, String> userInfo, String label,
+                                String claimedModelDid) {
+        ResolvedPlan(IssuePlan plan, Map<String, String> userInfo, String claimedModelDid) {
+            this(plan.vcPlanId(), plan.vcSchemaId(), userInfo, plan.label(), claimedModelDid);
+        }
+    }
 
     /** 본문 없이 호출(백워드 호환) = MDL. */
     public IssueResult issue(String modelId) throws Exception {
@@ -117,7 +121,7 @@ public class IssueVcService {
         String walletDid = wallets.readDid(modelId);
         String userDid = wallets.readUserDid(modelId);
         String walletId = wallets.walletId(modelId);
-        if (FL_SCHEMA.equals(plan.vcSchemaId()) && !request.claims().modelDid().equals(userDid)) {
+        if (plan.claimedModelDid() != null && !plan.claimedModelDid().equals(userDid)) {
             throw new IllegalArgumentException("modelDid does not match the registered wallet");
         }
 
@@ -223,47 +227,96 @@ public class IssueVcService {
     // ── plan/claims 해소 + Issuer user upsert ──────────────────────────────
 
     /**
-     * 요청 본문 → 발급 플랜 해소. 본문 없음/plan 생략/"mdl" → MDL(데모 기본 claim). "facelicense" →
-     * FaceLicense(요청 claims 를 namespace claim id 로 매핑). userInfo 키 = "namespaceId.claimId".
+     * 요청 본문 → 발급 플랜 해소({@link IssuePlan}). 본문 없음/plan 생략/"mdl" → MDL(데모 기본 claim).
+     * "facelicense-v2" / "fmsponsorship-v1" → 요청 claims 를 namespace claim id 로 매핑.
+     * userInfo 키 = "namespaceId.claimId". 클레임 id 는 scripts/issuer-provision-*.sh 의 items 와 같아야 한다.
      */
     private ResolvedPlan resolvePlan(IssueVcDtos.IssueRequest request) {
-        String plan = (request == null || request.plan() == null) ? "mdl"
-                : request.plan().trim().toLowerCase();
+        IssuePlan plan = IssuePlan.fromRequest(request == null ? null : request.plan())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "unknown plan (expected mdl, facelicense-v2 or fmsponsorship-v1)"));
+        return switch (plan) {
+            case FACELICENSE_V2 -> resolveFaceLicense(request);
+            case FMSPONSORSHIP_V1 -> resolveSponsorship(request);
+            case MDL -> {
+                // MDL — 기존 동작(데모 placeholder claim). Issuer user 는 이 값으로 멱등 upsert.
+                Map<String, String> ui = new LinkedHashMap<>();
+                ui.put(MDL_NS + ".family_name", "WEARLESS");
+                ui.put(MDL_NS + ".given_name", "Model");
+                ui.put(MDL_NS + ".birth_date", "2000-01-01");
+                yield new ResolvedPlan(plan, ui, null);
+            }
+        };
+    }
 
-        if (FL_SCHEMA.equals(plan)) {
-            IssueVcDtos.Claims c = request.claims();
-            if (c == null) {
-                throw new IllegalArgumentException("plan=facelicense-v2 requires a claims object");
-            }
-            Map<String, String> ui = new LinkedHashMap<>();
-            putClaim(ui, FL_NS + ".model_did", c.modelDid());
-            putClaim(ui, FL_NS + ".license_id", c.licenseId());
-            putClaim(ui, FL_NS + ".issued_at", c.issuedAt());
-            putClaim(ui, FL_NS + ".face_image_digest", c.faceImageDigest());
-            putClaim(ui, FL_NS + ".agreement_version", c.agreementVersion());
-            putClaim(ui, FL_NS + ".consent_doc_version", c.consentDocVersion());
-            java.time.Instant.parse(c.issuedAt());
-            String licenseId = java.util.UUID.fromString(c.licenseId()).toString();
-            if (!licenseId.equals(c.licenseId())
-                    || !("fm-license:" + licenseId).equals(request.idempotencyKey())) {
-                throw new IllegalArgumentException("licenseId does not match the idempotency key");
-            }
-            return new ResolvedPlan(FL_PLAN, FL_SCHEMA, ui, "FaceLicense v2");
+    private static ResolvedPlan resolveFaceLicense(IssueVcDtos.IssueRequest request) {
+        IssueVcDtos.Claims c = request.claims();
+        if (c == null) {
+            throw new IllegalArgumentException("plan=facelicense-v2 requires a claims object");
         }
-        if (!"mdl".equals(plan)) {
-            throw new IllegalArgumentException("unknown plan (expected mdl or facelicense-v2)");
-        }
-        // MDL — 기존 동작(데모 placeholder claim). Issuer user 는 이 값으로 멱등 upsert.
         Map<String, String> ui = new LinkedHashMap<>();
-        ui.put(MDL_NS + ".family_name", "WEARLESS");
-        ui.put(MDL_NS + ".given_name", "Model");
-        ui.put(MDL_NS + ".birth_date", "2000-01-01");
-        return new ResolvedPlan(MDL_PLAN, MDL_SCHEMA, ui, "MDL");
+        putClaim(ui, FL_NS + ".model_did", c.modelDid());
+        putClaim(ui, FL_NS + ".license_id", c.licenseId());
+        putClaim(ui, FL_NS + ".issued_at", c.issuedAt());
+        putClaim(ui, FL_NS + ".face_image_digest", c.faceImageDigest());
+        putClaim(ui, FL_NS + ".agreement_version", c.agreementVersion());
+        putClaim(ui, FL_NS + ".consent_doc_version", c.consentDocVersion());
+        java.time.Instant.parse(c.issuedAt());
+        String licenseId = java.util.UUID.fromString(c.licenseId()).toString();
+        if (!licenseId.equals(c.licenseId())
+                || !IssuePlan.FACELICENSE_V2.idempotencyKeyFor(licenseId).equals(request.idempotencyKey())) {
+            throw new IllegalArgumentException("licenseId does not match the idempotency key");
+        }
+        return new ResolvedPlan(IssuePlan.FACELICENSE_V2, ui, c.modelDid());
+    }
+
+    /**
+     * 협찬 동의 VC — 동의 사실 6개만. 전부 필수 비공백, credentialId = 소문자 UUID 이며 멱등키
+     * {@code fm-sponsorship:<credentialId>} 와 일치, 두 해시 = 소문자 hex 64자, consentedAt = UTC 'Z' ISO-8601.
+     * 모르는 클레임 키는 요청 바인딩 단계에서 거절된다({@link IssueVcDtos.IssueRequest}).
+     */
+    private static ResolvedPlan resolveSponsorship(IssueVcDtos.IssueRequest request) {
+        IssueVcDtos.SponsorshipClaims c = request.sponsorshipClaims();
+        if (c == null) {
+            throw new IllegalArgumentException("plan=fmsponsorship-v1 requires a claims object");
+        }
+        Map<String, String> ui = new LinkedHashMap<>();
+        putSponsorshipClaim(ui, SP_NS + ".model_did", c.modelDid());
+        putSponsorshipClaim(ui, SP_NS + ".credential_id", c.credentialId());
+        putSponsorshipClaim(ui, SP_NS + ".consent_doc_version", c.consentDocVersion());
+        putSponsorshipClaim(ui, SP_NS + ".participation_doc_sha256", c.participationDocSha256());
+        putSponsorshipClaim(ui, SP_NS + ".profile_doc_sha256", c.profileDocSha256());
+        putSponsorshipClaim(ui, SP_NS + ".consented_at", c.consentedAt());
+        if (!SHA256_HEX.matcher(c.participationDocSha256()).matches()
+                || !SHA256_HEX.matcher(c.profileDocSha256()).matches()) {
+            throw new IllegalArgumentException("sponsorship document digests must be 64 lowercase hex chars");
+        }
+        try {
+            if (!c.consentedAt().endsWith("Z")) {
+                throw new java.time.DateTimeException("not UTC");
+            }
+            java.time.Instant.parse(c.consentedAt());
+        } catch (java.time.DateTimeException e) {
+            throw new IllegalArgumentException("consentedAt must be ISO-8601 UTC ending in Z", e);
+        }
+        String credentialId = java.util.UUID.fromString(c.credentialId()).toString();
+        if (!credentialId.equals(c.credentialId())
+                || !IssuePlan.FMSPONSORSHIP_V1.idempotencyKeyFor(credentialId).equals(request.idempotencyKey())) {
+            throw new IllegalArgumentException("credentialId does not match the idempotency key");
+        }
+        return new ResolvedPlan(IssuePlan.FMSPONSORSHIP_V1, ui, c.modelDid());
     }
 
     private static void putClaim(Map<String, String> map, String key, String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("immutable FaceLicense claim is required: " + key);
+        }
+        map.put(key, value);
+    }
+
+    private static void putSponsorshipClaim(Map<String, String> map, String key, String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("immutable FmSponsorship claim is required: " + key);
         }
         map.put(key, value);
     }
