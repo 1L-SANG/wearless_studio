@@ -867,8 +867,10 @@ def test_editor_new_real_studio_cut_is_accepted(
 ):
     """실제 모델로 **스튜디오 컷**은 새로 만들 수 있다.
 
-    2026-09-14: 실제 모델은 studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
-    스타일링 컷은 아래 test_editor_new_real_styling_cut_is_refused 가 잠근다.
+    실제 모델은 studio·styling 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES —
+    2026-09-14 studio, 2026-09-25 styling 추가). 스타일링 컷은 아래
+    test_editor_new_real_styling_cut_is_accepted, 아직 막힌 섹션은
+    test_editor_new_real_hooking_cut_is_refused 가 잠근다.
     """
     client.app.state.settings = replace(
         client.app.state.settings,
@@ -927,8 +929,77 @@ def test_editor_new_real_studio_cut_is_accepted(
     assert seen["payload"]["_facemarket"] == {"modelId": MODEL_ID, "licenseId": LICENSE_ID}
 
 
-def test_editor_new_real_styling_cut_is_refused(client, make_token, monkeypatch):
-    """실제 모델 + studio 밖 섹션 = 생성 전에 거부. 잡도 예약도 없다(과금 0)."""
+@pytest.mark.parametrize("cut_type", ["styling", "mirror"])
+def test_editor_new_real_styling_cut_is_accepted(client, make_token, monkeypatch, cut_type):
+    """실제 모델 + styling 섹션(스타일링·거울샷) = 스튜디오 컷과 똑같이 실제 얼굴로 만든다.
+
+    2026-09-25 사용자 결정 — 예전(2026-09-14~)에는 409 real_model_studio_only 로 거부했다.
+    """
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+    seen = {}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, model_id, **kwargs):
+        assert model_id == MODEL_ID
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    def fake_verify(app, row, **kwargs):
+        seen["verified"] = kwargs
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-new-styling"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        seen["reserved"] = amount
+        return 9
+
+    async def fake_lock(conn):
+        return None
+
+    async def fake_closed(conn):
+        return False
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={"mode": "new", "cutType": cut_type, "modelId": MODEL_ID},
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"]["modelId"] == MODEL_ID
+    assert seen["payload"]["cutType"] == cut_type
+    assert seen["payload"]["brandUseCategory"] == CATEGORY
+    assert seen["verified"] == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+    assert seen["payload"]["_facemarket"] == {"modelId": MODEL_ID, "licenseId": LICENSE_ID}
+    assert seen["reserved"] == client.app.state.settings.credit_cost_editor_image
+
+
+def test_editor_new_real_hooking_cut_is_refused(client, make_token, monkeypatch):
+    """실제 모델 + 아직 막힌 섹션(hooking) = 생성 전에 거부. 잡도 예약도 없다(과금 0).
+
+    styling 이 열린(2026-09-25) 뒤에도 hooking·product 는 막혀 있다. 제품컷은 에디터에서
+    실제 모델을 떼고 진행하므로(test_editor_product_cut_strips_real_model_before_facemarket_gate)
+    거부 예시는 hooking(hero) 컷이다.
+    """
     client.app.state.settings = replace(client.app.state.settings, facemarket_enabled=True)
     calls = {"create": 0, "reserve": 0}
 
@@ -959,7 +1030,7 @@ def test_editor_new_real_styling_cut_is_refused(client, make_token, monkeypatch)
     response = client.post(
         "/v1/projects/p1/editor:generate-image",
         headers=_auth(make_token),
-        json={"mode": "new", "cutType": "styling", "modelId": MODEL_ID},
+        json={"mode": "new", "contentRole": "hero", "cutType": "styling", "modelId": MODEL_ID},
     )
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "real_model_studio_only"
