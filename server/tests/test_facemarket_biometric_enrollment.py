@@ -2470,14 +2470,14 @@ def test_complete_cancellation_waits_for_workers_before_wiping(
     assert wiped == [PORTRAIT_JPEG_BYTES, b"front-bytes", b"angle45-bytes", b"side-bytes"]
 
 
-@pytest.mark.parametrize("stage", ["refset", "id_crop"])
+@pytest.mark.parametrize("stage", ["refset", "id_crop", "liveness"])
 def test_complete_cancellation_waits_for_other_biometric_readers(
     enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
     completion_fakes, monkeypatch, stage,
 ):
     enrollment_client.app.state.settings = replace(
         enrollment_client.app.state.settings,
-        fm_liveness_enabled=False,
+        fm_liveness_enabled=stage == "liveness",
         fm_face_match_enabled=stage == "id_crop",
     )
     eid = create_complete_ready_enrollment(
@@ -2508,18 +2508,23 @@ def test_complete_cancellation_waits_for_other_biometric_readers(
             if stage == "id_crop":
                 assert bytes(args[0]) == b"id-document-bytes"
                 return bytearray(PORTRAIT_JPEG_BYTES)
+            if stage == "liveness":
+                return facemarket_enrollment.LivenessResult(bytearray(b"live-reference"), 95.0)
             assert all(bytes(buffer) for _, buffer in args[1])
             return {"status": "ok"}
 
         if stage == "id_crop":
             monkeypatch.setattr(facemarket_enrollment.facemarket_id_document, "crop_id_face", block)
+        elif stage == "liveness":
+            monkeypatch.setattr(facemarket_enrollment, "get_liveness_result", block)
         else:
             monkeypatch.setattr(facemarket_enrollment, "refset_agreement", block)
 
         async def complete():
             await facemarket_enrollment.process_enrollment_completion(
                 types.SimpleNamespace(app=enrollment_client.app),
-                enrollment_id=eid, user_id="user-1", session_id=None,
+                enrollment_id=eid, user_id="user-1",
+                session_id=fake_rekognition.session_id if stage == "liveness" else None,
             )
 
         task = asyncio.create_task(complete())
@@ -2528,6 +2533,7 @@ def test_complete_cancellation_waits_for_other_biometric_readers(
             task.cancel()
             for _ in range(10):
                 await asyncio.sleep(0)
+            assert not task.done(), "the biometric worker must settle before completion exits"
             assert wiped == [], "the biometric reader is still using these buffers"
         finally:
             allow_finish.set()
@@ -2538,6 +2544,8 @@ def test_complete_cancellation_waits_for_other_biometric_readers(
     if stage == "id_crop":
         assert b"id-document-bytes" in wiped
         assert PORTRAIT_JPEG_BYTES in wiped
+    elif stage == "liveness":
+        assert b"live-reference" in wiped
     else:
         assert b"front-bytes" in wiped
 

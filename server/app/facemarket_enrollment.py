@@ -3261,7 +3261,7 @@ def _completion_match_snapshot(
     }
 
 
-async def _await_biometric_worker(future: asyncio.Future, *, wipe_abandoned_result: bool = False):
+async def _await_biometric_worker(future: asyncio.Future, *, wipe_abandoned_result=None):
     """Keep mutable biometric inputs alive until a cancelled worker has stopped reading them."""
     try:
         return await asyncio.shield(future)
@@ -3282,8 +3282,8 @@ async def _await_biometric_worker(future: asyncio.Future, *, wipe_abandoned_resu
             except Exception:
                 pass  # Cancellation wins, but retrieve the worker error.
             else:
-                if wipe_abandoned_result and isinstance(result, bytearray):
-                    cx_identity.wipe_bytearray(result)
+                if wipe_abandoned_result is not None:
+                    wipe_abandoned_result(result)
         raise
 
 
@@ -3311,11 +3311,15 @@ async def process_enrollment_completion(
         processing_started = True
         if settings.fm_liveness_enabled:
             try:
-                liveness = await asyncio.to_thread(
+                liveness_task = asyncio.create_task(asyncio.to_thread(
                     get_liveness_result,
                     request.app.state.fm_rekognition,
                     session_id=session_id,
                     minimum_confidence=settings.fm_liveness_confidence_threshold,
+                ))
+                liveness = await _await_biometric_worker(
+                    liveness_task,
+                    wipe_abandoned_result=lambda result: cx_identity.wipe_bytearray(result.reference_image),
                 )
             except BiometricProviderError as exc:
                 raise EnrollmentMappedError(exc.reason) from None
@@ -3349,7 +3353,7 @@ async def process_enrollment_completion(
                         settings=settings,
                     ))
                     portrait = await _await_biometric_worker(
-                        crop_task, wipe_abandoned_result=True,
+                        crop_task, wipe_abandoned_result=cx_identity.wipe_bytearray,
                     )
                 except facemarket_id_document.IdDocumentError as exc:
                     raise EnrollmentMappedError(exc.reason) from None
