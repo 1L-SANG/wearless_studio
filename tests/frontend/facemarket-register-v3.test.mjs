@@ -308,7 +308,7 @@ for (const fails of [false, true]) {
     let resolve, reject;
     const response = new Promise((done, fail) => { resolve = done; reject = fail; });
     const h = await modelComponentHarness({ initialStates: ['2', photoRecord(), module.PHOTO_REVIEW_SUB], api: {
-      getFacemarketConfig: async () => ({ livenessRequired: false, faceMatchEnabled: true }),
+      getFacemarketConfig: async () => ({ livenessRequired: false, faceMatchEnabled: false }),
       completeEnrollment: () => response,
     } });
     let pending;
@@ -321,7 +321,7 @@ for (const fails of [false, true]) {
       assert.ok(checking);
       assert.equal(checking.props.disabled, true);
       assert.ok(findTree(checking, node => node.props.className === 'spinner' && node.props['aria-hidden'] === true));
-      assert.equal(textOf(findTree(tree, node => node.props.id === checking.props['aria-describedby'])), '얼굴이 본인과 맞는지 18장을 확인하고 있어요. 10초쯤 걸려요.');
+      assert.equal(textOf(findTree(tree, node => node.props.id === checking.props['aria-describedby'])), '등록 사진을 확인하고 있어요. 10초쯤 걸려요.');
       if (fails) reject(new Error('사진 확인 요청 실패'));
       else resolve({ passed: true, status: 'license_pending', modelId: 'model-1' });
       await pending;

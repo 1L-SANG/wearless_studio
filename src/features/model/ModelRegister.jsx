@@ -533,7 +533,7 @@ export function ModelRegister() {
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, editingDisabled: assetsPending, onFile: changePhoto, onRemove: removePhoto, photoSlot, error, onPick: rememberPhotoPick, onCancelPick: clearPhotoPick, editGroup: (groupSub) => { clearPhotoError(); setSub(groupSub); setEditingPhotos(true); } });
     const progress = photoProgress(enrollment?.photos, sub < PHOTO_REVIEW_SUB ? PHOTO_GROUPS[sub - 1].id : undefined);
-    next = { label: checkingPhotos ? '사진을 확인하는 중…' : sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !progress.complete, hint: checkingPhotos ? '얼굴이 본인과 맞는지 18장을 확인하고 있어요. 10초쯤 걸려요.' : assetsPending ? '사진을 정리하고 있어요. 준비가 끝나면 사진을 바꾸거나 지울 수 있어요.' : progress.complete ? '모두 저장했어요' : `${progress.count}/${progress.total}장 저장. ${progress.total - progress.count}장을 더 올려 주세요.` };
+    next = { label: checkingPhotos ? '사진을 확인하는 중…' : sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !progress.complete, hint: checkingPhotos ? '등록 사진을 확인하고 있어요. 10초쯤 걸려요.' : assetsPending ? '사진을 정리하고 있어요. 준비가 끝나면 사진을 바꾸거나 지울 수 있어요.' : progress.complete ? '모두 저장했어요' : `${progress.count}/${progress.total}장 저장. ${progress.total - progress.count}장을 더 올려 주세요.` };
     previous = { label: '이전', action: () => { clearPhotoError(); if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === 'reshoot') {
     content = renderReshoot({ enrollment, previews, busy, onFile: changePhoto, photoSlot, error });
