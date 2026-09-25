@@ -2,6 +2,8 @@ export const TOP_SIZES = Object.freeze(['XS', 'S', 'M', 'L', 'XL', 'FREE']);
 export const BOTTOM_WAIST_SIZES = Object.freeze(Array.from({ length: 11 }, (_, i) => 24 + i));
 export const SPONSORSHIP_CHANGED = 'facemarket:sponsorship-changed';
 
+export const INSTAGRAM_HANDLE_PATTERN = /^[a-zA-Z0-9_](?:[a-zA-Z0-9_.]{0,28}[a-zA-Z0-9_])?$/;
+
 export function normalizeInstagramHandle(value) {
   return String(value ?? '').trim().replace(/^@/, '');
 }
@@ -21,7 +23,7 @@ export function sponsorshipDraft(model = {}) {
 export function sponsorshipPayload(draft) {
   if (!draft.sponsorshipEnabled) return { sponsorshipEnabled: false };
   const instagramHandle = normalizeInstagramHandle(draft.instagramHandle);
-  if (!/^[a-zA-Z0-9_](?:[a-zA-Z0-9_.]{0,28}[a-zA-Z0-9_])?$/.test(instagramHandle) || instagramHandle.includes('..')) {
+  if (!INSTAGRAM_HANDLE_PATTERN.test(instagramHandle) || instagramHandle.includes('..')) {
     throw new Error('인스타 계정을 확인해 주세요. 링크 대신 아이디만 적어주세요.');
   }
   const followers = String(draft.instagramFollowers ?? '').trim();

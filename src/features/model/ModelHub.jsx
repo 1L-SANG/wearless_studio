@@ -46,7 +46,8 @@ export function ModelHub({ onSignOut }) {
     if (journey.action?.kind === 'route') navigate(journey.action.to);
     else if (journey.action?.kind === 'reload') load();
     else if (journey.action?.kind === 'cancel' && application) {
-      try { await cancelApplication(application.id); load(); }
+      if (!window.confirm('지원을 취소할까요? 검토가 멈추고, 다시 지원할 때 사진은 새로 올려야 해요.')) return;
+      try { await cancelApplication(application.id); push?.('지원을 취소했어요.'); load(); }
       catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
     }
   };

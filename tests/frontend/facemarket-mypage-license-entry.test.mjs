@@ -96,3 +96,114 @@ test('라우트 가드와 공개 리다이렉트는 그대로예요', () => {
   assert.match(app, /path="license" element={<Navigate to="\/status" replace \/>}/);
   assert.match(app, /path="licensing" element={<Navigate to="\/status" replace \/>}/);
 });
+
+for (const [status, modelStatus] of [['vc_pending', 'pending'], ['passed', 'pending'], ['passed', 'awaiting_confirm']]) {
+  test(`${status} 상태의 ${modelStatus} 모델은 이미 발급된 증서도 확정 전에는 숨겨요`, async () => {
+    const harness = await loadEarningsHarness();
+    try {
+      const { resolveHubJourney } = await import('../../src/features/model/modelHubState.js');
+      const { ActiveDashboard } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageDashboard.jsx');
+      const { MyPageConditions } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageConditions.jsx');
+      const { ProfileHero, MyPageCertificate } = await cert(harness);
+      const ownedModel = { ...model, status: modelStatus };
+      const enrollment = { status };
+      const journey = resolveHubJourney({ ownedModel, enrollment, license: issued, hasLicense: true });
+      harness.runtime.hash = '#license';
+      let tree = harness.render(ActiveDashboard, { journey, enrollment, model: ownedModel, license: issued });
+      let hero = elementOf(tree, 'ProfileHero');
+      assert.equal(hero.props.license, null);
+      assert.ok(text(ProfileHero(hero.props)).includes('테스트컷 준비 중'));
+      hero.props.onCertificate();
+      tree = harness.render(ActiveDashboard, { journey, enrollment, model: ownedModel, license: issued });
+      const dialogCard = elementOf(tree, 'MyPageCertificate');
+      assert.equal(dialogCard.props.license, null);
+      assert.equal(elementOf(MyPageCertificate(dialogCard.props), 'LicenseManageLink'), null);
+      const conditions = elementOf(tree, 'MyPageConditions');
+      const tab = harness.render(MyPageConditions, conditions.props);
+      assert.equal(elementOf(tab, 'MyPageCertificate').props.license, null);
+      assert.equal(findTree(tab, node => node.type === 'button' && text(node).startsWith('사용 조건 편집')).props.disabled, true);
+      assert.equal(text(MyPageCertificate(elementOf(tab, 'MyPageCertificate').props)).includes('proof-1'), false);
+    } finally { await harness.close(); }
+  });
+}
+
+test('확정 뒤에는 마이페이지의 증서와 관리 링크를 보여줘요', async () => {
+  const harness = await loadEarningsHarness();
+  try {
+    const { ActiveDashboard } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageDashboard.jsx');
+    const { ProfileHero } = await cert(harness);
+    const tree = harness.render(ActiveDashboard, { journey: { mode: 'active', flag: 'none' }, model: { ...model, status: 'verified', confirmedAt: '2026-09-14T00:00:00Z' }, license: issued });
+    const hero = elementOf(tree, 'ProfileHero');
+    assert.equal(hero.props.license, issued);
+    assert.ok(text(ProfileHero(hero.props)).includes('내 증서 보기'));
+  } finally { await harness.close(); }
+});
+
+for (const confirmedAt of [null, '2026-09-14T00:00:00Z']) {
+  for (const entry of ['상단 카드', '증서 대화상자', '라이선스 탭']) {
+    test(`운영 정지 모델의 ${entry}에서 테스트컷 ${confirmedAt ? '확정 뒤 증서를 보여줘요' : '확정 전 증서를 숨겨요'}`, async () => {
+      const harness = await loadEarningsHarness();
+      try {
+        const { resolveHubJourney } = await import('../../src/features/model/modelHubState.js');
+        const { ActiveDashboard } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageDashboard.jsx');
+        const { MyPageConditions } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageConditions.jsx');
+        const { ProfileHero, MyPageCertificate, LicenseManageLink } = await cert(harness);
+        const ownedModel = { ...model, status: 'suspended', confirmedAt };
+        const journey = resolveHubJourney({ ownedModel, license: issued, hasLicense: true });
+        assert.equal(journey.mode, 'active');
+        assert.equal(journey.flag, 'paused');
+        const props = { journey, model: ownedModel, license: issued };
+        let tree = harness.render(ActiveDashboard, props);
+        const hero = elementOf(tree, 'ProfileHero');
+
+        if (entry === '상단 카드') {
+          const rendered = ProfileHero(hero.props);
+          assert.equal(hero.props.license, confirmedAt ? issued : null);
+          assert.equal(text(rendered).includes('초상 라이선스 증서'), Boolean(confirmedAt));
+          assert.equal(text(rendered).includes('내 증서 보기'), Boolean(confirmedAt));
+          assert.equal(text(rendered).includes('테스트컷 준비 중'), !confirmedAt);
+          return;
+        }
+
+        let certificate;
+        if (entry === '증서 대화상자') {
+          hero.props.onCertificate();
+          tree = harness.render(ActiveDashboard, props);
+          certificate = elementOf(tree, 'MyPageCertificate');
+        } else {
+          findTree(tree, node => node.props?.role === 'tab' && text(node) === '라이선스').props.onClick();
+          tree = harness.render(ActiveDashboard, props);
+          const conditions = elementOf(tree, 'MyPageConditions');
+          const tab = harness.render(MyPageConditions, conditions.props);
+          certificate = elementOf(tab, 'MyPageCertificate');
+          assert.equal(text(findTree(tab, node => node.type === 'button' && node.props?.onClick === conditions.props.onCertificate)),
+            confirmedAt ? '내 증서 보기' : '테스트컷 준비 중');
+        }
+
+        assert.equal(certificate.props.license, confirmedAt ? issued : null);
+        const rendered = MyPageCertificate(certificate.props);
+        const link = elementOf(rendered, 'LicenseManageLink');
+        assert.equal(text(rendered).includes('proof-1'), Boolean(confirmedAt));
+        if (confirmedAt) {
+          assert.ok(link);
+          assert.ok(manageLink(LicenseManageLink(link.props)));
+        } else {
+          assert.equal(link, null);
+          assert.equal(findTree(rendered, node => node.type === 'Link'), null);
+          assert.equal(elementOf(rendered, 'EmptyPanel').props.title, '테스트컷 준비 중');
+        }
+      } finally { await harness.close(); }
+    });
+  }
+}
+
+test('얼굴 라이선스 페이지는 증서의 계약 역할을 안내하며 유지돼요', async () => {
+  const { modelComponentHarness } = await import('./helpers/facemarketHarness.mjs');
+  const h = await modelComponentHarness({ entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense',
+    initialStates: ['ready', 'cards', null, [], null, []], api: {} });
+  try {
+    const tree = h.render();
+    assert.ok(text(tree).includes('얼굴 라이선스'));
+    assert.ok(text(tree).includes('발급받은 라이선스 증서는 셀러가 모델님을 이용할 때 계약서로서 작용해요.'));
+  } finally { await h.close(); }
+});

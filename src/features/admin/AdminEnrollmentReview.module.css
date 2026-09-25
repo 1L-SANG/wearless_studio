@@ -1,0 +1,42 @@
+.page {
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.page h1,
+.page h2,
+.page h3 {
+  text-wrap: balance;
+}
+
+.page p {
+  text-wrap: pretty;
+}
+
+.page button,
+.page label {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.page button {
+  white-space: normal;
+}
+
+.detailRefreshFeedback {
+  height: 5rem;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.detailRefreshMessage {
+  flex: 1;
+  min-width: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.detailRefreshFeedback button {
+  flex-shrink: 0;
+}

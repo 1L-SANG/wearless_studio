@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.facemarket import FaceVcIssueError, FaceVcIssueResult
+from app.facemarket import FaceVcIssueError, IDENTITY_CLEARED_SQL
 from scripts import retry_pending_face_vcs as retry
 
 
@@ -86,7 +86,7 @@ def test_retry_dry_run_selects_only_owned_pending_vc_candidates_and_prints_count
     monkeypatch.setattr(retry, "create_pool", lambda _url: pool)
     monkeypatch.setattr(
         retry,
-        "issue_face_vc",
+        "issue_and_activate_pending_face_vc",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dry run issued")),
     )
 
@@ -99,6 +99,7 @@ def test_retry_dry_run_selects_only_owned_pending_vc_candidates_and_prints_count
     assert "l.status = 'pending'" in query and "l.vc_id is null" in query
     assert "m.user_id is not null" in query
     assert "e.status = 'vc_pending'" in query
+    assert IDENTITY_CLEARED_SQL in query
     assert "e.user_id = m.user_id" in query and "e.model_id = m.id" in query
     assert capsys.readouterr().out.strip() == (
         "mode=DRY_RUN pending=2 issued=0 failed=0"
@@ -134,36 +135,22 @@ def test_retry_apply_uses_shared_issue_and_finalizer_continues_and_prints_counts
         row["license_valid_until"] = valid_until
     pool = _Pool(rows)
     issued = []
-    finalized = []
-
     async def fake_issue(_app, **kwargs):
-        assert kwargs["forbidden"] == []
-        assert kwargs["valid_until"] == valid_until
-        assert kwargs["issued_at"] == datetime(2026, 9, 1, tzinfo=timezone.utc)
-        assert kwargs["consent_doc_version"] == "2026-08-v1"
+        assert kwargs["user_id"].startswith("user-")
+        assert kwargs["model_id"].startswith("model-")
         issued.append(kwargs["license_id"])
         if kwargs["license_id"] == "license-2":
             raise FaceVcIssueError("vc_issue_delayed", status_code=503)
-        return FaceVcIssueResult(f"vc-{kwargs['license_id']}", "did:omn:user")
-
-    async def fake_finalize(connect, **kwargs):
-        assert connect == pool.connection
-        finalized.append((kwargs["license_id"], kwargs["issued"].vc_id))
         return {"status": "active"}
 
     monkeypatch.setattr(retry, "load_settings", _settings)
     monkeypatch.setattr(retry, "create_pool", lambda _url: pool)
-    monkeypatch.setattr(retry, "issue_face_vc", fake_issue)
-    monkeypatch.setattr(retry, "finalize_issued_face_vc", fake_finalize)
+    monkeypatch.setattr(retry, "issue_and_activate_pending_face_vc", fake_issue)
 
     with pytest.raises(SystemExit, match="VC 재발급 실패: 1/3"):
         asyncio.run(retry.main(["--apply"]))
 
     assert issued == ["license-1", "license-2", "license-3"]
-    assert finalized == [
-        ("license-1", "vc-license-1"),
-        ("license-3", "vc-license-3"),
-    ]
     output = capsys.readouterr().out.strip()
     assert output == "mode=APPLY pending=3 issued=2 failed=1"
     assert all(row["id"] not in output for row in rows)

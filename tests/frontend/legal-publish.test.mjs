@@ -79,13 +79,13 @@ test('publisher keeps each document revision date consistent in metadata and bod
     'seller-license-terms': { version: 'v1.2', effectiveDate: '2026-09-18' },
     // 선택 의류 협찬 개정(2026-09-23, 오너 결정으로 예고 기간 없이 시행. 이용자 0명 단계):
     // 모델 약관 v1.2 · 처리방침 v1.6 · 법적 FAQ v1.3 · E-2 협찬 동의.
-    'terms-model': { version: 'v1.2', effectiveDate: '2026-09-23' },
+    'terms-model': { version: 'v1.3', effectiveDate: '2026-09-25' },
     'privacy-model': { version: 'v1.6', effectiveDate: '2026-09-23' },
-    'answers': { version: 'v1.3', effectiveDate: '2026-09-23' },
-    'sponsorship-consent': { version: '2026-09-sponsorship-v1', effectiveDate: '2026-09-23' },
+    'answers': { version: 'v1.4', effectiveDate: '2026-09-25' },
+    'sponsorship-consent': { version: '2026-09-sponsorship-v2', effectiveDate: '2026-09-25' },
     // 요청·배송 기능용 델타(02·05 v3)는 아직 초안 — 시행일 미정.
     'license-agreement-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
-    'seller-license-terms-sponsorship-draft': { version: 'v3-draft', effectiveDate: null },
+    'seller-license-terms-sponsorship-draft': { version: 'v3-draft.1', effectiveDate: null },
   };
   for (const { slug, version, effectiveDate } of manifest) {
     const expected = revised[slug] || { version: 'v1.1', effectiveDate: '2026-09-11' };
@@ -182,4 +182,21 @@ test('published model-license terms do not retain duration-based rights or refun
   const answers = readFileSync(join(f.root, 'public/legal/answers.md'), 'utf8');
   assert.doesNotMatch(answers, /허용 품목·제외 품목·기간/);
   assert.match(answers, /허용 품목·제외 품목\)과 플랫폼 표준가/);
+});
+
+
+test('협찬 발행본은 게시 기한과 유지 기간만 개정하고 게시 매체와 횟수를 유지해요', t => {
+  const f = fixture(t);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  for (const slug of ['terms-model', 'answers', 'sponsorship-consent', 'seller-license-terms-sponsorship-draft']) {
+    const text = readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8');
+    assert.match(text, /옷 수령 후 7일 이내/);
+    assert.match(text, /게시일부터 90일/);
+    assert.match(text, /본인 인스타그램 피드에 착용 게시물 1회/);
+    assert.doesNotMatch(text, /옷 수령 후 3일 이내|게시일부터 30일/);
+  }
+  const manifest = JSON.parse(readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'));
+  assert.equal(manifest.find(row => row.slug === 'seller-license-terms-sponsorship-draft').revisionDate, '2026-09-25');
+  assert.equal(manifest.find(row => row.slug === 'license-agreement-sponsorship-draft').revisionDate, '2026-09-22');
 });

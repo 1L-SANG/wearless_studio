@@ -1,12 +1,4 @@
-/* 등록 사진 칸 그림 — 사진 파일 없이 도형만 그려요(currentColor 만 씁니다).
-
-   RegisterIllustration 은 각도(정면/3:4/옆)만 구분해요. 그래서 정면 네 칸(무표정·미소·
-   시선 왼쪽·시선 오른쪽)이 똑같이 보이고, 'back' 을 몰라서 뒷모습 칸에도 앞모습이 나왔어요.
-   여기서는 앞모습은 **눈동자와 입**으로, 옆·뒤는 **위에서 본 머리(코 방향)** 로 구분해요.
-
-   cut 값은 server/app/facemarket_photos.py 의 CUT_LABELS 키와 같아요
-   (front · smile · 34 · front2 · gaze_left · gaze_right · side · side_right · back).
-   RegisterIllustration 은 지우지 않아요 — 체형 고르기 화면이 그걸 그대로 씁니다. */
+/* 촬영 자세별 구도를 그려요. */
 
 const STROKE = { fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' };
 

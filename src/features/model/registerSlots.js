@@ -53,12 +53,6 @@ export const SHOOT_RULES = Object.freeze([
   { icon: 'calendar', title: '같은 날 찍기', body: '머리, 옷이 일관되게 한 번에 찍어주세요.' },
 ]);
 
-export const REGISTER_BODIES = Object.freeze([
-  { value: 'delicate', label: '여리여리', width: 0.78 },
-  { value: 'slim', label: '마름', width: 0.92 },
-  { value: 'regular', label: '보통', width: 1.06 },
-  { value: 'plump', label: '통통', width: 1.25 },
-]);
 export const CONSENT_VERSION = '2026-09-v4';
 // 옛 등록(3각도 · 16칸)이 돌려주는 이름 → 지금 슬롯. 서버 facemarket_photos.SLOT_CANDIDATES 와 같아요.
 export const LEGACY_PHOTO_SLOTS = Object.freeze({
@@ -88,20 +82,18 @@ export function restoreRegisterScreen(enrollment) {
   if (enrollment.photoReviewStatus === 'reshoot_requested' && (enrollment.reshootSlots || []).length) {
     return { step: 'reshoot', sub: 1 };
   }
-  // 간편인증(simple_auth) 경로 전용 두 상태. id_capture_pending 은 본인확인 전에 신분증을
-  // 찍어 올리는 단계이고, review_pending 은 완료 직전 관리자 육안 심사를 기다리는 단계다
-  // — 둘 다 '끝났다'(done)로 보내면 사용자는 증서도 없이 축하 화면을 보게 된다.
+  // 예전 심사 대기 건만 대기 화면에 남겨요. 새 등록은 조건을 바로 고를 수 있어요.
   if (status === 'id_capture_pending') return { step: 'id_capture', sub: 1 };
-  if (status === 'review_pending') return { step: 'review', sub: PHOTO_REVIEW_SUB };
+  if (status === 'review_pending') return { step: 'processing', sub: PHOTO_REVIEW_SUB };
   if (status === 'identity_pending') return { step: '1', sub: 1 };
   if (status === 'photos_pending' || status === 'liveness_pending') {
     const index = PHOTO_GROUPS.findIndex((group) => !photoProgress(enrollment.photos, group.id).complete);
     return { step: '2', sub: index < 0 ? PHOTO_REVIEW_SUB : index + 1 };
   }
   if (status === 'license_pending') return { step: '3', sub: PHOTO_REVIEW_SUB };
-  if (status === 'vc_pending') return { step: '4b', sub: PHOTO_REVIEW_SUB };
+  if (status === 'vc_pending') return { step: 'done', sub: PHOTO_REVIEW_SUB };
   if (status === 'passed') return { step: 'done', sub: PHOTO_REVIEW_SUB };
-  if (['processing', 'asset_building'].includes(status)) return { step: 'processing', sub: PHOTO_REVIEW_SUB };
+  if (['processing', 'asset_building'].includes(status)) return { step: '3', sub: PHOTO_REVIEW_SUB };
   return { step: 'failed', sub: 1 };
 }
 export function readRegisterDraft(enrollmentId) {

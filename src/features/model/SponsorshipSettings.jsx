@@ -13,13 +13,12 @@ export function SponsorshipFields({ value, onChange, disabled = false }) {
       <div><h2 id={`${id}-title`}>의류 협찬 받기</h2><span className={s.optional}>선택 · 기본 꺼짐</span></div>
       {!value.sponsorshipEnabled && toggle}
     </div>
-    <p className={s.description}>켜 두면 셀러가 바로 협찬을 요청할 수 있어요. 옷을 받으면 입고 찍어서 피드에 올려요. 옷은 내 것, 현금은 없어요. <strong>언제든 끌 수 있어요.</strong></p>
-    <p className={s.description}>협찬 옷도 위에서 정한 허용 품목 안에서만 와요.</p>
+    <p className={s.description}>켜 두면 셀러에게 협찬 요청까지 받을 수 있어요.</p>
     <ul className={s.rules}>
-      <li>옷을 받은 뒤 <strong>3일 이내</strong>, 본인 인스타그램 피드에 <strong>1회</strong> 게시해요.</li>
-      <li>게시물은 <strong>30일</strong> 유지해요.</li>
-      <li>옷은 반납하지 않아요.</li>
+      <li>옷을 받은 뒤 기본적으로 <strong>7일 이내</strong>, SNS 피드에 착용컷을 올리면 돼요.</li>
+      <li>게시물은 <strong>90일간만</strong> 유지하면 돼요.</li>
     </ul>
+    <p className={s.description}>협찬 옷도 위에서 정한 허용 품목 안에서만 와요.</p>
     {value.sponsorshipEnabled && <div className={s.fields}>
       <div className={s.field}><div className={s.fieldHeading}><label htmlFor={`${id}-instagram`}>인스타 계정</label>{toggle}</div><input id={`${id}-instagram`} autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={31}
         value={value.instagramHandle} onChange={event => field('instagramHandle', event.target.value)} disabled={disabled} placeholder="아이디를 적어주세요" aria-describedby={`${id}-instagram-help`} />

@@ -79,7 +79,16 @@ def rrn_rect_in_frame(frame_w: float, frame_h: float, fill: float = 0.86) -> dic
     }
 
 
-def mask_is_applied(image_bytes: bytes) -> tuple[bool, dict]:
+def mask_is_applied(image_bytes: bytes, *, region: dict | None = None) -> tuple[bool, dict]:
+    """지정된 영역의 덮어쓰기만 검사한다. 번호 위치의 의미 판정은 하지 않는다."""
+    if region is not None:
+        if (not isinstance(region, dict) or set(region) != {"xr", "yr", "wr", "hr"}
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in region.values())
+                or region["xr"] < 0 or region["yr"] < 0
+                or region["wr"] < .02 or region["hr"] < .02
+                or region["xr"] + region["wr"] > 1.000001
+                or region["yr"] + region["hr"] > 1.000001):
+            return False, {"reason": "invalid_region"}
     try:
         image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
     except Exception:
@@ -88,13 +97,21 @@ def mask_is_applied(image_bytes: bytes) -> tuple[bool, dict]:
         return False, {"reason": "decode_failed"}
 
     h, w = image.shape[:2]
-    rect = rrn_rect_in_frame(w, h)
+    if region is None:
+        rect = rrn_rect_in_frame(w, h)
+    else:
+        x, y = math.floor(region["xr"] * w), math.floor(region["yr"] * h)
+        rect = {"x": x, "y": y,
+                "w": math.ceil((region["xr"] + region["wr"]) * w) - x,
+                "h": math.ceil((region["yr"] + region["hr"]) * h) - y}
     x0 = max(0, rect["x"]); y0 = max(0, rect["y"])
     x1 = min(w, x0 + rect["w"]); y1 = min(h, y0 + rect["h"])
     if x1 <= x0 or y1 <= y0:
         return False, {"reason": "region_empty"}
 
-    region = image[y0:y1, x0:x1]
+    # JPEG 경계의 번짐은 제외하고 실제 불투명하게 덮인 내부 픽셀을 확인한다.
+    inset = 1 if region is not None and min(x1 - x0, y1 - y0) > 4 else 0
+    region = image[y0 + inset:y1 - inset, x0 + inset:x1 - inset]
     mean = float(region.mean())
     stddev = float(region.std())
     applied = stddev <= MAX_STDDEV and mean <= MAX_MEAN

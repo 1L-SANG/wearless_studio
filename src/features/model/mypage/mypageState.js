@@ -16,18 +16,18 @@ export function registrationCard(journey, enrollment) {
   }
   if (journey.mode === 'review') {
     return {
-      title: '사진을 검수하고 있어요.',
-      description: '검수가 끝나면 다음 단계를 알려드릴게요.',
+      title: '테스트컷을 준비하고 있어요.',
+      description: '모델님의 얼굴을 활용한 테스트컷은 2일 이내 보내드릴게요. 테스트컷을 확정하면 라이선스 증서 발급과 함께 등록이 끝나요.',
       label: '등록 내용 확인',
       to: '/model/register',
       currentStep: 4,
     };
   }
-  if (['vc_pending', 'license_pending'].includes(enrollment?.status)) {
+  if (['license_pending', 'processing', 'asset_building'].includes(enrollment?.status)) {
     return {
-      title: '라이선스 증서를 발급하고 있어요.',
-      description: '발급이 완료되면 내 증서 카드에서 확인할 수 있어요.',
-      label: '진행 상황 확인',
+      title: '사용 조건을 정해 주세요.',
+      description: '조건을 정하고 증서 발급하기를 누르면 등록 절차가 끝나요.',
+      label: '이어서 등록하기',
       to: '/model/register',
       currentStep: 3,
     };

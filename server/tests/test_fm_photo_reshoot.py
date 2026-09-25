@@ -84,14 +84,33 @@ def test_reshoot_views_drop_unknown_slots_but_keep_reasons():
 class _Cur:
     """reshoot_slots 배열 하나만 아는 가짜 커서 — jsonb_agg 필터를 파이썬으로 흉내낸다."""
 
-    def __init__(self, slots, status="reshoot_requested"):
+    def __init__(self, slots, status="reshoot_requested", enrollment_status="passed"):
         self.slots, self.status = slots, status
+        self.enrollment_status = enrollment_status
+        self.photo_revision = 0
+        self.match_scores = {"scores": {"front": 0.9}}
+        self.jobs = []
         self.result = None
         self.queries = []
 
     async def execute(self, sql, params=()):
         query = " ".join(sql.split())
         self.queries.append(query)
+        if "set status = 'asset_building'" in query:
+            if self.enrollment_status == "vc_pending":
+                self.enrollment_status = "asset_building"
+                self.photo_revision += 1
+                if "match_scores = null" in query:
+                    self.match_scores = None
+                self.result = {"model_id": "m1", "photo_revision": self.photo_revision}
+            else:
+                self.result = None
+            return
+        if "insert into jobs" in query:
+            self.jobs.append(params[1].obj)
+            return
+        if "update fm_models" in query:
+            return
         if self.status != "reshoot_requested":
             self.result = None
             return
@@ -132,3 +151,17 @@ def test_nothing_happens_when_the_row_is_not_in_reshoot():
     asyncio.run(_consume_reshoot_slot(cur, "e1", "u1", "sh_34"))
     assert cur.status == "approved"
     assert not any("set photo_review_status = 'pending'" in q for q in cur.queries)
+
+
+def test_pending_vc_rebuilds_once_after_the_last_requested_photo():
+    cur = _Cur([{"slot": "sh_front"}, {"slot": "sh_34"}], enrollment_status="vc_pending")
+    asyncio.run(_consume_reshoot_slot(cur, "e1", "u1", "sh_front"))
+    assert cur.enrollment_status == "vc_pending"
+    assert cur.jobs == []
+    asyncio.run(_consume_reshoot_slot(cur, "e1", "u1", "sh_34"))
+    assert cur.enrollment_status == "asset_building"
+    assert cur.photo_revision == 1
+    assert cur.match_scores is None
+    assert cur.jobs == [{"modelId": "m1", "enrollmentId": "e1", "photoRevision": 1}]
+    asyncio.run(_consume_reshoot_slot(cur, "e1", "u1", "sh_34"))
+    assert len(cur.jobs) == 1

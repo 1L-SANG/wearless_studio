@@ -1,4 +1,4 @@
-.guide, .preparation, .referenceNote { color: var(--fm-ink); font-family: var(--font-body); word-break: keep-all; overflow-wrap: anywhere; }
+.guide, .preparation, .referenceNote, .checkSection { color: var(--fm-ink); font-family: var(--font-body); word-break: keep-all; overflow-wrap: anywhere; }
 .guide { max-width: 1040px; margin: 0 auto; padding: 44px 0 36px; }
 .guideAction { display: flex; justify-content: center; padding-bottom: 48px; }
 .guide *, .preparation * { box-sizing: border-box; }

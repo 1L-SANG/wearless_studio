@@ -1,4 +1,4 @@
-.page { --color-soft: #f4f5f7; display: flex; flex-direction: column; min-height: calc(100dvh - var(--fm-header-h)); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.page { word-break: keep-all; overflow-wrap: anywhere; --color-soft: #f4f5f7; display: flex; flex-direction: column; min-height: calc(100dvh - var(--fm-header-h)); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
 .page *, .page *::before, .page *::after { box-sizing: border-box; }
 .page button, .page input { font: inherit; }
 .page button, .page a, .slot { touch-action: manipulation; }
@@ -8,7 +8,7 @@
 .page h1, .page h2, .page h3, .page p { margin: 0; }
 .page h1 { font-family: var(--font-body); font-size: 32px; line-height: 1.3; font-weight: 700; letter-spacing: -.02em; text-wrap: balance; }
 .page h1[tabindex="-1"]:focus { outline: none; }
-.page h2 { font-size: 18px; font-weight: 600; line-height: 1.5; }
+.page h2 { text-wrap: balance; font-size: 18px; font-weight: 600; line-height: 1.5; }
 .page h3 { font-size: 16px; font-weight: 600; }
 .main { width: min(100%, 800px); margin: 0 auto; padding: 40px 20px 32px; min-width: 0; flex: 1; }
 .intro { margin-bottom: 28px; }
@@ -35,11 +35,9 @@
 .consentLabel { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; font-weight: 500; cursor: pointer; }
 .consentLabel input { margin-top: 2px; }
 .required { margin-left: 2px; color: var(--fm-muted); font-weight: 500; }
-.optional { margin-left: 8px; color: var(--fm-muted); font-size: 12px; font-weight: 400; }
 .legalLinks { margin: 8px 0 0 28px; display: flex; flex-wrap: wrap; gap: 16px; }
-.legalSummary { margin: 10px 0 0 28px; font-size: 12px; color: var(--fm-muted); line-height: 1.6; }
-.legalSummary b { font-weight: 600; color: var(--fg-1); }
-.legalSummary .textLink { display: inline-block; margin-top: 8px; font-size: 12px; }
+.consentDetails { margin: 10px 0 0 28px; font-size: 12px; color: var(--fm-muted); line-height: 1.6; }
+.consentDetails b { font-weight: 600; color: var(--fg-1); }
 .tag { display: inline-flex; border: 1px solid var(--fm-line); border-radius: var(--r-pill); padding: 2px 8px; background: var(--bg-2); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .consentCard > .tag { margin: 0 0 8px 28px; }
 .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--fm-line); border-top-color: var(--fg-1); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle; flex-shrink: 0; }
@@ -61,14 +59,6 @@
 .photoProgress progress::-webkit-progress-bar { background: var(--fm-line); }
 .photoProgress progress::-webkit-progress-value { background: var(--fm-ink); }
 .photoProgress progress::-moz-progress-bar { background: var(--fm-ink); }
-.photoStages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; list-style: none; padding: 0; margin: 12px 0 0; }
-.photoStages li { display: flex; flex-direction: column; gap: 4px; padding: 10px 8px; border: 1px solid var(--fm-line); border-radius: var(--r-3); font-size: 12px; color: var(--fm-muted); }
-.photoStages b { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.photoStages [aria-current='step'] { border-color: var(--fm-ink); color: var(--fm-ink); background: var(--bg-2); }
-.photoStages [data-complete='true'] b { color: var(--accent-success); }
-.captureHelp { padding: 0 16px; border: 1px solid var(--fm-line); border-radius: var(--r-4); margin-bottom: 16px; }
-.captureHelp summary { min-height: 48px; padding: 12px 0; font-size: 14px; font-weight: 500; cursor: pointer; }
-.captureHelp[open] summary { margin-bottom: 12px; }
 .photoGuideLink { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
 .photoGuideLink a { display: inline-flex; min-height: 44px; align-items: center; }
 .photoGuideLink > span { color: var(--fm-muted); font-size: 11px; }
@@ -85,10 +75,9 @@
 .slotImage { display: block; position: relative; aspect-ratio: 1; background: var(--bg-2); border-bottom: 1px solid var(--fm-line); }
 .slotImage > img { display: block; width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
 .photoPose { display: block; width: 100%; height: 100%; color: var(--fm-muted); }
-.slotImageCue { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border-radius: var(--r-3); background: color-mix(in srgb, var(--fm-ink) 86%, transparent); color: var(--bg-1); font-size: 11px; font-weight: 600; text-align: center; }
+.slotImageCue { word-break: keep-all; overflow-wrap: anywhere; line-height: 1.3; position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border-radius: var(--r-3); background: color-mix(in srgb, var(--fm-ink) 86%, transparent); color: var(--bg-1); font-size: 11px; font-weight: 600; text-align: center; }
 .savedPhoto { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--accent-success); font-size: 26px; }
 .savedPhoto > span { font-size: 12px; color: var(--fm-muted); }
-.person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
 .fileInput { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
 .slotBadge { position: absolute; top: 10px; left: 10px; font-size: 11px; padding: 4px 8px; background: var(--bg-1); color: var(--fm-ink); border-radius: var(--r-pill); }
 .filled .slotBadge { color: var(--accent-success); }
@@ -97,18 +86,11 @@
 .slotHint { display: block; font-size: 12px; line-height: 1.65; color: var(--fm-muted); margin: 6px 0 14px; word-break: keep-all; }
 .slotActions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
 .slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) auto; }
-.slotAction, .removePhoto { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--fm-line); border-radius: var(--r-3); background: var(--bg-1); color: var(--fm-ink); font-size: 12px; font-weight: 500; cursor: pointer; touch-action: manipulation; }
+.slotAction, .removePhoto { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--fm-line); border-radius: var(--r-3); background: var(--bg-1); color: var(--fm-ink); font-size: 12px; font-weight: 500; cursor: pointer; touch-action: manipulation; }
 .slotAction:hover, .removePhoto:hover { border-color: var(--fm-ink); }
 .fileInput:disabled ~ .slotActions .slotAction, .slotAction[aria-disabled='true'], .removePhoto:disabled { cursor: default; opacity: .45; }
 .removePhoto { color: var(--fm-muted); }
 .page .groupStatus { margin-top: 20px; color: var(--fm-muted); text-align: center; font-size: 13px; }
-.bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.bodyCard { position: relative; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
-.bodyCard.selected { border-color: var(--fg-1); box-shadow: 0 0 0 1px var(--fg-1); }
-.bodyArt { display: block; height: 180px; background: var(--fm-line); }
-.bodyName { display: block; padding: 10px 12px; font-size: 14px; }
-.bodyCheck { position: absolute; top: 8px; left: 8px; width: 23px; height: 23px; border-radius: 50%; background: var(--fg-1); color: var(--bg-1); font-size: 11px; line-height: 23px; text-align: center; }
-.bodyOptional { text-align: center; color: var(--fm-muted); font-size: 13px; margin-top: 16px !important; }
 .categories { border: 1px solid var(--fm-line); border-radius: var(--r-4); overflow: hidden; }
 .categoryRow { display: grid; grid-template-columns: minmax(0, 1fr) 46px; column-gap: 20px; padding: 19px 20px; align-items: center; }
 .categoryRow + .categoryRow { border-top: 1px solid var(--fm-line); }
@@ -130,21 +112,18 @@
 .recordTable dt { color: var(--fm-muted); font-size: 14px; }
 .recordTable dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
 .certificateNote { color: var(--fm-muted); font-size: 14px; margin: 22px 0 30px !important; }
-.issueList { list-style: none; margin: 0 0 24px; padding: 0; border-top: 1px solid var(--ring-strong); }
-.issueList li { display: flex; align-items: center; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--ring-strong); font-size: 14px; }
-.issueList li > span { width: 18px; text-align: center; }
-.issueList .dot { width: 7px; height: 7px; margin: 0 5px; }
 .page[data-step='done'] .main { display: grid; place-items: center; min-height: calc(100dvh - var(--fm-header-h)); padding: 24px; }
 .doneContent { display: flex; flex-direction: column; align-items: center; width: 100%; text-align: center; }
 .doneMark { width: 60px; height: 60px; flex: 0 0 60px; fill: none; stroke: var(--link); stroke-width: 2.5px; }
 .doneMark path { stroke-linecap: round; stroke-linejoin: round; }
 .doneContent h1 { margin-top: 26px; font-size: 34px; }
 .doneDescription { margin-top: 14px; font-size: 17px; line-height: 1.7; color: var(--fm-muted); }
-.doneCertificate { font-size: 13px; overflow-wrap: anywhere; }
 .doneButton { height: 52px; min-width: 150px; padding: 0 32px; margin-top: 32px; border-radius: 8px; background: var(--fg-1); color: var(--bg-1); font-size: 15px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .doneContent > .textLink { margin-top: 16px; font-size: 14px; }
 .bottomBar { position: sticky; z-index: 15; bottom: 0; flex-shrink: 0; background: var(--bg-1); padding-bottom: env(safe-area-inset-bottom); }
 .footerHint { max-width: 808px; margin: 0 auto !important; text-align: center; font-size: 13px; color: var(--fm-muted); padding: 9px 24px; }
+.assetError { color: var(--accent-error); text-wrap: pretty; }
+.assetError .textLink { min-height: 44px; }
 .footerActions { border-top: 1px solid var(--fm-line); padding: 12px 20px; }
 .footerInner { max-width: 760px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .primary, .secondary { min-height: 52px; border-radius: var(--r-pill); padding: 12px 24px; font-size: 16px !important; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; }
@@ -172,13 +151,10 @@
   .consentAll { min-height: 52px; padding: 0 12px; font-size: 14px; }
   .consentCard { padding: 14px 12px; }
   .consentLabel { font-size: 14px; gap: 8px; }
-  .legalSummary, .legalLinks { margin-left: 26px; }
+  .consentDetails, .legalLinks { margin-left: 26px; }
   .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tips { padding: 14px; }
   .groupHeading { gap: 7px; }
-  .photoStages { gap: 5px; }
-  .photoStages li { padding: 8px 6px; font-size: 11px; }
-  .photoStages li > span { min-height: 2.8em; word-break: keep-all; }
   .groupHeading h2 { font-size: 21px; }
   .slotBadge { top: 8px; left: 8px; font-size: 10px; padding: 3px 6px; }
   .slotBottom { padding: 12px 10px; }
@@ -186,8 +162,6 @@
   .slotHint { font-size: 12px; }
   .slotAction, .removePhoto { min-height: 44px; padding-inline: 9px; font-size: 11px; }
   .slotActions:has(.removePhoto) { grid-template-columns: minmax(0, 1fr) 72px; }
-  .bodyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bodyArt { height: 160px; }
   .categoryRow { padding: 17px 16px; column-gap: 14px; }
   .recordTable > div { grid-template-columns: 96px minmax(0, 1fr); }
   .doneContent h1 { font-size: 28px; }
@@ -214,8 +188,6 @@
 .reviewThumbnail { width: 60px; height: 80px; flex: 0 0 60px; border-radius: 6px; overflow: hidden; background: var(--color-soft); }
 .reviewThumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .reviewThumbnail > span { display: grid; height: 100%; place-items: center; font-size: 11px; text-align: center; color: var(--fm-muted); }
-.bodySection { margin-top: 30px; }
-.page .bodyDescription { color: var(--fm-muted); font-size: 14px; margin: 8px 0 16px; }
 .priceCard ul { padding-left: 20px; margin: 12px 0 0; font-size: 14px; color: var(--fg-1); }
 .priceCard li + li { margin-top: 10px; }
 .contractLink { margin-top: 12px; }
@@ -253,313 +225,64 @@
 .methodChoiceLabel { font-size: 14.5px; font-weight: 600; color: var(--fm-ink, var(--fg-1)); }
 .methodChoiceHint { font-size: 12.5px; color: var(--fm-muted, var(--fg-3)); }
 
-/* ---- IdDocumentStep — 신분증 촬영·마스킹 ---- */
-.idNotice { margin: 2px 0 0; font-size: 13px; line-height: 1.55; color: var(--fg-2); }
-.idNotice strong { color: var(--fm-ink, var(--fg-1)); }
 
-/* 사진 미리보기 + 드래그 가능한 마스킹 박스를 겹쳐 그리는 무대. 캔버스가 아니라 <img>
-   위에 절대배치 <div> 를 얹는 방식이라 드래그마다 다시 그릴 필요가 없다 — 실제 픽셀을
-   덮어쓰는 작업은 제출 시점에 한 번, 화면에 안 보이는 캔버스(.idHiddenCanvas)에서만
-   일어난다(submit → buildMaskedBlob). */
-.idImageStage {
-  position: relative;
-  margin: 14px 0 10px;
-  border-radius: var(--r-5);
-  overflow: hidden;
-  background: var(--bg-2);
-  line-height: 0;
-}
-
-.idPreviewImage { display: block; width: 100%; max-height: 60dvh; object-fit: contain; }
-
-.idMaskBox {
-  position: absolute;
-  border: 2px dashed #fff;
-  background: rgba(17, 17, 17, 0.72);
-  cursor: move;
-  touch-action: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.idMaskLabel {
-  padding: 0 6px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 500;
-  text-align: center;
-  pointer-events: none;
-}
-
-/* right/bottom 을 박스 안쪽으로 둔다(원래는 -6px 로 박스 밖에 반쯤 걸쳐 있었다) —
-   .idImageStage 가 overflow: hidden 이고 clampMaskRatio 는 박스가 이미지 오른쪽/아래
-   끝에 딱 붙는 걸 허용한다. 그 상태에서 손잡이가 박스 밖으로 나가 있으면 이미지 바깥이라
-   같이 잘려 나가 손도 못 댈 자리가 된다(모바일 감사). 박스 안쪽에 두면 박스가 어디
-   있든 항상 이미지 안이라 절대 잘리지 않는다. */
-.idMaskHandle {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid var(--fm-ink, #111);
-  cursor: nwse-resize;
-  touch-action: none;
-}
-/* 보이는 손잡이는 16px 그대로 두고(디자인 유지), 투명 의사요소로 히트 영역만
-   44px 로 넓힌다 — .switch::after/.removePhoto::after 와 같은 기법(#274). */
-.idMaskHandle::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 44px;
-  height: 44px;
-  transform: translate(-50%, -50%);
-}
-
-.idHiddenCanvas { display: none; }
-
-/* ── 간편인증(신분증 촬영) 경로 화면이 쓰는 규칙 ─────────────────────────────
-   #285/#287 의 등록 위저드 재설계가 이 클래스들을 걷어냈지만 IdDocumentStep ·
-   IdentityMethodStep 은 여전히 쓴다 — 빠지면 그 화면만 스타일 없이 뜬다. */
-/* ---- 목적별 고지(FaceMarket + 개인화 겸용 안내) ---- */
-.purposeNotice {
-  margin: 4px 0 20px;
-  padding: 15px 16px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-}
-.purposeNoticeHead {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--fg-1);
-  font-size: 13px;
-  font-weight: 600;
-}
-.purposeNoticeHead svg { flex: none; color: var(--fg-2); }
-/* 힌트와 인증 버튼 사이 여백. */
-.identityAction { margin-top: 22px; }
-/* min-height: 52px — .priceConsent 와 같은 값(모바일 감사). 라벨이 한 줄(~24px)뿐이라
-   높이가 없으면 히트 영역이 그 한 줄로 줄어든다 — <label> 전체가 체크박스를 토글하므로
-   높이를 키우면 그 여백까지 그대로 눌리는 영역이 된다. */
-.consentCheck {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 18px 0;
-  min-height: 52px;
-  color: var(--fg-1);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.consentCheck input { margin-top: 4px; }
-.stateTitle {
-  margin: 0 0 8px;
-  color: var(--fg-1);
-  font-family: var(--font-display);
-  font-size: 20px;
-}
-.nextCard {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  text-align: left;
-  margin-top: 30px;
-  padding: 18px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-  color: inherit;
-  text-decoration: none;
-  transition: background .15s;
-}
-.nextCard:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
-.nextCard > :last-child { margin-left: auto; color: var(--fg-3); flex: none; }
-/* ---- 진행 레일(6단계, 모노크롬) ---- */
-
-/* ---- 위저드 카드 내부(단계 헤더·체형 매트릭스·대표 이미지 업로드) ----
-   진행 레일을 가로로 다시 짜면서 블록을 통째로 교체했는데, 그때 이 규칙들이
-   같이 지워져 체형·대표 단계가 스타일 없이 렌더됐다. 원본(ad1bf48b)에서 되살린다.
-   아래 "단계 카드 내부" 블록이 이 중 일부를 다시 덮는다(그쪽이 나중이라 이긴다). */
-
-/* ---- 단계 헤더(메달리온 + eyebrow + 제목) ---- */
-.stepHead {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 20px;
-}
-.medallion {
-  flex: none;
-  width: 52px;
-  height: 52px;
-  border-radius: var(--r-pill);
-  background: var(--bg-2);
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-}
-.stepEyebrow {
-  font-family: var(--font-display);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--fg-3);
-  margin-bottom: 4px;
-}
-.stepHead .stateTitle { margin: 0; }
-/* ---- 대표 이미지 업로드 존 ---- */
-.uploadZone {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin: 16px 0 8px;
-  padding: 26px 16px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
-  cursor: pointer;
-  transition: background .15s;
-}
-.uploadZone:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
-.uploadInput {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-.uploadIcon {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--r-pill);
-  background: #fff;
-  color: var(--fg-1);
-  display: grid;
-  place-items: center;
-  box-shadow: var(--elev-card);
-  margin-bottom: 2px;
-}
-.uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
-.uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
-/* 되돌아가기 — 주 동작(저장·건너뛰기)보다 약하게 둔다. */
-.backLink {
-  display: block;
-  margin: 14px auto 0;
-  padding: 6px 10px;
-  border: 0;
-  background: none;
-  color: var(--fg-2);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.backLink:disabled { opacity: .5; cursor: default; }
-/* ---- 체형·키(physique) 스텝 — 선택 칩은 전역 .chips/.chip(app.css)을 그대로 재사용,
-   여기선 그룹 간격/라벨만 더한다. ---- */
-.physiqueGroup {
-  margin: 16px 0 20px;
-}
-.physiqueGroup:last-of-type {
-  margin-bottom: 22px;
-}
-/* IdDocumentStep 의 신분증 종류 칩만 손댄다(:global 로 app.css 의 .chip 자체는 그대로
-   둔다 — 그건 전역이라 여기서 키우면 다른 화면 칩까지 다 바뀐다). 기본 .chip 은
-   padding 9px 라 렌더 높이가 ~35px 밖에 안 된다(모바일 감사) — min-height 만 44px 로
-   올린다. .chip 이 이미 inline-flex + align-items:center 라 내용은 그대로 가운데
-   정렬된 채 세로만 커진다. */
-.physiqueGroup :global(.chip) {
-  min-height: 44px;
-}
-.physiqueLabel {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-2);
-  margin-bottom: 10px;
-}
-.retryNote {
-  margin: 12px 0 0;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--fg-3);
-  line-height: 1.5;
-}
-/* ================= FaceMarket 랜딩 디자인 — 단계 카드 내부 =================
-   위 규칙들은 셀러 스튜디오 토큰(--bg-2·--fg-2·--font-display)으로 짜여 있었다.
-   파일 끝에서 랜딩 토큰으로 덮는다 — 원본 규칙을 지우지 않고 남겨 둔 이유는,
-   이 모듈이 ai 도메인에서도(현재는 안 쓰지만) 재사용될 수 있고 무엇이 바뀌었는지
-   diff 로 보이는 편이 낫기 때문이다.
-   ============================================================================ */
-
-/* 안내 블록. 랜딩의 '확인할 수 있는 기록'(.record)이 쓰는 옅은 파랑과 같은 결로.
-   회색 블록은 "비활성"으로 읽히는데 이건 읽으라고 둔 내용이다. */
-.purposeNotice {
-  border-radius: 0.9rem;
-  background: rgba(45, 99, 255, 0.05);
-}
-.purposeNoticeHead { color: var(--fm-ink); font-family: var(--font-body); }
-.purposeNoticeHead svg { color: var(--fm-accent); }
-/* 메달리온 — 52px 회색 원은 이 디자인에서 과하다. 랜딩 카드가 아이콘을 배경 없이
-   그대로 놓는 결을 따르되, 단계 헤더의 시각 앵커라 얇은 테두리만 남긴다. */
-.medallion {
-  width: 2.6rem;
-  height: 2.6rem;
-  border: 1px solid var(--fm-line);
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--fm-ink);
-}
-/* 단계 eyebrow. 기본 자간은 **한글 기준**이다 — 이 자리에는 'STEP 1 / 7' 같은 라틴만
-   오는 게 아니라 '본인 확인만 다시'(순한글)와 'STEP 4 / 7 · 선택'(라틴+한글 혼합)도 온다.
-   0.22em 을 통째로 걸면 한글이 '본 인 확 인 만' 처럼 낱글자로 흩어진다(브라우저 실측).
-   넓은 자간은 라틴 조각에만 .stepEyebrowLatin 으로 따로 건다 — 랜딩 .eyebrow/.eyebrowLatin
-   과 같은 처방이고, 같은 실수를 여기서 한 번 더 했다. */
-.stepEyebrow {
-  font-family: var(--font-body);
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-transform: none;   /* 원본의 uppercase 를 끈다 — 한글엔 대문자가 없고 라틴은 이미 대문자다 */
-  color: var(--fm-muted);
-}
-.stepEyebrowLatin { letter-spacing: 0.22em; }
-/* 단계 제목 — 랜딩 카드 제목(.cardTitle)과 같은 눈금. --font-display(Cal Sans)는
-   한글이 없어 폴백으로 떨어지므로 본문 폰트(Pretendard)를 쓴다. */
-.stateTitle {
-  font-family: var(--font-body);
-  font-size: clamp(1.15rem, 2vw, 1.4rem);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fm-ink);
-}
-/* 신분증 가이드 촬영 스테이지. 비디오를 width:100%; height:auto 로 두면 표시 박스가
-   곧 프레임 픽셀 좌표계가 되고, idCardGeometry.guideRectPercent 가 뽑는 백분율이
-   그 좌표계 위에 어떤 배율에서도 정확히 겹친다 — 그래서 가이드 박스의 위치·크기는
-   여기(CSS)가 아니라 컴포넌트가 인라인 style 로 넣는다. 이 클래스들은 시각 스타일만 쥔다.
-
-   ⚠️ .idCameraGuide 의 퍼센트는 "가장 가까운 position 조상"(.idCameraViewport) 기준으로
-   해석된다 — .idCameraStage 가 아니다. 스테이지 안에는 힌트·에러 문구·셔터 버튼처럼
-   높이가 변하는 형제가 더 있어서, 가이드가 스테이지를 기준 삼으면 그 형제들 때문에
-   조상 높이가 늘었다 줄었다 할 때마다 가이드가 비디오와 어긋난다(15초 힌트가 뜨는
-   순간, 캡처 에러가 뜨는 순간 등). 그래서 비디오와 가이드만 담는 전용 래퍼
-   (.idCameraViewport)를 두고, 그 래퍼만 position:relative 를 쥔다. */
-.idCameraStage { width: 100%; }
-/* 비디오 렌더 박스 = 가이드의 containing block. width 는 인라인 style 로 프레임
-   비율(aspect-ratio)·60dvh 상한을 반영해 컴포넌트가 계산해 넣는다 — 세로가 짧은
-   화면(가로로 눕힌 폰)에서도 비디오가 화면을 넘지 않게 하면서, object-fit 없이
-   원본 비율 그대로 줄어들게 하기 위해서다(object-fit: cover 는 프레임을 잘라내서
-   가이드 좌표계가 화면에 보이는 비디오와 어긋난다 — 절대 쓰면 안 된다). 클래스의
-   width:100% 는 그 인라인 style 이 아직 없을 때(프레임 크기를 모르는 아주 짧은
-   순간)만 쓰이는 기본값이다. */
-.idCameraViewport { position: relative; width: 100%; margin: 0 auto; overflow: hidden; border-radius: 12px; background: #000; }
+.consentDetails { position: relative; height: var(--consent-fit, 8.5em); overflow-y: auto; border: 1px solid var(--fm-line); border-radius: var(--r-4); background: var(--bg-2); padding: 10px 12px; text-wrap: pretty; }
+.page .consentDetails p + p { margin-top: 4px; }
+.consentDetails:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 2px; }
+.legalLinks .textLink { display: inline-flex; align-items: center; min-height: 44px; }
+.prepBlock { border-bottom: 1px solid var(--fm-line); padding-bottom: 28px; margin-bottom: 28px; }
+.slotImageCue svg { flex-shrink: 0; }
+.slotUploading { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; background: color-mix(in srgb, var(--bg-1) 85%, transparent); color: var(--fm-ink); font-size: 12px; }
+.slotError { display: block; margin-top: 8px; font-size: 12px; color: var(--accent-error); word-break: keep-all; overflow-wrap: anywhere; }
+.slotCard:focus-within .slot { outline: 2px solid var(--fm-accent); outline-offset: 2px; }
+.methodChoiceHint, .methodChoiceNotice { word-break: keep-all; overflow-wrap: anywhere; }
+.methodChoiceNotice { color: var(--fm-accent); font-size: 12.5px; line-height: 1.5; }
+.doneDescription { text-wrap: pretty; }
+/* 가운데 정렬 문장은 줄 길이를 고르게 나눠 '철회하기 / 전까지'처럼 뜻 단위가 갈리지 않게 한다. */
+.doneDescription p { margin: 0; text-wrap: balance; }
+.doneDescription p + p { margin-top: 6px; }
+.idChoose { display: grid; gap: 12px; }
+.idCameraSheet { position: fixed; inset: 0; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; padding-top: env(safe-area-inset-top); background: var(--fm-ink); color: var(--bg-1); overflow: auto; }
+.idCameraHeader { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; min-height: 56px; padding: 6px 16px; text-align: center; }
+.idClose { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--r-pill); background: transparent; color: inherit; }
+.idCameraStage { display: grid; place-items: center; min-height: 0; min-width: 0; width: 100%; overflow: hidden; container-type: size; }
+.idCameraViewport { position: relative; width: min(100%, calc((100dvh - 300px) * var(--frame-ratio, .75))); aspect-ratio: var(--frame-aspect, 3 / 4); overflow: hidden; background: var(--fm-ink); }
+@supports (height: 1cqh) { .idCameraViewport { width: min(100%, calc(100cqh * var(--frame-ratio, .75))); } }
 .idCameraVideo { display: block; width: 100%; height: auto; }
-.idCameraGuide { position: absolute; border: 2px dashed #fff; border-radius: 10px; pointer-events: none; }
-.idCameraHint { margin-top: 12px; text-align: center; color: var(--fm-muted); }
+.idCameraGuide { position: absolute; left: var(--guide-left); top: var(--guide-top); width: var(--guide-width); height: var(--guide-height); border: 2px dashed var(--bg-1); border-radius: var(--r-4); pointer-events: none; }
+.idCameraHint { grid-row: 3; padding: 12px 20px; text-align: center; font-size: 14px; text-wrap: pretty; }
+/* 촬영 안내 아래 보조 줄. 검은 시트 위라 색은 그대로 두고 조금 흐리게, 조금 작게. */
+.idCameraSubHint { margin-top: 4px; font-size: 13px; opacity: .78; }
+.idCameraControls { grid-row: 5; display: grid; grid-template-columns: minmax(0, 1fr) 72px minmax(0, 1fr); align-items: center; gap: 12px; padding: 12px 20px max(20px, env(safe-area-inset-bottom)); }
+.idCameraControls .secondary { width: 100%; min-width: 0; background: var(--bg-1); }
+.idCameraControls .primary { min-width: 0; padding: 12px; background: var(--bg-1); color: var(--fm-ink); }
+.idReviewControls { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
+.idReviewControls button { min-height: 64px; height: 100%; font-size: 13px; }
+.idShutter { width: 72px; height: 72px; padding: 0; border: 4px solid var(--fm-ink); outline: 3px solid var(--bg-1); outline-offset: 0; border-radius: 50%; background: var(--bg-1); }
+.idShutter:disabled { opacity: .5; }
+.idReviewImage { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.idSheetError { grid-row: 4; padding: 8px 20px; text-align: center; font-size: 13px; }
+.idCaptureError { padding-top: 8px; font-size: 13px; }
+.idGalleryViewport { touch-action: none; cursor: move; }
+.idGalleryImage { position: absolute; left: var(--image-x, 0%); top: var(--image-y, 0%); width: var(--image-w, 100%); height: var(--image-h, 100%); max-width: none; object-fit: contain; pointer-events: none; user-select: none; }
+.idZoom { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.idZoom input { min-width: 0; flex: 1; min-height: 44px; accent-color: var(--bg-1); }
+@media (max-width: 700px) { .prepBlock { padding-bottom: 24px; margin-bottom: 24px; } }
+
+.error .textLink { display: block; min-height: 44px; margin-top: 8px; }
+
+.idCameraControls button:disabled { opacity: .5; }
+.idMaskViewport { touch-action: none; cursor: crosshair; overflow: visible; }
+.idMaskImage { display: block; width: 100%; height: auto; pointer-events: none; user-select: none; }
+.idManualMask { position: absolute; left: var(--mask-xr); top: var(--mask-yr); width: var(--mask-wr); height: var(--mask-hr); background: #111; outline: 2px dashed var(--bg-1); cursor: move; }
+.idMaskHandle { position: absolute; right: -8px; bottom: -8px; width: 16px; height: 16px; background: var(--bg-1); border: 2px solid var(--fm-ink); border-radius: 50%; cursor: nwse-resize; }
+.idMaskHandle::after { content: ''; position: absolute; inset: -16px; }
+.idMaskSliders { max-width: 480px; margin: 6px auto 0; }
+.idMaskSlidersEmpty { visibility: hidden; }
+.idMaskControls { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+.idMaskConfirmation { display: flex; align-items: center; gap: 12px; max-width: 480px; min-height: 48px; margin: 0 auto; text-align: left; }
+.idMaskConfirmation input { flex-shrink: 0; width: 22px; height: 22px; accent-color: var(--bg-1); }
+.idFinalControls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.idFinalControls .primary { grid-row: 1; grid-column: 1 / -1; width: 100%; margin: 0; }
+.idFinalControls button { font-size: 13px !important; padding: 10px; }
+.idMaskViewport:focus-visible { outline: 2px solid var(--bg-1); outline-offset: 2px; }

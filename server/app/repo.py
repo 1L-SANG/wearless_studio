@@ -1689,6 +1689,7 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
       사용에 필요하다 — 같은 테이블을 공유하면 둘 중 하나가 반드시 틀린다.
     """
     from app.services.sam_autoscale import DemandSnapshot
+    from .facemarket import IDENTITY_CLEARED_SQL
     async with conn.cursor() as cur:
         await cur.execute("select to_regclass('public.fm_holder_warm_pings') as t")
         has_pings = bool((await cur.fetchone() or {}).get("t"))
@@ -1699,8 +1700,9 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
-            "  (select count(*) from fm_biometric_enrollments "
+            "  (select count(*) from fm_biometric_enrollments e "
             "     where status in ('license_pending', 'vc_pending') "
+            f"       and {IDENTITY_CLEARED_SQL} "
             "       and updated_at > now() - make_interval(hours => %s)) "
             # 폐기 대기 잡도 수요다. 이게 빠져 있어서, 폐기 워커가 홀더를 깨워도(desired=1)
             # 60초 뒤 이 루프가 "수요 없음"으로 0 을 다시 써 버렸다 — 홀더는 2분 부팅을
@@ -1720,9 +1722,10 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
             "       and nullif(btrim(payload -> '_facemarket' ->> 'modelId'), '') is not null)"
             "  ) as last_finished, "
             "  greatest("
-            "    (select max(updated_at) from fm_biometric_enrollments "
+            "    (select max(updated_at) from fm_biometric_enrollments e "
             "       where status in ('liveness_pending', 'processing', 'asset_building', "
-            "                        'license_pending', 'vc_pending')), "
+            "                        'license_pending', 'vc_pending') "
+            f"       and {IDENTITY_CLEARED_SQL}), "
             f"{ping_sql}"
             "  ) as last_activity",
             (OPENDID_PENDING_ACTIVE_HOURS, list(HOLDER_JOB_KINDS), list(HOLDER_JOB_KINDS)),

@@ -14,6 +14,7 @@
 .intro .preparationNote { margin-top: 20px; color: var(--fm-muted); font-size: 14px; line-height: 1.7; }
 .preparationNote b { color: var(--fm-ink); }
 .primary { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; min-width: 200px; margin-top: 26px; padding: 0 24px; border-radius: var(--r-pill); background: var(--fm-ink); color: var(--bg-1); text-decoration: none; font-size: 16px; font-weight: 600; }
+button.primary { border: 0; font-family: inherit; line-height: inherit; cursor: pointer; }
 .faces { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; width: 100%; margin-top: 34px; }
 .faces img { display: block; width: 100%; aspect-ratio: 3/4; object-fit: cover; object-position: center 22%; border-radius: var(--r-4); }
 .footnote { display: flex; justify-content: space-between; gap: 16px; width: 100%; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--fm-line); color: var(--fm-muted); font-size: 13px; }
@@ -33,8 +34,8 @@
 .info:hover .tooltip, .info:focus .tooltip { visibility: visible; opacity: 1; }
 .qualifications { padding: 18px 0 22px; border-top: 1px solid var(--fm-line); }
 .qualifications ul { display: grid; gap: 9px; }
-.qualifications li { display: flex; align-items: center; gap: 9px; font-size: 14px; line-height: 1.55; }
-.qualifications svg { flex: none; color: var(--fm-muted); }
+.qualifications li { display: flex; align-items: flex-start; gap: 9px; font-size: 14px; line-height: 1.55; }
+.qualifications svg { flex: none; margin-top: 3px; color: var(--fm-muted); }
 .faq { max-width: 960px; margin: 12px auto 64px; padding-top: 32px; }
 .faq h2 { margin: 0 0 24px; text-align: center; font: 600 clamp(22px, 2.4vw, 28px)/1.3 var(--font-body); }
 .faqCards { display: flex; flex-direction: column; gap: 12px; }
@@ -44,6 +45,8 @@
 .faqCard summary::after { content: ''; flex: none; width: 8px; height: 8px; margin-right: 6px; border-right: 1.5px solid var(--fm-muted); border-bottom: 1.5px solid var(--fm-muted); transform: rotate(45deg); }
 .faqCard[open] summary::after { transform: rotate(-135deg); }
 .faqCard p { padding: 0 0 18px; color: var(--fm-muted); font-size: 15.5px; line-height: 1.65; }
+.faqCta { display: flex; justify-content: center; margin-top: 24px; }
+.faqCta .primary { margin-top: 0; }
 .wrap :is(a, summary, .info):focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
 @media (max-width: 767px) {
   .dashboard { grid-template-columns: 1fr; margin: 22px 0 24px; }

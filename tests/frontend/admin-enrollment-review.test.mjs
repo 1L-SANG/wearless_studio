@@ -6,8 +6,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  finalRejectReason, imageFailureLabel, scoreRow,
+  finalRejectReason, imageFailureLabel, scoreRow, reviewActions,
 } from '../../src/features/admin/enrollmentReviewMath.js';
+import { PHOTO_GROUPS, SLOTS } from '../../src/features/model/registerSlots.js';
+import { seoulDateTime } from '../../src/lib/datetime.js';
+import { findTree } from './helpers/facemarketHarness.mjs';
 
 const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
@@ -92,7 +95,7 @@ function identifiersIn(expr) {
   return Array.from(expr.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*/g)).map((m) => m[0]);
 }
 
-test('승인 버튼의 disabled 조건은 오직 maskOk·busy 로만 이루어진다(긍정 형태 검사)', () => {
+test('승인 버튼의 disabled 조건은 오직 identityOk·busy 로만 이루어진다(긍정 형태 검사)', () => {
   const approveIdx = source.indexOf('onClick={approve}');
   assert.ok(approveIdx !== -1, '승인 버튼(onClick={approve})을 못 찾았다');
   const buttonBlock = source.slice(source.lastIndexOf('<Button', approveIdx), source.indexOf('>', approveIdx));
@@ -102,11 +105,11 @@ test('승인 버튼의 disabled 조건은 오직 maskOk·busy 로만 이루어�
   assert.ok(idents.length > 0, 'disabled 조건에서 식별자를 못 찾았다');
   for (const id of idents) {
     assert.ok(
-      id === 'maskOk' || id === 'busy',
+      id === 'identityOk' || id === 'busy' || id === 'canApproveIdentity',
       `승인 버튼의 disabled 조건에 허용되지 않은 식별자가 있다(위조 신분증도 점수가 높을 수 있어 배지는 정보일 뿐이어야 한다): ${id} — 전체: ${expr}`,
     );
   }
-  assert.ok(idents.includes('maskOk'), '승인 버튼이 maskOk 를 안 쓴다');
+  assert.ok(idents.includes('identityOk'), '승인 버튼이 identityOk 를 안 쓴다');
 });
 
 test('거절 확정 버튼의 disabled 조건은 오직 finalReason·busy 로만 이루어진다(긍정 형태 검사)', () => {
@@ -126,9 +129,9 @@ test('거절 확정 버튼의 disabled 조건은 오직 finalReason·busy 로만
   assert.ok(idents.includes('finalReason'), '거절 버튼이 finalReason 을 안 쓴다');
 });
 
-test('마스킹 확인 문구가 실제로 화면에 있다', () => {
-  assert.ok(source.includes('주민등록번호 뒷자리가 가려져 있어요'), '마스킹 확인 체크박스 문구가 없다');
-  assert.ok(/type="checkbox"[\s\S]{0,80}checked=\{maskOk\}/.test(source), '체크박스가 maskOk state 를 안 쓴다');
+test('동일인 확인 문구가 실제로 화면에 있다', () => {
+  assert.ok(source.includes('신분증 사진과 등록 사진이 같은 사람이에요'), '마스킹 확인 체크박스 문구가 없다');
+  assert.ok(/type="checkbox"[\s\S]{0,80}checked=\{identityOk\}/.test(source), '체크박스가 identityOk state 를 안 쓴다');
 });
 
 // ── 거절 사유: 프리셋 + 자유 입력, 빈 사유 금지 ───────────────────────────────────
@@ -238,7 +241,7 @@ test('identityMismatchCount 를 카드에 낸다 — mid 전용이 아니라는 
 test('카드를 바꾸면 EnrollmentDetail 이 key 로 완전히 새로 마운트된다 — 마스킹 체크가 새어 들어가면 안 된다', () => {
   assert.ok(
     /<EnrollmentDetail\s+key=\{selectedId\}/.test(source),
-    'EnrollmentDetail 에 key={selectedId} 가 없다 — 이전 카드의 maskOk 가 다음 카드로 넘어갈 수 있다',
+    'EnrollmentDetail 에 key={selectedId} 가 없다 — 이전 카드의 identityOk 가 다음 카드로 넘어갈 수 있다',
   );
 });
 
@@ -330,4 +333,378 @@ test('신원 블록이 인증된 이름·출생연도를 둘 다 낸다(지원�
   const block = source.slice(idx, source.indexOf('return (', idx));
   assert.ok(/card\.identityNameMasked/.test(block), '인증된 이름(identityNameMasked)을 안 쓴다');
   assert.ok(/card\.identityBirthYear/.test(block), '인증된 출생연도(identityBirthYear)를 안 쓴다');
+});
+
+
+test('신원 승인은 조건 제출 뒤 열리고 옛 심사 대기도 계속 처리한다', () => {
+  for (const status of ['asset_building', 'license_pending']) {
+    const state = reviewActions({ status, reviewStatus: 'pending' });
+    assert.equal(state.canApproveIdentity, false);
+    assert.equal(state.approvalHint, '등록자가 사용 조건을 마치면 승인할 수 있어요.');
+    assert.equal(state.identityCleared, false);
+  }
+  const ready = reviewActions({ status: 'vc_pending', reviewStatus: 'pending' });
+  assert.equal(ready.canApproveIdentity, true);
+  assert.equal(ready.approvalLabel, '승인하고 증서 발급');
+  assert.equal(reviewActions({ status: 'review_pending', reviewStatus: 'pending' }).approvalLabel, '승인');
+  assert.equal(reviewActions({ status: 'review_pending', reviewStatus: 'pending' }).canApproveIdentity, true);
+  assert.equal(reviewActions({ status: 'failed', reviewStatus: 'pending' }).canApproveIdentity, false);
+});
+
+test('사진 확인은 신원 승인 뒤에만 열리고 이유를 버튼 옆에 표시한다', () => {
+  for (const reviewStatus of [null, 'approved']) assert.equal(reviewActions({ reviewStatus }).identityCleared, true);
+  for (const reviewStatus of ['pending', 'rejected', 'unknown']) assert.equal(reviewActions({ reviewStatus }).identityCleared, false);
+  const index = source.indexOf('onClick={approvePhotos}');
+  const button = source.slice(source.lastIndexOf('<Button', index), source.indexOf('>', index));
+  assert.match(button, /disabled=\{busy \|\| !identityCleared\}/);
+  assert.ok(source.includes('신원 확인을 먼저 마쳐 주세요.'));
+  assert.ok(source.includes('신원 확인을 마쳤어요. 증서는 몇 분 안에 자동으로 발급돼요.'));
+  assert.ok(source.includes('ENROLLMENT_STATUS_LABEL[row.status]'));
+});
+
+// 실제 화면과 상세 카드를 메모리에서 실행해요. 이미지 컴포넌트는 실행하지 않아요.
+async function enrollmentReviewHarness(api) {
+  const { transformWithEsbuild } = await import('vite');
+  const { code } = await transformWithEsbuild(source
+    .replace(/^import[\s\S]*?from '[^']+';\n/gm, '')
+    .replace(/^export default .+;\n?/gm, '')
+    .replace(/^export /gm, ''), 'AdminEnrollmentReview.jsx', { jsx: 'transform' });
+  let active;
+  let cursor;
+  let effects = [];
+  const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+  const bindings = {
+    React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
+    useState(initial) {
+      const frame = active;
+      const index = cursor++;
+      if (!(index in frame)) frame[index] = typeof initial === 'function' ? initial() : initial;
+      return [frame[index], value => { frame[index] = typeof value === 'function' ? value(frame[index]) : value; }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in active)) active[index] = { current: initial };
+      return active[index];
+    },
+    useCallback(value, deps) {
+      const index = cursor++;
+      if (!same(active[index]?.deps, deps)) active[index] = { value, deps };
+      return active[index].value;
+    },
+    useEffect(effect, deps) {
+      const frame = active;
+      const index = cursor++;
+      if (same(frame[index]?.deps, deps)) return;
+      const previous = frame[index];
+      frame[index] = { deps };
+      effects.push(() => {
+        previous?.cleanup?.();
+        frame[index].cleanup = effect();
+      });
+    },
+    useToast: () => ({ push() {} }),
+    styles: {}, PHOTO_GROUPS, SLOTS, seoulDateTime,
+    finalRejectReason, imageFailureLabel, scoreRow, reviewActions,
+    ...Object.fromEntries([
+      'Badge', 'Button', 'Card', 'CardContent', 'CardDescription', 'CardHeader', 'CardTitle',
+      'Skeleton', 'Textarea', 'Table', 'TableBody', 'TableCell', 'TableHead', 'TableHeader', 'TableRow',
+    ].map(name => [name, name])),
+    ...api,
+  };
+  const { AdminEnrollmentReview, EnrollmentDetail } = new Function(...Object.keys(bindings),
+    `${code}; return { AdminEnrollmentReview, EnrollmentDetail };`)(...Object.values(bindings));
+  const pageFrame = [];
+  let detailFrame = [];
+  let detailKey;
+  function render() {
+    active = pageFrame;
+    cursor = 0;
+    const page = AdminEnrollmentReview();
+    const selected = findTree(page, node => node.type === EnrollmentDetail);
+    if (selected?.props.key !== detailKey) {
+      for (const hook of detailFrame) hook?.cleanup?.();
+      detailFrame = [];
+      detailKey = selected?.props.key;
+    }
+    active = detailFrame;
+    cursor = 0;
+    const detail = selected ? EnrollmentDetail(selected.props) : null;
+    const pendingEffects = effects;
+    effects = [];
+    for (const effect of pendingEffects) effect();
+    return { page, detail };
+  }
+  return {
+    render,
+    async flush() {
+      for (let i = 0; i < 4; i += 1) {
+        render();
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return render();
+    },
+  };
+}
+
+const nodeText = node => Array.isArray(node)
+  ? node.map(nodeText).join('')
+  : node && typeof node === 'object' ? nodeText(node.props?.children) : String(node ?? '');
+const buttonNamed = (tree, label) => findTree(tree, node => node.type === 'Button' && nodeText(node) === label);
+const identityCheckbox = tree => findTree(tree, node => node.type === 'input' && node.props.type === 'checkbox');
+const queueRow = tree => findTree(tree, node => node.type === 'TableRow' && node.props.role === 'button');
+const enrollmentFixture = (overrides = {}) => ({
+  id: 'enrollment-1', identityMethod: 'simple_auth', reviewStatus: 'pending', status: 'license_pending',
+  createdAt: '2026-09-25T00:00:00Z', photoReviewStatus: 'pending', fullPhotosVisible: false,
+  maskMode: 'auto', images: {}, application: null, applicationId: null, matchScores: null,
+  identityNameMasked: '김*나', identityBirthYear: '1995', reviewedAt: null, reviewReason: null,
+  ...overrides,
+});
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const photoReviewSection = tree => findTree(tree, node => node.type?.name === 'PhotoReviewSection');
+
+// 같은 경로의 타입과 key가 유지돼야 React가 입력과 사진 영역을 다시 마운트하지 않아요.
+function elementLocation(tree, target, path = []) {
+  if (!tree || typeof tree !== 'object') return null;
+  const here = [...path, Array.isArray(tree) ? 'array' : [tree.type, tree.props?.key]];
+  if (tree === target) return here;
+  const children = Array.isArray(tree) ? tree : tree.props?.children || [];
+  for (let index = 0; index < children.length; index += 1) {
+    const found = elementLocation(children[index], target, [...here, index]);
+    if (found) return found;
+  }
+  return null;
+}
+
+for (const trigger of ['새로고침', '사진 확인 뒤 재조회']) {
+  for (const staleResult of ['성공', '실패']) {
+    test(`상세 요청 역전: ${trigger}의 늦은 ${staleResult} 응답이 최신 승인 상태를 덮지 않아요`, async () => {
+      let enrollment = enrollmentFixture({ fullPhotosVisible: true });
+      const stale = deferred();
+      const latest = deferred();
+      const responses = [Promise.resolve(enrollment), stale.promise, latest.promise];
+      const harness = await enrollmentReviewHarness({
+        adminListEnrollments: async () => [enrollment],
+        adminEnrollmentCard: () => responses.shift(),
+      });
+      let { page } = await harness.flush();
+      queueRow(page).props.onClick();
+      let { detail } = await harness.flush();
+      identityCheckbox(detail).props.onChange({ target: { checked: true } });
+      ({ page, detail } = harness.render());
+      const reload = () => trigger === '새로고침'
+        ? buttonNamed(page, '새로고침').props.onClick()
+        : photoReviewSection(detail).props.onChanged();
+      reload();
+      ({ page, detail } = await harness.flush());
+      const oldEnrollment = enrollment;
+      enrollment = { ...enrollment, status: 'vc_pending' };
+      // 두 종류의 재조회가 같은 요청 순서 보호를 사용해야 해요.
+      buttonNamed(page, '새로고침').props.onClick();
+      ({ page, detail } = await harness.flush());
+      latest.resolve(enrollment);
+      ({ page, detail } = await harness.flush());
+      assert.equal(buttonNamed(detail, '승인하고 증서 발급').props.disabled, false);
+      if (staleResult === '성공') stale.resolve(oldEnrollment);
+      else stale.reject(new Error('이전 요청이 실패했어요.'));
+      ({ page, detail } = await harness.flush());
+      assert.equal(identityCheckbox(detail)?.props.checked, true);
+      assert.equal(buttonNamed(detail, '승인하고 증서 발급')?.props.disabled, false);
+      assert.equal(nodeText(detail).includes('이전 요청이 실패했어요.'), false);
+      assert.equal(nodeText(queueRow(page)).includes('신원 확인 대기'), true);
+    });
+  }
+}
+
+test('상세 재조회 실패와 재시도 중에도 거절 입력과 사진 영역을 같은 위치에 유지해요', async () => {
+  const enrollment = enrollmentFixture({ fullPhotosVisible: true });
+  const refresh = deferred();
+  const retry = deferred();
+  const responses = [Promise.resolve(enrollment), refresh.promise, retry.promise];
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async () => [enrollment],
+    adminEnrollmentCard: () => responses.shift(),
+  });
+  let { page } = await harness.flush();
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  identityCheckbox(detail).props.onChange({ target: { checked: true } });
+  ({ page } = harness.render());
+  buttonNamed(page, '새로고침').props.onClick();
+  ({ detail } = await harness.flush());
+  buttonNamed(detail, '거절').props.onClick();
+  ({ detail } = harness.render());
+  findTree(detail, node => node.type === 'input' && node.props.value === 'other').props.onChange();
+  ({ detail } = harness.render());
+  findTree(detail, node => node.type === 'Textarea').props.onChange({ target: { value: '사진을 다시 확인해 주세요.' } });
+  ({ detail } = harness.render());
+  const inputLocation = elementLocation(detail, findTree(detail, node => node.type === 'Textarea'));
+  const photosLocation = elementLocation(detail, photoReviewSection(detail));
+  const assertKept = tree => {
+    const textarea = findTree(tree, node => node.type === 'Textarea');
+    assert.ok(textarea, '재조회 실패가 거절 입력을 제거하면 안 돼요.');
+    assert.equal(textarea.props.value, '사진을 다시 확인해 주세요.');
+    assert.deepEqual(elementLocation(tree, textarea), inputLocation);
+    assert.ok(photoReviewSection(tree), '재조회 실패가 열어 둔 사진 영역을 제거하면 안 돼요.');
+    assert.deepEqual(elementLocation(tree, photoReviewSection(tree)), photosLocation);
+  };
+  refresh.reject(new Error('상세 정보를 다시 불러오지 못했어요.'));
+  ({ detail } = await harness.flush());
+  assertKept(detail);
+  const alert = findTree(detail, node => node.props?.role === 'alert');
+  assert.ok(nodeText(alert).includes('상세 정보를 다시 불러오지 못했어요.'));
+  buttonNamed(detail, '다시 시도').props.onClick();
+  ({ detail } = await harness.flush());
+  assertKept(detail);
+  retry.resolve({ ...enrollment, status: 'vc_pending' });
+  ({ detail } = await harness.flush());
+  assertKept(detail);
+  assert.equal(nodeText(detail).includes('상세 정보를 다시 불러오지 못했어요.'), false);
+  buttonNamed(detail, '취소').props.onClick();
+  ({ detail } = harness.render());
+  assert.equal(identityCheckbox(detail).props.checked, true);
+  assert.equal(buttonNamed(detail, '승인하고 증서 발급').props.disabled, false);
+});
+
+test('최신 상세 조회가 실패하면 뒤늦은 성공도 기존 카드와 최신 오류를 바꾸지 않아요', async () => {
+  const enrollment = enrollmentFixture({ status: 'vc_pending', fullPhotosVisible: true });
+  const stale = deferred();
+  const latest = deferred();
+  const responses = [Promise.resolve(enrollment), stale.promise, latest.promise];
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async () => [enrollment],
+    adminEnrollmentCard: () => responses.shift(),
+  });
+  let { page } = await harness.flush();
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  identityCheckbox(detail).props.onChange({ target: { checked: true } });
+  ({ page } = harness.render());
+  buttonNamed(page, '새로고침').props.onClick();
+  ({ detail } = await harness.flush());
+  photoReviewSection(detail).props.onChanged();
+  await harness.flush();
+  latest.reject(new Error('최신 요청이 실패했어요.'));
+  ({ detail } = await harness.flush());
+  stale.resolve({ ...enrollment, status: 'license_pending' });
+  ({ detail } = await harness.flush());
+  assert.equal(buttonNamed(detail, '승인하고 증서 발급')?.props.disabled, false);
+  assert.ok(nodeText(findTree(detail, node => node.props?.role === 'alert')).includes('최신 요청이 실패했어요.'));
+});
+
+test('최초 상세 조회 실패에는 오류 카드와 재시도를 표시해요', async () => {
+  const enrollment = enrollmentFixture();
+  let requests = 0;
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async () => [enrollment],
+    adminEnrollmentCard: async () => {
+      if (++requests === 1) throw new Error('최초 조회에 실패했어요.');
+      return enrollment;
+    },
+  });
+  let { page } = await harness.flush();
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  assert.ok(nodeText(detail).includes('최초 조회에 실패했어요.'));
+  assert.equal(identityCheckbox(detail), null);
+  assert.equal(findTree(detail, node => node.type === 'Skeleton'), null);
+  buttonNamed(detail, '다시 시도').props.onClick();
+  ({ detail } = await harness.flush());
+  assert.ok(identityCheckbox(detail));
+  assert.equal(nodeText(detail).includes('최초 조회에 실패했어요.'), false);
+});
+
+test('새로고침하면 선택한 등록의 최신 조건 제출 상태로 승인 버튼을 갱신해요', async () => {
+  let enrollment = enrollmentFixture();
+  let resolveRefresh;
+  let cardRequests = 0;
+  const approvedIds = [];
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async () => [enrollment],
+    adminEnrollmentCard: async id => {
+      assert.equal(id, 'enrollment-1');
+      cardRequests += 1;
+      return cardRequests === 1 ? enrollment : new Promise(resolve => { resolveRefresh = resolve; });
+    },
+    adminApproveEnrollment: async id => { approvedIds.push(id); return { status: 'vc_pending' }; },
+  });
+  let { page } = await harness.flush();
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  identityCheckbox(detail).props.onChange({ target: { checked: true } });
+  ({ page, detail } = harness.render());
+  assert.equal(buttonNamed(detail, '승인하고 증서 발급').props.disabled, true);
+
+  enrollment = { ...enrollment, status: 'vc_pending' };
+  buttonNamed(page, '새로고침').props.onClick();
+  ({ page, detail } = await harness.flush());
+  assert.equal(nodeText(queueRow(page)).includes('신원 확인 대기'), true);
+  assert.equal(cardRequests, 2, '목록과 함께 선택한 상세 카드도 다시 조회해야 해요.');
+  assert.ok(identityCheckbox(detail), '재조회 중에도 기존 상세 카드가 보여야 해요.');
+  assert.equal(identityCheckbox(detail).props.checked, true);
+  assert.equal(findTree(detail, node => node.type === 'Skeleton'), null);
+
+  resolveRefresh(enrollment);
+  ({ detail } = await harness.flush());
+  assert.equal(buttonNamed(detail, '승인하고 증서 발급').props.disabled, false);
+  assert.equal(nodeText(detail).includes('등록자가 사용 조건을 마치면 승인할 수 있어요.'), false);
+  await buttonNamed(detail, '승인하고 증서 발급').props.onClick();
+  assert.deepEqual(approvedIds, ['enrollment-1']);
+});
+
+test('새로고침 응답을 기다리는 동안 목록과 상세 카드를 유지해요', async () => {
+  const enrollment = enrollmentFixture();
+  let refreshing = false;
+  let finishRefresh;
+  const refresh = new Promise(resolve => { finishRefresh = resolve; });
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async () => { if (refreshing) await refresh; return [enrollment]; },
+    adminEnrollmentCard: async () => { if (refreshing) await refresh; return enrollment; },
+  });
+  let { page } = await harness.flush();
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  identityCheckbox(detail).props.onChange({ target: { checked: true } });
+  ({ page } = harness.render());
+  refreshing = true;
+  buttonNamed(page, '새로고침').props.onClick();
+  try {
+    ({ page, detail } = await harness.flush());
+    assert.ok(queueRow(page), '상세 카드 위의 목록이 사라지면 스크롤 위치가 달라져요.');
+    assert.equal(identityCheckbox(detail)?.props.checked, true);
+    assert.equal(findTree(page, node => node.type === 'Skeleton'), null);
+    assert.equal(findTree(detail, node => node.type === 'Skeleton'), null);
+  } finally {
+    finishRefresh();
+    await harness.flush();
+  }
+});
+
+test('신원 승인 직후 승인 탭의 vc_pending 배지는 증서 발급 대기로 표시해요', async () => {
+  let enrollment = enrollmentFixture({ status: 'vc_pending' });
+  const harness = await enrollmentReviewHarness({
+    adminListEnrollments: async review => enrollment.reviewStatus === review ? [enrollment] : [],
+    adminEnrollmentCard: async () => enrollment,
+    adminApproveEnrollment: async () => {
+      enrollment = { ...enrollment, reviewStatus: 'approved' };
+      return { status: 'vc_pending', reviewStatus: 'approved' };
+    },
+  });
+  let { page } = await harness.flush();
+  assert.equal(nodeText(findTree(queueRow(page), node => node.type === 'Badge')), '신원 확인 대기');
+  queueRow(page).props.onClick();
+  let { detail } = await harness.flush();
+  identityCheckbox(detail).props.onChange({ target: { checked: true } });
+  ({ detail } = harness.render());
+  await buttonNamed(detail, '승인하고 증서 발급').props.onClick();
+  ({ page } = await harness.flush());
+  buttonNamed(page, '승인').props.onClick();
+  ({ page } = await harness.flush());
+  assert.equal(nodeText(findTree(queueRow(page), node => node.type === 'Badge')), '증서 발급 대기');
 });

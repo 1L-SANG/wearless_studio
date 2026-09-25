@@ -12,7 +12,6 @@ import logging
 
 import httpx
 
-from .facemarket_photos import PHOTO_SLOTS
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +30,12 @@ LINE = "#eceef1"
 PAGE = "#f6f7f9"
 CARD = "#ffffff"
 
+# 모델에게 가는 메일 하단 문의처. 인스타그램 계정은 @facemarket_official(2026-09-25 오너 확인).
+_CONTACT_LINE = "문의가 있다면 010-9592-0333 또는 @facemarket_official로 부탁드려요."
+
 
 def _shell(*, public_base: str, heading: str, body_html: str, cta: tuple[str, str] | None,
-           footnote: str) -> str:
+           footnote: str, model_facing: bool = True) -> str:
     """메일 한 통의 껍데기. 표(table) + 인라인 스타일만 쓴다.
 
     Gmail 은 <style> 블록을 지우는 경로가 있고 아웃룩(Word 렌더러)은 flex·grid 를 모른다 —
@@ -43,6 +45,10 @@ def _shell(*, public_base: str, heading: str, body_html: str, cta: tuple[str, st
     SVG 를 표시 폭의 2배(560px)로 구워 레티나에서 뭉개지지 않게 하고, width 로 140px 에 앉힌다. 이미지를
     막아 두고 여는 사람이 많아 alt 를 반드시 남긴다.
     """
+    footer = (
+        f"이 메일은 발신 전용이에요.<br>{_CONTACT_LINE}"
+        if model_facing else "이 메일은 발신 전용이에요. 문의는 FaceMarket 안에서 남겨 주세요."
+    )
     button = ""
     if cta:
         label, href = cta
@@ -80,10 +86,21 @@ def _shell(*, public_base: str, heading: str, body_html: str, cta: tuple[str, st
         f'<div style="border-top:1px solid {LINE};padding-top:16px;font-family:-apple-system,'
         f'BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',Arial,sans-serif;'
         f'font-size:12px;line-height:1.6;color:{MUTED};">'
-        f"이 메일은 발신 전용이에요. 문의는 FaceMarket 안에서 남겨 주세요."
+        f"{footer}"
         f"</div></td></tr>"
         f"</table></div>"
     )
+
+
+# 지원 승인 메일의 "최종 등록까지 진행될 과정". (단계, 단계 아래 작은 안내) 순서 그대로 번호가 붙는다.
+_APPROVED_STEPS = (
+    ("본인확인", None),
+    ("AI 모델 생성을 위한 18장 사진 찍기 (낮 시간대)", "* 촬영을 도와줄 사람이 있어야 편해요"),
+    ("사용 조건 정하기", None),
+    ("블록체인 기반 라이선스 증서 발급", None),
+    ("사진 검수 후, 프로필에 쓰일 테스트컷 선정 진행", None),
+    ("최종 등록 완료", None),
+)
 
 
 def _email_content(
@@ -97,7 +114,6 @@ def _email_content(
     """
     hub = f"{public_base}/status"
     apply = f"{public_base}/model/apply"
-    guide = f"{public_base}/photo-guide"
     if email_type == "test_cuts_ready":
         confirm = f"{public_base}/model/confirm"
         subject = "[FaceMarket] 테스트컷이 도착했어요"
@@ -117,7 +133,7 @@ def _email_content(
             "확대샷 1장, 전신샷 1장을 골라 프로필로 공개해 주세요. "
             "확정하기 전에는 아무에게도 공개되지 않아요.\n"
             f"{confirm}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     if email_type == "approved":
@@ -125,23 +141,33 @@ def _email_content(
         html = _shell(
             public_base=public_base,
             heading="모델 지원이 승인됐어요",
+            # 문구는 2026-09-25 오너 확정본이다. 단계 목록은 _APPROVED_STEPS 하나를 HTML·텍스트가 같이 쓴다.
             body_html=(
-                f"본인확인 후 등록 사진 {len(PHOTO_SLOTS)}장을 올리고, 사용 조건을 정해 증서를 발급받아요. "
-                "촬영은 밝은 야외에서 도와줄 사람과 함께 약 15분 걸려요. "
-                f'<a href="{_escape(guide)}">18장 촬영 가이드 보기</a><br><br>'
-                "사진 검수 후 테스트컷을 보내드려요. 직접 확인·확정한 뒤에 모델이 공개돼요."
+                "앞으로 최종 등록까지 진행될 과정을 알려드릴게요."
+                f'<ol style="margin:12px 0 0 0;padding-left:22px;">'
+                + "".join(
+                    f'<li style="margin:0 0 6px 0;">{step}'
+                    + (f'<br><span style="font-size:13px;color:{MUTED};">{note}</span>' if note else "")
+                    + "</li>"
+                    for step, note in _APPROVED_STEPS
+                )
+                + "</ol>"
+                '<p style="margin:14px 0 0 0;">서둘러 2차 등록을 하여 1차 기수에 선정돼보세요!</p>'
             ),
             cta=("모델 등록 계속하기", hub),
             footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {hub}",
         )
+        steps = "".join(
+            f"{index}. {step}\n" + (f"{note}\n" if note else "")
+            for index, (step, note) in enumerate(_APPROVED_STEPS, start=1)
+        )
         text = (
             "모델 지원이 승인됐어요.\n\n"
-            f"본인확인 후 등록 사진 {len(PHOTO_SLOTS)}장을 올리고, 사용 조건을 정해 증서를 발급받아요.\n"
-            "촬영은 밝은 야외에서 도와줄 사람과 함께 약 15분 걸려요.\n"
-            f"촬영 가이드: {guide}\n\n"
-            "사진 검수 후 테스트컷을 보내드려요. 직접 확인·확정한 뒤에 모델이 공개돼요.\n"
+            "앞으로 최종 등록까지 진행될 과정을 알려드릴게요.\n"
+            f"{steps}\n"
+            "서둘러 2차 등록을 하여 1차 기수에 선정돼보세요!\n"
             f"{hub}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     if email_type == "enrollment_review_approved":
@@ -161,7 +187,7 @@ def _email_content(
             "신분증과 등록 사진 확인을 마쳤어요. 마이페이지에서 남은 등록 절차를 이어가 주세요.\n"
             "테스트컷을 직접 확인·확정한 뒤에 모델이 공개돼요.\n"
             f"{hub}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     if email_type == "enrollment_review_rejected":
@@ -185,7 +211,7 @@ def _email_content(
             f"{reason_text}"
             "아래에서 다시 시도할 수 있어요.\n"
             f"{hub}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     if email_type == "enrollment_review_timeout":
@@ -204,7 +230,7 @@ def _email_content(
             "확인에 시간이 너무 오래 걸려 이번 등록은 자동으로 종료됐어요.\n\n"
             "아래에서 바로 다시 시작할 수 있어요.\n"
             f"{hub}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     if email_type == "auto_rejected":
@@ -222,7 +248,7 @@ def _email_content(
             "지원서에 적은 정보가 신분증과 3회 일치하지 않아 지원이 자동으로 거절됐어요.\n\n"
             "정보를 수정해 다시 지원할 수 있어요.\n"
             f"{apply}\n\n"
-            "이 메일은 발신 전용이에요."
+            f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
         )
         return subject, html, text
     # rejected
@@ -246,7 +272,7 @@ def _email_content(
         f"{reason_text}"
         "정보를 수정해 다시 지원할 수 있어요.\n"
         f"{apply}\n\n"
-        "이 메일은 발신 전용이에요."
+        f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
     )
     return subject, html, text
 
@@ -277,31 +303,32 @@ async def send_application_email(
     return await _send_email(settings, to=to, subject=subject, html=html, text=text)
 
 
-async def send_license_issued_email(
+async def send_registration_completed_email(
     settings, *, to: str, display_name: str
 ) -> tuple[bool, str | None, str | None]:
-    """활성화된 라이선스를 알린다. 키 미설정과 발송 실패는 발급을 되돌리지 않는다."""
+    """첫 테스트컷 확정 뒤 공개와 증서 발급 완료를 함께 알려요."""
     if not settings.resend_api_key:
         return False, None, "not_configured"
     status_url = f"{settings.fm_application_public_base}/status"
     safe_name = _escape(display_name)
-    subject = "[FaceMarket] 라이선스 증서가 발급됐어요"
+    subject = "[FaceMarket] 등록이 최종 완료됐어요"
     html = _shell(
         public_base=settings.fm_application_public_base,
-        heading="라이선스 증서가 발급됐어요",
+        heading="등록이 최종 완료됐어요",
         body_html=(
-            f"{safe_name}님의 라이선스 증서가 발급됐어요. "
-            "마이페이지에서 증서를 확인할 수 있어요. "
-            "모델 공개는 테스트컷을 직접 확인·확정한 뒤 시작돼요."
+            f"{safe_name}님의 프로필이 공개됐어요. 라이선스 증서도 발급됐어요. "
+            "발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요. "
+            "마이페이지에서 증서를 확인할 수 있어요."
         ),
         cta=("마이페이지 열기", status_url),
         footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {status_url}",
     )
     text = (
-        f"{display_name}님의 라이선스 증서가 발급됐어요.\n\n"
+        f"{display_name}님의 프로필이 공개됐어요. 라이선스 증서도 발급됐어요. "
+        "발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요. "
         "마이페이지에서 증서를 확인할 수 있어요.\n"
-        "모델 공개는 테스트컷을 직접 확인·확정한 뒤 시작돼요.\n"
-        f"{status_url}\n"
+        f"{status_url}\n\n"
+        f"이 메일은 발신 전용이에요.\n{_CONTACT_LINE}"
     )
     return await _send_email(settings, to=to, subject=subject, html=html, text=text)
 
@@ -327,6 +354,7 @@ async def send_usage_report_email(
         ),
         cta=None,
         footnote="관리자 도구에서 해당 정산 기록과 사용 범위를 확인해 주세요.",
+        model_facing=False,
     )
     text = (
         "새 사용 기록 신고가 접수됐어요.\n\n"

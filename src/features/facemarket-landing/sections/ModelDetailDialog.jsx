@@ -211,7 +211,7 @@ export function ModelDetailDialog({ model, onClose }) {
               {!sponsorship.masked && <Pair cells={[{ dt: '인스타 계정', dd: <a href={sponsorship.instagramUrl} target="_blank" rel="noopener noreferrer">@{sponsorship.instagramHandle}</a> },
                 { dt: '팔로워 수', dd: `${sponsorship.instagramFollowers.toLocaleString('ko-KR')}명` }]} />}
               {!sponsorship.masked && <Pair cells={[{ dt: '상의', dd: sponsorship.sizeTop }, { dt: '하의 허리', dd: `${sponsorship.sizeBottomWaist}인치` }]} />}
-              <Pair cells={[{ dt: '게시 조건', dd: '옷 받은 뒤 3일 이내 1회 · 30일 유지' }]} />
+              <Pair cells={[{ dt: '게시 조건', dd: '옷 받은 뒤 7일 이내 1회 · 90일 유지' }]} />
             </dl>
             {sponsorship.masked && <p className={s.dialogSponsorshipNote}>셀러 계정으로 로그인하면 인스타 계정, 팔로워 수, 사이즈를 볼 수 있어요.</p>}
             {!sponsorship.masked && <p className={s.dialogSponsorshipNote}>팔로워 수는 본인 입력이에요.{sponsorship.reportedAt && !Number.isNaN(Date.parse(sponsorship.reportedAt)) ? ` ${new Date(sponsorship.reportedAt).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })} 기준이에요.` : ''}</p>}

@@ -108,6 +108,19 @@ class _Cur:
         elif s.startswith("update fm_models") and "assets_status='ready'" in s:
             self.store.ready_updates += 1
             self._last = None
+        elif s.startswith("update fm_licenses") and "face_image_key" in s:
+            key, digest, enrollment_id = params
+            for license in self.store.licenses:
+                if license["enrollment_id"] == enrollment_id and license["status"] == "pending" and license.get("vc_id") is None:
+                    license.update(face_image_key=key, face_image_digest=digest)
+            self._last = None
+        elif (s.startswith("update fm_biometric_enrollments") and "completed_at=now()" in s
+              and "status='failed'" not in s):
+            self.store.enrollment_status = "vc_pending" if "exists" in s and any(
+                license["status"] == "pending" and license.get("vc_id") is None
+                for license in self.store.licenses
+            ) else "license_pending"
+            self._last = None
         elif s.startswith("update fm_models") and "assets_status='failed'" in s:
             if "photo_revision=%s" not in s or params[-1] == self.store.enrollment_rows[0].get("photo_revision", 0):
                 self.store.failed_updates += 1
@@ -116,8 +129,19 @@ class _Cur:
             self.store.building_updates += 1
             self._last = None
         elif s.startswith("update fm_biometric_enrollments") and "status='failed'" in s:
-            if "photo_revision=%s" not in s or params[-1] == self.store.enrollment_rows[0].get("photo_revision", 0):
+            if (self.store.enrollment_status == "asset_building"
+                    and ("photo_revision=%s" not in s or params[-1] == self.store.enrollment_rows[0].get("photo_revision", 0))):
                 self.store.enrollment_failed_updates += 1
+                self.store.enrollment_status = "failed"
+                self._last = {"id": params[1]} if "returning id" in s else None
+            else:
+                self._last = None
+        elif s.startswith("delete from fm_licenses"):
+            enrollment_id = params[0]
+            self.store.licenses[:] = [license for license in self.store.licenses if not (
+                license["enrollment_id"] == enrollment_id and license["status"] == "pending"
+                and license.get("vc_id") is None
+            )]
             self._last = None
         elif s.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
             self.store.cleanup_refs.append({"angle": params[1], "key": params[2], "reason": "delete"})
@@ -281,6 +305,8 @@ class _Store:
         account_closed=False,
     ):
         self.log = []
+        self.licenses = []
+        self.enrollment_status = status
         self.initial_binding = initial_binding
         self.final_binding = final_binding
         self.lease_ok = lease_ok
@@ -396,6 +422,30 @@ def test_photo_revalidation_builds_from_unchanged_approved_sources():
     assert all("/revision-1/" in call.destination for call in face_r2.copies)
 
 
+def test_retake_asset_build_refreshes_pending_evidence_and_preserves_terms():
+    app, _log, face_r2, store = build_worker_fixture()
+    for row in store.enrollment_rows:
+        row.update(storage_state="approved", photo_revision=1)
+    front = next(row for row in store.enrollment_rows if row["angle"] == "front")
+    front.update(storage_state="quarantine", image_digest="sha256-new-front")
+    license = {"enrollment_id": ENROLLMENT_ID, "status": "pending", "vc_id": None,
+               "face_image_key": "old-front", "face_image_digest": "old-digest",
+               "allowed_use": ["fashion"], "unit_price": 14900,
+               "opt_location_cuts": True, "consent_doc_version": "original-consent"}
+    store.licenses.append(license)
+    asyncio.run(run_fm_model_asset_job(app, _job({
+        "modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID, "photoRevision": 1,
+    })))
+    assert store.ready_updates == 1
+    assert license["face_image_key"] == f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/revision-1/originals/front.png"
+    assert license["face_image_digest"] == "sha256-new-front"
+    assert license["allowed_use"] == ["fashion"]
+    assert license["unit_price"] == 14900
+    assert license["opt_location_cuts"] is True
+    assert license["consent_doc_version"] == "original-consent"
+    assert store.enrollment_status == "vc_pending"
+
+
 def test_old_photo_revision_job_cannot_write_or_fail_the_current_registration():
     app, _log, face_r2, store = build_worker_fixture()
     for row in store.enrollment_rows:
@@ -404,6 +454,37 @@ def test_old_photo_revision_job_cannot_write_or_fail_the_current_registration():
     assert face_r2.copies == []
     assert face_r2.puts == []
     assert store.ready_updates == store.failed_updates == store.enrollment_failed_updates == 0
+
+
+@pytest.mark.parametrize("current_revision,lease_ok", [(1, True), (2, True), (1, False)])
+@pytest.mark.parametrize("license_status,vc_id", [("pending", None), ("active", "vc-active"), ("pending", "vc-issued")])
+def test_failed_retake_build_removes_only_current_unissued_license(current_revision, lease_ok, license_status, vc_id):
+    app, _log, face_r2, store = build_worker_fixture(lease_ok=lease_ok)
+    for photo in store.enrollment_rows:
+        photo.update(photo_revision=current_revision, storage_state="approved")
+    pending = {"enrollment_id": ENROLLMENT_ID, "status": license_status, "vc_id": vc_id}
+    protected = [
+        {"enrollment_id": "other-enrollment", "status": "pending", "vc_id": None},
+    ]
+    store.licenses.extend([pending, *protected])
+
+    def fail_copy(*_args):
+        raise RuntimeError("storage unavailable")
+
+    face_r2.copy = fail_copy
+    asyncio.run(run_fm_model_asset_job(app, _job({
+        "modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID, "photoRevision": 1,
+    })))
+    if current_revision == 1 and lease_ok:
+        assert store.enrollment_status == "failed"
+        assert store.licenses == (protected if license_status == "pending" and vc_id is None else [pending, *protected])
+        failure_commit = next(commit for commit in store.commits if any(
+            "update fm_biometric_enrollments" in sql and "status='failed'" in sql for sql in commit
+        ))
+        assert any("delete from fm_licenses" in sql for sql in failure_commit)
+    else:
+        assert store.enrollment_status == "asset_building"
+        assert store.licenses == [pending, *protected]
 
 
 def test_asset_swap_is_bound_to_current_enrollment_and_version():
@@ -417,7 +498,7 @@ def test_asset_swap_is_bound_to_current_enrollment_and_version():
     assert "source_enrollment_id" in sql
     assert "evidence_version" in sql
     assert "current_enrollment_id" in sql
-    assert "status='license_pending'" in sql
+    assert _store.enrollment_status == "license_pending"
     assert face_r2.deletes[-2:] == ["old/front.png", "old/grid.png"]
 
 

@@ -40,8 +40,9 @@ const cases = [
   ['test-cut confirmation overrides revoked history', { ownedModel: { ...verified, status: 'awaiting_confirm' }, enrollment: { status: 'confirm_pending' }, license: { ...activeLicense, status: 'revoked' } }, 'confirm', false, '테스트컷 확인', { before: '다음은 ', strong: '프로필 이미지 확정', after: '' }],
   ...[
     ['identity_pending', '본인확인'], ['photos_pending', '사진 등록'], ['liveness_pending', '본인확인 마무리'],
-    ['processing', '모델 이미지 준비'], ['asset_building', '모델 이미지 준비'],
-    ['license_pending', '사용 조건 정하기'], ['vc_pending', '사용 조건 정하기'],
+    // 9/25 흐름 변경: 이미지를 만드는 동안에도 조건을 먼저 정하고, 조건을 낸 뒤에는 테스트컷을 기다린다.
+    ['processing', '사용 조건 정하기'], ['asset_building', '사용 조건 정하기'],
+    ['license_pending', '사용 조건 정하기'], ['vc_pending', '테스트컷 준비'],
   ].map(([status, step]) => [status, { enrollment: { status, photos: [] }, application: { status: 'approved' } },
     'progress', false, '등록 진행 중', { before: '다음은 ', strong: step, after: '' }]),
   ['unknown enrollment step', { enrollment: { status: 'review_pending' } }, 'progress', false, '등록 진행 중', null],

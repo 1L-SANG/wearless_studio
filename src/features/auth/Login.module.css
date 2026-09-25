@@ -3,10 +3,12 @@
    카드 외곽(배경·그림자·라운드)은 공용 Modal(.modal)이 제공한다. */
 
 .gate {
+  position: relative;             /* facemarket 닫기 버튼(.close)의 기준 */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-16);
+  word-break: keep-all;           /* 한국어 문장이 '단계에 / 서' 처럼 낱말 중간에서 끊기지 않게 */
   /* 이메일 폼을 펼쳐도 작은 화면에서 제출 버튼까지 닿을 수 있게 카드 안쪽만 스크롤한다.
      공용 modal 패딩을 음수 마진으로 걷고 같은 값을 다시 더해, 평소 여백과 카드 모양은 유지한다.
      SignupCompletion 의 다음 장과 같은 스크롤 경계다. */
@@ -21,6 +23,25 @@
   overscroll-behavior: contain;
   border-radius: var(--r-6);
 }
+
+/* facemarket 전용 닫기 버튼. 폰에는 Esc 가 없고 바깥 탭은 눈에 안 띈다. 44px 터치 영역.
+   360px 폭에서도 로고(폭 72%, 가운데)의 오른쪽 끝보다 바깥에 놓여 겹치지 않는다. */
+.close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--fm-muted);
+  cursor: pointer;
+}
+.close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* 브랜드 락업(세로): 심볼 위, 그 아래 wearless 워드마크 + Studio 디스크립터 */
 .brand {
@@ -197,6 +218,32 @@
   color: var(--fg-3);
   text-align: center;
   margin: 0;
+  text-wrap: balance;
+}
+
+/* 부제와 고지문 색. 클래스 하나로는 app.css 의 `.modal p`(0,1,1)에 져서 --fg-2(흰 바탕 3.5:1)가
+   칠해진다. 두 클래스(0,2,0)로 이긴다. facemarket 은 .gate 에 fm-theme 이 붙어 #5f6b76(5.45:1),
+   셀러는 --fm-muted 의 :root 기본값 --fg-2 그대로다. admin 번들에는 facemarketTheme.css 가
+   없어 --fm-muted 가 정의되지 않으므로 같은 --fg-2 를 폴백으로 둔다. */
+.gate .subtitle,
+.gate .hint { color: var(--fm-muted, var(--fg-2)); }
+
+/* 앱 안 브라우저 안내(facemarket 전용). 링크는 카카오톡에서만 그린다. */
+.inAppNote {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-8);
+  text-align: center;
+}
+.inAppNote a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--fg-1);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* 임시 심사용 폼. '이메일로 로그인하기' 링크(.notice + .linkBtn)를 누르면 이 자리에 펼쳐진다.

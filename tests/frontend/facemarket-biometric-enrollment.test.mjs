@@ -178,10 +178,10 @@ test('server status restores the next safe enrollment step', () => {
   assert.equal(nextEnrollmentStep(null), 'consent');
   assert.equal(nextEnrollmentStep({ status: 'photos_pending', photos: [] }), 'photos');
   assert.equal(nextEnrollmentStep({ status: 'liveness_pending', photos: [{}, {}, {}] }), 'liveness');
-  assert.equal(nextEnrollmentStep({ status: 'processing', photos: [{}, {}, {}] }), 'processing');
-  assert.equal(nextEnrollmentStep({ status: 'asset_building', photos: [{}, {}, {}] }), 'processing');
+  assert.equal(nextEnrollmentStep({ status: 'processing', photos: [{}, {}, {}] }), 'terms');
+  assert.equal(nextEnrollmentStep({ status: 'asset_building', photos: [{}, {}, {}] }), 'terms');
   assert.equal(nextEnrollmentStep({ status: 'license_pending', photos: [{}, {}, {}] }), 'terms');
-  assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'terms');
+  assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'testcuts');
   assert.equal(nextEnrollmentStep({ status: 'passed', photos: [{}, {}, {}] }), 'done');
   assert.equal(nextEnrollmentStep({ status: 'failed', reason: 'face_match_failed' }), 'failed');
 });
@@ -249,7 +249,7 @@ test('uploadProfileImage mirrors multipart pattern', () => {
 // uploadProfileImage 와 같은 멀티파트 패턴을 따르는지, id-document 경로가 맞는지 확인.
 test('uploadIdDocument multiparts file+documentType+maskedConfirmed to the id-document route', () => {
   const apiSrc = read('../../src/lib/api/facemarket.js');
-  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed\s*\}\)/);
+  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed,\s*maskRegion\s*\}\)/);
   assert.match(apiSrc, /form\.append\('file',\s*file/);
   assert.match(apiSrc, /form\.append\('documentType',\s*documentType\)/);
   assert.match(apiSrc, /form\.append\('maskedConfirmed'/);
@@ -755,10 +755,10 @@ test('등록 완료 화면은 발급된 조건과 영구 유효 안내 및 마�
     const tree = harness.render();
     const text = collectText(tree);
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(text.includes('일반 의류, 액티브웨어에 쓸 수 있고 철회하기 전까지 유효해요.'));
-    assert.ok(text.includes('증서 번호 vc-1'));
+    assert.ok(text.includes('발급한 라이선스 증서는 모델님이 철회하기 전까지 유효해요.'));
+    assert.ok(!text.includes('증서 번호'));
     assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/status' && node.props.children === '마이페이지로'));
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
     assert.equal(findTree(tree, (node) => node.type === 'Chips'), null);
   } finally { await harness.close(); }
 });
@@ -780,7 +780,7 @@ test('등록 완료 화면은 발급 경로의 최소 체형 정보로 완료 �
     assert.equal(harness.runtime.states[0], 'done');
     assert.deepEqual(harness.runtime.states[1], handoff);
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
   } finally { await harness.close(); }
 });
 
@@ -789,9 +789,9 @@ test('등록 완료 조건이 없으면 증서 확인을 안내하고 기본 조
   try {
     const tree = harness.render();
     const text = collectText(tree);
-    assert.ok(text.includes('발급한 조건은 증서에서 확인할 수 있어요.'));
-    for (const value of ['14,900원', '49,900원', '철회하기 전까지 유효해요.', '증서 번호']) assert.ok(!text.includes(value), value);
-    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.ok(text.includes('모델님의 얼굴을 활용한 테스트컷은 2일 이내 보내드릴게요.'));
+    for (const value of ['14,900원', '49,900원', '증서 번호']) assert.ok(!text.includes(value), value);
+    assert.equal(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'), null);
   } finally { await harness.close(); }
 });
 
@@ -815,6 +815,7 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
     api: { submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; } },
   });
   harness.runtime.navigate = (...args) => navigations.push(args);
+  harness.runtime.location = { pathname: '/model/apply', search: '', state: { applyStep: 3, applyEditing: false }, key: 'k3' };
   try {
     const form = harness.render();
     const submit = findTree(form, (node) => node.type === 'button' && node.props?.children === '지원 완료');
@@ -831,7 +832,8 @@ test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상�
       privacyConsent: { accepted: true, documentVersion: '2026-09-v1' },
     });
     assert.equal(harness.runtime.states[0], 'complete');
-    assert.deepEqual(navigations, []);
+    // 완료 화면은 지금 기록 항목을 바꿔 적어, 그 뒤 뒤로가기를 알아볼 수 있게 한다.
+    assert.deepEqual(navigations, [['/model/apply', { replace: true, state: { applyComplete: true } }]]);
     const complete = harness.render();
     assert.ok(findTree(complete, (node) => node.props?.children === '지원서가 접수 완료됐어요'));
     assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/status' && node.props.children === '지원 상태 보기'));
@@ -868,7 +870,7 @@ test('체크사항 하나가 비어 있으면 지원 완료가 잠기고 미동�
   try {
     const tree = harness.render();
     assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료').props.disabled, true);
-    assert.ok(findTree(tree, (node) => node.props.children === '아직 표시하지 않은 체크사항이 1개 있어요.'));
+    assert.ok(findTree(tree, (node) => node.props.children === '아직 확인하지 않은 항목이 1개 있어요.'));
     assert.ok(findTree(tree, (node) => node.type === 'a' && node.props.href === '/privacy' && node.props.target === '_blank'));
   } finally { await harness.close(); }
 });
@@ -1101,6 +1103,7 @@ test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알�
   try {
     for (const label of ['포트폴리오 링크', 'SNS 링크']) {
       const input = findTree(harness.render(), (node) => node.type?.name === 'FormInput' && node.props.label === label);
+      input.props.onBlur();
       // https:// is added before submission; it must count towards the server's limit.
       for (const invalid of ['example.com/' + 'a'.repeat(490), 'ftp://example.com/file']) {
         input.props.onChange({ target: { value: invalid } });

@@ -91,7 +91,10 @@ class FakeCursor:
         cuts = self.store["cuts"]
         loras = self.store.setdefault("loras", [])
 
-        if "catalog_is_admin" in query:
+        if query.startswith("select a.contact_email, m.display_name"):
+            self.one = {"contact_email": self.store["application"].get("contact_email"),
+                        "display_name": model["display_name"]}
+        elif "catalog_is_admin" in query:
             # 모델 리스트 열람 판정(facemarket_catalog_access). 이 대역에서는 셀러 계정 하나만 자격이 있다.
             self.one = {"catalog_is_admin": False, "catalog_is_seller": params[0] == "seller-1",
                         "catalog_is_model": False}
@@ -314,6 +317,7 @@ class FakeCursor:
                     "model_status": model["status"],
                     "redo_count": model["redo_count"],
                     "display_name": model["display_name"],
+                    "confirmed_at": model.get("confirmed_at"),
                 }
         elif query.startswith("update fm_model_test_cuts set approved"):
             if len(params) == 3:
@@ -1418,3 +1422,57 @@ def test_building_needs_a_trained_lora(test_cut_api):
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "lora_not_ready"
+
+
+@pytest.mark.parametrize("previously_confirmed", [False, True])
+def test_completion_email_only_on_first_confirmation(test_cut_api, monkeypatch, previously_confirmed):
+    client, store, face_r2, _public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, data=_png(40, 40))
+    store["model"].update(status="awaiting_confirm", confirmed_at=NOW if previously_confirmed else None)
+    sent = []
+    async def send(settings, **kwargs):
+        assert store["model"]["status"] == "verified"
+        sent.append(kwargs)
+        return True, "msg-1", None
+    monkeypatch.setattr(facemarket_notify, "send_registration_completed_email", send, raising=False)
+    response = client.post("/v1/facemarket/model/test-cuts/confirm",
+                           json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID}, headers=_auth(make_token))
+    assert response.status_code == 200, response.text
+    assert len(sent) == (0 if previously_confirmed else 1)
+    if sent:
+        assert sent[0] == {"to": "model@example.com", "display_name": store["model"]["display_name"]}
+    retry = client.post("/v1/facemarket/model/test-cuts/confirm",
+                        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID}, headers=_auth(make_token))
+    assert retry.status_code == 409
+    assert len(sent) == (0 if previously_confirmed else 1)
+
+
+@pytest.mark.parametrize("email_error", [True, False])
+def test_completion_email_failure_never_rolls_back_confirmation(test_cut_api, monkeypatch, email_error):
+    client, store, face_r2, _public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, data=_png(40, 40))
+    store["model"]["status"] = "awaiting_confirm"
+    async def send(settings, **kwargs):
+        if email_error:
+            raise RuntimeError("mail unavailable")
+        return False, None, "send_error"
+    monkeypatch.setattr(facemarket_notify, "send_registration_completed_email", send, raising=False)
+    response = client.post("/v1/facemarket/model/test-cuts/confirm",
+                           json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID}, headers=_auth(make_token))
+    assert response.status_code == 200, response.text
+    assert store["model"]["status"] == "verified"
+
+
+def test_failed_confirmation_sends_no_completion_email(test_cut_api, monkeypatch):
+    client, store, face_r2, _public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2, data=_png(40, 40))
+    store["model"]["status"] = "awaiting_confirm"
+    store["license_active"] = False
+    sent = []
+    async def send(*args, **kwargs):
+        sent.append(kwargs)
+    monkeypatch.setattr(facemarket_notify, "send_registration_completed_email", send, raising=False)
+    response = client.post("/v1/facemarket/model/test-cuts/confirm",
+                           json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID}, headers=_auth(make_token))
+    assert response.status_code == 409
+    assert sent == []

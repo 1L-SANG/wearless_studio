@@ -78,9 +78,9 @@ def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True) ->
 SPONSORSHIP_NOTICES = {
     'sponsorship_participation': {
         'title': '의류 협찬 받기',
-        'notice': '켜 두면 셀러가 바로 협찬을 요청할 수 있어요. 옷을 받으면 입고 찍어서 피드에 올려요. 옷은 내 것, 현금은 없어요. 언제든 끌 수 있어요.',
+        'notice': '켜 두면 셀러에게 협찬 요청까지 받을 수 있어요.',
         'scope': '협찬 옷도 위에서 정한 허용 품목 안에서만 와요.',
-        'rules': ['옷을 받은 뒤 3일 이내, 본인 인스타그램 피드에 1회 게시해요.', '게시물은 30일 유지해요.', '옷은 반납하지 않아요.'],
+        'rules': ['옷을 받은 뒤 기본적으로 7일 이내, SNS 피드에 착용컷을 올리면 돼요.', '게시물은 90일간만 유지하면 돼요.'],
     },
     'sponsorship_profile_collection': {
         'title': '프로필 정보 수집에 동의합니다',

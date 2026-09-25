@@ -188,7 +188,7 @@ export function ModelConfirm() {
     setBusy(true);
     try {
       await confirmMyModelTestCuts({ closeupCutId, fullbodyCutId });
-      push?.('프로필을 확정했어요. 모델 리스트에 올라갔어요.', { icon: 'check' });
+      push?.('프로필을 확정했어요. 라이선스 증서도 발급됐어요.', { icon: 'check' });
       navigate('/status', { replace: true });
     } catch (error) {
       push?.(error.message, { icon: 'alertCircle' });

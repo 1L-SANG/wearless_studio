@@ -61,15 +61,15 @@ def _wrap_fake_cursor(monkeypatch, biometric_tests):
         query = " ".join(sql.split()).lower()
 
         if query.startswith(
-            "update fm_biometric_enrollments set status = 'review_pending'"
+            "update fm_biometric_enrollments set review_status = 'pending'"
         ):
             match_scores, enrollment_id = params
             row = next(
                 item for item in self.store.enrollments if item["id"] == enrollment_id
             )
             row.update(
-                status="review_pending",
                 review_status="pending",
+                reviewed_by=None, reviewed_at=None, review_reason=None,
                 match_scores=_json_value(match_scores),
             )
             self.result = None
@@ -203,7 +203,7 @@ def _setup(
 
 # ── review_pending 전이 ──────────────────────────────────────────────────────────────
 
-def test_simple_auth_stops_at_review_pending(enrollment_client_factory, monkeypatch):
+def test_simple_auth_binds_while_identity_review_is_pending(enrollment_client_factory, monkeypatch):
     client, store, settings = _setup(
         enrollment_client_factory,
         monkeypatch,
@@ -217,16 +217,16 @@ def test_simple_auth_stops_at_review_pending(enrollment_client_factory, monkeypa
         id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
     )
     response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
     body = response.json()
-    assert body["passed"] is False
-    assert body["status"] == "review_pending"
+    assert body["passed"] is True
+    assert body["status"] == "asset_building"
     row = _latest_row(store, enrollment_id)
-    assert row["status"] == "review_pending"
+    assert row["status"] == "asset_building"
     assert row["review_status"] == "pending"
-    # 자산 빌드가 시작되면 안 된다 — 심사 안 된 얼굴이 생성 파이프라인에 들어가면 안 된다.
-    assert store.jobs == []
-    assert row["model_id"] is None
+    assert len(store.jobs) == 1
+    assert row["model_id"] is not None
+    assert body["modelId"] == row["model_id"]
 
 
 def test_simple_auth_records_advisory_scores_without_blocking(
@@ -251,9 +251,9 @@ def test_simple_auth_records_advisory_scores_without_blocking(
         id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
     )
     response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
     row = _latest_row(store, enrollment_id)
-    assert row["status"] == "review_pending"
+    assert row["status"] == "asset_building"
     assert row["review_status"] == "pending"
     scores = row["match_scores"]
     assert scores["anchor"] == "id_document_crop"
@@ -315,11 +315,11 @@ def test_simple_auth_partial_detection_still_reviews(enrollment_client_factory, 
         id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
     )
     response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
     row = _latest_row(store, enrollment_id)
-    assert row["status"] == "review_pending"
+    assert row["status"] == "asset_building"
     assert row["review_status"] == "pending"
-    assert store.jobs == []
+    assert len(store.jobs) == 1
     scores = row["match_scores"]
     assert scores["skipped"] == ["side"]
     assert "side" not in scores["scores"]
@@ -374,7 +374,7 @@ def test_simple_auth_id_document_buffer_wiped_on_success(
         id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
     )
     response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
     assert "id_document_buffer_id" in captured
     assert captured["id_document_buffer_id"] in wiped_ids
 
@@ -569,11 +569,11 @@ def test_review_all_mode_parks_mid_after_passing_match(
         f"/v1/facemarket/enrollments/{enrollment_id}/complete",
         json={"idPhotoHex": PORTRAIT_HEX},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
     row = _latest_row(store, enrollment_id)
-    assert row["status"] == "review_pending"
+    assert row["status"] == "asset_building"
     assert row["review_status"] == "pending"
-    assert store.jobs == []
+    assert len(store.jobs) == 1
 
 
 # ── review_required() 단위 테스트 ────────────────────────────────────────────────────
@@ -626,6 +626,7 @@ class AdminStore:
         self.applications: dict[str, dict] = {}
         self.photos: list[dict] = []
         self.models: list[dict] = []
+        self.licenses: list[dict] = []
         # 얼굴 LoRA 장부 — 전체 사진 열람 범위가 "켜진 행이 있는가" 로도 닫힌다.
         self.loras: list[dict] = []
         self.identity_verifications: list[dict] = []
@@ -767,6 +768,24 @@ class AdminFakeCursor:
         self._many = []
         store = self.store
 
+        if query.startswith("select review_status") and "from fm_biometric_enrollments" in query:
+            row = next((r for r in store.enrollments if r["id"] == params[0] and r.get("decision") == "passed"), None)
+            self.result = dict(row) if row else None
+            if self.result is not None:
+                self.result["pending_license"] = any(
+                    license.get("enrollment_id") == row["id"] and license["status"] == "pending"
+                    and license.get("vc_id") is None for license in store.licenses
+                )
+            return
+        if query.startswith("select status from fm_biometric_enrollments"):
+            row = next((r for r in store.enrollments if r["id"] == params[0]), None)
+            self.result = {"status": row["status"]} if row else None
+            return
+        if query.startswith("delete from fm_licenses where enrollment_id"):
+            store.licenses[:] = [r for r in store.licenses if not (
+                r.get("enrollment_id") == params[0] and r["status"] == "pending" and r.get("vc_id") is None)]
+            return
+
         # --- admin_guard.require_admin_identity → repo.is_admin ---
         if query.startswith("select role from profiles where user_id"):
             (user_id,) = params
@@ -783,6 +802,8 @@ class AdminFakeCursor:
             # 승인 버튼이 409 를 내는 유령 항목이 된다(최종리뷰 I5).
             if "and status = 'review_pending'" in query:
                 rows = [r for r in rows if r["status"] == "review_pending"]
+            if "and status in" in query:
+                rows = [r for r in rows if r["status"] in ("review_pending", "asset_building", "license_pending", "vc_pending")]
             rows.sort(key=lambda r: r["created_at"], reverse=True)
             self._many = [
                 {
@@ -914,11 +935,14 @@ class AdminFakeCursor:
         if "set review_status = 'approved'" in query:
             reviewed_by, enrollment_id = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
-            if row and row["status"] == "review_pending" and row.get("review_status") == "pending":
+            expected = "vc_pending" if "status = 'vc_pending'" in query else "review_pending"
+            reshoot_blocked = ("photo_review_status is distinct from 'reshoot_requested'" in query
+                               and row and row.get("photo_review_status") == "reshoot_requested")
+            if row and row["status"] == expected and row.get("review_status") == "pending" and not reshoot_blocked:
                 now = datetime.now(timezone.utc)
                 row.update(
                     review_status="approved", reviewed_by=reviewed_by,
-                    reviewed_at=now, status="processing",
+                    reviewed_at=now, status="vc_pending" if expected == "vc_pending" else "processing",
                     # expires_at = greatest(expires_at, now() + interval '1 hour')
                     expires_at=max(row["expires_at"], now + timedelta(hours=1)),
                 )
@@ -931,11 +955,11 @@ class AdminFakeCursor:
         if "set review_status = 'rejected'" in query:
             reviewed_by, review_reason, enrollment_id = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
-            if row and row["status"] == "review_pending" and row.get("review_status") == "pending":
+            if row and row["status"] in ("review_pending", "asset_building", "license_pending", "vc_pending") and row.get("review_status") == "pending":
                 row.update(
                     review_status="rejected", reviewed_by=reviewed_by,
                     reviewed_at=datetime.now(timezone.utc), review_reason=review_reason,
-                    status="failed", reason="review_rejected",
+                    status="failed", decision="failed", reason="review_rejected",
                     completed_at=datetime.now(timezone.utc),
                 )
                 self.result = {"id": enrollment_id}
@@ -2026,3 +2050,126 @@ def test_the_photo_review_queue_rejects_an_unknown_filter(admin_client):
     response = client.get("/v1/facemarket/admin/enrollments/photo-review?status=everything")
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_review_filter"
+
+
+def test_new_review_approval_releases_vc_without_rebinding_or_email(admin_client, monkeypatch):
+    from app import facemarket
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status="vc_pending", review_status="pending", model_id="model-1",
+                               id_document_r2_key="id-doc")
+    wakes = []
+    monkeypatch.setattr(facemarket, "_wake_opendid", lambda app: wakes.append(app))
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/approve")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "vc_pending"
+    assert response.json()["assetBuildError"] is None
+    assert store.latest_enrollment["review_status"] == "approved"
+    assert store.jobs == [] and store.emails == []
+    assert store.latest_enrollment["id_document_r2_key"] is None
+    assert len(wakes) == 1
+    audit = next(a for a in store.audit if a["action"] == "enrollment_review_approve")
+    assert audit["before"]["status"] == "vc_pending"
+    assert audit["after"]["status"] == "vc_pending"
+
+
+def test_identity_approval_waits_for_requested_retakes_and_keeps_id_document(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status="vc_pending", review_status="pending", model_id="model-1",
+                               id_document_r2_key="id-doc")
+    store.latest_enrollment.update(photo_review_status="reshoot_requested",
+                                   reshoot_slots=[{"slot": "sh_front", "reason": "blur"}])
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/approve")
+    assert response.status_code == 409
+    assert store.latest_enrollment["review_status"] == "pending"
+    assert store.latest_enrollment["id_document_r2_key"] == "id-doc"
+
+
+def test_pending_vc_retake_cannot_replace_already_approved_identity_evidence(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="vc_pending", review_status="approved")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/reshoot",
+                           json={"slots": [{"slot": "sh_front", "reason": "blur"}]})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "vc_issuance_in_progress"
+    assert store.latest_enrollment["reshoot_slots"] is None
+
+
+def test_another_retake_cannot_race_with_pending_license_asset_rebuild(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="asset_building", review_status="pending")
+    store.licenses.append({"enrollment_id": eid, "status": "pending", "vc_id": None})
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/reshoot",
+                           json={"slots": [{"slot": "sh_front", "reason": "blur"}]})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "photo_rebuild_in_progress"
+    assert store.latest_enrollment["reshoot_slots"] is None
+
+
+def test_photo_approval_cannot_clear_outstanding_retake_request(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="vc_pending", review_status="approved",
+                                   photo_review_status="reshoot_requested",
+                                   reshoot_slots=[{"slot": "sh_front", "reason": "blur"}])
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/approve")
+    assert response.status_code == 409
+    assert store.latest_enrollment["photo_review_status"] == "reshoot_requested"
+
+
+@pytest.mark.parametrize("status", ["asset_building", "license_pending"])
+def test_cannot_approve_identity_before_conditions(admin_client, status):
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status=status, review_status="pending")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/approve")
+    assert response.status_code == 409
+    assert "사용 조건" in response.text
+    assert store.latest_enrollment["review_status"] == "pending"
+
+
+@pytest.mark.parametrize("status", ["asset_building", "license_pending", "vc_pending"])
+def test_pending_queue_includes_bound_enrollments(admin_client, status):
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status=status, review_status="pending")
+    response = client.get("/v1/facemarket/admin/enrollments?review=pending")
+    assert [row["id"] for row in response.json()] == [eid]
+
+
+@pytest.mark.parametrize("review_status,expected", [("pending", 409), ("rejected", 409), (None, 200), ("approved", 200)])
+def test_photo_approval_requires_identity_clearance(admin_client, review_status, expected):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment["review_status"] = review_status
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/approve")
+    assert response.status_code == expected, response.text
+    if expected == 409:
+        assert response.json()["error"]["code"] == "identity_review_pending"
+        assert store.latest_enrollment["photo_review_status"] == "pending"
+        assert store.audit == []
+    reshoot = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/reshoot",
+                         json={"slots": [{"slot": "sh_34", "reason": "다시 찍어 주세요"}]})
+    assert reshoot.status_code == 200, reshoot.text
+
+
+@pytest.mark.parametrize("status", ["review_pending", "asset_building", "license_pending", "vc_pending"])
+def test_review_reject_deletes_only_unissued_pending_licenses_before_cleanup(admin_client, monkeypatch, status):
+    from app import facemarket_admin_review as review
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status=status, review_status="pending", decision="passed", id_document_r2_key="id-doc")
+    store.licenses = [
+        {"id": "pending", "enrollment_id": eid, "status": "pending", "vc_id": None},
+        {"id": "issued", "enrollment_id": eid, "status": "active", "vc_id": "vc-old"},
+        {"id": "foreign", "enrollment_id": "other", "status": "pending", "vc_id": None},
+    ]
+    cleaned = []
+    async def cleanup(app, *, enrollment_id):
+        assert [r["id"] for r in store.licenses] == ["issued", "foreign"]
+        cleaned.append(enrollment_id)
+    monkeypatch.setattr(review, "cleanup_terminal_enrollment", cleanup)
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/reject", json={"reason": "신원을 확인할 수 없어요"})
+    assert response.status_code == 200, response.text
+    assert store.latest_enrollment["decision"] == "failed"
+    assert store.latest_enrollment["review_status"] == "rejected"
+    assert store.latest_enrollment["id_document_r2_key"] is None
+    assert cleaned == [eid]

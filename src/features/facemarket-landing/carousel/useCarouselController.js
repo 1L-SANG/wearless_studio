@@ -342,6 +342,9 @@ export function useCarouselController(itemCount, initialIndex = 0) {
     target,
     activeIndex,
     isDragging,
+    /* 지금 자동 회전 중인가. 위 자동 회전 이펙트와 같은 게이트다. 스크린리더 위치 안내가
+       자동 넘김마다 울리지 않게 하는 데 쓴다. */
+    autoplaying: autoplayOn && !focusHeld && inView && !reducedMotion && itemCount > 1,
     bind: {
       onPointerDown,
       onPointerMove,

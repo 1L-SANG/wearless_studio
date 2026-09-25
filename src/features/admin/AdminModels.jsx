@@ -171,7 +171,7 @@ function TestCuts({ modelId, onChanged }) {
   };
   const sendReason = (code) => {
     if (!sendable) return '이미 공개된 모델이에요. 지금은 다시 보낼 수 없어요.';
-    if (!state.readyToSend) return '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.';
+    if (!state.readyToSend) return '신원 확인과 증서 발급이 끝나야 보낼 수 있어요.';
     if (!groupReady(code)) return '이 보정의 확대샷 2장과 전신샷 2장이 다 있어야 보낼 수 있어요.';
     return undefined;
   };

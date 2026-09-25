@@ -378,10 +378,21 @@ def test_sponsorship_records_separate_versioned_grants_and_withdrawals(sponsorsh
     for p in grants:
         assert p[0] == OWNER and p[1] == MODEL_ID and p[2] == OWNER
         assert p[4] == 'granted'
-        assert p[5] == '2026-09-sponsorship-v1'
+        assert p[5] == '2026-09-sponsorship-v2'
         assert len(p[6]) == 64
         assert 'model.name' not in p[9]
     assert client.patch(url, json={'sponsorshipEnabled': False}).status_code == 200
     events = [p for q, p in store['queries'] if q.startswith('insert into fm_sponsorship_consent_events')]
     assert len(events) == 4
     assert all(p[4] == 'withdrawn' for p in events[2:])
+
+
+def test_sponsorship_participation_notice_uses_owner_copy():
+    from app.facemarket_sponsorship import SPONSORSHIP_NOTICES
+    notice = SPONSORSHIP_NOTICES["sponsorship_participation"]
+    assert notice["notice"] == "켜 두면 셀러에게 협찬 요청까지 받을 수 있어요."
+    assert notice["rules"] == [
+        "옷을 받은 뒤 기본적으로 7일 이내, SNS 피드에 착용컷을 올리면 돼요.",
+        "게시물은 90일간만 유지하면 돼요.",
+    ]
+    assert notice["scope"] == "협찬 옷도 위에서 정한 허용 품목 안에서만 와요."

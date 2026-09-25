@@ -141,7 +141,9 @@ export async function modelComponentHarness({
         `;
         if (id === '\0fm-test-router') return `
           export const Link = 'Link';
-          export const useNavigate = () => ${access}.navigate;
+          // 스텁이 없을 때도 같은 함수를 돌려줘 useEffect deps가 렌더마다 바뀌지 않게 한다.
+          const noopNavigate = () => {};
+          export const useNavigate = () => ${access}.navigate || noopNavigate;
           export const useLocation = () => ${access}.location || ({ state: null });
           export const useParams = () => ({ licenseId: 'l1' });
           export const useSearchParams = () => [new URLSearchParams(), () => {}];

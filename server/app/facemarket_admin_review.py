@@ -1,22 +1,9 @@
-"""FaceMarket 관리자 육안 심사 API — 큐 · 카드 · 이미지 열람 · 승인 · 거절.
+"""FaceMarket 관리자 신원 확인과 학습 전 사진 확인 API.
 
-간편인증(simple_auth) 경로의 앵커는 사용자가 손에 들고 촬영한 신분증이다 — 위조 가능한
-증거라 기계 점수(match_scores)가 어느 방향으로도 신뢰 판정을 내리지 못한다(위조된 카드도
-진짜 얼굴을 담고, 반사광 하나로 진짜 카드의 점수가 떨어진다). 그래서 Task7 은 점수를
-"정보"로만 남기고 `review_pending` 에서 멈춘다. 이 API 가 그 정보를 사람에게 보여주고
-결정을 받는 유일한 창구다 — 이게 없으면 등록이 `review_pending` 에 영원히 쌓인다.
-
-동시에 이 API 는 등록자의 신분증 원본을 볼 수 있는 **유일한** 자리다. 그래서 라우트
-5개 전부 `admin_guard.require_admin`(기기 게이트 포함)을 맨 앞에 두고, 이미지는
-`Cache-Control: private, no-store`로 어떤 중간 캐시에도 앉지 않게 하며, 승인·거절
-직후 신분증 촬영본을 즉시 파기한다(더 볼 사람이 없어진 순간이 곧 보관 이유가 사라지는
-순간이다).
-
-승인 뒤 자산빌드 재개: `bind_model_and_enqueue_asset_build`(facemarket_enrollment.py)는
-정상 완료 경로(`process_enrollment_completion`)의 모델 바인딩 tail 을 그대로 추출한
-공유 함수다. 심사 승인은 그 함수를 재사용해 모델을 만들고(또는 재사용) `fm_model_asset_build`
-잡을 큐잉한다 — 매칭을 다시 하지 않는다(신분증은 이미 파기됐고, Task7 이 advisory 로
-계산해 저장해 둔 match_scores 를 그대로 감사 기록에 남긴다).
+새 등록은 사진 완료 뒤 내부 자산을 준비하고 사용 조건을 받으며, 사람의 신원 승인은
+VC 발급과 학습 내보내기를 열어요. 배포 전에 review_pending에 들어온 등록만 승인 뒤
+모델 바인딩과 자산 빌드를 재개해요. 신분증 열람에는 관리자 권한과 감사 기록이 필요하고,
+승인 또는 거절 직후 신분증 촬영본을 파기해요.
 """
 
 import asyncio
@@ -38,6 +25,7 @@ from .facemarket_enrollment import (
     _reject_cutover_closed,
     _wake_dispatcher,
     bind_model_and_enqueue_asset_build,
+    cleanup_terminal_enrollment,
     notify_enrollment_decision,
     required_slots_for_consent,
 )
@@ -337,13 +325,10 @@ async def list_review_queue(
         await _require_admin(conn, user_id, request)
         if review not in REVIEW_STATUSES:
             raise _err("invalid_review_filter", "심사 상태 필터가 올바르지 않습니다.")
-        # `review_status` 만 보면 **취소·만료된 행이 대기 큐에 영원히 남는다**:
-        # cancel_enrollment 는 review_pending 을 받아 주면서 review_status 를 안 지웠고
-        # (이제는 지운다), 그 행에 승인을 누르면 상태 가드 UPDATE 가 0-row → 409 다.
-        # 지금은 두 겹으로 막는다 — 취소 시 review_status 를 null 로 만들고, 대기 큐는
-        # status='review_pending' 인 행만 센다(최종리뷰 I5). 승인·거절 필터는 결정 이후의
-        # 상태(processing/asset_building/… , failed)가 다양하므로 상태를 걸지 않는다.
-        pending_only = " and status = 'review_pending'" if review == "pending" else ""
+        pending_only = (
+            " and status in ('review_pending', 'asset_building', 'license_pending', 'vc_pending')"
+            if review == "pending" else ""
+        )
         async with conn.cursor() as cur:
             # created_at desc — 마이그레이션의 fm_biometric_review_queue 부분 인덱스와 정렬을 맞춘다.
             await cur.execute(
@@ -671,6 +656,21 @@ async def approve_enrollment_photos(
         await _require_admin(conn, user_id, request)
         enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
+            from .facemarket import identity_cleared
+
+            await cur.execute(
+                "select review_status, status, photo_review_status from fm_biometric_enrollments "
+                "where id = %s and decision = 'passed' for update",
+                (enrollment_id,),
+            )
+            enrollment = await cur.fetchone()
+            if enrollment is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if not identity_cleared(enrollment["review_status"]):
+                raise _err("identity_review_pending", "신원 확인을 먼저 마쳐 주세요.", status=409)
+            if (enrollment["status"] != "passed"
+                    and enrollment.get("photo_review_status") == "reshoot_requested"):
+                raise _err("photo_reshoot_pending", "요청한 사진을 모두 다시 받은 뒤 확인해 주세요.", status=409)
             await cur.execute(
                 """
                 update fm_biometric_enrollments
@@ -718,6 +718,21 @@ async def request_enrollment_reshoot(
         enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
             await cur.execute(
+                "select review_status, status, exists (select 1 from fm_licenses l "
+                "where l.enrollment_id = fm_biometric_enrollments.id "
+                "and l.status = 'pending' and l.vc_id is null) as pending_license "
+                "from fm_biometric_enrollments "
+                "where id = %s and decision = 'passed' for update",
+                (enrollment_id,),
+            )
+            enrollment = await cur.fetchone()
+            if enrollment is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if enrollment["status"] == "vc_pending" and enrollment["review_status"] != "pending":
+                raise _err("vc_issuance_in_progress", "증서 발급이 끝난 뒤 재촬영을 요청해 주세요.", status=409)
+            if enrollment["status"] == "asset_building" and enrollment["pending_license"]:
+                raise _err("photo_rebuild_in_progress", "새 사진 준비가 끝난 뒤 재촬영을 요청해 주세요.", status=409)
+            await cur.execute(
                 """
                 update fm_biometric_enrollments
                 set photo_review_status = 'reshoot_requested', photo_reviewed_by = %s,
@@ -752,27 +767,36 @@ async def approve_enrollment(
         await _require_admin(conn, user_id, request)
         enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
-            # 상태 가드 UPDATE — 다른 관리자가 이미 처리했으면 0-row(레이스에서 진 쪽은 409,
-            # 둘 다 "이겼다"고 믿는 일이 없다).
             await cur.execute(
-                """
-                update fm_biometric_enrollments
-                set review_status = 'approved', reviewed_by = %s, reviewed_at = now(),
-                    status = 'processing',
-                    -- expires_at 은 생성 + 24h 다. 사람 심사는 그보다 늦게 끝나는 게 정상이라
-                    -- 승인하는 순간 이미 만료 시각을 지났고, 'processing' 은 만료 스윕의
-                    -- 대상 상태다 — 손대지 않으면 승인된 등록이 ≤60초 안에 expired 로
-                    -- 뒤집히고 격리 사진까지 지워진다(최종리뷰 I4). 자산 빌드가 붙잡을
-                    -- 시간을 준다.
-                    expires_at = greatest(expires_at, now() + interval '1 hour')
-                where id = %s and status = 'review_pending' and review_status = 'pending'
-                returning id::text as id
-                """,
+                """update fm_biometric_enrollments
+                   set review_status = 'approved', reviewed_by = %s, reviewed_at = now()
+                   where id = %s and status = 'vc_pending' and review_status = 'pending'
+                     and photo_review_status is distinct from 'reshoot_requested'
+                   returning id::text as id""",
                 (user_id, enrollment_id),
             )
             updated = await cur.fetchone()
+            new_path = updated is not None
+            if not new_path:
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollments
+                    set review_status = 'approved', reviewed_by = %s, reviewed_at = now(),
+                        status = 'processing',
+                        -- expires_at 은 생성 + 24h 다. 사람 심사는 그보다 늦게 끝나는 게 정상이라
+                        -- 승인하는 순간 이미 만료 시각을 지났고, 'processing' 은 만료 스윕의
+                        -- 대상 상태다 — 손대지 않으면 승인된 등록이 ≤60초 안에 expired 로
+                        -- 뒤집히고 격리 사진까지 지워진다(최종리뷰 I4). 자산 빌드가 붙잡을
+                        -- 시간을 준다.
+                        expires_at = greatest(expires_at, now() + interval '1 hour')
+                    where id = %s and status = 'review_pending' and review_status = 'pending'
+                    returning id::text as id
+                    """,
+                    (user_id, enrollment_id),
+                )
+                updated = await cur.fetchone()
         if updated is None:
-            raise _err("invalid_review_state", "심사 대기 상태가 아닙니다.", status=409)
+            raise _err("invalid_review_state", "심사 대기 상태와 사용 조건 제출 여부를 확인해 주세요. 등록자가 사용 조건을 마친 뒤 승인할 수 있어요.", status=409)
         await conn.commit()
 
     # 커밋 뒤: 파기(best-effort) → 감사(필수) → 자산빌드 재개(best-effort) 순서.
@@ -784,10 +808,18 @@ async def approve_enrollment(
             action="enrollment_review_approve",
             target_type="enrollment",
             target_id=enrollment_id,
-            before={"reviewStatus": "pending", "status": "review_pending"},
-            after={"reviewStatus": "approved", "status": "processing"},
+            before={"reviewStatus": "pending", "status": "vc_pending" if new_path else "review_pending"},
+            after={"reviewStatus": "approved", "status": "vc_pending" if new_path else "processing"},
         )
         await conn.commit()
+    if new_path:
+        from .facemarket import _wake_opendid
+
+        _wake_opendid(request.app)
+        return JSONResponse(content=AdminReviewDecisionResult(
+            id=enrollment_id, review_status="approved", status="vc_pending",
+            asset_build_error=None,
+        ).model_dump(by_alias=True))
     # 심사 대기 화면이 "결과는 메일로 알려 드려요" 라고 약속한다 — 그 화면은 폴링하지
     # 않으므로 이게 유일한 통지 경로다(최종리뷰 I2). best-effort: 결정은 이미 커밋됐다.
     await notify_enrollment_decision(
@@ -824,17 +856,29 @@ async def reject_enrollment(
             raise _err("reason_too_long", "거절 사유가 너무 깁니다.")
         async with conn.cursor() as cur:
             await cur.execute(
+                "select status from fm_biometric_enrollments where id = %s for update",
+                (enrollment_id,),
+            )
+            previous = await cur.fetchone()
+            await cur.execute(
                 """
                 update fm_biometric_enrollments
                 set review_status = 'rejected', reviewed_by = %s, reviewed_at = now(),
-                    review_reason = %s, status = 'failed', reason = 'review_rejected',
+                    review_reason = %s, status = 'failed', decision = 'failed', reason = 'review_rejected',
                     completed_at = now()
-                where id = %s and status = 'review_pending' and review_status = 'pending'
+                where id = %s and review_status = 'pending'
+                  and status in ('review_pending', 'asset_building', 'license_pending', 'vc_pending')
                 returning id::text as id
                 """,
                 (user_id, reason, enrollment_id),
             )
             updated = await cur.fetchone()
+            if updated is not None:
+                await cur.execute(
+                    "delete from fm_licenses where enrollment_id = %s "
+                    "and status = 'pending' and vc_id is null",
+                    (enrollment_id,),
+                )
         if updated is None:
             raise _err("invalid_review_state", "심사 대기 상태가 아닙니다.", status=409)
         await conn.commit()
@@ -847,7 +891,7 @@ async def reject_enrollment(
             action="enrollment_review_reject",
             target_type="enrollment",
             target_id=enrollment_id,
-            before={"reviewStatus": "pending", "status": "review_pending"},
+            before={"reviewStatus": "pending", "status": previous["status"]},
             after={"reviewStatus": "rejected", "status": "failed"},
             note=reason,
         )
@@ -859,6 +903,10 @@ async def reject_enrollment(
         email_type="enrollment_review_rejected",
         reject_reason=reason,
     )
+    try:
+        await cleanup_terminal_enrollment(request.app, enrollment_id=enrollment_id)
+    except Exception:
+        logger.warning("rejected enrollment cleanup failed enrollment=%s", enrollment_id, exc_info=True)
     return JSONResponse(
         content=AdminReviewDecisionResult(
             id=enrollment_id, review_status="rejected", status="failed"
@@ -879,7 +927,7 @@ REVIEW_RESUME_RETRY_AFTER = "2 minutes"
 
 
 async def sweep_stalled_review_approvals(app, *, limit: int = 20) -> int:
-    """승인됐는데 자산빌드가 안 걸린 등록을 다시 집어 bind/enqueue 를 시도한다.
+    """옛 review_pending 승인 뒤 자산 빌드가 시작되지 않은 등록을 다시 처리해요.
 
     반환값은 이번 tick 에 성공적으로 재개한 건수. 실패는 다음 tick 이 다시 본다 —
     영구 실패(identity_replay 등)는 매번 WARNING 을 남기므로 알람이 걸린다.

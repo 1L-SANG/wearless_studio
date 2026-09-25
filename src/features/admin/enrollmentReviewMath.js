@@ -7,7 +7,7 @@
    같이 낸다. 배지(badge/tone)는 참고 정보일 뿐이다: 위조 신분증도 진짜 얼굴이 찍혀
    있어 점수가 높게 나오는 게 정상이고, 진짜 신분증도 코팅 반사광 한 번에 점수가 낮게
    나올 수 있다 — 그래서 이 결과로 승인/거절 버튼을 절대 막지 않는다(AdminEnrollmentReview.jsx
-   의 마스킹 체크박스만 승인을 막는다).
+   의 동일인 확인 체크와 등록 단계로 승인을 결정한다).
 
    score == null 은 "점수가 낮다"가 아니라 "그 각도에서 얼굴을 아예 못 찾았다"
    (match_scores.skipped)는 뜻이라 danger 와 다른 muted 톤으로 분리한다 — 둘을 같은
@@ -48,4 +48,18 @@ export function imageFailureLabel(status, kind) {
   if (status === 403) return '권한 없음 (기기 미승인)';
   if (status === 404) return kind === 'id_document' ? '볼 수 없음 (파기됨)' : '볼 수 없음 (없음)';
   return '불러오지 못했어요';
+}
+
+
+export function reviewActions(card) {
+  const identityCleared = card.reviewStatus == null || card.reviewStatus === 'approved';
+  const canApproveIdentity = card.reviewStatus === 'pending'
+    && ['review_pending', 'vc_pending'].includes(card.status);
+  return {
+    identityCleared,
+    canApproveIdentity,
+    approvalLabel: card.status === 'review_pending' ? '승인' : '승인하고 증서 발급',
+    approvalHint: ['asset_building', 'license_pending'].includes(card.status)
+      ? '등록자가 사용 조건을 마치면 승인할 수 있어요.' : '',
+  };
 }

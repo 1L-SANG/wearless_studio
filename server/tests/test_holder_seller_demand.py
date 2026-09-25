@@ -538,3 +538,9 @@ def test_a_stale_seller_recovers_on_the_next_try(monkeypatch):
     # ③ 이제 수요가 창 안이라 reconciler 가 켠 채로 둔다 — 재시도가 통한다
     fresh, _ = _demand(last_activity=NOW - timedelta(seconds=5))
     assert sam_autoscale.want_running(fresh, idle_minutes=30, now=NOW) is True
+
+
+def test_identity_pending_enrollment_is_not_holder_demand():
+    _, conn = _demand()
+    sql = " ".join(conn.cur.sql)
+    assert sql.count(facemarket.IDENTITY_CLEARED_SQL) == 2

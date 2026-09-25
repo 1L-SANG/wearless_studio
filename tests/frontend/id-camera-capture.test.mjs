@@ -28,33 +28,6 @@ test('카메라를 못 쓰면 부모에게 알린다 (폴백 경로)', () => {
   assert.match(code, /onUnavailable/, '권한 거부·미지원 시 파일 선택으로 내려갈 수 있어야 한다');
 });
 
-test('촬영 결과는 마스킹을 거친다 — 원본 프레임을 넘기지 않는다', () => {
-  // JPEG 인코딩(canvas.toBlob('image/jpeg', …))은 burnGuideMask(idDocumentMasking.js,
-  // 이미 검증됨) 안에 있다. 이 컴포넌트가 증명해야 할 건 "그 함수에 위임한다"는 것과
-  // "원본 스트림/비디오/프레임을 onCaptured 로 그대로 흘려보내지 않는다"는 것뿐이다.
-  assert.match(code, /burnGuideMask\(/, '가이드 기준 마스킹(burnGuideMask)에 위임해야 한다');
-  assert.ok(!/onCaptured\w*(?:\.current)?\??\.?\(\s*(?:stream|video|frame)\b/.test(code),
-    '원본 스트림/비디오 엘리먼트를 그대로 넘기면 안 된다');
-});
-
-test('onCaptured 는 마스킹된 blob 하나만 받는다 — {blob,width,height} 객체가 아니다', () => {
-  // 이전 계약(브리핑 원안)은 onCaptured({ blob, width, height }) 였다. 정정 1은
-  // onCaptured(blob) 하나로 좁혔다 — 마스킹 전 blob 이 부모 state 를 한 틱이라도
-  // 거치는 걸 막으려는 것이므로, 인자가 다시 객체로 넓어지면 그 취지가 깨진다.
-  // burnGuideMask(...).then(callbackParam => { ... onCaptured(무언가) ... }) 형태에서
-  // callbackParam 과 onCaptured 에 실제로 넘어가는 인자가 같은 식별자인지 비교한다.
-  const start = code.indexOf('burnGuideMask(');
-  assert.ok(start >= 0, 'burnGuideMask 호출을 찾을 수 없다');
-  const window_ = code.slice(start, start + 600);
-  const thenMatch = window_.match(/\.then\(\s*\(?\s*(\w+)\s*\)?\s*=>/);
-  assert.ok(thenMatch, 'burnGuideMask(...).then(blob => …) 콜백을 찾을 수 없다');
-  const callMatch = window_.match(/onCaptured\w*(?:\.current)?\??\.?\(([^)]*)\)/);
-  assert.ok(callMatch, 'onCaptured 호출을 찾을 수 없다');
-  const arg = callMatch[1].trim();
-  assert.equal(arg, thenMatch[1],
-    `onCaptured 는 마스킹된 blob 하나만 받아야 한다 (받은 인자: "${arg}")`);
-});
-
 test('스트림을 반드시 정리한다', () => {
   assert.match(code, /getTracks\(\)[\s\S]{0,80}stop\(\)/,
     '언마운트에서 트랙을 멈추지 않으면 카메라 표시등이 계속 켜져 있다');
@@ -80,22 +53,18 @@ test('가이드 오버레이는 비디오 전용 래퍼 안에만 있다 — 다
   assert.ok(!/showManualHint/.test(wrapper), '15초 힌트 문단은 래퍼 밖에 있어야 한다');
 });
 
-test('paused 는 자동 판정 루프만 멈추고 수동 셔터는 막지 않는다(최종리뷰 I2b)', () => {
-  // 부모(IdDocumentStep)가 업로드 실패 뒤 세우는 일시정지 신호 — ~10fps 판정 루프
-  // 안에서 확인해야 한다. 자동은 편의이지 관문이 아니므로 수동 셔터의 disabled 는
-  // 여전히 busy 로만 결정돼야 한다(paused 로 잠기면 안 된다).
-  const intervalStart = code.indexOf('setInterval(');
-  assert.ok(intervalStart >= 0, '판정 루프(setInterval)를 찾을 수 없다');
-  const guardWindow = code.slice(intervalStart, intervalStart + 400);
-  assert.match(
-    guardWindow,
-    /pausedRef\.current/,
-    '판정 루프 초입에서 pausedRef 를 확인해야 업로드 실패 뒤 자동 촬영이 멈춘다',
-  );
-  assert.ok(
-    !/disabled=\{[^}]*paused/.test(code),
-    '수동 셔터가 paused 로도 잠기면 "자동은 편의이지 관문이 아니다"라는 이 파일의 원칙이 깨진다',
-  );
+test('R7 capture is manual only and the shutter is accessible', () => {
+  assert.doesNotMatch(code, /idCardDetector|setInterval|paused|showManualHint|sampleRef/);
+  assert.match(code, /aria-label="촬영하기"/);
+  assert.match(code, /주민등록증을 네모 안에 맞추고 촬영해 주세요./);
+  assert.doesNotMatch(code, /style=\{/);
+});
+
+test('촬영과 앨범 맞추기 화면 모두 다음 단계의 필수 가림을 안내한다', () => {
+  assert.match(code, /촬영 후 주민등록번호 뒤 7자리를 직접 가려요./);
+  const fit = readFileSync(
+    fileURLToPath(new URL('../../src/features/model/IdGalleryFit.jsx', import.meta.url)), 'utf8');
+  assert.match(fit, /다음 화면에서 주민등록번호 뒤 7자리를 직접 가려요./);
 });
 
 test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시 계산한다(최종리뷰 I3)', () => {
@@ -116,4 +85,42 @@ test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시
     /removeEventListener\('resize'/,
     'resize 리스너도 같은 클린업에서 정리해야 한다 — 안 하면 언마운트 뒤에도 setFrameSize 가 불릴 수 있다',
   );
+});
+
+import { modelComponentHarness, findTree, eventually } from './helpers/facemarketHarness.mjs';
+
+test('수동 셔터는 프레임을 한 번만 인코딩해 로컬 가림 단계에 넘겨요', async () => {
+  const h = await modelComponentHarness({ entry: '/src/features/model/IdCameraCapture.jsx', exportName: 'default', initialStates: [true, { width: 1920, height: 1080 }, false], api: {} });
+  const captured = [], calls = []; let encode;
+  const blob = new Blob(['masked'], { type: 'image/jpeg' });
+  try {
+    const tree = h.render({ onCaptured: value => captured.push(value), busy: false });
+    const video = { videoWidth: 1920, videoHeight: 1080 };
+    h.runtime.refs[0].current = video;
+    h.runtime.refs[1].current = { getContext: () => ({ drawImage: (...args) => calls.push(['draw', ...args]), fillRect: (...args) => calls.push(['mask', ...args]) }), toBlob: done => { encode = done; } };
+    const shutter = findTree(tree, n => n.props['aria-label'] === '촬영하기');
+    assert.equal(shutter.props.disabled, false);
+    assert.deepEqual(captured, []);
+    shutter.props.onClick(); shutter.props.onClick();
+    assert.deepEqual(calls.map(c => c[0]), ['draw']);
+    assert.deepEqual(calls[0], ['draw', video, 224, 76, 1473, 929, 0, 0, 1473, 929]);
+    encode(blob);
+    await eventually(() => captured.length === 1, '완성된 사진을 전달해요');
+    assert.equal(captured[0], blob);
+  } finally { await h.close(); }
+});
+
+test('카메라 권한 응답이 화면을 닫은 뒤 도착하면 스트림을 바로 멈춰요', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let grant, stopped = 0;
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: { getUserMedia: () => new Promise(resolve => { grant = resolve; }) } } });
+  const h = await modelComponentHarness({ entry: '/src/features/model/IdCameraCapture.jsx', exportName: 'default', initialStates: [], api: {} });
+  try {
+    h.render();
+    const cleanup = h.runtime.effects[3]();
+    cleanup();
+    grant({ getTracks: () => [{ stop: () => { stopped++; } }] });
+    await eventually(() => stopped === 1, '늦게 도착한 스트림을 정리해요');
+    assert.equal(h.runtime.states[0], false);
+  } finally { await h.close(); if (previous) Object.defineProperty(globalThis, 'navigator', previous); else delete globalThis.navigator; }
 });

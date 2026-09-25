@@ -1,6 +1,7 @@
 """Registration recovery uses real handlers with in-memory DB and storage doubles."""
 
 import importlib.util
+import asyncio
 from dataclasses import replace
 from datetime import date
 
@@ -183,5 +184,59 @@ def test_revalidation_terminal_cleanup_deletes_unchanged_approved_photos(
     assert response.status_code == 200, response.text
     assert enrollment_store.photos == []
     assert enrollment_store.cleanup == []
+    assert fake_r2.objects == {}
+    assert enrollment_store.enrollments[0]["raw_deletion_evidence"]["quarantineDeleted"] is True
+
+
+def test_failed_pending_license_rebuild_allows_approved_photo_cleanup(
+    liveness_off_client, auth, enrollment_store, fake_r2, monkeypatch,
+):
+    from app.workers.fm_model_asset_job import run_fm_model_asset_job
+    from test_fm_model_asset_job import build_worker_fixture, _job
+
+    eid = prepare_license_pending(liveness_off_client, auth, enrollment_store, fake_r2)
+    assets = [{"view": view, "r2_key": f"private/{view}.png"}
+              for view in ("face_front", "grid_sedcard")]
+    for asset in assets:
+        fake_r2.objects[asset["r2_key"]] = (b"derived-photo", "image/png")
+    execute = FakeCursor.execute
+
+    async def execute_with_assets(cur, sql, params=None):
+        query = " ".join(sql.split()).lower()
+        if query.startswith("select view, r2_key from fm_model_assets where source_enrollment_id"):
+            assert params == (eid,)
+            cur.many = list(assets)
+        elif query.startswith("delete from fm_model_assets where source_enrollment_id"):
+            assert params == (eid,)
+            assets.clear()
+        else:
+            await execute(cur, sql, params)
+
+    monkeypatch.setattr(FakeCursor, "execute", execute_with_assets)
+    enrollment_store.enrollments[0].update(status="asset_building", photo_revision=1)
+    enrollment_store.licenses.append({"enrollment_id": eid, "status": "pending", "vc_id": None})
+    next(photo for photo in enrollment_store.photos if photo["angle"] == "sh_front")["storage_state"] = "quarantine"
+    worker_app, _, worker_r2, worker_store = build_worker_fixture()
+    # Both DB adapters share the persisted license rows. Transfer the worker's
+    # resulting enrollment status to the cleanup adapter after the commit.
+    worker_store.licenses = enrollment_store.licenses
+    for photo in worker_store.enrollment_rows:
+        photo.update(photo_revision=1, storage_state="approved")
+
+    def fail_copy(*_args):
+        raise RuntimeError("storage unavailable")
+
+    worker_r2.copy = fail_copy
+    asyncio.run(run_fm_model_asset_job(worker_app, _job({
+        "modelId": enrollment_store.models[0]["id"], "enrollmentId": eid, "photoRevision": 1,
+    })))
+    enrollment_store.enrollments[0]["status"] = worker_store.enrollment_status
+    assert enrollment_store.licenses == []
+    assert asyncio.run(facemarket_enrollment.cleanup_terminal_enrollment(
+        liveness_off_client.app, enrollment_id=eid,
+    )) is True
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+    assert assets == []
     assert fake_r2.objects == {}
     assert enrollment_store.enrollments[0]["raw_deletion_evidence"]["quarantineDeleted"] is True

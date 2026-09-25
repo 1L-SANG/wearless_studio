@@ -18,6 +18,7 @@ const METHOD_COPY = Object.freeze({
   simple_auth: {
     label: '간편인증으로 확인',
     hint: 'PASS·카카오·네이버 등으로 인증 후 신분증을 올려요.',
+    notice: '테스트 환경이라 이미지가 깨질 수 있어요.',
   },
 });
 
@@ -71,6 +72,7 @@ export default function IdentityMethodStep({ methods, onPick, simpleAuthUnavaila
             <small className={s.methodChoiceHint}>
               {simpleAuthReason || METHOD_COPY.simple_auth.hint}
             </small>
+            <small className={s.methodChoiceNotice}>{METHOD_COPY.simple_auth.notice}</small>
           </button>
         )}
       </div>

@@ -29,7 +29,7 @@ export function LicenseManageLink({ license, className }) {
   </Link>;
 }
 
-export function ProfileHero({ model, license, onCertificate }) {
+export function ProfileHero({ model, license, onCertificate, registering = false }) {
   const issued = isIssuedLicense(license);
   const since = seoulYearMonth(license?.createdAt || model?.createdAt);
   const [year, month] = since.split('.');
@@ -42,15 +42,15 @@ export function ProfileHero({ model, license, onCertificate }) {
     </div>
     <button type="button" className={s.licenseMini} onClick={onCertificate} aria-haspopup="dialog">
       <span className={s.certificateTop}>FACEMARKET LICENSE<FileText className={s.icon} aria-hidden="true" /></span>
-      <span className={s.certificateName}>{issued ? '초상 라이선스 증서' : '라이선스 발급 준비'}</span>
-      <span className={s.certificateMeta}>{!issued ? '발급이 완료되면 여기에 표시돼요' : license.status === 'revoked' ? '철회됨' : `${name} · ${certificateDate(license.createdAt)} 발급`}</span>
-      <span className={s.certificateLink}><span>{issued ? '내 증서 보기' : '발급 진행 확인'}</span><ArrowUpRight className={s.icon} aria-hidden="true" /></span>
+      <span className={s.certificateName}>{issued ? '초상 라이선스 증서' : registering ? '테스트컷 준비 중' : '라이선스 발급 준비'}</span>
+      <span className={s.certificateMeta}>{!issued ? (registering ? '테스트컷을 확정하면 증서를 볼 수 있어요' : '발급이 완료되면 여기에 표시돼요') : license.status === 'revoked' ? '철회됨' : `${name} · ${certificateDate(license.createdAt)} 발급`}</span>
+      <span className={s.certificateLink}><span>{issued ? '내 증서 보기' : registering ? '준비 상황 확인' : '발급 진행 확인'}</span><ArrowUpRight className={s.icon} aria-hidden="true" /></span>
     </button>
   </section>;
 }
 
-export function MyPageCertificate({ license, model, revoked = false }) {
-  if (!isIssuedLicense(license)) return <div className={s.certificateLarge}><EmptyPanel title="등록을 마치면 증서를 발급해요." description="발급 전에는 증서 번호가 표시되지 않아요." /></div>;
+export function MyPageCertificate({ license, model, revoked = false, registering = false }) {
+  if (!isIssuedLicense(license)) return <div className={s.certificateLarge}><EmptyPanel title={registering ? '테스트컷 준비 중' : '등록을 마치면 증서를 발급해요.'} description={registering ? '테스트컷을 확정하면 라이선스 증서를 볼 수 있어요.' : '발급 전에는 증서 번호가 표시되지 않아요.'} /></div>;
   return <div className={s.certificateLarge}>
     <div className={s.certificateTop}>FACEMARKET<CircleCheck className={s.icon} aria-hidden="true" /></div>
     <div className={s.certificateName}>초상 라이선스 증서</div><div className={s.certificateMeta}>Likeness License</div>

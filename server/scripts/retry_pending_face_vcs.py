@@ -24,7 +24,7 @@ sys.path.insert(0, str(SERVER))
 
 from app.config import load_settings  # noqa: E402
 from app.db import create_pool  # noqa: E402
-from app.facemarket import finalize_issued_face_vc, issue_face_vc  # noqa: E402
+from app.facemarket import IDENTITY_CLEARED_SQL, issue_and_activate_pending_face_vc  # noqa: E402
 
 
 async def main(argv=None) -> None:
@@ -55,7 +55,7 @@ async def main(argv=None) -> None:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     select l.id::text as id,
                            l.model_id::text as model_id,
                            m.user_id::text as user_id,
@@ -73,6 +73,7 @@ async def main(argv=None) -> None:
                        and l.vc_id is null
                        and m.user_id is not null
                        and e.status = 'vc_pending'
+                       and {IDENTITY_CLEARED_SQL}
                        and e.user_id = m.user_id
                        and e.model_id = m.id
                      order by l.created_at
@@ -88,27 +89,14 @@ async def main(argv=None) -> None:
         issued_count = 0
         for row in pending:
             try:
-                issued = await issue_face_vc(
+                active = await issue_and_activate_pending_face_vc(
                     app,
-                    license_id=row["id"],
-                    model_id=row["model_id"],
-                    allowed=row["allowed_use"],
-                    forbidden=[],
-                    unit_price=row["unit_price"],
-                    valid_until=row["license_valid_until"],
-                    digest=row["face_image_digest"],
-                    issued_at=row["created_at"],
-                    consent_doc_version=row["consent_doc_version"],
-                )
-                await finalize_issued_face_vc(
-                    pool.connection,
                     user_id=row["user_id"],
                     license_id=row["id"],
                     model_id=row["model_id"],
-                    enrollment_id=row["enrollment_id"],
-                    issued=issued,
                 )
-                issued_count += 1
+                if active is not None:
+                    issued_count += 1
             except Exception:
                 failed += 1
 

@@ -410,7 +410,7 @@ async def _load_owned_cut(
             """select c.id::text as id, c.r2_key, c.mime, c.sort, c.kind,
                       c.approved, c.created_at, c.skin_finish_code,
                       m.id::text as model_id, m.status as model_status, m.redo_count,
-                      m.display_name
+                      m.display_name, m.confirmed_at
                  from fm_model_test_cuts c
                  join fm_models m on m.id = c.model_id
                 where c.id = %s and m.user_id = %s""" + lock,
@@ -1183,6 +1183,33 @@ async def confirm_test_cut(
                     await asyncio.to_thread(public_r2.delete, key)
                 except Exception:
                     logger.warning("uncommitted model cover cleanup failed", exc_info=True)
+
+    if locked_closeup["confirmed_at"] is None:
+        try:
+            async with get_conn(request) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """select a.contact_email, m.display_name
+                             from fm_models m
+                             left join lateral (
+                                 select contact_email from fm_model_applications
+                                  where user_id = m.user_id
+                                  order by created_at desc limit 1
+                             ) a on true
+                            where m.id = %s and m.user_id = %s""",
+                        (locked_closeup["model_id"], user_id),
+                    )
+                    recipient = await cur.fetchone()
+            if recipient and recipient.get("contact_email"):
+                ok, _message_id, error = await facemarket_notify.send_registration_completed_email(
+                    request.app.state.settings,
+                    to=recipient["contact_email"],
+                    display_name=recipient.get("display_name") or "모델",
+                )
+                if not ok and error != "not_configured":
+                    logger.warning("registration completion email failed: %s", error)
+        except Exception:
+            logger.warning("registration completion email dispatch failed", exc_info=True)
 
     settings = request.app.state.settings
     admin_base = settings.fm_application_public_base.replace(

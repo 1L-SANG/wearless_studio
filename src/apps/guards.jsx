@@ -12,6 +12,7 @@ import { Button } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import { isMockMode } from '@/lib/api/index.js';
+import s from './guards.module.css';
 
 export function FacemarketLoginPrompt() {
   const { openLogin } = useAuth();
@@ -33,19 +34,22 @@ export function FacemarketLoginPrompt() {
   }, [openLogin, returnTo]);
   return (
     <div className="route-loading">
-      모델 등록은 로그인이 필요해요 — 로그인 창을 열었어요.
       {/* 모달을 닫은 사람에게 나갈 길과 되돌릴 길을 준다. effect 가 1회성이라 닫은 모달은
-          스스로 다시 열리지 않고, 이 화면은 등록 라우트라 링크가 없으면 주소창을 직접
-          고치는 수밖에 없다.
+          스스로 다시 열리지 않고, 링크가 없으면 주소창을 직접 고치는 수밖에 없다.
           맨 <button>·맨 <a> 로 두면 안 된다. 이 레포의 전역 스타일에는 버튼·링크 리셋이
           없어서(app.css 는 `button { font-family: inherit }` 한 줄, 링크는 `a.link` 클래스
-          한정) 그대로 두면 OS 기본 회색 버튼과 파란 밑줄 하이퍼링크가 프로덕션에 나온다 —
-          생체정보를 맡기라고 설득하는 도메인의 첫 화면 중 하나다. 앱의 Button·`a.link` 를 쓴다.
-          소개 링크는 Button 이 아니라 <Link> 로 남긴다: 이동이지 동작이 아니라서
-          가운데클릭·새 탭 열기가 살아야 한다. */}
-      <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
-        <Button variant="primary" size="sm" onClick={() => openLogin?.(returnTo)}>로그인 다시 열기</Button>
-        <Link className="link" to="/">FaceMarket 소개 보기</Link>
+          한정) 그대로 두면 OS 기본 회색 버튼과 파란 밑줄 하이퍼링크가 나온다. 앱의
+          Button·`a.link` 를 쓴다. 소개 링크는 Button 이 아니라 <Link> 로 남긴다: 이동이지
+          동작이 아니라서 가운데클릭·새 탭 열기가 살아야 한다.
+          문장과 버튼을 .prompt 하나로 감싸는 이유: .route-loading 은 그리드라 자식이 둘이면
+          두 행으로 늘어나 문장과 버튼이 화면 위아래로 벌어진다.
+          문장은 admin 과 /status 에서도 보이므로 특정 절차를 말하지 않는다. */}
+      <div className={s.prompt}>
+        <p>로그인하면 이어서 진행할 수 있어요.</p>
+        <div className={s.actions}>
+          <Button variant="primary" onClick={() => openLogin?.(returnTo)}>로그인 다시 열기</Button>
+          <Link className="link" to="/">FaceMarket 소개 보기</Link>
+        </div>
       </div>
     </div>
   );

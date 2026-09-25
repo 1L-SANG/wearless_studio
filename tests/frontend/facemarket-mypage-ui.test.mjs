@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { modelComponentHarness } from './helpers/facemarketHarness.mjs';
 import { loadEarningsHarness, findTree } from './helpers/mypageHarness.mjs';
 
 const row = { id: 's1', paymentId: 'p1', createdAt: '2026-09-01T00:00:00Z', productName: '셔츠', sellerName: '상점', modelAmount: 10430 };
@@ -305,4 +306,17 @@ test('발급 전 증서 번호를 숨기고 발급일은 서울 날짜로 표시
     const issued=MyPageCertificate({license,model:props.model});
     assert.equal(findTree(issued,node=>node.type==='Link').props.to,'/verify/l1');
   }finally{await harness.close();}
+});
+
+test('지원 승인 설명은 축하 문구 다음 줄에서 등록 과정을 안내해요', async () => {
+  const harness = await modelComponentHarness({ entry: '/src/features/model/mypage/MyPage.jsx', exportName: 'MyPage', initialStates: [], api: {} });
+  try {
+    const { resolveHubJourney } = await import('../../src/features/model/modelHubState.js');
+    const tree = harness.render({ journey: resolveHubJourney({ application: { status: 'approved' } }) });
+    assert.ok(textContent(tree).includes('승인됐어요. 이제 등록을 시작해요'));
+    assert.ok(textContent(tree).includes('축하드려요.'));
+    assert.ok(findTree(tree, node => node.type === 'br'));
+    assert.ok(textContent(tree).includes('지금 당장 본인확인과 온라인 모델 생성을 위한 사진 촬영, 조건 설정, 라이선스 증서 발급까지 완료해보세요.'));
+    assert.equal(component(tree, 'MyPageTimeline').props.description, '얼굴 구현을 위한 이미지들과, 라이선스 증서에 대한 설정이 필요해요.');
+  } finally { await harness.close(); }
 });

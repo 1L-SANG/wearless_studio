@@ -265,9 +265,9 @@
 | 거래·정산 기록 보관 | 5년 | 처리방침 §3 |
 | 약관 개정 공지 | 7일 전(불리한 변경 30일 전) | 약관 §3, 계약 §16, 셀러 조건 §13 |
 
-| 협찬 게시 기한 `sponsorship_post_deadline` | 옷 수령 후 3일 이내 | E-2, 01, 06, 05 v3. 제품 확정 |
+| 협찬 게시 기한 `sponsorship_post_deadline` | 옷 수령 후 7일 이내 | E-2, 01, 06, 05 v3. 제품 확정 |
 | 협찬 게시 횟수 `sponsorship_post_count` | 본인 인스타그램 피드에 착용 게시물 1회 | E-2, 01, 06, 05 v3. 제품 확정 |
-| 협찬 유지 기간 `sponsorship_keep_period` | 게시일부터 30일 | E-2, 06, 05 v3. 제품 확정 |
+| 협찬 유지 기간 `sponsorship_keep_period` | 게시일부터 90일 | E-2, 06, 05 v3. 제품 확정 |
 | 협찬 반납 `sponsorship_return` | 증정, 반납 없음 | E-2, 02 v3, 06. 제품 확정 |
 | 협찬 현금 `sponsorship_cash` | 현금 지급 없음 | E-2, 01, 06. 제품 확정 |
 | 협찬 배송정보 보유 `sponsorship_shipping_retention` | 발송 완료 후 30일 이내 파기 | 03, E-2d, 05 v3. 발송 취소·제공 동의 철회·목적 조기 달성 시 지체 없이 파기 |

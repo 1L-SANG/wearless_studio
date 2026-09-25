@@ -1,16 +1,37 @@
+import { useEffect, useRef } from 'react';
 import { SponsorshipFields } from './SponsorshipSettings.jsx';
-import { Camera, ImagePlus, Info, RefreshCw, Trash2 } from 'lucide-react';
+import { Info, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
-import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, REGISTER_BODIES, photoSlotKey, photoProgress, toggleRegisterCategory } from './registerSlots.js';
-import { RegisterIllustration } from './RegisterIllustration.jsx';
+import { SLOTS, PHOTO_GROUPS, PHOTO_REVIEW_SUB, photoSlotKey, photoProgress, toggleRegisterCategory } from './registerSlots.js';
 import { PhotoPoseIllustration } from './PhotoPoseIllustration.jsx';
-import { PhotoPreparation, ReferencePhotoNotice } from './PhotoGuide.jsx';
+import { ShootChecklist, ReferencePhotoNotice } from './PhotoGuide.jsx';
 import s from './ModelRegister.module.css';
 
 export const heading = (title, description) => <div className={s.intro}><h1 tabIndex={-1}>{title}</h1>{description && <p className={s.description}>{description}</p>}</div>;
 const legalLink = (to, text = '전문 보기') => <Link className={s.textLink} to={to} target="_blank" rel="noreferrer">{text}</Link>;
+
+export function ConsentDetails({ children }) {
+  const boxRef = useRef(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return undefined;
+    let active = true;
+    const measure = () => {
+      if (!active) return;
+      const end = box.querySelector('[data-fit-end]');
+      if (!end) return;
+      const lineHeight = parseFloat(getComputedStyle(end).lineHeight) || 19.2;
+      box.style.setProperty('--consent-fit', `${end.offsetTop + end.offsetHeight + Math.round(lineHeight * 0.6)}px`);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    document.fonts?.ready.then(measure);
+    return () => { active = false; window.removeEventListener('resize', measure); };
+  }, []);
+  return <div id="biometric-consent-details" className={s.consentDetails} tabIndex={0} role="region" aria-label="얼굴 정보 처리 세부 내용" ref={boxRef}>{children}</div>;
+}
 
 export function renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen, busy = false) {
   const allChecked = consents.every(Boolean);
@@ -36,46 +57,53 @@ export function renderConsent(consents, setConsents, withdrawalOpen, setWithdraw
         <span>필수 항목 전체 동의</span>
       </label>
       <div className={s.consentCard}>{check(0, 'FaceMarket 모델 이용약관에 동의하고 개인정보 처리방침을 확인했어요.')}<div className={s.legalLinks}>{legalLink('/terms', '이용약관 전문 보기')}{legalLink('/privacy', '처리방침 전문 보기')}</div></div>
-      <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<div className={s.legalSummary}>
-        <p><b>수집:</b> 얼굴·옆모습·뒷모습 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
+      <div className={s.consentCard}><span className={s.tag}>필수 · 법정</span>{check(1, '나의 얼굴 정보를 아래와 같이 수집·생성·이용하는 것에 동의해요.')}<ConsentDetails>
         <p><b>목적:</b> 같은 사람인지 확인, 얼굴 참조 자산 제작, 내가 정한 조건 안에서 착용컷 생성, 결과 품질 검사</p>
-        <p><b>학습:</b> 18장 중 12장으로 FaceMarket이 직접 학습해요. 학습을 외부 AI 회사에 맡기지 않아요.</p>
+        <p data-fit-end><b>학습:</b> 18장 중 12장으로 FaceMarket이 직접 학습해요. 학습을 외부 AI 회사에 맡기지 않아요.</p>
+        <p><b>수집:</b> 얼굴·옆모습·뒷모습 사진 18장, 그걸로 만든 얼굴 참조 자산과 얼굴 특징정보</p>
+        <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
+        <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>
         <p><b>확인:</b> 학습 전 담당자가 사진 품질을 확인해요. 열람 기록은 남아요.</p>
         <p><b>사용 시점:</b> 테스트컷을 확인·승인한 뒤부터 착용컷 생성에 써요.</p>
-        <p><b>보유:</b> 라이선스가 유지되는 동안, 철회하면 30일 안에 파기</p>
-        <p><b>거부:</b> 동의하지 않을 수 있지만 등록은 진행할 수 없어요.</p>{legalLink('/biometric-consent')}
-      </div></div>
+      </ConsentDetails><div className={s.legalLinks}>{legalLink('/biometric-consent')}</div></div>
     </div>
   </>;
 }
 
-function renderPhotoCard({ slot, filled, preview, busy, onFile, onRemove, reason }) {
+function renderPhotoCard({ slot, filled, preview, busy, editingDisabled = false, onFile, onRemove, reason, photoSlot, error, onPick, onCancelPick }) {
+  const disabled = busy || editingDisabled;
   const hintId = `photo-hint-${slot.key}`;
   const inputId = `photo-input-${slot.key}`;
+  const slotBusy = busy && photoSlot === slot.key;
+  const slotError = !busy && photoSlot === slot.key ? error : '';
+  const errorId = `photo-error-${slot.key}`;
+  const describedBy = [reason && hintId, slotError && errorId].filter(Boolean).join(' ') || undefined;
   return <div className={s.slotCard} key={slot.key}>
-    <input id={inputId} className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={busy} aria-label={`${slot.n}번 ${slot.title} ${filled ? '다시 촬영하거나 사진 교체' : '사진 찍기 또는 선택'}`} aria-describedby={hintId} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
+    <input id={inputId} className={s.fileInput} type="file" accept="image/*,.heic,.heif,.hif" disabled={disabled} aria-label={`${slot.n}번 ${slot.title} ${filled ? '다시 촬영하거나 사진 교체' : '사진 올리기'}`} aria-describedby={describedBy} onClick={() => onPick?.(slot.key)} onCancel={onCancelPick} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onFile(slot.key, file); }} />
     <label className={`${s.slot} ${filled ? s.filled : ''}`} htmlFor={inputId}>
       <span className={s.slotImage}>
         {preview ? <img src={preview} alt={`${slot.n}번 내 사진`} width="180" height="240" /> : filled ? <span className={s.savedPhoto}>✓<span>사진이 저장됐어요</span></span> : <PhotoPoseIllustration className={s.photoPose} slot={slot} />}
         <span className={s.slotBadge}>{String(slot.n).padStart(2, '0')}{filled ? ' · 저장 완료' : reason ? ' · 다시 찍기' : ' · 촬영 예시'}</span>
-        {!filled && !reason && <span className={s.slotImageCue}><Camera size={16} aria-hidden="true" />예시를 눌러 사진 추가</span>}
+        {!filled && !reason && <span className={s.slotImageCue}><Upload size={16} aria-hidden="true" />예시처럼 사진 올리기</span>}
+        {slotBusy && <span className={s.slotUploading} role="status"><span className={s.spinner} />올리는 중이에요</span>}
       </span>
       <span className={s.slotBottom}>
         <span className={s.caption}>{slot.title}</span>
-        <span className={s.slotHint} id={hintId}>{reason || slot.hint}</span>
+        {reason && <span className={s.slotHint} id={hintId}>{reason}</span>}
+        {slotError && <span className={s.slotError} role="alert" id={errorId}>{slotError}</span>}
       </span>
     </label>
-    <div className={s.slotActions}>
-      <label className={s.slotAction} htmlFor={inputId} aria-disabled={busy}>
-        {filled || reason ? <RefreshCw size={15} aria-hidden="true" /> : <ImagePlus size={15} aria-hidden="true" />}
-        {filled ? '재촬영·교체' : reason ? '재촬영·올리기' : '사진 찍기·선택'}
+    {(filled || reason) && <div className={s.slotActions}>
+      <label className={s.slotAction} htmlFor={inputId} aria-disabled={disabled}>
+        <RefreshCw size={15} aria-hidden="true" />
+        {filled ? '재촬영·교체' : '재촬영·올리기'}
       </label>
-      {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 삭제`} disabled={busy} onClick={() => onRemove(slot.key)}><Trash2 size={15} aria-hidden="true" />삭제</button>}
-    </div>
+      {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 삭제`} disabled={disabled} onClick={() => onRemove(slot.key)}><Trash2 size={15} aria-hidden="true" />삭제</button>}
+    </div>}
   </div>;
 }
 
-export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove, editGroup }) {
+export function renderPhotos({ sub, enrollment, previews, busy, editingDisabled, onFile, onRemove, editGroup, photoSlot, error, onPick, onCancelPick }) {
   const photos = enrollment?.photos || [];
   const uploaded = new Set(photos.map(photoSlotKey));
   if (sub === PHOTO_REVIEW_SUB) return <>
@@ -96,23 +124,20 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
   const progress = photoProgress(photos);
   const groupProgress = photoProgress(photos, group.id);
   return <>
-    {heading('등록 사진 18장을 올려요', '번호에 맞춰 올려 주세요. 나중에 이어서 등록해도 돼요.')}
+    {heading('온라인 모델 생성을 위해 필요한 이미지들을 업로드해요', '번호에 맞춰 올려 주세요. 나중에 이어서 등록해도 돼요.')}
     <div className={s.photoProgress}>
       <div><span>전체 사진</span><strong aria-live="polite">{progress.count} / {progress.total}장 저장</strong></div>
       <progress aria-label="전체 사진 업로드 진행률" value={progress.count} max={progress.total} />
-      <ol className={s.photoStages}>{PHOTO_GROUPS.map((item, index) => {
-        const saved = photoProgress(photos, item.id);
-        return <li key={item.id} aria-current={sub === index + 1 ? 'step' : undefined} data-complete={saved.complete}><span>{index + 1}. {item.title}</span><b>{saved.complete ? '✓ ' : ''}{saved.count}/{saved.total}</b></li>;
-      })}</ol>
+
     </div>
-    {sub === 1 && <details className={s.captureHelp}><summary>촬영 준비 보기</summary><PhotoPreparation /></details>}
+    {sub === 1 && <div className={s.prepBlock}><ShootChecklist /></div>}
     <div className={s.photoGuideLink}><Link className={s.textLink} to="/photo-guide" target="_blank" rel="noreferrer">18장 촬영 가이드 열기 (새 탭)</Link><span>JPG · PNG · WEBP · HEIC</span></div>
     <div className={s.groupHeading}>
       <span className={s.tag}>{sub} / {PHOTO_GROUPS.length} · {slots[0].n}~{slots.at(-1).n}번</span>
       <h2>{group.action} {slots.length}장</h2><p>{group.note}</p>
     </div>
-    <p className={s.uploadInstruction}><Camera size={17} aria-hidden="true" /><span>예시 이미지를 눌러 카메라로 찍거나 앨범에서 선택하세요. 올리면 예시가 내 사진으로 바뀌어요.</span></p>
-    <div className={s.photoGrid} aria-busy={busy}>{slots.map((slot) => renderPhotoCard({ slot, filled: uploaded.has(slot.key), preview: previews[slot.key], busy, onFile, onRemove }))}</div>
+    <p className={s.uploadInstruction}><Upload size={17} aria-hidden="true" /><span>예시 이미지를 눌러 카메라로 찍거나 앨범에서 선택하세요. 올리면 예시가 내 사진으로 바뀌어요.</span></p>
+    <div className={s.photoGrid} aria-busy={busy}>{slots.map((slot) => renderPhotoCard({ slot, filled: uploaded.has(slot.key), preview: previews[slot.key], busy, editingDisabled, onFile, onRemove, photoSlot, error, onPick, onCancelPick }))}</div>
     <p className={s.groupStatus} role="status">{groupProgress.complete ? '이 단계 사진을 모두 저장했어요.' : `${groupProgress.total - groupProgress.count}장을 더 올려 주세요.`}</p>
   </>;
 }
@@ -122,7 +147,7 @@ export function renderPhotos({ sub, enrollment, previews, busy, onFile, onRemove
    등록은 이미 끝났고 모델도 있다 — 여기서 받는 건 **요청된 칸뿐**이다. 다 올리면 서버가
    저절로 '확인 대기'로 되돌려 관리자 큐에 다시 띄운다(_consume_reshoot_slot). 사유는
    관리자가 적은 문장을 그대로 보여 준다 — 무엇이 문제였는지가 다시 찍는 데 필요한 전부다. */
-export function renderReshoot({ enrollment, previews, busy, onFile }) {
+export function renderReshoot({ enrollment, previews, busy, onFile, photoSlot, error }) {
   const requested = enrollment?.reshootSlots || [];
   const reasons = new Map(requested.map((item) => [item.slot, item.reason]));
   const slots = SLOTS.filter((slot) => reasons.has(slot.key));
@@ -131,27 +156,22 @@ export function renderReshoot({ enrollment, previews, busy, onFile }) {
     {slots.length === 0 && <p className={s.description} role="status">다시 찍을 칸이 없어요. 잠시 후 다시 확인해 주세요.</p>}
     {slots.some((slot) => ['sh_front2', 'sh_gaze_left', 'sh_gaze_right'].includes(slot.key)) && <ReferencePhotoNotice />}
     <p className={s.description}><Link className={s.textLink} to="/photo-guide" target="_blank" rel="noreferrer">촬영 가이드 보기 (새 탭)</Link></p>
-    <div className={s.photoGrid}>{slots.map((slot) => renderPhotoCard({ slot, preview: previews[slot.key], busy, onFile, reason: reasons.get(slot.key) || slot.hint }))}</div>
+    <div className={s.photoGrid}>{slots.map((slot) => renderPhotoCard({ slot, preview: previews[slot.key], busy, onFile, photoSlot, error, reason: reasons.get(slot.key) }))}</div>
   </>;
 }
 
-export function renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading }) {
-  const descriptions = ['상의, 하의, 아우터, 원피스 같은 평상복이에요.', '운동복, 레깅스, 요가복이에요.', '라운지웨어, 파자마예요.'];
+export function renderConditions({ terms, setTerms, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading }) {
+  const descriptions = ['예시: 상의, 하의, 아우터, 원피스', '예시: 레깅스, 운동복, 요가복', '예시: 라운지웨어, 파자마'];
   return <>
     {heading('사용 조건을 정해요', '내 얼굴을 사용할 옷 종류를 골라 주세요.')}
     <h2 className={s.sectionTitle}>내 얼굴을 쓸 수 있는 옷<span className={s.required}>*</span></h2>
     <div className={s.categories}>{BRAND_USE_CATEGORIES.map((category, index) => { const on = terms.allowedUse.includes(category); const last = on && terms.allowedUse.length === 1; return <div className={s.categoryRow} key={category}><div><h3>{category}</h3><p>{descriptions[index]}</p></div><button type="button" className={s.switch} role="switch" aria-label={`${category} 허용`} aria-checked={on} disabled={busy || last} onClick={() => setTerms((current) => ({ ...current, allowedUse: toggleRegisterCategory(current.allowedUse, category) }))}><span /></button>{last && <p className={s.categoryNote}>한 가지 이상 선택해 주세요.</p>}{!on && <p className={s.categoryNote}>이 종류의 옷에는 내 얼굴을 쓸 수 없어요.</p>}</div>; })}</div>
-    <section className={s.bodySection}>
-      <h2>몸의 두께<span className={s.optional}>선택</span></h2><p className={s.bodyDescription}>셀러가 옷을 고를 때 참고해요.</p>
-      <div className={s.bodyGrid} aria-label="몸의 두께, 선택 항목">{REGISTER_BODIES.map((item) => <button key={item.value} type="button" className={`${s.bodyCard} ${body === item.value ? s.selected : ''}`} aria-pressed={body === item.value} disabled={busy} onClick={() => setBody(item.value)}><span className={s.bodyArt}><RegisterIllustration className={s.person} width={item.width} /></span><span className={s.bodyName}>{item.label}</span>{body === item.value && <span className={s.bodyCheck}>✓</span>}</button>)}</div>
-      <p className={s.bodyOptional}>{body ? <>고른 두께는 {REGISTER_BODIES.find((item) => item.value === body)?.label}예요. <button type="button" className={s.textLink} onClick={() => setBody(null)} disabled={busy}>선택 지우기</button></> : '선택하지 않아도 돼요.'}</p>
-    </section>
     <div className={s.priceCard}><h2>셀러 사용료 규칙</h2><ul>
-      <li>셀러 이용료: 1회 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 {formatKrw(MONTHLY_PASS_PRICE_KRW)} (월 {MONTHLY_PASS_CUTS}회)</li>
+      <li>셀러 이용료: 1회 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 {formatKrw(MONTHLY_PASS_PRICE_KRW)} <span className={s.keepTogether}>(월 {MONTHLY_PASS_CUTS}회)</span></li>
       <li>결제 금액의 {MODEL_SHARE * 100}%를 정산받아요.</li>
     </ul></div>
     {sponsorship && <SponsorshipFields value={sponsorship} onChange={setSponsorship} disabled={busy || sponsorshipLoading} />}
     <div className={s.contractLink}>{legalLink('/license-agreement', '계약 요약과 전문 보기')}</div>
-    <label className={`${s.consentLabel} ${s.priceConsent}`} htmlFor="price-agreed"><input id="price-agreed" type="checkbox" checked={priceAgreed} disabled={busy} onChange={(event) => setPriceAgreed(event.target.checked)} /><span>셀러 사용료 규칙에 동의해요<span className={s.required}> (필수)</span></span></label>
+    <label className={`${s.consentLabel} ${s.priceConsent}`} htmlFor="price-agreed"><input id="price-agreed" type="checkbox" checked={priceAgreed} disabled={busy} onChange={(event) => setPriceAgreed(event.target.checked)} /><span>증서 발급하기를 누르면 FaceMarket의 사용료 분배 규정(모델 몫 {MODEL_SHARE * 100}%)에 동의하며, 초상 라이선스 계약에 서명되는 것으로 간주합니다.<span className={s.required}> (필수)</span></span></label>
   </>;
 }

@@ -35,8 +35,8 @@
     "slug": "terms-model",
     "app": "facemarket",
     "title": "FaceMarket 모델 이용약관",
-    "version": "v1.2",
-    "effectiveDate": "2026-09-23",
+    "version": "v1.3",
+    "effectiveDate": "2026-09-25",
     "source": "01_facemarket_terms_of_service_model_v1.md"
   },
   {
@@ -59,8 +59,8 @@
     "slug": "answers",
     "app": "facemarket",
     "title": "FaceMarket 법적 FAQ",
-    "version": "v1.3",
-    "effectiveDate": "2026-09-23",
+    "version": "v1.4",
+    "effectiveDate": "2026-09-25",
     "source": "06_facemarket_legal_faq_v1.md"
   },
   {
@@ -77,18 +77,18 @@
     "slug": "seller-license-terms-sponsorship-draft",
     "app": "both",
     "title": "셀러 협찬 요청 조건 개정안",
-    "version": "v3-draft",
+    "version": "v3-draft.1",
     "effectiveDate": null,
     "source": "05_facemarket_seller_license_terms_v3_draft.md",
     "status": "draft",
-    "revisionDate": "2026-09-22"
+    "revisionDate": "2026-09-25"
   },
   {
     "slug": "sponsorship-consent",
     "app": "facemarket",
     "title": "의류 협찬 참여 동의",
-    "version": "2026-09-sponsorship-v1",
-    "effectiveDate": "2026-09-23",
+    "version": "2026-09-sponsorship-v2",
+    "effectiveDate": "2026-09-25",
     "source": "04_facemarket_biometric_consent_forms_v1.md"
   },
   {

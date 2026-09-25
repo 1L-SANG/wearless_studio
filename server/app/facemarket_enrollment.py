@@ -726,6 +726,28 @@ async def _consume_reshoot_slot(cur, enrollment_id: str, user_id: str, slot: str
         """,
         (enrollment_id, user_id),
     )
+    # 아직 발급하지 않은 등록은 새 사진으로 증거를 다시 만든다. 업로드와 같은
+    # 트랜잭션에서 작업을 넣어 마지막 사진 뒤에 중단되어도 복구할 수 있게 한다.
+    await cur.execute(
+        """update fm_biometric_enrollments
+           set status = 'asset_building', photo_revision = photo_revision + 1,
+               match_scores = null
+           where id = %s and user_id = %s and status = 'vc_pending'
+           returning model_id::text as model_id, photo_revision""",
+        (enrollment_id, user_id),
+    )
+    rebuilding = await cur.fetchone()
+    if rebuilding is not None:
+        await cur.execute(
+            "update fm_models set assets_status = 'building' where id = %s",
+            (rebuilding["model_id"],),
+        )
+        await cur.execute(
+            """insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+               values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)""",
+            (user_id, Json({"modelId": rebuilding["model_id"], "enrollmentId": enrollment_id,
+                           "photoRevision": rebuilding["photo_revision"]})),
+        )
 
 
 def _validate_photo_mutation_enrollment(row: dict | None, slot: str | None = None) -> dict:
@@ -1985,6 +2007,7 @@ async def upload_id_document(
     file: UploadFile = File(...),
     document_type: str = Form(..., alias="documentType"),
     masked_confirmed: bool = Form(..., alias="maskedConfirmed"),
+    mask_region: str | None = Form(None, alias="maskRegion"),
     user_id: str = Depends(require_user),
 ):
     """간편인증(simple_auth) 경로 전용 — 사용자가 촬영한 신분증 업로드.
@@ -2039,7 +2062,22 @@ async def upload_id_document(
         # 없다. off 라 판정 자체가 없으면 None(NULL) 을 그대로 둔다 — 'auto'는 검사 안
         # 한 걸 통과로, 'manual'은 통과 못 한 걸로 거짓 기록하는 셈이라 둘 다 안 된다.
         mask_mode: str | None = None
-        if settings.fm_id_mask_verify != "off":
+        if mask_region is not None:
+            # 새 클라이언트는 직접 지정한 가림 영역을 보낸다. 고정 위치 검사와 분리하고,
+            # 실제 픽셀 덮어쓰기는 필수로 검사한다. 번호를 가렸는지는 관리자가 확인한다.
+            try:
+                region = json.loads(mask_region)
+                if not isinstance(region, dict):
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise _err("id_mask_not_applied", "가릴 위치를 다시 지정해 주세요.", status=422)
+            mask_applied, _metrics = await asyncio.to_thread(
+                facemarket_id_mask_verify.mask_is_applied, data, region=region
+            )
+            if not mask_applied:
+                raise _err("id_mask_not_applied", "가린 사진을 다시 확인해 주세요.", status=422)
+            mask_mode = "manual"
+        elif settings.fm_id_mask_verify != "off":
             mask_applied, mask_metrics = await asyncio.to_thread(
                 facemarket_id_mask_verify.mask_is_applied, data
             )
@@ -2855,7 +2893,8 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     f"""
                     with due as (
                         select id from fm_biometric_enrollments
-                        where status = 'review_pending' and review_status = 'pending'
+                        where review_status = 'pending'
+                          and status in ('review_pending', 'asset_building', 'license_pending', 'vc_pending')
                           and created_at <= now() - interval '{REVIEW_DEADLINE_DAYS} days'
                         order by created_at
                         for update skip locked
@@ -2870,6 +2909,12 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     (limit,),
                 )
                 timed_out = await cur.fetchall()
+                for row in timed_out:
+                    await cur.execute(
+                        "delete from fm_licenses where enrollment_id = %s "
+                        "and status = 'pending' and vc_id is null",
+                        (row["id"],),
+                    )
             await conn.commit()
         for row in timed_out:
             logger.warning("enrollment_review_timed_out enrollment=%s", row["id"])
@@ -3402,20 +3447,6 @@ async def process_enrollment_completion(
                     "set provider_versions = provider_versions || %s::jsonb where id = %s",
                     (Json({"refset": refset}), enrollment_id),
                 )
-                if match_required_review:
-                    # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
-                    # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
-                    await cur.execute(
-                        """
-                        update fm_biometric_enrollments
-                        set status = 'review_pending', review_status = 'pending',
-                            match_scores = %s
-                        where id = %s and status = 'processing'
-                        """,
-                        (Json(match_snapshot), enrollment_id),
-                    )
-                    await conn.commit()
-                    return EnrollmentDecision(False, False, None, "review_pending")
                 model_id = await bind_model_and_enqueue_asset_build(
                     cur,
                     user_id=user_id,
@@ -3429,6 +3460,15 @@ async def process_enrollment_completion(
                     ),
                     match_policy_version=settings.fm_match_policy_version,
                 )
+                if match_required_review:
+                    # 내부 자산은 준비하되 학습 내보내기와 증서 발급은 신원 확인을 기다려요.
+                    await cur.execute(
+                        """update fm_biometric_enrollments
+                           set review_status = 'pending', reviewed_by = null,
+                               reviewed_at = null, review_reason = null, match_scores = %s
+                           where id = %s""",
+                        (Json(match_snapshot), enrollment_id),
+                    )
             await conn.commit()
         return EnrollmentDecision(True, False, None, "asset_building", model_id)
     except EnrollmentExpiredError:

@@ -4,7 +4,7 @@ import { registerCta } from './registerCta.js';
 
 const STEP_NAMES = {
   identity: '본인확인', photos: '사진 등록', liveness: '본인확인 마무리',
-  processing: '모델 이미지 준비', terms: '사용 조건 정하기', consent: '동의 확인',
+  processing: '모델 이미지 준비', terms: '사용 조건 정하기', testcuts: '테스트컷 준비', consent: '동의 확인',
 };
 const nextDetail = step => step ? { before: '다음은 ', strong: step, after: '' } : null;
 const permanentOrFuture = (validUntil) => {

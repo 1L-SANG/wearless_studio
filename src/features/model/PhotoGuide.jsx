@@ -32,13 +32,8 @@ export function ReferencePhotoNotice() {
   </aside>;
 }
 
-export function PhotoGuide() {
-  return <div className={s.guide}>
-    <header className={s.header}><p className={s.eyebrow}>FaceMarket · 등록 준비</p>
-      <h1>사진 18장 촬영 가이드</h1>
-      <p>밝은 야외에서, 아래 번호대로 찍으면 돼요.</p>
-    </header>
-    <section className={s.checkSection} aria-labelledby="shoot-check-title">
+export function ShootChecklist() {
+  return <section className={s.checkSection} aria-labelledby="shoot-check-title">
       <h2 id="shoot-check-title">찍기 전, 확인해요</h2>
       <ul className={s.checklist}>{SHOOT_RULES.map((rule) =>
         <li key={rule.title}>
@@ -46,7 +41,16 @@ export function PhotoGuide() {
           <span><strong>{rule.title}</strong><small>{rule.body}</small></span>
         </li>
       )}</ul>
-    </section>
+    </section>;
+}
+
+export function PhotoGuide() {
+  return <div className={s.guide}>
+    <header className={s.header}><p className={s.eyebrow}>FaceMarket · 등록 준비</p>
+      <h1>사진 18장 촬영 가이드</h1>
+      <p>밝은 야외에서, 아래 번호대로 찍으면 돼요.</p>
+    </header>
+    <ShootChecklist />
     <PhotoPreparation />
     <p className={s.exampleNote}>자세는 그림처럼, 머리는 평소처럼 찍어요.</p>
     <nav className={s.jumpNav} aria-label="촬영 단계 바로가기">{PHOTO_GROUPS.map((group, index) =>
