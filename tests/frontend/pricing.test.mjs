@@ -45,9 +45,12 @@ before(async () => {
 });
 after(() => vite?.close());
 
-function render(plansToShow, currentPlan = 'free', loggedIn = true) {
+function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plansToShow);
+  if (queryError) {
+    client.getQueryCache().find({ queryKey: ['pricingPlans'] }).setState({ status: 'error', error: queryError });
+  }
   runtime.account = loggedIn ? { plan: currentPlan } : null;
   runtime.session = loggedIn ? { user: { id: 'pricing-user' } } : null;
   try {
@@ -130,4 +133,30 @@ test('개정 환율 카탈로그와 Seller 카드 지급량이 일치한다', ()
   ]) assert.equal(plans.find((plan) => plan.code === code)?.credits, credits, code);
   const html = render(plans.filter((plan) => plan.code === 'seller'));
   for (const text of ['1,400', '1,600', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);
+});
+
+test('구독 카드의 상세페이지 예상 개수는 254크레딧 기준으로 내림한다', () => {
+  const html = render(plans);
+  assert.deepEqual([...html.matchAll(/상세페이지 약 <strong>(\d+)개<\/strong>/g)].map((match) => match[1]), ['2', '6', '11']);
+  const starter = plans.find((plan) => plan.code === 'starter');
+  for (const [credits, count] of [['507', 1], ['508', 2]]) {
+    assert.ok(render([{ ...starter, credits }]).includes(`상세페이지 약 <strong>${count}개</strong>`), credits);
+  }
+});
+
+test('구독 카드가 보일 때만 평균 크레딧 안내 두 문장을 줄을 나누어 표시한다', () => {
+  const html = render(plans);
+  const note = html.match(/<p\b[^>]*>상세페이지 1개의 제작[\s\S]*?<\/p>/)?.[0];
+  assert.ok(note, '평균 크레딧 안내 문단');
+  assert.deepEqual(note.replace(/<br\s*\/?\s*>/g, '\n').replace(/<[^>]*>/g, '').split('\n'), [
+    '상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 약\u00a0250크레딧이 소모됩니다.',
+    '컷수에 따라 소모되는 비용은 상이합니다.',
+  ]);
+  assert.ok(html.indexOf(note) < html.indexOf('id="topup"'));
+  for (const hidden of [
+    render([]),
+    render(undefined),
+    render(plans.filter((plan) => plan.kind === 'topup')),
+    render(plans, 'free', true, new Error('요금제 조회 실패')),
+  ]) assert.doesNotMatch(hidden, /상세페이지 약|상세페이지 1개의 제작|컷수에 따라/);
 });
