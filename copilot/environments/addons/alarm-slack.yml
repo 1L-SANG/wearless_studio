@@ -114,6 +114,9 @@ Resources:
                       print("unparseable sns message")
                       continue
                   state = msg.get("NewStateValue", "")
+                  # 새로 만든 알람의 첫 판정(INSUFFICIENT_DATA 에서 OK)은 복구가 아니다.
+                  if state == "OK" and msg.get("OldStateValue") == "INSUFFICIENT_DATA":
+                      continue
                   # OK 로 돌아온 것도 보낸다 — 울고 끝나면 복구됐는지 사람이 모른다.
                   icon = ":rotating_light:" if state == "ALARM" else ":white_check_mark:"
                   name = msg.get("AlarmName", "(unnamed)")
@@ -209,13 +212,15 @@ Resources:
   # ② 서버 전체가 느려졌다. 평소 중앙값은 0.01~0.06초라 2초는 서른 배 넘게 위다.
   #    p95 가 아니라 중앙값을 보는 이유: 사진 업로드처럼 원래 몇 초 걸리는 요청은 꼬리만
   #    끌어올리고, 서버가 실제로 느려지면 모든 요청이 느려져 중앙값이 오른다.
-  #    응답 표본이 10건 미만인 5분은 0 으로 본다. 한 사람의 업로드 몇 장이 중앙값을 정하는
-  #    한산한 시간을 거르려는 것이다. 표본 수는 RequestCount 가 아니라 같은 지표의 SampleCount
+  #    응답 표본이 10건 미만인 5분은 값을 내지 않는다(빈 값). 한 사람의 업로드 몇 장이 중앙값을
+  #    정하는 한산한 시간을 거르려는 것이다. else 값을 0 으로 주면 아직 채워지는 중인 최신 5분이
+  #    진짜 0 이 되어 연속 판정이 구간마다 끊긴다. 표본 수는 RequestCount 가 아니라 같은 지표의 SampleCount
   #    로 센다. 그래야 중앙값을 만든 요청 수와 어긋나지 않는다(502·504 로 끝난 요청은
   #    RequestCount 에만 들어간다).
   #    대가: 한산한 시간의 느려짐은 못 본다. 서버가 멈추면 api 의 정상 서버 알람이, 에러로
   #    번지면 ① 과 ④ 가 잡는다. 8/30 라이선스 발급 장애도 ① 이 21:50 에 먼저 잡았다.
-  #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다.
+  #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다. 이게 실제로 필요하다: 9/25 14:15 구간은
+  #    사진 20장 업로드만으로 표본 10건 이상, 중앙값 2.64초였다(한 구간이라 안 울렸다).
   AlarmLatency:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -248,7 +253,7 @@ Resources:
             Stat: p50
         - Id: slow
           Label: p50 response time when 10+ samples
-          Expression: 'IF(n >= 10, p50, 0)'
+          Expression: 'IF(n >= 10, p50)'
           ReturnData: true
       EvaluationPeriods: 2
       Threshold: 2
@@ -261,7 +266,8 @@ Resources:
   #    504 는 유휴 타임아웃까지 응답 없음). 앱이 응답을 돌려준 것이 아니라서 ① 에는 안 잡힌다.
   #    503 은 봇이 기본 타깃그룹으로 떨어지며 늘 생겨서 뺐다. 60일 실측은 5분당 최대 1건
   #    (502 2건, 504 2건, 모두 따로 떨어져 있었다)이라 5 면 확실한 신호다.
-  #    한쪽 지표만 있는 5분도 셀 수 있게 빈 값은 0 으로 채운다.
+  #    SUM([...]) 은 한쪽만 있는 5분은 그 값으로, 둘 다 없는 5분은 빈 값으로 둔다. FILL(…, 0) 은
+  #    아직 지표가 안 온 최신 5분까지 진짜 0 으로 만들어 늦게 도착한 에러를 묻어 버려서 쓰지 않는다.
   AlarmElb5xx:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -294,7 +300,7 @@ Resources:
             Stat: Sum
         - Id: bad
           Label: ELB 502 + 504
-          Expression: 'FILL(e502, 0) + FILL(e504, 0)'
+          Expression: 'SUM([e502, e504])'
           ReturnData: true
       EvaluationPeriods: 1
       Threshold: 5
