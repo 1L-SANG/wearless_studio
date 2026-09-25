@@ -25,7 +25,6 @@ from PIL import Image
 from app import cx_identity, facemarket_enrollment, facemarket_photos, r2
 from app.facemarket import _gender_from_trans
 from app.main import create_app
-from app.personalization_qc import FaceQcResult
 
 
 def _uploaded_pair(fake_r2, nth=0):
@@ -1646,9 +1645,6 @@ def test_identity_verify_blocks_minor(
 def test_photos_require_identity_first(
     enrollment_client, auth, enrollment_store, monkeypatch
 ):
-    # QC 를 통과시켜, 거절이 QC 가 아니라 상태 게이트(identity_pending)에서 나옴을 확인한다.
-    # (upload_enrollment_photo 는 QC 를 먼저 돌리고 그 뒤 _validate_photo_mutation_enrollment 로 상태를 본다.)
-    stub_qc(monkeypatch)
     eid = create_enrollment(enrollment_client, auth, verify_identity=False)
     res = enrollment_client.post(
         f"/v1/facemarket/enrollments/{eid}/photos",
@@ -2837,13 +2833,6 @@ def test_complete_terminal_biometric_failures_set_cooldown_after_five(
     assert before <= enrollment_store.enrollments[0]["cooldown_until"] <= after
 
 
-def stub_qc(monkeypatch, verdict="pass", reasons=None):
-    async def qc(*_args, **_kwargs):
-        return FaceQcResult(verdict, reasons or [])
-
-    monkeypatch.setattr(facemarket_enrollment, "evaluate_face_qc", qc)
-
-
 def test_create_enrollment_records_consent_without_oacx_token(
     enrollment_client, auth, enrollment_store
 ):
@@ -3161,7 +3150,6 @@ def test_r2_copy_stays_server_side_and_replaces_content_type():
 def test_upload_passed_photo_uses_quarantine_prefix(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3184,7 +3172,6 @@ def test_upload_passed_photo_uses_quarantine_prefix(
 def test_upload_canonicalizes_uppercase_enrollment_uuid(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3272,90 +3259,50 @@ def test_refset_agreement_on_a_legacy_enrollment_has_nothing_to_compare(monkeypa
             "status": "absent", "photos": 0}
 
 
-# ── 촬영 스펙 검사 배선 ──────────────────────────────────────────────────────
-# 판정 자체는 tests/test_facemarket_photo_check.py(v7 실사진 16장의 숫자 픽스처)가 본다.
-# 여기서 보는 건 "라우트가 그 판정을 실제로 부르고, 막았을 때 아무것도 저장하지 않는가" 다.
-def _upload_one(client, auth, eid, slot="sh_front"):
-    return client.post(
-        f"/v1/facemarket/enrollments/{eid}/photos",
-        data={"slot": slot},
-        files={"photo": ("face.jpg", b"image", "image/jpeg")},
-        headers=auth(),
+# 등록사진 업로드는 디코딩·저장만 하고 촬영 품질은 관리자가 확인한다.
+@pytest.mark.parametrize("face_matching_enabled", [False, True])
+def test_upload_stores_decodable_no_face_photo_without_quality_inference(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch,
+    face_matching_enabled,
+):
+    """얼굴이 없는 유효 이미지도 받으며 검출기 지연·장애를 업로드에 끌어들이지 않는다."""
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings,
+        fm_face_match_enabled=face_matching_enabled,
     )
+    _real_normalize(monkeypatch)
 
+    def unexpected_framing(*args, **kwargs):
+        pytest.fail("등록사진 업로드에서 얼굴·구도 검사를 실행했다")
 
-@pytest.mark.real_photo_check
-def test_a_badly_framed_photo_is_rejected_before_anything_is_stored(
-    liveness_off_client, auth, fake_r2, monkeypatch
-):
-    eid = create_enrollment(liveness_off_client, auth)
+    async def unexpected_quality(*args, **kwargs):
+        pytest.fail("등록사진 업로드에서 얼굴 품질 검사를 실행했다")
+
     monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
-                        lambda data, slot, **kw: ("face_too_small", {"face_w": 120.0}))
+                        unexpected_framing, raising=False)
+    monkeypatch.setattr(facemarket_enrollment, "evaluate_face_qc",
+                        unexpected_quality, raising=False)
+    eid = create_enrollment(enrollment_client, auth)
+    body = _real_jpeg(96, 128)
 
-    response = _upload_one(liveness_off_client, auth, eid)
+    response = _upload(enrollment_client, auth(), eid, body)
 
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "photo_framing"
-    assert response.json()["error"]["reasons"] == ["face_too_small"]
-    assert "한 걸음 다가가서" in response.json()["error"]["message"]
-    assert fake_r2.puts == []
-
-
-@pytest.mark.real_photo_check
-def test_the_shot_check_runs_even_when_face_matching_is_off(
-    liveness_off_client, auth, monkeypatch
-):
-    """본인확인 QC(fm_face_match_enabled)와 별개다 — 등록 사진이 곧 학습셋이라 항상 본다."""
-    assert liveness_off_client.app.state.settings.fm_face_match_enabled is False
-    eid = create_enrollment(liveness_off_client, auth)
-    seen = []
-    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
-                        lambda data, slot, **kw: (seen.append(slot), (None, {}))[1])
-
-    assert _upload_one(liveness_off_client, auth, eid, slot="sl_34").status_code == 201
-    assert seen == ["sl_34"], "정식 슬롯 이름으로 검사한다"
-
-
-@pytest.mark.real_photo_check
-def test_a_legacy_angle_is_checked_under_its_canonical_slot(
-    liveness_off_client, auth, monkeypatch
-):
-    eid = create_enrollment(liveness_off_client, auth)
-    seen = []
-    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo",
-                        lambda data, slot, **kw: (seen.append(slot), (None, {}))[1])
-
-    response = liveness_off_client.post(
-        f"/v1/facemarket/enrollments/{eid}/photos",
-        data={"angle": "angle45"},
-        files={"photo": ("face.jpg", b"image", "image/jpeg")},
-        headers=auth(),
-    )
     assert response.status_code == 201, response.text
-    assert seen == ["sh_34"], "옛 angle45 도 3/4 창으로 잰다"
-
-
-@pytest.mark.real_photo_check
-def test_a_detector_outage_is_not_the_users_fault(
-    liveness_off_client, auth, fake_r2, monkeypatch
-):
-    """가중치 부재·cv2 오류는 503 — 사진을 다시 찍으라고 하면 안 된다(qc_unavailable 과 같은 규칙)."""
-    eid = create_enrollment(liveness_off_client, auth)
-
-    def boom(data, slot, **kw):
-        raise facemarket_enrollment.PhotoCheckUnavailable("FileNotFoundError")
-
-    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo", boom)
-
-    response = _upload_one(liveness_off_client, auth, eid)
-
-    assert response.status_code == 503, response.text
-    assert response.json()["error"]["code"] == "qc_unavailable"
-    assert fake_r2.puts == []
+    assert response.json()["qcStatus"] == "passed"
+    row = enrollment_store.photos[0]
+    assert row["angle"] == "sh_front"
+    assert row["storage_state"] == "quarantine"
+    assert row["qc_status"] == "passed"
+    assert row["image_digest"] == r2.sha256_sri(body)
+    original_key, normalized_key = _uploaded_pair(fake_r2)
+    assert fake_r2.objects[original_key] == (body, "image/jpeg")
+    normalized, mime = fake_r2.objects[normalized_key]
+    assert mime == "image/png"
+    with Image.open(io.BytesIO(normalized)) as image:
+        assert image.size == (96, 128)
 
 
 def test_upload_rejects_invalid_angle(enrollment_client, auth, fake_r2, monkeypatch):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3371,7 +3318,6 @@ def test_upload_rejects_invalid_angle(enrollment_client, auth, fake_r2, monkeypa
 
 
 def test_upload_rejects_non_image_mime(enrollment_client, auth, fake_r2, monkeypatch):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3387,7 +3333,6 @@ def test_upload_rejects_non_image_mime(enrollment_client, auth, fake_r2, monkeyp
 
 
 def test_upload_rejects_empty_file(enrollment_client, auth, fake_r2, monkeypatch):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3403,7 +3348,6 @@ def test_upload_rejects_empty_file(enrollment_client, auth, fake_r2, monkeypatch
 
 
 def test_upload_rejects_file_over_the_face_cap(enrollment_client, auth, fake_r2, monkeypatch):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3418,68 +3362,9 @@ def test_upload_rejects_file_over_the_face_cap(enrollment_client, auth, fake_r2,
     assert fake_r2.puts == []
 
 
-def test_failed_basic_qc_never_writes_to_r2(enrollment_client, auth, fake_r2, monkeypatch):
-    stub_qc(monkeypatch, "reject", ["occlusion"])
-    enrollment_id = create_enrollment(enrollment_client, auth)
-
-    response = enrollment_client.post(
-        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
-        data={"angle": "front"},
-        files={"photo": ("face.jpg", b"image", "image/jpeg")},
-        headers=auth(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "face_quality"
-    assert response.json()["error"]["reasons"] == ["occlusion"]
-    assert fake_r2.puts == []
-
-
-def test_angle_mismatch_now_blocks_upload(
-    enrollment_client, auth, fake_r2, monkeypatch
-):
-    # angle_mismatch 는 차단이다(front↔turned 불일치). 측면 칸에 정면 등 방향 어긋난 사진은
-    # 저장하지 않고 거절한다 — 45˚/측면 구분은 QC 가 안 하므로 이 케이스는 오탐이 아니다.
-    stub_qc(monkeypatch, "reject", ["angle_mismatch"])
-    enrollment_id = create_enrollment(enrollment_client, auth)
-
-    response = enrollment_client.post(
-        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
-        data={"angle": "front"},
-        files={"photo": ("front.jpg", b"image", "image/jpeg")},
-        headers=auth(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "face_quality"
-    assert response.json()["error"]["reasons"] == ["angle_mismatch"]
-    assert fake_r2.puts == []
-
-
-def test_blocking_qc_rejects_with_all_blocking_reasons(
-    enrollment_client, auth, fake_r2, monkeypatch
-):
-    # occlusion + angle_mismatch 둘 다 차단 사유라 거절하고, 두 사유 모두 노출한다.
-    stub_qc(monkeypatch, "reject", ["angle_mismatch", "occlusion"])
-    enrollment_id = create_enrollment(enrollment_client, auth)
-
-    response = enrollment_client.post(
-        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
-        data={"angle": "front"},
-        files={"photo": ("front.jpg", b"image", "image/jpeg")},
-        headers=auth(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "face_quality"
-    assert set(response.json()["error"]["reasons"]) == {"occlusion", "angle_mismatch"}
-    assert fake_r2.puts == []
-
-
 def test_three_legacy_angles_complete_custom_three_slot_configuration(
     enrollment_client, auth, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     for angle in ("front", "angle45", "side"):
         response = enrollment_client.post(
@@ -3517,7 +3402,6 @@ def test_three_legacy_angles_complete_custom_three_slot_configuration(
 def test_photo_mutation_rejects_post_liveness_and_terminal_states(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch, status
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_store.enrollments[0]["status"] = status
     puts_before = list(fake_r2.puts)
@@ -3541,7 +3425,6 @@ def test_photo_mutation_rejects_post_liveness_and_terminal_states(
 def test_issued_liveness_session_blocks_photo_mutation(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_store.enrollments[0].update(
         status="liveness_pending", liveness_session_digest="sha256-session"
@@ -3565,7 +3448,6 @@ def test_issued_liveness_session_blocks_photo_mutation(
 def test_pre_session_liveness_photo_delete_returns_to_photos_pending(
     enrollment_client, auth, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     for angle in facemarket_enrollment.PHOTO_SLOTS:
         enrollment_client.post(
@@ -3599,7 +3481,6 @@ def test_other_user_cannot_read_or_delete_enrollment(enrollment_client, auth):
 def test_other_user_upload_is_removed_and_returns_same_not_found(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = enrollment_client.post(
@@ -3618,7 +3499,6 @@ def test_other_user_upload_is_removed_and_returns_same_not_found(
 def test_other_user_same_angle_upload_never_touches_owner_object_or_row(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     owner = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3652,7 +3532,6 @@ def test_other_user_same_angle_upload_never_touches_owner_object_or_row(
 def test_delete_photo_removes_private_object_before_metadata(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     uploaded = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3675,7 +3554,6 @@ def test_delete_photo_removes_private_object_before_metadata(
 def test_delete_photo_r2_failure_leaves_metadata_for_retry(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3706,7 +3584,6 @@ def test_delete_photo_r2_failure_leaves_metadata_for_retry(
 def test_delete_prepare_commit_failure_does_not_touch_r2(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3731,7 +3608,6 @@ def test_delete_prepare_commit_failure_does_not_touch_r2(
 def test_delete_finalize_commit_failure_is_retryable_after_r2_delete(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3762,7 +3638,6 @@ def test_delete_finalize_commit_failure_is_retryable_after_r2_delete(
 def test_upload_replacement_with_new_extension_deletes_old_object_after_commit(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     for filename, mime in (("front.jpg", "image/jpeg"), ("front.png", "image/png")):
         response = enrollment_client.post(
@@ -3784,7 +3659,6 @@ def test_upload_replacement_with_new_extension_deletes_old_object_after_commit(
 def test_superseded_photo_cleanup_failure_remains_referenced_until_retry(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3825,7 +3699,6 @@ def test_superseded_photo_cleanup_failure_remains_referenced_until_retry(
 def test_superseded_cleanup_finalize_commit_failure_retries_without_orphan(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3860,7 +3733,6 @@ def test_superseded_cleanup_finalize_commit_failure_retries_without_orphan(
 def test_upload_database_failure_removes_new_quarantine_object(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_store.fail_photo_upsert = True
 
@@ -3882,7 +3754,6 @@ def test_upload_database_failure_removes_new_quarantine_object(
 def test_same_extension_replacement_db_failure_preserves_owner_photo(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     first = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3916,7 +3787,6 @@ def test_same_extension_replacement_db_failure_preserves_owner_photo(
 def test_replacement_commit_failure_rolls_back_switch_and_cleans_new_object(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -3949,7 +3819,6 @@ def test_replacement_commit_failure_rolls_back_switch_and_cleans_new_object(
 def test_failed_replacement_cleanup_is_tracked_and_retried_on_next_upload(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_store.fail_photo_upsert = True
     fake_r2.fail_next_delete = True
@@ -3987,7 +3856,6 @@ def test_upload_replacement_and_failure_cleanup_never_nest_pool_checkouts(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     fake_pool.fail_on_nested = True
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -4112,7 +3980,6 @@ def test_connection_death_mid_put_keeps_upload_orphan_until_object_is_deleted(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     put_started = threading.Event()
     allow_put = threading.Event()
@@ -4180,7 +4047,6 @@ def test_cutover_close_between_photo_preflight_and_fence_writes_no_r2_or_link(
     monkeypatch,
 ):
     """Break caught: close after preflight but before photo fence could still put R2."""
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_store.cutover_closed_sequence = [False, True]
 
@@ -4239,7 +4105,6 @@ def test_upload_fence_blocks_due_orphan_cleanup_beyond_old_lease(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     object_stored = threading.Event()
     allow_metadata = threading.Event()
@@ -4303,7 +4168,6 @@ def test_cancelled_upload_keeps_fence_until_put_finishes_then_cleans_orphan(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     put_started = threading.Event()
     allow_put = threading.Event()
@@ -4440,7 +4304,6 @@ def test_delete_photo_skips_immediately_while_upload_owns_fence(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     first = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4505,7 +4368,6 @@ def test_terminal_cleanup_skips_before_row_lock_while_upload_owns_fence(
     enrollment_store,
     monkeypatch,
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     put_started = threading.Event()
     allow_put = threading.Event()
@@ -4562,7 +4424,6 @@ def test_terminal_cleanup_skips_before_row_lock_while_upload_owns_fence(
 def test_cancel_is_idempotent_and_cleans_quarantine_photos(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4595,7 +4456,6 @@ def test_cancel_purges_id_document_from_r2_and_clears_column(
     실제로 문서가 있을 때 취소가 R2 delete 를 부르고 컬럼을 지우는지는 아무 테스트도
     확인하지 않았다. simple_auth 가 심었을 법한 실제 신분증 키를 fixture 에 직접 심고
     취소 경로(cancel_enrollment → cleanup_terminal_enrollment)로 몰아 이 갭을 메운다."""
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     key = r2.enrollment_id_document_key(enrollment_id, "jpg", version="test-version")
     enrollment_store.enrollments[0]["id_document_r2_key"] = key
@@ -4651,7 +4511,6 @@ def test_sweep_expires_identity_pending_enrollment(
 def test_cancel_cleanup_failure_remains_delete_pending_until_retry(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4684,7 +4543,6 @@ def test_cancel_cleanup_failure_remains_delete_pending_until_retry(
 def test_cancel_commit_failure_keeps_active_photo_usable_and_untouched(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4709,7 +4567,6 @@ def test_cancel_commit_failure_keeps_active_photo_usable_and_untouched(
 def test_cancel_cleanup_finalize_commit_failure_is_retryable(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4744,7 +4601,6 @@ def test_cancel_cleanup_finalize_commit_failure_is_retryable(
 def test_terminal_cleanup_prepare_commit_failure_never_deletes_usable_object(
     enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4771,7 +4627,6 @@ def test_terminal_cleanup_prepare_commit_failure_never_deletes_usable_object(
 def test_terminal_cleanup_finalize_commit_failure_retries_after_object_is_gone(
     enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4810,7 +4665,6 @@ def test_terminal_cleanup_finalize_commit_failure_retries_after_object_is_gone(
 def test_terminal_cleanup_r2_failure_stays_referenced_until_retry(
     enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -4847,7 +4701,6 @@ def test_terminal_cleanup_r2_failure_stays_referenced_until_retry(
 def test_delete_treats_r2_not_found_as_success(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",
@@ -5228,7 +5081,6 @@ def test_photo_upload_prewarms_opendid(
         def prewarm_soon(self):
             calls.append(True)
 
-    stub_qc(monkeypatch)
     enrollment_client.app.state.opendid_autoscaler = _Scaler()
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -5458,7 +5310,6 @@ def test_the_original_bytes_are_stored_unchanged(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
     """★ 이 PR 의 요점. 올린 바이트가 한 비트도 안 바뀌어야 학습이 원본 화질을 본다."""
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     body = _real_jpeg()
@@ -5479,7 +5330,6 @@ def test_the_original_bytes_are_stored_unchanged(
 def test_a_normalized_png_is_stored_next_to_the_original(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -5511,7 +5361,6 @@ def test_a_huge_photo_keeps_its_original_but_the_copy_is_capped(
     48MP(8064×6048) 실측: 정규화본 51.0MB/2.80s → 4096 상한에서 17.6MB/1.41s. api 태스크가
     작은 vCPU 를 셀러 API·헬스체크와 나눠 쓰므로 그 1.4초가 그냥 비용이다.
     """
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     # 설정은 frozen dataclass 다 — 기본값(4096)을 그대로 쓰고, 그 값이 기본임을 여기서 잠근다.
     assert enrollment_client.app.state.settings.fm_normalized_max_edge == 4096
@@ -5532,7 +5381,6 @@ def test_a_huge_photo_keeps_its_original_but_the_copy_is_capped(
 def test_a_photo_under_the_cap_is_not_resized(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -5541,29 +5389,6 @@ def test_a_photo_under_the_cap_is_not_resized(
 
     row = enrollment_store.photos[0]
     assert (row["normalized_width"], row["normalized_height"]) == (900, 1200)
-
-
-def test_the_quality_check_sees_the_normalized_bytes(
-    enrollment_client, auth, monkeypatch
-):
-    """HEIC 는 cv2 가 아예 못 읽는다 — 검사에 원본을 넘기면 전부 'unreadable' 이 된다."""
-    stub_qc(monkeypatch)
-    _real_normalize(monkeypatch)
-    seen = {}
-
-    def spy(data, slot, **kwargs):
-        seen["data"] = data
-        return None, {"spy": True}
-
-    monkeypatch.setattr(facemarket_enrollment, "check_enrollment_photo", spy)
-    enrollment_id = create_enrollment(enrollment_client, auth)
-    body = _real_jpeg()
-
-    assert _upload(enrollment_client, auth(), enrollment_id, body).status_code == 201
-
-    assert seen["data"] != body
-    with Image.open(io.BytesIO(seen["data"])) as checked:
-        assert checked.format == "PNG"
 
 
 @pytest.mark.parametrize("brand", [b"heic", b"mif1"])
@@ -5575,7 +5400,6 @@ def test_heic_is_accepted_whatever_the_browser_calls_it(
 
     여기서는 매직바이트 판정만 본다(진짜 HEIC 디코드는 test_face_photo_normalize 가 본다).
     """
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     body = b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 64
 
@@ -5619,7 +5443,6 @@ def test_a_video_wearing_the_same_box_header_is_refused(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
     """mp4 도 ftyp 박스다 — 브랜드를 안 보면 동영상이 얼굴 사진 자리에 들어온다."""
-    stub_qc(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
     response = _upload(enrollment_client, auth(), enrollment_id,
@@ -5635,7 +5458,6 @@ def test_an_unreadable_upload_never_reaches_storage(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
     """읽을 수 없는 사진을 받아 두면, 학습 내보내기 날에야 깨진 파일을 발견한다."""
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -5650,7 +5472,6 @@ def test_the_model_sees_the_normalized_bytes_back(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
     """미리보기로 원본(HEIC)을 내려주면 브라우저가 못 그려 빈 칸이 된다."""
-    stub_qc(monkeypatch)
     _real_normalize(monkeypatch)
     enrollment_id = create_enrollment(enrollment_client, auth)
     assert _upload(enrollment_client, auth(), enrollment_id, _real_jpeg()).status_code == 201

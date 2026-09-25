@@ -61,10 +61,10 @@ test('R7 capture is manual only and the shutter is accessible', () => {
 });
 
 test('촬영과 앨범 맞추기 화면 모두 다음 단계의 필수 가림을 안내한다', () => {
-  assert.match(code, /촬영 후 주민등록번호 뒤 7자리를 직접 가려요./);
+  assert.match(code, /촬영 후 화면을 터치해서 뒷자리를 가릴 가림막 박스를 만들어 주세요./);
   const fit = readFileSync(
     fileURLToPath(new URL('../../src/features/model/IdGalleryFit.jsx', import.meta.url)), 'utf8');
-  assert.match(fit, /다음 화면에서 주민등록번호 뒤 7자리를 직접 가려요./);
+  assert.match(fit, /다음 화면을 터치해서 뒷자리를 가릴 가림막 박스를 만들어 주세요./);
 });
 
 test('프레임 크기가 세션 도중 바뀌어도(회전) 가이드를 다시 계산한다(최종리뷰 I3)', () => {

@@ -54,7 +54,7 @@ export default function IdGalleryFit({ imageUrl, onCaptured, onGallery }) {
     </div>
     <div className={s.idCameraHint}>
       <p>사진을 끌어서 신분증을 네모 안에 맞춰 주세요.</p>
-      <p className={s.idCameraSubHint}>다음 화면에서 주민등록번호 뒤 7자리를 직접 가려요.</p>
+      <p className={s.idCameraSubHint}>다음 화면을 터치해서 뒷자리를 가릴 가림막 박스를 만들어 주세요.</p>
       <label className={s.idZoom}>사진 크기<input type="range" min="0.5" max="4" step="0.01" value={zoom} disabled={busy || !loaded} onChange={event => setZoom(Number(event.target.value))} /></label>
       {error && <p className={s.idCaptureError} role="alert">{error}</p>}
     </div>

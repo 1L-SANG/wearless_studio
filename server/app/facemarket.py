@@ -35,7 +35,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError, field_validator
 
-from . import admin_guard, cx_identity, holder_client
+from . import admin_guard, cx_identity, facemarket_photo_check, facemarket_photo_normalize, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
@@ -1138,6 +1138,35 @@ def _checked_license_evidence(row: dict | None) -> tuple[str, str, str]:
     return str(row["model_id"]), row["front_key"], row["front_digest"]
 
 
+async def _require_front_face(request: Request, front_key: str) -> None:
+    """Check only the representative front photo before starting certificate issuance."""
+    try:
+        source = await asyncio.to_thread(_r2_face(request).get_bytes, front_key)
+    except Exception:
+        raise _err("front_photo_unavailable", "정면 사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.", status=503) from None
+    try:
+        normalized, _size = await asyncio.to_thread(
+            facemarket_photo_normalize.normalize_png,
+            source,
+            request.app.state.settings.fm_normalized_max_edge,
+        )
+        measured = await asyncio.to_thread(
+            facemarket_photo_check.measure_photo,
+            normalized,
+            model_dir=request.app.state.settings.fm_face_qc_dir,
+        )
+    except (facemarket_photo_normalize.NormalizeFailed, ValueError):
+        measured = None
+    except facemarket_photo_check.PhotoCheckUnavailable:
+        raise _err("qc_unavailable", "얼굴 검사를 지금 수행할 수 없어요. 잠시 후 다시 시도해 주세요.", status=503) from None
+    if measured is None:
+        raise _err(
+            "front_face_missing",
+            "1번 정면 사진에서 얼굴을 찾지 못했어요. 이전 단계에서 1번 사진을 교체해 주세요.",
+            status=409,
+        )
+
+
 async def enqueue_vc_revocation(
     conn, *, license_id: str, model_id: str, vc_id: str
 ) -> None:
@@ -1499,6 +1528,7 @@ async def create_license(
 
         evidence = await _load_license_evidence(conn, user_id, enrollment_id)
         model_id, key, digest = _checked_license_evidence(evidence)
+        await _require_front_face(request, key)
         if existing:
             row = existing
             license_id = existing["id"]

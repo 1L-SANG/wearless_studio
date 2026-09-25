@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { buildMaskedBlob, clampMaskRatio } from './idDocumentMasking.js';
 import s from './ModelRegister.module.css';
 
-export default function IdMaskEditor({ imageUrl, onMasked, onRetake }) {
+export default function IdMaskEditor({ imageUrl, onSubmit, onRetake }) {
   const [loaded, setLoaded] = useState(false);
   const [mask, setMask] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -44,8 +44,8 @@ export default function IdMaskEditor({ imageUrl, onMasked, onRetake }) {
     try {
       const blob = await buildMaskedBlob(document.createElement('canvas'), imageRef.current, mask);
       if (!blob?.size) throw new Error('가린 사진을 저장하지 못했어요. 다시 시도해 주세요.');
-      if (active.current) onMasked(blob, mask);
-    } catch (failure) { if (active.current) setError(failure.message || '가린 사진을 만들지 못했어요.'); }
+      if (active.current) await onSubmit(blob, mask);
+    } catch (failure) { if (active.current) setError(failure.message || '사진을 제출하지 못했어요. 다시 시도해 주세요.'); }
     finally { inFlight.current = false; if (active.current) setBusy(false); }
   };
   return <>
@@ -71,22 +71,23 @@ export default function IdMaskEditor({ imageUrl, onMasked, onRetake }) {
             setLoaded(true);
           }} onError={() => { setLoaded(false); setError('사진을 열지 못했어요. 다시 찍어 주세요.'); }} />
         {loaded && mask && <div className={s.idManualMask} ref={maskRef} onPointerDown={event => startDrag(event, 'move')}>
-          <span className={s.idMaskHandle} aria-hidden="true" onPointerDown={event => startDrag(event, 'resize')} />
+          <button type="button" className={s.idMaskHandle} aria-label="가림막 크기 조절" disabled={busy}
+            onPointerDown={event => startDrag(event, 'resize')} onKeyDown={event => {
+              const delta = { ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01] }[event.key];
+              if (!delta || busy) return;
+              event.preventDefault(); event.stopPropagation();
+              setMask(clampMaskRatio({ ...mask, wr: mask.wr + delta[0], hr: mask.hr + delta[1] }));
+            }} />
         </div>}
       </div>
     </div>
     <div className={s.idCameraHint}>
-      <p>{mask ? '검은 박스를 움직이고 크기를 조절해 뒤 7자리를 모두 가려 주세요.' : '주민등록번호 뒤 7자리를 눌러 가릴 위치를 정해 주세요.'}</p>
-      <p className={s.idCameraSubHint}>이름과 얼굴 사진은 보이게 남겨 주세요. 사진은 아직 전송되지 않았어요.</p>
-      <div className={`${s.idMaskSliders} ${mask ? '' : s.idMaskSlidersEmpty}`} aria-hidden={!mask}>
-        <label className={s.idZoom}>가림 폭<input type="range" min=".02" max="1" step=".01" value={mask?.wr || .3} disabled={busy || !mask} onChange={e => mask && setMask(clampMaskRatio({ ...mask, wr: Number(e.target.value) }))} /></label>
-        <label className={s.idZoom}>가림 높이<input type="range" min=".02" max="1" step=".01" value={mask?.hr || .06} disabled={busy || !mask} onChange={e => mask && setMask(clampMaskRatio({ ...mask, hr: Number(e.target.value) }))} /></label>
-      </div>
+      <p>{mask ? <>검은 가림막 박스를 조절하며<br />주민등록번호 뒷자리만 가려주세요.</> : <>뒷자리 마스킹을 위해서 화면을 터치해서<br />가림막 박스를 만들어주세요.</>}</p>
       {error && <p role="alert" className={s.idCaptureError}>{error}</p>}
     </div>
     <div className={`${s.idCameraControls} ${s.idMaskControls}`}>
       <button type="button" className={s.secondary} disabled={busy} onClick={onRetake}>다시 찍기</button>
-      <button type="button" className={s.primary} disabled={busy || !loaded || !mask} onClick={apply}>{busy ? '가리는 중이에요' : '가린 결과 확인'}</button>
+      <button type="button" className={s.primary} disabled={busy || !loaded || !mask} onClick={apply}>{busy ? '제출 중이에요' : '제출하기'}</button>
     </div>
   </>;
 }

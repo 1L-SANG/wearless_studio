@@ -96,7 +96,7 @@ function renderPhotoCard({ slot, filled, preview, busy, editingDisabled = false,
     {(filled || reason) && <div className={s.slotActions}>
       <label className={s.slotAction} htmlFor={inputId} aria-disabled={disabled}>
         <RefreshCw size={15} aria-hidden="true" />
-        {filled ? '재촬영·교체' : '재촬영·올리기'}
+        교체
       </label>
       {filled && onRemove && <button type="button" className={s.removePhoto} aria-label={`${slot.n}번 사진 삭제`} disabled={disabled} onClick={() => onRemove(slot.key)}><Trash2 size={15} aria-hidden="true" />삭제</button>}
     </div>}

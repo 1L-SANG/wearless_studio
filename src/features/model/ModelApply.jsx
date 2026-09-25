@@ -460,7 +460,7 @@ export function ModelApply() {
       <h1 ref={heading} tabIndex={-1}>지원서가 접수 완료됐어요</h1>
       <p>
         <span>{`${REVIEW_SLA_LABEL}에 결과를 ${contactEmail} 주소로 보내 드려요. 메일이 안 보이면 스팸함도 확인해 주세요.`}</span>
-        <span>승인되면 본인확인과 등록 사진 18장을 올려요. 밝은 야외에서 도와줄 사람과 찍으면 약 15분 걸려요.</span>
+        <span>승인되면 본인확인과 18장의 사진 촬영을 올려야 해요. 밝은 낮에 도와줄 사람과 찍으면 평균 10분이면 등록과정이 끝나요.</span>
       </p>
       <Link className={s.completeCta} to="/status">지원 상태 보기</Link>
       <Link className={s.completeGuide} to="/photo-guide">촬영 가이드 미리 보기</Link>

@@ -20,7 +20,10 @@ test('accept은 지원 형식을 명시하고 아이폰 사진은 변환해서 �
 });
 
 test('로드 실패를 화면에 드러낸다 (onError)', () => {
-  assert.match(step(), /onError=/, '깨진 이미지는 안내 없이 두면 사용자가 원인을 알 수 없다');
+  for (const component of ['IdGalleryFit', 'IdMaskEditor']) {
+    assert.match(read(`src/features/model/${component}.jsx`), /onError=/,
+      `${component}의 깨진 이미지는 안내 없이 두면 사용자가 원인을 알 수 없다`);
+  }
 });
 
 test('서버 허용 목록과 클라이언트 목록이 같다', () => {

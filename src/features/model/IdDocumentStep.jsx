@@ -1,5 +1,4 @@
-/* 상태 순서: phase, imageUrl, capturedBlob, busy, localError, imageLoaded.
-   카메라와 앨범 모두 단말에서 직접 가린 사진만 확인 후 올려요. */
+/* 카메라와 앨범 모두 단말에서 직접 가린 사진을 제출한다. */
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { uploadIdDocument } from '@/lib/api/facemarket.js';
@@ -20,26 +19,32 @@ const CAMERA_UNAVAILABLE_MESSAGES = {
 export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
   const [phase, setPhase] = useState('camera');
   const [imageUrl, setImageUrl] = useState(null);
-  const [capturedBlob, setCapturedBlob] = useState(null);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [maskRegion, setMaskRegion] = useState(null);
-  const [maskConfirmed, setMaskConfirmed] = useState(false);
   const inputRef = useRef(null), sheetRef = useRef(null), mounted = useRef(true);
-  const inFlight = useRef(false), busyRef = useRef(false), retakeRef = useRef(null);
+  const inFlight = useRef(false), busyRef = useRef(false);
   busyRef.current = busy;
   const sheetOpen = phase !== 'choose';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (imageUrl) return () => URL.revokeObjectURL(imageUrl); }, [imageUrl]);
-  const clearMasked = () => { setCapturedBlob(null); setPreviewUrl(null); setMaskRegion(null); setMaskConfirmed(false); setImageLoaded(false); };
-  const discard = next => { setImageUrl(null); clearMasked(); setLocalError(''); setPhase(next); };
+  const discard = next => { setImageUrl(null); setLocalError(''); setPhase(next); };
   useEffect(() => {
     if (!sheetOpen || typeof document === 'undefined') return undefined;
     const previousFocus = document.activeElement;
     const previousOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
+    // iOS 하단 주소창과 키보드가 차지하는 영역을 제외한 실제 보이는 높이를 따른다.
+    const viewport = globalThis.window?.visualViewport;
+    const fitVisibleViewport = () => {
+      const height = viewport?.height || globalThis.window?.innerHeight;
+      if (!height) return;
+      sheetRef.current?.style?.setProperty('--id-visible-height', `${height}px`);
+      sheetRef.current?.style?.setProperty('--id-visible-top', `${viewport?.offsetTop || 0}px`);
+    };
+    fitVisibleViewport();
+    viewport?.addEventListener('resize', fitVisibleViewport);
+    viewport?.addEventListener('scroll', fitVisibleViewport);
+    globalThis.window?.addEventListener?.('resize', fitVisibleViewport);
     const onKey = event => {
       if (event.key === 'Escape' && !busyRef.current) { event.preventDefault(); discard('choose'); }
       if (event.key !== 'Tab') return;
@@ -56,6 +61,9 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
     return () => {
       document.documentElement.style.overflow = previousOverflow;
       document.removeEventListener('keydown', onKey);
+      viewport?.removeEventListener('resize', fitVisibleViewport);
+      viewport?.removeEventListener('scroll', fitVisibleViewport);
+      globalThis.window?.removeEventListener?.('resize', fitVisibleViewport);
       previousFocus?.focus?.({ preventScroll: true });
     };
   }, [sheetOpen]);
@@ -63,15 +71,9 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
     sheetRef.current?.querySelector('button')?.focus?.({ preventScroll: true });
   }, [phase]);
   useEffect(() => { if (busy) sheetRef.current?.focus?.({ preventScroll: true }); }, [busy]);
-  useEffect(() => { if (previewUrl) return () => URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   const captured = blob => {
     if (!blob?.size) { setLocalError('사진을 저장하지 못했어요. 다시 찍어 주세요.'); return; }
-    clearMasked(); setImageUrl(URL.createObjectURL(blob)); setLocalError(''); setPhase('mask');
-  };
-  const masked = (blob, region) => {
-    if (!blob?.size || !region) { setLocalError('가린 사진을 만들지 못했어요. 다시 시도해 주세요.'); return; }
-    setCapturedBlob(blob); setPreviewUrl(URL.createObjectURL(blob)); setMaskRegion(region);
-    setMaskConfirmed(false); setImageLoaded(false); setLocalError(''); setPhase('review');
+    setImageUrl(URL.createObjectURL(blob)); setLocalError(''); setPhase('mask');
   };
   const openGallery = () => {
     if (inFlight.current) return;
@@ -88,15 +90,15 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
     try {
       const converted = await toUploadableImage(file);
       if (!mounted.current) return;
-      setCapturedBlob(null); setImageUrl(URL.createObjectURL(converted)); setPhase('fit');
+      setImageUrl(URL.createObjectURL(converted)); setPhase('fit');
     } catch (error) { if (mounted.current) setLocalError(error.message || '사진을 열지 못했어요. 다시 골라 주세요.'); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
-  const upload = async () => {
-    if (phase !== 'review' || !capturedBlob?.size || !maskRegion || !maskConfirmed || !imageLoaded || !enrollmentId || inFlight.current) return;
+  const submitMasked = async (blob, maskRegion) => {
+    if (phase !== 'mask' || !blob?.size || !maskRegion || !enrollmentId || inFlight.current) return;
     inFlight.current = true; setBusy(true); setLocalError('');
     try {
-      const current = await uploadIdDocument(enrollmentId, { file: capturedBlob, documentType: ID_DOCUMENT_TYPES[0].value, maskedConfirmed: maskConfirmed, maskRegion });
+      const current = await uploadIdDocument(enrollmentId, { file: blob, documentType: ID_DOCUMENT_TYPES[0].value, maskedConfirmed: true, maskRegion });
       if (mounted.current) await onUploaded?.(current);
     } catch (error) {
       if (!mounted.current) return;
@@ -105,8 +107,7 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
         catch (refreshError) { error = refreshError; }
         if (!mounted.current) return;
       }
-      setLocalError(error?.code === 'id_face_not_detected' ? '신분증 얼굴이 보이게 다시 찍어 주세요.' : error?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
-      if (error?.code === 'id_face_not_detected') retakeRef.current?.focus?.({ preventScroll: true });
+      throw error;
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
   return <>
@@ -120,21 +121,11 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onStale }) {
     {sheetOpen && <div className={s.idCameraSheet} role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="id-camera-title" ref={sheetRef}>
       <div className={s.idCameraHeader}>
         <button type="button" className={s.idClose} aria-label="촬영 닫기" disabled={busy} onClick={() => discard('choose')}><X size={24} aria-hidden="true" /></button>
-        <h2 id="id-camera-title">{phase === 'mask' ? '주민번호 가리기' : phase === 'review' ? '가린 사진 확인' : '주민등록증 촬영'}</h2><span />
+        <h2 id="id-camera-title">{phase === 'mask' ? '주민번호 가리기' : '주민등록증 촬영'}</h2><span />
       </div>
       {phase === 'camera' && <IdCameraCapture busy={busy} onCaptured={captured} onGallery={openGallery} onUnavailable={reason => { discard('choose'); setLocalError(CAMERA_UNAVAILABLE_MESSAGES[reason] || CAMERA_UNAVAILABLE_MESSAGES.unsupported); }} />}
       {phase === 'fit' && <IdGalleryFit key={imageUrl} imageUrl={imageUrl} onCaptured={captured} onGallery={openGallery} />}
-      {phase === 'mask' && <IdMaskEditor key={imageUrl} imageUrl={imageUrl} onMasked={masked} onRetake={() => discard('camera')} />}
-      {phase === 'review' && <>
-        <div className={s.idCameraStage}><img className={s.idReviewImage} src={previewUrl} alt="주민등록번호를 가린 신분증" onLoad={() => setImageLoaded(true)} onError={() => { setImageLoaded(false); setLocalError('사진을 열지 못했어요. 다시 찍어 주세요.'); }} /></div>
-        <div className={s.idCameraHint}><label className={s.idMaskConfirmation} htmlFor="id-mask-confirmed"><input id="id-mask-confirmed" type="checkbox" checked={maskConfirmed} disabled={busy || !imageLoaded} onChange={event => setMaskConfirmed(event.target.checked)} /><span>주민등록번호 뒤 7자리가 모두 가려졌고, 이름과 얼굴 사진은 보여요.</span></label></div>
-        <div className={`${s.idCameraControls} ${s.idFinalControls}`}>
-          <button type="button" className={s.secondary} ref={retakeRef} disabled={busy} onClick={() => discard('camera')}>다시 찍기</button>
-          <button type="button" className={s.secondary} disabled={busy} onClick={() => { clearMasked(); setLocalError(''); setPhase('mask'); }}>다시 가리기</button>
-          <button type="button" className={s.primary} disabled={busy || !imageLoaded || !maskConfirmed} onClick={upload}>{busy ? '올리는 중이에요' : '이 사진으로 확인 요청'}</button>
-          <button type="button" className={s.secondary} disabled={busy} onClick={() => discard('choose')}>삭제</button>
-        </div>
-      </>}
+      {phase === 'mask' && <IdMaskEditor key={imageUrl} imageUrl={imageUrl} onSubmit={submitMasked} onRetake={() => discard('camera')} />}
       {localError && <p className={s.idSheetError} role="alert">{localError}</p>}
     </div>}
   </>;
