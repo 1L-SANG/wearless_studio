@@ -23,6 +23,17 @@ NS_REF=${FL_NAMESPACE_REF:-https://wearless.kr/schema/facelicense-v2}
 VC_SCHEMA=${FL_VC_SCHEMA:-facelicense-v2}
 VC_PLAN=${FL_VC_PLAN:-vcplanface0000000002}   # 정확히 20자 (varchar(20))
 
+# 스키마 내용 — 기본값 = FaceLicense v2. 다른 VC(협찬 등)는 얇은 래퍼가 FL_* 를 바꿔 이 스크립트를 재사용한다.
+# FL_CLAIMS = "claim_id|Caption;..." (전부 type=text/format=plain/location=inline/required=true)
+LABEL=${FL_LABEL:-FaceLicense}
+CLAIMS=${FL_CLAIMS:-model_did|Model DID;license_id|License ID;issued_at|Issued At;face_image_digest|Face Image Digest;agreement_version|Agreement Version;consent_doc_version|Consent Document Version}
+VC_TITLE=${FL_VC_TITLE:-WEARLESS Face License}
+VC_DESC=${FL_VC_DESCRIPTION:-WEARLESS model face-license VC for FaceMarket.}
+PROFILE_DESC=${FL_PROFILE_DESCRIPTION:-WEARLESS model face-license issuance profile.}
+TAG=${FL_TAG:-facelicense-v2}
+PLAN_KEY=${FL_PLAN_KEY:-facelicense_plan}
+REQUEST_PLAN=${FL_REQUEST_PLAN:-facelicense-v2}
+
 [ -n "$PGUSER" ] || { echo "PG_USER=missing" >&2; exit 1; }
 
 q() {
@@ -38,7 +49,23 @@ if [ "${#VC_PLAN}" -ne 20 ]; then
   exit 1
 fi
 
-echo "==> FaceLicense Issuer 프로비저닝 (admin=$ADMIN, db=$PGC/$PGDB)"
+# FL_CLAIMS → namespace items JSON. id/caption 은 JSON 에 그대로 박히므로 안전한 글자만 허용.
+claim_items_json() {
+  local out="" entry id caption
+  local IFS=';'
+  for entry in $CLAIMS; do
+    id=${entry%%|*}; caption=${entry#*|}
+    [[ "$id" =~ ^[a-z0-9_]+$ ]] && [[ "$caption" =~ ^[A-Za-z0-9\ ]+$ ]] && [ "$id" != "$entry" ] || {
+      echo "ERROR: FL_CLAIMS 항목 '$entry' 형식 오류 (claim_id|Caption)" >&2; return 1; }
+    [ -z "$out" ] || out+=","
+    out+="{\"id\":\"$id\",\"caption\":\"$caption\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true}"
+  done
+  [ -n "$out" ] || { echo "ERROR: FL_CLAIMS 가 비었다" >&2; return 1; }
+  printf '[%s]' "$out"
+}
+ITEMS_JSON=$(claim_items_json)
+
+echo "==> $LABEL Issuer 프로비저닝 (admin=$ADMIN, db=$PGC/$PGDB)"
 
 # 1/3 namespace (POST body = SchemaClaims: {namespace, items[]}, 각 claim type=text/format=plain/location=inline)
 NS_ID=$(q_issuer "SELECT id FROM namespace WHERE namespace_id = :'namespace_id';" -v "namespace_id=$NS_ID_STR")
@@ -46,14 +73,7 @@ if [ -z "$NS_ID" ]; then
   echo "--> 1/3 namespace 생성: $NS_ID_STR"
   curl -sf -X POST "$ADMIN/namespaces" -H 'Content-Type: application/json' -d "{
     \"namespace\": {\"id\":\"$NS_ID_STR\",\"name\":\"$NS_NAME\",\"ref\":\"$NS_REF\"},
-    \"items\": [
-      {\"id\":\"model_did\",\"caption\":\"Model DID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"license_id\",\"caption\":\"License ID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"issued_at\",\"caption\":\"Issued At\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"face_image_digest\",\"caption\":\"Face Image Digest\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"agreement_version\",\"caption\":\"Agreement Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"consent_doc_version\",\"caption\":\"Consent Document Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true}
-    ]
+    \"items\": $ITEMS_JSON
   }" >/dev/null
   NS_ID=$(q_issuer "SELECT id FROM namespace WHERE namespace_id = :'namespace_id';" -v "namespace_id=$NS_ID_STR")
   echo "    namespace id=$NS_ID"
@@ -69,8 +89,8 @@ if [ -z "$VS_ID" ]; then
   curl -sf -X POST "$ADMIN/vc-schemas" -H 'Content-Type: application/json' -d "{
     \"namespaces\": [$NS_ID],
     \"vcSchemaId\": \"$VC_SCHEMA\",
-    \"title\": \"WEARLESS Face License\",
-    \"description\": \"WEARLESS model face-license VC for FaceMarket.\",
+    \"title\": \"$VC_TITLE\",
+    \"description\": \"$VC_DESC\",
     \"language\": \"ko\",
     \"version\": \"2.0\"
   }" >/dev/null
@@ -87,8 +107,8 @@ if [ -z "$IP_ID" ]; then
   echo "--> 3/3 issue-profile 생성: $VC_PLAN (vc_schema=$VS_ID)"
   curl -sf -X POST "$ADMIN/issue-profiles" -H 'Content-Type: application/json' -d "{
     \"vcPlanId\": \"$VC_PLAN\",
-    \"title\": \"WEARLESS Face License\",
-    \"description\": \"WEARLESS model face-license issuance profile.\",
+    \"title\": \"$VC_TITLE\",
+    \"description\": \"$PROFILE_DESC\",
     \"vcSchemaId\": $VS_ID,
     \"language\": \"ko\",
     \"endpoints\": [\"http://127.0.0.1\"],
@@ -96,7 +116,7 @@ if [ -z "$IP_ID" ]; then
     \"curve\": \"Secp256r1\",
     \"padding\": \"PKCS5\",
     \"initiateType\": \"issuer_init\",
-    \"tags\": [\"facelicense-v2\"],
+    \"tags\": [\"$TAG\"],
     \"zkpEnabled\": false
   }" >/dev/null
   IP_ID=$(q_issuer "SELECT id FROM issue_profile WHERE vc_plan_id = :'vc_plan';" -v "vc_plan=$VC_PLAN")
@@ -112,7 +132,7 @@ echo "  vc_schema     : $(q_issuer "SELECT id||' ok' FROM vc_schema WHERE id = :
 echo "  issue_profile : $(q_issuer "SELECT id||' ok' FROM issue_profile WHERE id = :'id';" -v "id=$IP_ID")"
 # list_vc_plan 은 tas DB(List Community). issue-profile POST 가 여기에 자동 등록한다.
 LVP=$(q_tas "SELECT count(*) FROM list_vc_plan WHERE vc_plan_id = :'vc_plan';" -v "vc_plan=$VC_PLAN" || true)
-[ "${LVP:-0}" -gt 0 ] || { echo "facelicense_plan=missing"; exit 1; }
-echo "facelicense_plan=present"
-echo "완료. plan=$VC_PLAN 로 FaceLicense VC 발급 가능."
-echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"facelicense-v2\",\"claims\":{...}}"
+[ "${LVP:-0}" -gt 0 ] || { echo "${PLAN_KEY}=missing"; exit 1; }
+echo "${PLAN_KEY}=present"
+echo "완료. plan=$VC_PLAN 로 $LABEL VC 발급 가능."
+echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"$REQUEST_PLAN\",\"claims\":{...}}"

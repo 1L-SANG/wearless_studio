@@ -30,10 +30,37 @@ NS_REF=${FL_NAMESPACE_REF:-https://wearless.kr/schema/facelicense-v2}
 VC_SCHEMA=${FL_VC_SCHEMA:-facelicense-v2}
 VC_PLAN=${FL_VC_PLAN:-vcplanface0000000002}   # 정확히 20자 (varchar(20))
 
+# 스키마 내용 — 기본값 = FaceLicense v2. 다른 VC(협찬 등)는 얇은 래퍼가 FL_* 를 바꿔 이 스크립트를 재사용한다.
+# FL_CLAIMS = "claim_id|Caption;..." (전부 type=text/format=plain/location=inline/required=true)
+LABEL=${FL_LABEL:-FaceLicense v2}
+CLAIMS=${FL_CLAIMS:-model_did|Model DID;license_id|License ID;issued_at|Issued At;face_image_digest|Face Image Digest;agreement_version|Agreement Version;consent_doc_version|Consent Document Version}
+VC_TITLE=${FL_VC_TITLE:-WEARLESS Face License}
+VC_DESC=${FL_VC_DESCRIPTION:-WEARLESS model face-license VC for FaceMarket.}
+PROFILE_DESC=${FL_PROFILE_DESCRIPTION:-WEARLESS model face-license issuance profile.}
+TAG=${FL_TAG:-facelicense-v2}
+PLAN_KEY=${FL_PLAN_KEY:-facelicense_plan}
+REQUEST_PLAN=${FL_REQUEST_PLAN:-facelicense-v2}
+
 if [ "${#VC_PLAN}" -ne 20 ]; then
   echo "ERROR: vcPlanId '$VC_PLAN' 는 ${#VC_PLAN}자 — issue_profile.vc_plan_id 는 varchar(20) 필수." >&2
   exit 1
 fi
+
+# FL_CLAIMS → namespace items JSON. id/caption 은 JSON 에 그대로 박히므로 안전한 글자만 허용.
+claim_items_json() {
+  local out="" entry id caption
+  local IFS=';'
+  for entry in $CLAIMS; do
+    id=${entry%%|*}; caption=${entry#*|}
+    [[ "$id" =~ ^[a-z0-9_]+$ ]] && [[ "$caption" =~ ^[A-Za-z0-9\ ]+$ ]] && [ "$id" != "$entry" ] || {
+      echo "ERROR: FL_CLAIMS 항목 '$entry' 형식 오류 (claim_id|Caption)" >&2; return 1; }
+    [ -z "$out" ] || out+=","
+    out+="{\"id\":\"$id\",\"caption\":\"$caption\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true}"
+  done
+  [ -n "$out" ] || { echo "ERROR: FL_CLAIMS 가 비었다" >&2; return 1; }
+  printf '[%s]' "$out"
+}
+ITEMS_JSON=$(claim_items_json)
 
 # --- 태스크 자동 탐색 -------------------------------------------------------------
 if [ -z "$CLUSTER" ]; then
@@ -45,7 +72,7 @@ if [ -z "$TASK" ]; then
            --query 'taskArns[0]' --output text)
 fi
 [ -n "$TASK" ] && [ "$TASK" != "None" ] || { echo "ERROR: opendid RUNNING 태스크가 없다 — 먼저 깨워라(desired=1)." >&2; exit 1; }
-echo "==> FaceLicense v2 Issuer 프로비저닝 via ECS exec (cluster=${CLUSTER##*/} task=${TASK##*/} dry_run=$DRY_RUN)"
+echo "==> $LABEL Issuer 프로비저닝 via ECS exec (cluster=${CLUSTER##*/} task=${TASK##*/} dry_run=$DRY_RUN)"
 
 # --- 원격 curl --------------------------------------------------------------------
 # execute-command 출력은 세션 배너(첫 줄 + 빈 줄)와 "Exiting session…" 꼬리가 붙는다 → 벗겨서 본문만.
@@ -99,14 +126,7 @@ if [ -z "$NS_ID" ]; then
   if [ "$DRY_RUN" = 1 ]; then echo "    (dry-run) skip"; else
   code=$(rpost "$ISSUER/namespaces" "{
     \"namespace\": {\"id\":\"$NS_ID_STR\",\"name\":\"$NS_NAME\",\"ref\":\"$NS_REF\"},
-    \"items\": [
-      {\"id\":\"model_did\",\"caption\":\"Model DID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"license_id\",\"caption\":\"License ID\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"issued_at\",\"caption\":\"Issued At\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"face_image_digest\",\"caption\":\"Face Image Digest\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"agreement_version\",\"caption\":\"Agreement Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true},
-      {\"id\":\"consent_doc_version\",\"caption\":\"Consent Document Version\",\"type\":\"text\",\"format\":\"plain\",\"hideValue\":false,\"location\":\"inline\",\"required\":true}
-    ]
+    \"items\": $ITEMS_JSON
   }")
   [ "$code" = 200 ] || [ "$code" = 201 ] || echo "    경고: namespace POST http='$code' — 세션이 끊겼을 수 있어 재조회로 판정한다" >&2
   NS_ID=$(jid "$(rget "$ISSUER/namespaces?searchKey=namespaceId&searchValue=$NS_ID_STR&size=100")" namespaceId "$NS_ID_STR")
@@ -126,8 +146,8 @@ if [ -z "$VS_ID" ]; then
   code=$(rpost "$ISSUER/vc-schemas" "{
     \"namespaces\": [$NS_ID],
     \"vcSchemaId\": \"$VC_SCHEMA\",
-    \"title\": \"WEARLESS Face License\",
-    \"description\": \"WEARLESS model face-license VC for FaceMarket.\",
+    \"title\": \"$VC_TITLE\",
+    \"description\": \"$VC_DESC\",
     \"language\": \"ko\",
     \"version\": \"2.0\"
   }")
@@ -147,8 +167,8 @@ if [ -z "$IP_ID" ]; then
   if [ "$DRY_RUN" = 1 ]; then echo "    (dry-run) skip"; exit 0; fi
   code=$(rpost "$ISSUER/issue-profiles" "{
     \"vcPlanId\": \"$VC_PLAN\",
-    \"title\": \"WEARLESS Face License\",
-    \"description\": \"WEARLESS model face-license issuance profile.\",
+    \"title\": \"$VC_TITLE\",
+    \"description\": \"$PROFILE_DESC\",
     \"vcSchemaId\": $VS_ID,
     \"language\": \"ko\",
     \"endpoints\": [\"http://127.0.0.1\"],
@@ -156,7 +176,7 @@ if [ -z "$IP_ID" ]; then
     \"curve\": \"Secp256r1\",
     \"padding\": \"PKCS5\",
     \"initiateType\": \"issuer_init\",
-    \"tags\": [\"facelicense-v2\"],
+    \"tags\": [\"$TAG\"],
     \"zkpEnabled\": false
   }")
   [ "$code" = 200 ] || [ "$code" = 201 ] || echo "    경고: issue-profile POST http='$code' — 세션이 끊겼을 수 있어 재조회로 판정한다" >&2
@@ -173,7 +193,7 @@ echo "  vc_schema     : $VS_ID ok"
 echo "  issue_profile : $IP_ID ok"
 # list_vc_plan 은 TAS(List Community). issue-profile POST 가 여기에 자동 등록한다.
 LVP=$(jid "$(rget "$TAS/vc-plans/list?size=200")" vcPlanId "$VC_PLAN")
-[ -n "$LVP" ] || { echo "facelicense_plan=missing"; exit 1; }
-echo "facelicense_plan=present"
-echo "완료. plan=$VC_PLAN 로 FaceLicense v2 VC 발급 가능."
-echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"$VC_SCHEMA\",\"claims\":{...}}"
+[ -n "$LVP" ] || { echo "${PLAN_KEY}=missing"; exit 1; }
+echo "${PLAN_KEY}=present"
+echo "완료. plan=$VC_PLAN 로 $LABEL VC 발급 가능."
+echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"$REQUEST_PLAN\",\"claims\":{...}}"
