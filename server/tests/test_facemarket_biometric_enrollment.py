@@ -2383,10 +2383,13 @@ def test_complete_matches_sequentially_on_one_worker_thread(
 
 
 @pytest.mark.parametrize("stage", ["download", "match"])
-@pytest.mark.parametrize("scope_cancel", [False, True])
+@pytest.mark.parametrize(
+    ("scope_cancel", "repeat_cancel"),
+    [(False, False), (False, True), (True, False)],
+)
 def test_complete_cancellation_waits_for_workers_before_wiping(
     enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
-    completion_fakes, monkeypatch, stage, scope_cancel,
+    completion_fakes, monkeypatch, stage, scope_cancel, repeat_cancel,
 ):
     enrollment_client.app.state.settings = replace(
         enrollment_client.app.state.settings, fm_liveness_enabled=False,
@@ -2453,6 +2456,9 @@ def test_complete_cancellation_waits_for_workers_before_wiping(
             try:
                 await asyncio.wait_for(started.wait(), timeout=5)
                 task.cancel()
+                if repeat_cancel:
+                    await asyncio.sleep(0)
+                    task.cancel()
                 await assert_still_running()
             finally:
                 allow_finish.set()
@@ -2462,6 +2468,78 @@ def test_complete_cancellation_waits_for_workers_before_wiping(
     asyncio.run(run_and_cancel())
     assert len(completed) == 3
     assert wiped == [PORTRAIT_JPEG_BYTES, b"front-bytes", b"angle45-bytes", b"side-bytes"]
+
+
+@pytest.mark.parametrize("stage", ["refset", "id_crop"])
+def test_complete_cancellation_waits_for_other_biometric_readers(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    completion_fakes, monkeypatch, stage,
+):
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings,
+        fm_liveness_enabled=False,
+        fm_face_match_enabled=stage == "id_crop",
+    )
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    )
+    if stage == "id_crop":
+        enrollment_store.enrollments[0]["identity_method"] = "simple_auth"
+        enrollment_store.enrollments[0]["id_document_r2_key"] = "private/iddoc.jpg"
+        fake_r2.objects["private/iddoc.jpg"] = (b"id-document-bytes", "image/jpeg")
+
+    allow_finish = threading.Event()
+    wiped = []
+    original_wipe = cx_identity.wipe_bytearray
+
+    def record_wipe(buffer):
+        wiped.append(bytes(buffer))
+        original_wipe(buffer)
+
+    monkeypatch.setattr(cx_identity, "wipe_bytearray", record_wipe)
+
+    async def run_and_cancel():
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+
+        def block(*args, **kwargs):
+            loop.call_soon_threadsafe(started.set)
+            assert allow_finish.wait(timeout=3)
+            if stage == "id_crop":
+                assert bytes(args[0]) == b"id-document-bytes"
+                return bytearray(PORTRAIT_JPEG_BYTES)
+            assert all(bytes(buffer) for _, buffer in args[1])
+            return {"status": "ok"}
+
+        if stage == "id_crop":
+            monkeypatch.setattr(facemarket_enrollment.facemarket_id_document, "crop_id_face", block)
+        else:
+            monkeypatch.setattr(facemarket_enrollment, "refset_agreement", block)
+
+        async def complete():
+            await facemarket_enrollment.process_enrollment_completion(
+                types.SimpleNamespace(app=enrollment_client.app),
+                enrollment_id=eid, user_id="user-1", session_id=None,
+            )
+
+        task = asyncio.create_task(complete())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            task.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert wiped == [], "the biometric reader is still using these buffers"
+        finally:
+            allow_finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run_and_cancel())
+    if stage == "id_crop":
+        assert b"id-document-bytes" in wiped
+        assert PORTRAIT_JPEG_BYTES in wiped
+    else:
+        assert b"front-bytes" in wiped
 
 
 @pytest.mark.parametrize("face_match_enabled", [False, True])

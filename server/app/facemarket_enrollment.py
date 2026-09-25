@@ -3261,6 +3261,32 @@ def _completion_match_snapshot(
     }
 
 
+async def _await_biometric_worker(future: asyncio.Future, *, wipe_abandoned_result: bool = False):
+    """Keep mutable biometric inputs alive until a cancelled worker has stopped reading them."""
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        # AnyIO shields level cancellation; asyncio.shield protects the worker from
+        # repeated direct Task.cancel() calls while this request waits for it.
+        with anyio.CancelScope(shield=True):
+            while not future.done():
+                try:
+                    await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+        if future.done() and not future.cancelled():
+            try:
+                result = future.result()
+            except Exception:
+                pass  # Cancellation wins, but retrieve the worker error.
+            else:
+                if wipe_abandoned_result and isinstance(result, bytearray):
+                    cx_identity.wipe_bytearray(result)
+        raise
+
+
 async def process_enrollment_completion(
     request: Request,
     *,
@@ -3317,10 +3343,13 @@ async def process_enrollment_completion(
                     await asyncio.to_thread(r2_document.get_bytes, key)
                 )
                 try:
-                    portrait = await asyncio.to_thread(
+                    crop_task = asyncio.create_task(asyncio.to_thread(
                         facemarket_id_document.crop_id_face,
                         id_document_buffer,
                         settings=settings,
+                    ))
+                    portrait = await _await_biometric_worker(
+                        crop_task, wipe_abandoned_result=True,
                     )
                 except facemarket_id_document.IdDocumentError as exc:
                     raise EnrollmentMappedError(exc.reason) from None
@@ -3366,13 +3395,7 @@ async def process_enrollment_completion(
                 *(download_photo(index, photo) for index, photo in enumerate(photos)),
                 return_exceptions=True,
             )
-            try:
-                downloaded = await asyncio.shield(downloads)
-            except asyncio.CancelledError:
-                # Starlette may cancel at every await while the request scope exits.
-                with anyio.CancelScope(shield=True):
-                    await downloads
-                raise
+            downloaded = await _await_biometric_worker(downloads)
             # Settle every download before raising, so finally can wipe all buffers.
             for item in downloaded:
                 if isinstance(item, BaseException):
@@ -3387,7 +3410,10 @@ async def process_enrollment_completion(
         # 기준 3장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
         refset_started = time.perf_counter()
         try:
-            refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
+            refset_task = asyncio.create_task(asyncio.to_thread(
+                refset_agreement, settings, photo_items,
+            ))
+            refset = await _await_biometric_worker(refset_task)
         finally:
             logger.info(
                 "fm_complete_timing enrollment=%s refset_ms=%d photos=%d",
@@ -3403,13 +3429,7 @@ async def process_enrollment_completion(
                 settings, method=method, portrait=portrait, liveness=liveness,
                 photo_items=photo_items,
             ))
-            try:
-                match_snapshot = await asyncio.shield(match_task)
-            except asyncio.CancelledError:
-                # A worker cannot be stopped; let it finish before wiping its inputs.
-                with anyio.CancelScope(shield=True):
-                    await asyncio.gather(match_task, return_exceptions=True)
-                raise
+            match_snapshot = await _await_biometric_worker(match_task)
           except EnrollmentMappedError:
               raise
           except QcFailed as exc:
