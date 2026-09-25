@@ -27,7 +27,7 @@ export const SLOTS = Object.freeze([
   { n: 13, key: 'sr_front', group: 'sr', cut: 'front', title: '정면 · 무표정', hint: '렌즈를 봐요. 얼굴에 그림자가 져도 괜찮아요.', framing: 'face', angle: 'front' },
   { n: 14, key: 'sr_smile', group: 'sr', cut: 'smile', title: '정면 · 미소', hint: '같은 자리에서 입을 다물고 웃어요.', framing: 'face', angle: 'front', expression: 'smile' },
   { n: 15, key: 'sr_34', group: 'sr', cut: '34', title: '비스듬히 · 무표정', hint: '3번과 같은 쪽으로 고개를 돌려요.', framing: 'face', angle: 'left45' },
-  { n: 16, key: 'bl_front', group: 'bl', cut: 'front', title: '정면 · 무표정', hint: '얼굴을 눌러 밝기를 맞춰요. 플래시는 꺼요.', framing: 'face', angle: 'front' },
+  { n: 16, key: 'bl_front', group: 'bl', cut: 'front', title: '정면 · 무표정', hint: '얼굴이 어두우면 화면 속 얼굴을 톡 눌러요. 플래시는 꺼요.', framing: 'face', angle: 'front' },
   { n: 17, key: 'bl_smile', group: 'bl', cut: 'smile', title: '정면 · 미소', hint: '같은 자리에서 입을 다물고 웃어요.', framing: 'face', angle: 'front', expression: 'smile' },
   { n: 18, key: 'bl_34', group: 'bl', cut: '34', title: '비스듬히 · 무표정', hint: '3번과 같은 쪽으로 고개를 돌려요.', framing: 'face', angle: 'left45' },
 ].map((slot) => Object.freeze(slot)));
@@ -42,7 +42,7 @@ export const PHOTO_GROUPS = Object.freeze([
   { id: 'sh', title: '그늘', action: '그늘에서', badge: '건물 그림자 · 나무 아래', note: '그늘 한 자리에서 1~9번을 찍어요.', cloudy: ['낮에 밝은 곳에서 찍어요.', '얼굴에 그림자가 없으면 돼요.'] },
   { id: 'sl', title: '햇빛', action: '햇빛 드는 곳으로 나와서', badge: '그늘에서 나오기', note: '햇빛으로 나와 아래 자세로 3장을 찍어요.', cloudy: ['낮에 창가나 조명 옆에 서요.', '얼굴 한쪽에 그림자가 생기면 돼요.'] },
   { id: 'sr', title: '90도 회전', action: '오른쪽으로 90도 돌아서', badge: '선 자리에서 몸만 돌리기', note: '찍는 사람도 얼굴 정면으로 이동해요.', cloudy: ['몸만 돌려요.', '그림자가 반대쪽 볼로 가면 돼요.'] },
-  { id: 'bl', title: '한 번 더 회전', action: '한 번 더 90도 돌아서', badge: '해를 등지고', note: '얼굴이 어두우면 화면에서 얼굴을 눌러 주세요.', cloudy: ['빛을 등지고 서요.'] },
+  { id: 'bl', title: '한 번 더 회전', action: '한 번 더 90도 돌아서', badge: '해를 등지고', note: '얼굴이 어둡게 나오면 카메라 화면 속 얼굴을 톡 눌러 초점을 맞춰요. 그러면 얼굴이 밝아져요.', cloudy: ['빛을 등지고 서요.'] },
 ]);
 // 사진 확인 화면의 sub 번호. 단계 화면 다음 자리예요(단계가 늘면 같이 밀려요).
 export const PHOTO_REVIEW_SUB = PHOTO_GROUPS.length + 1;

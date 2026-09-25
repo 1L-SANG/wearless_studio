@@ -98,7 +98,7 @@ test('복원은 동의와 사진, 발급 대기와 완료 상태를 구분해요
 import { findTree, modelComponentHarness, eventually } from './helpers/facemarketHarness.mjs';
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const baseEnrollment = { consentDocumentVersion:module.CONSENT_VERSION, termsConsentVersion:module.CONSENT_VERSION, overseasConsentVersion:module.CONSENT_VERSION, id: 'enrollment-1', modelId: 'model-1', status: 'identity_pending', photos: [] };
-const button = (tree, label) => findTree(tree, (node) => node.type === 'button' && node.props.children === label);
+const button = (tree, label) => findTree(tree, (node) => node.type === 'button' && textOf(node) === label);
 const commit = (harness) => { const tree = harness.render(); harness.runtime.effects.forEach((effect) => effect()); return tree; };
 const textOf = (node) => node == null || typeof node === 'boolean' ? '' : typeof node !== 'object' ? String(node) : Array.isArray(node) ? node.map(textOf).join('') : textOf(node.props?.children);
 
@@ -302,6 +302,35 @@ test('발급 실패 뒤 조건이 남고 재시도로 완료돼요', async () =>
 
 const allPhotos = () => module.SLOTS.map((slot) => ({ slot: slot.key, angle: slot.key, qcStatus: 'passed' }));
 const photoRecord = () => ({ ...baseEnrollment, status: 'liveness_pending', photos: allPhotos() });
+
+for (const fails of [false, true]) {
+  test(`사진 확인 요청 대기 중 안내를 보이고 ${fails ? '실패하면 기존 오류 화면으로 가요' : '성공하면 조건 화면으로 가요'}`, async () => {
+    let resolve, reject;
+    const response = new Promise((done, fail) => { resolve = done; reject = fail; });
+    const h = await modelComponentHarness({ initialStates: ['2', photoRecord(), module.PHOTO_REVIEW_SUB], api: {
+      getFacemarketConfig: async () => ({ livenessRequired: false, faceMatchEnabled: false }),
+      completeEnrollment: () => response,
+    } });
+    let pending;
+    try {
+      assert.equal(button(h.render(), '사진을 확인하는 중…'), null);
+      pending = button(h.render(), '확인 완료').props.onClick();
+      await flush();
+      const tree = h.render();
+      const checking = button(tree, '사진을 확인하는 중…');
+      assert.ok(checking);
+      assert.equal(checking.props.disabled, true);
+      assert.ok(findTree(checking, node => node.props.className === 'spinner' && node.props['aria-hidden'] === true));
+      assert.equal(textOf(findTree(tree, node => node.props.id === checking.props['aria-describedby'])), '등록 사진을 확인하고 있어요. 10초쯤 걸려요.');
+      if (fails) reject(new Error('사진 확인 요청 실패'));
+      else resolve({ passed: true, status: 'license_pending', modelId: 'model-1' });
+      await pending;
+      assert.equal(button(h.render(), '사진을 확인하는 중…'), null);
+      assert.equal(h.runtime.states[0], fails ? 'poll_error' : '3');
+      if (fails) assert.match(textOf(findTree(h.render(), node => node.props.role === 'alert')), /사진 확인 요청 실패/);
+    } finally { resolve({ status: 'license_pending' }); await pending; await h.close(); }
+  });
+}
 
 test('모든 사진을 올리면 세션이나 초상 없이 완료 요청을 보내요', async () => {
   const calls = [];

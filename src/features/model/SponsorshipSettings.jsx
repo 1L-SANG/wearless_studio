@@ -6,6 +6,17 @@ import s from './SponsorshipSettings.module.css';
 export function SponsorshipFields({ value, onChange, disabled = false }) {
   const id = useId();
   const field = (name, next) => onChange({ ...value, [name]: next });
+  const moveSize = (event, name) => {
+    const offset = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (disabled || !offset) return;
+    const buttons = [...event.currentTarget.querySelectorAll('[role="radio"]')];
+    const index = buttons.indexOf(event.target);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = buttons[(index + offset + buttons.length) % buttons.length];
+    field(name, next.value);
+    next.focus();
+  };
   const toggle = <button type="button" role="switch" aria-checked={value.sponsorshipEnabled} aria-label="의류 협찬 받기" className={s.toggle} disabled={disabled}
         onClick={() => field('sponsorshipEnabled', !value.sponsorshipEnabled)}><span /></button>;
   return <section className={s.card} aria-labelledby={`${id}-title`}>
@@ -26,10 +37,18 @@ export function SponsorshipFields({ value, onChange, disabled = false }) {
       <div className={s.field}><label htmlFor={`${id}-followers`}>팔로워 수</label><input id={`${id}-followers`} inputMode="numeric" value={value.instagramFollowers}
         onChange={event => field('instagramFollowers', event.target.value)} disabled={disabled} placeholder="0" aria-describedby={`${id}-followers-help`} />
         <small id={`${id}-followers-help`}>본인 입력이에요. 저장한 날짜가 기준일로 표시돼요.</small></div>
-      <div className={s.field}><label htmlFor={`${id}-top`}>상의 사이즈</label><select id={`${id}-top`} value={value.sizeTop} onChange={event => field('sizeTop', event.target.value)} disabled={disabled}>
-        <option value="">골라 주세요</option>{TOP_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select></div>
-      <div className={s.field}><label htmlFor={`${id}-bottom`}>하의 사이즈</label><select id={`${id}-bottom`} value={value.sizeBottomWaist} onChange={event => field('sizeBottomWaist', event.target.value)} disabled={disabled}>
-        <option value="">허리 인치를 골라 주세요</option>{BOTTOM_WAIST_SIZES.map(size => <option key={size} value={size}>{size}인치</option>)}</select></div>
+      <div className={`${s.field} ${s.sizeField}`}><span id={`${id}-top`} className={s.fieldTitle}>상의 사이즈</span>
+        <div className={`${s.sizeGrid} ${s.topGrid}`} role="radiogroup" aria-labelledby={`${id}-top`} onKeyDown={event => moveSize(event, 'sizeTop')}>
+          {TOP_SIZES.map((size, index) => <button key={size} type="button" role="radio" value={size} aria-checked={value.sizeTop === size}
+            tabIndex={value.sizeTop === size || (!TOP_SIZES.includes(value.sizeTop) && index === 0) ? 0 : -1}
+            className={s.sizeOption} disabled={disabled} onClick={() => field('sizeTop', size)}>{size}</button>)}
+        </div></div>
+      <div className={`${s.field} ${s.sizeField}`}><span id={`${id}-bottom`} className={s.fieldTitle}>하의 사이즈 (허리, 인치)</span>
+        <div className={`${s.sizeGrid} ${s.bottomGrid}`} role="radiogroup" aria-labelledby={`${id}-bottom`} onKeyDown={event => moveSize(event, 'sizeBottomWaist')}>
+          {BOTTOM_WAIST_SIZES.map((size, index) => <button key={size} type="button" role="radio" value={String(size)} aria-checked={value.sizeBottomWaist === String(size)}
+            tabIndex={value.sizeBottomWaist === String(size) || (!BOTTOM_WAIST_SIZES.includes(Number(value.sizeBottomWaist)) && index === 0) ? 0 : -1}
+            className={s.sizeOption} disabled={disabled} onClick={() => field('sizeBottomWaist', String(size))}>{size}</button>)}
+        </div></div>
       <label className={s.consent} htmlFor={`${id}-consent`}>
         <input id={`${id}-consent`} type="checkbox" checked={value.profileConsent === true} disabled={disabled} onChange={event => field('profileConsent', event.target.checked)} />
         <span><strong>프로필 정보 수집에 동의합니다</strong> <em className={s.required}>필수</em>

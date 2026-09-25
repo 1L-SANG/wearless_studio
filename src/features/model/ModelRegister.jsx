@@ -497,6 +497,7 @@ export function ModelRegister() {
   };
 
   const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness', 'reshoot'].includes(step) ? 2 : Number(step[0]) || 1;
+  const checkingPhotos = step === '2' && sub === PHOTO_REVIEW_SUB && busy;
   const visibleAssetError = assetsPending && ['2', '3'].includes(step) ? assetError : '';
   // 이 등록이 어느 경로인가 — 화면 문구를 실제로 열리는 위젯에 맞추는 데 써요(표시층 전용,
   // 컷 파이프라인·상태머신은 이 값으로 갈리지 않아요).
@@ -532,7 +533,7 @@ export function ModelRegister() {
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, editingDisabled: assetsPending, onFile: changePhoto, onRemove: removePhoto, photoSlot, error, onPick: rememberPhotoPick, onCancelPick: clearPhotoPick, editGroup: (groupSub) => { clearPhotoError(); setSub(groupSub); setEditingPhotos(true); } });
     const progress = photoProgress(enrollment?.photos, sub < PHOTO_REVIEW_SUB ? PHOTO_GROUPS[sub - 1].id : undefined);
-    next = { label: sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !progress.complete, hint: assetsPending ? '사진을 정리하고 있어요. 준비가 끝나면 사진을 바꾸거나 지울 수 있어요.' : progress.complete ? '모두 저장했어요' : `${progress.count}/${progress.total}장 저장. ${progress.total - progress.count}장을 더 올려 주세요.` };
+    next = { label: checkingPhotos ? '사진을 확인하는 중…' : sub === PHOTO_REVIEW_SUB ? '확인 완료' : '다음', action: nextPhoto, disabled: !progress.complete, hint: checkingPhotos ? '등록 사진을 확인하고 있어요. 10초쯤 걸려요.' : assetsPending ? '사진을 정리하고 있어요. 준비가 끝나면 사진을 바꾸거나 지울 수 있어요.' : progress.complete ? '모두 저장했어요' : `${progress.count}/${progress.total}장 저장. ${progress.total - progress.count}장을 더 올려 주세요.` };
     previous = { label: '이전', action: () => { clearPhotoError(); if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === 'reshoot') {
     content = renderReshoot({ enrollment, previews, busy, onFile: changePhoto, photoSlot, error });
@@ -573,7 +574,7 @@ export function ModelRegister() {
     {(next || previous) && <footer className={s.bottomBar}>
       {visibleAssetError ? <div id="register-asset-error" className={`${s.footerHint} ${s.assetError}`} role="alert"><p>{visibleAssetError}</p><button type="button" className={s.textLink} onClick={() => { setAssetError(''); setAssetPollRetry(value => value + 1); }}>사진 준비 상태 다시 확인하기</button></div>
         : next?.hint && <p id="register-hint" className={s.footerHint} aria-live="polite">{next.hint}</p>}
-      <div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}{next && <button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-describedby={visibleAssetError ? 'register-asset-error' : next.hint ? 'register-hint' : undefined} onClick={next.action}>{next.label}</button>}</div></div>
+      <div className={s.footerActions}><div className={s.footerInner}>{previous && <button type="button" className={s.secondary} disabled={busy} onClick={previous.action}>{previous.label}</button>}{next && <button type="button" className={s.primary} disabled={busy || !!next.disabled} aria-busy={checkingPhotos || undefined} aria-describedby={visibleAssetError ? 'register-asset-error' : next.hint ? 'register-hint' : undefined} onClick={next.action}>{checkingPhotos ? <><span className={s.spinner} aria-hidden={true} />{next.label}</> : next.label}</button>}</div></div>
     </footer>}
   </div>;
 }

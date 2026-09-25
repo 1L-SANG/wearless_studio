@@ -17,7 +17,7 @@ test('프로필 정보 수집에 동의하지 않으면 켤 수 없고, 저장�
   assert.equal(sponsorshipDraft({ sponsorshipEnabled: true, sponsorshipProfileConsentAt: '2026-09-22T00:00:00Z' }).profileConsent, true);
   assert.equal(sponsorshipDraft({ sponsorshipEnabled: true }).profileConsent, false);
 });
-for (const patch of [{instagramHandle:'https://instagram.com/a'}, {instagramHandle:'a..b'}, {instagramFollowers:''}, {instagramFollowers:'1.5'}, {instagramFollowers:'-1'}, {sizeTop:'XXL'}, {sizeBottomWaist:'23'}]) {
+for (const patch of [{instagramHandle:'https://instagram.com/a'}, {instagramHandle:'a..b'}, {instagramFollowers:''}, {instagramFollowers:'1.5'}, {instagramFollowers:'-1'}, {sizeTop:'XXL'}, {sizeTop:'FREE'}, {sizeBottomWaist:'23'}]) {
  test(`협찬을 켤 때 유효하지 않은 입력을 거부해요 ${JSON.stringify(patch)}`, () => assert.throws(() => sponsorshipPayload({...enabled,...patch})));
 }
 test('협찬 필터는 실제 참여 모델만 남기고 기존 순서를 보존해요', () => {
@@ -35,4 +35,16 @@ test('공개 어댑터는 참여 중인 모델에만 안전한 SNS와 사이즈 
  assert.equal('profileConsent' in toBrowseModel(item).sponsorship,false);
  assert.equal(toBrowseModel({...item,instagramHandle:'javascript:alert(1)'}).sponsorship,null);
  assert.equal(fromExampleModel(BROWSE_MODELS[0]).sponsorship,null);
+});
+
+test('FREE로 저장된 공개 모델은 협찬 정보와 필터 참여를 유지해요', () => {
+ const item={id:'legacy',displayName:'기존 모델',closeupImageUrl:'/image.webp',...enabled,sizeTop:'FREE'};
+ const model=toBrowseModel(item);
+ assert.equal(model.sponsorship?.sizeTop,'FREE');
+ assert.equal(model.sponsorship?.instagramUrl,'https://www.instagram.com/daily.style/');
+ assert.equal(model.sponsorship?.masked,false);
+ assert.deepEqual(filterSponsorshipModels([model],true),[model]);
+ assert.equal(toBrowseModel({...item,sizeTop:'XXL'}).sponsorship,null);
+ assert.equal(toBrowseModel({...item,instagramHandle:'javascript:alert(1)'}).sponsorship,null);
+ assert.equal(toBrowseModel({...item,sizeBottomWaist:23}).sponsorship,null);
 });
