@@ -1,0 +1,3 @@
+# Immutable detail-QC receipts are byte-hashed; preserve captured line endings.
+/reference/detail-production-qc/**/*.json -text
+/server/prompts/detail_output_qc_v1.txt -text
