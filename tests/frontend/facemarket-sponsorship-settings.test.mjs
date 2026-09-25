@@ -56,6 +56,73 @@ test('마이페이지에서 끄기 저장이 실패하면 실제 켜진 상태�
   } finally { await h.close(); }
 });
 
+test('사이즈 격자는 FREE 없이 선택 상태를 바꾸고 같은 칸을 다시 눌러도 유지해요', async () => {
+  const h = await modelComponentHarness({ entry: '/src/features/model/SponsorshipSettings.jsx', exportName: 'SponsorshipFields', initialStates: [], api: {} });
+  let value = sponsorshipDraft({ ...model, sizeTop: 'FREE' });
+  const render = (disabled = false) => h.render({ value, disabled, onChange: next => { value = next; } });
+  const group = (tree, title) => {
+    const label = findTree(tree, node => textOf(node) === title && node.props?.id);
+    assert.ok(label, title);
+    return findTree(tree, node => node.props?.role === 'radiogroup' && node.props['aria-labelledby'] === label.props.id);
+  };
+  const radios = tree => {
+    const result = [];
+    findTree(tree, node => { if (node.props?.role === 'radio') result.push(node); return false; });
+    return result;
+  };
+  try {
+    const top = group(render(), '상의 사이즈');
+    assert.ok(top);
+    assert.deepEqual(radios(top).map(textOf), ['XS', 'S', 'M', 'L', 'XL']);
+    assert.ok(radios(top).every(node => node.props['aria-checked'] === false));
+    assert.equal(findTree(render(), node => node.type === 'select'), null);
+    for (const size of ['S', 'XL', 'XL']) {
+      button(group(render(), '상의 사이즈'), size).props.onClick();
+      assert.equal(value.sizeTop, size);
+      assert.deepEqual(radios(group(render(), '상의 사이즈')).filter(node => node.props['aria-checked']).map(textOf), [size]);
+    }
+    const bottomTitle = '하의 사이즈 (허리, 인치)';
+    assert.deepEqual(radios(group(render(), bottomTitle)).map(textOf), ['24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34']);
+    for (const size of ['24', '34', '34']) {
+      button(group(render(), bottomTitle), size).props.onClick();
+      assert.equal(value.sizeBottomWaist, size);
+      assert.deepEqual(radios(group(render(), bottomTitle)).filter(node => node.props['aria-checked']).map(textOf), [size]);
+    }
+    assert.equal(radios(render(true)).length, 16);
+    assert.ok(radios(render(true)).every(node => node.props.disabled === true));
+    for (const [title, key, from, expected] of [
+      ['상의 사이즈', 'ArrowRight', 'XL', 'XS'],
+      ['상의 사이즈', 'ArrowLeft', 'XS', 'XL'],
+      [bottomTitle, 'ArrowDown', '34', '24'],
+      [bottomTitle, 'ArrowUp', '24', '34'],
+    ]) {
+      const grid = group(render(), title);
+      let focused, prevented = false;
+      const buttons = radios(grid).map(node => ({ value: node.props.value, focus() { focused = this.value; } }));
+      grid.props.onKeyDown({ key, target: buttons.find(node => node.value === from), currentTarget: { querySelectorAll: () => buttons }, preventDefault() { prevented = true; } });
+      assert.equal(focused, expected);
+      assert.equal(prevented, true);
+      assert.deepEqual(radios(group(render(), title)).filter(node => node.props['aria-checked']).map(textOf), [expected]);
+      assert.deepEqual(radios(group(render(), title)).filter(node => node.props.tabIndex === 0).map(textOf), [expected]);
+    }
+  } finally { await h.close(); }
+});
+
+test('마이페이지의 기존 FREE 값은 새 상의 사이즈를 고른 뒤에만 저장돼요', async () => {
+  const calls = [];
+  const h = await settingsHarness({ updateModelSponsorship: async (id, body) => { calls.push(body); return { ...model, ...body }; } });
+  const legacy = { ...model, sizeTop: 'FREE' };
+  try {
+    await button(h.render({ model: legacy }), '협찬 설정 저장').props.onClick();
+    assert.deepEqual(calls, []);
+    assert.match(textOf(h.render({ model: legacy })), /상의 사이즈를 골라 주세요\./);
+    fields(h.render({ model: legacy })).props.onChange({ ...sponsorshipDraft(legacy), sizeTop: 'L' });
+    await button(h.render({ model: legacy }), '협찬 설정 저장').props.onClick();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sizeTop, 'L');
+  } finally { await h.close(); }
+});
+
 test('마이페이지의 무관한 모델 갱신은 입력 중인 협찬 계정을 덮지 않아요', async () => {
   const h = await settingsHarness({});
   try {

@@ -1,4 +1,5 @@
-export const TOP_SIZES = Object.freeze(['XS', 'S', 'M', 'L', 'XL', 'FREE']);
+export const TOP_SIZES = Object.freeze(['XS', 'S', 'M', 'L', 'XL']);
+const LEGACY_TOP_SIZES = Object.freeze([...TOP_SIZES, 'FREE']);
 export const BOTTOM_WAIST_SIZES = Object.freeze(Array.from({ length: 11 }, (_, i) => 24 + i));
 export const SPONSORSHIP_CHANGED = 'facemarket:sponsorship-changed';
 
@@ -21,6 +22,10 @@ export function sponsorshipDraft(model = {}) {
 }
 
 export function sponsorshipPayload(draft) {
+  return validatedSponsorship(draft, TOP_SIZES);
+}
+
+function validatedSponsorship(draft, topSizes) {
   if (!draft.sponsorshipEnabled) return { sponsorshipEnabled: false };
   const instagramHandle = normalizeInstagramHandle(draft.instagramHandle);
   if (!INSTAGRAM_HANDLE_PATTERN.test(instagramHandle) || instagramHandle.includes('..')) {
@@ -31,7 +36,7 @@ export function sponsorshipPayload(draft) {
   if (!/^\d+$/.test(followers) || !Number.isInteger(instagramFollowers) || instagramFollowers > 2147483647) {
     throw new Error('팔로워 수를 0 이상의 정수로 적어주세요.');
   }
-  if (!TOP_SIZES.includes(draft.sizeTop)) throw new Error('상의 사이즈를 골라 주세요.');
+  if (!topSizes.includes(draft.sizeTop)) throw new Error('상의 사이즈를 골라 주세요.');
   const sizeBottomWaist = Number(draft.sizeBottomWaist);
   if (!BOTTOM_WAIST_SIZES.includes(sizeBottomWaist)) throw new Error('하의 허리 사이즈를 골라 주세요.');
   if (draft.profileConsent !== true) throw new Error('프로필 정보 수집에 동의해 주세요.');
@@ -52,7 +57,7 @@ export function publicSponsorship(item) {
   // 비로그인 공개 응답은 켜짐만 알리고 상세를 비워요. 그때는 배지만 그려요.
   if (item.instagramHandle == null && item.instagramFollowers == null && item.sizeTop == null) return { enabled: true, masked: true };
   try {
-    const { profileConsent, ...value } = sponsorshipPayload({ ...item, profileConsent: true });
+    const { profileConsent, ...value } = validatedSponsorship({ ...item, profileConsent: true }, LEGACY_TOP_SIZES);
     return { enabled: true, masked: false, ...value, instagramUrl: `https://www.instagram.com/${value.instagramHandle}/`, reportedAt: item.instagramFollowersReportedAt || null };
   } catch { return null; }
 }

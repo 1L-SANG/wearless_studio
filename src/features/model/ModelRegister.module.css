@@ -136,6 +136,10 @@
 @keyframes registerSheen { to { left: 130%; } }
 @media (prefers-reduced-motion: reduce) { .primary:hover:not(:disabled)::after { animation: none; } }
 .primary:disabled { box-shadow: none; background: var(--bg-2); border-color: var(--fm-line); color: var(--fg-3); }
+.primary .spinner { width: 14px; height: 14px; margin-right: 8px; border-top-color: var(--fm-ink); }
+/* 사진 확인 중에는 멈춘 버튼처럼 보이지 않게 검정 바탕을 유지하고 흰 스피너를 돌린다. */
+.primary[aria-busy="true"]:disabled { background: var(--fg-1); border-color: var(--fg-1); color: var(--bg-1); cursor: progress; }
+.primary[aria-busy="true"] .spinner { border-color: color-mix(in srgb, var(--bg-1) 35%, transparent); border-top-color: var(--bg-1); }
 .secondary { background: var(--bg-1); color: var(--fg-1); border: 1px solid var(--fm-line); }
 /* max-height 병기: 가로로 눕힌 폰(예 844×390)은 너비 조건(700px)엔 안 걸리지만
    세로 공간이 좁기는 마찬가지다 — 신분증 카메라 화면처럼 진행 레일·헤딩·안내문이
