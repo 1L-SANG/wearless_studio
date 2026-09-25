@@ -638,7 +638,7 @@ function EnrollmentDetail({ enrollmentId, refreshVersion, onDecided }) {
                 onChange={(e) => setIdentityOk(e.target.checked)}
                 className="mt-0.5"
               />
-              신분증 사진과 등록 사진이 같은 사람이에요
+              신분증 사진과 등록 사진이 같은 사람이에요. 주민등록번호 뒤 7자리도 가려져 있어요.
             </label>
             {approvalHint && <p className="mb-3 text-xs text-muted-foreground">{approvalHint}</p>}
             <div className="flex flex-wrap gap-2">

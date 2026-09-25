@@ -1,7 +1,7 @@
 /* 신분증은 사용자가 직접 촬영해요. 안내 틀과 실제 프레임의 좌표를 맞춰요. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { setCaptureFrameStyle } from './idGalleryFraming.js';
-import { burnGuideMask } from './idDocumentMasking.js';
+import { captureFrameBlob } from './idDocumentMasking.js';
 import s from './ModelRegister.module.css';
 
 export default function IdCameraCapture({ onCaptured, onUnavailable, busy, onGallery }) {
@@ -73,7 +73,7 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy, onGal
     capturingRef.current = true;
     setCaptureError(false);
     try {
-      burnGuideMask(canvas, video, width, height)
+      captureFrameBlob(canvas, video, width, height)
         .then((blob) => {
           if (!mountedRef.current) return;
           onCapturedRef.current?.(blob);
@@ -104,8 +104,8 @@ export default function IdCameraCapture({ onCaptured, onUnavailable, busy, onGal
       <canvas ref={shotRef} hidden />
     </div>
     <div className={s.idCameraHint}>
-      <p>신분증을 네모 안에 맞추고 촬영 버튼을 눌러 주세요.</p>
-      <p className={s.idCameraSubHint}>주민등록번호 뒷자리는 가리고 찍어도 돼요.</p>
+      <p>주민등록증을 네모 안에 맞추고 촬영해 주세요.</p>
+      <p className={s.idCameraSubHint}>촬영 후 주민등록번호 뒤 7자리를 직접 가려요.</p>
       {captureError && <p className={s.idCaptureError} role="alert">사진을 저장하지 못했어요. 다시 찍어 주세요.</p>}
     </div>
     <div className={s.idCameraControls}>

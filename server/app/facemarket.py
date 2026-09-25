@@ -1357,12 +1357,15 @@ async def issue_and_activate_pending_face_vc(
         enrollment_id = str(locked.get("enrollment_id") or "")
         async with conn.cursor() as cur:
             await cur.execute(
-                "select e.review_status from fm_biometric_enrollments e "
-                "where e.id = %s and e.user_id = %s",
+                "select e.review_status, e.status, e.photo_review_status "
+                "from fm_biometric_enrollments e "
+                "where e.id = %s and e.user_id = %s for update skip locked",
                 (enrollment_id, user_id),
             )
             enrollment = await cur.fetchone()
-        if enrollment is None or not identity_cleared(enrollment["review_status"]):
+        if (enrollment is None or not identity_cleared(enrollment["review_status"])
+                or enrollment["status"] != "vc_pending"
+                or enrollment.get("photo_review_status") == "reshoot_requested"):
             await conn.rollback()
             return None
         issued = await issue_face_vc(

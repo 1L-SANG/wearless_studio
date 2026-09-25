@@ -272,3 +272,17 @@
 .error .textLink { display: block; min-height: 44px; margin-top: 8px; }
 
 .idCameraControls button:disabled { opacity: .5; }
+.idMaskViewport { touch-action: none; cursor: crosshair; overflow: visible; }
+.idMaskImage { display: block; width: 100%; height: auto; pointer-events: none; user-select: none; }
+.idManualMask { position: absolute; left: var(--mask-xr); top: var(--mask-yr); width: var(--mask-wr); height: var(--mask-hr); background: #111; outline: 2px dashed var(--bg-1); cursor: move; }
+.idMaskHandle { position: absolute; right: -8px; bottom: -8px; width: 16px; height: 16px; background: var(--bg-1); border: 2px solid var(--fm-ink); border-radius: 50%; cursor: nwse-resize; }
+.idMaskHandle::after { content: ''; position: absolute; inset: -16px; }
+.idMaskSliders { max-width: 480px; margin: 6px auto 0; }
+.idMaskSlidersEmpty { visibility: hidden; }
+.idMaskControls { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+.idMaskConfirmation { display: flex; align-items: center; gap: 12px; max-width: 480px; min-height: 48px; margin: 0 auto; text-align: left; }
+.idMaskConfirmation input { flex-shrink: 0; width: 22px; height: 22px; accent-color: var(--bg-1); }
+.idFinalControls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.idFinalControls .primary { grid-row: 1; grid-column: 1 / -1; width: 100%; margin: 0; }
+.idFinalControls button { font-size: 13px !important; padding: 10px; }
+.idMaskViewport:focus-visible { outline: 2px solid var(--bg-1); outline-offset: 2px; }

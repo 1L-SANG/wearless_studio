@@ -23,7 +23,7 @@ export default function IdGalleryFit({ imageUrl, onCaptured, onGallery }) {
     if (!loaded || inFlight.current) return;
     inFlight.current = true; setBusy(true); setError('');
     try {
-      const blob = await frameGalleryPhoto(document.createElement('canvas'), document.createElement('canvas'), imageRef.current, zoom, offset);
+      const blob = await frameGalleryPhoto(document.createElement('canvas'), imageRef.current, zoom, offset, document.createElement('canvas'));
       if (active.current) onCaptured(blob);
     } catch { if (active.current) setError('사진을 저장하지 못했어요. 다시 골라 주세요.'); }
     finally { inFlight.current = false; if (active.current) setBusy(false); }
@@ -54,7 +54,7 @@ export default function IdGalleryFit({ imageUrl, onCaptured, onGallery }) {
     </div>
     <div className={s.idCameraHint}>
       <p>사진을 끌어서 신분증을 네모 안에 맞춰 주세요.</p>
-      <p className={s.idCameraSubHint}>주민등록번호 뒷자리는 가리고 올려도 돼요.</p>
+      <p className={s.idCameraSubHint}>다음 화면에서 주민등록번호 뒤 7자리를 직접 가려요.</p>
       <label className={s.idZoom}>사진 크기<input type="range" min="0.5" max="4" step="0.01" value={zoom} disabled={busy || !loaded} onChange={event => setZoom(Number(event.target.value))} /></label>
       {error && <p className={s.idCaptureError} role="alert">{error}</p>}
     </div>

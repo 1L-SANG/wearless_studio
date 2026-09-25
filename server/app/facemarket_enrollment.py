@@ -726,6 +726,28 @@ async def _consume_reshoot_slot(cur, enrollment_id: str, user_id: str, slot: str
         """,
         (enrollment_id, user_id),
     )
+    # 아직 발급하지 않은 등록은 새 사진으로 증거를 다시 만든다. 업로드와 같은
+    # 트랜잭션에서 작업을 넣어 마지막 사진 뒤에 중단되어도 복구할 수 있게 한다.
+    await cur.execute(
+        """update fm_biometric_enrollments
+           set status = 'asset_building', photo_revision = photo_revision + 1,
+               match_scores = null
+           where id = %s and user_id = %s and status = 'vc_pending'
+           returning model_id::text as model_id, photo_revision""",
+        (enrollment_id, user_id),
+    )
+    rebuilding = await cur.fetchone()
+    if rebuilding is not None:
+        await cur.execute(
+            "update fm_models set assets_status = 'building' where id = %s",
+            (rebuilding["model_id"],),
+        )
+        await cur.execute(
+            """insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+               values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)""",
+            (user_id, Json({"modelId": rebuilding["model_id"], "enrollmentId": enrollment_id,
+                           "photoRevision": rebuilding["photo_revision"]})),
+        )
 
 
 def _validate_photo_mutation_enrollment(row: dict | None, slot: str | None = None) -> dict:
@@ -1985,6 +2007,7 @@ async def upload_id_document(
     file: UploadFile = File(...),
     document_type: str = Form(..., alias="documentType"),
     masked_confirmed: bool = Form(..., alias="maskedConfirmed"),
+    mask_region: str | None = Form(None, alias="maskRegion"),
     user_id: str = Depends(require_user),
 ):
     """간편인증(simple_auth) 경로 전용 — 사용자가 촬영한 신분증 업로드.
@@ -2039,7 +2062,22 @@ async def upload_id_document(
         # 없다. off 라 판정 자체가 없으면 None(NULL) 을 그대로 둔다 — 'auto'는 검사 안
         # 한 걸 통과로, 'manual'은 통과 못 한 걸로 거짓 기록하는 셈이라 둘 다 안 된다.
         mask_mode: str | None = None
-        if settings.fm_id_mask_verify != "off":
+        if mask_region is not None:
+            # 새 클라이언트는 직접 지정한 가림 영역을 보낸다. 고정 위치 검사와 분리하고,
+            # 실제 픽셀 덮어쓰기는 필수로 검사한다. 번호를 가렸는지는 관리자가 확인한다.
+            try:
+                region = json.loads(mask_region)
+                if not isinstance(region, dict):
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise _err("id_mask_not_applied", "가릴 위치를 다시 지정해 주세요.", status=422)
+            mask_applied, _metrics = await asyncio.to_thread(
+                facemarket_id_mask_verify.mask_is_applied, data, region=region
+            )
+            if not mask_applied:
+                raise _err("id_mask_not_applied", "가린 사진을 다시 확인해 주세요.", status=422)
+            mask_mode = "manual"
+        elif settings.fm_id_mask_verify != "off":
             mask_applied, mask_metrics = await asyncio.to_thread(
                 facemarket_id_mask_verify.mask_is_applied, data
             )

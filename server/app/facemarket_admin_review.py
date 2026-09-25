@@ -659,7 +659,7 @@ async def approve_enrollment_photos(
             from .facemarket import identity_cleared
 
             await cur.execute(
-                "select review_status from fm_biometric_enrollments "
+                "select review_status, status, photo_review_status from fm_biometric_enrollments "
                 "where id = %s and decision = 'passed' for update",
                 (enrollment_id,),
             )
@@ -668,6 +668,9 @@ async def approve_enrollment_photos(
                 raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
             if not identity_cleared(enrollment["review_status"]):
                 raise _err("identity_review_pending", "신원 확인을 먼저 마쳐 주세요.", status=409)
+            if (enrollment["status"] != "passed"
+                    and enrollment.get("photo_review_status") == "reshoot_requested"):
+                raise _err("photo_reshoot_pending", "요청한 사진을 모두 다시 받은 뒤 확인해 주세요.", status=409)
             await cur.execute(
                 """
                 update fm_biometric_enrollments
@@ -715,6 +718,21 @@ async def request_enrollment_reshoot(
         enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
             await cur.execute(
+                "select review_status, status, exists (select 1 from fm_licenses l "
+                "where l.enrollment_id = fm_biometric_enrollments.id "
+                "and l.status = 'pending' and l.vc_id is null) as pending_license "
+                "from fm_biometric_enrollments "
+                "where id = %s and decision = 'passed' for update",
+                (enrollment_id,),
+            )
+            enrollment = await cur.fetchone()
+            if enrollment is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if enrollment["status"] == "vc_pending" and enrollment["review_status"] != "pending":
+                raise _err("vc_issuance_in_progress", "증서 발급이 끝난 뒤 재촬영을 요청해 주세요.", status=409)
+            if enrollment["status"] == "asset_building" and enrollment["pending_license"]:
+                raise _err("photo_rebuild_in_progress", "새 사진 준비가 끝난 뒤 재촬영을 요청해 주세요.", status=409)
+            await cur.execute(
                 """
                 update fm_biometric_enrollments
                 set photo_review_status = 'reshoot_requested', photo_reviewed_by = %s,
@@ -753,6 +771,7 @@ async def approve_enrollment(
                 """update fm_biometric_enrollments
                    set review_status = 'approved', reviewed_by = %s, reviewed_at = now()
                    where id = %s and status = 'vc_pending' and review_status = 'pending'
+                     and photo_review_status is distinct from 'reshoot_requested'
                    returning id::text as id""",
                 (user_id, enrollment_id),
             )

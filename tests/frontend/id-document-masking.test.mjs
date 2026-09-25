@@ -3,6 +3,29 @@ import assert from 'node:assert/strict';
 import { ID_DOCUMENT_TYPES, burnGuideMask } from '../../src/features/model/idDocumentMasking.js';
 import { rrnRectInFrame, guideRectPercent } from '../../src/features/model/idCardGeometry.js';
 import { frameGalleryPhoto, galleryImageRect, setCaptureFrameStyle } from '../../src/features/model/idGalleryFraming.js';
+import * as masking from '../../src/features/model/idDocumentMasking.js';
+
+test('촬영 안내 틀을 잘라 가림 화면에서 번호를 크게 표시해요', async () => {
+  const canvas = fakeCanvas();
+  const video = {};
+  await masking.captureFrameBlob(canvas, video, 1920, 1080);
+  assert.equal(canvas.width, 1473); assert.equal(canvas.height, 929);
+  assert.deepEqual(canvas.sequence.find(c => c.op === 'drawImage').args, [video, 224, 76, 1473, 929, 0, 0, 1473, 929]);
+});
+
+test('직접 선택한 가림 영역을 원본 픽셀에 불투명하게 덮은 결과만 반환해요', async () => {
+  assert.equal(typeof masking.buildMaskedBlob, 'function');
+  const canvas = fakeCanvas();
+  const image = { naturalWidth: 1200, naturalHeight: 1600 };
+  const blob = await masking.buildMaskedBlob(canvas, image, { xr: .25, yr: .4, wr: .2, hr: .1 });
+  assert.equal(canvas.width, 1200); assert.equal(canvas.height, 1600);
+  assert.deepEqual(blob.sequence.filter(c => ['drawImage', 'fillRect'].includes(c.op)).map(c => c.op), ['drawImage', 'fillRect']);
+  assert.deepEqual(blob.sequence.find(c => c.op === 'fillRect').args, [300, 640, 240, 160]);
+  assert.ok(blob.sequence.some(c => c.op === 'fillStyle' && c.value === '#111'));
+  for (const region of [null, { xr: NaN, yr: 0, wr: .2, hr: .1 }, { xr: .9, yr: 0, wr: .2, hr: .1 }]) {
+    assert.throws(() => masking.buildMaskedBlob(canvas, image, region));
+  }
+});
 
 test('v1 은 신분증 종류가 주민등록증 하나뿐이다(서버 ID_DOCUMENT_TYPES 와 같은 집합)', () => {
   assert.deepEqual(ID_DOCUMENT_TYPES.map((d) => d.value), ['rrc']);
@@ -84,14 +107,14 @@ test('burnGuideMask: 마스크 좌표 골든값 — 규격에서 직접 계산�
   assert.equal(fillStyle, '#111');
 });
 
-test('앨범 사진은 표시와 같은 이동 및 확대 좌표로 그린 뒤 별도 캔버스에서 가려요', async () => {
+test('앨범 사진은 표시와 같은 좌표로 그려 필수 가림 단계에 전달해요', async () => {
   const source = fakeCanvas(), output = fakeCanvas();
   const image = { naturalWidth: 900, naturalHeight: 600 };
   assert.deepEqual(galleryImageRect(900, 600), { x: 0, y: 400, w: 1200, h: 800 });
-  const blob = await frameGalleryPhoto(source, output, image, 1.5, { x: 40, y: -60 });
+  const blob = await frameGalleryPhoto(source, image, 1.5, { x: 40, y: -60 }, output);
   assert.deepEqual(source.sequence.find(c => c.op === 'drawImage').args, [image, -260, 140, 1800, 1200]);
-  assert.deepEqual(output.sequence.filter(c => ['drawImage', 'fillRect'].includes(c.op)).map(c => c.op), ['drawImage', 'fillRect']);
-  assert.equal(output.sequence.find(c => c.op === 'drawImage').args[0], source);
+  assert.equal(source.sequence.filter(c => c.op === 'fillRect').length, 1, '배경만 채우고 임의 위치를 자동으로 가리지 않아요');
+  assert.deepEqual(output.sequence.find(c => c.op === 'drawImage').args, [source, 84, 475, 1032, 651, 0, 0, 1032, 651]);
   assert.equal(blob.type, 'image/jpeg');
 });
 

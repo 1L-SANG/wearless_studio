@@ -432,9 +432,9 @@ class FakeCursor:
         self.rowcount = -1
         self.store.setdefault("sql", []).append(s)
 
-        if s.startswith("select e.review_status from fm_biometric_enrollments e"):
+        if s.startswith("select e.review_status") and "from fm_biometric_enrollments e" in s:
             enrollment_id, user_id = params
-            self._result = next(({"review_status": e.get("review_status")} for e in self.store["enrollments"]
+            self._result = next(({**e, "review_status": e.get("review_status")} for e in self.store["enrollments"]
                                  if e["id"] == enrollment_id and e["user_id"] == user_id), None)
         elif s.startswith("select pg_advisory_xact_lock"):
             self._result = {"?column?": None}
@@ -2856,3 +2856,33 @@ def test_identity_review_blocks_every_issue_attempt(biometric_fm, make_token, ho
     assert response.status_code == 201, response.text
     assert response.json()["status"] == "active"
     assert holder_stub.calls
+
+
+@pytest.mark.parametrize("status,photo_review_status", [
+    ("vc_pending", "reshoot_requested"),
+    ("asset_building", "pending"),
+])
+def test_retake_blocks_holder_until_all_photos_are_rebuilt(
+    biometric_fm, make_token, holder_stub, status, photo_review_status,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    store["enrollments"][0]["review_status"] = "pending"
+    created = client.post("/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+                          headers=_auth(make_token))
+    assert created.status_code == 201
+    store["enrollments"][0].update(
+        review_status="approved", status=status, photo_review_status=photo_review_status,
+    )
+
+    @contextlib.asynccontextmanager
+    async def connect():
+        yield FakeConn(store)
+
+    result = asyncio.run(facemarket.issue_and_activate_pending_face_vc(
+        client.app, user_id="user-1", license_id=store["licenses"][0]["id"],
+        model_id=MODEL_ID, connect=connect,
+    ))
+    assert result is None
+    assert holder_stub.calls == []
+    assert store["licenses"][0]["status"] == "pending"

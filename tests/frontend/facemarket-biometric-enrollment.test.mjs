@@ -249,7 +249,7 @@ test('uploadProfileImage mirrors multipart pattern', () => {
 // uploadProfileImage 와 같은 멀티파트 패턴을 따르는지, id-document 경로가 맞는지 확인.
 test('uploadIdDocument multiparts file+documentType+maskedConfirmed to the id-document route', () => {
   const apiSrc = read('../../src/lib/api/facemarket.js');
-  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed\s*\}\)/);
+  assert.match(apiSrc, /uploadIdDocument\(enrollmentId,\s*\{\s*file,\s*documentType,\s*maskedConfirmed,\s*maskRegion\s*\}\)/);
   assert.match(apiSrc, /form\.append\('file',\s*file/);
   assert.match(apiSrc, /form\.append\('documentType',\s*documentType\)/);
   assert.match(apiSrc, /form\.append\('maskedConfirmed'/);

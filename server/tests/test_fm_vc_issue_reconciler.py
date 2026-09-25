@@ -179,7 +179,8 @@ def test_shared_issue_function_activates_without_email_on_same_locked_connection
     original_cursor = conn.cursor
     def recipient_cursor():
         cursor = original_cursor()
-        cursor.row = {"review_status": "approved", "contact_email": "model@example.com", "display_name": "모델A"}
+        cursor.row = {"review_status": "approved", "status": "vc_pending", "photo_review_status": "pending",
+                      "contact_email": "model@example.com", "display_name": "모델A"}
         return cursor
     conn.cursor = recipient_cursor
     monkeypatch.setattr(facemarket, "_find_license_for_update", fake_find)

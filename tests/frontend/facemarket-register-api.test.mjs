@@ -11,6 +11,22 @@ async function apiHarness() {
   return {api:await server.ssrLoadModule('/src/lib/api/facemarket.js'),widget:await server.ssrLoadModule('/src/lib/api/facemarketIdentityWidget.js'),calls,close:async()=>{await server.close();delete globalThis[key];}};
 }
 
+test('신분증 어댑터는 가린 파일과 직접 선택한 영역 및 확인값을 함께 보내요', async () => {
+  const h = await apiHarness();
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response('{}', { status: 201 }); };
+  try {
+    const file = new Blob(['masked-only'], { type: 'image/jpeg' });
+    const region = { xr: .2, yr: .3, wr: .4, hr: .1 };
+    await h.api.uploadIdDocument('e/1', { file, documentType: 'rrc', maskedConfirmed: true, maskRegion: region });
+    assert.match(calls[0].url, /e%2F1\/id-document$/);
+    assert.equal(await calls[0].options.body.get('file').text(), 'masked-only');
+    assert.equal(calls[0].options.body.get('maskedConfirmed'), 'true');
+    assert.deepEqual(JSON.parse(calls[0].options.body.get('maskRegion')), region);
+  } finally { globalThis.fetch = previousFetch; await h.close(); }
+});
+
 test('완료 어댑터는 전달받더라도 초상이나 인증 토큰을 직렬화하지 않아요',async()=>{
   const h=await apiHarness();try{
     await h.api.completeEnrollment('enrollment/1',{idPhotoHex:'never-forward',token:'never-forward'});

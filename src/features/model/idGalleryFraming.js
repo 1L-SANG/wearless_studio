@@ -1,5 +1,5 @@
 import { guideRectPercent } from './idCardGeometry.js';
-import { burnGuideMask } from './idDocumentMasking.js';
+import { captureFrameBlob } from './idDocumentMasking.js';
 
 export const GALLERY_FRAME = Object.freeze({ width: 1200, height: 1600 });
 
@@ -17,7 +17,7 @@ export function setCaptureFrameStyle(element, width, height) {
   for (const [key, value] of Object.entries(guide)) element.style.setProperty(`--guide-${key}`, `${value}%`);
 }
 
-export function frameGalleryPhoto(canvas, output, image, zoom, offset) {
+export function frameGalleryPhoto(canvas, image, zoom, offset, output) {
   const { width, height } = GALLERY_FRAME;
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d');
@@ -25,5 +25,5 @@ export function frameGalleryPhoto(canvas, output, image, zoom, offset) {
   ctx.fillRect(0, 0, width, height);
   const rect = galleryImageRect(image.naturalWidth, image.naturalHeight, zoom, offset);
   ctx.drawImage(image, rect.x, rect.y, rect.w, rect.h);
-  return burnGuideMask(output, canvas, width, height);
+  return captureFrameBlob(output, canvas, width, height);
 }

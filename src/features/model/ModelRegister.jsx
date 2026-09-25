@@ -519,7 +519,7 @@ export function ModelRegister() {
     content = <>{heading('본인 확인 방법을 골라 주세요')}<IdentityMethodStep methods={IDENTITY_METHODS} onPick={handleMethodPick} simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON} /></>;
     previous = { label: '이전', action: () => setStep('1') };
   } else if (step === 'id_capture') {
-    content = <>{heading('신분증을 찍어 올려요', `신분증 이미지는 심사 이후 바로 삭제되며, 다른 어떠한 용도로도 활용되지 않습니다. 주민등록번호 뒷자리는 가리고 올려도 됩니다.`)}
+    content = <>{heading('주민등록증을 찍어 올려요', `신분증 이미지는 심사 이후 바로 삭제되며, 다른 어떠한 용도로도 활용되지 않습니다. 촬영 후 주민등록번호 뒤 7자리를 가리고 확인해야 올릴 수 있어요.`)}
       {enrollment?.id && <IdDocumentStep
         key={enrollment.id}
         enrollmentId={enrollment.id}

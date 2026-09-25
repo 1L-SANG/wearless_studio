@@ -60,6 +60,7 @@ class FaceVcIssueReconciler:
                          join fm_biometric_enrollments e on e.id = l.enrollment_id
                         where l.status = 'pending' and l.vc_id is null
                           and e.status = 'vc_pending'
+                          and e.photo_review_status is distinct from 'reshoot_requested'
                           and {IDENTITY_CLEARED_SQL}
                           and e.user_id = m.user_id and e.model_id = m.id
                           and l.updated_at < now() - interval '15 seconds'

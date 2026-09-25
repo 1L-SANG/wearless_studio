@@ -546,8 +546,41 @@ const idEntry = '/src/features/model/IdDocumentStep.jsx';
 const findButton = (tree, label) => findTree(tree, n => n.type === 'button' && collectText(n) === label);
 const camera = tree => findTree(tree, n => n.type?.name === 'IdCameraCapture');
 const reviewBlob = new Blob(['masked'], { type: 'image/jpeg' });
-const reviewStates = () => ['review', 'blob:review', reviewBlob, false, '', true];
+const testMaskRegion = { xr: .3, yr: .4, wr: .25, hr: .05 };
+const reviewStates = () => ['review', 'blob:raw', reviewBlob, false, '', true, 'blob:review', testMaskRegion, true];
 const idEnrollment = { id: 'e1', status: 'id_capture_pending', identityMethod: 'simple_auth', photos: [], consentDocumentVersion: CONSENT_VERSION, termsConsentVersion: CONSENT_VERSION };
+
+test('촬영 원본은 업로드할 수 없고 직접 가린 결과를 확인한 뒤에만 전송해요', async () => {
+  const uploads = [];
+  const h = await stepHarness({ entry: idEntry, api: { uploadIdDocument: async (...args) => uploads.push(args) } });
+  const props = { enrollmentId: 'e1' };
+  const raw = new Blob(['raw-id'], { type: 'image/jpeg' });
+  const masked = new Blob(['opaque-masked-id'], { type: 'image/jpeg' });
+  const region = { xr: .3, yr: .4, wr: .25, hr: .05 };
+  try {
+    camera(h.render(props)).props.onCaptured(raw);
+    let tree = h.render(props);
+    const editor = findTree(tree, n => n.type?.name === 'IdMaskEditor');
+    assert.ok(editor, '촬영 뒤 필수 가림 단계를 열어야 해요');
+    assert.equal(findButton(tree, '이 사진으로 확인 요청'), null);
+    assert.equal(h.runtime.states[2], null, '원본을 업로드할 blob에 담지 않아요');
+    editor.props.onMasked(masked, region);
+    tree = h.render(props);
+    findTree(tree, n => n.type === 'img').props.onLoad();
+    tree = h.render(props);
+    assert.equal(findButton(tree, '이 사진으로 확인 요청').props.disabled, true);
+    await findButton(tree, '이 사진으로 확인 요청').props.onClick();
+    assert.deepEqual(uploads, []);
+    findTree(tree, n => n.props.id === 'id-mask-confirmed').props.onChange({ target: { checked: true } });
+    tree = h.render(props);
+    assert.equal(findButton(tree, '이 사진으로 확인 요청').props.disabled, false);
+    await findButton(tree, '이 사진으로 확인 요청').props.onClick();
+    assert.deepEqual(uploads, [['e1', { file: masked, documentType: 'rrc', maskedConfirmed: true, maskRegion: region }]]);
+    findButton(h.render(props), '다시 가리기').props.onClick();
+    assert.equal(findButton(h.render(props), '이 사진으로 확인 요청'), null);
+    assert.equal(h.runtime.states[2], null);
+  } finally { await h.close(); }
+});
 
 test('FIX1 신분증 업로드 응답으로 사진 화면을 열고 재조회 없이 이전 오류를 지워요', async () => {
   let lookups = 0;
@@ -600,7 +633,7 @@ test('R2 간편인증 선택지에는 테스트 환경 안내가 있어요', asy
   } finally { await h.close(); }
 });
 
-test('R3 R4 R5 신분증 설명과 선택 화면에는 가리기 조작이 없어요', async () => {
+test('신분증 선택 전에는 가림 확인을 받지 않고 촬영 후 필수 단계를 안내해요', async () => {
   const h = await stepHarness({ entry: idEntry, initialStates: ['choose'] });
   try {
     const tree = h.render();
@@ -609,7 +642,7 @@ test('R3 R4 R5 신분증 설명과 선택 화면에는 가리기 조작이 없�
     assert.ok(findButton(tree, '카메라로 촬영'));
     assert.ok(findButton(tree, '앨범에서 사진 선택'));
     assert.match(modelRegisterSource, /신분증 이미지는 심사 이후 바로 삭제되며, 다른 어떠한 용도로도 활용되지 않습니다./);
-    assert.match(modelRegisterSource, /주민등록번호 뒷자리는 가리고 올려도 됩니다./);
+    assert.match(modelRegisterSource, /촬영 후 주민등록번호 뒤 7자리를 가리고 확인해야 올릴 수 있어요/);
   } finally { await h.close(); }
 });
 
@@ -621,16 +654,18 @@ test('R6 기본은 전체 화면 카메라이고 촬영 후 검토 전에는 업
     const tree = h.render(props);
     assert.ok(findTree(tree, n => n.props.role === 'dialog' && n.props['aria-modal']));
     camera(tree).props.onCaptured(reviewBlob);
-    assert.equal(h.runtime.states[0], 'review');
+    assert.equal(h.runtime.states[0], 'mask');
     assert.deepEqual(uploads, []);
+    findTree(h.render(props), n => n.type?.name === 'IdMaskEditor').props.onMasked(reviewBlob, testMaskRegion);
     let review = h.render(props);
     assert.ok(findButton(review, '다시 찍기')); assert.ok(findButton(review, '삭제'));
     assert.equal(findButton(review, '이 사진으로 확인 요청').props.disabled, true);
     findTree(review, n => n.type === 'img').props.onLoad();
+    findTree(h.render(props), n => n.props.id === 'id-mask-confirmed').props.onChange({ target: { checked: true } });
     review = h.render(props);
     await findButton(review, '이 사진으로 확인 요청').props.onClick();
     assert.equal(uploads.length, 1);
-    assert.deepEqual(uploads[0], ['e1', { file: reviewBlob, documentType: 'rrc', maskedConfirmed: true }]);
+    assert.deepEqual(uploads[0], ['e1', { file: reviewBlob, documentType: 'rrc', maskedConfirmed: true, maskRegion: testMaskRegion }]);
   } finally { await h.close(); }
 });
 
@@ -677,7 +712,8 @@ test('R6 앨범을 열면 카메라를 닫고 HEIC 변환 후 안내 틀에 맞�
     assert.equal(h.runtime.states[0], 'fit');
     const fit = findTree(h.render(), n => n.type?.name === 'IdGalleryFit');
     assert.ok(fit); fit.props.onCaptured(reviewBlob);
-    assert.equal(h.runtime.states[0], 'review'); assert.equal(h.runtime.states[2], reviewBlob);
+    assert.equal(h.runtime.states[0], 'mask'); assert.equal(h.runtime.states[2], null);
+    assert.ok(findTree(h.render(), n => n.type?.name === 'IdMaskEditor'));
   } finally { await h.close(); }
 });
 
@@ -688,6 +724,7 @@ test('빈 촬영 결과와 미리보기 실패는 현장에서 오류를 보여�
     assert.equal(h.runtime.states[0], 'camera');
     assert.match(collectText(h.render()), /사진을 저장하지 못했어요/);
     camera(h.render()).props.onCaptured(reviewBlob);
+    findTree(h.render(), n => n.type?.name === 'IdMaskEditor').props.onMasked(reviewBlob, testMaskRegion);
     findTree(h.render(), n => n.type === 'img').props.onError();
     assert.equal(findButton(h.render(), '이 사진으로 확인 요청').props.disabled, true);
     assert.match(collectText(h.render()), /사진을 열지 못했어요/);

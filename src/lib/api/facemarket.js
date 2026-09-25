@@ -153,11 +153,12 @@ export function createEnrollment({ documentVersion, deviceId, identityMethod }) 
 // 사용자가 촬영한 신분증 전체본(마스킹 확인 완료) 업로드. 성공 시 photos_pending 전이
 // (이 라우트에 오는 시점엔 본인확인이 이미 끝나 있다 — Task6 순서 뒤집기 이후).
 // documentType: v1 은 rrc(주민등록증)만. 얼굴 업로드(uploadEnrollmentPhoto)와 같은 멀티파트 패턴.
-export async function uploadIdDocument(enrollmentId, { file, documentType, maskedConfirmed }) {
+export async function uploadIdDocument(enrollmentId, { file, documentType, maskedConfirmed, maskRegion }) {
   const form = new FormData();
   form.append('file', file, file?.name || 'id-document');
   form.append('documentType', documentType);
   form.append('maskedConfirmed', maskedConfirmed ? 'true' : 'false');
+  if (maskRegion) form.append('maskRegion', JSON.stringify(maskRegion));
   return checkedJson(await _authFetch(
     `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/id-document`,
     { method: 'POST', body: form },

@@ -22,6 +22,7 @@
 """
 
 import logging
+import json
 from contextlib import contextmanager
 
 import cv2
@@ -143,6 +144,38 @@ def _upload(client, enrollment_id, *, masked="true", document_type="rrc",
 
 def _row(store, enrollment_id):
     return next(row for row in store.enrollments if row["id"] == enrollment_id)
+
+
+@pytest.mark.parametrize("masked", [False, True])
+def test_manual_mask_region_is_checked_before_storage_even_when_legacy_check_off(id_capture, masked):
+    client, store, _, enrollment_id = id_capture(fm_id_mask_verify="off")
+    image = np.full((400, 300, 3), 210, np.uint8)
+    if masked:
+        image[120:160, 60:180] = 17
+    _, encoded = cv2.imencode('.jpg', image)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/id-document",
+        data={"documentType": "rrc", "maskedConfirmed": "true",
+              "maskRegion": json.dumps({"xr": .2, "yr": .3, "wr": .4, "hr": .1})},
+        files={"file": ("masked.jpg", encoded.tobytes(), "image/jpeg")},
+    )
+    assert response.status_code == (201 if masked else 422), response.text
+    if masked:
+        assert _row(store, enrollment_id)["mask_mode"] == "manual"
+    else:
+        assert client.app.state.r2_face.puts == []
+
+
+@pytest.mark.parametrize("region", ['null', '{}', 'not-json', '{"xr":0,"yr":0,"wr":2,"hr":1}'])
+def test_invalid_manual_mask_region_is_rejected_before_storage(id_capture, region):
+    client, _, _, enrollment_id = id_capture(fm_id_mask_verify="off")
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/id-document",
+        data={"documentType": "rrc", "maskedConfirmed": "true", "maskRegion": region},
+        files={"file": ("masked.jpg", _id_card_bytes(True), "image/jpeg")},
+    )
+    assert response.status_code == 422, response.text
+    assert client.app.state.r2_face.puts == []
 
 
 # ── 정상 경로 ─────────────────────────────────────────────────────────────────────────

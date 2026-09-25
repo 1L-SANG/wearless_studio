@@ -768,9 +768,14 @@ class AdminFakeCursor:
         self._many = []
         store = self.store
 
-        if query.startswith("select review_status from fm_biometric_enrollments"):
+        if query.startswith("select review_status") and "from fm_biometric_enrollments" in query:
             row = next((r for r in store.enrollments if r["id"] == params[0] and r.get("decision") == "passed"), None)
-            self.result = {"review_status": row.get("review_status")} if row else None
+            self.result = dict(row) if row else None
+            if self.result is not None:
+                self.result["pending_license"] = any(
+                    license.get("enrollment_id") == row["id"] and license["status"] == "pending"
+                    and license.get("vc_id") is None for license in store.licenses
+                )
             return
         if query.startswith("select status from fm_biometric_enrollments"):
             row = next((r for r in store.enrollments if r["id"] == params[0]), None)
@@ -931,7 +936,9 @@ class AdminFakeCursor:
             reviewed_by, enrollment_id = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
             expected = "vc_pending" if "status = 'vc_pending'" in query else "review_pending"
-            if row and row["status"] == expected and row.get("review_status") == "pending":
+            reshoot_blocked = ("photo_review_status is distinct from 'reshoot_requested'" in query
+                               and row and row.get("photo_review_status") == "reshoot_requested")
+            if row and row["status"] == expected and row.get("review_status") == "pending" and not reshoot_blocked:
                 now = datetime.now(timezone.utc)
                 row.update(
                     review_status="approved", reviewed_by=reviewed_by,
@@ -2063,6 +2070,52 @@ def test_new_review_approval_releases_vc_without_rebinding_or_email(admin_client
     audit = next(a for a in store.audit if a["action"] == "enrollment_review_approve")
     assert audit["before"]["status"] == "vc_pending"
     assert audit["after"]["status"] == "vc_pending"
+
+
+def test_identity_approval_waits_for_requested_retakes_and_keeps_id_document(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = store.add_enrollment(status="vc_pending", review_status="pending", model_id="model-1",
+                               id_document_r2_key="id-doc")
+    store.latest_enrollment.update(photo_review_status="reshoot_requested",
+                                   reshoot_slots=[{"slot": "sh_front", "reason": "blur"}])
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/approve")
+    assert response.status_code == 409
+    assert store.latest_enrollment["review_status"] == "pending"
+    assert store.latest_enrollment["id_document_r2_key"] == "id-doc"
+
+
+def test_pending_vc_retake_cannot_replace_already_approved_identity_evidence(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="vc_pending", review_status="approved")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/reshoot",
+                           json={"slots": [{"slot": "sh_front", "reason": "blur"}]})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "vc_issuance_in_progress"
+    assert store.latest_enrollment["reshoot_slots"] is None
+
+
+def test_another_retake_cannot_race_with_pending_license_asset_rebuild(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="asset_building", review_status="pending")
+    store.licenses.append({"enrollment_id": eid, "status": "pending", "vc_id": None})
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/reshoot",
+                           json={"slots": [{"slot": "sh_front", "reason": "blur"}]})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "photo_rebuild_in_progress"
+    assert store.latest_enrollment["reshoot_slots"] is None
+
+
+def test_photo_approval_cannot_clear_outstanding_retake_request(admin_client):
+    client, store = admin_client(is_admin=True)
+    eid = _seed_trained_candidate(store)
+    store.latest_enrollment.update(status="vc_pending", review_status="approved",
+                                   photo_review_status="reshoot_requested",
+                                   reshoot_slots=[{"slot": "sh_front", "reason": "blur"}])
+    response = client.post(f"/v1/facemarket/admin/enrollments/{eid}/photos/approve")
+    assert response.status_code == 409
+    assert store.latest_enrollment["photo_review_status"] == "reshoot_requested"
 
 
 @pytest.mark.parametrize("status", ["asset_building", "license_pending"])

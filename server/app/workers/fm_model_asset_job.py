@@ -179,9 +179,16 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                                 where id=%s and model_id=%s and user_id=%s
                                   and status='asset_building'
                                   and photo_revision=%s
+                                returning id
                                 """,
                                 (reason, enrollment_id, model_id, user_id, photo_revision),
                             )
+                            if await cur.fetchone() is not None:
+                                await cur.execute(
+                                    "delete from fm_licenses where enrollment_id=%s "
+                                    "and status='pending' and vc_id is null",
+                                    (enrollment_id,),
+                                )
                 await conn.commit()
         except Exception as exc:
             log.warning(
@@ -554,8 +561,21 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     )
                     await cur.execute(
                         """
+                        update fm_licenses
+                        set face_image_key=%s, face_image_digest=%s
+                        where enrollment_id=%s and status='pending' and vc_id is null
+                        """,
+                        (originals[0][2], faces[0]["image_digest"], enrollment_id),
+                    )
+                    await cur.execute(
+                        """
                         update fm_biometric_enrollments
-                        set status='license_pending', decision='passed', completed_at=now()
+                        set status=case when exists (
+                            select 1 from fm_licenses l
+                            where l.enrollment_id=fm_biometric_enrollments.id
+                              and l.status='pending' and l.vc_id is null
+                        ) then 'vc_pending' else 'license_pending' end,
+                            decision='passed', completed_at=now()
                         where id=%s and model_id=%s and user_id=%s and status='asset_building'
                         """,
                         (enrollment_id, model_id, user_id),
