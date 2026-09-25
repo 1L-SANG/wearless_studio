@@ -26,6 +26,7 @@ from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.fm_license_revoke_alert_reconciler import LicenseRevokeAlertReconciler
+from .workers.fm_enrollment_completed_alert_reconciler import EnrollmentCompletedAlertReconciler
 from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.fm_sponsorship_vc_reconciler import FmSponsorshipVcReconciler
 from .workers.lora_training_reconciler import LoraTrainingReconciler
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
         license_revoke_alert_reconciler = None
+        enrollment_completed_alert_reconciler = None
         vc_issue_reconciler = None
         sponsorship_vc_reconciler = None
         lora_training = None
@@ -180,6 +182,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and settings.facemarket_enabled:
                 license_revoke_alert_reconciler = LicenseRevokeAlertReconciler(app)
                 await license_revoke_alert_reconciler.start()
+                enrollment_completed_alert_reconciler = EnrollmentCompletedAlertReconciler(app)
+                await enrollment_completed_alert_reconciler.start()
             # 인물 LoRA 학습 큐. 기본 off(FM_LORA_TRAINING)이고, detail-worker 에서는 안 돈다 —
             # 한 건이 GPU 파드를 몇 시간 쓰는 일이라 도는 자리가 하나여야 한다.
             if not detail_worker_only:
@@ -363,6 +367,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await vc_revocation_reconciler.stop()
         if license_revoke_alert_reconciler is not None:
             await license_revoke_alert_reconciler.stop()
+        if enrollment_completed_alert_reconciler is not None:
+            await enrollment_completed_alert_reconciler.stop()
         if vc_issue_reconciler is not None:
             await vc_issue_reconciler.stop()
         if sponsorship_vc_reconciler is not None:

@@ -1096,7 +1096,8 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select e.id::text as enrollment_id, e.status as enrollment_status,
-                      e.match_policy_version, e.review_status, m.id::text as model_id, m.status as model_status,
+                      e.match_policy_version, e.review_status, e.identity_method, m.display_name,
+                      m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       p.r2_key as front_key, p.image_digest as front_digest,
                       p.storage_state as front_storage_state,
@@ -1539,6 +1540,7 @@ async def create_license(
 
     license_id = str(uuid.uuid4())
     row = None
+    created = False
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
         await _reject_cutover_closed(conn)
@@ -1606,6 +1608,7 @@ async def create_license(
                     ),
                 )
                 row = await cur.fetchone()
+            created = row is not None
             if row is None:
                 row = await _find_license_by_enrollment(conn, user_id, enrollment_id)
                 if row is None:
@@ -1652,6 +1655,28 @@ async def create_license(
             if await cur.fetchone() is None:
                 await conn.rollback()
                 raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
+        if created:
+            # 라이선스와 알림을 한 트랜잭션에 저장한다. 전송은 별도 워커가 맡는다.
+            display_name = str(evidence.get("display_name") or "").strip()
+            if len(display_name) == 1:
+                display_name = "*"
+            identity_method = (
+                "simple_auth" if evidence.get("identity_method") == "simple_auth" else "mid"
+            )
+            admin_base = request.app.state.settings.fm_application_public_base.replace(
+                "facemarket.", "admin."
+            ).rstrip("/")
+            review_path = "/review?tab=photos" if identity_method == "mid" else "/review"
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_enrollment_completed_alerts
+                         (license_id, enrollment_id, model_id, display_name, identity_method,
+                          admin_link)
+                       values (%s, %s, %s, %s, %s, %s)
+                       on conflict do nothing""",
+                    (license_id, enrollment_id, model_id, display_name, identity_method,
+                     f"{admin_base}{review_path}"),
+                )
         await conn.commit()
 
     if not identity_cleared(evidence["review_status"]):

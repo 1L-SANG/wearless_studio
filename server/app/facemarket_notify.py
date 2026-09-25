@@ -4,8 +4,8 @@
 오타 시 제3자 메일함으로 갈 수 있어 심사 결과·PII 노출이 된다. 거절 사유는 UX 가치가 크고
 유출 민감도가 낮아 포함하되, 상세는 앱 상태 화면이 진실이다(2A). 링크는 권한 없는 딥링크다
 (로그인 필수, 1A). 발송·알림 실패는 절대 승인/거절 트랜잭션을 막지 않는다 — 이미 커밋된 뒤
-호출되고, 대시보드 '미발송' 뱃지·재발송으로 복구한다. 라이선스 해지 알림은
-fm_license_revoke_alerts 작업이 성공할 때까지 재시도한다.
+호출되고, 대시보드 '미발송' 뱃지·재발송으로 복구한다. 라이선스 해지 알림과
+등록 완료 Slack 알림은 각각 DB 작업이 성공할 때까지 재시도한다.
 """
 
 import logging
@@ -433,6 +433,30 @@ async def notify_slack_new_application(
     )
     text += f"\n<{admin_link}|관리자 검토 콘솔 열기>"
     await _post_slack(settings, text)
+
+
+async def notify_slack_enrollment_completed(
+    settings, *, display_name: str | None, identity_method: str, admin_link: str
+) -> bool:
+    """사용 조건 제출로 등록을 마쳤다는 알림. 본인확인에서 받은 가린 이름(예: 홍*동)과 인증 방법만 싣는다."""
+    if not settings.fm_slack_webhook_url:
+        return False
+    # 가린 이름 규칙(cx_identity._mask_name)은 한 글자 이름을 그대로 두므로 여기서 가린다.
+    if display_name and len(display_name.strip()) == 1:
+        display_name = "*"
+    if identity_method == "simple_auth":
+        method_label = "간편인증"
+        next_step = "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."
+    else:
+        method_label = "모바일 신분증"
+        next_step = "사진 18장을 확인해 주세요."
+    text = (
+        ":camera_with_flash: 2차 등록 완료 · 이름: "
+        f"{_slack_escape(display_name or '-')} · 인증: {method_label}\n"
+        f"{next_step}\n"
+        f"<{admin_link}|관리자 등록 심사 열기>"
+    )
+    return await _post_slack(settings, text)
 
 
 async def notify_slack_model_confirmed(

@@ -3,6 +3,7 @@
    카드 선택이 바뀌면 EnrollmentDetail을 새로 마운트해 확인 체크가 넘어가지 않게 해요.
    생체 이미지는 인증된 게이트로 받아 사용한 뒤 objectURL을 해제해요. */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/components/ui.jsx';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -698,7 +699,8 @@ function EnrollmentDetail({ enrollmentId, refreshVersion, onDecided }) {
 }
 
 export function AdminEnrollmentReview() {
-  const [review, setReview] = useState('pending');
+  const [searchParams] = useSearchParams();
+  const [review, setReview] = useState(() => searchParams.get('tab') === PHOTO_FILTER ? PHOTO_FILTER : 'pending');
   const [items, setItems] = useState(null);
   const [listError, setListError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);

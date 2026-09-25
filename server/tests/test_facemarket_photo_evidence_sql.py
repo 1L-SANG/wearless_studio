@@ -25,10 +25,11 @@ class Connection:
         self.db.executescript("""
             create table fm_biometric_enrollments (
                 id text, user_id text, model_id text, status text,
-                match_policy_version text, body_type text, created_at text, review_status text);
+                match_policy_version text, body_type text, created_at text, review_status text,
+                identity_method text);
             create table fm_models (
                 id text, user_id text, status text, did text, assets_status text,
-                current_enrollment_id text, reverification_batch_id text);
+                current_enrollment_id text, reverification_batch_id text, display_name text);
             create table fm_licenses (
                 id text, model_id text, enrollment_id text, created_at text,
                 reverification_batch_id text);
@@ -40,9 +41,9 @@ class Connection:
                 model_id text, view text, r2_key text, source_enrollment_id text,
                 evidence_version text);
             insert into fm_biometric_enrollments values
-                ('enrollment', 'owner', 'model', 'license_pending', 'policy', null, '2026-09-01', null);
+                ('enrollment', 'owner', 'model', 'license_pending', 'policy', null, '2026-09-01', null, 'mid');
             insert into fm_models values
-                ('model', 'owner', 'pending', null, 'ready', 'enrollment', null);
+                ('model', 'owner', 'pending', null, 'ready', 'enrollment', null, '테스트 모델');
             insert into fm_licenses values
                 ('license', 'model', 'enrollment', '2026-09-02', null);
             insert into fm_model_assets values
@@ -142,6 +143,8 @@ def test_issuance_activation_and_catalog_select_the_same_photo(evidence_connecti
         for angle in angles:
             conn.photo(angle)
         evidence = asyncio.run(facemarket._load_license_evidence(conn, "owner", "enrollment"))
+        assert evidence["identity_method"] == "mid"
+        assert evidence["display_name"] == "테스트 모델"
         assert facemarket._checked_license_evidence(evidence)[1] == want
         active = asyncio.run(facemarket._load_activation_evidence_for_update(
             conn, "owner", "license", "enrollment"))
