@@ -62,6 +62,13 @@ class Cursor:
                 self.one = dict(model)
         elif query.startswith("insert into fm_sponsorship_consent_events"):
             pass
+        elif query.startswith("update fm_sponsorship_credentials"):
+            # 협찬 동의 VC 증서 닫기(끄기 전환). 열린 증서가 있을 때만 폐기 대상이 돌아와요.
+            self.store["credential_closes"].append(params)
+            self.many = list(self.store["open_credentials"])
+            self.store["open_credentials"] = []
+        elif query.startswith("insert into fm_vc_revocation_jobs"):
+            self.store["revocations"].append(params)
         elif query.startswith("insert into fm_sponsorship_interest"):
             assert "on conflict (seller_user_id, model_id) do nothing" in query
             self.store["interests"].add(tuple(params))
@@ -128,6 +135,7 @@ def sponsorship_api(monkeypatch, keypair, make_token):
             "sponsorship_profile_consent_at": NOW,
         },
         "closed": False, "interests": set(), "queries": [], "sellers": {SELLER},
+        "credential_closes": [], "open_credentials": [], "revocations": [],
     }
 
     @contextlib.asynccontextmanager
@@ -396,3 +404,70 @@ def test_sponsorship_participation_notice_uses_owner_copy():
         "게시물은 90일간만 유지하면 돼요.",
     ]
     assert notice["scope"] == "협찬 옷도 위에서 정한 허용 품목 안에서만 와요."
+
+
+# ---- 협찬 동의 VC(FM_SPONSORSHIP_VC) -------------------------------------------------
+
+
+@pytest.fixture
+def vc_on(sponsorship_api, monkeypatch):
+    """FM_SPONSORSHIP_VC=on 으로 바꾸고, 증서 열기 호출을 기록한다(SQL 은 _db 테스트가 본다)."""
+    client, store, make_token = sponsorship_api
+    client.app.state.settings = client.app.state.settings.__class__(
+        **{**client.app.state.settings.__dict__, "fm_sponsorship_vc": "on"}
+    )
+    store["opens"] = []
+
+    async def fake_open(cur, *, model_id, user_id):
+        store["opens"].append((model_id, user_id))
+        return "cred-1"
+
+    monkeypatch.setattr(facemarket, "open_sponsorship_credential", fake_open)
+    return client, store, make_token
+
+
+def test_vc_on_toggle_opens_on_enable_and_closes_on_disable(vc_on):
+    client, store, _ = vc_on
+    url = f"/v1/facemarket/models/{MODEL_ID}/sponsorship"
+    assert client.patch(url, json={"sponsorshipEnabled": True}).status_code == 200
+    assert store["opens"] == [(MODEL_ID, OWNER)]
+    # 켜진 상태에서 값만 바꾸면 증서는 그대로.
+    assert client.patch(url, json={"sizeTop": "XS"}).status_code == 200
+    assert store["opens"] == [(MODEL_ID, OWNER)] and store["credential_closes"] == []
+    store["open_credentials"] = [{"id": "cred-1", "model_id": MODEL_ID, "vc_id": "vc-sp-1"}]
+    assert client.patch(url, json={"sponsorshipEnabled": False}).status_code == 200
+    assert len(store["credential_closes"]) == 1
+    assert store["revocations"] == [(MODEL_ID, "vc-sp-1")]
+
+
+def test_vc_off_never_opens_but_disable_still_closes(sponsorship_api, monkeypatch):
+    client, store, _ = sponsorship_api
+    opened = []
+
+    async def fake_open(cur, **kwargs):
+        opened.append(kwargs)
+
+    monkeypatch.setattr(facemarket, "open_sponsorship_credential", fake_open)
+    url = f"/v1/facemarket/models/{MODEL_ID}/sponsorship"
+    assert client.patch(url, json={"sponsorshipEnabled": True}).status_code == 200
+    assert client.patch(url, json={"sponsorshipEnabled": False}).status_code == 200
+    assert opened == [] and len(store["credential_closes"]) == 1
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_vc_on_interest_and_catalog_need_active_credential(vc_on, active):
+    client, store, make_token = vc_on
+    store["model"]["sponsorship_enabled"] = True
+    store["model"]["sponsorship_credential_active"] = active
+    client.headers["Authorization"] = f"Bearer {make_token(sub=SELLER)}"
+    url = f"/v1/facemarket/models/{MODEL_ID}/sponsorship-interest"
+    response = client.post(url)
+    assert response.status_code == (200 if active else 404), response.text
+    public = client.get("/v1/facemarket/public/models").json()["items"][0]
+    catalog = client.get("/v1/facemarket/models").json()[0]
+    for item in (public, catalog):
+        assert item["sponsorshipEnabled"] is active
+        assert item["instagramHandle"] == ("saved.model" if active else None)
+    # 본인은 증서와 무관하게 자기 설정을 그대로 본다.
+    client.headers["Authorization"] = f"Bearer {make_token(sub=OWNER)}"
+    assert client.get("/v1/facemarket/models/me").json()[0]["sponsorshipEnabled"] is True

@@ -19,6 +19,7 @@ import {
 import { useToast } from '@/components/ui.jsx';
 import { seoulDateKey } from '@/lib/datetime.js';
 import { AdminSubmissionDetails } from './AdminSubmissionDetails.jsx';
+import { adminSponsorshipCredentialLine } from '@/features/model/sponsorshipCredential.js';
 
 // fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 값 전부를 다뤄야 한다.
 // reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
@@ -355,6 +356,9 @@ function Detail({ modelId, onChanged }) {
   }
 
   const { model, licenses, settlements, enrollment } = data;
+  // 협찬 동의 증명서 — 필드가 없는 응답(기능 전 서버)이면 섹션을 그리지 않는다.
+  const hasSponsorshipCredential = Object.hasOwn(data, 'sponsorshipCredential');
+  const sponsorshipCredentialLine = adminSponsorshipCredentialLine(data.sponsorshipCredential);
   const suspended = model.status === 'suspended';
   const ownerPaused = suspended && model.suspensionSource === 'owner';
   const adminSuspended = suspended && !ownerPaused;
@@ -407,6 +411,12 @@ function Detail({ modelId, onChanged }) {
           <h4 className="mb-1 text-xs font-medium text-muted-foreground">생체등록</h4>
           <p>{enrollment ? `${enrollment.status} · ${day(enrollment.completedAt)}` : '기록 없음'}</p>
         </section>
+        {hasSponsorshipCredential && (
+          <section>
+            <h4 className="mb-1 text-xs font-medium text-muted-foreground">협찬 동의 증명서</h4>
+            <p title={data.sponsorshipCredential?.vcId || undefined}>{sponsorshipCredentialLine || '없음'}</p>
+          </section>
+        )}
         <TestCuts modelId={model.id} onChanged={onChanged} />
         <section className="border-t border-border pt-4">
           {adminSuspended ? (

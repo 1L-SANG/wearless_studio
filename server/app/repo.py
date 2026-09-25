@@ -1688,7 +1688,7 @@ OPENDID_PENDING_ACTIVE_HOURS = 2
 HOLDER_JOB_KINDS = ("editor_image", "detail_page")
 
 
-async def opendid_demand_snapshot(conn: AsyncConnection):
+async def opendid_demand_snapshot(conn: AsyncConnection, *, sponsorship_vc: bool = False):
     """opendid(fm-holder) 가 켜져 있어야 하는지 판단. sam 과 같은 DemandSnapshot 모양을 재사용한다.
 
     수요는 두 갈래다.
@@ -1731,6 +1731,14 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
             # 못 끝내고 죽었고 폐기는 영원히 transport 로 실패했다(prod 실측 attempts=867).
             "  + (select count(*) from fm_vc_revocation_jobs "
             "       where status in ('pending', 'retry', 'processing')) "
+            # 협찬 동의 VC 발급 대기 — 스위치가 on 이고(off 면 발급 워커가 안 돌아 행이 영영
+            # 남는다) DID 가 있는(=발급 가능한) 것만. DID 없는 pending 은 라이선스 VC 를 기다리는
+            # 중이라 holder 를 켜 둘 이유가 없다. 50 = facemarket_sponsorship_vc.MAX_ATTEMPTS.
+            "  + (select count(*) from fm_sponsorship_credentials c "
+            "       join fm_models m on m.id = c.model_id "
+            f"      where {'true' if sponsorship_vc else 'false'} "
+            "        and c.status = 'pending' and c.attempts < 50 "
+            "        and nullif(btrim(m.did), '') is not null) "
             # 셀러 사용 — 실존 모델(payload._facemarket.modelId)이 붙은 컷 잡. 이 잡들은
             # 하나하나가 verify_license → holder 호출이다.
             "  + (select count(*) from jobs where kind = any(%s) "

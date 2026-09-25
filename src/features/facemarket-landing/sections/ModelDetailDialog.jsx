@@ -1,5 +1,6 @@
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { getSponsorshipInterest, requestSponsorshipInterest } from '@/lib/api/facemarket.js';
+import { SPONSORSHIP_UNAVAILABLE_MESSAGE, sponsorshipInterestErrorMessage } from '../../model/sponsorshipCredential.js';
 /* =============================================================
    모델 상세 서랍 — 카드를 누르면 **오른쪽에서** 나온다(사용자 지시: "팝업처럼이 아니라 우측에서
    기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다. 서랍 자체는 검정 바탕.
@@ -59,8 +60,9 @@ export function ModelDetailDialog({ model, onClose }) {
     let alive = true;
     getSponsorshipInterest(model.id).then(result => {
       if (alive && interestVersion.current === version) setInterested(result.interested === true);
-    }).catch(() => {
-      if (alive && interestVersion.current === version) setInterestError('알림 신청 상태를 확인하지 못했어요. 다시 신청해도 중복되지 않아요.');
+    }).catch(error => {
+      // 유효한 협찬 동의 증명서가 없는 모델은 서버가 404 로 답해요.
+      if (alive && interestVersion.current === version) setInterestError(error?.status === 404 ? SPONSORSHIP_UNAVAILABLE_MESSAGE : '알림 신청 상태를 확인하지 못했어요. 다시 신청해도 중복되지 않아요.');
     });
     return () => { alive = false; interestVersion.current += 1; };
   }, [userId, model.id, sponsorship?.enabled]);
@@ -74,7 +76,7 @@ export function ModelDetailDialog({ model, onClose }) {
       await requestSponsorshipInterest(model.id);
       if (interestVersion.current === version) setInterested(true);
     } catch (error) {
-      if (interestVersion.current === version) setInterestError(error.message || '알림 신청을 저장하지 못했어요. 다시 시도해 주세요.');
+      if (interestVersion.current === version) setInterestError(sponsorshipInterestErrorMessage(error, '알림 신청을 저장하지 못했어요. 다시 시도해 주세요.'));
     } finally {
       if (interestVersion.current === version) { submittingInterest.current = false; setInterestBusy(false); }
     }

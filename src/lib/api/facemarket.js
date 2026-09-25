@@ -780,6 +780,15 @@ export async function updateModelSponsorship(modelId, settings, screen = 'sponso
   return updated;
 }
 
+// GET …/sponsorship/credential — 협찬 동의 증명서(VC) 상태(본인 모델만).
+// → { featureEnabled, status: none|waiting_license|pending|active, vcId, issuedAt }.
+// featureEnabled=false 면 화면은 지금과 똑같이 아무것도 더 그리지 않아요.
+const NO_SPONSORSHIP_CREDENTIAL = { featureEnabled: false, status: 'none', vcId: null, issuedAt: null };
+export function getSponsorshipCredential(modelId) {
+  if (MOCK || !modelId) return Promise.resolve(NO_SPONSORSHIP_CREDENTIAL);
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/sponsorship/credential`);
+}
+
 export function getSponsorshipInterest(modelId) {
   return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/sponsorship-interest`);
 }

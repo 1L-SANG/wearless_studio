@@ -57,13 +57,18 @@ class SponsorshipPatch(CamelModel):
         return value
 
 
-def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True) -> dict:
+def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True,
+                     credential_gate: bool = False) -> dict:
     """협찬 필드의 노출 규칙.
 
     owner: 본인은 켜짐과 무관하게 전부 본다(동의 시각 포함).
     details: 로그인한 셀러만 계정·팔로워·사이즈를 본다. 비로그인 공개 화면은 켜짐 여부만.
+    credential_gate: FM_SPONSORSHIP_VC=on — 남에게는 협찬 동의 VC 가 유효(active)한 모델만
+      협찬으로 보인다. row 에 sponsorship_credential_active 가 있어야 한다(없으면 막힌 것으로 본다).
     """
     enabled = bool(row.get("sponsorship_enabled"))
+    if credential_gate and not owner and not row.get("sponsorship_credential_active"):
+        enabled = False
     show = owner or (enabled and details)
     return {
         "sponsorship_enabled": enabled,

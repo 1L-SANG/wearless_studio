@@ -79,6 +79,37 @@ class HolderSignedIssueHttpTest {
         verify(service, never()).issue(eq(MODEL), any());
     }
 
+    @Test
+    void signedSponsorshipBodyBindsStrictlyAndReturnsSameShape(@TempDir Path dataDir) throws Exception {
+        String id = "223e4567-e89b-12d3-a456-426614174000";
+        String body = """
+                {"plan":"fmsponsorship-v1","idempotencyKey":"fm-sponsorship:%s","claims":{
+                  "modelDid":"did:omn:user","credentialId":"%s","consentDocVersion":"2026-09-v1",
+                  "participationDocSha256":"%s","profileDocSha256":"%s",
+                  "consentedAt":"2026-09-25T00:00:00Z"}}
+                """.formatted(id, id, "a".repeat(64), "b".repeat(64));
+        IssueVcService service = mock(IssueVcService.class);
+        when(service.issue(eq(MODEL), any(IssueVcDtos.IssueRequest.class)))
+                .thenReturn(new IssueVcService.IssueResult(
+                        "vc-sp", "did:omn:issuer", "tx-1", null,
+                        "issued", "issued", "did:omn:user"));
+        MockMvc mvc = mvc(dataDir, service);
+
+        mvc.perform(signed(body.replace("\"modelDid\"", "\"instagram\":\"@x\",\"modelDid\""),
+                        "nonce_signed_http_00004"))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).issue(eq(MODEL), any());
+
+        mvc.perform(signed(body, "nonce_signed_http_00005"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.vcId").value("vc-sp"))
+                .andExpect(jsonPath("$.userDid").value("did:omn:user"));
+        ArgumentCaptor<IssueVcDtos.IssueRequest> request =
+                ArgumentCaptor.forClass(IssueVcDtos.IssueRequest.class);
+        verify(service, times(1)).issue(eq(MODEL), request.capture());
+        assertEquals(id, request.getValue().sponsorshipClaims().credentialId());
+    }
+
     private static MockMvc mvc(Path dataDir, IssueVcService service) {
         return standaloneSetup(new IssueController(
                         service, new IssueIdempotencyStore(dataDir.toString())))

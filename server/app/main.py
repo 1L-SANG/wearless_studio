@@ -27,6 +27,7 @@ from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.fm_license_revoke_alert_reconciler import LicenseRevokeAlertReconciler
 from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
+from .workers.fm_sponsorship_vc_reconciler import FmSponsorshipVcReconciler
 from .workers.lora_training_reconciler import LoraTrainingReconciler
 from .workers.test_cut_build_reconciler import TestCutBuildReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         vc_revocation_reconciler = None
         license_revoke_alert_reconciler = None
         vc_issue_reconciler = None
+        sponsorship_vc_reconciler = None
         lora_training = None
         test_cut_build = None
         publication_anchor = None
@@ -171,6 +173,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await vc_revocation_reconciler.start()
                 vc_issue_reconciler = FaceVcIssueReconciler(app)
                 await vc_issue_reconciler.start()
+                # 협찬 동의 VC 발급(FM_SPONSORSHIP_VC=on 일 때만) — 폐기는 위 리컨실러가 공유한다.
+                if settings.fm_sponsorship_vc == "on":
+                    sponsorship_vc_reconciler = FmSponsorshipVcReconciler(app)
+                    await sponsorship_vc_reconciler.start()
             if not detail_worker_only and settings.facemarket_enabled:
                 license_revoke_alert_reconciler = LicenseRevokeAlertReconciler(app)
                 await license_revoke_alert_reconciler.start()
@@ -238,7 +244,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     enabled_attr="opendid_autoscale", topic_attr="sam_alert_topic_arn")
                 app.state.opendid_autoscaler = SamAutoscaler(
                     app, opendid_adapter,
-                    demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(conn),
+                    demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(
+                        conn, sponsorship_vc=settings.fm_sponsorship_vc == "on"),
                     idle_attr="opendid_autoscale_idle_minutes",
                     name="opendid", lock_key="opendid_autoscaler")
                 if opendid_adapter.enabled:
@@ -358,6 +365,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await license_revoke_alert_reconciler.stop()
         if vc_issue_reconciler is not None:
             await vc_issue_reconciler.stop()
+        if sponsorship_vc_reconciler is not None:
+            await sponsorship_vc_reconciler.stop()
         if lora_training is not None:
             await lora_training.stop()
         if test_cut_build is not None:

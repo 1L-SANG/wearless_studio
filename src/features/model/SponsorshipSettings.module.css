@@ -44,3 +44,9 @@
 @media (prefers-reduced-motion: reduce) { .toggle span { transition: none; } }
 
 .fieldHeading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.6rem; }
+
+/* 협찬 동의 증명서 상태 — 토글 바로 아래 한두 줄. */
+.credential { display: grid; gap: .2rem; margin: 0 0 .6rem; padding: .7rem .85rem; border: 1px solid var(--fm-line); border-radius: .55rem; background: var(--fm-page-bg); }
+.credential p { margin: 0; font-size: .88rem; line-height: 1.6; word-break: keep-all; overflow-wrap: anywhere; }
+.credential > small { color: var(--fm-muted); font-size: .78rem; line-height: 1.6; word-break: keep-all; }
+.credentialId { color: var(--fm-muted); font-size: .74rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

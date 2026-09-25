@@ -534,6 +534,10 @@ class Settings:
     # ---- 인물 LoRA 학습 자동화(workers/lora_training_reconciler.py). 기본 off.
     #: "on" 일 때만 학습 큐가 돈다. 파드를 만드는 경로라 문자열 스위치로 둔다(OPENDID_AUTOSCALE 선례).
     fm_lora_training: str = "off"
+    # ---- 협찬 동의 VC(facemarket_sponsorship_vc.py). 기본 off — holder 가 fmsponsorship-v1 을
+    #: 배포받은 뒤에 켠다(2026-09-13 사고: holder 계약보다 API 가 먼저 나가면 발급이 전부 막힌다).
+    #: "on" 이면 협찬을 켤 때 증서를 만들고, 셀러 협찬 요청은 유효 증서가 있어야 통과한다.
+    fm_sponsorship_vc: str = "off"
     #: 파드를 만들기 전에 보는 최소 잔액(USD). 0 이하면 검사를 아예 안 한다(운영자 비상구).
     #: 1800 스텝 한 번이 RTX PRO 6000 에서 약 3시간 40분·약 $11 이라 그 위로 잡는다.
     fm_lora_min_balance_usd: float = 20.0
@@ -1000,6 +1004,7 @@ def load_settings() -> Settings:
         face_pass_real_wait_seconds=_int_env("FACE_PASS_REAL_WAIT_SECONDS", 600),
         face_crop_upscale=(os.getenv("FACE_CROP_UPSCALE", "true").lower() != "false"),
         fm_lora_training=(os.getenv("FM_LORA_TRAINING", "off").strip().lower() or "off"),
+        fm_sponsorship_vc=(os.getenv("FM_SPONSORSHIP_VC", "off").strip().lower() or "off"),
         fm_lora_min_balance_usd=float(os.getenv("FM_LORA_MIN_BALANCE_USD") or "20"),
         fm_lora_max_seconds=int(os.getenv("FM_LORA_MAX_SECONDS") or str(5 * 3600)),
         fm_test_cut_build=(os.getenv("FM_TEST_CUT_BUILD", "off").strip().lower() or "off"),
