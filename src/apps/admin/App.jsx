@@ -13,7 +13,7 @@ import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { AdminShell } from '@/features/admin/AdminShell.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { AdminBankTransfers } from '@/features/admin/AdminBankTransfers.jsx';
-import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
+import { AdminPostLogin } from './AdminPostLogin.jsx';
 import { AdminEnrollmentReview } from '@/features/admin/AdminEnrollmentReview.jsx';
 import { AdminModels } from '@/features/admin/AdminModels.jsx';
 import { AdminStaff } from '@/features/admin/AdminStaff.jsx';
@@ -41,7 +41,7 @@ export default function AppAdmin() {
         {/* 기기 게이트 — 로그인 뒤·콘솔 셸 앞. 서버 가드가 진짜 판정이고 이건 그 판정의 화면이다. */}
         <Route element={<RequireDevice />}>
           <Route element={<AdminShell />}>
-            <Route index element={<AdminDashboard />} />
+            <Route index element={<AdminPostLogin />} />
             <Route path="applications" element={<AdminApplications />} />
             <Route path="review" element={<AdminEnrollmentReview />} />
             <Route path="usage-reports" element={<AdminUsageReports />} />

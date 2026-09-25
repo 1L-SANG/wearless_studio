@@ -403,6 +403,7 @@ async function enrollmentReviewHarness(api) {
       });
     },
     useToast: () => ({ push() {} }),
+    useSearchParams: () => [new URLSearchParams(), () => {}],
     styles: {}, PHOTO_GROUPS, SLOTS, seoulDateTime,
     finalRejectReason, imageFailureLabel, scoreRow, reviewActions,
     ...Object.fromEntries([
@@ -459,6 +460,24 @@ const enrollmentFixture = (overrides = {}) => ({
   identityNameMasked: '김*나', identityBirthYear: '1995', reviewedAt: null, reviewReason: null,
   ...overrides,
 });
+
+for (const [query, expectedTab, expectedRequest] of [
+  ['tab=photos', '사진 확인', 'photos:awaiting'],
+  ['', '대기', 'identity:pending'],
+  ['tab=unknown', '대기', 'identity:pending'],
+]) {
+  test(`관리자 등록 심사 링크 ${query || '(기본)'}는 ${expectedTab} 탭을 열어요`, async () => {
+    const requests = [];
+    const harness = await enrollmentReviewHarness({
+      useSearchParams: () => [new URLSearchParams(query), () => {}],
+      adminListPhotoReview: async (status) => { requests.push(`photos:${status}`); return []; },
+      adminListEnrollments: async (status) => { requests.push(`identity:${status}`); return []; },
+    });
+    const { page } = await harness.flush();
+    assert.equal(buttonNamed(page, expectedTab).props.variant, 'default');
+    assert.deepEqual(requests, [expectedRequest]);
+  });
+}
 
 function deferred() {
   let resolve;

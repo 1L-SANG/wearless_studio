@@ -18,10 +18,10 @@ export function FacemarketLoginPrompt() {
   const { openLogin } = useAuth();
   // 로그인 뒤에는 **지금 서 있던 화면**으로 돌아간다 — 승인 메일의 딥링크(/model/register)나
   // 상단바 '모델 지원'(/model/apply)으로 온 사람이 로그인 뒤 엉뚱한 곳(예전엔 무조건
-  // /model/register → 지원서 게이트에 막혀 /status)으로 튀지 않게. /model/* 밖(admin 등)은
-  // 종전 기본값을 쓴다(facemarketRootTarget 화이트리스트가 /model·/status·/verify 만 통과).
+  // /model/register → 지원서 게이트에 막혀 /status)으로 튀지 않게. admin 도 현재
+  // 심사 화면의 쿼리까지 기억한다(루트에서 관리자 경로만 다시 통과시킨다).
   const { pathname, search } = useLocation();
-  const returnTo = pathname.startsWith('/model') ? `${pathname}${search}` : '/model/register';
+  const returnTo = IS_ADMIN || pathname.startsWith('/model') ? `${pathname}${search}` : '/model/register';
   // 모달을 딱 한 번만 연다. openLogin 은 AuthProvider 가 매 렌더 새로 만드는 함수라
   // deps 에 두면, 사용자가 모달을 닫아(closeLogin → AuthProvider 리렌더) identity 가
   // 바뀌는 순간 effect 가 다시 돌아 모달이 곧장 다시 열린다 — 닫을 수 없는 모달이 된다.

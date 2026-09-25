@@ -39,11 +39,12 @@ def test_enrollment_completed_slack_body(
 
     monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", FakeAsyncClient)
     settings = make_settings(fm_slack_webhook_url="https://hooks.example/facemarket")
-    asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
+    delivered = asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
         settings, display_name=display_name, identity_method=identity_method,
         admin_link="https://admin.wearless.kr/review",
     ))
 
+    assert delivered is True
     assert sent == [("https://hooks.example/facemarket", {"text": (
         f":camera_with_flash: 2차 등록 완료 · 이름: {safe_name} · 인증: {method_label}\n"
         f"{next_step}\n"
@@ -61,10 +62,11 @@ def test_enrollment_completed_slack_skips_delivery_without_webhook(monkeypatch):
             raise AssertionError("webhook 설정이 없으면 HTTP 클라이언트를 만들면 안 됩니다")
 
     monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", ForbiddenAsyncClient)
-    asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
+    delivered = asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
         make_settings(fm_slack_webhook_url=None), display_name="모델",
         identity_method="mid", admin_link="https://admin.wearless.kr/review",
     ))
+    assert delivered is False
     assert clients == []
 
 

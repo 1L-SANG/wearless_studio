@@ -236,6 +236,16 @@ jobs:
             # 빌드보다 앞이라 **서버가 통째로 옛 코드에 머물렀다** — 프론트는 Vercel 로 이미
             # 나가 있어서 UI 는 새 화면, API 는 404 인 상태가 하루 가까이 방치됐다.
             # 순서가 아니라 적용 여부가 정본이므로 밀린 것을 전부 적용한다.
+            - name: DB 마이그레이션 사전 확인 (prod dry-run)
+              env:
+                  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+              run: |
+                  if [ -z "$SUPABASE_DB_URL" ]; then
+                    echo "::error::SUPABASE_DB_URL 시크릿이 없습니다."
+                    exit 1
+                  fi
+                  supabase db push --dry-run --include-all --db-url "$SUPABASE_DB_URL"
+
             - name: DB 마이그레이션 적용 (prod)
               env:
                   SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

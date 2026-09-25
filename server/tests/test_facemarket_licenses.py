@@ -784,6 +784,21 @@ class FakeCursor:
                     "other_active_licenses": other_count,
                     "status": "pending",
                 })
+        elif s.startswith("insert into fm_enrollment_completed_alerts"):
+            license_id, enrollment_id, model_id, display_name, identity_method, *links = params
+            admin_link = links[0] if links else None
+            alerts = self.store.setdefault("enrollment_completed_alerts", [])
+            if not any(alert["license_id"] == license_id or alert["enrollment_id"] == enrollment_id
+                       for alert in alerts):
+                alerts.append({
+                    "license_id": license_id,
+                    "enrollment_id": enrollment_id,
+                    "model_id": model_id,
+                    "display_name": display_name,
+                    "identity_method": identity_method,
+                    "admin_link": admin_link,
+                    "status": "pending",
+                })
         elif s.startswith("update fm_models set did ="):
             user_did, body_type, model_id, enrollment_id = params[:4]
             if self.store.get("final_model_update_misses"):
@@ -1014,6 +1029,7 @@ def biometric_fm(keypair, monkeypatch):
         "face_photos": [],
         "identities": [],
         "revocations": {},
+        "enrollment_completed_alerts": [],
         "account_closed": False,
     }
 
@@ -1396,6 +1412,43 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
 
 
+@pytest.mark.parametrize("identity_method", ["mid", "simple_auth", "legacy_unknown"])
+def test_new_license_queues_one_enrollment_alert_without_waiting_for_slack(
+    biometric_fm, make_token, holder_stub, monkeypatch, identity_method,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    store["enrollments"][0].update(
+        identity_method=identity_method,
+        review_status="pending" if identity_method == "simple_auth" else None,
+    )
+    store["models"][0]["display_name"] = "홍*동"
+    async def forbidden_slack(*_args, **_kwargs):
+        raise AssertionError("Slack must run from the queued worker")
+    monkeypatch.setattr(facemarket_notify, "notify_slack_enrollment_completed", forbidden_slack)
+
+    responses = [client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    ) for _ in range(2)]
+
+    assert [response.status_code for response in responses] == [201, 201]
+    assert len(store["enrollment_completed_alerts"]) == 1
+    normalized_method = "simple_auth" if identity_method == "simple_auth" else "mid"
+    assert store["enrollment_completed_alerts"][0] == {
+        "license_id": store["licenses"][0]["id"],
+        "enrollment_id": ENROLLMENT_ID,
+        "model_id": MODEL_ID,
+        "display_name": "홍*동",
+        "identity_method": normalized_method,
+        "admin_link": (
+            "https://admin.wearless.kr/review?tab=photos"
+            if normalized_method == "mid" else "https://admin.wearless.kr/review"
+        ),
+        "status": "pending",
+    }
+
+
 @pytest.mark.parametrize(
     ("identity_method", "review_status", "vc_outcome", "status_code", "next_step"),
     [
@@ -1408,7 +1461,7 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
          "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."),
     ],
 )
-def test_new_license_notifies_once_after_commit_before_vc_even_on_retry(
+def test_new_license_queues_once_before_vc_even_on_retry(
     biometric_fm, make_token, holder_stub, monkeypatch,
     identity_method, review_status, vc_outcome, status_code, next_step,
 ):
@@ -1425,22 +1478,21 @@ def test_new_license_notifies_once_after_commit_before_vc_even_on_retry(
     elif vc_outcome == "malformed":
         holder_stub.issue_body = {}
     committed = []
-    sent = []
     commit = FakeConn.commit
 
     async def track_commit(conn):
         await commit(conn)
-        committed.append(copy.deepcopy(conn.store["licenses"]))
+        committed.append((
+            copy.deepcopy(conn.store["licenses"]),
+            copy.deepcopy(conn.store["enrollment_completed_alerts"]),
+            len(holder_stub.calls),
+        ))
 
-    async def capture_slack(_settings, text):
-        assert committed and len(committed[0]) == 1
-        assert committed[0][0]["status"] == "pending"
-        assert holder_stub.calls == []
-        sent.append(text)
-        return True
+    async def forbidden_slack(*_args, **_kwargs):
+        raise AssertionError("request must not dispatch Slack")
 
     monkeypatch.setattr(FakeConn, "commit", track_commit)
-    monkeypatch.setattr(facemarket_notify, "_post_slack", capture_slack)
+    monkeypatch.setattr(facemarket_notify, "notify_slack_enrollment_completed", forbidden_slack)
     responses = [client.post(
         "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
         headers=_auth(make_token),
@@ -1448,16 +1500,16 @@ def test_new_license_notifies_once_after_commit_before_vc_even_on_retry(
 
     assert [response.status_code for response in responses] == [status_code, status_code]
     assert len(store["licenses"]) == 1
-    assert len(sent) == 1
-    method_label = "모바일 신분증" if identity_method == "mid" else "간편인증"
-    assert sent[0].splitlines() == [
-        f":camera_with_flash: 2차 등록 완료 · 이름: &lt;모델&amp;이름&gt; · 인증: {method_label}",
-        next_step,
-        "<https://admin.wearless.kr/review|관리자 등록 심사 열기>",
-    ]
+    assert committed[0][0][0]["status"] == "pending"
+    assert len(committed[0][1]) == 1
+    assert committed[0][2] == 0
+    assert len(store["enrollment_completed_alerts"]) == 1
+    assert store["enrollment_completed_alerts"][0]["display_name"] == "<모델&이름>"
+    assert store["enrollment_completed_alerts"][0]["identity_method"] == identity_method
+    alert = store["enrollment_completed_alerts"][0]
     for private_value in (ENROLLMENT_ID, MODEL_ID, "user-1", "private@example.com",
                           store["licenses"][0]["id"], APPROVED_FRONT_KEY):
-        assert private_value not in sent[0]
+        assert private_value not in alert["display_name"]
     if vc_outcome == "unattempted":
         assert holder_stub.calls == []
 
@@ -1498,6 +1550,7 @@ def test_existing_license_does_not_notify_enrollment_completed(
 
     assert response.status_code == (503 if existing_path == "locked_pending" else 201), response.text
     assert sent == []
+    assert store["enrollment_completed_alerts"] == []
 
 
 @pytest.mark.parametrize("failure", ["rollback", "commit_error"])
@@ -1533,13 +1586,13 @@ def test_uncommitted_new_license_does_not_notify(
     assert response.status_code == (503 if failure == "rollback" else 500)
     assert store["licenses"] == []
     assert sent == []
+    assert store["enrollment_completed_alerts"] == []
     assert holder_stub.calls == []
 
 
 @pytest.mark.parametrize("identity_method", ["mid", "simple_auth"])
-@pytest.mark.parametrize("slack_result", ["exception", "failed"])
-def test_enrollment_slack_failure_preserves_license_response(
-    biometric_fm, make_token, holder_stub, monkeypatch, identity_method, slack_result,
+def test_webhook_outage_does_not_block_license_response(
+    biometric_fm, make_token, holder_stub, monkeypatch, identity_method,
 ):
     client, store, _ = biometric_fm
     _seed_license_pending_enrollment(store)
@@ -1563,20 +1616,18 @@ def test_enrollment_slack_failure_preserves_license_response(
 
     async def fail_slack(*args, **kwargs):
         attempts.append(True)
-        if slack_result == "exception":
-            raise RuntimeError("slack unavailable")
-        return False
+        raise RuntimeError("slack unavailable")
 
-    target = "notify_slack_enrollment_completed" if slack_result == "exception" else "_post_slack"
-    monkeypatch.setattr(facemarket_notify, target, fail_slack, raising=False)
+    monkeypatch.setattr(facemarket_notify, "notify_slack_enrollment_completed", fail_slack)
     response = client.post(
         "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
         headers=_auth(make_token),
     )
 
-    assert attempts == [True]
+    assert attempts == []
     assert response.status_code == baseline.status_code
     assert response.json() == baseline.json()
+    assert len(store["enrollment_completed_alerts"]) == 1
 
 
 def test_create_license_refuses_front_without_face_before_pending_license(

@@ -36,7 +36,7 @@ from psycopg.types.json import Json
 from pydantic import Field, ValidationError, field_validator
 
 from . import admin_guard, cx_identity, facemarket_photo_check, facemarket_photo_normalize, holder_client
-from . import facemarket_notify, repo
+from . import repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_catalog_access import catalog_access
@@ -1655,22 +1655,29 @@ async def create_license(
             if await cur.fetchone() is None:
                 await conn.rollback()
                 raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
-        await conn.commit()
-
-    if created:
-        # VC 실패의 HTTPException 응답에는 BackgroundTasks가 이어지지 않는다.
-        # 신규 행 커밋 직후, 발급 시도 전에 보내 실패 경로에서도 한 번만 알린다.
-        try:
-            settings = request.app.state.settings
-            admin_base = settings.fm_application_public_base.replace("facemarket.", "admin.").rstrip("/")
-            await facemarket_notify.notify_slack_enrollment_completed(
-                settings,
-                display_name=evidence.get("display_name"),
-                identity_method=evidence.get("identity_method") or "mid",
-                admin_link=f"{admin_base}/review",
+        if created:
+            # 라이선스와 알림을 한 트랜잭션에 저장한다. 전송은 별도 워커가 맡는다.
+            display_name = str(evidence.get("display_name") or "").strip()
+            if len(display_name) == 1:
+                display_name = "*"
+            identity_method = (
+                "simple_auth" if evidence.get("identity_method") == "simple_auth" else "mid"
             )
-        except Exception:
-            logger.warning("enrollment completed slack dispatch failed", exc_info=True)
+            admin_base = request.app.state.settings.fm_application_public_base.replace(
+                "facemarket.", "admin."
+            ).rstrip("/")
+            review_path = "/review?tab=photos" if identity_method == "mid" else "/review"
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_enrollment_completed_alerts
+                         (license_id, enrollment_id, model_id, display_name, identity_method,
+                          admin_link)
+                       values (%s, %s, %s, %s, %s, %s)
+                       on conflict do nothing""",
+                    (license_id, enrollment_id, model_id, display_name, identity_method,
+                     f"{admin_base}{review_path}"),
+                )
+        await conn.commit()
 
     if not identity_cleared(evidence["review_status"]):
         return _license_card({**row, "unit_price": unit_price, "license_valid_until": valid_until})
