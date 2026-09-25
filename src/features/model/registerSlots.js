@@ -36,11 +36,13 @@ export const REGISTRATION_PHOTO_COUNT = SLOTS.length;
 export const SHOOTING_TIME_MINUTES = 15;
 
 // 저장 키는 유지하고, 화면에서는 촬영자가 따라 할 행동으로 안내해요.
+// cloudy: 흐리거나 실내에서 찍는 방법 [할 일, 확인 기준...]. 첫 줄은 '흐리거나 실내라면' 뒤에 굵게, 나머지는 한 문장씩 줄을 바꿔 파란 글씨로 보여요.
+// 광원(창문, 조명)은 정하지 않고 '낮에 찍기'와 '얼굴 그림자'로 스스로 맞추게 해요.
 export const PHOTO_GROUPS = Object.freeze([
-  { id: 'sh', title: '그늘', action: '그늘에서', badge: '건물 그림자 · 나무 아래', note: '그늘 한 자리에서 1~9번을 찍어요.' },
-  { id: 'sl', title: '햇빛', action: '햇빛 드는 곳으로 나와서', badge: '그늘에서 나오기', note: '햇빛으로 나와 아래 자세로 3장을 찍어요.' },
-  { id: 'sr', title: '90도 회전', action: '오른쪽으로 90도 돌아서', badge: '선 자리에서 몸만 돌리기', note: '찍는 사람도 얼굴 정면으로 이동해요.' },
-  { id: 'bl', title: '한 번 더 회전', action: '한 번 더 90도 돌아서', badge: '해를 등지고', note: '얼굴이 어두우면 화면에서 얼굴을 눌러 주세요.' },
+  { id: 'sh', title: '그늘', action: '그늘에서', badge: '건물 그림자 · 나무 아래', note: '그늘 한 자리에서 1~9번을 찍어요.', cloudy: ['낮에 밝은 곳에서 찍어요.', '얼굴에 그림자가 없으면 돼요.'] },
+  { id: 'sl', title: '햇빛', action: '햇빛 드는 곳으로 나와서', badge: '그늘에서 나오기', note: '햇빛으로 나와 아래 자세로 3장을 찍어요.', cloudy: ['낮에 창가나 조명 옆에 서요.', '얼굴 한쪽에 그림자가 생기면 돼요.'] },
+  { id: 'sr', title: '90도 회전', action: '오른쪽으로 90도 돌아서', badge: '선 자리에서 몸만 돌리기', note: '찍는 사람도 얼굴 정면으로 이동해요.', cloudy: ['몸만 돌려요.', '그림자가 반대쪽 볼로 가면 돼요.'] },
+  { id: 'bl', title: '한 번 더 회전', action: '한 번 더 90도 돌아서', badge: '해를 등지고', note: '얼굴이 어두우면 화면에서 얼굴을 눌러 주세요.', cloudy: ['빛을 등지고 서요.'] },
 ]);
 // 사진 확인 화면의 sub 번호. 단계 화면 다음 자리예요(단계가 늘면 같이 밀려요).
 export const PHOTO_REVIEW_SUB = PHOTO_GROUPS.length + 1;

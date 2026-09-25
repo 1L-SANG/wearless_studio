@@ -27,7 +27,11 @@
 .shootHeading { display: flex; gap: 20px; margin-bottom: 20px; }
 .sectionNumber { flex-shrink: 0; white-space: nowrap; font-size: 36px; letter-spacing: -.05em; line-height: 1.2; color: var(--fm-muted); font-variant-numeric: tabular-nums; }
 .shootHeading h2 { font-size: clamp(21px, 2.5vw, 28px); margin: 5px 0 8px; line-height: 1.4; font-weight: 600; }
-.shootHeading p:last-child { color: var(--fm-muted); font-size: 14px; line-height: 1.7; }
+.shootHeading h2 + p { color: var(--fm-muted); font-size: 14px; line-height: 1.7; }
+.shootHeading .cloudyTip { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; color: var(--fm-accent); font-size: 14px; line-height: 1.6; }
+.shootHeading .cloudyTip svg { flex: 0 0 auto; margin-top: 3px; }
+.shootHeading .cloudyTip strong { font-weight: 700; }
+.shootHeading .cloudyCheck { display: block; font-weight: 400; }
 .referenceNote { border-left: 3px solid var(--fm-accent); background: var(--bg-2); padding: 16px 20px; margin: 20px 0; font-size: 14px; }
 .referenceNote strong { font-weight: 600; }
 .referenceNote p { color: var(--fm-muted); font-size: 13px; line-height: 1.7; margin-top: 6px; }

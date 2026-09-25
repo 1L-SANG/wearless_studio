@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { SponsorshipFields } from './SponsorshipSettings.jsx';
-import { Info, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { CloudSun, Info, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
 import { STANDARD_UNIT_PRICE_KRW, MONTHLY_PASS_PRICE_KRW, MONTHLY_PASS_CUTS, MODEL_SHARE, formatKrw } from '../facemarket-landing/facemarketTerms.js';
@@ -131,10 +131,10 @@ export function renderPhotos({ sub, enrollment, previews, busy, editingDisabled,
 
     </div>
     {sub === 1 && <div className={s.prepBlock}><ShootChecklist /></div>}
-    <div className={s.photoGuideLink}><Link className={s.textLink} to="/photo-guide" target="_blank" rel="noreferrer">18장 촬영 가이드 열기 (새 탭)</Link><span>JPG · PNG · WEBP · HEIC</span></div>
     <div className={s.groupHeading}>
-      <span className={s.tag}>{sub} / {PHOTO_GROUPS.length} · {slots[0].n}~{slots.at(-1).n}번</span>
+      <span className={s.tag}>{slots[0].n}~{slots.at(-1).n}번째</span>
       <h2>{group.action} {slots.length}장</h2><p>{group.note}</p>
+      {group.cloudy && <p className={s.cloudyTip}><CloudSun size={16} aria-hidden="true" /><span><strong>흐리거나 실내라면 {group.cloudy[0]}</strong>{group.cloudy.slice(1).map((line) => <span key={line} className={s.cloudyCheck}>{line}</span>)}</span></p>}
     </div>
     <p className={s.uploadInstruction}><Upload size={17} aria-hidden="true" /><span>예시 이미지를 눌러 카메라로 찍거나 앨범에서 선택하세요. 올리면 예시가 내 사진으로 바뀌어요.</span></p>
     <div className={s.photoGrid} aria-busy={busy}>{slots.map((slot) => renderPhotoCard({ slot, filled: uploaded.has(slot.key), preview: previews[slot.key], busy, editingDisabled, onFile, onRemove, photoSlot, error, onPick, onCancelPick }))}</div>
