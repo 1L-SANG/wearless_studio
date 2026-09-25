@@ -108,8 +108,17 @@ def _example_repeat_indexes(
     return indexes
 
 
+class _SkippedCut(tuple):
+    """생성하지 않고 건너뛰는 컷의 자리표. 모양은 예전 빈 튜플과 같아 _one_impl 이 그대로
+    빈 슬롯으로 끝낸다. 따로 표시하는 이유는 복제 판정 — 아래 _duplicate_source_indexes."""
+
+
+def _skipped_cut(cut_spec: dict) -> "_SkippedCut":
+    return _SkippedCut((cut_spec, [], "", False, [], None, False))
+
+
 def _duplicate_source_indexes(
-    blocks: list[dict], clothing_type: str,
+    blocks: list[dict], clothing_type: str, skipped: frozenset[int] | set[int] | None = None,
 ) -> list[int | None]:
     """생성 계약이 완전히 같은 뒤쪽 블록 → 앞쪽 원본 인덱스 매핑.
 
@@ -121,8 +130,15 @@ def _duplicate_source_indexes(
 
     first_by_key: dict[str, int] = {}
     sources: list[int | None] = []
+    skipped = skipped or frozenset()
     for index, block in enumerate(blocks):
         source = None
+        # 건너뛰는 컷은 원본이 될 수 없다 — 원본이 되면 같은 레시피의 뒤 컷이 "복제"로 접혀
+        # 빈 슬롯을 물려받는다(2026-09-25: 실제 모델에 styling 을 열자, 막힌 hooking 이 같은
+        # styling/front/full 레시피라 허용된 스타일링 컷이 cut_failed 가 됐다).
+        if index in skipped:
+            sources.append(None)
+            continue
         if isinstance(block, dict) and block.get("source") == "ai":
             try:
                 spec = cut_generator.normalize_spec(
@@ -842,7 +858,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # 같은 설정 복제 컷은 생성에서 접는다 — 원본만 생성하고 결과를 복제 위치에 복사
     # (2026-08-14 오너 확정: "같은 컷 복제는 1장만 생성"). 진행 분모도 실제 생성 수.
     dup_sources = _duplicate_source_indexes(
-        [item[0] for item in prepared], clothing_type
+        [item[0] for item in prepared], clothing_type,
+        skipped={i for i, item in enumerate(prepared) if isinstance(item, _SkippedCut)},
     )
     original_indexes = [i for i in range(len(prepared)) if dup_sources[i] is None]
 
@@ -1603,7 +1620,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_skipped",
                              "reason": rejection[0]})
-                prepared.append((cut_spec, [], "", False, [], None, False))
+                prepared.append(_skipped_cut(cut_spec))
                 continue
             try:
                 confirmed_requested = bool(
@@ -1624,7 +1641,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     b.get("id"),
                     e,
                 )
-                prepared.append((cut_spec, [], "", False, [], None, False))
+                prepared.append(_skipped_cut(cut_spec))
                 continue
             is_product_cut = normalized is not None and normalized["cutType"] == "product"
             is_worn_cut = normalized is not None and normalized["cutType"] in _WORN_CUT_TYPES
@@ -1647,7 +1664,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
             if cut_mannequin_asset is None and not prods:
-                prepared.append((cut_spec, [], "", False, [], None, False))
+                prepared.append(_skipped_cut(cut_spec))
                 continue
             mids = normalized.get("matchIds", []) if is_worn_cut else []
             matching_assets = [match_assets.get(matching_id) for matching_id in mids]
@@ -1659,7 +1676,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     job_id,
                     b.get("id"),
                 )
-                prepared.append((cut_spec, [], "", False, [], None, False))
+                prepared.append(_skipped_cut(cut_spec))
                 continue
             try:
                 matching_images = [await _img(asset) for asset in matching_assets]
@@ -1671,7 +1688,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     b.get("id"),
                     e,
                 )
-                prepared.append((cut_spec, [], "", False, [], None, False))
+                prepared.append(_skipped_cut(cut_spec))
                 continue
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
@@ -1714,7 +1731,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         b.get("id"),
                         e,
                     )
-                    prepared.append((cut_spec, [], "", False, [], None, False))
+                    prepared.append(_skipped_cut(cut_spec))
                     continue
                 model_has_full_body = len(model_images) == 2
                 has_identity = False
@@ -1843,7 +1860,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 "exampleId": example_id,
                                 "direction": normalized.get("direction"),
                             })
-                            prepared.append((cut_spec, [], "", False, [], None, False))
+                            prepared.append(_skipped_cut(cut_spec))
                             continue
                         else:
                             # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
@@ -1858,7 +1875,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 # 무드 사진으로 장면이 바뀔 수 있으므로 pose/bg와 똑같이 닫는다.
                                 log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
                                             scope, job_id, b.get("id"))
-                                prepared.append((cut_spec, [], "", False, [], None, False))
+                                prepared.append(_skipped_cut(cut_spec))
                                 continue
                             if example_img is not None:
                                 # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
@@ -1911,7 +1928,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         b.get("id"),
                         e,
                     )
-                    prepared.append((cut_spec, [], "", False, [], None, False))
+                    prepared.append(_skipped_cut(cut_spec))
                     continue
                 imgs = list(confirmed_packet.images)
                 manifest = confirmed_packet.manifest

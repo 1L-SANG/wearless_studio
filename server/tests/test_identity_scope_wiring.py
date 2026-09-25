@@ -128,8 +128,10 @@ def test_editor_new_cut_outside_the_scope_is_refused_before_any_charge(
                                 if k not in ("id", "source")}, "modelId": REAL},
     )
     assert res.status_code == 409, res.text
-    # styling 컷은 이제 **섹션 규칙**에 먼저 걸린다(2026-09-14: 실제 모델은 studio 섹션만).
-    assert res.json()["error"]["code"] == identity_scope.STUDIO_ONLY_CODE
+    # styling 섹션은 실제 모델에 열렸다(2026-09-25) — 이 컷은 섹션이 아니라 **확정 GPT 프로필
+    # 예시(가상 전용)** 때문에 막힌다. 그래서 코드가 mismatch 다(셀러는 예시를 바꾸면 된다).
+    assert res.json()["error"]["code"] == identity_scope.MISMATCH_CODE
+    assert res.json()["error"]["message"] == identity_scope.MISMATCH_MESSAGE
     assert calls == {"create": 0, "reserve": 0}
 
 
@@ -236,7 +238,8 @@ def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
     assert "v1" not in captured["cuts"]
     skipped = [payload for kind, payload in captured["events"]
                if isinstance(payload, dict) and payload.get("status") == "cut_skipped"]
-    assert any(p.get("reason") == identity_scope.STUDIO_ONLY_CODE and p.get("blockId") == "v1"
+    # styling 섹션이 열린(2026-09-25) 뒤로는 확정 프로필(가상 전용) 이유로 건너뛴다 = mismatch.
+    assert any(p.get("reason") == identity_scope.MISMATCH_CODE and p.get("blockId") == "v1"
                for p in skipped), (skipped, captured["events"], captured.get("cuts"))
     # 건너뛴 컷은 자산이 없다 = 성공 컷 수 기준 정산에서 빠진다(크레딧 0).
     assets = (captured.get("finalize") or {}).get("cut_assets") or []

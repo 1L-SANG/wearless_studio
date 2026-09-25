@@ -295,8 +295,9 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
         headers=auth_headers(make_token),
     )
 
-    # 2026-09-14: 실제 모델은 studio 섹션 컷만 만든다. 제품 컷만 있는 콘티는 만들 수 있는 컷이
-    # 0 이라 잡도 예약도 없이 끝난다("전부 걸러져 0컷이면 400" — 사용자 지시).
+    # 실제 모델은 studio·styling 섹션 컷만 만든다(2026-09-14 studio, 2026-09-25 styling 추가).
+    # 제품 컷만 있는 콘티는 만들 수 있는 컷이 0 이라 잡도 예약도 없이 끝난다
+    # ("전부 걸러져 0컷이면 400" — 사용자 지시).
     assert response.status_code == 400, response.text
     assert response.json()["error"]["code"] == "real_model_studio_only"
     assert seen == {} and events == ["cache"]
@@ -305,11 +306,12 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
 def test_detail_real_styling_needs_no_virtual_stand_in(
     client, make_token, monkeypatch
 ):
-    """스타일링 컷은 실제 모델로 만들지 않는다(2026-09-14 사용자 결정).
+    """스타일링 컷은 **실제 모델 그대로** 만든다 — 가상 대역 없음(2026-09-25 사용자 결정).
 
     이력: 2026-09-11 에 "가상 대역 없이 실제 모델 그대로 간다" 로 바뀌었고(400
-    styling_model_required 폐기), 이제는 **아예 만들지 않는다** — 얼굴 합성이 검증된 곳이
-    studio 섹션뿐이라 나머지는 gpt-image 비용만 나간다. 모델 선택 자체는 그대로다.
+    styling_model_required 폐기), 2026-09-14 에 studio 섹션만 남겼다가, 2026-09-25 에 styling
+    섹션을 다시 열었다(호리존만으로는 상세페이지가 모자라다). hooking·product 는 여전히 막혀
+    예약에서 빠진다 — 만들지도 않을 컷에 크레딧을 잡지 않는다.
     """
     seen = {}
     client.app.state.settings = replace(
@@ -324,7 +326,12 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "s1", "source": "ai", "cutType": "styling"}]
+        return [
+            {"id": "s1", "source": "ai", "cutType": "styling"},
+            # 아직 막힌 섹션(hooking) — 예약에서 빠져야 한다
+            {"id": "k1", "source": "ai", "sectionRole": "hooking", "contentRole": "hero",
+             "cutType": "styling", "direction": "front", "shot": "full"},
+        ]
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -346,6 +353,82 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
         return {"id": "job-styling-only"}, True
 
     async def fake_reserve(conn, user_id, amount):
+        seen["reserved"] = amount
+        return 10
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license_local", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, [])
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 202, response.text
+    # 스타일링 컷이 실제 모델 하나로 간다 — 가상 대역(stylingModelId) 없이 라이선스가 붙는다.
+    assert seen["payload"] == {
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    }
+    # hooking 컷은 예약에서 빠진다 — 예약 = 실제로 만들 스타일링 1컷.
+    per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
+    assert seen["metadata"]["aiCount"] == 1
+    assert seen["credits_reserved"] == per_cut
+    assert seen["reserved"] == per_cut
+
+
+def test_detail_real_blocked_sections_only_are_refused_with_the_studio_only_code(
+    client, make_token, monkeypatch
+):
+    """styling 이 열린 뒤에도 hooking 만 있는 콘티는 만들 컷이 0 이다 — 잡·예약 없이 400."""
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "k1", "source": "ai", "sectionRole": "hooking", "contentRole": "hero",
+                 "cutType": "styling", "direction": "front", "shot": "full"}]
+
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    def fake_verify(*args, **kwargs):
+        return None
+
+    async def fake_lock(conn, project_id, license_id):
+        return None
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-hooking-only"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        seen["reserved"] = amount
         return 10
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
@@ -2015,15 +2098,23 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
     assert all("modelId" not in block and "model_id" not in block for block in storyboard)
 
 
-@pytest.mark.parametrize("real_cuts_fail", [False, True])
+@pytest.mark.parametrize("real_cuts_fail,hooking_shot", [
+    pytest.param(False, "medium", id="False"),
+    pytest.param(True, "medium", id="True"),
+    # 회귀(2026-09-25): hero(hooking)와 coordination(styling)의 기본 레시피가 같다
+    # (styling/front/full). 건너뛴 hooking 이 복제 판정(_duplicate_source_indexes)의 원본이
+    # 되면 허용된 스타일링 컷이 그 "복제"로 cut_failed 가 됐다 — 건너뛴 컷은 원본에서 뺀다.
+    pytest.param(False, "full", id="hooking-same-recipe-as-styling"),
+])
 def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
-    monkeypatch, real_cuts_fail,
+    monkeypatch, real_cuts_fail, hooking_shot,
 ):
-    """실제 모델은 **스튜디오 컷만** 만들고 그 얼굴로 간다(2026-09-14 사용자 결정).
+    """실제 모델은 **studio·styling 섹션 컷**을 만들고 전부 그 얼굴로 간다.
 
     이력: 2026-09-11 에 "스튜디오·스타일링·미러 전부 실제 얼굴" 로 바뀌어 가상 대역(mA)이
-    사라졌다. 이제는 그 위에 범위를 좁혔다 — 얼굴 합성이 검증된 곳이 studio 섹션뿐이라
-    나머지는 아예 만들지 않는다(gpt-image 호출 0, 정산 0).
+    사라졌다. 2026-09-14 에 studio 섹션만 남겼다가, 2026-09-25 사용자 결정으로 styling 섹션
+    (스타일링·미러)을 다시 열었다. hooking·product 는 여전히 아예 만들지 않는다
+    (gpt-image 호출 0, 정산 0).
     """
     captured = {"cuts": {}, "settlements": [], "events": []}
     storyboard = [
@@ -2031,7 +2122,12 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         {"id": "h-side", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "side"},
         {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full", "direction": "front"},
         {"id": "mirror", "source": "ai", "cutType": "mirror", "shot": "full"},
+        # 아직 막힌 섹션(hooking) — 생성기까지 가지 않고 real_model_studio_only 로 건너뛴다.
+        # shot 이 스타일링 컷과 같아도(full) 건너뛴 hooking 은 복제 원본이 되지 않는다.
+        {"id": "hooking", "source": "ai", "sectionRole": "hooking", "contentRole": "hero",
+         "cutType": "styling", "shot": hooking_shot, "direction": "front"},
     ]
+    real_face_ids = ("h-front", "h-side", "styling", "mirror")
 
     class TrackingR2:
         def get_bytes(self, key):
@@ -2098,7 +2194,7 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
             "modelId": cut_spec.get("modelId"),
             "images": [image.data.decode() for image in images],
         }
-        if real_cuts_fail and cut_spec["cutType"] == "horizon":
+        if real_cuts_fail and cut_spec["id"] in real_face_ids:
             raise ValueError("real cut generation failed")
         return b"IMG", "image/png"
 
@@ -2148,35 +2244,36 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }, credits_reserved=4)))
 
-    for block_id in ("h-front", "h-side"):
+    # 스튜디오·스타일링·미러 컷 전부 실제 얼굴로 생성기에 간다(2026-09-25 styling 섹션 열림).
+    for block_id in real_face_ids:
         assert captured["cuts"][block_id]["modelId"] == MODEL_ID, block_id
         assert "real/face" in captured["cuts"][block_id]["images"], block_id
-    # studio 밖 컷은 생성기까지 가지 않는다 = gpt-image 호출 0.
-    for block_id in ("styling", "mirror"):
-        assert block_id not in captured["cuts"], block_id
+    # 아직 막힌 섹션(hooking)은 생성기까지 가지 않는다 = gpt-image 호출 0.
+    assert "hooking" not in captured["cuts"]
     skipped = {payload["blockId"]: payload for event_type, payload in captured["events"]
                if event_type == "step" and payload.get("status") == "cut_skipped"}
-    assert set(skipped) == {"styling", "mirror"}
-    assert all(p["reason"] == "real_model_studio_only" for p in skipped.values())
+    assert set(skipped) == {"hooking"}
+    assert skipped["hooking"]["reason"] == "real_model_studio_only"
     done_events = {
         payload["blockId"]: payload
         for event_type, payload in captured["events"]
         if event_type == "step" and payload.get("status") == "cut_done"
     }
     if real_cuts_fail:
-        assert "h-front" not in done_events and "h-side" not in done_events
+        assert not any(block_id in done_events for block_id in real_face_ids)
     else:
-        assert "previewUrl" not in done_events["h-front"]
-        assert "previewUrl" not in done_events["h-side"]
+        for block_id in real_face_ids:
+            assert "previewUrl" not in done_events[block_id], block_id
     # 건너뛴 컷은 완료 이벤트도 자산도 없다 = 정산(성공 컷 수 기준)에서 빠진다.
-    assert "styling" not in done_events and "mirror" not in done_events
+    assert "hooking" not in done_events
     if real_cuts_fail:
-        # 만들 컷이 스튜디오 둘뿐인데 그 둘이 실패하면 나온 컷이 0 이다 — 성공 종결도 없다.
+        # 실제 얼굴 컷이 전부 실패하면 나온 컷이 0 이다 — 성공 종결도 정산도 없다.
         assert "finalize" not in captured
         assert captured["settlements"] == []
         return
     assets = captured["finalize"]["cut_assets"]
-    assert len(assets) == 2
+    assert len(assets) == len(real_face_ids)
+    assert all(a.get("block_id") != "hooking" for a in assets)
     for asset in assets:
         assert asset["metadata"]["facemarket_real_derived"] is True
         assert asset["provenance"] == {"license_id": LICENSE_ID, "model_id": MODEL_ID}

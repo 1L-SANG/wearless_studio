@@ -379,11 +379,12 @@ def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
 
 
 def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
-    """스튜디오 착용 컷에만 인물 증거가 붙는다.
+    """스튜디오·스타일링 섹션 착용 컷에 인물 증거가 붙는다.
 
     이력: 2026-09-11 에 거울샷도 실제 모델로 합쳐졌고(그 전엔 가상모델로 갈려 한 페이지에
-    인물이 둘이었다), 2026-09-14 에 범위를 studio 섹션으로 좁혔다 — 거울샷·제품컷은 실제
-    모델로 아예 만들지 않는다.
+    인물이 둘이었다), 2026-09-14 에 범위를 studio 섹션으로 좁혔다가, 2026-09-25 사용자
+    결정으로 styling 섹션(거울샷 포함)을 다시 열었다. 제품컷(product 섹션)은 여전히 실제
+    모델로 만들지 않는다.
     """
     captured = {}
     _patch_inputs(monkeypatch, captured,
@@ -403,14 +404,18 @@ def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
     by_block = {c["block"]: c for c in captured["calls"]}
     assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 3
     assert by_block["b1b"]["has_face"] is True and len(by_block["b1b"]["images"]) == 3
-    # studio 밖 컷(제품·거울샷)은 생성기까지 가지 않는다.
-    assert "b2" not in by_block and "b3" not in by_block
+    # 거울샷(styling 섹션)도 같은 등록자 증거로 만든다(2026-09-25). 얼굴 노출은 없어
+    # has_face 는 False 그대로다(검증-얼굴 배지는 얼굴이 보이는 컷에만).
+    assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
+    assert by_block["b3"]["images"][0] == by_block["b1"]["images"][0]
+    # 아직 막힌 섹션(제품컷)은 생성기까지 가지 않는다.
+    assert "b2" not in by_block
     assert captured["license_notice"] is not None
-    # 실존 모델 파생물 두 장 — 둘 다 비공개 캐시로 나간다. 공개 캐시는 없다.
-    assert main_r2.caches.count("private, no-store") == 2
+    # 실존 모델 파생물 세 장 — 전부 비공개 캐시로 나간다. 공개 캐시는 없다.
+    assert main_r2.caches.count("private, no-store") == 3
     assert main_r2.caches.count("public, max-age=31536000, immutable") == 0
     markers = [asset["metadata"]["facemarket_real_derived"] for asset in captured["cut_assets"]]
-    assert markers.count(True) == 2
+    assert markers.count(True) == 3
     assert markers.count(False) == 0
 
 
