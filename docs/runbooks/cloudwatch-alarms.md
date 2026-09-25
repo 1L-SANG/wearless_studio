@@ -5,19 +5,20 @@
 | | 보는 것 | 파일 |
 |---|---|---|
 | 로그 알림 | 로그에 찍힌 **글자** (`CRITICAL`·`Traceback`·`http error status=5`) | `copilot/environments/addons/log-slack-alerts.yml` |
-| 지표 알람 | AWS 가 세는 **숫자** (5xx 건수·응답시간·정상 서버 수) | `copilot/environments/addons/alarm-slack.yml` |
+| 지표 알람 | AWS 가 세는 **숫자** (5xx 건수·응답시간·정상 서버 수) | `copilot/environments/addons/alarm-slack.yml`, 정상 서버 수만 `copilot/api/addons/api-alarms.yml` |
 
 앱이 조용히 느려지거나 붙을 서버가 없어지면 **로그에는 아무것도 안 남는다**. 2026-08-26 장애가 그랬다 — 동기 이미지 작업이 이벤트루프를 얼려 `/healthz` 가 37초 공백이었고 ALB 가 서버를 죽은 것으로 판정했다. 그건 숫자로만 보인다.
 
 도착지는 같은 Slack 채널(`SLACK_ALERT_WEBHOOK_URL`)이다.
 
-## 지금 걸린 알람 셋
+## 지금 걸린 알람 넷
 
 | 알람 | 조건 | 무슨 뜻 |
 |---|---|---|
-| `…-target-5xx` | Target 5xx 5분에 10건 이상 | 앱이 에러를 뱉는다 = 사용자가 에러 화면을 본다 |
-| `…-slow-response` | 요청 5건 이상인 5분의 응답 **중앙값** 2초 초과가 10분(5분 × 2회) | 일부가 아니라 대부분의 요청이 느리다 |
-| `…-no-healthy-target` | api 타깃그룹 정상 서버 0대가 2분(1분 × 2회) | ALB 가 붙을 서버가 없다. 이벤트루프 동결로 `/healthz` 가 막혀도 여기서 잡힌다 |
+| `wearless-use1-target-5xx` | Target 5xx 5분에 10건 이상 | 앱이 에러를 돌려준다. 사용자가 에러 화면을 본다 |
+| `wearless-use1-elb-502-504` | ELB 가 만든 502·504 합계 5분에 5건 이상 | 앱이 응답하지 못했다(응답 도중 죽음, 또는 멈춰서 타임아웃). 앱이 응답한 게 아니라 target-5xx 에는 안 잡힌다 |
+| `wearless-use1-slow-response` | 응답 표본 10건 이상인 5분의 응답 **중앙값** 2초 초과가 10분(5분 × 2회) | 일부가 아니라 대부분의 요청이 느리다 |
+| `wearless-use1-api-no-healthy-target` | api 타깃그룹 정상 서버 0대인 1분이 한 번이라도 | ALB 가 붙을 서버가 없다. 이벤트루프 동결로 `/healthz` 가 20초 넘게 막혀도 여기서 잡힌다 |
 
 복구(`OK`)도 Slack 으로 온다 — 울고 끝나면 회복됐는지 모른다.
 
@@ -27,23 +28,28 @@
 - **ELB 503 43건(1.3%) — 우리 장애가 아니다.** ALB 뒤 Copilot 기본 타깃그룹은 타깃이 0대인데, 호스트명 없이 IP 로 직접 들어오는 봇 스캔이 거기로 떨어져 503 이 난다. 5분당 1~7건이 바닥.
 - 그래서 503 임계는 바닥의 4배인 **30**. api 가 실제로 내려가면 사용자 요청이 전부 503 이 되어 이 선을 금방 넘는다.
 
-## 2026-09-26 개정: 헛경보 둘을 고쳤다
+## 2026-09-26 개정: 헛경보를 고치고 사각지대를 메웠다 (PR #414, 사후 리뷰 후속)
 
 9/25 에 알람이 세 번 울렸는데 셋 다 장애가 아니었다.
 
-- `slow-response` 두 번(10:59, 14:12 KST): FaceMarket 2차 등록 사진 업로드가 장당 5~9초라서 울렸다. 트래픽이 5분당 중앙값 0건이라 p95 는 느린 요청 몇 개가 정한다. 그래서 p95 대신 **중앙값**을 본다. 원래 오래 걸리는 요청은 꼬리만 끌어올리고, 서버가 실제로 느려지면 모든 요청이 느려져 중앙값이 오른다. 요청 5건 미만인 5분은 0 으로 쳐서 한두 건이 중앙값을 정하는 새벽을 거른다.
-- `no-healthy-target` 한 번(21:21 KST): ELB 503 이 3분에 95건 몰렸는데, 그동안 api 정상 서버는 계속 1대였고 api 타깃그룹 요청은 0건이었다. 기본 타깃그룹으로 떨어진 봇 트래픽이다. 그래서 503 개수 대신 **api 타깃그룹 정상 서버 수**를 본다. 타깃그룹은 서비스 스택이 만들어 환경 애드온이 직접 지목할 수 없으므로 Metrics Insights 쿼리(`SELECT MIN(HealthyHostCount) … WHERE LoadBalancer = …`)로 이 LB 의 타깃그룹을 훑는다. 기본 타깃그룹은 이 지표를 내지 않아 결과는 api 값이 된다.
+- `slow-response` 두 번(10:59, 14:12 KST): FaceMarket 2차 등록 사진 업로드가 장당 5~9초라서 울렸다. 트래픽이 5분당 중앙값 0건이라 p95 는 느린 요청 몇 개가 정한다. 그래서 p95 대신 **중앙값**을 본다. 원래 오래 걸리는 요청은 꼬리만 끌어올리고, 서버가 실제로 느려지면 모든 요청이 느려져 중앙값이 오른다. 응답 표본(`TargetResponseTime` 의 `SampleCount`)이 10건 미만인 5분은 0 으로 쳐서, 한 사람의 업로드 몇 장이 중앙값을 정하는 한산한 시간을 거른다.
+- `no-healthy-target` 한 번(21:21 KST): ELB 503 이 3분에 95건 몰렸는데, 그동안 api 정상 서버는 계속 1대였고 api 타깃그룹 요청은 0건이었다. 기본 타깃그룹으로 떨어진 봇 트래픽이다. 그래서 503 개수 대신 **api 타깃그룹 정상 서버 수**를 본다. 타깃그룹은 서비스 스택이 만들므로 알람을 api 서비스 애드온에 두고 `addons.parameters.yml` 로 `TargetGroupFullName` 을 넘겨받는다.
 
-60일(8/26 use1 이전 이후 전체) 실측에 새 규칙을 대입한 결과:
+처음(#414)에는 정상 서버 알람을 환경 애드온에서 Metrics Insights 로 LB 의 모든 타깃그룹을 훑게 했고 2분 연속을 요구했다. 사후 리뷰에서 세 가지가 지적돼 옮겼다. 다른 타깃그룹이 섞일 수 있고, api 가 없는 환경에서는 영구 ALARM 이 되며, 헬스체크(10초 간격, 2회 실패)상 37초 동결은 20~40초 비정상으로 끝나 2분 연속에 안 걸린다. 503 알람을 없애면서 비는 ELB 502·504 는 새 알람으로 메웠다.
+
+60일(8/26 use1 이전 이후 전체) 실측 대입. 연속은 시간이 실제로 붙은 구간만 셌다.
 
 | 알람 | 옛 규칙 | 새 규칙 |
 |---|---|---|
-| `slow-response` | 7회 울림(9/25 두 번은 사진 업로드, 나머지는 원인 미조사) | 1회: 8/30 22:00, `POST /licenses` 가 8~11초 걸려 503 을 8분 넘게 반복한 **진짜 장애** |
-| `no-healthy-target` | 17회 울렸을 것(9/25 21:22 포함). 그때마다 api 정상 서버는 1대 이상이었다 | 0회. 정상 서버 0대인 분 0회, 지표가 빈 구간 0회(배포 중에도 새 서버가 먼저 붙는다) |
+| `slow-response` | 7회. 8/30 진짜 장애 2회(21:55, 22:20), 사진 업로드 4회(8/27 두 번, 8/31, 9/25), 에디터 사용 중 에러 없는 튐 1회(9/7) | 0회. 8/30 장애는 `target-5xx` 가 21:50 에 먼저 잡는다(5분에 14건, 28건) |
+| 붙을 서버 없음 | ELB 503 규칙으로 17회. 그때마다 api 정상 서버는 1대 이상이었다 | 0회. 정상 서버 0대인 분 0회, 지표가 빈 구간 0회(배포 중에도 새 서버가 먼저 붙는다) |
+| `elb-502-504` | 없음 | 0회. 60일 동안 502 2건, 504 2건, 모두 5분에 1건씩 따로 |
 
-대가: 요청이 5분에 5건 미만인 한산한 시간의 느려짐은 `slow-response` 가 못 본다. 서버가 아예 멈추는 경우는 `/healthz` 실패로 `no-healthy-target` 이 잡고, 에러로 번지면 `target-5xx` 가 잡는다.
+## 남는 사각지대
 
-정상 서버 알람은 빈 데이터를 장애로 본다(`TreatMissingData: breaching`). 서버가 모두 빠지면 타깃그룹도 지표를 멈추기 때문이다. 이 알람이 새로 생긴 서비스나 LB 교체 직후 울리면 쿼리의 LoadBalancer 값부터 확인한다.
+- **한산한 시간의 느려짐**: 응답 표본이 5분에 10건 미만이면 `slow-response` 는 보지 않는다. 서버가 멈추면 정상 서버 알람이, 에러로 번지면 `target-5xx`·`elb-502-504` 가 잡는다.
+- **서버가 통째로 사라지는 경우**: 타깃이 0개가 되면 타깃그룹이 `HealthyHostCount` 를 아예 안 낸다. 빈 데이터는 장애로 보게 했지만(`breaching`), CloudWatch 는 평가 구간에 이전 값(1)이 남아 있는 동안 그 값으로 판정하므로 몇 분 늦게 울 수 있다. 부팅이 실패하면 로그 알림(`Application startup failed`)이 먼저 온다.
+- **리스너 규칙이 깨져 사용자 요청이 기본 타깃그룹으로 가는 경우**: ELB 503 만 늘고 api 쪽 지표는 조용하다. 봇 503 과 구분할 수 없어서 알람이 없다. Cloudflare 원본 잠금(#315)이 붙어 봇 503 바닥이 0 이 되면 ELB 503 알람을 다시 걸 수 있다.
 
 ## ECS CPU 알람이 없는 이유
 
@@ -53,22 +59,27 @@
 
 ## 배포
 
+두 곳이 따로 배포된다.
+
+- `copilot/api/addons/**`(정상 서버 알람): main 에 머지되면 `deploy-server` 워크플로가 api 를 배포하면서 같이 반영된다.
+- `copilot/environments/addons/**`(나머지 알람): CI 가 배포하지 않는다. 아래 명령을 IAM 사용자 자격으로 돌린다. 루트 자격(`aws login` 루트)으로는 copilot 이 역할 전환을 못 해서 실패한다(`Roles may not be assumed by root accounts`).
+
 ```bash
 copilot-aws env deploy --name use1
 ```
 
-앱 재배포와 무관하다 — 환경 애드온만 바뀐다. ⚠️ **CF 원본 잠금(#315)과 순서가 얽힌다**: 그 작업도 `env deploy` 를 쓴다. 두 개를 같은 시점에 밀면 어느 쪽이 깨졌는지 못 가른다. 하나씩.
+앱 재배포와 무관하다. 환경 애드온만 바뀐다. ⚠️ **CF 원본 잠금(#315)과 순서가 얽힌다**: 그 작업도 `env deploy` 를 쓴다. 두 개를 같은 시점에 밀면 어느 쪽이 깨졌는지 못 가른다. 하나씩.
 
 ## 알람을 추가할 때
 
-SNS 토픽이 `${App}-${Env}-AlarmTopicArn` 으로 export 돼 있다. 새 알람의 `AlarmActions`·`OKActions` 에 그걸 주면 같은 채널로 온다.
+SNS 토픽이 `${App}-${Env}-AlarmTopicArn` 으로 export 돼 있다. 새 알람의 `AlarmActions`·`OKActions` 에 그걸 주면 같은 채널로 온다. `api-alarms.yml` 이 이미 이 export 를 가져다 쓰므로 export 이름을 바꾸거나 지우면 env 배포가 막힌다.
 
 ## 되돌리기
 
-`alarm-slack.yml` 을 지우고 `env deploy`. 알람·토픽·램다가 같이 사라진다. 로그 알림은 별개 파일이라 영향 없다.
+먼저 `copilot/api/addons/api-alarms.yml` 과 `addons.parameters.yml` 을 지워 api 를 배포한다(토픽 export 를 가져다 쓰는 쪽이 먼저 빠져야 한다). 그다음 `alarm-slack.yml` 을 지우고 `env deploy`. 알람·토픽·램다가 같이 사라진다. 로그 알림은 별개 파일이라 영향 없다.
 
 ## 시끄러우면
 
 - 특정 알람만 끄기: 해당 리소스의 `ActionsEnabled: false` → `env deploy`
-- 임계 조정: `Threshold` / `EvaluationPeriods` 만 고쳐 `env deploy`
-- 새벽에 데이터가 없어 우는 경우: `target-5xx`·`slow-response` 는 이미 `TreatMissingData: notBreaching` 로 막아 뒀다. `no-healthy-target` 만 일부러 `breaching` 이다(위 개정 절 참고)
+- 임계 조정: `Threshold`·`EvaluationPeriods` 를 고쳐 `env deploy`(정상 서버 알람은 api 배포). `DatapointsToAlarm` 을 쓰는 알람은 없으니 연속 횟수는 `EvaluationPeriods` 하나로 정해진다
+- 새벽에 데이터가 없어 우는 경우: 환경 애드온 알람은 모두 `TreatMissingData: notBreaching` 이다. `api-no-healthy-target` 만 일부러 `breaching` 이다(위 사각지대 절 참고)
