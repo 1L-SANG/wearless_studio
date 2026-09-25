@@ -12,11 +12,16 @@
 #
 # ── 임계는 실측으로 잡았다 (2026-09-23, prod 3시간) ───────────────────────
 #   요청 3,283건 · Target 5xx 0건 · TargetResponseTime p95 0.69초
-#   ELB 503 43건(1.3%) — **이건 우리 장애가 아니다.** ALB 뒤 기본 타깃그룹(타깃 0대)에
-#   호스트명 없이 IP 로 직접 들어오는 봇 스캔이 떨어져서 나는 값이고, 5분당 1~7건이 바닥이다.
-#   그래서 503 임계를 30 으로 잡았다 — 바닥의 4배 위. api 가 실제로 내려가면 사용자 요청이
-#   전부 503 이 되므로 이 선을 금방 넘는다. Cloudflare 원본 잠금이 붙으면 바닥이 0 으로
-#   내려가니 그때 임계를 10 쯤으로 조이면 된다.
+#
+# ── 2026-09-26 개정: 헛경보 두 개를 고쳤다 (60일 실측 재대입) ─────────────
+#   ② slow-response: p95 3초 → "요청 5건 이상일 때의 중앙값(p50) 2초". 트래픽이 5분당
+#      중앙값 0건이라 p95 는 느린 요청 몇 개가 정한다. 사진 업로드(장당 5~9초)만으로 울렸다
+#      (9/25 두 번). 60일 대입: 옛 규칙 7회 울림, 새 규칙 1회(8/30 22:00 라이선스 발급 503
+#      반복, 진짜 장애).
+#   ③ no-healthy-target: ELB 503 개수 → api 타깃그룹 정상 서버 수. 503 은 기본 타깃그룹
+#      (타깃 0대)으로 떨어지는 봇 스캔까지 세서 9/25 21:21 에 95건으로 울렸다. 그동안 api
+#      정상 서버는 계속 1대였다. 60일 대입: 옛 규칙 17회 울림(전부 정상 서버 1대 이상일 때),
+#      새 규칙 0회(정상 서버 0대인 분 0회, 지표가 빈 구간 0회).
 #
 # ── 못 건 것: ECS CPU ─────────────────────────────────────────────────────
 #   AWS/ECS CPUUtilization 은 (ClusterName, ServiceName) 차원으로만 온다. 서비스 이름은
@@ -174,8 +179,9 @@ Resources:
                 AWS:SourceAccount: !Ref AWS::AccountId
 
   # ── 알람 셋 ───────────────────────────────────────────────────────────
-  # 모두 LoadBalancer 차원만 쓴다. 타깃그룹 ARN 은 서비스 스택이 만들어서 환경 애드온이
+  # ①② 는 LoadBalancer 차원만 쓴다. 타깃그룹 ARN 은 서비스 스택이 만들어서 환경 애드온이
   # 지목할 수 없다(확인함). LB 차원으로도 "사용자가 무엇을 받았나"는 다 보인다.
+  # ③ 은 타깃그룹 차원이 필요해서 Metrics Insights 쿼리로 이 LB 의 타깃그룹을 훑는다.
 
   # ① 앱이 5xx 를 뱉는다 = 사용자가 에러 화면을 보는 중. 3시간 실측 0건이라 10 이면 확실한 신호.
   Alarm5xx:
@@ -200,47 +206,81 @@ Resources:
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
-  # ② 느려짐·이벤트루프 동결. 실측 p95 0.69초라 3초는 네 배 위 — 오발화 여지가 적다.
+  # ② 서버 전체가 느려졌다. 평소 중앙값은 0.01~0.06초라 2초는 서른 배 넘게 위다.
+  #    p95 가 아니라 중앙값을 보는 이유: 사진 업로드처럼 원래 몇 초 걸리는 요청은 꼬리만
+  #    끌어올리고, 서버가 실제로 느려지면 모든 요청이 느려져 중앙값이 오른다.
+  #    요청 5건 미만인 5분은 0 으로 본다. 요청 한두 건이 중앙값을 정하는 새벽을 거르려는 것이고,
+  #    이벤트루프 동결처럼 서버가 아예 멈추는 경우는 ③ 이 healthz 실패로 잡는다.
   #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다.
   AlarmLatency:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub '${App}-${Env}-slow-response'
-      AlarmDescription: '응답이 느려졌어요(p95 3초 초과 10분). 2026-08-26 이벤트루프 동결과 같은 신호입니다.'
-      Namespace: AWS/ApplicationELB
-      MetricName: TargetResponseTime
-      Dimensions:
-        - Name: LoadBalancer
-          Value: !ImportValue
-            'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
-      ExtendedStatistic: p95
-      Period: 300
+      AlarmDescription: '서버 전체가 느려졌어요(응답 중앙값 2초 초과가 10분). 일부 느린 요청이 아니라 대부분의 요청이 느린 상태입니다.'
+      Metrics:
+        - Id: req
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: RequestCount
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !ImportValue
+                    'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+            Period: 300
+            Stat: Sum
+        - Id: p50
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: TargetResponseTime
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !ImportValue
+                    'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+            Period: 300
+            Stat: p50
+        - Id: slow
+          Label: p50 response time when 5+ requests
+          Expression: 'IF(req >= 5, p50, 0)'
+          ReturnData: true
       EvaluationPeriods: 2
-      Threshold: 3
+      Threshold: 2
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
-  # ③ 붙을 서버가 없다. 바닥(봇 스캔) 이 5분당 1~7건이라 30 으로 잡고 2회 연속을 요구한다.
-  #    api 가 내려가면 사용자 요청이 전부 여기로 떨어져 금방 넘는다.
+  # ③ api 에 정상 서버가 없다. 이 LB 타깃그룹들의 HealthyHostCount 최솟값이 2분 연속 0 이면 운다.
+  #    기본 타깃그룹(타깃 0대)은 이 지표를 내지 않아서 최솟값은 api 타깃그룹 값이 된다(확인함).
+  #    서버가 모두 빠지면 타깃그룹도 지표를 멈추므로 빈 데이터는 장애로 본다(breaching).
+  #    60일 동안 빈 구간은 0회였고, 배포 중에도 새 서버가 먼저 붙어서 0대가 된 적이 없다.
+  #    논리 ID 는 Alarm503 그대로 둔다. ID 를 바꾸면 CloudFormation 이 같은 이름 알람을 새로
+  #    만든(덮어쓴) 뒤 옛 리소스를 지우면서 새 알람까지 지운다.
   Alarm503:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub '${App}-${Env}-no-healthy-target'
-      AlarmDescription: 'ALB 가 붙을 서버를 못 찾고 있어요(503 급증). 서비스가 내려갔는지 확인하세요.'
-      Namespace: AWS/ApplicationELB
-      MetricName: HTTPCode_ELB_503_Count
-      Dimensions:
-        - Name: LoadBalancer
-          Value: !ImportValue
-            'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
-      Statistic: Sum
-      Period: 300
+      AlarmDescription: 'api 에 정상 서버가 2분째 0대예요. 사용자 요청이 실패하고 있을 수 있어요. ECS 서비스 이벤트와 /healthz 를 확인하세요.'
+      Metrics:
+        - Id: healthy
+          Label: min healthy targets
+          Period: 60
+          ReturnData: true
+          Expression: !Sub
+            - >-
+              SELECT MIN(HealthyHostCount)
+              FROM SCHEMA("AWS/ApplicationELB", LoadBalancer, TargetGroup)
+              WHERE LoadBalancer = '${Lb}'
+            - Lb: !ImportValue
+                'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
       EvaluationPeriods: 2
-      Threshold: 30
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
