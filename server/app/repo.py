@@ -1731,6 +1731,12 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
             # 못 끝내고 죽었고 폐기는 영원히 transport 로 실패했다(prod 실측 attempts=867).
             "  + (select count(*) from fm_vc_revocation_jobs "
             "       where status in ('pending', 'retry', 'processing')) "
+            # 협찬 동의 VC 발급 대기 — DID 가 있는(=발급 가능한) 것만. DID 없는 pending 은
+            # 라이선스 VC 를 기다리는 중이라 holder 를 켜 둘 이유가 없다(켜 두면 24/7 켜진다).
+            "  + (select count(*) from fm_sponsorship_credentials c "
+            "       join fm_models m on m.id = c.model_id "
+            "      where c.status = 'pending' and c.attempts < 50 "
+            "        and nullif(btrim(m.did), '') is not null) "
             # 셀러 사용 — 실존 모델(payload._facemarket.modelId)이 붙은 컷 잡. 이 잡들은
             # 하나하나가 verify_license → holder 호출이다.
             "  + (select count(*) from jobs where kind = any(%s) "

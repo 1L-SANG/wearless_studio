@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -43,6 +43,12 @@ from .facemarket_catalog_access import catalog_access
 from .facemarket_enrollment import ACCEPTED_BIOMETRIC_CONSENT_VERSIONS
 from .facemarket_notify import send_usage_report_email
 from .facemarket_photos import preferred_photo_predicate
+from .facemarket_sponsorship_vc import (
+    close_open_credentials as close_sponsorship_credentials,
+    open_credential as open_sponsorship_credential,
+    owner_status as sponsorship_credential_owner_status,
+    sponsorship_vc_enabled,
+)
 from .facemarket_sponsorship import (
     SPONSORSHIP_COLUMNS, SponsorshipFields, SponsorshipPatch, SponsorshipResult,
     sponsorship_view, record_sponsorship_consents,
@@ -637,7 +643,11 @@ async def list_models(
         seller = access["seller"]
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""select {_MODEL_CARD_COLS_ENRICHED} from fm_models m
+                f"""select {_MODEL_CARD_COLS_ENRICHED},
+                           exists (select 1 from fm_sponsorship_credentials sc
+                                    where sc.model_id = m.id and sc.status = 'active')
+                             as sponsorship_credential_active
+                      from fm_models m
                     {_CURRENT_CARD_JOINS}
                     where {_CURRENT_CARD_ELIGIBILITY}
                     order by m.created_at desc limit 200""",
@@ -646,7 +656,10 @@ async def list_models(
             rows = await cur.fetchall()
     for row in rows:
         row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
-        row.update(sponsorship_view(row, details=seller))
+        row.update(sponsorship_view(
+            row, details=seller,
+            credential_gate=sponsorship_vc_enabled(request.app.state.settings),
+        ))
     response.headers["Cache-Control"] = "no-store, private"
     return rows
 
@@ -757,8 +770,43 @@ async def update_model_sponsorship(
                 previous_enabled=current['sponsorship_enabled'], profile_consent=profile_consent,
                 client_ip=_request_client_ip(request),
             )
+            # 협찬 동의 VC — 켜고 끄는 **전환**에만 증서가 생기고 닫힌다(재동의만으로는 그대로).
+            # 끄는 쪽은 스위치와 무관하게 닫는다: on 시절에 만든 증서가 off 배포 뒤에 남으면 안 된다.
+            if merged['sponsorship_enabled'] and not current['sponsorship_enabled']:
+                if sponsorship_vc_enabled(request.app.state.settings):
+                    await open_sponsorship_credential(cur, model_id=model_id, user_id=user_id)
+            elif current['sponsorship_enabled'] and not merged['sponsorship_enabled']:
+                await close_sponsorship_credentials(cur, [model_id])
         await conn.commit()
     return updated
+
+
+class SponsorshipCredentialStatus(CamelModel):
+    """모델 본인 화면의 협찬 동의 증서 상태. feature_enabled=false 면 화면은 지금과 같다."""
+
+    feature_enabled: bool
+    status: Literal["none", "waiting_license", "pending", "active"]
+    vc_id: str | None = None
+    issued_at: datetime | None = None
+
+
+@router.get("/models/{model_id}/sponsorship/credential", response_model=SponsorshipCredentialStatus)
+async def get_model_sponsorship_credential(
+    model_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select 1 from fm_models where id = %s and user_id = %s", (model_id, user_id)
+            )
+            if await cur.fetchone() is None:
+                raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+        view = await sponsorship_credential_owner_status(conn, model_id)
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"feature_enabled": sponsorship_vc_enabled(request.app.state.settings), **view}
 
 
 @router.post(
@@ -1951,6 +1999,21 @@ class PublicVerifyResult(CamelModel):
     valid_until: datetime | None
     vc_id: str | None = None
     model: PublicVerifyModel
+    #: 2026-09-25 계약 확장(협찬 동의 VC). 동의 **사실**만 — 인스타·팔로워·사이즈는 절대 싣지 않는다.
+    #: 유효(active) 증서가 없으면 null.
+    sponsorship: "PublicVerifySponsorship | None" = None
+
+
+class PublicVerifySponsorship(CamelModel):
+    """공개 검증의 협찬 동의 — 증서 id·동의 시각·동의서 버전뿐."""
+
+    active: bool
+    vc_id: str | None = None
+    consented_at: datetime | None = None
+    consent_doc_version: str | None = None
+
+
+PublicVerifyResult.model_rebuild()
 
 
 @router.get(
@@ -1985,11 +2048,17 @@ async def verify_license_public(request: Request, license_id: str, response: Res
             await cur.execute(
                 """select l.status, l.allowed_use, l.forbidden_use, l.unit_price,
                           l.license_valid_until, l.vc_id, m.display_name,
+                          sc.vc_id as sponsorship_vc_id,
+                          sc.consented_at as sponsorship_consented_at,
+                          sc.consent_doc_version as sponsorship_consent_doc_version,
                           (select v.fields->>'birthYear' from fm_identity_verifications v
                            where v.model_id = m.id
                            order by v.verified_at desc limit 1) as birth_year
                    from fm_licenses l
                    join fm_models m on m.id = l.model_id
+                   -- 협찬 동의 VC — 유효(active) 증서만. 모델당 열린 증서는 하나(부분 유니크).
+                   left join fm_sponsorship_credentials sc
+                     on sc.model_id = m.id and sc.status = 'active'
                    where l.id = %s""",
                 (lic_id,),
             )
@@ -2018,6 +2087,15 @@ async def verify_license_public(request: Request, license_id: str, response: Res
             "nameMasked": _mask_name(row["display_name"]),
             "age": _age_from_birth_year(row["birth_year"]),
         },
+        "sponsorship": (
+            {
+                "active": True,
+                "vcId": row["sponsorship_vc_id"],
+                "consentedAt": row.get("sponsorship_consented_at"),
+                "consentDocVersion": row.get("sponsorship_consent_doc_version"),
+            }
+            if row.get("sponsorship_vc_id") else None
+        ),
     }
 
 

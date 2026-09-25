@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from . import admin_guard, repo
+from .facemarket_sponsorship_vc import admin_view as sponsorship_credential_admin_view
 from .auth import require_user
 from .db import get_conn
 from .facemarket_admin_devices import revoke_devices_for_user
@@ -452,8 +453,14 @@ async def model_detail(conn, *, model_id: str) -> dict:
         profile = await cur.fetchone()
         await cur.execute(DETAIL_CONSENTS_SQL, params)
         consents = await cur.fetchall() or []
+    credential = await sponsorship_credential_admin_view(conn, str(model["id"]))
 
     return {
+        "sponsorshipCredential": None if credential is None else {
+            "status": credential["status"], "vcId": credential["vc_id"],
+            "issuedAt": _detail_time(credential["issued_at"]),
+            "attempts": credential["attempts"], "lastErrorCode": credential["last_error_code"],
+        },
         "model": {**_model_row(model), "gender": model.get("gender"),
                   "heightBucket": model.get("height_bucket"), "bodyType": model.get("body_type")},
         "application": _detail_application(application),

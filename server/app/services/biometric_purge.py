@@ -8,6 +8,7 @@ from typing import Literal
 from psycopg.types.json import Json
 
 from app import repo
+from app.facemarket_sponsorship_vc import close_open_credentials
 
 
 PurgeReason = Literal["withdrawal", "reverification", "account_delete"]
@@ -951,6 +952,9 @@ async def _cleanup(
                 ):
                     if _has(schema, "fm_models", column):
                         model_sets.append(f"{column}=null")
+                # 협찬 동의 VC 도 닫는다 — 열린 증서는 revoked, 발급된 VC 는 폐기 큐로.
+                if _has(schema, "fm_sponsorship_credentials", "status"):
+                    await close_open_credentials(cur, list(model_ids))
                 # 모델 행은 유지하므로 알림 신청도 직접 지워요.
                 if _has(schema, "fm_sponsorship_interest", "model_id"):
                     await cur.execute(

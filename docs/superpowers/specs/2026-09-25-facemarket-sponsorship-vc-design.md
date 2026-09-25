@@ -61,10 +61,12 @@
 
 ## 파기·오류
 
-- 생체 파기(withdrawal·account_delete): 열린 증서를 revoked + 폐기 큐, `withdrawn` 동의 이벤트 기록.
+- 생체 파기(withdrawal·account_delete): 열린 증서를 revoked + 폐기 큐. `withdrawn` 동의 이벤트는
+  남기지 않는다 — 이벤트 테이블 reason 이 `model_toggle` 만 허용하고, account_delete 는 auth.users
+  삭제로 이벤트가 cascade 되므로 증서 행(revoked_at)이 철회 증빙이다.
 - holder 장애: 토글은 항상 즉시 성공, 발급·폐기는 워커 재시도. revoked 로 바뀐 순간부터
   게이트·검증은 무효로 본다(폐기 완료 여부와 무관).
-- 발급 실패가 반복되면(`attempts >= 10`) 경고 로그 → 기존 CloudWatch→Slack 경로.
+- 발급 실패가 반복되면(`attempts >= 10`) 경고 로그 + 관리자 모델 상세에 `lastErrorCode`. (Slack 로그 알림은 api 5xx 만 거르므로 이 경고는 자동 알림 대상이 아니다.)
 
 ## 스위치·배포
 

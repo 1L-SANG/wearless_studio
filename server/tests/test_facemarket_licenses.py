@@ -892,6 +892,8 @@ class FakeCursor:
                     "license_valid_until": lic["license_valid_until"], "vc_id": lic["vc_id"],
                     "display_name": (m or {}).get("display_name") or "",
                     "birth_year": (ident or {}).get("birth_year"),
+                    # 협찬 동의 VC(active 만 조인된다) — 테스트가 store["sponsorships"] 에 심는다.
+                    **self.store.get("sponsorships", {}).get(lic["model_id"], {}),
                 }
         elif "catalog_is_admin" in s:
             # 모델 리스트 열람 판정(facemarket_catalog_access). 셀러 카탈로그를 부르는 이 테스트의 계정은
@@ -2794,6 +2796,8 @@ def test_legacy_face_license_records_null_profile(fm, make_token):
 # ── step02: 공개 검증(QR — 무인증) ─────────────────────────────
 _PUBLIC_KEYS = {
     "valid", "status", "allowedUse", "forbiddenUse", "unitPrice", "validUntil", "vcId", "model",
+    # 2026-09-25 계약 확장: 협찬 동의 VC — 동의 사실만(없으면 null).
+    "sponsorship",
 }
 
 
@@ -3065,3 +3069,20 @@ def test_retake_blocks_holder_until_all_photos_are_rebuilt(
     assert result is None
     assert holder_stub.calls == []
     assert store["licenses"][0]["status"] == "pending"
+
+
+def test_public_verify_sponsorship_shows_only_consent_fact(fm, make_token):
+    """협찬 동의 VC 가 유효하면 증서 id·동의 시각·동의서 버전만 싣는다. 없으면 null."""
+    client, store, r2 = fm
+    card = _make_license(store, r2, allowed_use="광고", forbidden_use="")
+    assert client.get(f"/v1/facemarket/verify/{card['id']}").json()["sponsorship"] is None
+    store["sponsorships"] = {"model-1": {
+        "sponsorship_vc_id": "vc-sponsor-9",
+        "sponsorship_consented_at": datetime(2026, 9, 25, 3, 0, tzinfo=timezone.utc),
+        "sponsorship_consent_doc_version": "2026-09-sponsorship-v1",
+    }}
+    body = client.get(f"/v1/facemarket/verify/{card['id']}").json()
+    assert body["sponsorship"] == {
+        "active": True, "vcId": "vc-sponsor-9",
+        "consentedAt": "2026-09-25T03:00:00Z", "consentDocVersion": "2026-09-sponsorship-v1",
+    }

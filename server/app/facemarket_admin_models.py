@@ -22,6 +22,7 @@ from .db import get_conn
 from .facemarket import _assert_account_open, _cover_serving_url, _model_id_or_404
 from .facemarket_catalog_access import CatalogRole, catalog_access
 from .facemarket_sponsorship import SponsorshipFields, sponsorship_view
+from .facemarket_sponsorship_vc import sponsorship_vc_enabled
 from .models import CamelModel
 from .personalization import CONSENT_DOC_VERSION
 from .r2 import (
@@ -232,7 +233,9 @@ select m.id::text as id, m.display_name, m.gender,
        m.cover_image_url, m.fullbody_image_url, m.confirmed_at,
        m.sponsorship_enabled, m.instagram_handle, m.instagram_followers,
        m.instagram_followers_reported_at, m.size_top, m.size_bottom_waist,
-       m.sponsorship_profile_consent_at
+       m.sponsorship_profile_consent_at,
+       exists (select 1 from fm_sponsorship_credentials sc
+                where sc.model_id = m.id and sc.status = 'active') as sponsorship_credential_active
   from fm_models m
   join fm_biometric_enrollments e
     on e.id = m.current_enrollment_id and e.model_id = m.id
@@ -309,9 +312,10 @@ def _age_band(birthdate) -> str | None:
     return f"{decade}대 {part}"
 
 
-def _profile_view(row: dict, *, owner: bool = False, details: bool = True) -> dict:
+def _profile_view(row: dict, *, owner: bool = False, details: bool = True,
+                  credential_gate: bool = False) -> dict:
     return {
-        **sponsorship_view(row, owner=owner, details=details),
+        **sponsorship_view(row, owner=owner, details=details, credential_gate=credential_gate),
         "display_name": row["display_name"],
         "gender": row.get("gender"),
         "age_band": _age_band(row.get("birthdate")),
@@ -934,7 +938,10 @@ async def public_models(
         items.append(
             {
                 "id": row["id"],
-                **_profile_view(row, details=seller),
+                **_profile_view(
+                    row, details=seller,
+                    credential_gate=sponsorship_vc_enabled(request.app.state.settings),
+                ),
                 "closeup_image_url": _cover_serving_url(
                     request, row["cover_image_url"]
                 ),
@@ -952,9 +959,13 @@ class SponsorshipInterestResult(CamelModel):
     interested: bool
 
 
-async def _sponsorship_target(conn, model_id: str) -> None:
+async def _sponsorship_target(conn, model_id: str, settings) -> None:
+    """셀러가 협찬 관심을 보낼 수 있는 모델인가. FM_SPONSORSHIP_VC=on 이면 협찬 동의 VC 가
+    유효(active)해야 한다 — 없거나 무효면 같은 404 로 답한다(협찬 여부를 따로 흘리지 않는다)."""
     rows = await _load_model_profiles(conn, model_id=model_id, public_only=True, for_update=True)
     if not rows or not rows[0].get("sponsorship_enabled"):
+        raise _err("not_found", "협찬을 받는 공개 모델을 찾을 수 없습니다.", status=404)
+    if sponsorship_vc_enabled(settings) and not rows[0].get("sponsorship_credential_active"):
         raise _err("not_found", "협찬을 받는 공개 모델을 찾을 수 없습니다.", status=404)
 
 
@@ -966,7 +977,7 @@ async def get_sponsorship_interest(
     model_id = _model_id_or_404(model_id)
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
-        await _sponsorship_target(conn, model_id)
+        await _sponsorship_target(conn, model_id, request.app.state.settings)
         async with conn.cursor() as cur:
             await cur.execute(
                 """select exists (select 1 from fm_sponsorship_interest
@@ -986,7 +997,7 @@ async def create_sponsorship_interest(
     model_id = _model_id_or_404(model_id)
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
-        await _sponsorship_target(conn, model_id)
+        await _sponsorship_target(conn, model_id, request.app.state.settings)
         async with conn.cursor() as cur:
             await cur.execute(
                 """insert into fm_sponsorship_interest (seller_user_id, model_id)
