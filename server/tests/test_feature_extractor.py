@@ -96,4 +96,19 @@ def test_extract_without_feature_tier_falls_back_to_default_model(monkeypatch):
 def test_schema_is_strict_compatible():
     s = fx._schema()
     assert s["additionalProperties"] is False
-    assert set(s["required"]) == {"candidates", "selected"}
+    assert set(s["required"]) == {"candidates", "selected", "detailCandidates"}
+
+
+def test_extract_preserves_detail_metadata_in_existing_single_call(monkeypatch):
+    raw_candidates = [{"kind": "fabric"}]
+    calls = []
+
+    async def fake(*args, **kwargs):
+        calls.append(args)
+        return {"selected": ["골지 짜임"], "detailCandidates": raw_candidates}, "gemini"
+
+    monkeypatch.setattr(fx, "analyze_with_fallback", fake)
+    points, provider = asyncio.run(fx.extract(SimpleNamespace(model_text_gemini_features=""), {}, []))
+    assert points == ["골지 짜임"] and provider == "gemini"
+    assert points.detail_candidates == raw_candidates
+    assert len(calls) == 1

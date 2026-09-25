@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 
 import pytest
 
@@ -11,6 +12,139 @@ from conftest import FakeR2, auth_headers, fake_worker_app, make_settings, patch
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
+
+
+@pytest.mark.parametrize("case", ["same", "back", "failed_qc", "legacy"])
+def test_editor_vary_checked_detail_uses_trusted_recipe_and_original_sources(monkeypatch, case):
+    from app.agents import detail_recommendations as dr
+
+    contract = dr.build_contract([{
+        "kind": "closure", "sourceIndex": 0, "region": {"x": .1, "y": .1, "w": .6, "h": .6},
+        "photoUse": "standalone", "visibility": "clear", "rank": 1, "standaloneValue": "construction",
+        "label": "단추", "reason": "여밈 구조", "informationGroup": "closure", "featurePoints": [],
+    }], [(b"k/front", "image/png"), (b"k/back", "image/png")], ["Front", "Back"])
+    target_id = contract["candidates"][0]["id"]
+    recipe = {"version": 1, "shot": "detail", "direction": "front", "colorId": "base",
+              "detailTargetId": target_id, "exampleId": "original-photography"}
+    captured = {"writes": [], "events": [], "legacy": False}
+
+    async def asset(conn, user_id, asset_id):
+        metadata = {"detail_recipe": recipe} if asset_id == "generated" and case != "legacy" else {}
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png", "metadata": metadata}
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [
+            {"slot": "Front", "id": "front"}, {"slot": "Back", "id": "back"}]}]}
+
+    async def analysis(*args):
+        return {dr.PERSISTED_KEY: contract}
+
+    async def checked(settings, gemini, sources, *, target, direction, progress, style_reference=None):
+        captured["target"] = target
+        captured["sources"] = [image.data for image in sources]
+        captured["direction"] = direction
+        assert style_reference.data == b"k/generated"
+        if case == "failed_qc":
+            raise eij.DetailShotRejected("detail_qc_failed", {"passed": False})
+        assert case != "legacy", "Old product images must keep the existing variator path"
+        return eij.InlineImage("image/png", b"CHECKED"), {"passed": True}
+
+    async def legacy(settings, gemini, image, changes, cut_type, **kwargs):
+        assert case == "legacy", "Checked details must not bypass the dedicated QC pipeline"
+        assert image.data == b"k/generated" and changes == [] and cut_type == "product"
+        captured["legacy"] = True
+        return b"LEGACY", "image/png"
+
+    async def success(conn, **kwargs):
+        captured["success"] = kwargs
+        return {"id": "result"}
+
+    async def failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def emit(pool, job_id, event, payload):
+        captured["events"].append((event, payload))
+
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(eij.repo, "get_product", product)
+    monkeypatch.setattr(eij.repo, "get_analysis", analysis)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", checked)
+    monkeypatch.setattr(eij.detail_shot_runtime, "ProgressStore", lambda *_args: object())
+    monkeypatch.setattr(eij.cut_variator, "generate", legacy)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", success)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", failure)
+    monkeypatch.setattr(eij, "_emit", emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
+    app.state.r2.put_bytes = lambda key, data, *args, **kwargs: captured["writes"].append(data)
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "vary", "source": {"src": "/v1/assets/generated/file", "cutType": "product",
+                                    "detailTargetId": "untrusted-client-target"},
+        "changes": [{"type": "direction", "value": "back"}] if case == "back" else [],
+    })))
+
+    if case == "failed_qc":
+        assert "success" not in captured and captured["writes"] == []
+        assert captured["failure"]["reserved"] == 1
+        assert all("previewUrl" not in payload for _, payload in captured["events"])
+    elif case == "legacy":
+        assert captured["legacy"] is True and captured["writes"] == [b"LEGACY"]
+        assert "detail_recipe" not in captured["success"]["image"]["metadata"]
+    else:
+        result_recipe = captured["success"]["image"]["metadata"]["detail_recipe"]
+        assert captured["writes"] == [b"CHECKED"]
+        assert captured["success"]["group"] == "base"
+        if case == "same":
+            assert captured["target"]["id"] == target_id
+            assert captured["sources"] == [b"k/front"]
+            assert result_recipe == recipe
+        else:
+            assert captured["target"] is None and captured["direction"] == "back"
+            assert captured["sources"] == [b"k/back"]
+            assert result_recipe["detailTargetId"] is None and result_recipe["exampleId"] is None
+
+
+@pytest.mark.parametrize("reason", ["detail_qc_failed", "detail_qc_unknown"])
+def test_editor_detail_rejected_qc_has_no_asset_or_preview_and_refunds(monkeypatch, reason):
+    captured = {"writes": [], "events": []}
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "front"}]}]}
+
+    async def analysis(*args):
+        return {}
+
+    async def reject(*args):
+        raise eij.DetailShotRejected(reason, {"passed": False, "attempts": 2})
+
+    async def failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def forbidden_success(*args, **kwargs):
+        pytest.fail("Rejected detail must never create an asset or success ledger entry")
+
+    async def emit(pool, job_id, event, payload):
+        captured["events"].append((event, payload))
+
+    monkeypatch.setattr(eij.repo, "get_product", product)
+    monkeypatch.setattr(eij.repo, "get_analysis", analysis)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate", reject)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", failure)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", forbidden_success)
+    monkeypatch.setattr(eij, "_emit", emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.put_bytes = lambda *args, **kwargs: captured["writes"].append(args)
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "product", "shot": "detail", "colorId": "base",
+    }, credits_reserved=1)))
+
+    assert captured["writes"] == []
+    assert captured["failure"]["reserved"] == 1
+    assert captured["failure"]["metadata"]["error"] == reason
+    assert captured["failure"]["metadata"]["detailQc"]["passed"] is False
+    assert all("previewUrl" not in payload for _, payload in captured["events"])
 
 
 # ---------- 라우트 ----------
@@ -824,11 +958,13 @@ def test_run_editor_image_job_new_uses_selected_color_detail_assets(monkeypatch)
     async def fake_get_analysis(conn, pid):
         return {}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
-        captured["cut_spec"] = cut_spec
-        captured["manifest"] = manifest
-        captured["image_count"] = len(images)
-        return b"DETAIL", "image/png"
+    async def fake_gen(settings, gemini, sources, *, target, direction, progress, **kwargs):
+        captured["generated"] = True
+        captured["sources"] = [image.data for image in sources]
+        captured["target"] = target
+        captured["direction"] = direction
+        return eij.InlineImage("image/png", b"DETAIL"), {"passed": True}
+
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
@@ -840,7 +976,8 @@ def test_run_editor_image_job_new_uses_selected_color_detail_assets(monkeypatch)
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
@@ -849,14 +986,13 @@ def test_run_editor_image_job_new_uses_selected_color_detail_assets(monkeypatch)
         "direction": "front", "shot": "detail",
     }
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["asset_ids"] == ["a2", "d2"]
-    assert captured["cut_spec"]["colorId"] == "col2"
-    assert "_detailColorTransfer" not in captured["cut_spec"]
-    assert captured["image_count"] == 2
-    assert "front view of the garment" in captured["manifest"]
-    assert "detail close-up of the garment" in captured["manifest"]
+    assert captured["target"] is None
+    assert captured["sources"] == [b"k/a2", b"k/d2"]
+    assert captured["direction"] == "front"
     assert captured["group"] == "col2"
     assert captured["charge"] == 1
 
@@ -881,12 +1017,13 @@ def test_run_editor_image_job_new_detail_uses_other_color_reference_with_transfe
     async def fake_get_analysis(conn, pid):
         return {}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
-        captured["cut_spec"] = cut_spec
-        captured["manifest"] = manifest
-        captured["prompt"] = eij.cut_generator.build_prompt(
-            cut_spec, product, analysis=analysis, manifest=manifest)
-        return b"DETAIL", "image/png"
+    async def fake_gen(settings, gemini, sources, *, target, direction, progress, **kwargs):
+        captured["generated"] = True
+        captured["sources"] = [image.data for image in sources]
+        captured["target"] = target
+        captured["direction"] = direction
+        return eij.InlineImage("image/png", b"DETAIL"), {"passed": True}
+
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
@@ -898,21 +1035,22 @@ def test_run_editor_image_job_new_detail_uses_other_color_reference_with_transfe
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
     payload = {"mode": "new", "colorId": "col2", "cutType": "product", "shot": "detail"}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["asset_ids"] == ["a2", "d1"]
-    assert captured["cut_spec"]["_detailColorTransfer"] == {
-        "targetName": "그린", "targetHex": "#3f7a4f", "referenceName": "레드",
-    }
-    assert "detail close-up of the garment" in captured["manifest"]
-    assert "DETAIL COLORWAY TRANSFER" in captured["prompt"]
-    assert "Target color: 그린 (#3f7a4f)" in captured["prompt"]
+    assert captured["sources"] == [b"k/a2", b"k/d1"]
+    assert captured["target"]["colorTransfer"] is True
+    assert captured["target"]["kind"] == "construction"
+    assert captured["target"]["sourceSha256"] == hashlib.sha256(b"k/d1").hexdigest()
+    assert captured["target"]["colorSourceSha256"] == hashlib.sha256(b"k/a2").hexdigest()
     assert captured["group"] == "col2"
     assert captured["charge"] == 1
 
@@ -932,10 +1070,13 @@ def test_run_editor_image_job_new_detail_without_color_id_uses_base_detail(monke
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
-    async def fake_gen(*args, **kwargs):
+    async def fake_gen(settings, gemini, sources, *, target, direction, progress, **kwargs):
         captured["generated"] = True
-        captured["cut_spec"] = args[2]
-        return b"DETAIL", "image/png"
+        captured["sources"] = [image.data for image in sources]
+        captured["target"] = target
+        captured["direction"] = direction
+        return eij.InlineImage("image/png", b"DETAIL"), {"passed": True}
+
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
@@ -944,16 +1085,19 @@ def test_run_editor_image_job_new_detail_without_color_id_uses_base_detail(monke
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
 
     payload = {"mode": "new", "cutType": "product", "shot": "detail"}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["product_loaded"] is True
     assert captured["generated"] is True
-    assert "_detailColorTransfer" not in captured["cut_spec"]
+    assert captured["target"] is None
+    assert captured["sources"] == [b"k/a1", b"k/d1"]
     assert captured["group"] is None
     assert captured["charge"] == 1
 
@@ -975,10 +1119,13 @@ def test_run_editor_image_job_new_back_detail_uses_back_side_reference(monkeypat
         captured["asset_ids"].append(aid)
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
-    async def fake_gen(*args, **kwargs):
+    async def fake_gen(settings, gemini, sources, *, target, direction, progress, **kwargs):
         captured["generated"] = True
-        captured["cut_spec"] = args[2]
-        return b"DETAIL", "image/png"
+        captured["sources"] = [image.data for image in sources]
+        captured["target"] = target
+        captured["direction"] = direction
+        return eij.InlineImage("image/png", b"DETAIL"), {"passed": True}
+
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
@@ -987,14 +1134,18 @@ def test_run_editor_image_job_new_back_detail_uses_back_side_reference(monkeypat
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "ProgressStore", lambda *_args: object())
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
 
     payload = {"mode": "new", "cutType": "product", "shot": "detail", "direction": "back"}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: key.encode()
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["generated"] is True
+    assert captured["direction"] == "back"
+    assert captured["sources"] == [b"k/a2", b"k/bd1"]
     assert "bd1" in captured["asset_ids"]
     assert "d1" not in captured["asset_ids"], "반대 방향 디테일은 첨부 금지"
 
@@ -1025,7 +1176,7 @@ def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch)
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
     payload = {
@@ -1036,7 +1187,7 @@ def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch)
 
     assert captured["asset_ids"] == []
     assert captured["generated"] is False
-    assert captured["metadata"] == {"error": "invalid_color"}
+    assert captured["metadata"]["error"] == "detail_target_unavailable"
     assert captured["reserved"] == 1
 
 
@@ -1072,7 +1223,7 @@ def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypa
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.detail_shot_runtime, "generate_verified", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
     payload = {"mode": "new", "colorId": "col2", "cutType": "product",
@@ -1081,7 +1232,7 @@ def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypa
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["generated"] is False
-    assert captured["metadata"]["error"] == "detail_reference_required"
+    assert captured["metadata"]["error"] == "detail_source_unavailable"
     assert captured["reserved"] == 1
 
 

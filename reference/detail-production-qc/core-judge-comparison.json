@@ -1,0 +1,115 @@
+[
+  {
+    "id": "pink_actual_seam_core",
+    "expectedCore": "PASS",
+    "requestedModel": "gpt-5.4-2026-03-05",
+    "promptHash": "b8002078fb7b01e984e70fe8d8b8d426bfda2a93ad8b25000443e53491e60f6d",
+    "sourceHashes": [
+      "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+      "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8"
+    ],
+    "candidateHash": "105c1e5d64705b122fdd97fe1c0d2739d3d78a165b34d5661eab3ab76e1175df",
+    "rawJudge": {
+      "gates": [
+        {
+          "code": "targetFraming",
+          "status": "PASS",
+          "evidence": "Front product-detail crop without a person shows the requested connected upper region: scoop neckline, shoulder/neck area, chest seam/trim, and centered bow."
+        },
+        {
+          "code": "constructionDesign",
+          "status": "PASS",
+          "evidence": "Matches the source design: bound scoop neck with inner wavy lettuce edge, visible neck label/back seam through the fabric, and a horizontal decorative trim seam with a centered bow."
+        },
+        {
+          "code": "colorMaterial",
+          "status": "PASS",
+          "evidence": "Preserves the pale baby-pink color family and fine lightweight jersey/knit appearance; material remains smooth, soft, and slightly sheer rather than becoming a different fabric."
+        },
+        {
+          "code": "photographicPreparation",
+          "status": "PASS",
+          "evidence": "Useful, sharp studio-style detail with soft coherent light and natural cloth depth; no severe blur, pasted edges, or obviously fake flattened surface."
+        }
+      ]
+    },
+    "decision": "PASS",
+    "metadata": {
+      "requested_model": "gpt-5.4-2026-03-05",
+      "returned_model": "gpt-5.4-2026-03-05",
+      "usage": {
+        "prompt_tokens": 5269,
+        "completion_tokens": 1405,
+        "total_tokens": 6674,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1192,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "finish_reason": "stop"
+    },
+    "elapsedSeconds": 22.77
+  },
+  {
+    "id": "full_garment_negative_core",
+    "expectedCore": "FAIL",
+    "requestedModel": "gpt-5.4-2026-03-05",
+    "promptHash": "830e747d22fe06c6598757a07884bba5d242fd3220e5f8d00c3cb314437faa89",
+    "sourceHashes": [
+      "491361c35bad201b545c6a2788629b495b305d54264161055c978bdafdc59fda"
+    ],
+    "candidateHash": "ec845d55c9d9dd4dbd7b96548cee4e2751ba5aa1e9e57eb69851731e0c76bb1f",
+    "rawJudge": {
+      "gates": [
+        {
+          "code": "targetFraming",
+          "status": "FAIL",
+          "evidence": "Requested front closure detail crop is not provided; candidate shows the full garment including sleeves and hem instead of a useful partial closure-focused product detail."
+        },
+        {
+          "code": "constructionDesign",
+          "status": "PASS",
+          "evidence": "Source-supported design is preserved: wide square neckline, short sleeves, front opening with six covered buttons and visible buttonholes, and the same shaped side seam/panel lines."
+        },
+        {
+          "code": "colorMaterial",
+          "status": "PASS",
+          "evidence": "Candidate keeps the same light taupe-beige color family and smooth matte woven/suiting-like material, without inventing shine, knit texture, print, or heavier fabric."
+        },
+        {
+          "code": "photographicPreparation",
+          "status": "PASS",
+          "evidence": "Useful coherent studio presentation with soft light, readable garment edges, and natural cloth depth; no severe blur, harsh cutout defects, or obviously fake flattened surface."
+        }
+      ]
+    },
+    "decision": "FAIL",
+    "metadata": {
+      "requested_model": "gpt-5.4-2026-03-05",
+      "returned_model": "gpt-5.4-2026-03-05",
+      "usage": {
+        "prompt_tokens": 7361,
+        "completion_tokens": 1152,
+        "total_tokens": 8513,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 945,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "finish_reason": "stop"
+    },
+    "elapsedSeconds": 21.05
+  }
+]

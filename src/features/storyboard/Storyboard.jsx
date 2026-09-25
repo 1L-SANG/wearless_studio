@@ -11,6 +11,8 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useContext } from 
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
+import { DetailTargetPicker } from './DetailTargetPicker.jsx';
+import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe, detailTargetPresentation, detailRecommendationMessage, selectableDetailTargets } from '@/lib/detailRecommendations.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -42,6 +44,7 @@ import {
   generationExampleImageSources,
   groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
+  hasAvailableGenerationRecipe,
   isGenerationCombinationPublic,
   repeatedAllExampleVariationIds,
   selectGenerationExamples,
@@ -234,7 +237,8 @@ function referenceFeedbackPatch(block, changes, catalogs) {
   // 같은 공간 묶음 컷은 서버 계약(normalize_spec)이 범위를 'pose' 로 강제 — 프론트 표시도 동일 규칙
   const spaceGroupId = Object.prototype.hasOwnProperty.call(changes, 'spaceGroupId') ? changes.spaceGroupId : block.spaceGroupId;
   const effScope = spaceGroupId ? 'pose' : refScope;
-  const next = { ...changes };
+  const next = { ...preserveDetailTargetBinding(block, changes) };
+  if (isProductDetail({ ...block, ...changes })) return next;
   if (exampleId && effScope === 'all') {
     if (block.baseThumb == null) next.baseThumb = block.thumb;
     next.thumb = exampleThumbFor(catalogs, exampleId, changes.cutType ?? block.cutType);
@@ -254,6 +258,7 @@ const prefersReducedMotion = () => (
 
 const initialRevealThumbnailFor = (block, catalogs) => {
   if (block.source === 'mine') return block.thumb || block.ownImages?.[0];
+  if (isProductDetail(block)) return detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations)?.src;
   const example = block.exampleId
     ? (catalogs?.genExamples || []).find((candidate) => candidate.id === block.exampleId)
     : null;
@@ -477,13 +482,14 @@ function StoryboardMedia({
   showPoseVariation = false,
   onDuplicate, onDelete, move = null, canDelete = true,
 }) {
-  const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
+  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+  const missing = detail ? !detail.src : block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
   const example = block.exampleId
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const image = example ? generationExampleImageSources(example) : null;
-  const src = block.source === 'mine'
+  const src = detail ? detail.src : block.source === 'mine'
     ? (block.thumb || block.ownImages?.[0])
     : (block.previewThumb || image?.src || block.thumb);
   // 매칭 의류 표시는 셀러가 인스펙터에서 직접 바꾼 컷에만(자동 배정 컷은 조용히) —
@@ -499,13 +505,14 @@ function StoryboardMedia({
       {missing ? (
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
-          <i>{manualEmpty
+          <i>{detail ? '상품 원본을 불러오지 못했어요' : manualEmpty
             ? '분위기 예시를 골라주세요.'
             : '이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요'}</i>
         </span>
       ) : (
-        <img src={src} srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
+        <img className={detail ? "detail-source-image" : undefined} src={src} srcSet={detail ? undefined : image?.srcSet} alt={detail ? `내 상품 원본 · ${detail.label}` : ""} loading="lazy" decoding="async" />
       )}
+      {detail && <span className="sb-mine-badge">내 상품 원본 · {detail.label}</span>}
       {showPoseVariation && (
         <span className="sb-pose-variation-note">약간 다른 포즈 적용</span>
       )}
@@ -585,7 +592,7 @@ function StoryboardCard({
   swapProps = null, canDelete = true, outOfScope = false,
 }) {
   const { block, index } = item;
-  const missing = block.source !== 'mine' && !block.exampleId;
+  const missing = !isProductDetail(block) && block.source !== 'mine' && !block.exampleId;
   const manualEmpty = missing && block.exampleChoice === 'manual';
   /* 네 컷 구성 격자의 첫 줄과 나란히 선 낱장 컷은 설명을 사진 위로 올린다 — 같은 줄에서
      설명 위치가 엇갈리면 한 덩어리로 안 읽힌다(2026-08-16 오너). 줄 판정은 실제 배치를 잰다. */
@@ -791,11 +798,12 @@ function StoryboardStack({ group, total, catalogs, onOpen }) {
             ? (catalogs?.genExamples || []).find((candidate) => candidate.id === item.block.exampleId)
             : null;
           const image = example ? generationExampleImageSources(example) : null;
+          const detail = detailTargetPresentation(item.block, catalogs?.detailProduct, catalogs?.detailRecommendations);
           return (
             <span key={item.block.id} className="sb-stack-cut">
               {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
-              <img src={item.block.previewThumb || image?.src || item.block.thumb || item.block.ownImages?.[0]}
-                srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
+              <img className={detail ? "detail-source-image" : undefined} src={detail ? detail.src : item.block.previewThumb || image?.src || item.block.thumb || item.block.ownImages?.[0]}
+                srcSet={detail ? undefined : image?.srcSet} alt={detail ? `내 상품 원본 · ${detail.label}` : ""} loading="lazy" decoding="async" />
             </span>
           );
         }) : <span className="sb-stack-empty">＋ 컷 추가</span>}
@@ -944,9 +952,10 @@ function ShotSegment({
       {options.map((option) => {
         const published = !option.disabled && (isOptionPublished
           ? isOptionPublished(option.value)
-          : isGenerationCombinationPublic({
-            cutType: cut, shot: option.value, clothingType, gender,
-          }));
+          : (isSourceBasedDetailRecipe({ cutType: cut, shot: option.value, clothingType })
+            || isGenerationCombinationPublic({
+              cutType: cut, shot: option.value, clothingType, gender,
+            })));
         return (
           <button key={option.value} type="button" className={value === option.value ? 'on' : ''}
             disabled={!published} aria-pressed={value === option.value}
@@ -1279,7 +1288,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
   return (
     <div className="insp-sec">
       <div className="sb-exhead">
-        <label className="lbl">{cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
+        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
         {onShotChange
           ? <ShotSegment options={(cut === 'styling' || cut === 'horizon') ? [
             ...shotOpts, { ...MINE_SHOT_OPTION, disabled: !onRefsChange || !onUseMine },
@@ -1317,7 +1326,9 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       )}
       {/* 정면이 아닌 방향에서 갤러리를 흐리게 덮던 처리를 걷어냈다 — 방향별 묶음이 생긴 뒤로는
           "왜 회색인데 눌리지?"만 남았다(2026-09-22 오너). moodOnly 는 기본 범위 판정에만 쓴다. */}
-      <div className="sb-exgallery" ref={galleryRef}
+      {isSourceBasedDetailRecipe({ cutType: cut, shot: shotVal, clothingType }) && !examples.length ? (
+        <p className="hint">예시 없이 내 상품 원본으로 디테일을 촬영해요. 촬영 연출 예시는 선택 사항이에요.</p>
+      ) : <div className="sb-exgallery" ref={galleryRef}
         role="region" aria-label="생성예시 갤러리">
         {gallerySections.length ? gallerySections.map((section) => (
           <div className="sb-exsection" key={`sec:${section.key}`}>
@@ -1333,7 +1344,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
             <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
           </div>
         )}
-      </div>
+      </div>}
       </>}
     </div>
   );
@@ -1390,7 +1401,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
   const productShotOptions = catalogs.productShotTypes;
-  const hasSelectableExamples = (cutType, shot) => hasSelectableGenerationExamples(
+  const hasSelectableExamples = (cutType, shot) => hasAvailableGenerationRecipe(
     catalogs.genExamples,
     {
       cutType,
@@ -1421,6 +1432,13 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     setPendingRecipe({ cutType, shot });
   };
   const onShotChange = (shot) => {
+    if (block.cutType === 'product' && shot === 'detail') {
+      if (block.shot === shot) return;
+      onChange({ ...normalizedRecipePatch({ ...block, shot }, CONTENT_ROLES.DETAIL),
+        detailTargetId: null, detailTargetOrigin: 'user', exampleId: null, exampleSelectionOrigin: null });
+      setPendingRecipe(null);
+      return;
+    }
     if (block.cutType === 'product') {
       if (block.shot === shot) { setPendingRecipe(null); return; }
       setPendingError(null);
@@ -1465,6 +1483,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ? current.colorId : nextColorOpts[0]?.id;
     const changes = referenceFeedbackPatch(current, {
       ...recipePatch,
+      ...(recipePatch.cutType !== 'product' || recipePatch.shot !== 'detail'
+        ? { detailTargetId: null, detailTargetOrigin: null } : {}),
       source: 'ai',
       shot: recipePatch.shot,
       colorId,
@@ -1482,7 +1502,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ...(recipePatch.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
       // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
       // 숨은 상태로 남아 BackDetail 근거로 새어 나가는 것을 막는다(Codex 리뷰 P1).
-      ...(recipePatch.cutType === 'product' && recipePatch.shot === 'detail'
+      ...(recipePatch.cutType === 'product' && recipePatch.shot === 'detail' && !current.detailTargetId
         ? { direction: detailDirectionFromExample(example) } : {}),
     }, catalogs);
     setPendingChoice(exampleId);
@@ -1640,6 +1660,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
+          {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
+            recommendations={catalogs.detailRecommendations} onChange={onChange} />}
           {isSignatureSlot && (
             <SignatureCutGallery
               gender={exampleGender}
@@ -1808,7 +1830,8 @@ export function StoryboardLoadingState({ photoUpload = null }) {
 function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, analysis], sourceBlocks = board) {
   const p = product;
   const a = analysis;
-  const hydratedCatalogs = withStoryboardSpaceSetExamples(rawCatalogs);
+  const hydratedCatalogs = { ...withStoryboardSpaceSetExamples(rawCatalogs),
+    detailProduct: p, detailRecommendations: a?.detailRecommendations };
   const hasDetailImage = hasDetailSource(p);
   const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
@@ -1916,6 +1939,8 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
       colors: p.colors || [],
       targetGenders: a?.targetGenders || [],
       matchClothing: matchClothing || [],
+      detailRecommendations: a?.detailRecommendations,
+      sellingPoints: a?.sellingPoints || [],
     },
     normalized,
     assignment,
@@ -2571,6 +2596,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       clothingType,
       targetGenders: composeModeSeed.targetGenders,
       matchClothing: composeModeSeed.matchClothing,
+      detailRecommendations: composeModeSeed.detailRecommendations,
+      sellingPoints: composeModeSeed.sellingPoints,
     },
   );
 
@@ -2629,7 +2656,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const previous = blocks;
     const current = previous.find((block) => block.id === id);
     if (!current) return;
-    const applied = typeof changes === 'function' ? changes(current) : changes;
+    const applied = preserveDetailTargetBinding(current, typeof changes === 'function' ? changes(current) : changes);
     const oldRowId = current.layoutRowId;
     let next = previous.map((block) => {
       if (block.id === id) {
@@ -2652,6 +2679,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     atomicSavingRef.current = true;
     setAtomicSaving(true);
     const previous = blocks;
+    changes = preserveDetailTargetBinding(previous.find((block) => block.id === id), changes);
     const move = pendingSectionMove?.blockId === id ? pendingSectionMove : null;
     let staged = previous;
     if (move) {
@@ -3855,6 +3883,9 @@ export function Storyboard({ toastOverride = null } = {}) {
             <div className="sb-deck-collapse">
               <div>
                 {/* 레이아웃 설정 UI는 MVP 이후 재도입한다. sectionLayout 로직과 저장 필드는 유지한다. */}
+                {groupSection.role === SECTION_ROLES.PRODUCT && !blocks.some(isProductDetail)
+                  && !selectableDetailTargets(catalogs.detailRecommendations).length
+                  && <p className="hint">{detailRecommendationMessage(catalogs.detailRecommendations)}</p>}
                 <div className="sb-canvas-grid">
                   {canvasUnits(group.items).map((unit) => (
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
@@ -4053,7 +4084,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {/* 완료 가드는 게이트를 기다리지 않는다 — 기다리면 잠금 없이 보드가 활성화되는 창이 생긴다(리뷰 P1) */}
       {doneBlocked && <DoneGuardModal />}
-      <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      <PageHead title="상세페이지 초안 구성" sub="촬영 예시와 내 상품 원본으로 구성을 확인하세요. 각 컷의 연출과 촬영 대상을 바꿀 수 있어요." />
       {undoEntry && (
         <div className={`sb-undo-bar${undoExiting ? ' exiting' : ''}`} role="status" aria-live="polite"
           style={{ top: `${inspectorTop}px` }}

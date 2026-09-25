@@ -1,0 +1,617 @@
+{
+  "manifestSha256": "a702a7abd9dd90a91770b10e10a875d75f49eef95c1d38a99ef9db8ce5b1e7a0",
+  "split": "held_out",
+  "startedAt": "2026-09-25T10:33:58.240676+00:00",
+  "maxJudgeCalls": 6,
+  "results": [
+    {
+      "id": "held_3990_wrong_garment",
+      "sku": "coor_3990",
+      "expected": "FAIL",
+      "latencySeconds": 8.859,
+      "judgeCalls": 1,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v3",
+        "passed": false,
+        "decision": "FAIL",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "FAIL",
+            "evidence": "The candidate image shows the button fly and waistband of a pair of jeans, which does not match the requested target (front neckline detail of a sweater)."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "FAIL",
+            "evidence": "The candidate displays entirely different construction (denim button fly, waistband, belt loops) compared to the source garment (knit polo collar, buttons, stripes)."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "FAIL",
+            "evidence": "The candidate shows light blue denim material with metal hardware, whereas the source is a grey fuzzy knit fabric with resin/plastic buttons."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "UNKNOWN",
+            "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "UNKNOWN",
+            "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "The candidate is a well-lit, clearly focused product detail photograph."
+          }
+        ],
+        "markings": null,
+        "temporaryArtifacts": null,
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "648a1d2272994bb535bb3c3348ac38301a0941fcba394cbf203b351af7b72812",
+        "sourceHashes": [
+          "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927"
+        ],
+        "sourceHash": "22f30edd2b0c90fd144f67c9b9c4e6941aaa70d1e0bfde007d974d03dc7503e1",
+        "resultHash": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "targetHash": "427483a8e116de76addba80c06ec3b91d4e6664d3eed63caf21102fe28e311ac",
+        "judgeImageHashes": [
+          "7167a1f55fdc759769a6065ad54afec4036e5540dd1f1c829ea77fa3892fcdec",
+          "5308f11e36cafbdaa3e12ad6a1ace646d1dd787e6d59b493584807e1b20a70b6",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "FAIL",
+              "evidence": "The candidate image shows the button fly and waistband of a pair of jeans, which does not match the requested target (front neckline detail of a sweater)."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "FAIL",
+              "evidence": "The candidate displays entirely different construction (denim button fly, waistband, belt loops) compared to the source garment (knit polo collar, buttons, stripes)."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "FAIL",
+              "evidence": "The candidate shows light blue denim material with metal hardware, whereas the source is a grey fuzzy knit fabric with resin/plastic buttons."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "The candidate is a well-lit, clearly focused product detail photograph."
+            }
+          ]
+        },
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5161,
+          "candidatesTokenCount": 231,
+          "totalTokenCount": 5392,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4398
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 763
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "specialist": {
+          "status": "NOT_RUN",
+          "provider": "gpt",
+          "requestedModel": null,
+          "returnedModel": null,
+          "promptHash": null,
+          "judgeImageHashes": [],
+          "rawJudge": null,
+          "usage": null,
+          "errorCode": null
+        }
+      }
+    },
+    {
+      "id": "held_4013_wrong_garment",
+      "sku": "coor_4013",
+      "expected": "FAIL",
+      "latencySeconds": 8.97,
+      "judgeCalls": 1,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v3",
+        "passed": false,
+        "decision": "FAIL",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "FAIL",
+            "evidence": "Candidate shows a completely different closure region (zipper) than the requested target (button fly)."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "FAIL",
+            "evidence": "Candidate depicts a zipper and clips, failing to preserve the source button fly and denim panel structure."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "FAIL",
+            "evidence": "Candidate changes the light blue denim material to a dark brown canvas/woven material."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "UNKNOWN",
+            "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "UNKNOWN",
+            "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "The candidate image is a clear, well-lit, and professionally prepared fashion detail."
+          }
+        ],
+        "markings": null,
+        "temporaryArtifacts": null,
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "9414708a7cd495bb98a4894461cd1ac306669a5616d069867a68b1d6654f1956",
+        "sourceHashes": [
+          "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d"
+        ],
+        "sourceHash": "2441332e492afb2e071053d887cbcf1278bff6880c71b32eadd08d224b6797ee",
+        "resultHash": "f58e3e85cadf9a7bfe519275f8798864ecd65dc42ff4aec930c0a3a03c93cc4f",
+        "targetHash": "75549683b5c49d073706031fc79fdb25a99d9beca4c4c0e55fa247108d8ee6f1",
+        "judgeImageHashes": [
+          "30ed7d64dd0002ea0b458d867826f201c2a6354a84b276f4bc41b897a30b4a7a",
+          "81364534e14ac580a4de164e8512653557541bd17cfb5248631f4b485471dcd9",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+          "8fbcd90da3b9dd5d05735d8e3756dcfe6731c37936d450f14f3a5c464d63229f"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "FAIL",
+              "evidence": "Candidate shows a completely different closure region (zipper) than the requested target (button fly)."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "FAIL",
+              "evidence": "Candidate depicts a zipper and clips, failing to preserve the source button fly and denim panel structure."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "FAIL",
+              "evidence": "Candidate changes the light blue denim material to a dark brown canvas/woven material."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "The candidate image is a clear, well-lit, and professionally prepared fashion detail."
+            }
+          ]
+        },
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5160,
+          "candidatesTokenCount": 201,
+          "totalTokenCount": 5361,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4398
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 762
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "specialist": {
+          "status": "NOT_RUN",
+          "provider": "gpt",
+          "requestedModel": null,
+          "returnedModel": null,
+          "promptHash": null,
+          "judgeImageHashes": [],
+          "rawJudge": null,
+          "usage": null,
+          "errorCode": null
+        }
+      }
+    },
+    {
+      "id": "held_3990_valid",
+      "sku": "coor_3990",
+      "expected": "PASS",
+      "latencySeconds": 34.196,
+      "judgeCalls": 2,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v3",
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Candidate successfully frames the neckline and button placket as a product detail without a person."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Collar structure, button placket with buttons, and stripe paneling match the source intrinsic design."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Heathered grey knit, brushed texture, and dark stripe elements are preserved."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "SOURCE 1 close neckline and SOURCE 2 full garment both show a sewn white inner neck label reading \"coor\"; in the complete candidate, the same neck-label region is in frame and the label is present, readable, and text matches."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "Across source and candidate neckline/placket areas, no sales tag/card, hanger/clip, hand, or connector is visible; only the sewn label, buttons, knit fabric, shadows, and garment openings are seen."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "Clear, well-lit detail shot with natural texture and depth; authentic source crop."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "absent",
+          "sourceKind": "none",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        },
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "648a1d2272994bb535bb3c3348ac38301a0941fcba394cbf203b351af7b72812",
+        "sourceHashes": [
+          "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927"
+        ],
+        "sourceHash": "22f30edd2b0c90fd144f67c9b9c4e6941aaa70d1e0bfde007d974d03dc7503e1",
+        "resultHash": "bdb67a665fb749bf451d361e635c44cf0b2600eb960ffeb9f635004682bc2599",
+        "targetHash": "427483a8e116de76addba80c06ec3b91d4e6664d3eed63caf21102fe28e311ac",
+        "judgeImageHashes": [
+          "7167a1f55fdc759769a6065ad54afec4036e5540dd1f1c829ea77fa3892fcdec",
+          "5308f11e36cafbdaa3e12ad6a1ace646d1dd787e6d59b493584807e1b20a70b6",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Candidate successfully frames the neckline and button placket as a product detail without a person."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Collar structure, button placket with buttons, and stripe paneling match the source intrinsic design."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Heathered grey knit, brushed texture, and dark stripe elements are preserved."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Clear, well-lit detail shot with natural texture and depth; authentic source crop."
+            }
+          ]
+        },
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5161,
+          "candidatesTokenCount": 199,
+          "totalTokenCount": 5360,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 763
+            },
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4398
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "specialist": {
+          "status": "COMPLETE",
+          "provider": "gpt",
+          "requestedModel": "gpt-5.4-2026-03-05",
+          "returnedModel": "gpt-5.4-2026-03-05",
+          "promptHash": "1688f3f4e93731a0bf94c5ba8afb8fd9138b1f2e8dcfe46ce2f12d81aacd9ee9",
+          "judgeImageHashes": [
+            "7167a1f55fdc759769a6065ad54afec4036e5540dd1f1c829ea77fa3892fcdec",
+            "5308f11e36cafbdaa3e12ad6a1ace646d1dd787e6d59b493584807e1b20a70b6",
+            "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+            "807ac070de4251020f9248bdd1974c4a2defd46462e0041fd927908cfbff5488",
+            "a698f892a0f256026ac59c788510caf0b814cac1e9c619c1cbdf68393e3d033f",
+            "54bab3e74108444576d6eecd109b3bffd6fa43bb052249de33a01e6e288b4537",
+            "a64fffb1473ef4fde835e197309361902e9c953690ba6d9242c87affa2880841",
+            "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+            "807ac070de4251020f9248bdd1974c4a2defd46462e0041fd927908cfbff5488",
+            "a698f892a0f256026ac59c788510caf0b814cac1e9c619c1cbdf68393e3d033f",
+            "54bab3e74108444576d6eecd109b3bffd6fa43bb052249de33a01e6e288b4537",
+            "a64fffb1473ef4fde835e197309361902e9c953690ba6d9242c87affa2880841"
+          ],
+          "rawJudge": {
+            "gates": [
+              {
+                "code": "permanentMarkings",
+                "status": "PASS",
+                "evidence": "SOURCE 1 close neckline and SOURCE 2 full garment both show a sewn white inner neck label reading \"coor\"; in the complete candidate, the same neck-label region is in frame and the label is present, readable, and text matches."
+              },
+              {
+                "code": "temporaryArtifacts",
+                "status": "PASS",
+                "evidence": "Across source and candidate neckline/placket areas, no sales tag/card, hanger/clip, hand, or connector is visible; only the sewn label, buttons, knit fabric, shadows, and garment openings are seen."
+              }
+            ],
+            "permanentMarkings": {
+              "sourcePresence": "present",
+              "sourceReadability": "readable",
+              "candidateRegion": "in_frame",
+              "candidatePresence": "present",
+              "candidateReadability": "readable",
+              "textMatch": "match"
+            },
+            "temporaryArtifacts": {
+              "sourcePresence": "absent",
+              "sourceKind": "none",
+              "candidatePresence": "absent",
+              "candidateKind": "none"
+            }
+          },
+          "usage": {
+            "prompt_tokens": 13701,
+            "completion_tokens": 1442,
+            "total_tokens": 15143,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 1224,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "errorCode": null
+        }
+      }
+    },
+    {
+      "id": "held_4013_valid",
+      "sku": "coor_4013",
+      "expected": "PASS",
+      "latencySeconds": 67.514,
+      "judgeCalls": 2,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v3",
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Candidate provides a clear detail shot of the closure region as requested."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Button fly, stitching, and panel layout match the source garments exactly."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Denim wash, texture, and hardware colors are consistent with the source."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "SOURCE 1 close-up (and its crop/tiles) shows readable stamped lettering on the button-fly hardware; SOURCE 2 whole view is too distant for added marking evidence. The same stamped button text appears in the complete CANDIDATE and its tiles in the same in-frame closure area."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "In SOURCE 1/2 there is no sales tag/card, hanger/clip, hand, or clear plastic fastener in the fly gap or behind the buttons; the white fly facing, metal backs, and loose threads appear to be garment parts. The complete CANDIDATE and all tiles likewise show no retained temporary photographic object."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "Image is sharp, well-lit, and presents the detail clearly."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "absent",
+          "sourceKind": "none",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        },
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "9414708a7cd495bb98a4894461cd1ac306669a5616d069867a68b1d6654f1956",
+        "sourceHashes": [
+          "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d"
+        ],
+        "sourceHash": "2441332e492afb2e071053d887cbcf1278bff6880c71b32eadd08d224b6797ee",
+        "resultHash": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "targetHash": "75549683b5c49d073706031fc79fdb25a99d9beca4c4c0e55fa247108d8ee6f1",
+        "judgeImageHashes": [
+          "30ed7d64dd0002ea0b458d867826f201c2a6354a84b276f4bc41b897a30b4a7a",
+          "81364534e14ac580a4de164e8512653557541bd17cfb5248631f4b485471dcd9",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Candidate provides a clear detail shot of the closure region as requested."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Button fly, stitching, and panel layout match the source garments exactly."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Denim wash, texture, and hardware colors are consistent with the source."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Image is sharp, well-lit, and presents the detail clearly."
+            }
+          ]
+        },
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5160,
+          "candidatesTokenCount": 186,
+          "totalTokenCount": 5346,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4398
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 762
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "specialist": {
+          "status": "COMPLETE",
+          "provider": "gpt",
+          "requestedModel": "gpt-5.4-2026-03-05",
+          "returnedModel": "gpt-5.4-2026-03-05",
+          "promptHash": "46ec4359c983e839722548f6e7b9a6436fb600a6bdabca7de24c1097a3f8c922",
+          "judgeImageHashes": [
+            "30ed7d64dd0002ea0b458d867826f201c2a6354a84b276f4bc41b897a30b4a7a",
+            "81364534e14ac580a4de164e8512653557541bd17cfb5248631f4b485471dcd9",
+            "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+            "76e308a2c1d3e2a7de0afa0bb1d7268ceb96a48615eff5b82136b0b72b287906",
+            "141ca25d434ba3fe4d861aa9ebf2231158a04d0d83a6551d10a3185e68fcbd1d",
+            "43240642ae4863aa0690add87811eafbf726aa367efdeebc330c31afaac45f92",
+            "2133ca1b14a4adb3a6f2f71442ab2837ce5938e8e669aa7369bceed7bb4967ae",
+            "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+            "76e308a2c1d3e2a7de0afa0bb1d7268ceb96a48615eff5b82136b0b72b287906",
+            "141ca25d434ba3fe4d861aa9ebf2231158a04d0d83a6551d10a3185e68fcbd1d",
+            "43240642ae4863aa0690add87811eafbf726aa367efdeebc330c31afaac45f92",
+            "2133ca1b14a4adb3a6f2f71442ab2837ce5938e8e669aa7369bceed7bb4967ae"
+          ],
+          "rawJudge": {
+            "gates": [
+              {
+                "code": "permanentMarkings",
+                "status": "PASS",
+                "evidence": "SOURCE 1 close-up (and its crop/tiles) shows readable stamped lettering on the button-fly hardware; SOURCE 2 whole view is too distant for added marking evidence. The same stamped button text appears in the complete CANDIDATE and its tiles in the same in-frame closure area."
+              },
+              {
+                "code": "temporaryArtifacts",
+                "status": "PASS",
+                "evidence": "In SOURCE 1/2 there is no sales tag/card, hanger/clip, hand, or clear plastic fastener in the fly gap or behind the buttons; the white fly facing, metal backs, and loose threads appear to be garment parts. The complete CANDIDATE and all tiles likewise show no retained temporary photographic object."
+              }
+            ],
+            "permanentMarkings": {
+              "sourcePresence": "present",
+              "sourceReadability": "readable",
+              "candidateRegion": "in_frame",
+              "candidatePresence": "present",
+              "candidateReadability": "readable",
+              "textMatch": "match"
+            },
+            "temporaryArtifacts": {
+              "sourcePresence": "absent",
+              "sourceKind": "none",
+              "candidatePresence": "absent",
+              "candidateKind": "none"
+            }
+          },
+          "usage": {
+            "prompt_tokens": 13700,
+            "completion_tokens": 4241,
+            "total_tokens": 17941,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 3959,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "errorCode": null
+        }
+      }
+    }
+  ],
+  "unrun": [],
+  "metrics": {
+    "total": 4,
+    "positive": 2,
+    "negative": 2,
+    "falseAccepts": 0,
+    "falseRejects": 0,
+    "unknown": 0,
+    "correctPass": 2,
+    "correctFail": 2
+  },
+  "completedAt": "2026-09-25T10:35:57.786893+00:00",
+  "judgeCalls": 6
+}

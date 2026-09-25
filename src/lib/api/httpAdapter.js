@@ -371,6 +371,8 @@ function mergeAnalysisResult(ai) {
     swatchSuggestions: ai.swatchSuggestions ?? [],
     sourceMirrored: ai.sourceMirrored === true,
     confirmedGptProductEvidenceHandoff: ai.confirmedGptProductEvidenceHandoff ?? null,
+    detailRecommendations: ai.detailRecommendations ?? base.detailRecommendations,
+    detailRecommendationsHandoff: ai.detailRecommendationsHandoff ?? null,
     customCategory: ai.customCategory ?? null,
     sellingPoints: [],
     inputConsistency: ai.inputConsistency ?? null,
@@ -490,6 +492,11 @@ export const httpAdapter = {
     // getProduct·마네킹·콘티·에디터가 모두 http 로 스왑됨(US-2~4) → mock 미러 불필요, 서버가 단일 소스.
     return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
   },
+  async promoteDetailRecommendations(projectId, handoff) {
+    return http(`/v1/projects/${projectId}/analysis/detail-recommendations:promote`, {
+      method: 'POST', body: handoff,
+    });
+  },
   async promoteConfirmedGptEvidence(projectId, handoff) {
     return http(`/v1/projects/${projectId}/analysis/confirmed-gpt-evidence:promote`, {
       method: 'POST', body: handoff,
@@ -536,6 +543,8 @@ export const httpAdapter = {
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
       matchClothing: analysis?.matchClothing || [],
+      detailRecommendations: analysis?.detailRecommendations,
+      sellingPoints: analysis?.sellingPoints || [],
       // 실제 모델이면 가상 전용 컷을 자동 구성에서 뺀다(lib/identityScope.js — 판정은 서버).
       identityKind: identityKindOf(isRealModelSelection(
         analysis?.selectedModelId || analysis?.selected_model_id)),

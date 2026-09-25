@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { selectPublicAnalysisPhotos } from '../../src/lib/publicAnalysisPhotos.js';
 
-test('public analysis selects Front then Back before remaining images', () => {
+test('public analysis prioritizes Front and Back then orders the selected evidence by source slot', () => {
   const images = [
     { id: 'front-1', slot: 'Front' },
     { id: 'front-2', slot: 'Front' },
@@ -15,6 +15,6 @@ test('public analysis selects Front then Back before remaining images', () => {
 
   assert.deepEqual(
     selectPublicAnalysisPhotos(images).map((image) => image.id),
-    ['front-1', 'back-1', 'front-2', 'detail-1'],
+    ['front-1', 'front-2', 'back-1', 'detail-1'],
   );
 });

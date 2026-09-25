@@ -2,6 +2,7 @@ import publicCombinationTable from '../../data/genexamples_public_combinations.j
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
 import { detailDirectionFromExample } from './storyboardExampleSelection.js';
+import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
 import {
   exampleMoodBucket,
   EXAMPLE_MOOD_BUCKETS,
@@ -21,6 +22,12 @@ export function combinationKey({ cutType, shot, clothingType, gender }) {
 
 export function isGenerationCombinationPublic(condition) {
   return PUBLIC_KEYS.has(combinationKey(condition));
+}
+
+// Product details can use seller source photos without an optional example.
+// Keep catalog eligibility and all other recipe gates unchanged.
+export function hasAvailableGenerationRecipe(catalog, options) {
+  return isSourceBasedDetailRecipe(options) || hasSelectableGenerationExamples(catalog, options);
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
@@ -382,6 +389,8 @@ export function assignGenerationExamples(blocks, {
   const protectedIds = [];
   const missingIds = [];
   const next = blocks.map((block) => {
+    if (block?.detailTargetId && block.cutType === 'product' && block.shot === 'detail'
+      && !only?.has(block.id)) return block;
     if (!block || block.source !== 'ai') return block;
     if (only && !only.has(block.id)) return block;
     if (block.exampleChoice === 'manual') return block;
@@ -444,7 +453,7 @@ export function assignGenerationExamples(blocks, {
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
       // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙
-      ...(block.cutType === 'product' && block.shot === 'detail'
+      ...(block.cutType === 'product' && block.shot === 'detail' && !block.detailTargetId
         ? { direction: detailDirectionFromExample(example) } : {}),
     };
   });

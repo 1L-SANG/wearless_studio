@@ -16,7 +16,7 @@ test('매칭 의류는 단일 선택이다 — matchClothingMax=1 (PRD §6.8, �
   assert.match(aiPanel, /aria-pressed=\{on\}/);
 });
 
-test('컷 종류 탭은 발행 예시가 없는 종류를 비활성한다 (콘티보드 disabled 게이트)', () => {
+test('컷 종류 탭은 원본 기반 디테일 또는 발행 예시가 있는 종류를 제공한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /const cutTypeOptions = ALL_CUT_TYPE_OPTIONS\.map/);
   assert.match(aiPanel, /disabled: !shots\.some\(\(item\) => hasSelectableExamples\(option\.value, item\.value\)\)/);
@@ -29,7 +29,7 @@ test('컷 종류 탭은 발행 예시가 없는 종류를 비활성한다 (콘�
   assert.equal(mirrorPublished, false);
 });
 
-test('컷 종류 기본 샷은 발행 예시가 있는 샷으로 고른다 — 빈 갤러리로 시작하지 않는다', () => {
+test('컷 종류 기본 샷은 원본 기반 디테일을 포함한 사용 가능한 샷으로 고른다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /hasSelectableExamples\(value, preferred\) \? preferred/);
   assert.match(aiPanel, /nextShotOpts\.find\(\(option\) => hasSelectableExamples\(value, option\.value\)\)/);

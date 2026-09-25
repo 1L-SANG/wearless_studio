@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from .agents import product_evidence_contract
+from .agents import product_evidence_contract, detail_recommendations
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .r2 import ext_for_mime
@@ -224,4 +224,17 @@ async def public_analyze(
                     "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
                 },
             ) from None
+    detail_contract = (core.get("analysis_payload") or {}).get(detail_recommendations.PERSISTED_KEY)
+    if detail_contract is not None:
+        try:
+            data[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(detail_contract)
+            data[detail_recommendations.HANDOFF_KEY] = detail_recommendations.issue_handoff(
+                detail_contract, request.app.state.settings.r2_secret_access_key
+            )
+        except detail_recommendations.DetailRecommendationError:
+            logger.exception("public detail recommendations handoff could not be sealed")
+            raise HTTPException(status_code=503, detail={
+                "code": "analysis_handoff_unavailable",
+                "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            }) from None
     return JSONResponse({"data": data})

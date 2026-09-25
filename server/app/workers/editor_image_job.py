@@ -33,6 +33,8 @@ from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
+from . import detail_shot_runtime
+from ..agents.detail_shot_pipeline import DetailShotRejected
 
 log = logging.getLogger("wearless.editor_image_job")
 
@@ -93,6 +95,8 @@ async def run_editor_image_job(app, job: dict) -> None:
     settle_key = f"credit:job:{job_id}:settle"
     payload = job.get("payload") or {}
     mode = payload.get("mode")
+    if mode == "new":
+        payload = content_roles.canonicalize_storyboard_block(payload)
     # holder(opendid)는 scale-to-zero 다. 실존 모델 잡은 verify_license 로 반드시 holder 를
     # 부르므로, 커넥션을 잡기 **전에** 깨우고 콜드스타트(~2분)를 여기서 흡수한다. 못 깨워도
     # 진행은 한다 — 게이트가 fail-closed 로 막고 그 실패가 잡 실패로 남는다.
@@ -107,6 +111,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
     neck_repair_metadata: dict | None = None
+    detail_recipe_metadata: dict | None = None
 
     async def _fail(
         message: str,
@@ -262,13 +267,56 @@ async def run_editor_image_job(app, job: dict) -> None:
                     _vary_model_id = str(snapshot["modelId"])
                     _vary_kw["face_pass_url_provider"] = (
                         lambda: identity_source.active_face_backend_url(pool, _vary_model_id))
-                image, mime = await cut_variator.generate(
-                    editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
+                prior_recipe = (src_asset.get("metadata") or {}).get("detail_recipe")
+                if isinstance(prior_recipe, dict) and prior_recipe.get("version") == 1:
+                    # Product UI varies only direction or requests the same view.
+                    # Provenance comes from the owned asset, never the client source.
+                    if any(change.get("type") != "direction" or change.get("value") not in {"front", "back"}
+                           for change in changes):
+                        await _fail("디테일컷은 앞면·뒷면 방향을 바꿀 수 있어요.",
+                                    {"error": "detail_variation_unsupported"})
+                        return
+                    detail_spec = {**prior_recipe, "cutType": "product", "shot": "detail"}
+                    if changes and changes[-1]["value"] != detail_spec.get("direction"):
+                        detail_spec.update(direction=changes[-1]["value"], detailTargetId=None, exampleId=None)
+                    async with pool.connection() as conn:
+                        detail_product = await repo.get_product(conn, project_id) or {}
+                        detail_analysis = await repo.get_analysis(conn, project_id) or {}
+                    try:
+                        chosen, cut_qc_metadata = await detail_shot_runtime.generate(
+                            app, job, detail_spec, detail_product, detail_analysis, style_reference=src_img)
+                    except (DetailShotRejected, ValueError) as exc:
+                        await _fail("상품의 디테일을 충분히 확인하지 못해 수정하지 않았어요. 크레딧은 차감되지 않았습니다.",
+                                    {"error": getattr(exc, "reason", "detail_target_unavailable")})
+                        return
+                    image, mime = chosen.data, chosen.mime
+                    detail_recipe_metadata = detail_shot_runtime.recipe(detail_spec)
+                    cut_type = "product"
+                else:
+                    image, mime = await cut_variator.generate(
+                        editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except GeminiError as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
-            group = None  # AG-07 결과는 misc 그룹 (계약 §6)
+            group = detail_recipe_metadata.get("colorId") if detail_recipe_metadata else None
             cut_type = cut_type or "styling"  # cutType 미상 소스 → styling 가정(계약 §6)
+
+        elif mode == "new" and payload.get("cutType") == "product" and payload.get("shot") == "detail":
+            async with pool.connection() as conn:
+                product = await repo.get_product(conn, project_id) or {}
+                analysis = await repo.get_analysis(conn, project_id) or {}
+            try:
+                chosen, cut_qc_metadata = await detail_shot_runtime.generate(
+                    app, job, content_roles.canonicalize_storyboard_block(payload), product, analysis)
+            except (DetailShotRejected, ValueError) as exc:
+                await _fail(
+                    "상품의 디테일을 충분히 확인하지 못해 이 컷을 만들지 못했어요. 크레딧은 차감되지 않았습니다.",
+                    {"error": getattr(exc, "reason", "detail_target_unavailable"),
+                     "detailQc": getattr(exc, "metadata", {})})
+                return
+            image, mime = chosen.data, chosen.mime
+            group, cut_type = payload.get("colorId"), "product"
+            detail_recipe_metadata = detail_shot_runtime.recipe(payload)
 
         elif mode == "new":
             new_payload = content_roles.canonicalize_storyboard_block(payload)
@@ -963,6 +1011,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"detail_recipe": detail_recipe_metadata} if detail_recipe_metadata else {}),
                 **({"neck_repair": neck_repair_metadata}
                    if neck_repair_metadata is not None else {}),
                 # 이 컷의 얼굴이 LoRA 로 바뀐 것인지, 폴백으로 생성 모델 얼굴 그대로인지.

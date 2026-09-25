@@ -1,0 +1,564 @@
+{
+  "manifestSha256": "34314f105353d0020d623e2f41ac5f9b74cb8102fb5ba3cf6ddde2f7efb661a5",
+  "policyVersion": "detail-output-qc-v4",
+  "newJudgeCalls": 5,
+  "results": [
+    {
+      "id": "held_3990_wrong_garment",
+      "expected": "FAIL",
+      "newCore": {
+        "provider": "gpt",
+        "requestedModel": "gpt-5.4-2026-03-05",
+        "promptHash": "648a1d2272994bb535bb3c3348ac38301a0941fcba394cbf203b351af7b72812",
+        "judgeImageHashes": [
+          "7167a1f55fdc759769a6065ad54afec4036e5540dd1f1c829ea77fa3892fcdec",
+          "5308f11e36cafbdaa3e12ad6a1ace646d1dd787e6d59b493584807e1b20a70b6",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31"
+        ],
+        "sourceHashes": [
+          "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927"
+        ],
+        "resultHash": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "targetHash": "427483a8e116de76addba80c06ec3b91d4e6664d3eed63caf21102fe28e311ac",
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "FAIL",
+              "evidence": "Requested front neckline detail is not shown; candidate is a close-up of a denim waistband/fly area with snaps, not the knit polo collar/neckline region from the source."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "FAIL",
+              "evidence": "Source shows a fuzzy gray knit polo with folded collar and 3-button placket; candidate shows jeans construction with waistband, fly facing, button/snaps and belt-loop/buttonhole details."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "FAIL",
+              "evidence": "Source material is heather gray brushed knit jersey/sweater fabric; candidate is light blue denim twill with contrasting tan stitching and silver hardware, a completely different color and textile family."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Image is a sharp, well-lit, coherent studio garment detail with natural depth and no obvious blur, cutout edge, or flattening artifacts."
+            }
+          ]
+        },
+        "metadata": {
+          "requested_model": "gpt-5.4-2026-03-05",
+          "returned_model": "gpt-5.4-2026-03-05",
+          "usage": {
+            "prompt_tokens": 8640,
+            "completion_tokens": 712,
+            "total_tokens": 9352,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 500,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "finish_reason": "stop"
+        },
+        "elapsedSeconds": 16.835
+      },
+      "specialistExecution": "NOT_RUN",
+      "combinedDecision": "FAIL",
+      "coreDecision": "FAIL"
+    },
+    {
+      "id": "held_4013_wrong_garment",
+      "expected": "FAIL",
+      "newCore": {
+        "provider": "gpt",
+        "requestedModel": "gpt-5.4-2026-03-05",
+        "promptHash": "9414708a7cd495bb98a4894461cd1ac306669a5616d069867a68b1d6654f1956",
+        "judgeImageHashes": [
+          "30ed7d64dd0002ea0b458d867826f201c2a6354a84b276f4bc41b897a30b4a7a",
+          "81364534e14ac580a4de164e8512653557541bd17cfb5248631f4b485471dcd9",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+          "8fbcd90da3b9dd5d05735d8e3756dcfe6731c37936d450f14f3a5c464d63229f"
+        ],
+        "sourceHashes": [
+          "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d"
+        ],
+        "resultHash": "f58e3e85cadf9a7bfe519275f8798864ecd65dc42ff4aec930c0a3a03c93cc4f",
+        "targetHash": "75549683b5c49d073706031fc79fdb25a99d9beca4c4c0e55fa247108d8ee6f1",
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Shows a product-only front closure detail with connected fastener/placket context and no person; it is not a full-garment overview."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "FAIL",
+              "evidence": "Source is jeans construction with waistband, belt loops, pocket edge and a button fly; candidate is a different garment using a zipper with snap/toggle hardware."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "FAIL",
+              "evidence": "Source is light blue washed denim twill with tan topstitching; candidate is dark brown smooth matte non-denim material with bright metal zipper teeth."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Candidate is sharp and coherent with soft even lighting, readable cloth depth, and no obvious blur, pasted edges, or fake flattening."
+            }
+          ]
+        },
+        "metadata": {
+          "requested_model": "gpt-5.4-2026-03-05",
+          "returned_model": "gpt-5.4-2026-03-05",
+          "usage": {
+            "prompt_tokens": 8639,
+            "completion_tokens": 1168,
+            "total_tokens": 9807,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 972,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "finish_reason": "stop"
+        },
+        "elapsedSeconds": 19.169
+      },
+      "specialistExecution": "NOT_RUN",
+      "combinedDecision": "FAIL",
+      "coreDecision": "FAIL"
+    },
+    {
+      "id": "held_3990_valid",
+      "expected": "PASS",
+      "newCore": {
+        "provider": "gpt",
+        "requestedModel": "gpt-5.4-2026-03-05",
+        "promptHash": "648a1d2272994bb535bb3c3348ac38301a0941fcba394cbf203b351af7b72812",
+        "judgeImageHashes": [
+          "7167a1f55fdc759769a6065ad54afec4036e5540dd1f1c829ea77fa3892fcdec",
+          "5308f11e36cafbdaa3e12ad6a1ace646d1dd787e6d59b493584807e1b20a70b6",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341",
+          "5b4be00208bcd54c1a0ef6b41c3e8799d5b2a8cf99d625f6d7bdca4bc70c5341"
+        ],
+        "sourceHashes": [
+          "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927"
+        ],
+        "resultHash": "bdb67a665fb749bf451d361e635c44cf0b2600eb960ffeb9f635004682bc2599",
+        "targetHash": "427483a8e116de76addba80c06ec3b91d4e6664d3eed63caf21102fe28e311ac",
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Candidate shows the front neckline detail only: collar, inner neck seam/label area, upper placket and adjacent chest stripe context, without person or full-garment overview."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Matches source front detail with soft polo collar, centered 3-button placket, same neckline seam relationships, and the dark horizontal chest band entering both sides of the crop."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Same heather medium-grey fuzzy knit with darker charcoal stripe/band below; material remains soft brushed knit, not changed to smooth, shiny, chunky or solid woven fabric."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Clean, coherent studio-style detail crop with sharp focus, natural knit depth and soft light; no obvious blur, cutout artifacts, pasted edges or fake surface flattening."
+            }
+          ]
+        },
+        "metadata": {
+          "requested_model": "gpt-5.4-2026-03-05",
+          "returned_model": "gpt-5.4-2026-03-05",
+          "usage": {
+            "prompt_tokens": 8640,
+            "completion_tokens": 1144,
+            "total_tokens": 9784,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 928,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "finish_reason": "stop"
+        },
+        "elapsedSeconds": 22.31
+      },
+      "specialistExecution": "REPLAY_EXACT_INPUT",
+      "combinedDecision": "PASS",
+      "coreDecision": "PASS",
+      "specialistReuseChecks": {
+        "completed": true,
+        "sourceHashes": true,
+        "resultHash": true,
+        "targetHash": true,
+        "specialistPromptHash": true,
+        "judgeImageHashes": true,
+        "requestedModel": true,
+        "returnedModel": true
+      },
+      "replayedVerdict": {
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Candidate shows the front neckline detail only: collar, inner neck seam/label area, upper placket and adjacent chest stripe context, without person or full-garment overview."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Matches source front detail with soft polo collar, centered 3-button placket, same neckline seam relationships, and the dark horizontal chest band entering both sides of the crop."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Same heather medium-grey fuzzy knit with darker charcoal stripe/band below; material remains soft brushed knit, not changed to smooth, shiny, chunky or solid woven fabric."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "SOURCE 1 close neckline and SOURCE 2 full garment both show a sewn white inner neck label reading \"coor\"; in the complete candidate, the same neck-label region is in frame and the label is present, readable, and text matches."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "Across source and candidate neckline/placket areas, no sales tag/card, hanger/clip, hand, or connector is visible; only the sewn label, buttons, knit fabric, shadows, and garment openings are seen."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "Clean, coherent studio-style detail crop with sharp focus, natural knit depth and soft light; no obvious blur, cutout artifacts, pasted edges or fake surface flattening."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "absent",
+          "sourceKind": "none",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        }
+      }
+    },
+    {
+      "id": "held_4013_valid",
+      "expected": "PASS",
+      "newCore": {
+        "provider": "gpt",
+        "requestedModel": "gpt-5.4-2026-03-05",
+        "promptHash": "9414708a7cd495bb98a4894461cd1ac306669a5616d069867a68b1d6654f1956",
+        "judgeImageHashes": [
+          "30ed7d64dd0002ea0b458d867826f201c2a6354a84b276f4bc41b897a30b4a7a",
+          "81364534e14ac580a4de164e8512653557541bd17cfb5248631f4b485471dcd9",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31",
+          "1fa545a01a883961b09d68216e6bb7a2f0808d971f732caa0f723dc6ca9a2c31"
+        ],
+        "sourceHashes": [
+          "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d"
+        ],
+        "resultHash": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "targetHash": "75549683b5c49d073706031fc79fdb25a99d9beca4c4c0e55fa247108d8ee6f1",
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Front closure detail is correctly shown as a non-model product close-up: waistband, fly/button placket, buttonhole flap and nearby pocket context are visible without becoming a full-garment overview."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Matches the source jean closure construction: open front button-fly with five exposed metal buttons, corresponding buttonholes on the opposite flap, same waistband/belt-loop layout and pocket curve/seam relationships."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Preserves the light washed blue denim twill look with matte finish, visible diagonal weave, pale interior pocketing and warm tan topstitching consistent with the source."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Clean, sharp, coherent studio detail with soft even lighting and natural fabric depth; no severe blur, pasted edges or artificial flattening are apparent."
+            }
+          ]
+        },
+        "metadata": {
+          "requested_model": "gpt-5.4-2026-03-05",
+          "returned_model": "gpt-5.4-2026-03-05",
+          "usage": {
+            "prompt_tokens": 8639,
+            "completion_tokens": 980,
+            "total_tokens": 9619,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 760,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "finish_reason": "stop"
+        },
+        "elapsedSeconds": 19.964
+      },
+      "specialistExecution": "REPLAY_EXACT_INPUT",
+      "combinedDecision": "PASS",
+      "coreDecision": "PASS",
+      "specialistReuseChecks": {
+        "completed": true,
+        "sourceHashes": true,
+        "resultHash": true,
+        "targetHash": true,
+        "specialistPromptHash": true,
+        "judgeImageHashes": true,
+        "requestedModel": true,
+        "returnedModel": true
+      },
+      "replayedVerdict": {
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Front closure detail is correctly shown as a non-model product close-up: waistband, fly/button placket, buttonhole flap and nearby pocket context are visible without becoming a full-garment overview."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Matches the source jean closure construction: open front button-fly with five exposed metal buttons, corresponding buttonholes on the opposite flap, same waistband/belt-loop layout and pocket curve/seam relationships."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Preserves the light washed blue denim twill look with matte finish, visible diagonal weave, pale interior pocketing and warm tan topstitching consistent with the source."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "SOURCE 1 close-up (and its crop/tiles) shows readable stamped lettering on the button-fly hardware; SOURCE 2 whole view is too distant for added marking evidence. The same stamped button text appears in the complete CANDIDATE and its tiles in the same in-frame closure area."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "In SOURCE 1/2 there is no sales tag/card, hanger/clip, hand, or clear plastic fastener in the fly gap or behind the buttons; the white fly facing, metal backs, and loose threads appear to be garment parts. The complete CANDIDATE and all tiles likewise show no retained temporary photographic object."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "Clean, sharp, coherent studio detail with soft even lighting and natural fabric depth; no severe blur, pasted edges or artificial flattening are apparent."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "absent",
+          "sourceKind": "none",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        }
+      }
+    }
+  ],
+  "diagnostic": {
+    "id": "pink_actual_seam_complete_diagnosis",
+    "newSpecialist": {
+      "provider": "gpt",
+      "requestedModel": "gpt-5.4-2026-03-05",
+      "promptHash": "23cea89ac4d1d1c6ff2596bb86f3c2d6368a0d8beb51400daafe440f6630f511",
+      "judgeImageHashes": [
+        "37e638c13cf673c99f45e813a66594eb1bb6ac4247ab00084fe6383ef50e8305",
+        "8b64e53d90fc8f96457bc638f010f36bd5a0577f66ba07066b8e88b58566103d",
+        "0a9de4f6dad9c3ab1cbdf124c5ed1b72c2eebc5b9028a972c2400ff9fd46221f",
+        "0a9b40d4c28a59d92b96c1ed27115c23f51a8427772765741d7a926c09f4a10d",
+        "3ef7661f8cff3ee95f000ce905f7c535a72e0626c3e6226f8eb85a91ecad9b39",
+        "8d800e18663ab275ff3763d1eb6499a34b83beb2b74759745113845fea7b6d0e",
+        "966e6f945c2288e05c275c0e2c0960052f8dda3c36011eb1f6ed5a14c6c0cf70",
+        "5e271bf9a3d54a40d654b76fac5bd49c54b5691011105ce45cd5d314f32a9ea9",
+        "413320dc7818d8a6a0c78fa41da7c0e8976d94b3cf8d38141e693dfcfb29c13d",
+        "84fd23daa4b0ade8fd94fc4e3e2fe08bb90ba71d08251db7cac1a1aa31526fe2",
+        "0df96710deff1828ca4e26256c31fad09381ee9b981b3986f8d738b30bbc81f5",
+        "7510d46d7125078fcc7a1603577722b547e48f1cc66473d342b54f6a1281d978"
+      ],
+      "sourceHashes": [
+        "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+        "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8"
+      ],
+      "resultHash": "105c1e5d64705b122fdd97fe1c0d2739d3d78a165b34d5661eab3ab76e1175df",
+      "targetHash": "29237dbe52f3548533b4702358920dc20a6d0012e48ac4ce1e7ad6d37814cc19",
+      "rawJudge": {
+        "gates": [
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "Source 1 whole garment and Source 2 close crop show a cream sewn neck label at the center back neckline; the full candidate shows the same label in-frame in the same spot, with lettering too faint to read reliably in both."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "Source 1 shows a wooden hanger through the neckline and a hand holding it above the shoulder area; the full candidate and all four candidate tiles show no hanger, hand, tag, clip, or other temporary object remaining."
+          }
+        ],
+        "permanentMarkings": {
+          "sourcePresence": "present",
+          "sourceReadability": "unreadable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "unreadable",
+          "textMatch": "not_comparable"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "present",
+          "sourceKind": "hanger_or_clip",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        }
+      },
+      "metadata": {
+        "requested_model": "gpt-5.4-2026-03-05",
+        "returned_model": "gpt-5.4-2026-03-05",
+        "usage": {
+          "prompt_tokens": 10718,
+          "completion_tokens": 2256,
+          "total_tokens": 12974,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 2029,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "finish_reason": "stop"
+      },
+      "elapsedSeconds": 36.399
+    },
+    "coreExecution": "REPLAY_ROOT_DIAGNOSTIC_EXACT_SOURCE_RESULT_PROMPT",
+    "coreRaw": {
+      "gates": [
+        {
+          "code": "targetFraming",
+          "status": "PASS",
+          "evidence": "Front product-detail crop without a person shows the requested connected upper region: scoop neckline, shoulder/neck area, chest seam/trim, and centered bow."
+        },
+        {
+          "code": "constructionDesign",
+          "status": "PASS",
+          "evidence": "Matches the source design: bound scoop neck with inner wavy lettuce edge, visible neck label/back seam through the fabric, and a horizontal decorative trim seam with a centered bow."
+        },
+        {
+          "code": "colorMaterial",
+          "status": "PASS",
+          "evidence": "Preserves the pale baby-pink color family and fine lightweight jersey/knit appearance; material remains smooth, soft, and slightly sheer rather than becoming a different fabric."
+        },
+        {
+          "code": "photographicPreparation",
+          "status": "PASS",
+          "evidence": "Useful, sharp studio-style detail with soft coherent light and natural cloth depth; no severe blur, pasted edges, or obviously fake flattened surface."
+        }
+      ]
+    },
+    "combinedDecision": "PASS",
+    "replayedVerdict": {
+      "passed": true,
+      "decision": "PASS",
+      "gates": [
+        {
+          "code": "targetFraming",
+          "status": "PASS",
+          "evidence": "Front product-detail crop without a person shows the requested connected upper region: scoop neckline, shoulder/neck area, chest seam/trim, and centered bow."
+        },
+        {
+          "code": "constructionDesign",
+          "status": "PASS",
+          "evidence": "Matches the source design: bound scoop neck with inner wavy lettuce edge, visible neck label/back seam through the fabric, and a horizontal decorative trim seam with a centered bow."
+        },
+        {
+          "code": "colorMaterial",
+          "status": "PASS",
+          "evidence": "Preserves the pale baby-pink color family and fine lightweight jersey/knit appearance; material remains smooth, soft, and slightly sheer rather than becoming a different fabric."
+        },
+        {
+          "code": "permanentMarkings",
+          "status": "PASS",
+          "evidence": "Source 1 whole garment and Source 2 close crop show a cream sewn neck label at the center back neckline; the full candidate shows the same label in-frame in the same spot, with lettering too faint to read reliably in both."
+        },
+        {
+          "code": "temporaryArtifacts",
+          "status": "PASS",
+          "evidence": "Source 1 shows a wooden hanger through the neckline and a hand holding it above the shoulder area; the full candidate and all four candidate tiles show no hanger, hand, tag, clip, or other temporary object remaining."
+        },
+        {
+          "code": "photographicPreparation",
+          "status": "PASS",
+          "evidence": "Useful, sharp studio-style detail with soft coherent light and natural cloth depth; no severe blur, pasted edges, or obviously fake flattened surface."
+        }
+      ],
+      "markings": {
+        "sourcePresence": "present",
+        "sourceReadability": "unreadable",
+        "candidateRegion": "in_frame",
+        "candidatePresence": "present",
+        "candidateReadability": "unreadable",
+        "textMatch": "not_comparable"
+      },
+      "temporaryArtifacts": {
+        "sourcePresence": "present",
+        "sourceKind": "hanger_or_clip",
+        "candidatePresence": "absent",
+        "candidateKind": "none"
+      }
+    }
+  },
+  "componentReplayMetrics": {
+    "total": 4,
+    "positive": 2,
+    "negative": 2,
+    "falseAccepts": 0,
+    "falseRejects": 0,
+    "unknown": 0
+  }
+}

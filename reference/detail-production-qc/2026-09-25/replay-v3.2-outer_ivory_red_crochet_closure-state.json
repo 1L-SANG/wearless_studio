@@ -1,0 +1,23 @@
+{
+  "inputReport": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\pipeline-probe-v2\\outer_ivory_red_crochet_closure\\state.json",
+  "inputSha256": "549082ac1a49947d65edda5e8ed355c450d7848b82c963c8bdc169eb14c0d52e",
+  "currentModuleSha256": "bac8a073fc92e10c8dbd14974044e7f2c366fded96318df2a473786fa8ada65f",
+  "currentPromptFileSha256": "52c12bc7e5eab0d6cd692fc314b2e8f9d0dba91e8afb185dd0face794d3c9aa7",
+  "apiCalls": 0,
+  "results": [
+    {
+      "originalPolicyVersion": "detail-output-qc-v3",
+      "originalDecision": "UNKNOWN",
+      "replayedPolicyVersion": "detail-output-qc-v3.2",
+      "decision": "FAIL",
+      "errorCode": null,
+      "sameDecision": false,
+      "sourceHash": "08a614f33d7bd66e8d2b45645ef7743f6a154491c7fecc86bac028bae8b0dbf0",
+      "resultHash": "4117b95008aab53eeee27cfd391210c95c6b14a0ec8abd2d5d05b32417b56d36",
+      "targetHash": "357a9270159c7cddf8472f4cb96c170a5c23efd0c09652c6d3b9ec62b496428b",
+      "primaryPromptHash": "32b16b6c221acad4c1c6d2e71b144161ae0f67bc031d9f62268cfefebdf3956f",
+      "specialistPromptHash": "aea296b2da925cfe4c180b0e6678121574b1800d86ab3156d679361a121b361b"
+    }
+  ],
+  "allDecisionsUnchanged": false
+}

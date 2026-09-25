@@ -855,11 +855,12 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "inputConsistency",
     "featureCopy",
     "confirmedGptProductEvidence",
+    "detailRecommendations",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), this value is a
 # hash-bound AG-01 artifact. API clients may echo it but can never create or replace it;
 # only finalize_analyze_success replaces the full payload after a fresh provider call.
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence",)
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -951,6 +952,27 @@ async def save_confirmed_gpt_product_evidence(
         row = await cur.fetchone()
     if row is None:
         raise RuntimeError("analysis_required_before_evidence_promotion")
+    return row["payload"]
+
+
+async def save_detail_recommendations(conn: AsyncConnection, project_id: str, contract: dict) -> dict:
+    """Only signed promotion can initialize this field; repeated identical saves are safe."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update analyses
+            set payload = jsonb_set(payload, '{detailRecommendations}', %s::jsonb, true)
+            where project_id = %s and (
+                not (payload ? 'detailRecommendations')
+                or payload->'detailRecommendations' = %s::jsonb
+            )
+            returning payload
+            """,
+            (Json(contract), project_id, Json(contract)),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise ValueError("detail_recommendations_promotion_conflict")
     return row["payload"]
 
 

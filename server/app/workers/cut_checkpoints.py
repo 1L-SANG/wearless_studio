@@ -345,6 +345,23 @@ class CutCheckpointStore:
                 cut.base_reused = True
         return cut
 
+    async def for_verified_detail(self, fingerprint: str, block_id) -> CutCheckpoint:
+        """Only the dedicated policy's fully accepted final may cross failed jobs.
+
+        No generic final and no unjudged/held base is eligible. Source/target bytes,
+        models and policy versions are already in the dedicated fingerprint.
+        """
+        digest = _digest({'family': 'verified-product-detail-v1', 'recipe': fingerprint,
+                          'blockId': str(block_id or ''), 'userId': self.user_id,
+                          'projectId': self.project_id})
+        cut = CutCheckpoint(self, digest, digest, block_id)
+        saved = await self._load(digest, STAGE_FINAL)
+        qc = saved.meta.get('cutQc') if saved else None
+        if (isinstance(qc, dict) and qc.get('passed') is True
+                and qc.get('decision') == 'PASS' and qc.get('fingerprint') == fingerprint):
+            cut.final = saved
+        return cut
+
     async def _load(self, digest: str, stage: str) -> Loaded | None:
         for row in self._index.get((digest, stage), ()):
             key = row["r2_key"]

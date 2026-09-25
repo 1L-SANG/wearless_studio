@@ -9,15 +9,15 @@ import asyncio
 import logging
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .. import repo
 from ..agents import (
     feature_extractor,
     input_consistency,
-    mannequin,
     product_analyst,
     product_evidence_contract,
+    detail_recommendations,
 )
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
@@ -47,10 +47,12 @@ async def _judge_input_consistency(settings, images, slots) -> dict | None:
 
 def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
     """최장변 1024px JPEG(q82)로 축소. 작거나 실패하면 원본 그대로 (안전 폴백)."""
-    if len(data) <= _VISION_SKIP_BYTES:
-        return data, mime
     try:
         im = Image.open(BytesIO(data))
+        rotated = im.getexif().get(274, 1) != 1
+        im = ImageOps.exif_transpose(im)
+        if len(data) <= _VISION_SKIP_BYTES and not rotated:
+            return data, mime
         if max(im.size) > _VISION_MAX_DIM:
             im.thumbnail((_VISION_MAX_DIM, _VISION_MAX_DIM))
         if im.mode not in ("RGB", "L"):
@@ -58,7 +60,7 @@ def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
         buf = BytesIO()
         im.save(buf, format="JPEG", quality=82)
         out = buf.getvalue()
-        if len(out) < len(data):
+        if rotated or len(out) < len(data):
             return out, "image/jpeg"
         return data, mime
     except Exception:  # 손상 파일 등 — 축소 실패가 분석을 막지 않게
@@ -121,10 +123,12 @@ async def analyze_image_bytes(
 
     distributed, provider = analyze_res
     feature_provider = None
+    raw_details = None
     if isinstance(feature_res, BaseException):
         log.warning("AG-08 feature extract failed: %r", feature_res)
     else:
         points, feature_provider = feature_res
+        raw_details = getattr(points, "detail_candidates", None)
         if points:
             distributed["analysis"]["aiSuggestedPoints"] = points
 
@@ -135,6 +139,9 @@ async def analyze_image_bytes(
         consistency = consistency_res
 
     analysis_payload = distributed["analysis"]
+    analysis_payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.build_contract(
+        raw_details, source_images, slots
+    )
     # tags·swatch 기본 랭킹은 분석 완료 직후 match-candidates 요청과 재진입/새로고침 후
     # GET /analysis에서도 같은 값을 읽어야 한다. AG-01 distribute 단계에서는
     # intermediate이지만 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
@@ -154,6 +161,9 @@ async def analyze_image_bytes(
         for key, value in analysis_payload.items()
         if key != product_evidence_contract.PERSISTED_KEY
     }
+    public_analysis_payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(
+        analysis_payload[detail_recommendations.PERSISTED_KEY]
+    )
     result_data = {
         **public_analysis_payload,
         "clothingType": clothing_type,
@@ -196,7 +206,7 @@ async def run_analyze_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
             assets, slots = [], []
-            for slot, aid in mannequin.base_color_images(product):
+            for slot, aid in detail_recommendations.analysis_source_entries(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
                     assets.append(a)

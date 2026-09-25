@@ -70,7 +70,7 @@ export function generationExampleSelectionPatch(block, example, {
     exampleSelectionOrigin: exampleId ? 'user' : null,
     refScope: scope,
     ...(exampleId ? wornDirectionPatch(cutType, example) : {}),
-    ...(isDetail && exampleId ? { direction: detailDirectionFromExample(example) } : {}),
+    ...(isDetail && !block.detailTargetId && exampleId ? { direction: detailDirectionFromExample(example) } : {}),
   };
   if (!replacing) return { patch, settingsReset: false };
 
@@ -80,10 +80,10 @@ export function generationExampleSelectionPatch(block, example, {
       ...patch,
       // 디테일은 미기재 예시=front 로 확정(이전 back 잔존 방지). 그 외엔 기존 규칙 유지.
       direction: isDetail
-        ? detailDirectionFromExample(example)
+        ? (block.detailTargetId ? block.direction : detailDirectionFromExample(example))
         : cutType === 'mirror' ? null : (example.direction ?? effectiveBlock.direction),
       ...(cutType === 'mirror' ? { sideStyle: null } : {}),
-      colorId: defaultColorId || effectiveBlock.colorId,
+      colorId: isDetail && block.detailTargetId ? effectiveBlock.colorId : defaultColorId || effectiveBlock.colorId,
       colorIds: [],
       pose: 'auto',
       poseLabel: 'AI 자동',

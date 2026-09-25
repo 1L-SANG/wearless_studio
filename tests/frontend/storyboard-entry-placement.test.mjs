@@ -295,7 +295,7 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 10);   // 낱장 스타일링컷 제거(2026-08-16)로 11 → 10
+  assert.equal(basic.length, 9);   // 추천 근거 없는 자동 디테일은 만들지 않는다.
   // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
   for (const [pid, clothing, gender] of [
     ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
@@ -305,7 +305,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
-      1 + stylingCuts + horizonCuts + 4,
+      1 + stylingCuts + horizonCuts + 2,
       `${gender}/${clothing} extended`,
     );
   }
@@ -318,7 +318,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   const fallback = defaultStoryboard(baseColors, 'basic', forced);
   const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
   const fHorizon = fPicked.rotationSet?.members.length ?? 3;
-  assert.equal(fallback.length, 1 + fStyling + fHorizon + 2);
+  assert.equal(fallback.length, 1 + fStyling + fHorizon + 1);
   assert.equal(
     new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
     fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),
@@ -360,24 +360,24 @@ test('HTTP and mock entry paths pass project ids and share the default builder',
 
 // ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------
 
-test('기본 콘티는 디테일 사진이 없어도 디테일 컷을 포함한다', () => {
+test('추천이 없으면 기본·확장 콘티 모두 자동 디테일을 추가하지 않는다', () => {
   const colors = [{ id: 'col1', isBase: true, images: [
     { slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' },
   ] }];
   const basic = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail' });
-  assert.ok(basic.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+  assert.equal(basic.some((b) => b.cutType === 'product' && b.shot === 'detail'), false);
   const extended = defaultStoryboard(colors, 'extended', { clothingType: 'top', projectId: 'p-detail' });
-  assert.ok(extended.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+  assert.equal(extended.some((b) => b.cutType === 'product' && b.shot === 'detail'), false);
 });
 
-test('디테일 블록의 색상은 앞면 디테일 보유 색을 우선한다', () => {
+test('추천 디테일의 색상은 분석 원본의 기본 색상을 쓴다', () => {
   const colors = [
     { id: 'col1', isBase: true, images: [{ slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' }] },
     { id: 'col2', images: [{ slot: 'Detail', id: 'd2' }] },
   ];
-  const blocks = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail2' });
+  const blocks = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail2', detailRecommendations: { version: 1, status: 'ready', candidates: [{ id: 'front', direction: 'front', informationGroup: 'front', photoUse: 'standalone', visibility: 'clear', rank: 1 }] } });
   const detail = blocks.find((b) => b.cutType === 'product' && b.shot === 'detail');
-  assert.equal(detail.colorId, 'col2');
+  assert.equal(detail.colorId, 'col1');
 });
 
 test('디테일 예시 선택이 방향을 내부 결정한다 — back 라벨 예시=back, 미기재=front', async () => {

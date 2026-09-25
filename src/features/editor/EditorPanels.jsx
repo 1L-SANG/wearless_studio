@@ -3,6 +3,8 @@
    Ported verbatim from reference/prototype/features/editor-panels.jsx.
    Only change: ES imports/exports (was window globals).
    ============================================================= */
+import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
+import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
@@ -14,7 +16,7 @@ import {
   ALL_CUT_TYPE_OPTIONS,
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
-import { hasSelectableGenerationExamples } from '@/lib/generationExamples.js';
+import { hasAvailableGenerationRecipe } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import {
   detailDirectionFromExample,
@@ -387,10 +389,12 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ product, detailRecommendations, catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
+  const [detailTargetId, setDetailTargetId] = useState(null);
+  const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
   const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
@@ -421,7 +425,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     source: 'ai',
     contentRole: inferContentRole({ source: 'ai', cutType: galleryCutType, shot: galleryShotVal }),
     cutType: galleryCutType,
-    direction: galleryDirectionVal,
+    direction: galleryIsProduct && galleryShotVal === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : galleryDirectionVal,
     shot: galleryShotVal,
   };
   const effectiveRecipe = {
@@ -479,8 +483,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
-  // 콘티보드와 같은 게이트 — 발행 예시가 하나도 없는 컷 종류는 비활성(예시가 추가되면 자동 활성).
-  const hasSelectableExamples = (cut, shotValue) => hasSelectableGenerationExamples(catalogs.genExamples, {
+  // 원본 기반 디테일은 예시 없이 제공한다. 나머지 컷은 기존 발행 예시 게이트를 따른다.
+  const hasSelectableExamples = (cut, shotValue) => hasAvailableGenerationRecipe(catalogs.genExamples, {
     cutType: cut, shot: shotValue, clothingType, gender: modelGender,
     appendSetOnly: cut !== 'product',
     appendMirror: cut === 'styling',
@@ -498,10 +502,10 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     if (value === cutType) return;
     const nextShotOpts = value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
     const preferred = NEW_CUT_DEFAULT_SHOT[value] || 'full';
-    // 기본 샷에 발행 예시가 없으면 예시가 있는 샷으로 — 빈 갤러리로 시작하지 않는다(콘티보드 동일).
+    // 원본 기반 디테일을 포함해 실제로 사용 가능한 샷을 고른다.
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
-    setCutType(value); setDir('front'); setShot(nextShot);
+    setCutType(value); setDir('front'); setShot(nextShot); setDetailTargetId(null);
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -512,7 +516,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     if (replacing) resetRecipeSettings();
     // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
     // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
-    if (isDetail) {
+    if (isDetail && !detailTargetId) {
       const example = (catalogs.genExamples || []).find((item) => item.id === value);
       setDir(detailDirectionFromExample(example));
     }
@@ -537,10 +541,12 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         <PanelHead title="원래 콘티로 다시 만들기"
           sub={failedCutRetry.signature
             ? '시그니처 전용 예시와 원래 모델·색상·매칭 의류를 그대로 사용해요.'
-            : '이 자리에 지정했던 예시와 생성 설정을 그대로 사용해요.'} />
+            : failedCutRetry.detailLabel ? '내 상품 원본과 선택한 촬영 대상을 그대로 사용해요.'
+              : '이 자리에 지정했던 예시와 생성 설정을 그대로 사용해요.'} />
         {failedCutRetry.thumb && (
-          <img className="ai-failed-retry-thumb" src={failedCutRetry.thumb} alt="원래 선택한 생성 예시" />
+          <img className={`ai-failed-retry-thumb${failedCutRetry.detailLabel ? ' detail-source-image' : ''}`} src={failedCutRetry.thumb} alt={failedCutRetry.detailLabel ? `내 상품 원본 · ${failedCutRetry.detailLabel}` : "원래 선택한 생성 예시"} />
         )}
+        {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
         {brandUseCategoryControl}
         <Button variant="primary" block icon="sparkles" className="btn-glowring"
           disabled={brandUseCategoryBlocked} onClick={onRetryFailedCut}>
@@ -569,7 +575,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             direction={galleryDirectionVal} shot={galleryShotVal}
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
-              setShot(v); setExampleId(null); setRefScope('all');
+              setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
               // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
               if (isProduct) setDir('front');
             }} clothingType={clothingType} gender={modelGender}
@@ -577,6 +583,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+          {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
+            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.direction) setDir(patch.direction); if (patch.colorId) setColor(patch.colorId); }} />}
           {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
           {/* allowDeselect=false — 재클릭이 null 을 보내면 방향이 정면으로 떨어진다(콘티보드와 같은 이유). */}
           {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline direction-chips" allowDeselect={false} options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
@@ -604,7 +612,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           <div className="insp-divider" />
 
           <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={setColor} /></div>
+            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => { setColor(value); if (value !== colorVal) setDetailTargetId(null); }} /></div>
 
           {showMatchClothing && (
             <>
@@ -663,6 +671,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             direction: isMirror ? null : directionSpec.direction,
             sideStyle: isMirror ? null : directionSpec.sideStyle,
             shot: effectiveShotVal, modelId: model, exampleId, refScope,
+            ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
             outerClosureState: showOuterClosure ? outerClosure : null,
             matchIds: isProduct ? [] : matchIds,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)

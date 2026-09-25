@@ -58,6 +58,13 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # Product-only closeups; horizon/styling and mannequin keep their own models.
+    model_product_detail: str = "gpt-image-2.5-sunburst"
+    model_detail_core: str = "gpt-5.4-2026-03-05"
+    detail_core_timeout_seconds: float = 90.0
+    # Calibrated narrow label/temporary-artifact specialist; never a fallback.
+    model_detail_specialist: str = "gpt-5.4-2026-03-05"
+    detail_specialist_timeout_seconds: float = 90.0
     # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
     # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
     # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
@@ -764,6 +771,11 @@ def load_settings() -> Settings:
         mannequin_specialist_repair_model=(os.getenv("MANNEQUIN_SPECIALIST_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
+        model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
+        detail_core_timeout_seconds=float(os.getenv("DETAIL_CORE_TIMEOUT_SECONDS", "90")),
+        model_detail_specialist=(os.getenv("MODEL_DETAIL_SPECIALIST") or "").strip() or "gpt-5.4-2026-03-05",
+        detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),

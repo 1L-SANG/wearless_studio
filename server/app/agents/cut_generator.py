@@ -151,6 +151,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "cutType": cut,
         "direction": direction,
         "shot": shot,
+        # Resolved server-side; subject identity must also separate duplicate cuts.
+        **({"detailTargetId": _sanitize(raw.get("detailTargetId"))[:100]}
+           if cut == "product" and shot == "detail" and raw.get("detailTargetId") else {}),
         "colorId": _sanitize(raw_color_id) or None,
         "pose": _sanitize(pose)[:40] or "auto",
         "sideStyle": side_style,

@@ -1,0 +1,224 @@
+[
+  {
+    "caseId": "top_pink_lace_trim",
+    "requestedModel": "gemini-3.7-flash",
+    "auxBudgetSeconds": 12.0,
+    "promptSha256": "ffc88992c7692593913d033e50fc80c5975e7f557988b266cb931f1658a8cb4f",
+    "sourcePaths": [
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/01_52E6F7F3-4F4E-43C6-A789-FE3F154F503F_1_105_c.jpeg",
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/02_0C4F6230-9551-496B-AB32-EA2CBD078B81_1_105_c.jpeg"
+    ],
+    "provider": "gemini",
+    "points": [
+      "가슴 레이스 리본",
+      "넥라인 물결 마감"
+    ],
+    "contract": {
+      "version": 1,
+      "status": "ready",
+      "candidates": [
+        {
+          "kind": "construction",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 0.82
+          },
+          "photoUse": "standalone",
+          "standaloneValue": "construction",
+          "visibility": "clear",
+          "rank": 1,
+          "label": "넥라인 및 레이스 리본 디테일",
+          "reason": "물결 배색 파이핑이 들어간 넥라인과 가슴 라인의 레이스 및 미니 리본 봉제 디테일을 한눈에 보여줌",
+          "informationGroup": "upper_bodice_trim",
+          "featurePoints": [
+            "넥라인 물결 배색 마감",
+            "가슴 레이스 밴드 및 리본 장식",
+            "부드러운 슬러브 니트 질감"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+          "direction": "front",
+          "id": "dt1_443acd1b96f4723c32123637"
+        },
+        {
+          "kind": "hem",
+          "sourceIndex": 0,
+          "region": {
+            "x": 0.04,
+            "y": 0.81,
+            "w": 0.65,
+            "h": 0.16
+          },
+          "photoUse": "context",
+          "standaloneValue": "appearance_only",
+          "visibility": "clear",
+          "rank": 2,
+          "label": "밑단 물결 마감",
+          "reason": "티셔츠 밑단의 자연스러운 물결 프릴 마감을 보여주는 보조 디테일",
+          "informationGroup": "hem_trim",
+          "featurePoints": [
+            "물결 프릴 밑단 마감"
+          ],
+          "sourceSlot": "Front",
+          "sourceSha256": "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+          "direction": "front",
+          "id": "dt1_b27a83bc87dd8bf67868193b"
+        }
+      ],
+      "binding": [
+        {
+          "sourceIndex": 0,
+          "sourceSlot": "Front",
+          "sourceSha256": "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+          "byteLength": 195992
+        },
+        {
+          "sourceIndex": 1,
+          "sourceSlot": "Detail",
+          "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+          "byteLength": 159354
+        }
+      ]
+    },
+    "elapsedSeconds": 7.922,
+    "withinAuxBudget": true
+  },
+  {
+    "caseId": "outer_ivory_red_crochet_closure",
+    "requestedModel": "gemini-3.7-flash",
+    "auxBudgetSeconds": 12.0,
+    "promptSha256": "683a23d4140e5df33f719a6285ececae812fc4894ad99658302e1e7959ed6447",
+    "sourcePaths": [
+      "D:/wearless_studio/reference/upload_examples/아우터/여성) 크로셰 반팔 가디건/01_D186F5C8-4C21-4380-A9AE-F3582F97FF4A_1_105_c.jpeg",
+      "D:/wearless_studio/reference/upload_examples/아우터/여성) 크로셰 반팔 가디건/03_4D0F471B-90B7-47F7-AB5C-CF6D382B328A_1_105_c.jpeg"
+    ],
+    "provider": "gemini",
+    "points": [
+      "크로셰 니트 짜임",
+      "배색 라인 포인트"
+    ],
+    "contract": {
+      "version": 1,
+      "status": "ready",
+      "candidates": [
+        {
+          "kind": "fabric",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.0,
+            "y": 0.3,
+            "w": 0.95,
+            "h": 0.68
+          },
+          "photoUse": "standalone",
+          "standaloneValue": "material",
+          "visibility": "clear",
+          "rank": 1,
+          "label": "크로셰 짜임",
+          "reason": "성글고 입체적인 크로셰 조직감과 비침 정도를 선명하게 보여줌",
+          "informationGroup": "crochet_texture",
+          "featurePoints": [
+            "크로셰 니트 조직",
+            "성글고 가벼운 짜임"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "direction": "front",
+          "id": "dt1_e1979143695adebab4fce2d3"
+        },
+        {
+          "kind": "closure",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.12,
+            "y": 0.18,
+            "w": 0.52,
+            "h": 0.81
+          },
+          "photoUse": "standalone",
+          "standaloneValue": "construction",
+          "visibility": "clear",
+          "rank": 2,
+          "label": "단추 여밈 구조",
+          "reason": "레드 배색 플래킷과 니트 싸개 단추 디테일의 마감 구조를 확인할 수 있음",
+          "informationGroup": "button_placket",
+          "featurePoints": [
+            "니트 단추 여밈",
+            "레드 배색 앞섶 라인"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "direction": "front",
+          "id": "dt1_ddee12ee6be3bd73b3c9a09e"
+        },
+        {
+          "kind": "label",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.2,
+            "y": 0.06,
+            "w": 0.25,
+            "h": 0.15
+          },
+          "photoUse": "standalone",
+          "standaloneValue": "readable_identity",
+          "visibility": "clear",
+          "rank": 3,
+          "label": "넥 라벨",
+          "reason": "MORETHAN YESTERDAY 브랜드 텍스트가 선명하게 식별됨",
+          "informationGroup": "brand_label",
+          "featurePoints": [
+            "MORETHAN YESTERDAY 라벨"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "direction": "front",
+          "id": "dt1_fda5386265d28684edc9a054"
+        },
+        {
+          "kind": "pocket",
+          "sourceIndex": 0,
+          "region": {
+            "x": 0.35,
+            "y": 0.58,
+            "w": 0.22,
+            "h": 0.3
+          },
+          "photoUse": "context",
+          "standaloneValue": "appearance_only",
+          "visibility": "clear",
+          "rank": 4,
+          "label": "포켓 디테일",
+          "reason": "레드 배색 테두리가 들어간 패치 포켓 형태 확인 가능",
+          "informationGroup": "pocket_detail",
+          "featurePoints": [
+            "배색 패치 포켓"
+          ],
+          "sourceSlot": "Front",
+          "sourceSha256": "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2",
+          "direction": "front",
+          "id": "dt1_45b78cfc2823241a37ff7022"
+        }
+      ],
+      "binding": [
+        {
+          "sourceIndex": 0,
+          "sourceSlot": "Front",
+          "sourceSha256": "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2",
+          "byteLength": 332795
+        },
+        {
+          "sourceIndex": 1,
+          "sourceSlot": "Detail",
+          "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "byteLength": 357275
+        }
+      ]
+    },
+    "elapsedSeconds": 7.656,
+    "withinAuxBudget": true
+  }
+]

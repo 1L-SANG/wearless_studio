@@ -1,0 +1,218 @@
+[
+  {
+    "caseId": "top_pink_lace_trim",
+    "requestedModel": "gemini-3.7-flash",
+    "auxBudgetSeconds": 12.0,
+    "promptSha256": "26b0fe531f5a5b8b37f79b7270e2574e4d3b6453b40736e2c113f6ad24c51b6b",
+    "sourcePaths": [
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/01_52E6F7F3-4F4E-43C6-A789-FE3F154F503F_1_105_c.jpeg",
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/02_0C4F6230-9551-496B-AB32-EA2CBD078B81_1_105_c.jpeg"
+    ],
+    "provider": "gemini",
+    "points": [
+      "가슴 레이스 리본",
+      "물결 프릴 넥라인"
+    ],
+    "contract": {
+      "version": 1,
+      "status": "ready",
+      "candidates": [
+        {
+          "kind": "neckline",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 0.45
+          },
+          "photoUse": "standalone",
+          "visibility": "clear",
+          "rank": 1,
+          "label": "넥라인 물결 프릴",
+          "reason": "넓게 파인 라운드 넥라인과 잔잔한 물결 프릴 디테일의 봉제선이 선명하게 확인됨",
+          "informationGroup": "neckline_frill_detail",
+          "featurePoints": [
+            "와이드 라운드 넥라인",
+            "물결 프릴 마감"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+          "direction": "front",
+          "id": "dt1_44dac2ccd9dd444a71e55690"
+        },
+        {
+          "kind": "construction",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.0,
+            "y": 0.58,
+            "w": 0.98,
+            "h": 0.28
+          },
+          "photoUse": "standalone",
+          "visibility": "clear",
+          "rank": 2,
+          "label": "가슴 레이스 리본",
+          "reason": "가슴 절개선을 따라 들어간 레이스 트리밍과 중앙 미니 리본 매듭이 또렷하게 보임",
+          "informationGroup": "chest_lace_ribbon_detail",
+          "featurePoints": [
+            "바스트 레이스 배색",
+            "중앙 미니 리본 포인트"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+          "direction": "front",
+          "id": "dt1_5ce0690573ad652e778ee01d"
+        },
+        {
+          "kind": "hem",
+          "sourceIndex": 0,
+          "region": {
+            "x": 0.03,
+            "y": 0.8,
+            "w": 0.65,
+            "h": 0.17
+          },
+          "photoUse": "context",
+          "visibility": "clear",
+          "rank": 3,
+          "label": "밑단 물결 마감",
+          "reason": "상의 전체 실루엣과 어우러지는 밑단 물결 프릴 마감 처리를 확인할 수 있음",
+          "informationGroup": "hem_finish_detail",
+          "featurePoints": [
+            "물결 프릴 밑단"
+          ],
+          "sourceSlot": "Front",
+          "sourceSha256": "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+          "direction": "front",
+          "id": "dt1_266952542490be983208bead"
+        }
+      ],
+      "binding": [
+        {
+          "sourceIndex": 0,
+          "sourceSlot": "Front",
+          "sourceSha256": "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+          "byteLength": 195992
+        },
+        {
+          "sourceIndex": 1,
+          "sourceSlot": "Detail",
+          "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+          "byteLength": 159354
+        }
+      ]
+    },
+    "elapsedSeconds": 8.25,
+    "withinAuxBudget": true
+  },
+  {
+    "caseId": "top_green_pointelle_neck",
+    "requestedModel": "gemini-3.7-flash",
+    "auxBudgetSeconds": 12.0,
+    "promptSha256": "38a9710e0afa5ec144f0ba8a7f2e5ca2738a82645229c478c09deea450c448dc",
+    "sourcePaths": [
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 포인텔 반팔 니트 - 그린/01_0234C79A-34A6-4A21-A88E-F99B0EE9C9D4_1_105_c.jpeg",
+      "D:/wearless_studio/reference/upload_examples/상의/여성) 포인텔 반팔 니트 - 그린/03_A2E17717-82B1-44BF-9A16-E72CE475380B_1_105_c.jpeg"
+    ],
+    "provider": "gemini",
+    "points": [
+      "헨리넥 버튼 여밈",
+      "펀칭 패턴 니트"
+    ],
+    "contract": {
+      "version": 1,
+      "status": "ready",
+      "candidates": [
+        {
+          "kind": "closure",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.35,
+            "y": 0.02,
+            "w": 0.25,
+            "h": 0.65
+          },
+          "photoUse": "standalone",
+          "visibility": "clear",
+          "rank": 1,
+          "label": "헨리넥 단추 디테일",
+          "reason": "화이트 단추와 잔잔한 물결 마감 플래킷의 세부 만듦새가 선명하게 확인됨",
+          "informationGroup": "front_closure",
+          "featurePoints": [
+            "화이트 미니 버튼",
+            "물결 플래킷 마감"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "direction": "front",
+          "id": "dt1_88c47067cf9c49292a79f181"
+        },
+        {
+          "kind": "fabric",
+          "sourceIndex": 1,
+          "region": {
+            "x": 0.5,
+            "y": 0.2,
+            "w": 0.45,
+            "h": 0.65
+          },
+          "photoUse": "standalone",
+          "visibility": "clear",
+          "rank": 2,
+          "label": "펀칭 니트 원단",
+          "reason": "원단 표면의 펀칭 아일렛 조직감과 원사 텍스처를 뚜렷하게 보여줌",
+          "informationGroup": "pointelle_knit_fabric",
+          "featurePoints": [
+            "포인텔 펀칭 조직",
+            "가벼운 니트 텍스처"
+          ],
+          "sourceSlot": "Detail",
+          "sourceSha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "direction": "front",
+          "id": "dt1_cff9a656d404a9f3768b601d"
+        },
+        {
+          "kind": "neckline",
+          "sourceIndex": 0,
+          "region": {
+            "x": 0.32,
+            "y": 0.14,
+            "w": 0.38,
+            "h": 0.22
+          },
+          "photoUse": "standalone",
+          "visibility": "clear",
+          "rank": 3,
+          "label": "물결 넥라인",
+          "reason": "라운드 넥라인 가장자리의 물결 립 마감 구조가 명확하게 표현됨",
+          "informationGroup": "scallop_neckline",
+          "featurePoints": [
+            "물결 립 라운드넥"
+          ],
+          "sourceSlot": "Front",
+          "sourceSha256": "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2",
+          "direction": "front",
+          "id": "dt1_05359f9c3141a4edb0c8d751"
+        }
+      ],
+      "binding": [
+        {
+          "sourceIndex": 0,
+          "sourceSlot": "Front",
+          "sourceSha256": "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2",
+          "byteLength": 209335
+        },
+        {
+          "sourceIndex": 1,
+          "sourceSlot": "Detail",
+          "sourceSha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "byteLength": 330859
+        }
+      ]
+    },
+    "elapsedSeconds": 7.547,
+    "withinAuxBudget": true
+  }
+]

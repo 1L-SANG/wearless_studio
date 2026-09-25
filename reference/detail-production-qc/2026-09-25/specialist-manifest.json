@@ -1,0 +1,244 @@
+{
+  "frozenAt": "2026-09-25T10:22:57.347806+00:00",
+  "provider": "gpt",
+  "requestedModel": "gpt-5.4-2026-03-05",
+  "availabilityVerified": "Authenticated GET /v1/models returned this exact ID before calls",
+  "promptSha256": "02b4db64ab3b533b5d9272d09e8dae6a91bf88ea338b4e16c7dc9e74502a80b4",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "gates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "permanentMarkings",
+                "temporaryArtifacts"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL",
+                "UNKNOWN"
+              ]
+            },
+            "evidence": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "status",
+            "evidence"
+          ]
+        }
+      },
+      "permanentMarkings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sourcePresence": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent",
+              "uncertain"
+            ]
+          },
+          "sourceReadability": {
+            "type": "string",
+            "enum": [
+              "readable",
+              "unreadable",
+              "no_text",
+              "not_applicable"
+            ]
+          },
+          "candidateRegion": {
+            "type": "string",
+            "enum": [
+              "in_frame",
+              "out_of_frame",
+              "uncertain"
+            ]
+          },
+          "candidatePresence": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent",
+              "uncertain",
+              "not_applicable"
+            ]
+          },
+          "candidateReadability": {
+            "type": "string",
+            "enum": [
+              "readable",
+              "unreadable",
+              "no_text",
+              "not_applicable"
+            ]
+          },
+          "textMatch": {
+            "type": "string",
+            "enum": [
+              "match",
+              "mismatch",
+              "not_comparable",
+              "not_applicable"
+            ]
+          }
+        },
+        "required": [
+          "sourcePresence",
+          "sourceReadability",
+          "candidateRegion",
+          "candidatePresence",
+          "candidateReadability",
+          "textMatch"
+        ]
+      },
+      "temporaryArtifacts": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sourcePresence": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent",
+              "uncertain"
+            ]
+          },
+          "sourceKind": {
+            "type": "string",
+            "enum": [
+              "sales_tag",
+              "hanger_or_clip",
+              "hand_or_body",
+              "background_clutter",
+              "none",
+              "uncertain"
+            ]
+          },
+          "candidatePresence": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent",
+              "uncertain"
+            ]
+          },
+          "candidateKind": {
+            "type": "string",
+            "enum": [
+              "sales_tag",
+              "hanger_or_clip",
+              "hand_or_body",
+              "background_clutter",
+              "none",
+              "uncertain"
+            ]
+          }
+        },
+        "required": [
+          "sourcePresence",
+          "sourceKind",
+          "candidatePresence",
+          "candidateKind"
+        ]
+      }
+    },
+    "required": [
+      "gates",
+      "permanentMarkings",
+      "temporaryArtifacts"
+    ]
+  },
+  "labelsFrozenFromSha256": "07a380e932ded506a92783683eb197a96cfea552324f5959ae53bdc6c844aeca",
+  "cases": [
+    {
+      "id": "cal_pointelle_final",
+      "sku": "upload_pointelle_green",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 포인텔 반팔 니트 - 그린\\03_A2E17717-82B1-44BF-9A16-E72CE475380B_1_105_c.jpeg",
+          "sha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 포인텔 반팔 니트 - 그린\\01_0234C79A-34A6-4A21-A88E-F99B0EE9C9D4_1_105_c.jpeg",
+          "sha256": "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-category-expansion-2026-09-25\\top_green_pointelle_neck-final.png",
+        "sha256": "ca2501af2c8661a7c0d2451989693914f95509330375e6e254c28e0313b65922",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+        "region": {
+          "x": 0.04,
+          "y": 0,
+          "w": 0.92,
+          "h": 0.7
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Prior human review: label presence restored without confirmed new lettering; motif family, 5 buttons, connected neckline remain.",
+      "sourceProvenance": "real_upload_examples"
+    },
+    {
+      "id": "cal_crochet_sales_tag",
+      "sku": "upload_crochet_ivory_red",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\아우터\\여성) 크로셰 반팔 가디건\\03_4D0F471B-90B7-47F7-AB5C-CF6D382B328A_1_105_c.jpeg",
+          "sha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\아우터\\여성) 크로셰 반팔 가디건\\01_D186F5C8-4C21-4380-A9AE-F3582F97FF4A_1_105_c.jpeg",
+          "sha256": "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-category-expansion-2026-09-25\\outer_ivory_red_crochet_closure.png",
+        "sha256": "6654701d728fddc1f4eeaac470f6e036371d3cbaa103c806bda9b01b26c47bed",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+        "region": {
+          "x": 0.06,
+          "y": 0.18,
+          "w": 0.69,
+          "h": 0.63
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Visible large temporary brown sales card/connector in the front gap. The neck label is outside this crop and is NOT the negative label.",
+      "sourceProvenance": "real_upload_examples"
+    }
+  ],
+  "maxCalls": 2
+}

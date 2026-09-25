@@ -1,0 +1,385 @@
+{
+  "version": 1,
+  "frozenAt": "2026-09-25T10:03:53.407619+00:00",
+  "policyVersion": "detail-output-qc-v1",
+  "provider": "gemini",
+  "requestedModel": "gemini-3.1-pro-preview",
+  "maxJudgeCalls": 10,
+  "promptFileSha256": "0bc8c19c8744397d4e0fe9c937ebd2aff6d3e4a71cb597b9354aaa21d7ceb97f",
+  "moduleSha256": "24afcf9431c91a3ca41e0eb498cf7e472e4e67b2b5b7c596f798dc6a571544ac",
+  "labelsAssignedBy": "detail_evidence_cases human visual review before any judge call",
+  "splitPolicy": "Calibration uses prior known outputs only. Held-out product IDs are disjoint from all calibration SKUs; positives are real-source crops, negatives are whole wrong-garment swaps.",
+  "limits": [
+    "Tiny convenience sample, no broad reliability claim",
+    "Held-out positives are easier than generated candidates",
+    "Wrong-garment negatives do not measure subtle mutation recall",
+    "No unreadable-source text/hidden-region truth beyond actual pixels"
+  ],
+  "cases": [
+    {
+      "id": "cal_pointelle_final",
+      "sku": "upload_pointelle_green",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 포인텔 반팔 니트 - 그린\\03_A2E17717-82B1-44BF-9A16-E72CE475380B_1_105_c.jpeg",
+          "sha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 포인텔 반팔 니트 - 그린\\01_0234C79A-34A6-4A21-A88E-F99B0EE9C9D4_1_105_c.jpeg",
+          "sha256": "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-category-expansion-2026-09-25\\top_green_pointelle_neck-final.png",
+        "sha256": "ca2501af2c8661a7c0d2451989693914f95509330375e6e254c28e0313b65922",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+        "region": {
+          "x": 0.04,
+          "y": 0,
+          "w": 0.92,
+          "h": 0.7
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Prior human review: label presence restored without confirmed new lettering; motif family, 5 buttons, connected neckline remain.",
+      "sourceProvenance": "real_upload_examples"
+    },
+    {
+      "id": "cal_crochet_sales_tag",
+      "sku": "upload_crochet_ivory_red",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\아우터\\여성) 크로셰 반팔 가디건\\03_4D0F471B-90B7-47F7-AB5C-CF6D382B328A_1_105_c.jpeg",
+          "sha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\upload_examples\\아우터\\여성) 크로셰 반팔 가디건\\01_D186F5C8-4C21-4380-A9AE-F3582F97FF4A_1_105_c.jpeg",
+          "sha256": "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-category-expansion-2026-09-25\\outer_ivory_red_crochet_closure.png",
+        "sha256": "6654701d728fddc1f4eeaac470f6e036371d3cbaa103c806bda9b01b26c47bed",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+        "region": {
+          "x": 0.06,
+          "y": 0.18,
+          "w": 0.69,
+          "h": 0.63
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Visible large temporary brown sales card/connector in the front gap. The neck label is outside this crop and is NOT the negative label.",
+      "sourceProvenance": "real_upload_examples"
+    },
+    {
+      "id": "cal_outer_full_garment",
+      "sku": "upload_taupe_outer",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\output\\imagegen\\detail-refinement-2026-09-25\\inputs\\outer_taupe_double_button-original-1.png",
+          "sha256": "491361c35bad201b545c6a2788629b495b305d54264161055c978bdafdc59fda",
+          "mime": "image/png"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-styled-shape-2026-09-25\\outer_taupe_double_button-styled.png",
+        "sha256": "ec845d55c9d9dd4dbd7b96548cee4e2751ba5aa1e9e57eb69851731e0c76bb1f",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "491361c35bad201b545c6a2788629b495b305d54264161055c978bdafdc59fda",
+        "region": {
+          "x": 0.22,
+          "y": 0.22,
+          "w": 0.54,
+          "h": 0.38
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Full garment includes both sleeve ends and hem; not a requested upper-closure detail. Attractive steaming is allowed.",
+      "sourceProvenance": "real_upload_examples"
+    },
+    {
+      "id": "cal_shirt_prepared",
+      "sku": "upload_paprika_stripe_shirt",
+      "split": "calibration",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\output\\imagegen\\detail-refinement-2026-09-25\\inputs\\top_stripe_collar-original-1.png",
+          "sha256": "16221d82aff5d3bfaa72e801e481f53c90140558c1d1af9e3b89dbf0fad59ee3",
+          "mime": "image/png"
+        },
+        {
+          "path": "D:\\wearless_studio\\output\\imagegen\\detail-refinement-2026-09-25\\inputs\\top_stripe_collar-original-2.png",
+          "sha256": "f4ac5f2b8e2e83619d8a6c43c517068c5bed9703171dcd5cf5e1611c15fc6b7f",
+          "mime": "image/png"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\output\\imagegen\\detail-styled-shape-2026-09-25\\top_stripe_collar-styled.png",
+        "sha256": "b2ab6bb70172f723c501ecb25ecde289d8915303e4f0a6f6dc89e642a2d82a7e",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "16221d82aff5d3bfaa72e801e481f53c90140558c1d1af9e3b89dbf0fad59ee3",
+        "region": {
+          "x": 0.16,
+          "y": 0.035,
+          "w": 0.68,
+          "h": 0.325
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Prior human review: prepared collar/connected upper placket, same stripe family/buttons/label; re-laying is permissible.",
+      "sourceProvenance": "real_upload_examples"
+    },
+    {
+      "id": "held_3990_valid",
+      "sku": "coor_3990",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\05.jpg",
+          "sha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\01.jpg",
+          "sha256": "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-3990-source-crop.png",
+        "sha256": "bdb67a665fb749bf451d361e635c44cf0b2600eb960ffeb9f635004682bc2599",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Exact deterministic crop of this actual professional product-detail source. No generation or added facts. Crop remains a useful partial region.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_3990_wrong_garment",
+      "sku": "coor_3990",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\05.jpg",
+          "sha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\01.jpg",
+          "sha256": "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4013-source-crop.png",
+        "sha256": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Candidate is a real detail crop of DIFFERENT SKU coor_4013, with clearly different garment construction/material/color; not a quality-styled version of the source.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4013_valid",
+      "sku": "coor_4013",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\06.jpg",
+          "sha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\01.jpg",
+          "sha256": "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4013-source-crop.png",
+        "sha256": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Exact deterministic crop of this actual professional product-detail source. No generation or added facts. Crop remains a useful partial region.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4013_wrong_garment",
+      "sku": "coor_4013",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\06.jpg",
+          "sha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\01.jpg",
+          "sha256": "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4002-source-crop.png",
+        "sha256": "f58e3e85cadf9a7bfe519275f8798864ecd65dc42ff4aec930c0a3a03c93cc4f",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Candidate is a real detail crop of DIFFERENT SKU coor_4002, with clearly different garment construction/material/color; not a quality-styled version of the source.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4002_valid",
+      "sku": "coor_4002",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-08-additional\\상품별\\남성\\아우터\\4002_워시드 소프트 필 덱 후크 보머 자켓 (워시드브라운)\\원본이미지\\06.jpg",
+          "sha256": "b83554579e455a5bcfb71ae525f31ee456824690f15f5b6f9b8138200309974d",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-08-additional\\상품별\\남성\\아우터\\4002_워시드 소프트 필 덱 후크 보머 자켓 (워시드브라운)\\원본이미지\\01.jpg",
+          "sha256": "7e800894d3ad1df60c4ea8a5233f916fe3389a9fe931ba04bacbd8daef795722",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4002-source-crop.png",
+        "sha256": "f58e3e85cadf9a7bfe519275f8798864ecd65dc42ff4aec930c0a3a03c93cc4f",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "b83554579e455a5bcfb71ae525f31ee456824690f15f5b6f9b8138200309974d",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Exact deterministic crop of this actual professional product-detail source. No generation or added facts. Crop remains a useful partial region.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4002_wrong_garment",
+      "sku": "coor_4002",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-08-additional\\상품별\\남성\\아우터\\4002_워시드 소프트 필 덱 후크 보머 자켓 (워시드브라운)\\원본이미지\\06.jpg",
+          "sha256": "b83554579e455a5bcfb71ae525f31ee456824690f15f5b6f9b8138200309974d",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-08-additional\\상품별\\남성\\아우터\\4002_워시드 소프트 필 덱 후크 보머 자켓 (워시드브라운)\\원본이미지\\01.jpg",
+          "sha256": "7e800894d3ad1df60c4ea8a5233f916fe3389a9fe931ba04bacbd8daef795722",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-3990-source-crop.png",
+        "sha256": "bdb67a665fb749bf451d361e635c44cf0b2600eb960ffeb9f635004682bc2599",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "b83554579e455a5bcfb71ae525f31ee456824690f15f5b6f9b8138200309974d",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Candidate is a real detail crop of DIFFERENT SKU coor_3990, with clearly different garment construction/material/color; not a quality-styled version of the source.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    }
+  ]
+}

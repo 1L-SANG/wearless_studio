@@ -1,0 +1,291 @@
+{
+  "manifestSha256": "514c4494f23b7455382b9ce5286ae32e30c5f5d51a1f4be7fcd8923cd6a341d7",
+  "split": "calibration",
+  "startedAt": "2026-09-25T10:14:21.240653+00:00",
+  "reservedCalls": 2,
+  "results": [
+    {
+      "id": "cal_pointelle_final",
+      "sku": "upload_pointelle_green",
+      "expected": "PASS",
+      "latencySeconds": 10.283,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v2",
+        "passed": false,
+        "decision": "UNKNOWN",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          }
+        ],
+        "markings": null,
+        "temporaryArtifacts": null,
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "c20eb0583b96fff3a3b48b1fc4e6c2aacf187de055020c3131b7bb6f4c67da7f",
+        "sourceHashes": [
+          "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2"
+        ],
+        "sourceHash": "c40661893fe0fad9dc542466a97eb8a7660fbd7e8eb9a25919decc46580e8018",
+        "resultHash": "ca2501af2c8661a7c0d2451989693914f95509330375e6e254c28e0313b65922",
+        "targetHash": "c12b48b369929ad0d5cc7a0ba32b8d2376cfc22e67b8602eb42abafa60fe7c98",
+        "judgeImageHashes": [
+          "8f2cb36195ed3ded408111ac7e46be065b81eab9c5e12c78298b70846db8c19d",
+          "7a745b8076649ad8386a5a537ab3335ae274702befb87ba756662ea785614364",
+          "04bdb20721d3e8ebd48a0b62d63179ec7f9e7afd2efed18b46ef3a2067523d62",
+          "5144bd06aa2bb569178aaaa7138e102110f31127f6088e304824f6424db5d365",
+          "16bd2c8dfe8e2a19b8ae794db3c1190da625d6d751d0edc3582570e05cad440d",
+          "281d7590bed57de179e86ac84de8354434b8cea05d5e9a2f7e24346430bd88bb",
+          "eef147dbe2d47a5aaaec2d91acb5a61bb1dab65a8499112d3ab7dd3fa0a9568d",
+          "dfcfed79b80abcc65e3374993c36fc5b5b2fe51c5e528a28a70b3a49415e5bf5",
+          "4f75c6e93e7abcf516d2f8edb2b07c9280253b46a911302357a423d73cd640b3",
+          "ce3b78a072b8b5adb29f8cb995840f6efde2ed02122f89be2cd75fece55c653e",
+          "d455fb6568662fdbf2e2155c3cdc07d85a8a4ff0cc53b59ae399c3d82125e567",
+          "c91ccb3f6de70eec0b69337f65fbef74f42ed0640cf94d9a7e455dc421b2e37d"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Candidate provides a proper detail shot of the requested neckline and button placket area."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Candidate retains the ribbed neck edge, scalloped button placket with white buttons, and pointelle knit diamond pattern matching the source."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Candidate maintains the green knit fabric and pointelle texture seen in the source."
+            },
+            {
+              "code": "permanentMarkings",
+              "status": "FAIL",
+              "evidence": "Candidate invents a new sewn label inside the back neckline not present in source 1."
+            },
+            {
+              "code": "temporaryArtifacts",
+              "status": "PASS",
+              "evidence": "The tag string visible in the source is successfully removed in the candidate."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Candidate shows a clean, flat-lay presentation with good lighting and professional styling."
+            }
+          ],
+          "permanentMarkings": {
+            "sourcePresence": "absent",
+            "sourceReadability": "not_applicable",
+            "candidateRegion": "in_frame",
+            "candidatePresence": "present",
+            "candidateReadability": "unreadable",
+            "textMatch": "mismatch"
+          },
+          "temporaryArtifacts": {
+            "sourcePresence": "present",
+            "candidatePresence": "absent",
+            "kind": "sales_tag",
+            "comparison": "removed"
+          }
+        },
+        "errorCode": "inconsistent_artifact_evidence",
+        "usage": {
+          "promptTokenCount": 14928,
+          "candidatesTokenCount": 417,
+          "totalTokenCount": 15345,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 12973
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 1955
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    },
+    {
+      "id": "cal_crochet_sales_tag",
+      "sku": "upload_crochet_ivory_red",
+      "expected": "FAIL",
+      "latencySeconds": 11.699,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v2",
+        "passed": false,
+        "decision": "UNKNOWN",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          }
+        ],
+        "markings": null,
+        "temporaryArtifacts": null,
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "0c7fc5c4f3b7782243690482451b8592c1783ace0ec4308b4221f1de1ce8fff6",
+        "sourceHashes": [
+          "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2"
+        ],
+        "sourceHash": "08a614f33d7bd66e8d2b45645ef7743f6a154491c7fecc86bac028bae8b0dbf0",
+        "resultHash": "6654701d728fddc1f4eeaac470f6e036371d3cbaa103c806bda9b01b26c47bed",
+        "targetHash": "d10504cfab1872a08ad59f42fdcdc85ed2b141b79873fa7640255b6a84dc1805",
+        "judgeImageHashes": [
+          "a23f407b9da96bebc21eb860f375326eadb653124d4a37225bf86e6bb596fcc2",
+          "83e8ed789309639ad695ae270021da6da6fd089e339c750749cb45e885f5496f",
+          "7a7062f03e7d9dbc6e7bc08657a7b98418c16279a2f53d766c244de5d40c481f",
+          "b5e0b5e88fea7c872e8c24b5239ab14a96e24eba0d5e37a56881ebf6ea069c05",
+          "4783cde5146874ba8dcf5d39f844ecccd7f8af4f405d25e2b0d4adef21b4a0fb",
+          "25956ddbdd5a00de2398843cf6c6bc2f2585c339239cde9a5c6c53501b8eb9a0",
+          "619a0b8dc7f2acff6a77240961f7dc1cc493f7ca031693143dc7280f9b3f823f",
+          "26a9b4c998a2a98e9993e69cbadfa37eecfd966657f2485c6fa4c3190a34df4c",
+          "1909e78703289c1d587f14332ae6142174998db626b6e291ce95d392ea81c941",
+          "5837734e05dca7a7357ee049f557ae612ee841c5d654c5d2ac2a6efa2bd45677",
+          "ab2190343c557be19ebe60e419ba0a810a4881451087094376436aeb2dacc5ae",
+          "dcc5c7875d92fc2fb408d25e8a68511ebec12d2b4bf0569b8578eef2583796f2"
+        ],
+        "rawJudge": {
+          "gates": [
+            {
+              "code": "targetFraming",
+              "status": "PASS",
+              "evidence": "Candidate provides a detailed front closure crop matching the target region."
+            },
+            {
+              "code": "constructionDesign",
+              "status": "PASS",
+              "evidence": "Crochet grid pattern, red trim structure, and covered buttons match source."
+            },
+            {
+              "code": "colorMaterial",
+              "status": "PASS",
+              "evidence": "Off-white and red chunky crochet knit textures and colors are accurately preserved."
+            },
+            {
+              "code": "permanentMarkings",
+              "status": "PASS",
+              "evidence": "Brand label at the collar is outside the requested crop frame for the closure."
+            },
+            {
+              "code": "temporaryArtifacts",
+              "status": "PASS",
+              "evidence": "Tag string visible in source closure gap has been successfully removed in candidate."
+            },
+            {
+              "code": "photographicPreparation",
+              "status": "PASS",
+              "evidence": "Image is sharp, well-lit, and professionally presented without messy artifacts."
+            }
+          ],
+          "permanentMarkings": {
+            "sourcePresence": "present",
+            "sourceReadability": "readable",
+            "candidateRegion": "out_of_frame",
+            "candidatePresence": "not_applicable",
+            "candidateReadability": "not_applicable",
+            "textMatch": "not_applicable"
+          },
+          "temporaryArtifacts": {
+            "sourcePresence": "present",
+            "candidatePresence": "absent",
+            "kind": "sales_tag",
+            "comparison": "removed"
+          }
+        },
+        "errorCode": "inconsistent_artifact_evidence",
+        "usage": {
+          "promptTokenCount": 14886,
+          "candidatesTokenCount": 401,
+          "totalTokenCount": 15287,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 12928
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 1958
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "total": 2,
+    "positive": 1,
+    "negative": 1,
+    "falseAccepts": 0,
+    "falseRejects": 0,
+    "unknown": 2,
+    "correctPass": 0,
+    "correctFail": 0
+  },
+  "completedAt": "2026-09-25T10:14:43.225281+00:00"
+}

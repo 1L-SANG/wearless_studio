@@ -74,11 +74,11 @@ test('실제 모델 콘티 진입은 분석을 건드리지 않는다', async ()
 });
 
 test('edits that touch the storyboard seed invalidate the warmed prefetch', () => {
-  // 시드가 읽는 필드(colors·clothingType·targetGenders·matchClothing) 목록이 실제로 이 네 키를 담고 있어야
+  // 시드가 읽는 상품·매칭·디테일 추천/강조 필드를 모두 포함해야
   // 한다 — 목록이 비거나 다른 키로 바뀌면 이 어서션이 깨져 드리프트를 잡아낸다.
   assert.match(
     saveRoutingSource,
-    /STORYBOARD_SEED_PATCH_KEYS = new Set\(\[['"]colors['"], ['"]clothingType['"], ['"]targetGenders['"], ['"]matchClothing['"]\]\)/,
+    /STORYBOARD_SEED_PATCH_KEYS = new Set\(\[['"]colors['"], ['"]clothingType['"], ['"]targetGenders['"], ['"]matchClothing['"], ['"]detailRecommendations['"], ['"]sellingPoints['"]\]\)/,
   );
   // persistAnalysisEdit — 이 화면의 모든 분석 편집 저장이 지나는 단일 퍼널 — 이 그 키 집합을
   // 실제로 검사해 invalidateStoryboardEntryPrefetch 를 호출해야 한다. UI 핸들러 각각이 아니라
