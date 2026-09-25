@@ -496,6 +496,9 @@ class _RouteCur:
             if lic:
                 lic["status"] = "revoked"
             self._one = dict(_LIC_ROW, status="revoked")
+        elif normalized.startswith("insert into fm_license_revoke_alerts"):
+            self.store.setdefault("license_revoke_alerts", []).append(params)
+            self._one = None
         elif normalized.startswith("insert into fm_vc_revocation_jobs"):
             if self.store.get("enqueue_error"):
                 raise RuntimeError("queue unavailable")

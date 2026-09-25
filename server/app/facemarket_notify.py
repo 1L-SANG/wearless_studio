@@ -1,10 +1,11 @@
-"""지원서 승인/거절 메일(Resend) + 새 지원서 Slack 알림(webhook). 전부 best-effort.
+"""지원서 승인/거절 메일(Resend) + FaceMarket Slack 알림(webhook).
 
 메일 본문에는 신원정보(이름·생년월일)를 담지 않는다(E4): 지원서 이메일은 미검증이라
 오타 시 제3자 메일함으로 갈 수 있어 심사 결과·PII 노출이 된다. 거절 사유는 UX 가치가 크고
 유출 민감도가 낮아 포함하되, 상세는 앱 상태 화면이 진실이다(2A). 링크는 권한 없는 딥링크다
 (로그인 필수, 1A). 발송·알림 실패는 절대 승인/거절 트랜잭션을 막지 않는다 — 이미 커밋된 뒤
-호출되고, 대시보드 '미발송' 뱃지·재발송으로 복구한다.
+호출되고, 대시보드 '미발송' 뱃지·재발송으로 복구한다. 라이선스 해지 알림은
+fm_license_revoke_alerts 작업이 성공할 때까지 재시도한다.
 """
 
 import logging
@@ -377,16 +378,18 @@ def _slack_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-async def _post_slack(settings, text: str) -> None:
-    """incoming webhook 으로 한 줄. 상태를 안 보면 웹훅 폐기(404/410)·레이트리밋(429)이 성공과
-    구분되지 않는다 — 이 알림들은 원장이 없어 로그가 유일한 관측점이다."""
+async def _post_slack(settings, text: str) -> bool:
+    """incoming webhook 전송 결과를 반환한다. 해지 알림은 실패를 작업 큐에 남긴다."""
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
-        if res.status_code >= 400:
+        if not 200 <= res.status_code < 300:
             logger.error("slack notify rejected status=%s", res.status_code)
+            return False
+        return True
     except Exception as exc:
         logger.warning("slack notify failed: %s", exc)
+        return False
 
 
 async def notify_slack_new_application(
@@ -427,13 +430,13 @@ async def notify_slack_license_revoked(
     purge_due_on: str,
     other_active_licenses: int,
     admin_link: str,
-) -> None:
+) -> bool:
     """모델 라이선스 해지와 수동 파기 기한을 관리자에게 알린다.
 
     display_name 은 본인확인에서 받은 가려진 실명(예: 홍*동)이라 같은 이름이 여럿일 수 있다.
     파기할 모델을 정확히 찾도록 내부 모델 ID 를 함께 싣는다."""
     if not settings.fm_slack_webhook_url:
-        return
+        return False
     text = (
         f":warning: 모델 라이선스 해지 · 모델: {_slack_escape(display_name)} · ID {model_id}\n"
         f"해지일 {revoked_on} · 파기 기한 {purge_due_on}(30일)\n"
@@ -446,7 +449,7 @@ async def notify_slack_license_revoked(
             "파기 전에 확인하세요."
         )
     text += f"\n<{admin_link}|관리자 모델 콘솔 열기>"
-    await _post_slack(settings, text)
+    return await _post_slack(settings, text)
 
 
 async def notify_slack_admin_device_requested(settings, *, email: str | None, label: str) -> None:

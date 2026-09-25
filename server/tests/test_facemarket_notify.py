@@ -18,7 +18,7 @@ def test_license_revoked_slack_skips_delivery_without_webhook(monkeypatch):
         fm_slack_webhook_url=None,
     )
 
-    asyncio.run(
+    delivered = asyncio.run(
         facemarket_notify.notify_slack_license_revoked(
             settings,
             model_id="model-1",
@@ -29,6 +29,7 @@ def test_license_revoked_slack_skips_delivery_without_webhook(monkeypatch):
             admin_link="https://admin.wearless.kr/models",
         )
     )
+    assert delivered is False
 
 
 @pytest.mark.parametrize(
@@ -67,7 +68,7 @@ def test_license_revoked_slack_body_and_conditional_warning(
         fm_slack_webhook_url="https://hooks.example/facemarket",
     )
 
-    asyncio.run(
+    delivered = asyncio.run(
         facemarket_notify.notify_slack_license_revoked(
             settings,
             model_id="model-1",
@@ -78,6 +79,7 @@ def test_license_revoked_slack_body_and_conditional_warning(
             admin_link="https://admin.wearless.kr/models",
         )
     )
+    assert delivered is True
 
     lines = [
         ":warning: 모델 라이선스 해지 · 모델: &lt;모델&amp;이름&gt; · ID model-1",
@@ -93,3 +95,35 @@ def test_license_revoked_slack_body_and_conditional_warning(
 
     assert sent["url"] == "https://hooks.example/facemarket"
     assert sent["payload"] == {"text": "\n".join(lines)}
+
+
+@pytest.mark.parametrize("status_code", [302, 503])
+def test_license_revoked_slack_rejection_is_reported_for_retry(monkeypatch, status_code):
+    class FakeResponse:
+        pass
+
+    FakeResponse.status_code = status_code
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, *, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", FakeAsyncClient)
+    settings = make_settings(fm_slack_webhook_url="https://hooks.example/facemarket")
+    delivered = asyncio.run(
+        facemarket_notify.notify_slack_license_revoked(
+            settings, model_id="model-1", display_name="홍*동",
+            revoked_on="2026-09-25", purge_due_on="2026-10-25",
+            other_active_licenses=0, admin_link="https://admin.wearless.kr/models",
+        )
+    )
+    assert delivered is False

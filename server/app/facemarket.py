@@ -35,7 +35,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError, field_validator
 
-from . import admin_guard, cx_identity, facemarket_notify, holder_client
+from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
@@ -3279,6 +3279,17 @@ async def revoke_license(
                     (lic["model_id"], lic["id"]),
                 )
                 other_active_licenses = int((await cur.fetchone() or {}).get("count") or 0)
+            # Slack 장애와 프로세스 종료에도 파기 알림을 잃지 않도록 해지와 함께 적재한다.
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_license_revoke_alerts
+                         (license_id, model_id, display_name, revoked_on, other_active_licenses)
+                       values (%s, %s, %s, %s, %s)
+                       on conflict (license_id) do nothing""",
+                    (lic["id"], lic["model_id"],
+                     "*" if len(lic["display_name"].strip()) <= 1 else lic["display_name"],
+                     datetime.now(_KST).date(), other_active_licenses),
+                )
         if lic.get("vc_id"):
             await enqueue_vc_revocation(
                 conn,
@@ -3287,24 +3298,6 @@ async def revoke_license(
                 vc_id=lic["vc_id"],
             )
         await conn.commit()
-    if first_revocation:
-        revoked_date = datetime.now(_KST).date()
-        settings = request.app.state.settings
-        admin_base = settings.fm_application_public_base.replace(
-            "facemarket.", "admin."
-        ).rstrip("/")
-        try:
-            await facemarket_notify.notify_slack_license_revoked(
-                settings,
-                model_id=lic["model_id"],
-                display_name=lic["display_name"],
-                revoked_on=revoked_date.isoformat(),
-                purge_due_on=(revoked_date + timedelta(days=30)).isoformat(),
-                other_active_licenses=other_active_licenses,
-                admin_link=f"{admin_base}/models",
-            )
-        except Exception:
-            logger.warning("license revocation slack dispatch failed", exc_info=True)
     return row
 
 
