@@ -59,12 +59,13 @@
 .photoProgress progress::-webkit-progress-bar { background: var(--fm-line); }
 .photoProgress progress::-webkit-progress-value { background: var(--fm-ink); }
 .photoProgress progress::-moz-progress-bar { background: var(--fm-ink); }
-.photoGuideLink { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
-.photoGuideLink a { display: inline-flex; min-height: 44px; align-items: center; }
-.photoGuideLink > span { color: var(--fm-muted); font-size: 11px; }
 .groupHeading { margin-bottom: 20px; }
 .groupHeading h2 { margin-top: 10px; font-size: 24px; text-wrap: balance; }
 .groupHeading p { color: var(--fm-muted); font-size: 14px; margin-top: 8px; line-height: 1.7; }
+.groupHeading .cloudyTip { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; color: var(--fm-accent); font-size: 14px; line-height: 1.6; }
+.groupHeading .cloudyTip svg { flex: 0 0 auto; margin-top: 3px; }
+.groupHeading .cloudyTip strong { font-weight: 700; }
+.groupHeading .cloudyCheck { display: block; font-weight: 400; }
 .uploadInstruction { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px !important; padding: 12px 14px; border-radius: var(--r-4); background: var(--bg-2); color: var(--fm-ink); font-size: 13px; line-height: 1.6; }
 .uploadInstruction svg { flex: 0 0 auto; margin-top: 2px; color: var(--fm-accent); }
 .photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; }

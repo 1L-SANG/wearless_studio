@@ -183,7 +183,9 @@ for (const sub of [1, 2, 4]) {
       const progress = findTree(tree, node => node.type === 'progress');
       assert.equal(progress.props.value, 0);
       assert.equal(progress.props.max, 18);
-      assert.ok(findTree(tree, node => node.type === 'Link' && node.props.to === '/photo-guide'));
+      assert.equal(findTree(tree, node => node.type === 'Link' && node.props.to === '/photo-guide'), null);
+      assert.ok(text.includes(`${[1, 10, 13, 16][sub - 1]}~${[9, 12, 15, 18][sub - 1]}번째`));
+      assert.ok(text.includes('흐리거나 실내라면'));
       assert.ok(text.includes(sub === 1 ? '9장을 더 올려 주세요.' : '3장을 더 올려 주세요.'));
       assert.doesNotMatch(text, /사진 17장|전체 5단계|몸의 두께/);
       assert.equal(button(tree, '다음').props.disabled, true);

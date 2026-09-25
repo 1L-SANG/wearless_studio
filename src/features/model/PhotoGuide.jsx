@@ -1,4 +1,4 @@
-import { Camera, Clock3, Sun, Users } from 'lucide-react';
+import { Camera, CloudSun, Clock3, Sun, Users } from 'lucide-react';
 import { SLOTS, PHOTO_GROUPS, SHOOT_RULES, REGISTRATION_PHOTO_COUNT, SHOOTING_TIME_MINUTES } from './registerSlots.js';
 import { PhotoPoseIllustration } from './PhotoPoseIllustration.jsx';
 import { PhotoChecklistIcon } from './PhotoChecklistIcon.jsx';
@@ -60,7 +60,7 @@ export function PhotoGuide() {
       const slots = SLOTS.filter((slot) => slot.group === group.id);
       return <section className={s.shootSection} id={`shoot-${group.id}`} key={group.id} aria-labelledby={`shoot-title-${group.id}`}>
         <div className={s.shootHeading}><span className={s.sectionNumber}>{String(index + 1).padStart(2, '0')}</span>
-          <div><p className={s.eyebrow}>{group.badge} · {slots[0].n}~{slots.at(-1).n}번</p><h2 id={`shoot-title-${group.id}`}>{group.action} {slots.length}장</h2><p>{group.note}</p></div>
+          <div><p className={s.eyebrow}>{group.badge} · {slots[0].n}~{slots.at(-1).n}번</p><h2 id={`shoot-title-${group.id}`}>{group.action} {slots.length}장</h2><p>{group.note}</p>{group.cloudy && <p className={s.cloudyTip}><CloudSun size={16} aria-hidden="true" /><span><strong>흐리거나 실내라면 {group.cloudy[0]}</strong>{group.cloudy.slice(1).map((line) => <span key={line} className={s.cloudyCheck}>{line}</span>)}</span></p>}</div>
         </div>
         <ol className={s.shotGrid} start={slots[0].n}>{slots.map((slot) => <li key={slot.key}>
           <div className={s.shotArt}><span className={s.shotNumber}>{String(slot.n).padStart(2, '0')}</span><PhotoPoseIllustration className={s.pose} slot={slot} /></div>

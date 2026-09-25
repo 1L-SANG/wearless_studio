@@ -36,7 +36,8 @@ test('P1 P3 P4 P5 photos use first-page checklist, upload cards and no slot hint
     h.runtime.states[2] = 2;
     tree = h.render();
     assert.equal(findTree(tree, n => n.type?.name === 'ShootChecklist'), null);
-    assert.ok(findTree(tree, n => n.props.to === '/photo-guide'));
+    // 촬영 화면의 '18장 촬영 가이드 열기' 줄은 뺐어요(2026-09-25 오너). 안내는 각 단계 문구와 예시 그림이 맡아요.
+    assert.equal(findTree(tree, n => n.props.to === '/photo-guide'), null);
   } finally { await h.close(); }
 });
 
