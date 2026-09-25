@@ -84,7 +84,16 @@ else:
         content = [{"id": 13, "vcPlanId": load("issue-profiles")["vcPlanId"]}]
     elif path == "list" and load("issue-profiles") and os.environ.get("FAKE_LVP") != "0":
         content = [{"id": 1, "vcPlanId": load("issue-profiles")["vcPlanId"]}]
-    print(json.dumps({"content": content}))
+    # rget 은 한 줄로 압축한 응답의 크기(wc -c)를 먼저 묻고 600바이트씩 나눠 받는다.
+    body = json.dumps({"content": content})
+    if "wc -c" in cmd:
+        print(len(body.encode()))
+    else:
+        m = re.search(r"tail -c \+(\d+) \| head -c (\d+)", cmd)
+        if m:
+            start, n = int(m.group(1)) - 1, int(m.group(2))
+            body = body.encode()[start:start + n].decode()
+        print(body)
 print("\nExiting session with sessionId: fake-123")
 SH
 chmod +x "$fakebin"/*

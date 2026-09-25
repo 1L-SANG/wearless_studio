@@ -75,34 +75,53 @@ fi
 echo "==> $LABEL Issuer 프로비저닝 via ECS exec (cluster=${CLUSTER##*/} task=${TASK##*/} dry_run=$DRY_RUN)"
 
 # --- 원격 curl --------------------------------------------------------------------
-# execute-command 출력은 세션 배너(첫 줄 + 빈 줄)와 "Exiting session…" 꼬리가 붙는다 → 벗겨서 본문만.
+# execute-command 출력엔 세션 배너·꼬리가 붙는다 → 알려진 배너 줄만 지워 본문만 남긴다.
+# 예전엔 "첫 빈 줄까지 삭제"(sed '1,/^$/d')였는데, session-manager-plugin 이 앞에 설치 안내 +
+# 빈 줄 여러 개를 붙이면서 "Starting session…" 줄이 본문에 섞였다(2026-09-25, POST 코드 판정 실패).
+# 세션은 끝에 "Cannot perform start session: EOF" 를 붙이고 개행 없는 마지막 줄을 잃을 수 있어
+# 원격 명령은 항상 개행으로 끝낸다(rget/rpost 의 `; echo`).
 remote() {
   aws ecs execute-command --cluster "$CLUSTER" --task "$TASK" --container "$CONTAINER" \
-    --interactive --command "$1" 2>&1 | sed '1,/^$/d' | sed '/^Exiting session with sessionId/d'
+    --interactive --command "$1" 2>&1 | tr -d '\r' \
+    | grep -v -E '^(The Session Manager plugin|Starting session with SessionId|Exiting session with sessionId|Cannot perform start session)' \
+    | sed '/^$/d'
 }
-# 세션이 가끔 중간에 끊긴다("Cannot perform start session: EOF") → 완전한 JSON 이 올 때까지 최대 5회.
+# 세션은 출력이 ~1KB 를 넘으면 중간에 끊긴다("Cannot perform start session: EOF"). Issuer 응답은
+# 들여쓴 JSON 이라 1.5~2KB 가 넘는다(2026-09-25 협찬 프로비저닝에서 매번 잘렸다). 그래서 원격에서
+# 개행을 지우고 공백을 줄인 한 줄을 600바이트씩 나눠 받아 로컬에서 잇는다. 공백 압축은 문자열 값
+# 안의 연속 공백까지 줄이지만, 여기서 읽는 건 id·namespaceId·vcSchemaId 같은 공백 없는 값뿐이다.
+_RGET_CHUNK=600
 rget() {
-  local out n
+  local url=$1 compact size off chunk out n
+  # 개행 제거는 [:cntrl:] 로 — '\n' 은 로컬·원격 셸 두 겹 따옴표를 지나며 글자 n 이 돼
+  # 응답의 n 을 전부 지웠다(2026-09-25 실측: "amespaceId").
+  compact="curl -s '$url' | tr -d '[:cntrl:]' | tr -s ' '"
   for n in 1 2 3 4 5; do
-    # 한 줄짜리 긴 JSON(TAS 응답)은 세션이 ~1KB 에서 끊긴다 → 원격에서 줄을 나눠 받는다.
-    # JSON 문자열엔 raw 개행이 없으니 로컬에서 개행을 전부 지우면 원문과 같다.
-    out=$(remote "sh -c \"curl -s '$1' | fold -w 300\"")
+    size=$(remote "sh -c \"$compact | wc -c\"" | tr -dc '0-9')
+    out=""
+    if [ -n "$size" ] && [ "$size" -gt 0 ]; then
+      off=1
+      while [ "$off" -le "$size" ]; do
+        chunk=$(remote "sh -c \"$compact | tail -c +$off | head -c $_RGET_CHUNK | fold -w 200; echo\"" | tr -d '\n')
+        out="$out$chunk"
+        off=$((off + _RGET_CHUNK))
+      done
+    fi
     if printf '%s' "$out" | python3 -c '
 import json,sys
-raw=sys.stdin.read().replace("\r","").replace("\n",""); i=raw.find("{")
-sys.exit(1 if i<0 else 0) if i<0 else None
-json.JSONDecoder().raw_decode(raw[i:])' 2>/dev/null; then
+raw=sys.stdin.read(); i=raw.find("{")
+sys.exit(1) if i<0 else json.JSONDecoder().raw_decode(raw[i:])' 2>/dev/null; then
       printf '%s' "$out"; return 0
     fi
     echo "    (세션 끊김 — GET 재시도 $n/5)" >&2; sleep 2
   done
-  echo "ERROR: GET $1 — 5회 모두 불완전한 응답" >&2; return 1
+  echo "ERROR: GET $url — 5회 모두 불완전한 응답" >&2; return 1
 }
 # POST 본문은 base64 로 실어 원격 sh 의 따옴표 지옥을 피한다. 응답 코드만 돌려받는다.
 rpost() {
   local url=$1 body=$2 b64
   b64=$(printf '%s' "$body" | base64 | tr -d '\n')
-  remote "sh -c 'echo $b64 | base64 -d | curl -s -X POST \"$url\" -H \"Content-Type: application/json\" --data-binary @- -o /dev/null -w %{http_code}'" | tr -d '[:space:]'
+  remote "sh -c 'echo $b64 | base64 -d | curl -s -X POST \"$url\" -H \"Content-Type: application/json\" --data-binary @- -o /dev/null -w %{http_code}; echo'" | tr -d '[:space:]'
 }
 # JSON 파싱은 로컬 python3 (태스크 이미지엔 jq/python 없음).
 jid() {  # jid <json> <field> <value> → content[] 중 field==value 인 항목의 id (없으면 빈 문자열)
