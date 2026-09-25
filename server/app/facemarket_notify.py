@@ -435,6 +435,30 @@ async def notify_slack_new_application(
     await _post_slack(settings, text)
 
 
+async def notify_slack_enrollment_completed(
+    settings, *, display_name: str | None, identity_method: str, admin_link: str
+) -> None:
+    """사용 조건 제출로 등록을 마쳤다는 알림. 본인확인에서 받은 가린 이름(예: 홍*동)과 인증 방법만 싣는다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    # 가린 이름 규칙(cx_identity._mask_name)은 한 글자 이름을 그대로 두므로 여기서 가린다.
+    if display_name and len(display_name.strip()) == 1:
+        display_name = "*"
+    if identity_method == "simple_auth":
+        method_label = "간편인증"
+        next_step = "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."
+    else:
+        method_label = "모바일 신분증"
+        next_step = "사진 18장을 확인해 주세요."
+    text = (
+        ":camera_with_flash: 2차 등록 완료 · 이름: "
+        f"{_slack_escape(display_name or '-')} · 인증: {method_label}\n"
+        f"{next_step}\n"
+        f"<{admin_link}|관리자 등록 심사 열기>"
+    )
+    await _post_slack(settings, text)
+
+
 async def notify_slack_model_confirmed(
     settings, *, display_name: str, admin_link: str
 ) -> None:

@@ -36,7 +36,7 @@ from psycopg.types.json import Json
 from pydantic import Field, ValidationError, field_validator
 
 from . import admin_guard, cx_identity, facemarket_photo_check, facemarket_photo_normalize, holder_client
-from . import repo
+from . import facemarket_notify, repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_catalog_access import catalog_access
@@ -1096,7 +1096,8 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select e.id::text as enrollment_id, e.status as enrollment_status,
-                      e.match_policy_version, e.review_status, m.id::text as model_id, m.status as model_status,
+                      e.match_policy_version, e.review_status, e.identity_method, m.display_name,
+                      m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       p.r2_key as front_key, p.image_digest as front_digest,
                       p.storage_state as front_storage_state,
@@ -1539,6 +1540,7 @@ async def create_license(
 
     license_id = str(uuid.uuid4())
     row = None
+    created = False
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
         await _reject_cutover_closed(conn)
@@ -1606,6 +1608,7 @@ async def create_license(
                     ),
                 )
                 row = await cur.fetchone()
+            created = row is not None
             if row is None:
                 row = await _find_license_by_enrollment(conn, user_id, enrollment_id)
                 if row is None:
@@ -1653,6 +1656,21 @@ async def create_license(
                 await conn.rollback()
                 raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
         await conn.commit()
+
+    if created:
+        # VC 실패의 HTTPException 응답에는 BackgroundTasks가 이어지지 않는다.
+        # 신규 행 커밋 직후, 발급 시도 전에 보내 실패 경로에서도 한 번만 알린다.
+        try:
+            settings = request.app.state.settings
+            admin_base = settings.fm_application_public_base.replace("facemarket.", "admin.").rstrip("/")
+            await facemarket_notify.notify_slack_enrollment_completed(
+                settings,
+                display_name=evidence.get("display_name"),
+                identity_method=evidence.get("identity_method") or "mid",
+                admin_link=f"{admin_base}/review",
+            )
+        except Exception:
+            logger.warning("enrollment completed slack dispatch failed", exc_info=True)
 
     if not identity_cleared(evidence["review_status"]):
         return _license_card({**row, "unit_price": unit_price, "license_valid_until": valid_until})

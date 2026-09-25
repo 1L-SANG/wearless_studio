@@ -6,6 +6,68 @@ from app import facemarket_notify
 from conftest import make_settings
 
 
+@pytest.mark.parametrize(
+    ("identity_method", "method_label", "next_step"),
+    [
+        ("mid", "모바일 신분증", "사진 18장을 확인해 주세요."),
+        ("simple_auth", "간편인증", "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."),
+    ],
+)
+@pytest.mark.parametrize(
+    ("display_name", "safe_name"),
+    [("<모델&이름>", "&lt;모델&amp;이름&gt;"), ("", "-"), (None, "-"),
+     ("홍", "*"), (" 홍 ", "*")],
+)
+def test_enrollment_completed_slack_body(
+    monkeypatch, identity_method, method_label, next_step, display_name, safe_name
+):
+    sent = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, *, json):
+            sent.append((url, json))
+            return type("Response", (), {"status_code": 200})()
+
+    monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", FakeAsyncClient)
+    settings = make_settings(fm_slack_webhook_url="https://hooks.example/facemarket")
+    asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
+        settings, display_name=display_name, identity_method=identity_method,
+        admin_link="https://admin.wearless.kr/review",
+    ))
+
+    assert sent == [("https://hooks.example/facemarket", {"text": (
+        f":camera_with_flash: 2차 등록 완료 · 이름: {safe_name} · 인증: {method_label}\n"
+        f"{next_step}\n"
+        "<https://admin.wearless.kr/review|관리자 등록 심사 열기>"
+    )})]
+    assert "—" not in sent[0][1]["text"]
+
+
+def test_enrollment_completed_slack_skips_delivery_without_webhook(monkeypatch):
+    clients = []
+
+    class ForbiddenAsyncClient:
+        def __init__(self, **_kwargs):
+            clients.append(True)
+            raise AssertionError("webhook 설정이 없으면 HTTP 클라이언트를 만들면 안 됩니다")
+
+    monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", ForbiddenAsyncClient)
+    asyncio.run(facemarket_notify.notify_slack_enrollment_completed(
+        make_settings(fm_slack_webhook_url=None), display_name="모델",
+        identity_method="mid", admin_link="https://admin.wearless.kr/review",
+    ))
+    assert clients == []
+
+
 def test_license_revoked_slack_skips_delivery_without_webhook(monkeypatch):
     class ForbiddenAsyncClient:
         def __init__(self, **_kwargs):

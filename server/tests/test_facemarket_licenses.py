@@ -10,6 +10,7 @@ DB·R2를 페이크로 대체해 순수 로직만 검증:
 import asyncio
 import contextlib
 import copy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -18,7 +19,7 @@ from psycopg._queries import PostgresQuery
 from psycopg.adapt import Transformer
 
 from app import facemarket, facemarket_photo_check, facemarket_photo_normalize, holder_client
-from app import facemarket_enrollment
+from app import facemarket_enrollment, facemarket_notify
 from types import SimpleNamespace
 
 from app.facemarket import CreateLicenseRequest, LicenseCard, _cover_serving_url, _license_card
@@ -589,6 +590,8 @@ class FakeCursor:
                 "enrollment_id": e["id"],
                 "enrollment_status": e["status"],
                 "review_status": e.get("review_status"),
+                "identity_method": e.get("identity_method", "mid") if "e.identity_method" in s else None,
+                "display_name": (m or {}).get("display_name") if "m.display_name" in s else None,
                 "enrollment_body_type": e.get("body_type"),
                 "model_id": (m or {}).get("id"),
                 "model_status": (m or {}).get("status"),
@@ -1391,6 +1394,189 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
+
+
+@pytest.mark.parametrize(
+    ("identity_method", "review_status", "vc_outcome", "status_code", "next_step"),
+    [
+        ("mid", None, "issued", 201, "사진 18장을 확인해 주세요."),
+        ("mid", None, "delayed", 503, "사진 18장을 확인해 주세요."),
+        ("mid", None, "malformed", 502, "사진 18장을 확인해 주세요."),
+        ("simple_auth", "pending", "unattempted", 201,
+         "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."),
+        ("simple_auth", "approved", "issued", 201,
+         "신원 확인을 승인한 뒤 사진 18장을 확인해 주세요."),
+    ],
+)
+def test_new_license_notifies_once_after_commit_before_vc_even_on_retry(
+    biometric_fm, make_token, holder_stub, monkeypatch,
+    identity_method, review_status, vc_outcome, status_code, next_step,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    store["enrollments"][0].update(identity_method=identity_method, review_status=review_status)
+    store["models"][0].update(display_name="<모델&이름>", email="private@example.com")
+    client.app.state.settings = replace(
+        client.app.state.settings, fm_slack_webhook_url="https://hooks.example/facemarket",
+        fm_application_public_base="https://facemarket.wearless.kr/",
+    )
+    if vc_outcome == "delayed":
+        holder_stub.fail_with_status = 503
+    elif vc_outcome == "malformed":
+        holder_stub.issue_body = {}
+    committed = []
+    sent = []
+    commit = FakeConn.commit
+
+    async def track_commit(conn):
+        await commit(conn)
+        committed.append(copy.deepcopy(conn.store["licenses"]))
+
+    async def capture_slack(_settings, text):
+        assert committed and len(committed[0]) == 1
+        assert committed[0][0]["status"] == "pending"
+        assert holder_stub.calls == []
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(FakeConn, "commit", track_commit)
+    monkeypatch.setattr(facemarket_notify, "_post_slack", capture_slack)
+    responses = [client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    ) for _ in range(2)]
+
+    assert [response.status_code for response in responses] == [status_code, status_code]
+    assert len(store["licenses"]) == 1
+    assert len(sent) == 1
+    method_label = "모바일 신분증" if identity_method == "mid" else "간편인증"
+    assert sent[0].splitlines() == [
+        f":camera_with_flash: 2차 등록 완료 · 이름: &lt;모델&amp;이름&gt; · 인증: {method_label}",
+        next_step,
+        "<https://admin.wearless.kr/review|관리자 등록 심사 열기>",
+    ]
+    for private_value in (ENROLLMENT_ID, MODEL_ID, "user-1", "private@example.com",
+                          store["licenses"][0]["id"], APPROVED_FRONT_KEY):
+        assert private_value not in sent[0]
+    if vc_outcome == "unattempted":
+        assert holder_stub.calls == []
+
+
+@pytest.mark.parametrize("existing_path", [
+    "pending", "active", "conflict_pending", "conflict_active", "locked_active", "locked_pending",
+])
+def test_existing_license_does_not_notify_enrollment_completed(
+    biometric_fm, make_token, holder_stub, monkeypatch, existing_path,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    existing = _seed_pending_license(
+        store, allowed_use=["일반 의류"], digest=APPROVED_FRONT_DIGEST,
+    )
+    if existing_path in {"active", "conflict_active"}:
+        existing.update(status="active", vc_id="vc:existing")
+    if existing_path.startswith("conflict_"):
+        store["hide_existing_license_once"] = True
+    elif existing_path == "locked_active":
+        store["activate_after_pending_snapshot"] = True
+    elif existing_path == "locked_pending":
+        store["skip_locked_license_once"] = True
+    client.app.state.settings = replace(
+        client.app.state.settings, fm_slack_webhook_url="https://hooks.example/facemarket",
+    )
+    sent = []
+
+    async def capture_slack(_settings, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(facemarket_notify, "_post_slack", capture_slack)
+    response = client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == (503 if existing_path == "locked_pending" else 201), response.text
+    assert sent == []
+
+
+@pytest.mark.parametrize("failure", ["rollback", "commit_error"])
+def test_uncommitted_new_license_does_not_notify(
+    biometric_fm, make_token, holder_stub, monkeypatch, failure,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    client.app.state.settings = replace(
+        client.app.state.settings, fm_slack_webhook_url="https://hooks.example/facemarket",
+    )
+    sent = []
+
+    async def capture_slack(_settings, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(facemarket_notify, "_post_slack", capture_slack)
+    if failure == "rollback":
+        store["skip_locked_license_once"] = True
+    else:
+        async def failed_commit(conn):
+            await conn.rollback()
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(FakeConn, "commit", failed_commit)
+        client = TestClient(client.app, raise_server_exceptions=False)
+    response = client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == (503 if failure == "rollback" else 500)
+    assert store["licenses"] == []
+    assert sent == []
+    assert holder_stub.calls == []
+
+
+@pytest.mark.parametrize("identity_method", ["mid", "simple_auth"])
+@pytest.mark.parametrize("slack_result", ["exception", "failed"])
+def test_enrollment_slack_failure_preserves_license_response(
+    biometric_fm, make_token, holder_stub, monkeypatch, identity_method, slack_result,
+):
+    client, store, _ = biometric_fm
+    _seed_license_pending_enrollment(store)
+    store["enrollments"][0].update(
+        identity_method=identity_method, review_status="pending" if identity_method == "simple_auth" else None,
+    )
+    client.app.state.settings = replace(client.app.state.settings, fm_slack_webhook_url=None)
+    monkeypatch.setattr(facemarket.uuid, "uuid4", lambda: "55555555-5555-4555-8555-555555555555")
+    initial_store = copy.deepcopy(store)
+    baseline = client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    )
+    assert baseline.status_code == 201, baseline.text
+    store.clear()
+    store.update(initial_store)
+    client.app.state.settings = replace(
+        client.app.state.settings, fm_slack_webhook_url="https://hooks.example/facemarket",
+    )
+    attempts = []
+
+    async def fail_slack(*args, **kwargs):
+        attempts.append(True)
+        if slack_result == "exception":
+            raise RuntimeError("slack unavailable")
+        return False
+
+    target = "notify_slack_enrollment_completed" if slack_result == "exception" else "_post_slack"
+    monkeypatch.setattr(facemarket_notify, target, fail_slack, raising=False)
+    response = client.post(
+        "/v1/facemarket/licenses", json=valid_license_body(ENROLLMENT_ID),
+        headers=_auth(make_token),
+    )
+
+    assert attempts == [True]
+    assert response.status_code == baseline.status_code
+    assert response.json() == baseline.json()
 
 
 def test_create_license_refuses_front_without_face_before_pending_license(
