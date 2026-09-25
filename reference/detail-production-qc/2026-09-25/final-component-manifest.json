@@ -1,0 +1,237 @@
+{
+  "frozenAt": "2026-09-25T10:58:24.727560+00:00",
+  "policyVersion": "detail-output-qc-v4",
+  "provider": "gpt",
+  "coreModel": "gpt-5.4-2026-03-05",
+  "specialistModel": "gpt-5.4-2026-03-05",
+  "reasoningEffort": "high",
+  "imageDetail": "high",
+  "maxCompletionTokens": 7000,
+  "timeoutSeconds": 90,
+  "maxNewJudgeCalls": 5,
+  "labelsFrozenFromSha256": "07a380e932ded506a92783683eb197a96cfea552324f5959ae53bdc6c844aeca",
+  "priorHeldoutReportSha256": "32e1f48bcd9193235c938fd85acec8f6b920c19a00364c103043e2a6177d0b5f",
+  "coreDiagnosticReportSha256": "c91d9a56ec5549d008381dd064d2f018a4c7e2ccab1712b973c37d16e5a1a98d",
+  "moduleSha256": "ab36ce4a8606d94da33fcee545f47b2db4ffa9954e1cdd6c2c7b9a1eb4eca03a",
+  "promptFileSha256": "52c12bc7e5eab0d6cd692fc314b2e8f9d0dba91e8afb185dd0face794d3c9aa7",
+  "cases": [
+    {
+      "id": "held_3990_wrong_garment",
+      "sku": "coor_3990",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\05.jpg",
+          "sha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\01.jpg",
+          "sha256": "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4013-source-crop.png",
+        "sha256": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Candidate is a real detail crop of DIFFERENT SKU coor_4013, with clearly different garment construction/material/color; not a quality-styled version of the source.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4013_wrong_garment",
+      "sku": "coor_4013",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\06.jpg",
+          "sha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\01.jpg",
+          "sha256": "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4002-source-crop.png",
+        "sha256": "f58e3e85cadf9a7bfe519275f8798864ecd65dc42ff4aec930c0a3a03c93cc4f",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "FAIL",
+      "labelRationale": "Candidate is a real detail crop of DIFFERENT SKU coor_4002, with clearly different garment construction/material/color; not a quality-styled version of the source.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_3990_valid",
+      "sku": "coor_3990",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\05.jpg",
+          "sha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\남성\\상의\\3990_알파카 블렌드 스트라이프 폴로 스웨터 (멜란지그레이)\\원본이미지\\01.jpg",
+          "sha256": "56a452b44e31c1bc4fb05dcef376546dac5419461dbb0efe6aebf4e106868927",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-3990-source-crop.png",
+        "sha256": "bdb67a665fb749bf451d361e635c44cf0b2600eb960ffeb9f635004682bc2599",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "neckline",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "1484e141af603601074a186d742cb449faa646d99aefbba9d5099c89283e4e02",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Exact deterministic crop of this actual professional product-detail source. No generation or added facts. Crop remains a useful partial region.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    },
+    {
+      "id": "held_4013_valid",
+      "sku": "coor_4013",
+      "split": "held_out",
+      "sources": [
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\06.jpg",
+          "sha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+          "mime": "image/jpeg"
+        },
+        {
+          "path": "D:\\wearless_studio\\reference\\coor-detail-pages\\2026-09-07\\상품별\\여성\\하의\\4013_어시메트릭 헴 빈티지 진스 (라이트블루)\\원본이미지\\01.jpg",
+          "sha256": "1512ae90ac5b79bc6eab920826e08133fb33c62c223df43f63d80715a7ddb04d",
+          "mime": "image/jpeg"
+        }
+      ],
+      "candidate": {
+        "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\2026-09-25\\controls\\coor-4013-source-crop.png",
+        "sha256": "f676e456bcc3bbb32541cd1d0ba801232c93cbf603b26e576ca5bc8c652da15b",
+        "mime": "image/png"
+      },
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "c064011cf719659b7c27fa89e96342a004da280942e325927cdb3154cde81e55",
+        "region": {
+          "x": 0.06,
+          "y": 0.1,
+          "w": 0.88,
+          "h": 0.8
+        }
+      },
+      "expected": "PASS",
+      "labelRationale": "Exact deterministic crop of this actual professional product-detail source. No generation or added facts. Crop remains a useful partial region.",
+      "sourceProvenance": "collected_external_coor_official_product_photograph"
+    }
+  ],
+  "additionalDiagnostic": {
+    "id": "pink_actual_seam_complete_diagnosis",
+    "sources": [
+      {
+        "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 레이스 긴팔 - 핑크\\01_52E6F7F3-4F4E-43C6-A789-FE3F154F503F_1_105_c.jpeg",
+        "sha256": "8d1b0b5efddd279c993e0ffe704193c800f37aee86dd1dbc482298bbdafc7c67",
+        "mime": "image/jpeg"
+      },
+      {
+        "path": "D:\\wearless_studio\\reference\\upload_examples\\상의\\여성) 레이스 긴팔 - 핑크\\02_0C4F6230-9551-496B-AB32-EA2CBD078B81_1_105_c.jpeg",
+        "sha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+        "mime": "image/jpeg"
+      }
+    ],
+    "candidate": {
+      "path": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\pipeline-probe-v2\\top_pink_lace_trim\\candidate-2.png",
+      "sha256": "105c1e5d64705b122fdd97fe1c0d2739d3d78a165b34d5661eab3ab76e1175df",
+      "mime": "image/png"
+    },
+    "target": {
+      "kind": "construction",
+      "sourceIndex": 1,
+      "region": {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 1.0,
+        "h": 0.82
+      },
+      "photoUse": "standalone",
+      "standaloneValue": "construction",
+      "visibility": "clear",
+      "rank": 1,
+      "label": "넥라인 및 레이스 리본 디테일",
+      "reason": "물결 배색 파이핑이 들어간 넥라인과 가슴 라인의 레이스 및 미니 리본 봉제 디테일을 한눈에 보여줌",
+      "informationGroup": "upper_bodice_trim",
+      "featurePoints": [
+        "넥라인 물결 배색 마감",
+        "가슴 레이스 밴드 및 리본 장식",
+        "부드러운 슬러브 니트 질감"
+      ],
+      "sourceSlot": "Detail",
+      "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+      "direction": "front",
+      "id": "dt1_443acd1b96f4723c32123637"
+    },
+    "purpose": "Unlabeled specialist diagnostic; source seam independently observed, no forced specialist PASS"
+  },
+  "heldoutSpecialistReuseChecks": {
+    "held_3990_valid": {
+      "completed": true,
+      "sourceHashes": true,
+      "resultHash": true,
+      "targetHash": true,
+      "specialistPromptHash": true,
+      "judgeImageHashes": true,
+      "requestedModel": true,
+      "returnedModel": true
+    },
+    "held_4013_valid": {
+      "completed": true,
+      "sourceHashes": true,
+      "resultHash": true,
+      "targetHash": true,
+      "specialistPromptHash": true,
+      "judgeImageHashes": true,
+      "requestedModel": true,
+      "returnedModel": true
+    }
+  },
+  "interpretation": "Four new core-only calls plus exact-input specialist component replay; not four new full end-to-end evaluations."
+}

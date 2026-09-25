@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "date": "2026-09-25",
+  "type": "labeling_provenance_correction",
+  "incorrectStatements": [
+    "human visual review",
+    "Prior human review",
+    "independent human labels"
+  ],
+  "correctProvenance": {
+    "labelPreparation": "AI agent /root/detail_evidence_cases",
+    "additionalReview": "AI parent /root source/target and producer-diagnostic review",
+    "visualReviewSeparateFromImageProduction": true,
+    "qcAuthorAlsoPreparedLabels": true,
+    "humanLabelerInvolved": false,
+    "caseLevelHumanValidation": false,
+    "userContribution": "Policy preferences, not independent verification of each evaluation label",
+    "controls": "Deterministic actual-source crops as positives and known different-SKU swaps as negatives, with AI visual inspection"
+  },
+  "affectedFrozenArtifacts": [
+    {
+      "file": "manifest.json",
+      "sha256": "07a380e932ded506a92783683eb197a96cfea552324f5959ae53bdc6c844aeca",
+      "frozenHashStillMatches": true
+    },
+    {
+      "file": "manifest-v2.json",
+      "sha256": "514c4494f23b7455382b9ce5286ae32e30c5f5d51a1f4be7fcd8923cd6a341d7",
+      "frozenHashStillMatches": true
+    },
+    {
+      "file": "manifest-v3.json",
+      "sha256": "a702a7abd9dd90a91770b10e10a875d75f49eef95c1d38a99ef9db8ce5b1e7a0",
+      "frozenHashStillMatches": true
+    },
+    {
+      "file": "specialist-manifest.json",
+      "sha256": "dfe6aaff4f44e70003919b2d52d8e8f6091fba3733f98f81b5a3845b3d272848",
+      "frozenHashStillMatches": true
+    }
+  ],
+  "notChanged": [
+    "expected labels",
+    "source/candidate bytes and hashes",
+    "judge prompts/models",
+    "recorded judgments"
+  ],
+  "reason": "Preserve frozen evaluation history and correct its inaccurate attribution in this sidecar."
+}

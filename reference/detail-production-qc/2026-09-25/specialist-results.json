@@ -1,0 +1,141 @@
+{
+  "manifestSha256": "dfe6aaff4f44e70003919b2d52d8e8f6091fba3733f98f81b5a3845b3d272848",
+  "results": [
+    {
+      "id": "cal_pointelle_final",
+      "expected": "PASS",
+      "promptHash": "eac8052d7aff5c6ad1547d5d856b2bd8846d4b019dd669227def1d2c19956bd2",
+      "judgeImageHashes": [
+        "8f2cb36195ed3ded408111ac7e46be065b81eab9c5e12c78298b70846db8c19d",
+        "7a745b8076649ad8386a5a537ab3335ae274702befb87ba756662ea785614364",
+        "04bdb20721d3e8ebd48a0b62d63179ec7f9e7afd2efed18b46ef3a2067523d62",
+        "5144bd06aa2bb569178aaaa7138e102110f31127f6088e304824f6424db5d365",
+        "16bd2c8dfe8e2a19b8ae794db3c1190da625d6d751d0edc3582570e05cad440d",
+        "281d7590bed57de179e86ac84de8354434b8cea05d5e9a2f7e24346430bd88bb",
+        "eef147dbe2d47a5aaaec2d91acb5a61bb1dab65a8499112d3ab7dd3fa0a9568d",
+        "dfcfed79b80abcc65e3374993c36fc5b5b2fe51c5e528a28a70b3a49415e5bf5",
+        "4f75c6e93e7abcf516d2f8edb2b07c9280253b46a911302357a423d73cd640b3",
+        "ce3b78a072b8b5adb29f8cb995840f6efde2ed02122f89be2cd75fece55c653e",
+        "d455fb6568662fdbf2e2155c3cdc07d85a8a4ff0cc53b59ae399c3d82125e567",
+        "c91ccb3f6de70eec0b69337f65fbef74f42ed0640cf94d9a7e455dc421b2e37d"
+      ],
+      "rawJudge": {
+        "gates": [
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "Source 2 full-garment photo shows a white sewn neck label inside the back neckline; Source 1/crop does not show that area. In the complete CANDIDATE the same region is in frame and the white sewn label remains present, but lettering is faint/unreadable in both."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "Source 1 and Source 2 show a hanger/metal hook at the neckline area (Source 2 on a wooden hanger). In the complete CANDIDATE and detail tiles, that temporary hanger/clip artifact is absent; no tag, fastener, hand, or clip remains in the neckline/placket area."
+          }
+        ],
+        "permanentMarkings": {
+          "sourcePresence": "present",
+          "sourceReadability": "unreadable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "unreadable",
+          "textMatch": "not_comparable"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "present",
+          "sourceKind": "hanger_or_clip",
+          "candidatePresence": "absent",
+          "candidateKind": "none"
+        }
+      },
+      "latencySeconds": 32.998,
+      "metadata": {
+        "requested_model": "gpt-5.4-2026-03-05",
+        "returned_model": "gpt-5.4-2026-03-05",
+        "usage": {
+          "prompt_tokens": 8154,
+          "completion_tokens": 2201,
+          "total_tokens": 10355,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1940,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "id": "cal_crochet_sales_tag",
+      "expected": "FAIL",
+      "promptHash": "bb85d5d9f831d929bd40f35037c5375e864000c4b1b197a5450133c667df77f7",
+      "judgeImageHashes": [
+        "a23f407b9da96bebc21eb860f375326eadb653124d4a37225bf86e6bb596fcc2",
+        "83e8ed789309639ad695ae270021da6da6fd089e339c750749cb45e885f5496f",
+        "7a7062f03e7d9dbc6e7bc08657a7b98418c16279a2f53d766c244de5d40c481f",
+        "b5e0b5e88fea7c872e8c24b5239ab14a96e24eba0d5e37a56881ebf6ea069c05",
+        "4783cde5146874ba8dcf5d39f844ecccd7f8af4f405d25e2b0d4adef21b4a0fb",
+        "25956ddbdd5a00de2398843cf6c6bc2f2585c339239cde9a5c6c53501b8eb9a0",
+        "619a0b8dc7f2acff6a77240961f7dc1cc493f7ca031693143dc7280f9b3f823f",
+        "26a9b4c998a2a98e9993e69cbadfa37eecfd966657f2485c6fa4c3190a34df4c",
+        "1909e78703289c1d587f14332ae6142174998db626b6e291ce95d392ea81c941",
+        "5837734e05dca7a7357ee049f557ae612ee841c5d654c5d2ac2a6efa2bd45677",
+        "ab2190343c557be19ebe60e419ba0a810a4881451087094376436aeb2dacc5ae",
+        "dcc5c7875d92fc2fb408d25e8a68511ebec12d2b4bf0569b8578eef2583796f2"
+      ],
+      "rawJudge": {
+        "gates": [
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "Source 1 close view and Source 2 whole-garment view both show a readable sewn back-neck label, \"MORETHAN YESTERDAY\"; in the CANDIDATE the upper back-neck label position is cropped above the visible neckline/collars, so that marked region is out of frame."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "FAIL",
+            "evidence": "Source 1 target crop and Source 2 full view show a temporary hanger/clip element visible through the open front gap (tan wood strip with a small clear/silver connector); the CANDIDATE and its lower/right tiles still show the same object in the gap."
+          }
+        ],
+        "permanentMarkings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "out_of_frame",
+          "candidatePresence": "not_applicable",
+          "candidateReadability": "not_applicable",
+          "textMatch": "not_applicable"
+        },
+        "temporaryArtifacts": {
+          "sourcePresence": "present",
+          "sourceKind": "hanger_or_clip",
+          "candidatePresence": "present",
+          "candidateKind": "hanger_or_clip"
+        }
+      },
+      "latencySeconds": 53.937,
+      "metadata": {
+        "requested_model": "gpt-5.4-2026-03-05",
+        "returned_model": "gpt-5.4-2026-03-05",
+        "usage": {
+          "prompt_tokens": 7733,
+          "completion_tokens": 3589,
+          "total_tokens": 11322,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 3314,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "model": "gpt-5.4-2026-03-05",
+  "cases": [
+    {
+      "id": "pink_actual_seam_core",
+      "sources": [
+        "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/01_52E6F7F3-4F4E-43C6-A789-FE3F154F503F_1_105_c.jpeg",
+        "D:/wearless_studio/reference/upload_examples/상의/여성) 레이스 긴팔 - 핑크/02_0C4F6230-9551-496B-AB32-EA2CBD078B81_1_105_c.jpeg"
+      ],
+      "candidate": "D:\\wearless_studio\\.worktrees\\detail-shot-reliability\\reference\\detail-production-qc\\pipeline-probe-v2\\top_pink_lace_trim\\candidate-2.png",
+      "target": {
+        "kind": "construction",
+        "sourceIndex": 1,
+        "region": {
+          "x": 0.0,
+          "y": 0.0,
+          "w": 1.0,
+          "h": 0.82
+        },
+        "photoUse": "standalone",
+        "standaloneValue": "construction",
+        "visibility": "clear",
+        "rank": 1,
+        "label": "넥라인 및 레이스 리본 디테일",
+        "reason": "물결 배색 파이핑이 들어간 넥라인과 가슴 라인의 레이스 및 미니 리본 봉제 디테일을 한눈에 보여줌",
+        "informationGroup": "upper_bodice_trim",
+        "featurePoints": [
+          "넥라인 물결 배색 마감",
+          "가슴 레이스 밴드 및 리본 장식",
+          "부드러운 슬러브 니트 질감"
+        ],
+        "sourceSlot": "Detail",
+        "sourceSha256": "c1d0a82eff748cadd6a47a2bc10bb2d52d75d05603cc9ef952eb59ef9ffaf5f8",
+        "direction": "front",
+        "id": "dt1_443acd1b96f4723c32123637"
+      },
+      "expectedCore": "PASS",
+      "reason": "Original Detail visibly has the under-label vertical seam; this is not a new construction."
+    },
+    {
+      "id": "full_garment_negative_core",
+      "sources": [
+        "D:\\wearless_studio\\output\\imagegen\\detail-refinement-2026-09-25\\inputs\\outer_taupe_double_button-original-1.png"
+      ],
+      "candidate": "D:\\wearless_studio\\output\\imagegen\\detail-styled-shape-2026-09-25\\outer_taupe_double_button-styled.png",
+      "target": {
+        "kind": "closure",
+        "direction": "front",
+        "sourceIndex": 0,
+        "sourceSha256": "491361c35bad201b545c6a2788629b495b305d54264161055c978bdafdc59fda",
+        "region": {
+          "x": 0.22,
+          "y": 0.22,
+          "w": 0.54,
+          "h": 0.38
+        }
+      },
+      "expectedCore": "FAIL",
+      "reason": "A full garment cannot pass a requested detail crop."
+    }
+  ]
+}

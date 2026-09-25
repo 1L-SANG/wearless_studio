@@ -1,0 +1,27 @@
+{
+  "policyVersion": "detail-output-qc-v4",
+  "ownedPaidJudgeCalls": 19,
+  "generatedImages": 0,
+  "readOnlyModelListRequests": 1,
+  "dedicatedTestsPassed": 61,
+  "dedicatedAndAdapterTestsPassed": 77,
+  "frozenControlComponentMetrics": {
+    "total": 4,
+    "positive": 2,
+    "negative": 2,
+    "falseAccepts": 0,
+    "falseRejects": 0,
+    "unknown": 0
+  },
+  "pinkComponentDiagnostic": "PASS",
+  "freshFullEndToEndRunsInFinalComponentPhase": 0,
+  "newCoreCallsInFinalPhase": 4,
+  "newSpecialistCallsInFinalPhase": 1,
+  "reusedSpecialistResults": 2,
+  "broadProductionAccuracyEstablished": false,
+  "moduleSha256": "ab36ce4a8606d94da33fcee545f47b2db4ffa9954e1cdd6c2c7b9a1eb4eca03a",
+  "promptFileSha256": "52c12bc7e5eab0d6cd692fc314b2e8f9d0dba91e8afb185dd0face794d3c9aa7",
+  "humanLabelValidation": false,
+  "labelingProvenance": "AI visual review separate from image production; QC author also prepared labels; deterministic source-crop/wrong-SKU controls",
+  "provenanceErratum": "provenance-erratum.json"
+}

@@ -1,0 +1,367 @@
+{
+  "manifestSha256": "07a380e932ded506a92783683eb197a96cfea552324f5959ae53bdc6c844aeca",
+  "split": "calibration",
+  "startedAt": "2026-09-25T10:05:06.888509+00:00",
+  "reservedCalls": 4,
+  "results": [
+    {
+      "id": "cal_pointelle_final",
+      "sku": "upload_pointelle_green",
+      "expected": "PASS",
+      "latencySeconds": 10.046,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v1",
+        "passed": false,
+        "decision": "UNKNOWN",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "UNKNOWN",
+            "evidence": "QC could not establish a complete valid judgment."
+          }
+        ],
+        "markings": null,
+        "temporaryArtifacts": null,
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "382c9f1cf2d1a7a296924e907122530331550082eb88999093cab699cebe8eda",
+        "sourceHashes": [
+          "b595418a62aca2f115dfc55171941c94d20ed906a7922095c70f5a1166a90e75",
+          "027d91c08f20189f6176c14b1048701e3c6d83fabb67ab6319c75a36b9fd97d2"
+        ],
+        "sourceHash": "c40661893fe0fad9dc542466a97eb8a7660fbd7e8eb9a25919decc46580e8018",
+        "resultHash": "ca2501af2c8661a7c0d2451989693914f95509330375e6e254c28e0313b65922",
+        "targetHash": "c12b48b369929ad0d5cc7a0ba32b8d2376cfc22e67b8602eb42abafa60fe7c98",
+        "judgeImageHashes": [
+          "8f2cb36195ed3ded408111ac7e46be065b81eab9c5e12c78298b70846db8c19d",
+          "7a745b8076649ad8386a5a537ab3335ae274702befb87ba756662ea785614364",
+          "04bdb20721d3e8ebd48a0b62d63179ec7f9e7afd2efed18b46ef3a2067523d62",
+          "dfcfed79b80abcc65e3374993c36fc5b5b2fe51c5e528a28a70b3a49415e5bf5"
+        ],
+        "errorCode": "judge_unavailable_or_invalid",
+        "usage": {
+          "promptTokenCount": 5710,
+          "candidatesTokenCount": 371,
+          "totalTokenCount": 6081,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4297
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 1413
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    },
+    {
+      "id": "cal_crochet_sales_tag",
+      "sku": "upload_crochet_ivory_red",
+      "expected": "FAIL",
+      "latencySeconds": 11.25,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v1",
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Candidate provides a detailed front view of the closure and collar, matching the requested target crop region without showing a person."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Crochet motif, collar shape, contrasting red placket trim, and crocheted button styles all match the source design."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Cream and red colors are preserved. The chunky crochet texture and material behavior match the source."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "The source label is out of frame in the target crop and the candidate."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "No temporary artifacts such as tags or clips are present in the candidate image."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "The image is a clean, well-lit, and in-focus fashion detail shot with natural depth and coherence."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "out_of_frame",
+          "candidatePresence": "not_applicable",
+          "candidateReadability": "not_applicable",
+          "textMatch": "not_applicable"
+        },
+        "temporaryArtifacts": {
+          "candidatePresence": "absent",
+          "kind": "none"
+        },
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "aadcfc431662f8f9fb0d5f1ec391d037aff1699fd7923001fa912d84dd666ea4",
+        "sourceHashes": [
+          "1d6cf80e7539ec6ba5ca7774e14fb08aa30f345b70a6b4fb520843b4950ae28c",
+          "85c6fe478ad2e2bb55c97e14d2e5a0191f3849aa08aa7d4e1ed08870094289d2"
+        ],
+        "sourceHash": "08a614f33d7bd66e8d2b45645ef7743f6a154491c7fecc86bac028bae8b0dbf0",
+        "resultHash": "6654701d728fddc1f4eeaac470f6e036371d3cbaa103c806bda9b01b26c47bed",
+        "targetHash": "d10504cfab1872a08ad59f42fdcdc85ed2b141b79873fa7640255b6a84dc1805",
+        "judgeImageHashes": [
+          "a23f407b9da96bebc21eb860f375326eadb653124d4a37225bf86e6bb596fcc2",
+          "83e8ed789309639ad695ae270021da6da6fd089e339c750749cb45e885f5496f",
+          "7a7062f03e7d9dbc6e7bc08657a7b98418c16279a2f53d766c244de5d40c481f",
+          "26a9b4c998a2a98e9993e69cbadfa37eecfd966657f2485c6fa4c3190a34df4c"
+        ],
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5704,
+          "candidatesTokenCount": 414,
+          "totalTokenCount": 6118,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1416
+            },
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4288
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    },
+    {
+      "id": "cal_outer_full_garment",
+      "sku": "upload_taupe_outer",
+      "expected": "FAIL",
+      "latencySeconds": 9.504,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v1",
+        "passed": false,
+        "decision": "FAIL",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "FAIL",
+            "evidence": "Candidate shows the full garment including sleeves and hem as an overview, failing the detail crop requirement."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Overall double-breasted button layout, neckline shape, and seam placement remain consistent with the source."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "The beige color and matte, smooth fabric appearance are consistent with the source."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "The neck label is preserved in the correct location and the text matches the source."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "No temporary artifacts like sales tags, hangers, or hands are visible."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "The image is a clean, well-lit studio overview shot."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "candidatePresence": "absent",
+          "kind": "none"
+        },
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "fb78f3508633980d9df9fc950d11f68ec665c061fdfe0f754c0d659543f8cf88",
+        "sourceHashes": [
+          "491361c35bad201b545c6a2788629b495b305d54264161055c978bdafdc59fda"
+        ],
+        "sourceHash": "349f8a5f1427a87e2ae3031ffc791234ffe8ae68c8558db4165c38fd31751181",
+        "resultHash": "ec845d55c9d9dd4dbd7b96548cee4e2751ba5aa1e9e57eb69851731e0c76bb1f",
+        "targetHash": "df983a4207531d43e30cc6ddaaac79601d10ce286375e1f4ae10dbff59686b70",
+        "judgeImageHashes": [
+          "903247a6c7c4f9aabd72e0838a7802c84072261500233077a208b53e5e9166ea",
+          "b5f638457a85c8e5caacafacb3a6a7e022f3b8eb826380a35ee22ac812bbb404",
+          "28401c8ed0e7f3bebba1a04d33d79b62c945e3cb864daa5ebdd9ed76688cd897"
+        ],
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 4636,
+          "candidatesTokenCount": 385,
+          "totalTokenCount": 5021,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1404
+            },
+            {
+              "modality": "IMAGE",
+              "tokenCount": 3232
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    },
+    {
+      "id": "cal_shirt_prepared",
+      "sku": "upload_paprika_stripe_shirt",
+      "expected": "PASS",
+      "latencySeconds": 8.739,
+      "verdict": {
+        "version": 1,
+        "policyVersion": "detail-output-qc-v1",
+        "passed": true,
+        "decision": "PASS",
+        "gates": [
+          {
+            "code": "targetFraming",
+            "status": "PASS",
+            "evidence": "Candidate provides a well-framed neckline detail crop as requested."
+          },
+          {
+            "code": "constructionDesign",
+            "status": "PASS",
+            "evidence": "Collar, placket, and button details match the source garment structure."
+          },
+          {
+            "code": "colorMaterial",
+            "status": "PASS",
+            "evidence": "Stripe pattern, colors, and fabric texture are consistent with the source."
+          },
+          {
+            "code": "permanentMarkings",
+            "status": "PASS",
+            "evidence": "The 'paprika' neck label is preserved and accurately rendered."
+          },
+          {
+            "code": "temporaryArtifacts",
+            "status": "PASS",
+            "evidence": "No temporary artifacts are visible in the candidate."
+          },
+          {
+            "code": "photographicPreparation",
+            "status": "PASS",
+            "evidence": "Lighting, focus, and fabric presentation are clean and professional."
+          }
+        ],
+        "markings": {
+          "sourcePresence": "present",
+          "sourceReadability": "readable",
+          "candidateRegion": "in_frame",
+          "candidatePresence": "present",
+          "candidateReadability": "readable",
+          "textMatch": "match"
+        },
+        "temporaryArtifacts": {
+          "candidatePresence": "absent",
+          "kind": "none"
+        },
+        "provider": "gemini",
+        "requestedModel": "gemini-3.1-pro-preview",
+        "returnedModel": "gemini-3.1-pro-preview",
+        "promptHash": "cec14b0c848a65078de735f4970053ba899693f283a945e222e970ccacdf21e4",
+        "sourceHashes": [
+          "16221d82aff5d3bfaa72e801e481f53c90140558c1d1af9e3b89dbf0fad59ee3",
+          "f4ac5f2b8e2e83619d8a6c43c517068c5bed9703171dcd5cf5e1611c15fc6b7f"
+        ],
+        "sourceHash": "9ea623fecf6614afce6547c985e4000a017c84e773fdb16a103d139de000fbc1",
+        "resultHash": "b2ab6bb70172f723c501ecb25ecde289d8915303e4f0a6f6dc89e642a2d82a7e",
+        "targetHash": "4b25d7b2dee5457e25bc712fa07ff1438cf149958e5a25da99cb3d2747d83f4e",
+        "judgeImageHashes": [
+          "8b47c159f61621d30fc449c69659e866bf39707e4e736722222c8caf67f815b7",
+          "8262022c48bd537f8d2a1e1c6a92ded6218282d9c9aa53919a02a366137e262b",
+          "f6e3565197478709d0361b0849e40957de6d9680f6725259f43a96eafc3bb816",
+          "edd2e2de47990a884f3ca5e1143e38b8c919170fdf3d2fae7a18b3f1ecc0ac87"
+        ],
+        "errorCode": null,
+        "usage": {
+          "promptTokenCount": 5693,
+          "candidatesTokenCount": 364,
+          "totalTokenCount": 6057,
+          "promptTokensDetails": [
+            {
+              "modality": "IMAGE",
+              "tokenCount": 4274
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 1419
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "total": 4,
+    "positive": 2,
+    "negative": 2,
+    "falseAccepts": 1,
+    "falseRejects": 0,
+    "unknown": 1,
+    "correctPass": 1,
+    "correctFail": 1
+  },
+  "completedAt": "2026-09-25T10:05:46.576326+00:00"
+}
