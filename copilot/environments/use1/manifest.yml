@@ -19,6 +19,34 @@ http:
       # 서울 인증서(c878a5bb)는 ap-northeast-2 전용이라 여기 쓸 수 없다. 검증 CNAME 은
       # 두 인증서가 같은 이름/값을 공유해 Cloudflare 에 이미 있던 레코드로 즉시 ISSUED 됐다.
       - arn:aws:acm:us-east-1:439328746001:certificate/8120f0ff-bb02-4348-b1de-92ede7939d14
+    # 원본 잠금(2026-09-15): api.wearless.kr 은 Cloudflare 프록시(오렌지 클라우드) 뒤에 두고,
+    # ALB 보안그룹(80·443)은 Cloudflare 엣지 대역만 받는다. 0.0.0.0/0 이면 ALB IP 로 직접
+    # 붙어 Cloudflare 의 DDoS 방어·WAF 를 그대로 우회한다.
+    #
+    # ⚠️ 순서: Cloudflare 프록시를 **먼저** 켜고 DNS TTL(300s)이 충분히 지난 뒤 env deploy 한다.
+    # 반대로 하면 아직 ALB 로 직접 오는 방문자가 전부 막힌다. 되돌릴 때도 이 블록을 먼저 빼고
+    # env deploy 한 다음에 프록시를 끈다. CI 는 env deploy 를 하지 않는다 — 머지만으로는 안 잠긴다.
+    #   AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1 --diff
+    #
+    # 목록 출처 https://www.cloudflare.com/ips-v4 (2026-09-15). server/app/client_ip.py 의
+    # CLOUDFLARE_IPV4_RANGES 와 같아야 한다(tests/test_client_ip.py). ALB 는 IPv4 전용이다.
+    ingress:
+      source_ips:
+        - 173.245.48.0/20
+        - 103.21.244.0/22
+        - 103.22.200.0/22
+        - 103.31.4.0/22
+        - 141.101.64.0/18
+        - 108.162.192.0/18
+        - 190.93.240.0/20
+        - 188.114.96.0/20
+        - 197.234.240.0/22
+        - 198.41.128.0/17
+        - 162.158.0.0/15
+        - 104.16.0.0/13
+        - 104.24.0.0/14
+        - 172.64.0.0/13
+        - 131.0.72.0/22
 
 # Configure observability for your environment resources.
 observability:
