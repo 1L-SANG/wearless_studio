@@ -10,9 +10,11 @@ import re
 import threading
 import types
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+import anyio
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -2249,6 +2251,237 @@ def assert_completion_failure(response, store, reason, *, retryable):
     assert all(photo["storage_state"] != "quarantine" for photo in store.photos)
     assert "score" not in response.text.lower()
     assert "private/" not in response.text
+
+
+@pytest.mark.parametrize("failed_index", [None, 0])
+def test_complete_downloads_are_bounded_ordered_and_wiped(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    completion_fakes, monkeypatch, failed_index,
+):
+    slots = facemarket_photos.PHOTO_SLOTS
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings,
+        fm_photo_slots=slots, fm_required_slot_count=len(slots),
+        fm_liveness_enabled=False, fm_face_match_enabled=False,
+    )
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition, slots=slots,
+    )
+    enrollment_store.enrollments[0]["consent_version"] = "2026-09-v4"
+    # Exercise an 18-photo input independently of consent-based slot selection.
+    monkeypatch.setattr(facemarket_enrollment, "_required_photo_slots", lambda *_args: slots)
+    indexes = {f"private/{slot}.jpg": index for index, slot in enumerate(slots)}
+    barriers = [threading.Barrier(6) for _ in range(3)]
+    finished = [threading.Event() for _ in slots]
+    lock = threading.Lock()
+    active = peak = 0
+    returned = []
+    original_get = fake_r2.get_bytes
+
+    def reverse_download(key):
+        nonlocal active, peak
+        index = indexes[key]
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            barriers[index // 6].wait(timeout=3)
+            if index % 6 != 5:
+                assert finished[index + 1].wait(timeout=3)
+            if index == failed_index:
+                raise OSError("local download failure")
+            returned.append(index)
+            return original_get(key)
+        finally:
+            with lock:
+                active -= 1
+            finished[index].set()
+
+    seen_items = []
+    wiped = []
+    original_refset = facemarket_enrollment.refset_agreement
+    original_wipe = cx_identity.wipe_bytearray
+
+    def record_refset(settings, items):
+        seen_items.extend((angle, bytes(buffer)) for angle, buffer in items)
+        return original_refset(settings, items)
+
+    def record_wipe(buffer):
+        if buffer:
+            wiped.append((bytes(buffer), buffer))
+        original_wipe(buffer)
+
+    monkeypatch.setattr(fake_r2, "get_bytes", reverse_download)
+    monkeypatch.setattr(facemarket_enrollment, "refset_agreement", record_refset)
+    monkeypatch.setattr(cx_identity, "wipe_bytearray", record_wipe)
+
+    async def run_completion():
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=12))
+        return await facemarket_enrollment.process_enrollment_completion(
+            types.SimpleNamespace(app=enrollment_client.app),
+            enrollment_id=eid, user_id="user-1", session_id=None,
+        )
+
+    decision = asyncio.run(run_completion())
+
+    assert peak == 6
+    assert active == 0
+    expected = [(slot, f"{slot}-bytes".encode()) for slot in slots]
+    assert [raw for raw, _ in wiped] == [
+        raw for index, (_, raw) in enumerate(expected) if index != failed_index
+    ]
+    assert all(not any(buffer) for _, buffer in wiped)
+    assert returned[:5] == [5, 4, 3, 2, 1]
+    if failed_index is None:
+        assert decision.passed is True
+        assert decision.status == "asset_building"
+        assert seen_items == expected
+    else:
+        assert decision.reason == "id_portrait_unavailable"
+        assert decision.passed is False
+        assert seen_items == []
+        assert enrollment_store.jobs == []
+
+
+@pytest.mark.parametrize("liveness_enabled", [False, True])
+def test_complete_matches_sequentially_on_one_worker_thread(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    completion_fakes, monkeypatch, liveness_enabled,
+):
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings, fm_liveness_enabled=liveness_enabled,
+    )
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    )
+    qc = completion_fakes["face_qc"]
+    original_similarity = qc.one_to_one_similarity
+    worker_threads = []
+    loop_threads = []
+    original_checks = facemarket_enrollment._assert_account_open
+
+    async def record_loop_thread(*args, **kwargs):
+        loop_threads.append(threading.get_ident())
+        return await original_checks(*args, **kwargs)
+
+    def record_match_thread(reference, candidate):
+        worker_threads.append(threading.get_ident())
+        return original_similarity(reference, candidate)
+
+    monkeypatch.setattr(facemarket_enrollment, "_assert_account_open", record_loop_thread)
+    monkeypatch.setattr(qc, "one_to_one_similarity", record_match_thread)
+    response = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+
+    assert response.status_code == 202, response.text
+    anchor = "live" if liveness_enabled else "id"
+    assert qc.calls == (
+        ([("id", "live")] if liveness_enabled else [])
+        + [("front", anchor), ("angle45", anchor), ("side", anchor)]
+    )
+    assert len(set(worker_threads)) == 1
+    assert worker_threads[0] != loop_threads[0]
+
+
+@pytest.mark.parametrize("stage", ["download", "match"])
+@pytest.mark.parametrize("scope_cancel", [False, True])
+def test_complete_cancellation_waits_for_workers_before_wiping(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    completion_fakes, monkeypatch, stage, scope_cancel,
+):
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings, fm_liveness_enabled=False,
+    )
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    )
+    allow_finish = threading.Event()
+    completed = []
+    wiped = []
+    original_wipe = cx_identity.wipe_bytearray
+
+    def record_wipe(buffer):
+        wiped.append(bytes(buffer))
+        original_wipe(buffer)
+
+    monkeypatch.setattr(cx_identity, "wipe_bytearray", record_wipe)
+
+    async def run_and_cancel():
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        qc = completion_fakes["face_qc"]
+        target, name = (fake_r2, "get_bytes") if stage == "download" else (qc, "one_to_one_similarity")
+        original = getattr(target, name)
+
+        def blocking_work(*args):
+            loop.call_soon_threadsafe(started.set)
+            assert allow_finish.wait(timeout=3)
+            if stage == "match":
+                assert all(any(buffer) for buffer in args)
+            completed.append(args)
+            return original(*args)
+
+        monkeypatch.setattr(target, name, blocking_work)
+        finished = asyncio.Event()
+
+        async def complete():
+            try:
+                await facemarket_enrollment.process_enrollment_completion(
+                    types.SimpleNamespace(app=enrollment_client.app),
+                    enrollment_id=eid, user_id="user-1", session_id=None, id_photo_hex=PORTRAIT_HEX,
+                )
+            finally:
+                finished.set()
+
+        async def assert_still_running():
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not finished.is_set()
+            assert wiped == []
+
+        if scope_cancel:
+            async with anyio.create_task_group() as group:
+                group.start_soon(complete)
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=5)
+                    group.cancel_scope.cancel()
+                    with anyio.CancelScope(shield=True):
+                        await assert_still_running()
+                finally:
+                    allow_finish.set()
+        else:
+            task = asyncio.create_task(complete())
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                task.cancel()
+                await assert_still_running()
+            finally:
+                allow_finish.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    asyncio.run(run_and_cancel())
+    assert len(completed) == 3
+    assert wiped == [PORTRAIT_JPEG_BYTES, b"front-bytes", b"angle45-bytes", b"side-bytes"]
+
+
+@pytest.mark.parametrize("face_match_enabled", [False, True])
+def test_complete_logs_stage_timings(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    completion_fakes, caplog, face_match_enabled,
+):
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings, fm_face_match_enabled=face_match_enabled,
+    )
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition,
+    )
+    with caplog.at_level("INFO", logger=facemarket_enrollment.__name__):
+        response = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+
+    assert response.status_code == 202, response.text
+    for stage in ("download", "refset", "match"):
+        values = re.findall(rf"fm_complete_timing enrollment={eid} {stage}_ms=(\d+) photos=3", caplog.text)
+        assert len(values) == 1, caplog.text
 
 
 def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(

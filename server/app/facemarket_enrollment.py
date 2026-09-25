@@ -8,10 +8,12 @@ import json
 import logging
 import math
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+import anyio
 import boto3
 from botocore.config import Config
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -3169,6 +3171,96 @@ async def _initial_completion_checks(
     return row, photos
 
 
+def _completion_match_snapshot(
+    settings: Settings, *, method: str, portrait, liveness,
+    photo_items: list[tuple[str, bytearray]],
+) -> dict:
+    """Run all completion face comparisons sequentially in one worker thread."""
+    qc = load_face_qc(settings, required=True)
+    # 매칭 앵커: 라이브니스 on 이면 라이브 프레임, off 면 신분증 초상.
+    #  - on: 신분증 초상 ↔ 라이브(신원 앵커, 차단) + 업로드 사진 ↔ 라이브(스왑 방지).
+    #  - off: 업로드 사진 ↔ 신분증 초상. 신분증 초상이 앵커 = OACX 모바일신분증(실시간 폰
+    #    인증)으로 실명검증된 본인. id↔live 는 라이브 프레임이 없으니 생략(신분증이 곧 앵커).
+    match_anchor = liveness.reference_image if settings.fm_liveness_enabled else portrait
+    if settings.fm_liveness_enabled:
+        # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
+        id_live_score = qc.one_to_one_similarity(portrait, match_anchor)
+        # score 는 float 이거나 None(검출 실패), %s 로 로깅해 None 도 안전하게 찍고,
+        # None 판정(fail-closed)은 _assert_match 가 face_match_failed 로 처리한다.
+        logger.info(
+            "fm_match_id_live score=%s threshold=%.4f",
+            id_live_score, settings.fm_id_live_threshold,
+        )
+        _assert_match(id_live_score, settings.fm_id_live_threshold)
+    # 업로드 사진 ↔ 앵커: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
+    # 신뢰성 있게 다루지 못한다, 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
+    # 잡히는 사진만 매칭해 "모델 사진 = 검증된 본인"을 확인하고, 검출 불가한 각도
+    # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다.
+    #
+    # 경로 M(mid): 앵커가 정부 서명 VC 초상이다, 임계 미달은 "본인이 아니다"라는
+    # 신뢰할 수 있는 신호라 지금처럼 즉시 차단한다(enforce). 검출된 사진은 모두
+    # 매칭돼야 하고 최소 1장은 매칭돼야 한다(스왑 방지). **불변**.
+    # 경로 S(simple_auth): 앵커가 사용자가 손에 들고 촬영한 신분증이다, 위조 가능해서
+    # 점수가 높아도 진짜라는 보장이 안 되고, 촬영 각도·조명·코팅 반사 때문에 낮아도
+    # 본인이 아니라는 보장이 안 된다. 기계가 어느 방향으로도 신뢰 판정을 못 내리므로
+    # 점수는 기록만 하고(advisory) 사람이 심사한다. 예외: 세 각도 전부 얼굴 미검출이면
+    # 심사할 근거 자체가 없으므로 그때는 막는다(재촬영 유도).
+    advisory = method == "simple_auth"
+    scores: dict[str, float] = {}
+    below: list[str] = []
+    skipped: list[str] = []
+    matched_any = False
+    for _angle, buffer in photo_items:
+        try:
+            score = qc.one_to_one_similarity(buffer, match_anchor)
+        except QcFailed as exc:
+            if exc.reason == "no_face_detected":
+                skipped.append(_angle)  # 정면 검출기가 못 잡는 각도, 매칭 대상 아님
+                continue
+            # (MINOR4) reason 이 "no_face_detected" 가 아닌 QcFailed(예:
+            # embedding_invalid)는 advisory 라도 완료 전체를 중단시킨다, 브리프의
+            # 차단 예외("세 각도 전부 미검출")보다 넓지만, mid 의 기존 동작과 같은
+            # 선이라 의도적으로 바꾸지 않는다. 다음 사람이 놓친 게 아니라 알고
+            # 있다는 것만 남긴다.
+            raise
+        threshold = match_threshold_for_angle(settings, _angle)
+        logger.info(
+            "fm_match_photo_anchor angle=%s score=%s threshold=%.4f advisory=%s",
+            _angle, score, threshold, advisory,
+        )
+        if _is_below_threshold(score, threshold):
+            below.append(_angle)
+            if not advisory:
+                _assert_match(score, threshold)
+        else:
+            matched_any = True
+        numeric_score = _coerce_match_score(score)
+        if numeric_score is not None:
+            scores[_angle] = numeric_score
+    if not advisory and not matched_any:
+        raise EnrollmentMappedError("face_match_failed")
+    if advisory and not scores:
+        # 세 각도 전부 얼굴 미검출(혹은 무효 점수) = 심사할 근거가 없다.
+        raise EnrollmentMappedError("face_match_failed")
+    return {
+        # raw 코사인을 그대로 저장한다. 백분율 변환은 표시층에서만 한다, 임계
+        # 재캘리브·사후 분석이 원본을 요구하고, 표시 형식이 바뀐다고 저장 값이
+        # 흔들리면 안 된다.
+        "policyVersion": settings.fm_match_policy_version,
+        "anchor": "id_document_crop" if advisory else "oacx_portrait",
+        # 실제로 매칭을 시도한 각도만 적는다, 슬롯 구성이 3각도에서 18장으로
+        # 바뀌었으므로(main) 상수 목록을 박아 두면 스냅샷이 거짓이 된다.
+        "thresholds": {
+            angle: match_threshold_for_angle(settings, angle)
+            for angle, _ in photo_items
+        },
+        "scores": scores,
+        "belowThreshold": below,
+        "skipped": skipped,
+        "computedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def process_enrollment_completion(
     request: Request,
     *,
@@ -3256,103 +3348,68 @@ async def process_enrollment_completion(
 
         r2 = _r2_face(request)
         photo_items: list[tuple[str, bytearray]] = []  # (angle, buffer)
-        for photo in photos:
+        photo_buffers.extend(bytearray() for _ in photos)
+        download_limit = asyncio.Semaphore(6)
+
+        async def download_photo(index, photo):
+            async with download_limit:
+                buffer = photo_buffers[index]
+                try:
+                    buffer.extend(await asyncio.to_thread(r2.get_bytes, photo["r2_key"]))
+                except Exception:
+                    raise EnrollmentMappedError("id_portrait_unavailable") from None
+                return photo["angle"], buffer
+
+        download_started = time.perf_counter()
+        try:
+            downloads = asyncio.gather(
+                *(download_photo(index, photo) for index, photo in enumerate(photos)),
+                return_exceptions=True,
+            )
             try:
-                buffer = bytearray(await asyncio.to_thread(r2.get_bytes, photo["r2_key"]))
-            except Exception:
-                raise EnrollmentMappedError("id_portrait_unavailable") from None
-            photo_items.append((photo["angle"], buffer))
-            photo_buffers.append(buffer)  # 아래 finally 에서 일괄 wipe
+                downloaded = await asyncio.shield(downloads)
+            except asyncio.CancelledError:
+                # Starlette may cancel at every await while the request scope exits.
+                with anyio.CancelScope(shield=True):
+                    await downloads
+                raise
+            # Settle every download before raising, so finally can wipe all buffers.
+            for item in downloaded:
+                if isinstance(item, BaseException):
+                    raise item
+                photo_items.append(item)
+        finally:
+            logger.info(
+                "fm_complete_timing enrollment=%s download_ms=%d photos=%d",
+                enrollment_id, int((time.perf_counter() - download_started) * 1000), len(photos),
+            )
 
         # 기준 3장끼리의 합의도 — 기록만 한다(막지 않는다). 기록은 아래에서 행을 잠근 뒤에 쓴다.
-        refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
+        refset_started = time.perf_counter()
+        try:
+            refset = await asyncio.to_thread(refset_agreement, settings, photo_items)
+        finally:
+            logger.info(
+                "fm_complete_timing enrollment=%s refset_ms=%d photos=%d",
+                enrollment_id, int((time.perf_counter() - refset_started) * 1000), len(photos),
+            )
         logger.info("fm_refset_agreement enrollment=%s %s", enrollment_id, refset)
 
+        match_started = time.perf_counter()
         if settings.fm_face_match_enabled:
           try:
-            qc = load_face_qc(settings, required=True)
-            # 매칭 앵커: 라이브니스 on 이면 라이브 프레임, off 면 신분증 초상.
-            #  - on: 신분증 초상 ↔ 라이브(신원 앵커, 차단) + 업로드 사진 ↔ 라이브(스왑 방지).
-            #  - off: 업로드 사진 ↔ 신분증 초상. 신분증 초상이 앵커 = OACX 모바일신분증(실시간 폰
-            #    인증)으로 실명검증된 본인. id↔live 는 라이브 프레임이 없으니 생략(신분증이 곧 앵커).
-            match_anchor = liveness.reference_image if settings.fm_liveness_enabled else portrait
-            if settings.fm_liveness_enabled:
-                # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
-                id_live_score = qc.one_to_one_similarity(portrait, match_anchor)
-                # score 는 float 이거나 None(검출 실패) — %s 로 로깅해 None 도 안전하게 찍고,
-                # None 판정(fail-closed)은 _assert_match 가 face_match_failed 로 처리한다.
-                logger.info(
-                    "fm_match_id_live score=%s threshold=%.4f",
-                    id_live_score, settings.fm_id_live_threshold,
-                )
-                _assert_match(id_live_score, settings.fm_id_live_threshold)
-            # 업로드 사진 ↔ 앵커: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
-            # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
-            # 잡히는 사진만 매칭해 "모델 사진 = 검증된 본인"을 확인하고, 검출 불가한 각도
-            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다.
-            #
-            # 경로 M(mid): 앵커가 정부 서명 VC 초상이다 — 임계 미달은 "본인이 아니다"라는
-            # 신뢰할 수 있는 신호라 지금처럼 즉시 차단한다(enforce). 검출된 사진은 모두
-            # 매칭돼야 하고 최소 1장은 매칭돼야 한다(스왑 방지). **불변**.
-            # 경로 S(simple_auth): 앵커가 사용자가 손에 들고 촬영한 신분증이다 — 위조 가능해서
-            # 점수가 높아도 진짜라는 보장이 안 되고, 촬영 각도·조명·코팅 반사 때문에 낮아도
-            # 본인이 아니라는 보장이 안 된다. 기계가 어느 방향으로도 신뢰 판정을 못 내리므로
-            # 점수는 기록만 하고(advisory) 사람이 심사한다. 예외: 세 각도 전부 얼굴 미검출이면
-            # 심사할 근거 자체가 없으므로 그때는 막는다(재촬영 유도).
-            advisory = method == "simple_auth"
-            scores: dict[str, float] = {}
-            below: list[str] = []
-            skipped: list[str] = []
-            matched_any = False
-            for _angle, buffer in photo_items:
-                try:
-                    score = qc.one_to_one_similarity(buffer, match_anchor)
-                except QcFailed as exc:
-                    if exc.reason == "no_face_detected":
-                        skipped.append(_angle)  # 정면 검출기가 못 잡는 각도 — 매칭 대상 아님
-                        continue
-                    # (MINOR4) reason 이 "no_face_detected" 가 아닌 QcFailed(예:
-                    # embedding_invalid)는 advisory 라도 완료 전체를 중단시킨다 — 브리프의
-                    # 차단 예외("세 각도 전부 미검출")보다 넓지만, mid 의 기존 동작과 같은
-                    # 선이라 의도적으로 바꾸지 않는다. 다음 사람이 놓친 게 아니라 알고
-                    # 있다는 것만 남긴다.
-                    raise
-                threshold = match_threshold_for_angle(settings, _angle)
-                logger.info(
-                    "fm_match_photo_anchor angle=%s score=%s threshold=%.4f advisory=%s",
-                    _angle, score, threshold, advisory,
-                )
-                if _is_below_threshold(score, threshold):
-                    below.append(_angle)
-                    if not advisory:
-                        _assert_match(score, threshold)
-                else:
-                    matched_any = True
-                numeric_score = _coerce_match_score(score)
-                if numeric_score is not None:
-                    scores[_angle] = numeric_score
-            if not advisory and not matched_any:
-                raise EnrollmentMappedError("face_match_failed")
-            if advisory and not scores:
-                # 세 각도 전부 얼굴 미검출(혹은 무효 점수) = 심사할 근거가 없다.
-                raise EnrollmentMappedError("face_match_failed")
-            match_snapshot = {
-                # raw 코사인을 그대로 저장한다. 백분율 변환은 표시층에서만 한다 — 임계
-                # 재캘리브·사후 분석이 원본을 요구하고, 표시 형식이 바뀐다고 저장 값이
-                # 흔들리면 안 된다.
-                "policyVersion": settings.fm_match_policy_version,
-                "anchor": "id_document_crop" if advisory else "oacx_portrait",
-                # 실제로 매칭을 시도한 각도만 적는다 — 슬롯 구성이 3각도에서 18장으로
-                # 바뀌었으므로(main) 상수 목록을 박아 두면 스냅샷이 거짓이 된다.
-                "thresholds": {
-                    angle: match_threshold_for_angle(settings, angle)
-                    for angle, _ in photo_items
-                },
-                "scores": scores,
-                "belowThreshold": below,
-                "skipped": skipped,
-                "computedAt": datetime.now(timezone.utc).isoformat(),
-            }
+            match_task = asyncio.create_task(asyncio.to_thread(
+                _completion_match_snapshot,
+                settings, method=method, portrait=portrait, liveness=liveness,
+                photo_items=photo_items,
+            ))
+            try:
+                match_snapshot = await asyncio.shield(match_task)
+            except asyncio.CancelledError:
+                # A worker cannot be stopped; let it finish before wiping its inputs.
+                with anyio.CancelScope(shield=True):
+                    await asyncio.gather(match_task, return_exceptions=True)
+                raise
           except EnrollmentMappedError:
               raise
           except QcFailed as exc:
@@ -3360,6 +3417,16 @@ async def process_enrollment_completion(
               raise EnrollmentMappedError(reason) from None
           except Exception:
               raise EnrollmentMappedError("qc_unavailable") from None
+          finally:
+              logger.info(
+                  "fm_complete_timing enrollment=%s match_ms=%d photos=%d",
+                  enrollment_id, int((time.perf_counter() - match_started) * 1000), len(photos),
+              )
+        else:
+            logger.info(
+                "fm_complete_timing enrollment=%s match_ms=%d photos=%d",
+                enrollment_id, 0, len(photos),
+            )
 
         match_required_review = review_required(settings, method)
 
