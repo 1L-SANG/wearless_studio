@@ -27,6 +27,9 @@ import { BankTransferModal } from './BankTransferModal.jsx';
 import { CopyButton, PIcon, num, seoulShort, won } from './bankTransferParts.jsx';
 import s from './Pricing.module.css';
 
+// 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 수정 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
+const STANDARD_PAGE_CREDITS = 254;
+
 // 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.
 const perCredit = (p) => (Number(p.price) / Number(p.credits)).toFixed(1);
 
@@ -298,6 +301,7 @@ export function Pricing() {
                     </span>
                     <span className={s.creditUnit}>크레딧</span>
                   </div>
+                  <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / STANDARD_PAGE_CREDITS)}개</strong></p>
                 </div>
                 {details && <ul className={s.features}>
                   {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
@@ -356,6 +360,14 @@ export function Pricing() {
             );
           })}
         </div>
+      )}
+
+      {ready && subs.length > 0 && (
+        <p className={s.usageNote}>
+          상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 <span className={s.noWrap}>약&nbsp;250크레딧이</span> 소모됩니다.
+          <br />
+          컷수에 따라 소모되는 비용은 상이합니다.
+        </p>
       )}
 
       {/* 크레딧 충전 — 구독 카드보다 한 단계 가벼운 가로형 카드 두 장(구독이 주인공, 충전은 보조). */}
