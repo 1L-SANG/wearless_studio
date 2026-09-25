@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from psycopg._queries import PostgresQuery
 from psycopg.adapt import Transformer
 
-from app import facemarket, holder_client
+from app import facemarket, facemarket_photo_check, facemarket_photo_normalize, holder_client
 from app import facemarket_enrollment
 from types import SimpleNamespace
 
@@ -988,6 +988,11 @@ def biometric_fm(keypair, monkeypatch):
     ))
     app.state.jwt_key_resolver = lambda token: public_key
     app.state.r2_face = FakeR2Face()
+    app.state.r2_face.objects[APPROVED_FRONT_KEY] = (APPROVED_FRONT_BYTES, "image/webp")
+    # 이 파일의 오래된 발급 테스트는 얼굴 검출기 대신 결정적인 사진을 사용한다.
+    # 아래 거절 테스트는 검출 결과만 바꿔 실제 발급 경계를 검증한다.
+    monkeypatch.setattr(facemarket_photo_normalize, "normalize_png", lambda data, _edge: (b"normalized-front", (128, 128)))
+    monkeypatch.setattr(facemarket_photo_check, "measure_photo", lambda data, *, model_dir=None: object())
     store = {
         "models": [
             {
@@ -1384,6 +1389,49 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
+
+
+def test_create_license_refuses_front_without_face_before_pending_license(
+    biometric_fm, make_token, holder_stub, monkeypatch
+):
+    client, store, r2 = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    monkeypatch.setattr(facemarket_photo_check, "measure_photo", lambda data, *, model_dir=None: None)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "front_face_missing"
+    assert store["licenses"] == []
+    assert store["enrollments"][0]["status"] == "license_pending"
+    assert r2.gets == [APPROVED_FRONT_KEY]
+    assert holder_stub.calls == []
+
+
+def test_create_license_retries_when_front_detector_is_unavailable(
+    biometric_fm, make_token, holder_stub, monkeypatch
+):
+    client, store, _r2 = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    def unavailable(data, *, model_dir=None):
+        raise facemarket_photo_check.PhotoCheckUnavailable("detector offline")
+
+    monkeypatch.setattr(facemarket_photo_check, "measure_photo", unavailable)
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "qc_unavailable"
+    assert store["licenses"] == []
+    assert holder_stub.calls == []
 
 
 @pytest.mark.parametrize("body_type", ["toned", None])
