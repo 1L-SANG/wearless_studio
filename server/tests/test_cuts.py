@@ -1404,6 +1404,16 @@ def test_the_frontend_auto_default_is_not_a_choice():
     assert len(set(poses[1:])) == len(poses[1:])
 
 
+def test_horizon_set_members_keep_the_example_pose():
+    """호리존 세트 컷은 완성 예시의 포즈를 따른다(ADR-0013). 돌려 넣은 포즈가 셀러의 명시 포즈처럼
+    예시를 덮으면 2번째 컷부터 예시와 다른 자세가 나온다(2026-09-26 리뷰). 낱장 컷 변주는 그대로다."""
+    grouped = _studio(4, pose="auto", spaceGroupId="ssg1__set__one", exampleId="ss_example")
+    out = content_roles.canonicalize_storyboard(grouped)
+    assert all(b.get("pose") in (None, "", "auto") for b in out), [b.get("pose") for b in out]
+    loose = content_roles.canonicalize_storyboard(_studio(4, pose="auto"))
+    assert all(b.get("pose") not in (None, "", "auto") for b in loose[1:])
+
+
 def test_seller_cards_keep_their_pose():
     out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
     assert all(not b.get("pose") for b in out)
