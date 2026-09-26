@@ -41,6 +41,7 @@ from ..agents.gemini_image import InlineImage, normalize_openai_images
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
+from ..services import garment_color_measure
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
 from ..agents.detail_shot_pipeline import DetailShotRejected
@@ -1597,6 +1598,20 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _face_identity.with_references, fm_lora_spec,
                         _refs, getattr(s, "fm_face_qc_dir", None),
                     )
+
+        # 옷 색 백스톱: 스토리보드 이탈 때 측정이 끝나지 않았으면 가로 세트 벽 색을 정하기
+        # 전에 한 번 잰다. 실패하면 그대로 두고, 해당 컷은 기존 배경으로 만든다(fail-open).
+        tone_colors = garment_color_measure.measurable_color_ids(ai_blocks, product)
+        if tone_colors and not garment_color_measure.is_covered(
+                analysis.get("garmentColorEvidence"), tone_colors, clothing_type):
+            try:
+                _, measured = await garment_color_measure.ensure_garment_color_evidence(
+                    s, pool, app.state.r2, user_id=user_id, project_id=project_id,
+                    blocks=storyboard, product=product, analysis=analysis)
+                if measured is not None:
+                    analysis = {**analysis, "garmentColorEvidence": measured}
+            except Exception as exc:
+                log.warning("garment color backstop failed for %s: %s", project_id, type(exc).__name__)
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,

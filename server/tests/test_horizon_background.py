@@ -4,7 +4,7 @@ import asyncio
 import math
 from io import BytesIO
 from PIL import Image
-from app.agents import garment_color_evidence as gce
+from app.agents import garment_color_evidence as gce, garment_color_observer
 
 from app.agents import cut_generator as cg
 from app.agents import horizon_background as hb, cut_plan, cut_output_qc, content_roles, image_qc
@@ -307,7 +307,7 @@ def test_valid_retry_route_keeps_saved_contract_and_existing_idempotent_charge(c
 
 @pytest.mark.parametrize("pipeline", ["detail", "editor"])
 @pytest.mark.parametrize("set_id", ["horizon-sequence-06-women-top-linen", "set_horizon_women_bottom_threetimes_7563033280596_prod01", "horizon-sequence-figma-s05-v2", "horizon-sequence-figma-s11-v2"])
-@pytest.mark.parametrize("option", ["garment-tone", "reference", "unset", "missing-measurement"])
+@pytest.mark.parametrize("option", ["garment-tone", "reference", "unset", "missing-measurement", "lazy-measured"])
 def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeypatch, pipeline, set_id, option):
     _, registry = space_set_assets.load_space_set_registry()
     entry = registry[set_id]
@@ -324,9 +324,22 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     measured, measured_sources = measurement_fixture([("selected", "#1f2a44")], category)
     if option == "reference": saved["horizonBackgroundMode"] = "reference"
     if option == "unset": saved.pop("horizonBackgroundMode")
-    if option == "missing-measurement": measured = {}
-    active = option == "garment-tone"
+    if option in {"missing-measurement", "lazy-measured"}: measured = {}
+    # Only the detail job measures once as a backstop; the editor retry never does.
+    backstop = option == "lazy-measured" and pipeline == "detail"
+    active = option == "garment-tone" or backstop
     captured = {}
+    saves = []
+    async def observe(settings, sources, *, product=None):
+        if option != "lazy-measured":
+            raise RuntimeError("observer unavailable")
+        return [{"sourceIndex": row["sourceIndex"], "clothingType": category, "certainty": "high",
+                 "colorStructure": "solid", "lighting": "neutral", "material": "matte",
+                 "polygons": [[[.12,.12],[.4,.12],[.4,.4],[.12,.4]], [[.6,.6],[.88,.6],[.88,.88],[.6,.88]]]}
+                for row in sources]
+    async def replace_evidence(conn, project_id, contract, *, expected, identity):
+        saves.append(contract)
+        return True
     async def get_product(*args): return product
     async def get_analysis(*args): return {"targetGenders": ["women"], **measured}
     async def get_project(*args): return {"copywriting": False}
@@ -347,8 +360,10 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
         return [], [], 0, [], [], None, []
     for name, function in {"get_product": get_product, "get_analysis": get_analysis, "get_project": get_project,
                            "get_storyboard": get_storyboard, "get_asset_for_user": get_asset,
-                           "finalize_detail_page_failure": fail, "finalize_editor_image_success": finalize}.items():
+                           "finalize_detail_page_failure": fail, "finalize_editor_image_success": finalize,
+                           "replace_garment_color_evidence": replace_evidence}.items():
         monkeypatch.setattr(dpj.repo, name, function)
+    monkeypatch.setattr(garment_color_observer, "observe", observe)
     monkeypatch.setattr(space_set_assets, "load_space_set_image", load_image)
     monkeypatch.setattr(dpj, "_emit", emit)
     monkeypatch.setattr(eij, "_emit", emit)
@@ -364,6 +379,7 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     else:
         asyncio.run(eij.run_editor_image_job(app, worker_job({**saved, "mode": "new", "retryBlockId": "cut"})))
     assert captured, "worker must reach actual generation preparation"
+    assert len(saves) == int(backstop)
     assert captured["images"][-1].data == member["all"]["key"].encode()
     assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
     assert "POSE CONTROL" not in captured["manifest"]
