@@ -35,7 +35,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import face_angle_swap, face_identity, pose_crop
+from . import face_angle_swap, face_identity, pose_crop, space_set_assets
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -453,6 +453,32 @@ def apply_reference_compatibility(spec: dict) -> dict:
     return resolved
 
 
+def horizon_example_governs_pose(block: dict) -> bool:
+    """완성 예시가 이 호리존 컷의 포즈를 정하는지 판정한다(핏 섹션 자동 포즈 제외용).
+
+    예시가 있고, 참고 범위가 전부(all)나 포즈(pose)이고, 예시 방향이 컷 방향과 맞아야 한다.
+    일반 예시는 apply_reference_compatibility 와 같은 규칙(메타 없는 옛 예시는 양립, 옆모습은
+    갈래까지 같아야 함)을 쓰고, 세트 밖에서 쓴 공간 세트 멤버(ss_)는 그 멤버 방향과 컷 방향이
+    같은지 본다. 레지스트리를 못 읽으면 예시가 포즈를 정한다고 확신할 수 없어 False 다.
+    """
+    probe = dict(block)
+    probe.pop("_referenceDirectionCompatible", None)
+    spec = normalize_spec({**probe, "cutType": "horizon"})
+    example_id = spec["exampleId"]
+    if not example_id or spec["refScope"] not in ("all", "pose"):
+        return False
+    try:
+        if example_id.startswith("ss_"):
+            _base, registry = space_set_assets.load_space_set_registry()
+            member = next((member for parent in registry.values() for member in parent["members"]
+                           if member["exampleId"] == example_id), None)
+            return member is not None and member.get("direction") == spec["direction"]
+        resolved = apply_reference_compatibility({**spec, "refScope": "all", "spaceGroupId": None})
+    except (OSError, ValueError):
+        return False
+    return resolved["_referenceDirectionCompatible"] is not False
+
+
 @lru_cache(maxsize=1)
 def load_virtual_model_registry() -> dict[str, dict]:
     """서버 소유 modelId→R2 뷰 manifest. 프로세스당 1회만 읽는다."""
@@ -820,6 +846,18 @@ def render_cut_prompt(
     # bg는 '생성하며 참고'가 아니라 '플레이트 편집' 과업으로 전환(2026-07-20 야간 실측:
     # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
     bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
+    # 같은 all 예시를 두 번째 색상부터 다시 쓰는 컷(컬러웨이 반복, ADR-0011). 세트 멤버는 제외.
+    repeat_index = spec.get("_exampleRepeatIndex", 0)
+    example_repeat_active = (
+        has_resolved_example
+        and cut in _WORN_CUTS
+        and spec.get("refScope") == "all"
+        and spec.get("pose") == "auto"
+        and not spec.get("spaceGroupId")
+        and spec.get("_referenceDirectionCompatible") is not False
+        and type(repeat_index) is int
+        and repeat_index >= 1
+    )
     if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
         if (
             spec["refScope"] == "all"
@@ -884,7 +922,9 @@ def render_cut_prompt(
                 "is authoritative. Use example camera geometry only where compatible; never turn "
                 "the model back toward the example's original view."
             )
-            if cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False and spec["pose"] == "auto":
+            # 반복 컷은 HORIZON_ALL_POSE 대신 POSE FROM EXAMPLE + EXREPEAT 작은 변주를 쓴다(둘은 서로 충돌).
+            if (cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False
+                    and spec["pose"] == "auto" and not example_repeat_active):
                 all_pose_rule = need("HORIZON_ALL_POSE")
             scope_line = (
                 scope_line
@@ -895,17 +935,7 @@ def render_cut_prompt(
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
     example_repeat_line = ""
-    repeat_index = spec.get("_exampleRepeatIndex", 0)
-    if (
-        has_resolved_example
-        and cut in {"styling", "mirror"}
-        and spec.get("refScope") == "all"
-        and spec.get("pose") == "auto"
-        and not spec.get("spaceGroupId")
-        and spec.get("_referenceDirectionCompatible") is not False
-        and type(repeat_index) is int
-        and repeat_index >= 1
-    ):
+    if example_repeat_active:
         variant = (repeat_index - 1) % 3
         example_repeat_line = "\n".join((
             need("EXREPEAT:guard"),

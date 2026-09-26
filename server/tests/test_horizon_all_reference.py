@@ -63,9 +63,27 @@ def test_explicit_pose_overrides_reference_pose():
     assert "USER POSE OVERRIDE" in _prompt(spec)
 
 
-def test_horizon_color_reuse_does_not_force_different_pose():
+def test_horizon_color_reuse_adds_bounded_micro_pose():
+    """같은 완성 예시를 두 번째 색상부터 다시 쓰면 작은 포즈 변주를 준다(2026-09-26 오너 결정)."""
     spec = _bound(spaceGroupId=None, _exampleRepeatIndex=2)
-    assert "REPEATED ALL-SCOPE EXAMPLE" not in _prompt(spec)
+    prompt = _prompt(spec)
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "THIRD-USE MICRO-POSE" in prompt
+    assert "POSE FROM EXAMPLE" in prompt
+    assert "Preserve the complete example's body direction" not in prompt
+    assert "deliberately vary poses across colorways" not in prompt
+    assert "${" not in prompt
+    assert cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top").example_repeat_index == 2
+    first_color = _prompt(_bound(spaceGroupId=None, _exampleRepeatIndex=0))
+    assert "Preserve the complete example's body direction" in first_color
+    assert "REPEATED ALL-SCOPE EXAMPLE" not in first_color
+
+
+def test_horizon_set_member_reuse_keeps_the_example_pose():
+    spec = _bound(_exampleRepeatIndex=1)
+    prompt = _prompt(spec)
+    assert "REPEATED ALL-SCOPE EXAMPLE" not in prompt
+    assert "Preserve the complete example's body direction" in prompt
     assert cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top").example_repeat_index == 0
 
 

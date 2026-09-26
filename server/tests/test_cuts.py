@@ -1414,6 +1414,105 @@ def test_horizon_set_members_keep_the_example_pose():
     assert all(b.get("pose") not in (None, "", "auto") for b in loose[1:])
 
 
+_HZ_REGISTRY = {
+    "hz_front_full": {"cutType": "horizon", "direction": "front", "shot": "full"},
+    "hz_front_medium": {"cutType": "horizon", "direction": "front", "shot": "medium"},
+}
+
+
+@pytest.fixture
+def hz_registry(monkeypatch):
+    monkeypatch.setattr(cut, "load_example_asset_registry", lambda: (None, _HZ_REGISTRY))
+    monkeypatch.setattr(cut.space_set_assets, "load_space_set_registry", lambda: (None, {
+        "set1": {"members": [{"exampleId": "ss_front", "direction": "front"}]},
+    }))
+
+
+def _poses(blocks):
+    return [b.get("pose") for b in content_roles.canonicalize_storyboard(blocks)]
+
+
+def test_example_governed_horizon_cuts_keep_the_example_pose(hz_registry):
+    """완성 예시가 포즈를 정하는 낱장 호리존 컷에는 자동 포즈를 넣지 않는다(2026-09-26 오너 결정).
+    넣으면 워커가 셀러의 명시 포즈로 읽어 예시 포즈를 덮고, 컬러웨이 변주도 꺼진다."""
+    blocks = [
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto",
+         "exampleId": "hz_front_full", "refScope": "all"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto",
+         "exampleId": "hz_front_medium", "refScope": "pose"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
+    ]
+    poses = _poses(blocks)
+    assert poses[:3] == ["auto", "auto", "auto"], poses
+    assert poses[3:] == list(content_roles._STUDIO_POSE_ROTATION[:2])
+
+
+@pytest.mark.parametrize("direction", ["side", "back"])
+def test_a_front_example_on_a_side_or_back_cut_still_rotates(hz_registry, direction):
+    """방향이 안 맞는 예시는 포즈 권한이 없다. 이런 컷은 계속 자동 포즈로 변주한다."""
+    blocks = [
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
+        {"sectionRole": "studio", "cutType": "horizon", "direction": direction, "pose": "auto",
+         "exampleId": "hz_front_full", "refScope": "all"},
+    ]
+    assert _poses(blocks)[1] == content_roles._STUDIO_POSE_ROTATION[0]
+
+    # 저장본이나 클라이언트가 보낸 양립 플래그 true 로는 포즈 권한을 얻지 못한다.
+    forged = [blocks[0], {**blocks[1], "_referenceDirectionCompatible": True}]
+    assert _poses(forged)[1] == content_roles._STUDIO_POSE_ROTATION[0]
+    assert not cut.horizon_example_governs_pose(forged[1])
+
+
+def test_a_saved_auto_pose_on_a_governed_cut_resets_but_a_chosen_pose_stays(hz_registry):
+    """옛 서버가 저장한 자동 포즈는 셀러 선택이 아니라 auto 로 되돌린다. 셀러가 고른 포즈는 이긴다."""
+    governed = {"sectionRole": "studio", "cutType": "horizon", "direction": "front",
+                "exampleId": "hz_front_full", "refScope": "all"}
+    blocks = [
+        {**governed, "pose": content_roles._STUDIO_POSE_ROTATION[2]},
+        {**governed, "pose": "leaning on a wall"},
+    ]
+    assert _poses(blocks) == ["auto", "leaning on a wall"]
+
+
+def test_standalone_set_member_with_another_direction_still_rotates(hz_registry, monkeypatch):
+    base = {"sectionRole": "studio", "cutType": "horizon", "pose": "auto", "exampleId": "ss_front"}
+    blocks = [
+        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
+        {**base, "direction": "front"},
+        {**base, "direction": "back"},
+    ]
+    assert _poses(blocks) == ["auto", "auto", content_roles._STUDIO_POSE_ROTATION[0]]
+
+    def broken():
+        raise OSError("registry unavailable")
+    monkeypatch.setattr(cut.space_set_assets, "load_space_set_registry", broken)
+    assert not cut.horizon_example_governs_pose({**base, "direction": "front"})
+
+
+def test_default_colorway_pairs_reach_the_worker_as_repeat_indexes(hz_registry):
+    """확장 구성의 추가 색상 쌍(프런트 defaultStoryboard)이 저장·작업 정규화를 거쳐도 예시 포즈가
+    남아, 워커가 색상 순서대로 0, 1, 2 변주를 준다. 앞의 세트 컷은 대상이 아니다."""
+    from app.workers import detail_page_job as dpj
+
+    def card(color, shot, **extra):
+        return {"source": "ai", "sectionId": "studio-1", "sectionRole": "studio",
+                "contentRole": "fit", "cutType": "horizon", "direction": "front", "shot": shot,
+                "colorId": color, "pose": "auto", "refScope": "all",
+                "exampleId": f"hz_front_{shot}", "exampleSelectionOrigin": "auto", **extra}
+
+    blocks = [card("base", "full", spaceGroupId="ssg1__set__one", exampleId="ss_front")]
+    for color in ("c2", "c3", "c4"):
+        pair = {"colorwayGroupId": f"colorway__{color}", "sectionLayout": "twoColumn",
+                "layoutRowId": f"row__colorway__{color}"}
+        blocks += [card(color, "full", **pair), card(color, "medium", **pair)]
+
+    out = content_roles.canonicalize_storyboard(blocks)
+    assert all(b.get("pose") == "auto" for b in out[1:]), [b.get("pose") for b in out]
+    assert dpj._example_repeat_indexes(out, "top") == [None, 0, 0, 1, 1, 2, 2]
+
+
 def test_seller_cards_keep_their_pose():
     out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
     assert all(not b.get("pose") for b in out)
