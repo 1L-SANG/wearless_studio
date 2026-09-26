@@ -14,7 +14,8 @@ from ..agents.gemini_image import InlineImage, run_cpu_bound
 log = logging.getLogger("wearless.garment_color_measure")
 
 # 같은 프로세스에서 겹친 호출(두 번 누르기 등)은 한 줄로 세운다. 프로세스 사이는 CAS 가 막는다.
-_locks: dict[str, asyncio.Lock] = {}
+# 값은 [잠금, 잡았거나 기다리는 호출 수]. 수가 0 이 되면 지워 프로젝트마다 쌓이지 않게 한다.
+_locks: dict[str, list] = {}
 
 
 def _clothing_type(product: dict) -> str:
@@ -50,10 +51,16 @@ async def ensure_garment_color_evidence(
     관찰기·R2·이미지 처리 실패는 예외 대신 unavailable 이고, 이때는 아무것도 저장하지
     않아 다음 이탈이나 생성 잡이 다시 잰다.
     """
-    lock = _locks.setdefault(project_id, asyncio.Lock())
-    async with lock:
-        return await _ensure(settings, pool, r2, user_id=user_id, project_id=project_id,
-                             blocks=blocks, product=product, analysis=analysis)
+    entry = _locks.setdefault(project_id, [asyncio.Lock(), 0])
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            return await _ensure(settings, pool, r2, user_id=user_id, project_id=project_id,
+                                 blocks=blocks, product=product, analysis=analysis)
+    finally:
+        entry[1] -= 1
+        if not entry[1] and _locks.get(project_id) is entry:
+            del _locks[project_id]
 
 
 async def _ensure(settings, pool, r2, *, user_id, project_id, blocks, product, analysis):
@@ -83,7 +90,13 @@ async def _ensure(settings, pool, r2, *, user_id, project_id, blocks, product, a
                 if asset:
                     seen.add(slot)
                     firsts.append({**asset, "slot": slot})
-            selected.append((cid, firsts))
+            if firsts:
+                selected.append((cid, firsts))
+    # 원본이 하나도 안 남은 색(지워졌거나 남의 자산)은 재도 행이 안 생긴다. 빼고 다시 덮였는지
+    # 본다. 안 빼면 그 색 때문에 이탈·생성 잡마다 나머지 색을 다시 잰다.
+    needed = [cid for cid, _ in selected]
+    if not needed or is_covered(existing, needed, clothing_type):
+        return "skipped", existing
     # 커넥션을 놓은 채 원본을 받는다. 바인딩 해시는 원본 바이트여야 생성이 다시 맞춰 본다.
     try:
         downloaded = await asyncio.gather(*(
@@ -120,4 +133,9 @@ async def _ensure(settings, pool, r2, *, user_id, project_id, blocks, product, a
             conn, project_id, contract, expected=existing,
             identity=repo.garment_color_input_identity(product))
         await conn.commit()
-    return ("measured", contract) if saved else ("unavailable", existing)
+        if saved:
+            return "measured", contract
+        # CAS 에서 졌으면 다른 프로세스(API 이탈 측정과 워커 백스톱)가 먼저 썼을 수 있다.
+        # 지금 값이 필요한 색을 덮으면 그걸 쓴다.
+        current = (await repo.get_analysis(conn, project_id)).get(garment_color_evidence.PERSISTED_KEY)
+    return ("skipped", current) if is_covered(current, needed, clothing_type) else ("unavailable", current)

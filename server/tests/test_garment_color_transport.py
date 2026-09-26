@@ -272,6 +272,41 @@ def test_measure_lost_compare_and_set_is_unavailable(client, make_token, monkeyp
     assert len(seen["saves"]) == 1
 
 
+def test_measure_lost_compare_and_set_returns_winner_when_it_covers(client, make_token, monkeypatch):
+    # 다른 프로세스(API 이탈 측정과 워커 백스톱)가 먼저 쓴 계약이 필요한 색을 덮으면 그걸 쓴다.
+    source = {"sourceIndex": 0, "colorId": "base", "slot": "Front", "data": png("red"), "mime": "image/png"}
+    winner = evidence.build_contract(None, [source], clothing_type="top")
+    seen, _ = _measure_env(client, monkeypatch, blocks=[tone_block()], cas=False)
+    reads = []
+    async def get_analysis(*args):
+        reads.append(1)
+        return {evidence.PERSISTED_KEY: winner} if len(reads) > 1 else {}
+    monkeypatch.setattr(repo, "get_analysis", get_analysis)
+    body = _post(client, make_token).json()
+    assert body["status"] == "skipped"
+    assert body["garmentColorEvidence"] == evidence.public_summary(winner)
+    assert len(seen["saves"]) == 1 and len(reads) == 2
+
+
+def test_measure_ignores_color_whose_photos_are_gone_when_others_are_covered(client, make_token, monkeypatch):
+    # 정면 자산이 지워진 색은 재도 행이 안 생기니, 나머지 색이 덮였으면 관찰기를 부르지 않는다.
+    source = {"sourceIndex": 0, "colorId": "base", "slot": "Front", "data": png("red"), "mime": "image/png"}
+    stored = evidence.build_contract(None, [source], clothing_type="top")
+    product = {"clothing_type": "top", "colors": [
+        {"id": "base", "isBase": True, "images": [{"id": "front", "slot": "Front"}]},
+        {"id": "red", "images": [{"id": "gone", "slot": "Front"}]},
+    ]}
+    seen, _ = _measure_env(client, monkeypatch, blocks=[tone_block(), tone_block(id="red-cut", colorId="red")],
+                           analysis={evidence.PERSISTED_KEY: stored}, product=product)
+    async def asset(conn, user, aid):
+        return None if aid == "gone" else {"id": aid, "r2_key": "seller/" + aid, "mime_type": "image/png"}
+    monkeypatch.setattr(repo, "get_asset_for_user", asset)
+    assert hb.garment_tone_color_ids([tone_block(), tone_block(id="red-cut", colorId="red")], product) == ["base", "red"]
+    response = _post(client, make_token)
+    assert response.json()["status"] == "skipped"
+    assert seen["observe"] == 0 and not seen["saves"]
+
+
 def test_measure_coalesces_double_calls_in_one_process(monkeypatch):
     calls = []
     async def fake_ensure(*args, **kwargs):
@@ -285,6 +320,7 @@ def test_measure_coalesces_double_calls_in_one_process(monkeypatch):
             make_settings(), None, None, user_id="u", project_id="coalesce") for _ in range(2)))
     asyncio.run(run())
     assert calls == ["start", "end", "start", "end"]
+    assert measure._locks == {}  # 끝난 프로젝트의 잠금은 남기지 않는다
 
 
 def test_invalidation_identity_ignores_color_labels_but_detects_photo_and_category_changes():
