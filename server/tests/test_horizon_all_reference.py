@@ -24,7 +24,7 @@ def test_published_horizon_group_uses_all_but_styling_still_uses_pose():
 
 def test_verified_matching_frame_preserves_the_complete_photo_not_a_pose_mask():
     prompt = _prompt(_bound())
-    assert "FRAMING — MATCHED COMPLETE HORIZON EXAMPLE" in prompt
+    assert "FRAMING: MATCHED COMPLETE HORIZON EXAMPLE" in prompt
     assert "actual frame boundaries, head/body crop" in prompt
     assert "Do not expand a cropped photograph" in prompt
     assert "POSE-ONLY RETARGETING" not in prompt
@@ -32,11 +32,23 @@ def test_verified_matching_frame_preserves_the_complete_photo_not_a_pose_mask():
     assert "${" not in prompt
 
 
+def test_matching_full_shot_keeps_the_feet_and_hem_safety_framing():
+    """풀샷은 기장·밑단·신발 비율을 보는 컷이다. 예시와 샷이 같아도 기본 풀샷 문구를 쓴다(2026-09-26)."""
+    spec = {"cutType": "horizon", "exampleId": "ss_example", "spaceGroupId": "ssg1__set__one",
+            "shot": "full", "direction": "front", "pose": "auto"}
+    cg.bind_horizon_reference(spec, {"shot": "full", "direction": "front", "directionCompatible": True})
+    prompt = _prompt(spec)
+    assert "never crop toes, heels, or the garment hem" in prompt
+    assert "MATCHED COMPLETE HORIZON EXAMPLE" not in prompt
+    assert "FRAMING: FRAMING" not in prompt
+    assert "${" not in prompt
+
+
 @pytest.mark.parametrize("changes", [{"shot": "full"}, {"direction": "back"}])
 def test_explicit_shot_or_direction_override_releases_reference_camera(changes):
     spec = _bound(**changes)
     prompt = _prompt(spec)
-    assert "FRAMING — MATCHED COMPLETE HORIZON EXAMPLE" not in prompt
+    assert "FRAMING: MATCHED COMPLETE HORIZON EXAMPLE" not in prompt
     plan = cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top")
     assert "camera" not in plan.reference_attributes
     if changes.get("direction"):
@@ -81,7 +93,7 @@ def test_reference_frame_metadata_cannot_be_saved_from_client():
 def test_standalone_registry_metadata_preserves_frame(monkeypatch):
     monkeypatch.setattr(cg, "load_example_asset_registry", lambda: ("", {"standalone": {"cutType": "horizon", "direction": "front", "shot": "medium"}}))
     spec = {"cutType": "horizon", "exampleId": "standalone", "shot": "medium", "direction": "front", "refScope": "all"}
-    assert "FRAMING — MATCHED COMPLETE HORIZON EXAMPLE" in _prompt(spec)
+    assert "FRAMING: MATCHED COMPLETE HORIZON EXAMPLE" in _prompt(spec)
 
 
 def test_horizon_identity_manifest_names_only_attached_scene_owner():

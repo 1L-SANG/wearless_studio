@@ -747,7 +747,10 @@ def render_cut_prompt(
         return sec[key]
 
     shot_key = "detail_zoom" if detail_mode_zoom else shot
-    if (cut == "horizon" and spec.get("refScope") == "all"
+    # 예시의 자른 위치를 그대로 따르는 문구는 미디엄에만 쓴다. 풀샷은 기장·밑단·신발 비율을 보는
+    # 컷이라 "발·굽·밑단을 자르지 말 것"이 있는 기본 풀샷 문구를 쓴다(예시 구도 따르기는
+    # REFSCOPE:all_horizon 이 함께 준다). 2026-09-26 오너 결정.
+    if (cut == "horizon" and shot == "medium" and spec.get("refScope") == "all"
             and spec.get("_horizonReferenceShot") == shot
             and spec.get("_referenceDirectionCompatible") is not False
             and _EXAMPLE_ALL_LABEL in image_manifest):
