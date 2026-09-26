@@ -469,6 +469,60 @@ test('an uploaded photo stays pending until the slot PUT retry is accepted', asy
   }
 });
 
+test('a revoked blob: photo is not retried forever — only upload failures are', async () => {
+  // 2026-09-26 prod: 승격이 실패하자 복구 경로가 승격 전 초안을 다시 큐에 넣었고, 그 초안의
+  // blob: 주소는 이미 폐기돼 있었다. 폐기된 주소는 다시 읽어도 영원히 ERR_FILE_NOT_FOUND 인데
+  // 2초마다 재시도해 콘솔이 같은 에러로 뒤덮였다. 원본을 못 읽는 건 재시도로 안 풀린다.
+  const timers = fakeTimers();
+  const originalFetch = globalThis.fetch;
+  let reads = 0;
+  let uploads = 0;
+  globalThis.fetch = async (src) => {
+    reads += 1;
+    if (src === 'blob:revoked') throw new TypeError('Failed to fetch');
+    return { blob: async () => new Blob(['photo'], { type: 'image/jpeg' }) };
+  };
+  try {
+    const sync = createDraftSlotSync({
+      debounceMs: 500,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      storage: new MapStorage(),
+      adapter: {
+        async uploadDraftSlotPhoto() {
+          uploads += 1;
+          throw new Error('temporary network failure');
+        },
+        async putDraftSlot() { return { token: 'owned' }; },
+      },
+    });
+    sync.queue({
+      product: {
+        name: 'photo',
+        colors: [{ id: 'base', images: [
+          { id: 'dead', src: 'blob:revoked', type: 'image/jpeg' },
+          { id: 'live', src: 'blob:live', type: 'image/jpeg' },
+        ] }],
+      },
+    });
+    await new Promise(setImmediate);
+    await new Promise(setImmediate);
+
+    // 두 장 다 한 번씩 읽었다. 살아 있는 쪽은 업로드까지 가서 네트워크로 실패했다.
+    assert.equal(reads, 2);
+    assert.equal(uploads, 1);
+    // 재시도 타이머는 업로드가 실패한 사진 것 하나뿐이다 — 폐기된 사진은 다시 잡지 않는다.
+    const retries = [...Array(timers.count())].map(() => timers.runLatest());
+    assert.ok(retries.includes(2000), '업로드 실패는 2초 뒤 다시 시도한다');
+    await new Promise(setImmediate);
+    await new Promise(setImmediate);
+    assert.equal(reads, 3, '재시도는 살아 있는 사진만 다시 읽는다');
+    sync.discard();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('a photo removed during upload is explicitly discarded after upload completes', async () => {
   let releaseUpload;
   const discarded = [];

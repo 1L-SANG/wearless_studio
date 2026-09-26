@@ -24,8 +24,24 @@ class DetailRecommendationError(ValueError):
     pass
 
 
+def _browser_stable(value):
+    # 서명과 후보 id 는 이 직렬화 위에서 계산되는데, 계약은 브라우저를 거쳐 돌아온다. JS 의
+    # JSON.stringify 는 0.0·1.0 을 0·1 로 쓰고 파이썬은 그걸 int 로 읽어서, 값은 같아도
+    # "0.0" 과 "0" 으로 글자가 갈렸다 — 좌표가 0.0/1.0 인 후보 하나로 승격이 전부 400 이었다
+    # (2026-09-26). 정수 값인 실수를 정수로 맞춰 양쪽이 같은 글자를 보게 한다. 다른 실수는
+    # 양쪽 다 최단 표기로 왕복하므로 건드리지 않는다.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {k: _browser_stable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_browser_stable(v) for v in value]
+    return value
+
+
 def _canonical(value):
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+    return json.dumps(_browser_stable(value), sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"), allow_nan=False).encode()
 
 
 def _text(value, limit):

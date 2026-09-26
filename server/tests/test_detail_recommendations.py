@@ -1,4 +1,5 @@
 import asyncio
+import json
 from copy import deepcopy
 from dataclasses import replace
 from io import BytesIO
@@ -85,6 +86,38 @@ def test_handoff_rejects_forged_expired_or_cross_protocol_payload():
         with pytest.raises(dr.DetailRecommendationError):
             dr.verify_handoff(handoff, SECRET, now=now)
     assert "binding" not in dr.public_summary(value)
+
+
+def _through_browser(value):
+    """서버 응답이 브라우저를 거쳐 돌아온 모양. JSON.stringify 는 0.0·1.0 을 0·1 로 쓴다 —
+    파이썬은 그걸 int 로 읽는다. 다른 실수는 양쪽 다 최단 표기라 값이 그대로 돌아온다."""
+    def js(v):
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        if isinstance(v, dict):
+            return {k: js(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [js(x) for x in v]
+        return v
+    return js(json.loads(json.dumps(value)))
+
+
+@pytest.mark.parametrize("region", [
+    {"x": 0.0, "y": .3, "w": .4, "h": .2},    # 왼쪽 끝에 붙은 영역
+    {"x": 0.0, "y": .5, "w": 1.0, "h": .5},   # 전체 폭(밑단·단)
+])
+def test_handoff_survives_browser_round_trip_with_whole_number_coordinates(region):
+    """2026-09-26 prod: 좌표가 0.0/1.0 인 후보 하나로 서명이 어긋나 승격이 전부 400 이었다.
+
+    서명·후보 id 는 파이썬 canonical JSON 위에서 계산되는데, 브라우저가 0.0 을 0 으로 바꿔
+    보내면 같은 값인데도 글자가 달라졌다. 파이썬끼리만 왕복하던 기존 테스트는 못 잡았다.
+    """
+    value = contract([candidate(region=region)])
+    signed = dr.issue_handoff(value, SECRET, now=1000)
+    returned = dr.verify_handoff(_through_browser(signed), SECRET, now=1001)
+    assert [c["id"] for c in returned["candidates"]] == [c["id"] for c in value["candidates"]]
+    # 저장 뒤 다시 읽는 경로(GET analysis·resolve_target)도 같은 계약으로 통과해야 한다.
+    assert dr.validate_persisted(_through_browser(returned)) == returned
 
 
 def test_small_exif_rotated_source_is_normalized_before_analysis():
