@@ -33,10 +33,26 @@ test('signed detail handoff is promoted only after source upload, product and an
       analysis: { detailRecommendations: { status: 'ready', candidates: [{ id: 'cannot-promote-unsigned' }] }, detailRecommendationsHandoff: handoff },
     });
     assert.deepEqual(events, ['create', 'upload', 'product', 'analysis', 'promote', 'project']);
+    // 추천 승격이 실패해도 확정은 추천 없이 끝까지 간다. 뒤따르는 증거 승격·프로젝트 저장도 그대로 돈다.
     events.length = 0;
-    api.promoteDetailRecommendations = async () => { events.push('promote'); throw new Error('stale_source'); };
-    await assert.rejects(module.promoteDraftToProject({ product: { colors: [{ images: [{ id: 'asset', src: 'https://test/photo.jpg' }] }] }, analysis: { detailRecommendationsHandoff: handoff } }), /stale_source/);
-    assert.deepEqual(events, ['create', 'product', 'analysis', 'promote']);
+    api.promoteDetailRecommendations = async () => { events.push('promote'); throw Object.assign(new Error('bad'), { code: 'invalid_analysis_handoff' }); };
+    api.promoteConfirmedGptEvidence = async () => { events.push('evidence'); };
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const result = await module.promoteDraftToProject({ product: { colors: [{ images: [{ id: 'asset', src: 'https://test/photo.jpg' }] }] }, analysis: { detailRecommendationsHandoff: handoff, confirmedGptProductEvidenceHandoff: { opaque: true } } });
+      assert.equal(result.projectId, 'p');
+    } finally {
+      console.warn = warn;
+    }
+    assert.deepEqual(events, ['create', 'product', 'analysis', 'promote', 'evidence', 'project']);
+
+    // 증거 승격 실패는 지금처럼 확정을 막는다(이번 변경 범위 밖).
+    events.length = 0;
+    api.promoteDetailRecommendations = async () => { events.push('promote'); };
+    api.promoteConfirmedGptEvidence = async () => { events.push('evidence'); throw new Error('evidence_drift'); };
+    await assert.rejects(module.promoteDraftToProject({ product: { colors: [{ images: [{ id: 'asset', src: 'https://test/photo.jpg' }] }] }, analysis: { detailRecommendationsHandoff: handoff, confirmedGptProductEvidenceHandoff: { opaque: true } } }), /evidence_drift/);
+    assert.deepEqual(events, ['create', 'product', 'analysis', 'promote', 'evidence']);
   } finally {
     delete globalThis.__detailPromotionHarness;
   }
