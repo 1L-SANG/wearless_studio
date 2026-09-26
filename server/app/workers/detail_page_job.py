@@ -274,8 +274,6 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
     detail_model = resolve_detail_cut_model(s)
     horizon_model = resolve_detail_cut_model(s, "horizon")
-    detail_settings = replace(s, model_image_high=detail_model)
-    horizon_settings = replace(s, model_image_high=horizon_model)
     prepared = await _normalize_detail_openai_refs(prepared, detail_model, horizon_model)
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
@@ -406,8 +404,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
             s if cut_generator.is_signature_cut(b)
-            else horizon_settings if b.get("cutType") == "horizon"
-            else detail_settings
+            else replace(
+                s,
+                model_image_high=resolve_detail_cut_model(s, b.get("cutType")),
+            )
         )
         # 원본 패스스루 — 미세 패턴(스트라이프·체크) 상품의 디테일 컷은 **생성하지 않고**
         # 셀러가 찍은 그 색상의 Detail 사진을 그대로 쓴다. 원단 매크로는 전신 컷 해상도로는
