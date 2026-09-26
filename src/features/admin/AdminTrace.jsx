@@ -2,7 +2,10 @@
    후보를 보여준다(2026-09-26). 서버가 워터마크를 먼저 읽고, 없으면 지문(pHash)으로 찾는다.
 
    올린 이미지는 서버에 저장되지 않는다(감사 원장에는 해시 앞자리와 결과 요약만 남는다).
-   셀러는 마스킹된 이메일·이름으로만 보인다 — 연락이 필요하면 사용자 화면에서 셀러 id 로 찾는다. */
+   셀러는 마스킹된 이메일·이름으로만 보인다 — 연락이 필요하면 사용자 화면에서 셀러 id 로 찾는다.
+
+   2026-09-27: '자동 발견' 탭 — 순찰(네이버·지그재그)과 모델 제보가 쌓은 발견을 같은 화면에서 판정한다.
+   슬랙 알림 링크가 ?tab=found 로 들어온다. */
 import { useRef, useState } from 'react';
 import { adminTraceImage } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
@@ -14,10 +17,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   confidenceView, evidenceText, licenseStatusLabel, targetLabel, validateTraceFile, watermarkView,
 } from './adminTrace.js';
+import { AdminTraceFindings } from './AdminTraceFindings.jsx';
+import { initialTraceTab } from './adminTraceFindings.js';
 
 const day = value => (value ? String(value).slice(0, 10) : '-');
 
+const TABS = [{ id: 'manual', label: '직접 추적' }, { id: 'found', label: '자동 발견' }];
+
 export function AdminTrace() {
+  const [tab, setTab] = useState(() => initialTraceTab(typeof window === 'undefined' ? '' : window.location.search));
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -52,12 +60,23 @@ export function AdminTrace() {
   const wm = result ? watermarkView(result.watermark) : null;
   const candidates = result?.candidates || [];
 
+  const tabs = <div className="flex gap-2" role="tablist" aria-label="출처 추적 방식">
+    {TABS.map(item => <Button key={item.id} size="sm" role="tab" aria-selected={tab === item.id}
+      variant={tab === item.id ? 'default' : 'outline'} disabled={busy} onClick={() => setTab(item.id)}>{item.label}</Button>)}
+  </div>;
+  if (tab === 'found') return <div className="flex min-w-0 flex-col gap-5">
+    <div><h1 className="text-lg font-semibold tracking-tight">출처 추적</h1></div>
+    {tabs}
+    <AdminTraceFindings />
+  </div>;
+
   return <div className="flex min-w-0 flex-col gap-5">
     <div>
       <h1 className="text-lg font-semibold tracking-tight">출처 추적</h1>
       <p className="mt-1 text-sm text-muted-foreground">쇼핑몰에서 발견한 이미지를 올리면 배포본에 박힌 워터마크와 이미지 지문으로 어느 셀러·모델·라이선스에서 나왔는지 찾아요.</p>
       <p className="mt-1 text-xs text-muted-foreground">상세페이지 이미지 영역만, 좌우를 자르지 말고 전체 폭으로 올려 주세요. 세로 800px 이상이면 조각이어도 돼요. 올린 이미지는 저장하지 않아요.</p>
     </div>
+    {tabs}
     <div className="flex max-w-xl flex-col gap-2 sm:flex-row sm:items-end">
       <label className="flex flex-1 flex-col gap-1 text-sm">발견한 이미지
         <Input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={pick} />

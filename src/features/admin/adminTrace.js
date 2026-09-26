@@ -33,6 +33,7 @@ export function evidenceText(evidence) {
   if (evidence.watermark) parts.push('워터마크');
   if (evidence.phashDistance != null) {
     const where = evidence.matchedKind === 'cut' ? '생성 컷'
+      : evidence.matchedKind === 'cut_crop' ? '생성 컷(잘린 썸네일)'
       : evidence.matchedKind === 'strip' ? `페이지 구간 ${evidence.region?.y0 ?? 0}~${evidence.region?.y1 ?? 0}px`
         : '배포본 전체';
     parts.push(`${where} · 차이 ${evidence.phashDistance}/64`);

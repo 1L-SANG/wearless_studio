@@ -29,6 +29,12 @@ _INSERT_CUT_FP = (
     "select r.id, 'cut', %s, %s from fm_output_records r where r.asset_id = %s "
     "on conflict do nothing"
 )
+# 쇼핑몰 썸네일 크롭 변형(2026-09-27) — fm_fingerprint.cut_fingerprints 참고.
+_INSERT_CUT_CROP_FP = (
+    "insert into fm_image_fingerprints (output_record_id, kind, region_y0, region_y1, phash, dhash) "
+    "select r.id, 'cut_crop', %s, %s, %s, %s from fm_output_records r where r.asset_id = %s "
+    "on conflict do nothing"
+)
 
 
 async def allocate_wm_code(conn, publication_id: str) -> int | None:
@@ -101,12 +107,20 @@ async def record_cut_fingerprints(pool, items: list[dict]) -> int:
         (fm_fingerprint.to_signed(i["phash"]), fm_fingerprint.to_signed(i["dhash"]), i["asset_id"])
         for i in items if i.get("asset_id") and i.get("phash") is not None
     ]
+    crop_rows = [
+        (c["region_y0"], c["region_y1"], fm_fingerprint.to_signed(c["phash"]),
+         fm_fingerprint.to_signed(c["dhash"]), i["asset_id"])
+        for i in items if i.get("asset_id") and i.get("phash") is not None
+        for c in i.get("crops") or []
+    ]
     if not rows or pool is None:
         return 0
     try:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.executemany(_INSERT_CUT_FP, rows)
+                if crop_rows:
+                    await cur.executemany(_INSERT_CUT_CROP_FP, crop_rows)
             await conn.commit()
         return len(rows)
     except Exception:

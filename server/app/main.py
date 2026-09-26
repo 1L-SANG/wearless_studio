@@ -149,6 +149,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lora_training = None
         test_cut_build = None
         publication_anchor = None
+        trace_finding_alerts = None
+        trace_patrol = None
         sam_retry_pusher = None
         sam_autoscaler = None
         opendid_autoscaler = None
@@ -202,6 +204,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                 publication_anchor = PublicationAnchorReconciler(app)
                 await publication_anchor.start()
+                # 자동 출처 추적(2026-09-27) — 순찰·모델 제보로 생긴 새 발견을 슬랙으로 알린다.
+                # 발견 원장·관리자 화면이 같은 플래그 아래에 있으므로 같이 묶는다.
+                from .workers.fm_trace_finding_alert_reconciler import (
+                    TraceFindingAlertReconciler,
+                )
+
+                trace_finding_alerts = TraceFindingAlertReconciler(app)
+                await trace_finding_alerts.start()
+                # 하루 1회 순찰(네이버 공식 API · 지그재그). 자체 스위치 — 외부 사이트에 요청을 보내는
+                # 일이라 추적 층과 따로 끈다. 네이버는 키가 없으면 어댑터가 안 만들어진다.
+                if settings.fm_trace_patrol == "on":
+                    from .workers.fm_trace_patrol import TracePatrol
+
+                    trace_patrol = TracePatrol(app)
+                    await trace_patrol.start()
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
@@ -379,6 +396,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await test_cut_build.stop()
         if publication_anchor is not None:
             await publication_anchor.stop()
+        if trace_patrol is not None:
+            await trace_patrol.stop()
+        if trace_finding_alerts is not None:
+            await trace_finding_alerts.stop()
         if pool is not None:
             await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
@@ -730,6 +751,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .facemarket_trace import router as trace_router
 
             app.include_router(trace_router)
+            # 모델 제보(2026-09-27) — 같은 대조를 모델 마이페이지에서 부른다. 결과는 관리자에게만.
+            from .facemarket_sightings import router as sightings_router
+
+            app.include_router(sightings_router)
         else:
             app.state.fm_c2pa_signer = None
     else:

@@ -26,7 +26,9 @@ class Cur:
 
     def execute(self, sql, params=None):
         s = " ".join(sql.split()).lower()
-        if s.startswith("select r.id::text as id"):
+        if s.startswith("select r.id::text as id") and "'cut_crop'" in s:
+            self.rows = self.conn.crop_cuts
+        elif s.startswith("select r.id::text as id"):
             self.rows = self.conn.cuts
         elif s.startswith("select p.id::text as id"):
             self.rows = self.conn.pubs
@@ -41,8 +43,9 @@ class Cur:
 
 
 class Conn:
-    def __init__(self, cuts, pubs):
+    def __init__(self, cuts, pubs, crop_cuts=()):
         self.cuts, self.pubs, self.writes, self.commits = cuts, pubs, [], 0
+        self.crop_cuts = list(crop_cuts)
 
     def cursor(self):
         return Cur(self)
@@ -88,3 +91,17 @@ def test_apply_inserts_idempotently():
     assert pub_writes and all(w[1][0] == "p1" for w in pub_writes)
     assert all("on conflict do nothing" in w[0] for w in conn.writes)
     assert {w[1][1] for w in pub_writes} == {"publication", "strip"}
+
+
+def test_crop_variants_backfill_for_cuts_that_already_have_a_cut_row():
+    """2026-09-26 백필로 'cut' 행만 있는 컷 105장 — 썸네일 크롭 변형(cut_crop)만 따로 채운다."""
+    conn, r2 = _world()
+    conn.crop_cuts = [{"id": "o1", "r2_bucket": None, "r2_key": "cut/1.png"},
+                      {"id": "o2", "r2_bucket": None, "r2_key": "cut/2.png"}]
+    assert B.backfill_cut_crops(conn, lambda _b: r2, limit=10, apply=False) == (1, 1)
+    assert conn.writes == []
+    B.backfill_cut_crops(conn, lambda _b: r2, limit=10, apply=True)
+    crops = [w for w in conn.writes if "'cut_crop'" in w[0]]
+    assert crops and {w[1][0] for w in crops} == {"o1"}
+    assert all("on conflict do nothing" in w[0] for w in crops)
+    assert all(w[1][1] is not None and w[1][2] > w[1][1] for w in crops)     # 구간 있음

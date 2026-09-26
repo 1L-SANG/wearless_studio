@@ -248,3 +248,95 @@ def test_trace_route_absent_without_provenance_flag(keypair, make_token):
     with TestClient(app) as client:
         r = _post(client, make_token, b"x")
     assert r.status_code == 404
+
+
+def test_trace_image_is_reusable_without_the_route(world):
+    """순찰·모델 제보가 같은 대조를 쓴다 — 라우트 없이 conn 과 바이트만으로 돈다.
+    감사·커밋은 호출부 몫이라 여기서는 일어나지 않는다. 적재한 지문(rows)을 넘기면 다시 읽지 않는다."""
+    import asyncio
+    store = {"rows": world["rows"], "sql": [], "commits": 0}
+    small = world["page"].resize((860, round(world["page"].height * 860 / 2000)), Image.LANCZOS)
+    data = _jpeg(small.crop((0, 900, 860, 1900)), 70)
+
+    out = asyncio.run(T.trace_image(Conn(store), data, origin="https://ai.wearless.kr",
+                                    rows=world["rows"]))
+    assert out["watermark"]["status"] == "matched"
+    assert out["candidates"][0]["publicationId"] == PUB_ID
+    assert len(out["image"]["sha256"]) == 64
+    assert out["image"]["sha256"][:12] == out["image"]["sha256Prefix"]
+    assert store["commits"] == 0
+    assert not any(s.startswith("select id::text as id, publication_id::text") for s in store["sql"])
+
+
+def test_trace_image_raises_value_error_on_undecodable_bytes():
+    import asyncio
+    store = {"rows": [], "sql": [], "commits": 0}
+    with pytest.raises(ValueError):
+        asyncio.run(T.trace_image(Conn(store), b"nope", origin="https://x"))
+
+
+def _auth(make_token):
+    return {"Authorization": f"Bearer {make_token(sub='admin-1')}"}
+
+
+def test_admin_lists_findings_with_filters(trace, make_token, monkeypatch):
+    client, _store = trace
+    calls = []
+
+    async def fake_list(conn, **kw):
+        calls.append(kw)
+        return {"items": [{"id": "f1"}], "nextCursor": None}
+
+    monkeypatch.setattr(T.fm_trace_findings, "list_findings", fake_list)
+    r = client.get("/v1/facemarket/admin/trace/findings?status=new&source=patrol&limit=20",
+                   headers=_auth(make_token))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"items": [{"id": "f1"}], "nextCursor": None}
+    assert r.headers["cache-control"] == "no-store"
+    assert calls == [{"status": "new", "source": "patrol", "limit": 20, "cursor": None}]
+
+
+def test_findings_are_admin_only(trace, make_token, monkeypatch):
+    client, store = trace
+    store["admin"] = False
+    called = []
+    monkeypatch.setattr(T.fm_trace_findings, "list_findings",
+                        lambda *a, **k: called.append(1))
+    r = client.get("/v1/facemarket/admin/trace/findings", headers=_auth(make_token))
+    assert r.status_code == 403 and called == []
+    r = client.patch("/v1/facemarket/admin/trace/findings/x", json={"status": "misuse"},
+                     headers=_auth(make_token))
+    assert r.status_code == 403
+
+
+def test_admin_marks_finding_and_remembers_store(trace, make_token, monkeypatch):
+    client, store = trace
+    calls = []
+
+    async def fake_update(conn, **kw):
+        calls.append(kw)
+        return {"id": kw["finding_id"], "status": kw["status"], "storeRemembered": True}
+
+    monkeypatch.setattr(T.fm_trace_findings, "update_finding_status", fake_update)
+    fid = "cccccccc-0000-4000-8000-000000000003"
+    r = client.patch(f"/v1/facemarket/admin/trace/findings/{fid}",
+                     json={"status": "seller_own", "rememberStore": True},
+                     headers=_auth(make_token))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"id": fid, "status": "seller_own", "storeRemembered": True}
+    assert calls[0]["actor"] == "admin-1" and calls[0]["remember_store"] is True
+    assert calls[0]["write_audit"] is T.admin_guard.write_audit
+    assert store["commits"] == 1
+
+
+def test_finding_errors_map_to_api_errors(trace, make_token, monkeypatch):
+    client, store = trace
+
+    async def fake_update(conn, **kw):
+        raise T.fm_trace_findings.FindingError("not_found", "발견 기록을 찾을 수 없어요.", 404)
+
+    monkeypatch.setattr(T.fm_trace_findings, "update_finding_status", fake_update)
+    r = client.patch("/v1/facemarket/admin/trace/findings/x", json={"status": "misuse"},
+                     headers=_auth(make_token))
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+    assert store["commits"] == 0
