@@ -1302,6 +1302,22 @@ SIGNATURE_DIRECTION = (
     "No props, no text, no busy scenery."
 )
 
+# 실존 모델(얼굴 패스 대상) 첫 화면 — 2026-09-26 오너 결정. 위 지시의 "뒤통수·옆얼굴·입과 턱만"은
+# 얼굴 패스가 받을 수 없다: 옆얼굴(yaw > YAW_APPLY_MAX)은 남의 얼굴을 못 내보내서 컷이 실패하고,
+# 뒤통수·턱만 보이면 얼굴이 안 잡혀 모델 얼굴이 들어가지 않는다. 그래서 얼굴 패스를 탈 때만
+# "얼굴이 잡히는 반쪽~정면 가까운 얼굴"로 좁힌다. 가상 모델 컷은 SIGNATURE_DIRECTION 그대로.
+SIGNATURE_DIRECTION_FACE_PASS = (
+    "SIGNATURE OPENING CUT — extreme close crop of the upper body. "
+    "The face faces the camera or is turned only slightly (well under a three-quarter turn); "
+    "both eyes, the nose and the mouth are clearly visible. The crop may cut off the top of the "
+    "head or one side of the face so that roughly half to two-thirds of the face shows — never a "
+    "full centered frontal portrait. Never a side profile, never the back of the head, never only "
+    "the lower face. "
+    "BACKGROUND: same hue family as the garment's dominant color but much lighter and "
+    "desaturated — a soft, detail-free surface so the person and the garment stay dominant. "
+    "No props, no text, no busy scenery."
+)
+
 
 def build_prompt(
     cut_spec: dict, product: dict, *,
@@ -1344,7 +1360,8 @@ def build_prompt(
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
     if is_signature_cut(spec):
         # 기존 컷 프롬프트는 건드리지 않고 시그니처 분기에서만 지시를 덧붙인다.
-        authority_plan_line = f"{authority_plan_line}\n{SIGNATURE_DIRECTION}"
+        direction = SIGNATURE_DIRECTION_FACE_PASS if face_pass else SIGNATURE_DIRECTION
+        authority_plan_line = f"{authority_plan_line}\n{direction}"
 
     prompt = render_cut_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
