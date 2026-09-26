@@ -465,6 +465,19 @@ class Settings:
     fm_vc_required: bool = False
     opendid_holder_url: str | None = None
     opendid_holder_hmac_secret: str | None = None
+    # ---- 자동 출처 순찰(2026-09-27) — 무료 경로만(오너 결정) ----
+    # "on" 이면 하루 1회(KST fm_trace_patrol_hour_kst 시 이후) 허용된 플랫폼에서 REAL 컷 프로젝트의
+    # 상품명으로 검색해 대표 이미지를 워터마크·지문으로 대조한다. fm_provenance_enabled 아래에서만 돈다.
+    fm_trace_patrol: str = "off"
+    # 순찰할 곳. 허용값은 naver·zigzag 뿐이다 — 29CM(약관 제11조② 크롤러 금지)·무신사(robots)·
+    # 에이블리·쿠팡(봇 차단)은 어댑터 자체가 없다.
+    fm_trace_patrol_platforms: tuple[str, ...] = ("naver", "zigzag")
+    fm_trace_patrol_hour_kst: int = 4
+    # User-Agent 에 싣는 연락처(URL 또는 메일). 사이트 운영자가 우리에게 연락할 수 있어야 한다.
+    fm_trace_contact: str = "https://facemarket.wearless.kr"
+    # 네이버 개발자센터 검색 API 키. 둘 중 하나라도 없으면 네이버 어댑터는 만들어지지 않는다(fail-closed).
+    naver_search_client_id: str | None = None
+    naver_search_client_secret: str | None = None
     # ---- 실존 모델 얼굴 대조 QC (handoff §03 필수 게이트) — OpenCV SFace/YuNet(Apache-2.0) ----
     # enabled=false면 QC 스킵(dev·shadow). 3장 pairwise 코사인 최소값 < threshold 면 자산 등록 차단.
     fm_face_qc_enabled: bool = False
@@ -655,6 +668,22 @@ def _default_on_flag(env: str) -> str:
         return "on"
     value = raw.strip().lower()
     return value if value in {"off", "on"} else "off"
+
+
+_TRACE_PLATFORMS = ("naver", "zigzag")
+
+
+def _trace_platforms_env() -> tuple[str, ...]:
+    """FM_TRACE_PATROL_PLATFORMS — 쉼표 목록. 허용 목록 밖(29cm 등)은 버린다. 미설정이면 둘 다."""
+    raw = os.getenv("FM_TRACE_PATROL_PLATFORMS")
+    if raw is None:
+        return _TRACE_PLATFORMS
+    out: list[str] = []
+    for part in raw.split(","):
+        name = part.strip().lower()
+        if name in _TRACE_PLATFORMS and name not in out:
+            out.append(name)
+    return tuple(out)
 
 
 _IDENTITY_METHODS = ("mid", "simple_auth")
@@ -1026,6 +1055,13 @@ def load_settings() -> Settings:
         public_web_origin=(
             os.getenv("PUBLIC_WEB_ORIGIN") or "https://ai.wearless.kr"
         ).rstrip("/"),
+        fm_trace_patrol=_flag("FM_TRACE_PATROL", "off", {"off", "on"}),
+        fm_trace_patrol_platforms=_trace_platforms_env(),
+        fm_trace_patrol_hour_kst=min(23, max(0, _int_env("FM_TRACE_PATROL_HOUR_KST", 4))),
+        fm_trace_contact=(os.getenv("FM_TRACE_CONTACT") or "").strip()
+        or "https://facemarket.wearless.kr",
+        naver_search_client_id=(os.getenv("NAVER_SEARCH_CLIENT_ID") or "").strip() or None,
+        naver_search_client_secret=(os.getenv("NAVER_SEARCH_CLIENT_SECRET") or "").strip() or None,
         kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY") or None,
         kakao_client_secret=os.getenv("KAKAO_CLIENT_SECRET") or None,
         kakao_auth_base=(

@@ -42,7 +42,8 @@ def test_safe_image_hashes_never_raises():
     buf = io.BytesIO()
     procedural_photo(320, 240, 5).save(buf, "PNG")
     got = F.safe_image_hashes(buf.getvalue())
-    assert set(got) == {"phash", "dhash"}
+    assert set(got) == {"phash", "dhash", "crops"}
+    assert got["crops"] == []            # 가로 사진엔 세로 크롭 변형이 없다
 
 
 def test_publication_strips_cover_the_whole_page_including_bottom():
@@ -118,3 +119,62 @@ def test_popcount_fallback_matches_numpy():
     fallback = np.unpackbits(b, axis=-1).sum(axis=-1)
     assert fallback.tolist() == [[0, 1, 64, 8]]
     assert F._popcount(x).tolist() == [[0, 1, 64, 8]]
+
+
+def _jpeg_img(im, q=80, w=None):
+    if w:
+        im = im.resize((w, round(im.height * w / im.width)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, "JPEG", quality=q)
+    return Image.open(io.BytesIO(buf.getvalue()))
+
+
+def _cut_rows(im, oid="o1"):
+    out = []
+    for i, fp in enumerate(F.cut_fingerprints(im)):
+        out.append({"id": f"{oid}-{i}", "publication_id": None, "output_record_id": oid,
+                    "kind": fp["kind"], "region_y0": fp.get("region_y0"),
+                    "region_y1": fp.get("region_y1"), "phash": fp["phash"], "dhash": fp["dhash"]})
+    return out
+
+
+def test_cut_crops_cover_square_and_portrait_thumbnails_in_860_coords():
+    """쇼핑몰 대표 이미지는 정사각·3:4·4:5 로 잘린다(2026-09-27 실측: 컷 전체 지문만으론 정사각 0/22)."""
+    im = procedural_photo(848, 1264, 7)
+    fps = F.cut_fingerprints(im)
+    assert fps[0]["kind"] == "cut" and "region_y0" not in fps[0]
+    crops = [f for f in fps if f["kind"] == "cut_crop"]
+    h = round(1264 * 860 / 848)
+    spans = [(c["region_y0"], c["region_y1"]) for c in crops]
+    assert (0, 860) in spans                                  # 위 정사각
+    assert (h - 860) // 2 in [y0 for y0, _ in spans]          # 가운데 정사각
+    assert all(0 <= y0 < y1 <= h for y0, y1 in spans)
+    assert {y1 - y0 for y0, y1 in spans} >= {860, round(860 * 4 / 3), round(860 * 5 / 4)}
+    assert F.cut_fingerprints(procedural_photo(900, 900, 8))[1:] == []   # 정사각 원본엔 크롭 없음
+
+
+@pytest.mark.parametrize("frac", [0.0, 0.25, 0.5])
+def test_square_thumbnail_of_a_cut_is_found(frac):
+    im = procedural_photo(848, 1264, 11)
+    s = im.width
+    y = round((im.height - s) * frac)
+    thumb = _jpeg_img(im.crop((0, y, s, y + s)), 80, 720)
+    rows = _cut_rows(im) + _cut_rows(procedural_photo(848, 1264, 12), "o2")
+    hits = F.search(F.query_fingerprints(thumb), rows)
+    assert hits and hits[0]["row"]["output_record_id"] == "o1"
+    assert all(m["row"]["output_record_id"] == "o1" for m in hits)
+
+
+def test_white_padded_square_thumbnail_is_trimmed_before_matching():
+    im = procedural_photo(848, 1264, 13)
+    pad = Image.new("RGB", (1264, 1264), (255, 255, 255))
+    pad.paste(im.convert("RGB"), ((1264 - 848) // 2, 0))
+    queries = F.query_fingerprints(_jpeg_img(pad, 80, 720))
+    assert [q["kind"] for q in queries].count("whole") == 2   # 원본 + 여백 걷어낸 것
+    hits = F.search(queries, _cut_rows(im))
+    assert hits and hits[0]["row"]["kind"] == "cut"
+
+
+def test_trim_leaves_full_bleed_images_alone():
+    im = procedural_photo(860, 1100, 14)
+    assert [q["kind"] for q in F.query_fingerprints(im)].count("whole") == 1

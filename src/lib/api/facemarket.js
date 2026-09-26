@@ -532,6 +532,23 @@ export async function adminTraceImage(file) {
     '출처를 추적하지 못했어요. 잠시 후 다시 시도해 주세요.');
 }
 
+// 자동 발견(2026-09-27) — 순찰(네이버·지그재그)과 모델 제보가 쌓는 발견 원장. 셀러는 서버가 마스킹한다.
+export function adminListTraceFindings({ status, source, limit = 50, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set('status', status);
+  if (source) params.set('source', source);
+  if (cursor) params.set('cursor', cursor);
+  return http(`/v1/facemarket/admin/trace/findings?${params.toString()}`);
+}
+
+// 판정: new | seller_own | misuse | dismissed. seller_own + rememberStore 면 그 판매처를 기억해
+// 다음 순찰부터 같은 셀러·판매처 발견은 알리지 않는다.
+export function adminUpdateTraceFinding(findingId, { status, rememberStore = false }) {
+  return http(`/v1/facemarket/admin/trace/findings/${encodeURIComponent(findingId)}`, {
+    method: 'PATCH', body: { status, rememberStore },
+  });
+}
+
 // ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
 // register·me 는 기기 없이 열린다(아직 기기가 없는 관리자가 부른다). 나머지는 승인 기기 필수.
 
@@ -806,6 +823,21 @@ export async function fetchLicenseFaceUrl(faceImageUri) {
   const res = await _authFetch(faceImageUri);
   if (!res.ok) throw new Error('얼굴 이미지를 불러오지 못했어요.');
   return URL.createObjectURL(await res.blob());
+}
+
+// 모델 제보 — "내 얼굴 찾기 신고"(2026-09-27). 서버가 배포본과 대조해 관리자에게 알린다.
+// 이미지는 저장되지 않는다. 응답은 접수 사실뿐({ id, status: 'received' }).
+export async function reportSighting(file, { pageUrl = '', note = '' } = {}) {
+  const form = new FormData();
+  form.append('image', file, file?.name || 'found-image');
+  if (pageUrl.trim()) form.append('pageUrl', pageUrl.trim());
+  if (note.trim()) form.append('note', note.trim());
+  return checkedJson(await _authFetch('/v1/facemarket/me/sightings', { method: 'POST', body: form }),
+    '신고를 보내지 못했어요. 잠시 후 다시 시도해 주세요.');
+}
+
+export function listMySightings() {
+  return http('/v1/facemarket/me/sightings');
 }
 
 export function reportUsage(paymentId, reason) {

@@ -19,13 +19,17 @@ import hashlib
 import logging
 import time
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from . import admin_guard, fm_fingerprint_store
+from . import admin_guard, fm_fingerprint_store, fm_trace_findings
 from .auth import require_user
 from .db import get_conn
+from .models import CamelModel
 from .facemarket import _err, _mask_name
+from .fm_trace_findings import _mask_email
 from .services import fm_fingerprint, fm_watermark
 
 logger = logging.getLogger("facemarket.trace")
@@ -34,14 +38,6 @@ router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin consol
 
 MAX_TRACE_BYTES = 60 * 1024 * 1024
 MAX_CANDIDATES = 10
-
-
-def _mask_email(email: str | None) -> str | None:
-    """관리자 화면용 이메일 마스킹 — 앞 2자 + *** + 도메인."""
-    if not email or "@" not in email:
-        return None
-    local, domain = email.split("@", 1)
-    return f"{local[:2]}***@{domain}"
 
 
 def _analyze(data: bytes) -> dict:
@@ -192,6 +188,63 @@ async def _details(conn, candidates: list[dict]) -> dict[tuple[str, str], dict]:
     return out
 
 
+async def trace_image(conn, data: bytes, *, origin: str, rows: list[dict] | None = None) -> dict:
+    """발견 이미지 바이트 → 워터마크 판독 + 지문 후보(관리자 추적·모델 제보·순찰이 같이 쓴다).
+
+    감사 기록·커밋은 하지 않는다(호출부 몫). rows = 미리 적재한 지문 — 순찰처럼 한 번에 수십 장을
+    대조할 때 매번 전수 적재하지 않으려고 넘긴다. 디코드 실패는 ValueError.
+    """
+    sha256 = hashlib.sha256(data).hexdigest()
+    try:
+        analysis = await asyncio.to_thread(_analyze, data)
+    except Exception as exc:
+        raise ValueError("invalid image") from exc
+    wm: fm_watermark.WatermarkRead = analysis["wm"]
+    wm_hits: dict[int, str] = {}
+    if wm.codes:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id, wm_code from fm_publication_records "
+                "where wm_code = any(%s::bigint[])",
+                (list(wm.codes),),
+            )
+            for r in await cur.fetchall() or []:
+                wm_hits[int(r["wm_code"])] = r["id"]
+    if rows is None:
+        rows = await fm_fingerprint_store.load_fingerprints(conn)
+    matches = await asyncio.to_thread(fm_fingerprint.search, analysis["queries"], rows)
+    ranked = rank_candidates(matches, list(dict.fromkeys(wm_hits.values())))
+    details = await _details(conn, ranked)
+    candidates = [
+        _candidate_view(c, details.get((c["target"], c["target_id"])), origin) for c in ranked
+    ]
+    matched_code = next((code for code in sorted(wm.codes, key=lambda k: -wm.codes[k])
+                         if code in wm_hits), None)
+    if matched_code is not None:
+        wm_status = "matched"
+    elif wm.code is not None and wm.votes >= 2:
+        wm_status = "unregistered"     # 코드는 읽혔지만 이 원장에 없다(다른 환경 배포본 등)
+    else:
+        wm_status = "not_found"
+    shown_code = matched_code if matched_code is not None else (
+        wm.code if wm_status == "unregistered" else None)
+    return {
+        "image": {"width": analysis["width"], "height": analysis["height"],
+                  "sha256": sha256, "sha256Prefix": sha256[:12]},
+        "watermark": {
+            "status": wm_status,
+            "code": f"{shown_code:08x}" if shown_code is not None else None,
+            "votes": wm.codes.get(shown_code, 0) if shown_code is not None else 0,
+            "windows": wm.windows,
+            "syncScore": round(wm.best_z, 1),
+            "publicationId": wm_hits.get(matched_code) if matched_code is not None else None,
+        },
+        "candidates": candidates,
+        "stats": {"fingerprintsScanned": len(rows), "queryWindows": len(analysis["queries"]),
+                  "watermarkMs": analysis["wm_ms"]},
+    }
+
+
 @router.post("/trace")
 async def admin_trace(
     request: Request,
@@ -208,53 +261,18 @@ async def admin_trace(
         raise _err("empty_upload", "빈 파일은 사용할 수 없어요.")
     if len(data) > MAX_TRACE_BYTES:
         raise _err("file_too_large", "이미지는 60MB 이하만 올릴 수 있어요.", status=413)
-    sha_prefix = hashlib.sha256(data).hexdigest()[:12]
-    try:
-        analysis = await asyncio.to_thread(_analyze, data)
-    except Exception:
-        logger.info("trace_decode_failed sha=%s bytes=%d", sha_prefix, len(data))
-        raise _err("invalid_image", "이미지를 읽을 수 없어요. PNG·JPEG·WebP 파일인지 확인해 주세요.")
-    del data   # 이후 단계는 바이트가 필요 없다 — 요청이 끝날 때까지 들고 있지 않는다
-
-    wm: fm_watermark.WatermarkRead = analysis["wm"]
     s = request.app.state.settings
     async with get_conn(request) as conn:
-        wm_hits: dict[int, str] = {}
-        if wm.codes:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "select id::text as id, wm_code from fm_publication_records "
-                    "where wm_code = any(%s::bigint[])",
-                    (list(wm.codes),),
-                )
-                for r in await cur.fetchall() or []:
-                    wm_hits[int(r["wm_code"])] = r["id"]
-        rows = await fm_fingerprint_store.load_fingerprints(conn)
-        matches = await asyncio.to_thread(fm_fingerprint.search, analysis["queries"], rows)
-        ranked = rank_candidates(matches, list(dict.fromkeys(wm_hits.values())))
-        details = await _details(conn, ranked)
-        candidates = [
-            _candidate_view(c, details.get((c["target"], c["target_id"])), s.public_web_origin)
-            for c in ranked
-        ]
-        matched_code = next((code for code in sorted(wm.codes, key=lambda k: -wm.codes[k])
-                             if code in wm_hits), None)
-        if matched_code is not None:
-            wm_status = "matched"
-        elif wm.code is not None and wm.votes >= 2:
-            wm_status = "unregistered"     # 코드는 읽혔지만 이 원장에 없다(다른 환경 배포본 등)
-        else:
-            wm_status = "not_found"
-        shown_code = matched_code if matched_code is not None else (
-            wm.code if wm_status == "unregistered" else None)
-        watermark = {
-            "status": wm_status,
-            "code": f"{shown_code:08x}" if shown_code is not None else None,
-            "votes": wm.codes.get(shown_code, 0) if shown_code is not None else 0,
-            "windows": wm.windows,
-            "syncScore": round(wm.best_z, 1),
-            "publicationId": wm_hits.get(matched_code) if matched_code is not None else None,
-        }
+        try:
+            result = await trace_image(conn, data, origin=s.public_web_origin)
+        except ValueError:
+            logger.info("trace_decode_failed sha=%s bytes=%d",
+                        hashlib.sha256(data).hexdigest()[:12], len(data))
+            raise _err("invalid_image",
+                       "이미지를 읽을 수 없어요. PNG·JPEG·WebP 파일인지 확인해 주세요.")
+        del data   # 이후 단계는 바이트가 필요 없다 — 요청이 끝날 때까지 들고 있지 않는다
+        watermark, candidates = result["watermark"], result["candidates"]
+        sha_prefix = result["image"]["sha256Prefix"]
         elapsed = int((time.monotonic() - started) * 1000)
         await admin_guard.write_audit(
             conn,
@@ -264,7 +282,7 @@ async def admin_trace(
             target_id=watermark["publicationId"],
             after={
                 "sha256Prefix": sha_prefix,
-                "watermark": wm_status,
+                "watermark": watermark["status"],
                 "candidates": len(candidates),
                 "publicationIds": [c["publicationId"] for c in candidates if c["publicationId"]],
                 "outputRecordIds": [c["outputRecordId"] for c in candidates
@@ -272,15 +290,69 @@ async def admin_trace(
             },
         )
         await conn.commit()
+    stats = result["stats"]
     logger.info(
         "trace sha=%s wm=%s candidates=%d fingerprints=%d windows=%d ms=%d",
-        sha_prefix, wm_status, len(candidates), len(rows), len(analysis["queries"]), elapsed,
+        sha_prefix, watermark["status"], len(candidates), stats["fingerprintsScanned"],
+        stats["queryWindows"], elapsed,
     )
+    image_info = {k: v for k, v in result["image"].items() if k != "sha256"}
     return JSONResponse({
-        "image": {"width": analysis["width"], "height": analysis["height"],
-                  "sha256Prefix": sha_prefix},
+        "image": image_info,
         "watermark": watermark,
         "candidates": candidates,
-        "stats": {"fingerprintsScanned": len(rows), "queryWindows": len(analysis["queries"]),
-                  "watermarkMs": analysis["wm_ms"], "elapsedMs": elapsed},
+        "stats": {**stats, "elapsedMs": elapsed},
     })
+
+
+# ---------- 자동 발견(순찰·모델 제보) 목록·판정 ----------
+
+class FindingStatusRequest(CamelModel):
+    status: Literal["new", "seller_own", "misuse", "dismissed"]
+    remember_store: bool = False
+
+
+def _finding_error(e: fm_trace_findings.FindingError):
+    return _err(e.code, e.message, status=e.status)
+
+
+@router.get("/trace/findings")
+async def admin_list_trace_findings(
+    request: Request,
+    status: str | None = Query(None),
+    source: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    cursor: str | None = Query(None, max_length=256),
+    user_id: str = Depends(require_user),
+):
+    """자동 발견 목록(최근 본 순). 셀러는 마스킹. 관리자 전용."""
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        try:
+            result = await fm_trace_findings.list_findings(
+                conn, status=status, source=source, limit=limit, cursor=cursor)
+        except fm_trace_findings.FindingError as e:
+            raise _finding_error(e) from None
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.patch("/trace/findings/{finding_id}")
+async def admin_update_trace_finding(
+    request: Request,
+    finding_id: str,
+    body: FindingStatusRequest,
+    user_id: str = Depends(require_user),
+):
+    """관리자 판정. seller_own + rememberStore 면 그 판매처를 셀러 본인 것으로 기억해 다음 순찰부터
+    알리지 않는다. 감사 원장에 전후 상태가 남는다."""
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        try:
+            result = await fm_trace_findings.update_finding_status(
+                conn, finding_id=finding_id, actor=user_id, status=body.status,
+                remember_store=body.remember_store, write_audit=admin_guard.write_audit)
+        except fm_trace_findings.FindingError as e:
+            await conn.rollback()
+            raise _finding_error(e) from None
+        await conn.commit()
+    return JSONResponse(result)

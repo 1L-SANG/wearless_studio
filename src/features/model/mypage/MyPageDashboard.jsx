@@ -7,6 +7,7 @@ import { MyPageConditions } from './MyPageConditions.jsx';
 import { MyPageDialog } from './MyPageDialog.jsx';
 import { EarningsFigures, MyPageEarnings, NextPayout, useMyPageSettlements } from './MyPageEarnings.jsx';
 import { MyPageUsage } from './MyPageUsage.jsx';
+import { MyPageSightings } from './MyPageSightings.jsx';
 import { AccountShortcut, BankSection, PayoutAccountDialog, usePayoutAccount } from './MyPagePayoutAccount.jsx';
 import { PAYOUT_ACCOUNT_API_READY } from './payoutAccount.js';
 import { defaultUsageMonth } from './usageMonths.js';
@@ -68,7 +69,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
       {tab === 'license' ? <MyPageConditions license={license} model={model} revoked={journey.flag === 'revoked'} registering={registering}
         onLicenseChange={onLicenseChange} onModelChange={onModelChange} onCertificate={() => setCertificate(true)} onManage={() => setActivityDialog('manage')} />
         : registering ? <RegistrationProgress journey={journey} enrollment={enrollment} />
-        : tab === 'usage' ? <MyPageUsage data={data} month={month} onMonthChange={setMonth} />
+        : tab === 'usage' ? <><MyPageUsage data={data} month={month} onMonthChange={setMonth} /><MyPageSightings /></>
         : <MyPageEarnings data={data} month={month} onMonthChange={setMonth}><BankSection bank={bank} onOpen={openAccount} /></MyPageEarnings>}
     </section>
     {certificate && <MyPageDialog title="내 라이선스 증서" certificate onClose={() => setCertificate(false)}><MyPageCertificate model={model} license={canShowCertificate ? license : null} registering={!canShowCertificate} revoked={journey.flag === 'revoked'} /></MyPageDialog>}

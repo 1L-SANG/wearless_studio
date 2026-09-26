@@ -38,6 +38,7 @@ test('근거 문구 — 워터마크·구간·컷을 구분한다', () => {
   assert.equal(evidenceText({ watermark: true, phashDistance: 0, matchedKind: 'strip', region: { y0: 900, y1: 1700 } }),
     '워터마크 + 페이지 구간 900~1700px · 차이 0/64');
   assert.equal(evidenceText({ watermark: false, phashDistance: 6, matchedKind: 'cut' }), '생성 컷 · 차이 6/64');
+  assert.equal(evidenceText({ watermark: false, phashDistance: 2, matchedKind: 'cut_crop' }), '생성 컷(잘린 썸네일) · 차이 2/64');
   assert.equal(evidenceText({ watermark: true, phashDistance: null }), '워터마크');
   assert.equal(licenseStatusLabel('deleted'), '삭제됨');
   assert.equal(targetLabel({ target: 'publication', publicationKind: 'zip' }), '배포본 · ZIP');

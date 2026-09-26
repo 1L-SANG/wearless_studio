@@ -105,10 +105,13 @@ def open_image(data: bytes) -> Image.Image:
 
 
 def safe_image_hashes(data: bytes) -> dict | None:
-    """컷 1장 지문(베스트에포트). 실패하면 None — 컷 종결을 절대 막지 않는다."""
+    """컷 1장 지문(베스트에포트). 실패하면 None — 컷 종결을 절대 막지 않는다.
+
+    {"phash", "dhash", "crops"} — crops 는 쇼핑몰 대표 이미지 크롭 변형(cut_fingerprints 참고).
+    """
     try:
-        ph, dh, _std = _hashes(open_image(data))
-        return {"phash": ph, "dhash": dh}
+        fps = cut_fingerprints(open_image(data))
+        return {"phash": fps[0]["phash"], "dhash": fps[0]["dhash"], "crops": fps[1:]}
     except Exception:
         logger.warning("cut fingerprint failed", exc_info=True)
         return None
@@ -148,6 +151,61 @@ def _strip_starts(h: int, size: int, step: int) -> list[int]:
     return starts
 
 
+#: 쇼핑몰 대표 이미지 크롭(2026-09-27 실측) — 네이버·지그재그 목록 썸네일은 정사각(1:1)이 많고 3:4·4:5
+#: 도 쓴다. 컷 전체 지문만으로는 정사각 크롭 0/22·흰 여백 정사각 0/22 가 맞았다(샘플 22컷). 아래 다섯
+#: 크롭을 원장에 같이 두고 조회 때 단색 여백을 걷어내면 22/22, 다른 컷을 잘못 짚은 쌍은 정사각에서 0.
+#: (세로 비율 h/w, 세로 위치 0=위 · 0.5=가운데). 좌표는 폭 860 정규화 기준 — region_y0·y1 에 싣는다.
+CUT_CROPS = ((1.0, 0.0), (1.0, 0.25), (1.0, 0.5), (4 / 3, 0.5), (5 / 4, 0.5))
+
+
+def cut_fingerprints(img: Image.Image) -> list[dict]:
+    """REAL 컷 1장 → [{"kind": "cut", ...}] + 크롭 변형 [{"kind": "cut_crop", region_y0, region_y1, ...}].
+
+    크롭은 세로가 그 비율보다 긴 컷에만 생긴다(정사각·가로 원본엔 없다). 정보가 거의 없는 크롭(빈 배경)은
+    버린다 — 서로 다른 컷의 빈 여백끼리 가까워 헛후보가 된다.
+    """
+    ph, dh, _ = _hashes(img)
+    out = [{"kind": "cut", "phash": ph, "dhash": dh}]
+    norm = normalize(img)
+    seen = set()
+    for ratio, frac in CUT_CROPS:
+        ch = round(NORM_W * ratio)
+        if norm.height <= ch + 4:
+            continue
+        y0 = round((norm.height - ch) * frac)
+        if (y0, ch) in seen:
+            continue
+        seen.add((y0, ch))
+        ph, dh, std = _hashes(norm.crop((0, y0, NORM_W, y0 + ch)))
+        if std >= LOW_INFO_STD:
+            out.append({"kind": "cut_crop", "region_y0": y0, "region_y1": y0 + ch,
+                        "phash": ph, "dhash": dh})
+    return out
+
+
+#: 여백 걷기 — 가장자리 중앙값과 이만큼(8비트) 넘게 다른 픽셀이 1% 넘는 행·열만 남긴다.
+_TRIM_TOL = 12
+_TRIM_MIN_KEEP = 0.5
+
+
+def trim_uniform_border(img: Image.Image) -> Image.Image | None:
+    """단색 여백(흰 띠 등)을 걷어낸 이미지. 걷을 게 없거나 너무 많이 깎이면 None."""
+    a = np.asarray(img.convert("L"), dtype=np.int16)
+    if a.size == 0:
+        return None
+    edge = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
+    mask = np.abs(a - int(np.median(edge))) > _TRIM_TOL
+    rows = np.where(mask.mean(axis=1) > 0.01)[0]
+    cols = np.where(mask.mean(axis=0) > 0.01)[0]
+    if len(rows) == 0 or len(cols) == 0:
+        return None
+    box = (int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1)
+    kept = (box[2] - box[0]) * (box[3] - box[1])
+    if kept >= a.shape[0] * a.shape[1] * 0.97 or kept < a.shape[0] * a.shape[1] * _TRIM_MIN_KEEP:
+        return None
+    return img.crop(box)
+
+
 def publication_fingerprints(normalized: list[Image.Image]) -> list[dict]:
     """배포본 지문. normalized = normalize() 를 거친 이미지들(긴 PNG 는 1장, ZIP 은 블록 순서대로).
 
@@ -179,6 +237,10 @@ def query_fingerprints(img: Image.Image) -> list[dict]:
     norm = normalize(img)
     ph, dh, _ = _hashes(norm)
     out = [{"kind": "whole", "y0": 0, "y1": norm.height, "phash": ph, "dhash": dh}]
+    trimmed = trim_uniform_border(norm)
+    if trimmed is not None:           # 흰 여백 붙인 정사각 썸네일 — 여백 걷은 그림도 전체로 대조한다
+        tph, tdh, _ = _hashes(trimmed)
+        out.append({"kind": "whole", "y0": 0, "y1": norm.height, "phash": tph, "dhash": tdh})
     if norm.height > STRIP:
         step = QUERY_STEP if norm.height <= QUERY_LONG else QUERY_STEP_LONG
         for y0 in _strip_starts(norm.height, STRIP, step):

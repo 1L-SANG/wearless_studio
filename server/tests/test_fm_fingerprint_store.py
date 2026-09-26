@@ -146,3 +146,17 @@ def test_sign_marks_before_c2pa_signing():
     assert _after(body, "_mark_publication(", "sign_bytes, signer")
     zip_branch = body.split('elif kind == "zip":', 1)[1].split("else:", 1)[0]
     assert _after(zip_branch, "_mark_publication(", "r2.put_bytes")
+
+
+def test_record_cut_fingerprints_also_stores_crop_variants():
+    items = S.cut_fingerprint_items([{
+        "asset_id": "a1", "provenance": {"license_id": "l"},
+        "fingerprint": {"phash": 5, "dhash": 6, "crops": [
+            {"kind": "cut_crop", "region_y0": 0, "region_y1": 860, "phash": 1 << 63, "dhash": 2}]},
+    }])
+    conn = Conn()
+    assert asyncio.run(S.record_cut_fingerprints(Pool(conn), items)) == 1
+    (main_sql, main_rows), (crop_sql, crop_rows) = conn.calls
+    assert main_rows == [(5, 6, "a1")]
+    assert "'cut_crop'" in crop_sql and "from fm_output_records r where r.asset_id = %s" in crop_sql
+    assert crop_rows == [(0, 860, fm_fingerprint.to_signed(1 << 63), 2, "a1")]
