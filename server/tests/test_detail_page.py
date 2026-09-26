@@ -82,6 +82,15 @@ def test_detail_rejection_keeps_other_cut_without_asset_preview_or_charge(monkey
 
 # ---------- 라우트 ----------
 
+def test_detail_minimum_cut_setting_defaults_and_reads_env(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.delenv("CREDIT_MIN_STORYBOARD_CUTS", raising=False)
+    assert load_settings().credit_min_storyboard_cuts == 5
+    monkeypatch.setenv("CREDIT_MIN_STORYBOARD_CUTS", "6")
+    assert load_settings().credit_min_storyboard_cuts == 6
+
+
 def test_detail_404(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return None
@@ -136,13 +145,65 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-dp-1"
     assert seen["kind"] == "detail_page"
-    assert seen["credits_reserved"] == 38  # ai 블록 2개 × storyboardPerCut(19)
-    assert seen["reserved"] == 38
+    assert seen["credits_reserved"] == 95  # AI 2컷도 최소 5컷 기준
+    assert seen["reserved"] == 95
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
     assert seen["metadata"]["perCutCost"] == 19
     assert seen["metadata"]["creditCostVersion"] == "v6"
     assert seen["metadata"]["aiCount"] == 2
+    assert seen["metadata"]["minCuts"] == 5
     assert seen["prewarmed"] == 1
+
+
+@pytest.mark.parametrize("ai_count,expected_cost", [(0, 0), (3, 95), (7, 133)])
+def test_detail_reservation_uses_minimum_only_for_positive_ai_count(
+    client, make_token, monkeypatch, ai_count, expected_cost,
+):
+    seen = {}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {}
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+                 "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
+                for i in range(ai_count)] + [{"id": "mine", "source": "mine"}]
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "j1"}, True
+
+    async def fake_reserve(conn, user_id, cost):
+        seen["reserved"] = cost
+        return 100
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
+    assert response.status_code == 202, response.text
+    assert seen["credits_reserved"] == expected_cost
+    assert seen["metadata"]["aiCount"] == ai_count
+    assert seen["metadata"]["minCuts"] == 5
+    if ai_count == 0:
+        assert "reserved" not in seen
+    else:
+        assert seen["reserved"] == expected_cost
 
 
 def test_detail_rejects_saved_bg_example_before_job_or_credit(
@@ -384,8 +445,8 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
     # hooking 컷은 예약에서 빠진다 — 예약 = 실제로 만들 스타일링 1컷.
     per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
     assert seen["metadata"]["aiCount"] == 1
-    assert seen["credits_reserved"] == per_cut
-    assert seen["reserved"] == per_cut
+    assert seen["credits_reserved"] == 5 * per_cut
+    assert seen["reserved"] == 5 * per_cut
 
 
 def test_detail_real_blocked_sections_only_are_refused_with_the_studio_only_code(
@@ -1170,6 +1231,70 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
     assert captured["product_name"] == "미니멀 코튼 셔츠"  # copywriting OFF도 무호출 작명
+
+
+@pytest.mark.parametrize("requested,completed,legacy,expected_charge", [
+    (3, 3, False, 95),
+    (3, 1, False, 95),
+    (7, 2, False, 38),
+    (3, 3, True, 57),
+])
+def test_detail_success_settles_from_requested_minimum_snapshot(
+    monkeypatch, requested, completed, legacy, expected_charge,
+):
+    captured = {}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+                 "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
+                for i in range(requested)]
+
+    async def fake_product(conn, project_id):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, project_id):
+        return {}
+
+    async def fake_asset(conn, user_id, asset_id):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_cuts(app, job, prepared, product, analysis, **kwargs):
+        return ([{"blockId": f"b{i}"} for i in range(completed)],
+                [{"metadata": {}} for _ in range(completed)], 0, [], [], None, [])
+
+    def fake_assemble(*args, **kwargs):
+        return []
+
+    async def fake_finalize(conn, **kwargs):
+        captured.update(kwargs)
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_emit(pool, job_id, event, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj, "_gen_cuts", fake_cuts)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    reserved = (requested if legacy or requested >= 5 else 5) * 19
+    job = _job(reserved=reserved, per_cut=19)
+    job["metadata"]["aiCount"] = requested
+    if not legacy:
+        job["metadata"]["minCuts"] = 5
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), job))
+
+    assert len(captured["cut_assets"]) == completed
+    assert captured["reserved"] == reserved
+    assert captured["charge"] == expected_charge
 
 
 def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
@@ -2403,7 +2528,8 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}]
+        return [{"id": f"b{i}", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}
+                for i in range(3)]
 
     async def fake_prod(conn, pid):
         return {"colors": []}   # 상품 사진 없음 + 마네킹 미선택
@@ -2443,12 +2569,15 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+    job = worker_job(credits_reserved=95)
+    job["metadata"] = {"perCutCost": 19, "aiCount": 3, "minCuts": 5}
+    asyncio.run(dpj.run_detail_page_job(app, job))
 
     assert calls["n"] == 0                       # 생성 호출 자체가 없다
     assert captured["failure"]["code"] == "all_cuts_failed"
+    assert captured["failure"]["reserved"] == 95  # 실패 경로가 예약 전액을 반환
     assert captured["failure"]["metadata"] == {
-        "error": "all_cuts_failed", "requestedCuts": 1,
+        "error": "all_cuts_failed", "requestedCuts": 3,
     }
 
 

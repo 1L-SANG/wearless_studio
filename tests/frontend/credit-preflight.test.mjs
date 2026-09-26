@@ -106,10 +106,10 @@ test('mannequin preflight accepts a quoted plan-aware total while preserving its
   assert.equal(mannequinGenerationCreditShortfall({ credits: 45 }), null);
 });
 
-test('detail-page confirmation multiplies AI cuts by the canonical per-cut cost', () => {
+test('detail-page confirmation requires the five-cut minimum for three AI cuts', () => {
   const shortfall = detailPageGenerationCreditShortfall({ credits: 56 }, 3);
   assert.equal(shortfall.availableCredits, 56);
-  assert.equal(shortfall.requiredCredits, 3 * CREDIT_COSTS.storyboardPerCut);
+  assert.equal(shortfall.requiredCredits, 95);
 });
 
 test('an account with the exact required balance passes each paid gate', () => {
@@ -117,7 +117,7 @@ test('an account with the exact required balance passes each paid gate', () => {
     credits: CREDIT_COSTS.mannequinGenerate,
   }), null);
   assert.equal(detailPageGenerationCreditShortfall({
-    credits: 3 * CREDIT_COSTS.storyboardPerCut,
+    credits: 95,
   }, 3), null);
 });
 

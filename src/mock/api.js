@@ -29,6 +29,7 @@ import {
 import {
   CREDIT_COSTS,
   LIMITS,
+  detailPageCreditCost,
   extensionModelFee,
   mannequinGenerationTotal,
   mannequinRegenerationQuote,
@@ -668,7 +669,7 @@ export const api = {
 
   /* ---- generation waiting (PRD §9) ----
      입력은 전부 서버 상태(저장된 콘티 + project 선택값)에서 읽는다 (계약 §6).
-     크레딧: storyboardPerCut × AI 컷 수 — 내 이미지 블록은 생성 작업이 없어 제외.
+     크레딧: AI 생성이 있으면 최소 5컷 값, 내 이미지 블록은 생성 작업이 없어 제외.
      진행 중 재호출은 기존 job 에 합류한다 — 1회만 생성·차감.
      이미 완료(status='done')면 재생성·재차감 없이 기존 결과를 반환한다. */
   /* 에디터 대기(editor_wait_dev_spec §3) — mock 이벤트 시뮬. 서버와 같은 이벤트 계약
@@ -722,8 +723,8 @@ export const api = {
       push('progress', { progress: 85, phase: 'assemble' });
       await wait(700);
       DB.editorBlocks = blocks; DB.project.status = 'done'; touch();
-      const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
-      ewSim.result = { data: clone(blocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
+      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
+      ewSim.result = { data: clone(blocks), credits: spend(detailPageCreditCost(aiCuts)) };
       ewSim.progress = 100; ewSim.status = 'done';
     })();
     return { jobId: ewSim.jobId };
@@ -759,7 +760,7 @@ export const api = {
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
       const aiCuts = uniqueGenerationCutCount(DB.storyboard);
-      return { data: clone(DB.editorBlocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
+      return { data: clone(DB.editorBlocks), credits: spend(detailPageCreditCost(aiCuts)) };
     })());
     job.listeners.push({ onProgress, onStep });
     return job.promise;

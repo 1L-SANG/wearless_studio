@@ -90,7 +90,9 @@ def test_reserve_counts_only_cuts_this_model_can_make(
     assert res.status_code == 202, res.text
     per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
     assert seen["metadata"]["aiCount"] == expected_cuts
-    assert seen["credits_reserved"] == expected_cuts * per_cut
+    assert seen["credits_reserved"] == max(
+        expected_cuts, client.app.state.settings.credit_min_storyboard_cuts
+    ) * per_cut
 
 
 # ── 에디터 새 컷: 범위 밖이면 잡도 크레딧도 없다 ──

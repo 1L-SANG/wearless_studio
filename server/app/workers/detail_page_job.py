@@ -1,8 +1,8 @@
 """PL-4 상세페이지 생성 워커. AG-06 컷 → AG-02 카피 → AG-03 검수 → M-02 조립 → EditorBlock[].
 
 저장 콘티(projects.storyboard)의 source='ai' 블록별로 AG-06 컷 이미지를 생성(실패 컷은 빈 슬롯,
-전체 중단 없음·미차감), copywriting 이면 블록별 AG-02 카피 + 묶음 AG-03 검수, page_assembler(M-02)
-로 EditorBlock[] 조립. 크레딧: 성공 컷 수 × storyboardPerCut 만 confirm(부분 성공). lease 펜스.
+전체 중단 없음), copywriting 이면 블록별 AG-02 카피 + 묶음 AG-03 검수, page_assembler(M-02)
+로 EditorBlock[] 조립. 크레딧: 소량 요청의 성공 정산은 최소 5컷, 전부 실패하면 환불. lease 펜스.
 """
 
 import asyncio
@@ -2091,15 +2091,23 @@ async def run_detail_page_job(app, job: dict) -> None:
         editor_blocks = page_assembler.assemble(
             storyboard, cut_results, copy_results, assembly_product, copywriting, **assemble_kwargs)
 
-        # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
+        # 5) 성공 종결 (원자·lease 펜스). 예약 시점 단가와 최소 컷 수 스냅샷으로 정산.
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면
         # 배포 사이 단가 변경이 낀 잡이 견적과 다르게 정산되고, 예약액÷현재 블록 수 역산은 예약 후
         # 콘티 재저장으로 블록이 늘면 단가가 0으로 떨어져 무과금 생성이 된다 — 둘 다 금지.
         # 스냅샷 없는 legacy 잡만 실행 시점 단가로 폴백. min 캡 = 예약 초과 차감 최종 가드.
-        per_cut = (job.get("metadata") or {}).get("perCutCost")
+        metadata = job.get("metadata") or {}
+        per_cut = metadata.get("perCutCost")
         if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
             per_cut = s.credit_cost_storyboard_per_cut
-        charge = min(len(cut_assets) * per_cut, reserved)
+        min_cuts = metadata.get("minCuts")
+        requested = metadata.get("aiCount")
+        billable = len(cut_assets)
+        # 소량 요청은 한 컷이라도 완성되면 최소 컷 수로 정산한다.
+        # minCuts 스냅샷이 없는 기존 잡은 성공 컷 수만큼 정산한다.
+        if min_cuts is not None and requested is not None and 0 < requested < min_cuts and billable > 0:
+            billable = min_cuts
+        charge = min(billable * per_cut, reserved)
         success_metadata = {
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),

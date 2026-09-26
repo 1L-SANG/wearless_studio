@@ -288,6 +288,7 @@ class Settings:
     credit_cost_mannequin_generate: int = 45
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
     credit_cost_storyboard_per_cut: int = 19  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
+    credit_min_storyboard_cuts: int = 5  # PL-4 상세페이지: AI 생성이 있으면 최소 청구 컷 수
     credit_cost_editor_image: int = 19  # PL-5 에디터 이미지 1장
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
@@ -830,6 +831,7 @@ def load_settings() -> Settings:
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "19")),
+        credit_min_storyboard_cuts=int(os.getenv("CREDIT_MIN_STORYBOARD_CUTS", "5")),
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "19")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),
