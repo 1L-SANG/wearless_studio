@@ -460,6 +460,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.method,
                 request.url.path,
             )
+            request.state.error_code = "internal_error"
             return JSONResponse(
                 status_code=500,
                 content={"error": {
@@ -487,16 +488,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.perf_counter()
         response = await call_next(request)
         status = response.status_code
-        if status >= 400 and request.url.path != "/healthz":
-            logging.getLogger("wearless.api").log(
+        duration_ms = (time.perf_counter() - started) * 1000
+        path = request.url.path
+        # 에러 봉투가 적어 둔 응답 코드(example_gender_mismatch 등). 없으면 "-".
+        code = getattr(request.state, "error_code", None) or "-"
+        logger = logging.getLogger("wearless.api")
+        if status >= 400 and path != "/healthz":
+            logger.log(
                 logging.ERROR if status >= 500 else logging.WARNING,
-                "http error status=%s method=%s path=%s duration_ms=%d trace=%s",
+                "http error status=%s method=%s path=%s duration_ms=%d trace=%s code=%s",
                 status,
                 request.method,
-                request.url.path,
-                (time.perf_counter() - started) * 1000,
+                path,
+                duration_ms,
                 # ALB 가 붙이는 추적 헤더. ALB 액세스 로그와 대조할 때 쓴다.
                 request.headers.get("x-amzn-trace-id", "-"),
+                code,
+            )
+        # 요청마다 한 줄 — 경로별 소요시간을 CloudWatch Logs Insights 로 잰다(2026-09-26 전엔
+        # 성공 요청의 시간이 어디에도 없었다). path 대신 라우트 틀을 쓴다: ID 가 박히면 집계가
+        # 요청 수만큼 흩어진다. 라우트에 안 걸린 요청(봇의 /.env 등)은 "-". ALB 가 10초마다
+        # 찌르는 헬스체크와 CORS 사전 요청은 뺀다. INFO 라 Slack 알림 필터에는 안 걸린다.
+        if path not in ("/healthz", "/readyz") and request.method != "OPTIONS":
+            route = getattr(request.scope.get("route"), "path", None) or "-"
+            logger.info(
+                "http request status=%s method=%s route=%s duration_ms=%d code=%s",
+                status,
+                request.method,
+                route,
+                duration_ms,
+                code,
             )
         return response
 
@@ -527,12 +548,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "code": DEFAULT_ERROR_CODES.get(exc.status_code, "error"),
                 "message": str(exc.detail),
             }
+        request.state.error_code = body.get("code")   # http_error_log 가 로그 줄에 붙인다
         return JSONResponse(status_code=exc.status_code, content={"error": body})
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
         if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
+            request.state.error_code = "invalid_payout_account"
             return JSONResponse(status_code=400, content={"error": {
                 "code": "invalid_payout_account",
                 "message": "은행, 계좌번호와 예금주를 확인해 주세요.",
@@ -541,6 +564,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
         # 지원서 v3는 필수 입력 누락도 400으로 응답한다. 다른 API의 422 계약은 유지한다.
         application_submit = request.method == "POST" and request.url.path == "/v1/facemarket/applications"
+        request.state.error_code = "validation_error"
         return JSONResponse(
             status_code=400 if application_submit else 422,
             content={
