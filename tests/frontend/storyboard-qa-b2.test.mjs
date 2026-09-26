@@ -327,6 +327,40 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);
 });
 
+test('next-step afterFlush runs once after a saved board and before navigation', async () => {
+  const events = [];
+  const moved = await continueAfterStoryboardFlush({
+    flush: async () => { events.push('flush'); },
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => events.push('afterFlush'),
+  });
+  assert.equal(moved, true);
+  assert.deepEqual(events, ['flush', 'afterFlush', 'navigate']);
+  assert.match(storyboardSource, /afterFlush: \(\) => \{\s*if \(needsGarmentColorMeasurement\([^)]*\)\) void api\.measureGarmentColors\(projectId\)\.catch\(\(\) => \{\}\);/);
+});
+
+test('next-step afterFlush is skipped when the save fails and never blocks navigation when it throws', async () => {
+  const events = [];
+  const failed = await continueAfterStoryboardFlush({
+    flush: async () => { throw new Error('저장 실패'); },
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => events.push('afterFlush'),
+  });
+  assert.equal(failed, false);
+  assert.deepEqual(events, ['toast']);
+  events.length = 0;
+  const moved = await continueAfterStoryboardFlush({
+    flush: async () => {},
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => { events.push('afterFlush'); throw new Error('boom'); },
+  });
+  assert.equal(moved, true);
+  assert.deepEqual(events, ['afterFlush', 'navigate']);
+});
+
 test('a deterministic 4xx asks the repair hook once and saves the repaired snapshot', async () => {
   // 카탈로그 발행 회전 뒤 저장 보드가 unknown_example_id 로 거절되는 클래스 —
   // 같은 스냅샷 맹목 재시도는 영원히 같은 답이라 하지 않고, 복구본을 즉시 저장한다.

@@ -168,7 +168,7 @@ const STEP_MS = 800;
 
 const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
 
-export function AnalysisProgress({ photoSrc, done, onFinished, colorNote = false }) {
+export function AnalysisProgress({ photoSrc, done, onFinished }) {
   const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
   const [slow, setSlow] = useState(false);         // 20초+ 지연 — 멈춤으로 오해받지 않게 문구만 교체
   const finishedRef = useRef(false);
@@ -232,7 +232,6 @@ export function AnalysisProgress({ photoSrc, done, onFinished, colorNote = false
         {/* 단계마다 같은 몫을 그 단계의 예정 시간 동안 균등하게 채운다(steppedProgress).
             숫자는 여전히 안 쓴다 — 마네킹 대기화면과 동일 결정. */}
         <div className="ap-bar"><i style={{ width: `${barPercent}%` }} /></div>
-        {colorNote && <div className="sec-sub ap-note">색상이 여러 개라 분석이 조금 더 걸릴 수 있어요.</div>}
       </div>
     </div>
   );
