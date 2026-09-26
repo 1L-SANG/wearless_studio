@@ -324,11 +324,14 @@ def _spread_studio_poses(raw: list) -> None:
 
     첫 컷은 건드리지 않는다 — 그 섹션의 기준 컷이고, 기준은 POSE:auto 가 맞다.
     콘티가 **이름 있는 포즈**를 줬으면 그대로 둔다. 셀러 카드도 안 건드린다.
+    촬영 세트 컷도 안 건드린다. 호리존 세트는 컷마다 완성 예시가 포즈를 정하고(ADR-0013),
+    여기서 넣은 포즈는 워커가 셀러의 명시 포즈로 읽어 예시 포즈를 덮는다.
     """
     open_slots = [
         block for block in raw
         if isinstance(block, dict)
         and block.get("source") != "mine"
+        and not block.get("spaceGroupId")
         and (block.get("sectionRole") or block.get("section_role")
              or resolve_section_role(block)) == "studio"
         and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
