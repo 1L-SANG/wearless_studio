@@ -39,32 +39,18 @@ test('selecting a regular block keeps the generation gallery, shot tabs, and my-
   assert.match(storyboardSource, /MINE_SHOT_OPTION = Object\.freeze\(\{ value: 'mine', label: '내 이미지' \}\)/);
 });
 
-test('selecting a space-set block renders the shared card with its display name', () => {
-  const set = {
-    id: 'set-style-women-dress-cafe-garden-attrangs-160544-root03',
-    placeType: 'cafe-shop-interior',
-  };
-  assert.equal(spaceSetDisplayName(set), '볕 드는 카페 정원');
-  assert.match(spaceSetHeaderSource, /<SpaceSetCard set=\{set\} interactive=\{false\} currentCutOrdinal=\{ordinal\} \/>/);
-  assert.match(spaceSetCardSource, /<strong>\{spaceSetDisplayName\(set\)\}<\/strong>/);
-  assert.doesNotMatch(spaceSetCardSource, /<strong>\{set\.(?:id|name)\}/);
+test('a selected set member uses a compact cut header instead of the large set card', () => {
+  assert.doesNotMatch(spaceSetHeaderSource, /<SpaceSetCard/);
+  assert.match(spaceSetHeaderSource, /sb-space-current-thumb/);
+  assert.match(spaceSetHeaderSource, /세트 설정/);
+  assert.match(spaceSetHeaderSource, /세트 공통/);
+  assert.doesNotMatch(inspectorSource, /<HorizonBackgroundControl/);
+  assert.match(inspectorSource, /label className="lbl">방향/);
+  assert.match(inspectorSource, /label className="lbl">대상 색상/);
 });
 
-test('the current space-set card shows which member cut is selected', () => {
-  assert.match(spaceSetCardSource, /현재 선택 · \{currentCutOrdinal\}번째 컷/);
-  assert.match(spaceSetHeaderSource, /currentCutOrdinal=\{ordinal\}/);
-});
-
-test('the inspector space-set card and its thumbnails have no replacement click handler', () => {
-  const staticVariantSource = spaceSetCardSource.slice(
-    spaceSetCardSource.indexOf('if (!interactive)'),
-    spaceSetCardSource.indexOf('return (', spaceSetCardSource.indexOf('if (!interactive)')),
-  );
-  const thumbnailSource = spaceSetCardSource.slice(
-    spaceSetCardSource.indexOf('<span className="sb-set-polaroids"'),
-    spaceSetCardSource.indexOf('<strong>{spaceSetDisplayName(set)}</strong>'),
-  );
-  assert.match(staticVariantSource, /return <div className=\{className\}>\{content\}<\/div>/);
-  assert.doesNotMatch(staticVariantSource, /onClick|onKeyDown/);
-  assert.doesNotMatch(thumbnailSource, /onClick|onKeyDown/);
+test('set gallery guide says what a set click does and that a single cut can be dragged in', () => {
+  const gallerySource = storyboardSource.slice(storyboardSource.indexOf('function SpaceSetGallery('));
+  // 세트 변경 화면에서 누르면 교체되고, 추가 화면에서 누르면 추가된다. 한 컷은 미리보기에서 끌어 온다.
+  assert.match(gallerySource, /replacing \? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요\.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요\.'/);
 });

@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 
 import { allowedCutTypeOptionsForSection } from '../../src/lib/storyboardTaxonomy.js';
 
-const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+// Source-level UI checks must mean the same thing in LF and Windows CRLF checkouts.
+const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
 const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');
 const uiSource = read('../../src/components/ui.jsx');

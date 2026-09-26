@@ -11,6 +11,7 @@ import { assignGenerationExamples } from './generationExamples.js';
 import { filterSpaceSetsForModel } from './identityScope.js';
 import { entryStylingMembers } from './storyboardEntryPlacement.js';
 import { clearExampleSelection } from './storyboardExampleStaleness.js';
+import { reconcileHorizonGroupBackground } from './horizonBackgroundAvailability.js';
 import { groupConsecutiveSpaceRuns, replaceSpaceSetRun } from './storyboardSpaceSets.js';
 import {
   inferStoryboardSpaceSet,
@@ -61,7 +62,7 @@ const isRerollableOne = (block, sectionId) => (
    세트 교체는 건너뛴다). */
 export function shuffleSectionExamples(blocks, {
   sectionId, catalog, product, gender, rotation = 0, uid = null,
-  onlySpaceGroupId = null, onlyBlockId = null, identityKind = null,
+  onlySpaceGroupId = null, onlyBlockId = null, identityKind = null, colorEvidence = null,
 }) {
   const list = Array.isArray(blocks) ? blocks : [];
   if (!sectionId) return list;
@@ -116,11 +117,15 @@ export function shuffleSectionExamples(blocks, {
     const currentIndex = candidates.findIndex((set) => set.id > current.id);
     const pickAt = ((currentIndex < 0 ? 0 : currentIndex) + rotation) % candidates.length;
     const set = candidates[pickAt];
+    const newGroupId = spaceSetGroupId(set.id, uid ? uid('sg') : `shuffle-${rotation}`);
     next = replaceSpaceSetRun(next, run.spaceGroupId, set, {
-      spaceGroupId: spaceSetGroupId(set.id, uid ? uid('sg') : `shuffle-${rotation}`),
+      spaceGroupId: newGroupId,
       setSelectionOrigin: 'auto',
       members: replacementMembers(set, run.items.length),
     });
+    if (set.setType.startsWith('horizon')) {
+      next = reconcileHorizonGroupBackground(next, newGroupId, product, colorEvidence, set.id);
+    }
   }
 
   // ② 낱개 컷 — 선택을 비우고 기존 배정기로 재추첨(직전 예시는 회피).

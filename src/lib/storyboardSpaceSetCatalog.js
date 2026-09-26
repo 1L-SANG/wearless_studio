@@ -1,5 +1,6 @@
 import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
 import placeTypeTable from '../../data/storyboard_space_place_types.json' with { type: 'json' };
+import replacements from '../../data/storyboardSpaceSetReplacements.json' with { type: 'json' };
 
 const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
 const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
@@ -40,6 +41,7 @@ function normalizedMember(member, index, setType) {
   const allUrl = text(member.allUrl);
   const thumb = text(member.thumbUrl);
   const expectedCutType = setType === 'styling' ? 'styling' : 'horizon';
+  const variants = member.variants === undefined ? ['all', 'pose'] : member.variants;
   if (
     !EXAMPLE_ID.test(exampleId)
     || exampleId.includes('__')
@@ -49,6 +51,10 @@ function normalizedMember(member, index, setType) {
     || !DIRECTIONS.has(member.direction)
     || !allUrl
     || !thumb
+    || !Array.isArray(variants)
+    || variants[0] !== 'all' || variants.length < 1 || variants.length > 2
+    || (variants.length === 2 && variants[1] !== 'pose')
+    || (setType === 'styling' && variants.join(',') !== 'all,pose')
   ) return null;
   return Object.freeze({
     exampleId,
@@ -59,6 +65,7 @@ function normalizedMember(member, index, setType) {
     thumb,
     thumbUrl: thumb,
     allUrl,
+    variants: Object.freeze([...variants]),
   });
 }
 
@@ -92,7 +99,7 @@ function normalizedSet(set, index) {
     || !text(set.compositionLabel)
     || !Array.isArray(set.members)
     || set.members.length < 2
-    || set.members.length > 5
+    || set.members.length > (setType === 'horizon-sequence' ? 7 : 5)
   ) return null;
   if (
     set.setApplicableClothingTypes != null
@@ -188,7 +195,13 @@ export function normalizeStoryboardSpaceSetRelease(release) {
 
 const RELEASE_SPACE_SETS = normalizeStoryboardSpaceSetRelease(spaceSetRelease);
 
-export const STORYBOARD_SPACE_SETS = Object.freeze(RELEASE_SPACE_SETS);
+export function selectableSpaceSets(sets, replacementMap = replacements) {
+  const present = new Set(sets.map((set) => set.id));
+  return sets.filter((set) => !present.has(replacementMap[set.id]));
+}
+
+export const STORYBOARD_SPACE_SETS = Object.freeze(selectableSpaceSets(RELEASE_SPACE_SETS));
+const SELECTABLE_SET_IDS = new Set(STORYBOARD_SPACE_SETS.map((set) => set.id));
 
 export const STORYBOARD_SPACE_SET_EXAMPLES = Object.freeze(
   RELEASE_SPACE_SETS.flatMap((set) => set.members
@@ -202,15 +215,16 @@ export const STORYBOARD_SPACE_SET_EXAMPLES = Object.freeze(
       applicableClothingTypes: set.applicableClothingTypes,
       thumb: member.thumb,
       assetUrl: member.allUrl,
-      variants: Object.freeze(['all', 'pose']),
+      variants: member.variants,
       rank: member.order,
       mood: set.tone,
       setOnly: true,
       spaceSetId: set.id,
+      ...(!SELECTABLE_SET_IDS.has(set.id) ? { retired: true } : {}),
     }))),
 );
 
-const SET_BY_ID = new Map(STORYBOARD_SPACE_SETS.map((set) => [set.id, set]));
+const SET_BY_ID = new Map(RELEASE_SPACE_SETS.map((set) => [set.id, set]));
 
 export function storyboardSpaceSetById(id) {
   return SET_BY_ID.get(id) || null;

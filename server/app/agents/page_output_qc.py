@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
+from . import horizon_background
 
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -106,6 +107,10 @@ def normalize_page_plan(page_plan: Sequence[Mapping[str, Any]]) -> list[dict[str
         space = _text(item.get("spaceGroupId"), MAX_ID, "space_group_id", True)
         if space:
             row["spaceGroupId"] = space
+            if cut_type == "horizon":
+                background = horizon_background.normalize_runtime(item.get("horizonBackground"))
+                if background:
+                    row["horizonBackground"] = {"mode": background["mode"], "wallHex": background["wallHex"]}
         out.append(row)
     out.sort(key=lambda item: item["outputIndex"])
     if [item["outputIndex"] for item in out] != list(range(len(out))):
@@ -145,6 +150,8 @@ def _provider_plan(plan, product_ref_count=None):
         }
         if item.get("spaceGroupId"):
             row["spaceGroupId"] = alias("space", item["spaceGroupId"], "S")
+        if item.get("horizonBackground"):
+            row["horizonBackground"] = item["horizonBackground"]
         provider_plan.append(row)
     return provider_plan, block_aliases
 
@@ -157,6 +164,19 @@ def build_prompt(page_plan: Sequence[Mapping[str, Any]], product_ref_count: int)
     provider_plan, _ = _provider_plan(plan, product_ref_count)
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         prompt = f.read()
+    if any(item.get("horizonBackground") for item in plan):
+        prompt += (
+            '\n\nHORIZON WALL OPTION: only horizon outputs with horizonBackground.mode="garment-tone" '
+            "authorize wallHex as a muted wall HUE/CHROMA suggestion, not an exact RGB or brightness "
+            "target. Keep each complete EXAMPLE's wall lightness, gradient shape, original key-light "
+            "direction, cast/contact shadow direction, length, spread, edge softness and overall mood. "
+            "Within one spaceGroupId, "
+            "different targetColor aliases may deliberately use different wall tones. Do not reject "
+            "that planned difference as a new place. The same group and targetColor must retain a "
+            "consistent wall hue family across cuts. Floor, geometry, lighting and shadows still obey the "
+            "session continuity contract. Never permit garment or skin recoloring to match the wall. "
+            "Never flatten, relocate or rotate existing shadows or alter exposure and white balance."
+        )
     return (prompt.replace("${productRefCount}", str(product_ref_count))
             .replace("${outputCount}", str(len(plan)))
             .replace("${pagePlan}", json.dumps(provider_plan, ensure_ascii=False, indent=2)))

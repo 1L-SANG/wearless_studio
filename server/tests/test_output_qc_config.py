@@ -19,11 +19,13 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
     monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE", "1K")
     monkeypatch.setenv("DETAIL_CUT_IMAGE_SIZE", "4K")
     monkeypatch.setenv("MODEL_ROUTING_DETAIL_CUT", "gpt-image-2-2026-04-21")
+    monkeypatch.setenv("MODEL_ROUTING_HORIZON_CUT", "gpt-image-2.5-sunburst")
     settings = load_settings()
     assert settings.cut_output_qc_mode == "repair"
     assert settings.mannequin_image_size == "1K"
     assert settings.detail_cut_image_size == "4K"
     assert settings.model_detail_cut == "gpt-image-2-2026-04-21"
+    assert settings.model_horizon_cut == "gpt-image-2.5-sunburst"
 
     monkeypatch.setenv("CUT_OUTPUT_QC_MODE", "enforce")
     monkeypatch.setenv("PAGE_OUTPUT_QC_MODE", "invalid")
@@ -59,9 +61,14 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     variables = manifest["variables"]
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
-    # 최종 컷만 gpt-image 2.5 flare 로 교체(2026-09-10 오너 결정, 운영 키 접근 200 확인).
-    # image_high(마네킹·매칭·개인화)는 위 줄대로 Gemini 그대로다.
+    # 일반 최종 컷은 Flare, 호리존만 Sunburst. image_high(마네킹·매칭·개인화)는 그대로다.
     assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2.5-flare"
+    assert variables["MODEL_ROUTING_HORIZON_CUT"] == "gpt-image-2.5-sunburst"
+    worker_manifest = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "copilot/detail-worker/manifest.yml").read_text(encoding="utf-8")
+    )["variables"]
+    assert worker_manifest["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2.5-flare"
+    assert worker_manifest["MODEL_ROUTING_HORIZON_CUT"] == "gpt-image-2.5-sunburst"
     # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 같은 모델로 못 박는다.
     assert variables["MODEL_ROUTING_EDITOR_CUT"] == "gpt-image-2.5-flare"
     # 상세페이지 컷 출고 해상도 2K (2026-08-26 오너 결정, 4K 에서 내림). 마네킹 핀과 같은

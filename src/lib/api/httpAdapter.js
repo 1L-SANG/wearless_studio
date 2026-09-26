@@ -685,6 +685,11 @@ export const httpAdapter = {
     analysisCache = { projectId, analysis: normalized };
     return normalized;
   },
+  // 호리존 세트 벽 색 '옷 색에 맞춤'용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
+  // 콘티·원본 사진을 읽어 필요한 색만 재고 analysis 에 저장한다. {status, garmentColorEvidence(요약|null)}.
+  async measureGarmentColors(projectId) {
+    return http(`/v1/projects/${projectId}/analysis/garment-colors:measure`, { method: 'POST' });
+  },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
   async draftWashCare(projectId) {

@@ -58,6 +58,9 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 호리존 착장컷 전용. 빈 값이면 호출 경로의 상세컷/에디터 모델을 그대로 쓴다.
+    # 스타일링은 model_detail_cut/model_editor_cut에 남겨 배경·포즈 정밀 경로만 분리한다.
+    model_horizon_cut: str = ""
     # Product-only closeups; horizon/styling and mannequin keep their own models.
     model_product_detail: str = "gpt-image-2.5-sunburst"
     model_detail_core: str = "gpt-5.4-2026-03-05"
@@ -804,6 +807,7 @@ def load_settings() -> Settings:
         mannequin_specialist_repair_model=(os.getenv("MANNEQUIN_SPECIALIST_REPAIR_MODEL") or "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
         model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
         detail_core_timeout_seconds=float(os.getenv("DETAIL_CORE_TIMEOUT_SECONDS", "90")),
