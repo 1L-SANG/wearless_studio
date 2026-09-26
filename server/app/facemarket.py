@@ -23,7 +23,6 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from ipaddress import ip_address
 from typing import Any, Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -37,6 +36,7 @@ from pydantic import Field, ValidationError, field_validator
 
 from . import admin_guard, cx_identity, facemarket_photo_check, facemarket_photo_normalize, holder_client
 from . import repo
+from .client_ip import client_ip as _request_client_ip
 from .auth import require_user
 from .db import get_conn
 from .facemarket_catalog_access import catalog_access
@@ -2186,18 +2186,6 @@ class UsageReportCard(CamelModel):
     created_at: datetime
 
 
-def _request_client_ip(request: Request) -> str:
-    """AWS ALB append-mode XFF의 마지막 주소를 사용하고 ASGI peer로 폴백한다."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        candidate = forwarded.rsplit(",", 1)[-1].strip()
-        try:
-            return str(ip_address(candidate))
-        except ValueError:
-            pass
-    return request.client.host if request.client else "unknown"
-
-
 async def _take_simulation_rate_slot(
     conn, *, user_id: str, client_ip: str, pepper: str
 ) -> None:
@@ -3469,7 +3457,7 @@ async def get_job_settlement(
                 await cur.execute(
                     """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
                               st.model_amount, st.platform_amount, st.ops_amount,
-                              st.chain_status, l.vc_id
+                              st.chain_status, st.recorded_block, st.created_at, l.vc_id
                        from fm_settlements st
                        join jobs j on j.id = st.job_id
                        left join fm_licenses l on l.id = st.license_id
@@ -3490,6 +3478,10 @@ async def get_job_settlement(
         "opsAmount": row["ops_amount"],
         "vcId": row["vc_id"],
         "chainStatus": row["chain_status"],
+        # 영수증의 블록·기록 시각(2026-09-26). [체인에서 확인]은 paymentId 로
+        # /settlements/{paymentId}/chain-check 를 불러 이 값들을 체인과 나란히 대조한다.
+        "recordedBlock": row.get("recorded_block"),
+        "createdAt": row.get("created_at"),
     }
 
 

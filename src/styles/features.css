@@ -669,6 +669,28 @@
 .fm-chain-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--fg-3); }
 .fm-chain-row code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--fg-1); background: var(--bg-2); padding: 2px 7px; border-radius: var(--r-3, 6px); overflow-wrap: anywhere; }
 .fm-chain-status { font-weight: 700; color: var(--accent-success); }
+/* 영수증 체인 대조(2026-09-26) — [체인에서 확인] 결과. 배지는 서버 판정(verdict)만 따른다. */
+.fm-receipt { max-height: calc(100vh - 48px); overflow-y: auto; }
+.fm-receipt .fm-chain { margin-bottom: 16px; }
+.fm-chain-hash { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 0; cursor: pointer; color: var(--fg-2); }
+.fm-chain-hash:hover code { box-shadow: 0 0 0 1px var(--ring-strong); }
+.fm-chain-copied { font-size: 11px; color: var(--accent-success); font-weight: 600; }
+.fm-chain-check { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; padding: 7px 12px;
+  font-size: 12.5px; font-weight: 600; color: var(--fg-1); background: var(--bg-2); border: 0; border-radius: var(--r-pill);
+  box-shadow: 0 0 0 1px var(--ring-strong); cursor: pointer; }
+.fm-chain-check:disabled { cursor: progress; color: var(--fg-3); }
+.fm-chain-error { font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
+.fm-chain-result { display: flex; flex-direction: column; gap: 8px; }
+.fm-chain-verdict { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--fg-3); }
+.fm-chain-badge { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: var(--r-pill); }
+.fm-chain-badge.is-ok { color: var(--accent-success); background: var(--accent-success-ring); }
+.fm-chain-badge.is-bad { color: var(--accent-error); background: var(--accent-error-ring); }
+.fm-chain-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fm-chain-table th { text-align: left; font-weight: 500; color: var(--fg-3); padding: 4px 4px; border-bottom: 1px solid var(--line); }
+.fm-chain-table td { padding: 5px 4px; color: var(--fg-2); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.fm-chain-table td:last-child { color: var(--accent-success); font-weight: 600; white-space: nowrap; }
+.fm-chain-table tr.is-diff td { color: var(--accent-error); }
+.fm-chain-note { font-size: 11.5px; color: var(--fg-3); line-height: 1.5; }
 
 /* FaceMarket 라이선스 차단 패널 (Generating 409 · 장면⑤) */
 .fm-blocked { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px 22px; }

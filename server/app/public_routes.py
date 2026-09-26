@@ -5,7 +5,6 @@ import json
 import logging
 import time
 from collections import deque
-from ipaddress import ip_address
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -14,6 +13,7 @@ from fastapi.routing import APIRoute
 from .agents import product_evidence_contract, detail_recommendations
 from .agents.vision_llm import VisionError
 from .auth import optional_user
+from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
 from .routes import MAX_UPLOAD_BYTES
 from .workers.analyze_job import analyze_image_bytes
@@ -87,22 +87,6 @@ class PublicAnalysisRateLimiter:
 
 def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
-
-
-def _client_ip(request: Request) -> str:
-    """AWS ALB append-mode XFF의 마지막 주소(실제 ALB 접속자)를 사용한다.
-
-    ALB는 들어온 X-Forwarded-For 뒤에 관측한 client IP를 append하므로 공격자가 앞 값을
-    꾸며도 마지막 값은 ALB가 쓴다. 헤더가 없거나 형식이 틀리면 ASGI peer로 안전 폴백한다.
-    """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        candidate = forwarded.rsplit(",", 1)[-1].strip()
-        try:
-            return str(ip_address(candidate))
-        except ValueError:
-            pass
-    return request.client.host if request.client else "unknown"
 
 
 def _detected_image_mime(data: bytes) -> str | None:

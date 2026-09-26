@@ -14,7 +14,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from .. import facemarket, repo
+from .. import facemarket, fm_fingerprint_store, repo
+from ..services import fm_fingerprint
 from ..agents import (
     content_roles,
     cut_generator,
@@ -457,6 +458,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+            cut_generation_settings = replace(
+                s,
+                model_image_high=resolve_editor_cut_model(s, normalized["cutType"]),
+            )
 
             requested_model_id = payload.get("modelId")
 
@@ -876,7 +881,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(image)
             except ValueError as e:
@@ -920,7 +925,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     attempt += 1
                     try:
                         image, mime = await cut_generator.generate(
-                            editor_settings, app.state.gemini, cut_spec, product, images,
+                            cut_generation_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
                         _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
@@ -930,7 +935,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(candidate_image)
                 if scene_plate is None:
@@ -953,7 +958,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         raise RuntimeError("bg candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
-                        editor_settings, app.state.gemini, cut_spec, product, images,
+                        cut_generation_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
                     _remember_outcome(candidate_image)
                 return InlineImage(candidate_mime, candidate_image)
@@ -995,7 +1000,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             if (
                 fm_lora_spec is not None
                 and real_horizon_neck_repair.eligible(
-                    s, cut_spec, generation_model=editor_settings.model_image_high,
+                    s, cut_spec, generation_model=cut_generation_settings.model_image_high,
                     real_identity_attached=fm_face_injected,
                     outcome=face_pass_outcome,
                 )
@@ -1020,6 +1025,11 @@ async def run_editor_image_job(app, job: dict) -> None:
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
         img_sha256 = hashlib.sha256(image).hexdigest()
+        # 추적 층(2026-09-26) — REAL 컷 지문. 실패하면 None(절대 raise 안 함), 기록은 커밋 뒤.
+        fingerprint = (
+            await asyncio.to_thread(fm_fingerprint.safe_image_hashes, image)
+            if fm_face_injected else None
+        )
         async with pool.connection() as conn:
             cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                 conn,
@@ -1048,6 +1058,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
             "sha256": img_sha256,
+            **({"fingerprint": fingerprint} if fingerprint else {}),
             "provenance": (
                 {"license_id": str(fm_license_row["id"]),
                  "model_id": str(fm_license_row["model_id"])}
@@ -1129,6 +1140,11 @@ async def run_editor_image_job(app, job: dict) -> None:
         else:
             written_key = None
             written_cleanup_intent_id = None
+        if out is not None:
+            # 추적 층 — 커밋된 원장 행에 컷 지문을 붙인다(베스트에포트, 백필이 빈틈을 채운다).
+            # written_key 를 비운 **뒤**라, 만에 하나 여기서 무슨 일이 나도 확정된 컷을 안 지운다.
+            await fm_fingerprint_store.record_cut_fingerprints(
+                pool, fm_fingerprint_store.cut_fingerprint_items([image_row]))
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         if written_key:
             await _delete_output_candidate(written_key, written_cleanup_intent_id)

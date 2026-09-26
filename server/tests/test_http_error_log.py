@@ -100,8 +100,74 @@ def test_4xx_stays_below_error_level(client):
     assert "status=404" in warnings[0].getMessage()
 
 
-def test_successful_response_is_not_logged(client):
+def test_successful_health_check_is_not_logged(client):
+    # ALB 가 10초마다 찌른다 — 요청별 줄(아래)에서도 빠져야 로그가 헬스체크로 덮이지 않는다.
     with _capture_api_logs() as records:
         assert client.get("/healthz").status_code == 200
 
     assert records == []
+
+
+# ── 2026-09-26: 요청별 소요시간 + 4xx 에러 코드 ───────────────────────────
+# 실트래픽 분석에서 두 구멍이 드러났다. (1) 성공 요청은 소요시간이 어디에도 안 남아
+# "어느 API 가 몇 ms 인가"를 못 잰다. (2) 실패 줄에 에러 코드가 없어 콘티 저장 400 폭주
+# (0.3초 간격 2,871회)의 거절 사유를 끝내 못 가렸다.
+
+
+def _requests(records):
+    return [r for r in records if r.getMessage().startswith("http request ")]
+
+
+def test_every_request_logs_route_template_and_duration(client):
+    @client.app.get("/_test/items/{item_id}")
+    async def item(item_id: str):
+        return {"id": item_id}
+
+    with _capture_api_logs() as records:
+        res = client.get("/_test/items/0f9815a4-dacd-4bce-82d6-016a71a6805b")
+
+    assert res.status_code == 200
+    lines = _requests(records)
+    assert len(lines) == 1
+    message = lines[0].getMessage()
+    assert lines[0].levelno == logging.INFO          # 알림 필터(ERROR)에 안 걸린다
+    assert "status=200" in message and "method=GET" in message
+    # 경로 대신 라우트 틀 — ID 가 그대로 박히면 경로별 집계가 요청 수만큼 흩어진다.
+    assert "route=/_test/items/{item_id}" in message
+    assert "0f9815a4" not in message
+    assert "duration_ms=" in message
+
+
+def test_health_checks_and_preflight_are_not_logged(client):
+    with _capture_api_logs() as records:
+        client.get("/healthz")
+        client.get("/readyz")
+        client.options("/v1/me/ping", headers={
+            "Origin": "https://ai.wearless.kr", "Access-Control-Request-Method": "GET"})
+    assert _requests(records) == []
+
+
+def test_4xx_line_carries_the_error_code(client):
+    @client.app.put("/_test/board")
+    async def board():
+        raise HTTPException(status_code=400, detail={
+            "code": "example_gender_mismatch", "message": "이 상품에 맞지 않는 생성예시예요."})
+
+    with _capture_api_logs() as records:
+        res = client.put("/_test/board")
+
+    assert res.status_code == 400
+    warning = _warnings(records)[0].getMessage()
+    assert warning.startswith("http error status=400")   # 알림 필터가 기대는 앞부분은 그대로
+    assert "code=example_gender_mismatch" in warning
+    request_line = _requests(records)[0].getMessage()
+    assert "code=example_gender_mismatch" in request_line
+    assert "route=/_test/board" in request_line
+
+
+def test_unmatched_path_is_logged_without_inventing_a_route(client):
+    with _capture_api_logs() as records:
+        client.get("/.env")
+    line = _requests(records)[0].getMessage()
+    assert "status=404" in line
+    assert "route=-" in line   # 봇이 찌른 임의 경로로 라우트 집계를 오염시키지 않는다

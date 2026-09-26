@@ -149,6 +149,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lora_training = None
         test_cut_build = None
         publication_anchor = None
+        trace_finding_alerts = None
+        trace_patrol = None
         sam_retry_pusher = None
         sam_autoscaler = None
         opendid_autoscaler = None
@@ -202,6 +204,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                 publication_anchor = PublicationAnchorReconciler(app)
                 await publication_anchor.start()
+                # 자동 출처 추적(2026-09-27) — 순찰·모델 제보로 생긴 새 발견을 슬랙으로 알린다.
+                # 발견 원장·관리자 화면이 같은 플래그 아래에 있으므로 같이 묶는다.
+                from .workers.fm_trace_finding_alert_reconciler import (
+                    TraceFindingAlertReconciler,
+                )
+
+                trace_finding_alerts = TraceFindingAlertReconciler(app)
+                await trace_finding_alerts.start()
+                # 하루 1회 순찰(네이버 공식 API · 지그재그). 자체 스위치 — 외부 사이트에 요청을 보내는
+                # 일이라 추적 층과 따로 끈다. 네이버는 키가 없으면 어댑터가 안 만들어진다.
+                if settings.fm_trace_patrol == "on":
+                    from .workers.fm_trace_patrol import TracePatrol
+
+                    trace_patrol = TracePatrol(app)
+                    await trace_patrol.start()
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
@@ -379,6 +396,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await test_cut_build.stop()
         if publication_anchor is not None:
             await publication_anchor.stop()
+        if trace_patrol is not None:
+            await trace_patrol.stop()
+        if trace_finding_alerts is not None:
+            await trace_finding_alerts.stop()
         if pool is not None:
             await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
@@ -460,6 +481,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.method,
                 request.url.path,
             )
+            request.state.error_code = "internal_error"
             return JSONResponse(
                 status_code=500,
                 content={"error": {
@@ -487,16 +509,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.perf_counter()
         response = await call_next(request)
         status = response.status_code
-        if status >= 400 and request.url.path != "/healthz":
-            logging.getLogger("wearless.api").log(
+        duration_ms = (time.perf_counter() - started) * 1000
+        path = request.url.path
+        # 에러 봉투가 적어 둔 응답 코드(example_gender_mismatch 등). 없으면 "-".
+        code = getattr(request.state, "error_code", None) or "-"
+        logger = logging.getLogger("wearless.api")
+        if status >= 400 and path != "/healthz":
+            logger.log(
                 logging.ERROR if status >= 500 else logging.WARNING,
-                "http error status=%s method=%s path=%s duration_ms=%d trace=%s",
+                "http error status=%s method=%s path=%s duration_ms=%d trace=%s code=%s",
                 status,
                 request.method,
-                request.url.path,
-                (time.perf_counter() - started) * 1000,
+                path,
+                duration_ms,
                 # ALB 가 붙이는 추적 헤더. ALB 액세스 로그와 대조할 때 쓴다.
                 request.headers.get("x-amzn-trace-id", "-"),
+                code,
+            )
+        # 요청마다 한 줄 — 경로별 소요시간을 CloudWatch Logs Insights 로 잰다(2026-09-26 전엔
+        # 성공 요청의 시간이 어디에도 없었다). path 대신 라우트 틀을 쓴다: ID 가 박히면 집계가
+        # 요청 수만큼 흩어진다. 라우트에 안 걸린 요청(봇의 /.env 등)은 "-". ALB 가 10초마다
+        # 찌르는 헬스체크와 CORS 사전 요청은 뺀다. INFO 라 Slack 알림 필터에는 안 걸린다.
+        if path not in ("/healthz", "/readyz") and request.method != "OPTIONS":
+            route = getattr(request.scope.get("route"), "path", None) or "-"
+            logger.info(
+                "http request status=%s method=%s route=%s duration_ms=%d code=%s",
+                status,
+                request.method,
+                route,
+                duration_ms,
+                code,
             )
         return response
 
@@ -527,12 +569,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "code": DEFAULT_ERROR_CODES.get(exc.status_code, "error"),
                 "message": str(exc.detail),
             }
+        request.state.error_code = body.get("code")   # http_error_log 가 로그 줄에 붙인다
         return JSONResponse(status_code=exc.status_code, content={"error": body})
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
         if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
+            request.state.error_code = "invalid_payout_account"
             return JSONResponse(status_code=400, content={"error": {
                 "code": "invalid_payout_account",
                 "message": "은행, 계좌번호와 예금주를 확인해 주세요.",
@@ -541,6 +585,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
         # 지원서 v3는 필수 입력 누락도 400으로 응답한다. 다른 API의 422 계약은 유지한다.
         application_submit = request.method == "POST" and request.url.path == "/v1/facemarket/applications"
+        request.state.error_code = "validation_error"
         return JSONResponse(
             status_code=400 if application_submit else 422,
             content={
@@ -657,6 +702,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_payout import router as payout_router
 
         app.include_router(payout_router)
+        # 정산 체인 대조(2026-09-26) — DB 미러와 getSettlement eth_call 을 나란히. 셀러·모델·관리자
+        # 각자 자기 범위만. 체인 미설정이면 라우트는 있되 503 으로 "조회할 수 없음"을 말한다.
+        from .facemarket_settlement_chain import router as settlement_chain_router
+
+        app.include_router(settlement_chain_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
         # 모델 지원서·관리자 검토(리뉴얼). 지원서 제출·검토는 생체등록 스택(face QC·라이브니스)에
@@ -696,6 +746,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             app.include_router(provenance_router)
             app.state.fm_c2pa_signer = C2paSigner.from_settings(settings)
+            # 추적 층(2026-09-26) — 발견 이미지 → 배포본·셀러·모델·라이선스 후보. 워터마크 코드와
+            # 지문이 이 플래그 아래(sign 단계)에서만 생기므로 같은 플래그에 묶는다. 관리자 전용.
+            from .facemarket_trace import router as trace_router
+
+            app.include_router(trace_router)
+            # 모델 제보(2026-09-27) — 같은 대조를 모델 마이페이지에서 부른다. 결과는 관리자에게만.
+            from .facemarket_sightings import router as sightings_router
+
+            app.include_router(sightings_router)
         else:
             app.state.fm_c2pa_signer = None
     else:

@@ -24,16 +24,22 @@ def resolve_model(settings: Settings, tier: str) -> str:
     return model
 
 
-def resolve_detail_cut_model(settings: Settings) -> str:
+def resolve_detail_cut_model(settings: Settings, cut_type: str | None = None) -> str:
     """AG-06 콘티 전용 모델. 미설정 환경은 기존 image_high 경로를 그대로 쓴다."""
-    return getattr(settings, "model_detail_cut", "") or resolve_model(settings, "image_high")
+    fallback = getattr(settings, "model_detail_cut", "") or resolve_model(settings, "image_high")
+    if cut_type == "horizon":
+        return getattr(settings, "model_horizon_cut", "") or fallback
+    return fallback
 
 
-def resolve_editor_cut_model(settings: Settings) -> str:
+def resolve_editor_cut_model(settings: Settings, cut_type: str | None = None) -> str:
     """에디터 컷(editor_image_job) 전용 모델. 미설정 환경은 기존 image_high 경로를 그대로 쓴다.
 
     image_high 를 직접 바꾸면 마네킹·매칭 플랫레이·AG-07 까지 함께 전환되므로,
     에디터 워커 안에서만 Settings 복사본의 image_high 를 이 값으로 치환한다(detail_cut 선례와 동일).
     """
-    return getattr(settings, "model_editor_cut", "") or resolve_model(settings, "image_high")
+    fallback = getattr(settings, "model_editor_cut", "") or resolve_model(settings, "image_high")
+    if cut_type == "horizon":
+        return getattr(settings, "model_horizon_cut", "") or fallback
+    return fallback
 
