@@ -82,7 +82,7 @@ test('호리존 세트 셔플은 측정 전이면 옷 색 선택을 유지하고
     exampleId: member.exampleId, horizonBackgroundMode: 'garment-tone',
   }));
   const options = { sectionId: 'sec-a', catalog: [], gender: 'women', rotation: 1,
-    onlySpaceGroupId: groupId, product: { clothingType: 'top', colors: [{ id: 'base', isBase: true }] } };
+    onlySpaceGroupId: groupId, product: { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: [{ slot: 'Front' }, { slot: 'Back' }] }] } };
   const withoutEvidence = shuffleSectionExamples(blocks, options);
   assert.notEqual(withoutEvidence, blocks);
   assert.ok(withoutEvidence.every(block => block.horizonBackgroundMode === 'garment-tone'));

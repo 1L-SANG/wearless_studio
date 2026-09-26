@@ -12,7 +12,8 @@ const horizonSetIds = STORYBOARD_SPACE_SETS.filter(set => set.setType.startsWith
 const stylingSetId = STORYBOARD_SPACE_SETS.find(set => set.setType === 'styling').id;
 const horizonSetId = horizonSetIds[0];
 const horizonBackgroundAvailability = (members, product, evidence, setId = horizonSetId) => resolveAvailability(members, product, evidence, setId);
-const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }, { id: 'blue' }] };
+const photos = [{ slot: 'Front' }, { slot: 'Back' }];
+const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: photos }, { id: 'blue', images: photos }] };
 const member = colorId => ({ cutType: 'horizon', source: 'ai', colorId });
 const evidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'ready', backgroundStatus: 'ready', backgroundPolicyVersion: policy.version }, { colorId: 'blue', status: 'ready', backgroundStatus: 'ready', backgroundPolicyVersion: policy.version }] };
 
@@ -26,11 +27,21 @@ test('all current group colors ready is ready; null means base; a missing row is
   assert.deepEqual(failed, { state: 'unavailable', available: false, reason: measuredFailure });
 });
 test('not yet measured or measured for other inputs stays selectable as pending', () => {
-  assert.deepEqual(horizonBackgroundAvailability([member('base')], { ...product, colors: [{ id: 'base', swatchId: 'black', hex: '#15141a' }] }, null), pendingResult);
+  assert.deepEqual(horizonBackgroundAvailability([member('base')], { ...product, colors: [{ id: 'base', swatchId: 'black', hex: '#15141a', images: photos }] }, null), pendingResult);
   assert.deepEqual(horizonBackgroundAvailability([member('base')], product, { ...evidence, clothingType: 'bottom' }), pendingResult);
   assert.deepEqual(horizonBackgroundAvailability([member('base')], product, { ...evidence, version: 2 }), pendingResult);
-  assert.deepEqual(horizonBackgroundAvailability([member('gone')], product, evidence), pendingResult);
   assert.deepEqual(horizonBackgroundAvailability([member('base')], product, { ...evidence, colors: [{ ...evidence.colors[0], backgroundPolicyVersion: policy.version - 1 }] }), pendingResult);
+});
+test('a color the server can never measure is unavailable at once, but an unloaded product stays pending', () => {
+  const noPhoto = { ...product, colors: [...product.colors, { id: 'red', images: [{ slot: 'Detail' }] }] };
+  const photoMissing = { state: 'unavailable', available: false, reason: '이 색상은 앞면이나 뒷면 사진이 없어 기존 배경을 사용해요.' };
+  assert.deepEqual(horizonBackgroundAvailability([member('base'), member('red')], noPhoto, null), photoMissing);
+  assert.deepEqual(horizonBackgroundAvailability([member('gone')], product, evidence), photoMissing);
+  // 슬롯 없는 사진은 서버가 앞면으로 본다.
+  assert.equal(horizonBackgroundAvailability([member('red')], { ...product, colors: [...product.colors, { id: 'red', images: [{}] }] }, null).state, 'pending');
+  assert.deepEqual(horizonBackgroundAvailability([member('base')], { clothingType: 'top' }, null), pendingResult);
+  const blocks = [{ ...member('red'), spaceGroupId: 'g', horizonBackgroundMode: 'garment-tone' }];
+  assert.equal(reconcileHorizonGroupBackground(blocks, 'g', noPhoto, null, horizonSetId)[0].horizonBackgroundMode, 'reference');
 });
 test('a missing row wins over a failed row because the server measures every needed color again', () => {
   const partial = { ...evidence, colors: [{ ...evidence.colors[0], status: 'unavailable', backgroundStatus: 'reference' }] };
