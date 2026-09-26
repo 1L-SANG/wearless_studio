@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation, adminSimulatePayoutConfirmation } from '@/lib/api/facemarket.js';
+import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation, adminSimulatePayoutConfirmation, adminRunMonthlyPayout } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent } from '@/components/admin-ui/card.jsx';
 import { Input } from '@/components/admin-ui/input.jsx';
 import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/admin-ui/table.jsx';
-import { payoutAdminStatus, previousSeoulMonth } from './adminPayoutStatements.js';
+import { monthOpensOn, payoutAdminStatus, previousSeoulMonth, runOutcomeLabel, todaySeoulDate, transferRecordBody } from './adminPayoutStatements.js';
 import { actualPayoutDate } from '../model/mypage/payoutStatements.js';
 
 const won = value => `${Number(value || 0).toLocaleString('ko-KR')}원`;
@@ -31,6 +31,10 @@ export function AdminPayoutStatements() {
   const [revealed, setRevealed] = useState(null);
   // 시뮬레이션에서 고른 결과. 데모에서 실패도 보여줘야 해서 성공만 두지 않는다.
   const [outcome, setOutcome] = useState('paid');
+  // 월말 정산 실행 결과(2026-09-26). 돈은 움직이지 않는다 — 확인서만 만든다.
+  const [run, setRun] = useState(null);
+  // 확인서별 이체 기록 입력(참조번호·금액·이체일). 은행 앱에서 보고 그대로 옮겨 적는다.
+  const [transfers, setTransfers] = useState({});
   const alive = useRef(false);
   const listVersion = useRef(0);
   const listing = useRef(false);
@@ -82,6 +86,7 @@ export function AdminPayoutStatements() {
     if (saving.current || revealing.current) return;
     clearReveal();
     setRowError(null);
+    setRun(null);
     setMonth(event.target.value);
   };
 
@@ -128,11 +133,50 @@ export function AdminPayoutStatements() {
     }
   });
 
+  /* 월말 정산 실행 — 마감된 달의 체인 확정 정산을 모델별 지급 확인서로. 이체는 여기서 일어나지 않는다. */
+  const runMonth = async () => {
+    if (saving.current || revealing.current || listing.current) return;
+    if (!window.confirm(`${month} 월말 정산을 실행할까요? 체인에 확정된 정산을 모델별로 모아 지급 확인서를 만들어요. 돈은 움직이지 않아요 — 이체는 송금 시작 후 은행 앱에서 직접 하고 참조번호를 기록해요.`)) return;
+    saving.current = true;
+    setBusyId('run');
+    setRun(null);
+    clearReveal();
+    try {
+      const result = await adminRunMonthlyPayout(month);
+      if (alive.current) setRun({ result });
+      if (alive.current) await load(month);
+    } catch (error) {
+      if (alive.current) setRun({ error: error.message || '월말 정산을 실행하지 못했어요.' });
+    } finally {
+      saving.current = false;
+      if (alive.current) setBusyId(null);
+    }
+  };
+
+  const transferForm = confirmation => transfers[confirmation.id] || { reference: '', amount: '', date: todaySeoulDate() };
+  const editTransfer = (confirmation, key, value) => setTransfers(previous => ({
+    ...previous, [confirmation.id]: { ...transferForm(confirmation), [key]: value },
+  }));
+
+  /* 지급 완료 기록 — 실제 이체의 증거(참조번호·금액·이체일)가 있어야 서버가 받는다. 금액이 확인서와
+     다르면 서버가 거절한다. 여기서 먼저 막는 건 편의일 뿐, 판정은 서버다. */
+  const recordTransfer = (item, confirmation) => {
+    const body = transferRecordBody(transferForm(confirmation));
+    if (!body) {
+      setRowError({ key: rowKey(item), message: '참조번호(4자 이상)·이체 금액·이체일을 모두 적어 주세요.' });
+      return;
+    }
+    if (!window.confirm(`${body.transferredOn}에 ${won(body.amount)}을 ${confirmation.bankName} ${confirmation.accountMasked} ${confirmation.holderName} 계좌로 실제 이체했고, 은행 거래 참조는 '${body.transferReference}' 인가요? 확인되면 지급 완료로 기록해요.`)) return;
+    return mutate(item, async () => {
+      await adminAdvancePayoutConfirmation(confirmation.id, 'paid', body);
+      setTransfers(previous => { const next = { ...previous }; delete next[confirmation.id]; return next; });
+    });
+  };
+
   const advance = (item, confirmation, action) => {
     const message = action === 'start'
       ? `${won(confirmation.amount)}을 ${confirmation.bankName} ${confirmation.accountMasked} ${confirmation.holderName} 계좌로 송금할 준비가 됐나요? 시작 후 계좌번호를 확인하고 한 번만 송금해 주세요.`
-      : action === 'paid' ? `${won(confirmation.amount)}을 실제 송금한 사실을 확인하고 지급 완료로 기록할까요?`
-        : '아직 송금하지 않은 확인 건을 취소할까요?';
+      : '아직 송금하지 않은 확인 건을 취소할까요?'; // 지급 완료는 recordTransfer(이체 기록 필수)로만.
     if (!window.confirm(message)) return;
     return mutate(item, async () => {
       await adminAdvancePayoutConfirmation(confirmation.id, action);
@@ -178,9 +222,24 @@ export function AdminPayoutStatements() {
     </div>;
   };
 
+  const opensOn = monthOpensOn(month);
   return <div className="flex min-w-0 flex-col gap-5">
     <div><h1 className="text-lg font-semibold tracking-tight">지급 명세</h1><p className="mt-1 text-sm text-muted-foreground">금액과 계좌를 확인한 담당자가 수동 송금하고 결과를 기록해요.</p></div>
     <label className="flex max-w-xs flex-col gap-1 text-sm">정산 월<Input type="month" value={month} disabled={busyId !== null} onChange={changeMonth} /></label>
+    <div className="flex flex-col gap-2 rounded-lg border p-4 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button size="sm" disabled={busyId !== null || Boolean(opensOn)} onClick={runMonth}>{busyId === 'run' ? '실행 중…' : '월말 정산 실행'}</Button>
+        <span className="text-xs text-muted-foreground">{opensOn
+          ? `${month}분은 아직 마감 전이에요. ${opensOn} 00:00(KST)부터 실행할 수 있어요.`
+          : '체인에 확정된 정산을 모델별로 모아 지급 확인서를 만들어요. 돈은 움직이지 않아요 — 이체는 담당자가 은행 앱에서 직접 해요.'}</span>
+      </div>
+      {run?.error && <p role="alert" className="text-xs text-destructive">{run.error}</p>}
+      {run?.result && <div className="flex flex-col gap-1 text-xs">
+        <span className="font-medium">{run.result.periodMonth} 실행 결과 · 모델 {run.result.results.length}명 · 실제 이체 없음</span>
+        {run.result.results.length === 0 && <span className="text-muted-foreground">이 달에는 정산 내역이 없어요.</span>}
+        {run.result.results.map(row => <span key={row.modelId}>{row.modelName || row.modelId} — {runOutcomeLabel(row)}</span>)}
+      </div>}
+    </div>
     <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => { clearReveal(); load(month); }}>상태 다시 확인</Button>
     {listError && <p role="alert" className="text-sm">{listError}</p>}
     <Card className="min-w-0"><CardContent className="p-0">
@@ -205,7 +264,7 @@ export function AdminPayoutStatements() {
                 <span>{won(confirmation.amount)} · {confirmation.count}건 · {payoutAdminStatus(confirmation.status).label}</span>
                 {confirmation.simulated && <span className="text-xs font-medium text-amber-700">시뮬레이션 · 실제 이체 없음</span>}
                 {confirmation.failureReason && <span className="text-xs text-destructive">{SIMULATE_FAILURES[confirmation.failureReason] || '지급이 거절됐어요.'}</span>}
-                {confirmation.status === 'paid' && <span>지급일 {actualPayoutDate(confirmation.paidAt)}</span>}
+                {confirmation.status === 'paid' && <span>{confirmation.transferredOn ? `이체일 ${confirmation.transferredOn}` : `지급일 ${actualPayoutDate(confirmation.paidAt)}`}{confirmation.providerRef && !confirmation.simulated ? ` · 참조 ${confirmation.providerRef}` : ''}</span>}
                 {confirmation.status !== 'cancelled' && accountCell(item, confirmation)}
                 {!confirmation.canManage && ['prepared', 'transfer_started'].includes(confirmation.status) && <span>확인한 담당 관리자가 처리 중이에요.</span>}
                 {confirmation.canManage && confirmation.status === 'prepared' && <div className="flex gap-1">
@@ -219,7 +278,13 @@ export function AdminPayoutStatements() {
                   <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => simulate(item, confirmation)}>지급 시뮬레이션</Button>
                 </div>}
                 {confirmation.status === 'transfer_started' && <><span>송금 여부가 불확실하면 은행 내역을 확인해 주세요. 다시 송금하지 마세요.</span>
-                  {confirmation.canManage && <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => advance(item, confirmation, 'paid')}>지급 완료 기록</Button>}</>}
+                  {confirmation.canManage && <form className="flex flex-col gap-1" onSubmit={event => { event.preventDefault(); recordTransfer(item, confirmation); }}>
+                    <span className="text-xs text-muted-foreground">은행 앱에서 이체한 뒤 그대로 옮겨 적어 주세요.</span>
+                    <Input aria-label="이체 참조번호" placeholder="은행 거래번호·적요 (4자 이상)" value={transferForm(confirmation).reference} onChange={event => editTransfer(confirmation, 'reference', event.target.value)} />
+                    <Input aria-label="이체 금액" inputMode="numeric" placeholder={`이체 금액 (확인서 ${won(confirmation.amount)})`} value={transferForm(confirmation).amount} onChange={event => editTransfer(confirmation, 'amount', event.target.value)} />
+                    <Input aria-label="이체일" type="date" max={todaySeoulDate()} value={transferForm(confirmation).date} onChange={event => editTransfer(confirmation, 'date', event.target.value)} />
+                    <Button type="submit" size="sm" variant="outline" disabled={busyId !== null}>지급 완료 기록</Button>
+                  </form>}</>}
               </div>)}
               {rowError?.key === rowKey(item) && <p role="alert" className="text-xs text-destructive">{rowError.message}</p>}
             </div></TableCell></TableRow>;

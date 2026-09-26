@@ -17,6 +17,8 @@ ADMIN_DEVICES = (APP / "facemarket_admin_devices.py").read_text() if (APP / "fac
 PAYOUT = (APP / "facemarket_payout.py").read_text()
 # 관리자 출처 추적(2026-09-26) — 셀러 신원이 드러나는 화면이라 같은 가드·감사 규칙 아래 둔다.
 TRACE = (APP / "facemarket_trace.py").read_text()
+# 정산 체인 대조(2026-09-26) — 관리자 목록·조회 라우트가 같은 가드(기기 게이트 포함)를 지나는지.
+SETTLEMENT_CHAIN = (APP / "facemarket_settlement_chain.py").read_text()
 
 
 def test_no_module_calls_repo_is_admin_directly():
@@ -30,6 +32,7 @@ def test_no_module_calls_repo_is_admin_directly():
         ("facemarket_admin_models.py", ADMIN_MODELS),
         ("facemarket_payout.py", PAYOUT),
         ("facemarket_trace.py", TRACE),
+        ("facemarket_settlement_chain.py", SETTLEMENT_CHAIN),
     ]
     if ADMIN_DEVICES:
         cases.append(("facemarket_admin_devices.py", ADMIN_DEVICES))
@@ -120,6 +123,7 @@ def test_every_require_admin_call_passes_the_request():
         ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
         ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_admin_devices.py", ADMIN_DEVICES),
         ("facemarket_payout.py", PAYOUT), ("facemarket_trace.py", TRACE),
+        ("facemarket_settlement_chain.py", SETTLEMENT_CHAIN),
     ):
         for m in pattern.finditer(source):
             args = [a.strip() for a in m.group(1).split(",")]
@@ -137,6 +141,7 @@ def test_identity_only_guard_is_used_by_exactly_the_two_device_bootstrap_routes(
         ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
         ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_cutover.py", CUTOVER),
         ("facemarket_payout.py", PAYOUT), ("facemarket_trace.py", TRACE),
+        ("facemarket_settlement_chain.py", SETTLEMENT_CHAIN),
     ):
         assert "require_admin_identity(" not in source, f"{name} 가 기기 면제 가드를 쓴다"
     if ADMIN_DEVICES:
@@ -150,3 +155,10 @@ def test_trace_route_is_gated_and_audited_before_commit():
     assert guard_at < read_at, "관리자 판정 전에 업로드 바이트를 읽는다"
     assert body.index("admin_guard.write_audit(") < body.index("await conn.commit()")
     assert '"facemarket.trace"' in body
+
+
+def test_settlement_chain_admin_routes_are_gated_before_reading():
+    for route in ("admin_list_settlements", "admin_chain_check"):
+        body = SETTLEMENT_CHAIN.split(f"async def {route}(")[1].split("@router.")[0]
+        guard_at = body.index("await admin_guard.require_admin(conn, user_id, request)")
+        assert guard_at < body.index("fm_settlements"), route

@@ -59,7 +59,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
     {!registering && !data.loading && (data.summaryError || data.rowsError || data.statementsError) && <div className={s.stateMessage}><Info className={s.icon} aria-hidden="true" />
       <p>정산 정보만 잠시 확인할 수 없어요.</p><button type="button" className={s.quietButton} onClick={data.retry}>다시 불러오기</button></div>}
     {!registering && <div className={s.settlementStrip}>
-      <EarningsFigures summary={data.summary} /><div className={s.transferNote}><p>매달 10일 자동이체</p><NextPayout nextPayout={data.statements?.nextPayout} /></div><AccountShortcut bank={bank} onOpen={openAccount} />
+      <EarningsFigures summary={data.summary} /><div className={s.transferNote}><p>매달 10일 지급 · 운영자 확인 후 이체</p><NextPayout nextPayout={data.statements?.nextPayout} /></div><AccountShortcut bank={bank} onOpen={openAccount} />
     </div>}
     <div className={s.cardTabs} role="tablist" aria-label="마이페이지 항목">{tabs.map(item => <button key={item.id} type="button" className={s.tab}
       id={`tab-${item.id}`} role="tab" aria-controls={`panel-${item.id}`} aria-selected={item.id === tab} tabIndex={item.id === tab ? 0 : -1}
