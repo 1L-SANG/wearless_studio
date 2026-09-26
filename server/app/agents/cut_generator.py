@@ -479,6 +479,19 @@ def horizon_example_governs_pose(block: dict) -> bool:
     return resolved["_referenceDirectionCompatible"] is not False
 
 
+def clear_legacy_studio_pose(spec: dict) -> dict:
+    """옛 서버가 저장한 핏 섹션 자동 포즈를 세트 밖 호리존 컷에서도 지운다(에디터 한 컷 경로용).
+
+    콘티 저장·상세 생성은 content_roles 가 같은 일을 하지만, 에디터 한 컷 다시 만들기는 콘티
+    정리를 거치지 않는다. 예시가 포즈를 정하는 컷만 지운다. 세트 멤버는 normalize_spec 이 처리한다.
+    """
+    if (spec.get("cutType") == "horizon" and not spec.get("spaceGroupId")
+            and _sanitize(spec.get("pose") or "")[:40] in _AUTO_STUDIO_POSES
+            and horizon_example_governs_pose(spec)):
+        return {**spec, "pose": "auto"}
+    return spec
+
+
 @lru_cache(maxsize=1)
 def load_virtual_model_registry() -> dict[str, dict]:
     """서버 소유 modelId→R2 뷰 manifest. 프로세스당 1회만 읽는다."""

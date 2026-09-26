@@ -97,6 +97,19 @@ def test_saved_auto_studio_pose_on_a_set_member_does_not_override_the_example(po
     assert cg.normalize_spec({**_bound(pose=pose), "spaceGroupId": None})["pose"] != "auto"
 
 
+def test_editor_single_cut_clears_saved_auto_pose_only_where_the_example_governs(monkeypatch):
+    """에디터 한 컷 다시 만들기도 옛 자동 포즈 대신 예시 포즈를 따른다(2026-09-27). 방향이 달라 예시가
+    포즈를 못 정하는 컷과 셀러가 고른 포즈는 그대로 둔다."""
+    monkeypatch.setattr(cg, "load_example_asset_registry", lambda: ("", {"standalone": {"cutType": "horizon", "direction": "front", "shot": "full"}}))
+    rotated = content_roles._STUDIO_POSE_ROTATION[1]
+    spec = {"cutType": "horizon", "exampleId": "standalone", "shot": "full", "direction": "front",
+            "refScope": "all", "pose": rotated}
+    assert cg.clear_legacy_studio_pose(spec)["pose"] == "auto"
+    assert cg.clear_legacy_studio_pose({**spec, "direction": "back"})["pose"] == rotated
+    assert cg.clear_legacy_studio_pose({**spec, "pose": "walking"})["pose"] == "walking"
+    assert cg.clear_legacy_studio_pose({**spec, "cutType": "styling"})["pose"] == rotated
+
+
 def test_snake_case_set_members_are_also_skipped_by_studio_pose_rotation():
     grouped = [{"sectionRole": "studio", "cutType": "horizon", "pose": "auto",
                 "space_group_id": "ssg1__set__one", "exampleId": "ss_example"} for _ in range(3)]
