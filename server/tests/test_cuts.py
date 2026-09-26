@@ -1459,6 +1459,11 @@ def test_a_front_example_on_a_side_or_back_cut_still_rotates(hz_registry, direct
     ]
     assert _poses(blocks)[1] == content_roles._STUDIO_POSE_ROTATION[0]
 
+    # 저장본이나 클라이언트가 보낸 양립 플래그 true 로는 포즈 권한을 얻지 못한다.
+    forged = [blocks[0], {**blocks[1], "_referenceDirectionCompatible": True}]
+    assert _poses(forged)[1] == content_roles._STUDIO_POSE_ROTATION[0]
+    assert not cut.horizon_example_governs_pose(forged[1])
+
 
 def test_a_saved_auto_pose_on_a_governed_cut_resets_but_a_chosen_pose_stays(hz_registry):
     """옛 서버가 저장한 자동 포즈는 셀러 선택이 아니라 auto 로 되돌린다. 셀러가 고른 포즈는 이긴다."""
