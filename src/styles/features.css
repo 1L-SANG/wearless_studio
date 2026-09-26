@@ -3377,6 +3377,12 @@
   align-items: center; justify-content: center; gap: 6px; text-align: center;
   font-size: 26px; font-weight: 600; color: #8e4a55; line-height: 1.5; }
 .ed-genwait-fail small { font-weight: 400; font-size: 20px; opacity: .8; }
+/* 완성됐지만 아직 주소가 없는 컷(REAL 얼굴 컷, 2026-09-26) — 실패와 구분되는 차분한 완료 톤 */
+.ed-genwait.done { background: #e8f1ec !important; }
+.ed-genwait-done { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; text-align: center;
+  font-size: 26px; font-weight: 600; color: #3b7d5e; line-height: 1.5; }
+.ed-genwait-done small { font-weight: 400; font-size: 20px; opacity: .8; }
 
 .ed-genoverlay { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center;
   justify-content: center; background: rgba(14,13,20,.4); backdrop-filter: blur(3px); padding: 24px; }

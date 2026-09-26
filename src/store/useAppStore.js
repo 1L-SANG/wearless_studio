@@ -18,7 +18,8 @@ import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
-import { assetFileUrl } from '@/lib/assetUrl.js';
+import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
+import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import {
   adoptGenerationRelevantEdits,
   clearGenerationRelevantEdits as clearGenerationRelevantEditsSession,
@@ -107,12 +108,15 @@ const initialDetailPageJob = () => ({
   phase: null,      // inputs_loaded | copy | cut | assemble
   cutsDone: 0,
   cutsTotal: 0,
-  cuts: {},         // sourceBlockId → { url, width, height } (previewUrl=1h presigned)
+  cuts: {},         // sourceBlockId → { url, width, height, done } (previewUrl=1h presigned, REAL 컷은 url 없음)
   live: [],         // 지금 생성 중인 sourceBlockId[] (cut_start~종결 사이)
   failedCuts: [],   // 실패 컷 sourceBlockId[] (빈 슬롯·미차감)
   copy: {},         // sourceBlockId → texts[{role,text}] (AG-03 통과본)
   errorMessage: '',
   startedAt: 0,
+  // 15분을 넘겨도 서버 잡이 살아 있으면 계속 기다린다 — 실패가 아니라 "오래 걸리는 중" 표식
+  // (2026-09-26, lib/detailPageJobPoll.js).
+  slow: false,
 });
 
 function restoredDetailPageJob(projectId) {
@@ -137,40 +141,8 @@ function notifyDetailPageDone() {
   } catch { /* 알림 실패는 생성 결과에 영향 없음 */ }
 }
 
-/* 이벤트 → 잡 상태 반영 (순수 함수). 이벤트는 append-only 원장이라 재수신(after=0 재생)에도
-   같은 결과로 수렴한다 — 새로고침 복원의 근거. */
-function applyDetailJobEvents(job, events) {
-  const next = { ...job, cuts: { ...job.cuts }, copy: { ...job.copy } };
-  const live = new Set(next.live);
-  const failed = new Set(next.failedCuts);
-  for (const e of events) {
-    const p = e?.payload || {};
-    if (e?.type === 'progress') {
-      next.progress = Math.max(next.progress, p.progress || 0);
-      if (p.phase) next.phase = p.phase;
-      if (p.phase === 'cut') {
-        next.cutsDone = p.done ?? next.cutsDone;
-        next.cutsTotal = p.total ?? next.cutsTotal;
-      }
-    } else if (e?.type === 'step' && p.blockId) {
-      if (p.status === 'cut_start') live.add(p.blockId);
-      if (p.status === 'cut_done') {
-        live.delete(p.blockId);
-        next.cuts[p.blockId] = { url: p.previewUrl, width: p.width, height: p.height };
-      }
-      if (p.status === 'cut_passthrough') {
-        live.delete(p.blockId);
-        // 셀러 원본 재사용 — asset 행이 이미 있어 안정 /file 경로가 즉시 유효
-        next.cuts[p.blockId] = { url: p.assetId ? assetFileUrl(p.assetId) : null };
-      }
-      if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }
-      if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];
-    }
-  }
-  next.live = [...live];
-  next.failedCuts = [...failed];
-  return next;
-}
+/* 이벤트 → 잡 상태 반영(순수 함수)은 lib/detailPageJobEvents.js, 폴링 루프는
+   lib/detailPageJobPoll.js — node --test 로 직접 고정하려고 떼어 냈다(2026-09-26). */
 
 // 레거시/후속 화면의 ensureProject 동시 호출 합류용 — 확정 승격은 draftSyncSingleFlight가 맡는다.
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
@@ -522,58 +494,46 @@ export const useAppStore = create((set, get) => ({
         return;   // 재호출은 즉시 완료 — 새 생성이 아니므로 알림 없음
       }
       patch({ jobId: res.jobId });
-      let after = 0;
-      // 15분 — 정상 실측 242~285초 + 서버 lease 복구(900초) 동안 화면이 먼저 포기하지 않게
-      // (httpAdapter.generateDetailPage 의 timeoutMs 와 같은 근거).
-      const deadline = (running.startedAt || Date.now()) + 900000;
-      let dbUnavailableCount = 0;
-      for (;;) {
-        if (!alive()) return;
-        let job;
-        let ev;
-        try {
-          [job, ev] = await Promise.all([
-            api.getJob(res.jobId),
-            // 이벤트는 보조 신호 — 일시 실패해도 잡 폴링은 계속(다음 턴에 after 재시도)
-            api.getJobEvents(res.jobId, after).catch(() => ({ events: [] })),
-          ]);
-          dbUnavailableCount = 0;
-        } catch (e) {
-          // DB 풀/DB 자체의 일시 503은 생성 실패가 아니다. 서버의 기존 jobId는 그대로 두고
-          // 재조회만 늦춘다. POST를 다시 보내지 않으므로 중복 생성·중복 과금도 없다.
-          if (e?.status !== 503 || Date.now() > deadline) throw e;
-          dbUnavailableCount += 1;
-          const retryMs = Math.min(5000, 1200 * (2 ** Math.min(dbUnavailableCount - 1, 2)));
-          await new Promise((r) => setTimeout(r, retryMs));
-          continue;
-        }
-        if (!alive()) return;
-        const events = ev?.events || [];
-        if (events.length) {
-          after = events[events.length - 1].id;
+      // 서버 잡이 살아 있는 동안 화면은 포기하지 않는다(2026-09-26) — 15분 뒤에는 주기만
+      // 늦추고(slow) 계속 본다. 끝은 서버가 정한다: done / error(서버 errorMessage) / cancelled.
+      // DB·게이트웨이 일시 장애와 연결 끊김은 같은 jobId 재조회만 늦춘다 — POST 를 다시 보내지
+      // 않으므로 중복 생성·중복 과금도 없다(lib/detailPageJobPoll.js).
+      const job = await pollDetailPageJob({
+        jobId: res.jobId,
+        getJob: (id) => api.getJob(id),
+        getJobEvents: (id, after) => api.getJobEvents(id, after),
+        startedAt: running.startedAt || Date.now(),
+        isAlive: alive,
+        onEvents: (events) => {
+          if (!alive()) return;
           set((s) => ({ detailPageJob: applyDetailJobEvents(s.detailPageJob, events) }));
-        }
-        if (typeof job.progress === 'number') {
-          patch({ progress: Math.max(get().detailPageJob.progress, job.progress) });
-        }
-        if (job.status === 'done') {
-          get().syncCredits(job.result?.credits);
-          patch({ status: 'done', progress: 100 });
-          clearDetailPageJobMarker();
-          notifyDetailPageDone();
-          return;
-        }
-        if (job.status === 'error') {
-          patch({ status: 'error', errorMessage: job.errorMessage || '상세페이지 생성에 실패했어요.' });
-          return;
-        }
-        if (Date.now() > deadline) {
-          // 타임아웃은 실패가 아니다 — 화면이 기다리기를 그만둔 것(서버 잡은 계속 돈다)
-          patch({ status: 'error', errorMessage: '생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.' });
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1200));
+        },
+        onJob: (j, { slow }) => {
+          const cur = get().detailPageJob;
+          const p = {};
+          if (typeof j?.progress === 'number' && j.progress > cur.progress) p.progress = j.progress;
+          if (slow !== Boolean(cur.slow)) p.slow = slow;
+          if (Object.keys(p).length) patch(p);
+        },
+      });
+      if (!job || !alive()) return;
+      if (job.status === 'done') {
+        get().syncCredits(job.result?.credits);
+        patch({ status: 'done', progress: 100, slow: false });
+        clearDetailPageJobMarker();
+        notifyDetailPageDone();
+        return;
       }
+      // error·cancelled — 서버가 끝났다고 말한 경우에만 실패로 보인다. 이미 받은 컷(cuts)은
+      // 지우지 않는다: 중간에 멈춰도 만든 컷은 캔버스에 그대로 남는다(오너 2026-09-26).
+      // live 만 비운다 — 더는 그리는 중인 컷이 없다.
+      patch({
+        status: 'error',
+        slow: false,
+        live: [],
+        errorMessage: job.errorMessage
+          || (job.status === 'cancelled' ? '생성이 중단됐어요. 다시 시도해 주세요.' : '상세페이지 생성에 실패했어요.'),
+      });
     } catch (e) {
       if (!alive()) return;
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
@@ -581,7 +541,8 @@ export const useAppStore = create((set, get) => ({
         patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
         return;
       }
-      patch({ status: 'error', errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+      // 잡이 사라졌거나(404) 일시 장애가 아닌 오류 — 여기서도 받아 둔 컷은 지우지 않는다.
+      patch({ status: 'error', slow: false, live: [], errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
     } finally {
       if (alive()) detailJobLoopProjectId = null;
     }
