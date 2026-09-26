@@ -413,6 +413,56 @@ async def clear_ai_output_cleanup_intent(conn: AsyncConnection, intent_id: str) 
         )
 
 
+# ---- 생성 중 컷 미리보기(2026-09-26, 오너 결정 b) -----------------------------------------
+# REAL 얼굴 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 싣지 않는다(492cbc64). 대신
+# 서버 전용 정리 표식에 "이 출력이 어느 콘티 블록 자리인가"만 적어 두고, 미리보기 라우트가
+# 요청마다 소유·라이선스를 다시 확인한 뒤 여기서 키를 찾는다. 표식은 출력과 수명이 같다 —
+# 성공 종결(assets 행)·삭제 확인 때 지워지므로, 지워진 뒤에는 미리보기도 없다.
+
+
+async def tag_ai_output_preview_block(
+    conn: AsyncConnection, *, intent_id: str | None, block_id: str | None
+) -> None:
+    """정리 표식에 미리보기 블록 id 를 더한다(복제 컷은 같은 출력에 여러 블록). 같은 id 는 한 번만."""
+    if not intent_id or not block_id or not hasattr(conn, "cursor"):
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update ai_output_cleanup_intents
+               set preview_block_ids = array_append(preview_block_ids, %s::text)
+             where id = %s
+               and not (%s::text = any(preview_block_ids))
+            """,
+            (str(block_id), intent_id, str(block_id)),
+        )
+
+
+async def get_detail_cut_preview_key(
+    conn: AsyncConnection, *, job_id: str, block_id: str
+) -> str | None:
+    """이 잡이 이 블록 자리에 올린, 아직 공개 전(pending)인 출력 키. 없으면 None.
+
+    job_id 인덱스(ai_output_cleanup_intents_job_idx)로 잡 하나의 표식(컷 수만큼)만 본다."""
+    if not hasattr(conn, "cursor"):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select r2_key
+              from ai_output_cleanup_intents
+             where job_id = %s
+               and status = 'pending'
+               and %s::text = any(preview_block_ids)
+             order by created_at desc
+             limit 1
+            """,
+            (job_id, str(block_id)),
+        )
+        row = await cur.fetchone()
+    return row["r2_key"] if row else None
+
+
 # ---- 상세 컷 체크포인트(2026-09-23) ------------------------------------------------------
 # 이미 값을 치른 베이스컷·완성 컷을 다음 시도가 이어 쓰게 남겨 둔다(workers/cut_checkpoints).
 # 새 테이블을 만들지 않는다 — 정리 표식(ai_output_cleanup_intents)의 not_before 가 곧 TTL 이다:

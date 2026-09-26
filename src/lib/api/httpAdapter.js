@@ -18,6 +18,7 @@ import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 import { jobFailure } from './jobFailure.js';
 import { pollDetailPageJob } from '../detailPageJobPoll.js';
+import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
@@ -616,6 +617,12 @@ export const httpAdapter = {
   // ?poll=1 — SSE 대신 1회 JSON(EventSource 는 Bearer 헤더 불가). after = 마지막 이벤트 id 커서.
   async getJobEvents(jobId, after = 0) {
     return http(`/v1/jobs/${jobId}/events?poll=1&after=${after}`);
+  },
+  // 생성 중 컷 미리보기 바이트(2026-09-26) — REAL 얼굴 컷의 cut_done 은 주소가 없다(492cbc64).
+  // 서버가 요청마다 소유·라이선스를 다시 확인하고 바이트를 준다. Bearer 가 필요해 blob 으로 받는다.
+  // 실패는 err.status 를 실어 던진다(403 = 라이선스가 지금 유효하지 않음) — 콘솔 로그는 없다.
+  detailCutPreview(projectId, jobId, blockId, opts) {
+    return httpBlob(detailCutPreviewPath(projectId, jobId, blockId), opts);
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
   // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:

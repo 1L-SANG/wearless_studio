@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -160,6 +161,37 @@ def _duplicate_source_indexes(
     return sources
 
 
+async def _tag_preview_block(app, job_id, intent_id, block_id, *, conn=None) -> None:
+    """정리 표식에 미리보기 블록 id 를 적는다(2026-09-26, 오너 결정 b). **best-effort** —
+    실패하면 그 컷만 대기 화면에서 '완성됐어요' 타일로 남고(오늘과 같다), 컷 생성·저장·정산은
+    막지 않는다. 컬럼이 아직 없는 DB(마이그 전)에서도 컷은 그대로 간다. 로그에 키를 남기지 않는다."""
+    if not intent_id or block_id in (None, ""):
+        return
+
+    async def _tag(c) -> None:
+        await repo.tag_ai_output_preview_block(c, intent_id=intent_id, block_id=str(block_id))
+        await c.commit()
+
+    try:
+        if conn is not None:
+            try:
+                await _tag(conn)
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if rollback is not None:
+                    with contextlib.suppress(Exception):
+                        await rollback()
+                raise
+        else:
+            async with app.state.pool.connection() as own:
+                await _tag(own)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — 미리보기 표식은 화면 편의다
+        log.warning("cut preview tag skipped job %s block %s: %s",
+                    job_id, block_id, type(e).__name__)
+
+
 def _dims(data: bytes):
     try:
         im = Image.open(BytesIO(data))
@@ -280,6 +312,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 r2_key=key,
             )
             await conn.commit()
+            # 생성 중 미리보기(2026-09-26, 오너 결정 b) — 이 출력이 어느 블록 자리인지를 서버 전용
+            # 정리 표식에만 적는다. 이벤트 원장에는 여전히 주소·키·표식 id 를 싣지 않는다(492cbc64).
+            await _tag_preview_block(app, job_id, cleanup_intent_id, b.get("id"), conn=conn)
         await asyncio.to_thread(
             r2.put_bytes,
             key,
@@ -300,8 +335,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         step = {"blockId": b.get("id"), "status": "cut_done",
                 "width": w, "height": h}
         # 비-REAL 컷은 저장된 컷마다 예외 없이 previewUrl 을 싣는다 — 대기 화면이 그 자리를 바로
-        # 채운다. REAL 컷은 위 규칙대로 주소 없이 완료만 알리고, 에디터는 '완성됐어요' 타일을
-        # 보이다가 완료 병합의 안정 주소로 채운다(2026-09-26).
+        # 채운다. REAL 컷은 위 규칙대로 주소 없이 완료만 알린다. 에디터는 그 자리를 미리보기
+        # 라우트(routes.get_detail_cut_preview — 요청마다 소유·라이선스 재확인)로 채우고, 거절되면
+        # '완성됐어요' 타일로 두었다가 완료 병합의 안정 주소로 채운다(2026-09-26).
         if not real_identity_attached:
             step["previewUrl"] = r2.preview_url(key)
         await _emit(app.state.pool, job_id, "step", step)
@@ -932,6 +968,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         {"blockId": block.get("id"), "status": "cut_passthrough",
                          "assetId": base_passthrough["id"]})
         else:
+            if base[1] is not None:
+                # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
+                await _tag_preview_block(
+                    app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
             step = {"blockId": block.get("id"), "status": "cut_done",
                     "width": base[0].get("width"), "height": base[0].get("height")}
             base_is_real_derived = bool(

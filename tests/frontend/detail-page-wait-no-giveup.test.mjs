@@ -200,7 +200,9 @@ test('주소 없는 cut_done(REAL 얼굴 컷)은 "완성" 타일 — 대기로 �
   assert.equal(blocks[0].elements[0].src, null);
   assert.equal(blocks[0].elements[0].genPending, 'done');
   assert.match(editor, /el\.genPending === 'done'/, '에디터가 완성 타일을 그린다');
-  assert.match(editor, /완성됐어요/);
+  // 2026-09-26: 타일 내용은 GenDonePreview(미리보기, 거절되면 '완성됐어요')가 그린다 —
+  // tests/frontend/detail-cut-preview.test.mjs 가 그 교체를 고정한다.
+  assert.match(editor, /el\.genPending === 'done'[\s\S]{0,400}<GenDonePreview sourceBlockId=\{el\.sourceBlockId\} \/>/);
 });
 
 test('재생(after=0)으로 같은 이벤트를 다시 받아도 이미 받은 주소를 잃지 않는다', () => {
