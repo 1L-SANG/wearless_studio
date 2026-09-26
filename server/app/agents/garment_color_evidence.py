@@ -44,6 +44,10 @@ def _number(value, low=0, high=1):
     return type(value) in (float, int) and math.isfinite(value) and low <= value <= high
 
 
+#: Modes that LANCZOS thumbnail handles before the ICC transform.
+_PRE_ICC_RESAMPLE_MODES = frozenset({"RGB", "RGBA", "L", "LA", "CMYK"})
+
+
 def _frame(data, max_side=None):
     try:
         with Image.open(BytesIO(data)) as raw:
@@ -51,20 +55,25 @@ def _frame(data, max_side=None):
                 raise ValueError("invalid_image")
             orientation = raw.getexif().get(274, 1)
             profile = raw.info.get("icc_profile")
+            # Remember the source size: JPEG draft can already land exactly on
+            # max_side, and the frame must still count as changed (resized).
+            oversize = bool(max_side) and max(raw.size) > max_side
             if max_side:
                 # Shrink before any full-size work. JPEG decodes at a reduced
                 # scale; keep the file's own mode so a CMYK profile still fits.
                 raw.draft(raw.mode, (max_side, max_side))
             im = ImageOps.exif_transpose(raw)
-            changed = orientation not in (None, 1)
-            if max_side and max(im.size) > max_side:
+            changed = orientation not in (None, 1) or oversize
+            if oversize:
                 # Palette and 1-bit images resize with nearest neighbour; expand
                 # them first. Polygons are normalized, so the ROI stays aligned.
                 if im.mode in ("P", "PA", "1"):
                     im = im.convert("RGBA" if im.mode == "PA" or "transparency" in im.info
                                     else "L" if im.mode == "1" else "RGB")
-                im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-                changed = True
+                # Exotic modes (16-bit, float) cannot be LANCZOS-reduced; they are
+                # shrunk after the sRGB/RGBA conversion below, as before.
+                if max(im.size) > max_side and im.mode in _PRE_ICC_RESAMPLE_MODES:
+                    im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             # Alpha is taken after the resize so its size matches the frame.
             alpha = im.getchannel("A") if im.mode in ("RGBA", "LA", "PA") else Image.new("L", im.size, 255)
             if im.mode == "P" and "transparency" in im.info:
@@ -91,6 +100,8 @@ def _frame(data, max_side=None):
                 raise ValueError("invalid_color_profile")
             im = im.convert("RGBA")
             im.putalpha(alpha)
+            if oversize and max(im.size) > max_side:
+                im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             im.load()
             return im, changed
     except ValueError:

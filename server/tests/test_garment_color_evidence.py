@@ -331,6 +331,18 @@ def test_large_profiled_photo_is_shrunk_before_conversion_for_observer_and_measu
     assert gce.source_binding_matches(contract(sources=[source(data)]), [source(data)])
 
 
+@pytest.mark.parametrize("side", [2048, 4096])
+def test_square_jpeg_that_decodes_exactly_to_the_limit_is_still_sent_small(side):
+    """JPEG draft 가 정확히 1024 로 떨어지면 '줄이지 않음'으로 보여 원본이 AI 로 가던 경계(2026-09-27)."""
+    out = BytesIO()
+    Image.new("RGB", (side, side), (190, 39, 50)).save(out, format="JPEG", quality=90)
+    data = out.getvalue()
+    normalized, mime = gce.normalize_for_vision(data, "image/jpeg")
+    assert mime == "image/png" and normalized != data
+    with Image.open(BytesIO(normalized)) as frame:
+        assert frame.size == (1024, 1024)
+
+
 def test_clipped_white_stays_neutral_with_nonzero_uncertainty_range():
     row = first(contract(sources=[source(photo((255, 255, 255)))]))
     assert row["status"] == "ready" and row["observedHex"] == "#FFFFFF"

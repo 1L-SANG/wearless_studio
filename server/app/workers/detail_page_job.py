@@ -1607,7 +1607,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             try:
                 _, measured = await garment_color_measure.ensure_garment_color_evidence(
                     s, pool, app.state.r2, user_id=user_id, project_id=project_id,
-                    blocks=storyboard, product=product, analysis=analysis)
+                    # analysis 는 넘기지 않는다. 잡 시작 뒤 콘티 이탈 측정이 저장을 마쳤으면
+                    # 서비스가 잠금 뒤 최신 값을 읽어 다시 재지 않는다(관찰 호출 중복 방지).
+                    blocks=storyboard, product=product, analysis=None)
                 if measured is not None:
                     analysis = {**analysis, "garmentColorEvidence": measured}
             except Exception as exc:
