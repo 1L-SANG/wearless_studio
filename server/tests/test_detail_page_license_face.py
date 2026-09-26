@@ -379,12 +379,12 @@ def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
 
 
 def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
-    """스튜디오·스타일링 섹션 착용 컷에 인물 증거가 붙는다.
+    """열린 섹션(첫 장면·스타일링·스튜디오)의 착용 컷에 인물 증거가 붙는다.
 
     이력: 2026-09-11 에 거울샷도 실제 모델로 합쳐졌고(그 전엔 가상모델로 갈려 한 페이지에
     인물이 둘이었다), 2026-09-14 에 범위를 studio 섹션으로 좁혔다가, 2026-09-25 사용자
-    결정으로 styling 섹션(거울샷 포함)을 다시 열었다. 제품컷(product 섹션)은 여전히 실제
-    모델로 만들지 않는다.
+    결정으로 styling 섹션(거울샷 포함)을, 2026-09-26 에 hooking 을 다시 열었다.
+    제품컷(product 섹션)은 여전히 실제 모델로 만들지 않는다.
     """
     captured = {}
     _patch_inputs(monkeypatch, captured,

@@ -397,6 +397,14 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     b, chosen.data, chosen.mime, chosen, has_face=False,
                     real_identity_attached=False, garment_qc=None, cut_qc=detail_report,
                     garment_warnings=[], neck_repair_metadata=None, face_pass_outcome={})
+            if isinstance(item, _SkippedCut):
+                # 준비 단계에서 이미 건너뛴 자리(범위 밖·설정 오류 등) — 이유는 그쪽이 cut_skipped 로
+                # 남겼다. 아래 "옷 근거 없음" 로그로 떨어지면 원인을 잘못 가리킨다(2026-09-26: 막힌
+                # 첫 장면이 3번 연속 "no garment-truth references" 로 보였다). 화면이 그 자리를
+                # 닫을 수 있게 cut_failed 는 예전처럼 보낸다.
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_failed"})
+                return None
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
                 await _emit(app.state.pool, job_id, "step",

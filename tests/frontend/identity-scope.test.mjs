@@ -37,16 +37,17 @@ test('확정 프로필을 요구하는 컷과 스튜디오 공간세트는 가�
   assert.equal(scopeOfSpaceSet(STUDIO_SET), 'virtual');
 });
 
-test('studio·styling 섹션 밖은 전부 가상 전용 — 실제 모델은 스튜디오·스타일링 컷만 만든다', () => {
-  // 2026-09-14 사용자 결정으로 studio 를 열었고, 2026-09-25 결정으로 styling 을 더했다.
+test('열린 섹션(hooking·styling·studio) 밖은 전부 가상 전용 — 실제 모델은 첫 장면·스타일링·스튜디오 컷만 만든다', () => {
+  // 2026-09-14 사용자 결정으로 studio 를 열었고, 2026-09-25 에 styling, 2026-09-26 에 hooking 을 더했다.
   for (const block of [{ sectionRole: 'studio', cutType: 'horizon' },
-    { sectionRole: 'styling', cutType: 'styling' }, { cutType: 'styling' }, { cutType: 'mirror' }]) {
+    { sectionRole: 'styling', cutType: 'styling' }, { cutType: 'styling' }, { cutType: 'mirror' },
+    { sectionRole: 'hooking', cutType: 'styling' }, { sectionRole: 'hooking', cutType: 'horizon' },
+    { contentRole: 'hero', cutType: 'styling' }]) {
     assert.equal(scopeOfBlock(block), 'both', JSON.stringify(block));
   }
-  // hooking·product 는 여전히 막힌다.
-  for (const block of [{ sectionRole: 'hooking', cutType: 'styling' },
-    { sectionRole: 'hooking', cutType: 'horizon' },
-    { sectionRole: 'product', cutType: 'product' }, { cutType: 'product' }]) {
+  // product 는 여전히 막힌다(착용 컷 모양이어도 섹션이 product 면 막힌다).
+  for (const block of [{ sectionRole: 'product', cutType: 'product' }, { cutType: 'product' },
+    { cutType: 'product', shot: 'detail' }, { sectionRole: 'product', cutType: 'styling' }]) {
     assert.equal(scopeOfBlock(block), 'virtual', JSON.stringify(block));
   }
 });
@@ -72,20 +73,25 @@ test('실제 모델은 가상 전용 컷을 만들 수 없다', () => {
   assert.equal(blockAllowedForModel(styling, real), true);
   assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, direction: 'back' }, real), true);
   assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, sectionRole: 'styling' }, real), false);
-  // 그 밖의 섹션(hooking·product)은 모양과 무관하게 막힌다
+  // hooking 섹션도 같다(2026-09-26) — 모양이 괜찮으면 통과, 확정 프로필 모양은 여전히 가상 전용.
+  assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, direction: 'back', sectionRole: 'hooking' }, real), true);
+  assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, sectionRole: 'hooking' }, real), false);
+  // 그 밖의 섹션(product)은 모양과 무관하게 막힌다
   assert.equal(blockAllowedForModel({ cutType: 'product' }, real), false);
-  assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, direction: 'back', sectionRole: 'hooking' }, real), false);
+  assert.equal(blockAllowedForModel({ ...PROFILE_BLOCK, direction: 'back', sectionRole: 'product' }, real), false);
 });
 
 test('막힌 이유가 셀러에게 갈린다 — 문구는 서버 규칙 표에서 온다', () => {
   const real = identityKindOf(true);
-  const outside = rejectionOfBlock({ sectionRole: 'hooking', cutType: 'styling' }, real);
+  const outside = rejectionOfBlock({ sectionRole: 'product', cutType: 'product' }, real);
   assert.equal(outside.code, 'real_model_studio_only');
-  assert.match(outside.message, /스튜디오/);
+  assert.match(outside.message, /첫 장면/);
   assert.match(outside.message, /스타일링/);
+  assert.match(outside.message, /스튜디오/);
+  assert.equal(rejectionOfBlock({ sectionRole: 'hooking', cutType: 'styling' }, real), null);   // 2026-09-26 열림
   assert.equal(rejectionOfSection('studio', real), null);
   assert.equal(rejectionOfSection('styling', real), null);   // 2026-09-25 열림
-  assert.equal(rejectionOfSection('hooking', real).code, 'real_model_studio_only');
+  assert.equal(rejectionOfSection('hooking', real), null);   // 2026-09-26 열림
   assert.equal(rejectionOfSection('product', real).code, 'real_model_studio_only');
   assert.equal(rejectionOfSection('product', identityKindOf(false)), null);
   // styling 섹션의 확정 프로필 예시는 섹션이 아니라 예시 때문에 막힌다 — 섹션 사유(코드)가
@@ -97,14 +103,16 @@ test('막힌 이유가 셀러에게 갈린다 — 문구는 서버 규칙 표에
 
 test('견적은 실제로 생성될 컷만 센다', () => {
   const blocks = [
+    { source: 'ai', sectionRole: 'hooking', cutType: 'styling' },
     { source: 'ai', sectionRole: 'studio', cutType: 'horizon' },
     { source: 'ai', sectionRole: 'styling', cutType: 'styling' },
-    { source: 'ai', sectionRole: 'hooking', cutType: 'styling' },
+    { source: 'ai', sectionRole: 'product', cutType: 'product' },
     { source: 'mine' },
   ];
-  assert.equal(blocksForModel(blocks, identityKindOf(true)).length, 3);   // studio + styling + 내 이미지
-  assert.equal(blocksForModel(blocks, identityKindOf(false)).length, 4);
-  assert.equal(blocksForModel(blocks, null).length, 4);                   // 모르면 안 뺀다
+  // hooking + studio + styling + 내 이미지 — 제품 컷만 빠진다(2026-09-26 hooking 열림)
+  assert.equal(blocksForModel(blocks, identityKindOf(true)).length, 4);
+  assert.equal(blocksForModel(blocks, identityKindOf(false)).length, 5);
+  assert.equal(blocksForModel(blocks, null).length, 5);                   // 모르면 안 뺀다
 });
 
 test('선택지에서도 빠진다 — 갤러리·자동 구성 공용 필터', () => {

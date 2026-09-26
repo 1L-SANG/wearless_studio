@@ -13,11 +13,12 @@
    "scope": "virtual",
    "why": "studio 밖 섹션 — 실제 모델 얼굴 합성은 studio 에서만 검증됐다(2026-09-14)",
    "code": "real_model_studio_only",
-   "message": "실제 모델은 현재 스튜디오·스타일링 컷만 만들 수 있어요.",
+   "message": "실제 모델은 현재 첫 장면·스타일링·스튜디오 컷만 만들 수 있어요.",
    "when": {
     "sectionNotIn": [
-     "studio",
-     "styling"
+     "hooking",
+     "styling",
+     "studio"
     ]
    }
   },
