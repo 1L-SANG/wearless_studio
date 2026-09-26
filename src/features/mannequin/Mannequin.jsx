@@ -10,7 +10,7 @@ import {
   mannequinGenerationCreditShortfall,
 } from '@/lib/creditPreflight.js';
 import {
-  CREDIT_COSTS,
+  detailPageCreditCost,
   mannequinRegenerationCtaLabel,
   mannequinRegenerationQuote,
 } from '@/lib/limits.js';
@@ -921,7 +921,7 @@ export function Mannequin() {
     || mannequinRegenerationQuote(useAppStore.getState().account?.plan, cuts.length);
   const continueLabel = needsRegen
     ? mannequinRegenerationCtaLabel(regenerationQuote)
-    : `이대로 진행 · ${aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧${realModelFee}`;
+    : `이대로 진행 · ${aiCutCount == null ? '—' : detailPageCreditCost(aiCutCount)} 크레딧${realModelFee}`;
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   const openAdjustmentExamples = (key) => {

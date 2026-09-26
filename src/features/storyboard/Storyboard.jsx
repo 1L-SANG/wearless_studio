@@ -82,6 +82,7 @@ import {
 } from '@/lib/identityScope.js';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
+import { CREDIT_COSTS, crossedBelowDetailPageMinimum, detailPageCreditCost } from '@/lib/limits.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   detachSpaceMembership,
@@ -2173,6 +2174,19 @@ export function Storyboard({ toastOverride = null } = {}) {
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
+  const generationCutCount = blocks == null
+    ? null
+    : uniqueGenerationCutCount(blocksForModel(blocks, identityKind));
+  const previousGenerationCutCount = useRef(null);
+  useEffect(() => {
+    if (generationCutCount == null) return;
+    if (previousGenerationCutCount.current != null && crossedBelowDetailPageMinimum(
+      previousGenerationCutCount.current, generationCutCount, CREDIT_COSTS.storyboardMinCuts,
+    )) {
+      pushToast(`AI 컷이 ${CREDIT_COSTS.storyboardMinCuts}장보다 적으면 ${CREDIT_COSTS.storyboardMinCuts}장 기준(${detailPageCreditCost(1)}크레딧)으로 차감돼요. ${CREDIT_COSTS.storyboardMinCuts}장까지는 같은 값이에요.`);
+    }
+    previousGenerationCutCount.current = generationCutCount;
+  }, [generationCutCount, pushToast]);
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());
   const promotedMatchClothingRef = useRef({ projectId: null, items: null });
@@ -4119,7 +4133,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
           </div>
           {/* 만들 수 없는 컷은 서버 예약에서도 빠진다 — 견적도 같은 수를 봐야 한다. */}
-          <span className="sb-ab-cost">생성 {uniqueGenerationCutCount(blocksForModel(blocks, identityKind)) * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
+          <span className="sb-ab-cost">생성 {detailPageCreditCost(generationCutCount)} 크레딧</span>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={onCopywritingChange} label="카피라이팅" />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>

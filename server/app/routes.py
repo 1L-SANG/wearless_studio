@@ -3241,7 +3241,7 @@ async def generate_detail_page(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
-    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    AI 1~4컷 요청은 1컷 이상 성공 시 5컷 값, 5컷 이상 요청은 성공 컷 수만큼 차감. 전부 실패하거나 완료 재호출이면 무차감."""
     s = request.app.state.settings
     scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
@@ -3342,14 +3342,17 @@ async def generate_detail_page(
         ai_blocks = allowed_blocks
         dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
         ai_count = sum(1 for source in dup_sources if source is None)
-        cost = ai_count * s.credit_cost_storyboard_per_cut
+        min_cuts = s.credit_min_storyboard_cuts
+        billable = max(ai_count, min_cuts) if ai_count > 0 else 0
+        cost = billable * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
             payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,
-                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count})
+                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
+                      "minCuts": min_cuts})
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")
