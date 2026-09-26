@@ -83,10 +83,17 @@ def test_shared_analysis_isolates_optional_observer_and_preserves_original_sourc
     assert result["clothing_type"] == "top"
     profile = result["analysis_payload"][evidence.PERSISTED_KEY]
     assert {c["colorId"] for c in profile["colors"]} == {"base", "other"}
-    assert all(c["status"] == "unavailable" for c in profile["colors"])
+    by_color = {color["colorId"]: color for color in profile["colors"]}
+    if observer_state == "bad-image":
+        # The damaged additional color must not invalidate the base garment's
+        # valid Front/Back pixels; their different panels now yield a coarse tone.
+        assert by_color["base"]["status"] == "ready"
+        assert by_color["other"]["status"] == "unavailable"
+    else:
+        assert all(color["status"] == "unavailable" for color in profile["colors"])
     assert "sourceBindings" not in result["result_data"][evidence.PERSISTED_KEY]
     if observer_state == "bad-image":
-        assert next(c for c in profile["colors"] if c["colorId"] == "other")["reason"] == "invalid_image"
+        assert by_color["other"]["reason"] == "invalid_image"
 
 
 def test_observer_never_calls_provider_without_sources_and_returns_only_regions(monkeypatch):
