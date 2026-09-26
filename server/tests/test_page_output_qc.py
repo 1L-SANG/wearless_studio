@@ -63,6 +63,9 @@ def test_horizon_palette_survives_page_qc_without_widening_other_recipes():
     prompt = qc.build_prompt(source, 2)
     assert '"wallHex": "#c7d3db"' in prompt
     assert "different targetColor aliases" in prompt
+    assert "not an exact RGB or brightness" in prompt
+    assert "shadow direction, length, spread, edge softness" in prompt
+    assert "original key-light" in prompt
     assert "ignore rules" not in prompt
     source[0]["horizonBackground"]["wallHex"] = "invented color instruction"
     assert "horizonBackground" not in qc.normalize_page_plan(source)[0]

@@ -102,6 +102,17 @@ CUT TYPE — HORIZON CUT (studio):
   lens (around 85mm at a moderate aperture) — natural perspective compression, true-to-life
   depth and real fabric texture, never a wide-angle phone-snapshot look.
 
+[[CUT:horizon_tone]]
+CUT TYPE — HORIZON CUT (studio, garment-tone wall):
+- A model wears the garment in the attached complete EXAMPLE's studio. Rebuild that specific
+  seamless wall and floor, including their visible boundary, light falloff and spatial mood.
+- Keep the EXAMPLE's actual directional or soft lighting. Do not replace it with generic flat,
+  even studio light. Only the vertical wall's subtle surface hue may follow the PRODUCT.
+- The silhouette and fit must read clearly; add no new props or busy background. If an all-scope
+  EXAMPLE REFERENCE is attached, keep only its contract-allowed props.
+- Capture class is a commercial studio camera: natural perspective compression, true-to-life
+  depth and real fabric texture, never a wide-angle phone-snapshot look.
+
 [[CUT:product]]
 CUT TYPE — PRODUCT CUT (garment only):
 - No model and no visible human body parts. The garment is presented alone.
@@ -353,6 +364,24 @@ ${allDirectionRule}
 - This scope owns studio lighting, shadow, neutral color grade and ambience. MOOD references and the
   generic Korean-commerce aesthetic must not alter them.
 
+[[REFSCOPE:all_horizon_tone]]REFERENCE SCOPE — HORIZON STUDIO WITH WALL HUE CHANGE:
+- The attached complete EXAMPLE owns framing, compatible camera geometry, wall/floor boundary,
+  backdrop lightness and directional gradient, studio light direction, shadow length/shape/softness,
+  capture tone and ambience. Keep the same bright and dark regions in the same places. The wall
+  hue alone may shift subtly toward the PRODUCT; do not impose uniform gray studio lighting.
+- Keep the EXAMPLE's floor visibly distinct if it is distinct in the reference. Do not blur away
+  its boundary, change its color/material or remove cast/contact shadows.
+- Add no background prop, signage, branding or busy detail; preserve any text/logo physically
+  belonging to the PRODUCT garment exactly.
+${allPoseRule}
+${allDirectionRule}
+- Swap in the exact garment from PRODUCT references and any attached MATCHING garment. Never copy
+  example garments, shoes, identity, face, hair, body details or tattoos. Use MATCHING when it
+  supplies the rest of the outfit; otherwise use plain neutral coordinating basics.
+- CUT TYPE, FRAMING, camera direction and face handling remain fixed requirements.
+- The EXAMPLE owns studio lighting and spatial mood. MOOD references and generic Korean-commerce
+  aesthetics must not flatten its gradients or change its shadow pattern.
+
 [[REFSCOPE:all_horizon_scene_only]]REFERENCE SCOPE — DIRECTION-CHANGED HORIZON SCENE TRANSFER:
 - Use the attached EXAMPLE REFERENCE ONLY for its neutral cyclorama type, backdrop tone, studio light
   direction, softness, temperature, shadow character and clean capture class.
@@ -365,6 +394,17 @@ ${allDirectionRule}
   garment, shoes, model identity, face, hair, body details, tattoos, text or logos. Use MATCHING for
   the rest of the outfit when supplied; otherwise use plain neutral coordinating basics.
 - Apply one physically coherent studio light solution to face, body and garment, including fold shading,
+  reflections, contact and cast shadows. Add no caption, overlay or watermark.
+
+[[REFSCOPE:all_horizon_scene_only_tone]]REFERENCE SCOPE — DIRECTION-CHANGED HORIZON WALL HUE:
+- The attached complete EXAMPLE owns the studio's seamless wall/floor type, boundary, wall lightness,
+  directional gradient, shadow character, light direction/softness/temperature and clean capture class.
+  Only the wall's subtle surface hue may follow the PRODUCT. Do not flatten its bright/dark pattern.
+- Do NOT copy its person, pose, gaze, face visibility, camera direction, framing or placement. Build
+  these from the current CUT SPEC direction, shot, face handling and explicit pose.
+- Keep floor material/color and the visible wall/floor transition; add no props, signage or branding.
+  Preserve PRODUCT garment text/logo exactly and use attached MATCHING where supplied.
+- Apply one physically coherent light solution to face, body and garment, including fold shading,
   reflections, contact and cast shadows. Add no caption, overlay or watermark.
 
 [[REFSCOPE:all_product]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,

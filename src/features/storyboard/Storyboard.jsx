@@ -16,7 +16,7 @@ import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
 import { CATALOG_DRAG_MIME, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
 import { attachStoryboardDragScroll } from '@/lib/storyboardDragScroll.js';
-import { horizonBackgroundAvailability } from '@/lib/horizonBackgroundAvailability.js';
+import { effectiveHorizonBackgroundMode, horizonBackgroundAvailability, reconcileHorizonGroupBackground } from '@/lib/horizonBackgroundAvailability.js';
 import { horizonBackgroundMode, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
 import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe, detailTargetPresentation, detailRecommendationMessage, selectableDetailTargets } from '@/lib/detailRecommendations.js';
 import { uid } from '@/lib/ids.js';
@@ -1051,7 +1051,7 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
   </div>;
 }
 
-function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
+function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet, backgroundAvailability }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
   const ordinal = siblingIndex >= 0 ? siblingIndex + 1 : (block.spaceSetMemberOrder || 1);
   const count = siblings.length || set?.members?.length || 1;
@@ -1066,7 +1066,7 @@ function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
           </div>
         </div>
       </div>
-      {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {horizonBackgroundMode(block) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
+      {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {effectiveHorizonBackgroundMode(block, backgroundAvailability) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
     </div>
   );
 }
@@ -1616,7 +1616,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ) : <>
       {block.spaceGroupId && (
         <SpaceSetInspectorHeader set={spaceContext?.set} siblings={spaceContext?.siblings || []}
-          block={block} onChangeSet={onChangeSpaceSet} />
+          block={block} onChangeSet={onChangeSpaceSet}
+          backgroundAvailability={horizonBackgroundAvailability(spaceContext?.siblings, catalogs.detailProduct,
+            catalogs.garmentColorEvidence, spaceContext?.set?.id)} />
       )}
       {!block.cutType ? (
         <>
@@ -3392,13 +3394,15 @@ export function Storyboard({ toastOverride = null } = {}) {
             setSelectionOrigin: 'user',
           });
           const normalized = normalizeBoard(replaced);
-          return assignGenerationExamples(normalized, {
+          const assigned = assignGenerationExamples(normalized, {
             catalog: catalogs.genExamples,
             product: { clothingType },
             gender: exampleGender,
             onlyBlockIds: newIds,
             identityKind,
           }).blocks;
+          return reconcileHorizonGroupBackground(assigned, groupId, catalogs.detailProduct,
+            catalogs.garmentColorEvidence, set.id);
         }, { nextSelectedId: newIds[0] });
       } else {
         const memberIds = set.members.map(() => uid('blk'));
@@ -3588,6 +3592,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       sectionId: section.id,
       catalog: catalogs.genExamples,
       product: { clothingType, colors: composeModeSeed.colors },
+      colorEvidence: catalogs.garmentColorEvidence,
       gender: boundGenderNow,
       rotation: shuffleTickRef.current,
       uid,

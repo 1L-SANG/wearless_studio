@@ -1,10 +1,13 @@
 import policy from '../../server/app/data/horizon_background_policy.json' with { type: 'json' };
+import { storyboardSpaceSetById } from './storyboardSpaceSetCatalog.js';
+import { horizonBackgroundMode, updateHorizonGroupBackground } from './horizonBackground.js';
 
-export const HORIZON_COLOR_EVIDENCE_UNAVAILABLE = '사진에서 의류색을 충분히 확인하지 못했어요. 기존 배경을 사용해 주세요.';
+export const HORIZON_COLOR_EVIDENCE_UNAVAILABLE = '의류색 분석 결과가 없어 기존 배경을 사용해요.';
 export const HORIZON_BACKGROUND_UNAVAILABLE = '이 의류색은 배경 톤을 안정적으로 맞추기 어려워 기존 배경을 사용해요.';
 
 export function horizonBackgroundAvailability(members, product, evidence, setId) {
-  if (!policy.allowedSetIds?.includes(setId)) return { available: false, reason: '이 세트는 기존 배경을 사용해요.' };
+  const set = storyboardSpaceSetById(setId);
+  if (!set?.setType.startsWith('horizon')) return { available: false, reason: '이 세트는 기존 배경을 사용해요.' };
   const unavailable = { available: false, reason: HORIZON_COLOR_EVIDENCE_UNAVAILABLE };
   const horizon = (members || []).filter(block => block.cutType === 'horizon' && block.source !== 'mine');
   if (!horizon.length || evidence?.version !== 1 || !product?.clothingType
@@ -23,4 +26,15 @@ export function horizonBackgroundAvailability(members, product, evidence, setId)
     return { available: false, reason: HORIZON_BACKGROUND_UNAVAILABLE };
   }
   return { available: true, reason: null };
+}
+
+export function effectiveHorizonBackgroundMode(block, availability) {
+  return horizonBackgroundMode(block) === 'garment-tone' && availability?.available === true
+    ? 'garment-tone' : 'reference';
+}
+
+export function reconcileHorizonGroupBackground(blocks, groupId, product, evidence, setId) {
+  const members = (blocks || []).filter(block => block.spaceGroupId === groupId);
+  return horizonBackgroundAvailability(members, product, evidence, setId).available
+    ? blocks : updateHorizonGroupBackground(blocks, groupId, 'reference');
 }

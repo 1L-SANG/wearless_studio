@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { horizonBackgroundMode } from '../../lib/horizonBackground.js';
+import { effectiveHorizonBackgroundMode } from '../../lib/horizonBackgroundAvailability.js';
 
 export default function HorizonBackgroundControl({ block, disabled, onChange, memberCount,
   garmentToneAvailable = false, garmentToneUnavailableReason = '현재 상품의 색상 근거를 확인한 뒤 사용할 수 있어요.' }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   if (block?.cutType !== 'horizon' || !block.spaceGroupId) return null;
-  const mode = horizonBackgroundMode(block);
+  const requestedMode = horizonBackgroundMode(block);
+  const mode = effectiveHorizonBackgroundMode(block, { available: garmentToneAvailable });
   async function choose(value, input) {
-    if (value === mode || saving || disabled) return;
+    if (value === requestedMode || saving || disabled) return;
     setSaving(true);
     setError('');
     try { await onChange(value); }
@@ -26,7 +28,11 @@ export default function HorizonBackgroundControl({ block, disabled, onChange, me
         ['garment-tone', '옷 색에 맞춤'],
       ].map(([value, label]) => <label key={value} data-selected={mode === value}>
         <input type="radio" name={`horizon-background-${block.spaceGroupId}`} value={value}
-          checked={mode === value} disabled={value === 'garment-tone' && !garmentToneAvailable} onChange={(event) => choose(value, event.currentTarget)} />
+          checked={mode === value} disabled={value === 'garment-tone' && !garmentToneAvailable}
+          onClick={(event) => {
+            if (value === 'reference' && mode === 'reference' && requestedMode === 'garment-tone') choose(value, event.currentTarget);
+          }}
+          onChange={(event) => choose(value, event.currentTarget)} />
         <span>{label}</span>
       </label>)}
     </div>

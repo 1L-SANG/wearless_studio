@@ -58,7 +58,7 @@ def reference(reason: str) -> dict:
 
 
 def palette_for_observed(target: str, *, lightness_range=None) -> dict:
-    """Finite muted palette, with an explicit uncertain band instead of a hidden jump.
+    """Muted hue suggestion; the example, not this swatch, owns wall luminance.
 
     Used only AFTER source verification in generation. The review tool may call
     this pure function with hypothetical RGB inputs, never as product evidence.
@@ -71,29 +71,30 @@ def palette_for_observed(target: str, *, lightness_range=None) -> dict:
             or any(type(v) not in (int, float) or not math.isfinite(v) for v in bounds)
             or not 0 <= bounds[0] <= bounds[1] <= 1.001):
         return reference("measurement-unavailable")
-    low, high = bounds
-    if low >= POLICY["whiteGarmentMinimum"]:
-        wall_l, band = POLICY["whiteWallLightness"], "white"
-    elif high <= POLICY["lightBranchMaximum"]:
-        wall_l, band = POLICY["lightWallLightness"], "light"
-    elif low >= POLICY["darkBranchMinimum"]:
-        wall_l, band = POLICY["darkWallLightness"], "dark"
-    else:
-        return reference("lightness-ambiguous")
+    # Large lightness ranges are expected in ordinary folded white garments.
+    # They are not grounds to disable a hue-only backdrop option. The generated
+    # wall keeps the example's existing luminance and shadows (see prompt).
+    band = "white" if lightness >= POLICY["whiteGarmentMinimum"] else (
+        "dark" if lightness >= POLICY["darkBranchMinimum"] else "light")
+    wall_l = POLICY["wallHueSwatchLightness"] + (
+        -POLICY["wallHueSwatchContrastOffset"] if band in {"dark", "white"}
+        else POLICY["wallHueSwatchContrastOffset"])
     chroma = math.hypot(a, b)
     hue = (math.degrees(math.atan2(b, a)) + 360) % 360
     hue = (int((hue + POLICY["hueStep"] / 2) // POLICY["hueStep"]) * POLICY["hueStep"]) % 360
-    wall_c = 0 if chroma < POLICY["achromaticThreshold"] else POLICY["subtleChroma"]
-    if chroma >= POLICY["strongGarmentChroma"] and band == "dark":
+    # A dark blue-gray garment can have low measured chroma but still show a
+    # meaningful cool hue. The same tiny chroma on a bright white photo often
+    # comes from illumination, so keep that wall neutral.
+    neutral_cutoff = (POLICY["darkGarmentAchromaticThreshold"]
+                      if lightness <= POLICY["darkGarmentLightnessMaximum"]
+                      else POLICY["achromaticThreshold"])
+    wall_c = 0 if chroma < neutral_cutoff else POLICY["subtleChroma"]
+    if chroma >= POLICY["strongGarmentChroma"]:
         wall_c = POLICY["mutedChroma"]
-    if band == "dark" and 60 <= hue <= 120:
+    if POLICY["yellowHueRange"][0] <= hue <= POLICY["yellowHueRange"][1]:
         wall_c = min(wall_c, POLICY["darkenedYellowMaxChroma"])
     radians = math.radians(hue)
     wall = _oklab_hex(wall_l, wall_c * math.cos(radians), wall_c * math.sin(radians))
-    actual_l = hex_to_oklab(wall)[0]
-    separation = low - actual_l if actual_l < low else actual_l - high if actual_l > high else 0
-    if separation < POLICY["minimumLightnessGap"]:
-        return reference("contrast-uncertain")
     return {"mode": "garment-tone", "wallHex": wall, "targetHex": target.lower(),
             "reason": "measured-color", "paletteBand": band, "policyVersion": POLICY["version"]}
 
@@ -145,8 +146,17 @@ def active(block: dict) -> bool:
 
 
 def resolve_for_block(block: dict, product: dict, *, analysis=None, sources=None) -> dict:
-    group = str(block.get("spaceGroupId") or "").split("__")
-    if len(group) != 3 or group[0] != "ssg1" or group[1] not in POLICY["allowedSetIds"]:
+    from . import space_set_assets
+
+    try:
+        parsed = space_set_assets.parse_space_set_group_id(block.get("spaceGroupId"))
+        if not parsed or block.get("cutType") != "horizon":
+            return reference("set-unsupported")
+        _, registry = space_set_assets.load_space_set_registry()
+        entry = registry.get(parsed[0])
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        return reference("set-unsupported")
+    if not entry or entry.get("setType") not in {"horizon-rotation", "horizon-sequence"}:
         return reference("set-unsupported")
     return resolve(product, block.get("colorId"), analysis=analysis, sources=sources)
 

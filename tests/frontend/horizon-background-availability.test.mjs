@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { horizonBackgroundAvailability as resolveAvailability } from '../../src/lib/horizonBackgroundAvailability.js';
+import { effectiveHorizonBackgroundMode, horizonBackgroundAvailability as resolveAvailability,
+  reconcileHorizonGroupBackground } from '../../src/lib/horizonBackgroundAvailability.js';
+import { STORYBOARD_SPACE_SETS } from '../../src/lib/storyboardSpaceSetCatalog.js';
 import policy from '../../server/app/data/horizon_background_policy.json' with { type: 'json' };
-const allowedSetId = policy.allowedSetIds[0];
-const horizonBackgroundAvailability = (members, product, evidence, setId = allowedSetId) => resolveAvailability(members, product, evidence, setId);
+const horizonSetIds = STORYBOARD_SPACE_SETS.filter(set => set.setType.startsWith('horizon')).map(set => set.id);
+const stylingSetId = STORYBOARD_SPACE_SETS.find(set => set.setType === 'styling').id;
+const horizonSetId = horizonSetIds[0];
+const horizonBackgroundAvailability = (members, product, evidence, setId = horizonSetId) => resolveAvailability(members, product, evidence, setId);
 const product = { clothingType: 'top', colors: [{ id: 'base', isBase: true }, { id: 'blue' }] };
 const member = colorId => ({ cutType: 'horizon', source: 'ai', colorId });
 const evidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'ready', backgroundStatus: 'ready', backgroundPolicyVersion: policy.version }, { colorId: 'blue', status: 'ready', backgroundStatus: 'ready', backgroundPolicyVersion: policy.version }] };
@@ -32,10 +36,33 @@ test('measured colors still require a current ready background calculation', () 
   assert.equal(horizonBackgroundAvailability([member('base')], product, { ...evidence, colors: [{ colorId: 'base', status: 'ready' }] }).available, false);
   assert.equal(horizonBackgroundAvailability([member('base')], product, { ...evidence, colors: [{ ...evidence.colors[0], backgroundPolicyVersion: policy.version - 1 }] }).available, false);
 });
-test('only explicitly supported catalog sets enable garment tone', () => {
-  assert.ok(allowedSetId);
-  assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, 'horizon-sequence-figma-s14-v2').available, false);
-  assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, 'horizon-sequence-figma-s05-v2').available, true);
+test('all published horizon sets enable garment tone, while styling sets do not', () => {
+  assert.ok(horizonSetIds.length >= 19);
   assert.equal(resolveAvailability([member('base')], product, evidence).available, false);
-  for (const id of policy.allowedSetIds) assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, id).available, true);
+  assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, stylingSetId).available, false);
+  for (const id of horizonSetIds) assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, id).available, true, id);
+});
+
+test('a saved tone request shows the background actually used for stale or missing evidence', () => {
+  const block = { ...member('base'), spaceGroupId: 'current', horizonBackgroundMode: 'garment-tone' };
+  assert.equal(effectiveHorizonBackgroundMode(block, { available: true }), 'garment-tone');
+  assert.equal(effectiveHorizonBackgroundMode(block, { available: false }), 'reference');
+  assert.equal(effectiveHorizonBackgroundMode(block, null), 'reference');
+});
+
+test('replacing a set keeps tone only if every target color is ready and preserves undo source', () => {
+  const old = { ...member('base'), id: 'old', spaceGroupId: 'old-group', horizonBackgroundMode: 'garment-tone' };
+  const nextGroup = [
+    { ...old, id: 'next-a', spaceGroupId: 'new-group' },
+    { ...old, id: 'next-b', colorId: 'blue', spaceGroupId: 'new-group' },
+  ];
+  const blocks = [old, ...nextGroup];
+  assert.equal(reconcileHorizonGroupBackground(blocks, 'new-group', product, evidence, horizonSetId), blocks);
+  const missingBlue = { ...evidence, colors: evidence.colors.slice(0, 1) };
+  const downgraded = reconcileHorizonGroupBackground(blocks, 'new-group', product, missingBlue, horizonSetId);
+  assert.notEqual(downgraded, blocks);
+  assert.equal(downgraded[0], old);
+  assert.ok(downgraded.slice(1).every(block => block.horizonBackgroundMode === 'reference'));
+  assert.ok(blocks.slice(1).every(block => block.horizonBackgroundMode === 'garment-tone'));
+  assert.equal(reconcileHorizonGroupBackground(blocks, 'new-group', product, evidence, stylingSetId)[1].horizonBackgroundMode, 'reference');
 });

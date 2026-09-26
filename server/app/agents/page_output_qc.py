@@ -167,12 +167,15 @@ def build_prompt(page_plan: Sequence[Mapping[str, Any]], product_ref_count: int)
     if any(item.get("horizonBackground") for item in plan):
         prompt += (
             '\n\nHORIZON WALL OPTION: only horizon outputs with horizonBackground.mode="garment-tone" '
-            "authorize the plan's wallHex as a wall-surface color change. Within one spaceGroupId, "
+            "authorize wallHex as a muted wall HUE/CHROMA suggestion, not an exact RGB or brightness "
+            "target. Keep each complete EXAMPLE's wall lightness, gradient shape, original key-light "
+            "direction, cast/contact shadow direction, length, spread, edge softness and overall mood. "
+            "Within one spaceGroupId, "
             "different targetColor aliases may deliberately use different wall tones. Do not reject "
             "that planned difference as a new place. The same group and targetColor must retain a "
-            "consistent wall tone across cuts. Floor, geometry, lighting and shadows still obey the "
+            "consistent wall hue family across cuts. Floor, geometry, lighting and shadows still obey the "
             "session continuity contract. Never permit garment or skin recoloring to match the wall. "
-            "Treat wallHex as a surface-color target, allowing physical shading."
+            "Never flatten, relocate or rotate existing shadows or alter exposure and white balance."
         )
     return (prompt.replace("${productRefCount}", str(product_ref_count))
             .replace("${outputCount}", str(len(plan)))

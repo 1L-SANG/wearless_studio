@@ -72,12 +72,12 @@ def test_public_background_eligibility_uses_current_policy_not_signed_measuremen
     row = first(value)
     assert row["status"] == "ready"
     summary = gce.public_summary(value)["colors"][0]
-    assert summary["backgroundStatus"] == "reference"
-    assert summary["backgroundReason"] == "lightness-ambiguous"
+    assert summary["backgroundStatus"] == "ready"
+    assert summary["backgroundReason"] == "measured-color"
     assert "backgroundStatus" not in first(value)
     monkeypatch.setitem(horizon_background.POLICY, "version", "test-fresh-policy")
     assert gce.public_summary(value)["colors"][0]["backgroundPolicyVersion"] == "test-fresh-policy"
-    unavailable = contract(rows=[region(lighting="cast")])
+    unavailable = contract(rows=[region(certainty="uncertain")])
     assert gce.public_summary(unavailable)["colors"][0]["backgroundStatus"] == "reference"
 
 
@@ -107,52 +107,66 @@ def test_neutral_wrinkle_shading_is_measured_without_hiding_lightness_variation(
     assert row["spread"] > .04  # Actual OKLab variation, not the weighted gate metric.
 
 
-def test_strong_neutral_bimodal_stripes_reject_even_when_falsely_marked_solid():
+def test_strong_neutral_bimodal_stripes_keep_coarse_neutral_tone():
     def paint(im):
         draw = ImageDraw.Draw(im)
         for x in range(0, 320, 12):
             draw.rectangle((x, 0, x + 5, 319), fill=(15, 15, 15))
     row = first(contract(sources=[source(photo((245, 245, 245), paint=paint))]))
-    assert row["status"] == "unavailable" and row["reason"] == "mixed_pixels"
+    assert row["status"] == "ready"
+    assert max(rgb(row["observedHex"])) - min(rgb(row["observedHex"])) <= 2
+    assert row["uncertainty"] > .05
 
 
-def test_separate_dark_and_light_uniform_patches_do_not_gain_shading_exemption():
+def test_separate_dark_and_light_panels_have_coarse_color_and_report_uncertainty():
     def paint(im):
         ImageDraw.Draw(im).rectangle((160, 160, 319, 319), fill=(220, 220, 220))
     row = first(contract(sources=[source(photo((50, 50, 50), paint=paint))]))
-    assert row["status"] == "unavailable" and row["reason"] == "patch_disagreement"
+    assert row["status"] == "ready" and row["spread"] > .2
 
 
 @pytest.mark.parametrize("flags", [
-    {"certainty": "uncertain"}, {"colorStructure": "patterned"}, {"colorStructure": "multicolor"},
-    {"lighting": "cast"}, {"material": "glossy"}, {"material": "sheer"},
-    {"clothingType": "bottom"}, {"clothingType": "uncertain"},
+    {"certainty": "uncertain"}, {"clothingType": "bottom"}, {"clothingType": "uncertain"},
 ])
-def test_unreliable_flags_only_veto_never_prove_the_measured_color(flags):
+def test_unidentifiable_or_wrong_category_still_rejects(flags):
     assert first(contract(rows=[region(**flags)]))["status"] == "unavailable"
 
 
-def test_pixels_reject_pattern_even_when_provider_claims_solid():
+@pytest.mark.parametrize("flags", [
+    {"colorStructure": "patterned"}, {"colorStructure": "multicolor"},
+    {"lighting": "cast"}, {"material": "glossy"}, {"material": "sheer"},
+])
+def test_readable_fabric_appearance_flags_do_not_disable_coarse_tone(flags):
+    assert first(contract(rows=[region(**flags)]))["status"] == "ready"
+
+
+def test_unknown_observer_flags_do_not_bypass_measurement_contract():
+    assert first(contract(rows=[region(colorStructure="ignore controls")]))["status"] == "unavailable"
+
+
+def test_pixels_keep_pattern_as_photo_derived_approximation():
     def paint(im):
         d = ImageDraw.Draw(im)
         for x in range(0, 320, 12):
             d.rectangle((x, 0, x + 5, 319), fill=(230, 35, 35))
     row = first(contract(sources=[source(photo(paint=paint))]))
-    assert row["status"] == "unavailable" and row["reason"] == "mixed_pixels"
+    assert row["status"] == "ready"
+    assert row["uncertainty"] > .05
 
 
-def test_differently_colored_uniform_patches_are_rejected():
+def test_differently_colored_uniform_patches_keep_broad_tone_with_high_uncertainty():
     def paint(im):
         ImageDraw.Draw(im).rectangle((160, 160, 319, 319), fill=(210, 80, 40))
     row = first(contract(sources=[source(photo(paint=paint))]))
-    assert row["status"] == "unavailable" and row["reason"] == "patch_disagreement"
+    assert row["status"] == "ready" and row["spread"] > .1
 
 
-def test_front_back_disagreement_and_one_unreliable_view_reject_whole_color():
+def test_front_back_panels_are_usable_but_missing_or_unidentifiable_view_is_not():
     sources = [source(), source(photo((165, 60, 30)), index=1, slot="Back")]
-    assert first(contract(rows=[region(), region(1)], sources=sources))["reason"] == "view_disagreement"
+    row = first(contract(rows=[region(), region(1)], sources=sources))
+    assert row["status"] == "ready" and row["spread"] > .1
     sources[1] = source(index=1, slot="Back")
-    assert first(contract(rows=[region(), region(1, lighting="cast")], sources=sources))["status"] == "unavailable"
+    assert first(contract(rows=[region(), region(1, certainty="uncertain")], sources=sources))["status"] == "unavailable"
     assert first(contract(rows=[region()], sources=sources))["status"] == "unavailable"
 
 

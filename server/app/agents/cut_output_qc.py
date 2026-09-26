@@ -64,12 +64,23 @@ _REFERENCE_ROLE_LABELS = {
     "plate": "PLATE",
 }
 _HORIZON_WALL_EXCEPTION = """HORIZON WALL OPTION: the compiled horizonBackground.mode is garment-tone.
-The vertical wall surface may change to its wallHex low-chroma tone. This is the sole
-exception to plate/reference color fidelity. Judge approximate tone under preserved
-lighting, never exact output RGB equality. Preserve studio geometry, floor material/color,
-wall-floor transition, light direction/softness/exposure/white balance and cast/contact
-shadows. Do not treat authorized wall recoloring as a mismatch. Do not permit global color
-casts or garment/skin recoloring to match the wall.
+The vertical wall may shift toward wallHex's muted hue/chroma. wallHex is not an exact
+brightness target: judge a subtle related color under the EXAMPLE's existing lightness
+and gradient, never exact RGB equality. This is the sole reference-color exception.
+Preserve studio geometry, floor material/color and wall-floor transition. Compare the
+EXAMPLE and output for the same key-light direction, cast/contact shadow direction,
+length, spread and edge softness, gradient shape, exposure, white balance, contrast and
+overall calm/bright/dark mood. Wall recoloring may not erase, rotate or invent shadows,
+change floor or light, or tint garments, skin or the whole image. Do not count authorized
+wall hue change as a mismatch, but do flag those unrelated changes.
+For lightingShadowReflectionDrape, explicitly compare unoccluded upper-left versus upper-right
+and lower-left versus lower-right wall regions of EXAMPLE and OUTPUT. If the EXAMPLE has an
+obvious directional bright-to-dark falloff and OUTPUT makes those regions nearly uniform,
+mark FAIL even if both images look like plausible studios. For referenceScopeCaptureClass,
+compare the visible wall-to-floor boundary and floor tone; if the EXAMPLE has a distinct
+floor boundary that OUTPUT erases into a seamless gray field, mark FAIL. Name the missing
+gradient or boundary in the gate evidence. A generic statement that the studio lighting is
+consistent is not evidence that the specific EXAMPLE's light and mood were preserved.
 The attached EXAMPLE ALL supplies its allowed studio/pose/framing evidence. The wall-color
 exception never gives its garment or person identity authority, and does not require a separate
 PLATE, pose mask or layout image. Current storyboard overrides remain authoritative.
@@ -222,6 +233,17 @@ _CORRECTIONS = MappingProxyType({
     "lightingShadowReflectionDrape": (
         "Restore pose-driven tension, compression and asymmetric folds plus coherent self, "
         "reflection, contact, and cast shadows under the owned scene light."
+    ),
+})
+_HORIZON_TONE_CORRECTIONS = MappingProxyType({
+    **_CORRECTIONS,
+    "referenceScopeCaptureClass": (
+        "Rebuild the complete EXAMPLE's visible wall/floor boundary, floor material and directional "
+        "wall gradient. Change only wall hue; do not flatten the scene into a uniform backdrop."
+    ),
+    "lightingShadowReflectionDrape": (
+        "Restore the complete EXAMPLE's bright/dark wall placement, key-light direction, shadow "
+        "direction, length, spread, edge softness and mood. Change only wall hue."
     ),
 })
 _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
@@ -732,9 +754,12 @@ def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
     authority_profile = result.get("authorityProfile", "generic_v1")
     if authority_profile not in _AUTHORITY_PROFILES:
         raise VisionError("cut_output_qc: unknown authority profile")
+    contract = _mapping(result.get("contract"))
     correction_map = (
-        _CONFIRMED_GPT_CORRECTIONS
-        if authority_profile == "confirmed_gpt_v1"
+        _CONFIRMED_GPT_CORRECTIONS if authority_profile == "confirmed_gpt_v1"
+        else _HORIZON_TONE_CORRECTIONS
+        if contract.get("recipeFamily") == "horizon"
+        and horizon_background.normalize_runtime(contract.get("horizonBackground"))
         else _CORRECTIONS
     )
     if not isinstance(operations, list) or not operations:
@@ -1037,6 +1062,12 @@ async def verdict(
         "contract": contract,
         "authorityProfile": authority_profile,
     })
+    if authority_profile == "generic_v1" and contract.get("recipeFamily") == "horizon" \
+            and horizon_background.normalize_runtime(contract.get("horizonBackground")) \
+            and result.get("correctionPatch"):
+        result["correctionPatch"] = _correction_patch(
+            result["gates"], corrections=_HORIZON_TONE_CORRECTIONS
+        )
     if authority_profile == "confirmed_gpt_v1" and result.get("correctionPatch"):
         result["correctionPatch"] = _correction_patch(
             result["gates"], corrections=_CONFIRMED_GPT_CORRECTIONS

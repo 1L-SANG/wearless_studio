@@ -25,8 +25,6 @@ _TTL = 86400
 _TYPES = ("top", "bottom", "outer", "dress")
 MAX_IMAGE_PIXELS = 40_000_000
 _MAX_PIXELS = MAX_IMAGE_PIXELS
-_PATCH_DELTA = .04
-_VIEW_DELTA = .06
 _REASONS = {"measured", "insufficient_evidence", "invalid_region", "unreliable_source",
             "invalid_image", "invalid_color_profile", "insufficient_pixels",
             "transparency", "mixed_pixels", "patch_disagreement", "view_disagreement"}
@@ -161,13 +159,6 @@ def _color_distance(a, b):
     return math.sqrt((.35 * (a[0]-b[0]))**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2)
 
 
-def _agreement(a, b):
-    # Overlapping robust illumination ranges support the same color under
-    # different folds. Flat, differently colored patches get no such exemption.
-    gap = max(0., a["range"][0]-b["range"][1], b["range"][0]-a["range"][1])
-    return math.sqrt((.35*gap)**2 + (a["lab"][1]-b["lab"][1])**2 + (a["lab"][2]-b["lab"][2])**2)
-
-
 def _rgb_median(pixels):
     return tuple(round(median(p[i] for p in pixels)) for i in range(3))
 
@@ -199,15 +190,11 @@ def _patch(im, polygon, cap):
     center = max(seeds, key=lambda key: sum(count for other, count in hist.items() if _color_distance(labs[key], labs[other]) <= .04))
     selected = {key for key in hist if _color_distance(labs[center], labs[key]) <= .04}
     fraction = sum(hist[key] for key in selected) / len(opaque)
-    if fraction < .6:
-        raise ValueError("mixed_pixels")
-    remaining = [key for key, _ in hist.most_common() if key not in selected]
-    if remaining:
-        secondary = remaining[0]
-        mass = sum(hist[key] for key in remaining if _color_distance(labs[secondary], labs[key]) <= .04) / len(opaque)
-        if mass >= .15 and _color_distance(labs[center], labs[secondary]) > .065:
-            raise ValueError("mixed_pixels")
-    pixels = [p for p in opaque if tuple(v // 8 for v in p) in selected]
+    # A stripe, wash, normal fold or highlight can make the dominant cluster
+    # less than 60% of a valid fabric patch. Its overall median is still a
+    # useful coarse backdrop hue; never turn ordinary texture into no option.
+    pixels = ([p for p in opaque if tuple(v // 8 for v in p) in selected]
+              if fraction >= .6 else opaque)
     rgb = _rgb_median(pixels)
     lab = _lab(rgb)
     # The representative RGB trims sparse shade/highlight tails, but its safety
@@ -221,15 +208,18 @@ def _patch(im, polygon, cap):
 def _measure(source, row, clothing_type):
     if not isinstance(row, dict) or set(row) != set(regions_schema()["items"]["properties"]):
         raise ValueError("invalid_region")
-    if (row["clothingType"] != clothing_type or row["certainty"] != "high" or row["colorStructure"] != "solid"
-            or row["lighting"] != "neutral" or row["material"] != "matte"):
+    if (row["colorStructure"] not in {"solid", "patterned", "multicolor", "uncertain"}
+            or row["lighting"] not in {"neutral", "cast", "uncertain"}
+            or row["material"] not in {"matte", "glossy", "sheer", "uncertain"}):
+        raise ValueError("invalid_region")
+    if row["clothingType"] != clothing_type or row["certainty"] != "high":
         raise ValueError("unreliable_source")
     polygons = _polygons(row["polygons"])
     im, _ = _frame(source["data"])
     im.thumbnail((512, 512), Image.Resampling.LANCZOS)
     patches = [_patch(im, p, 16000 // len(polygons)) for p in polygons]
-    if max(_agreement(a, b) for a in patches for b in patches) > _PATCH_DELTA:
-        raise ValueError("patch_disagreement")
+    # Disagreement raises the reported uncertainty; it does not make the
+    # selected photo's broad color family unknowable.
     return {"patches": patches, "lab": _lab(_rgb_median([p["rgb"] for p in patches])),
             "spread": max(_distance(a["lab"], b["lab"]) for a in patches for b in patches),
             "range": [min(p["range"][0] for p in patches), max(p["range"][1] for p in patches)]}
@@ -275,8 +265,8 @@ def build_contract(raw_regions, sources, *, clothing_type):
                 raise ValueError("insufficient_evidence")
             views = [_measure(s, rows[s["sourceIndex"]], clothing_type) for s in selected]
             view_delta = max(_distance(a["lab"], b["lab"]) for a in views for b in views)
-            if max(_agreement(a, b) for a in views for b in views) > _VIEW_DELTA:
-                raise ValueError("view_disagreement")
+            # Front and back may legitimately have different panels. Keep a
+            # photo-derived approximate tone and report its spread below.
             patches = [p for v in views for p in v["patches"]]
             rgb = _rgb_median([p["rgb"] for p in patches])
             spread = max([view_delta, *[v["spread"] for v in views], *[p["spread"] for p in patches]])

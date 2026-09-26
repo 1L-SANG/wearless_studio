@@ -698,6 +698,7 @@ def render_cut_prompt(
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
+    horizon_tone = cut == "horizon" and horizon_background.active(spec)
     # 디테일 컷 2모드 판정(2026-08-07 스펙 §5) — 근거는 컷 방향과 같은 쪽만 인정한다.
     # 방향 디테일 라벨 有 → 정밀 모드(SHOT:detail). 없고 같은 방향 원본 라벨만 有 →
     # 구조 확대 모드(SHOT:detail_zoom — 원본에서 확인되는 구조 요소만 확대, 원단 조직 발명 금지).
@@ -822,6 +823,8 @@ def render_cut_prompt(
             scope_key = f"REFSCOPE:all_{cut}"
         else:
             scope_key = f"REFSCOPE:{spec['refScope']}"
+        if horizon_tone and scope_key in {"REFSCOPE:all_horizon", "REFSCOPE:all_horizon_scene_only"}:
+            scope_key += "_tone"
         scope_line = need(scope_key)
         if spec["refScope"] == "all" and cut in _WORN_CUTS:
             if spec.get("_referenceDirectionCompatible") is False:
@@ -935,6 +938,7 @@ def render_cut_prompt(
             "\n\n".join((need("CUT:bg_edit"), need("CUT:bg_edit_mirror")))
             if bg_edit_mode and cut == "mirror"
             else need("CUT:bg_edit") if bg_edit_mode
+            else need("CUT:horizon_tone") if horizon_tone
             else need(f"CUT:{cut}"),
         )
         .replace("${shotLine}", need(f"SHOT:{shot_key}"))

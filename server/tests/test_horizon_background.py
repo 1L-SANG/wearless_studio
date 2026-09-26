@@ -18,6 +18,9 @@ from app.agents import space_set_assets
 from app.workers import editor_image_job as eij
 
 GROUP = "ssg1__horizon-sequence-05-women-top-draped__one"
+_, PUBLISHED_SETS = space_set_assets.load_space_set_registry()
+PUBLISHED_HORIZON_IDS = [set_id for set_id, entry in PUBLISHED_SETS.items()
+                         if entry["setType"] in {"horizon-rotation", "horizon-sequence"}]
 
 
 def block(**changes):
@@ -56,17 +59,36 @@ def test_standalone_horizon_does_not_enable_set_background_option():
     assert hb.mode(block(spaceGroupId=None)) == "reference"
 
 
+@pytest.mark.parametrize("set_id", PUBLISHED_HORIZON_IDS)
+def test_every_published_horizon_set_accepts_photo_bound_wall_tone(set_id):
+    entry = PUBLISHED_SETS[set_id]
+    clothing = entry["applicableClothingTypes"][0]
+    analysis, sources = measurement_fixture([("base", "#2a5db0")], clothing)
+    palette = hb.resolve_for_block(
+        block(spaceGroupId=f"ssg1__{set_id}__instance"),
+        {"clothingType": clothing, "colors": [{"id": "base", "isBase": True}]},
+        analysis=analysis, sources=sources,
+    )
+    assert palette["mode"] == "garment-tone", set_id
+
+
+def test_unpublished_or_styling_set_never_gets_wall_tone_even_with_valid_photo():
+    analysis, sources = measurement_fixture([("base", "#2a5db0")])
+    product = {"clothingType": "top", "colors": [{"id": "base", "isBase": True}]}
+    styling_id = next(k for k, v in PUBLISHED_SETS.items() if v["setType"] == "styling")
+    for group in (f"ssg1__{styling_id}__instance", "ssg1__unknown__instance", "other"):
+        assert hb.resolve_for_block(block(spaceGroupId=group), product,
+                                    analysis=analysis, sources=sources)["reason"] == "set-unsupported"
+
+
 @pytest.mark.parametrize("swatch", list(hb.POLICY["swatches"]))
-def test_palette_separates_garment_without_saturated_or_dark_wall(swatch):
+def test_palette_provides_muted_hue_for_every_normal_garment_color(swatch):
     value = hb.palette_for_observed(hb.POLICY["swatches"][swatch])
-    if value["mode"] == "reference":
-        assert value["reason"] in {"lightness-ambiguous", "contrast-uncertain"}
-        return
+    assert value["mode"] == "garment-tone"
     l, a, b = hb.hex_to_oklab(value["wallHex"])
-    target_l, _, _ = hb.hex_to_oklab(value["targetHex"])
     assert math.hypot(a, b) <= hb.POLICY["maxChroma"] + .001
     assert hb.POLICY["minimumWallLightness"] - .003 <= l <= hb.POLICY["maximumWallLightness"] + .003
-    assert abs(l - target_l) >= hb.POLICY["minimumLightnessGap"]
+    assert abs(l - hb.POLICY["wallHueSwatchLightness"]) <= hb.POLICY["wallHueSwatchContrastOffset"] + .003
 
 
 def test_known_white_is_not_mistaken_for_black_and_unknown_names_cannot_supply_hue():
@@ -84,13 +106,23 @@ def test_client_hex_swatch_and_multicolor_flags_cannot_replace_photo_measurement
     assert "wallHex" not in palette
 
 
-def test_small_gray_noise_cannot_flip_directly_between_light_and_dark_wall():
+def test_small_gray_noise_keeps_similar_muted_wall_hue():
     first = hb.palette_for_observed("#c3c3c3")
     second = hb.palette_for_observed("#c4c4c4")
-    assert first["paletteBand"] == "light"
-    assert second["mode"] == "reference"
-    assert second["reason"] == "lightness-ambiguous"
-    assert hb.palette_for_observed("#c6c6c6", lightness_range=[.81,.85])["mode"] == "reference"
+    assert first["mode"] == second["mode"] == "garment-tone"
+    assert first["wallHex"] == second["wallHex"]
+    assert hb.palette_for_observed("#c6c6c6", lightness_range=[.81,.85])["mode"] == "garment-tone"
+
+
+def test_dark_blue_gray_gets_subtle_cool_wall_without_tinting_shaded_white():
+    denim = hb.palette_for_observed("#63676e")
+    white_under_cool_light = hb.palette_for_observed("#9ca1a7")
+    assert denim["mode"] == white_under_cool_light["mode"] == "garment-tone"
+    assert denim["wallHex"] != white_under_cool_light["wallHex"]
+    _, denim_a, denim_b = hb.hex_to_oklab(denim["wallHex"])
+    _, white_a, white_b = hb.hex_to_oklab(white_under_cool_light["wallHex"])
+    assert math.hypot(denim_a, denim_b) > math.hypot(white_a, white_b)
+    assert math.hypot(denim_a, denim_b) < .015  # a whisper of blue, not a saturated set
 
 
 def test_palette_is_shared_within_color_but_not_taken_from_other_color():
@@ -125,14 +157,55 @@ def test_saved_selection_worker_palette_prompt_and_qc_keep_one_contract(clothing
                                  example_scope="all", has_space_set_plate=False)
     prompt = cg.build_prompt(runtime, product, manifest=manifest)
     assert runtime["_horizonBackground"]["wallHex"] in prompt
-    assert "wall-color-only exception" in prompt
-    assert "floor material and floor color" in prompt
+    assert "wall hue only" in prompt
+    assert "floor material and color" in prompt
+    assert "shadow direction, length, spread and edge" in prompt
     assert "REFERENCE SCOPE — HORIZON STUDIO" in prompt
+    assert "Even, soft studio lighting" not in prompt
+    assert "neutral color grade" not in prompt
+    assert "wall/floor boundary" in prompt
 
 
 def test_reference_mode_has_no_adaptive_contract():
     default = block(horizonBackgroundMode="reference")
     assert "horizonBackground" not in cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(default)), "top").to_dict()
+    baseline_prompt = cg.build_prompt(default, {"clothingType": "top", "colors": [{"id": "base"}]},
+                                      manifest=cg.build_manifest([], has_mannequin=False, has_match=False,
+                                                                 mood_count=0, example_scope="all"))
+    assert "Even, soft studio lighting" in baseline_prompt
+    assert "HORIZON WALL TONE" not in baseline_prompt
+
+
+def test_horizon_tone_qc_failure_uses_fixed_scene_repair_not_provider_prose(monkeypatch):
+    product = {"clothingType": "top", "colors": [{"id": "base"}]}
+    runtime = block(_horizonBackground=hb.palette_for_observed("#63676e"))
+    cg.bind_horizon_reference(runtime, {"shot": "full", "direction": "front",
+                                        "directionCompatible": True})
+    plan = cut_plan.compile_cut_plan(
+        cg.apply_reference_compatibility(cg.normalize_spec(runtime)), "top")
+    output = BytesIO()
+    Image.new("RGB", (128, 128), "#dddddd").save(output, "PNG")
+    image = InlineImage("image/png", output.getvalue())
+    references = [cut_output_qc.LabeledReference("product", image),
+                  cut_output_qc.LabeledReference("example", image)]
+    raw = {"gates": [{"gate": gate,
+                      "status": "FAIL" if gate == "referenceScopeCaptureClass" else "PASS",
+                      "evidence": "provider text must not be used for repair"}
+                     for gate in cut_output_qc.GATES]}
+
+    async def judge(*args, **kwargs):
+        return raw, "test-provider"
+
+    monkeypatch.setattr(cut_output_qc, "analyze_with_fallback", judge)
+    result = asyncio.run(cut_output_qc.verdict(make_settings(), plan, references, image))
+    assert result["verdict"] == "FAIL"
+    assert cut_output_qc.repair_route(result) == "REGENERATE_FROM_SCRATCH", {
+        k: v for k, v in result["gates"].items() if v["status"] != "PASS"}
+    instructions = cut_output_qc.repair_instructions(result)
+    assert len(instructions) == 1
+    assert "wall/floor boundary" in instructions[0]
+    assert "provider text" not in instructions[0]
+    assert "generic" not in instructions[0].lower()
 
 
 def test_complete_reference_is_the_only_horizon_scene_evidence():
@@ -234,14 +307,13 @@ def test_valid_retry_route_keeps_saved_contract_and_existing_idempotent_charge(c
 
 @pytest.mark.parametrize("pipeline", ["detail", "editor"])
 @pytest.mark.parametrize("set_id", ["horizon-sequence-06-women-top-linen", "set_horizon_women_bottom_threetimes_7563033280596_prod01", "horizon-sequence-figma-s05-v2", "horizon-sequence-figma-s11-v2"])
-@pytest.mark.parametrize("option", ["garment-tone", "reference", "unset", "missing-measurement", "unsupported-set"])
+@pytest.mark.parametrize("option", ["garment-tone", "reference", "unset", "missing-measurement"])
 def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeypatch, pipeline, set_id, option):
     _, registry = space_set_assets.load_space_set_registry()
     entry = registry[set_id]
     member = entry["members"][0]
     category = entry["applicableClothingTypes"][0]
     # Exercise the measured tone contract for both legacy and all-only releases.
-    monkeypatch.setitem(hb.POLICY, "allowedSetIds", [*hb.POLICY["allowedSetIds"], set_id])
     saved = block(spaceGroupId=f"ssg1__{set_id}__test", exampleId=member["exampleId"], shot=member["shot"],
                   direction=member["direction"], spaceVariation=entry["spaceVariation"], colorId="selected",
                   _horizonBackground={"mode": "garment-tone", "wallHex": "#ff0000"})
@@ -253,7 +325,6 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     if option == "reference": saved["horizonBackgroundMode"] = "reference"
     if option == "unset": saved.pop("horizonBackgroundMode")
     if option == "missing-measurement": measured = {}
-    if option == "unsupported-set": monkeypatch.setitem(hb.POLICY, "allowedSetIds", [])
     active = option == "garment-tone"
     captured = {}
     async def get_product(*args): return product
