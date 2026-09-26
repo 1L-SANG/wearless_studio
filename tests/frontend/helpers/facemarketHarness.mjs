@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 export async function eventually(predicate, message) {
@@ -59,7 +60,7 @@ export async function modelComponentHarness({
   const server = await createServer({
     configFile: false,
     logLevel: 'silent',
-    root: new URL('../../..', import.meta.url).pathname,
+    root: fileURLToPath(new URL('../../..', import.meta.url)),
     // 이 harness 는 테스트마다 vite 서버를 새로 띄운다(facemarket-register-v3 만 38번).
     // 워처를 켜 두면 chokidar 가 그때마다 프로젝트 루트를 훑는데, CI 에는 조립 정본 대조용
     // server/.venv(7천 파일)가 같이 있어 리눅스 inotify 로 그게 통째로 비용이 된다 —
@@ -74,11 +75,11 @@ export async function modelComponentHarness({
       resolveId(id) {
         if (id === 'qrcode') return '\0fm-test-qrcode';
         if (id === '@/lib/api/facemarketIdentityWidget.js') return '\0fm-test-identity-widget';
-        if (id === '@/lib/brandUseCategories.js') return new URL('../../../src/lib/brandUseCategories.js', import.meta.url).pathname;
+        if (id === '@/lib/brandUseCategories.js') return fileURLToPath(new URL('../../../src/lib/brandUseCategories.js', import.meta.url));
         // 날짜 표기는 스텁하지 않고 진짜 모듈을 쓴다. 화면의 발급일 등 한국 시간
         // 표기도 이 테스트가 지나는 경로다(src/lib/datetime.js).
-        if (id === '@/lib/companyInfo.json') return new URL('../../../src/lib/companyInfo.json', import.meta.url).pathname;
-        if (id === '@/lib/datetime.js') return new URL('../../../src/lib/datetime.js', import.meta.url).pathname;
+        if (id === '@/lib/companyInfo.json') return fileURLToPath(new URL('../../../src/lib/companyInfo.json', import.meta.url));
+        if (id === '@/lib/datetime.js') return fileURLToPath(new URL('../../../src/lib/datetime.js', import.meta.url));
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';
@@ -89,7 +90,7 @@ export async function modelComponentHarness({
         if (stubUpload && id.endsWith('ModelFaceUpload.jsx')) return '\0fm-test-upload';
         if (id.endsWith('imageTranscode.js')) return '\0fm-test-transcode';
         if (id.endsWith('.module.css')) return '\0fm-test-css';
-        if (id.startsWith('@/')) return new URL('../../../src/' + id.slice(2), import.meta.url).pathname;
+        if (id.startsWith('@/')) return fileURLToPath(new URL('../../../src/' + id.slice(2), import.meta.url));
         return null;
       },
       load(id) {
