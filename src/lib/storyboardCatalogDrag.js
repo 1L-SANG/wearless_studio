@@ -31,6 +31,15 @@ export function insertCatalogBlocks(blocks, index, added) {
   return next;
 }
 
+// 세트 갤러리에서 컷 하나를 고르면 대상 섹션 끝에 붙인다. 섹션이 비어 있으면 갤러리를 연
+// 자리(fallbackIndex)에 넣는다. 0 으로 두면 스튜디오 컷이 후킹보다 앞에 들어갔다(2026-09-26).
+export function catalogMemberInsertIndex(blocks, sectionId, sectionRole, fallbackIndex) {
+  const end = blocks.reduce((last, block, index) => (
+    block.sectionId === sectionId && block.sectionRole === sectionRole ? index + 1 : last
+  ), -1);
+  return end >= 0 ? end : (fallbackIndex ?? blocks.length);
+}
+
 export function setCatalogDragImage(event, members) {
   if (!event.dataTransfer?.setDragImage || !members?.length) return () => {};
   const ghost = document.createElement('div');

@@ -723,8 +723,9 @@ def render_cut_prompt(
     has_identity_reference = cut in _WORN_CUTS and any(
         label in image_manifest for label in identity_labels
     )
-    has_body_reference = (
-        cut in _WORN_CUTS and _MODEL_FULL_BODY_LABEL in image_manifest
+    has_body_reference = cut in _WORN_CUTS and (
+        _MODEL_FULL_BODY_LABEL in image_manifest
+        or _MODEL_FULL_BODY_HORIZON_LABEL in image_manifest
     )
     has_licensed_face_reference = _FACE_LABEL in image_manifest
     # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
@@ -1136,6 +1137,10 @@ _MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — use ONLY the body outline and pro
                           "pose, framing or camera distance; PRODUCT and MATCHING own the clothing "
                           "and SPACE SET PLATE owns the location. ZERO authority over facial "
                           "identity, facial features or hair")
+#: plate 없이 완성 예시(all)를 참고하는 호리존 컷의 전신 라벨. 체형 규칙([[BODY_REF]]) 판정도
+#: 이 문자열을 알아야 한다. 문구만 바꾸고 판정을 놔두면 호리존 컷에서 체형 규칙이 통째로 빠진다.
+_MODEL_FULL_BODY_HORIZON_LABEL = _MODEL_FULL_BODY_LABEL.replace(
+    "SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 _CUSTOM_MATCH_LABEL = (
     _MATCH_LABEL
@@ -1219,7 +1224,7 @@ def build_manifest(
     if has_model_full_body:
         body_label = _MODEL_FULL_BODY_LABEL
         if example_is_horizon and example_scope == "all" and not has_space_set_plate:
-            body_label = body_label.replace("SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
+            body_label = _MODEL_FULL_BODY_HORIZON_LABEL
         lines.append(f"{i}. {body_label}")
         i += 1
     for a in prod_assets:

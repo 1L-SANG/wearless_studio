@@ -36,3 +36,13 @@ test('complete-only horizon members can be independently added with all scope an
  const result = drag.createIndependentCatalogMembers(set,['a'],{spaceGroupId:'old',spaceVariation:'fixed',horizonBackgroundMode:'garment-tone',layoutRowId:'row',hookFrameId:'hook'}, {...context,catalog:allOnly,makeId:()=> 'new'});
  assert.equal(result[0].refScope,'all');assert.equal(result[0].spaceGroupId,undefined);assert.equal(result[0].horizonBackgroundMode,undefined);assert.equal(result[0].hookFrameId,undefined);assert.equal(result[0].layoutRowId,undefined);
 });
+test('single catalog cut lands at the end of its section, or at the picker slot when the section is empty', () => {
+ const board = [
+  {id:'h1',sectionId:'hook',sectionRole:'hooking'},{id:'h2',sectionId:'hook',sectionRole:'hooking'},
+  {id:'s1',sectionId:'sty',sectionRole:'styling'},{id:'p1',sectionId:'prod',sectionRole:'product'},
+ ];
+ assert.equal(drag.catalogMemberInsertIndex(board,'sty','styling',99),3);
+ // 빈 스튜디오 섹션: 갤러리를 연 자리(스타일링 뒤)에 넣는다. 예전에는 0 이라 후킹 앞에 들어갔다.
+ assert.equal(drag.catalogMemberInsertIndex(board,'empty:studio','studio',3),3);
+ assert.equal(drag.catalogMemberInsertIndex(board,'empty:studio','studio',undefined),board.length);
+});
