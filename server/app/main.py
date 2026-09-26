@@ -696,6 +696,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             app.include_router(provenance_router)
             app.state.fm_c2pa_signer = C2paSigner.from_settings(settings)
+            # 추적 층(2026-09-26) — 발견 이미지 → 배포본·셀러·모델·라이선스 후보. 워터마크 코드와
+            # 지문이 이 플래그 아래(sign 단계)에서만 생기므로 같은 플래그에 묶는다. 관리자 전용.
+            from .facemarket_trace import router as trace_router
+
+            app.include_router(trace_router)
         else:
             app.state.fm_c2pa_signer = None
     else:

@@ -493,6 +493,16 @@ export function adminRevealPayoutConfirmation(confirmationId) {
   return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/account`);
 }
 
+// ── 관리자: 출처 추적(2026-09-26) ─────────────────────────────────────────────
+// 쇼핑몰에서 발견한 이미지 → 워터마크 판독 + 지문(pHash) 대조 → 배포본·셀러·모델·라이선스 후보.
+// 서버가 관리자·기기 게이트를 판정하고 감사 원장에 남긴다. 이미지는 저장하지 않는다.
+export async function adminTraceImage(file) {
+  const form = new FormData();
+  form.append('image', file, file?.name || 'found-image');
+  return checkedJson(await _authFetch('/v1/facemarket/admin/trace', { method: 'POST', body: form }),
+    '출처를 추적하지 못했어요. 잠시 후 다시 시도해 주세요.');
+}
+
 // ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
 // register·me 는 기기 없이 열린다(아직 기기가 없는 관리자가 부른다). 나머지는 승인 기기 필수.
 

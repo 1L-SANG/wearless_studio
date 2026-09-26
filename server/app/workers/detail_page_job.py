@@ -17,7 +17,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from .. import facemarket, repo
+from .. import facemarket, fm_fingerprint_store, repo
+from ..services import fm_fingerprint
 from ..agents import identity_scope
 from ..agents import (
     content_roles,
@@ -305,6 +306,12 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
         img_sha256 = hashlib.sha256(img).hexdigest()
+        # 추적 층(2026-09-26) — REAL 컷 지문(pHash·dHash). 수십 ms 짜리 스레드 작업이고 실패하면
+        # None 이다(절대 raise 안 함). 원장 기록은 finalize 커밋 **뒤에** 한다 — 컷 종결을 안 막는다.
+        fingerprint = (
+            await asyncio.to_thread(fm_fingerprint.safe_image_hashes, img)
+            if real_identity_attached else None
+        )
         async with app.state.pool.connection() as conn:
             cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                 conn,
@@ -350,6 +357,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "size": len(img), "width": w, "height": h,
              "cleanup_intent_id": cleanup_intent_id,
              "sha256": img_sha256,
+             **({"fingerprint": fingerprint} if fingerprint else {}),
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
@@ -2214,6 +2222,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             for c in cut_assets:
                 await _delete_output_candidate(c)
         else:
+            # 추적 층 — 커밋된 원장 행에 컷 지문을 붙인다. 베스트에포트(실패해도 조용히 빠지고
+            # 백필 스크립트가 채운다). 이미 done 으로 커밋된 뒤라 셀러 화면을 늦추지 않는다.
+            await fm_fingerprint_store.record_cut_fingerprints(
+                pool, fm_fingerprint_store.cut_fingerprint_items(cut_assets))
             if cut_store is not None:
                 # 성공 — 컷은 이미 셀러에게 나갔다. 체크포인트를 지금 지워 같은 그림이 다음 잡에
                 # 다시 실리지 않게 한다(조회도 error 잡만 보지만 이중으로 막는다).

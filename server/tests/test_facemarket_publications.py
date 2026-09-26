@@ -158,6 +158,8 @@ def _new_store() -> dict:
         "publications": {},       # publication_id -> row dict
         "publications_by_hash": {},  # (seller_id, sha) -> publication_id
         "anchor_jobs": [],        # [publication_id, ...] (중복 없음 — on conflict do nothing 흉내)
+        "fingerprints": [],       # 추적 층(2026-09-26) — fm_image_fingerprints insert 행
+        "statements": [],         # 실행 순서(워터마크 기록이 앵커 큐보다 먼저인지 본다)
     }
 
 
@@ -216,8 +218,18 @@ class FakeCursor:
         params = params or ()
         store = self.store
         self._result = None
+        store["statements"].append(s)
 
-        if s.startswith("select r.license_ref::text as license_ref"):
+        if s.startswith("update fm_publication_records set wm_code = coalesce(wm_code"):
+            candidate, pub_id = params
+            row = store["publications"][pub_id]
+            if row.get("wm_code") is None:
+                row["wm_code"] = candidate
+            self._result = {"wm_code": row["wm_code"]}
+        elif s.startswith("update fm_publication_records set wm_status"):
+            wm_status, wm_sha256, pub_id = params
+            store["publications"][pub_id].update(wm_status=wm_status, wm_sha256=wm_sha256)
+        elif s.startswith("select r.license_ref::text as license_ref"):
             project_id, seller_id = params
             self._result = _matching_usage(store, project_id, seller_id)
         elif s.startswith("select l.id::text as id, m.id::text as model_id"):
@@ -263,6 +275,15 @@ class FakeCursor:
         else:
             raise AssertionError(f"FakeCursor 가 모르는 SQL: {s[:150]!r}")
         return self
+
+    async def executemany(self, sql, seq):
+        s = " ".join(sql.split()).lower()
+        self.store["statements"].append(s)
+        if s.startswith("insert into fm_image_fingerprints"):
+            for params in seq:
+                self.store["fingerprints"].append(params)
+        else:
+            raise AssertionError(f"FakeCursor 가 모르는 executemany: {s[:150]!r}")
 
     async def fetchone(self):
         return self._result
@@ -587,3 +608,142 @@ def test_route_sign_503_when_token_secret_unconfigured(keypair, monkeypatch):
         )
     assert r.status_code == 503, r.text
     assert r.json()["error"]["code"] == "provenance_unconfigured"
+
+
+# ============================================================================
+# 추적 층(2026-09-26) — 워터마크는 C2PA 서명 **전에** 박히고, 실패해도 다운로드는 나간다.
+# ============================================================================
+
+import io  # noqa: E402
+import zipfile  # noqa: E402
+
+from PIL import Image  # noqa: E402
+
+from app import fm_fingerprint_store  # noqa: E402
+from app.services import fm_watermark  # noqa: E402
+from scripts.fm_trace_robustness import procedural_photo  # noqa: E402
+
+
+class RecordingSigner(FakeSigner):
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
+
+    def sign(self, data, mime, manifest):
+        self.inputs.append(data)
+        return super().sign(data, mime, manifest)
+
+
+def _real_png(seed=1, w=1000, h=1800) -> bytes:
+    buf = io.BytesIO()
+    procedural_photo(w, h, seed).convert("RGBA").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _upload(client, make_token, r2, data, *, kind="long_png"):
+    p = _presign(client, make_token, kind=kind)
+    upload_token = p.json()["uploadToken"]
+    key = fp.parse_upload_token(ROUTE_SECRET, upload_token)["key"]
+    r2.objects[key] = data
+    return upload_token
+
+
+def test_route_sign_embeds_watermark_before_c2pa_and_before_anchor(prov, make_token):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+    signer = RecordingSigner()
+    client.app.state.fm_c2pa_signer = signer
+    raw = _real_png()
+
+    r = _sign(client, make_token, _upload(client, make_token, r2, raw))
+    assert r.status_code == 200, r.text
+    pub = store["publications"][r.json()["publicationId"]]
+
+    # ① 서명기는 워터마크본을 받았다 → C2PA 하드바인딩이 워터마크 바이트를 덮는다.
+    assert len(signer.inputs) == 1
+    signed_input = signer.inputs[0]
+    assert signed_input != raw
+    code = fm_watermark.read_image(Image.open(io.BytesIO(signed_input))).code
+    assert code is not None and code == pub["wm_code"]
+    # ② 원장: 업로드 해시는 멱등 키로 그대로, 워터마크본·서명본 해시가 따로 남는다.
+    assert pub["image_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert pub["wm_status"] == "embedded"
+    assert pub["wm_sha256"] == hashlib.sha256(signed_input).hexdigest()
+    stored_key, stored, _mime = r2.put_calls[-1]
+    assert stored == signed_input + b"-SIGNED"
+    assert pub["signed_sha256"] == hashlib.sha256(stored).hexdigest()
+    # ③ 지문이 배포본에 붙었다.
+    assert store["fingerprints"] and all(f[0] == pub["id"] for f in store["fingerprints"])
+    # ④ 워터마크 기록이 앵커 큐보다 먼저 커밋된다(앵커가 coalesce(wm_sha256, …) 를 읽는다).
+    st = store["statements"]
+    wm_at = next(i for i, q in enumerate(st) if q.startswith("update fm_publication_records set wm_status"))
+    anchor_at = next(i for i, q in enumerate(st) if q.startswith("insert into fm_publication_anchor_jobs"))
+    assert wm_at < anchor_at
+
+
+def test_route_sign_replay_reuses_the_same_code(prov, make_token):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+    raw = _real_png(seed=2)
+    r1 = _sign(client, make_token, _upload(client, make_token, r2, raw))
+    code1 = store["publications"][r1.json()["publicationId"]]["wm_code"]
+    r2res = _sign(client, make_token, _upload(client, make_token, r2, raw))
+    assert r2res.json()["publicationId"] == r1.json()["publicationId"]
+    assert store["publications"][r1.json()["publicationId"]]["wm_code"] == code1
+
+
+def test_route_sign_watermark_failure_never_blocks_download(prov, make_token, monkeypatch):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+
+    async def boom(conn, publication_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(fm_fingerprint_store, "allocate_wm_code", boom)
+    raw = _real_png(seed=3)
+    r = _sign(client, make_token, _upload(client, make_token, r2, raw))
+    assert r.status_code == 200, r.text
+    pub = store["publications"][r.json()["publicationId"]]
+    assert pub["wm_status"] == "failed" and pub["wm_sha256"] is None
+    assert r2.put_calls[-1][1] == raw, "워터마크 실패는 원본 바이트를 그대로 내보내야 한다"
+    assert store["fingerprints"], "워터마크가 실패해도 지문은 남긴다"
+    assert store["anchor_jobs"] == [pub["id"]]
+
+
+def test_route_sign_mark_save_failure_still_signs(prov, make_token, monkeypatch):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+
+    async def save_boom(*a, **k):
+        raise RuntimeError("relation fm_image_fingerprints does not exist")
+
+    monkeypatch.setattr(fm_fingerprint_store, "save_publication_mark", save_boom)
+    r = _sign(client, make_token, _upload(client, make_token, r2, _real_png(seed=4)))
+    assert r.status_code == 200, r.text
+    assert r.json()["c2paStatus"] == "skipped"
+
+
+def test_route_sign_zip_watermarks_each_png_entry(prov, make_token):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("블록01.png", _real_png(seed=5, h=900))
+        z.writestr("블록02.png", _real_png(seed=6, h=1100))
+    raw = buf.getvalue()
+
+    r = _sign(client, make_token, _upload(client, make_token, r2, raw, kind="zip"))
+    assert r.status_code == 200, r.text
+    pub = store["publications"][r.json()["publicationId"]]
+    stored = r2.put_calls[-1][1]
+    assert stored != raw and pub["wm_status"] == "embedded"
+    assert pub["signed_sha256"] == hashlib.sha256(stored).hexdigest() == pub["wm_sha256"]
+    z = zipfile.ZipFile(io.BytesIO(stored))
+    for name in ("블록01.png", "블록02.png"):
+        got = fm_watermark.read_image(Image.open(io.BytesIO(z.read(name)))).code
+        assert got == pub["wm_code"]
