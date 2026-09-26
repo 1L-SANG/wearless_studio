@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { findTree } from './helpers/facemarketHarness.mjs';
 import { adminUsageReportsHarness } from './helpers/adminUsageReportsHarness.mjs';
+import { currentSeoulMonth } from '../../src/features/admin/adminPayoutStatements.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; let reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -42,7 +43,8 @@ async function harness(api, { confirm = true, storage = new Map() } = {}) {
         export const adminRevealPayoutConfirmation=(...args)=>api.adminRevealPayoutConfirmation(...args);
         export const adminRevealPayoutAccount=(...args)=>api.adminRevealPayoutAccount(...args);
         export const adminSimulatePayoutConfirmation=(...args)=>api.adminSimulatePayoutConfirmation(...args);
-        export const adminRunMonthlyPayout=(...args)=>api.adminRunMonthlyPayout(...args);`;
+        export const adminRunMonthlyPayout=(...args)=>api.adminRunMonthlyPayout(...args);
+        export const adminRunInterimPayout=(...args)=>api.adminRunInterimPayout(...args);`;
     }}],
   });
   const oldWindow = globalThis.window; const oldNavigator = globalThis.navigator;
@@ -280,5 +282,61 @@ test('시뮬레이션 실패는 사유를 화면에 남겨요', async () => {
   try {
     h.render(); await flush(); const tree = h.render();
     assert.match(text(tree), /계좌 정보가 맞지 않아|계좌 오류/);
+  } finally { await h.close(); }
+});
+
+
+/* ---- 중간 정산(2026-09-27) ------------------------------------------------
+   이번 달을 누른 시각까지 먼저 지급 확인서로. 돈은 움직이지 않고, 지급 완료는 같은 이체 기록 폼으로만. */
+
+test('이번 달로 옮기면 [중간 정산 실행]이 열리고 결과에 기준 시각과 "실제 이체 없음"을 보여 줘요', async () => {
+  const calls = [];
+  const thisMonth = currentSeoulMonth();
+  const h = await harness({ adminListPayoutStatements: async ({ month }) => ({ items: [{ ...row, periodMonth: month, open: month === thisMonth }] }),
+    adminRunMonthlyPayout: () => assert.fail('월말 정산을 부르면 안 돼요'),
+    adminRunInterimPayout: async month => { calls.push(month); return { periodMonth: month, kind: 'interim', cutoffAt: '2026-09-27T05:05:00Z', coveredThrough: '2026-09-27', moneyMoved: false, summary: { prepared: 1 },
+      results: [{ modelId: 'model-1', modelName: '김서연', outcome: 'prepared', amount: 16000, count: 2, confirmationId: 'c-1', unconfirmedCount: 1 }] }; } });
+  try {
+    h.render(); await flush(); let tree = h.render();
+    assert.equal(button(tree, '중간 정산 실행'), null, '지난달 화면에는 중간 정산 버튼이 없어요');
+    button(tree, `이번 달(${thisMonth}) 중간 정산으로`).props.onClick(); h.render(); await flush(); tree = h.render();
+    const monthEnd = button(tree, '월말 정산 실행');
+    assert.equal(monthEnd.props.disabled, true, '이번 달 월말 정산은 마감 전이라 잠겨 있어요');
+    const interim = button(tree, '중간 정산 실행');
+    assert.ok(interim); assert.equal(interim.props.disabled, false);
+    assert.match(text(tree), /기준 시각: 누르는 순간/);
+    await interim.props.onClick(); await flush(); tree = h.render();
+    assert.deepEqual(calls, [thisMonth]);
+    assert.match(text(tree), /중간 정산\s+실행 결과\s+· 기준 시각 9\/27 14:05 \(9\/1–9\/27분\)/);
+    assert.match(text(tree), /실제 이체 없음/);
+    assert.match(text(tree), /체인 미확정 1건은 담지 않았어요/);
+    assert.doesNotMatch(text(tree), /입금됐|송금 완료/);
+  } finally { await h.close(); }
+});
+
+test('중간 정산 확인서는 기간 표시와 함께 같은 이체 기록 폼으로만 지급 완료돼요', async () => {
+  const calls = [];
+  const interim = { id: 'c-interim', modelId: row.modelId, periodMonth: '2026-09', kind: 'interim', coveredThrough: '2026-09-27', cutoffAt: '2026-09-27T05:05:00Z',
+    status: 'transfer_started', amount: 16000, count: 2, canManage: true, bankName: '국민은행', holderName: '김서연', accountMasked: '***-****-1234', provider: 'manual', simulated: false };
+  let listed = { ...row, periodMonth: '2026-09', open: true, status: 'processing', unpaidAmount: 5000, unpaidCount: 1, paidAmount: 0, paidCount: 0, confirmations: [interim] };
+  const h = await harness({ adminListPayoutStatements: async () => ({ items: [listed] }),
+    adminAdvancePayoutConfirmation: async (...args) => { calls.push(args);
+      listed = { ...listed, status: 'scheduled', paidAmount: 16000, paidCount: 2, confirmations: [{ ...interim, status: 'paid', transferredOn: '2026-09-30', providerRef: '국민 0930-0042', paidAt: '2026-09-30T02:00:00Z' }] };
+      return listed.confirmations[0]; } });
+  try {
+    h.render(); await flush(); let tree = h.render();
+    assert.match(text(tree), /중간 정산 · 9\/1–9\/27분 ·\s+16,000원\s+·\s+2 건 ·\s+송금 진행 중/);
+    assert.match(text(tree), /남은 몫/);
+    await submitTransfer(tree); tree = h.render();
+    assert.deepEqual(calls, [], '이체 기록 없이는 서버를 부르지 않아요');
+    field(tree, '이체 참조번호').props.onChange({ target: { value: '국민 0930-0042' } }); tree = h.render();
+    field(tree, '이체 금액').props.onChange({ target: { value: '16,000' } }); tree = h.render();
+    field(tree, '이체일').props.onChange({ target: { value: '2026-09-30' } }); tree = h.render();
+    await submitTransfer(tree); await flush(); tree = h.render();
+    assert.deepEqual(calls, [['c-interim', 'paid', { transferReference: '국민 0930-0042', amount: 16000, transferredOn: '2026-09-30' }]]);
+    assert.match(text(tree), /중간 정산 · 9\/1–9\/27분 ·\s+16,000원\s+·\s+2 건 ·\s+지급 완료/);
+    assert.match(text(tree), /이체일 2026-09-30/);
+    assert.match(text(tree), /지급 완료\s+16,000원\s+·\s+2\s*건/);
+    assert.doesNotMatch(text(tree), /시뮬레이션/);
   } finally { await h.close(); }
 });

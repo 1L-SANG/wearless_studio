@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation, adminSimulatePayoutConfirmation, adminRunMonthlyPayout } from '@/lib/api/facemarket.js';
+import { adminListPayoutStatements, adminSetPayoutStatementStatus, adminConfirmPayoutStatement, adminAdvancePayoutConfirmation, adminRevealPayoutConfirmation, adminSimulatePayoutConfirmation, adminRunMonthlyPayout, adminRunInterimPayout } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent } from '@/components/admin-ui/card.jsx';
 import { Input } from '@/components/admin-ui/input.jsx';
 import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/admin-ui/table.jsx';
-import { monthOpensOn, payoutAdminStatus, previousSeoulMonth, runOutcomeLabel, todaySeoulDate, transferRecordBody } from './adminPayoutStatements.js';
+import { confirmationKindLabel, currentSeoulMonth, cutoffLabel, interimRangeLabel, monthOpensOn, payoutAdminStatus, previousSeoulMonth, runOutcomeLabel, todaySeoulDate, transferRecordBody } from './adminPayoutStatements.js';
 import { actualPayoutDate } from '../model/mypage/payoutStatements.js';
 
 const won = value => `${Number(value || 0).toLocaleString('ko-KR')}원`;
@@ -133,16 +133,20 @@ export function AdminPayoutStatements() {
     }
   });
 
-  /* 월말 정산 실행 — 마감된 달의 체인 확정 정산을 모델별 지급 확인서로. 이체는 여기서 일어나지 않는다. */
-  const runMonth = async () => {
+  /* 월말 정산 실행 — 마감된 달의 체인 확정 정산을 모델별 지급 확인서로. 이체는 여기서 일어나지 않는다.
+     중간 정산(2026-09-27) — 이번 달을 누른 시각까지. 같은 확인서·이체 기록 흐름을 탄다. */
+  const runMonth = async (interim = false) => {
     if (saving.current || revealing.current || listing.current) return;
-    if (!window.confirm(`${month} 월말 정산을 실행할까요? 체인에 확정된 정산을 모델별로 모아 지급 확인서를 만들어요. 돈은 움직이지 않아요 — 이체는 송금 시작 후 은행 앱에서 직접 하고 참조번호를 기록해요.`)) return;
+    const question = interim
+      ? `${month} 중간 정산을 실행할까요? ${month.slice(5).replace(/^0/, '')}/1 00:00부터 지금(${cutoffLabel(new Date())})까지 체인에 확정된 정산 중 아직 지급 확인서에 없는 것만 모델별로 모아요. 돈은 움직이지 않아요 — 이체는 송금 시작 후 은행 앱에서 직접 하고 참조번호를 기록해요. 남은 몫은 달이 끝난 뒤 월말 정산에서 모여요.`
+      : `${month} 월말 정산을 실행할까요? 체인에 확정된 정산을 모델별로 모아 지급 확인서를 만들어요. 돈은 움직이지 않아요 — 이체는 송금 시작 후 은행 앱에서 직접 하고 참조번호를 기록해요.`;
+    if (!window.confirm(question)) return;
     saving.current = true;
     setBusyId('run');
     setRun(null);
     clearReveal();
     try {
-      const result = await adminRunMonthlyPayout(month);
+      const result = await (interim ? adminRunInterimPayout(month) : adminRunMonthlyPayout(month));
       if (alive.current) setRun({ result });
       if (alive.current) await load(month);
     } catch (error) {
@@ -223,19 +227,27 @@ export function AdminPayoutStatements() {
   };
 
   const opensOn = monthOpensOn(month);
+  const thisMonth = currentSeoulMonth();
+  const interimOpen = month === thisMonth;
+  const runKind = run?.result?.kind === 'interim' ? '중간 정산' : '월말 정산';
   return <div className="flex min-w-0 flex-col gap-5">
     <div><h1 className="text-lg font-semibold tracking-tight">지급 명세</h1><p className="mt-1 text-sm text-muted-foreground">금액과 계좌를 확인한 담당자가 수동 송금하고 결과를 기록해요.</p></div>
     <label className="flex max-w-xs flex-col gap-1 text-sm">정산 월<Input type="month" value={month} disabled={busyId !== null} onChange={changeMonth} /></label>
     <div className="flex flex-col gap-2 rounded-lg border p-4 text-sm">
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="sm" disabled={busyId !== null || Boolean(opensOn)} onClick={runMonth}>{busyId === 'run' ? '실행 중…' : '월말 정산 실행'}</Button>
+        <Button size="sm" disabled={busyId !== null || Boolean(opensOn)} onClick={() => runMonth(false)}>{busyId === 'run' ? '실행 중…' : '월말 정산 실행'}</Button>
         <span className="text-xs text-muted-foreground">{opensOn
           ? `${month}분은 아직 마감 전이에요. ${opensOn} 00:00(KST)부터 실행할 수 있어요.`
           : '체인에 확정된 정산을 모델별로 모아 지급 확인서를 만들어요. 돈은 움직이지 않아요 — 이체는 담당자가 은행 앱에서 직접 해요.'}</span>
       </div>
+      {!interimOpen && <div><Button size="sm" variant="ghost" disabled={busyId !== null} onClick={() => changeMonth({ target: { value: thisMonth } })}>{`이번 달(${thisMonth}) 중간 정산으로`}</Button></div>}
+      {interimOpen && <div className="flex flex-wrap items-center gap-3 border-t pt-2">
+        <Button size="sm" disabled={busyId !== null} onClick={() => runMonth(true)}>{busyId === 'run' ? '실행 중…' : '중간 정산 실행'}</Button>
+        <span className="text-xs text-muted-foreground">{`기준 시각: 누르는 순간(지금 ${cutoffLabel(new Date())} KST). ${Number(month.slice(5))}/1 00:00부터 그때까지 체인에 확정된 정산 중 아직 지급 확인서에 없는 것만 모아요. 체인 미확정 정산과 이후 정산은 ${opensOn} 이후 월말 정산에서 남은 몫으로 모여요 — 같은 정산은 두 번 담기지 않아요.`}</span>
+      </div>}
       {run?.error && <p role="alert" className="text-xs text-destructive">{run.error}</p>}
       {run?.result && <div className="flex flex-col gap-1 text-xs">
-        <span className="font-medium">{run.result.periodMonth} 실행 결과 · 모델 {run.result.results.length}명 · 실제 이체 없음</span>
+        <span className="font-medium">{run.result.periodMonth} {runKind} 실행 결과{run.result.kind === 'interim' ? ` · 기준 시각 ${cutoffLabel(run.result.cutoffAt)} (${interimRangeLabel(run.result.periodMonth, run.result.coveredThrough)})` : ''} · 모델 {run.result.results.length}명 · 실제 이체 없음</span>
         {run.result.results.length === 0 && <span className="text-muted-foreground">이 달에는 정산 내역이 없어요.</span>}
         {run.result.results.map(row => <span key={row.modelId}>{row.modelName || row.modelId} — {runOutcomeLabel(row)}</span>)}
       </div>}
@@ -251,7 +263,8 @@ export function AdminPayoutStatements() {
           const unpaid = item.unpaidAmount ?? (item.status === 'paid' ? 0 : item.amount);
           const status = payoutAdminStatus(item.status);
           return <TableRow key={rowKey(item)}><TableCell>{item.modelName || item.modelId}</TableCell><TableCell>{item.unpaidCount ?? item.count}건</TableCell>
-            <TableCell>{won(unpaid)}<span className="block text-xs text-muted-foreground">{confirmations.length ? '추가 미지급' : '미지급'}</span></TableCell>
+            <TableCell>{won(unpaid)}<span className="block text-xs text-muted-foreground">{confirmations.length ? (item.open ? '남은 몫' : '추가 미지급') : '미지급'}</span>
+              {item.paidAmount > 0 && <span className="block text-xs text-muted-foreground">지급 완료 {won(item.paidAmount)} · {item.paidCount}건</span>}</TableCell>
             <TableCell>{active ? <span>지급 확인 건에 저장된 계좌를 사용해 주세요.</span> : accountCell(item)}</TableCell><TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell>
             <TableCell><div className="flex min-w-40 flex-col items-start gap-2">
               {item.legacyPaid && <p>기존 지급 {won(item.amount)} · {actualPayoutDate(item.paidAt)}. 추가 지급은 기존 정산 항목 확인이 필요해요.</p>}
@@ -259,9 +272,9 @@ export function AdminPayoutStatements() {
                 <Button size="sm" variant="outline" disabled={busyId !== null || item.open || item.status === 'held' || unpaid <= 0 || !item.bankName} onClick={() => prepare(item)}>지급 확인</Button>
                 <Button size="sm" variant="outline" disabled={busyId !== null} onClick={() => mutate(item, () => adminSetPayoutStatementStatus(item.modelId, item.periodMonth, item.status === 'held' ? 'scheduled' : 'held', undefined, confirmations.at(-1)?.id))}>{item.status === 'held' ? '보류 해제' : '보류'}</Button>
               </div>}
-              {item.open && <span>이번 달은 집계 중이에요.</span>}
+              {item.open && <span>이번 달은 집계 중이에요. 지금까지 몫은 위의 [중간 정산 실행]으로 먼저 지급할 수 있어요.</span>}
               {confirmations.map(confirmation => <div key={confirmation.id} className="flex flex-col gap-1 border-t pt-2">
-                <span>{won(confirmation.amount)} · {confirmation.count}건 · {payoutAdminStatus(confirmation.status).label}</span>
+                <span>{confirmationKindLabel(confirmation) && `${confirmationKindLabel(confirmation)} · `}{won(confirmation.amount)} · {confirmation.count}건 · {payoutAdminStatus(confirmation.status).label}</span>
                 {confirmation.simulated && <span className="text-xs font-medium text-amber-700">시뮬레이션 · 실제 이체 없음</span>}
                 {confirmation.failureReason && <span className="text-xs text-destructive">{SIMULATE_FAILURES[confirmation.failureReason] || '지급이 거절됐어요.'}</span>}
                 {confirmation.status === 'paid' && <span>{confirmation.transferredOn ? `이체일 ${confirmation.transferredOn}` : `지급일 ${actualPayoutDate(confirmation.paidAt)}`}{confirmation.providerRef && !confirmation.simulated ? ` · 참조 ${confirmation.providerRef}` : ''}</span>}
@@ -291,6 +304,6 @@ export function AdminPayoutStatements() {
         })}{items.length === 0 && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">이 달에는 정산 내역이 없어요.</TableCell></TableRow>}</TableBody>
       </Table>}
     </CardContent></Card>
-    {items && <p className="text-sm text-muted-foreground">모델 {items.length}명 · 미지급 {won(items.reduce((sum, item) => sum + (item.unpaidAmount ?? (item.status === 'paid' ? 0 : Number(item.amount) || 0)), 0))}</p>}
+    {items && <p className="text-sm text-muted-foreground">모델 {items.length}명 · 미지급 {won(items.reduce((sum, item) => sum + (item.unpaidAmount ?? (item.status === 'paid' ? 0 : Number(item.amount) || 0)), 0))} · 지급 완료 {won(items.reduce((sum, item) => sum + (Number(item.paidAmount) || 0), 0))}</p>}
   </div>;
 }

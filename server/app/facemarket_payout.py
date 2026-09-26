@@ -181,9 +181,10 @@ def _parse_month(value):
 
 # transferred_on(2026-09-26): 관리자가 은행 앱에서 확인한 이체일. 수동 지급은 이것과
 # 참조번호(provider_ref) 없이 paid 가 될 수 없다(20260926230000 CHECK + 아래 paid 검증).
+# kind·cutoff_at(2026-09-27): 중간 정산(interim)이 만든 확인서와 그 기준 시각(20260927090000).
 _CONFIRMATION_FIELDS = """id::text, model_id::text, period_month, responsible_admin, amount, count,
     bank_code, holder_name, account_last4, account_version::text, status, provider, provider_ref,
-    failure_reason, created_at, started_at, paid_at, cancelled_at, transferred_on"""
+    failure_reason, created_at, started_at, paid_at, cancelled_at, transferred_on, kind, cutoff_at"""
 
 
 def _history_sql(model, month):
@@ -395,11 +396,26 @@ def mask_reference(value):
     return "••••" + text[-4:] if len(text) > 4 else "••••"
 
 
+def _as_datetime(value):
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return value
+
+
+def covered_through(cutoff):
+    """중간 정산이 담은 마지막 날(KST). 기준 시각은 배타적이라 1µs 앞의 날짜다."""
+    cutoff = _as_datetime(cutoff)
+    if cutoff is None:
+        return None
+    return (cutoff - timedelta(microseconds=1)).astimezone(KST).date()
+
+
 def _confirmation_view(row, user_id=None):
     month = row["period_month"]
     if isinstance(month, str):
         month = date.fromisoformat(month)
     provider = row.get("provider") or "manual"
+    cutoff = _as_datetime(row.get("cutoff_at"))
     return {
         "id": row["id"], "modelId": row["model_id"], "periodMonth": month.strftime("%Y-%m"),
         "amount": int(row["amount"]), "count": row["count"], "status": row["status"],
@@ -417,6 +433,10 @@ def _confirmation_view(row, user_id=None):
         "transferReferenceMasked": mask_reference(row.get("provider_ref")),
         "transferredOn": row.get("transferred_on"),
         "failureReason": row.get("failure_reason"),
+        # 중간 정산(2026-09-27): 이 확인서가 담은 기간은 그 달 1일 ~ coveredThrough(KST).
+        "kind": row.get("kind") or "monthly",
+        "cutoffAt": cutoff,
+        "coveredThrough": covered_through(cutoff),
     }
 
 
@@ -424,6 +444,13 @@ def _with_confirmations(item, confirmations):
     matching = [row for row in confirmations if row["periodMonth"] == item["periodMonth"]
                 and (not item.get("modelId") or row["modelId"] == item["modelId"])]
     item["confirmations"] = matching
+    # 지금까지 실제로 지급된 몫(중간 정산 포함)과 진행 중인 몫(2026-09-27). 스텁(simulated)이
+    # paid 로 만든 건은 돈이 가지 않았으므로 지급액에 넣지 않는다. 남은 몫 = unpaidAmount.
+    real_paid = [row for row in matching if row["status"] == "paid" and not row.get("simulated")]
+    item["paidAmount"] = sum(int(row["amount"]) for row in real_paid)
+    item["paidCount"] = sum(int(row["count"]) for row in real_paid)
+    item["inProgressAmount"] = sum(int(row["amount"]) for row in matching
+                                   if row["status"] in ("prepared", "transfer_started"))
     item["legacyPaid"] = item["status"] == "paid"
     if item["legacyPaid"]:
         # Older paid rows have no entry identities. Do not guess their allocations.
@@ -431,7 +458,10 @@ def _with_confirmations(item, confirmations):
         item["unpaidCount"] = max(0, item["unpaidCount"] - item["count"])
     elif any(row["status"] in ("prepared", "transfer_started") for row in matching):
         item["status"] = "processing"
-    elif item["status"] != "held" and item["unpaidCount"] == 0 and any(row["status"] == "paid" for row in matching):
+    elif (item["status"] != "held" and not item.get("open") and item["unpaidCount"] == 0
+          and any(row["status"] == "paid" for row in matching)):
+        # 마감 전 달은 중간 정산이 지금까지 몫을 다 지급해도 "지급 완료"가 아니다 — 달이 끝나야
+        # 남은 몫이 정해진다(2026-09-27).
         item["status"] = "paid"
         item["paidAt"] = max(row["paidAt"] for row in matching if row["status"] == "paid")
     return item
@@ -441,11 +471,16 @@ class PayoutConfirmationRequest(CamelModel):
     confirmation_id: uuid.UUID
 
 
-async def _prepare_confirmation(cur, request, *, model_id, month, confirmation_id, user_id):
+async def _prepare_confirmation(cur, request, *, model_id, month, confirmation_id, user_id, cutoff=None):
     """계좌 스냅샷 + 미배정 정산 항목으로 확인서(prepared)를 만든다. 모델 행 잠금은 호출부 몫.
 
-    지급 확인(단건)과 월말 정산 실행(2026-09-26)이 같은 코드를 탄다 — 금액·항목을 고르는 규칙이
-    두 벌로 갈라지면 한쪽만 고쳐지는 날이 온다. 반환: (확인서 행, 금액, 건수)."""
+    지급 확인(단건)과 월말 정산 실행(2026-09-26), 중간 정산(2026-09-27)이 같은 코드를 탄다 —
+    금액·항목을 고르는 규칙이 두 벌로 갈라지면 한쪽만 고쳐지는 날이 온다.
+
+    cutoff 가 있으면 중간 정산이다: 그 시각 전에 생긴 **체인 확정** 정산만 담고, 확인서에
+    kind='interim' + cutoff_at 을 남긴다. 어느 쪽이든 이미 풀리지 않은 항목에 들어간 정산은
+    고르지 않는다 — 중간 정산으로 담긴 정산을 월말 정산이 다시 담지 못하는 이유다(DB 에서도
+    fm_payout_one_active_allocation 이 막는다). 반환: (확인서 행, 금액, 건수)."""
     await cur.execute("select bank_code, holder_name, account_number_enc, account_last4, account_version::text from fm_payout_accounts where model_id = %s for share", (model_id,))
     account = await cur.fetchone()
     if not account:
@@ -456,11 +491,13 @@ async def _prepare_confirmation(cur, request, *, model_id, month, confirmation_i
     except (InvalidToken, ValueError):
         raise _err("payout_account_unconfigured", "입금 계좌를 확인할 수 없어요.", 503) from None
     start, end = month_bounds(month)
-    await cur.execute("""select st.id::text, st.model_amount from fm_settlements st
+    until = min(cutoff, end) if cutoff else end
+    confirmed_only = "and st.chain_status = 'confirmed'" if cutoff else ""
+    await cur.execute(f"""select st.id::text, st.model_amount from fm_settlements st
         join fm_licenses l on l.id = st.license_id
-        where l.model_id = %s and st.created_at >= %s and st.created_at < %s
+        where l.model_id = %s and st.created_at >= %s and st.created_at < %s {confirmed_only}
           and not exists (select 1 from fm_payout_confirmation_entries e where e.settlement_id = st.id and e.released_at is null)
-        order by st.id""", (model_id, start, end))
+        order by st.id""", (model_id, start, until))
     entries = await cur.fetchall()
     amount = sum(int(entry["model_amount"]) for entry in entries)
     if not entries or amount <= 0:
@@ -472,11 +509,12 @@ async def _prepare_confirmation(cur, request, *, model_id, month, confirmation_i
         request.app.state.settings.fm_payout_provider).name
     await cur.execute(f"""insert into fm_payout_confirmations
         (id, model_id, period_month, responsible_admin, amount, count,
-         bank_code, holder_name, account_number_enc, account_last4, account_version, provider)
-        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning {_CONFIRMATION_FIELDS}""",
+         bank_code, holder_name, account_number_enc, account_last4, account_version, provider,
+         kind, cutoff_at)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning {_CONFIRMATION_FIELDS}""",
         (confirmation_id, model_id, month, user_id, amount, len(entries), account["bank_code"],
          account["holder_name"], account["account_number_enc"], account["account_last4"],
-         account["account_version"], provider))
+         account["account_version"], provider, "interim" if cutoff else "monthly", cutoff))
     result = await cur.fetchone()
     await cur.execute("""insert into fm_payout_confirmation_entries (confirmation_id, settlement_id, amount)
         select %s::uuid, entry_id, amount from unnest(%s::uuid[], %s::bigint[]) as selected(entry_id, amount)""",
@@ -603,37 +641,115 @@ async def _run_model_month(conn, cur, request, *, model, month, start, end, user
     return {**base, "outcome": "prepared", "confirmationId": result["id"], "amount": amount, "count": count}
 
 
+# ── 중간 정산(2026-09-27) ──────────────────────────────────────────────────────
+# 마감 전인 **이번 달**을 지금(기준 시각 cutoff)까지 먼저 정산한다. 월말 정산과 다른 점은 둘:
+#   1) 체인 미확정 정산이 있어도 모델을 건너뛰지 않고, 확정된 정산만 담는다(미확정은 남는다).
+#   2) 확인서에 kind='interim' + cutoff_at 을 남긴다.
+# 나머지 — 모델 잠금, 보류·이전 방식 지급 건너뛰기, 진행 중 확인서 재사용(멱등), 계좌 스냅샷,
+# 항목 배정, 송금 시작 → 실제 이체 기록 → paid — 는 월말 정산·단건 확인과 같은 코드다.
+# 달이 끝나고 월말 정산을 돌리면 이미 배정된(중간 정산) 정산은 빠지고 남은 몫만 모인다.
+
+INTERIM_DUE_SQL = """
+select count(*) filter (where st.chain_status = 'confirmed') as due_count,
+       coalesce(sum(st.model_amount) filter (where st.chain_status = 'confirmed'), 0) as due_amount,
+       count(*) filter (where st.chain_status <> 'confirmed') as unconfirmed_count
+  from fm_settlements st join fm_licenses l on l.id = st.license_id
+ where l.model_id = %s and st.created_at >= %s and st.created_at < %s
+   and not exists (select 1 from fm_payout_confirmation_entries e
+                    where e.settlement_id = st.id and e.released_at is null)
+"""
+
+
+async def _run_model_interim(conn, cur, request, *, model, month, start, cutoff, user_id):
+    model_id = model["model_id"]
+    base = {"modelId": model_id, "modelName": model.get("model_name"), "amount": 0, "count": 0,
+            "confirmationId": None, "unconfirmedCount": 0}
+    await cur.execute("select id from fm_models where id = %s for update", (model_id,))
+    await cur.fetchone()
+    await cur.execute("select status from fm_payout_statements where model_id = %s and period_month = %s",
+                      (model_id, month))
+    statement = await cur.fetchone()
+    if statement and statement["status"] in ("held", "paid"):
+        return {**base, "outcome": statement["status"]}
+    await cur.execute(f"select {_CONFIRMATION_FIELDS} from fm_payout_confirmations where model_id = %s and period_month = %s and status in ('prepared','transfer_started')", (model_id, month))
+    active = await cur.fetchone()
+    if active:
+        return {**base, "outcome": "in_progress", "confirmationId": active["id"],
+                "amount": int(active["amount"]), "count": int(active["count"])}
+    await cur.execute(INTERIM_DUE_SQL, (model_id, start, cutoff))
+    due = await cur.fetchone() or {}
+    base["unconfirmedCount"] = int(due.get("unconfirmed_count") or 0)
+    if int(due.get("due_count") or 0) == 0:
+        return {**base, "outcome": "nothing_due"}
+    confirmation_id = str(uuid.uuid4())
+    try:
+        result, amount, count = await _prepare_confirmation(
+            cur, request, model_id=model_id, month=month,
+            confirmation_id=confirmation_id, user_id=user_id, cutoff=cutoff)
+    except HTTPException as exc:
+        code = (exc.detail or {}).get("code") if isinstance(exc.detail, dict) else None
+        if code == "payout_account_not_found":
+            return {**base, "outcome": "no_account",
+                    "amount": int(due["due_amount"]), "count": int(due["due_count"])}
+        if code == "payout_nothing_due":
+            return {**base, "outcome": "nothing_due"}
+        raise
+    await admin_guard.write_audit(
+        conn, actor_user_id=user_id, action="payout_confirmation.prepare",
+        target_type="model", target_id=model_id,
+        after={"confirmationId": confirmation_id, "amount": amount, "count": count,
+               "via": "interim_run", "cutoffAt": cutoff.isoformat()})
+    return {**base, "outcome": "prepared", "confirmationId": result["id"], "amount": amount, "count": count}
+
+
 @router.post("/admin/payout-statements/{period_month}/run")
 async def run_monthly_payout(period_month: str, request: Request, response: Response,
-                             user_id: str = Depends(require_user)):
-    """월말 정산 실행 — 마감된 달의 확정 정산을 모델별 지급 확인서로. 돈은 움직이지 않는다."""
+                             user_id: str = Depends(require_user), interim: bool = False):
+    """월말 정산 실행 — 마감된 달의 확정 정산을 모델별 지급 확인서로. 돈은 움직이지 않는다.
+
+    ?interim=true (2026-09-27): **이번 달**이면 중간 정산 — 지금까지 체인에 확정된 정산 중 아직
+    어느 확인서에도 없는 것만 모은다. 마감된 달이면 월말 정산과 똑같고, 다음 달 이후는 거절한다."""
     response.headers["Cache-Control"] = "no-store"
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id, request)
         month = _parse_month(period_month)
-        current_month = datetime.now(KST).date().replace(day=1)
-        if month >= current_month:
+        now = datetime.now(KST)
+        current_month = now.date().replace(day=1)
+        if interim and month > current_month:
+            raise _err("payout_month_future", f"{period_month}분은 아직 시작하지 않았어요. 이번 달만 중간 정산할 수 있어요.", 409)
+        if month >= current_month and not interim:
             opens = month_bounds(month)[1].date().isoformat()
             raise _err("payout_month_open",
                        f"마감된 월만 정산을 실행할 수 있어요. {period_month}분은 {opens} 00:00(KST)부터 실행돼요.", 409)
+        interim_run = month == current_month
         start, end = month_bounds(month)
+        # 기준 시각은 초 단위로 — 화면·감사 기록·확인서가 같은 값을 말한다.
+        cutoff = now.replace(microsecond=0) if interim_run else None
         results = []
         async with conn.cursor() as cur:
-            await cur.execute(RUN_MODELS_SQL, (start, end, month))
+            await cur.execute(RUN_MODELS_SQL, (start, cutoff or end, month))
             models = await cur.fetchall()
             for model in models:
                 # 감사 기록도 같은 트랜잭션(conn)에 — 확인서와 원장이 함께 커밋되거나 함께 사라진다.
-                results.append(await _run_model_month(
-                    conn, cur, request, model=model, month=month, start=start, end=end, user_id=user_id))
+                if interim_run:
+                    results.append(await _run_model_interim(
+                        conn, cur, request, model=model, month=month, start=start, cutoff=cutoff, user_id=user_id))
+                else:
+                    results.append(await _run_model_month(
+                        conn, cur, request, model=model, month=month, start=start, end=end, user_id=user_id))
         summary = {outcome: sum(1 for row in results if row["outcome"] == outcome)
                    for outcome in ("prepared", "in_progress", "nothing_due", "held", "paid",
                                    "unconfirmed", "no_account")}
         await admin_guard.write_audit(
-            conn, actor_user_id=user_id, action="payout_statement.run", target_type="payout_month",
-            target_id=period_month, after={"models": len(results), **summary})
+            conn, actor_user_id=user_id,
+            action="payout_statement.interim_run" if interim_run else "payout_statement.run",
+            target_type="payout_month", target_id=period_month,
+            after={"models": len(results), **summary,
+                   **({"cutoffAt": cutoff.isoformat()} if interim_run else {})})
         await conn.commit()
-    return {"periodMonth": period_month, "results": results, "summary": summary,
-            "moneyMoved": False}
+    return {"periodMonth": period_month, "kind": "interim" if interim_run else "monthly",
+            "cutoffAt": cutoff, "coveredThrough": covered_through(cutoff),
+            "results": results, "summary": summary, "moneyMoved": False}
 
 
 async def _locked_confirmation(conn, confirmation_id, user_id):

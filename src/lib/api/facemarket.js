@@ -500,6 +500,13 @@ export function adminRunMonthlyPayout(periodMonth) {
   return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(periodMonth)}/run`, { method: 'POST' });
 }
 
+// POST .../payout-statements/{이번 달}/run?interim=true — 중간 정산(2026-09-27). 마감 전인 이번 달의
+// 체인 확정 정산 중 아직 어느 확인서에도 없는 것을 **누른 시각(cutoffAt)까지** 모은다. 돈은 움직이지
+// 않는다. 월말 정산은 나중에 남은 몫만 모은다(이미 담긴 정산은 다시 못 담는다).
+export function adminRunInterimPayout(periodMonth) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(periodMonth)}/run?interim=true`, { method: 'POST' });
+}
+
 // ── 정산 체인 대조(2026-09-26) ── 서버가 getSettlement 를 그 자리에서 eth_call 로 읽어 DB 값과
 // 칸마다 비교한다 → { verdict:'match'|'mismatch'|'not_found', fields:[{key,label,db,chain,match}],
 // checkedAt, chainId, contractAddress, txHash }. 체인을 못 읽으면 502/503 으로 throw(성공 흉내 없음).

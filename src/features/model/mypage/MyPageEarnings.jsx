@@ -4,7 +4,7 @@ import { chainCheckError, chainCheckedLabel, chainVerdict, shortHash } from '../
 import { formatKrw } from '../../facemarket-landing/facemarketTerms.js';
 import { rowsForMonth, usageDate, settlementLineParts } from './usageMonths.js';
 import { EmptyPanel, MonthSelect } from './MyPageParts.jsx';
-import { nextPayoutLabel, payoutMonthLabel, payoutStatementStatusLabel, payoutDisplayRows } from './payoutStatements.js';
+import { interimPayoutLine, nextPayoutLabel, payoutDateLabel, payoutMonthLabel, payoutStatementStatusLabel, payoutDisplayRows } from './payoutStatements.js';
 import s from './MyPage.module.css';
 
 export function useMyPageSettlements(modelId, enabled = true) {
@@ -77,6 +77,20 @@ export function ChainCheckLine({ row }) {
   </span>;
 }
 
+/* 중간 정산 요약(2026-09-27) — 달마다 '중간 정산 · 9/1–9/27분 · 지급 완료(9월 30일 이체)' 와
+   지금까지 지급 · 남은 몫. 지급 완료는 운영자가 실제 이체하고 참조번호를 기록한 건만이다. */
+export function InterimSummary({ items }) {
+  const months = (items || []).filter(item => (item.confirmations || []).some(row => row.kind === 'interim' && row.status !== 'cancelled'));
+  if (!months.length) return null;
+  return <div className={s.interimSummary}>{months.map(item => {
+    const lines = payoutDisplayRows(item).filter(row => row.interimLabel).map(interimPayoutLine);
+    return <p key={item.periodMonth}>
+      {lines.map(line => <span key={line} className={s.interimLine}>{line}</span>)}
+      <span className={s.interimTotals}>{payoutMonthLabel(item.periodMonth)} 지금까지 지급 {formatKrw(item.paidAmount || 0)} · 남은 몫 {formatKrw(item.unpaidAmount || 0)}{item.unpaidAmount > 0 && item.scheduledFor ? ` (${payoutDateLabel(item.scheduledFor)} 지급 예정 · 운영자 확인 후 이체)` : ''}</span>
+    </p>;
+  })}</div>;
+}
+
 export function MyPageEarnings({ data, month, onMonthChange, children }) {
   const rows = rowsForMonth(data.rows, month);
   const failed = data.summaryError || data.rowsError;
@@ -94,9 +108,11 @@ export function MyPageEarnings({ data, month, onMonthChange, children }) {
         <tfoot><tr><td colSpan={2}>합계 · {rows.length}건</td><td>{formatKrw(rows.reduce((total, row) => total + (Number(row.modelAmount) || 0), 0))}</td></tr></tfoot>
       </table> : <EmptyPanel title="아직 정산 내역이 없어요." description="이미지가 사용되면 정산 내역이 쌓여요." />}
     {data.summary && <p className={s.earningsTotal}>누적 {formatKrw(data.summary.totalAmount)} · {data.summary.totalCount}건</p>}
-    {!data.statementsError && data.statements?.items?.length > 0 && <div className={s.statementTableWrap}><h3>월별 지급 상태</h3><table className={`${s.payoutTable} ${s.statementTable}`}>
+    {!data.statementsError && data.statements?.items?.length > 0 && <div className={s.statementTableWrap}><h3>월별 지급 상태</h3>
+      <InterimSummary items={data.statements.items} />
+      <table className={`${s.payoutTable} ${s.statementTable}`}>
       <thead><tr><th scope="col">정산 월</th><th scope="col">건수</th><th scope="col">금액</th><th scope="col">지급일</th><th scope="col">상태</th></tr></thead>
-      <tbody>{data.statements.items.flatMap(payoutDisplayRows).map(statement => <tr key={statement.key}><td>{payoutMonthLabel(statement.periodMonth)}{statement.needsReconciliation ? ' · 추가 확인 필요' : statement.additional ? ' · 추가 미지급' : ''}</td><td>{statement.count}건</td>
+      <tbody>{data.statements.items.flatMap(payoutDisplayRows).map(statement => <tr key={statement.key}><td>{payoutMonthLabel(statement.periodMonth)}{statement.interimLabel ? ` · ${statement.interimLabel}` : statement.needsReconciliation ? ' · 추가 확인 필요' : statement.remainder ? ' · 남은 몫' : statement.additional ? ' · 추가 미지급' : ''}</td><td>{statement.count}건</td>
         <td>{formatKrw(statement.amount)}</td><td>{statement.displayDate}</td><td>{payoutStatementStatusLabel(statement.status)}{statement.open ? ' · 집계 중' : ''}
           {statement.reference && <span className={s.statementRef}>이체 참조 {statement.reference}</span>}</td></tr>)}</tbody>
     </table></div>}

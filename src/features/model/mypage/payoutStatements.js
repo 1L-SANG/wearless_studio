@@ -31,12 +31,34 @@ export function payoutDisplayRows(statement) {
       status: simulatedPaid ? 'simulated' : item.status,
       displayDate: simulatedPaid ? '-' : item.status === 'paid' ? paidDate : statement.scheduledFor || '-',
       reference: !item.simulated && item.status === 'paid' ? item.transferReferenceMasked || null : null,
+      // 중간 정산(2026-09-27): '중간 정산 · 9/1–9/27분'. 월말 정산 확인서는 빈 문자열.
+      interimLabel: item.kind === 'interim' ? interimLabel(statement.periodMonth, item.coveredThrough) : '',
     };
   });
   if (statement.unpaidCount > 0) rows.push({ ...statement, key: `${statement.periodMonth}:unpaid`,
     amount: statement.unpaidAmount, count: statement.unpaidCount, status: statement.status === 'held' ? 'held' : 'scheduled',
-    displayDate: statement.scheduledFor || '-', additional: true });
+    displayDate: statement.scheduledFor || '-', additional: true,
+    // 중간 정산 뒤 남은 몫은 "추가 미지급"이 아니라 "남은 몫"이다(달이 끝나면 월말 정산이 모은다).
+    remainder: confirmations.some(item => item.kind === 'interim' && item.status !== 'cancelled') });
   return rows;
+}
+
+function interimLabel(periodMonth, coveredThrough) {
+  const month = /^\d{4}-(\d{2})$/.exec(String(periodMonth || ''));
+  const last = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(coveredThrough || ''));
+  return month && last ? `중간 정산 · ${Number(month[1])}/1–${Number(last[1])}/${Number(last[2])}분` : '중간 정산';
+}
+
+/** 모델 화면 중간 정산 한 줄 — '중간 정산 · 9/1–9/27분 · 지급 완료(9월 30일 이체)'. 실제 이체(수동·참조번호)만
+ *  지급 완료라고 말한다. 스텁(simulated)은 '시뮬레이션 · 실제 이체 없음'. */
+export function interimPayoutLine(row) {
+  if (!row?.interimLabel) return '';
+  if (row.status === 'simulated') return `${row.interimLabel} · 시뮬레이션 · 실제 이체 없음`;
+  if (row.status === 'paid') {
+    const date = payoutDateLabel(row.transferredOn || row.displayDate);
+    return `${row.interimLabel} · 지급 완료${date === '-' ? '' : `(${date} 이체)`}`;
+  }
+  return `${row.interimLabel} · ${payoutStatementStatusLabel(row.status)}`;
 }
 
 export function payoutMonthLabel(periodMonth) {
