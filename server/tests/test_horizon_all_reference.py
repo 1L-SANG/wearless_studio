@@ -57,6 +57,22 @@ def test_horizon_color_reuse_does_not_force_different_pose():
     assert cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top").example_repeat_index == 0
 
 
+@pytest.mark.parametrize("pose", content_roles._STUDIO_POSE_ROTATION)
+def test_saved_auto_studio_pose_on_a_set_member_does_not_override_the_example(pose):
+    """옛 서버가 저장해 둔 핏 섹션 자동 포즈는 예시 포즈를 덮지 않는다. 셀러가 고른 포즈는 그대로다."""
+    spec = _bound(pose=pose)
+    assert cg.normalize_spec(spec)["pose"] == "auto"
+    assert "USER POSE OVERRIDE" not in _prompt(spec)
+    assert cg.normalize_spec(_bound(pose="walking"))["pose"] == "walking"
+    assert cg.normalize_spec({**_bound(pose=pose), "spaceGroupId": None})["pose"] != "auto"
+
+
+def test_snake_case_set_members_are_also_skipped_by_studio_pose_rotation():
+    grouped = [{"sectionRole": "studio", "cutType": "horizon", "pose": "auto",
+                "space_group_id": "ssg1__set__one", "exampleId": "ss_example"} for _ in range(3)]
+    assert all(b.get("pose") in (None, "", "auto") for b in content_roles.canonicalize_storyboard(grouped))
+
+
 def test_reference_frame_metadata_cannot_be_saved_from_client():
     stored = content_roles.canonicalize_storyboard([{"id": "one", "source": "ai", **_bound()}], for_storage=True)[0]
     assert "_horizonReferenceShot" not in stored

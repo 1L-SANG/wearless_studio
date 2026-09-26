@@ -331,7 +331,7 @@ def _spread_studio_poses(raw: list) -> None:
         block for block in raw
         if isinstance(block, dict)
         and block.get("source") != "mine"
-        and not block.get("spaceGroupId")
+        and not (block.get("spaceGroupId") or block.get("space_group_id"))
         and (block.get("sectionRole") or block.get("section_role")
              or resolve_section_role(block)) == "studio"
         and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
