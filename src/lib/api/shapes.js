@@ -305,8 +305,6 @@ export function defaultAnalysisShape(clothingType = 'top') {
     confirmedGptProductEvidenceHandoff: null,
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
     detailRecommendationsHandoff: null,
-    garmentColorEvidence: null,
-    garmentColorEvidenceHandoff: null,
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: createMeasurementFields(clothingType),
     fitProfile: null,

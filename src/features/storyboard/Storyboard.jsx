@@ -17,7 +17,7 @@ import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
 import { CATALOG_DRAG_MIME, catalogMemberTarget, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
 import { attachStoryboardDragScroll } from '@/lib/storyboardDragScroll.js';
 import { effectiveHorizonBackgroundMode, horizonBackgroundAvailability, reconcileHorizonGroupBackground } from '@/lib/horizonBackgroundAvailability.js';
-import { horizonBackgroundMode, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
+import { horizonBackgroundMode, needsGarmentColorMeasurement, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
 import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe, detailTargetPresentation, detailRecommendationMessage, selectableDetailTargets } from '@/lib/detailRecommendations.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
@@ -1140,7 +1140,7 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
       <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
       <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
-      disabled={busy} onChange={onBackgroundChange} garmentToneAvailable={availability.available} garmentToneUnavailableReason={availability.reason} />}
+      disabled={busy} onChange={onBackgroundChange} availability={availability} />}
     <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
       selected={currentSet?.id === set.id} onPreviewOpen={openPreview} onPreviewClose={leavePreview} onPreviewPin={pinPreview}
       pinned={preview?.set.id === set.id && preview.pinned} onCatalogDragStart={startDrag} onCatalogDragEnd={endDrag} />)}
@@ -4167,6 +4167,10 @@ export function Storyboard({ toastOverride = null } = {}) {
       flush: () => saveNow(projectId),
       navigate: () => navigate('/create/mannequin'),
       onFailure: (message) => toast.push(message),
+      // 호리존 세트에 '옷 색에 맞춤'이 있으면 저장된 콘티 기준으로 옷 색 확인을 맡긴다. 기다리지 않는다(실패하면 기존 배경).
+      afterFlush: () => {
+        if (needsGarmentColorMeasurement(latestBlocks.current || blocks)) void api.measureGarmentColors(projectId).catch(() => {});
+      },
     });
   };
   return (

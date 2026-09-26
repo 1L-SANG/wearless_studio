@@ -70,7 +70,7 @@ test('세트별 셔플은 기존 run 크기를 유지한다 — 엔트리 2멤�
   assert.deepEqual(next.map((block) => block.shot).sort(), ['full', 'medium']);
 });
 
-test('호리존 세트 셔플은 새 세트의 사진 색 근거에 맞춰 배경 선택을 유지하거나 해제한다', () => {
+test('호리존 세트 셔플은 측정 전이면 옷 색 선택을 유지하고, 잰 결과 맞출 수 없을 때만 해제한다', () => {
   const sets = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })
     .filter(set => set.setType === 'horizon-sequence');
   assert.ok(sets.length >= 2);
@@ -85,7 +85,11 @@ test('호리존 세트 셔플은 새 세트의 사진 색 근거에 맞춰 배�
     onlySpaceGroupId: groupId, product: { clothingType: 'top', colors: [{ id: 'base', isBase: true }] } };
   const withoutEvidence = shuffleSectionExamples(blocks, options);
   assert.notEqual(withoutEvidence, blocks);
-  assert.ok(withoutEvidence.every(block => block.horizonBackgroundMode === 'reference'));
+  assert.ok(withoutEvidence.every(block => block.horizonBackgroundMode === 'garment-tone'));
+  const failedEvidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'unavailable',
+    backgroundStatus: 'reference', backgroundPolicyVersion: backgroundPolicy.version }] };
+  const withFailure = shuffleSectionExamples(blocks, { ...options, colorEvidence: failedEvidence });
+  assert.ok(withFailure.every(block => block.horizonBackgroundMode === 'reference'));
   assert.ok(blocks.every(block => block.horizonBackgroundMode === 'garment-tone'));
   const colorEvidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'ready',
     backgroundStatus: 'ready', backgroundPolicyVersion: backgroundPolicy.version }] };

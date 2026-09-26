@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { horizonBackgroundMode, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '../../src/lib/horizonBackground.js';
+import { horizonBackgroundMode, needsGarmentColorMeasurement, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '../../src/lib/horizonBackground.js';
 import { createSpaceSetMembers, detachSpaceMembership, nextSpaceSetMemberReservation } from '../../src/lib/storyboardSpaceSets.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
@@ -74,4 +74,16 @@ test('failed-cut retry preserves horizon group selection without copying a clien
   assert.equal(retry.request.spaceSetMemberOrder, 2);
   assert.equal(retry.request._horizonBackground, undefined);
   assert.equal(buildFailedCutRetry([{ ...block, cutType: 'styling' }], 'failed').request.horizonBackgroundMode, undefined);
+});
+
+test('leaving the storyboard asks for a garment color measurement only for AI horizon set cuts on garment tone', () => {
+  const tone = { horizonBackgroundMode: 'garment-tone' };
+  assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', tone)]), true);
+  assert.equal(needsGarmentColorMeasurement([horizon('a'), horizon('b', 'set:instance-b', tone)]), true);
+  assert.equal(needsGarmentColorMeasurement([horizon('a')]), false);
+  assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', { ...tone, source: 'mine' })]), false);
+  assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', { ...tone, cutType: 'styling' })]), false);
+  assert.equal(needsGarmentColorMeasurement([horizon('a', null, tone)]), false);
+  assert.equal(needsGarmentColorMeasurement([]), false);
+  assert.equal(needsGarmentColorMeasurement(null), false);
 });

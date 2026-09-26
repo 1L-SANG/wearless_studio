@@ -5,6 +5,13 @@ export function horizonBackgroundMode(block) {
     && block.horizonBackgroundMode === 'garment-tone' ? 'garment-tone' : 'reference';
 }
 
+// 콘티보드를 떠날 때 옷 색 측정을 부를지 정하는 클라 게이트. 서버가 세트 종류와 기존 측정을 다시 보고
+// 필요 없으면 건너뛰므로, 여기서는 '옷 색에 맞춤'을 고른 AI 호리존 세트 컷이 있는지만 본다.
+export function needsGarmentColorMeasurement(blocks) {
+  return (blocks || []).some(block => block?.source !== 'mine' && block?.cutType === 'horizon'
+    && block?.spaceGroupId && horizonBackgroundMode(block) === 'garment-tone');
+}
+
 // A placed set is an instance: choosing a backdrop must not change another copy
 // of the same catalog set, or any lifestyle/product-only cuts.
 export function updateHorizonGroupBackground(blocks, groupId, mode) {
