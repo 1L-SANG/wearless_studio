@@ -66,6 +66,8 @@ variables:
   MODEL_DETAIL_SPECIALIST: gpt-5.4-2026-03-05
   DETAIL_SPECIALIST_TIMEOUT_SECONDS: 90
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
+  # 생성 직전 옷 색 백스톱 측정도 api 와 같은 flash 로 돌린다(비우면 위 pro 로 넘어간다).
+  MODEL_ROUTING_TEXT_GEMINI_ANALYSIS: gemini-3.8-flash
   DETAIL_CUT_IMAGE_SIZE: "2K"
   DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "1000"

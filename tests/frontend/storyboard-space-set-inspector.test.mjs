@@ -48,3 +48,9 @@ test('a selected set member uses a compact cut header instead of the large set c
   assert.match(inspectorSource, /label className="lbl">방향/);
   assert.match(inspectorSource, /label className="lbl">대상 색상/);
 });
+
+test('set gallery guide says what a set click does and that a single cut can be dragged in', () => {
+  const gallerySource = storyboardSource.slice(storyboardSource.indexOf('function SpaceSetGallery('));
+  // 세트 변경 화면에서 누르면 교체되고, 추가 화면에서 누르면 추가된다. 한 컷은 미리보기에서 끌어 온다.
+  assert.match(gallerySource, /replacing \? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요\.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요\.'/);
+});

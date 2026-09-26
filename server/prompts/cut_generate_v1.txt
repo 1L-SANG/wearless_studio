@@ -69,7 +69,7 @@ not overlays: preserve their exact spelling, shape, color, orientation, count an
 ATTACHED IMAGES (in order):
 ${imageManifest}
 
-[[SHOT:horizon_reference]]FRAMING — MATCHED COMPLETE HORIZON EXAMPLE:
+[[SHOT:horizon_reference]]MATCHED COMPLETE HORIZON EXAMPLE:
 The current shot and direction match the attached complete EXAMPLE REFERENCE. Preserve its
 actual frame boundaries, head/body crop, subject scale, placement and camera relationship.
 Do not expand a cropped photograph into a full-body pose mask. Do not invent a different pose
@@ -78,7 +78,7 @@ do not post-crop a full-body result. Explicit shot/direction/pose/face choices r
 
 [[HORIZON_ALL_POSE]]- Preserve the complete example's body direction, action, large arm/leg roles,
 support side, weight distribution and head position/orientation. Do not reset asymmetry into a
-centered pose or deliberately vary poses across colorways. Small hand/foot adjustments within
+centered pose. Small hand/foot adjustments within
 the same pose and tiny visible-eye gaze changes are allowed; exact garment fidelity and supported
 contacts take priority over matching joint coordinates. Never copy the example clothing/identity.
 

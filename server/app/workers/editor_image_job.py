@@ -434,6 +434,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                           "spaceSetMemberOrder", "horizonBackgroundMode")
             }
             cut_spec["matchIds"] = matching_ids
+            cut_spec = cut_generator.clear_legacy_studio_pose(cut_spec)
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"

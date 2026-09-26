@@ -352,7 +352,7 @@ def compile_cut_plan(
     effective_repeat_index = (
         example_repeat_index
         if (
-            recipe_family == "styling"
+            recipe_family in {"styling", "horizon"}
             and reference_mode == "all"
             and space_set_continuity is None
             and reference_direction_compatible

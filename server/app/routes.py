@@ -38,8 +38,8 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
-                       mannequin_display,
+from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
+                       input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval, sam_retry)
 from .auth import require_user
@@ -1203,44 +1203,32 @@ async def promote_confirmed_gpt_evidence(
 
 
 @router.post(
-    "/projects/{project_id}/analysis/garment-colors:promote",
+    "/projects/{project_id}/analysis/garment-colors:measure",
     responses={**COMMON_RESPONSES}, tags=["Analysis"],
-    summary="공개 분석의 픽셀 기반 의류색 근거 승격",
+    summary="가로 세트 벽 색용 옷 색 지연 측정",
 )
-async def promote_garment_color_evidence(
-    request: Request, project_id: str, handoff: dict = Body(...),
-    user_id: str = Depends(require_user),
-):
-    from .workers.analyze_job import garment_color_source_entries
-    try:
-        contract = garment_color_evidence.verify_handoff(handoff, request.app.state.settings.r2_secret_access_key)
-    except ValueError:
-        raise _bad_request("invalid_analysis_handoff", "의류색 근거를 확인하지 못했어요.") from None
+async def measure_garment_colors(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    """저장된 스토리보드에서 '옷 색에 맞춤' 가로 세트가 쓰는 색만 원본 사진으로 잰다(무과금·동기).
+
+    스토리보드를 떠날 때 부른다. 이미 잰 색이면 다시 재지 않는다. 관찰·R2·이미지 처리
+    실패는 5xx 가 아니라 `unavailable` 로 돌려주고, 생성은 기존 배경으로 만든다.
+    반환: `{status: skipped|measured|unavailable, garmentColorEvidence: 공개 요약|null}`.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유.
+    """
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        product = await repo.get_product(conn, project_id) or {}
-        sources = []
-        bound_colors = {row["colorId"] for row in contract["sourceBindings"]}
-        for entry in garment_color_source_entries(product):
-            if entry["colorId"] not in bound_colors:
-                # Optional upload budgeting may omit entire extra colors. Verify all
-                # current views of measured colors, not unrelated unmeasured colors.
-                continue
-            asset = await repo.get_asset_for_user(conn, user_id, entry["assetId"])
-            if asset is None:
-                raise _bad_request("analysis_handoff_source_missing", "현재 상품 사진을 찾지 못했어요.")
-            sources.append({k: entry[k] for k in ("sourceIndex", "colorId", "slot")})
-            sources[-1].update(data=await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"]), mime=asset["mime_type"])
-        clothing_type = product.get("clothingType") or product.get("clothing_type")
-        if not garment_color_evidence.source_binding_matches(contract, sources, clothing_type):
-            raise _bad_request("analysis_handoff_source_drift", "분석 후 사진이나 상품 종류가 바뀌었어요.")
-        try:
-            await repo.save_garment_color_evidence(conn, project_id, contract)
-        except ValueError:
-            raise HTTPException(status_code=409, detail={"code": "analysis_handoff_conflict", "message": "이미 저장된 의류색 근거와 달라 이전 측정값을 유지해요."}) from None
-        await conn.commit()
-    return {"promoted": True, garment_color_evidence.PERSISTED_KEY: garment_color_evidence.public_summary(contract)}
+    # 커넥션은 놓고 R2·LLM·이미지 작업을 한다. 서비스가 필요할 때 다시 연다.
+    status, contract = await garment_color_measure.ensure_garment_color_evidence(
+        request.app.state.settings, request.app.state.pool, getattr(request.app.state, "r2", None),
+        user_id=user_id, project_id=project_id)
+    try:
+        summary = garment_color_evidence.public_summary(contract) if contract is not None else None
+    except ValueError:
+        summary = None
+    return {"status": status, garment_color_evidence.PERSISTED_KEY: summary}
 
 
 @router.post(

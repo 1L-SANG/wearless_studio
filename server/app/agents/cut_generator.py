@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import Settings
-from .content_roles import canonicalize_storyboard_block
+from .content_roles import _STUDIO_POSE_ROTATION, canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     compile_confirmed_gpt_prompt,
@@ -35,7 +35,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import face_angle_swap, face_identity, pose_crop
+from . import face_angle_swap, face_identity, pose_crop, space_set_assets
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -103,6 +103,10 @@ def _normalize_detail_color_transfer(value) -> dict | None:
         "targetHex": target_hex,
         "referenceName": reference_name or None,
     }
+
+
+#: 핏 섹션 자동 포즈(content_roles._STUDIO_POSE_ROTATION)를 아래 pose 정리와 같은 방식으로 맞춘 값.
+_AUTO_STUDIO_POSES = frozenset(_sanitize(pose)[:40] for pose in _STUDIO_POSE_ROTATION)
 
 
 def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
@@ -201,6 +205,10 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     # Horizon sets reference the complete photograph; styling keeps plate + pose.
     if spec["spaceGroupId"] and spec["exampleId"]:
         spec["refScope"] = "all" if cut == "horizon" else "pose"
+        # 옛 서버가 콘티 저장 때 세트 컷에 돌려 넣은 핏 섹션 자동 포즈는 셀러 선택이 아니다(화면에서
+        # 고를 수 없는 문장). 남기면 USER POSE OVERRIDE 로 완성 예시 포즈를 덮는다(ADR-0013).
+        if cut == "horizon" and spec["pose"] in _AUTO_STUDIO_POSES:
+            spec["pose"] = "auto"
     if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
         spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
     if horizon_background.active({**raw, "cutType": cut}):
@@ -443,6 +451,45 @@ def apply_reference_compatibility(spec: dict) -> dict:
     if example_cut in ("styling", "horizon") and example_direction in _DIRECTIONS:
         resolved["_referenceDirectionCompatible"] = direction_family_matches(entry, spec)
     return resolved
+
+
+def horizon_example_governs_pose(block: dict) -> bool:
+    """완성 예시가 이 호리존 컷의 포즈를 정하는지 판정한다(핏 섹션 자동 포즈 제외용).
+
+    예시가 있고, 참고 범위가 전부(all)나 포즈(pose)이고, 예시 방향이 컷 방향과 맞아야 한다.
+    일반 예시는 apply_reference_compatibility 와 같은 규칙(메타 없는 옛 예시는 양립, 옆모습은
+    갈래까지 같아야 함)을 쓰고, 세트 밖에서 쓴 공간 세트 멤버(ss_)는 그 멤버 방향과 컷 방향이
+    같은지 본다. 레지스트리를 못 읽으면 예시가 포즈를 정한다고 확신할 수 없어 False 다.
+    """
+    probe = dict(block)
+    probe.pop("_referenceDirectionCompatible", None)
+    spec = normalize_spec({**probe, "cutType": "horizon"})
+    example_id = spec["exampleId"]
+    if not example_id or spec["refScope"] not in ("all", "pose"):
+        return False
+    try:
+        if example_id.startswith("ss_"):
+            _base, registry = space_set_assets.load_space_set_registry()
+            member = next((member for parent in registry.values() for member in parent["members"]
+                           if member["exampleId"] == example_id), None)
+            return member is not None and member.get("direction") == spec["direction"]
+        resolved = apply_reference_compatibility({**spec, "refScope": "all", "spaceGroupId": None})
+    except (OSError, ValueError):
+        return False
+    return resolved["_referenceDirectionCompatible"] is not False
+
+
+def clear_legacy_studio_pose(spec: dict) -> dict:
+    """옛 서버가 저장한 핏 섹션 자동 포즈를 세트 밖 호리존 컷에서도 지운다(에디터 한 컷 경로용).
+
+    콘티 저장·상세 생성은 content_roles 가 같은 일을 하지만, 에디터 한 컷 다시 만들기는 콘티
+    정리를 거치지 않는다. 예시가 포즈를 정하는 컷만 지운다. 세트 멤버는 normalize_spec 이 처리한다.
+    """
+    if (spec.get("cutType") == "horizon" and not spec.get("spaceGroupId")
+            and _sanitize(spec.get("pose") or "")[:40] in _AUTO_STUDIO_POSES
+            and horizon_example_governs_pose(spec)):
+        return {**spec, "pose": "auto"}
+    return spec
 
 
 @lru_cache(maxsize=1)
@@ -723,8 +770,9 @@ def render_cut_prompt(
     has_identity_reference = cut in _WORN_CUTS and any(
         label in image_manifest for label in identity_labels
     )
-    has_body_reference = (
-        cut in _WORN_CUTS and _MODEL_FULL_BODY_LABEL in image_manifest
+    has_body_reference = cut in _WORN_CUTS and (
+        _MODEL_FULL_BODY_LABEL in image_manifest
+        or _MODEL_FULL_BODY_HORIZON_LABEL in image_manifest
     )
     has_licensed_face_reference = _FACE_LABEL in image_manifest
     # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
@@ -738,7 +786,10 @@ def render_cut_prompt(
         return sec[key]
 
     shot_key = "detail_zoom" if detail_mode_zoom else shot
-    if (cut == "horizon" and spec.get("refScope") == "all"
+    # 예시의 자른 위치를 그대로 따르는 문구는 미디엄에만 쓴다. 풀샷은 기장·밑단·신발 비율을 보는
+    # 컷이라 "발·굽·밑단을 자르지 말 것"이 있는 기본 풀샷 문구를 쓴다(예시 구도 따르기는
+    # REFSCOPE:all_horizon 이 함께 준다). 2026-09-26 오너 결정.
+    if (cut == "horizon" and shot == "medium" and spec.get("refScope") == "all"
             and spec.get("_horizonReferenceShot") == shot
             and spec.get("_referenceDirectionCompatible") is not False
             and _EXAMPLE_ALL_LABEL in image_manifest):
@@ -808,6 +859,18 @@ def render_cut_prompt(
     # bg는 '생성하며 참고'가 아니라 '플레이트 편집' 과업으로 전환(2026-07-20 야간 실측:
     # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
     bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
+    # 같은 all 예시를 두 번째 색상부터 다시 쓰는 컷(컬러웨이 반복, ADR-0011). 세트 멤버는 제외.
+    repeat_index = spec.get("_exampleRepeatIndex", 0)
+    example_repeat_active = (
+        has_resolved_example
+        and cut in _WORN_CUTS
+        and spec.get("refScope") == "all"
+        and spec.get("pose") == "auto"
+        and not spec.get("spaceGroupId")
+        and spec.get("_referenceDirectionCompatible") is not False
+        and type(repeat_index) is int
+        and repeat_index >= 1
+    )
     if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
         if (
             spec["refScope"] == "all"
@@ -872,7 +935,9 @@ def render_cut_prompt(
                 "is authoritative. Use example camera geometry only where compatible; never turn "
                 "the model back toward the example's original view."
             )
-            if cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False and spec["pose"] == "auto":
+            # 반복 컷은 HORIZON_ALL_POSE 대신 POSE FROM EXAMPLE + EXREPEAT 작은 변주를 쓴다(둘은 서로 충돌).
+            if (cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False
+                    and spec["pose"] == "auto" and not example_repeat_active):
                 all_pose_rule = need("HORIZON_ALL_POSE")
             scope_line = (
                 scope_line
@@ -883,17 +948,7 @@ def render_cut_prompt(
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
     example_repeat_line = ""
-    repeat_index = spec.get("_exampleRepeatIndex", 0)
-    if (
-        has_resolved_example
-        and cut in {"styling", "mirror"}
-        and spec.get("refScope") == "all"
-        and spec.get("pose") == "auto"
-        and not spec.get("spaceGroupId")
-        and spec.get("_referenceDirectionCompatible") is not False
-        and type(repeat_index) is int
-        and repeat_index >= 1
-    ):
+    if example_repeat_active:
         variant = (repeat_index - 1) % 3
         example_repeat_line = "\n".join((
             need("EXREPEAT:guard"),
@@ -1136,6 +1191,10 @@ _MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — use ONLY the body outline and pro
                           "pose, framing or camera distance; PRODUCT and MATCHING own the clothing "
                           "and SPACE SET PLATE owns the location. ZERO authority over facial "
                           "identity, facial features or hair")
+#: plate 없이 완성 예시(all)를 참고하는 호리존 컷의 전신 라벨. 체형 규칙([[BODY_REF]]) 판정도
+#: 이 문자열을 알아야 한다. 문구만 바꾸고 판정을 놔두면 호리존 컷에서 체형 규칙이 통째로 빠진다.
+_MODEL_FULL_BODY_HORIZON_LABEL = _MODEL_FULL_BODY_LABEL.replace(
+    "SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 _CUSTOM_MATCH_LABEL = (
     _MATCH_LABEL
@@ -1219,7 +1278,7 @@ def build_manifest(
     if has_model_full_body:
         body_label = _MODEL_FULL_BODY_LABEL
         if example_is_horizon and example_scope == "all" and not has_space_set_plate:
-            body_label = body_label.replace("SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
+            body_label = _MODEL_FULL_BODY_HORIZON_LABEL
         lines.append(f"{i}. {body_label}")
         i += 1
     for a in prod_assets:

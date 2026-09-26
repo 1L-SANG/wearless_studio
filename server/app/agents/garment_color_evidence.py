@@ -8,20 +8,13 @@ from collections import Counter
 from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
-import hmac
-import json
 import math
 import re
 from statistics import median
-import time
 
 from PIL import Image, ImageCms, ImageDraw, ImageOps
 
 PERSISTED_KEY = "garmentColorEvidence"
-RAW_KEY = "garmentColorRegions"
-HANDOFF_KEY = "garmentColorEvidenceHandoff"
-_PURPOSE = "wearless:garment-color-evidence:v1"
-_TTL = 86400
 _TYPES = ("top", "bottom", "outer", "dress")
 MAX_IMAGE_PIXELS = 40_000_000
 _MAX_PIXELS = MAX_IMAGE_PIXELS
@@ -51,18 +44,40 @@ def _number(value, low=0, high=1):
     return type(value) in (float, int) and math.isfinite(value) and low <= value <= high
 
 
-def _frame(data):
+#: Modes that LANCZOS thumbnail handles before the ICC transform.
+_PRE_ICC_RESAMPLE_MODES = frozenset({"RGB", "RGBA", "L", "LA", "CMYK"})
+
+
+def _frame(data, max_side=None):
     try:
         with Image.open(BytesIO(data)) as raw:
             if raw.width * raw.height > _MAX_PIXELS:
                 raise ValueError("invalid_image")
             orientation = raw.getexif().get(274, 1)
             profile = raw.info.get("icc_profile")
+            # Remember the source size: JPEG draft can already land exactly on
+            # max_side, and the frame must still count as changed (resized).
+            oversize = bool(max_side) and max(raw.size) > max_side
+            if max_side:
+                # Shrink before any full-size work. JPEG decodes at a reduced
+                # scale; keep the file's own mode so a CMYK profile still fits.
+                raw.draft(raw.mode, (max_side, max_side))
             im = ImageOps.exif_transpose(raw)
+            changed = orientation not in (None, 1) or oversize
+            if oversize:
+                # Palette and 1-bit images resize with nearest neighbour; expand
+                # them first. Polygons are normalized, so the ROI stays aligned.
+                if im.mode in ("P", "PA", "1"):
+                    im = im.convert("RGBA" if im.mode == "PA" or "transparency" in im.info
+                                    else "L" if im.mode == "1" else "RGB")
+                # Exotic modes (16-bit, float) cannot be LANCZOS-reduced; they are
+                # shrunk after the sRGB/RGBA conversion below, as before.
+                if max(im.size) > max_side and im.mode in _PRE_ICC_RESAMPLE_MODES:
+                    im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            # Alpha is taken after the resize so its size matches the frame.
             alpha = im.getchannel("A") if im.mode in ("RGBA", "LA", "PA") else Image.new("L", im.size, 255)
             if im.mode == "P" and "transparency" in im.info:
                 alpha = im.convert("RGBA").getchannel("A")
-            changed = orientation not in (None, 1)
             if profile:
                 try:
                     source_profile = ImageCms.ImageCmsProfile(BytesIO(profile))
@@ -85,6 +100,8 @@ def _frame(data):
                 raise ValueError("invalid_color_profile")
             im = im.convert("RGBA")
             im.putalpha(alpha)
+            if oversize and max(im.size) > max_side:
+                im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             im.load()
             return im, changed
     except ValueError:
@@ -93,18 +110,23 @@ def _frame(data):
         raise ValueError("invalid_image") from exc
 
 
-def normalize_for_vision(data: bytes, mime: str):
-    """Same EXIF-upright/sRGB frame as sampling; malformed inputs remain nonfatal."""
+def vision_frame(data: bytes, mime: str, max_side=1024):
+    """Same EXIF-upright/sRGB frame as sampling, at most max_side; raises on bad input."""
+    im, changed = _frame(data, max_side)
+    if not changed:
+        return data, mime
+    output = BytesIO()
+    # Fresh image drops the original ICC/EXIF, avoiding double conversion.
+    clean = Image.new("RGBA", im.size)
+    clean.paste(im)
+    clean.save(output, format="PNG")
+    return output.getvalue(), "image/png"
+
+
+def normalize_for_vision(data: bytes, mime: str, max_side=1024):
+    """vision_frame, but malformed inputs remain nonfatal."""
     try:
-        im, changed = _frame(data)
-        if not changed:
-            return data, mime
-        output = BytesIO()
-        # Fresh image drops the original ICC/EXIF, avoiding double conversion.
-        clean = Image.new("RGBA", im.size)
-        clean.paste(im)
-        clean.save(output, format="PNG")
-        return output.getvalue(), "image/png"
+        return vision_frame(data, mime, max_side)
     except (ValueError, OSError):
         return data, mime
 
@@ -224,8 +246,7 @@ def _measure(source, row, clothing_type):
     if row["clothingType"] != clothing_type or row["certainty"] != "high":
         raise ValueError("unreliable_source")
     polygons = _polygons(row["polygons"])
-    im, _ = _frame(source["data"])
-    im.thumbnail((512, 512), Image.Resampling.LANCZOS)
+    im, _ = _frame(source["data"], max_side=512)
     patches = [_patch(im, p, 16000 // len(polygons)) for p in polygons]
     # Disagreement raises the reported uncertainty; it does not make the
     # selected photo's broad color family unknowable.
@@ -368,51 +389,3 @@ def source_binding_matches(value, sources, clothing_type=None):
         return Counter(map(key, value["sourceBindings"])) == Counter(map(key, current))
     except (ValueError, TypeError, KeyError):
         return False
-
-
-def _browser_stable(value):
-    # Guest handoffs pass through JSON.stringify, which writes 0.0/1.0 as 0/1.
-    # Normalize only equal whole-number representations; never round fractions.
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, dict):
-        return {key: _browser_stable(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_browser_stable(item) for item in value]
-    return value
-
-
-def _canonical(value):
-    try:
-        return json.dumps(_browser_stable(value), sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
-    except (ValueError, TypeError) as exc:
-        raise ValueError("garment_color_handoff_invalid") from exc
-
-
-def _sign(value, secret):
-    if not isinstance(secret, str) or len(secret) < 16:
-        raise ValueError("garment_color_handoff_secret_required")
-    return hmac.new(secret.encode(), _canonical(value), "sha256").hexdigest()
-
-
-def issue_handoff(value, secret, now=None):
-    issued = int(time.time() if now is None else now)
-    payload = {"purpose": _PURPOSE, "version": 1, "issuedAt": issued,
-               "expiresAt": issued + _TTL, "contract": validate_contract(value)}
-    return {**payload, "signature": _sign(payload, secret)}
-
-
-def verify_handoff(envelope, secret, now=None):
-    current = int(time.time() if now is None else now)
-    if not isinstance(envelope, dict) or set(envelope) != {"purpose", "version", "issuedAt", "expiresAt", "contract", "signature"}:
-        raise ValueError("garment_color_handoff_invalid")
-    if (envelope["purpose"] != _PURPOSE or type(envelope["version"]) is not int or envelope["version"] != 1
-            or type(envelope["issuedAt"]) is not int or type(envelope["expiresAt"]) is not int
-            or envelope["expiresAt"] - envelope["issuedAt"] != _TTL
-            or envelope["issuedAt"] > current + 60 or envelope["expiresAt"] < current):
-        raise ValueError("garment_color_handoff_expired_or_invalid")
-    payload = {k: v for k, v in envelope.items() if k != "signature"}
-    if (not isinstance(envelope["signature"], str) or not re.fullmatch(r"[0-9a-f]{64}", envelope["signature"])
-            or not hmac.compare_digest(envelope["signature"], _sign(payload, secret))):
-        raise ValueError("garment_color_handoff_signature_invalid")
-    return validate_contract(envelope["contract"])

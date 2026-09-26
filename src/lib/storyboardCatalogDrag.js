@@ -31,6 +31,23 @@ export function insertCatalogBlocks(blocks, index, added) {
   return next;
 }
 
+// 세트 갤러리에서 고른 컷 하나가 들어갈 섹션과 자리. 섹션 끝에 붙이고, 섹션이 비어 있으면
+// 갤러리를 연 자리(fallbackIndex)에 넣는다. 빈 섹션 자리표시(empty:*)는 첫 컷이 들어가면 실제
+// 섹션으로 바뀌므로 매번 다시 찾는다. 2026-09-26: 빈 섹션 첫 컷이 후킹 앞(0)에 들어갔고,
+// 자리만 고치면 두 번째 컷부터 같은 역할 섹션이 둘로 쪼개졌다.
+export function catalogMemberTarget(blocks, { targetSid, targetRole, spaceGroupId, fallbackIndex }) {
+  const host = spaceGroupId ? blocks.find((block) => block.spaceGroupId === spaceGroupId) : null;
+  const sectionRole = targetRole || host?.sectionRole;
+  const live = (id) => id && blocks.some((block) => block.sectionId === id && block.sectionRole === sectionRole);
+  const sectionId = live(targetSid) ? targetSid
+    : live(host?.sectionId) ? host.sectionId
+    : blocks.find((block) => block.sectionRole === sectionRole)?.sectionId || targetSid || host?.sectionId;
+  const end = blocks.reduce((last, block, index) => (
+    block.sectionId === sectionId && block.sectionRole === sectionRole ? index + 1 : last
+  ), -1);
+  return { sectionId, sectionRole, index: end >= 0 ? end : (fallbackIndex ?? blocks.length) };
+}
+
 export function setCatalogDragImage(event, members) {
   if (!event.dataTransfer?.setDragImage || !members?.length) return () => {};
   const ghost = document.createElement('div');

@@ -1,41 +1,31 @@
 """Optional color-region observation, isolated from the fixed AG-01 evidence inputs."""
 import asyncio
-from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
 
 from . import garment_color_evidence
-from .gemini_image import InlineImage
+from .gemini_image import InlineImage, run_cpu_bound
 from .vision_llm import analyze_with_fallback
 
 _PROMPT = Path(__file__).parents[2] / "prompts" / "garment_color_regions_v1.txt"
 
 
 def _observer_image(data: bytes, mime: str) -> InlineImage | None:
-    normalized, normalized_mime = garment_color_evidence.normalize_for_vision(data, mime)
+    # One decode: the 1024 upright sRGB frame is sent as is. Oversize, broken or
+    # unconvertible photos cannot be measured either, so they are not observed.
     try:
-        with Image.open(BytesIO(normalized)) as source:
-            if source.width * source.height > garment_color_evidence.MAX_IMAGE_PIXELS:
-                return None
-            source.verify()
-        with Image.open(BytesIO(normalized)) as source:
-            if max(source.size) <= 1024:
-                return InlineImage(normalized_mime, normalized)
-            image = source.convert("RGB")
-            image.thumbnail((1024, 1024))
-            out = BytesIO()
-            image.save(out, format="PNG")
-            return InlineImage("image/png", out.getvalue())
+        frame, frame_mime = garment_color_evidence.vision_frame(data, mime, max_side=1024)
     except (OSError, ValueError, Image.DecompressionBombError):
         return None
+    return InlineImage(frame_mime, frame)
 
 
 async def observe(settings, sources: list[dict], *, product: dict | None = None):
     if not sources:
         return []
     images = await asyncio.gather(*(
-        asyncio.to_thread(_observer_image, row["data"], row["mime"]) for row in sources
+        run_cpu_bound(_observer_image, row["data"], row["mime"]) for row in sources
     ))
     eligible = [(source, image) for source, image in zip(sources, images, strict=True) if image is not None]
     if not eligible:

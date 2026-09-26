@@ -2,13 +2,11 @@
 from copy import deepcopy
 from io import BytesIO
 import math
-import json
 
 import pytest
 from PIL import Image, ImageCms, ImageDraw
 
 from app.agents import garment_color_evidence as gce
-from app.agents import detail_recommendations
 from app.agents import horizon_background
 
 
@@ -236,47 +234,6 @@ def test_source_binding_ignores_reenumerated_index_but_not_color_slot_or_bytes()
     assert not gce.source_binding_matches(value, runtime[:1])
 
 
-def test_signed_handoff_tamper_expiry_future_and_cross_purpose():
-    secret = "test-only-secret-long-enough"
-    value = contract()
-    envelope = gce.issue_handoff(value, secret, now=1000)
-    assert gce.verify_handoff(envelope, secret, now=1001) == value
-    for mutate in (lambda v: v.update(purpose=detail_recommendations.PERSISTED_KEY),
-                   lambda v: v["contract"]["colors"][0].update(observedHex="#000000"),
-                   lambda v: v.update(signature="0" * 64)):
-        changed = deepcopy(envelope)
-        mutate(changed)
-        with pytest.raises(ValueError):
-            gce.verify_handoff(changed, secret, now=1001)
-    with pytest.raises(ValueError):
-        gce.verify_handoff(envelope, secret, now=1000 + 86401)
-    with pytest.raises(ValueError):
-        gce.verify_handoff(envelope, secret, now=0)
-    with pytest.raises(ValueError):
-        detail_recommendations.verify_handoff(envelope, secret, now=1001)
-
-
-@pytest.mark.parametrize("color", [(255, 255, 255), (0, 0, 0), (45, 95, 155)])
-def test_color_handoff_survives_browser_whole_number_serialization(color):
-    value = contract(sources=[source(photo(color))])
-    assert first(value)["status"] == "ready"
-    secret = "test-color-browser-secret"
-    envelope = gce.issue_handoff(value, secret, now=1000)
-    # JSON.stringify writes 0.0/1.0 as 0/1. Keep fractional values exact rather
-    # than round them, so this matches a browser round trip without needing Node in CI.
-    def browser_number(text):
-        number = float(text)
-        return int(number) if number.is_integer() else number
-    returned = json.loads(json.dumps(envelope), parse_float=browser_number)
-    assert type(first(returned["contract"])["spread"]) is int
-    assert gce.verify_handoff(returned, secret, now=1001) == value
-    assert first(returned["contract"])["uncertainty"] == first(value)["uncertainty"]
-    # Even the nearest representable different fraction must remain a change.
-    first(returned["contract"])["uncertainty"] = math.nextafter(first(value)["uncertainty"], 1.0)
-    with pytest.raises(ValueError, match="signature_invalid"):
-        gce.verify_handoff(returned, secret, now=1001)
-
-
 def test_exif_upright_roi_matches_observer_frame():
     im = Image.new("RGB", (320, 200), (200, 40, 40))
     ImageDraw.Draw(im).rectangle((0, 0, 159, 199), fill=(40, 80, 160))
@@ -350,6 +307,40 @@ def test_profile_conversion_matches_observer_pixels_and_binds_original_bytes():
     assert rgb(first(value)["observedHex"]) == observer_color
     assert gce.source_binding_matches(value, [source(data)])
     assert not gce.source_binding_matches(value, [source(normalized)])
+
+
+def test_large_profiled_photo_is_shrunk_before_conversion_for_observer_and_measurement():
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    out = BytesIO()
+    Image.new("RGB", (3000, 2000), (45, 95, 155)).save(out, format="JPEG", quality=95, icc_profile=profile)
+    data = out.getvalue()
+    normalized, mime = gce.normalize_for_vision(data, "image/jpeg")
+    assert mime == "image/png"
+    with Image.open(BytesIO(normalized)) as frame:
+        assert max(frame.size) <= 1024 and frame.size == (1024, 683)
+        assert "icc_profile" not in frame.info
+    measured, _ = gce._frame(data, max_side=512)
+    assert max(measured.size) <= 512
+    # JPEG rounding only; a uniform fill has no detail for the resize to change.
+    small = BytesIO()
+    Image.new("RGB", (300, 200), (45, 95, 155)).save(small, format="JPEG", quality=95, icc_profile=profile)
+    large_row = first(contract(sources=[source(data)]))
+    small_row = first(contract(sources=[source(small.getvalue())]))
+    assert large_row["status"] == small_row["status"] == "ready"
+    assert max(abs(a - b) for a, b in zip(rgb(large_row["observedHex"]), rgb(small_row["observedHex"]))) <= 2
+    assert gce.source_binding_matches(contract(sources=[source(data)]), [source(data)])
+
+
+@pytest.mark.parametrize("side", [2048, 4096])
+def test_square_jpeg_that_decodes_exactly_to_the_limit_is_still_sent_small(side):
+    """JPEG draft 가 정확히 1024 로 떨어지면 '줄이지 않음'으로 보여 원본이 AI 로 가던 경계(2026-09-27)."""
+    out = BytesIO()
+    Image.new("RGB", (side, side), (190, 39, 50)).save(out, format="JPEG", quality=90)
+    data = out.getvalue()
+    normalized, mime = gce.normalize_for_vision(data, "image/jpeg")
+    assert mime == "image/png" and normalized != data
+    with Image.open(BytesIO(normalized)) as frame:
+        assert frame.size == (1024, 1024)
 
 
 def test_clipped_white_stays_neutral_with_nonzero_uncertainty_range():
