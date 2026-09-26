@@ -18,8 +18,6 @@ from ..agents import (
     product_analyst,
     product_evidence_contract,
     detail_recommendations,
-    garment_color_evidence,
-    garment_color_observer,
 )
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
@@ -69,31 +67,6 @@ def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
         return data, mime
 
 
-def additional_color_source_entries(product: dict) -> list[dict]:
-    """At most two additional colors, first Front/Back each; base evidence stays intact."""
-    colors = [c for c in (product.get("colors") or []) if isinstance(c, dict)]
-    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else {})
-    rows = []
-    for color in [c for c in colors if c is not base and c.get("id")][:2]:
-        for slot in ("Front", "Back"):
-            image = next((im for im in color.get("images", []) if isinstance(im, dict) and im.get("slot") == slot and im.get("id")), None)
-            if image:
-                rows.append({"colorId": str(color["id"]), "slot": slot, "assetId": image["id"]})
-    return rows[:4]
-
-
-def garment_color_source_entries(product: dict) -> list[dict]:
-    """Canonical map used when re-binding public measurements to uploaded assets."""
-    colors = [c for c in (product.get("colors") or []) if isinstance(c, dict)]
-    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else {})
-    base_entries = detail_recommendations.analysis_source_entries(product)
-    first_views = {next((i for i, (s, _) in enumerate(base_entries) if s == slot), -1) for slot in ("Front", "Back")}
-    rows = [{"sourceIndex": index, "colorId": str(base["id"]), "slot": slot, "assetId": aid}
-            for index, (slot, aid) in enumerate(base_entries) if index in first_views and base.get("id")]
-    return rows + [{**row, "sourceIndex": len(base_entries) + index}
-                   for index, row in enumerate(additional_color_source_entries(product))]
-
-
 async def analyze_image_bytes(
     settings,
     source_images: list[tuple[bytes, str]],
@@ -102,14 +75,13 @@ async def analyze_image_bytes(
     slots: list[str] | None = None,
     on_prepared=None,
     persist_confirmed_evidence: bool = False,
-    additional_color_sources: list[dict] | None = None,
 ) -> dict:
     """DB·R2 없이 이미지 바이트를 분석하는 AG-01 공용 코어.
 
     로그인 job과 공개 체험 라우트가 같은 축소·분석·특징 발굴·입력 일관성 경로와
     반환 shape를 공유한다. 호출자는 영속화 여부만 결정한다.
     """
-    product = {k: v for k, v in (product or {}).items() if k != "_garmentColorSources"}
+    product = product or {}
     slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
 
     loaded = await asyncio.gather(*(
@@ -117,14 +89,6 @@ async def analyze_image_bytes(
         for data, mime in source_images
     ))
     images = [InlineImage(mime, data) for data, mime in loaded]
-    extras = (additional_color_sources or [])[:4]
-    colors = [c for c in (product.get("colors") or []) if isinstance(c, dict)]
-    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else {})
-    first_views = {next((i for i, s in enumerate(slots) if s == slot), -1) for slot in ("Front", "Back")}
-    color_sources = [{"sourceIndex": index, "colorId": str(base["id"]), "slot": slot, "data": data, "mime": mime}
-                     for index, ((data, mime), slot) in enumerate(zip(source_images, slots))
-                     if base.get("id") and index in first_views]
-    color_sources.extend({**row, "sourceIndex": len(source_images) + index} for index, row in enumerate(extras))
     analysis_product = product
     if persist_confirmed_evidence:
         evidence_binding = product_evidence_contract.build_input_binding(
@@ -145,15 +109,13 @@ async def analyze_image_bytes(
     # 그래서 부가 둘에만 짧은 예산을 준다. 넘기면 그 둘만 버리고 진행한다 — 아래
     # isinstance(BaseException) 분기가 이미 실패를 흡수하므로 새 실패 경로는 없다.
     aux_budget = settings.analysis_aux_timeout_seconds
-    analyze_res, feature_res, consistency_res, color_res = await asyncio.gather(
+    analyze_res, feature_res, consistency_res = await asyncio.gather(
         product_analyst.analyze(settings, analysis_product, images),
         asyncio.wait_for(
             feature_extractor.extract(settings, product, images, slots=slots),
             timeout=aux_budget),
         asyncio.wait_for(
             _judge_input_consistency(settings, images, slots), timeout=aux_budget),
-        asyncio.wait_for(
-            garment_color_observer.observe(settings, color_sources, product=product), timeout=aux_budget),
         return_exceptions=True,
     )
     if isinstance(analyze_res, BaseException):
@@ -192,30 +154,16 @@ async def analyze_image_bytes(
     ):
         analysis_payload["inputConsistency"] = consistency
     clothing_type = distributed["product"]["clothingType"]
-    if color_sources:
-        if isinstance(color_res, BaseException):
-            log.warning("optional garment color observer unavailable: %s", type(color_res).__name__)
-        try:
-            analysis_payload[garment_color_evidence.PERSISTED_KEY] = await asyncio.to_thread(
-                garment_color_evidence.build_contract,
-                None if isinstance(color_res, BaseException) else color_res,
-                color_sources, clothing_type=clothing_type,
-            )
-        except (ValueError, TypeError) as exc:
-            log.warning("garment color evidence unavailable: %s", type(exc).__name__)
     # The evidence contract is server-owned generation input. It stays in
     # analyses.payload but is not duplicated into the client-facing analysis job result.
     public_analysis_payload = {
         key: value
         for key, value in analysis_payload.items()
-        if key not in {product_evidence_contract.PERSISTED_KEY, garment_color_evidence.PERSISTED_KEY}
+        if key != product_evidence_contract.PERSISTED_KEY
     }
     public_analysis_payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(
         analysis_payload[detail_recommendations.PERSISTED_KEY]
     )
-    if garment_color_evidence.PERSISTED_KEY in analysis_payload:
-        public_analysis_payload[garment_color_evidence.PERSISTED_KEY] = garment_color_evidence.public_summary(
-            analysis_payload[garment_color_evidence.PERSISTED_KEY])
     result_data = {
         **public_analysis_payload,
         "clothingType": clothing_type,
@@ -257,16 +205,12 @@ async def run_analyze_job(app, job: dict) -> None:
         #    AG-08 관찰 가이드용으로 보존한다(디테일 컷 집중 지시 — 2026-07-13).
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
-            assets, slots, extra_assets = [], [], []
+            assets, slots = [], []
             for slot, aid in detail_recommendations.analysis_source_entries(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
                     assets.append(a)
                     slots.append(slot)
-            for entry in additional_color_source_entries(product):
-                asset = await repo.get_asset_for_user(conn, user_id, entry["assetId"])
-                if asset:
-                    extra_assets.append((entry, asset))
         if not assets:
             await _fail("상품 사진을 찾을 수 없어요. 정면 사진을 올렸는지 확인해 주세요.",
                         {"error": "no_product_images"})
@@ -280,10 +224,6 @@ async def run_analyze_job(app, job: dict) -> None:
             return raw, a["mime_type"]
 
         loaded = await asyncio.gather(*(_load_one(a) for a in assets))
-        extra_loaded = await asyncio.gather(*(_load_one(asset) for _, asset in extra_assets), return_exceptions=True)
-        additional_sources = [{"colorId": entry["colorId"], "slot": entry["slot"], "data": loaded_image[0], "mime": loaded_image[1]}
-                              for (entry, _), loaded_image in zip(extra_assets, extra_loaded)
-                              if not isinstance(loaded_image, BaseException)]
         bytes_in = sum(len(data) for data, _ in loaded)
 
         async def _inputs_loaded(bytes_out: int) -> None:
@@ -299,7 +239,6 @@ async def run_analyze_job(app, job: dict) -> None:
             slots=slots,
             on_prepared=_inputs_loaded,
             persist_confirmed_evidence=True,
-            additional_color_sources=additional_sources,
         )
 
         provider = core["provider"]

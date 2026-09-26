@@ -179,6 +179,26 @@ def palettes_for_blocks(blocks: list[dict], product: dict, *, analysis=None, sou
     return palettes
 
 
+def garment_tone_color_ids(blocks: list, product: dict) -> list[str]:
+    """옷 색 측정이 필요한 색상 id 목록. 스토리보드 순서, 중복 없이 최대 4개."""
+    colors = [c for c in (product or {}).get("colors") or [] if isinstance(c, dict)]
+    known = {str(c["id"]) for c in colors if c.get("id") is not None}
+    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    ids = []
+    for block in blocks or []:
+        if not isinstance(block, dict) or block.get("source") == "mine" or mode(block) != "garment-tone":
+            continue
+        # 세트 판정은 resolve_for_block 과 같아야 한다. 빈 상품이면 세트가 지원될 때
+        # measurement-unavailable, 아니면 set-unsupported 가 나오므로 그 차이만 본다.
+        if resolve_for_block(block, {})["reason"] == "set-unsupported":
+            continue
+        color_id = block.get("colorId")
+        color_id = str(color_id) if color_id is not None else (str(base["id"]) if base and base.get("id") is not None else None)
+        if color_id in known and color_id not in ids:
+            ids.append(color_id)
+    return ids[:4]
+
+
 def apply_runtime(block: dict, palettes: dict) -> dict:
     out = dict(block)
     out.pop("_horizonBackground", None)

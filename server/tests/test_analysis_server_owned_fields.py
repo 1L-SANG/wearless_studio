@@ -68,6 +68,15 @@ def test_garment_color_evidence_is_server_owned_and_cannot_be_forged():
     assert _save({"garmentColorEvidence": original}, {"fit": "regular"})["garmentColorEvidence"] == original
 
 
+def test_carry_forward_locks_the_row_so_a_lazy_color_write_is_not_lost():
+    """지연 옷 색 측정이 동시에 쓰면, 잠그지 않은 읽기는 옛 값을 이월해 새 측정을 지운다."""
+    conn = _Conn({"garmentColorEvidence": {"version": 1, "measured": "lazy"}})
+    asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
+    select_sql = next(sql for sql, _ in conn.calls if sql.lower().startswith("select"))
+    assert "for update" in select_sql.lower()
+    assert conn.saved["garmentColorEvidence"] == {"version": 1, "measured": "lazy"}
+
+
 def test_source_mirrored_carried_when_client_omits_it():
     saved = _save({"sourceMirrored": True, "fit": "over"}, {"fit": "regular"})
     assert saved["sourceMirrored"] is True   # 이월됨
