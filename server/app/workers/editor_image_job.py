@@ -14,7 +14,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from .. import facemarket, repo
+from .. import facemarket, fm_fingerprint_store, repo
+from ..services import fm_fingerprint
 from ..agents import (
     content_roles,
     cut_generator,
@@ -974,6 +975,11 @@ async def run_editor_image_job(app, job: dict) -> None:
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
         img_sha256 = hashlib.sha256(image).hexdigest()
+        # 추적 층(2026-09-26) — REAL 컷 지문. 실패하면 None(절대 raise 안 함), 기록은 커밋 뒤.
+        fingerprint = (
+            await asyncio.to_thread(fm_fingerprint.safe_image_hashes, image)
+            if fm_face_injected else None
+        )
         async with pool.connection() as conn:
             cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                 conn,
@@ -1002,6 +1008,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
             "sha256": img_sha256,
+            **({"fingerprint": fingerprint} if fingerprint else {}),
             "provenance": (
                 {"license_id": str(fm_license_row["id"]),
                  "model_id": str(fm_license_row["model_id"])}
@@ -1080,6 +1087,11 @@ async def run_editor_image_job(app, job: dict) -> None:
         else:
             written_key = None
             written_cleanup_intent_id = None
+        if out is not None:
+            # 추적 층 — 커밋된 원장 행에 컷 지문을 붙인다(베스트에포트, 백필이 빈틈을 채운다).
+            # written_key 를 비운 **뒤**라, 만에 하나 여기서 무슨 일이 나도 확정된 컷을 안 지운다.
+            await fm_fingerprint_store.record_cut_fingerprints(
+                pool, fm_fingerprint_store.cut_fingerprint_items([image_row]))
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         if written_key:
             await _delete_output_candidate(written_key, written_cleanup_intent_id)
