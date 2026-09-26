@@ -7,7 +7,8 @@
 #
 # 알림 경로(SNS, 램다, 웹훅)는 환경 애드온의 것을 그대로 쓴다. 토픽 ARN 은 환경 애드온의
 # export(${App}-${Env}-AlarmTopicArn)를 가져온다. 그래서 alarm-slack.yml 을 env 배포하지 않은
-# 환경에는 api 를 배포할 수 없다(지금 환경은 use1 하나이고 거기엔 있다).
+# 환경에는 api 를 배포할 수 없다. 지금 환경은 use1 하나이고 거기엔 있다. 서울 prod 는 매니페스트만
+# 남아 있고 스택은 없다(2026-09-26 확인). 되살리려면 env deploy 가 먼저라 그때 export 도 같이 생긴다.
 Parameters:
   App:
     Type: String
