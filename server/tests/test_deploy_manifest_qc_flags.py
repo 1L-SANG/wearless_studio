@@ -506,6 +506,22 @@ def test_autoscale_addon_exists_with_scoped_permissions():
     assert "SamAlertTopicArn" in addon["Outputs"]
 
 
+def test_api_addon_parameters_are_declared_by_an_addon_template():
+    """addons.parameters.yml 의 값은 addon 템플릿 Parameters 와 짝이 맞아야 한다.
+    한쪽만 지우거나 이름을 바꾸면 PR CI 는 통과하고 main 의 copilot svc deploy 에서야 깨진다."""
+    addons_dir = MANIFEST.parent / "addons"
+    params = yaml.load((addons_dir / "addons.parameters.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
+    declared = set()
+    for tpl in addons_dir.glob("*.yml"):
+        if tpl.name == "addons.parameters.yml":
+            continue
+        declared |= set(yaml.load(tpl.read_text(encoding="utf-8"), Loader=_CfnLoader).get("Parameters") or {})
+    assert set(params["Parameters"]) <= declared
+    alarms = yaml.load((addons_dir / "api-alarms.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
+    assert "TargetGroupFullName" in params["Parameters"]
+    assert "TargetGroupFullName" in alarms["Parameters"]
+
+
 def test_workflows_pin_copilot_and_deploy_server_watches_addons():
     root = MANIFEST.parents[2]
     for wf in ("deploy-sam2.yml", "deploy-server.yml"):

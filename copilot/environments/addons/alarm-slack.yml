@@ -31,7 +31,9 @@
 #   TargetResponseTime 알람이 그 역할을 한다. 진짜 CPU 알람이 필요해지면 서비스 이름을
 #   런타임에 찾아 알람을 만드는 커스텀 리소스가 필요하다.
 #
-# 되돌리기: 이 파일을 지우고 `copilot env deploy --name use1`. 앱 재배포는 무관하다.
+# 되돌리기: copilot/api/addons/api-alarms.yml 이 이 파일의 토픽 export 를 가져다 쓰므로 그것부터
+# 지워 api 를 배포한 뒤, 이 파일을 지우고 `copilot env deploy --name use1`. 순서가 바뀌면 export
+# 가 사용 중이라 env 배포가 실패한다(docs/runbooks/cloudwatch-alarms.md 되돌리기 절).
 Parameters:
   App:
     Type: String
@@ -115,6 +117,7 @@ Resources:
                       continue
                   state = msg.get("NewStateValue", "")
                   # 새로 만든 알람의 첫 판정(INSUFFICIENT_DATA 에서 OK)은 복구가 아니다.
+                  # 빈 데이터를 모두 따로 처리하는 알람들이라 INSUFFICIENT_DATA 는 생성 때만 생긴다.
                   if state == "OK" and msg.get("OldStateValue") == "INSUFFICIENT_DATA":
                       continue
                   # OK 로 돌아온 것도 보낸다 — 울고 끝나면 복구됐는지 사람이 모른다.
@@ -219,8 +222,13 @@ Resources:
   #    RequestCount 에만 들어간다).
   #    대가: 한산한 시간의 느려짐은 못 본다. 서버가 멈추면 api 의 정상 서버 알람이, 에러로
   #    번지면 ① 과 ④ 가 잡는다. 8/30 라이선스 발급 장애도 ① 이 21:50 에 먼저 잡았다.
-  #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다. 이게 실제로 필요하다: 9/25 14:15 구간은
-  #    사진 20장 업로드만으로 표본 10건 이상, 중앙값 2.64초였다(한 구간이라 안 울렸다).
+  #    2회를 요구해 일시적 튐은 넘긴다. 이게 실제로 필요하다: 9/25 14:15 구간은 사진 20장
+  #    업로드만으로 표본 10건 이상, 중앙값 2.64초였다(한 구간이라 안 울렸다). 다만 빈 구간은
+  #    건너뛰고 최근 실제 값 두 개로 판정하므로, 가운데 빈 5분을 둔 업로드 몰림 두 번이 겹치면
+  #    울 수 있다(60일 동안 15분 안에 두 번은 0회). 업로드 같은 느린 경로를 빼고 재는 근본
+  #    해결은 앱이 직접 지표를 내야 한다(런북 사각지대 절).
+  #    빈 데이터는 ignore(현재 상태 유지)다. notBreaching 이면 느려진 채로 요청이 줄어 표본이
+  #    10건 밑으로 떨어질 때 서버가 여전히 느린데도 OK(복구)로 돌아간다.
   AlarmLatency:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -258,18 +266,21 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 2
       ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
+      TreatMissingData: ignore
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
   # ④ ELB 가 직접 만든 502·504. 앱이 응답하지 못했다는 뜻이다(502 는 응답 도중 연결이 끊김,
   #    504 는 유휴 타임아웃까지 응답 없음). 앱이 응답을 돌려준 것이 아니라서 ① 에는 안 잡힌다.
   #    503 은 봇이 기본 타깃그룹으로 떨어지며 늘 생겨서 뺐다. 60일 실측은 5분당 최대 1건
-  #    (502 2건, 504 2건, 모두 따로 떨어져 있었다)이라 5 면 확실한 신호다.
+  #    (502 2건, 504 2건, 모두 따로 떨어져 있었다)이다. 3 으로 두면 우연히 겹친 한두 건은
+  #    넘기고, 한가한 시간에 사용자 세 명이 막힌 경우는 잡는다.
   #    SUM([...]) 은 한쪽만 있는 5분은 그 값으로, 둘 다 없는 5분은 빈 값으로 둔다. FILL(…, 0) 은
   #    아직 지표가 안 온 최신 5분까지 진짜 0 으로 만들어 늦게 도착한 에러를 묻어 버려서 쓰지 않는다.
   AlarmElb5xx:
     Type: AWS::CloudWatch::Alarm
+    # 새 알람의 첫 OK 를 거르는 램다 코드가 먼저 올라가야 Slack 에 가짜 '복구'가 안 간다.
+    DependsOn: AlarmSlackFunction
     Properties:
       AlarmName: !Sub '${App}-${Env}-elb-502-504'
       AlarmDescription: '로드밸런서가 502·504 를 내고 있어요. 서버가 응답 도중 죽었거나, 응답하지 못하고 멈춘 상태입니다.'
@@ -303,7 +314,7 @@ Resources:
           Expression: 'SUM([e502, e504])'
           ReturnData: true
       EvaluationPeriods: 1
-      Threshold: 5
+      Threshold: 3
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
