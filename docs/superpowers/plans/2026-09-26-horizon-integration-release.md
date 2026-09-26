@@ -31,5 +31,5 @@
 - [x] Capacity: horizon-sequence 최대7·horizon all 필수/pose 선택; rotation/styling 기존 제한. 경계/봉인 roundtrip 테스트 통과.
 - [x] Assets: 8세트42·린넨2와 재사용3장, 총47 원본·계보 확인. 사용자 결정대로 pose 추가 생성 없이 완성 예시를 사용. 통합+독립 시각 검수 PASS.
 - [x] Release: 불변 stage/hash·dry-run·94개 실제 upload·전수원격SHA 확인·양쪽 catalog적용. 린넨 새ID버전과 구 버전 선택목록 제외/저장호환 유지.
-- [ ] Integration: 최신main 기준 관련서버/프런트검사·build·실제UI 확인. 다른에이전트 독립리뷰와 수정재검토.
-- [ ] PR: 제품파일만 선별commit/push, 하나의 PR 생성·첨부. 이미배포된detailPR410/417은중복하지 않는다.
+- [x] Integration: 최신 main의 디테일 전달·생성 대기·REAL 첫 화면 후속 변경을 보존해 통합. 관련 서버 986·브라우저 22검사, build 및 독립 코드/시각 검토 완료. 전체 CI 결과는 PR 상태를 정본으로 한다.
+- [x] PR: 제품파일만 선별 commit/push, PR #424 생성·첨부. 이미 배포된 디테일 작업은 중복하지 않는다. 이미지 94개 원격 SHA 대조 및 카탈로그 동시 적용 완료.

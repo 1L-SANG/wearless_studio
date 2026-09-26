@@ -8,6 +8,7 @@ FACEMARKET_OPT_USES_ENABLED 플래그는 **수집 경로에만** 남는다 — �
 판정으로 되돌아오지 않는다는 것까지 고정한다(되돌아오면 컷이 조용히 막힌다).
 """
 
+import ast
 import pathlib
 
 import pytest
@@ -82,11 +83,50 @@ def test_styling_blocks_are_real_in_the_detail_worker():
     assert 'b.get("cutType") == "horizon"' not in text
 
 
+def _assert_real_face_guard_is_not_horizon_only(text):
+    tree = ast.parse(text)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == "real_identity_allowed_cut"]
+    assert calls, "REAL 얼굴 적용은 공통 착용컷 판정을 사용해야 한다"
+    for call in calls:
+        node = call
+        while node in parents:
+            node = parents[node]
+            if not isinstance(node, ast.If):
+                continue
+            for comparison in (item for item in ast.walk(node.test) if isinstance(item, ast.Compare)):
+                if not isinstance(comparison.left, ast.Subscript):
+                    continue
+                left = comparison.left
+                horizon_only = (isinstance(left.value, ast.Name) and left.value.id == "normalized"
+                                and isinstance(left.slice, ast.Constant) and left.slice.value == "cutType"
+                                and len(comparison.ops) == 1 and isinstance(comparison.ops[0], ast.Eq)
+                                and isinstance(comparison.comparators[0], ast.Constant)
+                                and comparison.comparators[0].value == "horizon")
+                assert not horizon_only, "REAL 얼굴 적용을 호리존 조건 안에 가두면 안 된다"
+
+
 def test_editor_injects_the_real_face_in_every_worn_cut():
     root = pathlib.Path(facemarket.__file__).resolve().parents[1]
     text = (root / "app/workers/editor_image_job.py").read_text(encoding="utf-8")
     assert 'facemarket.real_identity_allowed_cut(normalized["cutType"])' in text
-    assert 'normalized["cutType"] == "horizon"' not in text
+    # A manifest's horizon label is not an identity-eligibility gate.
+    _assert_real_face_guard_is_not_horizon_only(text)
+
+
+def test_real_face_guard_check_rejects_old_restriction_but_allows_reference_labels():
+    _assert_real_face_guard_is_not_horizon_only('''
+if facemarket.real_identity_allowed_cut(normalized["cutType"]):
+    inject_face()
+build_manifest(example_is_horizon=normalized["cutType"] == "horizon")
+''')
+    with pytest.raises(AssertionError, match="호리존 조건"):
+        _assert_real_face_guard_is_not_horizon_only('''
+if normalized["cutType"] == "horizon":
+    if facemarket.real_identity_allowed_cut(normalized["cutType"]):
+        inject_face()
+''')
 
 
 # ── 수집 경로는 그대로 남는다(판정에 안 쓸 뿐) ──
