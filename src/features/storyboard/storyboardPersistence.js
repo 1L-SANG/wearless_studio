@@ -105,6 +105,10 @@ export function createStoryboardPersistence({
               .then((repaired) => {
                 if (!repaired || repaired === snapshot) return;
                 if (pending.get(projectId) !== snapshot) return;   // 더 최신 저장이 이미 대체
+                // 복구본도 "복구 시도함"으로 표시한다. 안 그러면 복구본이 또 거절될 때 새 객체라
+                // 가드를 통과해 다시 복구 → 저장 → 거절이 네트워크 속도로 무한히 돈다
+                // (2026-09-22~23 prod: 0.3초 간격, 한 사용자 14분 2,871회).
+                if (typeof repaired === 'object') repairAttempted.add(repaired);
                 void saveNow(projectId, () => repaired, options).catch(() => {});
               })
               .catch(() => {});

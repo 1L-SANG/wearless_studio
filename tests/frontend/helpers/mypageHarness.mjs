@@ -44,6 +44,7 @@ export async function loadEarningsHarness(api = {}) {
           export const getPayoutStatements=()=>api.getPayoutStatements?.() ?? Promise.resolve({items:[],nextPayout:null});
           export const getPublicationPreviewUrl=(...args)=>api.getPublicationPreviewUrl?.(...args) ?? Promise.reject(new Error('no preview'));
           export const getSettlementPreviewUrl=(...args)=>api.getSettlementPreviewUrl?.(...args) ?? Promise.reject(new Error('no preview'));
+          export const checkModelSettlementOnChain=(...args)=>api.checkModelSettlementOnChain?.(...args) ?? Promise.reject(Object.assign(new Error('rpc'), {status:502, code:'chain_rpc_failed'}));
           export const getFacemarketConfig=()=>api.getFacemarketConfig?.() ?? Promise.resolve({});
           export const reportUsage=(...args)=>api.reportUsage(...args);
           export const pauseMyModel=(...args)=>api.pauseMyModel(...args);

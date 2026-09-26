@@ -193,6 +193,9 @@ class PublicationAnchorReconciler:
         이 큐만으로는 상한이 없다는 뜻이므로, 그런 패턴은 lease_until 회수 로그(_run 의
         warning)로 드러나야 한다.
         """
+        # 체인에 올리는 imageHash = C2PA 가 묶는 "서명 전" 바이트의 해시. 워터마크(추적 층,
+        # 2026-09-26)가 박혔으면 그 바이트(wm_sha256)가 서명 전 원본이다. image_sha256 은 업로드
+        # 원본 해시로 남아 멱등 키 역할만 한다. 워터마크 이전 배포본은 wm_sha256 이 null 이라 그대로.
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""update fm_publication_anchor_jobs j
@@ -213,7 +216,8 @@ class PublicationAnchorReconciler:
                               for update skip locked
                               limit 1)
                  returning j.publication_id::text as publication_id, j.attempts,
-                           r.image_sha256, r.license_ref::text as license_ref"""
+                           coalesce(r.wm_sha256, r.image_sha256) as image_sha256,
+                           r.license_ref::text as license_ref"""
             )
             row = await cur.fetchone()
         await conn.commit()

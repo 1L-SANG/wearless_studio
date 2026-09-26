@@ -35,7 +35,8 @@ from .facemarket import (
     resolve_model_license,
     verify_license_local,
 )
-from .services import c2pa_signer
+from . import fm_fingerprint_store
+from .services import c2pa_signer, fm_publication_mark
 
 logger = logging.getLogger("facemarket.provenance")
 
@@ -289,6 +290,44 @@ async def _upsert_publication(conn, *, seller_id, project_id, lic, kind, sha, si
     return row
 
 
+async def _mark_publication(request, *, publication_id: str, data: bytes, kind: str) -> bytes:
+    """추적 층(2026-09-26) — 워터마크 + 지문. C2PA 서명 **전에** 부른다.
+
+    그래야 signed_sha256·앵커(coalesce(wm_sha256, image_sha256))·C2PA 하드바인딩이 전부 워터마크가
+    든 바이트를 덮는다. 순서: ① 코드 발급(커밋) ② to_thread 로 표식·지문(이벤트루프 보호)
+    ③ wm_status·wm_sha256·지문 커밋 — 이 셋 다 호출부의 앵커 큐 insert 보다 먼저 끝난다.
+
+    🔴 어떤 실패도 올리지 않는다. 코드 발급·삽입·기록 중 하나라도 실패하면 원본(또는 표식본)
+       바이트로 서명을 계속하고 wm_status='failed' 로 남긴다 — 셀러의 다운로드를 막지 않는다.
+    """
+    try:
+        async with get_conn(request) as conn:
+            code = await fm_fingerprint_store.allocate_wm_code(conn, publication_id)
+    except Exception:
+        logger.warning("wm_code_allocation_crashed publication=%s", publication_id, exc_info=True)
+        code = None
+    result = await asyncio.to_thread(fm_publication_mark.mark_publication, data, kind, code)
+    wm_sha256 = (
+        hashlib.sha256(result.data).hexdigest() if result.wm_status == "embedded" else None
+    )
+    try:
+        async with get_conn(request) as conn:
+            saved = await fm_fingerprint_store.save_publication_mark(
+                conn, publication_id, wm_status=result.wm_status, wm_sha256=wm_sha256,
+                fingerprints=result.fingerprints,
+            )
+    except Exception:
+        logger.warning("wm_mark_save_crashed publication=%s", publication_id, exc_info=True)
+        saved = False
+    # 로그에는 상태·수치만 — 이미지 바이트·코드는 남기지 않는다(코드는 원장에만 있다).
+    logger.info(
+        "publication_mark publication=%s kind=%s wm_status=%s embed_ms=%s fingerprints=%d "
+        "saved=%s error=%s", publication_id, kind, result.wm_status, result.embed_ms,
+        len(result.fingerprints), saved, result.error,
+    )
+    return result.data
+
+
 @router.post(
     "/sign",
     response_model=SignResult,
@@ -361,6 +400,9 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
         # zip 아카이브에는 C2PA 를 못 박는다. 1차 범위에서는 원장·앵커만 태우고 서명은 생략한다
         # (설계 §6.1). 원본을 그대로 보관하고 c2pa_status='skipped'.
         signed_key = f"publications/{user_id}/{publication_id}/signed.zip"
+        # 추적 층 — ZIP 속 PNG 마다 워터마크(C2PA 는 못 박아도 워터마크는 박힌다).
+        data = await _mark_publication(
+            request, publication_id=publication_id, data=data, kind=kind)
         await asyncio.to_thread(r2.put_bytes, signed_key, data, mime)
         c2pa_status = "skipped"
         async with get_conn(request) as conn:
@@ -369,7 +411,7 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
                     """update fm_publication_records
                           set r2_key = %s, signed_sha256 = %s, c2pa_status = 'skipped'
                         where id = %s""",
-                    (signed_key, sha, publication_id),
+                    (signed_key, hashlib.sha256(data).hexdigest(), publication_id),
                 )
                 await cur.execute(
                     """insert into fm_publication_anchor_jobs (publication_id)
@@ -378,6 +420,9 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
                 )
             await conn.commit()
     else:
+        # 추적 층 — 서명 전에 워터마크. 이 뒤의 서명·해시·앵커가 전부 워터마크본을 덮는다.
+        data = await _mark_publication(
+            request, publication_id=publication_id, data=data, kind=kind)
         manifest = c2pa_signer.build_manifest(
             model_id=lic["model_id"],
             license_id=lic["license_ref"],
@@ -489,7 +534,7 @@ async def verify_publication(request: Request, publication_id: str, response: Re
         async with conn.cursor() as cur:
             # 방어 ① — 화이트리스트 SELECT. r2_key·seller_id·source_asset_ids·signed_sha256 미조회.
             await cur.execute(
-                """select p.kind, p.image_sha256, p.created_at, p.revoked_at,
+                """select p.kind, p.image_sha256, p.wm_sha256, p.created_at, p.revoked_at,
                           p.chain_status, p.tx_hash, p.chain_id, p.recorded_block,
                           l.status as license_status, l.allowed_use, l.forbidden_use,
                           l.license_valid_until, m.display_name,
@@ -528,7 +573,8 @@ async def verify_publication(request: Request, publication_id: str, response: Re
         "valid": status == "active",
         "status": status,
         "publishedAt": row["created_at"],
-        "imageHashPrefix": (row["image_sha256"] or "")[:12],
+        # 체인에 올라간 해시와 같은 값을 보여준다 — 워터마크본이 있으면 그 해시(2026-09-26).
+        "imageHashPrefix": (row.get("wm_sha256") or row["image_sha256"] or "")[:12],
         "kind": row["kind"],
         "allowedUse": row["allowed_use"] or [],
         "forbiddenUse": [],

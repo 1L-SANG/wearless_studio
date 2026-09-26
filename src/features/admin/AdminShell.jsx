@@ -4,7 +4,7 @@
    항상 보이고, 화면이 늘어도 세로로 늘어난다). 모바일은 대상이 아니다 — 작은 화면에서는
    내비가 위로 접힌다. */
 import { NavLink, Outlet } from 'react-router-dom';
-import { Banknote, Camera, FileText, Flag, IdCard, Landmark, LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
+import { Banknote, Camera, FileText, Flag, IdCard, Landmark, LayoutDashboard, Link2, ScanSearch, ShieldCheck, Users } from 'lucide-react';
 import { cn } from '@/lib/adminCn.js';
 
 /* '모델' 과 '사용자' 는 다른 화면이다 — 전자는 FaceMarket 에 얼굴을 올린 모델(fm_models),
@@ -19,7 +19,11 @@ const NAV = [
   { to: '/applications', label: '지원서 검토', icon: FileText },
   { to: '/review', label: '등록 심사', icon: IdCard },
   { to: '/usage-reports', label: '사용 신고', icon: Flag },
+  // 출처 추적(2026-09-26) — 쇼핑몰에서 발견한 이미지 → 워터마크·지문으로 배포본·셀러 후보.
+  { to: '/trace', label: '출처 추적', icon: ScanSearch },
   { to: '/payout-statements', label: '지급 명세', icon: Banknote },
+  // 체인 검증(2026-09-26) — 정산 장부 ↔ OmniOne Chain 컨트랙트 실시간 대조.
+  { to: '/settlements-chain', label: '체인 검증', icon: Link2 },
   { to: '/bank-transfers', label: '계좌이체 확인', icon: Landmark },
   { to: '/models', label: '모델', icon: Camera },
   { to: '/users', label: '사용자', icon: Users },
