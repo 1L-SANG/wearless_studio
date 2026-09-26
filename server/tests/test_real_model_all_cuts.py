@@ -89,22 +89,27 @@ def _assert_real_face_guard_is_not_horizon_only(text):
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
              and isinstance(node.func, ast.Attribute) and node.func.attr == "real_identity_allowed_cut"]
     assert calls, "REAL 얼굴 적용은 공통 착용컷 판정을 사용해야 한다"
+    conditions = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "fm_face_injected" for target in node.targets)]
     for call in calls:
         node = call
         while node in parents:
             node = parents[node]
-            if not isinstance(node, ast.If):
+            if isinstance(node, ast.If):
+                conditions.append(node.test)
+            elif isinstance(node, ast.BoolOp):
+                conditions.append(node)
+    for condition in conditions:
+        for comparison in (item for item in ast.walk(condition) if isinstance(item, ast.Compare)):
+            if not isinstance(comparison.left, ast.Subscript):
                 continue
-            for comparison in (item for item in ast.walk(node.test) if isinstance(item, ast.Compare)):
-                if not isinstance(comparison.left, ast.Subscript):
-                    continue
-                left = comparison.left
-                horizon_only = (isinstance(left.value, ast.Name) and left.value.id == "normalized"
-                                and isinstance(left.slice, ast.Constant) and left.slice.value == "cutType"
-                                and len(comparison.ops) == 1 and isinstance(comparison.ops[0], ast.Eq)
-                                and isinstance(comparison.comparators[0], ast.Constant)
-                                and comparison.comparators[0].value == "horizon")
-                assert not horizon_only, "REAL 얼굴 적용을 호리존 조건 안에 가두면 안 된다"
+            left = comparison.left
+            horizon_only = (isinstance(left.value, ast.Name) and left.value.id == "normalized"
+                            and isinstance(left.slice, ast.Constant) and left.slice.value == "cutType"
+                            and len(comparison.ops) == 1 and isinstance(comparison.ops[0], ast.Eq)
+                            and isinstance(comparison.comparators[0], ast.Constant)
+                            and comparison.comparators[0].value == "horizon")
+            assert not horizon_only, "REAL 얼굴 적용을 호리존 조건 안에 가두면 안 된다"
 
 
 def test_editor_injects_the_real_face_in_every_worn_cut():
@@ -126,6 +131,16 @@ build_manifest(example_is_horizon=normalized["cutType"] == "horizon")
 if normalized["cutType"] == "horizon":
     if facemarket.real_identity_allowed_cut(normalized["cutType"]):
         inject_face()
+''')
+    with pytest.raises(AssertionError, match="호리존 조건"):
+        _assert_real_face_guard_is_not_horizon_only('''
+fm_face_injected = (fm_source == "REAL" and facemarket.real_identity_allowed_cut(normalized["cutType"])
+                    and normalized["cutType"] == "horizon" and n_model_images >= 2)
+''')
+    with pytest.raises(AssertionError, match="호리존 조건"):
+        _assert_real_face_guard_is_not_horizon_only('''
+allowed = facemarket.real_identity_allowed_cut(normalized["cutType"])
+fm_face_injected = allowed and normalized["cutType"] == "horizon"
 ''')
 
 
