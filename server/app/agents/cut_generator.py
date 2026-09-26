@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import Settings
-from .content_roles import canonicalize_storyboard_block
+from .content_roles import _STUDIO_POSE_ROTATION, canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     compile_confirmed_gpt_prompt,
@@ -103,6 +103,10 @@ def _normalize_detail_color_transfer(value) -> dict | None:
         "targetHex": target_hex,
         "referenceName": reference_name or None,
     }
+
+
+#: 핏 섹션 자동 포즈(content_roles._STUDIO_POSE_ROTATION)를 아래 pose 정리와 같은 방식으로 맞춘 값.
+_AUTO_STUDIO_POSES = frozenset(_sanitize(pose)[:40] for pose in _STUDIO_POSE_ROTATION)
 
 
 def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
@@ -201,6 +205,10 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     # Horizon sets reference the complete photograph; styling keeps plate + pose.
     if spec["spaceGroupId"] and spec["exampleId"]:
         spec["refScope"] = "all" if cut == "horizon" else "pose"
+        # 옛 서버가 콘티 저장 때 세트 컷에 돌려 넣은 핏 섹션 자동 포즈는 셀러 선택이 아니다(화면에서
+        # 고를 수 없는 문장). 남기면 USER POSE OVERRIDE 로 완성 예시 포즈를 덮는다(ADR-0013).
+        if cut == "horizon" and spec["pose"] in _AUTO_STUDIO_POSES:
+            spec["pose"] = "auto"
     if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
         spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
     if horizon_background.active({**raw, "cutType": cut}):
