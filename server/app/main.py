@@ -681,6 +681,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_payout import router as payout_router
 
         app.include_router(payout_router)
+        # 정산 체인 대조(2026-09-26) — DB 미러와 getSettlement eth_call 을 나란히. 셀러·모델·관리자
+        # 각자 자기 범위만. 체인 미설정이면 라우트는 있되 503 으로 "조회할 수 없음"을 말한다.
+        from .facemarket_settlement_chain import router as settlement_chain_router
+
+        app.include_router(settlement_chain_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
         # 모델 지원서·관리자 검토(리뉴얼). 지원서 제출·검토는 생체등록 스택(face QC·라이브니스)에

@@ -3457,7 +3457,7 @@ async def get_job_settlement(
                 await cur.execute(
                     """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
                               st.model_amount, st.platform_amount, st.ops_amount,
-                              st.chain_status, l.vc_id
+                              st.chain_status, st.recorded_block, st.created_at, l.vc_id
                        from fm_settlements st
                        join jobs j on j.id = st.job_id
                        left join fm_licenses l on l.id = st.license_id
@@ -3478,6 +3478,10 @@ async def get_job_settlement(
         "opsAmount": row["ops_amount"],
         "vcId": row["vc_id"],
         "chainStatus": row["chain_status"],
+        # 영수증의 블록·기록 시각(2026-09-26). [체인에서 확인]은 paymentId 로
+        # /settlements/{paymentId}/chain-check 를 불러 이 값들을 체인과 나란히 대조한다.
+        "recordedBlock": row.get("recorded_block"),
+        "createdAt": row.get("created_at"),
     }
 
 

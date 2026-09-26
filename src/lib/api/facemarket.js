@@ -485,8 +485,30 @@ export function adminSimulatePayoutConfirmation(confirmationId, outcome) {
   });
 }
 
-export function adminAdvancePayoutConfirmation(confirmationId, action) {
-  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, { method: 'POST' });
+// 지급 완료(action='paid')는 2026-09-26 부터 실제 이체 기록이 있어야 한다 —
+// transfer = { transferReference, amount, transferredOn(YYYY-MM-DD) }. 서버가 금액·날짜를 확인서와 대조한다.
+export function adminAdvancePayoutConfirmation(confirmationId, action, transfer) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, {
+    method: 'POST', ...(transfer ? { body: transfer } : {}),
+  });
+}
+
+// POST .../payout-statements/{YYYY-MM}/run — 월말 정산 실행. 마감된 달의 체인 확정 정산을 모델별
+// 지급 확인서(prepared)로 모은다. **돈은 움직이지 않는다**(moneyMoved:false) — 이체는 담당자가
+// 은행 앱에서 하고 참조번호를 기록한다. 다시 눌러도 확인서가 늘지 않는다.
+export function adminRunMonthlyPayout(periodMonth) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(periodMonth)}/run`, { method: 'POST' });
+}
+
+// ── 정산 체인 대조(2026-09-26) ── 서버가 getSettlement 를 그 자리에서 eth_call 로 읽어 DB 값과
+// 칸마다 비교한다 → { verdict:'match'|'mismatch'|'not_found', fields:[{key,label,db,chain,match}],
+// checkedAt, chainId, contractAddress, txHash }. 체인을 못 읽으면 502/503 으로 throw(성공 흉내 없음).
+export function adminListSettlements({ limit = 100 } = {}) {
+  return http(`/v1/facemarket/admin/settlements?limit=${encodeURIComponent(limit)}`);
+}
+
+export function adminCheckSettlementOnChain(settlementId) {
+  return http(`/v1/facemarket/admin/settlements/${encodeURIComponent(settlementId)}/chain-check`, { suppressErrorLog: true });
 }
 
 export function adminRevealPayoutConfirmation(confirmationId) {
@@ -657,10 +679,21 @@ export function revokeLicense(id) {
 }
 
 // GET /v1/facemarket/jobs/{jobId}/settlement — 생성 잡이 속한 상품의 온체인 정산 영수증(payment_id=product:{projectId}:{날짜}, 레거시 job:{jobId}).
-// → { paymentId, txHash, chainId, totalAmount, modelAmount, platformAmount, opsAmount, vcId, chainStatus }
+// → { paymentId, txHash, chainId, totalAmount, modelAmount, platformAmount, opsAmount, vcId, chainStatus,
+//     recordedBlock, createdAt }  (recordedBlock·createdAt 은 2026-09-26 영수증 체인 칸용)
 // (70/20/10 = 모델/플랫폼/운영). 정산 미기록(비 FaceMarket 잡·체인 지연 등)이면 404 → http() 가 throw.
 export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
+}
+
+// GET /v1/facemarket/settlements/{paymentId}/chain-check — 영수증 [체인에서 확인]. 잡 소유 셀러만.
+export function checkSettlementOnChain(paymentId) {
+  return http(`/v1/facemarket/settlements/${encodeURIComponent(paymentId)}/chain-check`, { suppressErrorLog: true });
+}
+
+// GET /v1/facemarket/model/settlements/{id}/chain-check — 정산 내역 [체인 확인]. 그 얼굴의 모델 본인만.
+export function checkModelSettlementOnChain(settlementId) {
+  return http(`/v1/facemarket/model/settlements/${encodeURIComponent(settlementId)}/chain-check`, { suppressErrorLog: true });
 }
 
 // GET /v1/facemarket/settlements → 로그인 모델 본인의 정산 기록(최신순, 최대 200건).

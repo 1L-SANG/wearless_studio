@@ -1,5 +1,6 @@
 export function payoutStatementStatusLabel(status) {
-  return { scheduled: '예정', paid: '지급 완료', held: '보류', processing: '지급 처리 중', prepared: '송금 전 확인', transfer_started: '송금 진행 중', cancelled: '송금 전 취소' }[status] || '예정';
+  // simulated(2026-09-26): 스텁 제공자가 처리한 건. 돈이 가지 않았으므로 "지급 완료"라고 말하지 않는다.
+  return { scheduled: '예정', paid: '지급 완료', held: '보류', processing: '지급 처리 중', prepared: '송금 전 확인', transfer_started: '송금 진행 중', cancelled: '송금 전 취소', simulated: '시뮬레이션 · 실제 이체 없음' }[status] || '예정';
 }
 
 export function actualPayoutDate(value) {
@@ -20,10 +21,18 @@ export function payoutDisplayRows(statement) {
       status: 'held', displayDate: '-', needsReconciliation: true });
     return rows;
   }
-  const rows = confirmations.filter(item => item.status !== 'cancelled').map(item => ({
-    ...item, key: item.id, periodMonth: statement.periodMonth,
-    displayDate: item.status === 'paid' ? actualPayoutDate(item.paidAt) : statement.scheduledFor || '-',
-  }));
+  const rows = confirmations.filter(item => item.status !== 'cancelled').map(item => {
+    // 스텁(simulated)이 paid 로 만든 건은 이체일도 참조번호도 실제가 아니다 — 지급 완료로 보이지 않게.
+    const simulatedPaid = item.simulated && item.status === 'paid';
+    // 실제 이체는 관리자가 은행 앱에서 옮겨 적은 이체일(transferredOn)이 지급일이다(2026-09-26).
+    const paidDate = item.transferredOn || actualPayoutDate(item.paidAt);
+    return {
+      ...item, key: item.id, periodMonth: statement.periodMonth,
+      status: simulatedPaid ? 'simulated' : item.status,
+      displayDate: simulatedPaid ? '-' : item.status === 'paid' ? paidDate : statement.scheduledFor || '-',
+      reference: !item.simulated && item.status === 'paid' ? item.transferReferenceMasked || null : null,
+    };
+  });
   if (statement.unpaidCount > 0) rows.push({ ...statement, key: `${statement.periodMonth}:unpaid`,
     amount: statement.unpaidAmount, count: statement.unpaidCount, status: statement.status === 'held' ? 'held' : 'scheduled',
     displayDate: statement.scheduledFor || '-', additional: true });

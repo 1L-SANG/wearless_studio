@@ -118,7 +118,10 @@ def test_finish_after_account_change_uses_original_confirmation(keypair, make_to
     paid = {**item, "status": "paid", "paid_at": NOW}
     conn = Conn([item, paid])
     patch_db(monkeypatch, payout, conn)
-    response = client_for(keypair).post(f"{ACTIONS}/paid", headers=headers(make_token))
+    # 2026-09-26 부터 지급 완료는 실제 이체 기록(참조번호·금액·이체일)과 함께만 기록된다.
+    transfer = {"transferReference": "신한 거래 20260912-0001", "amount": 7000,
+                "transferredOn": datetime.now(payout.KST).date().isoformat()}
+    response = client_for(keypair).post(f"{ACTIONS}/paid", json=transfer, headers=headers(make_token))
     assert response.status_code == 200
     assert response.json()["amount"] == 7000
     assert not any("fm_payout_accounts" in sql or "fm_settlements" in sql for sql, _ in conn.executed)

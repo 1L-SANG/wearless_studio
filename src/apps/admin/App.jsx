@@ -19,6 +19,7 @@ import { AdminModels } from '@/features/admin/AdminModels.jsx';
 import { AdminStaff } from '@/features/admin/AdminStaff.jsx';
 import { AdminUsageReports } from '@/features/admin/AdminUsageReports.jsx';
 import { AdminPayoutStatements } from '@/features/admin/AdminPayoutStatements.jsx';
+import { AdminSettlementChain } from '@/features/admin/AdminSettlementChain.jsx';
 import { AdminTrace } from '@/features/admin/AdminTrace.jsx';
 import { AdminUsers } from '@/features/admin/AdminUsers.jsx';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
@@ -47,6 +48,8 @@ export default function AppAdmin() {
             <Route path="review" element={<AdminEnrollmentReview />} />
             <Route path="usage-reports" element={<AdminUsageReports />} />
             <Route path="payout-statements" element={<AdminPayoutStatements />} />
+            {/* 체인 검증(2026-09-26) — 정산 장부와 컨트랙트 getSettlement 를 나란히 대조. */}
+            <Route path="settlements-chain" element={<AdminSettlementChain />} />
             <Route path="trace" element={<AdminTrace />} />
             <Route path="bank-transfers" element={<AdminBankTransfers />} />
             <Route path="models" element={<AdminModels />} />

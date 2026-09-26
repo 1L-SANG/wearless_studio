@@ -191,6 +191,15 @@
 .statementTableWrap h3 { margin-bottom: var(--sp-8); font-size: 13px; font-weight: 550; }
 .statementTable th:first-child { width: auto; }
 .statementTable th:last-child { width: auto; }
+/* 정산 한 줄의 체인 칸 · 지급 참조(2026-09-26) */
+.chainLine { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 4px; font-size: 11px; color: var(--color-secondary); }
+.chainHash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; }
+.chainLink { border: 0; background: none; padding: 0; font-size: 11px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.chainLink:disabled { cursor: progress; color: var(--color-secondary); }
+.chainOk { flex-basis: 100%; color: #067647; }
+.chainBad { flex-basis: 100%; color: #b42318; }
+.chainError { flex-basis: 100%; color: var(--color-secondary); }
+.statementRef { display: block; margin-top: 2px; font-size: 11px; color: var(--color-secondary); }
 .licenseLayout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 34px; }
 .certificateLarge { background: var(--color-key); border: 1px solid var(--color-key); padding: 25px; border-radius: 9px; color: var(--color-on-key); position: relative; }
 .certificateLarge .certificateName { font-size: 25px; margin-top: 37px; }

@@ -13,6 +13,7 @@ import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
+import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
@@ -3290,6 +3291,8 @@ export function Editor() {
               <div className="fm-split-row"><span>플랫폼</span><span>{wonFmt(genReceipt.platformAmount)}</span></div>
               <div className="fm-split-row"><span>운영</span><span>{wonFmt(genReceipt.opsAmount)}</span></div>
             </div>
+            {/* 트랜잭션·체인 ID·블록 + [체인에서 확인](서버가 eth_call 로 방금 읽어 장부와 대조, 2026-09-26) */}
+            <SettlementReceiptChain receipt={genReceipt} />
             <Button variant="primary" block onClick={() => setGenReceipt(null)}>확인하고 편집 계속하기</Button>
           </div>
         </div>
