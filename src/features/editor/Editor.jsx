@@ -446,7 +446,11 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
           {el.genPending === 'failed'
             ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
-            : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
+            : el.genPending === 'done'
+              /* 다 만든 컷인데 보여 줄 주소가 아직 없다(REAL 얼굴 컷 — 최종 확인 뒤 공개).
+                 '대기'로 되돌려 보이지 않게 완성 사실을 말한다(2026-09-26). */
+              ? <span className="ed-genwait-done">완성됐어요<br /><small>상세페이지가 마무리되면 여기에 보여요</small></span>
+              : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
         </div>
       );
     }
@@ -3177,10 +3181,13 @@ export function Editor() {
           <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
             className={genFailed ? '' : 'spin'} />
           <span className="ed-genbar-msg">
+            {/* 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말하고
+                진행(몇 장 중 몇 장)을 그대로 보여 준다(2026-09-26). 실패는 서버가 error 라고
+                답했을 때만 뜬다(store.startDetailPageGeneration). */}
             {genFailed ? genFailureMessage
               : dpJob.cutsTotal
-                ? <>사진을 만들어 채우는 중 · <b>{dpJob.cutsDone}/{dpJob.cutsTotal}</b>컷</>
-                : '상세페이지를 만들고 있어요'}
+                ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료</>
+                : dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}
           </span>
           {!genFailed && (
             /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
@@ -3204,6 +3211,12 @@ export function Editor() {
                     완성본 다시 불러오기
                   </Button>
                 ) : (
+                  /* 다시 시도 = POST detail-page:generate. 중복 과금이 없는 근거는 서버 멱등이다
+                     (routes.generate_detail_page, 2026-09-26 확인): 이미 완성된 프로젝트면 기존
+                     editor_blocks 를 돌려주고(새 잡·차감 없음), 같은 프로젝트 잡이 아직 돌면
+                     repo.create_job 이 그 활성 잡에 합류시킨다(created=False → 예약 없음).
+                     새 잡은 서버가 error 로 끝낸 경우에만 생긴다 — 그때도 끝낸 컷은 체크포인트로
+                     이어 쓴다(#394). 캔버스에 이미 채운 컷은 reset 뒤에도 그대로다(fillGenBlocks). */
                   <Button size="sm" variant="primary" onClick={() => {
                     genMergedRef.current = false;
                     useAppStore.getState().resetDetailPageJob();
@@ -3217,6 +3230,11 @@ export function Editor() {
             ) : (
               <>
                 <span className="ed-genbar-hint">지금도 문구·배치를 고칠 수 있어요 · 창을 닫아도 계속 만들어져요</span>
+                {/* 오래 걸릴 때는 기다리지 않고 떠날 길을 준다 — 서버 잡은 계속 돌고, 편집분은
+                    flushExit 가 임시 작업본으로 남긴다(2026-09-26). */}
+                {dpJob.slow && (
+                  <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
+                )}
                 {genNotif === 'default' && (
                   <button type="button" className="ed-genbar-notify"
                     onClick={async () => setGenNotif(await Notification.requestPermission())}>완료되면 알림 받기</button>
