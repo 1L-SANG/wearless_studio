@@ -19,17 +19,16 @@
 | `ai_agent_modules.md` | AI 에이전트 모듈 정의 — tier→모델 라우팅 단일 소스(잠정 배정) |
 | `ai_pipeline_spec.md` | AI 파이프라인 명세 — PL-1~6, job 모델, 크레딧 트랜잭션 |
 | `backend_integration_plan.md` | 백엔드 연동 계획 + **실행 로드맵(§10)** ← 진행 현황·남은 단계의 정본 |
-| `TODO.md` | 구현 현황·할 일 — 코드↔계약 갭(✅/🔶/🆕)·정책 오픈이슈. 설계 문서 대신 **여기만 주기 갱신** |
 | `/CONTEXT.md` · `/docs/adr/` | 용어집 · 아키텍처 결정 기록(ADR 0001~0009) |
-| ~~`/handoff/`~~ | 과거 프로토타입 인수인계 산출물 — 2026-07-30 삭제. 계약 정본은 위 문서들과 `src/lib/types.js`, 화면은 `documents/mockups/`·실제 앱 참조 |
+| ~~`/handoff/`~~ | 과거 프로토타입 인수인계 산출물 — 2026-07-30 삭제. 계약 정본은 위 문서들과 `src/lib/types.js`, 화면은 실제 앱 참조 |
 
 ## 2. 읽는 순서 (역할별)
 
 - **PM/기획** → `PRD.md` → `backend_integration_plan.md` §11 (미확정 정책: 크레딧 단가·환불·보존 기한)
 - **프론트엔드** → `frontend_state_model.md` → `common_data_contract.md` → `PRD.md §10`(에디터)
 - **백엔드** → `common_data_contract.md`(계약) → `backend_integration_plan.md`(스키마·HTTP·job) → `ai_pipeline_spec.md`
-- **디자이너** → `src/styles/tokens.css` + `documents/mockups/` + `PRD.md §14`
-- **콘티·생성예시** → `PRD.md` §8 → `storyboard_sections_design.md` §8 → ADR-0004~0009 → `TODO.md`의 실제 생성예시 카탈로그 배선 체크포인트
+- **디자이너** → `src/styles/tokens.css` + `PRD.md §14`
+- **콘티·생성예시** → `PRD.md` §8 → `storyboard_sections_design.md` §8 → ADR-0004~0011
 
 ## 3. 진행 현황 및 남은 단계 (정본은 `backend_integration_plan.md` §10)
 
