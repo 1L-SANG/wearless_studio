@@ -3383,6 +3383,9 @@
   align-items: center; justify-content: center; gap: 6px; text-align: center;
   font-size: 26px; font-weight: 600; color: #3b7d5e; line-height: 1.5; }
 .ed-genwait-done small { font-weight: 400; font-size: 20px; opacity: .8; }
+/* 완성 컷의 생성 중 미리보기(REAL 얼굴 컷, 2026-09-26) — 서버가 권한을 다시 확인해 준 그림.
+   자리는 여전히 잠겨 있고(대기 타일), 호버하면 마무리 뒤 편집할 수 있다고 알려 준다. */
+.ed-genwait-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .ed-genoverlay { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center;
   justify-content: center; background: rgba(14,13,20,.4); backdrop-filter: blur(3px); padding: 24px; }

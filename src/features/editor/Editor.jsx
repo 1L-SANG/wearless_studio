@@ -48,6 +48,7 @@ import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShow
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
+import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -447,9 +448,10 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           {el.genPending === 'failed'
             ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
             : el.genPending === 'done'
-              /* 다 만든 컷인데 보여 줄 주소가 아직 없다(REAL 얼굴 컷 — 최종 확인 뒤 공개).
-                 '대기'로 되돌려 보이지 않게 완성 사실을 말한다(2026-09-26). */
-              ? <span className="ed-genwait-done">완성됐어요<br /><small>상세페이지가 마무리되면 여기에 보여요</small></span>
+              /* 다 만든 컷인데 이벤트에 주소가 없다(REAL 얼굴 컷 — 최종 확인 전 비공개, 492cbc64).
+                 서버 미리보기 라우트가 요청마다 소유·라이선스를 다시 확인해 주면 그 그림을, 거절되면
+                 '완성됐어요'를 보인다(2026-09-26, 오너 결정 b). 블록 데이터에는 넣지 않는다. */
+              ? <GenDonePreview sourceBlockId={el.sourceBlockId} />
               : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
         </div>
       );

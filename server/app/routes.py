@@ -19,7 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, app_origin, facemarket, legal_versions, personalization, plan_pricing, repo
+from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_versions, personalization, plan_pricing, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -3590,3 +3590,54 @@ async def job_events(
             await asyncio.sleep(1.0)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.get(
+    "/projects/{project_id}/jobs/{job_id}/cuts/{block_id}/preview",
+    responses={**COMMON_RESPONSES,
+               200: {"description": "생성 중 컷 이미지 바이트(Cache-Control: private, no-store)"},
+               503: {"description": "스토리지 일시 장애 — 재시도 대상 (preview_unavailable)"}},
+    tags=["Jobs & SSE"],
+    summary="상세페이지 생성 중 컷 미리보기 (요청마다 소유·라이선스 재확인)",
+)
+async def get_detail_cut_preview(
+    request: Request, project_id: str, job_id: str, block_id: str,
+    user_id: str = Depends(require_user),
+):
+    """생성 중인 상세페이지 잡이 이 블록 자리에 만든 컷을 바이트로 보냅니다(2026-09-26, 오너 결정 b).
+
+    REAL(실존 모델) 얼굴 컷은 최종 권한 확인 전까지 이벤트에 주소를 싣지 않습니다(492cbc64).
+    이 라우트는 **요청마다** 소유·잡 상태·출력 표식을 확인하고, REAL 잡이면 라이선스를 지금 다시
+    확인한 뒤에만 바이트를 보냅니다(detail_cut_preview.authorize). 서명 주소를 만들지 않으므로
+    응답·로그 어디에도 저장소 주소가 남지 않습니다.
+
+    - **Bearer Token**: 필수 — 프론트는 fetch → blob → objectURL 로 그립니다.
+    - `404`: 잡이 없거나 남의 것·다른 프로젝트·상세페이지 잡이 아님·이미 끝남, 또는 그 자리 출력이 없음
+    - `403`: REAL 잡인데 라이선스가 지금 유효하지 않음(코드 = license_revoked·license_expired 등)
+    - 호출 빈도: 주소 없는 완료 컷마다 1회(잡당 컷 수만큼) — 평시 0회.
+    """
+    async with get_conn(request) as conn:
+        key = await detail_cut_preview.authorize(
+            request.app, conn, user_id=user_id, project_id=project_id, job_id=job_id,
+            block_id=block_id)
+    try:
+        data = await asyncio.to_thread(_r2(request).get_bytes, key)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 키·주소는 로그에 남기지 않는다(예외 종류만)
+        if detail_cut_preview.is_missing_object(exc):
+            raise HTTPException(status_code=404, detail={
+                "code": "not_found", "message": "미리보기를 찾을 수 없어요."}) from None
+        logger.warning("detail cut preview read failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            "code": "preview_unavailable",
+            "message": "미리보기를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from None
+    return Response(
+        content=data,
+        media_type=detail_cut_preview.mime_for_key(key),
+        headers={
+            "Cache-Control": PRIVATE_NO_STORE,
+            "Vary": "Origin",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
