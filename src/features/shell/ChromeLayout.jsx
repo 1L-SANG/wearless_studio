@@ -173,8 +173,10 @@ function DetailPageJobRibbon() {
   if (!visible) return null;
 
   const isError = job.status === 'error';
-  const label = isError ? '상세페이지 생성에 실패했어요' : '상세페이지를 만들고 있어요';
-  /* cutsTotal 은 첫 cut 진행 이벤트에서야 채워진다(useAppStore.applyDetailJobEvents). 그 전엔
+  // 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말한다(2026-09-26).
+  const label = isError ? '상세페이지 생성에 실패했어요'
+    : job.slow ? '오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요';
+  /* cutsTotal 은 첫 cut 진행 이벤트에서야 채워진다(lib/detailPageJobEvents.applyDetailJobEvents). 그 전엔
      추정값밖에 없는데, 그걸 퍼센트로 내보내면 aria-live 로 보조기기까지 추정 숫자를 사실처럼
      읽어 준다(Codex Minor 2). 실제 컷 수가 생기기 전에는 문구만 쓴다. */
   const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.')

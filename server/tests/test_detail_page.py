@@ -2761,6 +2761,60 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
     assert ("progress", "assemble") in kinds
 
 
+def test_every_non_real_stored_cut_done_carries_preview_url(monkeypatch):
+    """대기 화면 점진 표시(2026-09-26) — 저장된 비-REAL 컷은 cut_done 마다 예외 없이
+    previewUrl 을 싣는다(원본·복제 모두). 셀러 원본 패스스루의 복제 자리는 새 출력이 없으니
+    원본과 같은 cut_passthrough(assetId)로 알린다 — 예전엔 주소 없는 cut_done 이라 그 자리만
+    끝까지 빈 채였다. REAL 얼굴 컷의 주소 비공개는 test_detail_page_license_face 가 지킨다."""
+    events = []
+
+    async def fake_emit(pool, job_id, et, payload):
+        events.append((et, payload))
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
+        return b"IMGDATA", "image/png"
+
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    app = _app(_settings())
+    images = [dpj.InlineImage("image/png", b"front")]
+    worn = {"source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+            "cutType": "horizon", "shot": "full", "direction": "front",
+            "pose": "auto", "refScope": "all"}
+    detail = {"source": "ai", "cutType": "product", "shot": "detail",
+              "direction": "front", "colorId": "base"}
+    original = {"id": "asset-detail-1", "width": 3000, "height": 4000, "slot": "Detail"}
+
+    def item(spec, passthrough=None):
+        return (spec, images, "manifest", False, images, None, False, passthrough)
+
+    prepared = [
+        item({**worn, "id": "worn"}),
+        item({**worn, "id": "worn-copy"}),
+        item({**detail, "id": "detail"}, original),
+        item({**detail, "id": "detail-copy"}, original),
+    ]
+    assert dpj._duplicate_source_indexes(
+        [p[0] for p in prepared], "top") == [None, 0, None, 2], "복제 판정 전제"
+
+    (cut_results, cut_assets, *_rest) = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=2), prepared, {"name": "셔츠", "clothingType": "top"}, {}))
+
+    assert [c["blockId"] for c in cut_results] == ["worn", "worn-copy", "detail", "detail-copy"]
+    assert len(cut_assets) == 1, "복제·패스스루는 새 asset(과금 단위)을 만들지 않는다"
+    dones = [p for et, p in events if et == "step" and p.get("status") == "cut_done"]
+    assert [d["blockId"] for d in dones] == ["worn", "worn-copy"]
+    for d in dones:
+        assert d["previewUrl"].startswith("https://r2.test/"), d["blockId"]
+    passthroughs = [p for et, p in events if et == "step" and p.get("status") == "cut_passthrough"]
+    assert passthroughs == [
+        {"blockId": "detail", "status": "cut_passthrough", "assetId": "asset-detail-1"},
+        {"blockId": "detail-copy", "status": "cut_passthrough", "assetId": "asset-detail-1"},
+    ]
+    # 이벤트는 작게 — 원본 키·정리 표식은 싣지 않는다.
+    assert "cleanup" not in repr(events) and "r2_key" not in repr(events)
+
+
 def test_assembler_wires_source_block_id_and_copy_role():
     """editor_wait_dev_spec §2-3 — 대기 화면 컷 채움·셀러 카피 오버라이드의 매칭 키."""
     storyboard = [{"id": "sb1", "source": "ai", "sectionRole": "styling",

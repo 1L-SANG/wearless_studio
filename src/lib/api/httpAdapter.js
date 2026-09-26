@@ -17,6 +17,7 @@ import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 import { jobFailure } from './jobFailure.js';
+import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
@@ -578,14 +579,24 @@ export const httpAdapter = {
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님) — 새 잡 없음
-    const result = await pollJob(res.jobId, {
-      onProgress,
-      // 15분. 정상 생성 실측이 242~285초인데 상한이 300초였다 — 여유가 15초뿐이라
-      // 조금만 느려도 화면이 먼저 포기했다(2026-08-05 실측). 서버 lease 복구가 900초라
-      // 그 사이 죽었다 되살아난 잡까지 화면이 지켜볼 수 있게 같은 값으로 맞춘다.
-      timeoutMs: 900000,
-      timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
+    // 상한 없음(2026-09-26) — 예전 15분 폴링 상한은 서버가 7초 뒤 끝낸 잡을 화면이 먼저
+    // 포기하게 만들었다. store 경로와 같은 규칙(lib/detailPageJobPoll.js): 서버 잡이 살아
+    // 있는 동안 계속 보고, 15분 뒤엔 주기만 늦춘다. 실패는 서버가 error 라고 답할 때만.
+    let last = -1;
+    const job = await pollDetailPageJob({
+      jobId: res.jobId,
+      getJob: (id) => http(`/v1/jobs/${id}`),
+      startedAt: Date.now(),
+      onJob: (j) => {
+        if (typeof j?.progress === 'number' && j.progress !== last) {
+          last = j.progress;
+          onProgress && onProgress(j.progress);
+        }
+      },
     });
+    if (job.status !== 'done') throw jobFailure(job);
+    onProgress && onProgress(100);
+    const result = job.result || {};
     // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement)을 조회한다. 정산은 상품(project) 단위 7일 창으로 묶인다.
     return { data: result.data, credits: result.credits, jobId: res.jobId };
   },

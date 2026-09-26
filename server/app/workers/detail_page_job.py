@@ -299,6 +299,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                          "result": face_pass_outcome["face_pass"]})
         step = {"blockId": b.get("id"), "status": "cut_done",
                 "width": w, "height": h}
+        # 비-REAL 컷은 저장된 컷마다 예외 없이 previewUrl 을 싣는다 — 대기 화면이 그 자리를 바로
+        # 채운다. REAL 컷은 위 규칙대로 주소 없이 완료만 알리고, 에디터는 '완성됐어요' 타일을
+        # 보이다가 완료 병합의 안정 주소로 채운다(2026-09-26).
         if not real_identity_attached:
             step["previewUrl"] = r2.preview_url(key)
         await _emit(app.state.pool, job_id, "step", step)
@@ -928,15 +931,25 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         {"blockId": block.get("id"), "status": "cut_failed"})
             outcomes.append(None)
             continue
-        step = {"blockId": block.get("id"), "status": "cut_done",
-                "width": base[0].get("width"), "height": base[0].get("height")}
-        base_is_real_derived = bool(
-            base[1] is not None
-            and (base[1].get("metadata") or {}).get("facemarket_real_derived") is True
-        )
-        if base[1] is not None and not base_is_real_derived:
-            step["previewUrl"] = r2.preview_url(base[1]["key"])
-        await _emit(app.state.pool, job_id, "step", step)
+        base_passthrough = prepared[src][7] if len(prepared[src]) > 7 else None
+        if base[1] is None and base_passthrough is not None:
+            # 원본이 셀러 사진 패스스루면 복제 자리도 원본과 같은 이벤트를 쏜다(2026-09-26).
+            # 예전엔 주소 없는 cut_done 이라 대기 화면에서 이 자리만 끝까지 빈 채였다 —
+            # 새 출력이 없으니 previewUrl 대신 이미 존재하는 셀러 자산 id 를 싣는다.
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": block.get("id"), "status": "cut_passthrough",
+                         "assetId": base_passthrough["id"]})
+        else:
+            step = {"blockId": block.get("id"), "status": "cut_done",
+                    "width": base[0].get("width"), "height": base[0].get("height")}
+            base_is_real_derived = bool(
+                base[1] is not None
+                and (base[1].get("metadata") or {}).get("facemarket_real_derived") is True
+            )
+            # REAL 얼굴 컷은 여기서도 최종 권한 펜스 전까지 출력 위치를 싣지 않는다(_store_cut 과 같은 규칙).
+            if base[1] is not None and not base_is_real_derived:
+                step["previewUrl"] = r2.preview_url(base[1]["key"])
+            await _emit(app.state.pool, job_id, "step", step)
         outcomes.append((
             # 같은 이미지 참조를 복제 블록 자리에 그대로 — 새 asset 없음(과금 없음),
             # 얼굴 컷 수·QC 는 원본에서 1회만 센다.
