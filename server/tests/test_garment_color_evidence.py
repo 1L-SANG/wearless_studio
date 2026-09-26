@@ -308,6 +308,31 @@ def test_valid_srgb_profile_and_noop_return_preserve_measurement():
     assert row["status"] == "ready" and rgb(row["observedHex"]) == (45,95,155)
 
 
+@pytest.mark.parametrize("mode,expected", [
+    ("L", (120, 120, 120)),
+    ("P", (45, 95, 155)),
+])
+def test_profiled_grayscale_and_palette_pngs_keep_their_visible_color(mode, expected):
+    image = Image.new(mode, (320, 320), 120 if mode == "L" else 1)
+    if mode == "P":
+        palette = [0] * (256 * 3)
+        palette[3:6] = list(expected)
+        image.putpalette(palette)
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    out = BytesIO()
+    image.save(out, format="PNG", icc_profile=profile)
+    original = out.getvalue()
+    normalized, mime = gce.normalize_for_vision(original, "image/png")
+    assert normalized != original and mime == "image/png"
+    with Image.open(BytesIO(normalized)) as visible:
+        assert "icc_profile" not in visible.info
+        assert max(abs(a - b) for a, b in zip(visible.convert("RGB").getpixel((100, 100)), expected)) <= 2
+    value = contract(sources=[source(original)])
+    assert first(value)["status"] == "ready"
+    assert max(abs(a - b) for a, b in zip(rgb(first(value)["observedHex"]), expected)) <= 2
+    assert gce.source_binding_matches(value, [source(original)])
+
+
 def test_profile_conversion_matches_observer_pixels_and_binds_original_bytes():
     srgb = ImageCms.createProfile("sRGB")
     lab = ImageCms.createProfile("LAB")

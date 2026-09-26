@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { effectiveHorizonBackgroundMode, horizonBackgroundAvailability as resolveAvailability,
   reconcileHorizonGroupBackground } from '../../src/lib/horizonBackgroundAvailability.js';
 import { STORYBOARD_SPACE_SETS } from '../../src/lib/storyboardSpaceSetCatalog.js';
+import { replaceSpaceSetRun } from '../../src/lib/storyboardSpaceSets.js';
 import policy from '../../server/app/data/horizon_background_policy.json' with { type: 'json' };
+import serverCatalog from '../../server/app/data/space_set_assets.json' with { type: 'json' };
+import frontendCatalog from '../../src/data/storyboardSpaceSets.json' with { type: 'json' };
+import replacements from '../../data/storyboardSpaceSetReplacements.json' with { type: 'json' };
 const horizonSetIds = STORYBOARD_SPACE_SETS.filter(set => set.setType.startsWith('horizon')).map(set => set.id);
 const stylingSetId = STORYBOARD_SPACE_SETS.find(set => set.setType === 'styling').id;
 const horizonSetId = horizonSetIds[0];
@@ -37,10 +41,36 @@ test('measured colors still require a current ready background calculation', () 
   assert.equal(horizonBackgroundAvailability([member('base')], product, { ...evidence, colors: [{ ...evidence.colors[0], backgroundPolicyVersion: policy.version - 1 }] }).available, false);
 });
 test('all published horizon sets enable garment tone, while styling sets do not', () => {
-  assert.ok(horizonSetIds.length >= 19);
+  const serverIds = serverCatalog.sets.filter(set => set.setType.startsWith('horizon')).map(set => set.setId);
+  const frontendIds = frontendCatalog.sets.filter(set => set.setType.startsWith('horizon')).map(set => set.setId);
+  assert.deepEqual([...frontendIds].sort(), [...serverIds].sort());
+  assert.deepEqual([...horizonSetIds].sort(), serverIds.filter(id => !serverIds.includes(replacements[id])).sort());
+  assert.equal(Object.hasOwn(policy, 'allowedSetIds'), false, 'a second allowlist would drift from the published catalog');
   assert.equal(resolveAvailability([member('base')], product, evidence).available, false);
   assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, stylingSetId).available, false);
-  for (const id of horizonSetIds) assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, id).available, true, id);
+  for (const id of serverIds) assert.equal(horizonBackgroundAvailability([member('base')], product, evidence, id).available, true, id);
+});
+
+test('replacing a selected real horizon set cannot leave a false garment-tone label', () => {
+  const [oldSet, nextSet] = STORYBOARD_SPACE_SETS.filter(set => set.setType.startsWith('horizon')
+    && set.gender === 'women' && set.applicableClothingTypes.includes('top'));
+  assert.ok(oldSet && nextSet);
+  const oldGroup = `ssg1__${oldSet.id}__old`;
+  const nextGroup = `ssg1__${nextSet.id}__next`;
+  const placed = oldSet.members.slice(0, 2).map((item, index) => ({
+    id: `old-${index}`, source: 'ai', sectionId: 'studio-section', sectionRole: 'studio',
+    cutType: 'horizon', colorId: 'base', spaceGroupId: oldGroup,
+    spaceSetMemberOrder: item.order, exampleId: item.exampleId,
+    horizonBackgroundMode: 'garment-tone',
+  }));
+  const copied = replaceSpaceSetRun(placed, oldGroup, nextSet, { spaceGroupId: nextGroup });
+  assert.ok(copied.length >= 2 && copied.every(block => block.horizonBackgroundMode === 'garment-tone'));
+  const fallback = reconcileHorizonGroupBackground(copied, nextGroup, product, null, nextSet.id);
+  assert.ok(fallback.every(block => block.horizonBackgroundMode === 'reference'));
+  assert.equal(effectiveHorizonBackgroundMode(fallback[0], { available: false }), 'reference');
+  const available = reconcileHorizonGroupBackground(copied, nextGroup, product, evidence, nextSet.id);
+  assert.ok(available.every(block => block.horizonBackgroundMode === 'garment-tone'));
+  assert.equal(effectiveHorizonBackgroundMode(available[0], { available: true }), 'garment-tone');
 });
 
 test('a saved tone request shows the background actually used for stale or missing evidence', () => {

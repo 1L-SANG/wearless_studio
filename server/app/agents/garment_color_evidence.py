@@ -66,7 +66,16 @@ def _frame(data):
             if profile:
                 try:
                     source_profile = ImageCms.ImageCmsProfile(BytesIO(profile))
-                    color = im.convert("RGB") if im.mode == "RGBA" else im
+                    profile_space = source_profile.profile.xcolor_space.strip()
+                    # PNG palettes and grayscale pixels must be expanded to the
+                    # embedded RGB profile's input mode before the ICC transform.
+                    # Keep alpha separately so transparent pixels remain excluded.
+                    if profile_space == "RGB" and im.mode in ("RGBA", "LA", "PA", "P", "L", "1"):
+                        color = im.convert("RGB")
+                    elif profile_space == "GRAY" and im.mode in ("LA", "PA", "P", "1"):
+                        color = im.convert("L")
+                    else:
+                        color = im
                     converted = ImageCms.profileToProfile(color, source_profile, ImageCms.createProfile("sRGB"), outputMode="RGB")
                     changed = True
                     im = converted
