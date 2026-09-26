@@ -112,7 +112,7 @@ Analysis {
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
   locked: boolean
-  garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 클라이언트 PATCH 금지
+  garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 콘티보드 이탈 시 필요할 때만 생성. 클라이언트 PATCH 금지
 }
 // fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).
 // subCategory는 원피스에서 null, targetGenders는 일반 카테고리에서 비울 수 있으나 dress는 ['women']으로 정규화.
@@ -129,11 +129,11 @@ MatchClothing {
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
-`garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 분석 작업에서 선택한 색상별 첫 Front·Back 원본을 별도 관찰기로 병렬 처리하고, 판매 의류 안쪽 영역의 실제 픽셀을 측정한다. 보조 분석 시간 제한 안에 실패하면 본 분석은 계속하며, 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
+`garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않고, 이동 시점의 측정이 끝나지 않았으면 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 
-공개 요약은 `{ version: 1, clothingType, colors: [{ colorId, status: 'ready'|'unavailable', reason, observedHex?, backgroundStatus: 'ready'|'reference', backgroundReason, backgroundPolicyVersion }] }`이다. 측정 성공과 배경 변경 가능은 별도 상태다. 프런트는 지원 세트·현재 의류 종류·세트의 모든 대상 색상·현 정책 버전을 확인해 선택을 활성화한다.
+공개 요약은 `{ version: 1, clothingType, colors: [{ colorId, status: 'ready'|'unavailable', reason, observedHex?, backgroundStatus: 'ready'|'reference', backgroundReason, backgroundPolicyVersion }] }`이다. 측정 성공과 배경 변경 가능은 별도 상태다. 프런트는 지원 세트이면 선택을 허용하고 의도만 저장한다. 요약이 없거나, 현재 의류 종류나 정책 버전과 맞지 않거나, 세트의 대상 색상 중 결과가 없는 색이 있으면 아직 측정 전으로 보고 선택을 막거나 reference로 되돌리지 않는다. 대상 색상의 결과가 `unavailable`이거나 `backgroundStatus`가 `reference`일 때만 선택을 끄고 이유를 보여 준다.
 
-서버 내부 계약에는 색상별 명도 범위와 원본의 SHA-256·색상 ID·Front/Back·바이트 길이가 함께 저장된다. 생성 직전에 실제 입력 바이트를 다시 대조하며, 사진/의류 종류가 바뀌거나 근거가 없으면 기존 배경으로 되돌린다. 클라이언트가 제공한 HEX, 좌표, 비공개 실행 필드는 생성 권한이 없다. 비회원 분석의 로그인 후 이관은 24시간 유효한 용도 제한 서명으로만 허용하며, 서명 실패가 기본 분석 저장을 막지 않는다. 요청한 배경 모드와 실제 적용/대체 사유는 생성 자산 기록에서 구별한다.
+서버 내부 계약에는 색상별 명도 범위와 원본의 SHA-256·색상 ID·Front/Back·바이트 길이가 함께 저장된다. 생성 직전에 실제 입력 바이트를 다시 대조하며, 사진/의류 종류가 바뀌거나 근거가 없으면 기존 배경으로 되돌린다. 클라이언트가 제공한 HEX, 좌표, 비공개 실행 필드는 생성 권한이 없다. 측정은 로그인한 프로젝트의 서버 저장 원본에서만 하며, 비회원 분석을 넘겨받는 경로는 없다. 사진은 먼저 줄여서 측정하지만 SHA와 길이는 원본 바이트로 계산한다. 늦게 끝난 측정은 저장 직전에 현재 사진을 다시 대조하고, 그 사이 저장된 근거가 바뀌었으면 저장하지 않아 최신 근거를 덮지 않는다. 요청한 배경 모드와 실제 적용/대체 사유는 생성 자산 기록에서 구별한다.
 
 ### 3.3 MannequinCut — 마네킹 컷 버전 (단일컷 전환)
 
