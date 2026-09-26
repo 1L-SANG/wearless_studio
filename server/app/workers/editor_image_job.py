@@ -456,6 +456,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+            cut_generation_settings = replace(
+                s,
+                model_image_high=resolve_editor_cut_model(s, normalized["cutType"]),
+            )
 
             requested_model_id = payload.get("modelId")
 
@@ -875,7 +879,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(image)
             except ValueError as e:
@@ -919,7 +923,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     attempt += 1
                     try:
                         image, mime = await cut_generator.generate(
-                            editor_settings, app.state.gemini, cut_spec, product, images,
+                            cut_generation_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
                         _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
@@ -929,7 +933,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(candidate_image)
                 if scene_plate is None:
@@ -952,7 +956,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         raise RuntimeError("bg candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
-                        editor_settings, app.state.gemini, cut_spec, product, images,
+                        cut_generation_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
                     _remember_outcome(candidate_image)
                 return InlineImage(candidate_mime, candidate_image)
@@ -994,7 +998,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             if (
                 fm_lora_spec is not None
                 and real_horizon_neck_repair.eligible(
-                    s, cut_spec, generation_model=editor_settings.model_image_high,
+                    s, cut_spec, generation_model=cut_generation_settings.model_image_high,
                     real_identity_attached=fm_face_injected,
                     outcome=face_pass_outcome,
                 )

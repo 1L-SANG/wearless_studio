@@ -202,7 +202,7 @@ def _dims(data: bytes):
         return None, None
 
 
-async def _normalize_detail_openai_refs(prepared, model: str):
+async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str | None = None):
     """Normalize shared generic GPT references once before five cut tasks fan out.
 
     item[1] 은 프로바이더가 받을 PNG 로 바뀌고, **원본 바이트는 item[10] 에 남는다**.
@@ -210,7 +210,8 @@ async def _normalize_detail_openai_refs(prepared, model: str):
     4.3MB → PNG 20.0MB), 판정 입력까지 갈아끼우면 컷마다 판정 요청이 그만큼 부풀고
     base64 인코딩도 CPU 상한 하나를 더 오래 잡는다. 판정 결과는 두 표현이 같다.
     """
-    if not model.startswith("gpt-image"):
+    horizon_model = horizon_model or model
+    if not model.startswith("gpt-image") and not horizon_model.startswith("gpt-image"):
         return prepared
     unique: dict[tuple[str, int], InlineImage] = {}
     eligible: list[int] = []
@@ -222,6 +223,9 @@ async def _normalize_detail_openai_refs(prepared, model: str):
             continue
         confirmed_packet = item[8] if len(item) > 8 else None
         if confirmed_packet is not None or cut_generator.is_signature_cut(block):
+            continue
+        selected_model = horizon_model if block.get("cutType") == "horizon" else model
+        if not selected_model.startswith("gpt-image"):
             continue
         eligible.append(index)
         for image in images:
@@ -268,8 +272,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
     # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
     detail_model = resolve_detail_cut_model(s)
+    horizon_model = resolve_detail_cut_model(s, "horizon")
     detail_settings = replace(s, model_image_high=detail_model)
-    prepared = await _normalize_detail_openai_refs(prepared, detail_model)
+    horizon_settings = replace(s, model_image_high=horizon_model)
+    prepared = await _normalize_detail_openai_refs(prepared, detail_model, horizon_model)
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
@@ -391,7 +397,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
-            s if cut_generator.is_signature_cut(b) else detail_settings
+            s if cut_generator.is_signature_cut(b)
+            else horizon_settings if b.get("cutType") == "horizon"
+            else detail_settings
         )
         # 원본 패스스루 — 미세 패턴(스트라이프·체크) 상품의 디테일 컷은 **생성하지 않고**
         # 셀러가 찍은 그 색상의 Detail 사진을 그대로 쓴다. 원단 매크로는 전신 컷 해상도로는
@@ -874,7 +882,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 face_identity_spec is not None
                 and not cut_generator.is_signature_cut(b)
                 and real_horizon_neck_repair.eligible(
-                    s, b, generation_model=detail_model,
+                    s, b, generation_model=generation_settings.model_image_high,
                     real_identity_attached=real_identity_attached,
                     outcome=selected_outcome,
                 )

@@ -232,10 +232,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  # 최종 컷(상세페이지·에디터)만 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
+  # 일반 최종 컷(상세페이지·에디터)은 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
   # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
   # 개인화는 image_high(Gemini) 그대로다.
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  # 완성 예시의 포즈·조명·상품 구조를 함께 지키는 호리존만 정밀 편집 모델로 분리한다.
+  MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
   MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
   DETAIL_CORE_TIMEOUT_SECONDS: 90

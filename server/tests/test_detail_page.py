@@ -933,6 +933,25 @@ def test_detail_refs_keep_provider_and_qc_inputs_at_stable_indexes(monkeypatch):
     assert len(gemini) == 10 and gemini[1] == [original]
 
 
+def test_horizon_openai_refs_are_normalized_when_other_detail_cuts_use_gemini(monkeypatch):
+    horizon_image = dpj.InlineImage("image/jpeg", b"horizon-jpeg")
+    styling_image = dpj.InlineImage("image/jpeg", b"styling-jpeg")
+    horizon = ({"source": "ai", "cutType": "horizon"}, [horizon_image], "", False, [])
+    styling = ({"source": "ai", "cutType": "styling"}, [styling_image], "", False, [])
+
+    async def fake_normalize(images, cache=None):
+        return [dpj.InlineImage("image/png", b"png:" + image.data) for image in images]
+
+    monkeypatch.setattr(dpj, "normalize_openai_images", fake_normalize)
+    normalized = asyncio.run(dpj._normalize_detail_openai_refs(
+        [horizon, styling], "gemini-3-pro-image", "gpt-image-2.5-sunburst"
+    ))
+    assert [image.data for image in normalized[0][1]] == [b"png:horizon-jpeg"]
+    assert normalized[0][10] == [horizon_image]
+    assert normalized[1][1] == [styling_image]
+    assert len(normalized[1]) <= 10
+
+
 def test_run_detail_page_job_reports_space_set_binding_error_without_generation(
     monkeypatch,
 ):
