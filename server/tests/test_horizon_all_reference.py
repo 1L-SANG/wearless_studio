@@ -77,3 +77,18 @@ def test_horizon_identity_manifest_names_only_attached_scene_owner():
     assert "SPACE SET PLATE" not in horizon
     assert "EXAMPLE REFERENCE owns the studio" in horizon
     assert horizon.splitlines()[0] == original.splitlines()[0]
+
+
+@pytest.mark.parametrize("in_set", [True, False])
+def test_horizon_example_keeps_model_body_continuity_rules(monkeypatch, in_set):
+    """호리존 라벨 문구가 바뀌어도 선택 모델 체형 규칙([[BODY_REF]])은 빠지면 안 된다(2026-09-26 회귀)."""
+    monkeypatch.setattr(cg, "load_example_asset_registry", lambda: ("", {"standalone": {"cutType": "horizon", "direction": "front", "shot": "medium"}}))
+    manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0,
+                                 has_model_face=True, has_model_full_body=True,
+                                 example_scope="all", example_is_horizon=True)
+    assert "EXAMPLE REFERENCE owns the studio" in manifest
+    spec = _bound() if in_set else {"cutType": "horizon", "exampleId": "standalone", "shot": "medium",
+                                    "direction": "front", "refScope": "all"}
+    prompt = cg.build_prompt(spec, {"clothingType": "top"}, manifest=manifest)
+    assert "MODEL FULL-BODY CONTINUITY" in prompt
+    assert "${" not in prompt

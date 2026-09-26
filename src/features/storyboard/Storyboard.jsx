@@ -14,7 +14,7 @@ import { api } from '@/lib/api/index.js';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
-import { CATALOG_DRAG_MIME, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
+import { CATALOG_DRAG_MIME, catalogMemberInsertIndex, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
 import { attachStoryboardDragScroll } from '@/lib/storyboardDragScroll.js';
 import { effectiveHorizonBackgroundMode, horizonBackgroundAvailability, reconcileHorizonGroupBackground } from '@/lib/horizonBackgroundAvailability.js';
 import { horizonBackgroundMode, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
@@ -3375,8 +3375,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (!setPicker) return;
     const host = blocks.find(block => block.spaceGroupId === setPicker.spaceGroupId);
     const sid = setPicker.targetSid || host?.sectionId, role = setPicker.targetRole || host?.sectionRole;
-    const lastIndex = blocks.reduce((last, block, index) => block.sectionId === sid && block.sectionRole === role ? index + 1 : last, 0);
-    return dropCatalogSelection({ setId: set.id, exampleId: member.exampleId }, lastIndex, sid, role);
+    const index = catalogMemberInsertIndex(blocks, sid, role, setPicker.index);
+    return dropCatalogSelection({ setId: set.id, exampleId: member.exampleId }, index, sid, role);
   };
   const chooseSpaceSet = async (set) => {
     if (!setPicker || atomicSavingRef.current) return;

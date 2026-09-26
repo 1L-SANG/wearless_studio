@@ -343,7 +343,8 @@ test('seeded styling groups keep two entry members while horizon groups stay com
     assert.ok(members.every(({ block }) => (
       block.exampleSelectionOrigin === 'auto'
       && block.setSelectionOrigin === 'auto'
-      && block.refScope === 'pose'
+      // 호리존은 완성 사진(all), 스타일링은 plate + pose(ADR-0013, 서버 normalize_spec 과 같다).
+      && block.refScope === (block.cutType === 'horizon' ? 'all' : 'pose')
     )));
   }
 });

@@ -54,7 +54,7 @@ function setMemberBlocks(set, colorId, sectionRole, contentRole) {
       spaceGroupId: groupId,
       spaceVariation: set.spaceVariation,
       spaceSetMemberOrder: member.order,
-      refScope: 'pose',
+      refScope: member.cutType === 'horizon' ? 'all' : 'pose',
       exampleId: member.exampleId,
       exampleSelectionOrigin: 'auto',
       setSelectionOrigin: 'auto',

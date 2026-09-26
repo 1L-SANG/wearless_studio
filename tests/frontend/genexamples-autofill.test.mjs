@@ -446,7 +446,7 @@ test('every supported gender and clothing category seeds styling and horizon set
     assert.ok(setMembers.every((item) => (
       item.exampleSelectionOrigin === 'auto'
       && item.setSelectionOrigin === 'auto'
-      && item.refScope === 'pose'
+      && item.refScope === (item.cutType === 'horizon' ? 'all' : 'pose')
       && item.exampleId
     )));
     // 확장형 기대 컷수를 실제 추첨 결과에서 유도 — 세트 슬롯 고갈(낱장 2컷 폴백)과
