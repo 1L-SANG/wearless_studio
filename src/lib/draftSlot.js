@@ -322,8 +322,13 @@ export function createDraftSlotSync({
     record.retryTimer = null;
     uploads.set(image.id, record);
     notifyPhotosPending();
+    // 원본(blob:) 을 못 읽은 건 재시도로 안 풀린다 — 폐기된 주소는 영원히 ERR_FILE_NOT_FOUND 다.
+    // 승격 실패 복구가 폐기된 사진을 담은 초안을 되살리자 2초마다 무한 재시도했다(2026-09-26).
+    // 재시도는 업로드(네트워크·서버) 실패에만 건다.
+    let sourceUnreadable = false;
     record.promise = fetch(image.src)
       .then((response) => response.blob())
+      .catch((error) => { sourceUnreadable = true; throw error; })
       .then((blob) => api.uploadDraftSlotPhoto({
         filename: image.name || `${image.id}.jpg`,
         mime: (image.type && image.type.includes('/')) ? image.type : (blob.type || 'image/jpeg'),
@@ -346,7 +351,9 @@ export function createDraftSlotSync({
         }
         const failed = uploads.get(image.id) || {};
         failed.status = 'failed';
-        failed.retryTimer = setTimer(() => startPhotoUpload(image), PHOTO_RETRY_MS);
+        failed.retryTimer = sourceUnreadable
+          ? null
+          : setTimer(() => startPhotoUpload(image), PHOTO_RETRY_MS);
         uploads.set(image.id, failed);
       })
       .finally(notifyPhotosPending);
