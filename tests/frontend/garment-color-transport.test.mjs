@@ -72,3 +72,31 @@ test('draft promotion never promotes garment color evidence', async () => {
     delete globalThis.__garmentColorHarness;
   }
 });
+
+test('measureGarmentColors posts to the measure route with no body, and the mock answers skipped', async t => {
+  const server = await createServer({
+    configFile: false, root: fileURLToPath(new URL('../..', import.meta.url)), logLevel: 'silent',
+    resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
+    server: { middlewareMode: true, watch: null, hmr: false },
+    plugins: [{ name: 'measure-auth-test', enforce: 'pre',
+      resolveId(id) { if (id.endsWith('/lib/supabase.js')) return '\0measure-auth'; },
+      load(id) { if (id === '\0measure-auth') return 'export const supabase={auth:{getSession:async()=>({data:{session:{access_token:"t"}}})}};'; },
+    }],
+  });
+  const oldFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ status: 'measured', garmentColorEvidence: null }), { headers: { 'Content-Type': 'application/json' } });
+  };
+  t.after(async () => { globalThis.fetch = oldFetch; await server.close(); });
+  const { httpAdapter } = await server.ssrLoadModule('/src/lib/api/httpAdapter.js');
+  const result = await httpAdapter.measureGarmentColors('p1');
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.endsWith('/v1/projects/p1/analysis/garment-colors:measure'), calls[0].url);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.body, undefined);
+  assert.deepEqual(result, { status: 'measured', garmentColorEvidence: null });
+  const { api } = await server.ssrLoadModule('/src/mock/api.js');
+  assert.deepEqual(await api.measureGarmentColors('p1'), { status: 'skipped', garmentColorEvidence: null });
+});
