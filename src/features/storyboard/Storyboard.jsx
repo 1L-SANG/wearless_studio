@@ -1137,7 +1137,7 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
   return <div className="surface inspector sb-set-picker" ref={pickerRef}
     onKeyDown={event => { if (event.key === 'Escape' && preview) { event.preventDefault(); event.stopPropagation(); dismissPreview(); } }}>
     <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
-      <p>{replacing ? '세트를 누르면 바로 바뀌어요.' : '세트를 누르면 통째로 추가돼요.'} 한 컷만 쓰려면 세트에 마우스를 올려 '개별 컷 보기'에서 누르거나 끌어 오세요.</p></div>
+      <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
       <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
       disabled={busy} onChange={onBackgroundChange} garmentToneAvailable={availability.available} garmentToneUnavailableReason={availability.reason} />}

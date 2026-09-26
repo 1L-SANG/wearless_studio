@@ -49,9 +49,8 @@ test('a selected set member uses a compact cut header instead of the large set c
   assert.match(inspectorSource, /label className="lbl">대상 색상/);
 });
 
-test('set gallery guide says what a set click does and how to take a single cut', () => {
+test('set gallery guide says what a set click does and that a single cut can be dragged in', () => {
   const gallerySource = storyboardSource.slice(storyboardSource.indexOf('function SpaceSetGallery('));
-  // 추가 모드에서 "바뀌어요"라고 하면 틀린 안내다. 한 컷만 쓰는 길은 호버해야 보이는 버튼이라 적어 준다.
-  assert.match(gallerySource, /replacing \? '세트를 누르면 바로 바뀌어요\.' : '세트를 누르면 통째로 추가돼요\.'/);
-  assert.match(gallerySource, /한 컷만 쓰려면 세트에 마우스를 올려 '개별 컷 보기'에서 누르거나 끌어 오세요\./);
+  // 세트 변경 화면에서 누르면 교체되고, 추가 화면에서 누르면 추가된다. 한 컷은 미리보기에서 끌어 온다.
+  assert.match(gallerySource, /replacing \? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요\.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요\.'/);
 });
