@@ -6,12 +6,13 @@ import logging
 import time
 from collections import deque
 from ipaddress import ip_address
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from .agents import product_evidence_contract, detail_recommendations
+from .agents import product_evidence_contract, detail_recommendations, garment_color_evidence
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .r2 import ext_for_mime
@@ -20,7 +21,8 @@ from .workers.analyze_job import analyze_image_bytes
 
 logger = logging.getLogger("wearless.public_analysis")
 
-MAX_PUBLIC_REQUEST_BYTES = 60 * 1024 * 1024
+_PUBLIC_LIMITS = json.loads((Path(__file__).parent / "data" / "public_analysis_limits.json").read_text(encoding="utf-8"))
+MAX_PUBLIC_REQUEST_BYTES = _PUBLIC_LIMITS["maxRequestBytes"]
 PUBLIC_ANALYSIS_CONCURRENCY = 4
 _analysis_semaphore = asyncio.Semaphore(PUBLIC_ANALYSIS_CONCURRENCY)
 
@@ -121,6 +123,9 @@ async def public_analyze(
     images: list[UploadFile] = File(...),
     slots: list[str] | None = Form(default=None),
     productContext: str | None = Form(default=None),
+    colorImages: list[UploadFile] | None = File(default=None),
+    colorSlots: list[str] | None = Form(default=None),
+    colorIds: list[str] | None = Form(default=None),
     authenticated_user: str | None = Depends(optional_user),
 ):
     """상품 사진 1~4장을 기존 AG-01 코어로 분석한다. 인증·프로젝트·DB 저장은 없다."""
@@ -183,6 +188,32 @@ async def public_analyze(
         except (TypeError, ValueError):
             product = {}
 
+    extra_images = colorImages or []
+    extra_slots, extra_ids = colorSlots or [], colorIds or []
+    colors = [c for c in (product.get("colors") or []) if isinstance(c, dict)]
+    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else {})
+    allowed_ids = {str(c["id"]) for c in colors if c.get("id") and c.get("id") != base.get("id")}
+    if (len(extra_images) > _PUBLIC_LIMITS["maxAdditionalColorImages"] or len(extra_images) != len(extra_slots) or len(extra_images) != len(extra_ids)
+            or (extra_images and (len(colors) > _PUBLIC_LIMITS["maxColorGroups"] or not base.get("id")))
+            or (extra_images and any(not isinstance(c.get("id"), str) or not 1 <= len(c["id"]) <= 200 for c in colors))
+            or (extra_images and len({str(c.get("id")) for c in colors}) != len(colors))
+            or any(slot not in {"Front", "Back"} for slot in extra_slots)
+            or any(cid not in allowed_ids for cid in extra_ids)
+            or len(set(zip(extra_ids, extra_slots))) != len(extra_images)):
+        raise _bad_request("invalid_color_sources", "색상별 정면·뒷면 사진 정보를 확인해 주세요.")
+    additional_sources = []
+    for upload, slot, color_id in zip(extra_images, extra_slots, extra_ids):
+        mime = (upload.content_type or "").lower()
+        data = await upload.read(MAX_UPLOAD_BYTES + 1)
+        if ext_for_mime(mime) is None or not data or _detected_image_mime(data) != mime:
+            raise _bad_request("invalid_image_content", "실제 이미지 파일만 올려주세요.")
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.")
+        total_bytes += len(data)
+        if total_bytes > MAX_PUBLIC_REQUEST_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "request_too_large", "message": "한 번에 올릴 수 있는 사진 용량을 초과했어요."})
+        additional_sources.append({"colorId": color_id, "slot": slot, "data": data, "mime": mime})
+
     if _analysis_semaphore.locked():
         raise HTTPException(
             status_code=429,
@@ -196,6 +227,7 @@ async def public_analyze(
             product=product,
             slots=slots,
             persist_confirmed_evidence=True,
+            **({"additional_color_sources": additional_sources} if additional_sources else {}),
         )
     except VisionError:
         raise HTTPException(
@@ -237,4 +269,14 @@ async def public_analyze(
                 "code": "analysis_handoff_unavailable",
                 "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
             }) from None
+    color_contract = (core.get("analysis_payload") or {}).get(garment_color_evidence.PERSISTED_KEY)
+    if color_contract is not None:
+        try:
+            data[garment_color_evidence.PERSISTED_KEY] = garment_color_evidence.public_summary(color_contract)
+            data["garmentColorEvidenceHandoff"] = garment_color_evidence.issue_handoff(
+                color_contract, request.app.state.settings.r2_secret_access_key)
+        except ValueError:
+            # Optional measured color must not block product analysis.
+            data.pop(garment_color_evidence.PERSISTED_KEY, None)
+            logger.warning("public garment color handoff unavailable")
     return JSONResponse({"data": data})

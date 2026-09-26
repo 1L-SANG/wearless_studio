@@ -152,9 +152,9 @@ test('owner cleanup removes place dissolve and obsolete inspector copy and stack
   assert.match(storyboardSource, /cutRangeLabel\(group\.items\)/);
 });
 
-test('shooting place picker uses column-aware larger previews and no tray place label', () => {
-  assert.match(storyboardSource, /const width = 316/);
-  assert.match(storyboardSource, /itemIndex % 2 === 0 \? leftSide : rightSide/);
+test('shooting place picker uses one inspector-anchored preview and no tray place label', () => {
+  assert.match(storyboardSource, /<SpaceSetHoverPreview/);
+  assert.doesNotMatch(storyboardSource, /itemIndex % 2 === 0 \? leftSide : rightSide/);
   assert.doesNotMatch(storyboardSource, /<strong>\{label\}<\/strong>|traySeqLabels|normalizePlaceType/);
   assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
 });

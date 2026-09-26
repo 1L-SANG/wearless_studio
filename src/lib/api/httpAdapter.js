@@ -20,6 +20,8 @@ import { jobFailure } from './jobFailure.js';
 import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
+import publicAnalysisLimits from '../../../server/app/data/public_analysis_limits.json' with { type: 'json' };
+import { MAX_UPLOAD_BYTES, isUploadablePhotoMime } from '@/lib/imageTranscode.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -375,6 +377,8 @@ function mergeAnalysisResult(ai) {
     confirmedGptProductEvidenceHandoff: ai.confirmedGptProductEvidenceHandoff ?? null,
     detailRecommendations: ai.detailRecommendations ?? base.detailRecommendations,
     detailRecommendationsHandoff: ai.detailRecommendationsHandoff ?? null,
+    garmentColorEvidence: ai.garmentColorEvidence ?? null,
+    garmentColorEvidenceHandoff: ai.garmentColorEvidenceHandoff ?? null,
     customCategory: ai.customCategory ?? null,
     sellingPoints: [],
     inputConsistency: ai.inputConsistency ?? null,
@@ -447,11 +451,42 @@ export const httpAdapter = {
     const photos = selectPublicAnalysisPhotos(baseColor?.images || []);
     if (!photos.length) throw new Error('분석할 상품 사진을 먼저 올려주세요.');
     const form = new FormData();
+    let imageBytes = 0;
     onProgress?.(10);
     for (const [index, photo] of photos.entries()) {
       const blob = await fetch(photo.src, { signal }).then((response) => response.blob());
+      imageBytes += blob.size;
       form.append('images', blob, photo.name || `product-${index + 1}`);
       form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
+    }
+    // Additional color references go only to the optional color observer. Keep the original
+    // four-photo evidence/detail order unchanged.
+    // Preserve all base bytes. Reserve bounded multipart headers + <=4096-char JSON;
+    // optional views are atomic per color so an omitted Back cannot hide disagreement.
+    const optionalBudget = publicAnalysisLimits.maxRequestBytes - publicAnalysisLimits.multipartReserveBytes;
+    for (const color of colors.filter((item) => item !== baseColor).slice(0, publicAnalysisLimits.maxColorGroups - 1)) {
+      let references;
+      try {
+        references = await Promise.all(['Front', 'Back'].flatMap((slot) => {
+          const photo = (color.images || []).find((item) => item.slot === slot);
+          return photo ? [(async () => {
+            const response = await fetch(photo.src, { signal });
+            if (!response.ok) throw new Error('optional_color_photo_unavailable');
+            return { slot, photo, blob: await response.blob() };
+          })()] : [];
+        }));
+      } catch {
+        if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
+        continue;
+      }
+      const bytes = references.reduce((sum, item) => sum + item.blob.size, 0);
+      if (imageBytes + bytes > optionalBudget || references.some(({ blob }) => !isUploadablePhotoMime(blob.type) || blob.size > MAX_UPLOAD_BYTES)) continue;
+      imageBytes += bytes;
+      for (const { slot, photo, blob } of references) {
+        form.append('colorImages', blob, photo.name || `color-${slot}`);
+        form.append('colorSlots', slot);
+        form.append('colorIds', String(color.id));
+      }
     }
     // 공개 분석은 DB Product가 없다. 에셋·blob을 제외한 색상 그룹 정체성만
     // 함께 보내야 AG-01이 현재 그룹 id를 그대로 되돌려주고 프론트가 매칭할 수 있다.
@@ -462,6 +497,7 @@ export const httpAdapter = {
         id: color.id,
         name: color.name || '',
         swatchId: color.swatchId || null,
+        isBase: color === baseColor,
       })),
     }));
     onProgress?.(30);
@@ -496,6 +532,11 @@ export const httpAdapter = {
   },
   async promoteDetailRecommendations(projectId, handoff) {
     return http(`/v1/projects/${projectId}/analysis/detail-recommendations:promote`, {
+      method: 'POST', body: handoff,
+    });
+  },
+  async promoteGarmentColorEvidence(projectId, handoff) {
+    return http(`/v1/projects/${projectId}/analysis/garment-colors:promote`, {
       method: 'POST', body: handoff,
     });
   },

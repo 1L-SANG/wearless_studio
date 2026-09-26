@@ -46,6 +46,7 @@ function stripSpaceSetBinding(block) {
     ...block,
     spaceGroupId: null,
     spaceVariation: null,
+    horizonBackgroundMode: null,
     exampleId: null,
     exampleSelectionOrigin: null,
     refScope: null,

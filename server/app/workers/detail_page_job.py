@@ -30,6 +30,7 @@ from ..agents import (
     face_identity,
     feature_copy,
     image_qc,
+    horizon_background,
     mannequin,
     page_assembler,
     page_output_qc,
@@ -76,6 +77,7 @@ def _example_repeat_indexes(
                 "_exampleRepeatIndex",
                 "_referenceDirectionCompatible",
                 "_spaceSetContinuity",
+                "_horizonReferenceShot",
                 "_detailColorTransfer",
             ):
                 safe_block.pop(runtime_field, None)
@@ -294,6 +296,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             "matchingIds": normalized.get("matchIds") or [],
             "spaceGroupId": normalized.get("spaceGroupId"),
             "productTruthIndexes": product_truth_indexes,
+            **({"horizonBackground": normalized["_horizonBackground"]}
+               if horizon_background.active(normalized) else {}),
         }
 
     async def _store_cut(b, img, mime, chosen, *, has_face, real_identity_attached, garment_qc,
@@ -353,6 +357,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
+                 **({"horizon_background": horizon_background.decision(b)}
+                    if horizon_background.decision(b) else {}),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
                     if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
                  **({"neck_repair": neck_repair_metadata}
@@ -1230,6 +1236,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     analysis, clothing_type
                 ),
             )
+            horizon_palettes = {}  # Filled after current source bytes are verified.
             ai_blocks = [
                 b
                 for b in storyboard
@@ -1617,6 +1624,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         _fallback_warned = False
         for b, example_repeat_index in zip(ai_blocks, example_repeat_indexes):
             cut_spec = dict(b)
+            cut_spec.pop("_horizonBackground", None)
+            cut_spec.pop("_horizonBackgroundFallback", None)
+            cut_spec.pop("_horizonLayoutReference", None)
+            cut_spec.pop("_horizonReferenceShot", None)
             space_binding = space_set_bindings.get(id(b))
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
             cut_spec.pop("_detailColorTransfer", None)
@@ -1628,8 +1639,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             if space_binding is not None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
-                cut_spec["refScope"] = "pose"
-                cut_spec["pose"] = "auto"
+                cut_spec["refScope"] = "all" if cut_spec.get("cutType") == "horizon" else "pose"
+                if cut_spec.get("cutType") != "horizon":
+                    cut_spec["pose"] = "auto"
                 cut_spec["spaceVariation"] = space_binding["set"]["spaceVariation"]
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
@@ -1810,6 +1822,15 @@ async def run_detail_page_job(app, job: dict) -> None:
                 product_image = await _img(a)
                 imgs.append(product_image)
                 product_images.append(product_image)
+            if horizon_background.mode(cut_spec) == "garment-tone":
+                palette_key = (cut_spec.get("spaceGroupId"), cut_spec.get("colorId"))
+                if palette_key not in horizon_palettes:
+                    horizon_palettes[palette_key] = horizon_background.resolve_for_block(
+                        cut_spec, product, analysis=analysis,
+                        sources=horizon_background.loaded_sources(product, cut_spec.get("colorId"), prods, product_images),
+                    )
+                cut_spec = horizon_background.apply_runtime(cut_spec, horizon_palettes)
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             imgs.extend(matching_images)
             # 무드는 장면 자산보다 앞에 와야 하지만, all/bg/대표 plate가 장면·조명을 소유하면
             # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
@@ -1819,7 +1840,27 @@ async def run_detail_page_job(app, job: dict) -> None:
             space_set_plate = None
             has_space_set_plate = False
             example_id = b.get("exampleId") or b.get("example_id")
-            if space_binding is not None:
+            if space_binding is not None and cut_spec.get("cutType") == "horizon":
+                reference = space_binding["horizonReference"]
+                cache_key = f"horizon-all:{reference['source']}:{reference['exampleId']}"
+                try:
+                    if cache_key not in _space_example_cache:
+                        image = (await space_set_assets.load_space_set_image(s, reference["asset"], role="전체 예시")
+                                 if reference["source"] == "space-set" else
+                                 await cut_generator.load_example_image(s, reference["exampleId"], scope="all", clothing_type=clothing_type))
+                        if image is None:
+                            raise space_set_assets.SpaceSetBindingError("space_set_all_unavailable", "호리존 완성 예시를 불러오지 못했어요.")
+                        _space_example_cache[cache_key] = image
+                    imgs.append(_space_example_cache[cache_key])
+                    cut_generator.bind_horizon_reference(cut_spec, reference)
+                    example_scope = "all"
+                    service_example_image = _space_example_cache[cache_key]
+                    normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+                except (space_set_assets.SpaceSetBindingError, OSError, ValueError) as exc:
+                    log.warning("horizon all unavailable job %s block %s: %s", job_id, b.get("id"), type(exc).__name__)
+                    prepared.append(_skipped_cut(cut_spec))
+                    continue
+            elif space_binding is not None:
                 set_entry = space_binding["set"]
                 pose_reference = space_binding["poseReference"]
                 set_id = set_entry["setId"]
@@ -1881,6 +1922,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                         cut_spec["_referenceDirectionCompatible"] = example_reference.get(
                             "directionCompatible", True
                         )
+                        if cut_spec.get("cutType") == "horizon" and scope == "all":
+                            cut_generator.bind_horizon_reference(cut_spec, example_reference)
                         cache_key = (
                             f"space-set:{example_reference['exampleId']}:{scope}"
                         )
@@ -2004,6 +2047,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     has_model_full_body=model_has_full_body,
                     has_face=False,
                     example_scope=example_scope,
+                    example_is_horizon=normalized is not None and normalized["cutType"] == "horizon",
                     example_is_product=normalized is not None and normalized["cutType"] == "product",
                     has_space_set_plate=has_space_set_plate,
                     reference_direction_compatible=cut_generator.apply_reference_compatibility(

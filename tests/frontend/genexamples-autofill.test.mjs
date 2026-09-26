@@ -482,14 +482,14 @@ test('direction badge labels are front, side and back', () => {
   assert.deepEqual(['front', 'side', 'back'].map(directionBadgeLabel), ['정면', '사이드', '뒷면']);
 });
 
-test('storyboard preserves an in-space pose across shot changes and remains atomically retryable', () => {
+test('storyboard preserves family-specific group references across shot changes and remains atomically retryable', () => {
   const shotHandler = storyboardSource.slice(
     storyboardSource.indexOf('const onShotChange ='),
     storyboardSource.indexOf('const commitPendingRecipe ='),
   );
   assert.match(
     shotHandler,
-    /return \{ shot, refScope: 'pose', exampleSelectionOrigin: 'user' \}/,
+    /return \{ shot, refScope: current\.cutType === 'horizon' \? 'all' : 'pose', exampleSelectionOrigin: 'user' \}/,
   );
   assert.doesNotMatch(shotHandler, /selectGenerationExamples/);
   assert.doesNotMatch(shotHandler.slice(shotHandler.indexOf('onChange((current)')), /exampleId:\s*null/);
@@ -526,4 +526,25 @@ test('storyboard keeps released set members available for generation without an 
   assert.match(storyboardSource, /appendSetOnly:\s*cutType !== 'product'/);
   assert.match(editorSource, /withStoryboardSpaceSetExamples\(c\)/);
   assert.match(editorSource, /setCatalogs\(hydratedCatalogs\)/);
+});
+
+
+test('horizon groups auto-assign complete-only references while styling groups retain pose scope', () => {
+  for (const [cutType, variants, expected] of [['horizon', ['all'], 'all'], ['styling', ['all', 'pose'], 'pose']]) {
+    const result = assignGenerationExamples([block('grouped', { cutType, direction: 'front', spaceGroupId: 'ssg1__test__one' })], {
+      catalog: [example('pick', { cutType, direction: 'front', variants })], product, gender: 'women',
+    });
+    assert.equal(result.blocks[0].exampleId, 'pick', cutType);
+    assert.equal(result.blocks[0].refScope, expected, cutType);
+  }
+});
+
+test('retired set examples disappear from new choices without breaking saved lookup', () => {
+  const retired = example('old-side', { cutType: 'horizon', setOnly: true, spaceSetId: 'old-set', retired: true });
+  const active = example('new-side', { cutType: 'horizon', setOnly: true, spaceSetId: 'new-set' });
+  const choices = selectGenerationExamples([retired, active], { cutType: 'horizon', shot: 'full', clothingType: 'outer', gender: 'women', appendSetOnly: true });
+  assert.deepEqual(choices.map(item => item.id), ['new-side']);
+  assert.equal(storedExampleConditionStatus(retired, { cutType: 'horizon', clothingType: 'outer', gender: 'women' }), 'valid');
+  const saved = block('saved', { cutType: 'horizon', exampleId: retired.id, exampleSelectionOrigin: 'user' });
+  assert.equal(assignGenerationExamples([saved], { catalog: [retired, active], product, gender: 'women' }).blocks[0].exampleId, retired.id);
 });

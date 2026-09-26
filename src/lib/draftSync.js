@@ -72,11 +72,14 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     let analysis = draft.analysis;
     const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
     const detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
+    const colorHandoff = analysis?.garmentColorEvidenceHandoff ?? null;
     if (analysis) {
       analysis = { ...analysis };
       delete analysis.confirmedGptProductEvidenceHandoff;
       delete analysis.detailRecommendationsHandoff;
       delete analysis.detailRecommendations;
+      delete analysis.garmentColorEvidence;
+      delete analysis.garmentColorEvidenceHandoff;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
         delete analysis[k];
@@ -109,6 +112,14 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
       }
       if (evidenceHandoff) {
         await api.promoteConfirmedGptEvidence(projectId, evidenceHandoff);
+      }
+      if (colorHandoff) {
+        try {
+          await api.promoteGarmentColorEvidence(projectId, colorHandoff);
+        } catch {
+          // Optional measured color: current original background remains available.
+          console.warn('의류색 근거를 저장하지 못해 기존 배경을 사용합니다.');
+        }
       }
     }
     await api.patchProject(projectId, {

@@ -32,6 +32,7 @@ from .agents import (
     product_evidence_contract,
     detail_recommendations,
     product_analyst,
+    garment_color_evidence,
     space_set_assets,
     style_affinity,
 )
@@ -1135,6 +1136,8 @@ async def save_analysis(
     payload = dict(row["payload"] or {})
     if detail_recommendations.PERSISTED_KEY in payload:
         payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])
+    if garment_color_evidence.PERSISTED_KEY in payload:
+        payload[garment_color_evidence.PERSISTED_KEY] = garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])
     return {"projectId": row["project_id"], **payload}
 
 
@@ -1197,6 +1200,47 @@ async def promote_confirmed_gpt_evidence(
         await repo.save_confirmed_gpt_product_evidence(conn, project_id, contract)
         await conn.commit()
     return {"promoted": True}
+
+
+@router.post(
+    "/projects/{project_id}/analysis/garment-colors:promote",
+    responses={**COMMON_RESPONSES}, tags=["Analysis"],
+    summary="공개 분석의 픽셀 기반 의류색 근거 승격",
+)
+async def promote_garment_color_evidence(
+    request: Request, project_id: str, handoff: dict = Body(...),
+    user_id: str = Depends(require_user),
+):
+    from .workers.analyze_job import garment_color_source_entries
+    try:
+        contract = garment_color_evidence.verify_handoff(handoff, request.app.state.settings.r2_secret_access_key)
+    except ValueError:
+        raise _bad_request("invalid_analysis_handoff", "의류색 근거를 확인하지 못했어요.") from None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        sources = []
+        bound_colors = {row["colorId"] for row in contract["sourceBindings"]}
+        for entry in garment_color_source_entries(product):
+            if entry["colorId"] not in bound_colors:
+                # Optional upload budgeting may omit entire extra colors. Verify all
+                # current views of measured colors, not unrelated unmeasured colors.
+                continue
+            asset = await repo.get_asset_for_user(conn, user_id, entry["assetId"])
+            if asset is None:
+                raise _bad_request("analysis_handoff_source_missing", "현재 상품 사진을 찾지 못했어요.")
+            sources.append({k: entry[k] for k in ("sourceIndex", "colorId", "slot")})
+            sources[-1].update(data=await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"]), mime=asset["mime_type"])
+        clothing_type = product.get("clothingType") or product.get("clothing_type")
+        if not garment_color_evidence.source_binding_matches(contract, sources, clothing_type):
+            raise _bad_request("analysis_handoff_source_drift", "분석 후 사진이나 상품 종류가 바뀌었어요.")
+        try:
+            await repo.save_garment_color_evidence(conn, project_id, contract)
+        except ValueError:
+            raise HTTPException(status_code=409, detail={"code": "analysis_handoff_conflict", "message": "이미 저장된 의류색 근거와 달라 이전 측정값을 유지해요."}) from None
+        await conn.commit()
+    return {"promoted": True, garment_color_evidence.PERSISTED_KEY: garment_color_evidence.public_summary(contract)}
 
 
 @router.post(
@@ -1264,6 +1308,8 @@ async def get_analysis(
         payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
     if detail_recommendations.PERSISTED_KEY in (payload or {}):
         payload = {**payload, detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])}
+    if garment_color_evidence.PERSISTED_KEY in (payload or {}):
+        payload = {**payload, garment_color_evidence.PERSISTED_KEY: garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])}
     return {"projectId": project_id, **(payload or {})}
 
 
@@ -3058,7 +3104,7 @@ async def generate_editor_image(
     _require_bg_examples_enabled(request, body)
     if (body or {}).get("mode") == "new" and (
         (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
-    ):
+    ) and not ((body or {}).get("cutType") == "horizon" and (body or {}).get("spaceGroupId") and (body or {}).get("retryBlockId")):
         raise _bad_request(
             "space_set_editor_unsupported",
             "촬영 세트는 콘티보드에서만 사용할 수 있어요.",
@@ -3086,6 +3132,16 @@ async def generate_editor_image(
             raise _not_found()
         payload = dict(body or {})
         payload.pop("_facemarket", None)
+        if payload.get("mode") == "new" and payload.get("spaceGroupId"):
+            from .agents import horizon_background
+            try:
+                payload = horizon_background.restore_failed_retry(
+                    payload,
+                    await repo.get_storyboard(conn, project_id),
+                    await repo.get_editor_blocks(conn, project_id),
+                )
+            except ValueError as exc:
+                raise _bad_request("invalid_horizon_set_retry", "원래 콘티의 실패한 스튜디오 컷만 다시 만들 수 있어요.") from exc
         analysis = None
         selected_model_id = None
         brand_use_category = None

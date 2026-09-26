@@ -1,4 +1,5 @@
 import { spaceSetIdFromGroupId } from './storyboardSpaceSetCatalog.js';
+import { horizonBackgroundMode } from './horizonBackground.js';
 
 const defaultBlock = (item) => item;
 
@@ -12,6 +13,7 @@ export function detachSpaceMembership(block) {
     spaceGroupId: _spaceGroupId,
     spaceVariation: _spaceVariation,
     spaceSetMemberOrder: _spaceSetMemberOrder,
+    horizonBackgroundMode: _horizonBackgroundMode,
     ...single
   } = block;
   return { ...single, refScope: 'all' };
@@ -102,9 +104,10 @@ export function nextSpaceSetMemberReservation(set, blocks) {
     blockPatch: {
       spaceGroupId: host.spaceGroupId,
       spaceVariation: host.spaceVariation || set.spaceVariation || 'subtle',
-      refScope: 'pose',
+      refScope: member.cutType === 'horizon' ? 'all' : 'pose',
       spaceSetMemberOrder: member.order,
       setSelectionOrigin: host.setSelectionOrigin || 'user',
+      ...(member.cutType === 'horizon' ? { horizonBackgroundMode: horizonBackgroundMode(host) } : {}),
     },
   };
 }
@@ -135,7 +138,7 @@ export function moveBlockWithSpaceMembership(
   if (staysInCurrentSpace) {
     moving = {
       ...clearLayoutRow(moving),
-      refScope: 'pose',
+      refScope: moving.cutType === 'horizon' ? 'all' : 'pose',
     };
   } else {
     moving = detachSpaceMembership(clearLayoutRow(moving));
@@ -185,7 +188,9 @@ export function createSpaceSetMembers(set, template, {
       ),
       spaceGroupId,
       spaceVariation: set.spaceVariation || 'subtle',
-      refScope: 'pose',
+      horizonBackgroundMode: member.cutType === 'horizon'
+        ? (previousMembers.length ? horizonBackgroundMode(previousMembers[0]) : 'reference') : null,
+      refScope: member.cutType === 'horizon' ? 'all' : 'pose',
       exampleId: member.exampleId || null,
       exampleSelectionOrigin: member.exampleId ? 'user' : null,
       setSelectionOrigin,

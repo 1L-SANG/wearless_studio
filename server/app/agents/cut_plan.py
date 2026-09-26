@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
+from . import horizon_background
 
 
 RecipeFamily = Literal["styling", "horizon", "product"]
@@ -85,6 +86,7 @@ class CutPlan:
     reference_direction_compatible: bool = True
     reference_face_visibility: Literal["hidden", "visible"] | None = None
     example_repeat_index: int = 0
+    horizon_background: Mapping[str, Any] | None = None
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -149,6 +151,8 @@ class CutPlan:
             out["spaceSetContinuity"] = self.space_set_continuity
         if self.reference_face_visibility is not None:
             out["referenceFaceVisibility"] = self.reference_face_visibility
+        if self.horizon_background is not None:
+            out["horizonBackground"] = dict(self.horizon_background)
         return out
 
     def render_prompt_contract(self) -> str:
@@ -199,6 +203,9 @@ class CutPlan:
                 "visual family. Do not use a structural/prop change quota or force object changes "
                 "to prove difference."
             )
+        if self.horizon_background is not None:
+            lines.append("The attached EXAMPLE ALL owns its allowed scene/light/captureTone; the wall-color exception does not change pose, framing, garment or identity owners.")
+            lines.append(horizon_background.prompt(dict(self.horizon_background)))
         return "\n".join(lines)
 
 
@@ -235,9 +242,7 @@ def _reference_mode(spec: Mapping[str, Any], recipe_family: RecipeFamily) -> Ref
         raise CutPlanError("unknown_reference_mode")
     if not example_id and not space_group_id:
         return "none"
-    # Published space sets bind a per-cut pose control while the set contract owns
-    # continuity.  Stored all/bg values must not compete with that binding.
-    mode: ReferenceMode = "pose" if space_group_id else raw_scope
+    mode: ReferenceMode = ("all" if recipe_family == "horizon" else "pose") if space_group_id else raw_scope
     if mode == "none":
         raise CutPlanError("reference_mode_none_with_reference")
     if recipe_family == "product" and mode != "all":
@@ -338,13 +343,16 @@ def compile_cut_plan(
                 reference_attributes.remove(attribute)
     if recipe_family == "product" and "pose" in reference_attributes:
         reference_attributes.remove("pose")
+    if (recipe_family == "horizon" and spec.get("_horizonReferenceShot") in {"full", "medium"}
+            and spec["_horizonReferenceShot"] != spec.get("shot") and "camera" in reference_attributes):
+        reference_attributes.remove("camera")
     if explicit_pose and "pose" in reference_attributes:
         reference_attributes.remove("pose")
 
     effective_repeat_index = (
         example_repeat_index
         if (
-            recipe_family in {"styling", "horizon"}
+            recipe_family == "styling"
             and reference_mode == "all"
             and space_set_continuity is None
             and reference_direction_compatible
@@ -359,6 +367,9 @@ def compile_cut_plan(
     owners.update({attribute: "storyboard" for attribute in _STORYBOARD_ATTRIBUTES})
     owners.update({attribute: "recipe" for attribute in _REFERENCE_CAPABLE_ATTRIBUTES})
     owners.update({attribute: "reference" for attribute in reference_attributes})
+    background = horizon_background.normalize_runtime(spec.get("_horizonBackground")) if horizon_background.active(dict(spec)) else None
+    if background is not None:
+        owners["backgroundTone"] = "storyboard"
     if spec.get("modelId"):
         owners["faceIdentity"] = "modelFace"
         owners["bodyProportions"] = "modelFullBody"
@@ -397,6 +408,7 @@ def compile_cut_plan(
         reference_attributes=tuple(reference_attributes),
         attribute_owners=MappingProxyType(owners),
         storyboard_values=MappingProxyType(storyboard_values),
+        horizon_background=MappingProxyType(background) if background is not None else None,
     )
 
 

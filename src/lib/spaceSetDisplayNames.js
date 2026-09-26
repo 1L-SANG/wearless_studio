@@ -1,9 +1,6 @@
+import horizonProfiles from '../../data/horizonSetProfiles.json' with { type: 'json' };
+
 const SPACE_SET_DISPLAY_NAMES = Object.freeze({
-  'horizon-sequence-05-women-top-draped': '부드러운 호리존',
-  'horizon-sequence-06-women-top-linen': '맑은 호리존',
-  'horizon-sequence-07-men-top-pleated': '차분한 호리존',
-  'horizon-sequence-08-men-top-textured': '선명한 호리존',
-  'horizon-sequence-09-women-dress-knit': '포근한 호리존',
   'set-women-bottom-rainy-storefront-kclub-140072876': '비 오는 상점 앞',
   'set-women-bottom-urban-ggsing-140741411': '낡은 상가 앞 골목',
   'set-women-bottom-home-petrichoor-162619101': '따뜻한 작은 집',
@@ -58,12 +55,6 @@ const SPACE_SET_DISPLAY_NAMES = Object.freeze({
   'set-10-night': '저녁 도심 불빛',
   'set-13-sports-center': '햇빛 든 체육관',
   'set-14-car-wash': '밝은 셀프 세차장',
-  'set_horizon_women_bottom_threetimes_7563033280596_prod01': '균일한 회전 촬영',
-  'set_horizon_men_bottom_hatchingroom_2161_prod01': '선명한 회전 촬영',
-  'horizon-set-01-women-scarf-outer': '부드러운 호리존',
-  'horizon-set-02-women-fluid-trousers': '동적인 호리존',
-  'horizon-set-03-men-tonal-outer': '차분한 톤온톤',
-  'horizon-set-04-men-chino-focus': '담백한 호리존',
 });
 
 const FALLBACK_BY_PLACE = Object.freeze({
@@ -71,7 +62,6 @@ const FALLBACK_BY_PLACE = Object.freeze({
   'building-interior': '밝은 실내 장소',
   'cafe-shop-interior': '볕 드는 카페',
   'home-interior': '편안한 거실',
-  'horizon-studio': '밝은 호리존 스튜디오',
   'industrial-yard': '도시적인 야외',
   'library-interior': '조용한 서재',
   'park-garden': '초록빛 정원',
@@ -84,11 +74,33 @@ const FALLBACK_BY_PLACE = Object.freeze({
 });
 
 export function spaceSetDisplayName(set) {
-  return SPACE_SET_DISPLAY_NAMES[set?.id]
+  return horizonProfiles.sets[set?.id]?.shortName
+    || horizonProfiles.sets[set?.id]?.title
+    || SPACE_SET_DISPLAY_NAMES[set?.id]
     || FALLBACK_BY_PLACE[set?.placeType]
     || (set?.setType?.startsWith('horizon') ? '밝은 호리존' : '실내 장소 세트');
 }
 
+export function spaceSetDescription(set) {
+  return horizonProfiles.sets[set?.id]?.description || '';
+}
+
+export function spaceSetBackgroundHint(set) {
+  return horizonProfiles.sets[set?.id]?.backgroundDescription || '';
+}
+
+export function spaceSetBackgroundLabel(set) {
+  return horizonProfiles.sets[set?.id]?.backgroundLabel || '';
+}
+
+export function spaceSetLightingLabel(set) {
+  return horizonProfiles.sets[set?.id]?.lightingLabel || '';
+}
+
+export function spaceSetSupportedBackgroundModes(set) {
+  return [...(horizonProfiles.sets[set?.id]?.supportedBackgroundModes || [])];
+}
+
 export function mappedSpaceSetCount() {
-  return Object.keys(SPACE_SET_DISPLAY_NAMES).length;
+  return new Set([...Object.keys(SPACE_SET_DISPLAY_NAMES), ...Object.keys(horizonProfiles.sets)]).size;
 }

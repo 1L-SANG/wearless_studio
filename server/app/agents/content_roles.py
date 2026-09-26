@@ -6,6 +6,8 @@ order and those choices keep the hidden role aligned. A missing role may be
 inferred defensively from ``cutType``; retired kind values are not interpreted.
 """
 
+from . import horizon_background
+
 CONTENT_ROLES = (
     "hero",
     "benefit",
@@ -455,6 +457,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             block.get("shot"),
         )
         updated = canonicalize_storyboard_block(candidate, for_storage=for_storage)
+        updated = horizon_background.normalize_block(updated)
         next_recipe = (updated.get("cutType"), updated.get("direction"), updated.get("shot"))
         recipe_incompatible = (
             previous_recipe[0] != next_recipe[0]

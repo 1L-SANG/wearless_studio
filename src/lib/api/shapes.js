@@ -239,6 +239,8 @@ function storyboardTemplateFingerprint(blocks) {
     ownImages: block.ownImages || [],
     spaceGroup: ordinal(spaceIds, block.spaceGroupId),
     spaceVariation: block.spaceVariation ?? null,
+    horizonBackgroundMode: block.cutType === 'horizon' && block.spaceGroupId
+      ? (block.horizonBackgroundMode === 'garment-tone' ? 'garment-tone' : 'reference') : null,
     sectionLayout: block.sectionLayout || 'stack',
     sectionCustom: !!block.sectionCustom,
     layoutRow: ordinal(rowIds, block.layoutRowId),
@@ -303,6 +305,8 @@ export function defaultAnalysisShape(clothingType = 'top') {
     confirmedGptProductEvidenceHandoff: null,
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
     detailRecommendationsHandoff: null,
+    garmentColorEvidence: null,
+    garmentColorEvidenceHandoff: null,
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: createMeasurementFields(clothingType),
     fitProfile: null,

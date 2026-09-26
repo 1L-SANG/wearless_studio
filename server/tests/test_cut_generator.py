@@ -367,7 +367,7 @@ def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
     )
     prompt = cg.build_prompt(
         {
-            "cutType": "horizon", "direction": "front", "shot": "full",
+            "cutType": "styling", "direction": "front", "shot": "full",
             "pose": "auto", "refScope": "all", "exampleId": "same-example",
             "_exampleRepeatIndex": 1,
         },
@@ -672,7 +672,7 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
         has_mannequin=False,
         has_match=False,
         mood_count=0,
-        example_scope="pose",
+        example_scope="all",
         has_space_set_plate=False,
     )
     prompt = cg.build_prompt(
@@ -689,7 +689,7 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
         manifest=manifest,
     )
 
-    assert "POSE CONTROL" in manifest
+    assert "EXAMPLE REFERENCE (scope: all)" in manifest
     assert "SPACE SET PLATE" not in manifest
     assert "SPACE CONTINUITY" not in prompt
     assert "PUBLISHED SPACE-SET LOCATION" not in prompt

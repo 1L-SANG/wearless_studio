@@ -28,6 +28,7 @@ from .confirmed_gpt_prompt import (
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
+from . import horizon_background
 
 
 GATES = (
@@ -62,6 +63,17 @@ _REFERENCE_ROLE_LABELS = {
     "example": "EXAMPLE",
     "plate": "PLATE",
 }
+_HORIZON_WALL_EXCEPTION = """HORIZON WALL OPTION: the compiled horizonBackground.mode is garment-tone.
+The vertical wall surface may change to its wallHex low-chroma tone. This is the sole
+exception to plate/reference color fidelity. Judge approximate tone under preserved
+lighting, never exact output RGB equality. Preserve studio geometry, floor material/color,
+wall-floor transition, light direction/softness/exposure/white balance and cast/contact
+shadows. Do not treat authorized wall recoloring as a mismatch. Do not permit global color
+casts or garment/skin recoloring to match the wall.
+The attached EXAMPLE ALL supplies its allowed studio/pose/framing evidence. The wall-color
+exception never gives its garment or person identity authority, and does not require a separate
+PLATE, pose mask or layout image. Current storyboard overrides remain authoritative.
+"""
 _AUTHORITY_PROFILES = frozenset({"generic_v1", "confirmed_gpt_v1"})
 _GENERIC_MANNEQUIN_AUTHORITY = (
     "- PRODUCT images alone own the target garment's construction, material, pattern, hardware and garment\n"
@@ -139,7 +151,7 @@ _OWNER_ATTRIBUTES = frozenset({
     "textLogo", "color",
     "direction", "shot", "face", "model", "matching", "outerClosure", "pose",
     "camera", "scene", "light", "captureTone", "sceneContinuity", "faceIdentity",
-    "bodyProportions",
+    "bodyProportions", "backgroundTone",
 })
 _REFERENCE_ATTRIBUTES = frozenset({"pose", "camera", "scene", "light", "captureTone"})
 
@@ -507,6 +519,8 @@ def normalize_plan(plan: Any) -> dict:
         "declaredFitAxisCount": declared_axis_count,
         "exampleRepeatIndex": example_repeat_index,
         "spaceSetContinuity": continuity,
+        **({"horizonBackground": background} if recipe == "horizon"
+           and (background := horizon_background.normalize_runtime(source.get("horizonBackground"))) else {}),
         "precedence": precedence_contract,
         "contractErrors": sorted(set(errors)),
     }
@@ -601,6 +615,9 @@ def build_prompt(
     )
     if "${" in prompt:
         raise VisionError("cut_output_qc: unresolved prompt token")
+    if (contract.get("recipeFamily") == "horizon"
+            and horizon_background.normalize_runtime(contract.get("horizonBackground"))):
+        prompt += "\n\n" + _HORIZON_WALL_EXCEPTION
     return prompt
 
 

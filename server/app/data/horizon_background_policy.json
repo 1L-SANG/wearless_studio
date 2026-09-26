@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "allowedSetIds": [
+    "set_horizon_women_bottom_threetimes_7563033280596_prod01",
+    "set_horizon_men_bottom_hatchingroom_2161_prod01",
+    "horizon-sequence-05-women-top-draped",
+    "horizon-sequence-06-women-top-linen",
+    "horizon-set-01-women-scarf-outer",
+    "horizon-set-02-women-fluid-trousers",
+    "horizon-sequence-06-women-top-linen-r2",
+    "horizon-sequence-figma-s05-v2",
+    "horizon-sequence-figma-s20-v2"
+  ],
+  "lightBranchMaximum": 0.82,
+  "darkBranchMinimum": 0.84,
+  "whiteGarmentMinimum": 0.94,
+  "darkWallLightness": 0.72,
+  "whiteWallLightness": 0.82,
+  "hueStep": 30,
+  "achromaticThreshold": 0.015,
+  "strongGarmentChroma": 0.07,
+  "subtleChroma": 0.009,
+  "mutedChroma": 0.024,
+  "maxChroma": 0.035,
+  "chromaScale": 0.18,
+  "minimumLightnessGap": 0.1,
+  "desiredLightnessGap": 0.15,
+  "minimumWallLightness": 0.7,
+  "maximumWallLightness": 0.94,
+  "maximumDarkenedWallLightness": 0.86,
+  "yellowHueRange": [
+    85,
+    115
+  ],
+  "darkenedYellowMaxChroma": 0.02,
+  "lightWallLightness": 0.94,
+  "fallbackHex": "#b8b8b8",
+  "swatches": {
+    "white": "#ffffff",
+    "gray": "#9a9aa1",
+    "black": "#15141a",
+    "ivory": "#f3eee1",
+    "beige": "#d8c4a3",
+    "brown": "#7a5230",
+    "purple": "#7d5ba6",
+    "red": "#c0392b",
+    "yellow": "#e7c75c",
+    "green": "#3f7a4f",
+    "blue": "#2a5db0",
+    "navy": "#1f2a44",
+    "pink": "#e3a7b8"
+  }
+}

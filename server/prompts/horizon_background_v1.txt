@@ -1,0 +1,11 @@
+HORIZON WALL TONE — explicit wall-color-only exception to reference/plate color fidelity:
+Set the seamless vertical wall's low-chroma surface color to ${wallHex}.
+Preserve the reference studio geometry, floor material and floor color, wall-floor transition,
+camera, framing, light direction/softness/exposure/white balance, gradients and cast/contact shadows.
+This is a wall surface change, never a global tint or a new lighting setup.
+Do not recolor the PRODUCT, skin, matching garments or floor. Preserve exact PRODUCT color,
+construction, hem, silhouette and visible detail ahead of reference clothing or pose contacts.
+Pose, framing, clothing and identity keep their existing compiled owners and input roles.
+The attached complete EXAMPLE ALL supplies studio geometry/light evidence with its allowed
+pose/framing scope. Do not require or infer an absent PLATE, pose mask or layout image.
+Use this same wall tone for every cut with this set and product color.

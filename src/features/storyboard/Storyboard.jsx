@@ -12,6 +12,12 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
+import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
+import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
+import { CATALOG_DRAG_MIME, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
+import { attachStoryboardDragScroll } from '@/lib/storyboardDragScroll.js';
+import { horizonBackgroundAvailability } from '@/lib/horizonBackgroundAvailability.js';
+import { horizonBackgroundMode, restoreHorizonGroupBackground, updateHorizonGroupBackground } from '@/lib/horizonBackground.js';
 import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe, detailTargetPresentation, detailRecommendationMessage, selectableDetailTargets } from '@/lib/detailRecommendations.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
@@ -234,9 +240,9 @@ function referenceFeedbackPatch(block, changes, catalogs) {
   if (!block) return changes;
   const exampleId = Object.prototype.hasOwnProperty.call(changes, 'exampleId') ? changes.exampleId : block.exampleId;
   const refScope = Object.prototype.hasOwnProperty.call(changes, 'refScope') ? changes.refScope : (block.refScope || 'all');
-  // 같은 공간 묶음 컷은 서버 계약(normalize_spec)이 범위를 'pose' 로 강제 — 프론트 표시도 동일 규칙
+  // 호리존 묶음은 완성 예시, 스타일링 묶음은 포즈 전용 참조를 쓴다.
   const spaceGroupId = Object.prototype.hasOwnProperty.call(changes, 'spaceGroupId') ? changes.spaceGroupId : block.spaceGroupId;
-  const effScope = spaceGroupId ? 'pose' : refScope;
+  const effScope = spaceGroupId ? ((changes.cutType ?? block.cutType) === 'horizon' ? 'all' : 'pose') : refScope;
   const next = { ...preserveDetailTargetBinding(block, changes) };
   if (isProductDetail({ ...block, ...changes })) return next;
   if (exampleId && effScope === 'all') {
@@ -1014,142 +1020,136 @@ function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage }) {
   );
 }
 
-function SpaceSetCard({
-  set,
-  interactive = true,
-  currentCutOrdinal = null,
-  onChoose,
-  onPreviewOpen,
-  onPreviewClose,
-}) {
-  const content = (
-    <>
-      <span className="sb-set-polaroids" aria-hidden="true"
-        style={{ '--set-member-count': set?.members?.length || 0 }}>
-        {(set?.members || []).map((member, index) => (
-          <span key={member.exampleId || `${member.direction}:${member.shot}:${index}`} className={`sb-set-polaroid p${index + 1}`}>
-            {member.thumb
-              ? <img src={member.thumb} alt="" />
-              : <span className={member.shot === 'medium' ? 'figure medium' : 'figure'} />}
-          </span>
-        ))}
-      </span>
-      <strong>{spaceSetDisplayName(set)}</strong>
-      <small>{set?.compositionLabel}</small>
-      {Number.isInteger(currentCutOrdinal) && (
-        <span className="sb-set-current-cut">현재 선택 · {currentCutOrdinal}번째 컷</span>
-      )}
-    </>
-  );
-  const className = `sb-set-card ${interactive ? 'is-interactive' : 'is-static'} tone-${set?.tone || 'neutral'}`;
-  if (!interactive) return <div className={className}>{content}</div>;
-  return (
-    <button type="button" className={className}
-      onMouseEnter={(event) => onPreviewOpen?.(set, event.currentTarget)}
-      onMouseLeave={onPreviewClose}
-      onFocus={(event) => onPreviewOpen?.(set, event.currentTarget, 0)}
-      onBlur={onPreviewClose}
-      onClick={() => onChoose?.(set)}>
-      {content}
+function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onChoose, onPreviewOpen, onPreviewClose,
+  onPreviewPin, onCatalogDragStart, onCatalogDragEnd, pinned = false, disabled = false, selected = false }) {
+  const content = <>
+    <span className="sb-set-cover" aria-hidden="true">
+      {set?.members?.[0]?.thumb ? <img src={set.members[0].thumb} alt="" draggable={false} /> : <span className="sb-set-cover-placeholder" />}
+      <span className="sb-set-miniatures">{(set?.members || []).slice(1, 5).map((member, index) => (
+        <span key={member.exampleId || index} className="sb-set-miniature">
+          {member.thumb ? <img src={member.thumb} alt="" loading="lazy" draggable={false} /> : <span className="sb-set-cover-placeholder" />}
+        </span>
+      ))}</span>
+    </span>
+    <strong>{spaceSetDisplayName(set)}</strong>
+    <small>{set?.members?.length || 0}컷</small>
+    {Number.isInteger(currentCutOrdinal) && <span className="sb-set-current-cut">현재 선택 · {currentCutOrdinal}번째 컷</span>}
+  </>;
+  if (!interactive) return <div className={`sb-set-card is-static tone-${set?.tone || 'neutral'}`}>{content}</div>;
+  return <div className="sb-set-card-shell" onMouseEnter={(event) => onPreviewOpen?.(set, event.currentTarget)} onMouseLeave={onPreviewClose}>
+    <button type="button" className={`sb-set-card is-interactive tone-${set?.tone || 'neutral'}`} data-set-id={set.id}
+      disabled={disabled} aria-pressed={selected} draggable={!disabled && !!onCatalogDragStart}
+      onDragStart={(event) => onCatalogDragStart?.(event, set)} onDragEnd={onCatalogDragEnd}
+      onFocus={(event) => onPreviewOpen?.(set, event.currentTarget, 0)} onBlur={onPreviewClose}
+      onClick={(event) => onChoose?.(set, event.currentTarget)}>{content}</button>
+    <button type="button" className="sb-set-individual-button" disabled={disabled} aria-expanded={pinned}
+      aria-controls={pinned ? 'sb-set-cut-preview' : undefined}
+      onFocus={(event) => onPreviewOpen?.(set, event.currentTarget.closest('.sb-set-card-shell'), 0)}
+      onClick={(event) => onPreviewPin?.(set, event.currentTarget.closest('.sb-set-card-shell'))}>
+      {pinned ? '미리보기 닫기' : '개별 컷 보기'}
     </button>
-  );
+  </div>;
 }
 
 function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
-  const ordinal = Number.isInteger(block.spaceSetMemberOrder)
-    ? block.spaceSetMemberOrder
-    : siblingIndex + 1;
+  const ordinal = siblingIndex >= 0 ? siblingIndex + 1 : (block.spaceSetMemberOrder || 1);
+  const count = siblings.length || set?.members?.length || 1;
+  const thumb = block.previewThumb || block.thumb || set?.members?.[ordinal - 1]?.thumb;
   return (
     <div className="sb-space-inspector-context">
-      <SpaceSetCard set={set} interactive={false} currentCutOrdinal={ordinal} />
-      <button type="button" className="sb-space-set-change" onClick={onChangeSet}>장소 세트 변경</button>
+      <div className="sb-space-current-cut">
+        {thumb && <img className="sb-space-current-thumb" src={thumb} alt="" />}
+        <div><strong>{ordinal}번째 컷</strong>
+          <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
+            <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
+          </div>
+        </div>
+      </div>
+      {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {horizonBackgroundMode(block) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
     </div>
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType, sectionRole = null,
-  identityKind = null }) {
+function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
+  identityKind = null, busy = false, currentMembers = [], product, colorEvidence, onBackgroundChange,
+  catalog = [], onCatalogDragStart, onCatalogDragEnd }) {
   const replacing = mode === 'replace';
-  // 섹션이 정해진 추가는 그 섹션이 실제로 소화하는 세트만 보여준다 — 스타일링 칸에 호리존
-  // 세트를 넣으면 그 섹션에서는 발행되지 않은 조합이라 컷이 통째로 빈다(2026-08-16 실측).
-  const spaceSets = filterSpaceSetsForModel(
-    storyboardSpaceSetsFor({ gender, clothingType }), identityKind,
-  )
-    .filter((set) => (
-      sectionRole === SECTION_ROLES.STYLING ? set.setType === 'styling'
-        : sectionRole === SECTION_ROLES.STUDIO ? String(set.setType || '').startsWith('horizon')
-          : true
-    ));
+  const spaceSets = filterSpaceSetsForModel(storyboardSpaceSetsFor({ gender, clothingType }), identityKind)
+    .filter(set => sectionRole === SECTION_ROLES.STYLING ? set.setType === 'styling'
+      : sectionRole === SECTION_ROLES.STUDIO ? String(set.setType || '').startsWith('horizon') : true);
   const [preview, setPreview] = useState(null);
-  const previewTimer = useRef(null);
-  useEffect(() => () => clearTimeout(previewTimer.current), []);
-  const closePreview = () => {
+  const [dragging, setDragging] = useState(false);
+  const pickerRef = useRef(null), ignorePreviewFocus = useRef(null), previewTimer = useRef(null);
+  const draggingRef = useRef(false), ghostCleanup = useRef(null);
+  const closePreview = React.useCallback(() => { clearTimeout(previewTimer.current); setPreview(null); }, []);
+  useEffect(() => () => { clearTimeout(previewTimer.current); ghostCleanup.current?.(); }, []);
+  useEffect(() => {
+    if (busy) { ghostCleanup.current?.(); ghostCleanup.current = null; draggingRef.current = false; setDragging(false); closePreview(); }
+  }, [busy, closePreview]);
+  const keepPreview = () => clearTimeout(previewTimer.current);
+  const leavePreview = () => {
+    if (draggingRef.current || preview?.pinned) return;
     clearTimeout(previewTimer.current);
-    setPreview(null);
+    previewTimer.current = setTimeout(() => setPreview(current => current?.pinned ? current : null), 120);
   };
-  const openPreview = (set, anchor, delay = 200) => {
+  const openPreview = (set, anchor, delay = 35) => {
+    if (busy || draggingRef.current || preview?.pinned || (delay === 0 && ignorePreviewFocus.current === anchor)) return;
     clearTimeout(previewTimer.current);
     previewTimer.current = setTimeout(() => {
-      const rect = anchor.getBoundingClientRect();
-      const width = 316;
-      const height = 58 + Math.ceil(set.members.length / 3) * 124;
-      const gap = 12;
-      const leftSide = rect.left - width - gap;
-      const rightSide = rect.right + gap;
-      const itemIndex = [...anchor.parentElement.children].indexOf(anchor);
-      const preferred = itemIndex % 2 === 0 ? leftSide : rightSide;
-      const fallback = itemIndex % 2 === 0 ? rightSide : leftSide;
-      const fits = (value) => value >= 8 && value + width <= window.innerWidth - 8;
-      const left = fits(preferred)
-        ? preferred
-        : Math.min(Math.max(8, fallback), window.innerWidth - width - 8);
-      const top = Math.min(
-        Math.max(8, rect.top),
-        Math.max(8, window.innerHeight - height - 8),
-      );
-      setPreview({ set, left, top, width });
+      if (anchor.isConnected && pickerRef.current?.isConnected) setPreview({ set, anchor, panel: pickerRef.current, pinned: false });
     }, delay);
   };
-  return (
-    <div className="surface inspector sb-set-picker">
-      <div className="sb-set-picker-head">
-        <div>
-          <div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
-          <p>{replacing
-            ? '고르면 공간과 구성 컷 전체가 한 번에 바뀌어요.'
-            : '장소 세트 카드 하나에 공간과 어울리는 컷 구성이 함께 들어 있어요.'}</p>
-        </div>
-        <button type="button" className="sb-set-picker-close" onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button>
-      </div>
-      <div className="sb-set-grid">
-        {spaceSets.map((set) => (
-          <SpaceSetCard key={set.id} set={set} onChoose={onChoose}
-            onPreviewOpen={openPreview} onPreviewClose={closePreview} />
-        ))}
-        {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 장소 세트를 준비 중이에요.</div>}
-      </div>
-      {error && <div className="sb-save-error">{error}</div>}
-      {preview && createPortal(
-        <div className="sb-set-preview" role="tooltip"
-          style={{ left: preview.left, top: preview.top, width: preview.width }}>
-          <strong>{spaceSetDisplayName(preview.set)}</strong>
-          <span>{preview.set.compositionLabel}</span>
-          <div className="sb-set-preview-grid">
-            {preview.set.members.map((member, index) => (
-              <figure key={member.exampleId || index}>
-                {member.thumb ? <img src={member.thumb} alt="" /> : <span />}
-                <figcaption>{index + 1}번째 컷</figcaption>
-              </figure>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
+  const pinPreview = (set, anchor) => {
+    clearTimeout(previewTimer.current);
+    setPreview(current => current?.set.id === set.id && current.pinned ? null : { set, anchor, panel: pickerRef.current, pinned: true });
+  };
+  const dismissPreview = () => {
+    const anchor = preview?.anchor?.matches('button') ? preview.anchor : preview?.anchor?.querySelector('.sb-set-card');
+    closePreview();
+    if (anchor?.isConnected) { ignorePreviewFocus.current = anchor; anchor.focus({ preventScroll: true }); requestAnimationFrame(() => { ignorePreviewFocus.current = null; }); }
+  };
+  const preservePicker = async (callback, anchor) => {
+    const scroller = pickerRef.current?.closest('.insp-col'), top = scroller?.scrollTop || 0;
+    try { await callback(); } finally { requestAnimationFrame(() => {
+      if (anchor?.isConnected) { ignorePreviewFocus.current = anchor; anchor.focus({ preventScroll: true }); requestAnimationFrame(() => { ignorePreviewFocus.current = null; }); }
+      if (scroller?.isConnected) scroller.scrollTop = top;
+    }); }
+  };
+  const choose = (set, anchor) => { if (busy) return; closePreview(); return preservePicker(() => onChoose(set), anchor); };
+  const chooseMember = (set, member) => {
+    if (busy) return;
+    const anchor = pickerRef.current?.querySelector(`[data-set-id="${set.id}"]`);
+    closePreview(); return preservePicker(() => onChooseMember(set, member), anchor);
+  };
+  const canChooseMember = (set, member) => !busy && independentSpaceSetChoices(set, { catalog, gender, clothingType, sectionRole })
+    .some(choice => choice.member.exampleId === member.exampleId);
+  const startDrag = (event, set, member = null) => {
+    if (busy || (member && !canChooseMember(set, member))) { event.preventDefault(); return; }
+    event.stopPropagation(); clearTimeout(previewTimer.current);
+    event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData(CATALOG_DRAG_MIME, JSON.stringify({ setId: set.id, exampleId: member?.exampleId || null }));
+    ghostCleanup.current?.(); ghostCleanup.current = setCatalogDragImage(event, member ? [member] : set.members);
+    draggingRef.current = true; setDragging(true); onCatalogDragStart?.(set, member);
+  };
+  const endDrag = () => { ghostCleanup.current?.(); ghostCleanup.current = null; draggingRef.current = false; setDragging(false); closePreview(); onCatalogDragEnd?.(); };
+  const currentBlock = currentMembers[0], currentSet = currentBlock ? inferStoryboardSpaceSet(currentBlock.spaceGroupId) : null;
+  const availability = horizonBackgroundAvailability(currentMembers, product, colorEvidence, currentSet?.id);
+  return <div className="surface inspector sb-set-picker" ref={pickerRef}
+    onKeyDown={event => { if (event.key === 'Escape' && preview) { event.preventDefault(); event.stopPropagation(); dismissPreview(); } }}>
+    <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
+      <p>누르면 세트가 바뀌고, 끌면 원하는 자리에 추가해요.</p></div>
+      <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
+    {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
+      disabled={busy} onChange={onBackgroundChange} garmentToneAvailable={availability.available} garmentToneUnavailableReason={availability.reason} />}
+    <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
+      selected={currentSet?.id === set.id} onPreviewOpen={openPreview} onPreviewClose={leavePreview} onPreviewPin={pinPreview}
+      pinned={preview?.set.id === set.id && preview.pinned} onCatalogDragStart={startDrag} onCatalogDragEnd={endDrag} />)}
+      {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 장소 세트를 준비 중이에요.</div>}</div>
+    {error && <div className="sb-save-error">{error}</div>}
+    {preview && <SpaceSetHoverPreview preview={preview} onEnter={keepPreview} onLeave={leavePreview} onClose={dismissPreview}
+      onChooseMember={chooseMember} onDragStart={startDrag} onDragEnd={endDrag} canChooseMember={canChooseMember} dragging={dragging} />}
+  </div>;
 }
-
 
 /* 시그니처 컷 전용 갤러리 — 생성예시 카탈로그가 아니라 signatureCutPool 을 보여준다.
    분위기를 고를 여지는 남기되(장소 세트처럼 감추지 않는다), 샷·참조범위 같은
@@ -1453,7 +1453,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           exampleSelectionOrigin: current.exampleId ? 'user' : null,
         };
       }
-      return { shot, refScope: 'pose', exampleSelectionOrigin: 'user' };
+      return { shot, refScope: current.cutType === 'horizon' ? 'all' : 'pose', exampleSelectionOrigin: 'user' };
     });
   };
   const commitPendingRecipe = async (exampleId) => {
@@ -1494,7 +1494,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
       exampleSelectionOrigin: 'user',
-      refScope: pendingInSpace ? 'pose' : 'all',
+      refScope: pendingInSpace && recipePatch.cutType !== 'horizon' ? 'pose' : 'all',
       outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(recipePatch.cutType)
         ? (closureOptions.some((option) => option.value === current.outerClosureState)
           ? current.outerClosureState : 'open')
@@ -1571,7 +1571,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       return repick ? { ...patch, ...repick } : patch;
     }
     const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
-    const compatible = (example?.variants || []).includes('pose')
+    const compatible = (current.cutType === 'horizon' || (example?.variants || []).includes('pose'))
       && poseExampleDirectionCompatible(example, {
         cutType: current.cutType,
         direction,
@@ -1580,7 +1580,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     if (compatible) {
       return {
         ...patch,
-        ...(current.spaceGroupId ? { refScope: 'pose' } : {}),
+        ...(current.spaceGroupId ? { refScope: current.cutType === 'horizon' ? 'all' : 'pose' } : {}),
       };
     }
     // 방향이 예시 포즈와 안 맞아도 생성예시는 유지한다(2026-08-15 오너 — 예시를 비워
@@ -1588,7 +1588,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     // 서버는 방향 비호환 시 포즈 권한만 내려놓고 생성한다(reference_direction_compatible).
     return {
       ...patch,
-      ...(current.spaceGroupId ? {} : { refScope: 'all' }),
+      ...(current.spaceGroupId && current.cutType !== 'horizon' ? {} : { refScope: 'all' }),
     };
   });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
@@ -1651,7 +1651,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               clothingType={clothingType} gender={exampleGender}
               includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
-              refScope={pendingInSpace ? 'pose' : 'all'} />
+              refScope={pendingInSpace && pendingRecipe.cutType !== 'horizon' ? 'pose' : 'all'} />
           )}
           {pendingError && <div className="sb-save-error">{pendingError}
             <button type="button" disabled={!pendingChoice || pendingSaving}
@@ -1831,7 +1831,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   const p = product;
   const a = analysis;
   const hydratedCatalogs = { ...withStoryboardSpaceSetExamples(rawCatalogs),
-    detailProduct: p, detailRecommendations: a?.detailRecommendations };
+    detailProduct: p, detailRecommendations: a?.detailRecommendations, garmentColorEvidence: a?.garmentColorEvidence };
   const hasDetailImage = hasDetailSource(p);
   const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
@@ -2141,10 +2141,15 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [splitOpen, setSplitOpen] = useState(false); // 한 번이라도 카드를 열면 좌/우 분할 유지
   const [dragId, setDragId] = useState(null);
   const [dragSpaceGroupId, setDragSpaceGroupId] = useState(null);
+  const [catalogDrag, setCatalogDrag] = useState(null);
+  const spaceDragCleanup = useRef(null);
   const [dragOver, setDragOver] = useState(null);
   const [dragOverSec, setDragOverSec] = useState(null); // 호버 중인 드롭 대상 섹션 — 하이라이트와 드롭이 같은 신호를 쓴다
   const [dragOverSpaceGroupId, setDragOverSpaceGroupId] = useState(null);
   const [dragExampleId, setDragExampleId] = useState(null);
+  const isDraggingStoryboard = !!(dragId || dragSpaceGroupId || dragExampleId || catalogDrag);
+  useEffect(() => { if (isDraggingStoryboard) return attachStoryboardDragScroll(); }, [isDraggingStoryboard]);
+  useEffect(() => () => spaceDragCleanup.current?.(), []);
   const [swapOverId, setSwapOverId] = useState(null);   // 자리 교환 대상으로 조준된 컷
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
@@ -2648,6 +2653,12 @@ export function Storyboard({ toastOverride = null } = {}) {
     const entry = undoEntryRef.current;
     if (!entry) return;
     setBlocks(entry.before);
+    if (setPicker?.mode === 'replace') {
+      const anchor = blocks.find((block) => block.spaceGroupId === setPicker.spaceGroupId);
+      const restored = entry.before.find((block) => block.id === anchor?.id);
+      if (restored?.spaceGroupId) setSetPicker((current) => current ? { ...current, spaceGroupId: restored.spaceGroupId } : current);
+      else setSetPicker(null);
+    }
     dismissUndo();
     toast.push('변경을 되돌렸어요', { icon: 'undo' });
   };
@@ -2754,7 +2765,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
-    if (selectedId === id) { finishEdit(); return; }      // click again → deselect
+    if (selectedId === id && !setPicker) { finishEdit(); return; }      // the open picker returns to this cut's inspector
     setPendingSectionMove(null);
     setSelectedId(id); setSplitOpen(true);
   };
@@ -2815,7 +2826,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       }
       if (unchanged) return preDelete;
       // 그 사이 실제 조작이 있었으면 폴백: 재삽입 후 이웃 섹션 재채택 + 공통 위생
-      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, undoBlock);
+      const restored = restoreHorizonGroupBackground(undoBlock, bs);
+      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, restored);
       return normalizeStoryboardMutation(adoptSection(n, undoBlock.id));
     }) });
   };
@@ -2856,7 +2868,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       toast.push('이 섹션에는 해당 생성예시를 추가할 수 없어요');
       return;
     }
-    if (targetSpaceGroupId && droppedExample && (!(droppedExample.variants || []).includes('pose')
+    if (targetSpaceGroupId && droppedExample && droppedCutType !== 'horizon' && (!(droppedExample.variants || []).includes('pose')
       || !poseExampleDirectionCompatible(droppedExample, {
         cutType: droppedCutType,
         direction: droppedExample.direction,
@@ -2913,7 +2925,9 @@ export function Storyboard({ toastOverride = null } = {}) {
           : null;
         const g = explicitGroup;
         if (g) out = out.map((b) => (b.id === nb.id
-          ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? 'subtle', refScope: 'pose' } : b));
+          ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? 'subtle',
+            horizonBackgroundMode: b.cutType === 'horizon' ? horizonBackgroundMode(g) : null,
+            refScope: b.cutType === 'horizon' ? 'all' : 'pose' } : b));
       }
       out = normalizeStoryboardMutation(out);   // 행 위생 + 분리된 공간 run 재키 (삽입 경로 공통 규칙)
     // 후킹에 프레임이 없으면(시그니처 컷을 지워 비운 상태) 새로 넣는 첫 컷이 시그니처가 된다 —
@@ -2961,7 +2975,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           exampleId: droppedExample.id,
           baseThumb: block.baseThumb ?? block.thumb,
           exampleSelectionOrigin: 'user',
-          refScope: effectiveSpaceGroupId ? 'pose' : 'all',
+          refScope: effectiveSpaceGroupId && block.cutType !== 'horizon' ? 'pose' : 'all',
         }, catalogs),
         ...(reservation?.blockPatch || {}),
       } : block)
@@ -3022,9 +3036,12 @@ export function Storyboard({ toastOverride = null } = {}) {
   const onSpaceDragStart = (spaceGroupId) => (e) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/space-group', spaceGroupId);
+    spaceDragCleanup.current?.();
+    spaceDragCleanup.current = setCatalogDragImage(e, blocks.filter(block => block.spaceGroupId === spaceGroupId));
     setDragSpaceGroupId(spaceGroupId);
   };
   const onDragEnd = () => {
+    spaceDragCleanup.current?.(); spaceDragCleanup.current = null; setCatalogDrag(null);
     setDragId(null); setDragSpaceGroupId(null); setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null);
     setSwapOverId(null);
   };
@@ -3115,6 +3132,11 @@ export function Storyboard({ toastOverride = null } = {}) {
   ) => (e) => {
     e.preventDefault();
     e.stopPropagation();
+    const catalogPayload = e.dataTransfer.getData(CATALOG_DRAG_MIME);
+    if (catalogPayload || catalogDrag) {
+      let payload; try { payload = catalogPayload ? JSON.parse(catalogPayload) : catalogDrag; } catch { onDragEnd(); return; }
+      onDragEnd(); dropCatalogSelection(payload, idx, targetSid, targetRole, targetSpaceGroupId, canAdd); return;
+    }
     const exampleId = e.dataTransfer.getData('text/example-id') || dragExampleId;
     const draggedGroup = e.dataTransfer.getData('text/space-group') || dragSpaceGroupId;
     setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null);
@@ -3134,7 +3156,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         let moved = moveSpaceSetRun(current, draggedGroup, idx);
         for (const member of members) moved = adoptSection(moved, member.id, targetSid, targetRole);
         return normalizeStoryboardMutation(moved.map((block) => memberIds.has(block.id)
-          ? { ...block, spaceGroupId: draggedGroup, spaceVariation: block.spaceVariation || 'subtle', refScope: 'pose' }
+          ? { ...block, spaceGroupId: draggedGroup, spaceVariation: block.spaceVariation || 'subtle', refScope: block.cutType === 'horizon' ? 'all' : 'pose' }
           : block));
       });
       return;
@@ -3317,8 +3339,46 @@ export function Storyboard({ toastOverride = null } = {}) {
     setSetPicker(picker);
     setSplitOpen(true);
   };
-  const chooseSpaceSet = async (set) => {
+  const catalogContext = { catalog: filterExamplesForModel(catalogs.genExamples, identityKind), gender: exampleGender, clothingType };
+  const availableCatalogSets = filterSpaceSetsForModel(storyboardSpaceSetsFor({ gender: exampleGender, clothingType }), identityKind);
+  const dropCatalogSelection = async (payload, index, targetSid, targetRole, targetSpaceGroupId = null, canAdd = true) => {
+    const selection = resolveCatalogDrag(payload, availableCatalogSets, { ...catalogContext, sectionRole: targetRole, targetSpaceGroupId, canAdd, locked: atomicSavingRef.current });
+    if (!selection) return;
+    const { set, member } = selection;
+    const ids = (member ? [member] : set.members).map(() => uid('blk'));
+    setSetPickerError(null);
+    try {
+      await atomicBoardChange(current => {
+        const host = current.find(block => block.sectionId === targetSid && block.sectionRole === targetRole && block.source !== 'mine');
+        const template = stripHookFrameFields(detachSpaceMembership(withoutLayoutRow({ ...(host || {}),
+          sectionRole: targetRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION, colorId: host?.colorId || colorOpts[0]?.id || 'col1',
+          matchIds: [...(host?.matchIds || [])], faceExposure: host?.faceExposure || 'same', angle: 'same', refImages: [], refAssetIds: [],
+        })));
+        const options = { makeId: (_member, position) => ids[position] };
+        const added = member ? createIndependentCatalogMembers(set, [member.exampleId], template, { ...catalogContext, sectionRole: targetRole, ...options })
+          : insertSpaceSet([], 0, set, template, { ...options, spaceGroupId: spaceSetGroupId(set.id, uid('sg')), setSelectionOrigin: 'user' });
+        const inserted = insertCatalogBlocks(current, index, added), byId = new Map(added.map(block => [block.id, block]));
+        const adopted = adoptSection(inserted, ids, targetSid, targetRole).map(block => {
+          const cut = byId.get(block.id);
+          return cut ? { ...block, ...cut, sectionId: block.sectionId, sectionTitle: block.sectionTitle, sectionLayout: block.sectionLayout, sectionCustom: true } : block;
+        });
+        return member ? adopted : assignGenerationExamples(normalizeBoard(adopted), {
+          catalog: catalogs.genExamples, product: { clothingType }, gender: exampleGender, onlyBlockIds: ids, identityKind,
+        }).blocks;
+      }, { nextSelectedId: ids[0], undoLabel: member ? '개별 컷 추가' : '세트 추가' });
+      toast.push(member ? '한 컷을 개별로 추가했어요' : '세트를 추가했어요', { icon: 'plus' });
+    } catch { setSetPickerError('추가한 내용을 저장하지 못했어요. 다시 시도해주세요.'); }
+  };
+  const chooseCatalogMember = (set, member) => {
     if (!setPicker) return;
+    const host = blocks.find(block => block.spaceGroupId === setPicker.spaceGroupId);
+    const sid = setPicker.targetSid || host?.sectionId, role = setPicker.targetRole || host?.sectionRole;
+    const lastIndex = blocks.reduce((last, block, index) => block.sectionId === sid && block.sectionRole === role ? index + 1 : last, 0);
+    return dropCatalogSelection({ setId: set.id, exampleId: member.exampleId }, lastIndex, sid, role);
+  };
+  const chooseSpaceSet = async (set) => {
+    if (!setPicker || atomicSavingRef.current) return;
+    if (setPicker.mode === 'replace' && inferStoryboardSpaceSet(setPicker.spaceGroupId)?.id === set.id) return;
     setSetPickerError(null);
     const groupId = spaceSetGroupId(set.id, uid('sg'));
     try {
@@ -3363,7 +3423,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           // 섹션 연속 run 이 깨진다(자체 리뷰). adoptSection 은 id 배열을 받는다 — 한 번에 넘긴다.
           inserted = adoptSection(inserted, memberIds, setPicker.targetSid, setPicker.targetRole);
           inserted = inserted.map((block) => memberIdSet.has(block.id) ? {
-            ...block, spaceGroupId: groupId, spaceVariation: set.spaceVariation || 'subtle', refScope: 'pose',
+            ...block, spaceGroupId: groupId, spaceVariation: set.spaceVariation || 'subtle', refScope: block.cutType === 'horizon' ? 'all' : 'pose',
           } : block);
           const normalized = normalizeBoard(inserted);
           return assignGenerationExamples(normalized, {
@@ -3375,7 +3435,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           }).blocks;
         }, { nextSelectedId: memberIds[0] });
       }
-      setSetPicker(null);
+      setSetPicker((current) => current ? { ...current, mode: 'replace', spaceGroupId: groupId } : current);
       toast.push(setPicker.mode === 'replace' ? '장소 세트를 변경했어요' : '장소 세트를 추가했어요', { icon: 'plus' });
     } catch {
       setSetPickerError('장소 세트를 저장하지 못했어요. 다시 시도해주세요.');
@@ -3577,6 +3637,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     { canAdd = true } = {},
   ) => {
     const section = sectionForGroup(group);
+    const acceptsCatalogDrag = catalogDrag && !!resolveCatalogDrag(catalogDrag, availableCatalogSets,
+      { ...catalogContext, sectionRole: section.role, targetSpaceGroupId, canAdd, locked: atomicSaving });
     const canAcceptDrag = (!draggedSpaceGroupKey || draggedSpaceGroupKey === group.key)
       && !(dragSpaceGroupId && targetSpaceGroupId);
     const lineOn = dragOver === idx && dragOverSec === section.id
@@ -3588,9 +3650,9 @@ export function Storyboard({ toastOverride = null } = {}) {
         placement={placement}
         /* 실제로 받을 수 있는 자리에만 자리표를 켠다 — 예시 드래그는 '새 컷 생성'이라
            canAdd 가 false 인 자리(예비 소진 세트)에서는 거부되므로 표시도 하지 않는다. */
-        dragging={!!(dragId || dragSpaceGroupId || (dragExampleId && canAdd))}
+        dragging={!!(dragId || dragSpaceGroupId || (dragExampleId && canAdd) || acceptsCatalogDrag)}
         onDragOver={(event) => {
-          if (!(dragId || dragExampleId || dragSpaceGroupId) || !canAcceptDrag) return;
+          if (!(dragId || dragExampleId || dragSpaceGroupId || acceptsCatalogDrag) || !canAcceptDrag || (catalogDrag && !acceptsCatalogDrag)) return;
           event.preventDefault();
           event.stopPropagation();
           setSwapOverId(null);          // 사이 자리를 조준하는 동안은 교환 표시를 끈다
@@ -3605,6 +3667,20 @@ export function Storyboard({ toastOverride = null } = {}) {
         }) : null}
       />
     );
+  };
+
+  const catalogEdgeControl = (group, edge) => {
+    const section = sectionForGroup(group);
+    if (!catalogDrag || !resolveCatalogDrag(catalogDrag, availableCatalogSets,
+      { ...catalogContext, sectionRole: section.role, canAdd: true, locked: atomicSaving })) return null;
+    const index = edge === 'top' ? Math.max(0, (group.items[0]?.index ?? section.start + 1) - 1)
+      : (group.items[group.items.length - 1]?.index ?? section.start);
+    const active = dragOver === index && dragOverSec === section.id && dragOverSpaceGroupId === null;
+    return <div className={`sb-set-edge-drop ${edge}${active ? ' on' : ''}`}
+      onDragOver={event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy'; setSwapOverId(null); setDragOver(index); setDragOverSec(section.id); setDragOverSpaceGroupId(null); }}
+      onDrop={onDropAt(index, section.id, section.role, null, group.key, { canAdd: true })}>
+      <span>{edge === 'top' ? '이 섹션 맨 위에 놓기' : '이 섹션 맨 아래에 놓기'}</span>
+    </div>;
   };
 
   const layoutControlForGroup = (group) => {
@@ -3886,6 +3962,7 @@ export function Storyboard({ toastOverride = null } = {}) {
                 {groupSection.role === SECTION_ROLES.PRODUCT && !blocks.some(isProductDetail)
                   && !selectableDetailTargets(catalogs.detailRecommendations).length
                   && <p className="hint">{detailRecommendationMessage(catalogs.detailRecommendations)}</p>}
+                {catalogEdgeControl(group, 'top')}
                 <div className="sb-canvas-grid">
                   {canvasUnits(group.items).map((unit) => (
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
@@ -3933,6 +4010,7 @@ export function Storyboard({ toastOverride = null } = {}) {
                     );
                   })()}
                 </div>
+                {catalogEdgeControl(group, 'bottom')}
                 {/* 예시 셔플 — 섹션1(후킹)에만, 마지막 카드 우측 아래(2026-08-15 오너).
                     장소세트는 renderSpaceRun 안에서 세트 단위로 붙는다. */}
                 {group.items.length > 0 && groupSection.role === SECTION_ROLES.HOOKING && (
@@ -3967,8 +4045,17 @@ export function Storyboard({ toastOverride = null } = {}) {
   /* '첫 화면 스타일'은 상시 패널이 아니라 컷 인스펙터에 얹는다(오너 확정). 단 **구성의 첫 컷
      하나에서만** — 스타일은 후킹 섹션 전체 구성을 지배하는 하나의 결정이라, 슬롯마다 같은
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
+  const pickerMembers = setPicker?.spaceGroupId ? blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const inspector = setPicker ? (
-    <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
+    <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
+      catalog={catalogContext.catalog} busy={atomicSaving || locked}
+      onCatalogDragStart={(set, member) => { setCatalogDrag({ setId: set.id, exampleId: member?.exampleId || null }); setDragId(null); setDragSpaceGroupId(null); setDragExampleId(null); }}
+      onCatalogDragEnd={onDragEnd}
+      currentMembers={pickerMembers} product={catalogs.detailProduct} colorEvidence={catalogs.garmentColorEvidence}
+      onBackgroundChange={(mode) => atomicBoardChange(
+        (current) => updateHorizonGroupBackground(current, setPicker.spaceGroupId, mode),
+        { undoBlockId: pickerMembers[0]?.id, undoLabel: '세트 배경' },
+      )}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       identityKind={identityKind}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />

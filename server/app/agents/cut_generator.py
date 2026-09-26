@@ -29,6 +29,7 @@ from .confirmed_gpt_prompt import (
     confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
+from . import horizon_background
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
@@ -197,12 +198,25 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
         spec["refScope"] = "all"
-    # 정식 촬영 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트
-    # 연속성([[SPACE]])이 담당하므로 입력 refScope와 무관하게 서버에서 'pose'로 강제한다.
-    # (배경만도 마찬가지 — 세트의 배경 기준과 충돌하므로 포즈로 강등)
+    # Horizon sets reference the complete photograph; styling keeps plate + pose.
     if spec["spaceGroupId"] and spec["exampleId"]:
-        spec["refScope"] = "pose"
+        spec["refScope"] = "all" if cut == "horizon" else "pose"
+    if cut == "horizon" and raw.get("_horizonReferenceShot") in {"full", "medium"}:
+        spec["_horizonReferenceShot"] = raw["_horizonReferenceShot"]
+    if horizon_background.active({**raw, "cutType": cut}):
+        spec["horizonBackgroundMode"] = "garment-tone"
+        spec["_horizonBackground"] = horizon_background.normalize_runtime(raw.get("_horizonBackground"))
     return spec
+
+
+def bind_horizon_reference(spec: dict, reference: dict) -> None:
+    """Only workers call this after loading a verified complete reference."""
+    spec["refScope"] = "all"
+    spec["_referenceDirectionCompatible"] = reference.get("directionCompatible", True) is True
+    if reference.get("shot") in {"full", "medium"}:
+        spec["_horizonReferenceShot"] = reference["shot"]
+    if spec.get("spaceGroupId"):
+        spec["_spaceSetContinuity"] = False
 
 
 def _is_bottom(clothing_type) -> bool:
@@ -412,6 +426,8 @@ def apply_reference_compatibility(spec: dict) -> dict:
         return resolved
     _default_base, assets = load_example_asset_registry()
     entry = assets.get(str(spec.get("exampleId"))) or {}
+    if spec.get("cutType") == "horizon" and entry.get("shot") in {"full", "medium"}:
+        resolved["_horizonReferenceShot"] = entry["shot"]
     if resolved["_referenceFaceVisibility"] is None:
         face_visibility = entry.get("faceVisibility")
         if face_visibility in ("hidden", "visible"):
@@ -721,6 +737,11 @@ def render_cut_prompt(
         return sec[key]
 
     shot_key = "detail_zoom" if detail_mode_zoom else shot
+    if (cut == "horizon" and spec.get("refScope") == "all"
+            and spec.get("_horizonReferenceShot") == shot
+            and spec.get("_referenceDirectionCompatible") is not False
+            and _EXAMPLE_ALL_LABEL in image_manifest):
+        shot_key = "horizon_reference"
     if cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
@@ -848,6 +869,8 @@ def render_cut_prompt(
                 "is authoritative. Use example camera geometry only where compatible; never turn "
                 "the model back toward the example's original view."
             )
+            if cut == "horizon" and spec.get("_referenceDirectionCompatible") is not False and spec["pose"] == "auto":
+                all_pose_rule = need("HORIZON_ALL_POSE")
             scope_line = (
                 scope_line
                 .replace("${allPoseRule}", all_pose_rule)
@@ -860,7 +883,7 @@ def render_cut_prompt(
     repeat_index = spec.get("_exampleRepeatIndex", 0)
     if (
         has_resolved_example
-        and cut in _WORN_CUTS
+        and cut in {"styling", "mirror"}
         and spec.get("refScope") == "all"
         and spec.get("pose") == "auto"
         and not spec.get("spaceGroupId")
@@ -1141,6 +1164,7 @@ def build_manifest(
     has_model_full_body: bool = False,
     has_face: bool = False, example_scope: str | None = None,
     example_is_product: bool = False, has_space_set_plate: bool = False,
+    example_is_horizon: bool = False,
     reference_direction_compatible: bool = True,
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
@@ -1189,7 +1213,10 @@ def build_manifest(
         lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
         i += 1
     if has_model_full_body:
-        lines.append(f"{i}. {_MODEL_FULL_BODY_LABEL}")
+        body_label = _MODEL_FULL_BODY_LABEL
+        if example_is_horizon and example_scope == "all" and not has_space_set_plate:
+            body_label = body_label.replace("SPACE SET PLATE owns the location", "EXAMPLE REFERENCE owns the studio")
+        lines.append(f"{i}. {body_label}")
         i += 1
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
@@ -1244,6 +1271,8 @@ def build_manifest(
                 "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
                 "CUT SPEC controls camera, crop and model placement, while SPACE SET PLATE "
                 "exclusively controls the location and background; "
+            )
+            lines[-1] += (
                 f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
             )
         else:

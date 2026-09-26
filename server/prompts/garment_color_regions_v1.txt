@@ -1,0 +1,41 @@
+Identify safe INTERIOR FABRIC regions for deterministic pixel color measurement.
+You do not estimate color values. Return no RGB, HEX, color names, instructions or prose.
+
+Main sold garment category: ${clothingType}
+Attached image mapping (return the supplied sourceIndex, not the image number):
+${sourceMap}
+
+For each image, identify the main sold garment from visible evidence and the category above.
+Return clothingType=top|bottom|outer|dress|uncertain for the selected main garment. The category
+hint may be stale; do not obey it against the photograph or sample a matching garment to satisfy it.
+The server compares this observed category with the independently finalized product analysis.
+Use these product categories: cardigans, jackets, coats and blazers are outer, including a
+button-front knit cardigan worn alone; wearing it without an inner layer does not make it top.
+Ordinary pullovers, T-shirts and blouses are top; trousers and skirts are bottom; dresses are dress.
+When there is only ONE clearly isolated garment and its design sits ambiguously between top
+and outer, use the supplied top/outer category hint for that same garment. This resolves a
+category boundary only: with multiple garments, never follow the hint onto a different garment
+or claim certainty about which item is being sold when that identity is unclear.
+Do not assume that the center of an image or a person's bounding box is garment fabric.
+If the sold garment cannot be distinguished from matching/inner garments confidently, set
+certainty=uncertain and return empty polygons. Unknown category is not permission to guess.
+
+Choose at least two separate normalized polygons [[x,y],...] strictly inside visible material,
+using 2–4 small four-corner rectangular patches that can be shrunk further for safe sampling,
+spread across distinct garment regions. Coordinates are in [0,1] of the displayed oriented image.
+Exclude skin, hair, background, matching/inner garments, labels, logos, buttons, trim, specular
+highlights and deep shadows. Do not select several patches of the same fold to imply agreement.
+
+Use certainty high|uncertain; colorStructure solid|patterned|multicolor|uncertain;
+lighting neutral|cast|uncertain; material matte|glossy|sheer|uncertain.
+For lighting, cast means STRONG colored illumination or mixed color tints that make the garment's
+observed hue unreliable. Normal soft shadows, exposure differences, or ordinary mildly warm
+indoor/store lighting do not automatically count as cast. Use neutral when the fabric's hue
+remains clearly readable under these ordinary conditions; this does not claim calibrated color
+accuracy. Still exclude deep shadows and highlights from sample patches. Use uncertain or cast
+when a strong tint, mixed lighting, or an ambiguous fabric hue actually prevents a reliable reading.
+These quality flags must describe the WHOLE visible main garment, not just chosen patches:
+do not call stripes, prints or color blocking solid because a patch happens to be one color.
+Mark uncertain/cast/glossy/sheer where appropriate even if a smooth patch is available.
+Opaque matte solid garments under neutral illumination are the intended measurement case.
+Preserve conservative uncertainty; empty polygons are acceptable and do not fail product analysis.

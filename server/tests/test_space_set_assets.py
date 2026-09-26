@@ -107,6 +107,59 @@ def _blocks():
     ]
 
 
+@pytest.mark.parametrize("count,valid", [(2, True), (6, True), (7, True), (8, False)])
+def test_horizon_sequence_all_only_capacity_and_direct_reference(space_registry, monkeypatch, count, valid):
+    raw = json.loads(json.dumps(space_registry))
+    entry = raw["sets"][0]
+    entry.update(setType="horizon-sequence", platePolicy="not-required", representativePlate=None)
+    template = entry["members"][0]
+    entry["members"] = [{**template, "exampleId": f"ss_horizon_{index}", "order": index + 1,
+                         "cutType": "horizon", "pose": None} for index in range(count)]
+    if not valid:
+        with pytest.raises(ValueError, match="members_invalid"):
+            sets.validate_space_set_registry_document(raw)
+        return
+    validated = sets.validate_space_set_registry_document(raw)
+    Path(sets._DEFAULT_SPACE_SET_ASSETS).write_text(json.dumps(raw), encoding="utf-8")
+    sets.load_space_set_registry.cache_clear()
+    block = {**_blocks()[0], "cutType": "horizon", "exampleId": "ss_horizon_0", "shot": "medium", "direction": "back"}
+    bound = sets.bind_storyboard_space_sets([block], clothing_type="top", gender="women")[id(block)]
+    assert "poseReference" not in bound
+    reference = bound["horizonReference"]
+    assert reference["source"] == "space-set" and reference["asset"] == validated[1][entry["setId"]]["members"][0]["all"]
+    assert (reference["shot"], reference["direction"], reference["directionCompatible"]) == ("full", "front", False)
+    assert sets.resolve_published_example_reference(block, clothing_type="top", gender="women", scope="all")["asset"] == reference["asset"]
+    with pytest.raises(sets.SpaceSetBindingError):
+        sets.resolve_published_example_reference(block, clothing_type="top", gender="women", scope="pose")
+
+
+def test_styling_still_requires_real_pose(space_registry):
+    space_registry["sets"][0]["members"][0].pop("pose")
+    with pytest.raises(ValueError, match="pose_missing"):
+        sets.validate_space_set_registry_document(space_registry)
+
+
+def test_actual_published_rotations_keep_all_reference_after_group_detachment(monkeypatch):
+    raw = json.loads((Path(__file__).parents[1] / "app/data/space_set_assets.json").read_text(encoding="utf-8"))
+    validated = sets.validate_space_set_registry_document(raw)
+    monkeypatch.setattr(sets, "load_space_set_registry", lambda: validated)
+    rotations = [entry for entry in validated[1].values() if entry["setType"] == "horizon-rotation"]
+    assert rotations
+    for entry in rotations:
+        for clothing in entry["setApplicableClothingTypes"]:
+            for member in entry["members"]:
+                block = {"cutType": "horizon", "exampleId": member["exampleId"],
+                         "shot": member["shot"], "direction": member["direction"],
+                         "spaceGroupId": f"ssg1__{entry['setId']}__existing", "spaceVariation": entry["spaceVariation"]}
+                grouped = sets.bind_storyboard_space_sets([block], clothing_type=clothing, gender=entry["gender"])[id(block)]["horizonReference"]
+                detached = {key: value for key, value in block.items() if key != "spaceGroupId"}
+                standalone = sets.resolve_published_example_reference(detached, clothing_type=clothing, gender=entry["gender"], scope="all")
+                assert standalone["asset"] == grouped["asset"] == member["all"]
+                assert standalone["directionCompatible"] is True
+                with pytest.raises(sets.SpaceSetBindingError):
+                    sets.resolve_published_example_reference(detached, clothing_type="unsupported", gender=entry["gender"], scope="all")
+
+
 def test_parse_group_id_accepts_only_the_published_namespace():
     assert sets.parse_space_set_group_id(None) is None
     for invalid in (
@@ -417,6 +470,7 @@ def test_space_set_binding_allows_pose_swap_add_and_drag_out(
             "https://images.example.test",
             {
                 flat_example_id: {
+                    "all": "all/flat.png",
                     "pose": "pose/flat.png",
                     "cutType": "horizon",
                     "shot": "full",
@@ -440,7 +494,7 @@ def test_space_set_binding_allows_pose_swap_add_and_drag_out(
     with_added = sets.bind_storyboard_space_sets(
         blocks, clothing_type="top", gender="women"
     )
-    assert with_added[id(added)]["poseReference"]["source"] == "flat"
+    assert with_added[id(added)]["horizonReference"]["source"] == "flat"
 
     blocks[1].pop("spaceGroupId")
     blocks[2].pop("spaceGroupId")

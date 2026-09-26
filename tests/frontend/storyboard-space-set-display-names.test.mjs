@@ -5,13 +5,18 @@ import { STORYBOARD_SPACE_SETS } from '../../src/lib/storyboardSpaceSetCatalog.j
 import { mappedSpaceSetCount, spaceSetDisplayName } from '../../src/lib/spaceSetDisplayNames.js';
 
 test('every released shooting set has a code-free Korean display name', () => {
-  assert.equal(mappedSpaceSetCount(), STORYBOARD_SPACE_SETS.length);
+  // Preparation-only sets also have reviewed names; every published set still needs coverage.
+  assert.ok(mappedSpaceSetCount() >= STORYBOARD_SPACE_SETS.length);
   for (const set of STORYBOARD_SPACE_SETS) {
     const displayName = spaceSetDisplayName(set);
     assert.match(displayName, /[가-힣]/, set.id);
     assert.doesNotMatch(displayName, /[A-Za-z0-9_]/, set.id);
-    assert.notEqual(displayName, set.name, `raw catalog name leaked for ${set.id}`);
-    assert.ok([...displayName].length <= 11, `${set.id}: ${displayName}`);
+    // A newly published catalog may already contain the same approved short name.
+    // Internal catalog text must still never override the reviewed display mapping.
+    assert.equal(spaceSetDisplayName({ ...set, name: 'INTERNAL_123_PASS' }), displayName);
+    // Horizon names describe shooting; background and lighting have their own rows.
+    const maxLength = set.setType.startsWith('horizon') ? 26 : 11;
+    assert.ok([...displayName].length <= maxLength, `${set.id}: ${displayName}`);
   }
 });
 

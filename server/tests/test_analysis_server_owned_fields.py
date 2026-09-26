@@ -60,6 +60,14 @@ def test_detail_recommendations_cannot_be_created_or_replaced_by_client():
     assert _save({"detailRecommendations": original}, {"fit": "regular"})["detailRecommendations"] == original
 
 
+def test_garment_color_evidence_is_server_owned_and_cannot_be_forged():
+    original = {"version": 1, "colors": [{"colorId": "blue", "observedHex": "#92b4c7"}]}
+    forged = {"version": 1, "colors": [{"colorId": "blue", "observedHex": "#ff0000"}]}
+    assert "garmentColorEvidence" not in _save(None, {"garmentColorEvidence": forged})
+    assert _save({"garmentColorEvidence": original}, {"garmentColorEvidence": forged})["garmentColorEvidence"] == original
+    assert _save({"garmentColorEvidence": original}, {"fit": "regular"})["garmentColorEvidence"] == original
+
+
 def test_source_mirrored_carried_when_client_omits_it():
     saved = _save({"sourceMirrored": True, "fit": "over"}, {"fit": "regular"})
     assert saved["sourceMirrored"] is True   # 이월됨

@@ -69,6 +69,19 @@ not overlays: preserve their exact spelling, shape, color, orientation, count an
 ATTACHED IMAGES (in order):
 ${imageManifest}
 
+[[SHOT:horizon_reference]]FRAMING — MATCHED COMPLETE HORIZON EXAMPLE:
+The current shot and direction match the attached complete EXAMPLE REFERENCE. Preserve its
+actual frame boundaries, head/body crop, subject scale, placement and camera relationship.
+Do not expand a cropped photograph into a full-body pose mask. Do not invent a different pose
+or viewpoint merely because this is a medium shot. Generate the current product in that frame;
+do not post-crop a full-body result. Explicit shot/direction/pose/face choices remain authoritative.
+
+[[HORIZON_ALL_POSE]]- Preserve the complete example's body direction, action, large arm/leg roles,
+support side, weight distribution and head position/orientation. Do not reset asymmetry into a
+centered pose or deliberately vary poses across colorways. Small hand/foot adjustments within
+the same pose and tiny visible-eye gaze changes are allowed; exact garment fidelity and supported
+contacts take priority over matching joint coordinates. Never copy the example clothing/identity.
+
 [[OUTER_INNER]]OUTERWEAR INNER — MANNEQUIN ANCHOR:
 - For an outerwear product, keep the inner T-shirt exactly the same as in the attached MANNEQUIN
   image. Never replace or restyle it, and never transfer an inner garment or layer from EXAMPLE
@@ -336,7 +349,7 @@ ${allDirectionRule}
 - Swap in the exact garment from PRODUCT references and any attached MATCHING garment. Never copy
   the example's garments, shoes, model identity, face, hair, body details or tattoos. Use MATCHING
   when it supplies the rest of the outfit; otherwise use plain neutral coordinating basics.
-- CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain fixed requirements.
+- CUT TYPE, FRAMING, camera direction and face handling remain fixed requirements.
 - This scope owns studio lighting, shadow, neutral color grade and ambience. MOOD references and the
   generic Korean-commerce aesthetic must not alter them.
 

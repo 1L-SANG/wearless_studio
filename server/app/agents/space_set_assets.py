@@ -256,7 +256,7 @@ def validate_space_set_registry_document(
         raw_members = raw_set.get("members")
         if (
             not isinstance(raw_members, list)
-            or not 2 <= len(raw_members) <= 5
+            or not 2 <= len(raw_members) <= (7 if set_type == "horizon-sequence" else 5)
         ):
             raise ValueError("space_set_registry_members_invalid")
 
@@ -303,7 +303,7 @@ def validate_space_set_registry_document(
                         field="space_set_member_all",
                         variant="all",
                     ),
-                    "pose": _clean_asset(
+                    "pose": None if cut_type == "horizon" and raw_member.get("pose") is None else _clean_asset(
                         raw_member.get("pose"),
                         field="space_set_member_pose",
                         variant="pose",
@@ -463,6 +463,35 @@ def resolve_published_pose_reference(
     return reference
 
 
+def _resolve_horizon_reference(block, *, clothing_type, gender, registry, flat_assets):
+    example_id = block.get("exampleId") or block.get("example_id")
+    if not _is_safe_id(example_id):
+        raise SpaceSetBindingError("space_set_example_id_invalid", "완성 예시 식별자가 올바르지 않아요.")
+    if example_id.startswith("ss_"):
+        found = next(((member, parent) for parent in registry.values() for member in parent["members"]
+                      if member["exampleId"] == example_id), None)
+        entry, parent = found if found else (None, None)
+        applicable = parent["setApplicableClothingTypes"] if parent else []
+        source = "space-set"
+    else:
+        if flat_assets is None:
+            from . import cut_generator
+            try:
+                _, flat_assets = cut_generator.load_example_asset_registry()
+            except (OSError, ValueError) as exc:
+                raise SpaceSetBindingError("space_set_example_unavailable", "완성 예시를 불러오지 못했어요.") from exc
+        entry = flat_assets.get(example_id)
+        applicable = (entry or {}).get("applicableClothingTypes") or []
+        source = "flat"
+    if (not entry or not entry.get("all") or entry.get("cutType") != "horizon"
+            or entry.get("gender") != gender or clothing_type not in applicable
+            or entry.get("shot") not in _SHOTS or entry.get("direction") not in _DIRECTIONS):
+        raise SpaceSetBindingError("space_set_example_incompatible", "현재 상품에 맞는 완성 호리존 예시를 선택해 주세요.")
+    return {"source": source, "exampleId": example_id, "asset": entry["all"] if source == "space-set" else None,
+            "shot": entry["shot"], "direction": entry["direction"],
+            "directionCompatible": entry["direction"] == block.get("direction")}, flat_assets
+
+
 def resolve_published_example_reference(
     block: dict,
     *,
@@ -539,6 +568,7 @@ def resolve_published_example_reference(
         # all 범위는 다른 방향에서도 장면·광원 참고용으로 선택할 수 있다. 호출자는 이 값이
         # false이면 멤버의 원래 포즈·카메라·프레이밍 권한을 제거해야 한다.
         "directionCompatible": member.get("direction") == block.get("direction"),
+        "shot": member["shot"], "direction": member["direction"],
     }
 
 
@@ -619,7 +649,18 @@ def bind_storyboard_space_sets(
                 "공간 세트 사진이 떨어져 있어요. 세트를 다시 선택해 주세요.",
             )
         group_blocks = [block for _position, block in indexed_group_blocks]
+        from .horizon_background import mode as background_mode
+        if len({background_mode(block) for block in group_blocks}) > 1:
+            raise SpaceSetBindingError(
+                "mixed_horizon_background_modes",
+                "같은 촬영 세트의 배경 옵션을 동일하게 선택해 주세요.",
+            )
         for block in group_blocks:
+            if block.get("cutType") == "horizon":
+                reference, flat_assets = _resolve_horizon_reference(
+                    block, clothing_type=clothing_type, gender=gender, registry=registry, flat_assets=flat_assets)
+                bindings[id(block)] = {"groupId": group_id, "set": set_entry, "horizonReference": reference}
+                continue
             pose_reference, flat_assets = _resolve_pose_reference(
                 block,
                 clothing_type=clothing_type,
