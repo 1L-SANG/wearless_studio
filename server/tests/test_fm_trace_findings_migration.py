@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "supabase" / "migrations"
-MIGRATION = MIGRATIONS / "20260927090000_fm_trace_findings.sql"
+MIGRATION = MIGRATIONS / "20260927110000_fm_trace_findings.sql"
 TRACE = MIGRATIONS / "20260926213000_fm_trace_watermark_fingerprints.sql"
 TEST_DATABASE_URL = os.getenv("FACEMARKET_TEST_DATABASE_URL")
 requires_database = pytest.mark.skipif(
@@ -154,3 +154,13 @@ def test_constraints_on_real_postgres_rolled_back():
             await conn.close()
 
     asyncio.run(run())
+
+
+def test_migration_versions_are_unique_across_the_repo():
+    """Supabase 는 파일명 앞 숫자(버전)로 적용 여부를 판단한다. 같은 버전이 둘이면 먼저 적용된 쪽만
+    기록되고 다른 쪽은 '이미 적용됨'으로 조용히 빠진다(2026-09-27 #432 와 이 파일이 둘 다
+    20260927090000 이었다 — 머지 직전에 발견)."""
+    from collections import Counter
+    versions = Counter(p.name.split("_", 1)[0] for p in MIGRATIONS.glob("*.sql"))
+    dupes = sorted(v for v, n in versions.items() if n > 1)
+    assert not dupes, f"같은 마이그레이션 버전이 여러 파일에 있다: {dupes}"

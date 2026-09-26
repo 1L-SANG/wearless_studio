@@ -21,7 +21,7 @@ from app import fm_trace_findings as F
 DB_URL = os.environ.get("FM_TRACE_TEST_DATABASE_URL",
                         "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
 MIGRATION = (Path(__file__).resolve().parents[2] / "supabase" / "migrations"
-             / "20260927090000_fm_trace_findings.sql")
+             / "20260927110000_fm_trace_findings.sql")
 
 # server/.env 의 DATABASE_URL 은 운영 DB 를 가리킨 적이 있다 — 이 파일은 로컬 호스트에만 붙는다.
 assert urlparse(DB_URL).hostname in ("127.0.0.1", "localhost"), "로컬 DB 에서만 돈다"
