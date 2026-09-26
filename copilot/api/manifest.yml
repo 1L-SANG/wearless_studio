@@ -506,6 +506,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   되돌리기: 이 값을 "off". 그러면 RunPod 를 아예 호출하지 않는다.
   # off 는 "안 쓰는 기능"이 아니라 **돈이 새는 걸 막는 안전장치**다 — 켤 예정이니 지우지 말 것.
   FM_LORA_TRAINING: "off"
+  # 협찬 동의 VC(fmsponsorship-v1) — 켜면 협찬 on 에 증서 발급, 셀러 협찬 요청·카탈로그 노출은
+  # 유효 증서가 있어야 한다. holder(390a5d6d)·Issuer 플랜을 먼저 갖춘 뒤 켰다(2026-09-26).
+  # 롤백은 "off" — docs/runbooks/facemarket-sponsorship-vc.md
+  FM_SPONSORSHIP_VC: "on"
   # 파드를 만들기 전에 보는 최소 잔액(USD). 1800 스텝 한 번이 RTX PRO 6000 에서 약 $11 이라
   # 그 위로 잡는다. 0 이하면 검사 자체를 끈다 — RunPod 가 잔액 API 를 바꿔도 빠져나갈 길.
   FM_LORA_MIN_BALANCE_USD: "20"
