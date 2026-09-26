@@ -1203,6 +1203,9 @@ export function ProductInput() {
   const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
   const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
+  // 다른 색상의 앞·뒤 사진도 의류색 측정에 함께 보낸다(httpAdapter publicAnalyze). 그만큼 분석이 길어진다.
+  const multiColorAnalysis = product.colors.some((c) => c !== baseColor
+    && (c.images || []).some((im) => im.slot === 'Front' || im.slot === 'Back'));
   const hasName = !!(product.name && product.name.trim());
   const canDone = hasFront && hasBack && phase === 'input' && !authLoading && !slotLock;
   // 사진 요구 문구는 CTA 옆에 두지 않는다(2026-08-14 사용자 결정) — 필수 표시는
@@ -1439,6 +1442,7 @@ export function ProductInput() {
         <>
           <AnalysisProgress
             photoSrc={product.colors?.[0]?.images?.[0]?.src}
+            colorNote={multiColorAnalysis}
             done={analysisReady}
             onFinished={() => { setPhase('done'); toast.push('AI 분석을 완료했어요', { icon: 'sparkles' }); }} />
           <AnalysisSkeleton />

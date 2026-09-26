@@ -307,6 +307,7 @@
   box-shadow: var(--elev-inset); }
 /* 채움(배경·쉬인·전환 없음)은 app.css 의 잉크+쉬인 공통 규칙이 소유한다. */
 .ap-bar i { display: block; height: 100%; border-radius: 99px; }
+.ap-body .ap-note { margin-top: 12px; }
 /* 분석 확정 바 B안 — 사진 양 선택과 확정을 한 덩어리의 분할 CTA로 묶는다. */
 .wizard-cta-analysis { padding: 14px 0 16px; }
 .af-cta-split { position: relative; display: inline-flex; align-items: stretch; height: 54px;
