@@ -1,0 +1,3 @@
+# 애드온에 서비스 스택 값을 넘긴다(Copilot 규약). api-alarms.yml 의 Parameters 와 짝이다.
+Parameters:
+  TargetGroupFullName: !GetAtt TargetGroup.TargetGroupFullName

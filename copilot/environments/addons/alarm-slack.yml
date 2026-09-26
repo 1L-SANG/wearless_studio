@@ -13,15 +13,15 @@
 # ── 임계는 실측으로 잡았다 (2026-09-23, prod 3시간) ───────────────────────
 #   요청 3,283건 · Target 5xx 0건 · TargetResponseTime p95 0.69초
 #
-# ── 2026-09-26 개정: 헛경보 두 개를 고쳤다 (60일 실측 재대입) ─────────────
-#   ② slow-response: p95 3초 → "요청 5건 이상일 때의 중앙값(p50) 2초". 트래픽이 5분당
-#      중앙값 0건이라 p95 는 느린 요청 몇 개가 정한다. 사진 업로드(장당 5~9초)만으로 울렸다
-#      (9/25 두 번). 60일 대입: 옛 규칙 7회 울림, 새 규칙 1회(8/30 22:00 라이선스 발급 503
-#      반복, 진짜 장애).
-#   ③ no-healthy-target: ELB 503 개수 → api 타깃그룹 정상 서버 수. 503 은 기본 타깃그룹
-#      (타깃 0대)으로 떨어지는 봇 스캔까지 세서 9/25 21:21 에 95건으로 울렸다. 그동안 api
-#      정상 서버는 계속 1대였다. 60일 대입: 옛 규칙 17회 울림(전부 정상 서버 1대 이상일 때),
-#      새 규칙 0회(정상 서버 0대인 분 0회, 지표가 빈 구간 0회).
+# ── 2026-09-26 개정 (PR #414 와 그 사후 리뷰) ─────────────────────────────
+#   9/25 에 울린 세 번이 모두 장애가 아니었다. 사진 업로드(장당 5~9초)가 p95 를 끌어올렸고,
+#   기본 타깃그룹(타깃 0대)으로 떨어진 봇 요청이 ELB 503 을 채웠다. 그래서 이렇게 바꿨다.
+#   ② slow-response 는 p95 대신 응답 중앙값을 보고, 응답 표본이 10건 이상인 5분만 센다.
+#   ③ ELB 503 개수로 보던 "붙을 서버 없음"은 api 서비스 애드온(copilot/api/addons/api-alarms.yml)
+#      의 정상 서버 수 알람으로 옮겼다. 타깃그룹 차원이 필요한데 그 타깃그룹은 서비스 스택이
+#      만들어서 여기서는 지목할 수 없다.
+#   ④ ELB 가 직접 만든 502·504 를 새로 본다. 앱이 응답하지 못한 경우인데 ① 에는 안 잡힌다.
+#   60일 실측 대입과 남는 사각지대는 docs/runbooks/cloudwatch-alarms.md 에 있다.
 #
 # ── 못 건 것: ECS CPU ─────────────────────────────────────────────────────
 #   AWS/ECS CPUUtilization 은 (ClusterName, ServiceName) 차원으로만 온다. 서비스 이름은
@@ -31,7 +31,9 @@
 #   TargetResponseTime 알람이 그 역할을 한다. 진짜 CPU 알람이 필요해지면 서비스 이름을
 #   런타임에 찾아 알람을 만드는 커스텀 리소스가 필요하다.
 #
-# 되돌리기: 이 파일을 지우고 `copilot env deploy --name use1`. 앱 재배포는 무관하다.
+# 되돌리기: copilot/api/addons/api-alarms.yml 이 이 파일의 토픽 export 를 가져다 쓰므로 그것부터
+# 지워 api 를 배포한 뒤, 이 파일을 지우고 `copilot env deploy --name use1`. 순서가 바뀌면 export
+# 가 사용 중이라 env 배포가 실패한다(docs/runbooks/cloudwatch-alarms.md 되돌리기 절).
 Parameters:
   App:
     Type: String
@@ -114,6 +116,11 @@ Resources:
                       print("unparseable sns message")
                       continue
                   state = msg.get("NewStateValue", "")
+                  # 새로 만든 알람의 첫 판정(INSUFFICIENT_DATA 에서 OK)은 복구가 아니다.
+                  # 빈 데이터를 모두 따로 처리하는 알람들이라 INSUFFICIENT_DATA 는 생성 때만 생긴다.
+                  if state == "OK" and msg.get("OldStateValue") == "INSUFFICIENT_DATA":
+                      print("skip first OK: %s" % msg.get("AlarmName"))
+                      continue
                   # OK 로 돌아온 것도 보낸다 — 울고 끝나면 복구됐는지 사람이 모른다.
                   icon = ":rotating_light:" if state == "ALARM" else ":white_check_mark:"
                   name = msg.get("AlarmName", "(unnamed)")
@@ -179,9 +186,9 @@ Resources:
                 AWS:SourceAccount: !Ref AWS::AccountId
 
   # ── 알람 셋 ───────────────────────────────────────────────────────────
-  # ①② 는 LoadBalancer 차원만 쓴다. 타깃그룹 ARN 은 서비스 스택이 만들어서 환경 애드온이
+  # 모두 LoadBalancer 차원만 쓴다. 타깃그룹 ARN 은 서비스 스택이 만들어서 환경 애드온이
   # 지목할 수 없다(확인함). LB 차원으로도 "사용자가 무엇을 받았나"는 다 보인다.
-  # ③ 은 타깃그룹 차원이 필요해서 Metrics Insights 쿼리로 이 LB 의 타깃그룹을 훑는다.
+  # 타깃그룹이 필요한 정상 서버 알람은 copilot/api/addons/api-alarms.yml 에 있다.
 
   # ① 앱이 5xx 를 뱉는다 = 사용자가 에러 화면을 보는 중. 3시간 실측 0건이라 10 이면 확실한 신호.
   Alarm5xx:
@@ -209,27 +216,38 @@ Resources:
   # ② 서버 전체가 느려졌다. 평소 중앙값은 0.01~0.06초라 2초는 서른 배 넘게 위다.
   #    p95 가 아니라 중앙값을 보는 이유: 사진 업로드처럼 원래 몇 초 걸리는 요청은 꼬리만
   #    끌어올리고, 서버가 실제로 느려지면 모든 요청이 느려져 중앙값이 오른다.
-  #    요청 5건 미만인 5분은 0 으로 본다. 요청 한두 건이 중앙값을 정하는 새벽을 거르려는 것이고,
-  #    이벤트루프 동결처럼 서버가 아예 멈추는 경우는 ③ 이 healthz 실패로 잡는다.
-  #    2회 연속(10분)을 요구해 일시적 튐은 넘긴다.
+  #    응답 표본(같은 지표의 SampleCount)이 10건 미만인 5분은 0 으로 친다. 한 사람의 업로드 몇
+  #    장이 중앙값을 정하는 한산한 시간을 거르려는 것이다. 표본 수를 RequestCount 로 세면
+  #    502·504 로 끝난 요청까지 들어가 중앙값을 만든 요청 수와 어긋난다.
+  #
+  #    빈 5분(요청 0건)도 FILL 로 0 을 채워 값이 끊기지 않게 한다. 빈 구간이 있으면 CloudWatch 는
+  #    그걸 건너뛰고 최근 실제 값들로 판정해서, 멀리 떨어진 업로드 몰림 두 번이 연속처럼 읽힌다.
+  #    FILL 은 아직 지표가 덜 온 최신 5분도 0 으로 만들기 때문에 판정은 "최근 3구간 중 2"로 한다.
+  #    맨 앞 구간이 0 이어도 앞의 두 구간이 넘으면 울고, 한 구간이 끊겼다고 복구로 뒤집히지 않는다.
+  #    한 구간만 넘는 튐도 넘긴다. 9/25 14:15 는 사진 20장 업로드만으로 표본 10건 이상, 중앙값
+  #    2.64초였다(한 구간이라 안 울렸다). 60일 실측과 구간 시작점 5가지 대입에서 0회 울렸다.
+  #    대가: 한산한 시간의 느려짐은 못 보고, 요청이 끊기면 0 으로 읽혀 복구로 돌아간다. 서버가
+  #    멈추면 api 의 정상 서버 알람이, 에러로 번지면 ① 과 ④ 가 잡는다. 8/30 라이선스 발급
+  #    장애도 ① 이 21:50 에 먼저 잡았다. 업로드 같은 느린 경로를 빼고 재는 근본 해결은 앱이
+  #    직접 지표를 내야 한다(런북 사각지대 절).
   AlarmLatency:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub '${App}-${Env}-slow-response'
-      AlarmDescription: '서버 전체가 느려졌어요(응답 중앙값 2초 초과가 10분). 일부 느린 요청이 아니라 대부분의 요청이 느린 상태입니다.'
+      AlarmDescription: '서버 전체가 느려졌어요(최근 15분 중 두 5분 구간에서 응답 중앙값 2초 초과). 일부 느린 요청이 아니라 대부분의 요청이 느린 상태입니다.'
       Metrics:
-        - Id: req
+        - Id: n
           ReturnData: false
           MetricStat:
             Metric:
               Namespace: AWS/ApplicationELB
-              MetricName: RequestCount
+              MetricName: TargetResponseTime
               Dimensions:
                 - Name: LoadBalancer
                   Value: !ImportValue
                     'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
             Period: 300
-            Stat: Sum
+            Stat: SampleCount
         - Id: p50
           ReturnData: false
           MetricStat:
@@ -242,51 +260,77 @@ Resources:
                     'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
             Period: 300
             Stat: p50
+        - Id: gated
+          ReturnData: false
+          Expression: 'IF(n >= 10, p50, 0)'
         - Id: slow
-          Label: p50 response time when 5+ requests
-          Expression: 'IF(req >= 5, p50, 0)'
+          Label: p50 response time when 10+ samples
+          Expression: 'FILL(gated, 0)'
           ReturnData: true
-      EvaluationPeriods: 2
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
       Threshold: 2
       ComparisonOperator: GreaterThanThreshold
+      # FILL 로 빈 값이 없으니 실제로는 쓰이지 않는다. 지표 자체가 사라지면 조용히 있게 둔다.
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
-  # ③ api 에 정상 서버가 없다. 이 LB 타깃그룹들의 HealthyHostCount 최솟값이 2분 연속 0 이면 운다.
-  #    기본 타깃그룹(타깃 0대)은 이 지표를 내지 않아서 최솟값은 api 타깃그룹 값이 된다(확인함).
-  #    서버가 모두 빠지면 타깃그룹도 지표를 멈추므로 빈 데이터는 장애로 본다(breaching).
-  #    60일 동안 빈 구간은 0회였고, 배포 중에도 새 서버가 먼저 붙어서 0대가 된 적이 없다.
-  #    논리 ID 는 Alarm503 그대로 둔다. ID 를 바꾸면 CloudFormation 이 같은 이름 알람을 새로
-  #    만든(덮어쓴) 뒤 옛 리소스를 지우면서 새 알람까지 지운다.
-  Alarm503:
+  # ④ ELB 가 직접 만든 502·504. 앱이 응답하지 못했다는 뜻이다(502 는 응답 도중 연결이 끊김,
+  #    504 는 유휴 타임아웃까지 응답 없음). 앱이 응답을 돌려준 것이 아니라서 ① 에는 안 잡힌다.
+  #    503 은 봇이 기본 타깃그룹으로 떨어지며 늘 생겨서 뺐다. 60일 실측은 5분당 최대 1건
+  #    (502 2건, 504 2건, 모두 따로 떨어져 있었다)이다. 3 으로 두면 우연히 겹친 한두 건은
+  #    넘기고, 한가한 시간에 사용자 세 명이 막힌 경우는 잡는다.
+  #    SUM([...]) 은 한쪽만 있는 5분은 그 값으로, 둘 다 없는 5분은 빈 값으로 둔다. FILL(…, 0) 은
+  #    아직 지표가 안 온 최신 5분까지 진짜 0 으로 만들어 늦게 도착한 에러를 묻어 버려서 쓰지 않는다.
+  AlarmElb5xx:
     Type: AWS::CloudWatch::Alarm
+    # 새 알람의 첫 OK 를 거르는 램다 코드가 먼저 올라가야 Slack 에 가짜 '복구'가 안 간다.
+    DependsOn: AlarmSlackFunction
     Properties:
-      AlarmName: !Sub '${App}-${Env}-no-healthy-target'
-      AlarmDescription: 'api 에 정상 서버가 2분째 0대예요. 사용자 요청이 실패하고 있을 수 있어요. ECS 서비스 이벤트와 /healthz 를 확인하세요.'
+      AlarmName: !Sub '${App}-${Env}-elb-502-504'
+      AlarmDescription: '로드밸런서가 502·504 를 내고 있어요. 서버가 응답 도중 죽었거나, 응답하지 못하고 멈춘 상태입니다.'
       Metrics:
-        - Id: healthy
-          Label: min healthy targets
-          Period: 60
+        - Id: e502
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_ELB_502_Count
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !ImportValue
+                    'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+            Period: 300
+            Stat: Sum
+        - Id: e504
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_ELB_504_Count
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !ImportValue
+                    'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
+            Period: 300
+            Stat: Sum
+        - Id: bad
+          Label: ELB 502 + 504
+          Expression: 'SUM([e502, e504])'
           ReturnData: true
-          Expression: !Sub
-            - >-
-              SELECT MIN(HealthyHostCount)
-              FROM SCHEMA("AWS/ApplicationELB", LoadBalancer, TargetGroup)
-              WHERE LoadBalancer = '${Lb}'
-            - Lb: !ImportValue
-                'Fn::Sub': '${App}-${Env}-PublicLoadBalancerFullName'
-      EvaluationPeriods: 2
-      DatapointsToAlarm: 2
-      Threshold: 1
-      ComparisonOperator: LessThanThreshold
-      TreatMissingData: breaching
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
 Outputs:
   AlarmTopicArn:
     Description: 알람이 들어오는 SNS 토픽. 새 알람을 만들면 AlarmActions 에 이걸 준다.
+    # copilot/api/addons/api-alarms.yml 이 ImportValue 로 쓴다. 이 export 를 지우거나 이름을
+    # 바꾸면 env 배포가 막힌다(가져다 쓰는 스택이 있으면 CloudFormation 이 거부한다).
     Value: !Ref AlarmTopic
     Export:
       Name: !Sub '${App}-${Env}-AlarmTopicArn'
