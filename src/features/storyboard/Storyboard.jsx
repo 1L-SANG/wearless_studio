@@ -3718,7 +3718,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           alignCaptionWithMoodGrid={section.role === SECTION_ROLES.HOOKING}
           outOfScope={block.source === 'ai' && !blockAllowedForModel(block, identityKind)
             ? (rejectionOfBlock(block, identityKind)
-              ? { label: '스튜디오·스타일링 컷만 만들 수 있어요',
+              ? { label: '첫 장면·스타일링·스튜디오 컷만 만들 수 있어요',
                   message: rejectionOfBlock(block, identityKind).message }
               : { label: '이 모델로는 만들 수 없는 컷',
                   message: '이 모델로는 만들 수 없는 컷이에요' })

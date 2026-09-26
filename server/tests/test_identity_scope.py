@@ -44,8 +44,12 @@ def test_studio_space_sets_are_virtual_only():
     # 2026-09-25: styling 섹션이 열렸다 — 스타일링·미러 컷(둘 다 styling 섹션)도 both 다.
     _block(cutType="styling", exampleId=None),
     _block(cutType="mirror", exampleId=None),
+    # 2026-09-26: hooking(첫 장면) 섹션도 열렸다.
+    _block(cutType="styling", contentRole="hero", exampleId=None),
+    _block(cutType="styling", sectionRole="hooking", exampleId=None),
 ])
-def test_studio_and_styling_cuts_are_both(spec):
+def test_cuts_in_the_open_sections_are_both(spec):
+    """첫 장면·스타일링·스튜디오 섹션의 컷(identity_scope.REAL_ALLOWED_SECTION_ROLES)."""
     assert identity_scope.section_of(spec) in identity_scope.REAL_ALLOWED_SECTION_ROLES
     assert identity_scope.scope_for_block(spec) == identity_scope.BOTH
 
@@ -53,14 +57,13 @@ def test_studio_and_styling_cuts_are_both(spec):
 @pytest.mark.parametrize("spec", [
     _block(cutType="product", exampleId="ex_product_top_ghost_01"),
     _block(cutType="product", shot="detail", exampleId=None),
-    _block(cutType="styling", contentRole="hero", exampleId=None),      # hooking 섹션
-    _block(cutType="styling", sectionRole="hooking", exampleId=None),
+    _block(cutType="product", sectionRole="product", shot="ghost", exampleId=None),
 ])
-def test_cuts_outside_the_studio_and_styling_sections_are_virtual_only(spec):
-    """실제 모델은 studio·styling 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
+def test_cuts_outside_the_open_sections_are_virtual_only(spec):
+    """실제 모델은 hooking·styling·studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
 
-    2026-09-14 에 studio 만 열었고, 2026-09-25 사용자 결정으로 styling 을 더했다.
-    hooking·product 는 여전히 막힌다. 컷 모양만 보던 예전에는 이것들이 전부 both 였다.
+    2026-09-14 에 studio 만 열었고, 2026-09-25 에 styling, 2026-09-26 에 hooking 을 더했다.
+    product 는 여전히 막힌다. 컷 모양만 보던 예전에는 이것들이 전부 both 였다.
     """
     assert identity_scope.section_of(spec) not in identity_scope.REAL_ALLOWED_SECTION_ROLES
     assert identity_scope.scope_for_block(spec) == identity_scope.VIRTUAL
