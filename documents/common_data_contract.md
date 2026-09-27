@@ -502,7 +502,7 @@ GenerationExample {
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · fitProfile을 analysis에 영속 후 새 버전 생성·자동 선택 (구 `regenerateMannequins` 대체) |
 | `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
-| `generateDetailPage(projectId, { onProgress, onStep })` | | 전량 성공 시 `{ data: EditorBlock[], credits }` | AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 한 컷이라도 실패하면 전체 실패·예약 전액 해제. 내 이미지 블록은 제외 |
+| `generateDetailPage(projectId, { onProgress, onStep })` | | 모든 AI 컷 자리가 채워지면 `{ data: EditorBlock[], credits }` | 생성 후보가 없는 AI 컷 자리가 하나라도 있으면 결과 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지 블록은 제외 |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
 | `getWardrobe(projectId)` | | `Wardrobe` | |

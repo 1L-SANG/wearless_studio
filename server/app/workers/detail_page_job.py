@@ -6,13 +6,13 @@
 """
 
 import asyncio
+from collections import Counter
 import contextlib
 import hashlib
 import json
 import logging
 import time
 import uuid
-from collections import Counter
 from dataclasses import replace
 from io import BytesIO
 
@@ -227,8 +227,7 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
     eligible: list[int] = []
     for index, item in enumerate(prepared):
         block, images = item[:2]
-        # 실패 슬롯(7-튜플)은 레퍼런스가 없다. 위치 필드를 밀어 다른 값으로
-        # 읽지 않도록 정상 입력만 정규화한다.
+        # 실패 슬롯(7-튜플)은 레퍼런스가 없다. 위치 필드를 밀지 않도록 정상 입력만 정규화한다.
         if not images:
             continue
         confirmed_packet = item[8] if len(item) > 8 else None
@@ -265,7 +264,8 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
-                    angle_photos=None, selected_model_id=None, cut_checkpoints=None):
+                    angle_photos=None, selected_model_id=None, cut_checkpoints=None,
+                    stored_outputs=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -273,10 +273,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
-    실패 컷은 여기서 None으로 남기고, 호출자가 한 컷이라도 빠졌으면 전체 작업을 실패시킨다.
+    실패 컷은 여기서 None 으로 남기고, 호출자가 한 컷이라도 빠졌으면 전체 작업을 실패시킨다.
     스펙 위반(unknown cutType)도 조용한 styling 대체 렌더는 하지 않는다(ADR-0004).
     cut_checkpoints(workers/cut_checkpoints.CutCheckpointStore)가 오면 앞선 실패 잡이 남긴
-    완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작."""
+    완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
+    stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
     # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
@@ -347,6 +348,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # 생성 근거로 쓴다. 본문 민감도는 노출 추정이 아니라 입력 증거로 분류한다.
             cache=PRIVATE_NO_STORE if real_identity_attached else IMMUTABLE_CACHE,
         )
+        # gather 가 끝나기 전 다른 컷의 예외·작업 중단이 오면 반환 튜플의 cut_assets 는
+        # 아직 없다. 저장 직후 외부 목록에 기록해 실패 종결에서 즉시 철회한다.
+        if stored_outputs is not None:
+            stored_outputs.append({"key": key, "cleanup_intent_id": cleanup_intent_id})
         w, h = _dims(img)
         # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
         # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
@@ -948,9 +953,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # gather 는 입력 순서를 보존 — 원본 컷만 생성한 뒤 복제 컷 자리에 결과를 복사한다.
     cut_results, cut_assets, face_cuts = [], [], 0
     garment_qcs, cut_qcs, garment_warnings = [], [], []
-    gathered = await asyncio.gather(*[
-        _one(pos, prepared[i]) for pos, i in enumerate(original_indexes)
-    ])
+    cut_tasks = [asyncio.create_task(_one(pos, prepared[i]))
+                 for pos, i in enumerate(original_indexes)]
+    try:
+        gathered = await asyncio.gather(*cut_tasks)
+    except BaseException:
+        # gather 는 한 형제의 예외 때 나머지를 자동 취소하지 않는다. 모두 멈춘 뒤에만
+        # 호출자가 stored_outputs 를 지워야 뒤늦은 업로드가 환불 후 살아남지 않는다.
+        for task in cut_tasks:
+            task.cancel()
+        await asyncio.gather(*cut_tasks, return_exceptions=True)
+        raise
     outcome_by_index = dict(zip(original_indexes, gathered))
     outcomes = []
     for i in range(len(prepared)):
@@ -966,29 +979,20 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         {"blockId": block.get("id"), "status": "cut_failed"})
             outcomes.append(None)
             continue
-        base_passthrough = prepared[src][7] if len(prepared[src]) > 7 else None
-        if base[1] is None and base_passthrough is not None:
-            # 원본이 셀러 사진 패스스루면 복제 자리도 원본과 같은 이벤트를 쏜다(2026-09-26).
-            # 예전엔 주소 없는 cut_done 이라 대기 화면에서 이 자리만 끝까지 빈 채였다 —
-            # 새 출력이 없으니 previewUrl 대신 이미 존재하는 셀러 자산 id 를 싣는다.
-            await _emit(app.state.pool, job_id, "step",
-                        {"blockId": block.get("id"), "status": "cut_passthrough",
-                         "assetId": base_passthrough["id"]})
-        else:
-            if base[1] is not None:
-                # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
-                await _tag_preview_block(
-                    app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
-            step = {"blockId": block.get("id"), "status": "cut_done",
-                    "width": base[0].get("width"), "height": base[0].get("height")}
-            base_is_real_derived = bool(
-                base[1] is not None
-                and (base[1].get("metadata") or {}).get("facemarket_real_derived") is True
-            )
-            # REAL 얼굴 컷은 여기서도 최종 권한 펜스 전까지 출력 위치를 싣지 않는다(_store_cut 과 같은 규칙).
-            if base[1] is not None and not base_is_real_derived:
-                step["previewUrl"] = r2.preview_url(base[1]["key"])
-            await _emit(app.state.pool, job_id, "step", step)
+        if base[1] is not None:
+            # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
+            await _tag_preview_block(
+                app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
+        step = {"blockId": block.get("id"), "status": "cut_done",
+                "width": base[0].get("width"), "height": base[0].get("height")}
+        base_is_real_derived = bool(
+            base[1] is not None
+            and (base[1].get("metadata") or {}).get("facemarket_real_derived") is True
+        )
+        # REAL 얼굴 컷은 여기서도 최종 권한 펜스 전까지 출력 위치를 싣지 않는다(_store_cut 과 같은 규칙).
+        if base[1] is not None and not base_is_real_derived:
+            step["previewUrl"] = r2.preview_url(base[1]["key"])
+        await _emit(app.state.pool, job_id, "step", step)
         outcomes.append((
             # 같은 이미지 참조를 복제 블록 자리에 그대로 — 새 asset 없음(과금 없음),
             # 얼굴 컷 수·QC 는 원본에서 1회만 센다.
@@ -1181,13 +1185,29 @@ async def run_detail_page_job(app, job: dict) -> None:
             return
         intent_id = c.get("cleanup_intent_id") if isinstance(c, dict) else None
         if intent_id:
-            async with pool.connection() as conn:
-                await repo.clear_ai_output_cleanup_intent(conn, intent_id)
-                await conn.commit()
+            try:
+                async with pool.connection() as conn:
+                    await repo.clear_ai_output_cleanup_intent(conn, intent_id)
+                    await conn.commit()
+            except Exception:
+                # 객체 삭제는 이미 확인했다. intent 정리 실패는 reclaimer 가 재시도한다.
+                log.warning("AI output cleanup intent clear deferred for job %s", job_id)
+
+    stored_outputs: list[dict] = []
+
+    async def _delete_generated_outputs(cut_assets_to_delete=()) -> None:
+        seen_keys = set()
+        for candidate in [*stored_outputs, *(cut_assets_to_delete or ())]:
+            key = candidate.get("key") if isinstance(candidate, dict) else None
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            await _delete_output_candidate(candidate)
 
     # 상세 컷 체크포인트 창구(2026-09-23) — 컷 생성 직전에 연다. except 경로가 라이선스 철회일 때
     # 이 잡의 체크포인트를 지우려면 try 밖에 이름이 있어야 한다.
     cut_store = None
+    finalization_started = False
     try:
         # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
         #    + 블록 색상별 상품 슬롯 이미지 + 모든 착용컷의 매칭 의류 + 무드 레퍼런스
@@ -1675,7 +1695,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             rejection = identity_scope.block_rejection(b, selected_model_id)
             if rejection is not None:
                 # 라우트가 예약 전에 이미 걸렀다 — 여기 걸리는 건 구 클라이언트·재시도·
-                # 구 잡이나 비정상 입력에서 온 범위 밖 컷이다. 최종 게이트가 전체를 실패시킨다.
+                # 콘티 재저장으로 들어온 것이다. 최종 게이트가 페이지 전체를 실패시킨다.
                 log.info("AG-06 %s job %s block %s scope=%s model=%s",
                          rejection[0], job_id, b.get("id"), identity_scope.scope_for_block(b),
                          identity_scope.identity_kind(selected_model_id))
@@ -2054,7 +2074,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     product_images,
                     space_set_plate,
                     space_binding is not None and space_set_plate is not None,
-                    None,  # 과거 원본 패스스루 자리. 위치 계약을 유지하되 더는 사용하지 않는다.
+                    None,  # 과거 원본 패스스루 자리. 새 컷은 항상 생성·검수한다.
                     confirmed_packet,
                     real_identity_attached,
                 )
@@ -2131,6 +2151,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             auto_named=needs_name)
         if cut_store is not None:
             _gen_cuts_kwargs["cut_checkpoints"] = cut_store
+        _gen_cuts_kwargs["stored_outputs"] = stored_outputs
         (
             cut_results,
             cut_assets,
@@ -2146,8 +2167,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             if (asset.get("metadata") or {}).get("facemarket_real_derived") is True
         )
         example_warnings.extend(garment_warnings)
-        # 새로 생성한 자산 수가 아니라 블록별 결과를 비교한다. 복제 컷은 새 자산 없이도
-        # 완성 컷이며, 같은 블록의 중복 결과가 누락 컷을 가려서는 안 된다.
+        # 중복 컷은 새 자산 없이도 완성 결과에 들어간다. 결과를 블록별로 대조해
+        # 어느 AI 컷도 빠지지 않았을 때만 상세페이지를 조립·과금한다.
         completed = Counter(str(c.get("blockId")) for c in cut_results)
         failed_block_ids = []
         for block in ai_blocks:
@@ -2157,24 +2178,25 @@ async def run_detail_page_job(app, job: dict) -> None:
             else:
                 failed_block_ids.append(block_id)
         if failed_block_ids:
-            # 일부 성공도 셀러에게 완성본으로 내보내지 않는다. 이미 만든 자산은 출고되지
-            # 않으며 정리 표식이 회수한다. 크레딧 예약은 전액 해제한다.
             all_failed = len(failed_block_ids) == len(ai_blocks)
             code = "all_cuts_failed" if all_failed else "incomplete_cuts"
             await _fail(
-                "이미지를 모두 만들지 못했어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
+                "이미지를 모두 만들지 못했어요. 크레딧은 차감되지 않았어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
                 ({"error": code, "requestedCuts": len(ai_blocks)} if all_failed else {
                     "error": code, "requestedCuts": len(ai_blocks),
                     "generatedCuts": len(cut_results), "failedBlockIds": failed_block_ids,
                 }),
                 code=code,
             )
+            # 성공한 다른 컷도 이 페이지에서는 발행되지 않았다. 이미 보낸 임시 프리뷰 URL이
+            # 환불 뒤 유효하지 않도록 출력 객체를 지운다. 실패하면 정리 표식이 다시 회수한다.
+            await _delete_generated_outputs(cut_assets)
             return
 
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "assemble",
                                                "generated": len(cut_assets)})
 
-        # 4) 조립(M-02) — 여기에는 모든 AI 컷이 완성된 경우만 들어온다.
+        # 4) 조립(M-02) — AI 컷이 모두 완성된 경우만 진입한다.
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
         # REAL 자산 주입이 실패했는데 '실제 모델'이라 쓰면 허위 고지가 된다.
         # 범위 주장 근거: totalCuts = **완성한 컷 수**(복제 컷 포함).
@@ -2210,7 +2232,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         min_cuts = metadata.get("minCuts")
         requested = metadata.get("aiCount")
         billable = len(cut_assets)
-        # 소량 요청은 한 컷이라도 완성되면 최소 컷 수로 정산한다.
+        # 전량 완성된 소량 요청은 최소 컷 수로 정산한다.
         # minCuts 스냅샷이 없는 기존 잡은 성공 컷 수만큼 정산한다.
         if min_cuts is not None and requested is not None and 0 < requested < min_cuts and billable > 0:
             billable = min_cuts
@@ -2257,6 +2279,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for c in cut_assets:
                     if (c.get("metadata") or {}).get("facemarket_real_derived") is True:
                         c["provenance"] = prov
+            # 이 지점부터 커밋 결과가 불확실할 수 있다. 예외·중단 시 직접 R2를 지우면
+            # 이미 과금·발행된 페이지의 이미지를 삭제할 위험이 있다. 실패로 확정된
+            # 미발행 객체는 assets 행을 확인하는 reclaimer 에 맡긴다.
+            finalization_started = True
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,
@@ -2307,10 +2333,12 @@ async def run_detail_page_job(app, job: dict) -> None:
             {"error": "worker_shutdown"},
             code="worker_shutdown",
         ))
+        if not finalization_started:
+            await asyncio.shield(_delete_generated_outputs(locals().get("cut_assets")))
         raise
     except Exception as e:
-        for c in locals().get("cut_assets") or ():
-            await _delete_output_candidate(c)
+        if not finalization_started:
+            await _delete_generated_outputs(locals().get("cut_assets"))
         error = str(e)[:300]
         fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None

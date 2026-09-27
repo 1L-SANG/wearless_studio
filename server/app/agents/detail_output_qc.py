@@ -19,7 +19,7 @@ from . import vision_llm
 from .gemini_image import InlineImage
 
 
-POLICY_VERSION = "detail-output-qc-v5"
+POLICY_VERSION = "detail-output-qc-v6"
 GATES = (
     "targetFraming", "constructionDesign", "colorMaterial", "permanentMarkings",
     "temporaryArtifacts", "photographicPreparation",
@@ -180,8 +180,20 @@ def _prepare(sources, candidate, target):
 
     focus = crop if crop is not None else images[(target["sourceOrdinal"] - 1) if target else 0]
     candidate_image = decode(candidate)
-    return [*[encode(im) for im in images], *([encode(crop)] if crop is not None else []),
-            *tiles(focus), encode(candidate_image), *tiles(candidate_image)]
+    candidate_encoded = encode(candidate_image)
+    # 생성기는 첫 원본에서 round 경계로 크롭한다(detail_shot_pipeline.target_crop).
+    # QC의 floor/ceil 크롭은 판정 근거를 넓게 보존하므로, 복사 감지만 생성기 경계를
+    # 별도로 대조한다. 두 경계가 다른 경우에도 원본 크롭 복사를 놓치지 않는다.
+    provider_crop_copy = False
+    if target is not None and "region" in target:
+        source = images[0]
+        r = target["region"]
+        provider_crop = source.crop((round(r["x"] * source.width), round(r["y"] * source.height),
+                                     round((r["x"] + r["w"]) * source.width),
+                                     round((r["y"] + r["h"]) * source.height)))
+        provider_crop_copy = encode(provider_crop).data == candidate_encoded.data
+    return ([*[encode(im) for im in images], *([encode(crop)] if crop is not None else []),
+             *tiles(focus), candidate_encoded, *tiles(candidate_image)], provider_crop_copy)
 
 
 def _validate_fields(value, fields):
@@ -268,7 +280,8 @@ def _normalize(raw):
     for code, derived in (("permanentMarkings", marking_status), ("temporaryArtifacts", artifact_status)):
         states = {seen[code]["status"], derived}
         seen[code]["status"] = "UNKNOWN" if "UNKNOWN" in states else "FAIL" if "FAIL" in states else "PASS"
-    # Unknown evidence also forbids spending an automatic correction attempt.
+    # A fully unknown judgment does not authorize correction. The caller preserves
+    # a confirmed core FAIL even if specialist evidence stays unknown.
     statuses = {gate["status"] for gate in seen.values()}
     decision = "UNKNOWN" if "UNKNOWN" in statuses else "FAIL" if "FAIL" in statuses else "PASS"
     return {"passed": decision == "PASS", "decision": decision,
@@ -302,14 +315,14 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         bound = _target(target, out["sourceHashes"], direction)
         prompt = build_prompt(len(sources), bound, direction, has_crop=bound is not None and "region" in bound)
         out["promptHash"] = _hash(prompt.encode())
-        all_images = await asyncio.to_thread(_prepare, sources, candidate, bound)
+        all_images, provider_crop_copy = await asyncio.to_thread(_prepare, sources, candidate, bound)
         has_crop = bound is not None and "region" in bound
         images = [*all_images[:len(sources) + int(has_crop)], all_images[-5]]
         out["judgeImageHashes"] = [_hash(im.data) for im in images]
-        # 다른 PNG 메타데이터·인코딩이어도 픽셀이 원본 또는 원본 크롭과 같다면
-        # AI 디테일 결과로 출고하지 않는다. 판정 모델이 출처 복사를 승인할 여지를 닫는다.
-        if any(all_images[-5].data == source.data
-               for source in all_images[:len(sources) + int(has_crop)]):
+        # 다른 PNG 메타데이터·인코딩이어도 원본이나 선택 부위 크롭과 픽셀이 같으면
+        # 새 AI 디테일 결과로 발행하지 않는다. 모델 판정 전에 결정적으로 차단한다.
+        if (provider_crop_copy or any(all_images[-5].data == source.data
+               for source in all_images[:len(sources) + int(has_crop)])):
             return {**out, "decision": "FAIL", "errorCode": "source_photo_copy",
                     "gates": [{"code": code,
                                "status": "FAIL" if code == "photographicPreparation" else "UNKNOWN",
@@ -325,6 +338,7 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
     if not key or not isinstance(out["requestedModel"], str) or not out["requestedModel"].strip():
         return _unknown(out, "primary_judge_unavailable")
     metadata = {}
+    core_failure = None
     try:
         timeout = float(getattr(settings, "detail_core_timeout_seconds", 90))
         if not math.isfinite(timeout) or timeout <= 0:
@@ -345,7 +359,12 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         if states != {"PASS"}:
             decision = "UNKNOWN" if "UNKNOWN" in states else "FAIL"
             gates = [primary.get(code, {"code": code, "status": "UNKNOWN", "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."}) for code in GATES]
-            return {**out, "decision": decision, "gates": gates}
+            if decision == "UNKNOWN":
+                return {**out, "decision": decision, "gates": gates}
+            # Known core failure still needs marking evidence to choose the least
+            # harmful candidate if all three attempts fail. Keep the core FAIL even
+            # when the specialist is unavailable or uncertain.
+            core_failure = {**out, "decision": "FAIL", "gates": gates}
     except Exception:
         # Do not log provider exception text: it can include sensitive request data.
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
@@ -354,7 +373,7 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
     if not getattr(settings, "openai_api_key", None) or not specialist["requestedModel"]:
         specialist.update(status="UNAVAILABLE", errorCode="specialist_unavailable")
-        return _unknown(out, "specialist_unavailable")
+        return core_failure or _unknown(out, "specialist_unavailable")
     specialist_metadata = {}
     try:
         specialist_timeout = float(getattr(settings, "detail_specialist_timeout_seconds", 90))
@@ -373,11 +392,13 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
             raise ValueError("invalid_specialist_contract")
         _validate_gates(specialist_raw["gates"], SPECIALIST_GATES)
         normalized = _normalize({**specialist_raw, "gates": [*primary.values(), *specialist_raw["gates"]]})
+        if core_failure is not None:
+            normalized.update(passed=False, decision="FAIL")
         return {**out, **normalized}
     except Exception as exc:
         specialist.update(status="UNKNOWN", returnedModel=specialist_metadata.get("returned_model"),
                           usage=specialist_metadata.get("usage"), errorCode=type(exc).__name__)
-        return _unknown(out, "specialist_unavailable_or_invalid")
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid")
 
 
 def repair_instructions(verdict):

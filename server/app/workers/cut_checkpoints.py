@@ -346,7 +346,7 @@ class CutCheckpointStore:
         return cut
 
     async def for_verified_detail(self, fingerprint: str, block_id) -> CutCheckpoint:
-        """Only the dedicated policy's fully accepted final may cross failed jobs.
+        """Only the dedicated policy's accepted final may cross failed jobs.
 
         No generic final and no unjudged/held base is eligible. Source/target bytes,
         models and policy versions are already in the dedicated fingerprint.
@@ -357,8 +357,8 @@ class CutCheckpointStore:
         cut = CutCheckpoint(self, digest, digest, block_id)
         saved = await self._load(digest, STAGE_FINAL)
         qc = saved.meta.get('cutQc') if saved else None
-        if (isinstance(qc, dict) and qc.get('passed') is True
-                and qc.get('decision') == 'PASS' and qc.get('fingerprint') == fingerprint):
+        if (isinstance(qc, dict) and qc.get('fingerprint') == fingerprint
+                and qc.get('passed') is True and qc.get('decision') == 'PASS'):
             cut.final = saved
         return cut
 

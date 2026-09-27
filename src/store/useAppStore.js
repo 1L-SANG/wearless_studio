@@ -109,8 +109,9 @@ const initialDetailPageJob = () => ({
   cutsDone: 0,
   cutsTotal: 0,
   cuts: {},         // sourceBlockId → { url, width, height, done } (previewUrl=1h presigned, REAL 컷은 url 없음)
+  revokedPreviewUrls: [], // 실패한 잡에서 받은 URL: 복제·의류 탭에 남은 임시 이미지도 철회
   live: [],         // 지금 생성 중인 sourceBlockId[] (cut_start~종결 사이)
-  failedCuts: [],   // 실패 컷 sourceBlockId[] (빈 슬롯·미차감)
+  failedCuts: [],   // 진행 중 컷별 실패 sourceBlockId[]; 잡 전체 실패는 출력 없음·예약 해제
   copy: {},         // sourceBlockId → texts[{role,text}] (AG-03 통과본)
   errorMessage: '',
   startedAt: 0,
@@ -524,16 +525,18 @@ export const useAppStore = create((set, get) => ({
         notifyDetailPageDone();
         return;
       }
-      // error·cancelled — 서버가 끝났다고 말한 경우에만 실패로 보인다. 이미 받은 컷(cuts)은
-      // 지우지 않는다: 중간에 멈춰도 만든 컷은 캔버스에 그대로 남는다(오너 2026-09-26).
-      // live 만 비운다 — 더는 그리는 중인 컷이 없다.
+      // error·cancelled — 전체 실패는 출력·과금이 없다. 임시 미리보기는 결과가 아니므로
+      // store 에서 지우고, 서버가 해제한 예약 잔액을 새로 읽는다.
       patch({
         status: 'error',
         slow: false,
+        revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
+        cuts: {},
         live: [],
         errorMessage: job.errorMessage
           || (job.status === 'cancelled' ? '생성이 중단됐어요. 다시 시도해 주세요.' : '상세페이지 생성에 실패했어요.'),
       });
+      void get().loadAccount({ force: true }).catch(() => {});
     } catch (e) {
       if (!alive()) return;
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
@@ -541,8 +544,11 @@ export const useAppStore = create((set, get) => ({
         patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
         return;
       }
-      // 잡이 사라졌거나(404) 일시 장애가 아닌 오류 — 여기서도 받아 둔 컷은 지우지 않는다.
-      patch({ status: 'error', slow: false, live: [], errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+      // 잡이 사라졌거나(404) 일시 장애가 아닌 오류 — 임시 컷을 최종 출력으로 남기지 않는다.
+      patch({ status: 'error', slow: false,
+        revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
+        cuts: {}, live: [], errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+      void get().loadAccount({ force: true }).catch(() => {});
     } finally {
       if (alive()) detailJobLoopProjectId = null;
     }

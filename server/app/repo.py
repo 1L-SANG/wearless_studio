@@ -3173,7 +3173,7 @@ async def finalize_detail_page_success(
     editor_blocks: list,
     cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
     reserved: int,
-    charge: int,  # 성공 컷 수 × storyboardPerCut (부분 성공 미차감)
+    charge: int,  # 전량 완성 시 실제 생성 컷 수 × storyboardPerCut
     metadata: dict,
     product_name: str | None = None,
 ) -> dict | None:
@@ -3230,7 +3230,7 @@ async def finalize_detail_page_success(
             conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
             charge=charge, action_key="detailPageGenerate", metadata=metadata,
         )
-    else:  # 전 컷 실패(charge 0) — 예약만 해제
+    else:  # AI 유료 컷이 없는 정상 작업(charge 0) — 예약만 해제
         available = await release_credits(
             conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
             settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})

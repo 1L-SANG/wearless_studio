@@ -248,7 +248,7 @@ def test_page_output_qc_maps_each_color_to_deduplicated_truth_indexes(monkeypatc
     assert result[6] == []
 
 
-def test_page_qc_receives_checked_new_detail_cut_not_seller_photo(monkeypatch):
+def test_page_qc_receives_generated_detail_instead_of_seller_photo(monkeypatch):
     calls = []
     product_image = InlineImage("image/png", b"PRODUCT")
     prepared = [(

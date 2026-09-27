@@ -92,8 +92,8 @@ assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 �
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
 - **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `후킹 / 스타일링 / 스튜디오 / 의류 확인`의 공식 네 섹션을 따른다. HTTP의 단계 체크리스트 실배선은 TODO다.
-- **크레딧**: AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut` (내 이미지 제외 — 계약 §6). 전량 성공일 때만 확정한다.
-- **완성 정책**: AI 컷 중 하나라도 실패하면 부분 상세페이지를 조립·출고하지 않는다. 전부 실패는 `all_cuts_failed`, 일부 실패는 `incomplete_cuts`로 작업을 실패시키며 예약 크레딧을 전액 해제한다. 일반 컷의 재시도 가능한 실패는 첫 생성 뒤 최대 2회 추가 생성한다. 입력 오류·미확정 과금 응답은 안전을 위해 즉시 실패 처리한다.
+- **크레딧**: 시작 시 AI 생성 컷을 예약한다. 1~4 생성 컷은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`으로 전량 완성 시에만 확정한다(내 이미지 제외, 계약 §6).
+- **완성 정책**: 요청한 AI 컷 중 생성 결과가 없는 자리가 하나라도 있으면 부분 상세페이지를 조립·출고하지 않는다. 전부 미완성은 `all_cuts_failed`, 일부 미완성은 `incomplete_cuts`로 작업을 실패시키며 예약 크레딧을 전액 해제한다. 일반 컷의 확인된 미과금 일시 오류는 첫 호출 뒤 최대 2회 재시도하며, 입력 오류·미확정 과금 응답은 재시도하지 않는다. 제품 디테일컷은 명확한 두 번의 QC 실패 뒤 원본 모양을 지키는 마지막 후보를 한 번 더 만든다. 끝내 QC를 통과하지 못해도 저장된 생성 후보 중 상품 사실 오류가 가장 덜 중대한 한 장을 미통과로 표시해 제공하고 정상 차감한다. 원본 픽셀 복사본과 읽을 수 없는 후보는 제외한다.
 - **확정 GPT exact 적용 범위와 입력 게이트**: `styling/direct`, front, full/medium,
   `refScope='all'`, `pose='auto'`, `spaceGroupId` 없음, 예시 방향 호환이며 서비스 예시를
   선택한 블록은 exact 프로필을 요청한 것이다. 실행에는 기준 색상, 선택 resolved 마네킹,

@@ -3284,8 +3284,10 @@ async def generate_detail_page(
     request: Request, project_id: str, user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """저장된 콘티의 AI 컷을 모두 생성한 뒤 상세페이지를 조립한다. 전량 성공 시에만
-    1~4 생성 컷은 5컷 값, 5컷 이상은 생성 컷 수만큼 차감한다. 실패 시 예약 전액 해제."""
+    """저장된 콘티의 AI 컷을 모두 생성한 뒤 상세페이지를 조립한다. 전량 완성 시에만
+    1~4 생성 컷은 5컷 값, 5컷 이상은 실제 생성 컷 수만큼 차감한다. 생성 후보가 없는
+    AI 컷이 하나라도 있으면 페이지를 발행하지 않고 예약 전액을 해제한다.
+    완료 재호출은 기존 결과를 무차감으로 반환한다."""
     s = request.app.state.settings
     scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:

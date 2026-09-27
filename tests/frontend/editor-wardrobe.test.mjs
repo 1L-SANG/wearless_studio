@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '../../src/features/editor/editorWardrobe.js';
+import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '../../src/features/editor/editorWardrobe.js';
 
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
 const panelSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
@@ -77,6 +77,20 @@ test('final asset URLs replace expired generation previews instead of doubling t
     'https://api.wearless.kr/v1/assets/stable-1/file',
     'https://api.wearless.kr/v1/assets/stable-2/file',
   ]);
+});
+
+test('failed page removes provisional wardrobe images but keeps saved and seller images', () => {
+  const wardrobe = {
+    black: [
+      { id: 'preview', src: 'https://r2.test/p1' },
+      { id: 'saved', src: '/v1/assets/saved/file' },
+    ],
+    misc: [{ id: 'seller', src: '/mine.jpg' }],
+  };
+  const cleaned = removeWardrobeImagesBySrc(wardrobe, new Set(['https://r2.test/p1']));
+  assert.deepEqual(cleaned.black.map((image) => image.id), ['saved']);
+  assert.deepEqual(cleaned.misc.map((image) => image.id), ['seller']);
+  assert.equal(wardrobe.black.length, 2, '기존 상태를 변형하지 않는다');
 });
 
 test('direct uploads are collected under misc without treating arbitrary placed photos as uploads', () => {

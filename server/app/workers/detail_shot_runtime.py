@@ -58,7 +58,8 @@ class ProgressStore:
             third_allowed = (state.get('phase') == 'retryable'
                              or (state.get('phase') == 'judged'
                                  and qc.get('attempts') == 2
-                                 and [j.get('decision') for j in judgments] == ['FAIL']))
+                                 and [j.get('decision') for j in judgments]
+                                 in (['FAIL'], ['FAIL', 'FAIL'])))
             if (state.get('phase') in {'generating', 'judging', 'accepted', 'held'}
                     or attempts >= 3
                     or (attempts == 2 and not third_allowed)
@@ -86,12 +87,15 @@ class ProgressStore:
             if (state.get('fingerprint') != fingerprint or state.get('attempts') != attempt
                     or state.get('phase') != 'generating'):
                 raise DetailShotRejected('detail_attempt_state_changed')
-            return {**state, 'phase': 'candidate', 'candidate': {'key': key, 'sha256': sha, 'mime': image.mime}}
+            candidate = {'attempt': attempt, 'key': key, 'sha256': sha, 'mime': image.mime}
+            return {**state, 'phase': 'candidate', 'candidate': candidate,
+                    'candidates': [*(state.get('candidates') or []), candidate]}
         await self._change(save)
 
-    async def load_candidate(self):
+    async def load_candidate(self, attempt=None):
         state = await self.read()
-        candidate = state.get('candidate') or {}
+        candidate = (state.get('candidate') or {}) if attempt is None else next(
+            (row for row in state.get('candidates') or [] if row.get('attempt') == attempt), {})
         job = self.job
         prefix = (f"users/{job['user_id']}/projects/{job['project_id']}/ai/{job['id']}/"
                   f"detail-checkpoints/{self.key}/")
@@ -126,9 +130,35 @@ class ProgressStore:
             return {**state, 'phase': 'retryable', 'qc': metadata}
         await self._change(record)
 
-    async def finish(self, metadata):
-        await self._change(lambda state: {**state, 'qc': metadata,
-                            'phase': 'accepted' if metadata.get('passed') is True else 'held'})
+    async def finish(self, metadata, *, selected_attempt=None):
+        def finish(state):
+            judgments = metadata.get('judgments') or []
+            selected_judgment = next(
+                (judgment for index, judgment in enumerate(judgments, 1)
+                 if isinstance(judgment, dict)
+                 and judgment.get('attempt', index) == selected_attempt), None)
+            best_effort = (
+                metadata.get('passed') is False
+                and metadata.get('publishedBestEffort') is True
+                and metadata.get('attempts') == 3
+                and type(selected_attempt) is int
+                and metadata.get('selectedAttempt') == selected_attempt
+                and isinstance(judgments, list)
+                and any(isinstance(j, dict) and j.get('decision') == 'FAIL' for j in judgments)
+                and selected_judgment is not None
+                and selected_judgment.get('errorCode') != 'source_photo_copy'
+            )
+            candidate = state.get('candidate')
+            if selected_attempt is not None:
+                if not best_effort:
+                    raise DetailShotRejected('detail_checkpoint_unavailable')
+                candidate = next((row for row in state.get('candidates') or []
+                                  if row.get('attempt') == selected_attempt), None)
+                if candidate is None:
+                    raise DetailShotRejected('detail_checkpoint_unavailable')
+            return {**state, 'qc': metadata, 'candidate': candidate,
+                    'phase': 'accepted' if metadata.get('passed') is True or best_effort else 'held'}
+        await self._change(finish)
 
 
 async def _load(app, user_id, refs):
@@ -150,6 +180,7 @@ async def resolve_sources(app, user_id, product, analysis, spec):
     valid_slots = {'Back', 'BackDetail'} if direction == 'back' else {'Front', 'Detail'}
     target_id = spec.get('detailTargetId')
     target = None
+    framing_source_index = 0
     if target_id:
         colors = product.get('colors') or []
         base = next((c for c in colors if c.get('isBase')), colors[0] if colors else {})
@@ -171,11 +202,13 @@ async def resolve_sources(app, user_id, product, analysis, spec):
         refs, transfer = cut_generator.detail_reference_images(product, spec.get('colorId'), direction=direction)
         refs = [(slot, aid) for slot, aid in refs if slot in valid_slots]
         sources, slots = await _load(app, user_id, refs)
+        detail_slot = 'BackDetail' if direction == 'back' else 'Detail'
+        framing_source_index = next((index for index, slot in enumerate(slots)
+                                     if slot == detail_slot), 0)
         if transfer:
             # Existing cross-color closeups: chosen-color whole photo owns COLOR,
             # another color's detail owns construction only (ADR-0010).
             whole_slot = 'Back' if direction == 'back' else 'Front'
-            detail_slot = 'BackDetail' if direction == 'back' else 'Detail'
             color_image = next((i for i, slot in zip(sources, slots) if slot == whole_slot), None)
             detail_image = next((i for i, slot in zip(sources, slots) if slot == detail_slot), None)
             if color_image is None or detail_image is None:
@@ -190,7 +223,7 @@ async def resolve_sources(app, user_id, product, analysis, spec):
         # uploaded originals first; generation AND QC then see the same upright,
         # horizontally corrected pixels, so correct lettering isn't judged wrong.
         sources, target = await asyncio.to_thread(normalize_mirrored_sources, sources, target)
-    return sources, target, direction
+    return sources, target, direction, framing_source_index
 
 
 def normalize_mirrored_sources(sources, target):
@@ -223,7 +256,8 @@ def recipe(spec):
 
 
 async def generate(app, job, spec, product, analysis, *, style_reference=None, final_cache=None):
-    sources, target, direction = await resolve_sources(app, job['user_id'], product, analysis, spec)
+    sources, target, direction, framing_source_index = await resolve_sources(
+        app, job['user_id'], product, analysis, spec)
     if style_reference is None and spec.get('exampleId'):
         style_reference = await cut_generator.load_example_image(
             app.state.settings, spec['exampleId'], scope='all',
@@ -233,7 +267,8 @@ async def generate(app, job, spec, product, analysis, *, style_reference=None, f
     progress = ProgressStore(app, job, spec.get('id') or 'editor-detail')
     cache_entry = None
     if final_cache is not None:
-        fp = fingerprint(app.state.settings, sources, target, direction, style_reference)
+        fp = fingerprint(app.state.settings, sources, target, direction, style_reference,
+                         framing_source_index=framing_source_index)
         cache_entry = await final_cache.for_verified_detail(fp, spec.get('id'))
         if cache_entry.final is not None:
             await progress.read()  # Even a reused final must respect this job's lease.
@@ -242,7 +277,7 @@ async def generate(app, job, spec, product, analysis, *, style_reference=None, f
     result, report = await generate_verified(
         app.state.settings, app.state.gemini, sources, target=target, direction=direction,
         progress=progress,
-        style_reference=style_reference)
+        style_reference=style_reference, framing_source_index=framing_source_index)
     if cache_entry is not None:
         await cache_entry.save_final(result.data, result.mime, {
             'garmentQc': None, 'cutQc': report, 'warnings': [], 'neckRepair': None, 'facePass': {},

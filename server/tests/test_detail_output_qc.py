@@ -51,7 +51,9 @@ def picture(color="green"):
     return InlineImage("image/png", buf.getvalue())
 
 
-def test_source_photo_copy_is_rejected_before_model_judgment(qc, monkeypatch):
+def test_source_photo_pixels_are_not_a_publishable_detail(monkeypatch):
+    from app.agents import detail_output_qc as qc
+
     original = picture()
     metadata = PngInfo()
     metadata.add_text("reencoded", "same pixels")
@@ -61,7 +63,7 @@ def test_source_photo_copy_is_rejected_before_model_judgment(qc, monkeypatch):
     assert copied.getvalue() != original.data
 
     async def forbidden(*args, **kwargs):
-        raise AssertionError("pixel-identical source copy must not reach model QC")
+        raise AssertionError("pixel-identical copy must not reach model QC")
 
     monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
     result = asyncio.run(qc.verdict(
@@ -75,20 +77,49 @@ def test_source_photo_copy_is_rejected_before_model_judgment(qc, monkeypatch):
     assert "do not reuse seller source pixels" in repair[0].lower()
 
 
-def test_selected_source_crop_cannot_be_published_as_generated_detail(qc, monkeypatch):
+def test_source_crop_pixels_are_not_a_publishable_detail(monkeypatch):
+    from app.agents import detail_output_qc as qc
+
     original = picture()
     target = bound_target()
-    crop_bytes = BytesIO()
+    cropped = BytesIO()
     with Image.open(BytesIO(original.data)) as image:
-        image.crop((3, 4, 26, 32)).save(crop_bytes, format="PNG")
+        image.crop((3, 4, 26, 32)).save(cropped, format="PNG")
 
     async def forbidden(*args, **kwargs):
         raise AssertionError("source crop copy must not reach model QC")
 
     monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
     result = asyncio.run(qc.verdict(
-        settings(), [original], InlineImage("image/png", crop_bytes.getvalue()),
+        settings(), [original], InlineImage("image/png", cropped.getvalue()),
         target=target))
+
+    assert result["decision"] == "FAIL"
+    assert result["errorCode"] == "source_photo_copy"
+
+
+def test_provider_rounded_crop_pixels_are_not_a_publishable_detail(monkeypatch):
+    from app.agents import detail_output_qc as qc, detail_shot_pipeline
+
+    patterned = Image.new("RGB", (64, 80))
+    for y in range(80):
+        for x in range(64):
+            patterned.putpixel((x, y), ((x * 7) % 256, (y * 11) % 256, (x + y) % 256))
+    encoded = BytesIO()
+    patterned.save(encoded, format="PNG")
+    original = InlineImage("image/png", encoded.getvalue())
+    target = {"kind": "fabric", "direction": "front",
+              "sourceSha256": hashlib.sha256(original.data).hexdigest(),
+              "region": {"x": .103, "y": .117, "w": .703, "h": .713}}
+    copied = detail_shot_pipeline.target_crop(original, target)
+    with Image.open(BytesIO(copied.data)) as image:
+        assert image.size == (45, 57)
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("provider's exact source crop must not reach model QC")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
+    result = asyncio.run(qc.verdict(settings(), [original], copied, target=target))
 
     assert result["decision"] == "FAIL"
     assert result["errorCode"] == "source_photo_copy"
@@ -400,20 +431,52 @@ def test_inconsistent_presence_and_readability_cannot_pass(qc, monkeypatch, chan
     assert evaluate(qc, monkeypatch, raw)["decision"] == "UNKNOWN"
 
 
-@pytest.mark.parametrize("core_status", ["FAIL", "UNKNOWN"])
-def test_core_fail_fast_never_spends_or_fakes_specialist_pass(qc, monkeypatch, core_status):
+def test_core_unknown_still_skips_specialist(qc, monkeypatch):
     async def primary(*args, **kwargs):
         raw = primary_response(qc, response(qc))
-        raw["gates"][0]["status"] = core_status
+        raw["gates"][0]["status"] = "UNKNOWN"
         return raw
     async def forbidden(*args, **kwargs):
         pytest.fail("specialist must not run after nonpassing primary")
     patch_core(qc, monkeypatch, primary)
     patch_specialist(qc, monkeypatch, forbidden)
     out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
-    assert out["decision"] == core_status
+    assert out["decision"] == "UNKNOWN"
     assert out["specialist"]["status"] == "NOT_RUN"
     assert all(g["status"] == "UNKNOWN" for g in out["gates"] if g["code"] in qc.SPECIALIST_GATES)
+
+
+def test_core_fail_also_checks_whether_the_logo_is_missing_for_best_effort_ranking(qc, monkeypatch):
+    raw = response(qc)
+    next(g for g in raw["gates"] if g["code"] == "colorMaterial")["status"] = "FAIL"
+    raw["permanentMarkings"].update(
+        sourcePresence="present", sourceReadability="readable",
+        candidatePresence="absent", candidateReadability="not_applicable",
+        textMatch="not_applicable",
+    )
+    out = evaluate(qc, monkeypatch, raw)
+    statuses = {gate["code"]: gate["status"] for gate in out["gates"]}
+    assert out["decision"] == "FAIL" and out["passed"] is False
+    assert out["specialist"]["status"] == "COMPLETE"
+    assert statuses["colorMaterial"] == "FAIL"
+    assert statuses["permanentMarkings"] == "FAIL"
+
+
+def test_core_fail_stays_a_failure_when_specialist_is_unavailable(qc, monkeypatch):
+    async def primary(*args, **kwargs):
+        raw = primary_response(qc, response(qc))
+        next(g for g in raw["gates"] if g["code"] == "colorMaterial")["status"] = "FAIL"
+        return raw
+    async def unavailable(*args, **kwargs):
+        raise TimeoutError("temporary")
+    patch_core(qc, monkeypatch, primary)
+    patch_specialist(qc, monkeypatch, unavailable)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
+    statuses = {gate["code"]: gate["status"] for gate in out["gates"]}
+    assert out["decision"] == "FAIL" and out["passed"] is False
+    assert out["specialist"]["status"] == "UNKNOWN"
+    assert statuses["colorMaterial"] == "FAIL"
+    assert statuses["permanentMarkings"] == "UNKNOWN"
 
 
 def test_specialist_unavailable_after_core_pass_is_unknown(qc, monkeypatch):

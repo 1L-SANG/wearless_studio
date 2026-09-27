@@ -44,10 +44,10 @@ def test_selected_target_excludes_unsigned_extra_photos(monkeypatch):
     async def load(*args):
         return [source,extra], ['Front','Detail']
     monkeypatch.setattr(runtime,'_load',load)
-    result, target, direction = asyncio.run(runtime.resolve_sources(
+    result, target, direction, framing_source_index = asyncio.run(runtime.resolve_sources(
         SimpleNamespace(), 'u', {'colors':[{'id':'base','isBase':True,'images':[]}]},
         {'detailRecommendations':contract}, {'detailTargetId':contract['candidates'][0]['id'],'direction':'front'}))
-    assert result == [source] and direction == 'front'
+    assert result == [source] and direction == 'front' and framing_source_index == 0
     assert target['sourceSha256'] == hashlib.sha256(source.data).hexdigest()
 
 
@@ -61,3 +61,16 @@ def test_legacy_targetless_front_never_attaches_back(monkeypatch):
                         lambda *args,**kw: ([('Front','front'),('Back','back'),('Detail','detail')],None))
     asyncio.run(runtime.resolve_sources(SimpleNamespace(),'u',{}, {}, {'direction':'front'}))
     assert seen == [('Front','front'),('Detail','detail')]
+
+
+def test_targetless_front_uses_detail_photo_as_final_framing_source(monkeypatch):
+    async def load(*args):
+        return [picture(), picture()], ['Front', 'Detail']
+    monkeypatch.setattr(runtime, '_load', load)
+    monkeypatch.setattr(runtime.cut_generator, 'detail_reference_images',
+                        lambda *args, **kwargs: ([('Front', 'front'), ('Detail', 'detail')], None))
+
+    _, target, direction, framing_source_index = asyncio.run(
+        runtime.resolve_sources(SimpleNamespace(), 'u', {}, {}, {'direction': 'front'}))
+
+    assert target is None and direction == 'front' and framing_source_index == 1

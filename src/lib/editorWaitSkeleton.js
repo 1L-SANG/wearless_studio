@@ -71,10 +71,14 @@ export function fillGenBlocks(blocks, job) {
           && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
-          const { genPending, genExample, ...rest } = el;
+          const { genPending, genExample, genFailed, ...rest } = el;
           return { ...rest, src: cut.url, genAutoSrc: cut.url };
         }
         const st = cutStateOf(job, el.sourceBlockId);
+        if (job.status === 'running' && st !== 'failed' && el.genFailed) {
+          const { genFailed, ...rest } = el;
+          return { ...rest, genPending: st };
+        }
         return st === el.genPending ? el : { ...el, genPending: st };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
@@ -83,6 +87,32 @@ export function fillGenBlocks(blocks, job) {
         return el;
       }
       return el;
+    }),
+  }));
+}
+
+/* 전체 잡 실패 시 진행 중 노출했던 임시 컷은 결과가 아니다. 브라우저 임시 작업본·undo
+   스냅샷·의류 탭에 남은 주소까지 같은 집합으로 철회할 수 있게 추출을 분리한다. */
+export function failedJobPreviewUrls(blocks) {
+  return new Set((blocks || []).flatMap((block) => (block.elements || [])
+    .map((el) => el.type === 'image' && el.genAutoSrc)
+    .filter((src) => typeof src === 'string' && src.length > 0)));
+}
+
+export function clearFailedJobPreviewBlocks(blocks, previewUrls = failedJobPreviewUrls(blocks)) {
+  return (blocks || []).map((block) => ({
+    ...block,
+    elements: (block.elements || []).map((el) => {
+      if (el.type !== 'image') return el;
+      const { genAutoSrc, ...rest } = el;
+      const revoked = previewUrls.has(el.src);
+      const generatedSlot = Boolean(el.sourceBlockId && !el.slotCleared
+        && (genAutoSrc || el.genPending));
+      if (generatedSlot && (!el.src || revoked || el.src === genAutoSrc)) {
+        return { ...rest, src: null, genPending: 'failed', genFailed: true };
+      }
+      if (revoked) return { ...rest, src: null };
+      return genAutoSrc ? rest : el;
     }),
   }));
 }

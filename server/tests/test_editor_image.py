@@ -39,10 +39,12 @@ def test_editor_vary_checked_detail_uses_trusted_recipe_and_original_sources(mon
     async def analysis(*args):
         return {dr.PERSISTED_KEY: contract}
 
-    async def checked(settings, gemini, sources, *, target, direction, progress, style_reference=None):
+    async def checked(settings, gemini, sources, *, target, direction, progress,
+                      style_reference=None, framing_source_index=0):
         captured["target"] = target
         captured["sources"] = [image.data for image in sources]
         captured["direction"] = direction
+        assert framing_source_index == 0
         assert style_reference.data == b"k/generated"
         if case == "failed_qc":
             raise eij.DetailShotRejected("detail_qc_failed", {"passed": False})
@@ -116,7 +118,7 @@ def test_editor_detail_rejected_qc_has_no_asset_or_preview_and_refunds(monkeypat
         return {}
 
     async def reject(*args):
-        raise eij.DetailShotRejected(reason, {"passed": False, "attempts": 2})
+        raise eij.DetailShotRejected(reason, {"passed": False, "attempts": 3})
 
     async def failure(conn, **kwargs):
         captured["failure"] = kwargs

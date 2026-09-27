@@ -1,6 +1,7 @@
 """Product detail publication requires source-bound QC; only safe failures get three calls."""
 from io import BytesIO
 import asyncio
+import hashlib
 from functools import wraps
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -26,9 +27,12 @@ def photo(color='gray'):
 
 
 class MemoryProgress:
-    def __init__(self, state=None, image=None):
+    def __init__(self, state=None, image=None, images=None):
         self.state = dict(state or {})
         self.image = image
+        self.images = dict(images or {})
+        if image is not None and self.state.get('attempts'):
+            self.images.setdefault(self.state['attempts'], image)
         self.claims = 0
 
     async def read(self):
@@ -44,10 +48,11 @@ class MemoryProgress:
 
     async def save_candidate(self, image, fingerprint, attempt):
         self.image = image
+        self.images[attempt] = image
         self.state.update(fingerprint=fingerprint, attempts=attempt, phase='candidate')
 
-    async def load_candidate(self):
-        return self.image
+    async def load_candidate(self, attempt=None):
+        return self.image if attempt is None else self.images.get(attempt)
 
     async def claim_judgment(self):
         assert self.state['phase'] == 'candidate'
@@ -56,8 +61,13 @@ class MemoryProgress:
     async def record_judgment(self, metadata):
         self.state.update(phase='judged', qc=metadata)
 
-    async def finish(self, metadata):
-        self.state.update(phase='accepted' if metadata['passed'] else 'held', qc=metadata)
+    async def finish(self, metadata, *, selected_attempt=None):
+        if selected_attempt is not None:
+            self.image = self.images.get(selected_attempt)
+            if self.image is None:
+                raise pipeline.DetailShotRejected('detail_checkpoint_unavailable')
+        self.state.update(phase='accepted' if metadata['passed'] or metadata.get('publishedBestEffort') else 'held',
+                          qc=metadata)
 
     async def record_retryable_failure(self, metadata):
         assert self.state['phase'] == 'generating'
@@ -78,6 +88,18 @@ def verdict(decision):
     return {'passed': decision == 'PASS', 'decision': decision, 'gates': []}
 
 
+def failed_gate(code):
+    core = {'targetFraming', 'constructionDesign', 'colorMaterial', 'photographicPreparation'}
+    specialist = {'permanentMarkings', 'temporaryArtifacts'}
+    return {'passed': False, 'decision': 'FAIL',
+            'gates': [{'code': name,
+                       'status': ('FAIL' if name == code else
+                                  'UNKNOWN' if code in core and name in specialist else 'PASS'),
+                       'evidence': 'checked'} for name in (
+                           'targetFraming', 'constructionDesign', 'colorMaterial',
+                           'permanentMarkings', 'temporaryArtifacts', 'photographicPreparation')]}
+
+
 async def run(setup, progress=None):
     _qc, client, settings = setup
     return await pipeline.generate_verified(
@@ -86,12 +108,183 @@ async def run(setup, progress=None):
 
 
 @sync_test
-async def test_failed_correction_is_not_published(setup):
+async def test_three_failed_judgments_publish_best_generated_candidate_without_claiming_qc_pass(setup):
     qc, client, _ = setup
-    qc.side_effect = [verdict('FAIL'), verdict('FAIL')]
-    with pytest.raises(pipeline.DetailShotRejected):
+    qc.side_effect = [verdict('FAIL'), verdict('FAIL'), verdict('FAIL')]
+    progress = MemoryProgress()
+    selected, report = await run(setup, progress)
+    assert selected.data == photo('pink').data
+    assert progress.state['phase'] == 'accepted'
+    assert report['passed'] is False and report['publishedBestEffort'] is True
+    assert report['selectedAttempt'] in {1, 2, 3}
+    assert client.generate_content_image.await_count == 3
+
+
+@sync_test
+async def test_best_effort_candidate_is_idempotent_within_the_same_job(setup):
+    qc, client, settings = setup
+    qc.side_effect = [failed_gate('photographicPreparation'),
+                      failed_gate('constructionDesign'), failed_gate('colorMaterial')]
+    client.generate_content_image.side_effect = [
+        SimpleNamespace(image=photo(color).data, mime='image/png')
+        for color in ('red', 'green', 'blue')]
+    progress = MemoryProgress()
+
+    selected, report = await run(setup, progress)
+    again, resumed = await run(setup, progress)
+
+    assert selected.data == again.data
+    assert report['publishedBestEffort'] is True and resumed['selectedAttempt'] == report['selectedAttempt']
+    assert progress.state['phase'] == 'accepted'
+    assert client.generate_content_image.await_count == qc.await_count == 3
+
+
+@sync_test
+async def test_logo_failure_is_worse_than_minor_color_and_photo_differences(setup):
+    qc, client, _ = setup
+    mild_color = failed_gate('colorMaterial')
+    for gate in mild_color['gates']:
+        if gate['code'] == 'photographicPreparation':
+            gate['status'] = 'FAIL'
+    qc.side_effect = [failed_gate('permanentMarkings'), mild_color,
+                      failed_gate('constructionDesign')]
+    client.generate_content_image.side_effect = [
+        SimpleNamespace(image=photo(color).data, mime='image/png')
+        for color in ('red', 'green', 'blue')]
+
+    selected, report = await run(setup)
+    assert selected.data == photo('green').data, '로고 오류보다 가벼운 색감·마감 차이를 우선한다'
+    assert report['selectedAttempt'] == 2
+    assert client.generate_content_image.await_count == 3
+
+
+@sync_test
+async def test_source_photo_copy_is_never_chosen_as_best_effort(setup):
+    qc, client, _ = setup
+    copied = failed_gate('photographicPreparation')
+    copied['errorCode'] = 'source_photo_copy'
+    qc.side_effect = [copied, failed_gate('colorMaterial'), failed_gate('constructionDesign')]
+    client.generate_content_image.side_effect = [
+        SimpleNamespace(image=photo(color).data, mime='image/png')
+        for color in ('red', 'green', 'blue')]
+
+    selected, report = await run(setup)
+    assert selected.data == photo('green').data
+    assert report['selectedAttempt'] == 2
+
+
+@sync_test
+async def test_only_source_photo_copies_leave_the_cut_unpublished(setup):
+    qc, client, _ = setup
+    copied = failed_gate('photographicPreparation')
+    copied['errorCode'] = 'source_photo_copy'
+    qc.side_effect = [copied, copied, copied]
+
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
         await run(setup)
-    assert client.generate_content_image.await_count == 2
+
+
+@sync_test
+async def test_unknown_final_judgment_selects_a_prior_judged_candidate(setup):
+    qc, client, _ = setup
+    first = failed_gate('constructionDesign')
+    second = failed_gate('colorMaterial')
+    for judgment in (first, second):
+        for gate in judgment['gates']:
+            if gate['code'] in {'constructionDesign', 'colorMaterial'}:
+                gate['status'] = 'FAIL'
+            elif gate['code'] in {'permanentMarkings', 'temporaryArtifacts'}:
+                gate['status'] = 'UNKNOWN'  # Specialist is not called after a core FAIL.
+    qc.side_effect = [first, second, verdict('UNKNOWN')]
+    client.generate_content_image.side_effect = [
+        SimpleNamespace(image=photo(color).data, mime='image/png')
+        for color in ('red', 'green', 'blue')]
+
+    selected, report = await run(setup)
+    assert selected.data in {photo('red').data, photo('green').data}
+    assert report['selectedAttempt'] in {1, 2}
+    assert report['passed'] is False and report['publishedBestEffort'] is True
+    assert client.generate_content_image.await_count == qc.await_count == 3
+
+
+@pytest.mark.parametrize('phase', ['generating', 'judging'])
+@sync_test
+async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_resubmitting(setup, phase):
+    qc, client, settings = setup
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'phase': phase, 'attempts': 3, 'fingerprint': fp,
+                               'qc': {'judgments': [failed_gate('photographicPreparation'),
+                                                    failed_gate('constructionDesign')]}},
+                              photo('pink') if phase == 'judging' else None,
+                              images={1: photo('red'), 2: photo('blue')})
+
+    selected, report = await pipeline.generate_verified(
+        settings, client, [source], target=None, direction='front', progress=progress)
+    assert selected.data == photo('red').data
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 1
+    client.generate_content_image.assert_not_called()
+    qc.assert_not_called()
+
+
+@sync_test
+async def test_reclaimed_final_judgment_uses_prior_candidate_if_last_checkpoint_is_missing(setup):
+    qc, client, settings = setup
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'phase': 'judged', 'attempts': 3, 'fingerprint': fp,
+                               'qc': {'judgments': [failed_gate('photographicPreparation'),
+                                                    failed_gate('constructionDesign'),
+                                                    failed_gate('colorMaterial')]}},
+                              images={1: photo('red'), 2: photo('blue')})
+
+    selected, report = await pipeline.generate_verified(
+        settings, client, [source], target=None, direction='front', progress=progress)
+    assert selected.data == photo('red').data
+    assert report['selectedAttempt'] == 1
+    client.generate_content_image.assert_not_called()
+    qc.assert_not_called()
+
+
+@sync_test
+async def test_reclaimed_passing_third_judgment_keeps_qc_pass_instead_of_best_effort(setup):
+    qc, client, settings = setup
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'phase': 'judged', 'attempts': 3, 'fingerprint': fp,
+                               'qc': {'judgments': [failed_gate('photographicPreparation'),
+                                                    failed_gate('constructionDesign'),
+                                                    verdict('PASS')]}},
+                              photo('green'), images={1: photo('red'), 2: photo('blue')})
+
+    selected, report = await pipeline.generate_verified(
+        settings, client, [source], target=None, direction='front', progress=progress)
+    assert selected.data == photo('green').data
+    assert report['passed'] is True
+    assert report.get('publishedBestEffort') is not True
+    assert progress.state['phase'] == 'accepted'
+    client.generate_content_image.assert_not_called()
+    qc.assert_not_called()
+
+
+@sync_test
+async def test_final_provider_error_uses_the_best_prior_generated_candidate(setup):
+    qc, client, _ = setup
+    qc.side_effect = [failed_gate('photographicPreparation'),
+                      failed_gate('constructionDesign')]
+    client.generate_content_image.side_effect = [
+        SimpleNamespace(image=photo('red').data, mime='image/png'),
+        SimpleNamespace(image=photo('blue').data, mime='image/png'),
+        TimeoutError('final provider unavailable')]
+
+    progress = MemoryProgress()
+    selected, report = await run(setup, progress)
+    assert selected.data == photo('red').data
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 1
+    assert progress.state['phase'] == 'accepted'
+    assert progress.state['qc']['attempts'] == 3
+    assert len(progress.state['qc']['judgments']) == 2
+    assert client.generate_content_image.await_count == 3 and qc.await_count == 2
 
 
 @sync_test
@@ -105,6 +298,77 @@ async def test_correction_uses_originals_and_is_rejudged(setup):
     assert second_images[0].data == photo().data
     assert second_images[-1].data == result.data
     assert all(call.args[1][0].data == photo().data for call in qc.call_args_list)
+
+
+@sync_test
+async def test_two_failed_attempts_try_source_shape_without_failed_images_or_style(setup):
+    qc, client, _ = setup
+    qc.side_effect = [verdict('FAIL'), verdict('FAIL'), verdict('PASS')]
+    source, style = photo(), photo('blue')
+    target = {'kind': 'neckline', 'region': {'x': .25, 'y': .25, 'w': .5, 'h': .25}}
+
+    result, report = await pipeline.generate_verified(
+        setup[2], client, [source], target=target, direction='front',
+        progress=MemoryProgress(), style_reference=style)
+
+    assert result.data == photo('pink').data
+    assert report['passed'] is True and report['attempts'] == 3
+    assert report['fallbackUsed'] is True
+    assert len(report['judgments']) == 3
+    third = client.generate_content_image.call_args_list[2]
+    assert 'source photograph' in third.args[1].lower()
+    assert 'wrinkles' in third.args[1].lower()
+    assert [Image.open(BytesIO(i.data)).size for i in third.args[2]] == [(80, 50), (160, 200)]
+    assert all(i.data != style.data and i.data != photo('pink').data for i in third.args[2])
+    assert qc.await_count == 3
+
+
+@sync_test
+async def test_unknown_second_judgment_does_not_start_source_shape_fallback(setup):
+    qc, client, _ = setup
+    qc.side_effect = [verdict('FAIL'), verdict('UNKNOWN')]
+
+    with pytest.raises(pipeline.DetailShotRejected):
+        await run(setup)
+
+    assert client.generate_content_image.await_count == 2
+
+
+@sync_test
+async def test_source_shape_fallback_uses_detail_frame_and_target_color_without_crop(setup):
+    qc, client, settings = setup
+    qc.side_effect = [verdict('FAIL'), verdict('FAIL'), verdict('PASS')]
+    detail, target_color = photo('red'), photo('blue')
+    target = {'kind': 'construction',
+              'colorTransfer': True,
+              'sourceSha256': hashlib.sha256(detail.data).hexdigest(),
+              'colorSourceSha256': hashlib.sha256(target_color.data).hexdigest()}
+
+    await pipeline.generate_verified(settings, client, [target_color, detail],
+                                     target=target, direction='front', progress=MemoryProgress(),
+                                     framing_source_index=1)
+
+    third = client.generate_content_image.call_args_list[2]
+    assert [Image.open(BytesIO(i.data)).getpixel((0, 0)) for i in third.args[2]] == [
+        (255, 0, 0), (0, 0, 255)]
+    assert 'Image 2 alone owns target garment color' in third.args[1]
+
+
+@sync_test
+async def test_reclaimed_second_failed_judgment_starts_only_the_final_fallback(setup):
+    qc, client, settings = setup
+    qc.return_value = verdict('PASS')
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'phase': 'judged', 'attempts': 2, 'fingerprint': fp,
+                               'qc': {'judgments': [verdict('FAIL'), verdict('FAIL')]}}, photo('pink'))
+
+    _, report = await pipeline.generate_verified(settings, client, [source],
+                                                 target=None, direction='front', progress=progress)
+
+    assert client.generate_content_image.await_count == 1
+    assert qc.await_count == 1
+    assert report['attempts'] == 3 and report['fallbackUsed'] is True
 
 
 @pytest.mark.parametrize('outcome', [verdict('UNKNOWN'), RuntimeError('judge unavailable')])
@@ -167,6 +431,68 @@ async def test_transient_detail_failure_leaves_one_quality_correction(setup):
     assert report['passed'] is True and report['attempts'] == 3
     assert len(report['judgments']) == 2
     assert client.generate_content_image.await_count == 3
+    third_prompt = client.generate_content_image.call_args_list[2].args[1]
+    assert 'CORRECT THE PREVIOUS CANDIDATE' in third_prompt
+    assert 'source photograph as the composition anchor' not in third_prompt
+
+
+@sync_test
+async def test_final_provider_error_after_transient_selects_the_judged_second_attempt(setup):
+    qc, client, _ = setup
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        SimpleNamespace(image=photo('green').data, mime='image/png'),
+        TimeoutError('final request had an uncertain response'),
+    ]
+    qc.side_effect = [failed_gate('photographicPreparation')]
+
+    selected, report = await run(setup)
+
+    assert selected.data == photo('green').data
+    assert report['passed'] is False and report['publishedBestEffort'] is True
+    assert report['selectedAttempt'] == 2
+    assert report['judgments'][0]['attempt'] == 2
+    assert client.generate_content_image.await_count == 3
+
+
+@sync_test
+async def test_two_unbilled_transients_leave_one_best_effort_candidate(setup):
+    qc, client, _ = setup
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        GeminiError('provider 503', transient=True),
+        SimpleNamespace(image=photo('green').data, mime='image/png'),
+    ]
+    qc.return_value = failed_gate('photographicPreparation')
+
+    selected, report = await run(setup)
+
+    assert selected.data == photo('green').data
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 3
+    assert report['judgments'][0]['attempt'] == 3
+    assert report['fallbackUsed'] is False
+
+
+@sync_test
+async def test_reopened_retryable_correction_uses_the_prior_judged_candidate(setup):
+    qc, client, settings = setup
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    previous = failed_gate('photographicPreparation')
+    previous['attempt'] = 1
+    progress = MemoryProgress({'phase': 'retryable', 'attempts': 2, 'fingerprint': fp,
+                               'qc': {'passed': False, 'attempts': 2,
+                                      'judgments': [previous]}}, images={1: photo('red')})
+    qc.return_value = verdict('PASS')
+    client.generate_content_image.return_value = SimpleNamespace(
+        image=photo('green').data, mime='image/png')
+
+    selected, report = await run(setup, progress)
+
+    assert selected.data == photo('green').data and report['passed'] is True
+    request = client.generate_content_image.call_args
+    assert 'CORRECT THE PREVIOUS CANDIDATE' in request.args[1]
+    assert request.args[2][-1].data == photo('red').data
 
 
 @sync_test
@@ -205,6 +531,15 @@ def test_subject_and_source_fingerprint_are_generation_identity(setup):
     assert original != pipeline.fingerprint(settings, [photo('red')], None, 'front')
     assert original != pipeline.fingerprint(settings, [photo()], {'kind': 'pocket'}, 'front')
     assert original != pipeline.fingerprint(settings, [photo()], None, 'back')
+    assert original != pipeline.fingerprint(settings, [photo()], None, 'front',
+                                            framing_source_index=1)
+
+
+def test_new_marking_inspection_policy_does_not_reuse_old_qc_checkpoints(setup, monkeypatch):
+    settings = setup[2]
+    current = pipeline.fingerprint(settings, [photo()], None, 'front')
+    monkeypatch.setattr(pipeline.detail_output_qc, 'POLICY_VERSION', 'detail-output-qc-v5')
+    assert pipeline.fingerprint(settings, [photo()], None, 'front') != current
 
 
 def test_prompt_does_not_execute_display_text():

@@ -10,7 +10,166 @@ from psycopg.rows import dict_row
 import pytest
 
 from app.agents.detail_shot_pipeline import DetailShotRejected
+from app.agents.gemini_image import InlineImage
+from app.workers import detail_shot_runtime
 from app.workers.detail_shot_runtime import ProgressStore
+
+
+def test_third_claim_requires_two_failed_judgments():
+    async def check(decisions):
+        state = {'phase': 'judged', 'attempts': 2, 'fingerprint': 'same',
+                 'qc': {'attempts': 2,
+                        'judgments': [{'decision': decision} for decision in decisions]}}
+        store = ProgressStore.__new__(ProgressStore)
+
+        async def change(mutate=None):
+            nonlocal state
+            if mutate:
+                state = mutate(state)
+            return state
+
+        store._change = change
+        return store, state
+
+    async def verify():
+        store, _ = await check(['FAIL', 'FAIL'])
+        assert await store.claim('same') == 3
+        with pytest.raises(DetailShotRejected):
+            await store.claim('same')
+        store, _ = await check(['FAIL'])  # 첫 호출이 미과금 일시 오류였던 경우
+        assert await store.claim('same') == 3
+        for decisions in (['FAIL', 'UNKNOWN'], ['FAIL', 'PASS'], []):
+            store, _ = await check(decisions)
+            with pytest.raises(DetailShotRejected):
+                await store.claim('same')
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_best_effort_finish_accepts_second_provider_attempt_after_first_transient():
+    store = ProgressStore.__new__(ProgressStore)
+    state = {'phase': 'generating', 'attempts': 3,
+             'candidate': {'attempt': 2, 'key': 'saved'},
+             'candidates': [{'attempt': 2, 'key': 'saved'}]}
+
+    async def change(mutate=None):
+        nonlocal state
+        if mutate:
+            state = mutate(state)
+        return state
+
+    store._change = change
+
+    async def verify():
+        await store.finish({'passed': False, 'publishedBestEffort': True,
+                            'attempts': 3, 'selectedAttempt': 2,
+                            'judgments': [{'attempt': 2, 'decision': 'FAIL'}]},
+                           selected_attempt=2)
+        assert state['phase'] == 'accepted'
+        assert state['candidate']['attempt'] == 2
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_failed_three_candidates_remain_private_and_held(monkeypatch):
+    class R2:
+        def __init__(self):
+            self.objects = {}
+
+        def put_bytes(self, key, data, mime, **kwargs):
+            self.objects[key] = data
+
+        def get_bytes(self, key):
+            return self.objects[key]
+
+    class Connection:
+        async def commit(self):
+            pass
+
+    @asynccontextmanager
+    async def connection():
+        yield Connection()
+
+    async def checkpoint_intent(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(detail_shot_runtime.repo, 'create_ai_checkpoint_intent', checkpoint_intent)
+    app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=connection), r2=R2()))
+    job = {'id': 'job', 'user_id': 'user', 'project_id': 'project', 'lease_token': 'lease'}
+    store = ProgressStore(app, job, 'detail')
+    state = {'fingerprint': 'same', 'attempts': 1, 'phase': 'generating'}
+
+    async def change(mutate=None):
+        nonlocal state
+        if mutate:
+            state = mutate(state)
+        return state
+
+    store._change = change
+
+    async def verify():
+        for attempt, data in enumerate((b'first', b'second', b'third'), 1):
+            if attempt > 1:
+                await store._change(lambda previous: {**previous, 'attempts': attempt,
+                                                       'phase': 'generating'})
+            await store.save_candidate(InlineImage('image/png', data), 'same', attempt)
+        assert (await store.load_candidate(attempt=1)).data == b'first'
+        assert len(state['candidates']) == 3
+        await store.finish({'passed': False, 'publishedBestEffort': True})
+        assert state['phase'] == 'held' and state['candidate']['attempt'] == 3
+        assert (await store.load_candidate()).data == b'third'
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_best_effort_finish_selects_the_judged_candidate_bytes(monkeypatch):
+    class R2:
+        objects = {}
+
+        def put_bytes(self, key, data, mime, **kwargs):
+            self.objects[key] = data
+
+        def get_bytes(self, key):
+            return self.objects[key]
+
+    class Connection:
+        async def commit(self):
+            pass
+
+    @asynccontextmanager
+    async def connection():
+        yield Connection()
+
+    async def checkpoint_intent(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(detail_shot_runtime.repo, 'create_ai_checkpoint_intent', checkpoint_intent)
+    app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=connection), r2=R2()))
+    job = {'id': 'job', 'user_id': 'user', 'project_id': 'project', 'lease_token': 'lease'}
+    store = ProgressStore(app, job, 'detail')
+    state = {'fingerprint': 'same', 'attempts': 1, 'phase': 'generating'}
+
+    async def change(mutate=None):
+        nonlocal state
+        if mutate:
+            state = mutate(state)
+        return state
+
+    store._change = change
+
+    async def verify():
+        for attempt, data in enumerate((b'best', b'logo-wrong', b'color-wrong'), 1):
+            if attempt > 1:
+                await store._change(lambda previous: {**previous, 'attempts': attempt, 'phase': 'generating'})
+            await store.save_candidate(InlineImage('image/png', data), 'same', attempt)
+        await store.finish({'passed': False, 'publishedBestEffort': True, 'attempts': 3,
+                            'selectedAttempt': 1,
+                            'judgments': [{'decision': 'FAIL'}] * 3}, selected_attempt=1)
+        assert state['phase'] == 'accepted'
+        assert state['candidate']['attempt'] == 1
+        assert (await store.load_candidate()).data == b'best'
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
 def test_progress_survives_new_store_and_lost_lease():
@@ -93,6 +252,7 @@ def test_progress_survives_new_store_and_lost_lease():
             await two_quality.record_judgment({'passed': False, 'decision': 'FAIL',
                                                'attempts': 2,
                                                'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}]})
+            assert await two_quality.claim('quality-recipe') == 3
             with pytest.raises(DetailShotRejected, match='attempt_budget_exhausted'):
                 await two_quality.claim('quality-recipe')
             await conn.execute("update jobs set locked_by='next-lease' where id='j'")
