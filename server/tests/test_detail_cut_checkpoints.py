@@ -342,11 +342,20 @@ async def _store(app, job_id, identity="id-1"):
 
 @pytest.mark.parametrize('verdict,expected', [
     ({'passed': True, 'decision': 'PASS', 'fingerprint': 'source-target-policy'}, True),
+    ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy',
+      'publishedBestEffort': True, 'attempts': 3, 'selectedAttempt': 1,
+      'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}, {'decision': 'FAIL'}]}, True),
+    ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy',
+      'publishedBestEffort': True, 'attempts': 2, 'selectedAttempt': 1,
+      'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}]}, False),
+    ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy',
+      'publishedBestEffort': True, 'attempts': 3, 'selectedAttempt': 1,
+      'judgments': 42}, False),
     ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy'}, False),
     ({'passed': False, 'decision': 'UNKNOWN', 'fingerprint': 'source-target-policy'}, False),
     ({'passed': True, 'decision': 'PASS'}, False),
 ])
-def test_detail_final_reuse_requires_same_verified_policy(monkeypatch, verdict, expected):
+def test_detail_final_reuse_requires_same_accepted_policy(monkeypatch, verdict, expected):
     db = _IntentDB()
     db.install(monkeypatch)
     app = _app(_settings(), _R2())
