@@ -51,6 +51,8 @@ def test_explicit_shot_or_direction_override_releases_reference_camera(changes):
     assert "FRAMING: MATCHED COMPLETE HORIZON EXAMPLE" not in prompt
     plan = cut_plan.compile_cut_plan(cg.apply_reference_compatibility(cg.normalize_spec(spec)), "top")
     assert "camera" not in plan.reference_attributes
+    if changes.get("shot"):
+        assert "current FRAMING wins" in prompt
     if changes.get("direction"):
         assert "pose" not in plan.reference_attributes
         assert "DIRECTION-CHANGED" in prompt

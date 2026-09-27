@@ -357,6 +357,7 @@ ${allFramingRule}
   or busy detail; preserve any text/logo physically belonging to the PRODUCT garment exactly.
 ${allPoseRule}
 ${allDirectionRule}
+${allFramingRule}
 - Swap in the exact garment from PRODUCT references and any attached MATCHING garment. Never copy
   the example's garments, shoes, model identity, face, hair, body details or tattoos. Use MATCHING
   when it supplies the rest of the outfit; otherwise use plain neutral coordinating basics.
@@ -375,6 +376,7 @@ ${allDirectionRule}
   belonging to the PRODUCT garment exactly.
 ${allPoseRule}
 ${allDirectionRule}
+${allFramingRule}
 - Swap in the exact garment from PRODUCT references and any attached MATCHING garment. Never copy
   example garments, shoes, identity, face, hair, body details or tattoos. Use MATCHING when it
   supplies the rest of the outfit; otherwise use plain neutral coordinating basics.

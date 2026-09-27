@@ -331,6 +331,28 @@ def test_large_profiled_photo_is_shrunk_before_conversion_for_observer_and_measu
     assert gce.source_binding_matches(contract(sources=[source(data)]), [source(data)])
 
 
+@pytest.mark.parametrize("profiled,side", [(False, 320), (True, 1200)])
+def test_16bit_grayscale_png_is_normalized_for_observer_and_measurement(profiled, side):
+    """상품 업로드가 허용하는 16비트 흑백 PNG도 옷 색 근거로 쓸 수 있어야 한다."""
+    out = BytesIO()
+    save_args = {}
+    if profiled:
+        save_args["icc_profile"] = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    Image.new("I;16", (side, side), 32768).save(out, format="PNG", **save_args)
+    data = out.getvalue()
+
+    normalized, mime = gce.normalize_for_vision(data, "image/png")
+    assert mime == "image/png" and normalized != data
+    with Image.open(BytesIO(normalized)) as frame:
+        assert max(frame.size) <= 1024
+        measured_gray = frame.convert("RGB").getpixel((frame.width // 2, frame.height // 2))[0]
+        assert 126 <= measured_gray <= 129
+
+    row = first(contract(sources=[source(data)]))
+    assert row["status"] == "ready"
+    assert all(126 <= channel <= 129 for channel in rgb(row["observedHex"]))
+
+
 @pytest.mark.parametrize("side", [2048, 4096])
 def test_square_jpeg_that_decodes_exactly_to_the_limit_is_still_sent_small(side):
     """JPEG draft 가 정확히 1024 로 떨어지면 '줄이지 않음'으로 보여 원본이 AI 로 가던 경계(2026-09-27)."""

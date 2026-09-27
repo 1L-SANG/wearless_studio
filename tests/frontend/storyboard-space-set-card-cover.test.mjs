@@ -27,17 +27,30 @@ for (const count of [3, 4, 5, 7]) {
 test('selection, preview, keyboard focus and static inspector behavior remain intact', () => {
   const shootingSet = { members: members(4) };
   const calls = [];
-  const shell = SpaceSetCard({ set: shootingSet, onChoose: set => calls.push(['choose', set]), onPreviewOpen: (...args) => calls.push(['preview', ...args]), onPreviewClose: () => calls.push(['close']) });
+  const shell = SpaceSetCard({ set: shootingSet, onChoose: set => calls.push(['choose', set]), onPreviewOpen: (...args) => calls.push(['preview', ...args]), onPreviewClose: () => calls.push(['close']), onPreviewPin: (...args) => calls.push(['pin', ...args]) });
   const card = shell.props.children[0];
+  const individual = shell.props.children[1];
   assert.equal(shell.type, 'div');
   assert.equal(card.type, 'button');
-  assert.equal(shell.props.children[1].props.children, '개별 컷 보기');
+  assert.equal(individual.props.children, '개별 컷 보기');
+  assert.match(individual.props['aria-label'], /개별 컷 보기/);
   const anchor = {};
+  const trigger = { closest: () => shell };
   card.props.onFocus({ currentTarget: anchor }); card.props.onBlur(); card.props.onClick({ currentTarget: anchor });
-  assert.deepEqual(calls, [['preview', shootingSet, anchor, 0], ['close'], ['choose', shootingSet]]);
+  individual.props.onClick({ currentTarget: trigger });
+  assert.deepEqual(calls, [['preview', shootingSet, anchor, 0], ['close'], ['choose', shootingSet], ['pin', shootingSet, shell, trigger]]);
   const staticCard = SpaceSetCard({ set: shootingSet, interactive: false, currentCutOrdinal: 3 });
   assert.equal(staticCard.type, 'div'); assert.equal(staticCard.props.onClick, undefined);
   assert.match(renderToStaticMarkup(staticCard), /현재 선택 · 3번째 컷/);
+});
+
+test('the pinned individual-cut preview moves focus into its first action and restores the trigger', () => {
+  const previewSource = readFileSync(
+    new URL('../../src/features/storyboard/SpaceSetHoverPreview.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(previewSource, /preview\.pinned[\s\S]*sb-set-hover-cut:not\(:disabled\)[\s\S]*\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(source, /preview\?\.trigger[\s\S]*\.focus\(\{ preventScroll: true \}\)/);
 });
 
 

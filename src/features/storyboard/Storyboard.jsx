@@ -1043,9 +1043,10 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
       onFocus={(event) => onPreviewOpen?.(set, event.currentTarget, 0)} onBlur={onPreviewClose}
       onClick={(event) => onChoose?.(set, event.currentTarget)}>{content}</button>
     <button type="button" className="sb-set-individual-button" disabled={disabled} aria-expanded={pinned}
+      aria-label={`${spaceSetDisplayName(set)} ${pinned ? '미리보기 닫기' : '개별 컷 보기'}`}
       aria-controls={pinned ? 'sb-set-cut-preview' : undefined}
       onFocus={(event) => onPreviewOpen?.(set, event.currentTarget.closest('.sb-set-card-shell'), 0)}
-      onClick={(event) => onPreviewPin?.(set, event.currentTarget.closest('.sb-set-card-shell'))}>
+      onClick={(event) => onPreviewPin?.(set, event.currentTarget.closest('.sb-set-card-shell'), event.currentTarget)}>
       {pinned ? '미리보기 닫기' : '개별 컷 보기'}
     </button>
   </div>;
@@ -1100,12 +1101,13 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
       if (anchor.isConnected && pickerRef.current?.isConnected) setPreview({ set, anchor, panel: pickerRef.current, pinned: false });
     }, delay);
   };
-  const pinPreview = (set, anchor) => {
+  const pinPreview = (set, anchor, trigger) => {
     clearTimeout(previewTimer.current);
-    setPreview(current => current?.set.id === set.id && current.pinned ? null : { set, anchor, panel: pickerRef.current, pinned: true });
+    setPreview(current => current?.set.id === set.id && current.pinned
+      ? null : { set, anchor, trigger, panel: pickerRef.current, pinned: true });
   };
   const dismissPreview = () => {
-    const anchor = preview?.anchor?.matches('button') ? preview.anchor : preview?.anchor?.querySelector('.sb-set-card');
+    const anchor = preview?.trigger || (preview?.anchor?.matches('button') ? preview.anchor : preview?.anchor?.querySelector('.sb-set-card'));
     closePreview();
     if (anchor?.isConnected) { ignorePreviewFocus.current = anchor; anchor.focus({ preventScroll: true }); requestAnimationFrame(() => { ignorePreviewFocus.current = null; }); }
   };
@@ -1310,7 +1312,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
                 appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
             ) : null} />
-          : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
+          : <span className="sb-exhint">{cut === 'horizon' && exampleId ? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'}</span>}
       </div>
       {mineTab ? (
         <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
@@ -1685,7 +1687,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             })} catalogs={catalogs} cut={block.cutType} blockCutType={block.cutType}
               direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
-              onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
+              onShotChange={block.cutType === 'horizon' && block.exampleId ? null : onShotChange}
+              clothingType={clothingType} gender={exampleGender}
               includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={block.exampleId || null}
               onExampleChange={onGenerationExampleChange}

@@ -36,6 +36,10 @@ export default function SpaceSetHoverPreview({ preview, onEnter, onLeave, onClos
     ref.current.style.setProperty('--set-preview-visible-count', Math.min(3, preview.set.members.length));
     scrollRef.current.scrollTop = 0;
   }, [preview.set.id, preview.set.members.length]);
+  useLayoutEffect(() => {
+    if (!preview.pinned) return;
+    ref.current?.querySelector('.sb-set-hover-cut:not(:disabled)')?.focus({ preventScroll: true });
+  }, [preview.pinned, preview.set.id]);
   return createPortal(
     <div ref={ref} className={`sb-set-hover-preview${dragging ? ' is-dragging' : ''}`} id="sb-set-cut-preview" role="region" aria-label="세트 구성 미리보기"
       onMouseEnter={onEnter} onMouseLeave={onLeave} onFocusCapture={onEnter}

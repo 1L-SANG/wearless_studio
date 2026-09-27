@@ -46,6 +46,7 @@ def _number(value, low=0, high=1):
 
 #: Modes that LANCZOS thumbnail handles before the ICC transform.
 _PRE_ICC_RESAMPLE_MODES = frozenset({"RGB", "RGBA", "L", "LA", "CMYK"})
+_HIGH_BIT_GRAYSCALE_MODES = frozenset({"I;16", "I;16B", "I;16L", "I;16N"})
 
 
 def _frame(data, max_side=None):
@@ -64,6 +65,12 @@ def _frame(data, max_side=None):
                 raw.draft(raw.mode, (max_side, max_side))
             im = ImageOps.exif_transpose(raw)
             changed = orientation not in (None, 1) or oversize
+            # Pillow clamps 16-bit grayscale to white when convert("L") is used
+            # directly. Scale the full 0..65535 sample range into 8-bit first so
+            # valid PNG product photos keep their actual midtones.
+            if im.mode in _HIGH_BIT_GRAYSCALE_MODES:
+                im = im.point(lambda value: value / 257).convert("L")
+                changed = True
             if oversize:
                 # Palette and 1-bit images resize with nearest neighbour; expand
                 # them first. Polygons are normalized, so the ROI stays aligned.

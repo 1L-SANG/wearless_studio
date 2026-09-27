@@ -49,6 +49,11 @@ test('a selected set member uses a compact cut header instead of the large set c
   assert.match(inspectorSource, /label className="lbl">대상 색상/);
 });
 
+test('an individual horizon cut backed by a published complete example cannot change its shot independently', () => {
+  assert.match(inspectorSource, /onShotChange=\{block\.cutType === 'horizon' && block\.exampleId \? null : onShotChange\}/);
+  assert.match(storyboardSource, /cut === 'horizon' && exampleId \? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'/);
+});
+
 test('set gallery guide says what a set click does and that a single cut can be dragged in', () => {
   const gallerySource = storyboardSource.slice(storyboardSource.indexOf('function SpaceSetGallery('));
   // 세트 변경 화면에서 누르면 교체되고, 추가 화면에서 누르면 추가된다. 한 컷은 미리보기에서 끌어 온다.
