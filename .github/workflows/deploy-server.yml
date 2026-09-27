@@ -87,8 +87,8 @@ env:
 
 jobs:
     # 테스트는 두 잡으로 나눠 **동시에** 돈다(2026-09-22). 전엔 잡 하나가 Supabase 로컬 DB 기동(92초)을
-    # 기다린 뒤에야 pytest 를 시작했는데, 그 DB 는 tests/test_personalization.py 하나만 쓴다.
-    # unit 은 DB 없이 바로 4워커 병렬로, db 는 DB 를 띄워 그 파일만 돈다 — 벽시계 6분 → 2분대.
+    # 기다린 뒤에야 pytest 를 시작했다. unit 은 DB 없이 바로 4워커 병렬로 돌리고,
+    # db 는 DB 를 띄워 실제 PostgreSQL 이 필요한 테스트만 돈다.
     test:
         runs-on: ubuntu-latest
         defaults:
@@ -100,7 +100,7 @@ jobs:
             - run: uv sync --frozen
             # -n 4 = ubuntu-latest 의 vCPU 수. 워커 간 상태 공유로 튀는 테스트가 생기면 그 파일에
             # @pytest.mark.xdist_group 을 달아 한 워커에 묶는다.
-            - run: uv run pytest -q -n 4 --ignore=tests/test_personalization.py --ignore=tests/test_facemarket_catalog_access_db.py --ignore=tests/test_detail_shot_progress.py --ignore=tests/test_facemarket_sponsorship_vc_db.py --ignore=tests/test_fm_trace_findings_db.py
+            - run: uv run pytest -q -n 4 --ignore=tests/test_personalization.py --ignore=tests/test_facemarket_catalog_access_db.py --ignore=tests/test_detail_shot_progress.py --ignore=tests/test_facemarket_sponsorship_vc_db.py --ignore=tests/test_fm_trace_findings_db.py --ignore=tests/test_facemarket_enrollment_ttl_rollout_db.py
 
     test-db:
         runs-on: ubuntu-latest
@@ -119,7 +119,7 @@ jobs:
               run: supabase db start
             - run: uv sync --frozen
             # 실제 DB 가 필요한 파일들. 모델 리스트 열람 판정 SQL 도 여기서 진짜 스키마로 검사한다.
-            - run: uv run pytest -q tests/test_personalization.py tests/test_facemarket_catalog_access_db.py tests/test_detail_shot_progress.py tests/test_facemarket_sponsorship_vc_db.py tests/test_fm_trace_findings_db.py
+            - run: uv run pytest -q tests/test_personalization.py tests/test_facemarket_catalog_access_db.py tests/test_detail_shot_progress.py tests/test_facemarket_sponsorship_vc_db.py tests/test_fm_trace_findings_db.py tests/test_facemarket_enrollment_ttl_rollout_db.py
 
     # 테스트·스크립트만 바뀐 push 는 CI만 돌고 ECS를 교체하지 않는다. API 이미지가 실제로
     # COPY하거나 배포 단계가 소비하는 입력만 여기서 배포 변경으로 판정한다.
