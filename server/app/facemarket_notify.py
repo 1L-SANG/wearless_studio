@@ -459,6 +459,38 @@ async def notify_slack_enrollment_completed(
     return await _post_slack(settings, text)
 
 
+_TRACE_PLATFORM_LABELS = {"naver": "네이버 순찰", "zigzag": "지그재그 순찰"}
+_TRACE_CONFIDENCE_LABELS = {"high": "확실", "medium": "유력", "low": "후보"}
+
+
+async def notify_slack_trace_finding(
+    settings, *, source: str, platform: str, model_name: str | None, method: str | None,
+    confidence: str | None, matched: bool, admin_link: str,
+) -> bool:
+    """자동 출처 추적 새 발견 알림(순찰·모델 제보).
+
+    외부 원문(상품 주소·상품명·판매처)과 셀러 정보는 싣지 않는다 — 네이버 검색 결과는 21일만 보관할 수
+    있는데(검색 API 특약 2.4) 슬랙 메시지는 지울 수 없고, 셀러 신원은 관리자 콘솔(마스킹·감사)에서만 본다.
+    """
+    if not settings.fm_slack_webhook_url:
+        return False
+    if source == "model_report":
+        head = ":raising_hand: 모델 제보"
+    else:
+        head = f":mag: 얼굴 사용 발견 · {_TRACE_PLATFORM_LABELS.get(platform, platform)}"
+    if not matched:
+        verdict = "일치하는 배포본·컷을 찾지 못했어요 — 직접 확인이 필요해요"
+    else:
+        how = "워터마크 일치" if method == "watermark" else "이미지 지문 일치"
+        verdict = f"{how}({_TRACE_CONFIDENCE_LABELS.get(confidence or '', '후보')})"
+    text = (
+        f"{head} · 모델: {_slack_escape(model_name or '-')}\n"
+        f"{verdict}\n"
+        f"<{admin_link}|관리자 출처 추적 열기>"
+    )
+    return await _post_slack(settings, text)
+
+
 async def notify_slack_model_confirmed(
     settings, *, display_name: str, admin_link: str
 ) -> None:

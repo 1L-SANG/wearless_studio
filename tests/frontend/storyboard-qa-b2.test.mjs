@@ -327,6 +327,40 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);
 });
 
+test('next-step afterFlush runs once after a saved board and before navigation', async () => {
+  const events = [];
+  const moved = await continueAfterStoryboardFlush({
+    flush: async () => { events.push('flush'); },
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => events.push('afterFlush'),
+  });
+  assert.equal(moved, true);
+  assert.deepEqual(events, ['flush', 'afterFlush', 'navigate']);
+  assert.match(storyboardSource, /afterFlush: \(\) => \{\s*if \(needsGarmentColorMeasurement\([^)]*\)\) void api\.measureGarmentColors\(projectId\)\.catch\(\(\) => \{\}\);/);
+});
+
+test('next-step afterFlush is skipped when the save fails and never blocks navigation when it throws', async () => {
+  const events = [];
+  const failed = await continueAfterStoryboardFlush({
+    flush: async () => { throw new Error('저장 실패'); },
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => events.push('afterFlush'),
+  });
+  assert.equal(failed, false);
+  assert.deepEqual(events, ['toast']);
+  events.length = 0;
+  const moved = await continueAfterStoryboardFlush({
+    flush: async () => {},
+    navigate: () => events.push('navigate'),
+    onFailure: () => events.push('toast'),
+    afterFlush: () => { events.push('afterFlush'); throw new Error('boom'); },
+  });
+  assert.equal(moved, true);
+  assert.deepEqual(events, ['afterFlush', 'navigate']);
+});
+
 test('a deterministic 4xx asks the repair hook once and saves the repaired snapshot', async () => {
   // 카탈로그 발행 회전 뒤 저장 보드가 unknown_example_id 로 거절되는 클래스 —
   // 같은 스냅샷 맹목 재시도는 영원히 같은 답이라 하지 않고, 복구본을 즉시 저장한다.
@@ -367,6 +401,46 @@ test('a deterministic 4xx asks the repair hook once and saves the repaired snaps
   assert.deepEqual(repairs, [['p1', 'poisoned', 'unknown_example_id', 'ex_removed']]);
   assert.deepEqual(calls, ['poisoned', 'repaired']);
   assert.equal(persistence.pending.has('p1'), false);
+  persistence.dispose();
+});
+
+test('a repaired snapshot that is rejected again is not repaired again (no 0.3s save storm)', async () => {
+  // 2026-09-22~23 prod: 서버가 생성예시를 거절 → 복구 훅이 예시를 빼고 **다시 배정** → 서버가
+  // 또 거절 → 복구본은 새 객체라 "스냅샷당 1회" 가드를 매번 통과 → 네트워크 속도(0.3s)로
+  // 무한 반복(한 사용자 14분 2,871회). 복구본이 다시 거절되면 거기서 멈춰야 한다.
+  const clock = fakeClock();
+  let calls = 0;
+  let repairs = 0;
+  const persistence = createStoryboardPersistence({
+    invalidate: () => {},
+    onlineTarget: null,
+    retryDelays: [1_000],
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    saveStoryboard: async () => {
+      calls += 1;
+      if (calls >= 20) return;   // 수정 전 코드에서 테스트가 끝나게 하는 안전판
+      const error = new Error('이 상품에 맞지 않는 생성예시예요.');
+      error.status = 400;
+      error.code = 'example_gender_mismatch';
+      throw error;
+    },
+  });
+  persistence.setRepairRejected((_projectId, snapshot) => {
+    repairs += 1;
+    return { id: `repaired-${repairs}`, from: snapshot.id };   // 매번 새 객체
+  });
+
+  await assert.rejects(persistence.saveNow('p3', () => ({ id: 'original' })), /생성예시/);
+  for (let i = 0; i < 30; i += 1) {
+    await new Promise(setImmediate);
+    await persistence.saveIdle();
+  }
+
+  assert.equal(repairs, 1, '복구는 한 번뿐');
+  assert.equal(calls, 2, '원본 1번 + 복구본 1번');
+  assert.equal(clock.count(), 0, '4xx 에는 재시도 타이머도 없다');
+  assert.equal(persistence.pending.get('p3')?.id, 'repaired-1');   // 다음 진입 복원이 이어받는다
   persistence.dispose();
 });
 

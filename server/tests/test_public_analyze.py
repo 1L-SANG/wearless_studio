@@ -283,3 +283,27 @@ def test_public_analyze_rejects_slots_length_and_supported_value_mismatches(clie
     assert length_mismatch.json()["error"]["code"] == "invalid_slots"
     assert unsupported.status_code == 400
     assert unsupported.json()["error"]["code"] == "invalid_slots"
+
+
+def test_public_analyze_limits_visitors_behind_one_cloudflare_edge_separately(
+    client, monkeypatch
+):
+    async def fake_analyze(settings, source_images, **kwargs):
+        return _analysis_result()
+
+    monkeypatch.setattr(public_routes, "analyze_image_bytes", fake_analyze)
+    client.app.state.public_analysis_limiter = PublicAnalysisRateLimiter(
+        hourly_limit=1, daily_limit=30)
+    files = [("images", ("front.jpg", JPEG, "image/jpeg"))]
+
+    def post(visitor):
+        # 172.68.10.20 = Cloudflare 엣지(172.64.0.0/13). ALB 는 이 값을 XFF 끝에 붙인다.
+        return client.post(
+            "/v1/public/analyze",
+            headers={"X-Forwarded-For": "172.68.10.20", "CF-Connecting-IP": visitor},
+            files=files,
+        )
+
+    assert post("203.0.113.1").status_code == 200
+    assert post("203.0.113.2").status_code == 200
+    assert post("203.0.113.1").status_code == 429

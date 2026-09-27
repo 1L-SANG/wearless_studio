@@ -1,7 +1,7 @@
 import { safeInternalPath } from '../../lib/kakaoOidc.js';
 
 const ADMIN_PATHS = new Set([
-  '/applications', '/review', '/usage-reports', '/payout-statements',
+  '/applications', '/review', '/usage-reports', '/payout-statements', '/settlements-chain',
   '/bank-transfers', '/models', '/users', '/staff',
 ]);
 

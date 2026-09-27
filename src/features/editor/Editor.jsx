@@ -13,6 +13,7 @@ import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
+import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
@@ -48,6 +49,7 @@ import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShow
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
+import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -446,7 +448,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
           {el.genPending === 'failed'
             ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
-            : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
+            : el.genPending === 'done'
+              /* 다 만든 컷인데 이벤트에 주소가 없다(REAL 얼굴 컷 — 최종 확인 전 비공개, 492cbc64).
+                 서버 미리보기 라우트가 요청마다 소유·라이선스를 다시 확인해 주면 그 그림을, 거절되면
+                 '완성됐어요'를 보인다(2026-09-26, 오너 결정 b). 블록 데이터에는 넣지 않는다. */
+              ? <GenDonePreview sourceBlockId={el.sourceBlockId} />
+              : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
         </div>
       );
     }
@@ -3177,10 +3184,13 @@ export function Editor() {
           <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
             className={genFailed ? '' : 'spin'} />
           <span className="ed-genbar-msg">
+            {/* 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말하고
+                진행(몇 장 중 몇 장)을 그대로 보여 준다(2026-09-26). 실패는 서버가 error 라고
+                답했을 때만 뜬다(store.startDetailPageGeneration). */}
             {genFailed ? genFailureMessage
               : dpJob.cutsTotal
-                ? <>사진을 만들어 채우는 중 · <b>{dpJob.cutsDone}/{dpJob.cutsTotal}</b>컷</>
-                : '상세페이지를 만들고 있어요'}
+                ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료</>
+                : dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}
           </span>
           {!genFailed && (
             /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
@@ -3204,6 +3214,12 @@ export function Editor() {
                     완성본 다시 불러오기
                   </Button>
                 ) : (
+                  /* 다시 시도 = POST detail-page:generate. 중복 과금이 없는 근거는 서버 멱등이다
+                     (routes.generate_detail_page, 2026-09-26 확인): 이미 완성된 프로젝트면 기존
+                     editor_blocks 를 돌려주고(새 잡·차감 없음), 같은 프로젝트 잡이 아직 돌면
+                     repo.create_job 이 그 활성 잡에 합류시킨다(created=False → 예약 없음).
+                     새 잡은 서버가 error 로 끝낸 경우에만 생긴다 — 그때도 끝낸 컷은 체크포인트로
+                     이어 쓴다(#394). 캔버스에 이미 채운 컷은 reset 뒤에도 그대로다(fillGenBlocks). */
                   <Button size="sm" variant="primary" onClick={() => {
                     genMergedRef.current = false;
                     useAppStore.getState().resetDetailPageJob();
@@ -3217,6 +3233,11 @@ export function Editor() {
             ) : (
               <>
                 <span className="ed-genbar-hint">지금도 문구·배치를 고칠 수 있어요 · 창을 닫아도 계속 만들어져요</span>
+                {/* 오래 걸릴 때는 기다리지 않고 떠날 길을 준다 — 서버 잡은 계속 돌고, 편집분은
+                    flushExit 가 임시 작업본으로 남긴다(2026-09-26). */}
+                {dpJob.slow && (
+                  <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
+                )}
                 {genNotif === 'default' && (
                   <button type="button" className="ed-genbar-notify"
                     onClick={async () => setGenNotif(await Notification.requestPermission())}>완료되면 알림 받기</button>
@@ -3270,6 +3291,8 @@ export function Editor() {
               <div className="fm-split-row"><span>플랫폼</span><span>{wonFmt(genReceipt.platformAmount)}</span></div>
               <div className="fm-split-row"><span>운영</span><span>{wonFmt(genReceipt.opsAmount)}</span></div>
             </div>
+            {/* 트랜잭션·체인 ID·블록 + [체인에서 확인](서버가 eth_call 로 방금 읽어 장부와 대조, 2026-09-26) */}
+            <SettlementReceiptChain receipt={genReceipt} />
             <Button variant="primary" block onClick={() => setGenReceipt(null)}>확인하고 편집 계속하기</Button>
           </div>
         </div>

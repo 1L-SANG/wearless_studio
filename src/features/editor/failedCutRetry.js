@@ -32,6 +32,12 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
   for (const field of RETRY_FIELDS) {
     if (block[field] !== undefined) request[field] = block[field];
   }
+  if (block.cutType === 'horizon' && block.spaceGroupId) {
+    request.retryBlockId = block.id;
+    for (const field of ['spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'horizonBackgroundMode']) {
+      if (block[field] !== undefined) request[field] = block[field];
+    }
+  }
   if (modelSelection) {
     const selectedModelId = modelSelection.selectedModelId
       || modelSelection.selected_model_id

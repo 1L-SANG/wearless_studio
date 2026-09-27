@@ -146,6 +146,61 @@ def _write_manifest(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def test_existing_released_rotation_scope_passes_catalog_pair_validation():
+    frontend = json.loads(release.DEFAULT_FRONTEND_CATALOG_PATH.read_text(encoding="utf-8"))
+    registry = json.loads(release.DEFAULT_SERVER_REGISTRY_PATH.read_text(encoding="utf-8"))
+    assert any(item.get("setApplicableClothingTypes") for item in frontend["sets"])
+    release._validate_catalog_pair(frontend, registry, label="existing release")
+    changed = deepcopy(frontend)
+    rotation = next(item for item in changed["sets"] if item.get("setApplicableClothingTypes"))
+    rotation["setApplicableClothingTypes"] = ["top"]
+    with pytest.raises(RuntimeError):
+        release._validate_catalog_pair(changed, registry, label="changed scope")
+
+
+@pytest.mark.parametrize("count", [6, 7])
+def test_all_only_horizon_sequence_stages_and_reloads_seven_cut_contract(tmp_path, count):
+    manifest_path, root, manifest = _fixture(tmp_path, set_type="horizon-sequence",
+        plate_policy="not-required", members=[("horizon", "full", "front")] * count)
+    for member in manifest["sets"][0]["members"]:
+        member.pop("pose")
+    _write_manifest(manifest_path, manifest)
+    staged = release.stage_release(manifest_path, root, public_base_url=PUBLIC_BASE, output_dir=tmp_path / "staged")
+    assert len(staged.assets) == count * 2
+    assert {asset.variant for asset in staged.assets} == {"all", "thumb"}
+    reused = release.load_staged_release(staged.output_dir)
+    frontend = json.loads(reused.frontend_catalog_path.read_text())
+    registry = json.loads(reused.server_registry_path.read_text())
+    release._validate_catalog_pair(frontend, registry, label="test")
+    release._assert_receipt_covers_release(reused, _receipt(reused), registry)
+    assert all(member["variants"] == ["all"] for member in frontend["sets"][0]["members"])
+    _, parsed = space_set_assets.validate_space_set_registry_document(registry)
+    assert all(member["pose"] is None for member in next(iter(parsed.values()))["members"])
+
+
+@pytest.mark.parametrize("set_type,count", [("horizon-sequence", 8), ("styling", 6), ("horizon-rotation", 4)])
+def test_set_capacity_preserves_other_family_limits(tmp_path, set_type, count):
+    _path, root, manifest = _fixture(tmp_path, set_type=set_type,
+        plate_policy="not-required" if set_type == "horizon-sequence" else "required",
+        members=[("styling" if set_type == "styling" else "horizon", "full", "front")] * count)
+    with pytest.raises(release.SpaceSetReleaseValidationError):
+        release.validate_manifest(manifest, root)
+
+
+def test_generated_stage_uses_portable_paths_and_accepts_sealed_legacy_windows_paths(tmp_path):
+    manifest_path, root, _ = _fixture(tmp_path)
+    staged = release.stage_release(manifest_path, root, public_base_url=PUBLIC_BASE, output_dir=tmp_path / "staged")
+    receipt_path = staged.output_dir / "release_stage.json"
+    receipt = json.loads(receipt_path.read_text())
+    assert all("\\" not in asset["path"] for asset in receipt["assets"])
+    for asset in receipt["assets"]:
+        asset["path"] = asset["path"].replace("/", "\\")
+    payload = {k: v for k, v in receipt.items() if k != "sealSha256"}
+    receipt["sealSha256"] = hashlib.sha256(release._canonical_json_bytes(payload)).hexdigest()
+    _write_manifest(receipt_path, receipt)
+    assert len(release.load_staged_release(staged.output_dir).assets) == len(staged.assets)
+
+
 def test_valid_manifest_stages_dedicated_catalog_registry_and_deterministic_thumbs(
     tmp_path, monkeypatch,
 ):
@@ -761,7 +816,7 @@ def test_staged_copy_is_rehashed_and_corruption_is_rejected(
 
     def corrupt_all_copy(source, destination):
         result = original_copy(source, destination)
-        if "/assets/all/" in str(destination):
+        if "/assets/all/" in Path(destination).as_posix():
             Path(destination).write_bytes(Path(destination).read_bytes() + b"corrupt")
         return result
 

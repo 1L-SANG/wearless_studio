@@ -29,8 +29,13 @@ export function alignSkeletonToServer(blocks, copywriting) {
   });
 }
 
+/* 'done' = 컷은 끝났지만 아직 보여 줄 주소가 없다(2026-09-26). REAL(실존 모델) 얼굴 컷은
+   서버가 최종 권한 확인 전까지 미리보기 주소를 주지 않는다 — 그 자리를 '대기'로 되돌려
+   보이면 다 만든 컷이 시작도 안 한 것처럼 보인다. 완료 병합이 안정 주소로 채운다. */
 const cutStateOf = (job, sbId) => (
-  job.failedCuts.includes(sbId) ? 'failed' : job.live.includes(sbId) ? 'live' : 'wait');
+  (job.failedCuts || []).includes(sbId) ? 'failed'
+    : (job.live || []).includes(sbId) ? 'live'
+      : job.cuts?.[sbId]?.done ? 'done' : 'wait');
 
 /* 생성 모드 진입 장식 — 빈 이미지 슬롯에 상태 플래그+잠금+호버용 예시 썸네일, 카피 슬롯에
    자동 텍스트 마커(genAutoText: 이 값과 같으면 "셀러가 아직 안 고침" = 서버본으로 교체 가능). */
@@ -129,9 +134,14 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
+        // 대기 중 자동으로 채운 미리보기(1h 서명 주소)는 임시다. 완료 병합(failedSourceIds 를
+        // 아는 호출)에서 서버 완성본에 그 컷이 없으면 저장본에 싣지 않는다 — 앞선 실패 잡의
+        // 미리보기가 한 시간 뒤 깨진 사진으로 남지 않게. 완료 결과가 이긴다(2026-09-26).
+        const tempPreview = Boolean(failedSourceIds) && Boolean(genAutoSrc) && rest.src === genAutoSrc;
         // 셀러가 일부러 비운 자리는 되살리지 않는다 — 지운 사진이 완료 순간 말없이
         // 돌아오면 "내가 지운 게 왜 있지"가 된다(2026-08-17 검증).
-        const src = rest.slotCleared ? null : (srcById[el.sourceBlockId] || rest.src || null);
+        const src = rest.slotCleared ? null
+          : (srcById[el.sourceBlockId] || (tempPreview ? null : rest.src) || null);
         // 실패 목록을 아는 호출(완료 병합)만 표식을 새로 판정한다. 목록 없이 부르는
         // 재진입 병합은 이미 저장된 표식을 그대로 지킨다 — 안 그러면 다시 열 때마다
         // '만들지 못했어요'가 평범한 빈 칸으로 둔갑한다(2026-08-17 리뷰).

@@ -151,3 +151,42 @@ def test_openai_input_is_normalized_to_png():
     # 깨진 바이트는 변환하지 못해도 원본을 그대로 보내 기존 동작을 유지한다(폴백).
     broken = b"not-an-image"
     assert _as_openai_png(InlineImage("image/jpeg", broken)) == broken
+
+
+# ---- 실존 모델(얼굴 패스) 첫 화면 — 2026-09-26 오너 결정 ----------------------------
+
+def _sig_spec():
+    return {"id": "b0", "source": "ai", "cutType": "horizon", "shot": "full",
+            "direction": "front", "exampleId": "sig_men_01", "colorId": "c1"}
+
+
+def _product():
+    return {"clothing_type": "top", "colors": [{"id": "c1", "isBase": True, "images": []}]}
+
+
+def test_face_pass_signature_direction_keeps_the_face_detectable():
+    """얼굴 패스가 받을 수 있는 얼굴만 주문한다 — 옆얼굴·뒤통수·턱만은 금지, 두 눈·코·입은 보인다."""
+    lowered = cut_generator.SIGNATURE_DIRECTION_FACE_PASS.lower()
+    assert "extreme close" in lowered
+    assert "both eyes, the nose and the mouth are clearly visible" in lowered
+    assert "never a side profile" in lowered
+    assert "never the back of the head" in lowered
+    assert "never only the lower face" in lowered
+    # 배경 규칙은 가상 모델 첫 화면과 같다
+    assert "same hue family as the garment" in lowered
+    assert "detail-free" in lowered
+
+
+def test_signature_prompt_uses_the_face_pass_direction_only_for_face_pass_cuts():
+    real = cut_generator.build_prompt(_sig_spec(), _product(), face_pass=True)
+    virtual = cut_generator.build_prompt(_sig_spec(), _product(), face_pass=False)
+    assert cut_generator.SIGNATURE_DIRECTION_FACE_PASS in real
+    assert cut_generator.SIGNATURE_DIRECTION not in real
+    assert cut_generator.SIGNATURE_DIRECTION in virtual
+    assert cut_generator.SIGNATURE_DIRECTION_FACE_PASS not in virtual
+
+
+def test_non_signature_cut_gets_no_signature_direction_even_with_face_pass():
+    spec = {**_sig_spec(), "exampleId": "ex_horizon_men_top_full_front_02"}
+    prompt = cut_generator.build_prompt(spec, _product(), face_pass=True)
+    assert "SIGNATURE OPENING CUT" not in prompt

@@ -17,7 +17,7 @@ def _settings(**kw) -> Settings:
     """실제 Settings 인스턴스(필수 필드가 많아 load_settings 를 기반으로 만든다)."""
     base = replace(load_settings(), model_image_high="gemini-3-pro-image",
                    model_image_light="gemini-3.1-flash-image", model_editor_cut="",
-                   model_detail_cut="", mannequin_tier="image_high",
+                   model_detail_cut="", model_horizon_cut="", mannequin_tier="image_high",
                    matching_flatlay_tier="image_high")
     return replace(base, **kw) if kw else base
 
@@ -27,6 +27,23 @@ def test_empty_knob_falls_back_to_image_high():
     assert s.model_editor_cut == ""
     assert resolve_editor_cut_model(s) == "gemini-3-pro-image"
     assert resolve_editor_cut_model(s) == resolve_model(s, "image_high")
+
+
+def test_empty_horizon_knob_preserves_each_existing_cut_fallback():
+    s = _settings(model_detail_cut="detail-flare", model_editor_cut="editor-flare")
+    assert resolve_detail_cut_model(s, "horizon") == "detail-flare"
+    assert resolve_editor_cut_model(s, "horizon") == "editor-flare"
+
+
+def test_horizon_knob_changes_only_horizon_generation():
+    s = _settings(model_detail_cut="detail-flare", model_editor_cut="editor-flare",
+                  model_horizon_cut="horizon-sunburst")
+    assert resolve_detail_cut_model(s, "horizon") == "horizon-sunburst"
+    assert resolve_editor_cut_model(s, "horizon") == "horizon-sunburst"
+    for recipe in ("styling", "product", "mirror"):
+        assert resolve_detail_cut_model(s, recipe) == "detail-flare"
+        assert resolve_editor_cut_model(s, recipe) == "editor-flare"
+    assert resolve_model(s, "image_high") == "gemini-3-pro-image"
 
 
 def test_knob_changes_editor_only():
@@ -55,8 +72,8 @@ def test_mannequin_and_matching_tiers_still_resolve_to_image_high():
     assert resolve_model(s, s.matching_flatlay_tier) == "gemini-3-pro-image"
 
 
-def test_editor_worker_uses_editor_settings_for_generation_calls():
-    """editor_image_job 의 이미지 생성 호출은 전부 editor_settings 를 쓴다(소스 고정)."""
+def test_editor_worker_uses_cut_specific_settings_for_generation_calls():
+    """new 생성은 컷별 설정, 기존 이미지 vary는 기존 에디터 설정을 쓴다."""
     import pathlib
     src = pathlib.Path(__file__).resolve().parents[1] / "app" / "workers" / "editor_image_job.py"
     text = src.read_text()
@@ -74,5 +91,9 @@ def test_editor_worker_uses_editor_settings_for_generation_calls():
     assert len(calls) == 5
     for call in calls:
         assert isinstance(call.args[0], ast.Name)
-        assert call.args[0].id == "editor_settings"
+        expected_settings = (
+            "editor_settings" if call.func.value.id == "cut_variator"
+            else "cut_generation_settings"
+        )
+        assert call.args[0].id == expected_settings
         assert ast.unparse(call.args[1]) == "app.state.gemini"

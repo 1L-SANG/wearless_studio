@@ -10,7 +10,7 @@
     fail-closed 로 컷을 버린다).
   · virtual — 스튜디오(horizon) 공간세트 전부. hatchingroom_2161 세트가 REAL 0/9,
     VIRTUAL 3/3 이었다(2026-09-11 실측). 나머지 스튜디오 세트는 REAL 미검증이라 함께 막는다.
-  · virtual — **studio·styling 섹션 밖의 모든 블록**(2026-09-14 결정, 09-25 styling 추가). 얼굴 합성이 검증된 건
+  · virtual — **REAL_ALLOWED_SECTION_ROLES 밖의 블록**(2026-09-14 결정, 09-25 styling·09-26 hooking 추가). 얼굴 합성이 검증된 건
     studio 섹션뿐이라, 나머지까지 그리면 gpt-image 비용만 나간다. 푸는 방법은
     REAL_ALLOWED_SECTION_ROLES 에 섹션을 더하는 것 하나뿐이다.
   · real    — 아직 없다. 구조만 지원한다(콘티보드에 실제 모델 전용 입력이 생기면 채운다).
@@ -35,10 +35,11 @@ SCOPES = (VIRTUAL, REAL, BOTH)
 #: studio 는 얼굴 합성을 실측으로 확인한 곳(2026-09-14 사용자 결정). styling 은 2026-09-25 사용자
 #: 결정으로 연다 — 호리존만으로는 상세페이지가 모자라다. 옆·뒤(각도 교체)는 단색 배경 기준으로
 #: 만든 경로라 스타일링 배경에서는 실패가 더 날 수 있다(실패는 컷 단위로 닫히고 미차감).
-REAL_ALLOWED_SECTION_ROLES = ("studio", "styling")
+#: hooking(첫 장면)은 2026-09-26 사용자 결정으로 연다. 남은 건 product(사람이 없는 제품 컷)뿐이다.
+REAL_ALLOWED_SECTION_ROLES = ("hooking", "styling", "studio")
 #: 그 규칙에 걸렸을 때 셀러가 보는 것. 인프라 단어(파드·라이선스·LoRA)는 쓰지 않는다.
 STUDIO_ONLY_CODE = "real_model_studio_only"
-STUDIO_ONLY_MESSAGE = "실제 모델은 현재 스튜디오·스타일링 컷만 만들 수 있어요."
+STUDIO_ONLY_MESSAGE = "실제 모델은 현재 첫 장면·스타일링·스튜디오 컷만 만들 수 있어요."
 #: 그 밖의 이유(가상 전용 예시·공간세트)로 막힌 경우
 MISMATCH_CODE = "identity_scope_mismatch"
 MISMATCH_MESSAGE = "이 모델로는 만들 수 없는 컷이에요."

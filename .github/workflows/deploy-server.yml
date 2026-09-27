@@ -100,7 +100,7 @@ jobs:
             - run: uv sync --frozen
             # -n 4 = ubuntu-latest 의 vCPU 수. 워커 간 상태 공유로 튀는 테스트가 생기면 그 파일에
             # @pytest.mark.xdist_group 을 달아 한 워커에 묶는다.
-            - run: uv run pytest -q -n 4 --ignore=tests/test_personalization.py --ignore=tests/test_facemarket_catalog_access_db.py --ignore=tests/test_detail_shot_progress.py --ignore=tests/test_facemarket_sponsorship_vc_db.py
+            - run: uv run pytest -q -n 4 --ignore=tests/test_personalization.py --ignore=tests/test_facemarket_catalog_access_db.py --ignore=tests/test_detail_shot_progress.py --ignore=tests/test_facemarket_sponsorship_vc_db.py --ignore=tests/test_fm_trace_findings_db.py
 
     test-db:
         runs-on: ubuntu-latest
@@ -119,7 +119,7 @@ jobs:
               run: supabase db start
             - run: uv sync --frozen
             # 실제 DB 가 필요한 파일들. 모델 리스트 열람 판정 SQL 도 여기서 진짜 스키마로 검사한다.
-            - run: uv run pytest -q tests/test_personalization.py tests/test_facemarket_catalog_access_db.py tests/test_detail_shot_progress.py tests/test_facemarket_sponsorship_vc_db.py
+            - run: uv run pytest -q tests/test_personalization.py tests/test_facemarket_catalog_access_db.py tests/test_detail_shot_progress.py tests/test_facemarket_sponsorship_vc_db.py tests/test_fm_trace_findings_db.py
 
     # 테스트·스크립트만 바뀐 push 는 CI만 돌고 ECS를 교체하지 않는다. API 이미지가 실제로
     # COPY하거나 배포 단계가 소비하는 입력만 여기서 배포 변경으로 판정한다.

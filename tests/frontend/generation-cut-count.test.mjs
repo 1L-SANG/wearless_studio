@@ -6,6 +6,7 @@ import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
 import { shuffleSectionExamples } from '../../src/lib/storyboardExampleShuffle.js';
 import { canRerollGenerationExample } from '../../src/lib/generationExamples.js';
 import genExamples from '../../src/data/genExamples.json' with { type: 'json' };
+import backgroundPolicy from '../../server/app/data/horizon_background_policy.json' with { type: 'json' };
 import { entryStylingMembers } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   spaceSetGroupId,
@@ -67,6 +68,33 @@ test('세트별 셔플은 기존 run 크기를 유지한다 — 엔트리 2멤�
   assert.equal(next.length, 2);
   // 스타일링 교체는 엔트리 규칙(풀+미디움 우선)을 따른다.
   assert.deepEqual(next.map((block) => block.shot).sort(), ['full', 'medium']);
+});
+
+test('호리존 세트 셔플은 측정 전이면 옷 색 선택을 유지하고, 잰 결과 맞출 수 없을 때만 해제한다', () => {
+  const sets = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })
+    .filter(set => set.setType === 'horizon-sequence');
+  assert.ok(sets.length >= 2);
+  const groupId = spaceSetGroupId(sets[0].id, 'tone-shuffle');
+  const blocks = sets[0].members.slice(0, 2).map((member, index) => ai(`h-${index}`, {
+    sectionRole: 'studio', cutType: 'horizon', shot: member.shot, direction: member.direction,
+    spaceGroupId: groupId, spaceSetMemberOrder: member.order,
+    setSelectionOrigin: 'auto', exampleSelectionOrigin: 'auto', refScope: 'all',
+    exampleId: member.exampleId, horizonBackgroundMode: 'garment-tone',
+  }));
+  const options = { sectionId: 'sec-a', catalog: [], gender: 'women', rotation: 1,
+    onlySpaceGroupId: groupId, product: { clothingType: 'top', colors: [{ id: 'base', isBase: true, images: [{ slot: 'Front' }, { slot: 'Back' }] }] } };
+  const withoutEvidence = shuffleSectionExamples(blocks, options);
+  assert.notEqual(withoutEvidence, blocks);
+  assert.ok(withoutEvidence.every(block => block.horizonBackgroundMode === 'garment-tone'));
+  const failedEvidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'unavailable',
+    backgroundStatus: 'reference', backgroundPolicyVersion: backgroundPolicy.version }] };
+  const withFailure = shuffleSectionExamples(blocks, { ...options, colorEvidence: failedEvidence });
+  assert.ok(withFailure.every(block => block.horizonBackgroundMode === 'reference'));
+  assert.ok(blocks.every(block => block.horizonBackgroundMode === 'garment-tone'));
+  const colorEvidence = { version: 1, clothingType: 'top', colors: [{ colorId: 'base', status: 'ready',
+    backgroundStatus: 'ready', backgroundPolicyVersion: backgroundPolicy.version }] };
+  const withEvidence = shuffleSectionExamples(blocks, { ...options, colorEvidence });
+  assert.ok(withEvidence.every(block => block.horizonBackgroundMode === 'garment-tone'));
 });
 
 

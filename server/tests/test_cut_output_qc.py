@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -91,6 +93,32 @@ def test_schema_is_strict_complete_and_names_text_logo_gate():
     assert "matchingGarmentIdentity" in item["properties"]["gate"]["enum"]
     assert "modelBodyProportions" in item["properties"]["gate"]["enum"]
     assert "relatedSceneDifferentPlace" in item["properties"]["gate"]["enum"]
+
+
+def test_default_qc_template_and_roles_match_pre_experiment_contract():
+    template = Path(qc._PROMPT_FILE).read_text(encoding="utf-8")
+    assert hashlib.sha256(template.encode()).hexdigest() == "f0d29a9e4a127073e8a0b3311ab86b445417af1a0b60e1bf0b267f8c6dfc8e14"
+    assert "horizonMaster" not in qc.REFERENCE_ROLES
+    assert "horizonMasterReference" not in qc.normalize_plan(_plan(
+        recipeFamily="horizon", horizonMasterReference={"shot": "full", "direction": "front"}))
+
+
+@pytest.mark.parametrize("recipe", ["styling", "horizon", "product"])
+@pytest.mark.parametrize("background", [None, {}, {"mode": "reference", "wallHex": "#ffffff"},
+                                      {"mode": "garment-tone", "wallHex": "invalid"},
+                                      {"mode": "garment-tone", "wallHex": "#d9e2e8"}])
+def test_wall_qc_exception_requires_horizon_and_valid_opt_in(recipe, background):
+    raw = _plan(recipeFamily=recipe, horizonBackground=background)
+    refs = [qc.LabeledReference("example", _img()), qc.LabeledReference("product", _img())]
+    contract = qc.normalize_plan(raw)
+    prompt = qc.build_prompt(contract, refs)
+    enabled = recipe == "horizon" and background == {"mode": "garment-tone", "wallHex": "#d9e2e8"}
+    assert ("HORIZON WALL OPTION" in prompt) is enabled
+    assert ("EXAMPLE ALL supplies its allowed" in prompt) is enabled
+    assert "HORIZON MASTER" not in prompt
+    assert "opposite buttonhole-bearing edge" not in prompt
+    if enabled:
+        assert "#d9e2e8" in prompt and "floor material/color" in prompt
 
 
 def test_references_from_manifest_maps_roles_in_order_and_omits_mood():

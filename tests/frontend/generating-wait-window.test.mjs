@@ -33,6 +33,10 @@ const editor = readFileSync(
   new URL('../../src/features/editor/Editor.jsx', import.meta.url),
   'utf8',
 );
+const poll = readFileSync(
+  new URL('../../src/lib/detailPageJobPoll.js', import.meta.url),
+  'utf8',
+);
 
 function memoryStorage() {
   const values = new Map();
@@ -43,23 +47,26 @@ function memoryStorage() {
   };
 }
 
-test('상세페이지 대기 상한은 서버 lease 복구와 같은 15분이다', () => {
+test('상세페이지 대기는 상한이 없다 — 15분(서버 lease 복구)부터는 느린 주기로 계속 본다', () => {
+  // 2026-09-26: 15분 상한이 서버가 7초 뒤 끝낸 잡(2240c252)을 화면이 먼저 포기하게 했다.
+  // 이제 15분은 '포기'가 아니라 '주기를 늦추는' 경계다(lib/detailPageJobPoll.js).
   const call = httpAdapter.slice(httpAdapter.indexOf('async generateDetailPage'));
   const body = call.slice(0, call.indexOf('async getProject'));
-  assert.match(body, /timeoutMs: 900000/);
-  assert.match(store, /\+ 900000/);
-  assert.doesNotMatch(body, /timeoutMs: 300000/);
+  assert.doesNotMatch(body, /timeoutMs: (900000|300000)/);
+  assert.doesNotMatch(store, /\+ 900000/);
+  assert.match(poll, /DETAIL_JOB_SLOW_AFTER_MS = 900000/);
 });
 
 test('DB 503은 기존 jobId 폴링만 늦추고 생성 POST를 재호출하지 않는다', () => {
-  const start = store.indexOf('let dbUnavailableCount = 0;');
+  // 재조회 분기는 공용 폴링 루프(lib/detailPageJobPoll.js)로 옮겨졌다(2026-09-26) —
+  // 행동은 detail-page-wait-no-giveup.test.mjs 가 가짜 시계로 고정한다.
+  const start = poll.indexOf('if (!isTransientPollError(e)) throw e;');
   assert.ok(start > 0, 'DB 일시 장애 재조회 분기를 못 찾았다');
-  const retry = store.slice(start, store.indexOf('const events = ev?.events || [];', start));
-  assert.match(retry, /e\?\.status !== 503/);
-  assert.match(retry, /Math\.min\(5000/);
-  assert.match(retry, /continue;/);
-  assert.doesNotMatch(retry, /startDetailPage/);
-  assert.doesNotMatch(retry, /generateDetailPage/);
+  const retry = poll.slice(start, poll.indexOf('continue;', start) + 'continue;'.length);
+  assert.match(poll, /TRANSIENT_STATUS = new Set\(\[502, 503, 504\]\)/);
+  assert.match(retry, /Math\.min\(DETAIL_JOB_SLOW_POLL_MS/);
+  assert.doesNotMatch(poll, /startDetailPage|generateDetailPage|detail-page:generate/);
+  assert.match(store, /const job = await pollDetailPageJob\(\{/);
 });
 
 test('진행 중 job 표식은 새로고침 뒤 같은 jobId로 복원하고 완료 시 지운다', () => {

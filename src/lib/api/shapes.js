@@ -54,7 +54,7 @@ function setMemberBlocks(set, colorId, sectionRole, contentRole) {
       spaceGroupId: groupId,
       spaceVariation: set.spaceVariation,
       spaceSetMemberOrder: member.order,
-      refScope: 'pose',
+      refScope: member.cutType === 'horizon' ? 'all' : 'pose',
       exampleId: member.exampleId,
       exampleSelectionOrigin: 'auto',
       setSelectionOrigin: 'auto',
@@ -239,6 +239,8 @@ function storyboardTemplateFingerprint(blocks) {
     ownImages: block.ownImages || [],
     spaceGroup: ordinal(spaceIds, block.spaceGroupId),
     spaceVariation: block.spaceVariation ?? null,
+    horizonBackgroundMode: block.cutType === 'horizon' && block.spaceGroupId
+      ? (block.horizonBackgroundMode === 'garment-tone' ? 'garment-tone' : 'reference') : null,
     sectionLayout: block.sectionLayout || 'stack',
     sectionCustom: !!block.sectionCustom,
     layoutRow: ordinal(rowIds, block.layoutRowId),

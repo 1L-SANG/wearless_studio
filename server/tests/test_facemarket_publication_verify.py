@@ -332,3 +332,14 @@ def test_cache_control_no_store_on_404_unknown(pub_client):
 
     assert r.status_code == 404
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_image_hash_prefix_follows_the_anchored_watermark_hash(pub_client):
+    """추적 층(2026-09-26) — 체인에 올라가는 imageHash 는 coalesce(wm_sha256, image_sha256) 다.
+    검증 페이지가 다른 해시를 보여 주면 체인 기록과 대조가 어긋난다."""
+    client, store = pub_client
+    store["publications"][PUB_ID] = _row(image_sha256="ab" * 32, wm_sha256="9f" * 32)
+
+    body = client.get(f"/v1/facemarket/publications/verify/{PUB_ID}").json()
+
+    assert body["imageHashPrefix"] == ("9f" * 32)[:12]

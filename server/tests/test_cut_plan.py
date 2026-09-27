@@ -150,6 +150,20 @@ def test_repeated_example_index_is_audited_only_when_micro_variation_is_active()
     assert not inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
 
 
+def test_horizon_colorway_repeat_is_audited_as_micro_variation():
+    plan = compile_cut_plan(
+        worn_spec(
+            "horizon", exampleId="same-example", refScope="all", pose="auto",
+            _exampleRepeatIndex=1,
+        ),
+        "top",
+    )
+
+    assert plan.example_repeat_index == 1
+    assert plan.to_dict()["exampleRepeatIndex"] == 1
+    assert plan.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
+
+
 @pytest.mark.parametrize("value", [-1, "1", True])
 def test_repeated_example_index_rejects_invalid_runtime_values(value):
     with pytest.raises(CutPlanError, match="invalid_example_repeat_index"):

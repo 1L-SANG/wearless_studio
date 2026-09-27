@@ -712,8 +712,9 @@ def validate_manifest(
 
         _validate_qc(space_set.get("qc"), f"{prefix}.qc", violations)
         members = space_set.get("members")
-        if not isinstance(members, list) or not 2 <= len(members) <= 5:
-            violations.append(f"{prefix}.members는 2~5개 배열이어야 합니다")
+        max_members = 7 if set_type == "horizon-sequence" else 5
+        if not isinstance(members, list) or not 2 <= len(members) <= max_members:
+            violations.append(f"{prefix}.members는 2~{max_members}개 배열이어야 합니다")
             members = []
 
         member_shots: list[str] = []
@@ -772,6 +773,8 @@ def validate_manifest(
                 )
 
             for variant in ("all", "pose"):
+                if variant == "pose" and cut_type == "horizon" and member.get(variant) is None:
+                    continue
                 path = _validate_asset(
                     member.get(variant),
                     asset_root=root,
@@ -964,7 +967,7 @@ def _write_stage_receipt(
             {
                 "ownerId": asset.owner_id,
                 "variant": asset.variant,
-                "path": str(asset.path.relative_to(build_dir)),
+                "path": asset.path.relative_to(build_dir).as_posix(),
                 "key": asset.r2_key,
                 "mime": asset.mime,
                 "sha256": _sha256(asset.path),
@@ -1092,6 +1095,7 @@ def stage_release(
                         expected_sha256=member[variant]["sha256"],
                     )
                     for variant in ("all", "pose")
+                    if (set_id, example_id, variant) in source_files
                 }
                 staged_thumb = thumb_dir / f"{example_id}.webp"
                 input_thumb = source_files.get((set_id, example_id, "thumb"))
@@ -1109,7 +1113,7 @@ def stage_release(
                     )
 
                 urls: dict[str, str] = {}
-                for variant in ("all", "pose"):
+                for variant in staged_variants:
                     spec = member[variant]
                     path = staged_variants[variant]
                     key = spec["key"]
@@ -1151,6 +1155,7 @@ def stage_release(
                     **common_member,
                     "thumbUrl": urls["thumb"],
                     "allUrl": urls["all"],
+                    "variants": list(staged_variants),
                 })
                 registry_members.append({
                     **common_member,
@@ -1158,7 +1163,7 @@ def stage_release(
                         member["all"],
                         staged_variants["all"],
                     ),
-                    "pose": _published_asset(
+                    "pose": None if "pose" not in staged_variants else _published_asset(
                         member["pose"],
                         staged_variants["pose"],
                     ),
@@ -1166,7 +1171,7 @@ def stage_release(
                 audit_members.append({
                     "exampleId": example_id,
                     "all": _asset_audit(member["all"]),
-                    "pose": _asset_audit(member["pose"]),
+                    "pose": _asset_audit(member["pose"]) if "pose" in staged_variants else None,
                 })
 
             common_set = {
@@ -1273,7 +1278,7 @@ def _verified_stage_path(
     if not isinstance(relative_value, str) or not relative_value:
         violations.append(f"{label}.path는 비어 있지 않은 상대 경로여야 합니다")
         return None
-    relative = Path(relative_value)
+    relative = Path(relative_value.replace("\\", "/"))
     if relative.is_absolute():
         violations.append(f"{label}.path는 상대 경로여야 합니다")
         return None
@@ -1404,6 +1409,8 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
         owner_id = spec.get("ownerId")
         variant = spec.get("variant")
         relative = spec.get("path")
+        if isinstance(relative, str):
+            relative = relative.replace("\\", "/")
         key = spec.get("key")
         mime = spec.get("mime")
         if variant not in {"plate", "all", "pose", "thumb"}:
@@ -1479,7 +1486,7 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
 
     assets_root = root / "assets"
     actual_asset_paths = {
-        str(path.relative_to(root))
+        path.relative_to(root).as_posix()
         for path in assets_root.rglob("*")
         if path.is_file()
     } if assets_root.is_dir() else set()
@@ -1583,6 +1590,13 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
         ):
             cross_violations.append(f"{label} 멤버 목록 크기가 다릅니다")
             continue
+        set_type = server_set.get("setType")
+        if not 2 <= len(server_members) <= (7 if set_type == "horizon-sequence" else 5):
+            cross_violations.append(f"{label} 멤버 수가 세트 종류의 범위를 벗어납니다")
+        if set_type == "horizon-rotation" and [
+            (m.get("shot"), m.get("direction")) if isinstance(m, dict) else None for m in server_members
+        ] != [("full", "front"), ("full", "side"), ("full", "back")]:
+            cross_violations.append(f"{label} 회전 세트는 정면·옆면·뒷면 전신 3컷이어야 합니다")
         for member_index, (front_member, server_member, audit_member) in enumerate(zip(
             front_members, server_members, audit_members
         )):
@@ -1593,6 +1607,8 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
                 cross_violations.append(f"{member_label} 형식이 올바르지 않습니다")
                 continue
             example_id = server_member.get("exampleId")
+            if front_member.get("variants", ["all", "pose"]) != (["all", "pose"] if server_member.get("pose") is not None else ["all"]):
+                cross_violations.append(f"{member_label} 발행 variant가 프론트·서버에서 다릅니다")
             recipe_fields = ("exampleId", "order", "cutType", "shot", "direction")
             if any(front_member.get(field) != server_member.get(field) for field in recipe_fields):
                 cross_violations.append(f"{member_label} 프론트·서버 레시피가 다릅니다")
@@ -1600,6 +1616,10 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
                 cross_violations.append(f"{member_label} 감사 exampleId가 다릅니다")
             for variant in ("all", "pose"):
                 published = server_member.get(variant)
+                if variant == "pose" and server_member.get("cutType") == "horizon" and published is None:
+                    if audit_member.get("pose") is not None or front_member.get("variants", ["all", "pose"]) != ["all"]:
+                        cross_violations.append(f"{member_label}.pose 발행 상태가 서로 다릅니다")
+                    continue
                 if not isinstance(published, dict):
                     cross_violations.append(
                         f"{member_label}.{variant} 형식이 올바르지 않습니다"
@@ -1796,7 +1816,7 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
     for set_index, space_set in enumerate(sets):
         if (
             not isinstance(space_set, dict)
-            or set(space_set) != _FRONTEND_SET_FIELDS
+            or set(space_set) - {"setApplicableClothingTypes"} != _FRONTEND_SET_FIELDS
         ):
             violations.append(f"sets[{set_index}]_fields_invalid")
             continue
@@ -1818,6 +1838,7 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
         set_type = space_set.get("setType")
         gender = space_set.get("gender")
         applicable = space_set.get("applicableClothingTypes")
+        rotation_scope = ["top", "bottom", "outer", "dress"] if gender == "women" else ["top", "bottom", "outer"]
         if set_type not in _SET_TYPES:
             violations.append(f"sets[{set_index}]_set_type_invalid")
         if gender not in _GENDERS:
@@ -1832,10 +1853,18 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
             or (
                 len(applicable) > 1
                 and set(applicable) != {"top", "outer"}
+                and not (set_type == "horizon-rotation" and applicable == rotation_scope)
             )
         ):
             violations.append(f"sets[{set_index}]_applicability_invalid")
             applicable = []
+        set_applicable = space_set.get("setApplicableClothingTypes", applicable)
+        if (not isinstance(set_applicable, list) or not set_applicable
+                or any(not isinstance(item, str) or item not in _CLOTHING_TYPES for item in set_applicable)
+                or len(set_applicable) != len(set(set_applicable))
+                or (gender == "men" and "dress" in set_applicable)
+                or (set_applicable != applicable and not (set_type == "horizon-rotation" and set_applicable == rotation_scope))):
+            violations.append(f"sets[{set_index}]_set_applicability_invalid")
         if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:
             violations.append(f"sets[{set_index}]_space_variation_invalid")
         if (
@@ -1864,17 +1893,20 @@ def _validate_frontend_catalog(value: object, *, label: str) -> None:
         ):
             violations.append(f"sets[{set_index}]_plate_policy_invalid")
         members = space_set.get("members")
-        if not isinstance(members, list) or not 2 <= len(members) <= 5:
+        if not isinstance(members, list) or not 2 <= len(members) <= (7 if set_type == "horizon-sequence" else 5):
             violations.append(f"sets[{set_index}]_members_invalid")
             continue
         for expected_order, member in enumerate(members, start=1):
             member_label = f"sets[{set_index}].members[{expected_order - 1}]"
             if (
                 not isinstance(member, dict)
-                or set(member) != _FRONTEND_MEMBER_FIELDS
+                or set(member) - {"variants"} != _FRONTEND_MEMBER_FIELDS
             ):
                 violations.append(f"{member_label}_fields_invalid")
                 continue
+            variants = member.get("variants", ["all", "pose"])
+            if variants not in (["all"], ["all", "pose"]) or (set_type == "styling" and variants != ["all", "pose"]):
+                violations.append(f"{member_label}_variants_invalid")
             example_id = member.get("exampleId")
             if (
                 not _valid_space_set_id(example_id, example=True)
@@ -2023,7 +2055,7 @@ def _validate_published_registry(value: object, *, label: str) -> None:
         set_label = f"sets[{set_index}]"
         if (
             not isinstance(space_set, dict)
-            or set(space_set) != _PUBLISHED_SET_FIELDS
+            or set(space_set) - {"setApplicableClothingTypes"} != _PUBLISHED_SET_FIELDS
         ):
             violations.append(f"{set_label}_fields_invalid")
             continue
@@ -2045,7 +2077,7 @@ def _validate_published_registry(value: object, *, label: str) -> None:
             member_label = f"{set_label}.members[{member_index}]"
             if (
                 not isinstance(member, dict)
-                or set(member) != _PUBLISHED_MEMBER_FIELDS
+                or (set(member) | ({"pose"} if space_set.get("setType") != "styling" else set())) != _PUBLISHED_MEMBER_FIELDS
             ):
                 violations.append(f"{member_label}_fields_invalid")
                 continue
@@ -2057,6 +2089,8 @@ def _validate_published_registry(value: object, *, label: str) -> None:
                 violations.append(f"{member_label}_order_invalid")
             example_id = member.get("exampleId")
             for variant in ("all", "pose"):
+                if variant == "pose" and space_set.get("setType") != "styling" and member.get("pose") is None:
+                    continue
                 release_id = _published_asset_release_id(
                     member.get(variant),
                     variant=variant,
@@ -2126,6 +2160,8 @@ def _validate_catalog_pair(frontend: dict, registry: dict, *, label: str) -> Non
     recipe_fields = ("exampleId", "order", "cutType", "shot", "direction")
     for frontend_set, server_set in zip(frontend_sets, server_sets):
         set_id = server_set["setId"]
+        if frontend_set.get("setApplicableClothingTypes", frontend_set.get("applicableClothingTypes")) != server_set.get("setApplicableClothingTypes", server_set.get("applicableClothingTypes")):
+            raise RuntimeError(f"{label} 세트 적용 범위가 프론트·서버에서 다릅니다: {set_id}")
         if any(
             frontend_set.get(field) != server_set.get(field)
             for field in common_fields
@@ -2150,6 +2186,9 @@ def _validate_catalog_pair(frontend: dict, registry: dict, *, label: str) -> Non
             raise RuntimeError(f"{label} 멤버 수가 프론트·서버에서 다릅니다: {set_id}")
         for frontend_member, server_member in zip(frontend_members, server_members):
             example_id = server_member["exampleId"]
+            expected_variants = ["all", "pose"] if server_member.get("pose") is not None else ["all"]
+            if frontend_member.get("variants", ["all", "pose"]) != expected_variants:
+                raise RuntimeError(f"{label} 멤버 variant가 프론트·서버에서 다릅니다: {example_id}")
             if any(
                 frontend_member.get(field) != server_member.get(field)
                 for field in recipe_fields
@@ -2278,7 +2317,8 @@ def _assert_receipt_covers_release(
             referenced.add(plate["key"])
         for member in space_set["members"]:
             referenced.add(member["all"]["key"])
-            referenced.add(member["pose"]["key"])
+            if member.get("pose") is not None:
+                referenced.add(member["pose"]["key"])
             release_root = member["all"]["key"].rsplit("/all/", 1)[0]
             referenced.add(f'{release_root}/thumb/{member["exampleId"]}.webp')
     unbacked = {

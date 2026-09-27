@@ -232,10 +232,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  # 최종 컷(상세페이지·에디터)만 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
+  # 일반 최종 컷(상세페이지·에디터)은 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
   # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
   # 개인화는 image_high(Gemini) 그대로다.
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  # 완성 예시의 포즈·조명·상품 구조를 함께 지키는 호리존만 정밀 편집 모델로 분리한다.
+  MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
   MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
   DETAIL_CORE_TIMEOUT_SECONDS: 90
@@ -410,6 +412,17 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 서명·배포된 파일 안 링크가 죽은 채로 남고 회수할 수 없다 — 값 변경 전 반드시
   # 실제로 열어서 seller 앱이 뜨는지 확인할 것(런북 §6).
   PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
+  # ---- 자동 출처 순찰(2026-09-27, 오너 결정 — 무료 경로만) ----
+  # 하루 1회(KST FM_TRACE_PATROL_HOUR_KST 시 이후) REAL 컷 프로젝트의 상품명으로 검색해 결과의 **대표
+  # 이미지만** 워터마크·지문으로 대조하고, 맞으면 관리자 콘솔(/trace 자동 발견)·슬랙으로 알린다.
+  # FM_PROVENANCE_ENABLED 아래에서만 돈다. 끄려면 "off".
+  #  - 지그재그: robots 허용, 약관에 크롤링 금지 조항 없음(제13조④ 영리 목적 복제 금지는 회색) — 켠다.
+  #  - 네이버: 공식 검색 API. 키(NAVER_SEARCH_CLIENT_ID/SECRET)가 없으면 조용히 꺼진다. 키를 SSM 에
+  #    넣은 **뒤에** 아래 secrets: 에 두 줄을 추가한다 — 값 없이 줄만 배포하면 ECS 기동이 실패한다.
+  #  - 29CM(약관이 크롤러 금지)·무신사(robots)·에이블리·쿠팡(봇 차단)은 어댑터 자체가 없다.
+  FM_TRACE_PATROL: "on"
+  FM_TRACE_PATROL_PLATFORMS: "zigzag,naver"
+  FM_TRACE_PATROL_HOUR_KST: "4"
 
   # ── 얼굴 패스(인물 LoRA) — **전부 꺼진 채로 커밋한다** ──
   # 켜기 전에 필요한 것: ① fm_model_loras 에 켜진 행(scripts/seed_model_lora.py)

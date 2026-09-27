@@ -101,9 +101,13 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     // '내 이미지'는 영속 데이터에 잘못된 행 id가 있어도 컴포지트 행에 합류하지 않는다.
     if (b.source === 'mine') delete b.layoutRowId;
     else if (b.layoutRowId && !b.layoutRowVersion) b.layoutRowVersion = 1;
-    // 같은 장소 시리즈 컷: 예시 범위가 불일치하면 'pose' 명시 — 서버 규칙의 실체화.
-    // 시리즈를 떠나 spaceGroupId 가 풀려도 이 명시값이 남아 화면·생성 결과가 어긋나지 않는다.
-    if (b.spaceGroupId && b.exampleId && b.refScope !== 'pose') b.refScope = 'pose';
+    // 같은 장소 시리즈 컷: 예시 범위를 서버 규칙(cut_generator.normalize_spec)대로 명시한다.
+    // 호리존은 완성 사진(all), 스타일링은 plate + 'pose'(ADR-0013). 시리즈를 떠나 spaceGroupId 가
+    // 풀려도 이 명시값이 남아 화면·생성 결과가 어긋나지 않는다.
+    if (b.spaceGroupId && b.exampleId) {
+      const seriesScope = b.cutType === 'horizon' ? 'all' : 'pose';
+      if (b.refScope !== seriesScope) b.refScope = seriesScope;
+    }
     const key = b.sectionRole;
     if (b.sectionId && !needsNormalization) {
       b.sectionTitle = titleForKey(key);

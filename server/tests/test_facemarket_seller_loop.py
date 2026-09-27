@@ -711,7 +711,10 @@ def test_job_settlement_receipt_shape(receipt, make_token, payment_id, age_days)
     assert set(b) == {
         "paymentId", "txHash", "chainId", "totalAmount", "modelAmount",
         "platformAmount", "opsAmount", "vcId", "chainStatus",
+        # 2026-09-26 영수증 체인 정보 — 블록·기록 시각.
+        "recordedBlock", "createdAt",
     }
+    assert b["recordedBlock"] == 1 and b["createdAt"]
     assert b["paymentId"] == payment_id and b["txHash"] == "0xabc"
     assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (10430, 2980, 1490)
     assert b["vcId"] == "vc-1" and b["chainStatus"] == "confirmed"
@@ -731,7 +734,9 @@ def test_job_settlement_regeneration_uses_product_window(receipt, make_token, ag
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == status, r.text
     if status == 200:
-        assert r.json() == {
+        body = r.json()
+        assert body.pop("recordedBlock") == 1 and body.pop("createdAt")
+        assert body == {
             "paymentId": "product:p1:20260908", "txHash": "0xabc", "chainId": "1337",
             "totalAmount": 14900, "modelAmount": 10430, "platformAmount": 2980,
             "opsAmount": 1490, "vcId": "vc-1", "chainStatus": "confirmed",

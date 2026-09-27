@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 export { findTree } from './facemarketHarness.mjs';
 
@@ -17,8 +18,8 @@ export async function adminUsageReportsHarness(api = {}) {
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({
     configFile: false, logLevel: 'silent',
-    root: new URL('../../..', import.meta.url).pathname,
-    server: { middlewareMode: true }, ssr: { noExternal: true },
+    root: fileURLToPath(new URL('../../..', import.meta.url)),
+    server: { middlewareMode: true, hmr: false, watch: null }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' }, appType: 'custom',
     plugins: [{
       name: 'admin-usage-reports-test', enforce: 'pre',
@@ -28,7 +29,7 @@ export async function adminUsageReportsHarness(api = {}) {
         if (id === '@/lib/api/facemarket.js') return '\0reports-api';
         if (id === '@/lib/api/httpAdapter.js') return '\0reports-http';
         if (id === '@/lib/supabase.js') return '\0reports-auth';
-        if (id.startsWith('@/')) return new URL(`../../../src/${id.slice(2)}`, import.meta.url).pathname;
+        if (id.startsWith('@/')) return fileURLToPath(new URL(`../../../src/${id.slice(2)}`, import.meta.url));
       },
       load(id) {
         if (id === '\0reports-jsx') return `export const jsx=(type,props,key)=>typeof type==='function'?{...type(props),key}:{type,props,key}; export const jsxs=jsx; export const jsxDEV=jsx;`;

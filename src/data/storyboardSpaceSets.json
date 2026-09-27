@@ -1,11 +1,746 @@
 {
   "_meta": {
     "defaultBaseUrl": "https://images.wearless.kr",
-    "releaseId": "space-sets-20260731-zara-v1",
-    "releasedAt": "2026-07-31T10:21:14.109552+00:00",
+    "releaseId": "space-sets-20260926-horizon-all-v1",
+    "releasedAt": "2026-09-26T07:06:12.432620+00:00",
     "schemaVersion": 1
   },
   "sets": [
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 2 + 미디움 3",
+      "gender": "men",
+      "id": "horizon-sequence-figma-s02-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s02_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s02_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s02_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s02_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_04_v2.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s02_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s02_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_05_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_05_v2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s02_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "기대기",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s02-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 2 + 미디움 2",
+      "gender": "women",
+      "id": "horizon-sequence-figma-s05-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s05_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s05_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s05_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s05_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_04_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s05_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "워킹",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s05-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀 3 + 미디움 3",
+      "gender": "men",
+      "id": "horizon-sequence-figma-s08-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s08_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_04_v2.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s08_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_05_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_05_v2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_06_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_06_v2",
+          "order": 6,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s08_06_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "허리포커스",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s08-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀 4 + 미디움 3",
+      "gender": "women",
+      "id": "horizon-sequence-figma-s11-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_02_v2",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_03_v2",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_04_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_04_v2",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_05_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_05_v2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_06_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_06_v2",
+          "order": 6,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_06_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_07_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_07_v2",
+          "order": 7,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s11_07_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "워킹",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s11-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀 2 + 미디움 4",
+      "gender": "men",
+      "id": "horizon-sequence-figma-s14-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s14_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_04_v2.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s14_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_05_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_05_v2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_06_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_06_v2",
+          "order": 6,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s14_06_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "클로즈업",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s14-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀 3 + 미디움 2",
+      "gender": "women",
+      "id": "horizon-sequence-figma-s18-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s18_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s18_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_03_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_03_v2",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s18_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_04_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_04_v2",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s18_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_05_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s18_05_v2",
+          "order": 5,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s18_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "릴랙스",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s18-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 2 + 미디움 2",
+      "gender": "women",
+      "id": "horizon-sequence-figma-s20-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s20_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_02_v2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s20_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_03_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s20_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_04_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s20_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s20_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "턴포즈",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s20-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 3 + 미디움 2",
+      "gender": "women",
+      "id": "horizon-sequence-figma-s21-v2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_01_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_01_v2",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s21_01_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_02_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_02_v2",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s21_02_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_03_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s21_03_v2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s21_03_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_04_v2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s21_04_v2",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s21_04_v2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_05_v2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_05_v2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_zara_s21_05_v2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "뒤태",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s21-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "미디움 5",
+      "gender": "women",
+      "id": "horizon-sequence-06-women-top-linen-r2",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_01_r2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_01_r2",
+          "order": 1,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_sequence_06_women_top_linen_01_r2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_02_r2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_02_r2",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_sequence_06_women_top_linen_02_r2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_03_r2.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_03_r2",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_sequence_06_women_top_linen_03_r2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_04_r2.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_04_r2",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_sequence_06_women_top_linen_04_r2.webp",
+          "variants": [
+            "all"
+          ]
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_05_r2.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_05_r2",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/thumb/ss_horizon_sequence_06_women_top_linen_05_r2.webp",
+          "variants": [
+            "all"
+          ]
+        }
+      ],
+      "name": "클로즈업",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-06-women-top-linen-r2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
     {
       "applicableClothingTypes": [
         "top"

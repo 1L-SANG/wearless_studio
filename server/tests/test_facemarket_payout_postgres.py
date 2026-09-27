@@ -36,11 +36,14 @@ def db(monkeypatch):
         conn.execute("""
             create table fm_models(id uuid primary key, user_id text, display_name text, status text default 'verified', created_at timestamptz default now());
             create table fm_licenses(id uuid primary key, model_id uuid references fm_models(id));
-            create table fm_settlements(id uuid primary key default gen_random_uuid(), license_id uuid references fm_licenses(id), model_amount bigint not null, created_at timestamptz not null default now());
+            create table fm_settlements(id uuid primary key default gen_random_uuid(), license_id uuid references fm_licenses(id), model_amount bigint not null, chain_status text not null default 'confirmed', created_at timestamptz not null default now());
             create table admin_audit_log(actor_user_id text, action text, target_type text, target_id text, before jsonb, after jsonb, note text);
             create function set_updated_at() returns trigger language plpgsql as $$begin new.updated_at := now(); return new; end;$$;
         """)
-        for name in ("20260911140000_fm_payout_accounts.sql", "20260911140100_fm_payout_statements.sql", "20260911170000_fm_manual_payout_confirmations.sql"):
+        # 20260922120000(provider)·20260926230000(이체 기록)·20260927090000(중간 정산)까지 — 코드가 읽는 컬럼이 전부 있어야 한다.
+        for name in ("20260911140000_fm_payout_accounts.sql", "20260911140100_fm_payout_statements.sql", "20260911170000_fm_manual_payout_confirmations.sql",
+                     "20260922120000_fm_payout_provider.sql", "20260926230000_fm_payout_transfer_record.sql",
+                     "20260927090000_fm_payout_interim.sql"):
             conn.execute((ROOT / name).read_text().replace("public.", schema + "."))
         conn.execute("insert into fm_models(id,user_id,display_name) values (%s,'model-user','모델')", (MODEL,))
         conn.execute("insert into fm_licenses values (%s,%s)", (LICENSE, MODEL))
@@ -56,26 +59,34 @@ def db(monkeypatch):
 
     monkeypatch.setattr(p, "get_conn", connection)
     monkeypatch.setattr(p.admin_guard.repo, "is_admin", is_admin)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=SimpleNamespace(fm_payout_account_key=key, admin_device_gate="off"))))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=SimpleNamespace(fm_payout_account_key=key, admin_device_gate="off", fm_payout_provider="manual"))))
 
     def sql(query, params=()):
         with psycopg.connect(DSN, options=options, row_factory=dict_row) as conn:
             cur = conn.execute(query, params)
             return cur.fetchall() if cur.description else None
 
-    def add(amount=7000, created="2026-08-20T00:00:00+09:00"):
-        return sql("insert into fm_settlements(license_id,model_amount,created_at) values (%s,%s,%s) returning id::text", (LICENSE, amount, created))[0]["id"]
+    def add(amount=7000, created="2026-08-20T00:00:00+09:00", chain_status="confirmed"):
+        return sql("insert into fm_settlements(license_id,model_amount,created_at,chain_status) values (%s,%s,%s,%s) returning id::text", (LICENSE, amount, created, chain_status))[0]["id"]
 
     async def confirm(owner="admin-1", ident=None):
         return await p.confirm_payout_statement(MODEL, "2026-08", p.PayoutConfirmationRequest(confirmation_id=ident or uuid.uuid4()), request, Response(), owner)
 
-    async def action(ident, action, owner="admin-1"):
-        return await p.advance_payout_confirmation(ident, action, request, Response(), owner)
+    async def action(ident, action, owner="admin-1", transfer=None):
+        # 지급 완료는 실제 이체 기록과 함께만(2026-09-26). 테스트는 확인서 금액 그대로 적는다.
+        if action == "paid" and transfer is None:
+            amount = sql("select amount from fm_payout_confirmations where id = %s", (str(ident),))[0]["amount"]
+            transfer = p.PayoutTransferRecord(transfer_reference="테스트 이체 0001", amount=amount,
+                                              transferred_on=p.datetime.now(p.KST).date())
+        return await p.advance_payout_confirmation(ident, action, request, Response(), owner, transfer)
+
+    async def run(month="2026-08", owner="admin-1", interim=False):
+        return await p.run_monthly_payout(month, request, Response(), owner, interim)
 
     async def listing():
         return await p.list_admin_payout_statements("2026-08", request, Response(), "admin-1")
 
-    yield SimpleNamespace(sql=sql, add=add, confirm=confirm, action=action, listing=listing, request=request, account=account)
+    yield SimpleNamespace(sql=sql, add=add, confirm=confirm, action=action, listing=listing, run=run, request=request, account=account)
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute(f"drop schema {schema} cascade")
 
@@ -257,3 +268,222 @@ def test_legacy_paid_amount_is_immutable_and_blocks_unknown_allocations(db):
             await p.set_payout_statement_status(MODEL, "2026-08", p.PayoutStatusRequest(status="scheduled"), db.request, Response(), "admin-1")
         assert db.sql("select amount from fm_payout_statements")[0]["amount"] == 7000
     asyncio.run(scenario())
+
+
+# ── 2026-09-26 월말 정산 실행 · 실제 이체 기록 ─────────────────────────────────────
+
+def test_monthly_run_is_idempotent_and_paid_needs_a_real_transfer_record(db):
+    first = db.add(); second = db.add(9000)
+    async def scenario():
+        ran = await db.run()
+        assert ran["moneyMoved"] is False
+        assert [row["outcome"] for row in ran["results"]] == ["prepared"]
+        assert ran["results"][0]["amount"] == 16000 and ran["results"][0]["count"] == 2
+        statement = db.sql("select amount, count, status from fm_payout_statements")[0]
+        assert (statement["amount"], statement["count"], statement["status"]) == (16000, 2, "scheduled")
+        entries = db.sql("select settlement_id::text from fm_payout_confirmation_entries")
+        assert {entry["settlement_id"] for entry in entries} == {first, second}
+        # 다시 눌러도 확인서는 하나다.
+        again = await db.run()
+        assert [row["outcome"] for row in again["results"]] == ["in_progress"]
+        assert again["results"][0]["confirmationId"] == ran["results"][0]["confirmationId"]
+        assert len(db.sql("select id from fm_payout_confirmations")) == 1
+        ident = ran["results"][0]["confirmationId"]
+        await db.action(ident, "start")
+        # 기록 없이 지급 완료 → 거절, 상태는 그대로 transfer_started.
+        with pytest.raises(HTTPException) as error:
+            await p.advance_payout_confirmation(ident, "paid", db.request, Response(), "admin-1", None)
+        assert error.value.detail["code"] == "payout_transfer_record_required"
+        wrong = p.PayoutTransferRecord(transfer_reference="국민 0001", amount=15999,
+                                       transferred_on=p.datetime.now(p.KST).date())
+        with pytest.raises(HTTPException) as error:
+            await db.action(ident, "paid", transfer=wrong)
+        assert error.value.detail["code"] == "payout_amount_mismatch"
+        assert db.sql("select status from fm_payout_confirmations")[0]["status"] == "transfer_started"
+        record = p.PayoutTransferRecord(transfer_reference="국민 거래 7788-0042", amount=16000,
+                                        transferred_on=p.datetime.now(p.KST).date())
+        paid = await db.action(ident, "paid", transfer=record)
+        assert paid["status"] == "paid" and paid["simulated"] is False
+        assert paid["providerRef"] == "국민 거래 7788-0042" and paid["transferReferenceMasked"] == "••••0042"
+        # 모델 화면: 지급 완료 + 이체일 + 끝 4자리만.
+        data = await p.get_payout_statements(db.request, Response(), "model-user")
+        row = next(item for item in data["items"] if item["periodMonth"] == "2026-08")
+        assert row["status"] == "paid"
+        confirmation = row["confirmations"][0]
+        assert confirmation["providerRef"] is None and confirmation["transferReferenceMasked"] == "••••0042"
+        assert confirmation["transferredOn"] == p.datetime.now(p.KST).date().isoformat()
+        assert confirmation["simulated"] is False
+        # 다 지급된 달을 다시 실행하면 새로 지급할 몫이 없다.
+        done = await db.run()
+        assert [row["outcome"] for row in done["results"]] == ["nothing_due"]
+        assert len(db.sql("select id from fm_payout_confirmations")) == 1
+        audit = [row["action"] for row in db.sql("select action from admin_audit_log")]
+        assert audit.count("payout_statement.run") == 3 and "payout_confirmation.paid" in audit
+    asyncio.run(scenario())
+
+
+def test_monthly_run_skips_months_with_unconfirmed_chain_settlements(db):
+    db.add(); db.add(9000, chain_status="pending")
+    async def scenario():
+        ran = await db.run()
+        assert ran["results"][0]["outcome"] == "unconfirmed" and ran["results"][0]["unconfirmedCount"] == 1
+        assert db.sql("select id from fm_payout_confirmations") == []
+    asyncio.run(scenario())
+
+
+def test_monthly_run_refuses_open_month(db):
+    async def scenario():
+        month = p.datetime.now(p.KST).date().strftime("%Y-%m")
+        with pytest.raises(HTTPException) as error:
+            await db.run(month=month)
+        assert error.value.status_code == 409 and error.value.detail["code"] == "payout_month_open"
+    asyncio.run(scenario())
+
+
+def test_database_refuses_manual_paid_without_record_and_record_rewrite(db):
+    db.add()
+    async def scenario():
+        confirmation = await db.confirm()
+        await db.action(confirmation["id"], "start")
+        return confirmation["id"]
+    ident = asyncio.run(scenario())
+    # 코드를 우회한 SQL 도 참조번호·이체일 없이는 수동 확인서를 paid 로 만들 수 없다.
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set status = 'paid', paid_at = now() where id = %s", (ident,))
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set transferred_on = current_date where id = %s", (ident,))
+    asyncio.run(db.action(ident, "paid"))
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set provider_ref = '바꿔치기' where id = %s", (ident,))
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set transferred_on = transferred_on - 1 where id = %s", (ident,))
+    assert db.sql("select provider_ref from fm_payout_confirmations")[0]["provider_ref"] == "테스트 이체 0001"
+
+
+# ── 2026-09-27 중간 정산 ────────────────────────────────────────────────────────
+
+def test_interim_then_month_end_never_pays_a_settlement_twice(db, monkeypatch):
+    from datetime import datetime, timedelta
+    start = datetime.combine(p.datetime.now(p.KST).date().replace(day=1), datetime.min.time(), p.KST)
+    month = start.strftime("%Y-%m")
+    early = db.add(7000, (start + timedelta(seconds=1)).isoformat())
+    early2 = db.add(9000, (start + timedelta(seconds=2)).isoformat())
+    pending = db.add(5000, (start + timedelta(seconds=3)).isoformat(), chain_status="pending")
+
+    async def interim_phase():
+        ran = await db.run(month=month, interim=True)
+        assert ran["kind"] == "interim" and ran["moneyMoved"] is False and ran["cutoffAt"] is not None
+        [row] = ran["results"]
+        assert row["outcome"] == "prepared" and (row["amount"], row["count"]) == (16000, 2)
+        assert row["unconfirmedCount"] == 1  # 체인 미확정 5,000원은 담지 않는다
+        ident = row["confirmationId"]
+        # 멱등 — 다시 눌러도 같은 확인서.
+        again = await db.run(month=month, interim=True)
+        assert [r["outcome"] for r in again["results"]] == ["in_progress"]
+        assert again["results"][0]["confirmationId"] == ident
+        stored = db.sql("select kind, cutoff_at from fm_payout_confirmations")
+        assert len(stored) == 1 and stored[0]["kind"] == "interim" and stored[0]["cutoff_at"] is not None
+        assert {e["settlement_id"] for e in db.sql("select settlement_id::text from fm_payout_confirmation_entries")} == {early, early2}
+        # 지급 완료는 실제 이체 기록과 함께만.
+        await db.action(ident, "start")
+        with pytest.raises(HTTPException) as error:
+            await p.advance_payout_confirmation(ident, "paid", db.request, Response(), "admin-1", None)
+        assert error.value.detail["code"] == "payout_transfer_record_required"
+        paid = await db.action(ident, "paid")
+        assert paid["status"] == "paid" and paid["kind"] == "interim" and paid["simulated"] is False
+        return ident
+
+    ident = asyncio.run(interim_phase())
+    cutoff = db.sql("select cutoff_at from fm_payout_confirmations")[0]["cutoff_at"]
+    late = db.add(11000, (cutoff + timedelta(seconds=1)).isoformat())
+    db.sql("update fm_settlements set chain_status = 'confirmed' where id = %s", (pending,))
+
+    async def still_open():
+        listed = (await p.list_admin_payout_statements(month, db.request, Response(), "admin-1"))["items"][0]
+        # 달이 안 끝났으니 "지급 완료"가 아니고, 지금까지 지급 16,000 · 남은 몫 16,000.
+        assert listed["open"] is True and listed["status"] == "scheduled"
+        assert listed["paidAmount"] == 16000 and listed["unpaidAmount"] == 16000 and listed["unpaidCount"] == 2
+        data = await p.get_payout_statements(db.request, Response(), "model-user")
+        mine = next(item for item in data["items"] if item["periodMonth"] == month)
+        [interim] = mine["confirmations"]
+        assert interim["kind"] == "interim" and interim["status"] == "paid"
+        assert interim["coveredThrough"] == p.covered_through(cutoff)
+        assert interim["providerRef"] is None and interim["transferReferenceMasked"] == "••••0001"
+        assert mine["paidAmount"] == 16000 and data["nextPayout"]["amount"] == 16000
+    asyncio.run(still_open())
+
+    # 달이 끝났다 — 월말 정산은 중간 정산이 담은 정산을 빼고 남은 몫만 모은다.
+    closed_at = (start + timedelta(days=32)).replace(day=1, hour=12)
+
+    class Frozen(p.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return closed_at.astimezone(tz or p.KST)
+
+    monkeypatch.setattr(p, "datetime", Frozen)
+
+    async def month_end():
+        ran = await db.run(month=month)
+        assert ran["kind"] == "monthly"
+        [row] = ran["results"]
+        assert row["outcome"] == "prepared" and (row["amount"], row["count"]) == (16000, 2)
+        final = row["confirmationId"]
+        remainder = {e["settlement_id"] for e in db.sql(
+            "select settlement_id::text from fm_payout_confirmation_entries where confirmation_id = %s", (final,))}
+        assert remainder == {pending, late}
+        await db.action(final, "start")
+        await db.action(final, "paid")
+        done = await db.run(month=month)
+        assert [r["outcome"] for r in done["results"]] == ["nothing_due"]
+        listed = (await p.list_admin_payout_statements(month, db.request, Response(), "admin-1"))["items"][0]
+        assert listed["status"] == "paid" and listed["paidAmount"] == 32000 and listed["unpaidAmount"] == 0
+        return final
+    final = asyncio.run(month_end())
+
+    # 정산 4건이 정확히 한 번씩, 합계 = 그 달 모델 몫 전부.
+    entries = db.sql("select settlement_id::text, amount from fm_payout_confirmation_entries where released_at is null")
+    assert sorted(e["settlement_id"] for e in entries) == sorted({early, early2, pending, late})
+    assert sum(e["amount"] for e in entries) == 32000
+    # DB 도 같은 정산을 두 번째 확인서에 넣지 못한다.
+    with pytest.raises(psycopg.Error):
+        db.sql("insert into fm_payout_confirmation_entries (confirmation_id, settlement_id, amount) values (%s, %s, 7000)",
+               (final, early))
+    # 중간 정산 표시·기준 시각은 바꿀 수 없다.
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set kind = 'monthly', cutoff_at = null where id = %s", (ident,))
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set cutoff_at = cutoff_at - interval '1 day' where id = %s", (ident,))
+
+
+def test_cancelled_interim_releases_settlements_for_the_next_run(db):
+    from datetime import datetime, timedelta
+    start = datetime.combine(p.datetime.now(p.KST).date().replace(day=1), datetime.min.time(), p.KST)
+    month = start.strftime("%Y-%m")
+    first = db.add(7000, (start + timedelta(seconds=1)).isoformat())
+
+    async def scenario():
+        ran = await db.run(month=month, interim=True)
+        ident = ran["results"][0]["confirmationId"]
+        await db.action(ident, "cancel")
+        again = await db.run(month=month, interim=True)
+        [row] = again["results"]
+        assert row["outcome"] == "prepared" and row["confirmationId"] != ident and row["amount"] == 7000
+        active = db.sql("select confirmation_id::text, settlement_id::text from fm_payout_confirmation_entries where released_at is null")
+        assert active == [{"confirmation_id": row["confirmationId"], "settlement_id": first}]
+    asyncio.run(scenario())
+
+
+def test_interim_rejects_future_month_and_database_requires_cutoff_for_interim(db):
+    from datetime import timedelta
+    db.add()
+    future = (p.datetime.now(p.KST).date().replace(day=1) + timedelta(days=32)).strftime("%Y-%m")
+
+    async def scenario():
+        with pytest.raises(HTTPException) as error:
+            await db.run(month=future, interim=True)
+        assert error.value.detail["code"] == "payout_month_future"
+        return await db.confirm()
+    confirmation = asyncio.run(scenario())
+    assert db.sql("select kind, cutoff_at from fm_payout_confirmations")[0] == {"kind": "monthly", "cutoff_at": None}
+    with pytest.raises(psycopg.Error):
+        db.sql("update fm_payout_confirmations set kind = 'interim' where id = %s", (confirmation["id"],))

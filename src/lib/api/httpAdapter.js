@@ -17,6 +17,8 @@ import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 import { jobFailure } from './jobFailure.js';
+import { pollDetailPageJob } from '../detailPageJobPoll.js';
+import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
@@ -578,14 +580,24 @@ export const httpAdapter = {
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님) — 새 잡 없음
-    const result = await pollJob(res.jobId, {
-      onProgress,
-      // 15분. 정상 생성 실측이 242~285초인데 상한이 300초였다 — 여유가 15초뿐이라
-      // 조금만 느려도 화면이 먼저 포기했다(2026-08-05 실측). 서버 lease 복구가 900초라
-      // 그 사이 죽었다 되살아난 잡까지 화면이 지켜볼 수 있게 같은 값으로 맞춘다.
-      timeoutMs: 900000,
-      timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
+    // 상한 없음(2026-09-26) — 예전 15분 폴링 상한은 서버가 7초 뒤 끝낸 잡을 화면이 먼저
+    // 포기하게 만들었다. store 경로와 같은 규칙(lib/detailPageJobPoll.js): 서버 잡이 살아
+    // 있는 동안 계속 보고, 15분 뒤엔 주기만 늦춘다. 실패는 서버가 error 라고 답할 때만.
+    let last = -1;
+    const job = await pollDetailPageJob({
+      jobId: res.jobId,
+      getJob: (id) => http(`/v1/jobs/${id}`),
+      startedAt: Date.now(),
+      onJob: (j) => {
+        if (typeof j?.progress === 'number' && j.progress !== last) {
+          last = j.progress;
+          onProgress && onProgress(j.progress);
+        }
+      },
     });
+    if (job.status !== 'done') throw jobFailure(job);
+    onProgress && onProgress(100);
+    const result = job.result || {};
     // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement)을 조회한다. 정산은 상품(project) 단위 7일 창으로 묶인다.
     return { data: result.data, credits: result.credits, jobId: res.jobId };
   },
@@ -605,6 +617,12 @@ export const httpAdapter = {
   // ?poll=1 — SSE 대신 1회 JSON(EventSource 는 Bearer 헤더 불가). after = 마지막 이벤트 id 커서.
   async getJobEvents(jobId, after = 0) {
     return http(`/v1/jobs/${jobId}/events?poll=1&after=${after}`);
+  },
+  // 생성 중 컷 미리보기 바이트(2026-09-26) — REAL 얼굴 컷의 cut_done 은 주소가 없다(492cbc64).
+  // 서버가 요청마다 소유·라이선스를 다시 확인하고 바이트를 준다. Bearer 가 필요해 blob 으로 받는다.
+  // 실패는 err.status 를 실어 던진다(403 = 라이선스가 지금 유효하지 않음) — 콘솔 로그는 없다.
+  detailCutPreview(projectId, jobId, blockId, opts) {
+    return httpBlob(detailCutPreviewPath(projectId, jobId, blockId), opts);
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
   // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
@@ -666,6 +684,11 @@ export const httpAdapter = {
     const normalized = { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
     analysisCache = { projectId, analysis: normalized };
     return normalized;
+  },
+  // 호리존 세트 벽 색 '옷 색에 맞춤'용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
+  // 콘티·원본 사진을 읽어 필요한 색만 재고 analysis 에 저장한다. {status, garmentColorEvidence(요약|null)}.
+  async measureGarmentColors(projectId) {
+    return http(`/v1/projects/${projectId}/analysis/garment-colors:measure`, { method: 'POST' });
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.

@@ -1,0 +1,17 @@
+HORIZON WALL TONE — wall hue only, with the complete EXAMPLE as the scene master:
+Use ${wallHex} as a muted HUE/CHROMA suggestion for the seamless vertical wall, not as
+an exact RGB or brightness target. Keep the example wall's overall lightness and its
+existing bright-to-dark gradient. Change only its underlying surface hue by a subtle
+amount that relates to the PRODUCT color. If the product has stripes or several colors,
+choose a restrained overall/neutral family from the visible PRODUCT, never one tiny accent.
+Preserve the example's wall/floor geometry, floor material and color, camera and framing.
+Preserve the original light source direction, shadow direction, length, spread and edge
+softness, including cast and contact shadows. Keep the same exposure, white balance,
+contrast, gradient shape and calm/bright/dark mood. Recoloring must not flatten existing
+shadows, move them, invent a second light, or recolor the floor or the entire image.
+Do not recolor the PRODUCT, skin, matching garments or floor. Preserve exact PRODUCT color,
+construction, hem, silhouette and visible detail ahead of reference clothing or pose contacts.
+Pose, framing, clothing and identity keep their existing compiled owners and input roles.
+The attached complete EXAMPLE ALL supplies studio geometry/light evidence with its allowed
+pose/framing scope. Do not require or infer an absent PLATE, pose mask or layout image.
+Use this same wall tone for every cut with this set and product color.

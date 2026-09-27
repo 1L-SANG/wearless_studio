@@ -95,7 +95,17 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
       if (detailHandoff) {
-        await api.promoteDetailRecommendations(projectId, detailHandoff);
+        // 디테일 추천은 부가 자료라 서명·유효기간 검증 실패(invalid_analysis_handoff)는 확정을 막지
+        // 않는다. 추천 없이 넘어가면 콘티는 "디테일 추천을 준비하지 못했어요" 안내와 수동 추가로
+        // 이어진다(ADR-0012). 2026-09-26: 좌표 0·1 서명 불일치(#417) 하나로 확정이 1시간 반 막혔다.
+        // 원본 불일치·저장 충돌은 계속 막는다. 증거 승격이 없으면 이것이 유일한 사진 대조다.
+        // 일시 오류도 막는다. 삼키면 확정 성공으로 초안이 지워져 재시도로 살릴 추천을 잃는다.
+        try {
+          await api.promoteDetailRecommendations(projectId, detailHandoff);
+        } catch (err) {
+          if (err?.code !== 'invalid_analysis_handoff') throw err;
+          console.warn('[promote] 디테일 추천 검증 실패, 추천 없이 진행합니다.', err.code);
+        }
       }
       if (evidenceHandoff) {
         await api.promoteConfirmedGptEvidence(projectId, evidenceHandoff);

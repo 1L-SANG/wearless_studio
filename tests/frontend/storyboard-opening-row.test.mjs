@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 
 import { createServer } from 'vite';
+import react from '@vitejs/plugin-react';
 
 import { defaultStoryboard } from '../../src/lib/api/shapes.js';
 import { getBlockRenderHeight } from '../../src/features/editor/editorGeometry.js';
@@ -16,8 +17,10 @@ const PRODUCT = {
 };
 const COLORS = [{ id: 'base', isBase: true, images: [] }];
 const SERVER_DIR = fileURLToPath(new URL('../../server/', import.meta.url));
-const VENV_PYTHON = fileURLToPath(new URL('../../server/.venv/bin/python', import.meta.url));
-const PYTHON = existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
+const VENV_PYTHON = fileURLToPath(new URL(
+  process.platform === 'win32' ? '../../server/.venv/Scripts/python.exe' : '../../server/.venv/bin/python', import.meta.url,
+));
+const PYTHON = process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : process.platform === 'win32' ? 'python' : 'python3');
 
 let vite;
 let buildEditorBlocksFromStoryboard;
@@ -25,6 +28,10 @@ let buildStoryboard;
 
 before(async () => {
   vite = await createServer({
+    configFile: false,
+    root: fileURLToPath(new URL('../..', import.meta.url)),
+    plugins: [react()],
+    resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     appType: 'custom',
     logLevel: 'silent',
     server: { middlewareMode: true, watch: null },
