@@ -15,7 +15,7 @@ import { api, isMockMode } from '@/lib/api/index.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
-import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
@@ -46,7 +46,7 @@ import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBloc
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
-import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
@@ -1160,6 +1160,7 @@ export function Editor() {
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
+  const failedCleanupJobRef = useRef(null);
   const lastPush = useRef(0);
 
   useEffect(() => {
@@ -1344,10 +1345,10 @@ export function Editor() {
      fillGenBlocks 가 건드리지 않는다(셀러 편집 승리). history 는 쌓지 않는다(자동 채움은
      되돌리기 대상이 아님 — setBlocks 는 명시 액션에서만 push). */
   useEffect(() => {
-    if (!genActive) return;
+    if (!genActive || dpJob.status === 'error') return;
     setBlocks((bs) => (bs ? fillGenBlocks(bs, dpJob) : bs));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genActive, dpJob.cuts, dpJob.copy, dpJob.live, dpJob.failedCuts]);
+  }, [genActive, dpJob.status, dpJob.cuts, dpJob.copy, dpJob.live, dpJob.failedCuts]);
 
   /* 완료 — 화면 전환 없이 같은 캔버스에서 확정(오너 결정 #4): 서버 조립본에서 안정 src·
      미편집 카피·AI 고지만 병합하고 저장을 연다. FaceMarket 영수증은 있으면 모달로. */
@@ -1366,8 +1367,8 @@ export function Editor() {
         const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
         if (cancelled) return;
         if (freshAnalysis) setAnalysis(freshAnalysis);
-        // 못 만든 컷은 완료 순간 표식을 잃고 일반 빈 슬롯이 된다 — 어떤 컷이 왜 비었는지,
-        // 크레딧이 나갔는지도 알 수 없다. 표식을 남겨 화면과 저장본 모두에서 보이게 한다.
+        // 전체 잡 성공에서만 서버 완성본이 있다. 혹시 서버가 실패 목록을 함께 보냈다면
+        // 병합 헬퍼가 그 표식을 유지한다.
         const failedCutIds = new Set(useAppStore.getState().detailPageJob.failedCuts || []);
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
@@ -1395,14 +1396,10 @@ export function Editor() {
         pendingGenerationDraft.current = false;
         genActiveRef.current = false;
         setGenActive(false);
-        const failedShown = latestBlocks.current.reduce((n, b) => n
-          + (b.elements || []).filter((el) => el.genFailed).length, 0);
         toast.push(restoredServerLayout
           ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
-          : failedShown
-            ? `상세페이지가 완성됐어요 — 다만 ${failedShown}컷은 만들지 못했어요(크레딧 미차감). 빈 자리에서 다시 만들 수 있어요`
-            : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요',
-        { icon: failedShown && !restoredServerLayout ? 'alertTri' : 'check' });
+          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요',
+        { icon: 'check' });
         if (dpJob.jobId) {
           const r = await tryGetReceipt(dpJob.jobId);
           if (!cancelled && r) setGenReceipt(r);
@@ -1426,6 +1423,33 @@ export function Editor() {
     if (now - lastPush.current > 350) { hist.current.past.push(prevBlocks.current); if (hist.current.past.length > 80) hist.current.past.shift(); hist.current.future = []; }
     lastPush.current = now; prevBlocks.current = blocks;
   }, [blocks]);
+
+  // 페이지 전체 실패는 출력 없음·예약 해제다. 진행 중 임시로 보인 컷도 결과로 남기지
+  // 않고, 임시 작업본·undo 기록·의류 탭에서 철회한다. 셀러가 고친 문구/배치는 유지한다.
+  useEffect(() => {
+    if (!genActive || dpJob.status !== 'error') {
+      failedCleanupJobRef.current = null;
+      return;
+    }
+    if (dpJob.projectId !== projectId || !Array.isArray(latestBlocks.current)) return;
+    const failedJobKey = dpJob.jobId || 'unstarted';
+    if (failedCleanupJobRef.current === failedJobKey) return;
+    failedCleanupJobRef.current = failedJobKey;
+    const snapshots = [latestBlocks.current, prevBlocks.current, ...hist.current.past, ...hist.current.future];
+    const revokedUrls = new Set([
+      ...(dpJob.revokedPreviewUrls || []),
+      ...snapshots.flatMap((snapshot) => [...failedJobPreviewUrls(snapshot)]),
+    ]);
+    const cleaned = clearFailedJobPreviewBlocks(latestBlocks.current, revokedUrls);
+    hist.current.past = hist.current.past.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls));
+    hist.current.future = hist.current.future.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls));
+    prevBlocks.current = cleaned;
+    latestBlocks.current = cleaned;
+    fromHistory.current = true;
+    setBlocksState(cleaned);
+    setWardrobe((current) => removeWardrobeImagesBySrc(current, revokedUrls));
+    backupLatestEditorDraft(cleaned);
+  }, [genActive, dpJob.status, dpJob.jobId, dpJob.revokedPreviewUrls, blocks, backupLatestEditorDraft]);
 
   // 자동 저장 — 생성 중에는 브라우저 임시 작업본, 완료 뒤에는 서버 완성본으로 분리한다.
   // 이 구분이 서버 조립 완료와 미완성 스켈레톤 PUT의 덮어쓰기 경합을 막는다.
@@ -3218,8 +3242,8 @@ export function Editor() {
                      (routes.generate_detail_page, 2026-09-26 확인): 이미 완성된 프로젝트면 기존
                      editor_blocks 를 돌려주고(새 잡·차감 없음), 같은 프로젝트 잡이 아직 돌면
                      repo.create_job 이 그 활성 잡에 합류시킨다(created=False → 예약 없음).
-                     새 잡은 서버가 error 로 끝낸 경우에만 생긴다 — 그때도 끝낸 컷은 체크포인트로
-                     이어 쓴다(#394). 캔버스에 이미 채운 컷은 reset 뒤에도 그대로다(fillGenBlocks). */
+                     새 잡은 서버가 error 로 끝낸 경우에만 생긴다. 통과한 컷 체크포인트는
+                     이어 쓰되(#394), 실패한 잡의 임시 미리보기는 화면에 남기지 않는다. */
                   <Button size="sm" variant="primary" onClick={() => {
                     genMergedRef.current = false;
                     useAppStore.getState().resetDetailPageJob();

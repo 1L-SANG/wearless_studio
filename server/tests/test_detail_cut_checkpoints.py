@@ -344,7 +344,7 @@ async def _store(app, job_id, identity="id-1"):
     ({'passed': True, 'decision': 'PASS', 'fingerprint': 'source-target-policy'}, True),
     ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy',
       'publishedBestEffort': True, 'attempts': 3, 'selectedAttempt': 1,
-      'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}, {'decision': 'FAIL'}]}, True),
+      'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}, {'decision': 'FAIL'}]}, False),
     ({'passed': False, 'decision': 'FAIL', 'fingerprint': 'source-target-policy',
       'publishedBestEffort': True, 'attempts': 2, 'selectedAttempt': 1,
       'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}]}, False),

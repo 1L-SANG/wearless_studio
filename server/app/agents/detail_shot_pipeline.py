@@ -1,8 +1,7 @@
 """Product-only closeups: original evidence, prepared presentation, source-shape fallback.
 
 Progress is durable and lease-fenced by the worker. A lost response is not permission
-to make another paid request. A best-effort selection remains explicitly marked as
-QC-failed when all checked candidates fail.
+to make another paid request. A best-effort candidate is marked as QC-unpassed.
 """
 from __future__ import annotations
 
@@ -160,18 +159,23 @@ def fingerprint(settings, sources, target, direction, style_reference=None, *, f
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+_FACT_SEVERITY = {
+    'permanentMarkings': 3, 'constructionDesign': 3, 'targetFraming': 3,
+    'colorMaterial': 2, 'temporaryArtifacts': 1, 'photographicPreparation': 1,
+}
+_FACT_PRIORITY = ('permanentMarkings', 'constructionDesign', 'targetFraming',
+                  'colorMaterial', 'temporaryArtifacts', 'photographicPreparation')
+
+
 def _candidate_rank(judgment, attempt):
+    """중대한 상품 사실부터 비교한다. 실패 항목의 단순 개수는 쓰지 않는다."""
     gates = {gate.get('code'): gate.get('status') for gate in judgment.get('gates') or []
              if isinstance(gate, dict)}
-    penalty = {'PASS': 0, 'UNKNOWN': 2, 'FAIL': 3}
-
-    def score(names):
-        return sum(penalty.get(gates.get(name), 2) for name in names)
-
-    return (judgment.get('decision') not in {'PASS', 'FAIL'},
-            score(('constructionDesign', 'colorMaterial')),
-            score(('permanentMarkings',)), score(('temporaryArtifacts',)),
-            score(('targetFraming',)), score(('photographicPreparation',)), -attempt)
+    severity = max((_FACT_SEVERITY[code] for code, status in gates.items()
+                    if code in _FACT_SEVERITY and status == 'FAIL'), default=0)
+    status_rank = {'PASS': 0, 'UNKNOWN': 1, 'FAIL': 2}
+    return (judgment.get('decision') not in {'PASS', 'FAIL'}, severity,
+            *(status_rank.get(gates.get(code), 1) for code in _FACT_PRIORITY), -attempt)
 
 
 async def generate_verified(settings, client, sources, *, target, direction, progress,
@@ -183,8 +187,8 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
     state = await progress.read()
     prior_judgments = list((state.get('qc') or {}).get('judgments') or [])
     recover_final = (state.get('attempts') == 3
-                     and state.get('phase') in {'generating', 'judging'}
-                     and [j.get('decision') for j in prior_judgments] == ['FAIL', 'FAIL'])
+                     and state.get('phase') in {'generating', 'judging', 'judged'}
+                     and [j.get('decision') for j in prior_judgments[:2]] == ['FAIL', 'FAIL'])
     if state and (state.get('fingerprint') != fp
                   or state.get('phase') == 'held'
                   or (state.get('phase') in {'generating', 'judging'} and not recover_final)):
@@ -230,20 +234,34 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
         report['fallbackInputHashes'] = [hashlib.sha256(i.data).hexdigest() for i in fallback_sources]
 
     async def publish_best_effort():
-        attempts = sorted(range(1, len(report['judgments']) + 1),
-                          key=lambda number: _candidate_rank(report['judgments'][number - 1], number))
-        for number in attempts:
+        if report['attempts'] != 3 or [j.get('decision') for j in report['judgments'][:2]] != ['FAIL', 'FAIL']:
+            await progress.finish(report)
+            raise DetailShotRejected('detail_quality_unconfirmed', report)
+        eligible = sorted(
+            (number for number, judgment in enumerate(report['judgments'], 1)
+             if isinstance(judgment, dict) and judgment.get('errorCode') != 'source_photo_copy'),
+            key=lambda number: _candidate_rank(report['judgments'][number - 1], number))
+        for number in eligible:
             selected = await progress.load_candidate(attempt=number)
             if selected is None:
                 continue
             report.update(publishedBestEffort=True, selectedAttempt=number,
+                          selectionRankVersion='severity-v1',
                           decision=report['judgments'][number - 1].get('decision', 'UNKNOWN'))
             await progress.finish(report, selected_attempt=number)
             return selected, report
         await progress.finish(report)
-        raise DetailShotRejected('detail_checkpoint_unavailable', report)
+        raise DetailShotRejected('detail_quality_unconfirmed', report)
 
     if recover_final:
+        final_judgment = report['judgments'][-1] if len(report['judgments']) >= 3 else None
+        if (state.get('phase') == 'judged' and candidate is not None
+                and isinstance(final_judgment, dict)
+                and final_judgment.get('passed') is True
+                and final_judgment.get('decision') == 'PASS'):
+            report.update(passed=True, decision='PASS')
+            await progress.finish(report)
+            return candidate, report
         report['fallbackInterrupted'] = True
         return await publish_best_effort()
 

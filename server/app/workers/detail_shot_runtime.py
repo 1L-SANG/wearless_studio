@@ -119,15 +119,28 @@ class ProgressStore:
 
     async def finish(self, metadata, *, selected_attempt=None):
         def finish(state):
+            judgments = metadata.get('judgments') or []
+            best_effort = (
+                metadata.get('passed') is False
+                and metadata.get('publishedBestEffort') is True
+                and metadata.get('attempts') == 3
+                and type(selected_attempt) is int
+                and metadata.get('selectedAttempt') == selected_attempt
+                and isinstance(judgments, list)
+                and [j.get('decision') for j in judgments[:2]] == ['FAIL', 'FAIL']
+                and 1 <= selected_attempt <= len(judgments)
+                and judgments[selected_attempt - 1].get('errorCode') != 'source_photo_copy'
+            )
             candidate = state.get('candidate')
             if selected_attempt is not None:
+                if not best_effort:
+                    raise DetailShotRejected('detail_checkpoint_unavailable')
                 candidate = next((row for row in state.get('candidates') or []
                                   if row.get('attempt') == selected_attempt), None)
                 if candidate is None:
                     raise DetailShotRejected('detail_checkpoint_unavailable')
-            accepted = metadata.get('passed') is True or metadata.get('publishedBestEffort') is True
             return {**state, 'qc': metadata, 'candidate': candidate,
-                    'phase': 'accepted' if accepted else 'held'}
+                    'phase': 'accepted' if metadata.get('passed') is True or best_effort else 'held'}
         await self._change(finish)
 
 

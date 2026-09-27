@@ -248,54 +248,40 @@ def test_page_output_qc_maps_each_color_to_deduplicated_truth_indexes(monkeypatc
     assert result[6] == []
 
 
-def test_passthrough_read_failure_skips_page_qc_without_completeness_failure(monkeypatch):
-    class _UnreadableR2(_RecordingR2):
-        def get_bytes(self, key):
-            raise RuntimeError("object unavailable")
-
-    calls = 0
-
-    async def forbidden(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        raise AssertionError("page QC must not run without the passthrough bytes")
-
+def test_page_qc_receives_generated_detail_instead_of_seller_photo(monkeypatch):
+    calls = []
     product_image = InlineImage("image/png", b"PRODUCT")
-    passthrough = {
-        "id": "seller-detail",
-        "r2_key": "seller/detail.png",
-        "mime_type": "image/png",
-        "width": 100,
-        "height": 200,
-    }
     prepared = [(
         _spec("detail", "product", "detail"),
         [product_image],
         "1. PRODUCT — detail",
         False,
         [product_image],
-        None,
-        False,
-        passthrough,
     )]
 
-    monkeypatch.setattr(dpj.page_output_qc, "judge", forbidden)
+    async def checked_detail(app, job, block, product, analysis, **kwargs):
+        return InlineImage("image/png", b"CHECKED-DETAIL"), {"passed": True}
+
+    async def judge(settings, page_plan, generated_images, *, product_truth_refs=()):
+        calls.append((page_plan, generated_images, product_truth_refs))
+        return {"overall": "PASS", "gates": [], "outliers": []}
+
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
+    monkeypatch.setattr(dpj.page_output_qc, "judge", judge)
     result, r2 = _run_cuts(
         monkeypatch,
         page_qc_mode="shadow",
         prepared=prepared,
-        r2=_UnreadableR2(),
     )
 
-    assert calls == 0
+    assert len(calls) == 1
+    assert [image.data for image in calls[0][1]] == [b"CHECKED-DETAIL"]
+    assert [image.data for image in calls[0][2]] == [b"PRODUCT"]
     assert result[0][0]["blockId"] == "detail"
-    assert result[1] == []
-    assert result[5] is None
-    assert result[6] == [{
-        "blockId": "detail",
-        "code": "page_output_qc_input_unavailable",
-    }]
-    assert r2.saved == []
+    assert len(result[1]) == 1
+    assert result[5]["overall"] == "PASS"
+    assert result[6] == []
+    assert r2.saved == [b"CHECKED-DETAIL"]
 
 
 def test_unexpected_page_qc_exception_is_fail_open(monkeypatch):

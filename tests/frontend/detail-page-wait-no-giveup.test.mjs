@@ -11,7 +11,7 @@ import {
   pollDetailPageJob,
 } from '../../src/lib/detailPageJobPoll.js';
 import { applyDetailJobEvents } from '../../src/lib/detailPageJobEvents.js';
-import { decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import { clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 
 const store = readFileSync(new URL('../../src/store/useAppStore.js', import.meta.url), 'utf8');
 const httpAdapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
@@ -162,7 +162,7 @@ test('이벤트는 after 커서로 이어 받고, 이벤트 조회 실패는 잡
   assert.deepEqual(got, [1, 2, 3]);
 });
 
-/* ---- 만든 컷은 바로 보이고, 잡이 멈춰도 남는다 ---- */
+/* ---- 만든 컷은 진행 중에 보이고, 실패하면 철회한다 ---- */
 
 const skeleton = () => [{ id: 'b1', elements: [
   { id: 'i1', type: 'image', sourceBlockId: 'sb1', src: 'mock-placeholder.jpg' },
@@ -218,7 +218,7 @@ test('재생(after=0)으로 같은 이벤트를 다시 받아도 이미 받은 �
   assert.equal(noUrl.cuts.sb1.url, 'https://r2.test/p1');
 });
 
-test('잡이 error 로 멈춰도 이미 그린 컷은 캔버스에 그대로 남는다', () => {
+test('잡이 error 로 끝나면 미리보기만 철회하고 셀러 편집과 레이아웃은 남긴다', () => {
   let job = emptyJob();
   let blocks = decorateGenBlocks(skeleton(), job, {});
   job = applyDetailJobEvents(job, [
@@ -226,28 +226,60 @@ test('잡이 error 로 멈춰도 이미 그린 컷은 캔버스에 그대로 남
     step(2, { blockId: 'sb2', status: 'cut_start' }),
   ]);
   blocks = fillGenBlocks(blocks, job);
-  // store 의 실패 종결 — cuts 는 그대로, live 만 비운다
-  job = { ...job, status: 'error', live: [], errorMessage: '작업 서버가 종료되어 생성이 중단됐어요. 다시 시도해 주세요.' };
-  blocks = fillGenBlocks(blocks, job);
-  assert.equal(blocks[0].elements[0].src, 'https://r2.test/p1', '만든 컷은 남는다');
-  assert.equal(blocks[0].elements[1].genPending, 'wait', '더는 "생성 중"으로 돌지 않는다');
+  blocks[0].elements[1] = { ...blocks[0].elements[1], src: '/seller-edited.jpg' };
+  blocks[0].elements.push({ id: 'copy', type: 'image', src: 'https://r2.test/p1' });
+  blocks[0].elements.push({ id: 'text', type: 'text', text: '셀러 문구' });
+  const previewUrls = failedJobPreviewUrls(blocks);
+  assert.deepEqual([...previewUrls], ['https://r2.test/p1']);
+  const cleaned = clearFailedJobPreviewBlocks(blocks, previewUrls);
+  assert.equal(cleaned[0].id, 'b1');
+  assert.equal(cleaned[0].elements[0].src, null);
+  assert.equal(cleaned[0].elements[0].genFailed, true);
+  assert.equal(cleaned[0].elements[0].genPending, 'failed');
+  assert.equal(cleaned[0].elements[1].src, '/seller-edited.jpg');
+  assert.equal(cleaned[0].elements[2].genFailed, true);
+  assert.equal(cleaned[0].elements[3].src, null, '캔버스에 복제한 임시 이미지도 철회');
+  assert.equal(cleaned[0].elements[4].text, '셀러 문구');
+  assert.doesNotMatch(JSON.stringify(cleaned), /https:\/\/r2\.test\/p1/);
+  assert.equal(blocks[0].elements[0].src, 'https://r2.test/p1', '입력은 변형하지 않는다');
 
-  // [다시 시도] — resetDetailPageJob 이 잡 상태를 비워도 캔버스의 컷은 지워지지 않는다
-  const reset = emptyJob();
-  blocks = fillGenBlocks(blocks, reset);
-  assert.equal(blocks[0].elements[0].src, 'https://r2.test/p1');
+  // 새 잡에서 성공하면 실패 표식을 지우고 새 미리보기로 채운다.
+  const waitingAgain = fillGenBlocks(cleaned, emptyJob());
+  assert.equal(waitingAgain[0].elements[0].genPending, 'wait');
+  assert.equal(waitingAgain[0].elements[0].genFailed, undefined);
+  const retry = { ...emptyJob(), cuts: { sb1: { url: '/retry.jpg', done: true } } };
+  const filled = fillGenBlocks(waitingAgain, retry);
+  assert.equal(filled[0].elements[0].src, '/retry.jpg');
+  assert.equal(filled[0].elements[0].genFailed, undefined);
 });
 
-test('store 는 실패 종결에서 컷을 지우지 않는다 — live 만 비운다', () => {
+test('원래 슬롯을 지운 뒤에도 작업 상태가 기억한 미리보기 주소로 복제본을 철회한다', () => {
+  const onlyCopy = [{ id: 'custom', elements: [{ id: 'copy', type: 'image', src: 'https://r2.test/p1' }] }];
+  assert.equal(failedJobPreviewUrls(onlyCopy).size, 0);
+  const cleaned = clearFailedJobPreviewBlocks(onlyCopy, new Set(['https://r2.test/p1']));
+  assert.equal(cleaned[0].elements[0].src, null);
+});
+
+test('store 는 실패 종결에서 미리보기 컷을 지우고 환불 잔액을 다시 읽는다', () => {
   const start = store.indexOf('const job = await pollDetailPageJob({');
   assert.ok(start > 0, 'store 가 공용 폴링 루프를 쓴다');
   const body = store.slice(start, store.indexOf('resetDetailPageJob() {', start));
-  const errorPatches = [...body.matchAll(/patch\(\{\s*status: 'error'[^}]*\}/g)].map((m) => m[0]);
+  const errorPatches = [...body.matchAll(/patch\(\{\s*status: 'error'[\s\S]*?\}\);/g)].map((m) => m[0]);
   assert.ok(errorPatches.length >= 2, `실패 종결 경로 ${errorPatches.length}개`);
   for (const p of errorPatches) {
-    assert.doesNotMatch(p, /cuts:/, '실패 종결이 cuts 를 덮으면 만든 컷이 사라진다');
+    assert.match(p, /cuts: \{\}/, '실패 종결에 컷 미리보기를 비운다');
     assert.match(p, /live: \[\]/);
   }
+  assert.match(body, /loadAccount\(\{ force: true \}\)/, '예약 해제된 잔액을 다시 읽는다');
+  assert.match(body, /revokedPreviewUrls:/, '원래 슬롯이 없어져도 임시 URL을 철회할 근거를 남긴다');
+  assert.match(editor, /clearFailedJobPreviewBlocks\(/, '실패 시 캔버스 미리보기를 철회한다');
+});
+
+test('오류가 캔버스 로드보다 먼저 와도 로드 직후 한 번 미리보기를 철회한다', () => {
+  const cleanup = editor.slice(editor.indexOf('// 페이지 전체 실패는 출력 없음'),
+    editor.indexOf('// 자동 저장 — 생성 중에는 브라우저 임시 작업본'));
+  assert.match(cleanup, /failedCleanupJobRef\.current/);
+  assert.match(cleanup, /\[genActive, dpJob\.status, dpJob\.jobId, dpJob\.revokedPreviewUrls, blocks, backupLatestEditorDraft\]/);
 });
 
 test('완료 병합은 서버 완성본이 이긴다 — 확인 안 된 임시 미리보기는 저장본에 싣지 않는다', () => {

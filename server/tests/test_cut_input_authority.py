@@ -44,7 +44,7 @@ class _TrackingR2(FakeR2):
 
 
 def _patch_detail_terminal(monkeypatch, captured):
-    async def fake_gen_cuts(app, job, prepared, product, analysis):
+    async def fake_gen_cuts(app, job, prepared, product, analysis, **kwargs):
         captured["prepared"] = prepared
         results = [
             {"blockId": item[0]["id"], "imageUrl": f"/{item[0]['id']}"}

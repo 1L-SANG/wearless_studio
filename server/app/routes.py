@@ -3285,7 +3285,10 @@ async def generate_detail_page(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
-    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    storyboardPerCut × source='ai' 블록 수를 예약한다. 모든 AI 컷이 완성됐을 때만
+    실제 새 생성 컷 수만큼 차감하고, 하나라도 실패하면 예약 전액을 해제하며 최종
+    페이지를 발행하지 않는다.
+    완료 재호출은 기존 결과 반환(무차감)."""
     s = request.app.state.settings
     scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:

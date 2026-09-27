@@ -25,6 +25,13 @@ export function isWardrobeImageUsed(blocks = [], image = null) {
   )));
 }
 
+/* 페이지 생성 전체 실패 뒤에는 의류 탭에 복제된 임시 컷도 보여 주지 않는다. */
+export function removeWardrobeImagesBySrc(wardrobe = {}, revokedUrls = new Set()) {
+  return Object.fromEntries(Object.entries(wardrobe || {})
+    .map(([group, images]) => [group, (images || []).filter((image) => !revokedUrls.has(image?.src))])
+    .filter(([, images]) => images.length));
+}
+
 function wardrobeImageFromElement(element, group) {
   return {
     id: element.id || `editor-image-${group}-${normalizedSrc(element.src)}`,

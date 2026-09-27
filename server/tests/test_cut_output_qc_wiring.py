@@ -457,9 +457,9 @@ def test_detail_shadow_qc_failure_warns_but_still_saves(monkeypatch, failure):
     assert calls["verdict"] == (1 if failure == "provider" else 0)
 
 
-def test_detail_off_and_passthrough_never_call_cut_qc(monkeypatch):
+def test_generic_qc_off_and_product_detail_uses_dedicated_qc(monkeypatch):
     async def forbidden(*_args, **_kwargs):
-        raise AssertionError("cut QC must not run")
+        raise AssertionError("generic cut QC must not run")
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", forbidden)
     off = _run_detail_cut(monkeypatch, qc_mode="off")
@@ -468,23 +468,32 @@ def test_detail_off_and_passthrough_never_call_cut_qc(monkeypatch):
     async def fake_emit(*_args, **_kwargs):
         return None
 
+    detail_calls = []
+
+    async def checked_detail(app, job, block, product, analysis, **kwargs):
+        detail_calls.append(block["id"])
+        return InlineImage("image/png", b"CHECKED-DETAIL"), {"passed": True}
+
     monkeypatch.setattr(dpj, "_emit", fake_emit)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
+    r2 = _RecordingR2([])
     app = fake_worker_app(make_settings(
         gemini_api_key="x", r2_bucket="b", cut_output_qc_mode="shadow",
-    ))
+    ), r2=r2)
     original = {"id": "seller-detail", "width": 100, "height": 200}
-    passthrough = asyncio.run(dpj._gen_cuts(
+    result = asyncio.run(dpj._gen_cuts(
         app,
         worker_job(),
-        [(_detail_spec(), [InlineImage("image/png", b"PRODUCT")], "manifest",
-          False, [], None, False, original)],
+        [({**_detail_spec(), "shot": "detail"}, [InlineImage("image/png", b"PRODUCT")],
+          "manifest", False, [], None, False, original)],
         {"clothingType": "top"},
         {},
     ))
-    assert passthrough[1] == []
-    assert passthrough[4] == []
-    assert passthrough[5] is None
-    assert passthrough[6] == []
+    assert detail_calls == ["b1"]
+    assert len(result[1]) == 1
+    assert result[4] == [{"blockId": "b1", "passed": True}]
+    assert result[5] is None and result[6] == []
+    assert r2.saved == [b"CHECKED-DETAIL"]
 
 
 def test_detail_job_persists_cut_qc_per_block(monkeypatch):

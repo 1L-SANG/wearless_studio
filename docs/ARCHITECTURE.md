@@ -508,7 +508,7 @@ graph LR
 ```
 
 - 예약(`credits_reserved`) → 확정(`credits_charged`) 2단계. lease 복구가 error 처리한 잡은 예약 자동 해제.
-- `detail_page` 는 **부분 성공 과금**: 성공 컷 수 × `CREDIT_COST_STORYBOARD_PER_CUT` 만 confirm. 실패 컷은 빈 슬롯 + 미차감, 전체 중단 없음.
+- `detail_page` 는 **전량 완성 시에만 출고·과금**: 실제 생성 컷 수 × `CREDIT_COST_STORYBOARD_PER_CUT` 확정. 한 컷이라도 미완성이면 실패 종결하고 예약 전액 해제.
 - 단가는 `CREDIT_COST_*` env + `CREDIT_COST_VERSION` 으로 버저닝, 잡 `metadata` 에 스냅샷.
 
 ---

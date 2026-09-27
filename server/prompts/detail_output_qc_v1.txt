@@ -19,14 +19,19 @@ Targetless legacy details must still be a useful, source-supported partial regio
 2. constructionDesign: Same intrinsic panels, motif family, seam/construction relationships, intentional
 lace/pleats/gathers and hardware type/count/placement within the crop. Re-laying and tension changes are allowed.
 Do not invent unseen lining, back structure, pockets, tie mechanism or closures. Clear wrong garment FAILS.
-3. colorMaterial: Preserve source-supported color family, stripe/print family/direction, knit/weave/openwork,
-edge thickness, translucency and sheen. Neutral exposure/white-balance changes are allowed. Do not turn fine
+3. colorMaterial: Preserve source-supported color family, stripe/print family and direction, knit/weave/openwork,
+edge thickness, translucency and sheen. Compare source-visible motif color sequence and relative repeat spacing;
+a clear changed sequence, density or scale FAILS even if both images show the same broad pattern family. Allow
+local spacing changes caused by natural folds and perspective. If the source cannot resolve a micro-detail,
+mark UNKNOWN rather than approving an invented one. Neutral exposure/white-balance changes are allowed. Do not turn fine
 knit into chunky wool, crochet into solid cloth, matte into satin, or infer fiber composition. When SERVER
 TARGET colorTransfer=true, colorSourceOrdinal ALONE owns target color while sourceOrdinal owns structure;
 the other colorway's close-up is not the color authority. Do not invent microtexture during transfer.
-4. photographicPreparation: Useful, coherent fashion detail with readable subject/connecting context,
-soft coherent light and natural cloth depth; no severe blur, pasted edge or fake flattened surface. Do not
-fail merely because steaming/re-laying improves an untidy source. An authentic source crop can PASS.
+4. photographicPreparation: Publishable e-commerce detail with readable, crisp subject and connecting context,
+soft coherent light, clean framing and natural cloth depth; no blur that hides a selling detail, pasted edge
+or fake flattened surface. Do not fail merely because steaming/re-laying improves an untidy source. Matching
+the seller source pixels alone is not sufficient: poor source lighting, blur or clutter must not pass through
+as a commercial result. A source-like candidate may PASS only if its photographic quality is already publishable.
 
 Permanent markings, unreadable lettering and temporary objects are owned by a SEPARATE specialist. Do not
 fail these four gates solely for a sewn label being inside/outside this crop or for uncertain tag/metal/thread

@@ -20,8 +20,8 @@ CATEGORY = "상의"
 
 
 @pytest.mark.parametrize("reason", ["detail_qc_failed", "detail_qc_unknown"])
-def test_detail_rejection_keeps_other_cut_without_asset_preview_or_charge(monkeypatch, reason):
-    captured = {"writes": [], "events": []}
+def test_detail_rejection_refunds_entire_page_without_publishing(monkeypatch, reason):
+    captured = {"writes": [], "deleted": [], "events": []}
 
     async def project(*args):
         return {"copywriting": False}
@@ -43,16 +43,18 @@ def test_detail_rejection_keeps_other_cut_without_asset_preview_or_charge(monkey
 
     async def detail(app, job, spec, product, analysis):
         if spec["id"] == "rejected":
-            raise dpj.DetailShotRejected(reason, {"passed": False, "attempts": 2})
+            raise dpj.DetailShotRejected(reason, {"passed": False, "attempts": 3})
         return dpj.InlineImage("image/png", b"PASSED-IMAGE"), {"passed": True}
 
     def assemble(storyboard, cuts, *args, **kwargs):
-        captured["cuts"] = cuts
-        return []
+        raise AssertionError("incomplete page must not be assembled")
 
     async def finalize(conn, **kwargs):
-        captured["finalize"] = kwargs
-        return {"editor_blocks": [], "available": 99}
+        raise AssertionError("incomplete page must not be published")
+
+    async def fail(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
 
     async def emit(pool, job_id, event, payload):
         captured["events"].append((event, payload))
@@ -65,20 +67,139 @@ def test_detail_rejection_keeps_other_cut_without_asset_preview_or_charge(monkey
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fail)
     monkeypatch.setattr(dpj, "_emit", emit)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     app.state.r2.put_bytes = lambda key, data, *args, **kwargs: captured["writes"].append(data)
+    app.state.r2.delete = lambda key: captured["deleted"].append(key)
+    app.state.r2.head = lambda key: None
     asyncio.run(dpj.run_detail_page_job(app, _job(reserved=2, per_cut=1)))
 
-    assert [cut["blockId"] for cut in captured["cuts"]] == ["accepted"]
+    assert captured["failure"]["code"] == "incomplete_cuts"
+    assert captured["failure"]["reserved"] == 2
     assert captured["writes"] == [b"PASSED-IMAGE"]
-    assert len(captured["finalize"]["cut_assets"]) == 1
-    assert captured["finalize"]["charge"] == 1
-    assert captured["finalize"]["reserved"] == 2
+    assert len(captured["deleted"]) == 1, "환불된 페이지의 임시 미리보기 파일도 지운다"
     done = [payload for event, payload in captured["events"] if payload.get("status") == "cut_done"]
     assert [payload["blockId"] for payload in done] == ["accepted"]
     failed = [payload for event, payload in captured["events"] if payload.get("status") == "cut_failed"]
     assert any(payload["blockId"] == "rejected" and payload.get("reason") == reason for payload in failed)
+
+
+@pytest.mark.parametrize("interruption", ["cancelled", "exception"])
+def test_interrupted_page_revokes_preview_stored_before_cut_gather_returns(monkeypatch, interruption):
+    captured = {"deleted": []}
+
+    async def project(*args):
+        return {"copywriting": False}
+
+    async def storyboard(*args):
+        return [{"id": "detail", "source": "ai", "sectionRole": "product",
+                 "contentRole": "detail", "cutType": "product", "shot": "detail",
+                 "direction": "front", "colorId": "base"}]
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "front"}]}]}
+
+    async def asset(*args):
+        return {"mime_type": "image/png", "r2_key": "k/front"}
+
+    async def interrupted(*args, stored_outputs=None, **kwargs):
+        assert stored_outputs is not None
+        stored_outputs.append({"key": "k/completed-cut", "cleanup_intent_id": None})
+        if interruption == "cancelled":
+            raise asyncio.CancelledError
+        raise RuntimeError("sibling failed before gather returned")
+
+    async def fail(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    monkeypatch.setattr(dpj.repo, "get_project", project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", lambda *args: asyncio.sleep(0, result={}))
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fail)
+    monkeypatch.setattr(dpj, "_gen_cuts", interrupted)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.delete = lambda key: captured["deleted"].append(key)
+    app.state.r2.head = lambda key: None
+
+    if interruption == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(dpj.run_detail_page_job(app, _job(reserved=1, per_cut=1)))
+    else:
+        asyncio.run(dpj.run_detail_page_job(app, _job(reserved=1, per_cut=1)))
+
+    assert captured["failure"]["reserved"] == 1
+    assert captured["deleted"] == ["k/completed-cut"]
+
+
+@pytest.mark.parametrize("cancel_point", ["commit", "post_commit"])
+def test_success_commit_uncertainty_never_deletes_published_cut(monkeypatch, cancel_point):
+    captured = {"deleted": [], "finalized": False, "commit_fault_delivered": False}
+
+    async def project(*args):
+        return {"copywriting": False}
+
+    async def storyboard(*args):
+        return [{"id": "detail", "source": "ai", "sectionRole": "product",
+                 "contentRole": "detail", "cutType": "product", "shot": "detail",
+                 "direction": "front", "colorId": "base"}]
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "front"}]}]}
+
+    async def generated(*args, stored_outputs=None, **kwargs):
+        stored_outputs.append({"key": "k/published", "cleanup_intent_id": None})
+        return ([{"blockId": "detail", "imageUrl": "/v1/assets/a1/file", "width": 880, "height": 1320}],
+                [{"asset_id": "a1", "bucket": "b", "key": "k/published", "mime": "image/png"}],
+                0, [], [], None, [])
+
+    async def finalize(*args, **kwargs):
+        captured["finalized"] = True
+        return {"editor_blocks": []}
+
+    async def fail(*args, **kwargs):
+        captured["failure_attempted"] = True
+        return False  # 이미 성공 커밋이면 실패 종결은 lease 펜스가 거부한다.
+
+    async def record(*args, **kwargs):
+        if cancel_point == "post_commit":
+            raise asyncio.CancelledError
+
+    class CommitConn:
+        async def commit(self):
+            if cancel_point == "commit" and captured["finalized"] and not captured["commit_fault_delivered"]:
+                captured["commit_fault_delivered"] = True
+                raise asyncio.CancelledError  # DB 커밋은 이뤄졌으나 응답이 끊긴 상황
+
+    class CommitPool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield CommitConn()
+
+    monkeypatch.setattr(dpj.repo, "get_project", project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", lambda *args: asyncio.sleep(0, result={}))
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", lambda *args: asyncio.sleep(0, result={
+        "mime_type": "image/png", "r2_key": "k/front"}))
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fail)
+    monkeypatch.setattr(dpj, "_gen_cuts", generated)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", lambda *args, **kwargs: [])
+    monkeypatch.setattr(dpj.fm_fingerprint_store, "record_cut_fingerprints", record)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.pool = CommitPool()
+    app.state.r2.delete = lambda key: captured["deleted"].append(key)
+    app.state.r2.head = lambda key: None
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(dpj.run_detail_page_job(app, _job(reserved=1, per_cut=1)))
+
+    assert captured["finalized"] is True
+    assert captured["deleted"] == [], "성공 커밋 중·직후 중단은 과금된 자산을 삭제하지 않는다"
 
 
 # ---------- 라우트 ----------
@@ -1086,13 +1207,18 @@ def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
     assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
 
 
-def test_gen_cuts_detail_publishes_only_dedicated_checked_output(monkeypatch):
+@pytest.mark.parametrize("qc_report", [
+    {"passed": True, "decision": "PASS"},
+    {"passed": False, "decision": "FAIL", "publishedBestEffort": True,
+     "selectedAttempt": 2, "judgments": [{"decision": "FAIL"}] * 3},
+])
+def test_gen_cuts_detail_publishes_selected_generated_output_once(monkeypatch, qc_report):
     async def fake_emit(pool, job_id, et, payload):
         return None
 
     async def fake_detail(app, job, block, product, analysis):
         assert block["id"] == "detail-1"
-        return dpj.InlineImage("image/png", b"QC-PASSED"), {"passed": True}
+        return dpj.InlineImage("image/png", b"SELECTED-GENERATED"), qc_report
 
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", fake_detail)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
@@ -1118,10 +1244,10 @@ def test_gen_cuts_detail_publishes_only_dedicated_checked_output(monkeypatch):
     assert len(cut_results) == len(cut_assets) == 1
     assert face_cuts == 0
     assert garment_qcs == [] and page_qc is None and warnings == []
-    assert len(cut_qcs) == 1 and cut_qcs[0]["passed"] is True
+    assert cut_qcs == [{"blockId": "detail-1", **qc_report}]
 
 
-def test_run_detail_page_job_partial_success(monkeypatch):
+def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypatch):
     captured = {}
 
     async def fake_gp(conn, uid, pid):
@@ -1142,21 +1268,23 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    call = {"n": 0}
+    call = {"b2": 0}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
-        call["n"] += 1
-        if call["n"] == 1:
-            return b"IMG", "image/png"     # b1 성공
-        raise RuntimeError("gen fail")      # b2 실패 → 빈 슬롯, 미차감
+        if cut_spec["id"] == "b1":
+            return b"IMG", "image/png"
+        call["b2"] += 1
+        raise RuntimeError("gen fail")
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
-        captured["cut_results"] = cut_results
-        return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
+        raise AssertionError("incomplete page must not be assembled")
 
     async def fake_finalize(conn, **kw):
-        captured.update(kw)
-        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+        raise AssertionError("incomplete page must not be published")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
 
     async def fake_emit(pool, job_id, et, payload):
         return None
@@ -1169,20 +1297,23 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
-    assert captured["charge"] == 19              # 성공 컷 1개 × per_cut(19), 실패 컷 미차감
-    assert len(captured["cut_assets"]) == 1
-    assert len(captured["cut_results"]) == 1     # b1만
-    assert captured["product_name"] == "미니멀 코튼 셔츠"  # copywriting OFF도 무호출 작명
+    assert call["b2"] == 2
+    assert captured["failure"]["reserved"] == 38
+    assert captured["failure"]["code"] == "incomplete_cuts"
+    assert captured["failure"]["metadata"] == {
+        "error": "incomplete_cuts", "requestedCuts": 2,
+        "generatedCuts": 1, "failedBlockIds": ["b2"],
+    }
 
 
-def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
-    """컷 생성은 일시 실패에 한 번 더 시도한다 — 빈 슬롯은 셀러에겐 그냥 못 만든 페이지다.
-    단 ValueError(입력 계약 위반)는 다시 불러도 같은 답이라 재시도하지 않는다."""
+def test_run_detail_page_job_retries_transient_failure_but_refunds_if_other_cut_is_invalid(monkeypatch):
+    """일시 오류는 재시도하고, 결정적 실패 컷이 남으면 전체 작업을 환불한다."""
     captured = {}
     attempts = {"transient": 0, "deterministic": 0}
 
@@ -1214,12 +1345,14 @@ def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
         raise ValueError("unknown cutType")
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
-        captured["cut_results"] = cut_results
-        return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
+        raise AssertionError("incomplete page must not be assembled")
 
     async def fake_finalize(conn, **kw):
-        captured.update(kw)
-        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+        raise AssertionError("incomplete page must not be published")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
 
     async def fake_emit(pool, job_id, et, payload):
         captured.setdefault("steps", []).append(payload.get("status"))
@@ -1232,6 +1365,7 @@ def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
@@ -1239,8 +1373,8 @@ def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
 
     assert attempts["transient"] == 2, "일시 실패는 한 번 더 시도한다"
     assert attempts["deterministic"] == 1, "ValueError 는 재시도하지 않는다"
-    assert len(captured["cut_results"]) == 1      # 재시도로 살아난 b1만
-    assert captured["charge"] == 19                # 실패 컷은 여전히 미차감
+    assert captured["failure"]["code"] == "incomplete_cuts"
+    assert captured["failure"]["reserved"] == 38
     assert captured["steps"].count("cut_failed") == 1
 
 
@@ -1653,8 +1787,11 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         return []
 
     async def fake_finalize(conn, **kw):
-        captured["finalize"] = kw
-        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+        raise AssertionError("incomplete page must not be published")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
 
     async def fake_emit(pool, job_id, et, payload):
         return None
@@ -1670,6 +1807,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     asyncio.run(dpj.run_detail_page_job(
@@ -1693,20 +1831,8 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert captured[block_id]["cut_spec"]["exampleId"] is None
         assert "EXAMPLE REFERENCE" not in captured[block_id]["manifest"]
         assert "Composition nuance" not in captured[block_id]["prompt"]
-    assert captured["finalize"]["metadata"]["warnings"] == [
-        {
-            "code": "example_not_applicable", "blockId": "mismatch",
-            "exampleId": "ex_wrong_clothing", "clothingType": "top", "refScope": "all",
-        },
-        {
-            "code": "pose_direction_incompatible", "blockId": "direction-mismatch",
-            "exampleId": "ex_back_pose", "direction": "front",
-        },
-        {
-            "code": "example_variant_unpublished", "blockId": "unpublished",
-            "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
-        },
-    ]
+    assert captured["failure"]["code"] == "incomplete_cuts"
+    assert captured["failure"]["metadata"]["failedBlockIds"] == ["direction-mismatch"]
     assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
 
 
@@ -2190,6 +2316,10 @@ def _run_real_detail_job(monkeypatch, storyboard, *, credits_reserved, failing_i
         captured["finalize"] = kwargs
         return {"editor_blocks": [], "available": 99}
 
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
     async def fake_settlement(*args, **kwargs):
         captured["settlements"].append(kwargs)
 
@@ -2210,6 +2340,7 @@ def _run_real_detail_job(monkeypatch, storyboard, *, credits_reserved, failing_i
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", lambda conn: asyncio.sleep(0))
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
@@ -2244,8 +2375,7 @@ _REAL_BLOCKED_PRODUCT = {"id": "product", "source": "ai", "sectionRole": "produc
     # (styling/front/full). 건너뛴 컷이 복제 판정(_duplicate_source_indexes)의 원본이 되면
     # 뒤에 오는 같은 레시피의 허용된 스타일링 컷이 그 "복제"로 cut_failed 가 됐다 — 건너뛴
     # 컷은 원본에서 뺀다(_SkippedCut).
-    # 2026-09-26 hooking 이 열려 이 조합은 기본 정책으로는 더 생기지 않는다. 남은 막힌 섹션
-    # (product)은 제품 컷이라 착용 컷과 레시피가 겹치지 않아 대신 쓸 수 없다. 그래서 이
+    # 2026-09-26 hooking 이 열려 이 조합은 기본 정책으로는 더 생기지 않는다. 이
     # 케이스만 정책 상수를 09-25 값(styling·studio)으로 되돌려 hooking 을 다시 막고 지킨다.
     pytest.param(False, "full", False, id="hooking-same-recipe-as-styling"),
 ])
@@ -2256,8 +2386,7 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
 
     이력: 2026-09-11 에 "스튜디오·스타일링·미러 전부 실제 얼굴" 로 바뀌어 가상 대역(mA)이
     사라졌다. 2026-09-14 에 studio 섹션만 남겼다가, 2026-09-25 사용자 결정으로 styling 섹션
-    (스타일링·미러)을, 2026-09-26 사용자 결정으로 hooking(첫 장면)을 다시 열었다. product 는
-    여전히 아예 만들지 않는다(gpt-image 호출 0, 정산 0).
+    (스타일링·미러)을, 2026-09-26 사용자 결정으로 hooking(첫 장면)을 다시 열었다.
     """
     from app.agents import identity_scope
 
@@ -2271,12 +2400,11 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         {"id": "h-side", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "side"},
         {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full", "direction": "front"},
         {"id": "mirror", "source": "ai", "cutType": "mirror", "shot": "full"},
-        dict(_REAL_BLOCKED_PRODUCT),
     ]
     real_face_ids = (
         (("hooking",) if hooking_open else ()) + ("h-front", "h-side", "styling", "mirror")
     )
-    skipped_ids = {"product"} | (set() if hooking_open else {"hooking"})
+    skipped_ids = set() if hooking_open else {"hooking"}
 
     captured = _run_real_detail_job(
         monkeypatch, storyboard, credits_reserved=len(real_face_ids),
@@ -2308,12 +2436,14 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         # 회귀 고정: 건너뛴 첫 장면과 레시피가 같아도 스타일링 컷은 **직접** 실제 얼굴로 생성된다.
         assert captured["cuts"]["styling"]["modelId"] == MODEL_ID
         assert "styling" in done_events
-    # 건너뛴 컷은 완료 이벤트도 자산도 없다 = 정산(성공 컷 수 기준)에서 빠진다.
+    # 범위 밖 컷은 완료 이벤트가 없고 작업 전체를 실패시킨다.
     assert not skipped_ids & set(done_events)
-    if real_cuts_fail:
-        # 실제 얼굴 컷이 전부 실패하면 나온 컷이 0 이다 — 성공 종결도 정산도 없다.
+    if real_cuts_fail or skipped_ids:
+        # 실제 얼굴 컷이 전부 실패하거나 범위 밖 컷이 남으면 출고·정산이 없다.
         assert "finalize" not in captured
         assert captured["settlements"] == []
+        assert captured["failure"]["code"] == (
+            "all_cuts_failed" if real_cuts_fail else "incomplete_cuts")
         return
     assets = captured["finalize"]["cut_assets"]
     assert len(assets) == len(real_face_ids)
@@ -2352,12 +2482,13 @@ def test_a_scope_skipped_cut_closes_its_slot_without_the_garment_truth_warning(
     assert "no garment-truth references" not in caplog.text
     # 옆의 허용된 컷은 그대로 실제 얼굴로 나온다.
     assert captured["cuts"]["styling"]["modelId"] == MODEL_ID
-    assert len(captured["finalize"]["cut_assets"]) == 1
+    assert "finalize" not in captured
+    assert captured["failure"]["code"] == "incomplete_cuts"
+    assert captured["failure"]["reserved"] == 1
 
 
-def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):
-    """정산 불변식 회귀: 부분 성공 단가는 실행 시점 설정이 아니라 예약액에서 역산한다.
-    예약(단가 1 × 2블록 = 2) 후 배포로 단가가 5로 올라도, 1컷 성공 = 1 차감(5도 2도 아님)."""
+def test_run_detail_page_job_full_charge_uses_reservation_time_price(monkeypatch):
+    """예약 뒤 단가가 바뀌어도 완성 페이지는 예약 시점의 단가로 정산한다."""
     captured = {}
 
     async def fake_gp(conn, uid, pid):
@@ -2376,13 +2507,8 @@ def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypa
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    call = {"n": 0}
-
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
-        call["n"] += 1
-        if call["n"] == 1:
-            return b"IMG", "image/png"
-        raise RuntimeError("gen fail")
+        return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
@@ -2408,7 +2534,7 @@ def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypa
     inflated = make_settings(gemini_api_key="x", r2_bucket="b", credit_cost_storyboard_per_cut=5)
     asyncio.run(dpj.run_detail_page_job(_app(inflated), _job(reserved=2)))
 
-    assert captured["charge"] == 1  # 스냅샷 단가(perCutCost=1) × 성공 1컷 — 실행 시점 5는 무시
+    assert captured["charge"] == 2  # 스냅샷 단가(perCutCost=1) × 완성 2컷
 
 
 def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
@@ -2651,40 +2777,40 @@ def test_detail_finalize_updates_product_name_and_project_title_in_same_transact
     assert result["available"] == 9
 
 
-def test_detail_passthrough_ships_the_sellers_original_without_generating(monkeypatch):
-    """미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 싣는다 — 이미지 모델을 부르지 않는다.
+def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monkeypatch):
+    """촘촘한 무늬도 원본을 바로 출고하지 않고 새 디테일 후보를 검수한다."""
+    calls = []
 
-    2026-08-01 측정: 줄 하나가 파란 실 2가닥 + 베이지 1가닥인 원단은 4K 에서도 한 주기 14px →
-    요소당 2.3px 이라 재현이 불가능하다. 원본이 있는데 다시 그리면 있던 정보를 버리는 셈이다.
-
-    과금은 **생성한 컷 수**(cut_assets)로 매기므로 패스스루는 거기 들어가면 안 된다 —
-    호출하지 않은 컷에 크레딧이 붙는다.
-    """
     async def fake_emit(pool, job_id, et, payload):
         return None
 
+    async def fake_detail(app, job, block, product, analysis):
+        calls.append(block["id"])
+        return dpj.InlineImage("image/png", b"POLISHED-IMAGE"), {"passed": True}
+
     monkeypatch.setattr(dpj, "_emit", fake_emit)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", fake_detail)
     app = _app(_settings())
-    app.state.gemini = _RecordingGemini()
     spec = {"id": "detail-1", "cutType": "product", "shot": "detail"}
     images = [dpj.InlineImage("image/png", b"front")]
     original = {"id": "asset-detail-1", "width": 3000, "height": 4000, "slot": "Detail"}
 
+    stored_outputs = []
     (cut_results, cut_assets, face_cuts, garment_qcs,
      cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1),
         [(spec, images, "manifest", False, images, None, False, original)],
         {"name": "스트라이프 셔츠", "clothingType": "top"}, {},
+        stored_outputs=stored_outputs,
     ))
 
-    assert app.state.gemini.calls == 0, "패스스루는 이미지 모델을 부르지 않는다"
-    assert cut_results == [{
-        "blockId": "detail-1",
-        "imageUrl": "/v1/assets/asset-detail-1/file",
-        "width": 3000, "height": 4000,
-    }]
-    assert cut_assets == [], "새 asset 을 만들지 않는다 — 과금 단위에 들어가면 안 된다"
-    assert face_cuts == 0 and garment_qcs == [] and cut_qcs == []
+    assert calls == ["detail-1"]
+    assert len(cut_results) == len(cut_assets) == 1
+    assert stored_outputs == [{"key": cut_assets[0]["key"],
+                               "cleanup_intent_id": cut_assets[0]["cleanup_intent_id"]}]
+    assert cut_results[0]["imageUrl"] != "/v1/assets/asset-detail-1/file"
+    assert cut_qcs == [{"blockId": "detail-1", "passed": True}]
+    assert face_cuts == 0 and garment_qcs == []
     assert page_qc is None and warnings == []
 
 
@@ -2782,9 +2908,8 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
 
 def test_every_non_real_stored_cut_done_carries_preview_url(monkeypatch):
     """대기 화면 점진 표시(2026-09-26) — 저장된 비-REAL 컷은 cut_done 마다 예외 없이
-    previewUrl 을 싣는다(원본·복제 모두). 셀러 원본 패스스루의 복제 자리는 새 출력이 없으니
-    원본과 같은 cut_passthrough(assetId)로 알린다 — 예전엔 주소 없는 cut_done 이라 그 자리만
-    끝까지 빈 채였다. REAL 얼굴 컷의 주소 비공개는 test_detail_page_license_face 가 지킨다."""
+    previewUrl 을 싣는다(원본·복제 모두). 디테일도 새 생성 컷으로 표시한다.
+    REAL 얼굴 컷의 주소 비공개는 test_detail_page_license_face 가 지킨다."""
     events = []
 
     async def fake_emit(pool, job_id, et, payload):
@@ -2793,8 +2918,12 @@ def test_every_non_real_stored_cut_done_carries_preview_url(monkeypatch):
     async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
         return b"IMGDATA", "image/png"
 
+    async def checked_detail(app, job, block, product, analysis, **kwargs):
+        return dpj.InlineImage("image/png", b"CHECKED-DETAIL"), {"passed": True}
+
     monkeypatch.setattr(dpj, "_emit", fake_emit)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", checked_detail)
     app = _app(_settings())
     images = [dpj.InlineImage("image/png", b"front")]
     worn = {"source": "ai", "sectionId": "section-a", "sectionRole": "studio",
@@ -2820,16 +2949,13 @@ def test_every_non_real_stored_cut_done_carries_preview_url(monkeypatch):
         app, _job(reserved=2), prepared, {"name": "셔츠", "clothingType": "top"}, {}))
 
     assert [c["blockId"] for c in cut_results] == ["worn", "worn-copy", "detail", "detail-copy"]
-    assert len(cut_assets) == 1, "복제·패스스루는 새 asset(과금 단위)을 만들지 않는다"
+    assert len(cut_assets) == 2, "착용 원본과 디테일 원본만 생성 자산으로 센다"
     dones = [p for et, p in events if et == "step" and p.get("status") == "cut_done"]
-    assert [d["blockId"] for d in dones] == ["worn", "worn-copy"]
+    assert {d["blockId"] for d in dones} == {"worn", "worn-copy", "detail", "detail-copy"}
+    assert len(dones) == 4
     for d in dones:
         assert d["previewUrl"].startswith("https://r2.test/"), d["blockId"]
-    passthroughs = [p for et, p in events if et == "step" and p.get("status") == "cut_passthrough"]
-    assert passthroughs == [
-        {"blockId": "detail", "status": "cut_passthrough", "assetId": "asset-detail-1"},
-        {"blockId": "detail-copy", "status": "cut_passthrough", "assetId": "asset-detail-1"},
-    ]
+    assert not any(p.get("status") == "cut_passthrough" for _, p in events)
     # 이벤트는 작게 — 원본 키·정리 표식은 싣지 않는다.
     assert "cleanup" not in repr(events) and "r2_key" not in repr(events)
 

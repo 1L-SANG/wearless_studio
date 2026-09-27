@@ -118,7 +118,7 @@ def test_editor_detail_rejected_qc_has_no_asset_or_preview_and_refunds(monkeypat
         return {}
 
     async def reject(*args):
-        raise eij.DetailShotRejected(reason, {"passed": False, "attempts": 2})
+        raise eij.DetailShotRejected(reason, {"passed": False, "attempts": 3})
 
     async def failure(conn, **kwargs):
         captured["failure"] = kwargs
