@@ -89,8 +89,10 @@ def required_slots_for_consent(consent_version: str | None) -> tuple[str, ...]:
     """그 동의 본문에 적힌 칸만 요구한다 — 동의서와 검사가 갈리면 둘 다 거짓이 된다."""
     return (PHOTO_SLOTS if str(consent_version or "") in CONSENT_VERSIONS_WITH_ANGLES
             else PHOTO_SLOTS_V2)
-ENROLLMENT_TTL = timedelta(hours=24)
-# 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
+# 2차 등록 진행 기한. 사진 18장을 하루에 다 찍기 어렵다는 오너 판단으로 2026-09-27 에 24h 에서
+# 72h 로 늘렸다. 신분증 촬영본 7일 파기 스윕보다 짧아야 한다(아래 REVIEW_DEADLINE_DAYS 설명 참고).
+ENROLLMENT_TTL = timedelta(hours=72)
+# 관리자 육안 심사 기한. 일반 등록의 TTL(ENROLLMENT_TTL) 로 자동 만료시키면 심사가 밀렸을 때 정상
 # 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
 # 7일 뒤 배치 스윕이 DB 와 무관하게 지운다** — 그 둘이 합쳐지면 7일 뒤엔 심사가 불가능해진
 # 행이 그 사용자의 단일 활성 등록 슬롯을 영구히 점유한다(최종리뷰 I3). 7일보다 짧은 전용
@@ -2817,8 +2819,8 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                         select id from fm_biometric_enrollments
                         where expires_at <= now()
                           -- Task5: id_capture_pending(신분증 촬영 대기)은 나머지와 같은 본인인증
-                          -- 진행 단계라 같은 24h TTL 로 만료시킨다. review_pending 은 일부러
-                          -- 뺀다 — 그건 사람 심사원을 기다리는 단계라, 같은 24h 로 자동만료시키면
+                          -- 진행 단계라 같은 TTL(ENROLLMENT_TTL) 로 만료시킨다. review_pending 은 일부러
+                          -- 뺀다 — 그건 사람 심사원을 기다리는 단계라, 같은 TTL 로 자동만료시키면
                           -- 심사가 밀린 정상 지원자가 자동 탈락한다. 대신 심사 액션(승인/반려,
                           -- Task7/8 소관)이 명시적으로 빠져나가게 한다 — review_pending 이 무기한
                           -- 방치될 위험은 심사팀 SLA/전용 타임아웃으로 다뤄야 할 별개 과제다.
@@ -2842,7 +2844,7 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
             await conn.commit()
 
         # 심사 기한(REVIEW_DEADLINE_DAYS) 초과분을 닫는다. 위 만료 스윕이 review_pending 을
-        # 일부러 빼 두는 건 "심사가 밀렸다고 정상 지원자를 24시간 만에 탈락시키지 않는다"는
+        # 일부러 빼 두는 건 "심사가 밀렸다고 정상 지원자를 등록 기한(ENROLLMENT_TTL) 만에 탈락시키지 않는다"는
         # 뜻이지 "영원히 기다린다"는 뜻이 아니다 — 신분증 촬영본은 7일이면 배치 스윕이
         # 지우므로 그 뒤엔 심사 자체가 불가능하고, 행은 사용자의 단일 활성 슬롯을 계속
         # 점유한다(최종리뷰 I3). review_status 도 비워 관리자 대기 큐에서 내린다.
