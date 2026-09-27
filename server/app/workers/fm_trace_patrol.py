@@ -146,8 +146,15 @@ async def finish_run(conn, run_id: str, status: str, stats: dict, error: str | N
 
 
 def _blank() -> dict:
-    return {"queries": 0, "hits": 0, "images": 0, "matched": 0, "new": 0, "errors": 0,
+    return {"queries": 0, "hits": 0, "images": 0, "matched": 0, "new": 0, "weak": 0, "errors": 0,
             "budget": False}
+
+
+#: 순찰이 남기는 신뢰도. 2026-09-28 첫 순찰 실측 — 브랜드 룩북 전신 사진이 구도만 비슷해 pHash 차이
+#: 6·8 로 걸렸다(오탐 2/214, 둘 다 다른 사람·다른 옷). 같은 컷 썸네일은 크롭·여백·재압축에서 최대 2
+#: (18컷 × 7변형). 그래서 순찰은 워터마크(high) 또는 차이 ≤ STRONG_PHASH(medium)만 남기고 약한
+#: 후보(low)는 개수만 센다. 모델 신고·관리자 직접 추적은 사람이 올린 이미지라 기존 한도(≤10)를 쓴다.
+PATROL_CONFIDENCE = ("high", "medium")
 
 
 async def patrol_once(pool, *, adapters, fetcher, queries: list[str], rows: list[dict],
@@ -205,8 +212,11 @@ async def patrol_once(pool, *, adapters, fetcher, queries: list[str], rows: list
                             result = await trace(conn, data, origin=origin, rows=rows)
                         except ValueError:
                             continue
-                        candidates = result["candidates"]
+                        candidates = [c for c in result["candidates"]
+                                      if c.get("confidence") in PATROL_CONFIDENCE]
                         if not candidates:
+                            if result["candidates"]:
+                                s["weak"] += 1
                             continue
                         s["matched"] += 1
                         rec = await fm_trace_findings.record_patrol_finding(
