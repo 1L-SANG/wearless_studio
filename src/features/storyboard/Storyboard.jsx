@@ -1312,7 +1312,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
                 appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
             ) : null} />
-          : <span className="sb-exhint">{cut === 'horizon' && exampleId ? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'}</span>}
+          : <span className="sb-exhint">{cut === 'horizon' && exampleId && refScope === 'all' ? '선택한 예시 구도 유지' : '내 사진은 이 프로젝트에서만'}</span>}
       </div>
       {mineTab ? (
         <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
@@ -1687,7 +1687,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             })} catalogs={catalogs} cut={block.cutType} blockCutType={block.cutType}
               direction={block.direction} sideStyle={block.sideStyle ?? null} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
-              onShotChange={block.cutType === 'horizon' && block.exampleId ? null : onShotChange}
+              onShotChange={block.cutType === 'horizon' && block.exampleId && (block.refScope || 'all') === 'all' ? null : onShotChange}
               clothingType={clothingType} gender={exampleGender}
               includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={block.exampleId || null}
