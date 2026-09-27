@@ -125,10 +125,11 @@ seed/matching/{matchingItemId}.{ext}
 [시작 tx]  idempotency/dedupe 조회(있으면 합류) → credit_accounts FOR UPDATE
            → 예상 최대 비용 계산(creditCosts) → available 검증(부족 시 402)
            → reserved += 비용 → jobs row(credits_reserved) → commit
-[성공 tx]  결과 저장 완료 후: 실제 성공분 계산(PL-4는 실패 컷 제외)
+[성공 tx]  결과 저장 완료 후: PL-4는 AI 컷 전량 완성 확인 후 확정액 계산
            → balance −= 실제, reserved −= 예약 → ledger append(delta, balance_after)
            → jobs.credits_charged, status='done' → commit
-[실패 tx]  reserved −= 예약 → jobs.status='error' → commit  (= 사용자 관점 미차감)
+[실패 tx]  PL-4는 AI 컷 1장이라도 미완성이면 reserved 전액 해제
+           → jobs.status='error' → commit  (= 사용자 관점 미차감)
 ```
 
 - 근거: 선검증만으로는 동시 job 2개가 같은 잔액을 통과할 수 있다 (Codex 지적 수용).

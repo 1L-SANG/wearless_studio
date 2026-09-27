@@ -160,7 +160,7 @@ function applyDetailJobEvents(job, events) {
       }
       if (p.status === 'cut_passthrough') {
         live.delete(p.blockId);
-        // 셀러 원본 재사용 — asset 행이 이미 있어 안정 /file 경로가 즉시 유효
+        // 구 작업 이벤트를 다시 읽기 위한 호환 처리. 새 디테일 생성은 이 상태를 보내지 않는다.
         next.cuts[p.blockId] = { url: p.assetId ? assetFileUrl(p.assetId) : null };
       }
       if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }

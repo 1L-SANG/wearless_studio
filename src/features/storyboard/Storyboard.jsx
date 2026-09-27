@@ -74,6 +74,7 @@ import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
 import {
   blockAllowedForModel,
   blocksForModel,
+  firstUnsupportedAiBlock,
   rejectionOfBlock,
   rejectionOfSection,
   filterExamplesForModel,
@@ -637,8 +638,8 @@ function StoryboardCard({
             canDelete={canDelete}
           />
           {selected && <SelectionRing />}
-          {/* 모델을 바꿔서 이 컷의 범위 밖이 된 경우 — 자동 교체는 하지 않고 표시만 하고
-              생성에서 뺀다(2026-09-11 사용자 결정). 서버도 같은 판정으로 건너뛴다. */}
+          {/* 모델을 바꿔 범위 밖이 된 컷은 자동 교체하지 않고 표시한다.
+              셀러가 수정하기 전에는 다음 단계로 진행하지 않는다. */}
           {outOfScope && (
             <div className="sb-out-of-scope" title={outOfScope.message}>
               <Icon name="alertTri" size={12} />
@@ -2177,6 +2178,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const generationCutCount = blocks == null
     ? null
     : uniqueGenerationCutCount(blocksForModel(blocks, identityKind));
+  const unsupportedAiBlock = firstUnsupportedAiBlock(blocks, identityKind);
   const previousGenerationCutCount = useRef(null);
   useEffect(() => {
     if (generationCutCount == null) return;
@@ -4082,6 +4084,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
     if (blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
+    if (unsupportedAiBlock) {
+      toast.push('이 모델로 만들 수 없는 AI 컷이 있어요. 표시된 컷을 삭제하거나 연출을 바꿔주세요.');
+      return;
+    }
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     await continueAfterStoryboardFlush({
@@ -4132,17 +4138,19 @@ export function Storyboard({ toastOverride = null } = {}) {
           <div className="sb-ab-count">
             AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
           </div>
-          {/* 만들 수 없는 컷은 서버 예약에서도 빠진다 — 견적도 같은 수를 봐야 한다. */}
-          <span className="sb-ab-cost">생성 {detailPageCreditCost(generationCutCount)} 크레딧</span>
+          <span className="sb-ab-cost" role={unsupportedAiBlock ? 'alert' : undefined}>
+            {unsupportedAiBlock ? 'AI 컷 설정 확인 필요' : `생성 ${detailPageCreditCost(generationCutCount)} 크레딧`}
+          </span>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={onCopywritingChange} label="카피라이팅" />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
           <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={goToMannequin}
-            disabled={blocks.length === 0 || blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))}
+            disabled={blocks.length === 0 || Boolean(unsupportedAiBlock) || blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))}
             title={blocks.length === 0 ? '컷을 1개 이상 구성해주세요'
-              : blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType)) ? '생성 설정을 준비하지 못한 이미지가 있어요' : undefined}>
+              : unsupportedAiBlock ? '이 모델로 만들 수 없는 AI 컷을 먼저 수정해 주세요'
+                : blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType)) ? '생성 설정을 준비하지 못한 이미지가 있어요' : undefined}>
             다음 · 마네킹컷 확인하기 <Icon name="arrowRight" size={17} />
           </button>
         </div>

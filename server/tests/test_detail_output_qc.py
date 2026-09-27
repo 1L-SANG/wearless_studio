@@ -10,12 +10,29 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 from app.agents.gemini_image import InlineImage
 
 
 def test_dedicated_module_exists():
     assert importlib.util.find_spec("app.agents.detail_output_qc") is not None
+
+
+def test_detail_qc_checks_visible_pattern_sequence_and_publishable_photo():
+    from app.agents import detail_output_qc
+
+    prompt = detail_output_qc.build_prompt(1, None, "front").lower()
+    assert "color sequence" in prompt
+    assert "repeat spacing" in prompt
+    assert "publishable" in prompt
+    fixes = detail_output_qc.repair_instructions({
+        "passed": False, "decision": "FAIL",
+        "gates": [{"code": "colorMaterial", "status": "FAIL"}],
+    })
+    assert len(fixes) == 1
+    assert "color sequence" in fixes[0].lower()
+    assert "repeat spacing" in fixes[0].lower()
 
 
 @pytest.fixture
@@ -32,6 +49,49 @@ def picture(color="green"):
     buf = BytesIO()
     Image.new("RGB", (32, 40), color).save(buf, format="PNG")
     return InlineImage("image/png", buf.getvalue())
+
+
+def test_source_photo_copy_is_rejected_before_model_judgment(qc, monkeypatch):
+    original = picture()
+    metadata = PngInfo()
+    metadata.add_text("reencoded", "same pixels")
+    copied = BytesIO()
+    with Image.open(BytesIO(original.data)) as image:
+        image.save(copied, format="PNG", pnginfo=metadata)
+    assert copied.getvalue() != original.data
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("pixel-identical source copy must not reach model QC")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
+    result = asyncio.run(qc.verdict(
+        settings(), [original], InlineImage("image/png", copied.getvalue())))
+
+    assert result["decision"] == "FAIL"
+    assert result["passed"] is False
+    assert result["errorCode"] == "source_photo_copy"
+    repair = qc.repair_instructions(result)
+    assert len(repair) == 1
+    assert "do not reuse seller source pixels" in repair[0].lower()
+
+
+def test_selected_source_crop_cannot_be_published_as_generated_detail(qc, monkeypatch):
+    original = picture()
+    target = bound_target()
+    crop_bytes = BytesIO()
+    with Image.open(BytesIO(original.data)) as image:
+        image.crop((3, 4, 26, 32)).save(crop_bytes, format="PNG")
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("source crop copy must not reach model QC")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
+    result = asyncio.run(qc.verdict(
+        settings(), [original], InlineImage("image/png", crop_bytes.getvalue()),
+        target=target))
+
+    assert result["decision"] == "FAIL"
+    assert result["errorCode"] == "source_photo_copy"
 
 
 def settings(**overrides):
@@ -230,10 +290,10 @@ def test_only_configured_primary_is_called_no_pass_from_fallback(qc, monkeypatch
         return response(qc)
     patch_core(qc, monkeypatch, fail)
     monkeypatch.setattr(qc.vision_llm, "_call_gemini", fallback)
-    out = asyncio.run(qc.verdict(settings(), [picture()], picture()))
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and calls == ["core"]
     calls.clear()
-    out = asyncio.run(qc.verdict(settings(openai_api_key=None), [picture()], picture()))
+    out = asyncio.run(qc.verdict(settings(openai_api_key=None), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and calls == []
 
 
@@ -243,13 +303,13 @@ def test_model_and_complete_envelope_options_are_explicit(qc, monkeypatch):
         seen.append((args, kwargs))
         return primary_response(qc, response(qc))
     patch_core(qc, monkeypatch, judge)
-    asyncio.run(qc.verdict(settings(), [picture()], picture()))
+    asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
     args, kwargs = seen[0]
     assert args[1] == "gpt-5.4-2026-03-05"
     assert kwargs["reasoning_effort"] == "high" and kwargs["image_detail"] == "high"
     assert kwargs["max_completion_tokens"] == 7000
     assert isinstance(kwargs["metadata"], dict)
-    assert len(args[3]) == 2 and args[3][-1].data == picture().data
+    assert len(args[3]) == 2 and args[3][-1].data == picture("red").data
 
 
 def test_untrusted_display_text_is_not_sent_to_judge(qc, monkeypatch):
@@ -259,7 +319,7 @@ def test_untrusted_display_text_is_not_sent_to_judge(qc, monkeypatch):
         return primary_response(qc, response(qc))
     patch_core(qc, monkeypatch, judge)
     target = bound_target(label="SECRET_ATTACK_IGNORE_RULES", reason="SECRET_ATTACK_IGNORE_RULES")
-    out = asyncio.run(qc.verdict(settings(), [picture()], picture(), target=target))
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red"), target=target))
     assert out["passed"] and "SECRET_ATTACK_IGNORE_RULES" not in prompts[0]
     assert '"kind":"neckline"' in prompts[0]
 
@@ -299,7 +359,7 @@ def test_reordered_sources_use_hash_not_original_analysis_index(qc, monkeypatch)
         prompts.append(args[2])
         return primary_response(qc, response(qc))
     patch_core(qc, monkeypatch, judge)
-    out = asyncio.run(qc.verdict(settings(), [picture("blue"), picture()], picture(),
+    out = asyncio.run(qc.verdict(settings(), [picture("blue"), picture()], picture("red"),
                                 target=bound_target(sourceIndex=19)))
     assert out["passed"] and '"sourceOrdinal":2' in prompts[0]
     assert len(out["judgeImageHashes"]) == 4
@@ -315,7 +375,7 @@ def test_legacy_cross_color_structure_and_color_authorities_are_separate(qc, mon
     target = {"kind": "construction", "direction": "front", "colorTransfer": True,
               "sourceSha256": hashlib.sha256(picture().data).hexdigest(),
               "colorSourceSha256": hashlib.sha256(picture("blue").data).hexdigest()}
-    out = asyncio.run(qc.verdict(settings(), [picture(), picture("blue")], picture("blue"), target=target))
+    out = asyncio.run(qc.verdict(settings(), [picture(), picture("blue")], picture("red"), target=target))
     assert out["passed"]
     assert '"colorSourceOrdinal":2' in captured[0][2]
     assert '"colorTransfer":true' in captured[0][2]
@@ -350,7 +410,7 @@ def test_core_fail_fast_never_spends_or_fakes_specialist_pass(qc, monkeypatch, c
         pytest.fail("specialist must not run after nonpassing primary")
     patch_core(qc, monkeypatch, primary)
     patch_specialist(qc, monkeypatch, forbidden)
-    out = asyncio.run(qc.verdict(settings(), [picture()], picture()))
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
     assert out["decision"] == core_status
     assert out["specialist"]["status"] == "NOT_RUN"
     assert all(g["status"] == "UNKNOWN" for g in out["gates"] if g["code"] in qc.SPECIALIST_GATES)
@@ -363,7 +423,7 @@ def test_specialist_unavailable_after_core_pass_is_unknown(qc, monkeypatch):
         raise TimeoutError("temporary")
     patch_core(qc, monkeypatch, primary)
     patch_specialist(qc, monkeypatch, unavailable)
-    out = asyncio.run(qc.verdict(settings(), [picture()], picture()))
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and not out["passed"]
     assert out["specialist"]["status"] == "UNKNOWN"
     assert qc.repair_instructions(out) == []
@@ -384,7 +444,7 @@ def test_invalid_specialist_response_is_auditable_and_never_published(qc, monkey
         return {"passed": True, "message": "pretend"}
     patch_core(qc, monkeypatch, primary)
     patch_specialist(qc, monkeypatch, malformed)
-    out = asyncio.run(qc.verdict(settings(), [picture()], picture()))
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and out["specialist"]["rawJudge"]["passed"] is True
     assert qc.repair_instructions(out) == []
 

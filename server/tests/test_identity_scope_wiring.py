@@ -26,10 +26,10 @@ BOTH_BLOCK = {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full",
               "direction": "front"}
 
 
-# ── 라우트: 예약에서 빠진다(만들지도 않을 컷으로 402 가 나면 안 된다) ──
-@pytest.mark.parametrize("model_id,expected_cuts", [(REAL, 1), ("mB", 2)])
-def test_reserve_counts_only_cuts_this_model_can_make(
-    client, make_token, monkeypatch, model_id, expected_cuts,
+# ── 라우트: 한 컷이라도 만들 수 없으면 작업·예약 전에 거절한다 ──
+@pytest.mark.parametrize("model_id,allowed", [(REAL, False), ("mB", True)])
+def test_detail_requires_every_requested_cut_to_be_supported(
+    client, make_token, monkeypatch, model_id, allowed,
 ):
     seen = {}
     client.app.state.settings = replace(client.app.state.settings, facemarket_enabled=True)
@@ -87,12 +87,17 @@ def test_reserve_counts_only_cuts_this_model_can_make(
     patch_route_db(monkeypatch, routes)
 
     res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
-    assert res.status_code == 202, res.text
-    per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
-    assert seen["metadata"]["aiCount"] == expected_cuts
-    assert seen["credits_reserved"] == max(
-        expected_cuts, client.app.state.settings.credit_min_storyboard_cuts
-    ) * per_cut
+    if not allowed:
+        assert res.status_code == 400, res.text
+        assert "credits_reserved" not in seen
+        assert "reserved" not in seen
+    else:
+        assert res.status_code == 202, res.text
+        per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
+        assert seen["metadata"]["aiCount"] == 2
+        assert seen["credits_reserved"] == max(
+            2, client.app.state.settings.credit_min_storyboard_cuts
+        ) * per_cut
 
 
 # ── 에디터 새 컷: 범위 밖이면 잡도 크레딧도 없다 ──
@@ -170,8 +175,8 @@ def test_editor_new_cut_inside_the_scope_is_not_touched(client, make_token, monk
     assert seen["payload"]["modelId"] == "mB"
 
 
-# ── 워커: 범위 밖 블록은 생성 전에 건너뛰고, 그 컷은 과금되지 않는다 ──
-def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
+# ── 워커: 예약 뒤 콘티 변경으로 범위 밖 블록이 들어와도 출고하지 않는다 ──
+def test_worker_rejects_page_with_out_of_scope_block(monkeypatch):
     captured = {"cuts": [], "events": []}
 
     async def fake_project(conn, uid, pid):
@@ -194,8 +199,11 @@ def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
         return []
 
     async def fake_finalize(conn, **kwargs):
-        captured["finalize"] = kwargs
-        return {"editor_blocks": [], "available": 99}
+        raise AssertionError("incomplete page must not be published")
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
 
     async def fake_emit(*args, **kwargs):
         captured["events"].append((args[-2], args[-1]))
@@ -226,6 +234,7 @@ def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", lambda conn: asyncio.sleep(0))
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
@@ -243,6 +252,5 @@ def test_worker_skips_out_of_scope_blocks_without_charging(monkeypatch):
     # styling 섹션이 열린(2026-09-25) 뒤로는 확정 프로필(가상 전용) 이유로 건너뛴다 = mismatch.
     assert any(p.get("reason") == identity_scope.MISMATCH_CODE and p.get("blockId") == "v1"
                for p in skipped), (skipped, captured["events"], captured.get("cuts"))
-    # 건너뛴 컷은 자산이 없다 = 성공 컷 수 기준 정산에서 빠진다(크레딧 0).
-    assets = (captured.get("finalize") or {}).get("cut_assets") or []
-    assert all(a.get("block_id") != "v1" for a in assets)
+    assert captured["failure"]["code"] in {"all_cuts_failed", "incomplete_cuts"}
+    assert captured["failure"]["reserved"] == 1

@@ -52,12 +52,20 @@ class ProgressStore:
 
     async def claim(self, fingerprint):
         def claim(state):
+            attempts = state.get('attempts', 0)
+            qc = state.get('qc') or {}
+            judgments = qc.get('judgments') or []
+            third_allowed = (state.get('phase') == 'retryable'
+                             or (state.get('phase') == 'judged'
+                                 and qc.get('attempts') == 2
+                                 and [j.get('decision') for j in judgments] == ['FAIL']))
             if (state.get('phase') in {'generating', 'judging', 'accepted', 'held'}
-                    or state.get('attempts', 0) >= 2
+                    or attempts >= 3
+                    or (attempts == 2 and not third_allowed)
                     or state and state.get('fingerprint') != fingerprint):
                 raise DetailShotRejected('attempt_budget_exhausted')
             return {**state, 'fingerprint': fingerprint,
-                    'attempts': state.get('attempts', 0) + 1, 'phase': 'generating'}
+                    'attempts': attempts + 1, 'phase': 'generating'}
         return (await self._change(claim))['attempts']
 
     async def save_candidate(self, image, fingerprint, attempt):
@@ -109,6 +117,13 @@ class ProgressStore:
             if state.get('phase') not in {'judging', 'judged'}:
                 raise DetailShotRejected('detail_judgment_state_changed')
             return {**state, 'phase': 'judged', 'qc': metadata}
+        await self._change(record)
+
+    async def record_retryable_failure(self, metadata):
+        def record(state):
+            if state.get('phase') != 'generating':
+                raise DetailShotRejected('detail_attempt_state_changed')
+            return {**state, 'phase': 'retryable', 'qc': metadata}
         await self._change(record)
 
     async def finish(self, metadata):

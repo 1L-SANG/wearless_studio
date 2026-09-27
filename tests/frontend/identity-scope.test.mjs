@@ -14,6 +14,7 @@ import {
   scopeOfBlock,
   scopeOfSpaceSet,
 } from '../../src/lib/identityScope.js';
+import * as identityScope from '../../src/lib/identityScope.js';
 
 // 컷 범위 — 실제/가상 모델이 만들 수 있는 컷을 가른다. **판정 규칙은 서버**에 있고, 이 파일은
 // 서버가 내보낸 규칙을 평가만 한다. 아래 첫 테스트가 "같은 답이 나오는가"를 통째로 고정한다.
@@ -105,6 +106,18 @@ test('견적은 실제로 생성될 컷만 센다', () => {
   assert.equal(blocksForModel(blocks, identityKindOf(true)).length, 3);   // studio + styling + 내 이미지
   assert.equal(blocksForModel(blocks, identityKindOf(false)).length, 4);
   assert.equal(blocksForModel(blocks, null).length, 4);                   // 모르면 안 뺀다
+});
+
+test('지원하지 않는 AI 컷이 있으면 다음 단계로 넘기기 전에 그 컷을 찾는다', () => {
+  assert.equal(typeof identityScope.firstUnsupportedAiBlock, 'function');
+  const blocks = [
+    { id: 'mine', source: 'mine', sectionRole: 'hooking' },
+    { id: 'valid', source: 'ai', sectionRole: 'studio', cutType: 'horizon' },
+    { id: 'blocked', source: 'ai', sectionRole: 'product', cutType: 'product' },
+  ];
+  assert.equal(identityScope.firstUnsupportedAiBlock(blocks, identityKindOf(true))?.id, 'blocked');
+  assert.equal(identityScope.firstUnsupportedAiBlock(blocks, identityKindOf(false)), null);
+  assert.equal(identityScope.firstUnsupportedAiBlock(blocks, null), null);
 });
 
 test('선택지에서도 빠진다 — 갤러리·자동 구성 공용 필터', () => {

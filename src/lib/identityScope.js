@@ -59,12 +59,20 @@ export function rejectionOfSection(sectionRole, identityKind) {
   return rejectionOfBlock({ sectionRole }, identityKind);
 }
 
-/** 이 모델로 실제 생성될 블록만 남긴다 — 서버 예약 필터(routes.generate_detail_page)와 같은 규칙. */
+/** 이 모델로 만들 수 있는 블록만 남긴다 — 화면의 생성 수 안내에 쓴다. */
 export function blocksForModel(blocks, identityKind) {
   if (!identityKind) return blocks || [];
   return (blocks || []).filter(
     (block) => block?.source === 'mine' || blockAllowedForModel(block, identityKind),
   );
+}
+
+/** 저장된 콘티에 범위 밖 AI 컷이 남았으면 첫 컷을 반환한다. */
+export function firstUnsupportedAiBlock(blocks, identityKind) {
+  if (!identityKind) return null;
+  return (blocks || []).find(
+    (block) => block?.source === 'ai' && !blockAllowedForModel(block, identityKind),
+  ) || null;
 }
 
 /** 이 컷의 범위. 규칙에 안 걸리면 both(막지 않는다). */
