@@ -19,6 +19,22 @@ def test_dedicated_module_exists():
     assert importlib.util.find_spec("app.agents.detail_output_qc") is not None
 
 
+def test_detail_qc_checks_visible_pattern_sequence_and_publishable_photo():
+    from app.agents import detail_output_qc
+
+    prompt = detail_output_qc.build_prompt(1, None, "front").lower()
+    assert "color sequence" in prompt
+    assert "repeat spacing" in prompt
+    assert "publishable" in prompt
+    fixes = detail_output_qc.repair_instructions({
+        "passed": False, "decision": "FAIL",
+        "gates": [{"code": "colorMaterial", "status": "FAIL"}],
+    })
+    assert len(fixes) == 1
+    assert "color sequence" in fixes[0].lower()
+    assert "repeat spacing" in fixes[0].lower()
+
+
 @pytest.fixture
 def qc(monkeypatch):
     from app.agents import detail_output_qc
@@ -56,7 +72,9 @@ def test_source_photo_pixels_are_not_a_publishable_detail(monkeypatch):
     assert result["decision"] == "FAIL"
     assert result["passed"] is False
     assert result["errorCode"] == "source_photo_copy"
-    assert qc.repair_instructions(result)
+    repair = qc.repair_instructions(result)
+    assert len(repair) == 1
+    assert "do not reuse seller source pixels" in repair[0].lower()
 
 
 def test_source_crop_pixels_are_not_a_publishable_detail(monkeypatch):

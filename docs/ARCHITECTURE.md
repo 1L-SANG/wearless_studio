@@ -377,7 +377,7 @@ graph TB
 | 미세 패턴 | `MANNEQUIN_PATTERN_IMAGE_SIZE=4K` | config 기본이 우선 |
 | 상세페이지 컷 | `DETAIL_CUT_IMAGE_SIZE=2K` | 4K→2K, 2336×3504 → 1536×2304, 실비·메모리 동시 완화 |
 | 동시 컷 | `DETAIL_CUT_CONCURRENCY=5` + `STAGGER_MS=1000` | 무제한 병렬이 2GB 태스크를 죽여 5장 유실(2026-08-18) |
-| 재시도 | `DETAIL_CUT_MAX_ATTEMPTS=1` / `MANNEQUIN_MAX_ATTEMPTS=2` | first-result 계약 / 편집 패스와 예산 공유 |
+| 재시도 | `DETAIL_CUT_MAX_ATTEMPTS=3` / `MANNEQUIN_MAX_ATTEMPTS=2` | 상세 일반 컷은 최초 1회와 안전한 추가 2회. 확정 불가 응답은 중복 과금 방지를 위해 재시도하지 않음 |
 
 ### 5.3 QC 정책 상태 (프로덕션)
 
@@ -508,7 +508,7 @@ graph LR
 ```
 
 - 예약(`credits_reserved`) → 확정(`credits_charged`) 2단계. lease 복구가 error 처리한 잡은 예약 자동 해제.
-- `detail_page` 는 **전량 완성 시에만 출고·과금**: 실제 생성 컷 수 × `CREDIT_COST_STORYBOARD_PER_CUT` 확정. 한 컷이라도 미완성이면 실패 종결하고 예약 전액 해제.
+- `detail_page` 는 **전량 완성 시에만 출고·과금**: AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `CREDIT_COST_STORYBOARD_PER_CUT`. 한 컷이라도 미완성이면 실패 종결하고 예약 전액 해제.
 - 단가는 `CREDIT_COST_*` env + `CREDIT_COST_VERSION` 으로 버저닝, 잡 `metadata` 에 스냅샷.
 
 ---

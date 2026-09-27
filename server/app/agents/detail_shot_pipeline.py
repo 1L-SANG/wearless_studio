@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 from . import detail_output_qc
 from .gemini_image import InlineImage
 
-PROMPT_VERSION = 'product-detail-source-shape-fallback-v3'
+PROMPT_VERSION = 'product-detail-source-shape-fallback-v4'
 _SUBJECTS = {
     'neckline': 'neckline and its connection to the surrounding bodice',
     'closure': 'fastener construction and surrounding placket',
@@ -49,6 +49,9 @@ If a TARGET CROP is attached, it is a pixel crop of the source, not another garm
 Keep that subject recognizable, with breathing room and context; do not enlarge
 unresolved fibers or lettering into fabricated detail. Fabric shots show visible
 weave/knit and natural drape, never claim microscopic structure from a distant photo.
+For source-visible stripes, checks or prints, preserve the motif color sequence,
+direction and relative repeat spacing. Natural folds and perspective may distort
+the spacing locally; do not redesign the pattern or invent unresolved microtexture.
 
 PHOTOGRAPHIC PREPARATION: gently steam incidental shipping/shooting wrinkles,
 smooth and re-lay the garment, tidy collar edges and folds for a professional flat
@@ -188,7 +191,8 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
     prior_judgments = list((state.get('qc') or {}).get('judgments') or [])
     recover_final = (state.get('attempts') == 3
                      and state.get('phase') in {'generating', 'judging', 'judged'}
-                     and [j.get('decision') for j in prior_judgments[:2]] == ['FAIL', 'FAIL'])
+                     and bool(prior_judgments)
+                     and all(j.get('decision') == 'FAIL' for j in prior_judgments))
     if state and (state.get('fingerprint') != fp
                   or state.get('phase') == 'held'
                   or (state.get('phase') in {'generating', 'judging'} and not recover_final)):
@@ -200,7 +204,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                                       or report.get('publishedBestEffort') is True):
             return candidate, report
         raise DetailShotRejected('detail_checkpoint_unavailable')
-    if state and candidate is None and not recover_final:
+    if state and candidate is None and not recover_final and state.get('phase') != 'retryable':
         raise DetailShotRejected('detail_checkpoint_unavailable')
 
     report = {'policyVersion': detail_output_qc.POLICY_VERSION,
@@ -208,7 +212,8 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
               'requestedGenerationModel': settings.model_product_detail,
               'passed': False, 'attempts': state.get('attempts', 0),
               'judgments': prior_judgments,
-              'fallbackUsed': state.get('attempts', 0) >= 3}
+              'fallbackUsed': (state.get('attempts', 0) >= 3
+                               and [j.get('decision') for j in prior_judgments[:2]] == ['FAIL', 'FAIL'])}
     resumed_judgment = report['judgments'][-1] if state.get('phase') == 'judged' and report['judgments'] else None
     original_sources = await asyncio.to_thread(lambda: [provider_reference(i) for i in sources])
     generation_sources = list(original_sources)
@@ -229,26 +234,37 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
         generation_sources.append(await asyncio.to_thread(provider_reference, style_reference))
         style_index = len(generation_sources)
     corrections = ()
+    if state.get('phase') == 'retryable' and prior_judgments:
+        previous_judgment = prior_judgments[-1]
+        if previous_judgment.get('decision') == 'FAIL':
+            previous_attempt = previous_judgment.get('attempt', len(prior_judgments))
+            previous_candidate = await progress.load_candidate(attempt=previous_attempt)
+            if previous_candidate is None:
+                raise DetailShotRejected('detail_checkpoint_unavailable')
+            corrections = tuple(detail_output_qc.repair_instructions(previous_judgment)) or (
+                'Restore all source garment facts and the requested contextual detail framing.',)
+            generation_sources = [*generation_sources, previous_candidate]
     report['providerInputHashes'] = [hashlib.sha256(i.data).hexdigest() for i in generation_sources]
     if report['fallbackUsed']:
         report['fallbackInputHashes'] = [hashlib.sha256(i.data).hexdigest() for i in fallback_sources]
 
     async def publish_best_effort():
-        if report['attempts'] != 3 or [j.get('decision') for j in report['judgments'][:2]] != ['FAIL', 'FAIL']:
+        if report['attempts'] != 3 or not any(j.get('decision') == 'FAIL' for j in report['judgments']):
             await progress.finish(report)
             raise DetailShotRejected('detail_quality_unconfirmed', report)
         eligible = sorted(
-            (number for number, judgment in enumerate(report['judgments'], 1)
+            ((judgment.get('attempt', number), judgment)
+             for number, judgment in enumerate(report['judgments'], 1)
              if isinstance(judgment, dict) and judgment.get('errorCode') != 'source_photo_copy'),
-            key=lambda number: _candidate_rank(report['judgments'][number - 1], number))
-        for number in eligible:
-            selected = await progress.load_candidate(attempt=number)
+            key=lambda item: _candidate_rank(item[1], item[0]))
+        for attempt_number, judgment in eligible:
+            selected = await progress.load_candidate(attempt=attempt_number)
             if selected is None:
                 continue
-            report.update(publishedBestEffort=True, selectedAttempt=number,
+            report.update(publishedBestEffort=True, selectedAttempt=attempt_number,
                           selectionRankVersion='severity-v1',
-                          decision=report['judgments'][number - 1].get('decision', 'UNKNOWN'))
-            await progress.finish(report, selected_attempt=number)
+                          decision=judgment.get('decision', 'UNKNOWN'))
+            await progress.finish(report, selected_attempt=attempt_number)
             return selected, report
         await progress.finish(report)
         raise DetailShotRejected('detail_quality_unconfirmed', report)
@@ -269,7 +285,9 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
         if candidate is None:
             attempt = await progress.claim(fp)
             report['attempts'] = attempt
-            if attempt == 3:
+            source_shape = (attempt == 3
+                            and [j.get('decision') for j in report['judgments'][:2]] == ['FAIL', 'FAIL'])
+            if source_shape:
                 report['fallbackUsed'] = True
                 report['fallbackInputHashes'] = [hashlib.sha256(i.data).hexdigest() for i in fallback_sources]
                 generation_sources = fallback_sources
@@ -289,7 +307,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                 if color_source_index is None:
                     raise DetailShotRejected('detail_color_reference_required')
                 color_index = (fallback_order.index(color_source_index) + 1 + int(crop is not None)
-                               if attempt == 3 else color_source_index + 1)
+                               if source_shape else color_source_index + 1)
                 prompt += (f'\nCOLORWAY TRANSFER: Image {color_index} alone owns target garment color. '
                            'Other-color closeup(s) explain the SAME construction only. '
                            'Keep their geometry, seams and visible texture, applying the target color.\n')
@@ -300,12 +318,19 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                     openai_preserve_input_bytes=True)
                 candidate = InlineImage(response.mime, response.image)
                 await progress.save_candidate(candidate, fp, attempt)
+                for stale_error_field in ('reason', 'errorType', 'billable'):
+                    report.pop(stale_error_field, None)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 report.update(decision='UNKNOWN', reason='generation_unavailable',
                               errorType=type(exc).__name__, billable=getattr(exc, 'billable', None))
-                if attempt == 3:
+                if (getattr(exc, 'transient', False) is True
+                        and getattr(exc, 'billable', False) is not True
+                        and attempt < 3):
+                    await progress.record_retryable_failure(report)
+                    continue
+                if attempt == 3 and report['judgments']:
                     return await publish_best_effort()
                 await progress.finish(report)
                 raise DetailShotRejected('detail_generation_unavailable', report) from exc
@@ -320,6 +345,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                 raise
             except Exception:
                 judgment = {'passed': False, 'decision': 'UNKNOWN', 'reason': 'judge_unavailable'}
+            judgment = {**judgment, 'attempt': report['attempts']}
             report['judgments'].append(judgment)
         report['decision'] = judgment.get('decision', 'UNKNOWN')
         await progress.record_judgment(report)
@@ -332,7 +358,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                 return await publish_best_effort()
             await progress.finish(report)
             raise DetailShotRejected('detail_quality_unconfirmed', report)
-        if report['attempts'] == 2:
+        if len(report['judgments']) >= 2:
             # The final attempt starts from seller pixels, never from either failed AI candidate.
             candidate = None
             continue

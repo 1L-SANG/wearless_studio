@@ -53,10 +53,16 @@ class ProgressStore:
     async def claim(self, fingerprint):
         def claim(state):
             attempts = state.get('attempts', 0)
-            judgments = (state.get('qc') or {}).get('judgments') or []
+            qc = state.get('qc') or {}
+            judgments = qc.get('judgments') or []
+            third_allowed = (state.get('phase') == 'retryable'
+                             or (state.get('phase') == 'judged'
+                                 and qc.get('attempts') == 2
+                                 and [j.get('decision') for j in judgments]
+                                 in (['FAIL'], ['FAIL', 'FAIL'])))
             if (state.get('phase') in {'generating', 'judging', 'accepted', 'held'}
                     or attempts >= 3
-                    or (attempts == 2 and [j.get('decision') for j in judgments] != ['FAIL', 'FAIL'])
+                    or (attempts == 2 and not third_allowed)
                     or state and state.get('fingerprint') != fingerprint):
                 raise DetailShotRejected('attempt_budget_exhausted')
             return {**state, 'fingerprint': fingerprint,
@@ -117,9 +123,20 @@ class ProgressStore:
             return {**state, 'phase': 'judged', 'qc': metadata}
         await self._change(record)
 
+    async def record_retryable_failure(self, metadata):
+        def record(state):
+            if state.get('phase') != 'generating':
+                raise DetailShotRejected('detail_attempt_state_changed')
+            return {**state, 'phase': 'retryable', 'qc': metadata}
+        await self._change(record)
+
     async def finish(self, metadata, *, selected_attempt=None):
         def finish(state):
             judgments = metadata.get('judgments') or []
+            selected_judgment = next(
+                (judgment for index, judgment in enumerate(judgments, 1)
+                 if isinstance(judgment, dict)
+                 and judgment.get('attempt', index) == selected_attempt), None)
             best_effort = (
                 metadata.get('passed') is False
                 and metadata.get('publishedBestEffort') is True
@@ -127,9 +144,9 @@ class ProgressStore:
                 and type(selected_attempt) is int
                 and metadata.get('selectedAttempt') == selected_attempt
                 and isinstance(judgments, list)
-                and [j.get('decision') for j in judgments[:2]] == ['FAIL', 'FAIL']
-                and 1 <= selected_attempt <= len(judgments)
-                and judgments[selected_attempt - 1].get('errorCode') != 'source_photo_copy'
+                and any(isinstance(j, dict) and j.get('decision') == 'FAIL' for j in judgments)
+                and selected_judgment is not None
+                and selected_judgment.get('errorCode') != 'source_photo_copy'
             )
             candidate = state.get('candidate')
             if selected_attempt is not None:

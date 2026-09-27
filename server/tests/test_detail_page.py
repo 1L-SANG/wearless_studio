@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import contextlib
 import inspect
+import json
 import logging
 import types
 from dataclasses import replace
@@ -83,6 +84,63 @@ def test_detail_rejection_refunds_entire_page_without_publishing(monkeypatch, re
     assert [payload["blockId"] for payload in done] == ["accepted"]
     failed = [payload for event, payload in captured["events"] if payload.get("status") == "cut_failed"]
     assert any(payload["blockId"] == "rejected" and payload.get("reason") == reason for payload in failed)
+
+
+def test_best_effort_detail_fills_page_and_uses_five_cut_minimum(monkeypatch):
+    captured = {}
+
+    async def project(*args):
+        return {"copywriting": False}
+
+    async def storyboard(*args):
+        return [{"id": block_id, "source": "ai", "sectionRole": "product", "contentRole": "detail",
+                 "cutType": "product", "shot": "detail", "direction": direction, "colorId": "base"}
+                for block_id, direction in [("best-effort", "front"), ("passed", "back")]]
+
+    async def product(*args):
+        return {"colors": [{"id": "base", "isBase": True, "images": [
+            {"slot": "Front", "id": "front"}, {"slot": "Back", "id": "back"}]}]}
+
+    async def asset(conn, user_id, asset_id):
+        return {"mime_type": "image/png", "r2_key": f"k/{asset_id}"}
+
+    async def detail(app, job, spec, product, analysis):
+        if spec["id"] == "best-effort":
+            return dpj.InlineImage("image/png", b"GENERATED-BEST"), {
+                "passed": False, "decision": "FAIL", "publishedBestEffort": True,
+                "selectedAttempt": 2, "judgments": [{"decision": "FAIL"}] * 2,
+            }
+        return dpj.InlineImage("image/png", b"GENERATED-PASS"), {"passed": True, "decision": "PASS"}
+
+    async def finalize(conn, **kwargs):
+        captured.update(kwargs)
+        return {"editor_blocks": kwargs["editor_blocks"], "available": 95}
+
+    async def failure(conn, **kwargs):
+        raise AssertionError("two generated cuts must not take the refund path")
+
+    async def emit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", lambda *args: asyncio.sleep(0, result={}))
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", failure)
+    monkeypatch.setattr(dpj, "_emit", emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    job = _job(reserved=5, per_cut=1)
+    job["metadata"].update(aiCount=2, minCuts=5)
+
+    asyncio.run(dpj.run_detail_page_job(app, job))
+
+    assert captured["charge"] == 5
+    assert len(captured["cut_assets"]) == 2
+    assert {cut["blockId"] for cut in captured["metadata"]["cutQc"]} == {"best-effort", "passed"}
+    assert any(cut.get("publishedBestEffort") is True for cut in captured["metadata"]["cutQc"])
 
 
 @pytest.mark.parametrize("interruption", ["cancelled", "exception"])
@@ -204,6 +262,15 @@ def test_success_commit_uncertainty_never_deletes_published_cut(monkeypatch, can
 
 # ---------- 라우트 ----------
 
+def test_detail_minimum_cut_setting_cannot_drift_from_frontend(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.delenv("CREDIT_MIN_STORYBOARD_CUTS", raising=False)
+    assert load_settings().credit_min_storyboard_cuts == 5
+    monkeypatch.setenv("CREDIT_MIN_STORYBOARD_CUTS", "6")
+    assert load_settings().credit_min_storyboard_cuts == 5
+
+
 def test_detail_404(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return None
@@ -258,13 +325,70 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-dp-1"
     assert seen["kind"] == "detail_page"
-    assert seen["credits_reserved"] == 38  # ai 블록 2개 × storyboardPerCut(19)
-    assert seen["reserved"] == 38
+    assert seen["credits_reserved"] == 95  # AI 2컷도 최소 5컷 기준
+    assert seen["reserved"] == 95
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
     assert seen["metadata"]["perCutCost"] == 19
     assert seen["metadata"]["creditCostVersion"] == "v6"
     assert seen["metadata"]["aiCount"] == 2
+    assert seen["metadata"]["minCuts"] == 5
+    assert seen["metadata"]["storyboardDigest"] == hashlib.sha256(json.dumps(
+        [{"id": "b1", "source": "ai"}, {"id": "b2", "source": "ai"},
+         {"id": "m", "source": "mine"}],
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    ).encode()).hexdigest()
     assert seen["prewarmed"] == 1
+
+
+@pytest.mark.parametrize("ai_count,expected_cost", [(0, 0), (3, 95), (7, 133)])
+def test_detail_reservation_uses_minimum_only_for_positive_ai_count(
+    client, make_token, monkeypatch, ai_count, expected_cost,
+):
+    seen = {}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {}
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+                 "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
+                for i in range(ai_count)] + [{"id": "mine", "source": "mine"}]
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "j1"}, True
+
+    async def fake_reserve(conn, user_id, cost):
+        seen["reserved"] = cost
+        return 100
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
+    assert response.status_code == 202, response.text
+    assert seen["credits_reserved"] == expected_cost
+    assert seen["metadata"]["aiCount"] == ai_count
+    assert seen["metadata"]["minCuts"] == 5
+    if ai_count == 0:
+        assert "reserved" not in seen
+    else:
+        assert seen["reserved"] == expected_cost
 
 
 def test_detail_rejects_saved_bg_example_before_job_or_credit(
@@ -495,14 +619,11 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
 
     이력: 2026-09-11 에 "가상 대역 없이 실제 모델 그대로 간다" 로 바뀌었고(400
     styling_model_required 폐기), 2026-09-14 에 studio 섹션만 남겼다가, 2026-09-25 에 styling
-    섹션을 다시 열었다(호리존만으로는 상세페이지가 모자라다). 2026-09-26 hooking 도 열려 남은
-    막힌 섹션은 product 뿐이다 — 그 컷은 예약에서 빠진다(만들지도 않을 컷에 크레딧을 잡지 않는다).
+    섹션을 다시 열었다(호리존만으로는 상세페이지가 모자라다). 2026-09-26 hooking 도 열렸다.
+    모델 범위 밖 컷은 별도 테스트에서 시작 전 거절한다.
     """
     response, seen = _post_real_detail_generate(client, make_token, monkeypatch, [
         {"id": "s1", "source": "ai", "cutType": "styling"},
-        # 아직 막힌 섹션(product) — 예약에서 빠져야 한다
-        {"id": "p1", "source": "ai", "sectionRole": "product", "contentRole": "productOverview",
-         "cutType": "product", "direction": "front", "shot": "ghost"},
     ])
 
     assert response.status_code == 202, response.text
@@ -513,11 +634,11 @@ def test_detail_real_styling_needs_no_virtual_stand_in(
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }
-    # 제품 컷은 예약에서 빠진다 — 예약 = 실제로 만들 스타일링 1컷.
+    # 예약 = 실제로 만들 스타일링 1컷의 최소 요금.
     per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
     assert seen["metadata"]["aiCount"] == 1
-    assert seen["credits_reserved"] == per_cut
-    assert seen["reserved"] == per_cut
+    assert seen["credits_reserved"] == 5 * per_cut
+    assert seen["reserved"] == 5 * per_cut
 
 
 def test_detail_real_hooking_cuts_are_reserved_like_styling(
@@ -543,7 +664,7 @@ def test_detail_real_hooking_cuts_are_reserved_like_styling(
     }
     per_cut = client.app.state.settings.credit_cost_storyboard_per_cut
     assert seen["metadata"]["aiCount"] == 2
-    assert seen["credits_reserved"] == seen["reserved"] == 2 * per_cut
+    assert seen["credits_reserved"] == seen["reserved"] == 5 * per_cut
 
 
 def test_detail_real_blocked_sections_only_are_refused_with_the_studio_only_code(
@@ -1249,6 +1370,7 @@ def test_gen_cuts_detail_publishes_selected_generated_output_once(monkeypatch, q
 
 def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypatch):
     captured = {}
+    from app.agents.gemini_image import GeminiError
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -1274,7 +1396,7 @@ def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypa
         if cut_spec["id"] == "b1":
             return b"IMG", "image/png"
         call["b2"] += 1
-        raise RuntimeError("gen fail")
+        raise GeminiError("temporary rejection", transient=True)
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         raise AssertionError("incomplete page must not be assembled")
@@ -1303,19 +1425,84 @@ def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypa
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
-    assert call["b2"] == 2
+    assert call["b2"] == 3
     assert captured["failure"]["reserved"] == 38
     assert captured["failure"]["code"] == "incomplete_cuts"
     assert captured["failure"]["metadata"] == {
         "error": "incomplete_cuts", "requestedCuts": 2,
         "generatedCuts": 1, "failedBlockIds": ["b2"],
     }
+    assert "cut_results" not in captured
 
 
-def test_run_detail_page_job_retries_transient_failure_but_refunds_if_other_cut_is_invalid(monkeypatch):
-    """일시 오류는 재시도하고, 결정적 실패 컷이 남으면 전체 작업을 환불한다."""
+@pytest.mark.parametrize("requested,completed,legacy,expected_charge", [
+    (3, 3, False, 95),
+    (7, 7, False, 133),
+    (3, 3, True, 57),
+])
+def test_detail_success_settles_from_requested_minimum_snapshot(
+    monkeypatch, requested, completed, legacy, expected_charge,
+):
     captured = {}
-    attempts = {"transient": 0, "deterministic": 0}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": f"b{i}", "source": "ai", "cutType": "product",
+                 "shot": "ghost", "direction": "front", "colorId": f"color-{i}"}
+                for i in range(requested)]
+
+    async def fake_product(conn, project_id):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, project_id):
+        return {}
+
+    async def fake_asset(conn, user_id, asset_id):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_cuts(app, job, prepared, product, analysis, **kwargs):
+        return ([{"blockId": f"b{i}"} for i in range(completed)],
+                [{"metadata": {}} for _ in range(completed)], 0, [], [], None, [])
+
+    def fake_assemble(*args, **kwargs):
+        return []
+
+    async def fake_finalize(conn, **kwargs):
+        captured.update(kwargs)
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_emit(pool, job_id, event, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj, "_gen_cuts", fake_cuts)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    reserved = (requested if legacy or requested >= 5 else 5) * 19
+    job = _job(reserved=reserved, per_cut=19)
+    job["metadata"]["aiCount"] = requested
+    if not legacy:
+        job["metadata"]["minCuts"] = 5
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), job))
+
+    assert len(captured["cut_assets"]) == completed
+    assert captured["reserved"] == reserved
+    assert captured["charge"] == expected_charge
+
+
+def test_run_detail_page_job_retries_transient_cut_failures_twice(monkeypatch):
+    """첫 생성이 두 번 실패해도 세 번째에 완성되면 전체 페이지를 내보낸다."""
+    from app.agents.gemini_image import GeminiError
+    captured = {}
+    attempts = {"transient": 0}
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -1336,23 +1523,20 @@ def test_run_detail_page_job_retries_transient_failure_but_refunds_if_other_cut_
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
-        if cut_spec.get("id") == "b1":          # 첫 시도 실패 → 재시도에서 성공
+        if cut_spec.get("id") == "b1":
             attempts["transient"] += 1
-            if attempts["transient"] == 1:
-                raise RuntimeError("provider hiccup")
+            if attempts["transient"] < 3:
+                raise GeminiError("provider hiccup", transient=True)
             return b"IMG", "image/png"
-        attempts["deterministic"] += 1          # 결정적 실패 → 재시도 없음
-        raise ValueError("unknown cutType")
+        return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
-        raise AssertionError("incomplete page must not be assembled")
+        captured["cut_results"] = cut_results
+        return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
 
     async def fake_finalize(conn, **kw):
-        raise AssertionError("incomplete page must not be published")
-
-    async def fake_failure(conn, **kw):
-        captured["failure"] = kw
-        return True
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
 
     async def fake_emit(pool, job_id, et, payload):
         captured.setdefault("steps", []).append(payload.get("status"))
@@ -1365,17 +1549,48 @@ def test_run_detail_page_job_retries_transient_failure_but_refunds_if_other_cut_
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
-    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
-    assert attempts["transient"] == 2, "일시 실패는 한 번 더 시도한다"
-    assert attempts["deterministic"] == 1, "ValueError 는 재시도하지 않는다"
-    assert captured["failure"]["code"] == "incomplete_cuts"
-    assert captured["failure"]["reserved"] == 38
-    assert captured["steps"].count("cut_failed") == 1
+    assert attempts["transient"] == 3
+    assert len(captured["cut_results"]) == 2
+    assert captured["charge"] == 38
+    assert captured["steps"].count("cut_failed") == 0
+
+
+def test_confirmed_profile_cut_also_gets_two_safe_retries(monkeypatch):
+    from app.agents.gemini_image import GeminiError
+    attempts = 0
+
+    async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        assert kwargs["confirmed_prompt_input"] == "confirmed-input"
+        if attempts < 3:
+            raise GeminiError("temporary provider failure", transient=True)
+        return b"IMG", "image/png"
+
+    async def fake_emit(pool, job_id, event, payload):
+        return None
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b",
+                                        detail_cut_max_attempts=3))
+    spec = {"id": "confirmed", "source": "ai", "cutType": "horizon", "shot": "full"}
+    image = dpj.InlineImage("image/png", b"product")
+    packet = types.SimpleNamespace(prompt_input="confirmed-input")
+    prepared = [(spec, [image], "manifest", False, [image], None, False,
+                 None, packet, False)]
+
+    results, assets, *_ = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=19), prepared, {"clothing_type": "top"}, {}))
+
+    assert attempts == 3
+    assert [result["blockId"] for result in results] == ["confirmed"]
+    assert len(assets) == 1
 
 
 def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
@@ -2387,6 +2602,7 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     이력: 2026-09-11 에 "스튜디오·스타일링·미러 전부 실제 얼굴" 로 바뀌어 가상 대역(mA)이
     사라졌다. 2026-09-14 에 studio 섹션만 남겼다가, 2026-09-25 사용자 결정으로 styling 섹션
     (스타일링·미러)을, 2026-09-26 사용자 결정으로 hooking(첫 장면)을 다시 열었다.
+    이 테스트는 허용된 컷만 담고, 범위 밖 제품 컷의 실패는 아래에서 따로 확인한다.
     """
     from app.agents import identity_scope
 
@@ -2439,7 +2655,7 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     # 범위 밖 컷은 완료 이벤트가 없고 작업 전체를 실패시킨다.
     assert not skipped_ids & set(done_events)
     if real_cuts_fail or skipped_ids:
-        # 실제 얼굴 컷이 전부 실패하거나 범위 밖 컷이 남으면 출고·정산이 없다.
+        # 전체 AI 컷 중 하나라도 미완성이면 출고·과금·모델 정산이 없다.
         assert "finalize" not in captured
         assert captured["settlements"] == []
         assert captured["failure"]["code"] == (
@@ -2485,10 +2701,11 @@ def test_a_scope_skipped_cut_closes_its_slot_without_the_garment_truth_warning(
     assert "finalize" not in captured
     assert captured["failure"]["code"] == "incomplete_cuts"
     assert captured["failure"]["reserved"] == 1
+    assert captured["settlements"] == []
 
 
 def test_run_detail_page_job_full_charge_uses_reservation_time_price(monkeypatch):
-    """예약 뒤 단가가 바뀌어도 완성 페이지는 예약 시점의 단가로 정산한다."""
+    """예약 후 배포로 단가가 올라도 완성 페이지에는 예약 시점 단가를 쓴다."""
     captured = {}
 
     async def fake_gp(conn, uid, pid):
@@ -2537,11 +2754,11 @@ def test_run_detail_page_job_full_charge_uses_reservation_time_price(monkeypatch
     assert captured["charge"] == 2  # 스냅샷 단가(perCutCost=1) × 완성 2컷
 
 
-def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
-    """정산 불변식 회귀: 예약(2블록×1) 후 콘티 재저장으로 ai 블록이 3개로 늘어도
-    정산은 스냅샷 단가 × 성공 컷(예약액 캡)이다 — 예약액÷현재 블록 수 역산이었다면
-    블록 수가 예약액을 넘는 순간 단가 0 → 무과금 생성이 된다."""
+def test_run_detail_page_job_rejects_board_growth_before_generation(monkeypatch):
+    """예약 뒤 콘티가 늘면 예약액으로 새 컷을 싸게 출고하지 않고 전액 환불한다."""
     captured = {}
+    reserved_board = [{"id": "b1", "source": "ai", "cutType": "styling"},
+                      {"id": "b2", "source": "ai", "cutType": "product"}]
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -2561,14 +2778,17 @@ def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
-        return b"IMG", "image/png"  # 3컷 전부 성공
+        raise AssertionError("changed storyboard must fail before provider calls")
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
 
     async def fake_finalize(conn, **kw):
-        captured.update(kw)
-        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+        raise AssertionError("changed storyboard must not publish")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
 
     async def fake_emit(pool, job_id, et, payload):
         return None
@@ -2581,11 +2801,17 @@ def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=2)))
+    job = _job(reserved=2)
+    job["metadata"]["storyboardDigest"] = hashlib.sha256(json.dumps(
+        reserved_board, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    ).encode()).hexdigest()
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), job))
 
-    assert captured["charge"] == 2  # min(3컷 × 스냅샷 1, 예약 2) — 0이 아니고 예약 초과도 아님
+    assert captured["failure"]["code"] == "storyboard_changed"
+    assert captured["failure"]["reserved"] == 2
 
 
 def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeypatch):
@@ -2598,7 +2824,8 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
         return {"copywriting": False}
 
     async def fake_sb(conn, pid):
-        return [{"id": "b1", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}]
+        return [{"id": f"b{i}", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}
+                for i in range(3)]
 
     async def fake_prod(conn, pid):
         return {"colors": []}   # 상품 사진 없음 + 마네킹 미선택
@@ -2638,12 +2865,15 @@ def test_run_detail_page_job_fails_when_all_ai_blocks_lack_garment_truth(monkeyp
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+    job = worker_job(credits_reserved=95)
+    job["metadata"] = {"perCutCost": 19, "aiCount": 3, "minCuts": 5}
+    asyncio.run(dpj.run_detail_page_job(app, job))
 
     assert calls["n"] == 0                       # 생성 호출 자체가 없다
     assert captured["failure"]["code"] == "all_cuts_failed"
+    assert captured["failure"]["reserved"] == 95  # 실패 경로가 예약 전액을 반환
     assert captured["failure"]["metadata"] == {
-        "error": "all_cuts_failed", "requestedCuts": 1,
+        "error": "all_cuts_failed", "requestedCuts": 3,
     }
 
 
@@ -2812,6 +3042,68 @@ def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monke
     assert cut_qcs == [{"blockId": "detail-1", "passed": True}]
     assert face_cuts == 0 and garment_qcs == []
     assert page_qc is None and warnings == []
+
+
+def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
+    captured = {"detail_calls": 0, "events": [], "uploaded": []}
+
+    async def project(conn, user_id, project_id):
+        return {"copywriting": False}
+
+    async def storyboard(conn, project_id):
+        return [{"id": "stripe-detail", "source": "ai", "cutType": "product",
+                 "shot": "detail", "direction": "front", "colorId": "base"}]
+
+    async def product(conn, project_id):
+        return {"name": "잔스트라이프 셔츠", "clothing_type": "top", "colors": [{
+            "id": "base", "isBase": True,
+            "images": [{"slot": "Front", "id": "front"},
+                       {"slot": "Detail", "id": "source-detail"}],
+        }]}
+
+    async def analysis(conn, project_id):
+        return {}
+
+    async def asset(conn, user_id, asset_id):
+        return {"id": asset_id, "mime_type": "image/png", "r2_key": f"input/{asset_id}"}
+
+    async def detail(app, job, block, product_row, analysis_row, **kwargs):
+        captured["detail_calls"] += 1
+        return dpj.InlineImage("image/png", b"POLISHED-DETAIL"), {"passed": True}
+
+    def assemble(storyboard_rows, cut_results, *args, **kwargs):
+        captured["cut_results"] = cut_results
+        return []
+
+    async def finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"editor_blocks": [], "available": 95}
+
+    async def emit(pool, job_id, event, payload):
+        captured["events"].append((event, payload))
+
+    monkeypatch.setattr(dpj.repo, "get_project", project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
+    monkeypatch.setattr(dpj, "_emit", emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.put_bytes = lambda key, data, *args, **kwargs: captured["uploaded"].append(data)
+    job = worker_job(credits_reserved=95)
+    job["metadata"] = {"perCutCost": 19, "aiCount": 1, "minCuts": 5}
+    asyncio.run(dpj.run_detail_page_job(app, job))
+
+    assert captured["detail_calls"] == 1
+    assert captured["uploaded"] == [b"POLISHED-DETAIL"]
+    assert captured["cut_results"][0]["imageUrl"] != "/v1/assets/source-detail/file"
+    assert len(captured["finalize"]["cut_assets"]) == 1
+    assert captured["finalize"]["charge"] == 95
+    assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 
 def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
@@ -3015,17 +3307,64 @@ def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monk
 
 
 def test_billable_failure_is_not_retried_by_the_worker(monkeypatch):
-    """프로바이더가 이미 그렸을 수 있는 실패는 워커도 다시 보내지 않는다.
+    """응답이 미확정이면 3회 허용 설정이어도 프로바이더를 다시 부르지 않는다."""
+    from app.agents.gemini_image import GeminiError
 
-    아래층(gemini_image)이 "다시 안 보낸다"고 판단한 실패를 위층 컷 재시도가 그대로
-    다시 보내면 같은 컷을 두 번 과금한다 — 그 방어를 코드로 고정한다(2026-08-17 검증).
-    """
-    import inspect
-    from app.workers import detail_page_job
+    attempts = 0
 
-    source = inspect.getsource(detail_page_job)
-    assert 'billable = bool(getattr(e, "billable", False))' in source
-    assert "if billable or attempt >= max_attempts" in source
+    async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise GeminiError("ambiguous provider response", billable=True)
+
+    async def fake_emit(pool, job_id, event, payload):
+        return None
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b",
+                                        detail_cut_max_attempts=3))
+    spec = {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}
+    image = dpj.InlineImage("image/png", b"product")
+    packet = types.SimpleNamespace(prompt_input="confirmed-input")
+    prepared = [(spec, [image], "manifest", False, [image], None, False,
+                 None, packet, False)]
+
+    results, assets, *_ = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=19), prepared, {"clothing_type": "top"}, {}))
+
+    assert attempts == 1
+    assert results == [] and assets == []
+
+
+def test_nontransient_rejection_is_not_retried_by_the_worker(monkeypatch):
+    from app.agents.gemini_image import GeminiError
+
+    attempts = 0
+
+    async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise GeminiError("OpenAI 400: invalid_image_file")
+
+    async def fake_emit(pool, job_id, event, payload):
+        return None
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b",
+                                        detail_cut_max_attempts=3))
+    spec = {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}
+    image = dpj.InlineImage("image/png", b"product")
+    packet = types.SimpleNamespace(prompt_input="confirmed-input")
+    prepared = [(spec, [image], "manifest", False, [image], None, False,
+                 None, packet, False)]
+
+    results, assets, *_ = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=19), prepared, {"clothing_type": "top"}, {}))
+
+    assert attempts == 1
+    assert results == [] and assets == []
 
 
 def test_gemini_error_carries_the_billable_flag_across_layers():

@@ -2,7 +2,7 @@
 
 저장 콘티(projects.storyboard)의 source='ai' 블록별로 AG-06 컷 이미지를 생성하고,
 전부 완성됐을 때만 AG-02/03 카피와 M-02 조립 결과를 출고한다. 한 컷이라도 실패하면
-예약 크레딧 전액 해제. 성공 시 실제 생성 컷 수로 정산한다. lease 펜스.
+예약 크레딧 전액 해제. 성공한 소량 요청은 최소 5컷 값으로 정산한다. lease 펜스.
 """
 
 import asyncio
@@ -121,6 +121,13 @@ class _SkippedCut(tuple):
 
 def _skipped_cut(cut_spec: dict) -> "_SkippedCut":
     return _SkippedCut((cut_spec, [], "", False, [], None, False))
+
+
+def _storyboard_digest(storyboard) -> str:
+    """예약 시 본 원본 콘티가 워커 실행 전 바뀌었는지 판별한다."""
+    payload = json.dumps(storyboard or [], sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _duplicate_source_indexes(
@@ -567,17 +574,15 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     raise
 
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
-            # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
-            # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
+            # 첫 시도 뒤 최대 두 번 더 시도한다. 비용은 우리가 흡수한다.
+            # ValueError(잘못된 cutType 등)는 결정적이라 제외.
             # 재시도 예산(초). 잡 lease(job_lease_timeout_seconds)를 넘기면 sweeper 가 실행 중인
             # 잡을 회수해 같은 잡이 다시 도는 사고가 난다 — 앞선 시도가 이미 오래 걸렸으면
             # (예: 프로바이더 타임아웃 연쇄) 재시도하지 않고 그 컷만 포기한다.
             retry_budget_s = max(60, s.job_lease_timeout_seconds // 4)
             cut_started = time.monotonic()
             img = mime = None
-            max_attempts = (
-                1 if confirmed_packet is not None else max(1, s.detail_cut_max_attempts)
-            )
+            max_attempts = max(1, s.detail_cut_max_attempts)
             for attempt in range(1, max_attempts + 1):
                 try:
                     img, mime = await _primary_generate()
@@ -597,15 +602,18 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     await _emit(app.state.pool, job_id, "step",
                                 {"blockId": b.get("id"), "status": "cut_failed"})
                     return None
-                except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
-                    # 각도 교체의 backend_error 처럼 후처리만 실패했으면 다음 시도는 남은 베이스로
-                    # 후처리만 다시 한다(_primary_generate) — 베이스 값을 두 번 내지 않는다.
+                except Exception as e:  # 안전한 일시 오류만 재시도, 나머지는 이 컷 실패
+                    # 각도 교체의 backend_error 처럼 후처리만 실패했고 베이스가 보존됐으면
+                    # 다음 시도는 그 베이스로 후처리만 다시 한다.
                     spent = time.monotonic() - cut_started
-                    # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504)는 여기서도
-                    # 다시 보내지 않는다 — 아래층이 안 보내기로 한 이유가 위층에서 무효가 되면
-                    # 같은 컷을 두 번 과금한다(2026-08-17 리뷰).
-                    billable = bool(getattr(e, "billable", False))
-                    if billable or attempt >= max_attempts or spent >= retry_budget_s:
+                    # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504·200 파싱)는
+                    # 여기서도 다시 보내지 않는다. 명시적으로 미과금 일시 오류이거나,
+                    # 이미 저장한 베이스로 안전하게 후처리만 재실행할 수 있을 때만 재시도한다.
+                    transient = bool(getattr(e, "transient", False)) or bool(
+                        ckpt is not None and ckpt.base.image is not None
+                        and _cut_checkpoints.base_survives(e)
+                    )
+                    if not transient or attempt >= max_attempts or spent >= retry_budget_s:
                         log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
                                     job_id, b.get("id"), attempt, spent, e)
                         await _emit(app.state.pool, job_id, "step",
@@ -916,15 +924,15 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 제출 간격 — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다(전부 병렬의 안전판).
         if idx and _stagger_s:
             await asyncio.sleep(idx * _stagger_s)
-        # 한 컷의 예상 밖 예외는 **그 컷만** 빈 슬롯으로 만든다(2026-09-23). 예전에는 아래
-        # gather 가 첫 예외로 페이지 전체를 실패시켰고, 이미 값을 치르고 끝난 다른 컷까지
+        # 한 컷의 예상 밖 예외는 우선 그 컷만 실패로 표시하고, 최종 게이트가 페이지 전체를 막는다.
+        # 이전에는 gather 가 첫 예외로 페이지 전체를 실패시켰고, 이미 값을 치르고 끝난 다른 컷까지
         # 정리 작업이 지웠다(R2 저장 오류·DB PoolTimeout·장소 QC 의 VisionError 아닌 예외 등).
         # 모양은 기존 실패 컷과 같다 — None + cut_failed 이벤트(미차감).
         # CancelledError 는 BaseException 이라 여기서 잡히지 않는다 — 워커 종료 신호는 그대로 올라간다.
         try:
             r = await _one_impl(item)
         except Exception as e:
-            log.warning("AG-06 cut crashed for job %s block %s: %r — only this cut fails",
+            log.warning("AG-06 cut crashed for job %s block %s: %r; cut marked failed",
                         job_id, item[0].get("id"), e)
             r = None
             try:
@@ -1206,6 +1214,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
+            loaded_storyboard_digest = _storyboard_digest(storyboard)
             if not getattr(s, "genexample_bg_enabled", False) and any(
                 isinstance(block, dict)
                 and (block.get("refScope") or block.get("ref_scope")) == "bg"
@@ -1428,6 +1437,15 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for rid in (b.get("refAssetIds") or [])[:3]:
                     if str(rid) not in mood_assets:
                         mood_assets[str(rid)] = await repo.get_asset_for_user(conn, user_id, str(rid))
+
+        expected_storyboard_digest = (job.get("metadata") or {}).get("storyboardDigest")
+        if (expected_storyboard_digest is not None
+                and loaded_storyboard_digest != expected_storyboard_digest):
+            await _fail(
+                "생성 중 콘티가 변경됐어요. 현재 콘티를 확인한 뒤 다시 시도해 주세요.",
+                {"error": "storyboard_changed"}, code="storyboard_changed",
+            )
+            return
 
         # R2 바이트는 r2_key 캐시로 1회만 — 같은 색상 이미지가 블록마다 재다운로드되지 않게
         _img_cache: dict = {}
@@ -2181,7 +2199,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 4) 조립(M-02) — AI 컷이 모두 완성된 경우만 진입한다.
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
         # REAL 자산 주입이 실패했는데 '실제 모델'이라 쓰면 허위 고지가 된다.
-        # 범위 주장 근거: totalCuts = **성공한 컷 수**(실패 컷은 빈 슬롯이라 인물이 없다).
+        # 범위 주장 근거: totalCuts = **완성한 컷 수**(복제 컷 포함).
         # face_cuts < totalCuts 면 얼굴 미첨부 컷(거울샷·뒷모습·하반신·상품컷)이 섞였다는 뜻이라
         # 페이지 전체를 '가상인물 아님' 으로 주장할 수 없다 → assembler 가 '일부 컷' 문구로 내린다.
         license_notice = None
@@ -2202,15 +2220,23 @@ async def run_detail_page_job(app, job: dict) -> None:
         editor_blocks = page_assembler.assemble(
             storyboard, cut_results, copy_results, assembly_product, copywriting, **assemble_kwargs)
 
-        # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
+        # 5) 성공 종결 (원자·lease 펜스). 예약 시점 단가와 최소 컷 수 스냅샷으로 정산.
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면
         # 배포 사이 단가 변경이 낀 잡이 견적과 다르게 정산되고, 예약액÷현재 블록 수 역산은 예약 후
         # 콘티 재저장으로 블록이 늘면 단가가 0으로 떨어져 무과금 생성이 된다 — 둘 다 금지.
         # 스냅샷 없는 legacy 잡만 실행 시점 단가로 폴백. min 캡 = 예약 초과 차감 최종 가드.
-        per_cut = (job.get("metadata") or {}).get("perCutCost")
+        metadata = job.get("metadata") or {}
+        per_cut = metadata.get("perCutCost")
         if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
             per_cut = s.credit_cost_storyboard_per_cut
-        charge = min(len(cut_assets) * per_cut, reserved)
+        min_cuts = metadata.get("minCuts")
+        requested = metadata.get("aiCount")
+        billable = len(cut_assets)
+        # 전량 완성된 소량 요청은 최소 컷 수로 정산한다.
+        # minCuts 스냅샷이 없는 기존 잡은 성공 컷 수만큼 정산한다.
+        if min_cuts is not None and requested is not None and 0 < requested < min_cuts and billable > 0:
+            billable = min_cuts
+        charge = min(billable * per_cut, reserved)
         success_metadata = {
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),

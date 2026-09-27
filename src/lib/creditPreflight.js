@@ -1,6 +1,6 @@
 // 유료 단계 진입 전, store 에 이미 캐시된 잔액만으로 부족 여부와 안내 문구를 만드는 순수 로직.
 // 표시용 사전 확인이므로 계정·비용을 모르면 통과시키고, 최종 정합성은 서버 402가 책임진다.
-import { CREDIT_COSTS } from './limits.js';
+import { CREDIT_COSTS, detailPageCreditCost } from './limits.js';
 
 const SHORTFALL_TITLE = '크레딧이 부족해요';
 
@@ -26,8 +26,6 @@ export function mannequinGenerationCreditShortfall(
 }
 
 export function detailPageGenerationCreditShortfall(account, aiCutCount) {
-  const requiredCredits = aiCutCount == null
-    ? null
-    : aiCutCount * CREDIT_COSTS.storyboardPerCut;
+  const requiredCredits = detailPageCreditCost(aiCutCount);
   return creditShortfall(account, requiredCredits);
 }

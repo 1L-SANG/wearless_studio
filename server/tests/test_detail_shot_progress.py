@@ -18,7 +18,8 @@ from app.workers.detail_shot_runtime import ProgressStore
 def test_third_claim_requires_two_failed_judgments():
     async def check(decisions):
         state = {'phase': 'judged', 'attempts': 2, 'fingerprint': 'same',
-                 'qc': {'judgments': [{'decision': decision} for decision in decisions]}}
+                 'qc': {'attempts': 2,
+                        'judgments': [{'decision': decision} for decision in decisions]}}
         store = ProgressStore.__new__(ProgressStore)
 
         async def change(mutate=None):
@@ -35,10 +36,37 @@ def test_third_claim_requires_two_failed_judgments():
         assert await store.claim('same') == 3
         with pytest.raises(DetailShotRejected):
             await store.claim('same')
-        for decisions in (['FAIL', 'UNKNOWN'], ['FAIL', 'PASS'], ['FAIL']):
+        store, _ = await check(['FAIL'])  # 첫 호출이 미과금 일시 오류였던 경우
+        assert await store.claim('same') == 3
+        for decisions in (['FAIL', 'UNKNOWN'], ['FAIL', 'PASS'], []):
             store, _ = await check(decisions)
             with pytest.raises(DetailShotRejected):
                 await store.claim('same')
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_best_effort_finish_accepts_second_provider_attempt_after_first_transient():
+    store = ProgressStore.__new__(ProgressStore)
+    state = {'phase': 'generating', 'attempts': 3,
+             'candidate': {'attempt': 2, 'key': 'saved'},
+             'candidates': [{'attempt': 2, 'key': 'saved'}]}
+
+    async def change(mutate=None):
+        nonlocal state
+        if mutate:
+            state = mutate(state)
+        return state
+
+    store._change = change
+
+    async def verify():
+        await store.finish({'passed': False, 'publishedBestEffort': True,
+                            'attempts': 3, 'selectedAttempt': 2,
+                            'judgments': [{'attempt': 2, 'decision': 'FAIL'}]},
+                           selected_attempt=2)
+        assert state['phase'] == 'accepted'
+        assert state['candidate']['attempt'] == 2
 
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
@@ -193,6 +221,40 @@ def test_progress_survives_new_store_and_lost_lease():
             await first._change(lambda s: {**s, 'phase': 'judged'})
             with pytest.raises(DetailShotRejected):
                 await reopened.claim('recipe')
+            retryable = ProgressStore(app, job, 'transient-cut')
+            assert await retryable.claim('same-recipe') == 1
+            await retryable.record_retryable_failure({'passed': False, 'attempts': 1})
+            retryable_reopened = ProgressStore(app, job, 'transient-cut')
+            assert await retryable_reopened.claim('same-recipe') == 2
+            await retryable_reopened.record_retryable_failure({'passed': False, 'attempts': 2})
+            assert await retryable.claim('same-recipe') == 3
+            await retryable.record_retryable_failure({'passed': False, 'attempts': 3})
+            with pytest.raises(DetailShotRejected, match='attempt_budget_exhausted'):
+                await retryable_reopened.claim('same-recipe')
+            mixed = ProgressStore(app, job, 'transient-then-quality')
+            assert await mixed.claim('mixed-recipe') == 1
+            await mixed.record_retryable_failure({'passed': False, 'attempts': 1})
+            assert await mixed.claim('mixed-recipe') == 2
+            await mixed._change(lambda s: {**s, 'phase': 'candidate'})
+            await mixed.claim_judgment()
+            await mixed.record_judgment({'passed': False, 'decision': 'FAIL',
+                                         'attempts': 2, 'judgments': [{'decision': 'FAIL'}]})
+            assert await mixed.claim('mixed-recipe') == 3
+            two_quality = ProgressStore(app, job, 'two-quality-fails')
+            assert await two_quality.claim('quality-recipe') == 1
+            await two_quality._change(lambda s: {**s, 'phase': 'candidate'})
+            await two_quality.claim_judgment()
+            await two_quality.record_judgment({'passed': False, 'decision': 'FAIL',
+                                               'attempts': 1, 'judgments': [{'decision': 'FAIL'}]})
+            assert await two_quality.claim('quality-recipe') == 2
+            await two_quality._change(lambda s: {**s, 'phase': 'candidate'})
+            await two_quality.claim_judgment()
+            await two_quality.record_judgment({'passed': False, 'decision': 'FAIL',
+                                               'attempts': 2,
+                                               'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}]})
+            assert await two_quality.claim('quality-recipe') == 3
+            with pytest.raises(DetailShotRejected, match='attempt_budget_exhausted'):
+                await two_quality.claim('quality-recipe')
             await conn.execute("update jobs set locked_by='next-lease' where id='j'")
             await conn.commit()
             with pytest.raises(DetailShotRejected, match='lease_lost'):

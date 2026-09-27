@@ -58,7 +58,7 @@ test('adjustment hotspots are immediately available without the old question car
   assert.match(source, /realModelFeeLabel\([\s\S]*analysis\?\.selectedModelId,[\s\S]*realModels,[\s\S]*horizonCutCount \|\| 0,[\s\S]*\)/);
   assert.match(
     source,
-    /`이대로 진행 · \$\{aiCutCount == null \? '—' : aiCutCount \* CREDIT_COSTS\.storyboardPerCut\} 크레딧\$\{realModelFee\}`/,
+    /`이대로 진행 · \$\{aiCutCount == null \? '—' : detailPageCreditCost\(aiCutCount\)\} 크레딧\$\{realModelFee\}`/,
   );
   assert.match(
     source,

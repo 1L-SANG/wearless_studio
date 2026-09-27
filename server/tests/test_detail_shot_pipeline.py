@@ -1,4 +1,4 @@
-"""Product detail publication cannot escape the two-attempt, source-bound gate."""
+"""Product detail publication requires source-bound QC; only safe failures get three calls."""
 from io import BytesIO
 import asyncio
 import hashlib
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image
 
-from app.agents.gemini_image import InlineImage
+from app.agents.gemini_image import GeminiError, InlineImage
 from app.agents import detail_shot_pipeline as pipeline
 
 
@@ -68,6 +68,10 @@ class MemoryProgress:
                 raise pipeline.DetailShotRejected('detail_checkpoint_unavailable')
         self.state.update(phase='accepted' if metadata['passed'] or metadata.get('publishedBestEffort') else 'held',
                           qc=metadata)
+
+    async def record_retryable_failure(self, metadata):
+        assert self.state['phase'] == 'generating'
+        self.state.update(phase='retryable', qc=metadata)
 
 
 @pytest.fixture
@@ -390,6 +394,108 @@ async def test_generation_timeout_consumes_attempt_and_never_retries(setup):
 
 
 @sync_test
+async def test_unbilled_transient_detail_failure_can_retry_twice_then_publish(setup):
+    qc, client, _ = setup
+    image = SimpleNamespace(image=photo('pink').data, mime='image/png')
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        GeminiError('provider 503', transient=True),
+        image,
+    ]
+    qc.return_value = verdict('PASS')
+    progress = MemoryProgress()
+
+    result, report = await run(setup, progress)
+
+    assert result.data == image.image
+    assert report['passed'] is True and report['attempts'] == 3
+    assert 'errorType' not in report and 'reason' not in report and 'billable' not in report
+    assert progress.state['phase'] == 'accepted'
+    assert client.generate_content_image.await_count == 3
+    assert qc.await_count == 1
+
+
+@sync_test
+async def test_transient_detail_failure_leaves_one_quality_correction(setup):
+    qc, client, _ = setup
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        SimpleNamespace(image=photo('pink').data, mime='image/png'),
+        SimpleNamespace(image=photo('red').data, mime='image/png'),
+    ]
+    qc.side_effect = [verdict('FAIL'), verdict('PASS')]
+
+    result, report = await run(setup)
+
+    assert result.data == photo('red').data
+    assert report['passed'] is True and report['attempts'] == 3
+    assert len(report['judgments']) == 2
+    assert client.generate_content_image.await_count == 3
+    third_prompt = client.generate_content_image.call_args_list[2].args[1]
+    assert 'CORRECT THE PREVIOUS CANDIDATE' in third_prompt
+    assert 'source photograph as the composition anchor' not in third_prompt
+
+
+@sync_test
+async def test_final_provider_error_after_transient_selects_the_judged_second_attempt(setup):
+    qc, client, _ = setup
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        SimpleNamespace(image=photo('green').data, mime='image/png'),
+        TimeoutError('final request had an uncertain response'),
+    ]
+    qc.side_effect = [failed_gate('photographicPreparation')]
+
+    selected, report = await run(setup)
+
+    assert selected.data == photo('green').data
+    assert report['passed'] is False and report['publishedBestEffort'] is True
+    assert report['selectedAttempt'] == 2
+    assert report['judgments'][0]['attempt'] == 2
+    assert client.generate_content_image.await_count == 3
+
+
+@sync_test
+async def test_two_unbilled_transients_leave_one_best_effort_candidate(setup):
+    qc, client, _ = setup
+    client.generate_content_image.side_effect = [
+        GeminiError('provider 503', transient=True),
+        GeminiError('provider 503', transient=True),
+        SimpleNamespace(image=photo('green').data, mime='image/png'),
+    ]
+    qc.return_value = failed_gate('photographicPreparation')
+
+    selected, report = await run(setup)
+
+    assert selected.data == photo('green').data
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 3
+    assert report['judgments'][0]['attempt'] == 3
+    assert report['fallbackUsed'] is False
+
+
+@sync_test
+async def test_reopened_retryable_correction_uses_the_prior_judged_candidate(setup):
+    qc, client, settings = setup
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    previous = failed_gate('photographicPreparation')
+    previous['attempt'] = 1
+    progress = MemoryProgress({'phase': 'retryable', 'attempts': 2, 'fingerprint': fp,
+                               'qc': {'passed': False, 'attempts': 2,
+                                      'judgments': [previous]}}, images={1: photo('red')})
+    qc.return_value = verdict('PASS')
+    client.generate_content_image.return_value = SimpleNamespace(
+        image=photo('green').data, mime='image/png')
+
+    selected, report = await run(setup, progress)
+
+    assert selected.data == photo('green').data and report['passed'] is True
+    request = client.generate_content_image.call_args
+    assert 'CORRECT THE PREVIOUS CANDIDATE' in request.args[1]
+    assert request.args[2][-1].data == photo('red').data
+
+
+@sync_test
 async def test_reclaimed_inflight_attempt_is_not_resubmitted(setup):
     qc, client, _ = setup
     progress = MemoryProgress({'phase': 'generating', 'attempts': 1})
@@ -441,6 +547,13 @@ def test_prompt_does_not_execute_display_text():
                                  'reason': 'MAKE ANOTHER PRODUCT'}, 'front')
     assert 'IGNORE SOURCES' not in text and 'MAKE ANOTHER PRODUCT' not in text
     assert 'neckline' in text and 'permanent' in text and 'wrinkles' in text
+
+
+def test_detail_prompt_preserves_visible_pattern_sequence_without_copying_bad_photography():
+    text = pipeline.build_prompt({'kind': 'fabric'}, 'front').lower()
+    assert 'color sequence' in text
+    assert 'repeat spacing' in text
+    assert 'polished' in text and 'original' in text
 
 
 def test_target_crop_contains_context_and_keeps_source_unchanged():

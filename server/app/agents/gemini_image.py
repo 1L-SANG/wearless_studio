@@ -340,11 +340,12 @@ class GeminiImageClient:
         )
         if parse_error is not None:
             raise GeminiError(
-                f"Gemini 200 응답 형식 오류: {type(parse_error).__name__}: {parse_error}"
+                f"Gemini 200 응답 형식 오류: {type(parse_error).__name__}: {parse_error}",
+                billable=True,
             ) from parse_error
         if not image_parts:
             text = " ".join(str(p.get("text") or "") for p in parts).strip()[:300]
-            raise GeminiError(f"응답에 이미지 없음. 텍스트: {text or '(없음)'}")
+            raise GeminiError(f"응답에 이미지 없음. 텍스트: {text or '(없음)'}", billable=True)
         # 가장 큰 image part 채택 (4K 응답은 프리뷰+본체 2개일 수 있음 — spike 노트)
         best = max(image_parts, key=lambda p: len(p["inlineData"]["data"]))
         decoded = await run_cpu_bound(base64.b64decode, best["inlineData"]["data"])
@@ -502,6 +503,6 @@ class GeminiImageClient:
             latency_ms=latency_ms, has_image=img is not None,
         )
         if parse_error is not None:
-            raise GeminiError(f"OpenAI 200 응답 형식 오류: {parse_error}") from parse_error
+            raise GeminiError(f"OpenAI 200 응답 형식 오류: {parse_error}", billable=True) from parse_error
         return GeminiImageResult(
             image=img, mime="image/png", latency_ms=latency_ms, usage=usage)

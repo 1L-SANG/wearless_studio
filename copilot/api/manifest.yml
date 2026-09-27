@@ -256,8 +256,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 보장되지 않는다(2026-08-19 Codex 리뷰) — 실측 전까지 5 를 상한으로 둔다.
   DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "1000"
-  # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
-  DETAIL_CUT_MAX_ATTEMPTS: "1"
+  # 결과가 없는 안전한 일시 실패만 최초 생성 뒤 최대 2회 재시도한다. best-of는 계속 금지.
+  DETAIL_CUT_MAX_ATTEMPTS: "3"
   # 구 best-of(컷마다 후보 2장 추가 생성 후 비전으로 고르기). IMAGE_QC·PANTS_QC·AXIS_QC
   # 하드게이트가 같은 일을 하게 되면서 2026-08-17 부터 off — 중복 비용이라 **되살릴 계획 없다**.
   # ⚠️ 이 줄을 지우면 코드 기본값 "bestof" 로 떨어져 되살아난다. 지우려면 image_qc.best_of

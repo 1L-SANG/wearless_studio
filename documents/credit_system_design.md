@@ -194,7 +194,7 @@ reject_refund(admin, req):
 
 - **월 리셋 자동화**: lazy(account 접근 시 period_end<now면 reset) vs 스케줄러 vs **PG 결제 웹훅**. 셋 다 §3.1을 account lock 하에서 호출. PG가 마지막 단계라 베타는 수동 `grant_subscription`. 설계는 모두 수용.
 - **cross-cycle 청구 허용**: 지난 주기에 시작된 job이 리셋 후 confirm되면 새 주기 버킷서 정산됨(회계상 무해, full-plan 지급이라 항상 커버). 불변식 5의 assert가 이상 시 노출.
-- **per-bucket 예약 모델(Path A, 후속)**: 현재 `reserved`는 aggregate라 reset/refund가 "어느 버킷이 진행중 job을 떠받치나"를 모름(Codex#3). v6에서는 마네킹 잡 45cr, 상세페이지 잡은 AI 컷 수 × 19cr이므로 과거의 작은 예약량을 근거로 race가 무해하다고 가정하지 않는다. **현재 aggregate + assert(불변식 5) 가드를 유지**하며, 버킷별 예약 개선은 별도 설계로 다룬다. 후속 `credit_holds(job_id, source_id, amount)` 테이블에서는 reserve가 버킷에서 즉시 차감·기록하고 confirm이 정산하며 release가 복원하도록 설계한다. 이를 통해 reset/refund 적격을 버킷별로 판정한다.
+- **per-bucket 예약 모델(Path A, 후속)**: 현재 `reserved`는 aggregate라 reset/refund가 "어느 버킷이 진행중 job을 떠받치나"를 모름(Codex#3). v6에서는 마네킹 잡 45cr, 상세페이지 잡은 AI 생성 컷 1~4장에 최소 5장 × 19cr, 5장 이상에 실제 생성 컷 수 × 19cr을 예약하므로 과거의 작은 예약량을 근거로 race가 무해하다고 가정하지 않는다. **현재 aggregate + assert(불변식 5) 가드를 유지**하며, 버킷별 예약 개선은 별도 설계로 다룬다. 후속 `credit_holds(job_id, source_id, amount)` 테이블에서는 reserve가 버킷에서 즉시 차감·기록하고 confirm이 정산하며 release가 복원하도록 설계한다. 이를 통해 reset/refund 적격을 버킷별로 판정한다.
 - **환불 적격 정밀화**(불변식 2): MVP `reserved==0`(진행중 job 있으면 환불 거부, 과보수적) → Path A 도입 시 "이 버킷이 어떤 hold도 안 가짐"으로 완화.
 - **stuck 예약 복구**(NEW-2): confirm의 `assert remain==0`이 (극단 edge로) 반복 rollback되면 job이 `running`에 머물러 `reserved`가 묶임. **영구 stuck 없음** — lease 만료 시 dispatcher의 `recover_stale_leases`가 그 job을 `error`로 종결하고 예약을 release(기존 AG-04 stale 복구 경로 = `list_unsettled_errored_jobs` 재시도). 운영 런북: stale 복구가 못 푸는 케이스는 해당 job/account 수동 점검.
 - **구독 해지/구독료 환불**: 본 문서 밖(PG 단계).

@@ -35,4 +35,34 @@ if [ -n "$violations" ]; then
   exit 1
 fi
 
+# -------------------------------------------------------------
+# 비밀값·로컬 전용 파일 차단 (2026-09-27). 저장소가 공개라 한 번 올라가면 되돌리기 어렵다.
+# 새로 추가·수정되는 줄에서 실제 키 형태를 찾고, 로컬 전용 경로의 파일이 스테이징되면 막는다.
+# -------------------------------------------------------------
+SECRET_RE='hf_[A-Za-z0-9]{30,}|sk-(proj|ant|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|sb_secret_[A-Za-z0-9_-]{20,}|rpa_[A-Za-z0-9]{30,}|live_g?sk_[A-Za-z0-9]{10,}|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+
+secret_hits="$(git diff --cached -U0 --no-color --diff-filter=ACMR -- . ':(exclude).githooks/pre-commit' \
+  | awk '/^\+\+\+ b\//{file=substr($0,7); next} /^\+/{print file": "substr($0,2)}' \
+  | grep -E "$SECRET_RE" | cut -c1-120 || true)"
+
+LOCAL_ONLY_RE='(^|/)\.env(\..+)?$|(^|/)\.mcp\.json$|\.(pem|p12|pfx)$|^(mockups|output|outputs|deliverables|insight|LoRA|reference/genexamples|reference/upload_examples|reference/privacy|reference/insta)/|^documents/.*hackathon'
+path_hits="$(git diff --cached --name-only --diff-filter=ACR \
+  | grep -E "$LOCAL_ONLY_RE" | grep -vE '(^|/)\.env\.example$' || true)"
+
+if [ -n "$secret_hits" ] || [ -n "$path_hits" ]; then
+  echo "✋ 커밋 거부: 공개 저장소에 올리면 안 되는 내용이 스테이징됐습니다." >&2
+  if [ -n "$secret_hits" ]; then
+    echo "  비밀값으로 보이는 줄:" >&2
+    echo "$secret_hits" | sed 's/^/   /' >&2
+  fi
+  if [ -n "$path_hits" ]; then
+    echo "  로컬 전용 파일(저작권 이미지, 실험 산출물, 개인·대회 문서, 키 파일):" >&2
+    echo "$path_hits" | sed 's/^/   /' >&2
+  fi
+  echo >&2
+  echo "  키는 .env나 AWS SSM에 두고 코드에서는 환경변수로 읽으세요. 파일은 git reset HEAD <파일>로 빼세요." >&2
+  echo "  가짜 예시값이라 정말 올려도 되면: git commit --no-verify" >&2
+  exit 1
+fi
+
 exit 0
