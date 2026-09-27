@@ -12,10 +12,14 @@ us-east-1 ALB 로 TCP+TLS 를 새로 여는 데 왕복 3~4번(≈1초)이 든다
 
 | 단계 | 내용 | 언제 |
 |---|---|---|
-| 1 | 앱(`client_ip.py`) 배포 → Cloudflare 프록시 켜기 | 지금 |
+| 1 | 앱(`client_ip.py`) 배포 → Cloudflare 프록시 켜기 | **완료** 2026-09-27 00:13 KST (#429) |
 | 2 | ALB 보안그룹을 Cloudflare 대역으로 잠금(env deploy) | 발표(9/30) 뒤 |
 
 1단계만으로 속도는 얻는다. 원본 IP 가 여전히 열려 있어 방어막으로는 2단계까지 가야 완성이다.
+
+1단계 실측(한국, 20회): 새 연결 p50 1.153 → 0.665초(TLS 0.79 → 0.18), 연결 재사용 요청은
+0.257 → 0.332초로 75ms 늘었다 — 무료 플랜은 서울이 아니라 홍콩(HKG)·도쿄(NRT) 엣지로 붙어
+엣지 → us-east-1 을 한 번 더 돈다.
 
 ## 끝난 상태 (2단계까지)
 
@@ -78,8 +82,9 @@ curl -so /dev/null -w 'dns %{time_namelookup} tcp %{time_connect} tls %{time_app
 
 ### 4. 대기 → SG 잠금 (2단계 — 발표 뒤)
 
-이 단계의 매니페스트 변경은 아직 레포에 없다(PR #315 에 남아 있음). `test_client_ip.py` 의
-SG 대조 검사는 매니페스트에 `ingress` 가 생기는 순간부터 돈다.
+이 단계가 매니페스트의 `http.public.ingress.source_ips` 다. **머지만으로는 잠기지 않는다** — CI 는
+`svc deploy` 만 하고 env deploy 는 안 한다. `test_client_ip.py` 의 SG 대조 검사는 이 블록이 있는
+동안 코드의 엣지 판정 대역과 한 글자라도 어긋나면 실패한다.
 
 DNS TTL 이 300초라 캐시된 ALB 주소로 오는 클라이언트가 잠깐 남는다. **최소 30분** 기다린 뒤:
 
