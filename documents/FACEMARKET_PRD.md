@@ -115,9 +115,9 @@ VC                라이선스를 담은 검증 가능한 자격증명. 체인�
 ```
 identity_pending → photos_pending → liveness_pending → processing
                  → asset_building → license_pending → vc_pending → passed
-실패 경로: failed(사유 기록) · cancelled(사용자 취소) · expired(24h TTL)
+실패 경로: failed(사유 기록) · cancelled(사용자 취소) · expired(72시간 등록 기한)
 ```
-- TTL 24시간. 만료 스윕은 **앞 4단계만** 정리한다. `license_pending` 이후는 만료시키지 않는다
+- 등록 진행 기한은 시작부터 72시간이다. 사진 재업로드로 다시 열면 그 시점부터 72시간이다. 만료 스윕은 `id_capture_pending`, `identity_pending`, `photos_pending`, `liveness_pending`, `processing`만 정리하고, `review_pending`과 `license_pending` 이후는 이 기한으로 만료시키지 않는다
 - 사용자당 진행 중 등록은 1건(부분 유니크 인덱스)
 - 간편인증도 사진을 다 올리면 바로 바인딩(`asset_building`)되고 `review_status='pending'`으로 신원 확인을 기다린다. `review_pending` 상태는 2026-09-25 이전에 들어간 행의 호환용으로만 남는다
 - 신원 확인됨은 `coalesce(review_status, 'approved') = 'approved'` 한 가지로 판정한다(`server/app/facemarket.py`의 `IDENTITY_CLEARED_SQL`, `identity_cleared`)
