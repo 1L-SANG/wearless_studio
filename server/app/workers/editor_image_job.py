@@ -24,6 +24,7 @@ from ..agents import (
     cut_variator,
     identity_source,
     image_qc,
+    horizon_background,
     real_horizon_neck_repair,
     mannequin,
     space_set_assets,
@@ -157,6 +158,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
         vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
         face_pass_outcome: dict = {}      # applied / skipped:<reason> / fallback:<reason> — 자산 메타·이벤트용
+        horizon_decision = None
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -428,17 +430,38 @@ async def run_editor_image_job(app, job: dict) -> None:
                 k: new_payload.get(k)
                 for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "pose",
                           "outerClosureState", "exampleId", "modelId", "model_id",
-                          "colorId", "matchIds", "refScope")
+                          "colorId", "matchIds", "refScope", "spaceGroupId", "spaceVariation",
+                          "spaceSetMemberOrder", "horizonBackgroundMode")
             }
             cut_spec["matchIds"] = matching_ids
+            cut_spec = cut_generator.clear_legacy_studio_pose(cut_spec)
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            retry_binding = None
+            if cut_spec.get("spaceGroupId"):
+                if not new_payload.get("retryBlockId") or cut_spec.get("cutType") != "horizon":
+                    await _fail("촬영 세트는 실패한 원래 컷만 다시 만들 수 있어요.", {"error": "space_set_editor_unsupported"})
+                    return
+                try:
+                    bindings = space_set_assets.bind_storyboard_space_sets(
+                        [cut_spec], clothing_type=clothing_type,
+                        gender=mannequin.select_base_gender(analysis, clothing_type),
+                    )
+                    retry_binding = bindings[id(cut_spec)]
+                    cut_spec["refScope"] = "all"
+                except (space_set_assets.SpaceSetBindingError, ValueError) as exc:
+                    await _fail("원래 촬영 세트 설정을 불러오지 못했어요.", {"error": str(exc)})
+                    return
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+            cut_generation_settings = replace(
+                s,
+                model_image_high=resolve_editor_cut_model(s, normalized["cutType"]),
+            )
 
             requested_model_id = payload.get("modelId")
 
@@ -637,6 +660,15 @@ async def run_editor_image_job(app, job: dict) -> None:
                     app.state.r2.get_bytes, a["r2_key"]))
                 for a in assets
             ]
+            if horizon_background.mode(cut_spec) == "garment-tone":
+                cut_spec = horizon_background.apply_runtime(
+                    cut_spec, horizon_background.palettes_for_blocks(
+                        [cut_spec], product, analysis=analysis,
+                        sources=horizon_background.loaded_sources(product, cut_spec.get("colorId"), assets, product_images),
+                    ),
+                )
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+            horizon_decision = horizon_background.decision(cut_spec)
             try:
                 matching_images = [
                     InlineImage(
@@ -673,7 +705,22 @@ async def run_editor_image_job(app, job: dict) -> None:
             pose_overrides_example = (
                 normalized["pose"] != "auto" and normalized["refScope"] == "pose"
             )
-            if example_id and not pose_overrides_example:
+            if retry_binding is not None and cut_spec.get("cutType") == "horizon":
+                reference = retry_binding["horizonReference"]
+                try:
+                    example_image = (await space_set_assets.load_space_set_image(s, reference["asset"], role="전체 예시")
+                                     if reference["source"] == "space-set" else
+                                     await cut_generator.load_example_image(s, reference["exampleId"], scope="all", clothing_type=clothing_type))
+                    if example_image is None:
+                        raise space_set_assets.SpaceSetBindingError("space_set_all_unavailable", "호리존 완성 예시를 불러오지 못했어요.")
+                except (space_set_assets.SpaceSetBindingError, OSError, ValueError) as exc:
+                    await _fail("호리존 완성 예시를 불러오지 못했어요.", {"error": getattr(exc, "code", "space_set_all_unavailable")})
+                    return
+                images.append(example_image)
+                cut_generator.bind_horizon_reference(cut_spec, reference)
+                example_scope = "all"
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+            elif retry_binding is None and example_id and not pose_overrides_example:
                 scope = normalized["refScope"]
                 if example_id.startswith("ss_"):
                     try:
@@ -690,6 +737,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                         cut_spec["_referenceDirectionCompatible"] = example_reference.get(
                             "directionCompatible", True
                         )
+                        if cut_spec.get("cutType") == "horizon" and scope == "all":
+                            cut_generator.bind_horizon_reference(cut_spec, example_reference)
                         example_image = await space_set_assets.load_space_set_image(
                             s,
                             example_reference["asset"],
@@ -775,6 +824,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 has_model_sheet=n_model_images == 3 or (n_model_images == 2 and not model_has_full_body),
                 has_model_full_body=model_has_full_body and n_model_images >= 2,
                 example_scope=example_scope,
+                example_is_horizon=normalized["cutType"] == "horizon",
                 example_is_product=normalized["cutType"] == "product",
                 reference_direction_compatible=cut_generator.apply_reference_compatibility(
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
@@ -831,7 +881,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(image)
             except ValueError as e:
@@ -875,7 +925,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     attempt += 1
                     try:
                         image, mime = await cut_generator.generate(
-                            editor_settings, app.state.gemini, cut_spec, product, images,
+                            cut_generation_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
                         _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
@@ -885,7 +935,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
-                    editor_settings, app.state.gemini, cut_spec, product, images,
+                    cut_generation_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 _remember_outcome(candidate_image)
                 if scene_plate is None:
@@ -908,7 +958,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         raise RuntimeError("bg candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
-                        editor_settings, app.state.gemini, cut_spec, product, images,
+                        cut_generation_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
                     _remember_outcome(candidate_image)
                 return InlineImage(candidate_mime, candidate_image)
@@ -929,7 +979,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             if s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     plan = cut_plan.compile_cut_plan(
-                        cut_generator.apply_reference_compatibility(normalized),
+                        cut_generator.apply_reference_compatibility(cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)),
                         clothing_type,
                         fit_profile=(analysis or {}).get("fitProfile"),
                     )
@@ -950,7 +1000,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             if (
                 fm_lora_spec is not None
                 and real_horizon_neck_repair.eligible(
-                    s, cut_spec, generation_model=editor_settings.model_image_high,
+                    s, cut_spec, generation_model=cut_generation_settings.model_image_high,
                     real_identity_attached=fm_face_injected,
                     outcome=face_pass_outcome,
                 )
@@ -1018,6 +1068,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"horizon_background": horizon_decision} if horizon_decision else {}),
                 **({"detail_recipe": detail_recipe_metadata} if detail_recipe_metadata else {}),
                 **({"neck_repair": neck_repair_metadata}
                    if neck_repair_metadata is not None else {}),
@@ -1032,6 +1083,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         # 실행 시점 설정 재조회 금지 — 단가 변경이 배포 사이에 끼면 예약액과 다른 차감 발생).
         charge = reserved
         success_metadata = {"creditCostVersion": s.credit_cost_version}
+        if horizon_decision:
+            success_metadata["horizonBackground"] = horizon_decision
         if scene_qc_attempts is not None:
             success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
         if garment_qc_metadata is not None:

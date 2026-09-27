@@ -199,6 +199,41 @@ def test_signature_cut_keeps_main_profile_settings_in_detail_worker(monkeypatch)
     assert run["generateModels"] == ["gemini-3-pro-image"]
 
 
+def test_horizon_cut_and_repair_use_sunburst_without_moving_styling(monkeypatch):
+    async def fail_then_pass_qc(settings, plan, references, generated):
+        return _qc_result("garmentConstruction") if generated.data == b"CHOSEN" else _qc_result()
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fail_then_pass_qc)
+    horizon = {
+        "id": "horizon-block", "cutType": "horizon", "direction": "front", "shot": "full",
+        "faceExposure": "same", "pose": "auto", "refScope": "all",
+    }
+    horizon_run = _run_detail_cut(
+        monkeypatch, qc_mode="repair", spec=horizon,
+        generated_outputs=[b"INITIAL", b"REPAIRED"],
+        settings_overrides={
+            "model_detail_cut": "gpt-image-2.5-flare",
+            "model_horizon_cut": "gpt-image-2.5-sunburst",
+        },
+    )
+    assert horizon_run["generateModels"] == [
+        "gpt-image-2.5-sunburst", "gpt-image-2.5-sunburst",
+    ]
+
+    styling = {
+        "id": "styling-block", "cutType": "styling", "direction": "front", "shot": "full",
+        "faceExposure": "same", "pose": "auto", "refScope": "all",
+    }
+    styling_run = _run_detail_cut(
+        monkeypatch, qc_mode="off", spec=styling,
+        settings_overrides={
+            "model_detail_cut": "gpt-image-2.5-flare",
+            "model_horizon_cut": "gpt-image-2.5-sunburst",
+        },
+    )
+    assert styling_run["generateModels"] == ["gpt-image-2.5-flare"]
+
+
 def _qc_result(*failed_gates):
     raw = {
         "gates": [
@@ -509,8 +544,8 @@ def test_detail_job_persists_cut_qc_per_block(monkeypatch):
     assert "garmentQc" not in captured["metadata"]
 
 
-def _run_editor(monkeypatch, *, qc_mode, qc_error=False):
-    captured = {"events": [], "qcCalls": 0}
+def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", settings_overrides=None):
+    captured = {"events": [], "qcCalls": 0, "generateModels": []}
 
     async def fake_product(conn, pid):
         return {"clothingType": "top", "colors": [{
@@ -524,8 +559,9 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False):
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": "product", "mime_type": "image/png"}
 
-    async def fake_generate(*_args, **_kwargs):
+    async def fake_generate(settings, *_args, **_kwargs):
         captured["events"].append("generate")
+        captured["generateModels"].append(settings.model_image_high)
         return b"INITIAL", "image/png"
 
     async def fake_best_of(settings, product_images, initial, generate_candidate):
@@ -559,23 +595,38 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False):
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
     r2 = _RecordingR2(captured["events"])
+    setting_values = {
+        "gemini_api_key": "x",
+        "r2_bucket": "b",
+        "garment_qc_mode": "off",
+        "cut_output_qc_mode": qc_mode,
+    }
+    setting_values.update(settings_overrides or {})
     app = fake_worker_app(
-        make_settings(
-            gemini_api_key="x",
-            r2_bucket="b",
-            garment_qc_mode="off",
-            cut_output_qc_mode=qc_mode,
-        ),
+        make_settings(**setting_values),
         r2=r2,
     )
+    worn = cut_type in {"styling", "horizon"}
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new",
         "colorId": "color",
-        "cutType": "product",
+        "cutType": cut_type,
         "direction": "front",
-        "shot": "ghost",
+        "shot": "full" if worn else "ghost",
+        **({"faceExposure": "same", "pose": "auto"} if worn else {}),
     })))
     return captured, r2
+
+
+def test_editor_horizon_uses_sunburst_while_other_cuts_keep_editor_model(monkeypatch):
+    settings = {"model_editor_cut": "gpt-image-2.5-flare",
+                "model_horizon_cut": "gpt-image-2.5-sunburst"}
+    horizon, _ = _run_editor(monkeypatch, qc_mode="off", cut_type="horizon",
+                             settings_overrides=settings)
+    styling, _ = _run_editor(monkeypatch, qc_mode="off", cut_type="styling",
+                             settings_overrides=settings)
+    assert horizon["generateModels"] == ["gpt-image-2.5-sunburst"]
+    assert styling["generateModels"] == ["gpt-image-2.5-flare"]
 
 
 @pytest.mark.parametrize(

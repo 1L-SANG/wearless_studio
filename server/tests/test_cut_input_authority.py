@@ -370,7 +370,7 @@ def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
         {"id": "with-plate", "source": "ai", "cutType": "styling", "shot": "full",
          "refAssetIds": ["mood"], "exampleId": "pose-1", "spaceGroupId": "group-1"},
         {"id": "without-plate", "source": "ai", "cutType": "horizon", "shot": "full",
-         "refAssetIds": ["mood"], "exampleId": "pose-2", "spaceGroupId": "group-2"},
+         "refAssetIds": ["mood"], "exampleId": "all-2", "spaceGroupId": "group-2"},
     ]
 
     async def fake_project(conn, uid, pid):
@@ -398,10 +398,11 @@ def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
                     "spaceVariation": "subtle",
                     "representativePlate": {"key": "plate"} if has_plate else None,
                 },
-                "poseReference": {
+                "poseReference" if has_plate else "horizonReference": {
                     "source": "space-set",
                     "exampleId": block["exampleId"],
                     "asset": {"key": block["exampleId"]},
+                    **({} if has_plate else {"shot": "full", "direction": "front", "directionCompatible": True}),
                 },
             }
         return out
@@ -427,8 +428,11 @@ def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
         b"k/product", b"plate", b"pose-1",
     ]
     assert [image.data for image in prepared["without-plate"][1]] == [
-        b"k/product", b"pose-2",
+        b"k/product", b"all-2",
     ]
+    assert "POSE CONTROL" in prepared["with-plate"][2]
+    assert "EXAMPLE REFERENCE (scope: all)" in prepared["without-plate"][2]
+    assert "POSE CONTROL" not in prepared["without-plate"][2]
     assert "MOOD —" not in prepared["with-plate"][2]
     assert "MOOD —" not in prepared["without-plate"][2]
 

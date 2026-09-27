@@ -367,7 +367,7 @@ def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
     )
     prompt = cg.build_prompt(
         {
-            "cutType": "horizon", "direction": "front", "shot": "full",
+            "cutType": "styling", "direction": "front", "shot": "full",
             "pose": "auto", "refScope": "all", "exampleId": "same-example",
             "_exampleRepeatIndex": 1,
         },
@@ -381,6 +381,29 @@ def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
     assert "stance width, shoulder/pelvis offset, or weight" in prompt
     assert "WITHOUT reversing the original support side" in prompt
     assert "NEVER change the action, body-direction family" in prompt
+    assert "${" not in prompt and "[[" not in prompt
+
+
+def test_repeated_horizon_all_example_second_color_adds_micro_pose():
+    """호리존도 같은 예시를 두 번째 색상부터 다시 쓰면 작은 포즈 변주를 받는다(2026-09-26)."""
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "SECOND-USE MICRO-POSE" in prompt
+    assert "POSE FROM EXAMPLE" in prompt
+    assert "Preserve the complete example's body direction" not in prompt
     assert "${" not in prompt and "[[" not in prompt
 
 
@@ -672,7 +695,7 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
         has_mannequin=False,
         has_match=False,
         mood_count=0,
-        example_scope="pose",
+        example_scope="all",
         has_space_set_plate=False,
     )
     prompt = cg.build_prompt(
@@ -689,7 +712,7 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
         manifest=manifest,
     )
 
-    assert "POSE CONTROL" in manifest
+    assert "EXAMPLE REFERENCE (scope: all)" in manifest
     assert "SPACE SET PLATE" not in manifest
     assert "SPACE CONTINUITY" not in prompt
     assert "PUBLISHED SPACE-SET LOCATION" not in prompt

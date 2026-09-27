@@ -16,10 +16,868 @@
     "urban-building-exterior",
     "waterfront"
   ],
-  "releaseId": "space-sets-20260731-zara-v1",
-  "releasedAt": "2026-07-31T10:21:14.109552+00:00",
+  "releaseId": "space-sets-20260926-horizon-all-v1",
+  "releasedAt": "2026-09-26T07:06:12.432620+00:00",
   "schemaVersion": 1,
   "sets": [
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 2 + 미디움 3",
+      "gender": "men",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_01_v2.png",
+            "mime": "image/png",
+            "sha256": "f6a3fb48bb7bfd184122dc515bc477b28c83d3bbdfe625391fe716fdccd7ddd3",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_02_v2.png",
+            "mime": "image/png",
+            "sha256": "b99f08041e495b987bdb99512e544837d87d3611c47a1833937fcf46bda0c411",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_03_v2.png",
+            "mime": "image/png",
+            "sha256": "99427a2d1ea69b32daf9ed9c2ec13980413a881451c7a15b193dab9e0d15ab8d",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s02_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_04_v2.png",
+            "mime": "image/png",
+            "sha256": "a0b58c9655178594c7bad9177b5d0c381af53697a8c9bdeb7b3e0f393a6a10c1",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s02_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s02_05_v2.png",
+            "mime": "image/png",
+            "sha256": "5bc2f0f0028dab34184453e5038c1e5e0b9f8c0033a7f8a0068c960199147641",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s02_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        }
+      ],
+      "name": "기대기",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s02-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 2 + 미디움 2",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_01_v2.png",
+            "mime": "image/png",
+            "sha256": "9eb6c02ea05fa52fbc1a8dfb845a05dd0e66bd481a477b1bc0d155775b755eb6",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_02_v2.png",
+            "mime": "image/png",
+            "sha256": "94777c25a0dd3f1f5bd7d94a7871e08014b9327d5be1f5312925ce2018f5bed8",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_03_v2.png",
+            "mime": "image/png",
+            "sha256": "85bb01d63f4cf28e9cedaa72c7c81a70f7c31657b68f397a8f0ae02728929770",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s05_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s05_04_v2.png",
+            "mime": "image/png",
+            "sha256": "add5c7153d45072c75867904ad7881416ae667bb3fe04dc2eebdcfd3979f67f2",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s05_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        }
+      ],
+      "name": "워킹",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s05-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀 3 + 미디움 3",
+      "gender": "men",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_01_v2.png",
+            "mime": "image/png",
+            "sha256": "3dc9a86f927ce4b4e37fd9ff0c7d0992f694f3be25f776fd1789244df98ad6f6",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_02_v2.png",
+            "mime": "image/png",
+            "sha256": "f28f2eddf0b1c2cc94876d85cd5a97a5b6a745d8e9bc3b37fe07dffc39a3c554",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_03_v2.png",
+            "mime": "image/png",
+            "sha256": "deac354ddd4ba4640ab9d3614be5c7b31380405a9c6a21f859a61cd2216ff8cb",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s08_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_04_v2.png",
+            "mime": "image/png",
+            "sha256": "0b30471adb752d94d481f6ad7e2a2941f3355fba5096fd7815c42314ce809453",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s08_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_05_v2.png",
+            "mime": "image/png",
+            "sha256": "b2e2c4199d7b477d6bf86a8f216dae691c969a2d1e409d8fd7de62a624bd8b5c",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s08_06_v2.png",
+            "mime": "image/png",
+            "sha256": "6d6d50963962c58e2448aa8872bcb3f94e4e9e02a2fa152aea03e836c46b3842",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s08_06_v2",
+          "order": 6,
+          "pose": null,
+          "shot": "full"
+        }
+      ],
+      "name": "허리포커스",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s08-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀 4 + 미디움 3",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_01_v2.png",
+            "mime": "image/png",
+            "sha256": "2a8d4085a8f4d36c2adfaf5d784deb7d2d07cb6722d4f94f799969e334998ad4",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_02_v2.png",
+            "mime": "image/png",
+            "sha256": "3ea901e5ca496a8e078cb49caf636e4f2aff2adec6d61e8204a827bb03e7d3db",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_03_v2.png",
+            "mime": "image/png",
+            "sha256": "32708f80af0442c145e4559eec6bad17a8be02e6e625fa3b1d5e91167b3b8810",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_04_v2.png",
+            "mime": "image/png",
+            "sha256": "7cf3d3fea4626b65278d4861476a79c5865c698c1f7003ba3d8580fe46cab427",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_05_v2.png",
+            "mime": "image/png",
+            "sha256": "7b0f373e8f19de90c4e27efa3f2587989279deed2dacc876af49e21fa913a8ab",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_06_v2.png",
+            "mime": "image/png",
+            "sha256": "331bfe4d5205e4a823fc84bf54f9c48107b7590f32b6650a6467b5dc56d05544",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s11_06_v2",
+          "order": 6,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s11_07_v2.png",
+            "mime": "image/png",
+            "sha256": "5aba59332f9215cdb62c664a401f9e0eb79db9ed9dd304ddfe81c90cd21e38b3",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s11_07_v2",
+          "order": 7,
+          "pose": null,
+          "shot": "full"
+        }
+      ],
+      "name": "워킹",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s11-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀 2 + 미디움 4",
+      "gender": "men",
+      "members": [
+        {
+          "all": {
+            "height": 1535,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_01_v2.png",
+            "mime": "image/png",
+            "sha256": "ffae9e2ad3aeefc0c14c15f172dc71be884adaf6661a22c6eb03d1a89e87879f",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_02_v2.png",
+            "mime": "image/png",
+            "sha256": "ef42f1dd0e8248f6708cc80637e0f13d175b6d576eb63b11758b0d4ad75ae010",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_03_v2.png",
+            "mime": "image/png",
+            "sha256": "7d30d439c50814a299b7267cba81e93a3f60b534ac94bd75e2d22809d181d7d2",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s14_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_04_v2.png",
+            "mime": "image/png",
+            "sha256": "6397f692b944cc4e9ea5578f89ce7e3fd87e74e8bcb87669ea5672ac325d7ce3",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_zara_s14_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_05_v2.png",
+            "mime": "image/png",
+            "sha256": "d0842d036316ad847d1d14f78c1ffd47f8806b5bcfa3a9de07e3519c7f2b9b3f",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s14_06_v2.png",
+            "mime": "image/png",
+            "sha256": "70764223352d489b889fc430dadd11ee838b02e30a0b589313898e090ccb5d8e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s14_06_v2",
+          "order": 6,
+          "pose": null,
+          "shot": "medium"
+        }
+      ],
+      "name": "클로즈업",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s14-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀 3 + 미디움 2",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_01_v2.png",
+            "mime": "image/png",
+            "sha256": "09cceecf4f423d62932f92879f9bed403713b2688dd1fec853dbc20a54bf42ea",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_02_v2.png",
+            "mime": "image/png",
+            "sha256": "9944ab5fb0bfe83a494e64a15cc6e46b84c6261851e6f95cc595bf93ea397f9e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_03_v2.png",
+            "mime": "image/png",
+            "sha256": "f871a9c87526c7f3fce084f2b6b1d7328df5d166a3e9bcb771ba4191c9d6dbe8",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_04_v2.png",
+            "mime": "image/png",
+            "sha256": "2ab6b15680b8dac9a68db2bb276f5e6fe24974346616cf3b0956af4bfbbc06d4",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s18_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s18_05_v2.png",
+            "mime": "image/png",
+            "sha256": "9b9e6b3f4c9d41c261257881975dae51f2a7fba2fda8b90301e951da79d6937e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s18_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "full"
+        }
+      ],
+      "name": "릴랙스",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s18-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 2 + 미디움 2",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1535,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_01_v2.png",
+            "mime": "image/png",
+            "sha256": "e37dca5da56bd8dab7e386db23affb9cf1ee733c3ca6a6791eeb1f271ff2c69e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_02_v2.png",
+            "mime": "image/png",
+            "sha256": "8c393ec4692eade523091997c161d5e1b06dc0ba72151746b83caf5a145463f8",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_03_v2.png",
+            "mime": "image/png",
+            "sha256": "d923fecb422f408b4429130c7163ba44646887ab18224044997d0c948ef0c12f",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s20_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s20_04_v2.png",
+            "mime": "image/png",
+            "sha256": "0542ce276e2b2d647ec9624aa7847218e30301d3410f31d548a59e037ea1e961",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s20_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        }
+      ],
+      "name": "턴포즈",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s20-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 3 + 미디움 2",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_01_v2.png",
+            "mime": "image/png",
+            "sha256": "5ed4b893bf3ef452bb1d6d2846b1f669da85ec8c2772ffd8078721bad7b2e3bb",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_01_v2",
+          "order": 1,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_02_v2.png",
+            "mime": "image/png",
+            "sha256": "4e3757d7435d44760f66def0b41f0849413190b7090e331fe0fe34183850745a",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_02_v2",
+          "order": 2,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_03_v2.png",
+            "mime": "image/png",
+            "sha256": "23a9d7e8cd02e1b6898c41156a72782bdb6141cfd0aba4e2ebf287e1c7961fd5",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s21_03_v2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_04_v2.png",
+            "mime": "image/png",
+            "sha256": "fdb3a42501c343ed668ee66fecf7328632bcd38c158e63a7b17a65b1e9c792b2",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_zara_s21_04_v2",
+          "order": 4,
+          "pose": null,
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_zara_s21_05_v2.png",
+            "mime": "image/png",
+            "sha256": "d1b7c397604b395d7a798e51d9464f72034f086352604dd05bd7361ee34a60b6",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_zara_s21_05_v2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        }
+      ],
+      "name": "뒤태",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-figma-s21-v2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "미디움 5",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_01_r2.png",
+            "mime": "image/png",
+            "sha256": "a474167a4ad6b53e1e14f7fc066dc35dc43cb7918b0de4d6fcea6ec43ea1121b",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_01_r2",
+          "order": 1,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_02_r2.png",
+            "mime": "image/png",
+            "sha256": "980debaf5538b07cea775bbf59a843ee17ddc2e30ef2c23357b4698708323d39",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_02_r2",
+          "order": 2,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_03_r2.png",
+            "mime": "image/png",
+            "sha256": "b8544286ae0c6e645c76aed7fcb7a81b858d67da1316335820ed604a7416a58e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_03_r2",
+          "order": 3,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_04_r2.png",
+            "mime": "image/png",
+            "sha256": "5841d6af893a248194c2bfb130531f62f3a63ecff8a64e0c6c771b01ec68f226",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_04_r2",
+          "order": 4,
+          "pose": null,
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260926-horizon-all-v1/all/ss_horizon_sequence_06_women_top_linen_05_r2.png",
+            "mime": "image/png",
+            "sha256": "ab89135b6d0386dafbdc6d0691b82e5ae5e0d03cc90c2781c9e3f13b5360c261",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_05_r2",
+          "order": 5,
+          "pose": null,
+          "shot": "medium"
+        }
+      ],
+      "name": "클로즈업",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-06-women-top-linen-r2",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
     {
       "applicableClothingTypes": [
         "top"

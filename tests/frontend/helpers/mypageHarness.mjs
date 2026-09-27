@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
 export function findTree(node, predicate) {
@@ -14,8 +15,8 @@ export async function loadEarningsHarness(api = {}) {
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({ configFile: false, logLevel: 'silent',
-    root: new URL('../../..', import.meta.url).pathname, server: { middlewareMode: true },
-    resolve: { alias: { '@': new URL('../../../src', import.meta.url).pathname } },
+    root: fileURLToPath(new URL('../../..', import.meta.url)), server: { middlewareMode: true, hmr: false, watch: null },
+    resolve: { alias: { '@': fileURLToPath(new URL('../../../src', import.meta.url)) } },
     ssr: { noExternal: true, external: ['lucide-react'] }, esbuild: { jsx: 'automatic' }, appType: 'custom',
     plugins: [{ name: 'mypage-harness', enforce: 'pre',
       resolveId(id) {

@@ -57,7 +57,7 @@ export function generationExampleSelectionPatch(block, example, {
   const structuralPatch = generationExampleStructuralRecipePatch(block, example);
   const effectiveBlock = { ...block, ...structuralPatch };
   const replacing = !!block?.exampleId && !!exampleId && block.exampleId !== exampleId;
-  const scope = block?.spaceGroupId ? 'pose' : (refScope || block?.refScope || 'all');
+  const scope = block?.spaceGroupId ? (block.cutType === 'horizon' ? 'all' : 'pose') : (refScope || block?.refScope || 'all');
   // 디테일 컷의 방향은 예시에 내재된 속성 — 셀러는 방향 UI 없이 예시만 고르고,
   // 예시의 direction 라벨(미기재=front)이 서버의 근거 사진(Detail/BackDetail) 선택을
   // 결정한다(2026-08-07 오너 결정). 첫 선택·교체 모두 적용.

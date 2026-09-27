@@ -129,20 +129,20 @@ function matchesMainSelection(example, options, flatCombinationPublished) {
     cutType, shot, clothingType, gender, spaceGroupId, direction, sideStyle = null,
     includeSetOnly, appendSetOnly,
   } = options;
-  return matchesSharedEligibility(example, {
+  return !example?.retired && matchesSharedEligibility(example, {
     clothingType, gender, allowSetOnly: includeSetOnly || appendSetOnly,
   })
     && (example?.setOnly || flatCombinationPublished)
     && example?.cutType === cutType
     && example?.shot === shot
     && (!spaceGroupId || (
-      example.variants.includes('pose')
+      (cutType === 'horizon' || example.variants.includes('pose'))
       && poseExampleDirectionCompatible(example, { cutType, direction, sideStyle })
     ));
 }
 
 function matchesMirrorSelection(example, { clothingType, gender }) {
-  return matchesSharedEligibility(example, { clothingType, gender })
+  return !example?.retired && matchesSharedEligibility(example, { clothingType, gender })
     && example?.cutType === 'mirror'
     && isGenerationCombinationPublic({
       cutType: 'mirror', shot: example.shot, clothingType, gender,
@@ -449,7 +449,7 @@ export function assignGenerationExamples(blocks, {
       ...block,
       exampleId: example.id,
       exampleSelectionOrigin: 'auto',
-      refScope: block.spaceGroupId ? 'pose' : 'all',
+      refScope: block.spaceGroupId && block.cutType !== 'horizon' ? 'pose' : 'all',
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
       // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙

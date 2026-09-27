@@ -32,13 +32,14 @@ from .agents import (
     product_evidence_contract,
     detail_recommendations,
     product_analyst,
+    garment_color_evidence,
     space_set_assets,
     style_affinity,
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
-                       mannequin_display,
+from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
+                       input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval, sam_retry)
 from .auth import require_user
@@ -1135,6 +1136,8 @@ async def save_analysis(
     payload = dict(row["payload"] or {})
     if detail_recommendations.PERSISTED_KEY in payload:
         payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])
+    if garment_color_evidence.PERSISTED_KEY in payload:
+        payload[garment_color_evidence.PERSISTED_KEY] = garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])
     return {"projectId": row["project_id"], **payload}
 
 
@@ -1197,6 +1200,35 @@ async def promote_confirmed_gpt_evidence(
         await repo.save_confirmed_gpt_product_evidence(conn, project_id, contract)
         await conn.commit()
     return {"promoted": True}
+
+
+@router.post(
+    "/projects/{project_id}/analysis/garment-colors:measure",
+    responses={**COMMON_RESPONSES}, tags=["Analysis"],
+    summary="가로 세트 벽 색용 옷 색 지연 측정",
+)
+async def measure_garment_colors(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    """저장된 스토리보드에서 '옷 색에 맞춤' 가로 세트가 쓰는 색만 원본 사진으로 잰다(무과금·동기).
+
+    스토리보드를 떠날 때 부른다. 이미 잰 색이면 다시 재지 않는다. 관찰·R2·이미지 처리
+    실패는 5xx 가 아니라 `unavailable` 로 돌려주고, 생성은 기존 배경으로 만든다.
+    반환: `{status: skipped|measured|unavailable, garmentColorEvidence: 공개 요약|null}`.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+    # 커넥션은 놓고 R2·LLM·이미지 작업을 한다. 서비스가 필요할 때 다시 연다.
+    status, contract = await garment_color_measure.ensure_garment_color_evidence(
+        request.app.state.settings, request.app.state.pool, getattr(request.app.state, "r2", None),
+        user_id=user_id, project_id=project_id)
+    try:
+        summary = garment_color_evidence.public_summary(contract) if contract is not None else None
+    except ValueError:
+        summary = None
+    return {"status": status, garment_color_evidence.PERSISTED_KEY: summary}
 
 
 @router.post(
@@ -1264,6 +1296,8 @@ async def get_analysis(
         payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
     if detail_recommendations.PERSISTED_KEY in (payload or {}):
         payload = {**payload, detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(payload[detail_recommendations.PERSISTED_KEY])}
+    if garment_color_evidence.PERSISTED_KEY in (payload or {}):
+        payload = {**payload, garment_color_evidence.PERSISTED_KEY: garment_color_evidence.public_summary(payload[garment_color_evidence.PERSISTED_KEY])}
     return {"projectId": project_id, **(payload or {})}
 
 
@@ -3058,7 +3092,7 @@ async def generate_editor_image(
     _require_bg_examples_enabled(request, body)
     if (body or {}).get("mode") == "new" and (
         (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
-    ):
+    ) and not ((body or {}).get("cutType") == "horizon" and (body or {}).get("spaceGroupId") and (body or {}).get("retryBlockId")):
         raise _bad_request(
             "space_set_editor_unsupported",
             "촬영 세트는 콘티보드에서만 사용할 수 있어요.",
@@ -3086,6 +3120,16 @@ async def generate_editor_image(
             raise _not_found()
         payload = dict(body or {})
         payload.pop("_facemarket", None)
+        if payload.get("mode") == "new" and payload.get("spaceGroupId"):
+            from .agents import horizon_background
+            try:
+                payload = horizon_background.restore_failed_retry(
+                    payload,
+                    await repo.get_storyboard(conn, project_id),
+                    await repo.get_editor_blocks(conn, project_id),
+                )
+            except ValueError as exc:
+                raise _bad_request("invalid_horizon_set_retry", "원래 콘티의 실패한 스튜디오 컷만 다시 만들 수 있어요.") from exc
         analysis = None
         selected_model_id = None
         brand_use_category = None

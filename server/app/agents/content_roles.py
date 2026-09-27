@@ -6,6 +6,8 @@ order and those choices keep the hidden role aligned. A missing role may be
 inferred defensively from ``cutType``; retired kind values are not interpreted.
 """
 
+from . import horizon_background
+
 CONTENT_ROLES = (
     "hero",
     "benefit",
@@ -298,6 +300,8 @@ _STUDIO_SPREAD_MIN_CUTS = 4
 #: 가는데, 같은 상품·같은 모델·같은 프롬프트면 같은 포즈가 나온다. 예시(exampleId)가
 #: 붙어야 도는 EXNUANCE·EXREPEAT 변주도 안 걸리고, 포즈 변주 전용인 cut_variator(AG-07)는
 #: 에디터에서만 쓴다. 즉 상세페이지에는 변주 장치가 하나도 안 걸려 있었다.
+#: 완성 예시가 포즈를 정하는 호리존 컷은 여기서 빼고 예시 포즈와 컬러웨이 변주(EXREPEAT)에
+#: 맡긴다(2026-09-26 오너 결정). 넣으면 워커가 셀러의 명시 포즈로 읽어 예시 포즈를 덮는다.
 #:
 #: 고르는 기준은 **옷이 계속 보이는 것**이다. 핏 확인 섹션이라 팔짱처럼 앞섶을 가리는
 #: 포즈는 넣지 않는다. 문구는 _sanitize 를 거쳐 40자에서 잘리므로 그 안에 맞춘다.
@@ -322,16 +326,30 @@ def _spread_studio_poses(raw: list) -> None:
 
     첫 컷은 건드리지 않는다 — 그 섹션의 기준 컷이고, 기준은 POSE:auto 가 맞다.
     콘티가 **이름 있는 포즈**를 줬으면 그대로 둔다. 셀러 카드도 안 건드린다.
+    촬영 세트 컷도 안 건드린다. 호리존 세트는 컷마다 완성 예시가 포즈를 정하고(ADR-0013),
+    여기서 넣은 포즈는 워커가 셀러의 명시 포즈로 읽어 예시 포즈를 덮는다.
+    세트 밖이라도 방향이 맞는 완성 예시가 포즈를 정하는 컷은 같은 이유로 안 건드리고, 옛 서버가
+    이런 컷에 저장해 둔 자동 포즈는 auto 로 되돌린다. 그래서 auto 로 남는 기준 컷은 예시가 포즈를
+    정하지 않는 컷 중 첫 컷이다. 방향 배분(_spread_studio_directions)이 끝난 뒤에 불러야 한다.
     """
-    open_slots = [
-        block for block in raw
-        if isinstance(block, dict)
-        and block.get("source") != "mine"
-        and (block.get("sectionRole") or block.get("section_role")
-             or resolve_section_role(block)) == "studio"
-        and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
-        and str(block.get("pose") or "").strip().lower() in _POSE_UNSET
-    ]
+    from . import cut_generator  # cut_generator 가 이 모듈을 import 하므로 함수 안에서 불러온다.
+
+    open_slots = []
+    for block in raw:
+        if not (
+            isinstance(block, dict)
+            and block.get("source") != "mine"
+            and not (block.get("spaceGroupId") or block.get("space_group_id"))
+            and (block.get("sectionRole") or block.get("section_role")
+                 or resolve_section_role(block)) == "studio"
+            and (block.get("cutType") or block.get("cut_type")) in (None, "", "horizon")
+        ):
+            continue
+        if cut_generator.horizon_example_governs_pose(block):
+            if block.get("pose") in _STUDIO_POSE_ROTATION:
+                block["pose"] = "auto"
+        elif str(block.get("pose") or "").strip().lower() in _POSE_UNSET:
+            open_slots.append(block)
     for index, block in enumerate(open_slots[1:]):
         block["pose"] = _STUDIO_POSE_ROTATION[index % len(_STUDIO_POSE_ROTATION)]
 
@@ -455,6 +473,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             block.get("shot"),
         )
         updated = canonicalize_storyboard_block(candidate, for_storage=for_storage)
+        updated = horizon_background.normalize_block(updated)
         next_recipe = (updated.get("cutType"), updated.get("direction"), updated.get("shot"))
         recipe_incompatible = (
             previous_recipe[0] != next_recipe[0]

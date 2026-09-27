@@ -407,6 +407,10 @@ export const api = {
     const analysis = normalizeAnalysisFit(clone(DB.analysis));
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
+  // 의류색 측정은 서버 전용이라 목에서는 측정할 것이 없다고 답한다(http 와 같은 shape).
+  async measureGarmentColors(/* projectId */) {
+    return { status: 'skipped', garmentColorEvidence: null };
+  },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고

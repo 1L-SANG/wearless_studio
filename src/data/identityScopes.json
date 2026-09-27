@@ -181,9 +181,18 @@
     "spaceSetIn": [
      "horizon-sequence-05-women-top-draped",
      "horizon-sequence-06-women-top-linen",
+     "horizon-sequence-06-women-top-linen-r2",
      "horizon-sequence-07-men-top-pleated",
      "horizon-sequence-08-men-top-textured",
      "horizon-sequence-09-women-dress-knit",
+     "horizon-sequence-figma-s02-v2",
+     "horizon-sequence-figma-s05-v2",
+     "horizon-sequence-figma-s08-v2",
+     "horizon-sequence-figma-s11-v2",
+     "horizon-sequence-figma-s14-v2",
+     "horizon-sequence-figma-s18-v2",
+     "horizon-sequence-figma-s20-v2",
+     "horizon-sequence-figma-s21-v2",
      "horizon-set-01-women-scarf-outer",
      "horizon-set-02-women-fluid-trousers",
      "horizon-set-03-men-tonal-outer",
@@ -198,10 +207,15 @@
      "ss_horizon_sequence_05_women_top_draped_04",
      "ss_horizon_sequence_05_women_top_draped_05",
      "ss_horizon_sequence_06_women_top_linen_01",
+     "ss_horizon_sequence_06_women_top_linen_01_r2",
      "ss_horizon_sequence_06_women_top_linen_02",
+     "ss_horizon_sequence_06_women_top_linen_02_r2",
      "ss_horizon_sequence_06_women_top_linen_03",
+     "ss_horizon_sequence_06_women_top_linen_03_r2",
      "ss_horizon_sequence_06_women_top_linen_04",
+     "ss_horizon_sequence_06_women_top_linen_04_r2",
      "ss_horizon_sequence_06_women_top_linen_05",
+     "ss_horizon_sequence_06_women_top_linen_05_r2",
      "ss_horizon_sequence_07_men_top_pleated_01",
      "ss_horizon_sequence_07_men_top_pleated_02",
      "ss_horizon_sequence_07_men_top_pleated_03",
@@ -236,6 +250,48 @@
      "ss_horizon_set_04_men_chino_focus_03",
      "ss_horizon_set_04_men_chino_focus_04",
      "ss_horizon_set_04_men_chino_focus_05",
+     "ss_horizon_zara_s02_01_v2",
+     "ss_horizon_zara_s02_02_v2",
+     "ss_horizon_zara_s02_03_v2",
+     "ss_horizon_zara_s02_04_v2",
+     "ss_horizon_zara_s02_05_v2",
+     "ss_horizon_zara_s05_01_v2",
+     "ss_horizon_zara_s05_02_v2",
+     "ss_horizon_zara_s05_03_v2",
+     "ss_horizon_zara_s05_04_v2",
+     "ss_horizon_zara_s08_01_v2",
+     "ss_horizon_zara_s08_02_v2",
+     "ss_horizon_zara_s08_03_v2",
+     "ss_horizon_zara_s08_04_v2",
+     "ss_horizon_zara_s08_05_v2",
+     "ss_horizon_zara_s08_06_v2",
+     "ss_horizon_zara_s11_01_v2",
+     "ss_horizon_zara_s11_02_v2",
+     "ss_horizon_zara_s11_03_v2",
+     "ss_horizon_zara_s11_04_v2",
+     "ss_horizon_zara_s11_05_v2",
+     "ss_horizon_zara_s11_06_v2",
+     "ss_horizon_zara_s11_07_v2",
+     "ss_horizon_zara_s14_01_v2",
+     "ss_horizon_zara_s14_02_v2",
+     "ss_horizon_zara_s14_03_v2",
+     "ss_horizon_zara_s14_04_v2",
+     "ss_horizon_zara_s14_05_v2",
+     "ss_horizon_zara_s14_06_v2",
+     "ss_horizon_zara_s18_01_v2",
+     "ss_horizon_zara_s18_02_v2",
+     "ss_horizon_zara_s18_03_v2",
+     "ss_horizon_zara_s18_04_v2",
+     "ss_horizon_zara_s18_05_v2",
+     "ss_horizon_zara_s20_01_v2",
+     "ss_horizon_zara_s20_02_v2",
+     "ss_horizon_zara_s20_03_v2",
+     "ss_horizon_zara_s20_04_v2",
+     "ss_horizon_zara_s21_01_v2",
+     "ss_horizon_zara_s21_02_v2",
+     "ss_horizon_zara_s21_03_v2",
+     "ss_horizon_zara_s21_04_v2",
+     "ss_horizon_zara_s21_05_v2",
      "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_01",
      "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_02",
      "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_03",
@@ -249,9 +305,18 @@
  "spaceSets": {
   "horizon-sequence-05-women-top-draped": "virtual",
   "horizon-sequence-06-women-top-linen": "virtual",
+  "horizon-sequence-06-women-top-linen-r2": "virtual",
   "horizon-sequence-07-men-top-pleated": "virtual",
   "horizon-sequence-08-men-top-textured": "virtual",
   "horizon-sequence-09-women-dress-knit": "virtual",
+  "horizon-sequence-figma-s02-v2": "virtual",
+  "horizon-sequence-figma-s05-v2": "virtual",
+  "horizon-sequence-figma-s08-v2": "virtual",
+  "horizon-sequence-figma-s11-v2": "virtual",
+  "horizon-sequence-figma-s14-v2": "virtual",
+  "horizon-sequence-figma-s18-v2": "virtual",
+  "horizon-sequence-figma-s20-v2": "virtual",
+  "horizon-sequence-figma-s21-v2": "virtual",
   "horizon-set-01-women-scarf-outer": "virtual",
   "horizon-set-02-women-fluid-trousers": "virtual",
   "horizon-set-03-men-tonal-outer": "virtual",
@@ -4396,6 +4461,114 @@
   },
   {
    "block": {
+    "exampleId": "ss_horizon_zara_s02_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s02-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s05_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s05-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s08_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s08-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s11_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s11-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s14_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s14-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s18_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s18-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s20_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s20-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_zara_s21_01_v2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "full",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-figma-s21-v2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ss_horizon_sequence_06_women_top_linen_01_r2",
+    "cutType": "horizon",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "pose",
+    "pose": "auto",
+    "spaceGroupId": "horizon-sequence-06-women-top-linen-r2"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
     "exampleId": "ss_horizon_sequence_05_women_top_draped_01",
     "cutType": "horizon",
     "direction": "front",
@@ -4523,114 +4696,6 @@
     "refScope": "pose",
     "pose": "auto",
     "spaceGroupId": "set-style-women-dress-city-ivy-modimood-2928-root02"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set-style-women-dress-cafe-garden-attrangs-160544-root03"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set-style-women-dress-neighborhood-garage-modimood-3266-root04"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_dress_coast_beach_hotping_48001_root05_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set-style-women-dress-coast-beach-hotping-48001-root05"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_dress_home_living_musinsa_6570399_root06_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set-style-women-dress-home-living-musinsa-6570399-root06"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set-style-women-dress-night-riverwalk-maybins-40948-root07"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_top_indoor_attrangs_170129_prod01_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set_style_women_top_indoor_attrangs_170129_prod01"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_top_outdoor_slowand_10690_prod01_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set_style_women_top_outdoor_slowand_10690_prod01"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_outer_indoor_commonunique_26096_prod01_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set_style_women_outer_indoor_commonunique_26096_prod01"
-   },
-   "scope": "both"
-  },
-  {
-   "block": {
-    "exampleId": "ss_set_style_women_top_cafe_attrangs_170103_prod02_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "full",
-    "refScope": "pose",
-    "pose": "auto",
-    "spaceGroupId": "set_style_women_top_cafe_attrangs_170103_prod02"
    },
    "scope": "both"
   }

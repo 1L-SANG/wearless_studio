@@ -18,6 +18,7 @@ import {
   inferStoryboardSpaceSet,
   isStoryboardSpaceSetEligible,
   normalizeStoryboardSpaceSetRelease,
+  selectableSpaceSets,
   spaceSetGroupId,
   spaceSetIdFromGroupId,
   STORYBOARD_SPACE_SETS,
@@ -48,6 +49,46 @@ const rawSpaceSetRelease = JSON.parse(readFileSync(
   new URL('../../src/data/storyboardSpaceSets.json', import.meta.url),
   'utf8',
 ));
+
+test('horizon sequence supports seven all-only members; styling and rotation limits stay unchanged', () => {
+  for (const [type, count, accepted] of [
+    ['horizon-sequence', 2, true], ['horizon-sequence', 6, true], ['horizon-sequence', 7, true],
+    ['horizon-sequence', 8, false], ['styling', 5, true], ['styling', 6, false],
+    ['horizon-rotation', 3, true], ['horizon-rotation', 4, false],
+  ]) {
+    const base = rawSpaceSetRelease.sets.find(set => set.setType === type);
+    const members = Array.from({ length: count }, (_, index) => ({ ...base.members[0],
+      exampleId: `ss_boundary_${index}`, order: index + 1, shot: 'full',
+      direction: ['front', 'side', 'back'][index % 3], variants: type === 'styling' ? ['all', 'pose'] : ['all'],
+    }));
+    const normalized = normalizeStoryboardSpaceSetRelease({ ...rawSpaceSetRelease, sets: [{ ...base, members }] });
+    assert.equal(normalized.length, accepted ? 1 : 0, `${type}:${count}`);
+    if (accepted) assert.deepEqual(normalized[0].members[0].variants, members[0].variants);
+  }
+});
+
+test('replacement becomes selectable only after release without deleting historical lookup data', () => {
+  const oldId = 'horizon-sequence-06-women-top-linen';
+  const old = { id: oldId };
+  const replacement = { id: `${oldId}-r2` };
+  assert.deepEqual(selectableSpaceSets([old]), [old]);
+  const all = [old, replacement];
+  assert.deepEqual(selectableSpaceSets(all), [replacement]);
+  assert.equal(all[0], old, 'stored-release input retains historical set');
+  assert.ok(inferStoryboardSpaceSet(spaceSetGroupId(oldId, 'saved')));
+});
+
+test('retired set examples remain readable but are marked only after a replacement is published', () => {
+  const active = new Set(STORYBOARD_SPACE_SETS.map(set => set.id));
+  for (const example of STORYBOARD_SPACE_SET_EXAMPLES) {
+    assert.equal(example.retired === true, !active.has(example.spaceSetId));
+  }
+  const oldId = 'horizon-sequence-06-women-top-linen';
+  const replacementExists = rawSpaceSetRelease.sets.some(set => set.setId === `${oldId}-r2`);
+  const oldExamples = STORYBOARD_SPACE_SET_EXAMPLES.filter(example => example.spaceSetId === oldId);
+  assert.ok(oldExamples.length);
+  assert.ok(oldExamples.every(example => (example.retired === true) === replacementExists));
+});
 
 test('consecutive spaceGroupId runs become bands without joining separated runs', () => {
   const groups = groupConsecutiveSpaceRuns([
@@ -147,9 +188,9 @@ test('space set replacement swaps the whole composition in one immutable board r
     item.spaceGroupId, item.cutType, item.direction, item.shot, item.refScope,
     item.exampleId, item.exampleSelectionOrigin, item.setSelectionOrigin, item.thumb,
   ]), [
-    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'user', 'front.webp'],
-    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'user', 'side.webp'],
-    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'user', 'back.webp'],
+    [groupB, 'horizon', 'front', 'full', 'all', 'front', 'user', 'user', 'front.webp'],
+    [groupB, 'horizon', 'side', 'full', 'all', 'side', 'user', 'user', 'side.webp'],
+    [groupB, 'horizon', 'back', 'full', 'all', 'back', 'user', 'user', 'back.webp'],
   ]);
   assert.deepEqual(next.map((item) => item.id), ['before', 'old-a', 'old-b', 'new-2', 'after']);
 });
@@ -276,7 +317,9 @@ test('published sets use only the shared place vocabulary and matching catalog f
   const allowed = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
   const released = STORYBOARD_SPACE_SETS;
   assert.ok(released.length > 0);
-  assert.equal(released.length, rawSpaceSetRelease.sets.length);
+  const allReleased = normalizeStoryboardSpaceSetRelease(rawSpaceSetRelease);
+  assert.equal(allReleased.length, rawSpaceSetRelease.sets.length);
+  assert.equal(released.length, selectableSpaceSets(allReleased).length);
   assert.ok(released.every((set) => allowed.has(set.placeType)));
   assert.ok(released.every((set) => set.place === set.placeType));
 });
@@ -349,6 +392,21 @@ test('rotation set members and grouped set both cover every supported clothing t
       && example.applicableClothingTypes.includes('dress')
     ),
   ));
+});
+
+test('actual rotation members keep every group clothing scope when dragged outside the group', () => {
+  const rotations = STORYBOARD_SPACE_SETS.filter(set => set.setType === 'horizon-rotation');
+  assert.ok(rotations.length);
+  for (const set of rotations) {
+    for (const member of set.members) {
+      const detached = detachSpaceMembership({ ...member, spaceGroupId: spaceSetGroupId(set.id, 'drag'), refScope: 'all' });
+      assert.equal(detached.refScope, 'all');
+      assert.equal(detached.spaceGroupId, undefined);
+      const example = STORYBOARD_SPACE_SET_EXAMPLES.find(item => item.id === member.exampleId);
+      assert.ok(set.setApplicableClothingTypes.every(type => example.applicableClothingTypes.includes(type)));
+      assert.equal(example.shot, 'full');
+    }
+  }
 });
 
 test('creating released members preserves exact ordered example choices as user selections', () => {

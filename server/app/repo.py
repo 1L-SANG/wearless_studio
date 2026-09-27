@@ -867,6 +867,10 @@ async def save_product(
 ) -> dict:
     """patch 적용 + name 변경 시 projects.title 동기화(계약 §3.1). 소유권은 라우트 선검증 +
     title UPDATE는 user_id 조건 명시(§9). 레거시(행 없음) 대비 행 보장 포함."""
+    previous_color_input = None
+    if "colors" in patch or "clothing_type" in patch:
+        previous = await get_product(conn, project_id) or {}
+        previous_color_input = garment_color_input_identity(previous)
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into products (project_id) values (%s) on conflict (project_id) do nothing",
@@ -887,12 +891,32 @@ async def save_product(
             [*sets.values(), project_id],
         )
         row = await cur.fetchone()
+        if previous_color_input is not None and row is not None and previous_color_input != garment_color_input_identity(row):
+            await cur.execute(
+                "update analyses set payload = payload - 'garmentColorEvidence' where project_id = %s",
+                (project_id,),
+            )
         if "name" in patch:
             await cur.execute(
                 "update projects set title = %s where id = %s and user_id = %s",
                 (patch["name"], project_id, user_id),
             )
     return row
+
+
+def garment_color_input_identity(product: dict) -> tuple:
+    """Metadata-only invalidation; consumers additionally verify original-byte hashes."""
+    colors = []
+    for color in product.get("colors") or []:
+        if not isinstance(color, dict):
+            continue
+        views = []
+        for slot in ("Front", "Back"):
+            image = next((im for im in color.get("images", []) if isinstance(im, dict) and im.get("slot") == slot and im.get("id")), None)
+            if image:
+                views.append((slot, str(image["id"])))
+        colors.append((str(color.get("id") or ""), tuple(views)))
+    return (product.get("clothing_type") or product.get("clothingType"), tuple(sorted(colors)))
 
 
 # AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
@@ -906,11 +930,13 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "featureCopy",
     "confirmedGptProductEvidence",
     "detailRecommendations",
+    "garmentColorEvidence",
 )
-# Unlike sourceMirrored (which the analysis form may explicitly edit), this value is a
-# hash-bound AG-01 artifact. API clients may echo it but can never create or replace it;
-# only finalize_analyze_success replaces the full payload after a fresh provider call.
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations")
+# Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
+# hash-bound server artifacts. API clients may echo them but can never create or replace
+# them; finalize_analyze_success replaces the full payload after a fresh provider call, and
+# replace_garment_color_evidence is the only other writer (lazy garment color measurement).
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -924,7 +950,13 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) 
     missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
     immutable_supplied = any(k in analysis for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
     if missing or immutable_supplied:
-        prev = await get_analysis(conn, project_id) or {}
+        # 행을 잠그고 읽는다. 지연 옷 색 측정이 읽기와 upsert 사이에 쓰면 이월이 옛 값을
+        # 덮어 새 측정이 사라진다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select payload from analyses where project_id = %s for update", (project_id,)
+            )
+            prev = ((await cur.fetchone()) or {}).get("payload") or {}
         carried = {k: prev[k] for k in missing if k in prev}
         immutable = {
             k: prev[k]
@@ -1024,6 +1056,33 @@ async def save_detail_recommendations(conn: AsyncConnection, project_id: str, co
     if row is None:
         raise ValueError("detail_recommendations_promotion_conflict")
     return row["payload"]
+
+
+async def replace_garment_color_evidence(
+    conn: AsyncConnection, project_id: str, contract: dict, *, expected, identity: tuple
+) -> bool:
+    """지연 측정한 옷 색 근거를 통째로 바꾼다. 쓰면 True.
+
+    측정에 쓴 상품 사진·종류가 지금도 같고(products 행을 잠가 save_product 무효화와 줄
+    세운다), 읽은 뒤 다른 측정이 먼저 쓰지 않았을 때만 쓴다(compare-and-set).
+    expected=None 은 '아직 근거 없음'이다. 분석 행이 없어도 False.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select colors, clothing_type from products where project_id = %s for update",
+            (project_id,),
+        )
+        row = await cur.fetchone()
+        if row is None or garment_color_input_identity(row) != identity:
+            return False
+        await cur.execute(
+            "update analyses set payload = jsonb_set(payload, '{garmentColorEvidence}', %s::jsonb, true) "
+            "where project_id = %s and (payload->'garmentColorEvidence') is not distinct from %s::jsonb "
+            "returning 1",
+            # None 은 SQL NULL 로 넘겨야 '키 없음'과 같아진다(Json(None) 은 jsonb 'null').
+            (Json(contract), project_id, None if expected is None else Json(expected)),
+        )
+        return await cur.fetchone() is not None
 
 
 async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str) -> dict | None:

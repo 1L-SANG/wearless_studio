@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 2,
+  "sets": {
+    "horizon-sequence-05-women-top-draped": {
+      "title": "전신과 상체 앞·옆·뒤",
+      "description": "전신 한 컷에 상체 앞·옆·뒤를 더해 옷의 전체 비율과 윗부분을 함께 보여줘요.",
+      "backgroundLabel": "따뜻한 회색",
+      "lightingLabel": "부드러운 빛 · 약한 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "상체핏"
+    },
+    "horizon-sequence-06-women-top-linen": {
+      "title": "상체 앞·옆·뒤와 가까운 컷",
+      "description": "상체 앞·옆·뒤에 목 아래 가까운 컷을 더해요. 바지 윗부분까지 보여 상의와의 연결을 확인할 수 있어요.",
+      "backgroundLabel": "밝은 무채색",
+      "lightingLabel": "고른 빛 · 낮은 대비",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "클로즈업"
+    },
+    "horizon-sequence-07-men-top-pleated": {
+      "title": "전신과 상체 앞·옆·뒤",
+      "description": "상체 앞·옆·뒤를 중심으로 한 전신 컷을 더해 옷의 비율과 형태를 비교해요.",
+      "backgroundLabel": "밝은 회색 벽",
+      "lightingLabel": "옆에서 오는 빛 · 선명한 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "쉐도우"
+    },
+    "horizon-sequence-08-men-top-textured": {
+      "title": "전신과 상체 앞·옆·뒤",
+      "description": "상체 앞·옆·뒤를 중심으로 한 전신 컷을 더해 옷의 비율과 형태를 비교해요.",
+      "backgroundLabel": "짙은 회색 · 중앙이 밝음",
+      "lightingLabel": "방향 있는 빛 · 벽 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "포켓포즈"
+    },
+    "horizon-sequence-09-women-dress-knit": {
+      "title": "정면과 걷는 전신",
+      "description": "정면·걸어오기·옆·뒤로 걷기 전신으로 실루엣과 움직임을 보여줘요.",
+      "backgroundLabel": "따뜻한 회색",
+      "lightingLabel": "옆에서 오는 빛 · 선명한 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "워킹"
+    },
+    "set_horizon_women_bottom_threetimes_7563033280596_prod01": {
+      "title": "기본 전신 앞·옆·뒤",
+      "description": "팔을 내리고 똑바로 선 자세로 앞·옆·뒤 전신을 비교하는 기본 구성이에요.",
+      "backgroundLabel": "밝은 회색",
+      "lightingLabel": "고른 빛 · 약한 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "베이직"
+    },
+    "set_horizon_men_bottom_hatchingroom_2161_prod01": {
+      "title": "기본 전신 앞·옆·뒤",
+      "description": "팔을 내리고 똑바로 선 자세로 앞·옆·뒤 전신을 비교하는 기본 구성이에요.",
+      "backgroundLabel": "밝은 회색",
+      "lightingLabel": "고른 빛 · 약한 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "베이직"
+    },
+    "horizon-set-01-women-scarf-outer": {
+      "title": "몸을 튼 전신과 상체",
+      "description": "몸을 살짝 튼 전신 위주로 앞·옆·뒤를 보여주고, 상체 컷에서 옷매무새를 확인해요.",
+      "backgroundLabel": "따뜻한 회색",
+      "lightingLabel": "부드러운 빛 · 약한 바닥 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "턴포즈"
+    },
+    "horizon-set-02-women-fluid-trousers": {
+      "title": "전신과 허리 아래 앞·뒤",
+      "description": "전신 앞과 돌아보는 뒤 전신에 허리부터 발까지의 앞·뒤 핏 컷을 더했어요. 옆면 컷은 없어요.",
+      "backgroundLabel": "중성 회색",
+      "lightingLabel": "고른 빛 · 은은한 바닥 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "하체핏"
+    },
+    "horizon-set-03-men-tonal-outer": {
+      "title": "전신과 옷을 잡는 상체",
+      "description": "상체 앞·옆·뒤와 전신을 묶고, 옷을 가볍게 잡는 손 동작으로 입체감을 보여줘요.",
+      "backgroundLabel": "흰 벽 · 밝은 회색 바닥",
+      "lightingLabel": "밝고 고른 빛",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "옷매무새"
+    },
+    "horizon-set-04-men-chino-focus": {
+      "title": "선 전신과 허리 아래",
+      "description": "가만히 선 전신 앞·옆과 허리부터 발까지의 앞·뒤 컷으로 핏을 비교해요.",
+      "backgroundLabel": "밝은 벽 · 짙은 회색 바닥",
+      "lightingLabel": "고른 빛 · 옅은 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "하체핏"
+    },
+    "horizon-sequence-figma-s02-v2": {
+      "title": "전신과 벽에 기댄 상체",
+      "description": "앞·옆·뒤 컷에 벽에 기대어 몸을 기울인 가까운 상체 컷을 더해요.",
+      "backgroundLabel": "밝은 벽 · 짙은 바닥",
+      "lightingLabel": "옆에서 오는 빛 · 넓은 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "기대기"
+    },
+    "horizon-sequence-figma-s05-v2": {
+      "title": "걷는 전신과 상체 앞·뒤",
+      "description": "걸어오는 전신과 상체 앞·뒤를 묶어 핏과 움직임을 보여줘요. 옆면 컷은 없어요.",
+      "backgroundLabel": "옅은 푸른 벽 · 회색 바닥",
+      "lightingLabel": "밝고 고른 빛",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "워킹"
+    },
+    "horizon-sequence-figma-s08-v2": {
+      "title": "전신과 허리 가까운 컷",
+      "description": "전신 앞·옆과 허리 아래 앞·뒤에 허리부터 무릎까지 비스듬히 당긴 가까운 컷을 더해요.",
+      "backgroundLabel": "밝은 벽 · 짙은 바닥",
+      "lightingLabel": "옆에서 오는 빛 · 옅은 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "허리포커스"
+    },
+    "horizon-sequence-figma-s11-v2": {
+      "title": "걷는 전신과 허리 아래",
+      "description": "걸어오기·뒤로 걸어가기 전신과 허리 아래 앞·뒤 컷으로 핏과 움직임을 보여줘요. 옆면 컷은 없어요.",
+      "backgroundLabel": "밝은 회색",
+      "lightingLabel": "부드러운 빛 · 낮은 대비",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "워킹"
+    },
+    "horizon-sequence-figma-s14-v2": {
+      "title": "전신과 앞면 가까운 컷",
+      "description": "앞·옆·뒤에 얼굴 없이 앞면을 꽉 채운 가까운 컷과 옷매무새를 만지는 상체 컷을 더해요.",
+      "backgroundLabel": "밝은 벽 · 짙은 바닥",
+      "lightingLabel": "옆에서 오는 빛 · 벽 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "클로즈업"
+    },
+    "horizon-sequence-figma-s18-v2": {
+      "title": "힘을 뺀 앞·옆·뒤",
+      "description": "주머니에 손 넣기·고개 숙이기·상체 숙이기 같은 힘을 뺀 포즈로 앞·옆·뒤를 찍어요.",
+      "backgroundLabel": "새하얀 무채색",
+      "lightingLabel": "고른 빛 · 그림자 거의 없음",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "릴랙스"
+    },
+    "horizon-sequence-figma-s20-v2": {
+      "title": "걷고 몸을 돌리는 포즈",
+      "description": "걸음을 떼고 몸을 틀어 돌아보는 동작으로 앞·옆·뒤를 찍어요. 밑단이 퍼지는 정도는 옷에 따라 달라요.",
+      "backgroundLabel": "밝은 무채색",
+      "lightingLabel": "고른 빛 · 자연스러운 바닥 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "턴포즈"
+    },
+    "horizon-sequence-figma-s21-v2": {
+      "title": "돌아보기와 뒤쪽 포즈",
+      "description": "어깨 너머 돌아보기·뒤 상체·뒤로 걸어가기처럼 뒤쪽 각도 컷이 많아요. 옆면 컷은 없어요.",
+      "backgroundLabel": "따뜻한 회색",
+      "lightingLabel": "부드러운 빛 · 한쪽 그림자",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "뒤태"
+    },
+    "horizon-sequence-06-women-top-linen-r2": {
+      "title": "상체 앞·옆·뒤와 가까운 컷",
+      "description": "상체 앞·옆·뒤에 목 아래 가까운 컷을 더해요. 바지 윗부분까지 보여 상의와의 연결을 확인할 수 있어요.",
+      "backgroundLabel": "밝은 무채색",
+      "lightingLabel": "고른 빛 · 낮은 대비",
+      "backgroundDescription": "예시의 배경과 조명 기준을 참고해요.",
+      "supportedBackgroundModes": [
+        "reference",
+        "garment-tone"
+      ],
+      "shortName": "클로즈업"
+    }
+  }
+}

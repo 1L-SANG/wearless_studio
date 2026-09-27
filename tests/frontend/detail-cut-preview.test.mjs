@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 /* 생성 중 REAL 얼굴 컷 미리보기(2026-09-26, 오너 결정 b).
    REAL 컷의 cut_done 에는 주소가 없다(492cbc64). 대기 타일은 '완성됐어요'만 말하다가, 이제
    서버 미리보기 라우트(요청마다 소유·라이선스 재확인)가 준 그림으로 바뀐다. 거절(403)이면
@@ -54,12 +55,12 @@ function fakeObjectUrls() {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function tileHarness() {
-  const root = new URL('../..', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../..', import.meta.url));
   const server = await createServer({
     configFile: false,
     logLevel: 'silent',
     root,
-    resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
+    resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null },
     esbuild: { jsx: 'automatic' },
     plugins: [{
