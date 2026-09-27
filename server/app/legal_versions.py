@@ -9,10 +9,10 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 # 공개된 최신 개정본. 신규 회원은 이 버전에 동의한다.
-SELLER_TERMS_VERSION = "v1.2"
+SELLER_TERMS_VERSION = "v1.3"
 SELLER_PRIVACY_VERSION = "v1.1"
-PREVIOUS_SELLER_TERMS_VERSION = "v1.1"
-SELLER_TERMS_EFFECTIVE_DATE = date(2026, 9, 29)
+PREVIOUS_SELLER_TERMS_VERSION = "v1.2"
+SELLER_TERMS_EFFECTIVE_DATE = date(2026, 10, 6)
 _SEOUL = ZoneInfo("Asia/Seoul")
 
 # 선택 의류 협찬 동의(04 동의서 E-2). 2026-09-23 시행. required_versions()나 등록 게이트에 연결하지 않아요
@@ -53,7 +53,7 @@ def required_versions() -> dict[str, str]:
 
 
 def terms_consent_required(accepted_version: str | None, *, today: date | None = None) -> bool:
-    """기존 v1.1 회원은 공지기간 동안 유지하고 시행일부터 v1.2 재동의를 받는다."""
+    """기존 v1.2 회원은 공지기간 동안 유지하고 시행일부터 v1.3 재동의를 받는다."""
     if accepted_version == SELLER_TERMS_VERSION:
         return False
     if accepted_version != PREVIOUS_SELLER_TERMS_VERSION:

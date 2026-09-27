@@ -71,7 +71,7 @@ test('publisher keeps each document revision date consistent in metadata and bod
   // 학습 가중치를 회사가 직접 학습한다는 것, 얼굴 부분 생성 GPU 서버(RunPod) 위탁, 학습 사본·
   // 가중치의 보관·파기 범위가 더해졌고, 받지 않는 사이즈·스타일과 "만료" 표기를 뺐다.
   const revised = {
-    'terms-seller': { version: 'v1.2', effectiveDate: '2026-09-29' },
+    'terms-seller': { version: 'v1.3', effectiveDate: '2026-10-06' },
     'refund': { version: 'v1.2', effectiveDate: '2026-09-29' },
     'biometric-consent': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
     'overseas-transfer': { version: '2026-09-v4', effectiveDate: '2026-09-18' },
@@ -100,7 +100,7 @@ test('publisher keeps each document revision date consistent in metadata and bod
   assert.doesNotMatch(agreement, /2026년 9월 7일부터 적용한다/);
 
   const datedSellerDocuments = [
-    ['terms-seller.md', /2026년 9월 29일\*\*부터 시행합니다/],
+    ['terms-seller.md', /2026년 10월 6일\*\*부터 시행합니다/],
     ['privacy-seller.md', /2026년 9월 11일\*\*부터 적용됩니다/],
     ['refund.md', /2026년 9월 29일\*\*부터 시행합니다/],
   ];
