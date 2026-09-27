@@ -111,15 +111,17 @@ def test_server_versions_match_published_manifest():
     assert by_slug["privacy-seller"]["version"] == legal_versions.SELLER_PRIVACY_VERSION
 
 
-def test_existing_v11_consent_is_valid_until_v12_effective_date():
-    assert legal_versions.terms_consent_required("v1.1", today=date(2026, 9, 28)) is False
-    assert legal_versions.terms_consent_required("v1.1", today=date(2026, 9, 29)) is True
-    assert routes._consent_payload(_row(terms="v1.1"), today=date(2026, 9, 28))["needsConsent"] is False
-    assert routes._consent_payload(_row(terms="v1.1"), today=date(2026, 9, 29))["needsConsent"] is True
+def test_existing_v12_consent_is_valid_until_v13_effective_date():
+    assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 5)) is False
+    assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 6)) is True
+    assert routes._consent_payload(_row(terms="v1.2"), today=date(2026, 10, 5))["needsConsent"] is False
+    assert routes._consent_payload(_row(terms="v1.2"), today=date(2026, 10, 6))["needsConsent"] is True
 
 
 def test_new_and_older_consents_still_require_the_published_version_before_effective_date():
     before = date(2026, 9, 28)
     assert legal_versions.terms_consent_required(None, today=before) is True
     assert legal_versions.terms_consent_required("v0.9", today=before) is True
+    assert legal_versions.terms_consent_required("v1.1", today=before) is True
     assert legal_versions.terms_consent_required("v1.2", today=before) is False
+    assert legal_versions.terms_consent_required("v1.3", today=before) is False
