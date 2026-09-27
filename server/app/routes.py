@@ -3284,8 +3284,8 @@ async def generate_detail_page(
     request: Request, project_id: str, user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
-    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    """저장된 콘티의 AI 컷을 모두 생성한 뒤 상세페이지를 조립한다. 전량 성공 시에만
+    1~4 생성 컷은 5컷 값, 5컷 이상은 생성 컷 수만큼 차감한다. 실패 시 예약 전액 해제."""
     s = request.app.state.settings
     scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
@@ -3368,32 +3368,34 @@ async def generate_detail_page(
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
         # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).
-        from .workers.detail_page_job import _duplicate_source_indexes
+        from .workers.detail_page_job import _duplicate_source_indexes, _storyboard_digest
         product_row = await repo.get_product(conn, project_id)
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
         ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
-        # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 워커가 건너뛴다 — 예약에서도 뺀다.
-        # 안 빼면 만들지도 않을 컷 때문에 잔액 부족(402)이 나거나 예약이 부풀어 오른다.
+        # 한 컷이라도 모델 범위 밖이면 전량 완성할 수 없다. 만들 수 있는 컷만 예약하고
+        # 일부 페이지를 출고하는 대신, 시작 전에 사용자가 콘티를 고치게 한다.
         allowed_blocks = [b for b in ai_blocks
                           if identity_scope.block_allowed(b, selected_model_id)]
-        if ai_blocks and not allowed_blocks:
-            # 만들 수 있는 컷이 하나도 없다 — 잡을 만들지 않고 예약도 하지 않는다.
-            # 사유는 첫 블록에서 읽는다(전부 같은 이유로 걸렸다).
-            code, message = (identity_scope.block_rejection(ai_blocks[0], selected_model_id)
+        if len(allowed_blocks) != len(ai_blocks):
+            rejected = next(b for b in ai_blocks
+                            if not identity_scope.block_allowed(b, selected_model_id))
+            code, message = (identity_scope.block_rejection(rejected, selected_model_id)
                              or (identity_scope.MISMATCH_CODE, identity_scope.MISMATCH_MESSAGE))
             raise _bad_request(code, message)
-        ai_blocks = allowed_blocks
         dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
         ai_count = sum(1 for source in dup_sources if source is None)
-        cost = ai_count * s.credit_cost_storyboard_per_cut
+        min_cuts = s.credit_min_storyboard_cuts
+        billable = max(ai_count, min_cuts) if ai_count > 0 else 0
+        cost = billable * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
             payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,
-                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count})
+                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count,
+                      "minCuts": min_cuts, "storyboardDigest": _storyboard_digest(storyboard)})
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")

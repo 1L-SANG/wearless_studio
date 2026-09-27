@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 from . import detail_output_qc
 from .gemini_image import InlineImage
 
-PROMPT_VERSION = 'product-detail-prepared-v2'
+PROMPT_VERSION = 'product-detail-prepared-v3'
 _SUBJECTS = {
     'neckline': 'neckline and its connection to the surrounding bodice',
     'closure': 'fastener construction and surrounding placket',
@@ -49,6 +49,9 @@ If a TARGET CROP is attached, it is a pixel crop of the source, not another garm
 Keep that subject recognizable, with breathing room and context; do not enlarge
 unresolved fibers or lettering into fabricated detail. Fabric shots show visible
 weave/knit and natural drape, never claim microscopic structure from a distant photo.
+For source-visible stripes, checks or prints, preserve the motif color sequence,
+direction and relative repeat spacing. Natural folds and perspective may distort
+the spacing locally; do not redesign the pattern or invent unresolved microtexture.
 
 PHOTOGRAPHIC PREPARATION: gently steam incidental shipping/shooting wrinkles,
 smooth and re-lay the garment, tidy collar edges and folds for a professional flat
@@ -136,7 +139,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
         if candidate is not None and report.get('passed') is True:
             return candidate, report
         raise DetailShotRejected('detail_checkpoint_unavailable')
-    if state and candidate is None:
+    if state and candidate is None and state.get('phase') != 'retryable':
         raise DetailShotRejected('detail_checkpoint_unavailable')
 
     report = {'policyVersion': detail_output_qc.POLICY_VERSION,
@@ -186,11 +189,18 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                     openai_preserve_input_bytes=True)
                 candidate = InlineImage(response.mime, response.image)
                 await progress.save_candidate(candidate, fp, attempt)
+                for stale_error_field in ('reason', 'errorType', 'billable'):
+                    report.pop(stale_error_field, None)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 report.update(decision='UNKNOWN', reason='generation_unavailable',
                               errorType=type(exc).__name__, billable=getattr(exc, 'billable', None))
+                if (getattr(exc, 'transient', False) is True
+                        and getattr(exc, 'billable', False) is not True
+                        and attempt < 3):
+                    await progress.record_retryable_failure(report)
+                    continue
                 await progress.finish(report)
                 raise DetailShotRejected('detail_generation_unavailable', report) from exc
         if resumed_judgment is not None:
@@ -211,7 +221,8 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
             report['passed'] = True
             await progress.finish(report)
             return candidate, report
-        if judgment.get('decision') != 'FAIL' or report['attempts'] >= 2:
+        if (judgment.get('decision') != 'FAIL'
+                or len(report['judgments']) >= 2 or report['attempts'] >= 3):
             await progress.finish(report)
             raise DetailShotRejected('detail_quality_unconfirmed', report)
         corrections = tuple(detail_output_qc.repair_instructions(judgment)) or (

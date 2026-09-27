@@ -19,7 +19,7 @@ from . import vision_llm
 from .gemini_image import InlineImage
 
 
-POLICY_VERSION = "detail-output-qc-v4"
+POLICY_VERSION = "detail-output-qc-v5"
 GATES = (
     "targetFraming", "constructionDesign", "colorMaterial", "permanentMarkings",
     "temporaryArtifacts", "photographicPreparation",
@@ -47,10 +47,10 @@ _ARTIFACT_FIELDS = {
 _REPAIRS = {
     "targetFraming": "Photograph the requested detail and its useful connecting garment context; exclude a full-garment overview and preserve the requested side.",
     "constructionDesign": "Restore the original garment's visible construction, motif family, intentional pleats or gathers, and hardware relationships. Keep permissible steaming and attractive re-laying.",
-    "colorMaterial": "Restore the original garment's color family and supported material, pattern, openwork, texture and sheen without inventing finer fibers or changing the fabric.",
+    "colorMaterial": "Restore the original garment's color family and supported material. Match source-visible motif color sequence, direction and relative repeat spacing while allowing natural folds and perspective. Do not invent finer fibers or change the fabric.",
     "permanentMarkings": "Preserve permanent sewn labels, logos and markings where their original location is inside this crop. Preserve presence separately from lettering; never invent unreadable source text or expose an outside-frame label.",
     "temporaryArtifacts": "Remove temporary sales tags, tag fasteners, hangers, clips, hands and distracting photographic artifacts. Keep real garment hardware, permanent sewn labels and intentional threads.",
-    "photographicPreparation": "Prepare a coherent fashion-product detail photograph with soft neutral light and natural cloth depth. Smooth incidental wrinkles and re-lay the garment while preserving intentional texture, lace, pleats and construction.",
+    "photographicPreparation": "Prepare a publishable fashion-product detail photograph with crisp subject detail, soft neutral light and natural cloth depth. Do not reuse seller source pixels as the result. Improve poor source lighting, blur or clutter while preserving intentional texture, lace, pleats and construction.",
 }
 
 
@@ -306,6 +306,17 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         has_crop = bound is not None and "region" in bound
         images = [*all_images[:len(sources) + int(has_crop)], all_images[-5]]
         out["judgeImageHashes"] = [_hash(im.data) for im in images]
+        # 다른 PNG 메타데이터·인코딩이어도 픽셀이 원본 또는 원본 크롭과 같다면
+        # AI 디테일 결과로 출고하지 않는다. 판정 모델이 출처 복사를 승인할 여지를 닫는다.
+        if any(all_images[-5].data == source.data
+               for source in all_images[:len(sources) + int(has_crop)]):
+            return {**out, "decision": "FAIL", "errorCode": "source_photo_copy",
+                    "gates": [{"code": code,
+                               "status": "FAIL" if code == "photographicPreparation" else "UNKNOWN",
+                               "evidence": "Generated candidate repeats seller source pixels."
+                               if code == "photographicPreparation"
+                               else "Not evaluated after source-photo copy detection."}
+                              for code in GATES]}
     except (ValueError, TypeError, OSError):
         return _unknown(out, "invalid_input")
     out["provider"] = "gpt"

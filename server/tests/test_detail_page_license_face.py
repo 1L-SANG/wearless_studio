@@ -392,7 +392,6 @@ def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
                   storyboard=[
                       {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"},
                       {"id": "b1b", "source": "ai", "cutType": "horizon", "shot": "medium"},
-                      {"id": "b2", "source": "ai", "cutType": "product", "shot": "ghost"},
                       {"id": "b3", "source": "ai", "cutType": "mirror", "shot": "full"},
                   ])
     row = _license_row()
@@ -408,8 +407,6 @@ def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
     # has_face 는 False 그대로다(검증-얼굴 배지는 얼굴이 보이는 컷에만).
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     assert by_block["b3"]["images"][0] == by_block["b1"]["images"][0]
-    # 아직 막힌 섹션(제품컷)은 생성기까지 가지 않는다.
-    assert "b2" not in by_block
     assert captured["license_notice"] is not None
     # 실존 모델 파생물 세 장 — 전부 비공개 캐시로 나간다. 공개 캐시는 없다.
     assert main_r2.caches.count("private, no-store") == 3

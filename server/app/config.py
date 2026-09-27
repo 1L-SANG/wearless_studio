@@ -131,9 +131,8 @@ class Settings:
     #: 기본 최초 생성은 1회. 확인된 결함은 현재 컷을 보존하는 별도 수정 슬롯으로
     #: 다룬다. 운영자가 명시한 더 큰 값은 하위 호환으로 계속 지원한다.
     mannequin_max_attempts: int = 1
-    # 상세페이지 컷 생성 재시도 횟수(1 = 재시도 없음). 일시적 실패로 빈 슬롯이 나는 것을
-    # 줄인다 — 실패 컷은 미차감이라 재시도 비용은 성공했을 때만 발생한다.
-    detail_cut_max_attempts: int = 2
+    # 첫 생성 + 추가 2회. 최종 미완성이면 페이지 전체 실패·예약 전액 해제.
+    detail_cut_max_attempts: int = 3
     # 재시도 사이 대기(초). 테스트는 0 으로 두어 실시간을 먹지 않게 한다.
     detail_cut_retry_delay_seconds: float = 2.0
     # 상세페이지 컷 동시 생성 상한. 0 = 제한 없음(콘티 컷 수만큼 동시 — 13컷이면 13개).
@@ -291,6 +290,7 @@ class Settings:
     credit_cost_mannequin_generate: int = 45
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
     credit_cost_storyboard_per_cut: int = 19  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
+    credit_min_storyboard_cuts: int = 5  # PL-4 상세페이지: AI 생성이 있으면 최소 청구 컷 수
     credit_cost_editor_image: int = 19  # PL-5 에디터 이미지 1장
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
@@ -833,7 +833,7 @@ def load_settings() -> Settings:
         detail_cut_image_size=_detail_cut_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "1")),
-        detail_cut_max_attempts=int(os.getenv("DETAIL_CUT_MAX_ATTEMPTS", "2")),
+        detail_cut_max_attempts=int(os.getenv("DETAIL_CUT_MAX_ATTEMPTS", "3")),
         detail_cut_retry_delay_seconds=float(os.getenv("DETAIL_CUT_RETRY_DELAY_SECONDS", "2")),
         detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
         detail_cut_stagger_ms=int(os.getenv("DETAIL_CUT_STAGGER_MS", "3000")),
@@ -863,6 +863,7 @@ def load_settings() -> Settings:
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "19")),
+        credit_min_storyboard_cuts=5,
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "19")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),

@@ -77,7 +77,7 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 제출 간격은 idx*간격 누적이라 14번째 컷이 3000ms 면 39초를 그냥 기다린다.
     # 전부-병렬(DETAIL_CUT_CONCURRENCY=0)로 올리면서 1000ms 로 낮췄다(2026-08-27).
     assert variables["DETAIL_CUT_STAGGER_MS"] == "1000"
-    assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
+    assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "3"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
     assert variables["MANNEQUIN_IMAGE_SIZE"] == "1K"

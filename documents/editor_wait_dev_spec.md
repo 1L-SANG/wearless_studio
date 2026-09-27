@@ -44,7 +44,7 @@
 
 - `previewUrl` = `r2.public_url(key)` (`r2.py:137` — 커스텀 도메인 or **1h presigned GET**).
   asset DB 행은 지금처럼 finalize에서만 insert — **DB 계약 무변경**. 10분 잡 ≪ 1h TTL이라 안전.
-  기존 `cut_passthrough`(assetId 실림 — 셀러 원본이라 행이 이미 존재)와 `cut_failed`는 유지.
+  `cut_failed`는 유지한다. 2026-09-27부터 디테일 원본 재사용을 폐기해 새 작업은 `cut_passthrough`를 내보내지 않는다. 프론트는 오래된 작업 이벤트를 읽는 호환 처리만 남긴다.
 - 컷 성공 경로는 현재 이벤트를 **안** 쏜다(`:355` 성공 return) → `cut_done` 추가가 핵심.
 - 카피 선행: `copy_results = await _gen_copy(...)` 호출을 `_gen_cuts` **앞으로** 이동
   (`:1083` → `:1057` 부근). 조립부는 변수 그대로 사용, 다른 변경 없음.

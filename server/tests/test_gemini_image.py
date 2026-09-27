@@ -183,10 +183,11 @@ def test_malformed_200_is_recorded_once_before_raising(monkeypatch):
     _wire_response(monkeypatch, Response())
     monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
 
-    with pytest.raises(gemini_image.GeminiError, match="응답 형식 오류"):
+    with pytest.raises(gemini_image.GeminiError, match="응답 형식 오류") as error:
         asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
             "gemini-3-pro-image", "prompt", [], "4K"))
 
+    assert error.value.billable is True
     assert len(recorded) == 1
     assert recorded[0]["usage"] is None
     assert recorded[0]["has_image"] is False
@@ -224,10 +225,11 @@ def test_text_only_200_records_usage_without_claiming_an_image(monkeypatch):
     _wire_response(monkeypatch, response)
     monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
 
-    with pytest.raises(gemini_image.GeminiError, match="이미지 없음"):
+    with pytest.raises(gemini_image.GeminiError, match="이미지 없음") as error:
         asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
             "gemini-3-pro-image", "prompt", [], "1K"))
 
+    assert error.value.billable is True
     assert len(recorded) == 1
     assert recorded[0]["usage"] == usage and recorded[0]["has_image"] is False
 
@@ -603,10 +605,11 @@ def test_openai_malformed_200_keeps_available_usage_in_ledger(monkeypatch):
     _wire_response(monkeypatch, response)
     monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
 
-    with pytest.raises(gemini_image.GeminiError, match="OpenAI 200 응답 형식 오류"):
+    with pytest.raises(gemini_image.GeminiError, match="OpenAI 200 응답 형식 오류") as error:
         asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
             "gpt-image-2", "prompt", [], "4K", aspect_ratio="2:3"))
 
+    assert error.value.billable is True
     assert len(recorded) == 1
     assert recorded[0]["usage"] == usage
     assert recorded[0]["has_image"] is False

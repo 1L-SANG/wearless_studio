@@ -1,5 +1,7 @@
 # Detail recommendation and publication reliability
 
+> 2026-09-27 오너 결정으로 아래 계획의 미세 패턴 원본 패스스루 유지 조항은 폐기했다. 디테일 컷은 무늬와 무관하게 새 이미지를 생성해 원본 대조 QC를 거치며, 원본과 같은 픽셀 결과는 불합격시킨다.
+
 ## Approved scope
 
 Owner approved recommendation and QC together, after rejecting a narrow lace-strip photo as a useful standalone detail. Highlights are product facts and ranking signals, not one-photo-per-highlight instructions. Automatically seed at most 2 basic / 3 extended useful, distinct detail cuts (fabric included); do not fill a quota. Preserve manual additions, deletions, and edited boards. Never require new photos on storyboard entry.

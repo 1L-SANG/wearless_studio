@@ -62,6 +62,39 @@ def test_progress_survives_new_store_and_lost_lease():
             await first._change(lambda s: {**s, 'phase': 'judged'})
             with pytest.raises(DetailShotRejected):
                 await reopened.claim('recipe')
+            retryable = ProgressStore(app, job, 'transient-cut')
+            assert await retryable.claim('same-recipe') == 1
+            await retryable.record_retryable_failure({'passed': False, 'attempts': 1})
+            retryable_reopened = ProgressStore(app, job, 'transient-cut')
+            assert await retryable_reopened.claim('same-recipe') == 2
+            await retryable_reopened.record_retryable_failure({'passed': False, 'attempts': 2})
+            assert await retryable.claim('same-recipe') == 3
+            await retryable.record_retryable_failure({'passed': False, 'attempts': 3})
+            with pytest.raises(DetailShotRejected, match='attempt_budget_exhausted'):
+                await retryable_reopened.claim('same-recipe')
+            mixed = ProgressStore(app, job, 'transient-then-quality')
+            assert await mixed.claim('mixed-recipe') == 1
+            await mixed.record_retryable_failure({'passed': False, 'attempts': 1})
+            assert await mixed.claim('mixed-recipe') == 2
+            await mixed._change(lambda s: {**s, 'phase': 'candidate'})
+            await mixed.claim_judgment()
+            await mixed.record_judgment({'passed': False, 'decision': 'FAIL',
+                                         'attempts': 2, 'judgments': [{'decision': 'FAIL'}]})
+            assert await mixed.claim('mixed-recipe') == 3
+            two_quality = ProgressStore(app, job, 'two-quality-fails')
+            assert await two_quality.claim('quality-recipe') == 1
+            await two_quality._change(lambda s: {**s, 'phase': 'candidate'})
+            await two_quality.claim_judgment()
+            await two_quality.record_judgment({'passed': False, 'decision': 'FAIL',
+                                               'attempts': 1, 'judgments': [{'decision': 'FAIL'}]})
+            assert await two_quality.claim('quality-recipe') == 2
+            await two_quality._change(lambda s: {**s, 'phase': 'candidate'})
+            await two_quality.claim_judgment()
+            await two_quality.record_judgment({'passed': False, 'decision': 'FAIL',
+                                               'attempts': 2,
+                                               'judgments': [{'decision': 'FAIL'}, {'decision': 'FAIL'}]})
+            with pytest.raises(DetailShotRejected, match='attempt_budget_exhausted'):
+                await two_quality.claim('quality-recipe')
             await conn.execute("update jobs set locked_by='next-lease' where id='j'")
             await conn.commit()
             with pytest.raises(DetailShotRejected, match='lease_lost'):
