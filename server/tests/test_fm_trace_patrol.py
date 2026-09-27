@@ -109,7 +109,28 @@ def test_patrol_records_only_matches_and_fetches_each_image_once(monkeypatch):
     assert rec["candidate"]["outputRecordId"] == "o1" and len(rec["candidates"]) == 2
     assert rec["image_sha256"] == "ab" * 32 and rec["store_id"] == "s1"
     assert stats["zigzag"] == {"queries": 2, "hits": 8, "images": 3, "matched": 1,
-                               "new": 1, "errors": 0, "budget": False}
+                               "new": 1, "weak": 0, "errors": 0, "budget": False}
+
+
+def _weak(target_id="w1", d=6):
+    return {"target": "cut", "outputRecordId": target_id, "confidence": "low",
+            "evidence": {"watermark": False, "phashDistance": d},
+            "model": {"id": "m1"}, "seller": {"id": "s1"}}
+
+
+def test_patrol_keeps_only_watermark_or_near_identical_matches(monkeypatch):
+    """2026-09-28 첫 순찰 실측: 브랜드 룩북 전신 사진이 구도만 비슷해 차이 6·8 로 걸렸다(오탐 2/214).
+    같은 컷 썸네일은 크롭·여백·재압축에서 최대 2 — 순찰은 차이 4 이하 또는 워터마크만 남긴다.
+    약한 후보는 기록하지 않고 개수만 센다(모델 신고·직접 추적은 사람이 올리니 그대로 10 이하)."""
+    zig = Adapter("zigzag", [_hit("zigzag", "1"), _hit("zigzag", "2")])
+    stats, recorded, _ = _run([zig], matches={
+        "https://img/1.jpg": [_weak("w1", 6), _weak("w2", 8)],
+        "https://img/2.jpg": [_weak("w3", 9), _cand("o1")],
+    }, monkeypatch=monkeypatch)
+    assert [r["product_id"] for r in recorded] == ["2"]
+    assert recorded[0]["candidate"]["outputRecordId"] == "o1"
+    assert [c["outputRecordId"] for c in recorded[0]["candidates"]] == ["o1"]
+    assert stats["zigzag"]["matched"] == 1 and stats["zigzag"]["weak"] == 1
 
 
 def test_one_platform_failing_does_not_stop_the_other(monkeypatch):
