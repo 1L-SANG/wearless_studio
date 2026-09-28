@@ -687,7 +687,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -708,13 +708,13 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
           </span>
         </div>
       )}
-      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={Boolean(uploading)} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
       {/* 업로드 중에는 사진이 들어올 자리를 로고 타일로 먼저 보여준다 — 입력 페이지와 같은
-          얼굴(오너 8/15). 상태를 늘리지 않고 uploading 플래그만으로 렌더한다. */}
-      {uploading && (
+          얼굴(오너 8/15). uploading = 올리는 중인 장수 — 그만큼 타일을 그린다. */}
+      {uploading > 0 && (
         <div className="wardrobe-grid" style={{ marginBottom: 16 }} role="status" aria-live="polite">
-          <UploadPendingTile className="ward-cell" />
-          <span className="sr-only">의류 이미지를 불러오는 중이에요</span>
+          {Array.from({ length: uploading }, (_, i) => <UploadPendingTile key={i} className="ward-cell" />)}
+          <span className="sr-only">의류 이미지 {uploading}장을 불러오는 중이에요</span>
         </div>
       )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
