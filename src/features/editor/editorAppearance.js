@@ -111,6 +111,21 @@ export function resizePolicyForElement(element, lockRatio) {
   };
 }
 
+/** 선(line)의 실제 색 — 캔버스 렌더와 속성 패널이 같은 규칙을 쓴다.
+ * 템플릿·프리셋 선은 `stroke` 로 색을 들고 오고, 예전에 그린 선은 `fill` 만 있다.
+ * 패널이 `fill` 만 바꾸고 렌더는 `stroke` 를 먼저 보던 시절엔 템플릿 선 색이 안 바뀌었다. */
+export const DEFAULT_LINE_COLOR = '#0e0d14';
+export function lineColor(element) {
+  const stroke = element?.stroke;
+  if (stroke && stroke !== 'none') return stroke;
+  return element?.fill || DEFAULT_LINE_COLOR;
+}
+
+/** 선 색 변경 패치. 두 필드를 같이 맞춰 어느 쪽을 읽는 경로든 같은 색을 보게 한다. */
+export function lineColorPatch(color) {
+  return { stroke: color, fill: color };
+}
+
 /** Keep thin rules at least this wide in screen pixels for pointer hit testing.
  * The visible stroke remains unchanged; only the transparent SVG hit stroke uses
  * this width. */

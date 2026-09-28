@@ -25,7 +25,7 @@ import {
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
-import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
+import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, lineColor, lineColorPatch, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
@@ -845,6 +845,8 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
       <PanelSection title={isLine ? '선 색상' : '채우기'}>
         {isImg ? (
           <SwatchField thumb={el.src} opacity={op} onOpacity={(v) => onChange({ opacity: v / 100 })} />
+        ) : isLine ? (
+          <SwatchField value={lineColor(el)} palette={SHAPE_PALETTE} opacity={op} onColor={(c) => onChange(lineColorPatch(c))} onOpacity={(v) => onChange({ opacity: v / 100 })} />
         ) : (
           <SwatchField value={el.fill || '#0e0d14'} palette={SHAPE_PALETTE} opacity={op} onColor={(c) => onChange({ fill: c })} onOpacity={(v) => onChange({ opacity: v / 100 })} />
         )}

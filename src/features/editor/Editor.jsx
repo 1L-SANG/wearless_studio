@@ -46,7 +46,7 @@ import { copyEditorElements, pasteEditorElements } from '@/features/editor/edito
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { imageResizeRect, lineColor, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
@@ -607,7 +607,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     </svg>
   );
   else {
-    const my = el.h / 2; const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14'); const lw = el.strokeWidth || 2.5;
+    const my = el.h / 2; const lc = lineColor(el); const lw = el.strokeWidth || 2.5;
     const hitWidth = lineHitStrokeWidth(lw, scale);
     const dashMap = { dotted: '3 5', dashed: '12 9', solid: '' };
     const da = dashMap[el.dash || 'solid'] || undefined;
