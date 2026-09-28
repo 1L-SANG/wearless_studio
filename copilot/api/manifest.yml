@@ -417,11 +417,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 이미지만** 워터마크·지문으로 대조하고, 맞으면 관리자 콘솔(/trace 자동 발견)·슬랙으로 알린다.
   # FM_PROVENANCE_ENABLED 아래에서만 돈다. 끄려면 "off".
   #  - 지그재그: robots 허용, 약관에 크롤링 금지 조항 없음(제13조④ 영리 목적 복제 금지는 회색) — 켠다.
-  #  - 네이버: 공식 검색 API. 키(NAVER_SEARCH_CLIENT_ID/SECRET)가 없으면 조용히 꺼진다. 키를 SSM 에
-  #    넣은 **뒤에** 아래 secrets: 에 두 줄을 추가한다 — 값 없이 줄만 배포하면 ECS 기동이 실패한다.
+  #  - 네이버 쇼핑: 개발자센터 검색 API 의 '쇼핑'이 2026-07-31 종료됐고 robots 도 전부 금지라 뺐다.
   #  - 29CM(약관이 크롤러 금지)·무신사(robots)·에이블리·쿠팡(봇 차단)은 어댑터 자체가 없다.
   FM_TRACE_PATROL: "on"
-  FM_TRACE_PATROL_PLATFORMS: "zigzag,naver"
+  FM_TRACE_PATROL_PLATFORMS: "zigzag"
   FM_TRACE_PATROL_HOUR_KST: "4"
 
   # ── 얼굴 패스(인물 LoRA) — **전부 꺼진 채로 커밋한다** ──

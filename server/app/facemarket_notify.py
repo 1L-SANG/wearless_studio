@@ -459,7 +459,7 @@ async def notify_slack_enrollment_completed(
     return await _post_slack(settings, text)
 
 
-_TRACE_PLATFORM_LABELS = {"naver": "네이버 순찰", "zigzag": "지그재그 순찰"}
+_TRACE_PLATFORM_LABELS = {"zigzag": "지그재그 순찰"}
 _TRACE_CONFIDENCE_LABELS = {"high": "확실", "medium": "유력", "low": "후보"}
 
 
@@ -469,8 +469,8 @@ async def notify_slack_trace_finding(
 ) -> bool:
     """자동 출처 추적 새 발견 알림(순찰·모델 제보).
 
-    외부 원문(상품 주소·상품명·판매처)과 셀러 정보는 싣지 않는다 — 네이버 검색 결과는 21일만 보관할 수
-    있는데(검색 API 특약 2.4) 슬랙 메시지는 지울 수 없고, 셀러 신원은 관리자 콘솔(마스킹·감사)에서만 본다.
+    외부 원문(상품 주소·상품명·판매처)과 셀러 정보는 싣지 않는다 — 슬랙 메시지는 지울 수 없고, 셀러 신원은
+    관리자 콘솔(마스킹·감사)에서만 본다.
     """
     if not settings.fm_slack_webhook_url:
         return False

@@ -1,7 +1,7 @@
 """하루 1회 자동 출처 순찰(2026-09-27, 오너 결정 — 무료 경로만).
 
 무엇: REAL 컷(fm_output_records)·배포본(fm_publication_records)이 있는 프로젝트의 상품명으로 허용된
-플랫폼(fm_trace_sources — 네이버 공식 검색 API · 지그재그)을 검색하고, 검색 결과의 **대표 이미지만**
+플랫폼(fm_trace_sources — 지그재그)을 검색하고, 검색 결과의 **대표 이미지만**
 받아 관리자 추적과 같은 대조(facemarket_trace.trace_image — 워터마크 → 지문)를 돌린다. 맞으면 발견
 원장(fm_trace_findings)에 남기고, 알림 워커가 슬랙으로 알린다.
 
@@ -9,12 +9,10 @@
   - 전용 테이블(fm_trace_patrol_runs)의 KST 날짜 unique 행을 lease 로 집는다 → API 태스크가 여럿이어도
     하루 한 번. 배포로 끊기면 lease(30분)가 만료된 뒤 다른 태스크가 처음부터 다시 돈다(발견은 dedupe_key
     로 멱등, 최대 3회).
-  - 순찰 시작 때 네이버 원문 21일 삭제(검색 API 특약 2.4)를 먼저 돌린다(순찰이 꺼져 있어도 알림
-    워커가 한 시간마다 같은 삭제를 돌린다 — fm_trace_finding_alert_reconciler).
   - 플랫폼마다 이미지 상한(MAX_IMAGES)·같은 이미지 한 번만·멈추라면 바로 멈춘다.
   - 검색어는 하루 MAX_QUERIES 개씩 날마다 시작점을 밀어 전부 돌아가며 찾는다(daily_queries).
 
-비용: 무료. 네이버 검색 API 는 하루 25,000건 한도 안에서 쿼리 수(MAX_QUERIES) 만큼만 부른다.
+비용: 무료(외부 API 키 없음).
 이미지 바이트는 저장하지 않는다(대조만 하고 버린다 — sha256 만 원장에).
 """
 
@@ -284,8 +282,6 @@ class TracePatrol:
         log.info("trace patrol start run=%s date=%s", run_id, run_date)
         try:
             async with pool.connection() as conn:
-                purged = await fm_trace_findings.purge_expired_external(conn)
-                await conn.commit()
                 queries = daily_queries(await load_target_names(conn), run_date)
                 rows = await fm_fingerprint_store.load_fingerprints(conn)
             async with httpx.AsyncClient() as client:
@@ -299,7 +295,7 @@ class TracePatrol:
                 stats = await patrol_once(
                     pool, adapters=adapters, fetcher=fetcher, queries=queries, rows=rows,
                     origin=settings.public_web_origin, stop=self._stop.is_set, heartbeat=beat)
-            stats.update({"purged": purged, "queryCount": len(queries),
+            stats.update({"queryCount": len(queries),
                           "fingerprints": len(rows),
                           "platforms": [a.platform for a in adapters]})
             if stats.get("stopped") == "shutdown":

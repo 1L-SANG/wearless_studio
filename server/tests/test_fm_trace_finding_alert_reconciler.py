@@ -35,7 +35,7 @@ class _MemoryReconciler(TraceFindingAlertReconciler):
         self.job["alert_status"] = "sent"
 
 
-PATROL = {"id": "f-1", "source": "patrol", "platform": "naver", "model_name": "김*연",
+PATROL = {"id": "f-1", "source": "patrol", "platform": "zigzag", "model_name": "김*연",
           "method": "watermark", "confidence": "high", "target": "publication"}
 
 
@@ -55,7 +55,7 @@ def test_failed_alert_retries_until_delivered(monkeypatch):
     assert worker.job["alert_status"] == "sent"
     assert asyncio.run(worker._sweep_once()) is False
     assert calls == [{
-        "source": "patrol", "platform": "naver", "model_name": "김*연",
+        "source": "patrol", "platform": "zigzag", "model_name": "김*연",
         "method": "watermark", "confidence": "high", "matched": True,
         "admin_link": "https://admin.wearless.kr/trace?tab=found",
     }] * 2
@@ -77,8 +77,8 @@ def test_unmatched_model_report_still_alerts(monkeypatch):
 
 
 @pytest.mark.parametrize("kw,expect,absent", [
-    ({"source": "patrol", "platform": "naver", "model_name": "김*연", "method": "watermark",
-      "confidence": "high", "matched": True}, ["네이버 순찰", "김*연", "워터마크"], ["http"]),
+    ({"source": "patrol", "platform": "zigzag", "model_name": "김*연", "method": "watermark",
+      "confidence": "high", "matched": True}, ["지그재그 순찰", "김*연", "워터마크"], ["http"]),
     ({"source": "model_report", "platform": "report", "model_name": "<b>", "method": None,
       "confidence": None, "matched": False}, ["모델 제보", "&lt;b&gt;", "일치하는 배포본"], []),
 ])
@@ -108,22 +108,5 @@ def test_no_webhook_means_not_delivered():
     assert ok is False
 
 
-def test_naver_purge_runs_from_the_always_on_alert_worker(monkeypatch):
-    """순찰을 꺼도(FM_TRACE_PATROL=off) 네이버 원문 21일 삭제는 돌아야 한다 — 알림 워커가 맡는다."""
-    worker = _MemoryReconciler(PATROL)
-    worker.job["alert_status"] = "sent"
-    purged = []
-
-    async def fake_purge():
-        purged.append(1)
-        return 2
-
-    monkeypatch.setattr(worker, "_purge_external", fake_purge)
-    clock = [1000.0]
-    monkeypatch.setattr("app.workers.fm_trace_finding_alert_reconciler.time.monotonic",
-                        lambda: clock[0])
-    asyncio.run(worker._maybe_purge())
-    asyncio.run(worker._maybe_purge())          # 한 시간 안엔 다시 안 돈다
-    clock[0] += 3601
-    asyncio.run(worker._maybe_purge())
-    assert purged == [1, 1]
+def test_alert_worker_no_longer_purges():
+    assert not hasattr(TraceFindingAlertReconciler, "_maybe_purge")

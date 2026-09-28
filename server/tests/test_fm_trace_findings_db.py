@@ -116,12 +116,12 @@ def _patrol(conn, cand, *, platform="zigzag", product_id="p1", store_id="s1", **
 
 
 def test_keys_are_stable_hashes_without_raw_ids():
-    k1 = F.dedupe_key("naver", "12345", "cut", "t-1")
-    assert k1 == F.dedupe_key("naver", "12345", "cut", "t-1")
-    assert k1 != F.dedupe_key("zigzag", "12345", "cut", "t-1")
+    k1 = F.dedupe_key("zigzag", "12345", "cut", "t-1")
+    assert k1 == F.dedupe_key("zigzag", "12345", "cut", "t-1")
+    assert k1 != F.dedupe_key("zigzag", "12345", "cut", "t-2")
     assert len(k1) == 64 and "12345" not in k1
-    assert F.store_key("naver", "가게") == F.store_key("naver", "가게")
-    assert F.store_key("naver", None) is None and F.store_key("naver", "  ") is None
+    assert F.store_key("zigzag", "가게") == F.store_key("zigzag", "가게")
+    assert F.store_key("zigzag", None) is None and F.store_key("zigzag", "  ") is None
 
 
 def test_best_candidate_prefers_reporters_model_then_rank():
@@ -146,32 +146,7 @@ def test_patrol_finding_inserts_once_then_updates_last_seen():
             row = await cur.fetchone()
         assert row["seen_count"] == 2 and row["product_url"].endswith("v=2")
         assert row["alert_status"] == "pending" and row["method"] == "phash"
-        assert row["external_purge_at"] is None          # 지그재그는 삭제 시한이 없다
-
-    _run(body)
-
-
-def test_naver_finding_gets_21_day_purge_and_purge_clears_raw_fields():
-    async def body(conn):
-        rec = await _patrol(conn, await _ledger(conn, target="publication", watermark=True,
-                                                 confidence="high"), platform="naver")
-        async with conn.cursor() as cur:
-            await cur.execute("select external_purge_at - last_seen_at as ttl, method "
-                              "from fm_trace_findings where id = %s", (rec["id"],))
-            row = await cur.fetchone()
-            assert row["ttl"] == timedelta(days=21) and row["method"] == "watermark"
-            await cur.execute("update fm_trace_findings set external_purge_at = now() - "
-                              "interval '1 second' where id = %s", (rec["id"],))
-        assert await F.purge_expired_external(conn) >= 1
-        async with conn.cursor() as cur:
-            await cur.execute("select product_url, image_url, product_title, store_name, "
-                              "external_purge_at, store_key, dedupe_key "
-                              "from fm_trace_findings where id = %s", (rec["id"],))
-            row = await cur.fetchone()
-        assert row["product_url"] is None and row["image_url"] is None
-        assert row["product_title"] is None and row["store_name"] is None
-        assert row["external_purge_at"] is None
-        assert row["store_key"] and row["dedupe_key"]     # 해시 키는 남는다
+        assert row["external_purge_at"] is None          # 보관 기한이 있는 출처가 없다
 
     _run(body)
 
@@ -378,3 +353,8 @@ def test_patrol_targets_are_real_cut_and_publication_projects():
         assert "순찰_테스트_셔츠" in names
 
     _run(body)
+
+
+def test_purge_helper_is_gone_with_naver():
+    """네이버 쇼핑 검색 API 종료(2026-07-31)로 21일 삭제 규칙을 둘 출처가 없다."""
+    assert not hasattr(F, "purge_expired_external")
