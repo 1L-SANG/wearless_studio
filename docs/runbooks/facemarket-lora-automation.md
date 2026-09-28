@@ -33,7 +33,9 @@ printf '%s' '<새 키>' > ~/.runpod/api_key && chmod 600 ~/.runpod/api_key
 구 GraphQL `{ myself { clientBalance } }` 를 쓰는데, 살아 있는 키로 확인한 적이 없다.
 
 ```bash
-curl -sS "https://api.runpod.io/graphql?api_key=$(cat ~/.runpod/api_key)" \
+# 키는 헤더로만 — URL 에 넣으면 로그·셸 기록에 남는다(서버 코드도 같은 규칙, 2026-09-28)
+curl -sS https://api.runpod.io/graphql \
+  -H "Authorization: Bearer $(cat ~/.runpod/api_key)" \
   -H 'content-type: application/json' \
   -d '{"query":"{ myself { clientBalance } }"}'
 ```
@@ -62,6 +64,47 @@ FM_LORA_TRAINING: "off"   →   "on"
 
 학습 카드 우선순위는 코드에 있다(`services/lora_train_pod.GPU_PRIORITY`) — 싼 것부터
 A100 80GB $1.59 → RTX PRO 6000 $2.09 → H100 80GB $3.49.
+
+## 1-1. 자동 큐잉 — 준비된 등록은 저절로 큐에 들어간다 (2026-09-28)
+
+큐가 켜져 있으면(`FM_LORA_TRAINING: "on"`) 리컨실러가 **매 회차(60초) 첫머리에** 학습해도 되는
+등록을 훑어 `fm_lora_training_runs` 에 `queued` 한 건을 넣는다(`enqueue_ready`). 켜고 배포하면
+첫 회차가 곧 백필이다. 조건(전부 참이어야 한다):
+
+- 모델이 `suspended`·`reverification_required` 가 아니다
+- 모델의 **현재 등록**(`fm_models.current_enrollment_id`)이고 `status = decision = 'passed'`(증서까지 끝)
+- 신원 심사가 끝났다(`review_status` 가 null 또는 `approved`)
+- **관리자 사진 확인 완료**(`photo_review_status = 'approved'`)
+- 그 등록의 라이선스가 `active`, `vc_id` 있음, 사용권 기간 안
+- **성별을 안다**(`fm_models.gender` → 없으면 지원서 `fm_model_applications.gender`). 트리거 토큰이
+  여기서 나온다 — 남 `ohwx man` · 여 `ohwx woman`. 학습 캡션·학습 중 표본 프롬프트·등록되는
+  `fm_model_loras.trigger_token`(= 추론 프롬프트)이 같은 값이다. 모르면 기다린다(추정 금지).
+
+건너뛰는 것:
+
+- 그 등록(또는 등록 칸이 빈 손 런)에 런이 **하나라도** 있다 — `failed` 도 포함. 실패한 런을 스윕이
+  다시 넣으면 같은 이유로 $11 씩 계속 탄다. **다시 돌리는 건 사람이 한다**(아래).
+- 그 모델에 `ready` LoRA 가 이미 있다 — 켜져 있거나, 이 등록에서 나왔거나, 출처가 비었거나.
+
+집은 뒤에는 **같은 조건을 한 번 더** 보고(큐에서 기다리는 사이 정지·해지·재촬영) 학습셋을 만든다
+(`lora_dataset.build_and_upload` → `dataset_key` 를 행에 적는다). 조건이 깨졌거나 학습셋을 못
+만들면 파드 없이 곧장 `failed`(재시도 없음 — 돈이 나가기 전이다). 잔액 미달은 실패가 아니라
+대기다 — 시도 횟수를 쓰지 않고 `queued` 로 돌아간다.
+
+손으로 다시 돌리기(실패한 런을 본 뒤):
+
+```sql
+insert into fm_lora_training_runs (model_id, enrollment_id, status)
+values ('<model uuid>', '<enrollment uuid>', 'queued');   -- dataset_key 는 비워 둔다(집을 때 만든다)
+```
+
+★ 아직 자동이 아닌 것(2026-09-28 코드 기준): `scoring` 을 처리하는 단계가 없고, 파드에
+`/root/verify.py` 를 넣는 곳도 없어 `result.json` 이 안 생긴다. 그래서 `OK` 로 끝난 런은
+`scoring` 에 머물고 **동시 1건 자리를 계속 차지한다**(다음 런이 안 집힌다). 체크포인트 6개는
+`facemarket/models/<model>/training/<run>/` 에 남는다 — 고르고 등록하는 건 지금은 손으로
+(`scripts/seed_model_lora.py`), 끝나면 그 런을 `done` 으로 바꿔 자리를 비운다.
+학습 중(약 3시간 40분)에 api 를 재배포하면 파드는 지워지지만 런은 `training` 에 남는다 —
+그 사이 배포는 피하고, 했다면 그 런을 `queued`(다시) 또는 `failed` 로 손으로 바꾼다.
 
 ## 1-2. 테스트컷 12장 자동 생성
 
@@ -140,7 +183,8 @@ FM_TEST_CUT_SOURCE_FULLBODY: "private/facemarket/test-cut-sources/full_a.png,...
 
 - [ ] 등록자가 사진 18칸을 올린다
 - [ ] 관리자 콘솔 "사진 확인" 탭에 뜬다 → 전체 사진을 보고 **확인 완료**
-- [ ] `fm_lora_training_runs` 에 `queued` 한 건을 넣는다(지금은 손으로 — 자동 큐잉은 다음 회차)
+- [ ] 60초 안에 `fm_lora_training_runs` 에 `queued` 한 건이 저절로 들어간다(자동 큐잉 — 1-1)
+- [ ] 집으면 `dataset_key` 가 채워진다(학습셋 R2 업로드)
 - [ ] 60초 안에 `preparing` → `training` 으로 바뀌고 `pod_id`·`gpu_type` 이 채워진다
 - [ ] **두 번째 런을 큐에 넣어도 안 집힌다**(동시 1건 인덱스)
 - [ ] 3~4시간 뒤 `scoring`, R2 에 체크포인트 6개 + `result.json`

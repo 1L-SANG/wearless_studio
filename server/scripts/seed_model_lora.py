@@ -20,7 +20,7 @@
 실행:
     cd server && .venv/bin/python -m scripts.seed_model_lora \
         --model-id <uuid> --ckpt ~/Downloads/lora_runs/v6_ckpt/ohwx_man_v6_000001500.safetensors \
-        --version 1 --trigger "ohwx man" --hair-length short --hair-color black \
+        --version 1 --hair-length short --hair-color black \
         --hair-texture straight --face-shape oval --jaw-line defined --trained-steps 1500 \
         --metrics '{"frontal_median":0.717,"refset_ceiling":0.885}'            # 확인만
     ... --apply                                                                # 실제 쓰기(=켬)
@@ -54,7 +54,7 @@ from app.facemarket_physique import (  # noqa: E402
     JAW_LINES,
 )
 from app.r2 import R2Client  # noqa: E402
-from app.services import model_lora  # noqa: E402
+from app.services import lora_dataset, model_lora  # noqa: E402
 
 def resolve_enable(requested: bool | None, model_status: str | None) -> bool:
     """켤지 말지 — 플래그를 줬으면 그 값, 안 줬으면 모델 상태가 정한다.
@@ -73,7 +73,9 @@ def main() -> int:
     ap.add_argument("--model-id", required=True, help="fm_models.id (uuid)")
     ap.add_argument("--ckpt", required=True, help="학습 산출물 .safetensors 경로")
     ap.add_argument("--version", type=int, default=1)
-    ap.add_argument("--trigger", default="ohwx man")
+    # 트리거는 **학습 때 쓴 값**이어야 한다. 없으면 모델 성별에서 정한다(학습 잡과 같은 규칙 —
+    # lora_dataset.trigger_token_for). 여성 등록자를 "ohwx man" 으로 붙이면 추론 프롬프트가 어긋난다.
+    ap.add_argument("--trigger", choices=sorted(lora_dataset.TRIGGER_TOKENS.values()))
     ap.add_argument("--base-model", default="Qwen/Qwen-Image-Edit-2509")
     ap.add_argument("--hair-length", choices=HAIR_LENGTHS)
     ap.add_argument("--hair-color", choices=HAIR_COLORS)
@@ -126,18 +128,26 @@ def main() -> int:
         if not (cur.fetchone() or {}).get("t"):
             print("fm_model_loras 가 없다 — 마이그레이션 20260910100000 을 먼저 적용할 것")
             return 2
-        cur.execute("select status from fm_models where id = %s", (a.model_id,))
+        cur.execute(
+            "select m.status, " + lora_dataset.model_gender_sql("m", "e") + " as gender "
+            "from fm_models m left join fm_biometric_enrollments e on e.id = m.current_enrollment_id "
+            "where m.id = %s", (a.model_id,))
         model = cur.fetchone()
         if model is None:
             print(f"fm_models 에 {a.model_id} 가 없다 — 등록된 사람만 LoRA 를 가질 수 있다")
             return 2
     model_status = model.get("status")
     enable = resolve_enable(a.enable, model_status)
+    try:
+        trigger = a.trigger or lora_dataset.trigger_token_for(model.get("gender"))
+    except lora_dataset.DatasetBuildError as exc:
+        print(f"{exc} — --trigger 로 학습 때 쓴 값을 정해 줄 것")
+        return 2
 
     print(f"ckpt   {ckpt} ({len(data)/2**20:.1f}MB)")
     print(f"sha256 {sha256}")
     print(f"key    {key}  (이미 있음: {bool(head)})")
-    print(f"model  status={model_status}")
+    print(f"model  status={model_status} gender={model.get('gender')} trigger={trigger!r}")
     print(f"db     {'apply' if a.apply else 'dry-run'}  enable={enable} version={a.version}")
     if not enable and a.enable is None:
         print("       (승인 전 모델이라 끈 채로 붙인다 — 본인이 테스트컷을 확인하면 켜진다)")
@@ -155,7 +165,7 @@ def main() -> int:
                 dsn, row_factory=psycopg.rows.dict_row) as conn:
             return await model_lora.register(
                 conn, r2, model_id=a.model_id, weights=data, filename=ckpt.name,
-                trigger_token=a.trigger, base_model=a.base_model,
+                trigger_token=trigger, base_model=a.base_model,
                 trained_steps=a.trained_steps, source_enrollment_id=a.source_enrollment_id,
                 physique={"hair_length": a.hair_length, "hair_color": a.hair_color,
                           "hair_texture": a.hair_texture, "face_shape": a.face_shape,

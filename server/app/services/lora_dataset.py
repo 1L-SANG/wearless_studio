@@ -15,7 +15,9 @@
   · 학습 12장(TRAINING_SLOTS)만. 기준 3장(REFSET_SLOTS)은 **학습에 넣지 않는다** —
     표본 control 로만 쓴다. 기준이 학습에 섞이면 동일인 채점이 자기 자신을 보게 된다.
   · 검출 = YuNet ×4 축소 → 좌표 ×4 복원.
-  · 캡션 "ohwx man, {표정}, head and shoulders portrait, {각도}, outdoors, {조명}, photograph"
+  · 캡션 "{트리거}, {표정}, head and shoulders portrait, {각도}, outdoors, {조명}, photograph"
+      트리거: 등록자 성별에서 — 남 "ohwx man" · 여 "ohwx woman"(2026-09-28, trigger_token_for).
+              원본은 "ohwx man" 고정이었다. 여성을 man 으로 학습하면 그 어휘가 그대로 가중치에 들어간다.
       표정: 미소→smiling(입_다문_미소→slight smile), 무표정→neutral expression,
             **없으면 생략**(추정 금지 — 없는 표정을 지어내면 그 어휘가 그대로 학습된다)
       각도: yaw ≤0.16 facing the camera / ≤0.45 turned three-quarters(+ to the left|right)
@@ -63,10 +65,41 @@ LIGHT = {
 AUG_SEED_BASE = 4000
 AUG_TARGET_RB = (1.15, 1.45)
 AUG_FACTOR_CAP = 1.35
+#: 트리거 토큰 — **등록자 성별**이 정한다. 학습 캡션·학습 중 표본 프롬프트·fm_model_loras.trigger_token
+#: (= 추론 프롬프트) 셋이 같은 값이어야 한다. 성별을 모르면 정하지 않는다(추정 금지 — 틀린 어휘가
+#: 가중치에 들어가면 되돌릴 길이 재학습뿐이다).
+TRIGGER_TOKENS = {"male": "ohwx man", "female": "ohwx woman"}
+#: v6/v7 레시피의 값. 순수 함수의 기본값으로만 남긴다 — 실제 진입점(build_and_upload)은 기본값이 없다.
+LEGACY_TRIGGER = TRIGGER_TOKENS["male"]
 
 
 class DatasetBuildError(RuntimeError):
     """학습셋을 만들 수 없다 — 반쪽 학습셋은 되돌릴 수 없는 품질 손실이라 **만들다 만 것을 올리지 않는다**."""
+
+
+def trigger_token_for(gender) -> str:
+    """성별 → 트리거 토큰. 모르면 DatasetBuildError(기본값으로 채우지 않는다)."""
+    token = TRIGGER_TOKENS.get(str(gender or "").strip().lower())
+    if token is None:
+        raise DatasetBuildError(f"성별을 모른다({gender!r}) — 트리거 토큰을 정할 수 없다")
+    return token
+
+
+def model_gender_sql(m: str = "m", e: str = "e") -> str:
+    """모델 성별 SQL 식(m = fm_models, e = 그 모델의 등록). 모델 행 → 등록의 지원서 → 같은 계정의 지원서.
+
+    fm_models.gender 는 신원 확인 경로에서만 채워져 비어 있는 모델이 있다(정*정 — 지원서에만 female).
+    alias 는 코드가 넘기는 상수뿐이다(사용자 입력이 아니다).
+    """
+    for alias in (m, e):
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", alias):
+            raise ValueError("invalid alias")
+    return f"""coalesce(
+        {m}.gender,
+        (select a.gender from fm_model_applications a where a.id = {e}.application_id),
+        (select a.gender from fm_model_applications a
+          where a.user_id = {m}.user_id and a.gender is not null
+          order by a.updated_at desc nulls last limit 1))"""
 
 
 # ── 검출 · 캡션 · 증강 (원본 규칙) ──────────────────────────────────────────
@@ -98,7 +131,7 @@ def detect4(image: Image.Image, model_dir: str | None = None):
     return tuple(float(v) for v in face[:4]), abs(float(face[8] - mid[0])) / eye, eye
 
 
-def caption(stem: str, yaw: float) -> tuple[str, str, str | None, str]:
+def caption(stem: str, yaw: float, trigger: str = LEGACY_TRIGGER) -> tuple[str, str, str | None, str]:
     """`<조명>__<컷>` 이름 + yaw → (캡션, 조명키, 표정, 각도). 원본 caption() 그대로다.
 
     파일 이름을 파싱하는 이유: 슬롯 → 이름 → 캡션이 한 규칙이라, 이름이 바뀌면 캡션도 같이 바뀐다
@@ -125,17 +158,18 @@ def caption(stem: str, yaw: float) -> tuple[str, str, str | None, str]:
         light = LIGHT[cond]
     except KeyError:
         raise DatasetBuildError(f"조명 어휘를 모르는 이름: {stem}") from None
-    parts = (["ohwx man"] + ([expression] if expression else [])
+    parts = ([trigger] + ([expression] if expression else [])
              + ["head and shoulders portrait", angle, "outdoors", light, "photograph"])
     return ", ".join(parts), cond, expression, angle
 
 
-def caption_for_slot(slot: str, yaw: float) -> tuple[str, str, str | None, str]:
+def caption_for_slot(slot: str, yaw: float,
+                     trigger: str = LEGACY_TRIGGER) -> tuple[str, str, str | None, str]:
     """슬롯 → 캡션. 이름(export_name)을 거쳐 **원본과 같은 파서**를 탄다."""
     name = export_name(slot)
     if not name:
         raise DatasetBuildError(f"이름 없는 슬롯: {slot}")
-    return caption(name, yaw)
+    return caption(name, yaw, trigger)
 
 
 def red_blue(image: Image.Image) -> float:
@@ -180,7 +214,8 @@ def _gray_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def build_items(photos, *, model_dir: str | None = None) -> tuple[list[tuple[str, bytes]], dict]:
+def build_items(photos, *, model_dir: str | None = None,
+                trigger: str = LEGACY_TRIGGER) -> tuple[list[tuple[str, bytes]], dict]:
     """학습 12장 → tar 멤버 목록 + meta. 한 장이라도 얼굴을 못 찾으면 **만들다 만 것을 안 내놓는다**.
 
     반쪽 학습셋은 조용한 품질 손실이다 — 11장으로 학습해도 돌긴 도는데, 왜 닮지 않는지는
@@ -192,7 +227,7 @@ def build_items(photos, *, model_dir: str | None = None) -> tuple[list[tuple[str
         raise DatasetBuildError(f"학습 사진이 빠졌다: {', '.join(missing)}")
 
     members: list[tuple[str, bytes]] = []
-    meta: dict = {"root": DATASET_ROOT, "train": {}, "captions": {}, "aug": {}}
+    meta: dict = {"root": DATASET_ROOT, "trigger": trigger, "train": {}, "captions": {}, "aug": {}}
     for index, slot in enumerate(TRAINING_SLOTS):
         with Image.open(io.BytesIO(by_slot[slot].data)) as opened:
             if opened.getexif().get(274) not in (None, 1):
@@ -211,7 +246,7 @@ def build_items(photos, *, model_dir: str | None = None) -> tuple[list[tuple[str
         control = fi.build_control(image, plan, crop=target)
         mask = fi.feather_mask(plan)
 
-        text, cond, expression, angle = caption_for_slot(slot, yaw)
+        text, cond, expression, angle = caption_for_slot(slot, yaw, trigger)
         members += [(f"target/{slot}.png", _png(target)),
                     (f"control/{slot}.png", _png(control)),
                     (f"mask/{slot}.png", _gray_png(mask)),
@@ -291,9 +326,10 @@ def pack(members, meta: dict) -> bytes:
     return out.getvalue()
 
 
-def build_dataset(photos, *, model_dir: str | None = None) -> tuple[bytes, dict]:
+def build_dataset(photos, *, model_dir: str | None = None,
+                  trigger: str = LEGACY_TRIGGER) -> tuple[bytes, dict]:
     """학습셋 tgz 바이트 + meta. 디스크를 안 쓴다."""
-    members, meta = build_items(photos, model_dir=model_dir)
+    members, meta = build_items(photos, model_dir=model_dir, trigger=trigger)
     samples = build_samples(photos, model_dir=model_dir)
     meta["samples"] = [name.split("/", 1)[1] for name, _ in samples]
     meta["files"] = len(members) + len(samples) + 1
@@ -349,16 +385,27 @@ def assert_ready(review_status: str | None, photos) -> None:
 
 
 def build_and_upload(r2_face, *, model_id: str, run_id: str, rows, review_status: str | None,
-                     model_dir: str | None = None, apply: bool = False) -> dict:
-    """등록 사진 → 학습셋 tgz → R2. 반환은 **키와 숫자만** — 바이트도 URL 도 안 싣는다."""
+                     trigger_token: str, model_dir: str | None = None,
+                     apply: bool = False) -> dict:
+    """등록 사진 → 학습셋 tgz → R2. 반환은 **키와 숫자만** — 바이트도 URL 도 안 싣는다.
+
+    trigger_token 은 **기본값이 없다** — 부르는 쪽이 성별에서 정해(trigger_token_for) 넘긴다.
+    기본값이 있으면 여성 등록자가 조용히 "ohwx man" 으로 학습된다(2026-09-28 실제로 그럴 뻔했다).
+    """
+    if trigger_token not in TRIGGER_TOKENS.values():
+        raise DatasetBuildError(f"모르는 트리거 토큰: {trigger_token!r}")
     photos = load_photos(r2_face, rows, tuple(TRAINING_SLOTS) + tuple(REFSET_SLOTS))
     assert_ready(review_status, photos)
-    payload, meta = build_dataset(photos, model_dir=model_dir)
+    payload, meta = build_dataset(photos, model_dir=model_dir, trigger=trigger_token)
     key = dataset_key(model_id, run_id)
     digest = hashlib.sha256(payload).hexdigest()
     result = {"key": key, "bytes": len(payload), "sha256": digest,
               "files": meta["files"], "train": len(meta["train"]),
-              "samples": len(meta["samples"]), "applied": bool(apply)}
+              "samples": len(meta["samples"]),
+              # 학습 설정의 표본 칸(samples_ctrl/<칸>.png). 칸 이름뿐이다 — 바이트·URL 아님.
+              # 학습셋에 **실제로 들어간** 칸만 준다: 없는 칸을 설정에 적으면 표본 차례에 학습이 죽는다.
+              "sample_slots": [name.rsplit(".", 1)[0] for name in meta["samples"]],
+              "trigger_token": trigger_token, "applied": bool(apply)}
     if apply:
         r2_face.put_bytes(key, payload, "application/gzip")
     log.info("lora_dataset built model=%s run=%s files=%d bytes=%d sha12=%s applied=%s",
