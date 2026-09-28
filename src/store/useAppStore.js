@@ -19,6 +19,7 @@ import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
+import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import {
   adoptGenerationRelevantEdits,
@@ -118,6 +119,12 @@ const initialDetailPageJob = () => ({
   // 15분을 넘겨도 서버 잡이 살아 있으면 계속 기다린다 — 실패가 아니라 "오래 걸리는 중" 표식
   // (2026-09-26, lib/detailPageJobPoll.js).
   slow: false,
+  // 부분 실패(incomplete_cuts, 2026-09-28) — 몇 장 중 무엇이 실패·완성·보관됐는지(lib/detailPageJobFailure).
+  incomplete: null,
+  // [실패한 컷만 다시 만들기]로 시작한 잡이면 앞선 실패의 요약(보관 수·콘티 지문) — 대기 문구 근거.
+  retryOf: null,
+  storyboardDigest: null, // 이 잡이 읽은 콘티 지문(inputs_loaded)
+  reusedCuts: [],         // 이 잡이 보관본을 그대로 실은 sourceBlockId[](cut_checkpoint_reused)
 });
 
 function restoredDetailPageJob(projectId) {
@@ -451,7 +458,7 @@ export const useAppStore = create((set, get) => ({
   /* ---- 상세페이지 생성 잡 (editor_wait_dev_spec §3) ----
      시작·폴링·이벤트 소비를 store 가 소유한다. 대기 화면(Generating)은 구독만 하고,
      셀러가 다른 화면으로 떠나도 루프는 계속 돌아 전역 리본이 진행을 보여준다. */
-  async startDetailPageGeneration(projectId) {
+  async startDetailPageGeneration(projectId, { retryOf = null } = {}) {
     const cur = get().detailPageJob;
     // 같은 프로젝트 생성이 이미 돌고 있으면 합류(마운트 중복·StrictMode 이중 실행 가드)
     if (cur.status === 'running' && cur.projectId === projectId
@@ -466,8 +473,8 @@ export const useAppStore = create((set, get) => ({
     const recovering = cur.projectId === projectId && Boolean(cur.jobId)
       && (cur.status === 'running' || cur.status === 'error');
     const running = recovering
-      ? { ...cur, status: 'running', errorMessage: '' }
-      : { ...initialDetailPageJob(), status: 'running', projectId, startedAt: Date.now() };
+      ? { ...cur, status: 'running', errorMessage: '', incomplete: null }
+      : { ...initialDetailPageJob(), status: 'running', projectId, startedAt: Date.now(), retryOf };
     detailJobLoopProjectId = projectId;
     set({ detailPageJob: running });
     saveDetailPageJobMarker(running);
@@ -527,6 +534,8 @@ export const useAppStore = create((set, get) => ({
       }
       // error·cancelled — 전체 실패는 출력·과금이 없다. 임시 미리보기는 결과가 아니므로
       // store 에서 지우고, 서버가 해제한 예약 잔액을 새로 읽는다.
+      // 부분 실패(incomplete_cuts, 2026-09-28)는 그 위에 완성 컷 '완성됐어요' 표식(주소 없음 — 그림은
+      // 미리보기 라우트가 보관본에서)과 실패 표식·요약을 덧씌운다. 과금·해제는 서버 그대로(#420).
       patch({
         status: 'error',
         slow: false,
@@ -535,6 +544,7 @@ export const useAppStore = create((set, get) => ({
         live: [],
         errorMessage: job.errorMessage
           || (job.status === 'cancelled' ? '생성이 중단됐어요. 다시 시도해 주세요.' : '상세페이지 생성에 실패했어요.'),
+        ...incompleteFailurePatch(job),
       });
       void get().loadAccount({ force: true }).catch(() => {});
     } catch (e) {

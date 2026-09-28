@@ -16,11 +16,23 @@
 
 잡이 끝나면(done/error/cancelled) 404 다 — 성공이면 완료 병합의 안정 주소가 이기고, 실패면
 출력은 지워지는 중이다(삭제 실패로 표식이 남아도 여기서는 내보내지 않는다).
+
+예외 하나(2026-09-28, 부분 실패 화면): 일부 컷만 실패해 페이지를 내보내지 않은 잡
+(error + result.errorCode = incomplete_cuts)은 완성 컷의 **보관본**을 보여 준다. 출력 객체는 이미
+지워졌고(detail_page_job 의 _delete_generated_outputs), 정본 사본은 체크포인트 완성 컷
+(…/ai/{원 잡}/ckpt/{digest}/final.bin, TTL 24시간 — cut_checkpoints)이다. 그 잡이 서버 전용
+메타(jobs.metadata.retainedCutKeys)에 적은 블록 → 키만 쓰고, 요청마다
+  · 키가 이 사용자·이 프로젝트의 완성 컷 체크포인트 모양인지,
+  · 그 표식이 아직 보관 중인지(실패한 상세 잡 소유 · pending · TTL 안 — 성공한 다시 시도·라이선스
+    철회·리클레이머가 지웠으면 없다),
+  · REAL 이면 라이선스가 지금 유효한지(위 3번과 같은 검사),
+를 보고, 객체 헤더(사용자·프로젝트·단계·digest·바이트 해시)까지 맞을 때만 이미지 바이트를 보낸다.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from fastapi import HTTPException
 
@@ -33,6 +45,18 @@ _ACTIVE_JOB_STATUSES = frozenset({"pending", "running"})
 _MAX_BLOCK_ID_LEN = 200
 _MIME_BY_EXT = {ext: mime for mime, ext in MIME_EXT.items()}
 _NOT_FOUND = {"code": "not_found", "message": "미리보기를 찾을 수 없어요."}
+
+
+#: 부분 실패 — 완성 컷 보관본을 보여 줄 수 있는 실패 코드(전부 실패·그 밖의 실패는 보관본 안내가 없다).
+_RETAINED_FAILURE_CODE = "incomplete_cuts"
+
+
+@dataclass(frozen=True)
+class PreviewTarget:
+    """내보낼 저장소 객체. checkpoint_digest 가 있으면 체크포인트 완성 컷(헤더+이미지 묶음)이다."""
+
+    key: str
+    checkpoint_digest: str | None = None
 
 
 def _not_found() -> HTTPException:
@@ -84,12 +108,47 @@ async def verify_real_license(app, conn, payload: dict) -> None:
         ) from None
 
 
-async def authorize(app, conn, *, user_id: str, project_id: str, job_id: str,
-                    block_id: str) -> str:
-    """통과하면 내보낼 R2 키. 아니면 HTTPException(404 없음·남의 것·끝난 잡 / 403 권한 없음).
+def is_retained_failure(job) -> bool:
+    """부분 실패로 끝나 완성 컷을 보관 중인 상세 잡인가(2026-09-28)."""
+    result = job.get("result") if isinstance(job, dict) else None
+    return (
+        isinstance(job, dict)
+        and job.get("status") == "error"
+        and isinstance(result, dict)
+        and result.get("errorCode") == _RETAINED_FAILURE_CODE
+    )
 
-    DB 는 가벼운 조회 두세 번뿐이다: 잡 1행(id·user), 그 잡의 정리 표식(job_id 인덱스),
-    REAL 이면 라이선스 1행."""
+
+async def _retained_target(conn, job: dict, *, user_id: str, project_id: str,
+                           block_id: str) -> PreviewTarget:
+    from .workers import cut_checkpoints  # 지연 임포트 — 라우트 모듈이 워커 의존을 끌고 오지 않게
+
+    metadata = job.get("metadata") if isinstance(job.get("metadata"), dict) else {}
+    keys = metadata.get("retainedCutKeys")
+    key = keys.get(block_id) if isinstance(keys, dict) else None
+    parsed = cut_checkpoints.parse_final_key(key, user_id=user_id, project_id=project_id)
+    if parsed is None:
+        raise _not_found()
+    if not await repo.is_retained_detail_checkpoint(
+            conn, user_id=str(user_id), project_id=str(project_id), r2_key=key):
+        raise _not_found()        # 24시간이 지났거나, 다시 시도가 성공했거나, 철회로 지워졌다
+    return PreviewTarget(key=key, checkpoint_digest=parsed[1])
+
+
+def retained_image(blob, *, user_id: str, project_id: str, digest: str):
+    """보관본 객체 → (이미지 바이트, mime). 헤더가 하나라도 안 맞으면 None(404)."""
+    from .workers import cut_checkpoints
+
+    return cut_checkpoints.read_final_image(
+        blob, user_id=user_id, project_id=project_id, digest=digest)
+
+
+async def authorize(app, conn, *, user_id: str, project_id: str, job_id: str,
+                    block_id: str) -> PreviewTarget:
+    """통과하면 내보낼 대상. 아니면 HTTPException(404 없음·남의 것·끝난 잡 / 403 권한 없음).
+
+    DB 는 가벼운 조회 두세 번뿐이다: 잡 1행(id·user), 그 잡의 정리 표식(job_id 인덱스) 또는
+    부분 실패 잡이면 보관본 표식 1행, REAL 이면 라이선스 1행."""
     if (
         not _is_uuid(project_id)
         or not _is_uuid(job_id)
@@ -102,19 +161,25 @@ async def authorize(app, conn, *, user_id: str, project_id: str, job_id: str,
         job is None
         or str(job.get("project_id")) != str(project_id)
         or job.get("kind") != "detail_page"
-        or job.get("status") not in _ACTIVE_JOB_STATUSES
     ):
         raise _not_found()
-    key = await repo.get_detail_cut_preview_key(conn, job_id=str(job_id), block_id=block_id)
-    # 방어선 하나 더 — 이 사용자·이 프로젝트·이 잡의 AI 출력 키 모양(ai_key)만 내보낸다.
-    # 체크포인트(…/ckpt/…)나 다른 경로의 키는 여기서 걸린다.
-    prefix = f"users/{user_id}/projects/{project_id}/ai/{job_id}/"
-    if not isinstance(key, str) or not key.startswith(prefix) or "/" in key[len(prefix):]:
+    if job.get("status") in _ACTIVE_JOB_STATUSES:
+        key = await repo.get_detail_cut_preview_key(conn, job_id=str(job_id), block_id=block_id)
+        # 방어선 하나 더 — 이 사용자·이 프로젝트·이 잡의 AI 출력 키 모양(ai_key)만 내보낸다.
+        # 체크포인트(…/ckpt/…)나 다른 경로의 키는 여기서 걸린다.
+        prefix = f"users/{user_id}/projects/{project_id}/ai/{job_id}/"
+        if not isinstance(key, str) or not key.startswith(prefix) or "/" in key[len(prefix):]:
+            raise _not_found()
+        target = PreviewTarget(key=key)
+    elif is_retained_failure(job):
+        target = await _retained_target(
+            conn, job, user_id=user_id, project_id=project_id, block_id=block_id)
+    else:
         raise _not_found()
     payload = job.get("payload") or {}
     if is_real_job(payload):
         await verify_real_license(app, conn, payload)
-    return key
+    return target
 
 
 def mime_for_key(key: str) -> str:

@@ -17,11 +17,15 @@ export function applyDetailJobEvents(job, events) {
   const next = { ...job, cuts: { ...job.cuts }, copy: { ...job.copy } };
   const live = new Set(next.live);
   const failed = new Set(next.failedCuts);
+  // 2026-09-28 — [실패한 컷만 다시 만들기]가 보관본을 실제로 이어 썼는지(서버 cut_checkpoint_reused)와
+  // 이 잡이 읽은 콘티 지문(inputs_loaded.storyboardDigest). 대기 문구가 사실대로 말하는 근거.
+  const reused = new Set(next.reusedCuts || []);
   for (const e of events || []) {
     const p = e?.payload || {};
     if (e?.type === 'progress') {
       next.progress = Math.max(next.progress, p.progress || 0);
       if (p.phase) next.phase = p.phase;
+      if (p.phase === 'inputs_loaded' && p.storyboardDigest) next.storyboardDigest = p.storyboardDigest;
       if (p.phase === 'cut') {
         next.cutsDone = p.done ?? next.cutsDone;
         next.cutsTotal = p.total ?? next.cutsTotal;
@@ -44,10 +48,12 @@ export function applyDetailJobEvents(job, events) {
         next.cuts[p.blockId] = { url: p.assetId ? assetFileUrl(p.assetId) : null, done: true };
       }
       if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }
+      if (p.status === 'cut_checkpoint_reused' && p.stage === 'final') reused.add(p.blockId);
       if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];
     }
   }
   next.live = [...live];
   next.failedCuts = [...failed];
+  next.reusedCuts = [...reused];
   return next;
 }

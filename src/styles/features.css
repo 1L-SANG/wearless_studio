@@ -3413,6 +3413,8 @@
   opacity: 0; transform: translateY(6px); transition: opacity .22s, transform .22s; }
 .ed-genwait:hover .ed-genwait-hint { opacity: 1; transform: none; }
 .ed-genwait.failed { background: #f0e5e7 !important; }
+/* 부분 실패(2026-09-28) — 실패한 자리에 '실패' 꼬리표(생성 중 꼬리표와 같은 자리·다른 색) */
+.ed-genwait-tag.fail { background: #b44655; }
 .ed-genwait-fail { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px; text-align: center;
   font-size: 26px; font-weight: 600; color: #8e4a55; line-height: 1.5; }

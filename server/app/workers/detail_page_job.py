@@ -130,6 +130,24 @@ def _storyboard_digest(storyboard) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _incomplete_cuts_message(requested: int, failed: int, retained: int) -> str:
+    """부분 실패 문구(2026-09-28) — 몇 장 중 몇 장이 실패했고, 완성 컷 중 몇 장이 보관됐는지 사실대로.
+
+    크레딧: 이번 시도는 전액 해제(#420). 다시 시도가 완성되면 보관본을 실은 컷까지 원래 견적대로
+    정산된다(보관본도 셀러에게 나가는 컷 1장 — cut_checkpoints 머리말). 그래서 "공짜"라 하지 않고
+    "추가 비용 없이"·"원래 견적만큼만"이라고 말한다."""
+    completed = max(0, requested - failed)
+    head = f"{requested}장 중 {failed}장을 만들지 못했어요."
+    credit = "이번 시도는 크레딧이 차감되지 않았어요."
+    if completed and retained >= completed:
+        return (f"{head} 완성된 {completed}장은 보관돼 있어 다시 시도하면 추가 비용 없이 그대로 쓰고, "
+                f"실패한 컷만 새로 만들어요. {credit}")
+    if retained > 0:
+        return (f"{head} 완성된 {completed}장 중 {retained}장은 보관돼 있어 다시 시도하면 그대로 쓰고, "
+                f"나머지는 새로 만들어요. {credit}")
+    return f"{head} {credit} 다시 시도하면 컷을 새로 만들어요."
+
+
 def _duplicate_source_indexes(
     blocks: list[dict], clothing_type: str, skipped: frozenset[int] | set[int] | None = None,
 ) -> list[int | None]:
@@ -983,6 +1001,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
             await _tag_preview_block(
                 app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
+        if cut_checkpoints is not None:
+            # 부분 실패 뒤 보관본 안내·미리보기(2026-09-28) — 복제 자리도 원본의 완성 컷을 가리킨다.
+            cut_checkpoints.alias_final(block.get("id"), prepared[src][0].get("id"))
         step = {"blockId": block.get("id"), "status": "cut_done",
                 "width": base[0].get("width"), "height": base[0].get("height")}
         base_is_real_derived = bool(
@@ -1158,13 +1179,16 @@ async def run_detail_page_job(app, job: dict) -> None:
     ):
         await facemarket.wait_for_holder(app)
 
-    async def _fail(message: str, meta: dict, code: str = "generation_failed"):
+    async def _fail(message: str, meta: dict, code: str = "generation_failed", **extra):
+        # extra = 부분 실패(incomplete_cuts)의 result·job_metadata·event_extra(2026-09-28). 다른 실패는
+        # 예전과 같은 인자로 부른다.
         try:
             async with pool.connection() as conn:
                 await repo.finalize_detail_page_failure(
                     conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                     project_id=project_id, reserved=reserved, settle_key=settle_key,
-                    message=message, metadata=meta, code=code)
+                    message=message, metadata=meta, code=code,
+                    **{k: v for k, v in extra.items() if v is not None})
                 await conn.commit()
         except Exception:
             log.exception("detail_page finalize_failure error for job %s", job_id)
@@ -2081,8 +2105,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             )
 
         copywriting = bool(project.get("copywriting"))
+        # storyboardDigest — "실패한 컷만 다시 만들기" 재시도가 앞선 실패와 같은 콘티로 도는지 화면이
+        # 가려 말하는 근거(2026-09-28). 콘티 내용의 해시일 뿐 저장소 키·주소가 아니다.
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
-                                               "aiCuts": len(ai_blocks)})
+                                               "aiCuts": len(ai_blocks),
+                                               "storyboardDigest": loaded_storyboard_digest})
 
         # 2) 카피(선택) + 검수 — **컷보다 먼저**. 카피는 컷 이미지를 입력으로 쓰지 않아
         # (copywriter.generate: product·analysis·role만) 순서를 당길 수 있고, 셀러는 컷을
@@ -2180,14 +2207,43 @@ async def run_detail_page_job(app, job: dict) -> None:
         if failed_block_ids:
             all_failed = len(failed_block_ids) == len(ai_blocks)
             code = "all_cuts_failed" if all_failed else "incomplete_cuts"
-            await _fail(
-                "이미지를 모두 만들지 못했어요. 크레딧은 차감되지 않았어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
-                ({"error": code, "requestedCuts": len(ai_blocks)} if all_failed else {
-                    "error": code, "requestedCuts": len(ai_blocks),
-                    "generatedCuts": len(cut_results), "failedBlockIds": failed_block_ids,
-                }),
-                code=code,
-            )
+            if all_failed:
+                await _fail(
+                    "이미지를 모두 만들지 못했어요. 크레딧은 차감되지 않았어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
+                    {"error": code, "requestedCuts": len(ai_blocks)},
+                    code=code,
+                )
+            else:
+                # 부분 실패(2026-09-28, 오너 결정 B 유지 — 페이지는 내보내지 않고 전액 해제). 다만
+                # "모두 못 만들었다"는 거짓이다: 몇 장 중 몇 장이 실패했고, 완성 컷은 체크포인트(#394)로
+                # 24시간 보관돼 다음 시도가 새로 그리지 않고 싣는다는 걸 그대로 말한다. 크레딧 정산
+                # 메타(meta)는 #420 그대로다 — 이 분기가 바꾸는 것은 문구·화면용 result·서버 전용 메타뿐.
+                failed_set = set(failed_block_ids)
+                completed_block_ids = [
+                    str(b.get("id")) for b in ai_blocks if str(b.get("id")) not in failed_set]
+                retained = (cut_store.retained_final_keys(completed_block_ids)
+                            if cut_store is not None else {})
+                summary = {
+                    "requestedCuts": len(ai_blocks),
+                    "generatedCuts": len(cut_results),
+                    "failedBlockIds": failed_block_ids,
+                    "completedBlockIds": completed_block_ids,
+                    "retainedBlockIds": [b for b in completed_block_ids if b in retained],
+                }
+                await _fail(
+                    _incomplete_cuts_message(
+                        len(ai_blocks), len(failed_block_ids), len(retained)),
+                    {"error": code, "requestedCuts": len(ai_blocks),
+                     "generatedCuts": len(cut_results), "failedBlockIds": failed_block_ids},
+                    code=code,
+                    # 화면(GET /jobs/{id} 의 result)과 원장(error 이벤트)에는 블록 id·개수만 싣는다.
+                    result={"errorCode": code, **summary,
+                            "storyboardDigest": loaded_storyboard_digest,
+                            **({"retainedUntil": cut_store.retained_until()} if retained else {})},
+                    event_extra=summary,
+                    # 보관본 위치는 서버 전용(jobs.metadata — JobView 에 없다). 미리보기 라우트만 읽는다.
+                    job_metadata={"retainedCutKeys": retained} if retained else None,
+                )
             # 성공한 다른 컷도 이 페이지에서는 발행되지 않았다. 이미 보낸 임시 프리뷰 URL이
             # 환불 뒤 유효하지 않도록 출력 객체를 지운다. 실패하면 정리 표식이 다시 회수한다.
             await _delete_generated_outputs(cut_assets)
