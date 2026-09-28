@@ -113,7 +113,11 @@ export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionC
   return Boolean(selected && selectionCount > 1 && !additive);
 }
 
-export function shouldStartTextOnlyDrag(element, additive) {
+/* inMultiSelection — 이 글자가 **지금 고른 여러 요소 중 하나**인가. 그렇다면 글자만 떼어
+   움직이지 않고 고른 전체가 같이 움직인다(2026-09-28: 프레임 요소를 전부 골라 끌었는데
+   글자를 잡으면 글자만 따로 움직였다). 혼자 골랐거나 선택 밖의 글자는 예전처럼 자기만. */
+export function shouldStartTextOnlyDrag(element, additive, { inMultiSelection = false } = {}) {
+  if (inMultiSelection) return false;
   const isObjectLibraryGroup = Boolean(element?.groupId && element?.libraryItemId);
   return Boolean(!additive && element?.type === 'text'
     && element?.shape !== 'bubble' && !isObjectLibraryGroup);

@@ -29,3 +29,12 @@ test('붙여넣기는 지금 고른 프레임을 먼저 찾는다(복사 원본 
   assert.match(src, /removeSelectedElements\(bs, selEls, \{ allowRemoveContiSlots \}\)/);
   assert.match(src, /const allowRemoveContiSlots = !genActiveRef\.current/);
 });
+
+test('여러 요소를 고른 상태에서 글자를 잡아 끌면 고른 전체가 같이 움직인다', async () => {
+  const { shouldStartTextOnlyDrag } = await import('../../src/features/editor/editorSelection.js');
+  const text = { id: 't', type: 'text', text: 'POINT 02' };
+  assert.equal(shouldStartTextOnlyDrag(text, false), true);                                 // 혼자면 글자만
+  assert.equal(shouldStartTextOnlyDrag(text, false, { inMultiSelection: true }), false);   // 다중 선택이면 전체
+  const src = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  assert.match(src, /shouldStartTextOnlyDrag\(el, false, \{ inMultiSelection: Boolean\(selected && selectionCount > 1\) \}\)/);
+});

@@ -272,7 +272,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
 
     // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
     // 라이브러리 완성형은 selectionIdsForElement 로 묶인 구성 요소 전체를 잡는다.
-    const isolateText = shouldStartTextOnlyDrag(el, false);
+    const isolateText = shouldStartTextOnlyDrag(el, false, { inMultiSelection: Boolean(selected && selectionCount > 1) });
     if (isolateText) {
       // 드래그 임계값(4px)에 도달하기 전에 브라우저의 네이티브 글자 선택이 먼저
       // 시작되면 같은 동작이 될 때도, 안 될 때도 있었다. 편집 진입은 더블클릭이
