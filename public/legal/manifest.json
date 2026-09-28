@@ -27,8 +27,8 @@
     "slug": "seller-license-terms",
     "app": "both",
     "title": "FaceMarket 셀러 라이선스 이용조건",
-    "version": "v1.2",
-    "effectiveDate": "2026-09-18",
+    "version": "v1.3",
+    "effectiveDate": "2026-09-28",
     "source": "05_facemarket_seller_license_terms_v1.md"
   },
   {
@@ -43,8 +43,8 @@
     "slug": "license-agreement",
     "app": "facemarket",
     "title": "FaceMarket 초상 라이선스 표준계약서",
-    "version": "v1.2",
-    "effectiveDate": "2026-09-18",
+    "version": "v1.3",
+    "effectiveDate": "2026-09-28",
     "source": "02_facemarket_likeness_license_agreement_v1.md"
   },
   {
@@ -59,8 +59,8 @@
     "slug": "answers",
     "app": "facemarket",
     "title": "FaceMarket 법적 FAQ",
-    "version": "v1.4",
-    "effectiveDate": "2026-09-25",
+    "version": "v1.5",
+    "effectiveDate": "2026-09-28",
     "source": "06_facemarket_legal_faq_v1.md"
   },
   {

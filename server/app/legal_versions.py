@@ -49,7 +49,7 @@ SECONDARY_USE_CONSENTS = {
 }
 # 협찬 개정 시행본(2026-09-23). tests/test_facemarket_sponsorship_legal_draft.py 가 manifest 와 대조해요.
 SPONSORSHIP_DOCUMENT_VERSIONS = {
-    "terms-model": "v1.3", "privacy-model": "v1.6", "answers": "v1.4",
+    "terms-model": "v1.3", "privacy-model": "v1.6", "answers": "v1.5",
     "sponsorship-consent": SPONSORSHIP_CONSENT_VERSION,
 }
 # 요청·배송 기능용 델타는 아직 초안(요청 기능 개시 때 승격).

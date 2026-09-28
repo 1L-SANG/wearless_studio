@@ -21,6 +21,75 @@ const collectTree = (node, predicate, found = []) => {
   return found;
 };
 
+test('협찬을 끈 뒤 2차 활용을 바꿔도 협찬과 삭제한 개인정보가 복원되지 않아요', async () => {
+  let model = { id: 'm1', secondaryUseEnabled: false, sponsorshipEnabled: true,
+    instagramHandle: 'initial', instagramFollowers: 100, sizeTop: 'M',
+    sizeBottomWaist: 28, sponsorshipProfileConsentAt: '2026-09-28' };
+  const writes = [];
+  const api = {
+    getSponsorshipCredential: async () => ({ featureEnabled: false }),
+    updateModelSecondaryUse: async (_, enabled) => ({ secondaryUseEnabled: enabled }),
+    updateModelSponsorship: async (_, payload) => {
+      writes.push(payload);
+      return payload.sponsorshipEnabled ? { ...payload, sponsorshipProfileConsentAt: '2026-09-28' }
+        : { sponsorshipEnabled: false, instagramHandle: null, instagramFollowers: null,
+          sizeTop: null, sizeBottomWaist: null, sponsorshipProfileConsentAt: null };
+    },
+  };
+  const options = { entry: '/src/features/model/SponsorshipSettings.jsx', initialStates: [], honorHookDependencies: true, api };
+  const secondary = await modelComponentHarness({ ...options, exportName: 'ModelSecondaryUseSettings' });
+  const sponsorship = await modelComponentHarness({ ...options, exportName: 'ModelSponsorshipSettings' });
+  const props = () => ({ model, onModelChange: next => { model = next; } });
+  const renderBoth = () => { commit(secondary, props()); commit(sponsorship, props()); };
+  const fields = () => findTree(sponsorship.render(props()), node => node.type?.name === 'SponsorshipFields');
+  try {
+    renderBoth();
+    fields().props.onChange({ ...fields().props.value, sponsorshipEnabled: false });
+    await eventually(() => { renderBoth(); return model.sponsorshipEnabled === false; }, '협찬 해제를 저장해요');
+    await secondaryUseSettings(secondary.render(props())).props.onChange(true);
+    renderBoth();
+    assert.equal(fields().props.value.sponsorshipEnabled, false);
+    assert.equal(model.instagramHandle, null);
+    assert.equal(model.sponsorshipProfileConsentAt, null);
+    await button(sponsorship.render(props()), '협찬 설정 저장').props.onClick();
+    assert.deepEqual(writes, [{ sponsorshipEnabled: false }, { sponsorshipEnabled: false }]);
+  } finally { await Promise.all([secondary.close(), sponsorship.close()]); }
+});
+
+test('모델 설정 조회가 실패하면 증서는 권한 확인 불가를 표시하고 재시도로 복구해요', async () => {
+  let fail = true;
+  const h = await modelComponentHarness({
+    entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense',
+    initialStates: [], honorHookDependencies: true,
+    api: {
+      listLicenses: async () => [{ id: 'l1', modelId: 'm1', status: 'active' }],
+      listMyModels: async () => { if (fail) throw new Error('temporary 503'); return [{ id: 'm1', secondaryUseEnabled: true }]; },
+    },
+  });
+  h.runtime.push = () => {};
+  const card = () => findTree(h.render(), node => node.type?.name === 'VcCard');
+  try {
+    await eventually(() => { commit(h); return card(); }, '조회에 실패해도 증서는 남아요');
+    assert.equal(card().props.secondaryUseEnabled, null);
+    assert.match(textOf(h.render()), /사용 범위를 확인하지 못했어요/);
+    fail = false;
+    await button(h.render(), '사용 범위 다시 확인').props.onClick();
+    await eventually(() => { commit(h); return card()?.props.secondaryUseEnabled === true; }, '권한 확인이 복구돼요');
+    assert.doesNotMatch(textOf(h.render()), /사용 범위를 확인하지 못했어요/);
+  } finally { await h.close(); }
+});
+
+test('권한을 모르는 증서는 불허로 단정하지 않아요', async () => {
+  const h = await modelComponentHarness({ entry: '/src/features/model/ModelLicense.jsx', exportName: 'VcCard', initialStates: [], api: {} });
+  const previousWindow = globalThis.window;
+  globalThis.window = { location: { origin: 'https://facemarket.example' } };
+  try {
+    const tree = h.render({ license: { id: 'l1', status: 'active', allowedUse: [], unitPrice: 14900 }, secondaryUseEnabled: null });
+    assert.match(textOf(tree), /사용 범위확인 필요/);
+    assert.doesNotMatch(textOf(tree), /사용 범위상세페이지 착용컷/);
+  } finally { globalThis.window = previousWindow; await h.close(); }
+});
+
 test('2차 활용 토글은 정본 문구와 실제 제어 상태를 보여줘요', async () => {
   const h = await modelComponentHarness({
     entry: '/src/features/model/SponsorshipSettings.jsx',

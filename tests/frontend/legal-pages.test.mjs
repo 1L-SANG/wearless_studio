@@ -103,7 +103,7 @@ test('시행일 미정인 공개 검토본도 법무 화면에서 읽을 수 있
     const document = manifest.find((item) => item.slug === 'license-agreement');
     setLoadedState({ phase: 'ready', document, markdown: read('public/legal/license-agreement.md') });
     const html = render(React.createElement(LegalPage, { slug: document.slug }));
-    assert.match(html, /시행일 2026년 9월 18일/);
+    assert.match(html, /시행일 2026년 9월 28일/);
   } finally {
     setLoadedState(null);
   }

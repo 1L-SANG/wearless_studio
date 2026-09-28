@@ -87,7 +87,7 @@ const USE_DESCRIPTIONS = {
 };
 
 /* 얼굴 VC 카드. 본인 목록의 holderName을 우선하고, 구 응답은 공개 검증의 가려진 이름으로 폴백한다. */
-export function VcCard({ license, secondaryUseEnabled = false, onRevoked, push }) {
+export function VcCard({ license, secondaryUseEnabled = null, onRevoked, push }) {
     const [faceUrl, setFaceUrl] = useState(null);
     const [pub, setPub] = useState(null); // { model:{nameMasked,age}, valid, status, ... }
     const [qrUrl, setQrUrl] = useState(null);
@@ -270,7 +270,7 @@ export function VcCard({ license, secondaryUseEnabled = false, onRevoked, push }
                                     <dt>사용 범위</dt>
                                     <dd>
                                         {/* 좁은 칸에서 "공식 / SNS 게시물"처럼 말덩이 중간에서 끊기지 않게 묶어요. */}
-                                        {secondaryUseEnabled
+                                        {secondaryUseEnabled == null ? "확인 필요" : secondaryUseEnabled
                                             ? <><span className={s.keep}>상세페이지 착용컷 ·</span> <span className={s.keep}>공식 SNS 게시물</span></>
                                             : "상세페이지 착용컷"}
                                     </dd>
@@ -533,7 +533,7 @@ export function ModelLicense() {
     const [issuedId, setIssuedId] = useState(null); // 방금 발급 — 카드로 스크롤·강조
     const issuedRef = useRef(null);
     const [usage, setUsage] = useState([]);
-    const [ownedModels, setOwnedModels] = useState([]);
+    const [ownedModels, setOwnedModels] = useState(null);
     // 이 화면은 라이선스 "목록"이지만 실제로는 모델 1인당 모델도 하나다(라이선스는
     // 재등록 때마다 늘 수 있어도 model_id 는 같다) — 첫 라이선스의 modelId 로 조회한다.
     const usageModelId = licenses[0]?.modelId;
@@ -541,7 +541,7 @@ export function ModelLicense() {
     const load = useCallback(async () => {
         setPhase("loading");
         try {
-            const [nextLicenses, nextModels] = await Promise.all([listLicenses(), listMyModels().catch(() => [])]);
+            const [nextLicenses, nextModels] = await Promise.all([listLicenses(), listMyModels().catch(() => null)]);
             setLicenses(nextLicenses);
             setOwnedModels(nextModels);
             if (termsRequested) {
@@ -686,6 +686,12 @@ export function ModelLicense() {
                                     않아요.
                                 </p>
                             </div>
+                            {licenses.some(lic => ownedModels?.find(model => model.id === lic.modelId)?.secondaryUseEnabled == null) && (
+                                <div role="alert">
+                                    <p>사용 범위를 확인하지 못했어요. SNS 사용 허용 여부를 다시 확인해 주세요.</p>
+                                    <button type="button" className={s.vcBtn} onClick={load}>사용 범위 다시 확인</button>
+                                </div>
+                            )}
                             <div className={s.cards}>
                                 {licenses.map((lic) => (
                                     <div
@@ -703,7 +709,7 @@ export function ModelLicense() {
                                     >
                                         <VcCard
                                             license={lic}
-                                            secondaryUseEnabled={ownedModels.find(model => model.id === lic.modelId)?.secondaryUseEnabled === true}
+                                            secondaryUseEnabled={ownedModels?.find(model => model.id === lic.modelId)?.secondaryUseEnabled ?? null}
                                             onRevoked={load}
                                             push={push}
                                         />

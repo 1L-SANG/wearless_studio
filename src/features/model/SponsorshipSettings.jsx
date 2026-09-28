@@ -25,8 +25,8 @@ export function ModelSecondaryUseSettings({ model, onModelChange, disabled = fal
   const [failed, setFailed] = useState(false);
   const inFlight = useRef(false);
   const latestModel = useRef(model);
+  useEffect(() => { latestModel.current = model; }, [model]);
   useEffect(() => {
-    latestModel.current = model;
     setEnabled(model?.secondaryUseEnabled === true);
   }, [model?.id, model?.secondaryUseEnabled]);
   useEffect(() => {

@@ -305,10 +305,19 @@ def test_claim_stops_after_max_attempts():
     assert _run(scenario) == []
 
 
-def test_backfill_opens_credential_for_models_enabled_before_the_switch():
+@pytest.mark.parametrize('secondary_use_granted', [False, True])
+def test_backfill_opens_credential_for_models_enabled_before_the_switch(secondary_use_granted):
     async def scenario(conn):
         user_id, model_id = await _seed_model(conn)
-        await _grant(conn, user_id, model_id)
+        key = await _grant(conn, user_id, model_id)
+        if secondary_use_granted:
+            from types import SimpleNamespace
+            from app.facemarket_sponsorship import record_secondary_use_consent
+            async with conn.cursor() as cur:
+                await record_secondary_use_consent(
+                    cur, SimpleNamespace(headers={}, client=None), user_id, model_id,
+                    enabled=True, previous_enabled=False,
+                )
         await conn.execute(
             """update fm_models set sponsorship_enabled = true, instagram_handle = 'a',
                       instagram_followers = 1, instagram_followers_reported_at = now(), size_top = 'M', size_bottom_waist = 28,
@@ -319,8 +328,10 @@ def test_backfill_opens_credential_for_models_enabled_before_the_switch():
         await svc.backfill_missing(pool, limit=100000)  # 두 번 돌아도 하나
         async with conn.cursor() as cur:
             await cur.execute(
-                "select status from fm_sponsorship_credentials where model_id = %s", (model_id,))
-            return [r["status"] for r in await cur.fetchall()]
+                "select status, consent_event_key from fm_sponsorship_credentials where model_id = %s", (model_id,))
+            rows = await cur.fetchall()
+            assert all(str(row['consent_event_key']) == key for row in rows)
+            return [r["status"] for r in rows]
 
     assert _run(scenario) == ["pending"]
 

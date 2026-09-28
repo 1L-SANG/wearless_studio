@@ -71,6 +71,7 @@ async def open_credential(cur, *, model_id: str, user_id: str) -> str | None:
               and idempotency_key = (
                   select idempotency_key from fm_sponsorship_consent_events
                    where model_id = %s and user_id = %s and action = 'granted'
+                     and consent_type = 'sponsorship_participation'
                    order by id desc limit 1)""",
         (model_id, user_id, model_id, user_id),
     )
