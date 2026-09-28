@@ -42,7 +42,7 @@ import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
-import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
+import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
@@ -272,7 +272,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
 
     // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
     // 라이브러리 완성형은 selectionIdsForElement 로 묶인 구성 요소 전체를 잡는다.
-    const isolateText = shouldStartTextOnlyDrag(el, false);
+    const isolateText = shouldStartTextOnlyDrag(el, false, { inMultiSelection: Boolean(selected && selectionCount > 1) });
     if (isolateText) {
       // 드래그 임계값(4px)에 도달하기 전에 브라우저의 네이티브 글자 선택이 먼저
       // 시작되면 같은 동작이 될 때도, 안 될 때도 있었다. 편집 진입은 더블클릭이
@@ -1567,9 +1567,12 @@ export function Editor() {
           const picked = bs0.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => ({ b, el })));
           // 사진이 든 자리만 '비우기'다 — 이미 빈 자리·다른 요소는 그냥 지워진다.
           const cleared = picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && el.src);
-          const removedCount = picked.length - cleared.length;
+          const allowRemoveContiSlots = !genActiveRef.current;
+          // 생성 중엔 빈 콘티 자리가 그대로 남는다 — 지운 것처럼 안내하지 않는다.
+          const kept = allowRemoveContiSlots ? [] : picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && !el.src && el.sourceBlockId);
+          const removedCount = picked.length - cleared.length - kept.length;
           setBlocks((bs) => {
-            const next = removeSelectedElements(bs, selEls);
+            const next = removeSelectedElements(bs, selEls, { allowRemoveContiSlots });
             // 정보 블록은 폼(block.info)이 정본이라 요소만 비우면 '내용 수정 → 업데이트'
             // 한 번에 지운 사진이 되살아난다. 폼 쪽 src 도 같이 비운다(2026-08-17 검증).
             const infoIds = new Set(cleared.filter(({ b }) => presetTypeOf(b) && b.info).map(({ b, el }) => `${b.id}:${el.id}`));
@@ -1581,6 +1584,7 @@ export function Editor() {
           const parts = [];
           if (cleared.length) parts.push(`${cleared.length > 1 ? `사진 ${cleared.length}장을` : '사진을'} 비웠어요 · 자리는 그대로예요`);
           if (removedCount) parts.push(`${removedCount > 1 ? `${removedCount}개 요소를` : '요소를'} 삭제했어요`);
+          if (kept.length) parts.push('생성 중에는 사진 자리를 지울 수 없어요 · 생성이 끝나면 다시 눌러 주세요');
           toast.push(parts.join(' · ') || '요소를 삭제했어요', { icon: 'trash' });
         } else {
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
@@ -1841,6 +1845,14 @@ export function Editor() {
   };
   const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
   const copySelectedElements = () => {
+    // 요소를 고르지 않고 프레임만 골랐으면 프레임을 통째로 복사한다.
+    if (!selEls.length && blockFocused && selBlock) {
+      const copiedBlock = copyEditorBlock(latestBlocks.current || blocks, selBlock);
+      if (!copiedBlock) return false;
+      editorClipboard.current = copiedBlock;
+      toast.push('프레임을 복사했어요', { icon: 'copy' });
+      return true;
+    }
     const copied = copyEditorElements(latestBlocks.current || blocks, selEls);
     if (!copied) return false;
     editorClipboard.current = copied;
@@ -1851,8 +1863,27 @@ export function Editor() {
     const copied = editorClipboard.current;
     if (!copied) return false;
     const currentBlocks = latestBlocks.current || blocks;
-    const targetBlock = currentBlocks.find((block) => block.id === copied.blockId)
-      || currentBlocks.find((block) => block.id === selBlock);
+    if (copied.kind === 'block') {
+      // 프레임 붙여넣기 — 지금 고른 프레임(없으면 복사 원본) 바로 아래에 넣는다.
+      const anchorId = selBlock
+        || currentBlocks.find((block) => block.elements.some((el) => selEls.includes(el.id)))?.id
+        || copied.blockId;
+      const anchorIndex = currentBlocks.findIndex((block) => block.id === anchorId);
+      const pastedBlock = pasteEditorBlock(copied.block, uid);
+      if (!pastedBlock) return false;
+      const nextBlock = { ...pastedBlock, contentRole: CONTENT_ROLES.CUSTOM };
+      const at = anchorIndex >= 0 ? anchorIndex + 1 : currentBlocks.length;
+      setBlocks((items) => [...items.slice(0, at), nextBlock, ...items.slice(at)]);
+      setSelBlock(nextBlock.id); setBlockFocused(true); setSelEl(null); setSelEls([]); setEditEl(null); setVaryTarget(null);
+      toast.push('프레임을 붙여넣었어요', { icon: 'copy' });
+      return true;
+    }
+    // 붙여넣을 곳 = **지금 고른 프레임**(프레임 자체 또는 그 안의 요소). 없을 때만 복사해 온
+    // 프레임. 예전엔 복사 원본을 먼저 찾아서 다른 프레임을 골라도 늘 원래 자리에 붙었다.
+    const selectedBlockId = selBlock
+      || currentBlocks.find((block) => block.elements.some((el) => selEls.includes(el.id)))?.id;
+    const targetBlock = currentBlocks.find((block) => block.id === selectedBlockId)
+      || currentBlocks.find((block) => block.id === copied.blockId);
     if (!targetBlock) return false;
     const pasted = pasteEditorElements({ ...targetBlock, h: getBlockRenderHeight(targetBlock) }, copied.elements, uid);
     if (!pasted) return false;

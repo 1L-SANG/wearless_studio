@@ -113,7 +113,11 @@ export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionC
   return Boolean(selected && selectionCount > 1 && !additive);
 }
 
-export function shouldStartTextOnlyDrag(element, additive) {
+/* inMultiSelection — 이 글자가 **지금 고른 여러 요소 중 하나**인가. 그렇다면 글자만 떼어
+   움직이지 않고 고른 전체가 같이 움직인다(2026-09-28: 프레임 요소를 전부 골라 끌었는데
+   글자를 잡으면 글자만 따로 움직였다). 혼자 골랐거나 선택 밖의 글자는 예전처럼 자기만. */
+export function shouldStartTextOnlyDrag(element, additive, { inMultiSelection = false } = {}) {
+  if (inMultiSelection) return false;
   const isObjectLibraryGroup = Boolean(element?.groupId && element?.libraryItemId);
   return Boolean(!additive && element?.type === 'text'
     && element?.shape !== 'bubble' && !isObjectLibraryGroup);
@@ -188,7 +192,11 @@ export function isPhotoSlotElement(block, element) {
 
 /** 사진이 **든** 자리는 비우고(요소 유지), 이미 빈 자리와 그 밖의 요소는 지운다.
     빈 자리까지 남기면 프레임 템플릿의 남는 칸이나 한 번 비운 칸을 영영 못 없앤다. */
-export function removeSelectedElements(blocks, selectedIds) {
+/* allowRemoveContiSlots — 생성이 진행 중이 아닐 때만 true 로 부른다(Editor 가 genActive 로 판단).
+   콘티 컷 자리를 요소째 지우면 안 되는 이유는 **생성 완료 병합**(canSafelyMergeServerBlocks)
+   뿐이다 — 병합은 생성 잡이 도는 동안·끝날 때만 일어난다. 그 밖에선 빈 자리를 영영 못
+   지우게 막을 이유가 없고, 셀러에겐 "Delete 를 눌러도 안 지워지는" 버그로 보였다(2026-09-28). */
+export function removeSelectedElements(blocks, selectedIds, { allowRemoveContiSlots = false } = {}) {
   const selected = new Set(selectedIds || []);
   if (!selected.size) return blocks;
   return blocks.map((block) => ({
@@ -202,7 +210,8 @@ export function removeSelectedElements(blocks, selectedIds) {
       if (!isPhotoSlotElement(block, element)) return kept;
       if (!element.src) {
         if (!element.sourceBlockId) return kept;      // 템플릿 빈 칸 — 없앤다
-        kept.push(element);                            // 콘티 컷 자리 — 그대로 둔다
+        if (allowRemoveContiSlots) return kept;        // 생성 중이 아니면 콘티 빈 자리도 없앤다
+        kept.push(element);                            // 생성 중 — 병합 안전을 위해 그대로 둔다
         return kept;
       }
       // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.

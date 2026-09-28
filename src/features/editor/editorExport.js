@@ -157,17 +157,34 @@ async function prepareClone(blockNode) {
   }
 }
 
+export function flattenOnWhite(canvas) {
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext('2d');
+  if (!ctx) return canvas;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, 0, 0);
+  canvas.width = 0; // 원본 픽셀 버퍼 해제
+  canvas.height = 0;
+  return out;
+}
+
 async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS) {
   const { clone, softFailed, dispose } = await prepareClone(blockNode);
   try {
-    const canvas = await toCanvas(clone, {
+    // backgroundColor 옵션을 넘기면 html-to-image 가 **캡처 대상(블록) 자체의 배경색을 그 값으로
+    // 덮어쓴다**(apply-style: style.backgroundColor = options.backgroundColor). 그래서 셀러가 바꾼
+    // 블록 배경이 다운로드에서 전부 흰색이 됐다(2026-09-28). 블록 배경은 그대로 캡처하고,
+    // 흰 바탕 합성은 우리가 한다 — 반투명 배경(bgOpacity)도 화면처럼 흰 바탕 위에 보인다.
+    const captured = await toCanvas(clone, {
       pixelRatio,
       width: EXPORT_WIDTH,
       height: clone.offsetHeight,
-      backgroundColor: '#ffffff',
       fontEmbedCSS,
     });
-    return { canvas, softFailed };
+    return { canvas: flattenOnWhite(captured), softFailed };
   } finally {
     dispose();
   }

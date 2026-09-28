@@ -86,3 +86,10 @@ test('내보내기 캡처에서 빈 사진 자리는 빠진다 — 완성본에 
   // 실제로 제거하는 코드와 이어져 있어야 목록이 의미가 있다.
   assert.match(source, /clone\.querySelectorAll\(CHROME_SELECTOR\)\.forEach\(\(n\) => n\.remove\(\)\)/);
 });
+
+test('내보내기 캡처는 블록 배경색을 덮어쓰지 않는다(backgroundColor 옵션 금지) — 흰 바탕은 합성으로', () => {
+  const src = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
+  const call = src.slice(src.indexOf('await toCanvas(clone'), src.indexOf('await toCanvas(clone') + 400);
+  assert.doesNotMatch(call, /backgroundColor/, 'html-to-image backgroundColor 는 블록 배경을 흰색으로 덮는다');
+  assert.match(src, /return \{ canvas: flattenOnWhite\(captured\), softFailed \}/);
+});
