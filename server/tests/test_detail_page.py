@@ -10,7 +10,7 @@ from dataclasses import replace
 import app.routes as routes
 import pytest
 from app import repo
-from app.agents import identity_source
+from app.agents import identity_scope, identity_source
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
@@ -541,12 +541,13 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
         headers=auth_headers(make_token),
     )
 
-    # 실제 모델은 hooking·styling·studio 섹션 컷만 만든다(2026-09-14 studio, 2026-09-25 styling,
-    # 2026-09-26 hooking 추가). 제품 컷만 있는 콘티는 만들 수 있는 컷이 0 이라 잡도 예약도
-    # 없이 끝난다("전부 걸러져 0컷이면 400" — 사용자 지시).
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "real_model_studio_only"
-    assert seen == {} and events == ["cache"]
+    # 제품 컷은 2026-09-28 에 실제 모델에게도 열렸다 — 사람이 안 나오는 컷이라 모델 종류와
+    # 상관이 없다. 제품 컷만 있는 콘티는 잡이 만들어지되, 얼굴을 쓰는 컷이 없으니 실제 모델
+    # id·라이선스(_facemarket)가 페이로드에서 빠지고 FaceMarket 게이트에도 들어가지 않는다
+    # (forbidden_resolve 가 불리면 AssertionError, 컷오버 잠금도 없음).
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {"mode": "generate"}
+    assert events == ["cache", "job", "reserve", "commit"]
 
 
 def _post_real_detail_generate(client, make_token, monkeypatch, storyboard):
@@ -670,8 +671,13 @@ def test_detail_real_hooking_cuts_are_reserved_like_styling(
 def test_detail_real_blocked_sections_only_are_refused_with_the_studio_only_code(
     client, make_token, monkeypatch
 ):
-    """hooking 까지 열린 뒤(2026-09-26) 막힌 섹션은 product 뿐이다 — 제품 컷(전체·디테일)만
-    있는 콘티는 만들 컷이 0 이다 — 잡·예약 없이 400."""
+    """막힌 섹션의 컷만 있는 콘티는 만들 컷이 0 이다 — 잡·예약 없이 400.
+
+    2026-09-28 product 까지 열려 지금 막힌 섹션은 없다. 장치(라우트 가드)는 남아 있으니
+    정책을 좁혀(product 를 뺀다) 거절 경로를 계속 지킨다.
+    """
+    monkeypatch.setattr(identity_scope, "REAL_ALLOWED_SECTION_ROLES",
+                        ("hooking", "styling", "studio"))
     response, seen = _post_real_detail_generate(client, make_token, monkeypatch, [
         {"id": "p1", "source": "ai", "sectionRole": "product", "contentRole": "productOverview",
          "cutType": "product", "direction": "front", "shot": "ghost"},
@@ -2577,10 +2583,16 @@ def _run_real_detail_job(monkeypatch, storyboard, *, credits_reserved, failing_i
     return captured
 
 
-#: 아직 막힌 섹션(product)의 제품 컷 — 실제 모델로는 만들지 않는다(2026-09-26 기준 남은 유일한 섹션).
+#: 정책을 좁혀(product 를 뺀) 막은 제품 컷. 2026-09-28 product 가 열려 기본 정책으로는 막힌 섹션이
+#: 없다 — 건너뛰기 장치를 지키는 테스트는 _block_product_for_real 로 정책을 좁혀 쓴다.
 _REAL_BLOCKED_PRODUCT = {"id": "product", "source": "ai", "sectionRole": "product",
                          "contentRole": "productOverview", "cutType": "product",
                          "shot": "ghost", "direction": "front"}
+
+
+def _block_product_for_real(monkeypatch):
+    monkeypatch.setattr(identity_scope, "REAL_ALLOWED_SECTION_ROLES",
+                        ("hooking", "styling", "studio"))
 
 
 @pytest.mark.parametrize("real_cuts_fail,hooking_shot,hooking_open", [
@@ -2682,6 +2694,7 @@ def test_a_scope_skipped_cut_closes_its_slot_without_the_garment_truth_warning(
     잘못 가리킨다(2026-09-26: 막힌 첫 장면이 3번 연속 그 경고로 보였다).
     """
     caplog.set_level(logging.INFO, logger=dpj.log.name)
+    _block_product_for_real(monkeypatch)
     captured = _run_real_detail_job(monkeypatch, [
         {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full",
          "direction": "front"},

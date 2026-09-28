@@ -35,11 +35,14 @@ SCOPES = (VIRTUAL, REAL, BOTH)
 #: studio 는 얼굴 합성을 실측으로 확인한 곳(2026-09-14 사용자 결정). styling 은 2026-09-25 사용자
 #: 결정으로 연다 — 호리존만으로는 상세페이지가 모자라다. 옆·뒤(각도 교체)는 단색 배경 기준으로
 #: 만든 경로라 스타일링 배경에서는 실패가 더 날 수 있다(실패는 컷 단위로 닫히고 미차감).
-#: hooking(첫 장면)은 2026-09-26 사용자 결정으로 연다. 남은 건 product(사람이 없는 제품 컷)뿐이다.
-REAL_ALLOWED_SECTION_ROLES = ("hooking", "styling", "studio")
+#: hooking(첫 장면)은 2026-09-26 사용자 결정으로 연다. product(제품 컷)는 2026-09-28 에 연다 —
+#: 사람이 안 나오는 컷이라 모델 종류와 상관이 없는데, #420(한 컷이라도 범위 밖이면 요청 전체 거절)
+#: 이후로 제품 컷이 든 콘티는 실제 모델 생성이 통째로 막혔다(데님 셔츠 E2E, 400 real_model_studio_only).
+#: 이제 섹션으로 막히는 곳은 없다. 가상 전용 예시·공간세트 규칙(shape_scope_for_block)은 그대로다.
+REAL_ALLOWED_SECTION_ROLES = ("hooking", "styling", "studio", "product")
 #: 그 규칙에 걸렸을 때 셀러가 보는 것. 인프라 단어(파드·라이선스·LoRA)는 쓰지 않는다.
 STUDIO_ONLY_CODE = "real_model_studio_only"
-STUDIO_ONLY_MESSAGE = "실제 모델은 현재 첫 장면·스타일링·스튜디오 컷만 만들 수 있어요."
+STUDIO_ONLY_MESSAGE = "실제 모델로는 만들 수 없는 섹션이에요."
 #: 그 밖의 이유(가상 전용 예시·공간세트)로 막힌 경우
 MISMATCH_CODE = "identity_scope_mismatch"
 MISMATCH_MESSAGE = "이 모델로는 만들 수 없는 컷이에요."

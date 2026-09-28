@@ -359,17 +359,29 @@ def test_product_only_queued_real_model_does_not_require_face_assets(monkeypatch
     )
     app = _app(_asset_rows(), None, face_r2)
 
+    async def fake_settlement(*_args, **kwargs):
+        captured.setdefault("settlements", []).append(kwargs)
+
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
+
     asyncio.run(dpj.run_detail_page_job(
         app, worker_job(_snapshot_payload(), credits_reserved=1)
     ))
 
+    # 얼굴 자산은 한 번도 읽지 않는다 — 제품 컷은 사람이 안 나온다.
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
-    # 2026-09-14: 실제 모델은 studio 섹션 컷만 만든다 — 제품컷만 있는 잡은 만들 컷이 0 이다.
-    # (라우트가 예약 전에 400 으로 끊으므로 실제로는 여기까지 오지 않는다. 구 클라이언트·
-    #  재시도로 들어온 잡도 얼굴 자산을 읽지 않는다는 것이 이 테스트의 요점이다.)
-    assert captured.get("calls") in (None, [])
-    assert captured.get("success", {}).get("charge", 0) == 0
+    # 2026-09-28: product 섹션이 실제 모델에게도 열려 제품 컷은 **만들어진다** — 얼굴 없이.
+    assert captured["calls"] == [
+        {"n_images": 1, "has_face": False,
+         "manifest": "1. PRODUCT — front view of the garment"},
+    ]
+    # 실제 모델 파생물이 아니다: 검증 배지·모델 정산 없음, 자산 표식 False.
+    assert captured["license_notice"] is None
+    assert captured.get("settlements") is None
+    assets = captured["success"]["cut_assets"]
+    assert [a["metadata"]["facemarket_real_derived"] for a in assets] == [False]
+    assert captured["success"]["charge"] == 1
 
 
 @pytest.mark.parametrize(

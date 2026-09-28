@@ -1,9 +1,11 @@
-"""실제(REAL) 모델은 **hooking·styling·studio 섹션 컷만** 만든다(첫 장면·스타일링·스튜디오).
+"""실제(REAL) 모델이 만들 수 있는 섹션 — identity_scope.REAL_ALLOWED_SECTION_ROLES.
 
 이력: 2026-09-14 사용자 결정으로 studio 섹션만 열었다(얼굴 합성이 실측으로 검증된 곳).
 2026-09-25 사용자 결정으로 styling 을 더했다 — 호리존만으로는 상세페이지가 모자라다.
-2026-09-26 사용자 결정으로 hooking(첫 장면)을 더했다. product 는 여전히 막힌다(사람이 없는
-제품 컷이다). 푸는 방법은 identity_scope.REAL_ALLOWED_SECTION_ROLES 에 섹션을 더하는 것 하나뿐이다.
+2026-09-26 사용자 결정으로 hooking(첫 장면)을 더했다. 2026-09-28 product(제품 컷)도 열었다 —
+사람이 안 나오는 컷이라 모델 종류와 상관이 없는데, #420 이후 제품 컷이 든 콘티가 통째로
+거절됐다. 이제 섹션으로 막히는 곳은 없다. 막는 장치는 남아 있어서, 거절 경로는 정책을
+좁혀(monkeypatch) 계속 지킨다.
 
 판정은 identity_scope 한 곳에 있고 세 자리가 그걸 쓴다:
   · 상세페이지 라우트 — **예약 전에** 걸러 예약 크레딧 = 실제 생성 컷 수
@@ -29,34 +31,43 @@ BLOCKS = {
 }
 
 
+#: 2026-09-26 정책 — 막는 장치를 지키는 테스트가 이 값으로 좁혀 쓴다(product 가 막힌다).
+NARROW_POLICY = ("hooking", "styling", "studio")
+
+
+@pytest.fixture
+def narrow_policy(monkeypatch):
+    monkeypatch.setattr(identity_scope, "REAL_ALLOWED_SECTION_ROLES", NARROW_POLICY)
+
+
 def test_the_policy_is_one_constant():
-    assert identity_scope.REAL_ALLOWED_SECTION_ROLES == ("hooking", "styling", "studio")
-    # 아직 막힌 섹션이 남아 있어야 이 규칙이 뜻이 있다(2026-09-26 기준 product 하나).
+    assert identity_scope.REAL_ALLOWED_SECTION_ROLES == ("hooking", "styling", "studio", "product")
+    # 2026-09-28 기준 섹션으로 막히는 곳은 없다.
     blocked = [r for r in content_roles.SECTION_ROLES
                if r not in identity_scope.REAL_ALLOWED_SECTION_ROLES]
-    assert blocked == ["product"]
+    assert blocked == []
     # 섹션 이름이 바뀌면 정책이 조용히 비어 버린다 — 실제 섹션 목록에 들어 있는지 잠근다.
     for role in identity_scope.REAL_ALLOWED_SECTION_ROLES:
         assert role in content_roles.SECTION_ROLES
 
 
 @pytest.mark.parametrize("section", ["product"])
-def test_a_real_model_cannot_make_cuts_outside_the_open_sections(section):
+def test_a_real_model_cannot_make_cuts_outside_the_open_sections(section, narrow_policy):
     block = BLOCKS[section]
     assert identity_scope.block_allowed(block, REAL_MODEL) is False
     code, message = identity_scope.block_rejection(block, REAL_MODEL)
+    # 코드 이름은 API 호환 때문에 studio_only 그대로다.
     assert code == "real_model_studio_only"
-    assert message == identity_scope.STUDIO_ONLY_MESSAGE
-    # 열린 섹션을 셀러에게 그대로 말한다(코드 이름은 API 호환 때문에 studio_only 그대로다).
-    assert "첫 장면" in message and "스타일링" in message and "스튜디오" in message
+    assert message == identity_scope.STUDIO_ONLY_MESSAGE == "실제 모델로는 만들 수 없는 섹션이에요."
     # 인프라 단어는 셀러 문구에 없다
     for word in ("파드", "라이선스", "LoRA", "pod"):
         assert word not in message
 
 
-@pytest.mark.parametrize("section", ["hooking", "styling", "studio"])
-def test_a_real_model_can_make_hooking_styling_and_studio_cuts(section):
-    """styling 은 2026-09-25, hooking 은 2026-09-26 사용자 결정으로 열렸다 — studio 와 똑같이 통과한다."""
+@pytest.mark.parametrize("section", ["hooking", "styling", "studio", "product"])
+def test_a_real_model_can_make_cuts_in_every_open_section(section):
+    """styling 은 2026-09-25, hooking 은 2026-09-26, product 는 2026-09-28 사용자 결정으로
+    열렸다 — studio 와 똑같이 통과한다."""
     assert identity_scope.studio_only_block(BLOCKS[section]) is False
     assert identity_scope.scope_for_block(BLOCKS[section]) == identity_scope.BOTH
     assert identity_scope.block_allowed(BLOCKS[section], REAL_MODEL) is True
@@ -82,13 +93,26 @@ def test_old_blocks_without_a_section_are_judged_by_their_recipe():
         assert identity_scope.section_of(block) == "hooking", block
         assert identity_scope.block_allowed(block, REAL_MODEL) is True, block
         assert identity_scope.block_rejection(block, REAL_MODEL) is None, block
-    # product(전체·디테일) → product 섹션: 여전히 막힌다.
+    # product(전체·디테일) → product 섹션: 2026-09-28 부터 열려 있다.
+    product_blocks = ({"source": "ai", "cutType": "product"},
+                      {"source": "ai", "cutType": "product", "shot": "detail"},
+                      {"source": "ai", "contentRole": "detail", "cutType": "product"})
+    for block in product_blocks:
+        assert identity_scope.section_of(block) == "product", block
+        assert identity_scope.block_allowed(block, REAL_MODEL) is True, block
+        assert identity_scope.block_rejection(block, REAL_MODEL) is None, block
+
+
+def test_old_blocks_are_blocked_by_their_inferred_section_under_a_narrower_policy(narrow_policy):
+    """추론된 섹션으로도 막는 장치가 걸리는지 — 정책을 좁혀(product 를 빼) 확인한다."""
     for block in ({"source": "ai", "cutType": "product"},
                   {"source": "ai", "cutType": "product", "shot": "detail"},
                   {"source": "ai", "contentRole": "detail", "cutType": "product"}):
         assert identity_scope.section_of(block) == "product", block
         assert identity_scope.block_allowed(block, REAL_MODEL) is False, block
         assert identity_scope.block_rejection(block, REAL_MODEL)[0] == "real_model_studio_only"
+    # 좁힌 정책에서도 열린 섹션은 그대로 통과한다.
+    assert identity_scope.block_allowed({"source": "ai", "cutType": "horizon"}, REAL_MODEL) is True
 
 
 def test_a_block_whose_section_cannot_be_resolved_is_not_blocked():
@@ -98,7 +122,7 @@ def test_a_block_whose_section_cannot_be_resolved_is_not_blocked():
 
 
 def test_the_two_reasons_stay_apart():
-    """"첫 장면·스타일링·스튜디오만 된다" 와 "이 예시는 가상 전용이다" 는 셀러가 할 수 있는 일이 다르다."""
+    """"이 섹션은 실제 모델로 안 된다" 와 "이 예시는 가상 전용이다" 는 셀러가 할 수 있는 일이 다르다."""
     assert identity_scope.STUDIO_ONLY_CODE != identity_scope.MISMATCH_CODE
     # 가상 전용 공간세트는 studio 섹션이어도 막힌다 — 그때는 mismatch 코드다
     space_block = {"source": "ai", "sectionRole": "studio", "cutType": "horizon",
