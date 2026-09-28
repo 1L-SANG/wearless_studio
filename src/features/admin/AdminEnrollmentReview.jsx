@@ -360,7 +360,11 @@ function PhotoReviewSection({ card, onChanged }) {
       )}
       {visible && !reshooting && (
         <div className="flex flex-wrap gap-2">
-          <Button variant="default" size="sm" disabled={busy || !identityCleared} onClick={approvePhotos}>사진 확인 완료</Button>
+          {/* 확인이 끝나도 LoRA 전까지는 사진이 열려 있다(PHOTO_REVIEW_PREDICATE) — 버튼까지 남으면
+              눌러도 아무 변화가 없어 "안 넘어간다"로 보인다. 확인 완료 뒤엔 재촬영 요청만 남긴다. */}
+          {status !== 'approved' && (
+            <Button variant="default" size="sm" disabled={busy || !identityCleared} onClick={approvePhotos}>사진 확인 완료</Button>
+          )}
           <Button variant="outline" size="sm" disabled={busy} onClick={() => setReshooting(true)}>재촬영 요청</Button>
         </div>
       )}

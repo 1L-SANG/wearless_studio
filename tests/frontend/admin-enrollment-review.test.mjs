@@ -727,3 +727,10 @@ test('신원 승인 직후 승인 탭의 vc_pending 배지는 증서 발급 대�
   ({ page } = await harness.flush());
   assert.equal(nodeText(findTree(queueRow(page), node => node.type === 'Badge')), '증서 발급 대기');
 });
+
+test('사진 확인이 끝나면(approved) "사진 확인 완료" 버튼을 다시 그리지 않는다 — 눌러도 변화가 없어 멈춘 것처럼 보였다', () => {
+  assert.ok(
+    /status\s*!==\s*'approved'\s*&&\s*\(\s*<Button[^>]*onClick=\{approvePhotos\}/.test(source),
+    '확인 완료 뒤에도 사진 확인 완료 버튼이 남는다',
+  );
+});
