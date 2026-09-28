@@ -38,6 +38,7 @@ import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
+import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
@@ -76,13 +77,15 @@ async function tryGetReceipt(jobId) {
 }
 const wonFmt = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
 
-function pickEditorImageFile() {
+/* multiple 이면 고른 파일 배열(취소 시 빈 배열), 아니면 한 장 또는 null. */
+function pickEditorImageFile({ multiple = false } = {}) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*,.heic,.heif,.hif';
-    input.onchange = () => resolve(input.files?.[0] || null);
-    input.oncancel = () => resolve(null);
+    input.multiple = multiple;
+    input.onchange = () => resolve(multiple ? Array.from(input.files || []) : (input.files?.[0] || null));
+    input.oncancel = () => resolve(multiple ? [] : null);
     input.click();
   });
 }
@@ -1110,7 +1113,8 @@ export function Editor() {
   const [dragFrame, setDragFrame] = useState(null);
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
-  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
+  // 의류 탭에 올리는 중인 장수 — 여러 장을 한 번에 고르면 그만큼 대기 타일을 보여 준다.
+  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(0);
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -2158,13 +2162,16 @@ export function Editor() {
     if (!id) return;
     window.setTimeout(() => setImageImports((current) => current.filter((item) => item.id !== id)), delay);
   };
-  const uploadEditorImage = async (file, placement, importId = null) => {
+  // insert=false: 의류 목록에만 넣는다(여러 장 업로드). quiet: 실패를 토스트 대신 던진다 —
+  // 여러 장이면 한 장마다 토스트를 띄우지 않고 끝에 한 번 모아서 알린다.
+  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false } = {}) => {
     if (!looksLikeImageFile(file)) {
+      if (quiet) throw new Error('unsupported_image');
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
     const isWardrobeUpload = !placement?.blockId && !importId;
-    if (isWardrobeUpload) setWardrobeUploadLoading(true);
+    if (isWardrobeUpload) setWardrobeUploadLoading((n) => n + 1);
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
@@ -2198,15 +2205,16 @@ export function Editor() {
       await waitForImageSource(uploaded.url);
       setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
-      else wardrobeInsert(image, { keepTab: true });
+      else if (insert) wardrobeInsert(image, { keepTab: true });
       patchImageImport(importId, { phase: 'done' });
       finishImageImport(importId, 420);
     } catch (error) {
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
+      if (quiet) throw error;
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
     } finally {
-      if (isWardrobeUpload) setWardrobeUploadLoading(false);
+      if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
     }
   };
   const dropImageFiles = (blockId, files, point, slotId = null) => {
@@ -2237,9 +2245,26 @@ export function Editor() {
     }]);
     void uploadEditorImage(file, { blockId, point, slotId: target.slotId }, importId);
   };
+  // 한 장이면 예전처럼 목록에 넣고 캔버스에도 놓는다. 여러 장이면 캔버스에 한꺼번에 쌓이지
+  // 않게 의류 목록(기타)에만 넣는다 — 셀러가 목록에서 골라 끌어 쓴다.
   const pickAndInsertImage = async () => {
-    const file = await pickEditorImageFile();
-    if (file) await uploadEditorImage(file);
+    const picked = await pickEditorImageFile({ multiple: true });
+    if (!picked.length) return;
+    if (picked.length === 1) {
+      await uploadEditorImage(picked[0]);
+      return;
+    }
+    const files = picked.slice(0, MAX_WARDROBE_UPLOADS);
+    if (picked.length > files.length) {
+      toast.push(`한 번에 ${MAX_WARDROBE_UPLOADS}장까지 올릴 수 있어요. 앞의 ${MAX_WARDROBE_UPLOADS}장만 올릴게요.`, { icon: 'alertTri' });
+    }
+    const results = await runWithConcurrency(files, WARDROBE_UPLOAD_CONCURRENCY,
+      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true }));
+    const done = results.filter((r) => r.ok).length;
+    const failed = results.length - done;
+    if (!failed) toast.push(`사진 ${done}장을 의류 목록에 추가했어요`, { icon: 'check' });
+    else if (!done) toast.push('사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+    else toast.push(`사진 ${done}장을 추가했어요. ${failed}장은 올리지 못했어요.`, { icon: 'alertTri' });
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });

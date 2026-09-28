@@ -180,11 +180,27 @@ test('direct wardrobe uploads keep the wardrobe tab and expose their loading sta
   assert.match(insertImage, /keepTab = false/);
   assert.match(insertImage, /selectEl\(target, el, false, keepTab\)/);
   assert.match(uploadEditorImage, /const isWardrobeUpload = !placement\?\.blockId && !importId/);
-  assert.match(uploadEditorImage, /setWardrobeUploadLoading\(true\)/);
-  assert.match(uploadEditorImage, /wardrobeInsert\(image, \{ keepTab: true \}\)/);
-  assert.match(uploadEditorImage, /finally \{\s*if \(isWardrobeUpload\) setWardrobeUploadLoading\(false\)/);
+  // 로딩은 올리는 중인 장수 — 여러 장을 동시에 올리면 그만큼 늘었다 줄어든다.
+  assert.match(uploadEditorImage, /setWardrobeUploadLoading\(\(n\) => n \+ 1\)/);
+  assert.match(uploadEditorImage, /else if \(insert\) wardrobeInsert\(image, \{ keepTab: true \}\)/);
+  assert.match(uploadEditorImage, /finally \{\s*if \(isWardrobeUpload\) setWardrobeUploadLoading\(\(n\) => Math\.max\(0, n - 1\)\)/);
   assert.match(panelSource, /role="status" aria-live="polite"/);
-  assert.match(panelSource, /의류 이미지를 불러오는 중이에요/);
+  assert.match(panelSource, /의류 이미지 \{uploading\}장을 불러오는 중이에요/);
+  // 0 이 화면에 찍히지 않게 숫자 비교로 가린다.
+  assert.match(panelSource, /\{uploading > 0 && \(/);
+});
+
+test('wardrobe upload picks several files; one file keeps the old insert-on-canvas behavior', () => {
+  const pick = editorSource.slice(
+    editorSource.indexOf('const pickAndInsertImage ='),
+    editorSource.indexOf('const freshSeen ='),
+  );
+  assert.match(editorSource, /input\.multiple = multiple/);
+  assert.match(pick, /pickEditorImageFile\(\{ multiple: true \}\)/);
+  assert.match(pick, /picked\.length === 1\) \{\s*await uploadEditorImage\(picked\[0\]\)/);
+  assert.match(pick, /runWithConcurrency\(files, WARDROBE_UPLOAD_CONCURRENCY/);
+  assert.match(pick, /\{ insert: false, quiet: true \}/);
+  assert.match(pick, /MAX_WARDROBE_UPLOADS/);
 });
 
 test('crop controls keep original and expose mouse confirm/cancel without instruction pills', () => {
