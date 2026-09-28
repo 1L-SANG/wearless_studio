@@ -47,8 +47,15 @@ export function GenDonePreview({ sourceBlockId }) {
   const projectId = useAppStore((s) => s.detailPageJob.projectId);
   const jobId = useAppStore((s) => s.detailPageJob.jobId);
   const status = useAppStore((s) => s.detailPageJob.status);
-  // running → done 사이에는 그대로 둔다(완료 병합이 곧 안정 주소로 바꾼다). error·blocked 면 거둔다.
-  const enabled = status === 'running' || status === 'done';
+  const incomplete = useAppStore((s) => s.detailPageJob.incomplete);
+  // 부분 실패(incomplete_cuts, 2026-09-28) — 완성 컷은 보관본(체크포인트 완성 컷, 24시간)에서 보여 준다.
+  // 서버 라우트가 요청마다 주인·보관 여부·(REAL 이면) 라이선스를 다시 확인한다. 보관되지 않은 컷은 묻지 않는다.
+  const retained = status === 'error' && incomplete
+    ? ((incomplete.retained || []).includes(String(sourceBlockId)) ? 'kept' : 'lost')
+    : null;
+  // running → done 사이에는 그대로 둔다(완료 병합이 곧 안정 주소로 바꾼다). error·blocked 면 거둔다
+  // — 부분 실패의 보관본만 예외.
+  const enabled = status === 'running' || status === 'done' || retained === 'kept';
   const previewUrl = useDetailCutPreviewUrl({ projectId, jobId, blockId: sourceBlockId, enabled });
-  return <GenDoneTileBody previewUrl={previewUrl} />;
+  return <GenDoneTileBody previewUrl={previewUrl} retained={retained} />;
 }

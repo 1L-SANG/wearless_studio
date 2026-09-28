@@ -533,6 +533,36 @@ async def list_detail_cut_checkpoints(
         return list(await cur.fetchall() or [])
 
 
+async def is_retained_detail_checkpoint(
+    conn: AsyncConnection, *, user_id: str, project_id: str, r2_key: str
+) -> bool:
+    """이 완성 컷 체크포인트가 **지금도 보관 중**인가(2026-09-28, 부분 실패 미리보기).
+
+    list_detail_cut_checkpoints 와 같은 조건 — 같은 사용자·프로젝트의 실패한(error) 상세 잡이 남긴,
+    pending 이고 TTL(not_before) 안인 표식. 성공한 다시 시도가 지웠거나(discard_all), 라이선스 철회로
+    지웠거나, 24시간이 지났으면 False — 미리보기 라우트는 404 로 답한다."""
+    if not r2_key or not hasattr(conn, "cursor"):
+        return False
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select 1 as ok
+              from ai_output_cleanup_intents i
+              join jobs j on j.id = i.job_id
+             where i.r2_key = %s
+               and i.status = 'pending'
+               and i.not_before > now()
+               and j.user_id = %s
+               and j.project_id = %s
+               and j.kind = 'detail_page'
+               and j.status = 'error'
+             limit 1
+            """,
+            (r2_key, user_id, project_id),
+        )
+        return (await cur.fetchone()) is not None
+
+
 async def set_ai_checkpoint_expiry(
     conn: AsyncConnection, r2_keys: list[str], *, ttl_seconds: int, extend_only: bool = False
 ) -> None:
@@ -2742,6 +2772,7 @@ async def _finalize_job_failure(
     metadata: dict,
     code: str,
     release: dict | None = None,
+    event_extra: dict | None = None,
 ) -> bool:
     """공통 실패 종결. False = lease 상실."""
     async with conn.cursor() as cur:
@@ -2771,7 +2802,7 @@ async def _finalize_job_failure(
         )
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
+            (job_id, Json({**(event_extra or {}), "code": code, "message": message})),
         )
     return True
 
@@ -3261,11 +3292,14 @@ async def finalize_detail_page_failure(
     message: str,
     metadata: dict,
     code: str = "generation_failed",
+    result: dict | None = None,
+    job_metadata: dict | None = None,
+    event_extra: dict | None = None,
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + 이벤트. False = lease 상실."""
-    return await _finalize_job_failure(
+    finalized = await _finalize_job_failure(
         conn, job_id=job_id, lease_token=lease_token, message=message,
-        metadata=metadata, code=code,
+        metadata=metadata, code=code, event_extra=event_extra,
         release={
             "user_id": user_id,
             "project_id": project_id,
@@ -3274,6 +3308,17 @@ async def finalize_detail_page_failure(
             "action_key": "detailPageGenerate.release",
         },
     )
+    if finalized and (result is not None or job_metadata is not None):
+        # 부분 실패(incomplete_cuts, 2026-09-28) — 같은 트랜잭션·행 잠금 안에서 폴링 응답(result)에
+        # 몇 장이 실패·완성·보관됐는지, 서버 전용 메타에 보관본 위치를 남긴다. 정산은 위와 같다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update jobs set result = coalesce(%s::jsonb, result), "
+                "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
+                (Json(result) if result is not None else None,
+                 Json(job_metadata or {}), job_id),
+            )
+    return finalized
 
 
 # ---------- 에디터 의류 탭(Wardrobe, PL-5/6) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------

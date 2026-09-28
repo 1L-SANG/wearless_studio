@@ -99,7 +99,11 @@ export function failedJobPreviewUrls(blocks) {
     .filter((src) => typeof src === 'string' && src.length > 0)));
 }
 
-export function clearFailedJobPreviewBlocks(blocks, previewUrls = failedJobPreviewUrls(blocks)) {
+/* keptSourceIds(2026-09-28, 부분 실패 incomplete_cuts): 서버가 완성했다고 알린 컷 자리. 임시 주소는
+   똑같이 철회하되(출력 객체는 서버가 이미 지웠다) '실패'가 아니라 '완성됐어요' 타일로 남긴다 —
+   그림은 미리보기 라우트가 보관본에서 요청마다 소유·라이선스를 확인해 준다(GenDonePreview). */
+export function clearFailedJobPreviewBlocks(blocks, previewUrls = failedJobPreviewUrls(blocks),
+  { keptSourceIds } = {}) {
   return (blocks || []).map((block) => ({
     ...block,
     elements: (block.elements || []).map((el) => {
@@ -109,6 +113,10 @@ export function clearFailedJobPreviewBlocks(blocks, previewUrls = failedJobPrevi
       const generatedSlot = Boolean(el.sourceBlockId && !el.slotCleared
         && (genAutoSrc || el.genPending));
       if (generatedSlot && (!el.src || revoked || el.src === genAutoSrc)) {
+        if (keptSourceIds?.has(el.sourceBlockId)) {
+          const { genFailed, ...kept } = rest;
+          return { ...kept, src: null, genPending: 'done' };
+        }
         return { ...rest, src: null, genPending: 'failed', genFailed: true };
       }
       if (revoked) return { ...rest, src: null };

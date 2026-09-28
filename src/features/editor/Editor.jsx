@@ -16,6 +16,7 @@ import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { incompleteMessage, incompleteSummary, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
@@ -446,6 +447,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           <span className="ed-genwait-logo" aria-hidden="true" />
           {el.genPending === 'live' && <span className="ed-genwait-shim" aria-hidden="true" />}
           {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
+          {/* 부분 실패(2026-09-28) — 완성 컷 사이에서 어느 자리가 실패했는지 한눈에 보이게. */}
+          {el.genPending === 'failed' && <span className="ed-genwait-tag fail">실패</span>}
           {el.genPending === 'failed'
             ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
             : el.genPending === 'done'
@@ -1440,9 +1443,13 @@ export function Editor() {
       ...(dpJob.revokedPreviewUrls || []),
       ...snapshots.flatMap((snapshot) => [...failedJobPreviewUrls(snapshot)]),
     ]);
-    const cleaned = clearFailedJobPreviewBlocks(latestBlocks.current, revokedUrls);
-    hist.current.past = hist.current.past.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls));
-    hist.current.future = hist.current.future.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls));
+    // 부분 실패(incomplete_cuts, 2026-09-28) — 서버가 완성했다고 알린 컷 자리는 '실패'가 아니라
+    // '완성됐어요'(보관본 미리보기)로 남긴다. 임시 주소 철회는 똑같이 한다(출력 객체는 이미 지워졌다).
+    // dpJob.incomplete 는 status·revokedPreviewUrls 와 같은 patch 로 바뀌어 아래 의존성으로 충분하다.
+    const keep = { keptSourceIds: new Set(dpJob.incomplete?.completed || []) };
+    const cleaned = clearFailedJobPreviewBlocks(latestBlocks.current, revokedUrls, keep);
+    hist.current.past = hist.current.past.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls, keep));
+    hist.current.future = hist.current.future.map((snapshot) => clearFailedJobPreviewBlocks(snapshot, revokedUrls, keep));
     prevBlocks.current = cleaned;
     latestBlocks.current = cleaned;
     fromHistory.current = true;
@@ -3131,7 +3138,13 @@ export function Editor() {
     }));
   };
   const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
-  const genFailureMessage = genFinalizeError || dpJob.errorMessage || '생성을 끝내지 못했어요';
+  // 부분 실패(incomplete_cuts, 2026-09-28) — "모두 못 만들었다"가 아니라 몇 장 완성·몇 장 실패인지.
+  const genIncomplete = (dpJob.status === 'error' && !genFinalizeError && dpJob.incomplete) || null;
+  const genFailureMessage = genFinalizeError
+    || (genIncomplete ? incompleteMessage(genIncomplete, dpJob.errorMessage) : dpJob.errorMessage)
+    || '생성을 끝내지 못했어요';
+  // [실패한 컷만 다시 만들기]로 시작한 잡의 진행 중 한 줄 — "보관된 N장은 그대로 써요"(콘티가 바뀌었으면 사실대로).
+  const genReuseHint = dpJob.status === 'running' ? retryReuseHint(dpJob) : '';
 
   return (
     <div className="editor">
@@ -3211,10 +3224,12 @@ export function Editor() {
             {/* 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말하고
                 진행(몇 장 중 몇 장)을 그대로 보여 준다(2026-09-26). 실패는 서버가 error 라고
                 답했을 때만 뜬다(store.startDetailPageGeneration). */}
-            {genFailed ? genFailureMessage
+            {genFailed ? (genIncomplete
+              ? <><b>{incompleteSummary(genIncomplete)}</b> — {genFailureMessage}</>
+              : genFailureMessage)
               : dpJob.cutsTotal
-                ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료</>
-                : dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}
+                ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료{genReuseHint ? ` · ${genReuseHint}` : ''}</>
+                : <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}{genReuseHint ? ` · ${genReuseHint}` : ''}</>}
           </span>
           {!genFailed && (
             /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
@@ -3237,6 +3252,24 @@ export function Editor() {
                   <Button size="sm" variant="primary" onClick={() => setGenFinalizeAttempt((n) => n + 1)}>
                     완성본 다시 불러오기
                   </Button>
+                ) : genIncomplete && genIncomplete.retained.length > 0 ? (
+                  /* 부분 실패(2026-09-28) — [다시 시도]와 **같은 길**(reset + POST detail-page:generate)로 새 잡을
+                     연다. 새 잡은 같은 사용자·프로젝트의 실패한(error) 잡이 남긴 완성 컷 체크포인트를 찾아
+                     (repo.list_detail_cut_checkpoints) digest(콘티 블록 스펙·참고 사진·신원·설정)가 같으면
+                     provider 호출 없이 싣고, 없는 컷만 새로 그린다(#394, cut_checkpoints.for_cut). 콘티를
+                     고쳤으면 digest 가 달라 새로 그린다 — 진행 문구가 그 사실을 말한다(retryReuseHint).
+                     크레딧은 완성됐을 때 원래 견적대로만 정산된다(#420 그대로). */
+                  <>
+                    <span className="ed-genbar-hint">콘티를 바꾸지 않았다면 보관된 {genIncomplete.retained.length}장을 그대로 써요 · 24시간 보관</span>
+                    <Button size="sm" variant="primary" onClick={() => {
+                      const retryOf = retryOfIncomplete(dpJob);
+                      genMergedRef.current = false;
+                      useAppStore.getState().resetDetailPageJob();
+                      useAppStore.getState().startDetailPageGeneration(projectId, { retryOf });
+                      genActiveRef.current = true;
+                      setGenActive(true);
+                    }}>실패한 컷만 다시 만들기</Button>
+                  </>
                 ) : (
                   /* 다시 시도 = POST detail-page:generate. 중복 과금이 없는 근거는 서버 멱등이다
                      (routes.generate_detail_page, 2026-09-26 확인): 이미 완성된 프로젝트면 기존

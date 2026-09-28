@@ -3661,13 +3661,15 @@ async def get_detail_cut_preview(
 
     - **Bearer Token**: 필수 — 프론트는 fetch → blob → objectURL 로 그립니다.
     - `404`: 잡이 없거나 남의 것·다른 프로젝트·상세페이지 잡이 아님·이미 끝남, 또는 그 자리 출력이 없음
+      (예외: 일부 컷만 실패한 잡(incomplete_cuts)은 완성 컷 보관본이 24시간 안에 남아 있는 동안만 200)
     - `403`: REAL 잡인데 라이선스가 지금 유효하지 않음(코드 = license_revoked·license_expired 등)
     - 호출 빈도: 주소 없는 완료 컷마다 1회(잡당 컷 수만큼) — 평시 0회.
     """
     async with get_conn(request) as conn:
-        key = await detail_cut_preview.authorize(
+        target = await detail_cut_preview.authorize(
             request.app, conn, user_id=user_id, project_id=project_id, job_id=job_id,
             block_id=block_id)
+    key = target.key
     try:
         data = await asyncio.to_thread(_r2(request).get_bytes, key)
     except HTTPException:
@@ -3680,9 +3682,18 @@ async def get_detail_cut_preview(
         raise HTTPException(status_code=503, detail={
             "code": "preview_unavailable",
             "message": "미리보기를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from None
+    media_type = detail_cut_preview.mime_for_key(key)
+    if target.checkpoint_digest is not None:
+        # 부분 실패 잡의 보관본(2026-09-28) — 체크포인트 묶음에서 헤더를 확인하고 이미지만 보낸다.
+        image = detail_cut_preview.retained_image(
+            data, user_id=user_id, project_id=project_id, digest=target.checkpoint_digest)
+        if image is None:
+            raise HTTPException(status_code=404, detail={
+                "code": "not_found", "message": "미리보기를 찾을 수 없어요."})
+        data, media_type = image
     return Response(
         content=data,
-        media_type=detail_cut_preview.mime_for_key(key),
+        media_type=media_type,
         headers={
             "Cache-Control": PRIVATE_NO_STORE,
             "Vary": "Origin",

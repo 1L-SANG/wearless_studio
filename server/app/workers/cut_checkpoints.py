@@ -38,7 +38,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .. import repo
 from ..agents import cut_generator, face_angle_swap, face_identity
@@ -106,6 +106,46 @@ def parse_key(key, *, user_id, project_id, job_id) -> tuple[str, str] | None:
     if not _DIGEST_RE.match(digest) or stage not in _STAGES:
         return None
     return digest, stage
+
+
+def parse_final_key(key, *, user_id, project_id) -> tuple[str, str] | None:
+    """이 사용자·이 프로젝트의 **완성 컷(final)** 체크포인트 키 → (원 잡 id, digest). 아니면 None.
+
+    실패 잡 미리보기(2026-09-28)가 쓴다 — 이어 받은 완성 컷은 앞선 실패 잡의 접두사 아래에 있어
+    잡 id 를 키에서 읽어야 한다. 베이스·다른 사용자·다른 프로젝트·모양이 틀린 키는 전부 None."""
+    if not isinstance(key, str):
+        return None
+    prefix = f"users/{user_id}/projects/{project_id}/ai/"
+    if not key.startswith(prefix):
+        return None
+    job_id, sep, _rest = key[len(prefix):].partition("/ckpt/")
+    if not sep or not job_id or "/" in job_id:
+        return None
+    parsed = parse_key(key, user_id=user_id, project_id=project_id, job_id=job_id)
+    if parsed is None or parsed[1] != STAGE_FINAL:
+        return None
+    return job_id, parsed[0]
+
+
+def read_final_image(blob, *, user_id, project_id, digest: str) -> tuple[bytes, str] | None:
+    """완성 컷 체크포인트 객체 → (이미지 바이트, mime). 헤더가 하나라도 안 맞으면 None(=내보내지
+    않는다). 재사용(_validate)과 같은 검사 — 사용자·프로젝트·단계·digest·형식·바이트 해시."""
+    parsed = unpack(blob)
+    if parsed is None:
+        return None
+    header, payload = parsed
+    if (
+        header.get("v") != FORMAT_VERSION
+        or header.get("stage") != STAGE_FINAL
+        or header.get("digest") != digest
+        or str(header.get("userId")) != str(user_id)
+        or str(header.get("projectId")) != str(project_id)
+        or header.get("mime") not in _IMAGE_MIMES
+        or not payload
+        or header.get("sha256") != hashlib.sha256(payload).hexdigest()
+    ):
+        return None
+    return payload, header["mime"]
 
 
 def pack(header: dict, payload: bytes) -> bytes:
@@ -193,6 +233,13 @@ def _valid_final_meta(meta) -> bool:
     )
 
 
+def _verified_pass(meta, fingerprint: str) -> bool:
+    """상세컷 전용 정책의 채택본이 다음 잡에서 이어 쓸 수 있는 PASS 인가(for_verified_detail 과 같은 조건)."""
+    qc = meta.get("cutQc") if isinstance(meta, dict) else None
+    return (isinstance(qc, dict) and qc.get("fingerprint") == fingerprint
+            and qc.get("passed") is True and qc.get("decision") == "PASS")
+
+
 @dataclass
 class Loaded:
     """R2 에서 읽어 검증을 통과한 체크포인트 1개."""
@@ -238,6 +285,8 @@ class CutCheckpoint:
         self.base = PersistedBase(self)
         #: 이 컷의 베이스를 앞선 잡에서 이어 받았는가(로그·이벤트용).
         self.base_reused = False
+        #: 상세컷 전용 정책(for_verified_detail)의 지문 — 그 정책은 PASS 채택본만 다음 잡이 싣는다.
+        self.verified_fingerprint: str | None = None
 
     async def after_failure(self, exc: BaseException) -> None:
         """generate() 가 실패했다. 베이스가 있었다면(=후처리에서 실패) 남길지 버릴지 정한다."""
@@ -256,6 +305,9 @@ class CutCheckpoint:
                                     block_id=self.block_id)
         if key is None:
             return False
+        if self.verified_fingerprint is None or _verified_pass(meta, self.verified_fingerprint):
+            # 다음 시도가 실제로 이어 쓸 완성 컷만 "보관됨"으로 센다(2026-09-28 부분 실패 안내).
+            self.store.note_final(self.block_id, key)
         if self.base.key:
             # 완성 컷이 남았으면 베이스는 더 쓸 일이 없다 — 지금 지운다.
             await self.store.discard([self.base.key])
@@ -280,6 +332,31 @@ class CutCheckpointStore:
         #: 이 잡이 만든 것 / 앞선 잡에서 이어 받은 것 — 성공·라이선스 철회면 지운다(discard_all).
         self.created: list[dict] = []
         self.reused: list[dict] = []
+        #: 블록 id → 이 잡에서 그 자리를 채운 완성 컷 체크포인트 키(새로 남긴 것·이어 받은 것).
+        #: 부분 실패(incomplete_cuts)로 끝나면 워커가 이걸 잡 메타(서버 전용)에 적고, 미리보기
+        #: 라우트가 TTL 안에서만 그 보관본을 보여 준다(2026-09-28). 원장·응답에는 싣지 않는다.
+        self.final_keys: dict[str, str] = {}
+        #: 창구를 연 시각 — 이 잡이 남기거나 이어 받은(=TTL 을 늘린) 체크포인트는 모두 이 뒤에 표식을
+        #: 잡았으므로, 여기 + TTL 이 보관본이 **적어도** 남아 있는 시각이다(화면의 보관 기한 안내).
+        self.opened_at = datetime.now(timezone.utc)
+
+    def note_final(self, block_id, key: str | None) -> None:
+        if block_id is not None and key:
+            self.final_keys[str(block_id)] = key
+
+    def alias_final(self, block_id, source_block_id) -> None:
+        """복제 컷 자리 — 원본 컷의 완성 컷을 같이 가리킨다(다음 시도도 원본을 이어 쓰고 복사한다)."""
+        key = self.final_keys.get(str(source_block_id))
+        if key:
+            self.note_final(block_id, key)
+
+    def retained_until(self) -> str:
+        """보관본이 적어도 남아 있는 시각(ISO-8601, UTC)."""
+        return (self.opened_at + timedelta(seconds=TTL_SECONDS)).isoformat()
+
+    def retained_final_keys(self, block_ids) -> dict[str, str]:
+        """완성한 블록 중 보관된 완성 컷이 있는 것만 — {블록 id: 체크포인트 키}."""
+        return {str(b): self.final_keys[str(b)] for b in block_ids if str(b) in self.final_keys}
 
     @classmethod
     async def open(cls, app, job: dict, *, identity: str,
@@ -338,6 +415,8 @@ class CutCheckpointStore:
         final_digest = _digest({"base": base_digest, "recipe": _final_recipe(settings)})
         cut = CutCheckpoint(self, base_digest, final_digest, block.get("id"))
         cut.final = await self._load(final_digest, STAGE_FINAL)
+        if cut.final is not None:
+            self.note_final(block.get("id"), cut.final.key)
         if cut.final is None:
             base = await self._load(base_digest, STAGE_BASE)
             if base is not None:
@@ -355,11 +434,11 @@ class CutCheckpointStore:
                           'blockId': str(block_id or ''), 'userId': self.user_id,
                           'projectId': self.project_id})
         cut = CutCheckpoint(self, digest, digest, block_id)
+        cut.verified_fingerprint = fingerprint
         saved = await self._load(digest, STAGE_FINAL)
-        qc = saved.meta.get('cutQc') if saved else None
-        if (isinstance(qc, dict) and qc.get('fingerprint') == fingerprint
-                and qc.get('passed') is True and qc.get('decision') == 'PASS'):
+        if saved is not None and _verified_pass(saved.meta, fingerprint):
             cut.final = saved
+            self.note_final(block_id, saved.key)
         return cut
 
     async def _load(self, digest: str, stage: str) -> Loaded | None:
