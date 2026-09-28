@@ -84,7 +84,7 @@ function useTestCutUrl(imageUri) {
 }
 
 // 확대샷은 상반신이라 4:5, 전신샷은 2:3 — 같은 줄의 A·B·C 가 같은 틀에 들어가야 눈으로 비교된다.
-const CUT_ASPECT = { closeup: 'aspect-[4/5]', fullbody: 'aspect-[2/3]' };
+const CUT_ASPECT = { closeup: 'aspect-[2/3]', fullbody: 'aspect-[2/3]' };
 
 function TestCutThumb({ cut, disabled, onDelete, onOpen }) {
   const url = useTestCutUrl(cut.imageUri);
