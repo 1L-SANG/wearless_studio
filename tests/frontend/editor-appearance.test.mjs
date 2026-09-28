@@ -403,3 +403,22 @@ test('진짜 생성 컷 블록(frameSlot 아님 + sourceBlockId)의 카피는 �
   const out = stripPhotoBlockTextElements([cutBlock]);
   assert.ok(!out[0].elements.some((el) => el.type === 'text'), 'native 생성 블록 카피는 걷힌다');
 });
+
+test('선 색: 템플릿 선(stroke)도 패널에서 바꾼 색이 그대로 보인다', async () => {
+  const { lineColor, lineColorPatch, DEFAULT_LINE_COLOR } = await import('../../src/features/editor/editorAppearance.js');
+  // 템플릿·프리셋 선은 stroke 로 색을 들고 온다 — 예전엔 패널이 fill 만 바꿔서 색이 안 바뀌었다.
+  const templateLine = { type: 'line', stroke: '#e5e5e3', fill: '#0e0d14' };
+  assert.equal(lineColor(templateLine), '#e5e5e3');
+  assert.equal(lineColor({ ...templateLine, ...lineColorPatch('#ff0000') }), '#ff0000');
+  // 예전에 그린 선(fill 만)과 빈 선도 같은 규칙으로 읽힌다.
+  assert.equal(lineColor({ type: 'line', fill: '#123456' }), '#123456');
+  assert.equal(lineColor({ type: 'line', stroke: 'none', fill: '#123456' }), '#123456');
+  assert.equal(lineColor({ type: 'line' }), DEFAULT_LINE_COLOR);
+});
+
+test('선 색 패널은 lineColor 로 읽고 lineColorPatch 로 쓴다(fill 만 바꾸던 회귀 방지)', () => {
+  const panels = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
+  assert.match(panels, /isLine \? \(\s*<SwatchField value=\{lineColor\(el\)\}[^>]*onColor=\{\(c\) => onChange\(lineColorPatch\(c\)\)\}/);
+  const editor = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
+  assert.match(editor, /const lc = lineColor\(el\)/);
+});
