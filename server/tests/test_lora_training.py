@@ -93,7 +93,7 @@ class _Client:
 def _spec():
     return ltp.PodSpec(run_id="11111111-2222-3333-4444-555555555555", model_id="m1",
                        config_name="fm_abc", dataset_key="facemarket/models/m1/training/r1/dataset.tgz",
-                       prefix="facemarket/models/m1/training/r1")
+                       prefix="facemarket/models/m1/training/r1", trigger_token="ohwx man")
 
 
 def _pod(r2, client, **over):
@@ -247,6 +247,47 @@ def test_the_balance_check_can_be_turned_off(monkeypatch):
     assert asyncio.run(pod.run(_spec(), (), poll_seconds=0)).status == "OK"
 
 
+def test_the_balance_query_never_puts_the_key_in_the_url(monkeypatch):
+    """★ httpx 는 INFO 로 요청 URL 을 통째로 찍는다 — `?api_key=` 로 보내면 키가 로그(CloudWatch)에
+    남는다(2026-09-28 실제로 일어났다). 키는 Authorization 헤더로만 간다."""
+    import httpx
+
+    sent: list[dict] = []
+
+    class _Res:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": {"myself": {"clientBalance": 44.1}}}
+
+    def fake_post(url, **kwargs):
+        sent.append({"url": str(url), **kwargs})
+        return _Res()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    pod = _pod(_R2(), _Client(), fm_lora_min_balance_usd=20.0)
+    assert pod._balance_sync() == 44.1
+
+    (call,) = sent
+    assert call["url"] == ltp.GRAPHQL_URL                      # 쿼리스트링 없음
+    assert "rp-secret-key" not in call["url"]
+    assert not call.get("params")
+    assert call["headers"]["Authorization"] == "Bearer rp-secret-key"
+
+
+def test_no_runpod_call_sends_the_key_as_a_query_parameter():
+    """같은 실수가 다른 RunPod 호출에 다시 들어오지 않게 — 앱 코드 전체에서 막는다."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    pattern = re.compile(r"params\s*=\s*\{[^}]*api_key|[?&]api_key=")
+    offenders = [str(path.relative_to(root)) for path in root.rglob("*.py")
+                 if pattern.search(path.read_text(encoding="utf-8"))]
+    assert offenders == []
+
+
 # ── 유출 ──────────────────────────────────────────────────────────────────
 def test_urls_and_tokens_never_leave_the_pod_env():
     """presigned 는 RunPod 요청 본문에만 있고 결과·로그에는 없어야 한다."""
@@ -302,6 +343,32 @@ def test_the_checkpoint_names_match_the_save_schedule():
     names = ltp.checkpoint_names("fm_x")
     assert len(names) == ltp.TOTAL_STEPS // ltp.SAVE_EVERY == 6
     assert names[0].endswith("_000000300.safetensors")
+
+
+@pytest.mark.parametrize("trigger", ["ohwx man", "ohwx woman"])
+def test_the_sample_prompts_use_the_registrants_trigger(trigger):
+    """표본 프롬프트의 트리거는 학습셋 캡션과 같은 값이다(성별에서 — 여성은 "ohwx woman")."""
+    import yaml
+
+    samples = yaml.safe_load(ltp.render_yaml("fm_x", ("sh_front2",), trigger))[
+        "config"]["process"][0]["sample"]["samples"]
+    assert [s["prompt"] for s in samples] == [f"{trigger}, facing the camera, photograph"]
+
+
+def test_the_pod_env_carries_the_specs_trigger():
+    import dataclasses
+
+    import yaml
+
+    spec = dataclasses.replace(_spec(), trigger_token="ohwx woman")
+    env = _pod(_R2(), _Client())._env(spec, ("sh_front2",))
+    samples = yaml.safe_load(env["RUN_YAML"])["config"]["process"][0]["sample"]["samples"]
+    assert samples[0]["prompt"].startswith("ohwx woman, ")
+
+
+def test_an_unknown_trigger_is_refused_not_quoted_into_the_yaml():
+    with pytest.raises(ValueError):
+        ltp.render_yaml("fm_x", ("sh_front2",), 'ohwx man" injected')
 
 
 def test_samples_come_from_the_registrants_own_reference_shots():

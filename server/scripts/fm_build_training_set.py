@@ -28,31 +28,36 @@ from app.r2 import R2Client  # noqa: E402
 from app.services import lora_dataset  # noqa: E402
 
 
-def fetch(dsn: str, model_id: str) -> tuple[str | None, str | None, list[dict]]:
-    """(등록 id, 사진 확인 상태, 사진 행들). 읽기 전용 트랜잭션."""
+def fetch(dsn: str, model_id: str) -> tuple[str | None, str | None, list[dict], str | None]:
+    """(등록 id, 사진 확인 상태, 사진 행들, 성별). 읽기 전용 트랜잭션."""
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         conn.read_only = True
         with conn.cursor() as cur:
             cur.execute(
-                "select id::text as id, coalesce(photo_review_status, 'pending') as photo_review_status "
-                "from fm_biometric_enrollments "
-                "where model_id = %s and decision = 'passed' "
-                "order by completed_at desc nulls last limit 1",
+                "select e.id::text as id, "
+                "coalesce(e.photo_review_status, 'pending') as photo_review_status, "
+                f"{lora_dataset.model_gender_sql('m', 'e')} as gender "
+                "from fm_biometric_enrollments e join fm_models m on m.id = e.model_id "
+                "where e.model_id = %s and e.decision = 'passed' "
+                "order by e.completed_at desc nulls last limit 1",
                 (model_id,))
             enrollment = cur.fetchone()
             if enrollment is None:
-                return None, None, []
+                return None, None, [], None
             cur.execute(
                 "select angle, r2_key, normalized_r2_key, mime_type, qc_status, storage_state "
                 "from fm_biometric_enrollment_photos where enrollment_id = %s",
                 (enrollment["id"],))
-            return enrollment["id"], enrollment["photo_review_status"], [dict(r) for r in cur.fetchall()]
+            return (enrollment["id"], enrollment["photo_review_status"],
+                    [dict(r) for r in cur.fetchall()], enrollment["gender"])
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model-id", required=True, help="fm_models.id (uuid)")
     ap.add_argument("--run-id", default=None, help="학습 런 id. 없으면 새로 만든다")
+    ap.add_argument("--trigger", choices=sorted(lora_dataset.TRIGGER_TOKENS.values()),
+                    help="트리거 토큰. 없으면 모델 성별에서 정한다(모르면 멈춘다)")
     ap.add_argument("--apply", action="store_true", help="없으면 만들어 보기만 하고 R2 에 안 올린다")
     a = ap.parse_args()
 
@@ -73,22 +78,28 @@ def main() -> int:
         print("DATABASE_URL 미설정")
         return 2
 
-    enrollment_id, review, rows = fetch(dsn, a.model_id)
+    enrollment_id, review, rows, gender = fetch(dsn, a.model_id)
     if enrollment_id is None:
         print(f"통과한 등록이 없다: model {a.model_id}")
+        return 2
+    try:
+        trigger = a.trigger or lora_dataset.trigger_token_for(gender)
+    except lora_dataset.DatasetBuildError as exc:
+        print(f"만들 수 없다: {exc} — --trigger 로 정해 주거나 fm_models.gender 를 채울 것")
         return 2
     run_id = a.run_id or uuid.uuid4().hex
     r2 = R2Client(settings, bucket=settings.r2_face_bucket, public_base=None)
     try:
         result = lora_dataset.build_and_upload(
             r2, model_id=a.model_id, run_id=run_id, rows=rows, review_status=review,
-            model_dir=settings.fm_face_qc_dir, apply=a.apply)
+            trigger_token=trigger, model_dir=settings.fm_face_qc_dir, apply=a.apply)
     except lora_dataset.DatasetBuildError as exc:
         print(f"만들 수 없다: {exc}")
         return 1
 
     print(f"enrollment {enrollment_id[:8]} · review {review}")
     print(f"run        {run_id}")
+    print(f"trigger    {trigger} (gender {gender})")
     print(f"files      {result['files']} (train {result['train']} · samples {result['samples']})")
     print(f"tgz        {result['bytes'] / 2 ** 20:.1f}MB sha256 {result['sha256'][:12]}…")
     print(f"key        {result['key']}")

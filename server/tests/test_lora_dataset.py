@@ -296,7 +296,7 @@ def test_it_reads_the_normalized_copy_not_the_original():
 def test_dry_run_uploads_nothing():
     r2 = _FakeR2(_objects())
     result = ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
-                                 review_status="approved", apply=False)
+                                 review_status="approved", trigger_token="ohwx man", apply=False)
     assert r2.puts == []
     assert result["applied"] is False
     assert result["key"] == "facemarket/models/m1/training/r1/dataset.tgz"
@@ -305,7 +305,7 @@ def test_dry_run_uploads_nothing():
 def test_apply_uploads_once_to_the_run_key():
     r2 = _FakeR2(_objects())
     result = ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
-                                 review_status="approved", apply=True)
+                                 review_status="approved", trigger_token="ohwx man", apply=True)
     assert len(r2.puts) == 1
     key, size, mime = r2.puts[0]
     assert key == result["key"] and size == result["bytes"] and mime == "application/gzip"
@@ -315,7 +315,7 @@ def test_nothing_is_uploaded_when_the_gate_says_no():
     r2 = _FakeR2(_objects())
     with pytest.raises(ld.DatasetBuildError):
         ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
-                            review_status="pending", apply=True)
+                            review_status="pending", trigger_token="ohwx man", apply=True)
     assert r2.puts == []
 
 
@@ -323,7 +323,61 @@ def test_the_result_never_carries_bytes_or_urls():
     """반환값은 로그·API 로 흐른다 — 사진 바이트도 presigned URL 도 실리면 안 된다."""
     r2 = _FakeR2(_objects())
     result = ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
-                                 review_status="approved", apply=False)
+                                 review_status="approved", trigger_token="ohwx man", apply=False)
     text = json.dumps(result)
     assert "http" not in text and "X-Amz" not in text
-    assert set(result) == {"key", "bytes", "sha256", "files", "train", "samples", "applied"}
+    assert set(result) == {"key", "bytes", "sha256", "files", "train", "samples",
+                           "sample_slots", "trigger_token", "applied"}
+    # 표본 칸은 이름뿐이고, 학습셋에 들어간 수와 같다.
+    assert all(isinstance(slot, str) and "/" not in slot for slot in result["sample_slots"])
+    assert len(result["sample_slots"]) == result["samples"]
+
+
+# ── 트리거 = 성별 ────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("gender,trigger", [("female", "ohwx woman"), ("male", "ohwx man"),
+                                            (" Female ", "ohwx woman")])
+def test_the_trigger_comes_from_the_gender(gender, trigger):
+    assert ld.trigger_token_for(gender) == trigger
+
+
+@pytest.mark.parametrize("gender", [None, "", "other", "unknown"])
+def test_an_unknown_gender_is_refused_not_defaulted(gender):
+    """★ 모르면 "ohwx man" 으로 채우지 않는다 — 여성 등록자가 man 으로 학습된다(2026-09-28)."""
+    with pytest.raises(ld.DatasetBuildError, match="성별"):
+        ld.trigger_token_for(gender)
+
+
+def test_a_female_registrant_is_captioned_as_a_woman():
+    text = ld.caption_for_slot("sh_front", 0.05, "ohwx woman")[0]
+    assert text.startswith("ohwx woman, neutral expression, head and shoulders portrait")
+    assert "ohwx man" not in text
+
+
+def test_every_caption_in_the_dataset_carries_the_given_trigger():
+    members, meta = ld.build_items(_photos(), trigger="ohwx woman")
+    captions = [data.decode() for name, data in members if name.endswith(".txt")]
+    assert len(captions) == 24 and all(text.startswith("ohwx woman, ") for text in captions)
+    assert meta["trigger"] == "ohwx woman"
+
+
+def test_upload_takes_the_trigger_and_reports_it():
+    r2 = _FakeR2(_objects())
+    result = ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
+                                 review_status="approved", trigger_token="ohwx woman", apply=False)
+    assert result["trigger_token"] == "ohwx woman"
+
+
+def test_upload_refuses_a_trigger_outside_the_known_pair():
+    r2 = _FakeR2(_objects())
+    with pytest.raises(ld.DatasetBuildError, match="트리거"):
+        ld.build_and_upload(r2, model_id="m1", run_id="r1", rows=_rows(),
+                            review_status="approved", trigger_token="ohwx person", apply=True)
+    assert r2.puts == []
+
+
+def test_upload_has_no_default_trigger():
+    """기본값이 있으면 부르는 쪽이 성별을 잊어도 조용히 돈다 — 인자를 빠뜨리면 TypeError 여야 한다."""
+    import inspect
+
+    param = inspect.signature(ld.build_and_upload).parameters["trigger_token"]
+    assert param.default is inspect.Parameter.empty

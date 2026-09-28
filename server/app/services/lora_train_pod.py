@@ -77,6 +77,9 @@ class PodSpec:
     config_name: str
     dataset_key: str
     prefix: str
+    #: 학습 중 표본 프롬프트의 트리거("ohwx man" | "ohwx woman"). 학습셋 캡션과 **같은 값**이어야 한다 —
+    #: 기본값이 없다(성별에서 정한다, lora_dataset.trigger_token_for).
+    trigger_token: str
 
 
 class PodCreateFailed(RuntimeError):
@@ -235,14 +238,21 @@ config:
         samples:
 {samples}
 """
-_SAMPLE_BLOCK = """          - prompt: "ohwx man, facing the camera, photograph"
+_SAMPLE_BLOCK = """          - prompt: "{trigger}, facing the camera, photograph"
             ctrl_img_1: "/root/lora_train/samples_ctrl/{slot}.png"
 """
 
 
-def render_yaml(config_name: str, sample_slots) -> str:
+#: 표본 프롬프트에 들어갈 수 있는 트리거. 따옴표 안에 그대로 박히므로 목록 밖 값은 받지 않는다.
+_TRIGGERS = ("ohwx man", "ohwx woman")
+
+
+def render_yaml(config_name: str, sample_slots, trigger: str = _TRIGGERS[0]) -> str:
     """학습 설정 한 벌. 표본이 하나도 없으면 sample 블록을 비운다(학습은 그대로 돈다)."""
-    samples = "".join(_SAMPLE_BLOCK.format(slot=slot) for slot in sample_slots) or "          []\n"
+    if trigger not in _TRIGGERS:
+        raise ValueError(f"모르는 트리거: {trigger!r}")
+    samples = "".join(_SAMPLE_BLOCK.format(slot=slot, trigger=trigger)
+                      for slot in sample_slots) or "          []\n"
     return RUN_YAML_TEMPLATE.format(name=config_name, save_every=SAVE_EVERY,
                                     steps=TOTAL_STEPS, samples=samples)
 
@@ -307,16 +317,23 @@ class LoraTrainPod:
         """계정 잔액(USD) 또는 None(못 읽음).
 
         ★ REST v1 에는 잔액 엔드포인트가 **없다**(2026-09-16 OpenAPI 확인 — /billing/* 은 과거
-          청구 집계뿐이다). 구 GraphQL 만 계정을 준다. 이 쿼리는 **살아 있는 키로 실측 확인이
-          안 됐다** — 지금 맥의 키는 401 이고 SSM 키는 옛 계정이다(RunPod 키 교체가 선행 조건).
-          그래서 못 읽으면 "0 이겠거니" 하지 않고 **못 읽었다**고 말한다(호출자가 시작을 막는다).
+          청구 집계뿐이다). 구 GraphQL 만 계정을 준다. 못 읽으면 "0 이겠거니" 하지 않고
+          **못 읽었다**고 말한다(호출자가 시작을 막는다).
+
+        ★ 키는 **헤더로만** 보낸다(Authorization: Bearer — api.runpod.io/graphql 이 받는 것을
+          2026-09-23 새 계정 키로 확인). 예전엔 쿼리스트링(api_key 파라미터)으로 보냈는데, httpx 가
+          INFO 로 요청 URL 을 통째로 찍어 키가 로그(운영이면 CloudWatch)에 남았다
+          (2026-09-28 로컬 학습 실행에서 확인).
         """
         import httpx
 
         try:
-            res = httpx.post(GRAPHQL_URL, params={"api_key": self._api_key},
+            res = httpx.post(GRAPHQL_URL,
                              json={"query": "{ myself { clientBalance } }"},
-                             headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT)
+                             headers={"Authorization": f"Bearer {self._api_key}",
+                                      "User-Agent": USER_AGENT,
+                                      "Content-Type": "application/json"},
+                             timeout=REQUEST_TIMEOUT)
             res.raise_for_status()
             value = (((res.json() or {}).get("data") or {}).get("myself") or {}).get("clientBalance")
         except Exception as exc:  # noqa: BLE001
@@ -353,7 +370,7 @@ class LoraTrainPod:
             "VERIFY_PUT_URL": put(f"{spec.prefix}/result.json", "application/json",
                                   PUT_EXPIRES_SECONDS),
             "DONE_PUT_URL": put(f"{spec.prefix}/DONE", "text/plain", PUT_EXPIRES_SECONDS),
-            "RUN_YAML": render_yaml(spec.config_name, sample_slots),
+            "RUN_YAML": render_yaml(spec.config_name, sample_slots, spec.trigger_token),
         }
 
     # ── 생성·삭제 ──
