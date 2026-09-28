@@ -42,7 +42,7 @@ import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
-import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
+import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
@@ -1845,6 +1845,14 @@ export function Editor() {
   };
   const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
   const copySelectedElements = () => {
+    // 요소를 고르지 않고 프레임만 골랐으면 프레임을 통째로 복사한다.
+    if (!selEls.length && blockFocused && selBlock) {
+      const copiedBlock = copyEditorBlock(latestBlocks.current || blocks, selBlock);
+      if (!copiedBlock) return false;
+      editorClipboard.current = copiedBlock;
+      toast.push('프레임을 복사했어요', { icon: 'copy' });
+      return true;
+    }
     const copied = copyEditorElements(latestBlocks.current || blocks, selEls);
     if (!copied) return false;
     editorClipboard.current = copied;
@@ -1855,6 +1863,21 @@ export function Editor() {
     const copied = editorClipboard.current;
     if (!copied) return false;
     const currentBlocks = latestBlocks.current || blocks;
+    if (copied.kind === 'block') {
+      // 프레임 붙여넣기 — 지금 고른 프레임(없으면 복사 원본) 바로 아래에 넣는다.
+      const anchorId = selBlock
+        || currentBlocks.find((block) => block.elements.some((el) => selEls.includes(el.id)))?.id
+        || copied.blockId;
+      const anchorIndex = currentBlocks.findIndex((block) => block.id === anchorId);
+      const pastedBlock = pasteEditorBlock(copied.block, uid);
+      if (!pastedBlock) return false;
+      const nextBlock = { ...pastedBlock, contentRole: CONTENT_ROLES.CUSTOM };
+      const at = anchorIndex >= 0 ? anchorIndex + 1 : currentBlocks.length;
+      setBlocks((items) => [...items.slice(0, at), nextBlock, ...items.slice(at)]);
+      setSelBlock(nextBlock.id); setBlockFocused(true); setSelEl(null); setSelEls([]); setEditEl(null); setVaryTarget(null);
+      toast.push('프레임을 붙여넣었어요', { icon: 'copy' });
+      return true;
+    }
     // 붙여넣을 곳 = **지금 고른 프레임**(프레임 자체 또는 그 안의 요소). 없을 때만 복사해 온
     // 프레임. 예전엔 복사 원본을 먼저 찾아서 다른 프레임을 골라도 늘 원래 자리에 붙었다.
     const selectedBlockId = selBlock

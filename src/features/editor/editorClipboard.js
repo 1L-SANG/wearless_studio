@@ -57,3 +57,42 @@ export function pasteEditorElements(block, copiedElements, createId, distance = 
   }));
   return { elements, selectedIds: elements.map((element) => element.id), offset: [dx, dy] };
 }
+
+/* 블록(프레임) 통째 복사·붙여넣기.
+   복사본은 **셀러가 직접 만든 일반 블록**이 된다 — 자동 관리 표식(auto·info·infoType·
+   contentRole·templateId)과 콘티 연결(sourceBlockId)을 뗀다. 남겨 두면 정보 템플릿·배송 블록
+   정리·생성 완료 병합이 복사본을 원본의 중복으로 보고 덮어쓰거나 지운다. 보이는 것(배경·높이·
+   요소 배치·사진)은 그대로다. */
+const BLOCK_AUTOMATION_KEYS = ['auto', 'info', 'infoType', 'contentRole', 'templateId'];
+const ELEMENT_AUTOMATION_KEYS = ['sourceBlockId', 'genPending', 'genFailed', 'slotCleared'];
+
+export function copyEditorBlock(blocks, blockId) {
+  if (!Array.isArray(blocks) || !blockId) return null;
+  const block = blocks.find((candidate) => candidate.id === blockId);
+  return block ? { kind: 'block', blockId: block.id, block: cloneEditorValue(block) } : null;
+}
+
+export function pasteEditorBlock(copiedBlock, createId) {
+  if (!copiedBlock || typeof createId !== 'function') return null;
+  const source = cloneEditorValue(copiedBlock);
+  const groupIds = new Map();
+  const bubblePairIds = new Map();
+  const remap = (map, oldId, prefix) => {
+    if (!oldId) return oldId;
+    if (!map.has(oldId)) map.set(oldId, createId(prefix));
+    return map.get(oldId);
+  };
+  const block = { ...source, id: createId('b') };
+  for (const key of BLOCK_AUTOMATION_KEYS) delete block[key];
+  block.elements = (source.elements || []).map((element) => {
+    const next = {
+      ...element,
+      id: createId('el'),
+      ...(element.groupId ? { groupId: remap(groupIds, element.groupId, 'grp') } : {}),
+      ...(element.bubblePairId ? { bubblePairId: remap(bubblePairIds, element.bubblePairId, 'pair') } : {}),
+    };
+    for (const key of ELEMENT_AUTOMATION_KEYS) delete next[key];
+    return next;
+  });
+  return block;
+}
