@@ -7,10 +7,8 @@
   - 제보: 제보 1건 = 1행. 매칭이 없어도 남긴다 — 워터마크·지문이 못 잡는 무단 사용(재촬영·딥페이크
     등)일 수 있어 관리자가 직접 봐야 한다.
 
-🔴 네이버 검색 API 특약(2026-09-07 개정) 2.3·2.4: 검색 결과 데이터(가공·파생물 포함)는 "서버 이력
-   조회 목적 최대 21일"만 보관한다. 네이버 행은 external_purge_at = last_seen + 21일을 달고,
-   purge_expired_external() 이 원문 필드(상품 주소·이미지 주소·상품명·판매처명)를 지운다. 멱등·판매처
-   대조 키는 sha256 해시로만 남긴다(원문 복원 불가).
+멱등·판매처 대조 키는 sha256 해시로만 남긴다. external_purge_at 열(원문 보관 기한)은 네이버 쇼핑 검색
+API 를 쓰려고 두었으나 그 API 가 2026-07-31 종료돼 지금은 채우는 출처가 없다(열은 남겨 둔다 — additive).
 이미지 바이트는 저장하지 않는다(관리자 추적과 같은 정책) — image_sha256 만.
 """
 
@@ -24,7 +22,7 @@ from datetime import datetime
 
 from .facemarket import _mask_name
 
-NAVER_RETENTION_DAYS = 21
+PATROL_PLATFORMS = ("zigzag",)
 STATUSES = ("new", "seller_own", "misuse", "dismissed")
 SOURCES = ("patrol", "model_report")
 _RANK = {"high": 0, "medium": 1, "low": 2}
@@ -46,7 +44,7 @@ def _sha(*parts: str) -> str:
 
 
 def dedupe_key(platform: str, product_id: str, target: str, target_id: str) -> str:
-    """순찰 멱등 키 — 상품 원문 id 를 남기지 않으려고 해시로(네이버 21일 규칙)."""
+    """순찰 멱등 키 — 상품 원문 id 대신 해시."""
     return _sha("finding", platform, str(product_id), target, str(target_id))
 
 
@@ -134,16 +132,14 @@ async def record_patrol_finding(
     # 알리지 않는 것: 이미 아는 셀러 판매처, 그리고 순찰의 '유사도 참고'(low) — 목록엔 남지만 슬랙은
     # 조용히 둔다. 썸네일 수천 장을 대조하는 순찰에서 약한 유사도까지 울리면 알림이 소음이 된다.
     alert_status = "skipped" if known or cols["confidence"] == "low" else "pending"
-    purge = (f"now() + interval '{NAVER_RETENTION_DAYS} days'" if platform == "naver"
-             else "null")
     async with conn.cursor() as cur:
         await cur.execute(
-            f"""insert into fm_trace_findings
+            """insert into fm_trace_findings
                   (source, platform, dedupe_key, product_url, image_url, product_title,
-                   store_name, store_key, external_purge_at, target, publication_id,
+                   store_name, store_key, target, publication_id,
                    output_record_id, model_id, seller_id, method, confidence, phash_distance,
                    dhash_distance, candidates, image_sha256, status, alert_status)
-                values ('patrol', %s, %s, %s, %s, %s, %s, %s, {purge}, %s, %s, %s, %s, %s, %s,
+                values ('patrol', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s::jsonb, %s, %s, %s)
                 on conflict (dedupe_key) where dedupe_key is not null do update
                    set last_seen_at = now(),
@@ -152,7 +148,6 @@ async def record_patrol_finding(
                        image_url = excluded.image_url,
                        product_title = excluded.product_title,
                        store_name = excluded.store_name,
-                       external_purge_at = excluded.external_purge_at,
                        phash_distance = least(fm_trace_findings.phash_distance,
                                               excluded.phash_distance),
                        image_sha256 = excluded.image_sha256
@@ -194,23 +189,11 @@ async def record_model_report(
     return {"id": row["id"], "matched": best is not None}
 
 
-async def purge_expired_external(conn) -> int:
-    """네이버 원문 필드 21일 삭제(특약 2.4). 지운 행 수. 커밋은 호출부 몫."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """update fm_trace_findings
-                  set product_url = null, image_url = null, product_title = null,
-                      store_name = null, external_purge_at = null
-                where external_purge_at is not null and external_purge_at <= now()"""
-        )
-        return cur.rowcount or 0
-
-
 # ---------- 관리자 목록·판정 ----------
 
 _LIST_SQL = """
 select f.id::text as id, f.source, f.platform, f.product_url, f.image_url, f.product_title,
-       f.store_name, f.external_purge_at, f.target, f.publication_id::text as publication_id,
+       f.store_name, f.target, f.publication_id::text as publication_id,
        f.output_record_id::text as output_record_id, f.model_id::text as model_id,
        f.seller_id::text as seller_id, f.method, f.confidence, f.phash_distance,
        f.dhash_distance, f.candidates, f.report_page_url, f.report_note, f.status,
@@ -252,7 +235,6 @@ def _row_view(r: dict) -> dict:
         "id": r["id"], "source": r["source"], "platform": r["platform"],
         "productUrl": r.get("product_url"), "imageUrl": r.get("image_url"),
         "productTitle": r.get("product_title"), "storeName": r.get("store_name"),
-        "externalPurgeAt": _iso(r.get("external_purge_at")),
         "target": r.get("target"), "publicationId": r.get("publication_id"),
         "outputRecordId": r.get("output_record_id"),
         "model": {"id": r.get("model_id"), "displayName": r.get("model_name")},
@@ -270,7 +252,7 @@ def _row_view(r: dict) -> dict:
         "reportPageUrl": r.get("report_page_url"), "reportNote": r.get("report_note"),
         "status": r["status"], "alertStatus": r.get("alert_status"),
         "canRememberStore": bool(r.get("has_store") and r.get("seller_id")
-                                 and r["platform"] in ("naver", "zigzag")),
+                                 and r["platform"] in PATROL_PLATFORMS),
         "firstSeenAt": _iso(r.get("first_seen_at")), "lastSeenAt": _iso(r.get("last_seen_at")),
         "seenCount": r.get("seen_count"),
     }
@@ -338,7 +320,7 @@ async def update_finding_status(conn, *, finding_id: str, actor: str, status: st
                 raise FindingError("remember_requires_seller_own",
                                    "셀러 본인 판매처로 판정할 때만 기억할 수 있어요.")
             if not (row["seller_id"] and row["store_key"]
-                    and row["platform"] in ("naver", "zigzag")):
+                    and row["platform"] in PATROL_PLATFORMS):
                 raise FindingError("store_unknown", "이 발견에는 판매처 정보가 없어요.")
             await cur.execute(
                 "insert into fm_trace_known_stores "

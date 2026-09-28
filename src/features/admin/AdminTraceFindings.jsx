@@ -1,4 +1,4 @@
-/* 출처 추적 · 자동 발견 — 순찰(네이버·지그재그)과 모델 제보가 쌓은 발견을 판정한다(2026-09-27).
+/* 출처 추적 · 자동 발견 — 순찰(지그재그)과 모델 제보가 쌓은 발견을 판정한다(2026-09-27).
 
    판정은 네 가지다. '셀러 정상 사용 · 판매처 기억'을 누르면 그 셀러의 그 판매처는 다음 순찰부터
    자동으로 정상 분류되고 슬랙이 울리지 않는다 — 셀러에게 판매처 등록을 요구하지 않고 구분하는 방법.
@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/admin-ui/table.jsx';
 import { seoulClock, seoulDateKey } from '@/lib/datetime.js';
 import {
-  FINDING_STATUSES, findingMatchText, findingSourceLabel, findingStatusLabel, purgeNote, targetText,
+  FINDING_STATUSES, findingMatchText, findingSourceLabel, findingStatusLabel, targetText,
 } from './adminTraceFindings.js';
 import { licenseStatusLabel } from './adminTrace.js';
 
@@ -110,7 +110,7 @@ export function AdminTraceFindings() {
 
   const locked = busyId !== null || loading;
   return <div className="flex min-w-0 flex-col gap-4">
-    <p className="text-sm text-muted-foreground">하루 한 번 네이버·지그재그에서 상품명으로 찾은 대표 이미지와, 모델이 직접 보낸 제보를 배포본과 대조한 결과예요. 셀러 본인 스토어의 정상 사용이면 판매처를 기억해 두세요 — 다음부터 알리지 않아요.</p>
+    <p className="text-sm text-muted-foreground">하루 한 번 지그재그에서 상품명으로 찾은 대표 이미지와, 모델이 직접 보낸 제보를 배포본과 대조한 결과예요. 셀러 본인 스토어의 정상 사용이면 판매처를 기억해 두세요 — 다음부터 알리지 않아요.</p>
     <div className="flex flex-wrap gap-2" aria-label="발견 판정 상태">
       {FINDING_STATUSES.map(filter => <Button key={filter.value || 'all'} size="sm"
         variant={status === filter.value ? 'default' : 'outline'} aria-pressed={status === filter.value}
@@ -131,7 +131,6 @@ export function AdminTraceFindings() {
         </TableRow></TableHeader>
         <TableBody>{items.map(item => {
           const where = item.source === 'model_report' ? item.reportPageUrl : item.productUrl;
-          const note = purgeNote(item);
           return <TableRow key={item.id}>
             <TableCell className="whitespace-nowrap text-muted-foreground">{seoulDateKey(item.lastSeenAt)}<br />{seoulClock(item.lastSeenAt)}{item.seenCount > 1 && <><br />{item.seenCount}회 발견</>}</TableCell>
             <TableCell><div className="flex flex-col gap-1"><span>{findingSourceLabel(item)}</span>
@@ -141,7 +140,6 @@ export function AdminTraceFindings() {
                 : <span className="text-sm text-muted-foreground">주소 없음</span>}
               {item.storeName && <span className="text-xs text-muted-foreground">판매처 {item.storeName}</span>}
               {item.reportNote && <span className="text-xs whitespace-pre-wrap">{item.reportNote}</span>}
-              {note && <span className="text-xs text-muted-foreground">{note}</span>}
             </div></TableCell>
             <TableCell className="text-sm"><div className="flex flex-col gap-1">
               <span>{findingMatchText(item)}</span>

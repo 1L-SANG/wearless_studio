@@ -134,11 +134,11 @@ def test_patrol_keeps_only_watermark_or_near_identical_matches(monkeypatch):
 
 
 def test_one_platform_failing_does_not_stop_the_other(monkeypatch):
-    bad = Adapter("naver", [], fail=True)
+    bad = Adapter("other", [], fail=True)
     zig = Adapter("zigzag", [_hit("zigzag", "1")])
     stats, recorded, _ = _run([bad, zig], matches={"https://img/1.jpg": [_cand()]},
                               monkeypatch=monkeypatch)
-    assert stats["naver"]["errors"] == 2 and stats["zigzag"]["matched"] == 1
+    assert stats["other"]["errors"] == 2 and stats["zigzag"]["matched"] == 1
     assert len(recorded) == 1
 
 
@@ -146,12 +146,12 @@ def test_image_budget_is_per_platform_and_counts_only_downloaded(monkeypatch):
     """앞 플랫폼이 예산을 다 써도 뒤 플랫폼은 돈다. 받지 못한 이미지(robots 거부·404)는 세지 않는다."""
     zig = Adapter("zigzag", [_hit("zigzag", "broken-a", image="https://img/broken-a.jpg")]
                   + [_hit("zigzag", str(i)) for i in range(10)])
-    nav = Adapter("naver", [_hit("naver", f"n{i}") for i in range(10)])
+    nav = Adapter("other", [_hit("other", f"n{i}") for i in range(10)])
     stats, _, fetcher = _run([zig, nav], matches={}, monkeypatch=monkeypatch, max_images=3)
     zig_fetched = [u for u in fetcher.fetched if "/n" not in u]
     assert zig_fetched[0] == "https://img/broken-a.jpg" and len(zig_fetched) == 4   # 실패 1 + 성공 3
     assert stats["zigzag"]["images"] == 3 and stats["zigzag"]["budget"] is True
-    assert stats["naver"]["images"] == 3 and stats["naver"]["budget"] is True
+    assert stats["other"]["images"] == 3 and stats["other"]["budget"] is True
     assert stats["stopped"] is None
 
 
@@ -196,7 +196,7 @@ def test_api_manifest_turns_patrol_on_with_allowed_platforms_only():
     manifest = yaml.safe_load((root / "copilot/api/manifest.yml").read_text())
     env = manifest["variables"]
     assert env["FM_TRACE_PATROL"] == "on"
-    assert set(env["FM_TRACE_PATROL_PLATFORMS"].split(",")) <= {"naver", "zigzag"}
+    assert env["FM_TRACE_PATROL_PLATFORMS"] == "zigzag"
     assert 0 <= int(env["FM_TRACE_PATROL_HOUR_KST"]) <= 23
     worker = yaml.safe_load((root / "copilot/detail-worker/manifest.yml").read_text())
     assert "FM_TRACE_PATROL" not in (worker.get("variables") or {})    # 순찰은 API 태스크에서만

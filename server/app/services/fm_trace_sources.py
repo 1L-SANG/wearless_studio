@@ -1,19 +1,17 @@
 """자동 출처 순찰의 수집기 — 허용된 곳에서, 예의 있게, 대표 이미지까지만(2026-09-27).
 
-어디서 무엇을(2026-09-26~27 robots.txt·이용약관 원문 확인, 오너 결정):
-  - 네이버 쇼핑: **공식 검색 API**(openapi.naver.com/v1/search/shop.json, 무료 하루 25,000건).
-    키(NAVER_SEARCH_CLIENT_ID/SECRET)가 없으면 어댑터를 만들지 않는다(fail-closed).
-    🔴 검색 API 특약(2026-09-07 개정) 2.3·2.4 — 결과 데이터는 서버에 최대 21일(이력 조회 목적).
-       원장 쪽(fm_trace_findings)이 21일 삭제를 맡는다. 여기서는 아무것도 저장하지 않는다.
+어디서 무엇을(2026-09-26~28 robots.txt·이용약관·개발자센터 공지 원문 확인, 오너 결정):
   - 지그재그: robots 는 AhrefsBot·GPTBot 외 전부 Allow, 약관에 크롤링 금지 조항은 없다
     (제13조④ "영리 목적 복제·이용 금지"는 회색 — 오너가 켜기로 결정). 웹 검색 화면이 부르는 GraphQL
     을 **필요한 필드만** 담은 최소 쿼리로 한 페이지만 부르고, 목록의 대표 이미지만 받는다.
   - 만들지 않는 곳: 29CM(무신사 통합약관 v2.11 제11조② 크롤러·스크립트 수집 명시 금지), 무신사(robots
-    가 허가 목록 봇 외 전부 Disallow), 에이블리(Cloudflare 봇 챌린지), 쿠팡(봇 거부).
+    가 허가 목록 봇 외 전부 Disallow), 에이블리(Cloudflare 봇 챌린지), 쿠팡(봇 거부), 네이버 쇼핑(개발자센터
+    검색 API 의 '쇼핑'은 2026-07-31 24:00 종료 — 약관 부칙 2026-07-20. shopping·smartstore robots 는
+    `User-agent: * Disallow: /`, search.shopping 은 418 — 브라우저 자동화로 우회하지 않는다).
 
 예의(PoliteFetcher):
   - robots.txt 를 호스트마다 한 번 읽고 따른다. RFC 9309: 4xx = 규칙 없음(전부 허용),
-    5xx·연결 실패 = 전부 금지로 본다. 공식 API 호출(네이버)만 robots 대상이 아니다.
+    5xx·연결 실패 = 전부 금지로 본다.
   - 같은 호스트 요청 사이 최소 간격(기본 3초), User-Agent 에 이름·연락처.
   - 이미지는 크기 상한·이미지 content-type 만. 상세페이지 본문 이미지는 받지 않는다(약관 위험).
 """
@@ -159,43 +157,6 @@ def _clean_title(raw: str | None) -> str | None:
     return html.unescape(_TAG.sub("", raw)).strip() or None
 
 
-class NaverShopAdapter:
-    """네이버 쇼핑 검색 API(공식). 결과 대표 이미지(image)만 받는다."""
-
-    platform = "naver"
-    ENDPOINT = "https://openapi.naver.com/v1/search/shop.json"
-
-    def __init__(self, fetcher: PoliteFetcher, *, client_id: str, client_secret: str,
-                 display: int = 40):
-        self.fetcher = fetcher
-        self._id = client_id
-        self._secret = client_secret
-        self.display = max(1, min(100, display))
-
-    async def search(self, query: str) -> list[SearchHit]:
-        res = await self.fetcher.get(
-            self.ENDPOINT, respect_robots=False,
-            params={"query": query, "display": str(self.display), "start": "1", "sort": "sim"},
-            headers={"X-Naver-Client-Id": self._id, "X-Naver-Client-Secret": self._secret},
-        )
-        if res is None or res.status_code != 200:
-            if res is not None:
-                log.warning("naver shop search status=%s", res.status_code)
-            return []
-        hits = []
-        for item in (res.json() or {}).get("items") or []:
-            image = (item.get("image") or "").strip()
-            pid = str(item.get("productId") or "").strip()
-            if not image or not pid:
-                continue
-            mall = (item.get("mallName") or "").strip() or None
-            hits.append(SearchHit(platform="naver", product_id=pid,
-                                  product_url=(item.get("link") or "").strip() or None,
-                                  image_url=image, title=_clean_title(item.get("title")),
-                                  store_name=mall, store_id=mall))
-        return hits
-
-
 class ZigzagAdapter:
     """지그재그 웹 검색이 부르는 GraphQL 을 필요한 필드만 담아 첫 페이지만 부른다."""
 
@@ -251,19 +212,10 @@ class ZigzagAdapter:
         return hits
 
 
-ADAPTERS = {"naver": NaverShopAdapter, "zigzag": ZigzagAdapter}
+ADAPTERS = {"zigzag": ZigzagAdapter}
 
 
 def build_adapters(settings, fetcher: PoliteFetcher) -> list:
-    """설정 순서대로 켜진 어댑터. 네이버는 키 둘 다 있어야 만든다(fail-closed)."""
-    out = []
-    for name in settings.fm_trace_patrol_platforms:
-        if name == "naver":
-            if settings.naver_search_client_id and settings.naver_search_client_secret:
-                out.append(NaverShopAdapter(fetcher, client_id=settings.naver_search_client_id,
-                                            client_secret=settings.naver_search_client_secret))
-            else:
-                log.info("naver trace adapter off (search API keys missing)")
-        elif name == "zigzag":
-            out.append(ZigzagAdapter(fetcher))
-    return out
+    """설정 순서대로 켜진 어댑터(허용 목록 밖 이름은 config 가 이미 버렸다)."""
+    return [ADAPTERS[name](fetcher) for name in settings.fm_trace_patrol_platforms
+            if name in ADAPTERS]

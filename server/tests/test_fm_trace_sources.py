@@ -3,7 +3,7 @@
 지키는 것:
   - robots.txt 를 읽고 따른다(4xx=전부 허용, 5xx·연결 실패=전부 금지 — RFC 9309).
   - 같은 호스트 요청 사이 최소 간격, User-Agent 에 연락처.
-  - 네이버는 공식 검색 API(키 없으면 어댑터가 아예 안 만들어진다 — fail-closed).
+  - 네이버 쇼핑 검색 API 는 2026-07-31 종료됐다(개발자센터 약관 부칙) — 어댑터가 없다.
   - 지그재그는 검색 결과의 대표 이미지만. 상세 이미지는 받지 않는다.
   - 29CM·무신사·에이블리·쿠팡은 만들 수 없다(약관·봇 차단).
 """
@@ -104,39 +104,6 @@ def test_image_fetch_caps_size_and_requires_image_type():
     asyncio.run(run())
 
 
-NAVER_BODY = {"items": [
-    {"title": "<b>데님</b> 셔츠 &amp; 팬츠", "link": "https://smartstore.naver.com/a/products/1",
-     "image": "https://shopping-phinf.pstatic.net/main_1/1.jpg", "mallName": "가게A",
-     "productId": "111", "brand": "", "maker": ""},
-    {"title": "이미지 없음", "link": "https://x", "image": "", "mallName": "B", "productId": "222"},
-]}
-
-
-def test_naver_uses_official_api_with_keys_and_parses_hits():
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        if request.url.host == "openapi.naver.com":
-            return httpx.Response(200, json=NAVER_BODY)
-        return httpx.Response(404)
-
-    f, _ = _fetcher(handler)
-    a = T.NaverShopAdapter(f, client_id="id-1", client_secret="sec-1", display=40)
-    hits = asyncio.run(a.search("데님 셔츠"))
-    api = [c for c in calls if c.url.host == "openapi.naver.com"][0]
-    assert api.url.path == "/v1/search/shop.json"
-    assert api.url.params["query"] == "데님 셔츠" and api.url.params["display"] == "40"
-    assert api.headers["X-Naver-Client-Id"] == "id-1"
-    assert api.headers["X-Naver-Client-Secret"] == "sec-1"
-    # 공식 API 는 robots 대상이 아니다(openapi.naver.com robots 는 크롤러용 Disallow: /)
-    assert not any(c.url.path == "/robots.txt" and c.url.host == "openapi.naver.com" for c in calls)
-    assert hits == [T.SearchHit(platform="naver", product_id="111",
-                                product_url="https://smartstore.naver.com/a/products/1",
-                                image_url="https://shopping-phinf.pstatic.net/main_1/1.jpg",
-                                title="데님 셔츠 & 팬츠", store_name="가게A", store_id="가게A")]
-
-
 ZIGZAG_BODY = {"data": {"search_result": {"ui_item_list": [
     {"__typename": "UxSearchResultFilterBar"},
     {"__typename": "UxGoodsCardItem",
@@ -169,35 +136,25 @@ def test_zigzag_minimal_graphql_and_original_image():
         title="데님 셔츠", store_name="프롬", store_id="20")]
 
 
-def _settings(**kw):
-    base = dict(fm_trace_patrol_platforms=("naver", "zigzag"), naver_search_client_id=None,
-                naver_search_client_secret=None)
-    base.update(kw)
-    return SimpleNamespace(**base)
-
-
-def test_naver_is_off_without_keys_fail_closed():
+def test_only_zigzag_adapter_is_built():
     f, _ = _fetcher(lambda r: httpx.Response(404))
-    names = [a.platform for a in T.build_adapters(_settings(), f)]
-    assert names == ["zigzag"]
-    names = [a.platform for a in T.build_adapters(_settings(
-        naver_search_client_id="i", naver_search_client_secret="s"), f)]
-    assert names == ["naver", "zigzag"]
+    s = SimpleNamespace(fm_trace_patrol_platforms=("zigzag",))
+    assert [a.platform for a in T.build_adapters(s, f)] == ["zigzag"]
+    assert T.build_adapters(SimpleNamespace(fm_trace_patrol_platforms=()), f) == []
 
 
 def test_platforms_setting_parses_only_allowed(monkeypatch):
     from app.config import load_settings
     monkeypatch.setenv("FM_TRACE_PATROL_PLATFORMS", "zigzag, 29cm, musinsa, NAVER")
     s = load_settings()
-    assert s.fm_trace_patrol_platforms == ("zigzag", "naver")
+    assert s.fm_trace_patrol_platforms == ("zigzag",)         # 네이버 쇼핑 API 는 종료됐다
     monkeypatch.delenv("FM_TRACE_PATROL_PLATFORMS")
     monkeypatch.delenv("FM_TRACE_PATROL", raising=False)
     s = load_settings()
     assert s.fm_trace_patrol == "off"                      # 기본은 꺼짐
-    assert s.fm_trace_patrol_platforms == ("naver", "zigzag")
-    monkeypatch.setenv("NAVER_SEARCH_CLIENT_ID", "  ")
-    assert load_settings().naver_search_client_id is None  # 빈 값은 없는 것
+    assert s.fm_trace_patrol_platforms == ("zigzag",)
+    assert not hasattr(s, "naver_search_client_id")
 
 
 def test_no_adapter_for_forbidden_platforms():
-    assert set(T.ADAPTERS) == {"naver", "zigzag"}
+    assert set(T.ADAPTERS) == {"zigzag"}
