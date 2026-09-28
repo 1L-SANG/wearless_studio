@@ -1567,9 +1567,12 @@ export function Editor() {
           const picked = bs0.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => ({ b, el })));
           // 사진이 든 자리만 '비우기'다 — 이미 빈 자리·다른 요소는 그냥 지워진다.
           const cleared = picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && el.src);
-          const removedCount = picked.length - cleared.length;
+          const allowRemoveContiSlots = !genActiveRef.current;
+          // 생성 중엔 빈 콘티 자리가 그대로 남는다 — 지운 것처럼 안내하지 않는다.
+          const kept = allowRemoveContiSlots ? [] : picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && !el.src && el.sourceBlockId);
+          const removedCount = picked.length - cleared.length - kept.length;
           setBlocks((bs) => {
-            const next = removeSelectedElements(bs, selEls);
+            const next = removeSelectedElements(bs, selEls, { allowRemoveContiSlots });
             // 정보 블록은 폼(block.info)이 정본이라 요소만 비우면 '내용 수정 → 업데이트'
             // 한 번에 지운 사진이 되살아난다. 폼 쪽 src 도 같이 비운다(2026-08-17 검증).
             const infoIds = new Set(cleared.filter(({ b }) => presetTypeOf(b) && b.info).map(({ b, el }) => `${b.id}:${el.id}`));
@@ -1581,6 +1584,7 @@ export function Editor() {
           const parts = [];
           if (cleared.length) parts.push(`${cleared.length > 1 ? `사진 ${cleared.length}장을` : '사진을'} 비웠어요 · 자리는 그대로예요`);
           if (removedCount) parts.push(`${removedCount > 1 ? `${removedCount}개 요소를` : '요소를'} 삭제했어요`);
+          if (kept.length) parts.push('생성 중에는 사진 자리를 지울 수 없어요 · 생성이 끝나면 다시 눌러 주세요');
           toast.push(parts.join(' · ') || '요소를 삭제했어요', { icon: 'trash' });
         } else {
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
@@ -1851,8 +1855,12 @@ export function Editor() {
     const copied = editorClipboard.current;
     if (!copied) return false;
     const currentBlocks = latestBlocks.current || blocks;
-    const targetBlock = currentBlocks.find((block) => block.id === copied.blockId)
-      || currentBlocks.find((block) => block.id === selBlock);
+    // 붙여넣을 곳 = **지금 고른 프레임**(프레임 자체 또는 그 안의 요소). 없을 때만 복사해 온
+    // 프레임. 예전엔 복사 원본을 먼저 찾아서 다른 프레임을 골라도 늘 원래 자리에 붙었다.
+    const selectedBlockId = selBlock
+      || currentBlocks.find((block) => block.elements.some((el) => selEls.includes(el.id)))?.id;
+    const targetBlock = currentBlocks.find((block) => block.id === selectedBlockId)
+      || currentBlocks.find((block) => block.id === copied.blockId);
     if (!targetBlock) return false;
     const pasted = pasteEditorElements({ ...targetBlock, h: getBlockRenderHeight(targetBlock) }, copied.elements, uid);
     if (!pasted) return false;
