@@ -9,6 +9,7 @@ import {
   adminUnsuspendModel, adminUploadModelTestCuts,
 } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
+import { TEST_CUT_SLOTS, neighborFinish, testCutMatrix } from './testCutMatrix.js';
 import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/admin-ui/card.jsx';
 import { Input } from '@/components/admin-ui/input.jsx';
@@ -68,22 +69,37 @@ const BUILD_VARIANT = { failed: 'destructive', partial: 'secondary', done: 'defa
    목록이 아니라 상세 안에 두는 이유: 운영자가 "이 모델 뭐지"를 확인하는 자리에서 그대로
    컷을 올리고 보내기 때문이다. 목록에 컬럼으로 얹으면 200행마다 이미지 메타를 조인해야 한다.
    서명 URL 이 아니라 인증 스트림으로 받는다 — 얼굴은 공개 주소를 갖지 않는다(처리방침 §10). */
-function TestCutThumb({ cut, disabled, onDelete }) {
+function useTestCutUrl(imageUri) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
     let revoked = null;
-    adminFetchModelTestCutUrl(cut.imageUri)
+    setUrl(null);
+    if (!imageUri) return undefined;
+    adminFetchModelTestCutUrl(imageUri)
       .then((next) => { revoked = next; setUrl(next); })
       .catch(() => setUrl(null));
     return () => { if (revoked) URL.revokeObjectURL(revoked); };
-  }, [cut.imageUri]);
+  }, [imageUri]);
+  return url;
+}
+
+// 확대샷은 상반신이라 4:5, 전신샷은 2:3 — 같은 줄의 A·B·C 가 같은 틀에 들어가야 눈으로 비교된다.
+const CUT_ASPECT = { closeup: 'aspect-[4/5]', fullbody: 'aspect-[2/3]' };
+
+function TestCutThumb({ cut, disabled, onDelete, onOpen }) {
+  const url = useTestCutUrl(cut.imageUri);
   return (
-    <figure className="relative m-0 w-20 overflow-hidden rounded-md border border-border bg-muted">
-      <div className="aspect-[4/5]">
+    <figure className="relative m-0 w-full overflow-hidden rounded-md border border-border bg-muted">
+      <button
+        type="button"
+        onClick={() => onOpen?.(cut)}
+        className={`block w-full ${CUT_ASPECT[cut.kind] || 'aspect-[4/5]'}`}
+        aria-label={`테스트컷 ${cut.sort + 1} 크게 보기`}
+      >
         {url
           ? <img src={url} alt={`테스트컷 ${cut.sort + 1}`} className="h-full w-full object-cover" />
-          : <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">불러오는 중</div>}
-      </div>
+          : <span className="flex h-full items-center justify-center text-[10px] text-muted-foreground">불러오는 중</span>}
+      </button>
       {cut.approved
         ? <span className="absolute left-1 top-1 rounded bg-background/90 px-1 text-[10px]">대표</span>
         : (
@@ -98,6 +114,84 @@ function TestCutThumb({ cut, disabled, onDelete }) {
           </button>
         )}
     </figure>
+  );
+}
+
+function EmptyCutCell({ kind }) {
+  return (
+    <div className={`flex w-full items-center justify-center rounded-md border border-dashed border-border text-[10px] text-muted-foreground ${CUT_ASPECT[kind] || 'aspect-[4/5]'}`}>
+      비어 있어요
+    </div>
+  );
+}
+
+/* 크게 보기 — 같은 자리(예: 확대 1)의 A·B·C 를 ←/→ 로 넘기며 비교한다. Esc 로 닫는다. */
+function TestCutViewer({ matrix, finishes, view, onChange, onClose }) {
+  const slot = TEST_CUT_SLOTS[view.slot];
+  const cut = matrix[view.finish]?.[view.slot] || null;
+  const url = useTestCutUrl(cut?.imageUri);
+  const finish = finishes.find((f) => f.code === view.finish);
+  const codes = finishes.map((f) => f.code);
+  const step = useCallback((dir) => {
+    const next = neighborFinish(matrix, codes, view.finish, view.slot, dir);
+    if (next) onChange({ ...view, finish: next });
+  }, [matrix, codes, view, onChange]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft') step(-1);
+      else if (e.key === 'ArrowRight') step(1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, step]);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="테스트컷 크게 보기"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/80 p-4"
+      onClick={onClose}
+    >
+      <div className="flex flex-wrap items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
+        {finishes.map((f) => {
+          const has = Boolean(matrix[f.code]?.[view.slot]);
+          return (
+            <Button
+              key={f.code}
+              size="sm"
+              variant={f.code === view.finish ? 'default' : 'outline'}
+              disabled={!has}
+              onClick={() => onChange({ ...view, finish: f.code })}
+            >
+              {f.label}
+            </Button>
+          );
+        })}
+      </div>
+      <div className="flex max-h-[78vh] items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        <Button variant="outline" size="sm" aria-label="이전 보정" onClick={() => step(-1)}>←</Button>
+        {url
+          ? <img src={url} alt={`${finish?.label || ''} ${slot.label}`} className="max-h-[78vh] max-w-[70vw] rounded-md object-contain" />
+          : <p className="text-sm text-white/80">불러오는 중</p>}
+        <Button variant="outline" size="sm" aria-label="다음 보정" onClick={() => step(1)}>→</Button>
+      </div>
+      <p className="text-sm text-white/90" onClick={(e) => e.stopPropagation()}>
+        {slot.label} · {finish?.label} <span className="text-white/60">(←/→ 로 보정 비교 · Esc 닫기)</span>
+      </p>
+      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+        {TEST_CUT_SLOTS.map((s, i) => (
+          <Button
+            key={s.key}
+            size="sm"
+            variant={i === view.slot ? 'default' : 'outline'}
+            onClick={() => onChange({ ...view, slot: i })}
+          >
+            {s.label}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -126,6 +220,8 @@ function TestCuts({ modelId, onChanged }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 크게 보기: { finish, slot } — 같은 자리의 A·B·C 를 넘겨 본다.
+  const [view, setView] = useState(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -159,6 +255,7 @@ function TestCuts({ modelId, onChanged }) {
   }
 
   const cuts = state.testCuts || [];
+  const matrix = testCutMatrix(cuts, SKIN_FINISHES.map((f) => f.code));
   const finishCounts = state.finishCounts || {};
   const build = state.build || null;
   const sent = state.status === 'awaiting_confirm';
@@ -209,12 +306,14 @@ function TestCuts({ modelId, onChanged }) {
         {build?.error ? ` 마지막 생성 오류: ${build.error}` : ''}
       </p>
 
+      {/* 비교 표 머리 — 아래 A·B·C 행이 같은 자리끼리 이 네 칸에 줄을 맞춘다. */}
+      <div className="mb-1 grid grid-cols-4 gap-2 px-3 text-center text-[11px] text-muted-foreground">
+        {TEST_CUT_SLOTS.map((slot) => <span key={slot.key}>{slot.label}</span>)}
+      </div>
       <div className="grid gap-3">
         {SKIN_FINISHES.map(({ code, label, hint }) => {
           const counts = finishCounts[code] || {};
-          const groupCuts = cuts.filter(
-            (cut) => (cut.skinFinish || 'prod') === code,
-          );
+          const row = matrix[code];
           const reason = sendReason(code);
           return (
             <div className="rounded-md border border-border p-3" key={code}>
@@ -239,24 +338,27 @@ function TestCuts({ modelId, onChanged }) {
                   이 보정으로 보내기
                 </Button>
               </div>
-              {groupCuts.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {groupCuts.map((cut) => (
+              <div className="grid grid-cols-4 gap-2">
+                {TEST_CUT_SLOTS.map((slot, slotIndex) => {
+                  const cut = row[slotIndex];
+                  if (!cut) return <EmptyCutCell key={slot.key} kind={slot.kind} />;
+                  return (
                     <TestCutThumb
                       key={cut.id}
                       cut={cut}
                       disabled={busy}
+                      onOpen={() => setView({ finish: code, slot: slotIndex })}
                       onDelete={(selectedCut) => {
-                        if (!window.confirm(`${label} ${selectedCut.sort + 1}을 삭제할까요?`)) return;
+                        if (!window.confirm(`${label} ${slot.label}을 삭제할까요?`)) return;
                         act(
                           () => adminDeleteModelTestCut(modelId, selectedCut.id),
                           () => '테스트컷을 삭제했어요.',
                         );
                       }}
                     />
-                  ))}
-                </div>
-              ) : <p className="text-xs text-muted-foreground">아직 없어요.</p>}
+                  );
+                })}
+              </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {TEST_CUT_GROUPS.map(({ kind, label: kindLabel }) => {
                   const inputId = `test-cut-upload-${modelId}-${code}-${kind}`;
@@ -298,6 +400,15 @@ function TestCuts({ modelId, onChanged }) {
         <p className="mt-2 text-xs text-muted-foreground">
           {day(state.confirmedAt)}에 모델이 확정했어요. 모델 리스트에 올라갔어요.
         </p>
+      )}
+      {view && (
+        <TestCutViewer
+          matrix={matrix}
+          finishes={SKIN_FINISHES}
+          view={view}
+          onChange={setView}
+          onClose={() => setView(null)}
+        />
       )}
       {state.redoCount > 0 && (
         <p className="mt-1 text-xs text-muted-foreground">재생성 요청 {state.redoCount}회 (1회까지)</p>
