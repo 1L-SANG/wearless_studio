@@ -13,12 +13,13 @@
    "scope": "virtual",
    "why": "studio 밖 섹션 — 실제 모델 얼굴 합성은 studio 에서만 검증됐다(2026-09-14)",
    "code": "real_model_studio_only",
-   "message": "실제 모델은 현재 첫 장면·스타일링·스튜디오 컷만 만들 수 있어요.",
+   "message": "실제 모델로는 만들 수 없는 섹션이에요.",
    "when": {
     "sectionNotIn": [
      "hooking",
      "styling",
-     "studio"
+     "studio",
+     "product"
     ]
    }
   },
@@ -413,7 +414,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -421,17 +422,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_bottom_detail_stone_closure_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -441,6 +431,17 @@
    "block": {
     "exampleId": "ex_product_bottom_detail_stone_closure_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_closure_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -479,7 +480,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -515,7 +516,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -581,7 +582,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -617,7 +618,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -625,17 +626,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_bottom_detail_stone_pocket_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -645,6 +635,17 @@
    "block": {
     "exampleId": "ex_product_bottom_detail_stone_pocket_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_bottom_detail_stone_pocket_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -683,7 +684,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -719,7 +720,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -785,7 +786,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -821,7 +822,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -829,17 +830,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_outer_detail_closure_button_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -849,6 +839,17 @@
    "block": {
     "exampleId": "ex_product_outer_detail_closure_button_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_closure_button_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -887,7 +888,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -923,7 +924,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -989,7 +990,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1025,7 +1026,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1033,17 +1034,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_outer_detail_collar_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -1053,6 +1043,17 @@
    "block": {
     "exampleId": "ex_product_outer_detail_collar_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_collar_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -1091,7 +1092,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1127,7 +1128,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1193,7 +1194,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1229,7 +1230,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1237,17 +1238,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_outer_detail_fabric_sewing_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -1257,6 +1247,17 @@
    "block": {
     "exampleId": "ex_product_outer_detail_fabric_sewing_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_outer_detail_fabric_sewing_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -1295,7 +1296,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1331,7 +1332,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1397,7 +1398,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1433,7 +1434,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1441,17 +1442,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -1461,6 +1451,17 @@
    "block": {
     "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_detail_polo_collar_buttoned_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -1499,7 +1500,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1535,7 +1536,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1601,7 +1602,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1637,7 +1638,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1645,17 +1646,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_product_top_ghost_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -1665,6 +1655,17 @@
    "block": {
     "exampleId": "ex_product_top_ghost_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_product_top_ghost_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -1703,7 +1704,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1739,7 +1740,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1805,7 +1806,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1841,7 +1842,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1849,17 +1850,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_02",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -1869,6 +1859,17 @@
    "block": {
     "exampleId": "ex_styling_men_bottom_full_snapshot_02",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_02",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -1907,7 +1908,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1943,7 +1944,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2009,7 +2010,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2045,7 +2046,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2053,17 +2054,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -2073,6 +2063,17 @@
    "block": {
     "exampleId": "ex_styling_men_bottom_full_snapshot_04",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_full_snapshot_04",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -2111,7 +2112,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2147,7 +2148,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2213,7 +2214,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2249,7 +2250,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2257,17 +2258,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -2277,6 +2267,17 @@
    "block": {
     "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -2315,7 +2316,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2351,7 +2352,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2417,7 +2418,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2453,7 +2454,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2461,17 +2462,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -2481,6 +2471,17 @@
    "block": {
     "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_03",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -2519,7 +2520,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2555,7 +2556,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2621,7 +2622,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2657,7 +2658,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2665,17 +2666,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -2685,6 +2675,17 @@
    "block": {
     "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_bottom_medium_snapshot_05",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -2723,7 +2724,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2759,7 +2760,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2825,7 +2826,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2861,7 +2862,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2869,17 +2870,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_01",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -2889,6 +2879,17 @@
    "block": {
     "exampleId": "ex_styling_men_outer_full_01",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_01",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -2927,7 +2928,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2963,7 +2964,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3029,7 +3030,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3065,7 +3066,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3073,17 +3074,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_03",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -3093,6 +3083,17 @@
    "block": {
     "exampleId": "ex_styling_men_outer_full_03",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_03",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -3131,7 +3132,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3167,7 +3168,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3233,7 +3234,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3269,7 +3270,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3277,17 +3278,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_05",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -3297,6 +3287,17 @@
    "block": {
     "exampleId": "ex_styling_men_outer_full_05",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_05",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -3335,7 +3336,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3371,7 +3372,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3437,7 +3438,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3473,7 +3474,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3481,17 +3482,6 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
-   },
-   "scope": "virtual"
-  },
-  {
-   "block": {
-    "exampleId": "ex_styling_men_outer_full_07",
-    "cutType": "styling",
-    "direction": "front",
-    "shot": "medium",
     "refScope": "all",
     "pose": "auto"
    },
@@ -3501,6 +3491,17 @@
    "block": {
     "exampleId": "ex_styling_men_outer_full_07",
     "cutType": "styling",
+    "direction": "front",
+    "shot": "medium",
+    "refScope": "all",
+    "pose": "auto"
+   },
+   "scope": "virtual"
+  },
+  {
+   "block": {
+    "exampleId": "ex_styling_men_outer_full_07",
+    "cutType": "styling",
     "direction": "back",
     "shot": "full",
     "refScope": "all",
@@ -3539,7 +3540,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3575,7 +3576,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3641,7 +3642,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3677,7 +3678,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3743,7 +3744,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3779,7 +3780,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3845,7 +3846,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3881,7 +3882,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3947,7 +3948,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -3983,7 +3984,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4049,7 +4050,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4085,7 +4086,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4151,7 +4152,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4187,7 +4188,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4253,7 +4254,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4289,7 +4290,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4355,7 +4356,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4391,7 +4392,7 @@
     "pose": "auto",
     "sectionRole": "product"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -4457,7 +4458,7 @@
     "refScope": "all",
     "pose": "auto"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {

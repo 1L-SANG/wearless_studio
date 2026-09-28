@@ -47,28 +47,46 @@ def test_studio_space_sets_are_virtual_only():
     # 2026-09-26: hooking(첫 장면) 섹션도 열렸다.
     _block(cutType="styling", contentRole="hero", exampleId=None),
     _block(cutType="styling", sectionRole="hooking", exampleId=None),
-])
-def test_cuts_in_the_open_sections_are_both(spec):
-    """첫 장면·스타일링·스튜디오 섹션의 컷(identity_scope.REAL_ALLOWED_SECTION_ROLES)."""
-    assert identity_scope.section_of(spec) in identity_scope.REAL_ALLOWED_SECTION_ROLES
-    assert identity_scope.scope_for_block(spec) == identity_scope.BOTH
-
-
-@pytest.mark.parametrize("spec", [
+    # 2026-09-28: product(제품 컷) 섹션도 열렸다 — 사람이 안 나오는 컷이다.
     _block(cutType="product", exampleId="ex_product_top_ghost_01"),
     _block(cutType="product", shot="detail", exampleId=None),
     _block(cutType="product", sectionRole="product", shot="ghost", exampleId=None),
 ])
-def test_cuts_outside_the_open_sections_are_virtual_only(spec):
-    """실제 모델은 hooking·styling·studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
+def test_cuts_in_the_open_sections_are_both(spec):
+    """열린 섹션의 컷(identity_scope.REAL_ALLOWED_SECTION_ROLES) — 2026-09-28 부터 네 섹션 전부."""
+    assert identity_scope.section_of(spec) in identity_scope.REAL_ALLOWED_SECTION_ROLES
+    assert identity_scope.scope_for_block(spec) == identity_scope.BOTH
 
-    2026-09-14 에 studio 만 열었고, 2026-09-25 에 styling, 2026-09-26 에 hooking 을 더했다.
-    product 는 여전히 막힌다. 컷 모양만 보던 예전에는 이것들이 전부 both 였다.
+
+_PRODUCT_SPECS = [
+    _block(cutType="product", exampleId="ex_product_top_ghost_01"),
+    _block(cutType="product", shot="detail", exampleId=None),
+    _block(cutType="product", sectionRole="product", shot="ghost", exampleId=None),
+]
+
+
+@pytest.mark.parametrize("spec", _PRODUCT_SPECS)
+def test_cuts_outside_the_open_sections_are_virtual_only(spec, monkeypatch):
+    """정책 밖 섹션의 컷은 가상 전용이다(identity_scope.REAL_ALLOWED_SECTION_ROLES).
+
+    2026-09-28 product 까지 열려 기본 정책으로 막힌 섹션은 없다. 장치는 남아 있으니 정책을
+    09-26 값(hooking·styling·studio)으로 좁혀 계속 지킨다.
     """
+    monkeypatch.setattr(identity_scope, "REAL_ALLOWED_SECTION_ROLES",
+                        ("hooking", "styling", "studio"))
     assert identity_scope.section_of(spec) not in identity_scope.REAL_ALLOWED_SECTION_ROLES
     assert identity_scope.scope_for_block(spec) == identity_scope.VIRTUAL
     # 섹션 규칙을 뺀 판정(공간세트 표가 쓰는 것)은 예전 그대로 both 다.
     assert identity_scope.shape_scope_for_block(spec) == identity_scope.BOTH
+
+
+def test_no_section_is_blocked_by_the_default_policy():
+    """2026-09-28: 모든 섹션이 실제 모델에게 열려 있다 — 섹션 규칙만으로 가상 전용이 되는 컷은 없다."""
+    from app.agents import content_roles
+
+    assert set(content_roles.SECTION_ROLES) <= set(identity_scope.REAL_ALLOWED_SECTION_ROLES)
+    for spec in _PRODUCT_SPECS:
+        assert identity_scope.studio_only_block(spec) is False
 
 
 def test_unknown_input_never_blocks():

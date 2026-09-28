@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 
 import app.routes as routes
+from app.agents import identity_scope
 
 from conftest import patch_route_db
 
@@ -867,10 +868,10 @@ def test_editor_new_real_studio_cut_is_accepted(
 ):
     """실제 모델로 **스튜디오 컷**은 새로 만들 수 있다.
 
-    실제 모델은 hooking·styling·studio 섹션 컷만 만든다(identity_scope.REAL_ALLOWED_SECTION_ROLES —
-    2026-09-14 studio, 2026-09-25 styling, 2026-09-26 hooking 추가). 스타일링·첫 장면 컷은 아래
-    test_editor_new_real_styling_and_hooking_cuts_are_accepted, 아직 막힌 섹션(product)은
-    test_editor_new_real_product_section_cut_is_refused 가 잠근다.
+    실제 모델이 만들 수 있는 섹션은 identity_scope.REAL_ALLOWED_SECTION_ROLES 다(2026-09-14 studio,
+    2026-09-25 styling, 2026-09-26 hooking, 2026-09-28 product 추가 — 이제 막힌 섹션이 없다).
+    스타일링·첫 장면·제품 섹션 컷은 아래 test_editor_new_real_styling_and_hooking_cuts_are_accepted,
+    막는 장치는 정책을 좁힌 test_editor_new_real_product_section_cut_is_refused 가 잠근다.
     """
     client.app.state.settings = replace(
         client.app.state.settings,
@@ -934,6 +935,10 @@ def test_editor_new_real_studio_cut_is_accepted(
     pytest.param("mirror", {}, id="mirror"),
     # 2026-09-26: 첫 장면(hooking) 섹션도 열렸다 — hero 컷이 같은 길로 간다.
     pytest.param("styling", {"contentRole": "hero"}, id="hooking-hero"),
+    # 2026-09-28: product 섹션도 열렸다 — 그 섹션에 착용 컷을 청하면 스타일링과 똑같이
+    # 실제 얼굴·라이선스 확인으로 간다(제품컷 cutType=product 는 얼굴 없이 간다 — 아래
+    # test_editor_product_cut_strips_real_model_before_facemarket_gate).
+    pytest.param("styling", {"contentRole": "productOverview"}, id="product-section-worn"),
 ])
 def test_editor_new_real_styling_and_hooking_cuts_are_accepted(
     client, make_token, monkeypatch, cut_type, extra,
@@ -1003,12 +1008,15 @@ def test_editor_new_real_styling_and_hooking_cuts_are_accepted(
 
 
 def test_editor_new_real_product_section_cut_is_refused(client, make_token, monkeypatch):
-    """실제 모델 + 아직 막힌 섹션(product) = 생성 전에 거부. 잡도 예약도 없다(과금 0).
+    """실제 모델 + 막힌 섹션 = 생성 전에 거부. 잡도 예약도 없다(과금 0).
 
-    hooking 까지 열린(2026-09-26) 뒤 막힌 섹션은 product 뿐이다. 제품컷(cutType=product)은
+    2026-09-28 product 까지 열려 기본 정책으로 막힌 섹션은 없다. 장치(에디터 라우트 가드)는
+    남아 있으니 정책을 09-26 값(product 제외)으로 좁혀 지킨다. 제품컷(cutType=product)은
     에디터에서 실제 모델을 떼고 진행하므로(test_editor_product_cut_strips_real_model_before_facemarket_gate)
     거부 예시는 제품 섹션 역할(productOverview)에 착용 컷(styling)을 청한 경우다.
     """
+    monkeypatch.setattr(identity_scope, "REAL_ALLOWED_SECTION_ROLES",
+                        ("hooking", "styling", "studio"))
     client.app.state.settings = replace(client.app.state.settings, facemarket_enabled=True)
     calls = {"create": 0, "reserve": 0}
 
