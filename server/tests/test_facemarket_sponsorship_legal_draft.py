@@ -52,7 +52,8 @@ def test_effective_sponsorship_documents_match_manifest():
     )}
     for slug, version in legal_versions.SPONSORSHIP_DOCUMENT_VERSIONS.items():
         assert manifest[slug]["version"] == version, slug
-        assert manifest[slug]["effectiveDate"] == ("2026-09-23" if slug == "privacy-model" else "2026-09-25"), slug
+        expected_date = {"privacy-model": "2026-09-23", "answers": "2026-09-28"}.get(slug, "2026-09-25")
+        assert manifest[slug]["effectiveDate"] == expected_date, slug
         assert "status" not in manifest[slug], slug
         text = (ROOT / f"public/legal/{slug}.md").read_text()
         assert "법률 검토 전 초안" not in text and "시행일 미확정" not in text and "검토안" not in text, slug

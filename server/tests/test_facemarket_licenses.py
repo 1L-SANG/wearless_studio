@@ -857,13 +857,27 @@ class FakeCursor:
             self.rowcount = 1
         elif s.startswith("select l.id::text as id, l.model_id::text as model_id"):
             # 목록: 소유 모델 경유. revoked 는 죽은 카드라 목록에서 빠진다.
-            owned = {m["id"] for m in models if m["user_id"] == params[0]}
+            user_id = params[0]
+            owned = {m["id"] for m in models if m["user_id"] == user_id}
             rows = [
                 r for r in licenses
                 if r["model_id"] in owned
                 and not ("l.status <> 'revoked'" in s and r["status"] == "revoked")
             ]
-            self._many = [{k: r[k] for k in _LICENSE_KEYS} for r in rows]
+            approved = sorted(
+                (
+                    row
+                    for row in self.store["applications"]
+                    if row["user_id"] == user_id and row["status"] == "approved"
+                ),
+                key=lambda row: row["created_at"],
+                reverse=True,
+            )
+            holder_name = approved[0]["applicant_name"] if approved else None
+            self._many = [
+                {**{k: r[k] for k in _LICENSE_KEYS}, "holder_name": holder_name}
+                for r in rows
+            ]
         elif s.startswith("select l.face_image_key, l.status"):
             # 게이트: license id + 소유자 조인
             lid, uid = params
@@ -967,6 +981,7 @@ def fm(keypair, monkeypatch):
         "enrollments": [],
         "enrollment_photos": [],
         "assets": [],
+        "applications": [],
         "profiles": [],     # 개인화 프로필 {id, user_id, status}
         "face_photos": [],  # 개인화 얼굴 슬롯 {profile_id, angle, r2_key, image_digest}
         "identities": [],   # fm_identity_verifications {model_id, birth_year}
@@ -1025,6 +1040,7 @@ def biometric_fm(keypair, monkeypatch):
         "enrollments": [],
         "enrollment_photos": [],
         "assets": [],
+        "applications": [],
         "profiles": [],
         "face_photos": [],
         "identities": [],
@@ -2533,6 +2549,49 @@ def test_list_licenses_scoped_to_owner(fm, make_token):
     # 다른 사용자는 못 본다
     other = client.get("/v1/facemarket/licenses", headers=_auth(make_token, sub="user-2"))
     assert other.status_code == 200 and other.json() == []
+
+
+def test_list_licenses_exposes_latest_approved_application_name_only_to_owner(
+    fm, make_token
+):
+    client, store, r2 = fm
+    _seed_active_license(store, r2)
+    store["applications"].extend(
+        [
+            {
+                "user_id": "user-1",
+                "status": "approved",
+                "applicant_name": "이전 실명",
+                "created_at": NOW - timedelta(days=2),
+            },
+            {
+                "user_id": "user-1",
+                "status": "approved",
+                "applicant_name": "최신 승인 실명",
+                "created_at": NOW - timedelta(days=1),
+            },
+            {
+                "user_id": "user-1",
+                "status": "under_review",
+                "applicant_name": "미승인 실명",
+                "created_at": NOW,
+            },
+        ]
+    )
+
+    mine = client.get("/v1/facemarket/licenses", headers=_auth(make_token))
+    other = client.get(
+        "/v1/facemarket/licenses", headers=_auth(make_token, sub="user-2")
+    )
+    public = client.get(f"/v1/facemarket/verify/{store['licenses'][0]['id']}")
+
+    assert mine.status_code == 200
+    assert mine.json()[0]["holderName"] == "최신 승인 실명"
+    assert other.status_code == 200 and other.json() == []
+    assert public.status_code == 200
+    assert public.json()["model"]["nameMasked"] == "홍*동"
+    assert "holderName" not in public.json()
+    assert "최신 승인 실명" not in public.text
 
 
 def test_face_gate_owner_gets_current_approved_bytes_only(

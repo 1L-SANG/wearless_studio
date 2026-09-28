@@ -40,6 +40,7 @@ import {
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
+import { SecondaryUseBadge } from '@/features/model/SecondaryUseBadge.jsx';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -1306,6 +1307,7 @@ export function AnalysisForm({
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
                     : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                  <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
                   <span className="fm-studio-only">스튜디오 컷 전용</span>
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
@@ -1328,6 +1330,7 @@ export function AnalysisForm({
                         ? <img src={m.coverImageUrl} alt={m.displayName} />
                         : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                       {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                      <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
                       <span className="fm-studio-only">스튜디오 컷 전용</span>
                       <div className="fm-meta">
                         <div className="fm-name">{m.displayName}</div>

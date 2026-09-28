@@ -36,9 +36,20 @@ SPONSORSHIP_CONSENTS = {
         "version": SPONSORSHIP_CONSENT_VERSION,
     },
 }
+
+# 선택 2차 활용 동의. 등록 필수 동의가 아니며 모델이 켜거나 끌 때만 이벤트로 남겨요.
+SECONDARY_USE_CONSENT_VERSION = "2026-09-28"
+SECONDARY_USE_CONSENTS = {
+    "secondary_use": {
+        "section": "2차 활용 허용",
+        "required_for_enrollment": False,
+        "version": SECONDARY_USE_CONSENT_VERSION,
+        "notice": "셀러가 내 이미지를 셀러 자신의 SNS 속 피드에 게시물로 올릴 수가 있어요. 셀러 브랜드 피드에 노출되고 싶다면 허용해 주세요. 허용한 모델들은 모델 선택창에서 강조되어, 셀러들에게 더 많은 선택을 받을 수 있어요.",
+    },
+}
 # 협찬 개정 시행본(2026-09-23). tests/test_facemarket_sponsorship_legal_draft.py 가 manifest 와 대조해요.
 SPONSORSHIP_DOCUMENT_VERSIONS = {
-    "terms-model": "v1.3", "privacy-model": "v1.6", "answers": "v1.4",
+    "terms-model": "v1.3", "privacy-model": "v1.6", "answers": "v1.5",
     "sponsorship-consent": SPONSORSHIP_CONSENT_VERSION,
 }
 # 요청·배송 기능용 델타는 아직 초안(요청 기능 개시 때 승격).

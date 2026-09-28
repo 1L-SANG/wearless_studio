@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { SponsorshipFields } from './SponsorshipSettings.jsx';
+import { SecondaryUseSettings, SponsorshipFields } from './SponsorshipSettings.jsx';
 import { CloudSun, Info, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { BRAND_USE_CATEGORIES } from '../../lib/brandUseCategories.js';
@@ -160,16 +160,17 @@ export function renderReshoot({ enrollment, previews, busy, onFile, photoSlot, e
   </>;
 }
 
-export function renderConditions({ terms, setTerms, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading }) {
+export function renderConditions({ terms, setTerms, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading, secondaryUseEnabled, setSecondaryUseEnabled }) {
   const descriptions = ['예시: 상의, 하의, 아우터, 원피스', '예시: 레깅스, 운동복, 요가복', '예시: 라운지웨어, 파자마'];
   return <>
     {heading('사용 조건을 정해요', '내 얼굴을 사용할 옷 종류를 골라 주세요.')}
     <h2 className={s.sectionTitle}>내 얼굴을 쓸 수 있는 옷<span className={s.required}>*</span></h2>
     <div className={s.categories}>{BRAND_USE_CATEGORIES.map((category, index) => { const on = terms.allowedUse.includes(category); const last = on && terms.allowedUse.length === 1; return <div className={s.categoryRow} key={category}><div><h3>{category}</h3><p>{descriptions[index]}</p></div><button type="button" className={s.switch} role="switch" aria-label={`${category} 허용`} aria-checked={on} disabled={busy || last} onClick={() => setTerms((current) => ({ ...current, allowedUse: toggleRegisterCategory(current.allowedUse, category) }))}><span /></button>{last && <p className={s.categoryNote}>한 가지 이상 선택해 주세요.</p>}{!on && <p className={s.categoryNote}>이 종류의 옷에는 내 얼굴을 쓸 수 없어요.</p>}</div>; })}</div>
-    <div className={s.priceCard}><h2>셀러 사용료 규칙</h2><ul>
+    <div className={s.priceCard}><h2>사용료 안내</h2><ul>
       <li>셀러 이용료: 1회 {formatKrw(STANDARD_UNIT_PRICE_KRW)}, 월 {formatKrw(MONTHLY_PASS_PRICE_KRW)} <span className={s.keepTogether}>(월 {MONTHLY_PASS_CUTS}회)</span></li>
       <li>결제 금액의 {MODEL_SHARE * 100}%를 정산받아요.</li>
     </ul></div>
+    <SecondaryUseSettings enabled={secondaryUseEnabled} onChange={setSecondaryUseEnabled} disabled={busy || sponsorshipLoading} />
     {sponsorship && <SponsorshipFields value={sponsorship} onChange={setSponsorship} disabled={busy || sponsorshipLoading} />}
     <div className={s.contractLink}>{legalLink('/license-agreement', '계약 요약과 전문 보기')}</div>
     <label className={`${s.consentLabel} ${s.priceConsent}`} htmlFor="price-agreed"><input id="price-agreed" type="checkbox" checked={priceAgreed} disabled={busy} onChange={(event) => setPriceAgreed(event.target.checked)} /><span>증서 발급하기를 누르면 FaceMarket의 사용료 분배 규정(모델 몫 {MODEL_SHARE * 100}%)에 동의하며, 초상 라이선스 계약에 서명되는 것으로 간주합니다.<span className={s.required}> (필수)</span></span></label>

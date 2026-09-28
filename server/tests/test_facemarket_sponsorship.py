@@ -1,6 +1,8 @@
 """Sponsorship preferences and notification interest stay separate from licensing."""
 
 import contextlib
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -60,6 +62,11 @@ class Cursor:
             if model_id == model["id"] and owner_id == model["user_id"]:
                 model.update(zip(FIELDS, values))
                 self.one = dict(model)
+        elif query.startswith("update fm_models set secondary_use_enabled"):
+            enabled, model_id, owner_id = params
+            if model_id == model["id"] and owner_id == model["user_id"]:
+                model["secondary_use_enabled"] = enabled
+                self.one = {"secondary_use_enabled": enabled}
         elif query.startswith("insert into fm_sponsorship_consent_events"):
             pass
         elif query.startswith("update fm_sponsorship_credentials"):
@@ -133,6 +140,7 @@ def sponsorship_api(monkeypatch, keypair, make_token):
             "instagram_followers": 1200, "instagram_followers_reported_at": NOW,
             "size_top": "M", "size_bottom_waist": 28,
             "sponsorship_profile_consent_at": NOW,
+            "secondary_use_enabled": False,
         },
         "closed": False, "interests": set(), "queries": [], "sellers": {SELLER},
         "credential_closes": [], "open_credentials": [], "revocations": [],
@@ -393,6 +401,96 @@ def test_sponsorship_records_separate_versioned_grants_and_withdrawals(sponsorsh
     events = [p for q, p in store['queries'] if q.startswith('insert into fm_sponsorship_consent_events')]
     assert len(events) == 4
     assert all(p[4] == 'withdrawn' for p in events[2:])
+
+
+def test_secondary_use_owner_toggle_records_only_value_changes(sponsorship_api):
+    client, store, _ = sponsorship_api
+    url = f"/v1/facemarket/models/{MODEL_ID}/secondary-use"
+    notice = {
+        "title": "2차 활용 허용",
+        "notice": "셀러가 내 이미지를 셀러 자신의 SNS 속 피드에 게시물로 올릴 수가 있어요. 셀러 브랜드 피드에 노출되고 싶다면 허용해 주세요. 허용한 모델들은 모델 선택창에서 강조되어, 셀러들에게 더 많은 선택을 받을 수 있어요.",
+    }
+    snapshot = json.dumps(notice, ensure_ascii=False, sort_keys=True)
+    expected_hash = hashlib.sha256(snapshot.encode()).hexdigest()
+
+    granted = client.patch(
+        url, json={"enabled": True},
+        headers={"X-Facemarket-Screen": "model_register", "X-Forwarded-For": "203.0.113.9"},
+    )
+    assert granted.status_code == 200, granted.text
+    assert granted.json() == {"secondaryUseEnabled": True}
+    events = [p for q, p in store["queries"] if q.startswith("insert into fm_sponsorship_consent_events")]
+    assert len(events) == 1
+    event = events[0]
+    assert event[:6] == (OWNER, MODEL_ID, OWNER, "secondary_use", "granted", "2026-09-28")
+    assert event[6] == expected_hash
+    assert event[7] == "203.0.113.9"
+    assert event[8] == "model_register"
+    assert json.loads(event[9]) == notice
+
+    same = client.patch(url, json={"enabled": True}, headers={"X-Facemarket-Screen": "model_mypage"})
+    assert same.status_code == 200, same.text
+    events = [p for q, p in store["queries"] if q.startswith("insert into fm_sponsorship_consent_events")]
+    assert len(events) == 1
+
+    withdrawn = client.patch(url, json={"enabled": False}, headers={"X-Facemarket-Screen": "model_mypage"})
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert withdrawn.json() == {"secondaryUseEnabled": False}
+    events = [p for q, p in store["queries"] if q.startswith("insert into fm_sponsorship_consent_events")]
+    assert len(events) == 2
+    assert events[1][3:6] == ("secondary_use", "withdrawn", "2026-09-28")
+    assert events[1][6] == expected_hash
+    assert events[1][8] == "model_mypage"
+
+    assert client.patch(url, json={"enabled": False}).status_code == 200
+    events = [p for q, p in store["queries"] if q.startswith("insert into fm_sponsorship_consent_events")]
+    assert len(events) == 2
+
+
+def test_secondary_use_update_requires_owner_and_open_account(sponsorship_api):
+    client, store, make_token = sponsorship_api
+    url = f"/v1/facemarket/models/{MODEL_ID}/secondary-use"
+    other = client.patch(
+        url, json={"enabled": True},
+        headers={"Authorization": f"Bearer {make_token(sub=SELLER)}"},
+    )
+    assert other.status_code == 404
+    assert store["model"]["secondary_use_enabled"] is False
+    store["closed"] = True
+    assert client.patch(url, json={"enabled": True}).status_code == 404
+    client.headers.pop("Authorization")
+    assert client.patch(url, json={"enabled": True}).status_code == 401
+
+
+def test_secondary_use_flag_is_in_owner_and_seller_model_responses(sponsorship_api):
+    client, store, make_token = sponsorship_api
+    store["model"]["secondary_use_enabled"] = True
+    seller = {"Authorization": f"Bearer {make_token(sub=SELLER)}"}
+    public = client.get("/v1/facemarket/public/models", headers=seller)
+    catalog = client.get("/v1/facemarket/models", headers=seller)
+    owner = client.get("/v1/facemarket/models/me")
+    assert public.status_code == catalog.status_code == owner.status_code == 200
+    assert public.json()["items"][0]["secondaryUseEnabled"] is True
+    assert catalog.json()[0]["secondaryUseEnabled"] is True
+    assert owner.json()[0]["secondaryUseEnabled"] is True
+
+
+def test_secondary_use_notice_version_and_forward_migration_are_fixed():
+    import pathlib
+    from app import legal_versions
+
+    notice = legal_versions.SECONDARY_USE_CONSENTS["secondary_use"]
+    assert notice == {
+        "section": "2차 활용 허용",
+        "required_for_enrollment": False,
+        "version": "2026-09-28",
+        "notice": "셀러가 내 이미지를 셀러 자신의 SNS 속 피드에 게시물로 올릴 수가 있어요. 셀러 브랜드 피드에 노출되고 싶다면 허용해 주세요. 허용한 모델들은 모델 선택창에서 강조되어, 셀러들에게 더 많은 선택을 받을 수 있어요.",
+    }
+    root = pathlib.Path(__file__).resolve().parents[2]
+    migration = root / "supabase/migrations/20260928120000_fm_secondary_use.sql"
+    sql = " ".join(migration.read_text().split()).lower()
+    assert "add column secondary_use_enabled boolean not null default false" in sql
+    assert "consent_type in ('sponsorship_participation', 'sponsorship_profile_collection', 'secondary_use')" in sql
 
 
 def test_sponsorship_participation_notice_uses_owner_copy():

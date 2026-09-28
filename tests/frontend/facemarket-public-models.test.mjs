@@ -36,6 +36,7 @@ const ITEM = {
     validDays: 365,
   },
   confirmedAt: '2026-09-07T10:00:00Z',
+  secondaryUseEnabled: true,
 };
 
 test('유효기간 라벨 — 1년·2년·90일·영구', () => {
@@ -96,10 +97,11 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
     validUntilText: '2027년 9월 7일까지',
   });
   assert.equal(model.verified, true);
+  assert.equal(model.secondaryUseEnabled, true);
   // 서버가 실수로 더 보내도(이메일·실명·생년월일) 화면 모델에는 안 실린다.
   assert.deepEqual(
     Object.keys(model).sort(),
-    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizeParts', 'sizes', 'spec', 'sponsorship', 'verified', 'weight'],
+    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'secondaryUseEnabled', 'sizeParts', 'sizes', 'spec', 'sponsorship', 'verified', 'weight'],
   );
 });
 
@@ -128,6 +130,7 @@ test('가상 예시 → 같은 모양: 확대 = 초상, 전신 = 본인 전신 �
   assert.equal(w1.weight, '49kg');
   assert.equal(w1.sizes, null);
   assert.equal(w1.verified, false);
+  assert.equal(w1.secondaryUseEnabled, false);
   assert.ok(w1.license.validity);
 });
 

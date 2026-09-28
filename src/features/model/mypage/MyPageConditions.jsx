@@ -1,4 +1,4 @@
-import { ModelSponsorshipSettings } from '../SponsorshipSettings.jsx';
+import { ModelSecondaryUseSettings, ModelSponsorshipSettings } from '../SponsorshipSettings.jsx';
 import { useRef, useState } from 'react';
 import { ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { updateLicenseTerms } from '@/lib/api/facemarket.js';
@@ -56,6 +56,7 @@ export function MyPageConditions({ license, model, revoked = false, registering 
       </div>
     </div>
     {message && !editing && <p className={s.muted} role="status">{message}</p>}
+    {model?.id && <ModelSecondaryUseSettings model={model} onModelChange={onModelChange} />}
     {model?.id && <ModelSponsorshipSettings model={model} onModelChange={onModelChange} />}
     <section className={s.licenseManagement}><div><h3>활동 관리</h3>
       <p>{revoked ? '종료된 라이선스와 데이터를 확인해요.' : registering ? '등록 이후의 활동 설정을 확인해요.' : '잠시 쉬어가기와 라이선스 종료를 관리해요.'}</p></div>

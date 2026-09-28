@@ -193,6 +193,9 @@ export async function modelComponentHarness({
           export const updateModelSponsorship = (id, body) => (
             api.updateModelSponsorship ? api.updateModelSponsorship(id, body) : Promise.resolve({ id, ...body })
           );
+          export const updateModelSecondaryUse = (...args) => (
+            api.updateModelSecondaryUse ? api.updateModelSecondaryUse(...args) : Promise.resolve({ secondaryUseEnabled: args[1] })
+          );
           export const getSponsorshipCredential = (...args) => (
             api.getSponsorshipCredential ? api.getSponsorshipCredential(...args)
               : Promise.resolve({ featureEnabled: false, status: 'none', vcId: null, issuedAt: null })
@@ -209,6 +212,9 @@ export async function modelComponentHarness({
           );
           export const listLicenses = (...args) => (
             api.listLicenses ? api.listLicenses(...args) : Promise.resolve([])
+          );
+          export const listModelUsage = (...args) => (
+            api.listModelUsage ? api.listModelUsage(...args) : Promise.resolve([])
           );
           export const listSettlements = (...args) => (
             api.listSettlements ? api.listSettlements(...args) : Promise.resolve([])

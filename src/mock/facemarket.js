@@ -15,6 +15,7 @@ export function createFacemarketMock({ scenario = 'new', storage = null } = {}) 
   let staged = false;
   let stagedId = null;
   let stageSequence = 0;
+  const secondaryUseByModel = new Map();
   if (scenario === 'saved') {
     try { application = JSON.parse(storage?.getItem(STORAGE_KEY) || 'null'); } catch { /* 빈 시작 */ }
   } else if (['review', 'approved', 'rejected'].includes(scenario)) {
@@ -32,6 +33,10 @@ export function createFacemarketMock({ scenario = 'new', storage = null } = {}) 
   };
   if (scenario !== 'saved') persist();
   return {
+    updateModelSecondaryUse: async (modelId, enabled) => {
+      secondaryUseByModel.set(modelId, enabled === true);
+      return { secondaryUseEnabled: secondaryUseByModel.get(modelId) };
+    },
     getCurrentApplication: async () => application ? structuredClone(application) : null,
     stageApplicationPhoto: async ({ kind }) => {
       staged = kind === 'profile';

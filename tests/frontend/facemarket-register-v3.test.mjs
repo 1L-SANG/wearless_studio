@@ -220,7 +220,7 @@ test('조건에는 옷, 사용료 규칙, 필수 동의가 있고 동의 전에�
     assert.ok(text.includes('내 얼굴을 사용할 옷 종류를 골라 주세요.'));
     assert.equal(findTree(tree, node => node.props?.['aria-label'] === '몸의 두께, 선택 항목'), null);
     assert.doesNotMatch(text, /몸의 두께/);
-    assert.ok(text.indexOf('셀러 사용료 규칙') < text.indexOf('증서 발급하기를 누르면 FaceMarket'));
+    assert.ok(text.indexOf('사용료 안내') < text.indexOf('증서 발급하기를 누르면 FaceMarket'));
     assert.ok(text.includes('셀러 이용료: 1회 14,900원, 월 49,900원 (월 10회)'));
     assert.ok(text.includes('결제 금액의 70%를 정산받아요.'));
     assert.ok(text.includes('증서 발급하기를 누르면 FaceMarket의 사용료 분배 규정(모델 몫 70%)에 동의하며, 초상 라이선스 계약에 서명되는 것으로 간주합니다. (필수)'));

@@ -1,6 +1,7 @@
 """협찬 동의 VC — holder 요청 모양과 실패 코드. SQL 전이는 _db 테스트가 본다."""
 
 import asyncio
+import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -19,6 +20,51 @@ ROW = {
     "attempts": 0,
 }
 SETTINGS = SimpleNamespace(opendid_holder_url="http://holder", opendid_holder_hmac_secret="s")
+
+
+def test_open_credential_ignores_newer_secondary_use_grant():
+    # 실제 SELECT를 SQL 엔진으로 실행한다. PG 타입 캐스트와 바인딩 표기만 바꾼다.
+    # 부분 유니크 인덱스와 backfill은 별도의 Postgres 회귀 테스트로도 검증한다.
+    with sqlite3.connect(":memory:") as db:
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            create table fm_sponsorship_consent_events (
+                id integer primary key, model_id text, user_id text, action text,
+                idempotency_key text, consent_type text, doc_version text,
+                document_sha256 text, occurred_at text);
+            create table fm_sponsorship_credentials (
+                id text default 'credential-1', model_id text, consent_event_key text,
+                consent_doc_version text, participation_doc_sha256 text,
+                profile_doc_sha256 text, consented_at text, status text default 'pending');
+            create unique index one_open on fm_sponsorship_credentials(model_id)
+                where status in ('pending', 'active');
+        """)
+        for kind, key, digest in [
+            ('sponsorship_participation', 'sponsorship-key', 'participation-hash'),
+            ('sponsorship_profile_collection', 'sponsorship-key', 'profile-hash'),
+            ('secondary_use', 'secondary-key', 'secondary-hash'),
+        ]:
+            db.execute("""insert into fm_sponsorship_consent_events
+                (model_id, user_id, action, idempotency_key, consent_type,
+                 doc_version, document_sha256, occurred_at)
+                values ('model-1', 'owner-1', 'granted', ?, ?, 'v1', ?, '2026-09-28')""",
+                (key, kind, digest))
+
+        class Cursor:
+            async def execute(self, sql, params):
+                self.result = db.execute(sql.replace('::text', '').replace('%s', '?'), params)
+
+            async def fetchall(self):
+                return self.result.fetchall()
+
+            async def fetchone(self):
+                return self.result.fetchone()
+
+        assert asyncio.run(svc.open_credential(Cursor(), model_id='model-1', user_id='owner-1')) == 'credential-1'
+        row = db.execute('select * from fm_sponsorship_credentials').fetchone()
+        assert row['consent_event_key'] == 'sponsorship-key'
+        assert row['participation_doc_sha256'] == 'participation-hash'
+        assert row['profile_doc_sha256'] == 'profile-hash'
 
 
 def _fake_holder(monkeypatch, responses):
