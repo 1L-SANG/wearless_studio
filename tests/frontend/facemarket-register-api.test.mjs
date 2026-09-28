@@ -210,3 +210,14 @@ test('협찬 저장은 증서 API와 분리하고 허용한 프로필 필드만 
     assert.deepEqual(h.calls[2].options.body, {});
   } finally { await h.close(); }
 });
+
+test('2차 활용 설정 API는 bool만 전용 경로와 화면 헤더로 보내요', async () => {
+  const h = await apiHarness();
+  try {
+    await h.api.updateModelSecondaryUse('model/1', true, 'model_register');
+    assert.equal(h.calls[0].path, '/v1/facemarket/models/model%2F1/secondary-use');
+    assert.equal(h.calls[0].options.method, 'PATCH');
+    assert.deepEqual(h.calls[0].options.body, { enabled: true });
+    assert.deepEqual(h.calls[0].options.headers, { 'X-Facemarket-Screen': 'model_register' });
+  } finally { await h.close(); }
+});

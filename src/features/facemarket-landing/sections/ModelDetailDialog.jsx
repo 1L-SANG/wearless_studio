@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { sellerStudioUrl } from '../data/publicModels.js';
 import { pricingParts } from '@/lib/facemarketPricing.js';
+import { SecondaryUseBadge } from '../../model/SecondaryUseBadge.jsx';
 import s from '../BrowseModels.module.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -132,6 +133,7 @@ export function ModelDetailDialog({ model, onClose }) {
   }, []);
 
   const isExample = model.kind === 'example';
+  const secondaryUseEnabled = model.kind === 'real' && model.secondaryUseEnabled === true;
   const meta = [model.gender, model.ageBand].filter(Boolean).join(' · ');
   const { license, sizeParts } = model;
 
@@ -160,10 +162,11 @@ export function ModelDetailDialog({ model, onClose }) {
             : <div className={s.dialogHeroEmpty}>전신샷 준비 중</div>}
           <div className={s.dialogHeroText}>
             <h2 className={s.dialogName} id="fm-model-dialog-title">{model.name}</h2>
-            {(meta || isExample) && (
+            {(meta || isExample || secondaryUseEnabled) && (
               <p className={s.dialogMeta}>
                 {meta && <span>{meta}</span>}
                 {isExample && <span className={s.exampleBadge}>예시</span>}
+                {secondaryUseEnabled && <SecondaryUseBadge enabled />}
               </p>
             )}
           </div>

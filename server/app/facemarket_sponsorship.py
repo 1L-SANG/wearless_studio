@@ -57,6 +57,16 @@ class SponsorshipPatch(CamelModel):
         return value
 
 
+class SecondaryUsePatch(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: StrictBool
+
+
+class SecondaryUseResult(CamelModel):
+    secondary_use_enabled: bool
+
+
 def sponsorship_view(row: dict, *, owner: bool = False, details: bool = True,
                      credential_gate: bool = False) -> dict:
     """협찬 필드의 노출 규칙.
@@ -94,6 +104,38 @@ SPONSORSHIP_NOTICES = {
         'refusal': '동의하지 않아도 모델 등록과 얼굴 사용료 정산은 이용할 수 있어요.',
     },
 }
+
+
+async def record_secondary_use_consent(cur, request, user_id, model_id, *, enabled,
+                                       previous_enabled, client_ip=None):
+    """2차 활용 설정 변경과 같은 트랜잭션에 화면 고지의 버전, 해시, IP를 기록해요."""
+    import hashlib
+    import ipaddress
+    import json
+    import uuid
+    from .legal_versions import SECONDARY_USE_CONSENTS
+
+    if enabled == previous_enabled:
+        return
+    spec = SECONDARY_USE_CONSENTS["secondary_use"]
+    notice = {"title": spec["section"], "notice": spec["notice"]}
+    snapshot = json.dumps(notice, ensure_ascii=False, sort_keys=True)
+    try:
+        raw_ip = client_ip or (request.client.host if request.client else None)
+        address = str(ipaddress.ip_address(raw_ip)) if raw_ip else None
+    except ValueError:
+        address = None
+    screen = request.headers.get("x-facemarket-screen", "model_mypage")
+    if screen not in {"model_register", "model_mypage"}:
+        screen = "model_mypage"
+    await cur.execute(
+        """insert into fm_sponsorship_consent_events
+           (user_id, model_id, actor_user_id, consent_type, action, doc_version,
+            document_sha256, ip_address, screen_id, notice_snapshot, idempotency_key, reason)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'model_toggle')""",
+        (user_id, model_id, user_id, "secondary_use", "granted" if enabled else "withdrawn", spec["version"],
+         hashlib.sha256(snapshot.encode()).hexdigest(), address, screen, snapshot, str(uuid.uuid4())),
+    )
 
 
 async def record_sponsorship_consents(cur, request, user_id, model_id, *, enabled, previous_enabled,

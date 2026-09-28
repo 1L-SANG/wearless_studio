@@ -1,7 +1,7 @@
 import { sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, updateModelSponsorship, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
+import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, reopenEnrollmentPhotos, updateModelSecondaryUse, updateModelSponsorship, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
 import { CX_AUTH_CONFIG_URL, runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toPreviewImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
@@ -45,7 +45,7 @@ export function ModelRegister() {
   const [busy, setBusy] = useState(false);
   const [consents, setConsents] = useState([false, false]);
   const [terms, setTerms] = useState(defaultRegisterTerms);
-  useState(null); // 기존 테스트의 상태 순서를 유지해요.
+  const [secondaryUseEnabled, setSecondaryUseEnabled] = useState(false);
   const [config, setConfig] = useState(null);
   const [, setLicense] = useState(null);
   const [session, setSession] = useState(null);
@@ -69,6 +69,7 @@ export function ModelRegister() {
   // "이전"으로 취소한 등록 id — 그 등록의 늦은 응답을 무시하는 데 써요(backFromIdCapture·finishIdDocument).
   const abandonedEnrollmentId = useRef(null);
   const savedSponsorshipEnabled = useRef(false);
+  const savedSecondaryUseEnabled = useRef(false);
 
   const showRecord = useCallback((record) => {
     setEnrollment(record);
@@ -205,13 +206,15 @@ export function ModelRegister() {
   useEffect(() => {
     const modelId = enrollment?.modelId;
     setSponsorshipReady(null); setSponsorshipError('');
-    if (!modelId) { setSponsorship(sponsorshipDraft()); return undefined; }
+    if (!modelId) { setSponsorship(sponsorshipDraft()); setSecondaryUseEnabled(false); return undefined; }
     let alive = true;
     listMyModels().then(models => {
       if (!alive) return;
       const model = models.find(item => item.id === modelId);
       if (!model) throw new Error('모델 정보를 불러오지 못했어요.');
       savedSponsorshipEnabled.current = model.sponsorshipEnabled === true;
+      savedSecondaryUseEnabled.current = model.secondaryUseEnabled === true;
+      setSecondaryUseEnabled(savedSecondaryUseEnabled.current);
       setSponsorship(sponsorshipDraft(model)); setSponsorshipReady(modelId);
     }).catch(error => { if (alive) setSponsorshipError(error.message || '협찬 설정을 불러오지 못했어요.'); });
     return () => { alive = false; };
@@ -459,6 +462,10 @@ export function ModelRegister() {
         await updateModelSponsorship(enrollment.modelId, payload, 'model_register');
         savedSponsorshipEnabled.current = payload.sponsorshipEnabled;
       }
+      if (secondaryUseEnabled !== savedSecondaryUseEnabled.current) {
+        await updateModelSecondaryUse(enrollment.modelId, secondaryUseEnabled, 'model_register');
+        savedSecondaryUseEnabled.current = secondaryUseEnabled;
+      }
       if (!mounted.current) return;
       saveRegisterDraft(enrollment.id, terms);
       issuing = true;
@@ -491,7 +498,7 @@ export function ModelRegister() {
       if (models.some((model) => model.status === 'awaiting_confirm')) { navigate('/model/confirm', { replace: true }); return; }
       if (!mounted.current) return;
       Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {}; setPreviews({});
-      setEnrollment(null); setLicense(null); setConsents([false, false]); setTerms(defaultRegisterTerms()); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setPhotoSlot(null); setSub(1); setStep('1');
+      setEnrollment(null); setLicense(null); setConsents([false, false]); setTerms(defaultRegisterTerms()); setSecondaryUseEnabled(false); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setPhotoSlot(null); setSub(1); setStep('1');
     } catch (requestError) { if (mounted.current) setError(requestError.message); }
     finally { if (mounted.current) setBusy(false); }
   };
@@ -546,7 +553,7 @@ export function ModelRegister() {
     };
     previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === '3') {
-    content = <>{renderConditions({ terms, setTerms, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading: sponsorshipReady !== enrollment?.modelId })}{sponsorshipReady !== enrollment?.modelId && !sponsorshipError && <p role="status" className={s.description}>저장된 협찬 설정을 불러오고 있어요.</p>}{sponsorshipError && <div role="alert"><p>{sponsorshipError}</p><button type="button" className={s.textLink} onClick={() => setSponsorshipRetry(value => value + 1)}>설정 다시 불러오기</button></div>}</>;
+    content = <>{renderConditions({ terms, setTerms, busy, priceAgreed, setPriceAgreed, sponsorship, setSponsorship, sponsorshipLoading: sponsorshipReady !== enrollment?.modelId, secondaryUseEnabled, setSecondaryUseEnabled })}{sponsorshipReady !== enrollment?.modelId && !sponsorshipError && <p role="status" className={s.description}>저장된 협찬 설정을 불러오고 있어요.</p>}{sponsorshipError && <div role="alert"><p>{sponsorshipError}</p><button type="button" className={s.textLink} onClick={() => setSponsorshipRetry(value => value + 1)}>설정 다시 불러오기</button></div>}</>;
     next = { label: busy ? '저장하고 있어요' : '라이선스 증서 발급하기', action: submitConditions, disabled: enrollment?.status !== 'license_pending' || !terms.allowedUse.length || !priceAgreed || sponsorshipReady !== enrollment?.modelId, hint: assetsPending ? '사진을 정리하고 있어요. 잠시 뒤 발급할 수 있어요.' : priceAgreed ? '필수 동의를 마쳤어요' : '필수 동의에 체크해 주세요' };
     previous = { label: '이전', action: () => { setStep('2'); setSub(PHOTO_REVIEW_SUB); setEditingPhotos(false); } };
   } else if (step === 'done') {

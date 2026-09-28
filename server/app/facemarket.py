@@ -52,8 +52,9 @@ from .facemarket_sponsorship_vc import (
     sponsorship_vc_enabled,
 )
 from .facemarket_sponsorship import (
-    SPONSORSHIP_COLUMNS, SponsorshipFields, SponsorshipPatch, SponsorshipResult,
-    sponsorship_view, record_sponsorship_consents,
+    SPONSORSHIP_COLUMNS, SecondaryUsePatch, SecondaryUseResult, SponsorshipFields,
+    SponsorshipPatch, SponsorshipResult, sponsorship_view, record_secondary_use_consent,
+    record_sponsorship_consents,
 )
 from .models import CamelModel, ErrorResponse
 from .r2 import MIME_EXT
@@ -119,6 +120,7 @@ class ModelCard(SponsorshipFields):
     opt_lookbook_person_replace: bool = False
     # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
+    secondary_use_enabled: bool = False
 
 
 class OwnedModelCard(ModelCard):
@@ -508,7 +510,7 @@ async def identity_verify(
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
                     "(assets_status = 'ready') as assets_ready, redo_count, "
-                    + ", ".join(SPONSORSHIP_COLUMNS))
+                    + ", ".join(SPONSORSHIP_COLUMNS) + ", secondary_use_enabled")
 
 _CURRENT_CARD_JOINS = f"""
 join fm_biometric_enrollments e
@@ -571,6 +573,7 @@ _MODEL_CARD_COLS_ENRICHED = (
     "  as opt_lookbook_person_replace, "
     "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri, "
     + ", ".join(f"m.{column}" for column in SPONSORSHIP_COLUMNS)
+    + ", m.secondary_use_enabled"
 )
 
 _MODEL_PLACEHOLDER_SVG = (
@@ -777,6 +780,42 @@ async def update_model_sponsorship(
                     await open_sponsorship_credential(cur, model_id=model_id, user_id=user_id)
             elif current['sponsorship_enabled'] and not merged['sponsorship_enabled']:
                 await close_sponsorship_credentials(cur, [model_id])
+        await conn.commit()
+    return updated
+
+
+@router.patch("/models/{model_id}/secondary-use", response_model=SecondaryUseResult)
+async def update_model_secondary_use(
+    model_id: str, body: SecondaryUsePatch, request: Request,
+    user_id: str = Depends(require_user),
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select secondary_use_enabled from fm_models
+                    where id = %s and user_id = %s for update""",
+                (model_id, user_id),
+            )
+            current = await cur.fetchone()
+            if current is None:
+                raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+            previous_enabled = bool(current.get("secondary_use_enabled"))
+            if body.enabled != previous_enabled:
+                await cur.execute(
+                    """update fm_models set secondary_use_enabled = %s
+                        where id = %s and user_id = %s
+                        returning secondary_use_enabled""",
+                    (body.enabled, model_id, user_id),
+                )
+                updated = await cur.fetchone()
+                await record_secondary_use_consent(
+                    cur, request, user_id, model_id, enabled=body.enabled,
+                    previous_enabled=previous_enabled, client_ip=_request_client_ip(request),
+                )
+            else:
+                updated = {"secondary_use_enabled": previous_enabled}
         await conn.commit()
     return updated
 
@@ -988,6 +1027,12 @@ class LicenseCard(CamelModel):
     def empty_forbidden_use(cls, _value):
         # 기존 라이선스도 응답 계약의 빈 배열로 내보낸다. 저장 이력은 유지한다.
         return []
+
+
+class OwnerLicenseCard(LicenseCard):
+    """인증된 모델 본인에게만 제공하는 라이선스 카드."""
+
+    holder_name: str | None = None
 
 
 class CreateLicenseRequest(CamelModel):
@@ -1805,7 +1850,7 @@ async def update_license_terms(
 
 @router.get(
     "/licenses",
-    response_model=list[LicenseCard],
+    response_model=list[OwnerLicenseCard],
     responses={401: {"model": ErrorResponse, "description": "인증 실패"}},
     tags=["FaceMarket"],
     summary="내 라이선스 목록",
@@ -1821,8 +1866,14 @@ async def list_licenses(
             revoked_filter = "" if include_revoked else "and l.status <> 'revoked'"
             await cur.execute(
                 # 기본값은 기존 계약을 지킨다. 이력 화면만 includeRevoked=true 로 죽은 카드를 요청한다.
-                f"""select {_LICENSE_CARD_COLS_L} from fm_licenses l
+                f"""select {_LICENSE_CARD_COLS_L}, owner_application.applicant_name as holder_name
+                    from fm_licenses l
                     join fm_models m on m.id = l.model_id
+                    left join lateral (
+                        select applicant_name from fm_model_applications
+                        where user_id = m.user_id and status = 'approved'
+                        order by created_at desc limit 1
+                    ) owner_application on true
                     where m.user_id = %s {revoked_filter}
                     order by l.created_at desc limit 200""",
                 (user_id,),

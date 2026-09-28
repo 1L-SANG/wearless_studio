@@ -463,9 +463,10 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         "sponsorshipEnabled", "instagramHandle", "instagramFollowers",
         "instagramFollowersReportedAt", "sizeTop", "sizeBottomWaist",
         # 동의 시각은 본인에게만 값이 실리고 카탈로그에서는 항상 None 이다.
-        "sponsorshipProfileConsentAt",
+        "sponsorshipProfileConsentAt", "secondaryUseEnabled",
     }
     assert card["sponsorshipProfileConsentAt"] is None
+    assert card["secondaryUseEnabled"] is False
     assert card["optLocationCuts"] is False          # 기본값 = 스튜디오 전용
     assert card["optLookbookPersonReplace"] is False
     assert card["status"] == "verified"

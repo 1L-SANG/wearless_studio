@@ -136,6 +136,14 @@
   letter-spacing: 0.02em;
 }
 
+.secondaryUseBadge {
+  position: absolute;
+  right: 0.65rem;
+  bottom: 0.65rem;
+  z-index: 1;
+}
+.secondaryUseBadge ~ .cardPill { bottom: 3rem; }
+
 /* hover·focus 에서 **사진 안쪽 아래**로 떠오르는 검정 pill "모델 정보 확인"(2026-09-04 오너
    지시). 사진 아랫변에서 0.75rem 띄운 자리가 목적지고, 처음엔 그보다 8px 아래에 투명하게
    있다가 올라오며 나타난다. 터치에는 hover 가 없지만 카드 자체가 버튼이라 탭하면 같은 창이 열린다. */

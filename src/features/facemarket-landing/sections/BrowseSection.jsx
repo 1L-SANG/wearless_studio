@@ -25,6 +25,7 @@ import { BROWSE_MODELS } from '../data/browseModels.js';
 import { fetchPublicModels, fromExampleModel } from '../data/publicModels.js';
 import { pricingParts } from '@/lib/facemarketPricing.js';
 import { ModelDetailDialog } from './ModelDetailDialog.jsx';
+import { SecondaryUseBadge } from '../../model/SecondaryUseBadge.jsx';
 import s from '../BrowseModels.module.css';
 
 const EXAMPLE_MODELS = Object.freeze(BROWSE_MODELS.map(fromExampleModel));
@@ -110,13 +111,14 @@ export function BrowseSection() {
         {models.map((model) => (
           <li className={s.card} key={`${model.kind}-${model.id}`}>
             <button
-              aria-label={`${model.name} 모델 정보 보기`}
+              aria-label={`${model.name} 모델 정보 보기${model.kind === 'real' && model.secondaryUseEnabled === true ? ', 2차 활용 가능' : ''}`}
               className={s.cardMedia}
               onClick={() => setOpenId(model.id)}
               type="button"
             >
               <img alt={model.alt} className={s.cardImage} loading="lazy" src={model.closeup} />
               {model.kind === 'example' && <span aria-hidden="true" className={s.cardBadge}>예시</span>}
+              {model.kind === 'real' && model.secondaryUseEnabled === true && <SecondaryUseBadge enabled className={s.secondaryUseBadge} />}
               {/* hover·focus 에서 사진 안쪽 아래로 떠오르는 검정 pill. aria-hidden 인 이유는 위
                   aria-label 이 같은 말을 이미 하고 있어서다 — 안 그러면 "모델 정보"를 두 번 읽는다. */}
               <span aria-hidden="true" className={s.cardPill}>

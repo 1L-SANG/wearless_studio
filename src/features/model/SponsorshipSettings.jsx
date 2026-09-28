@@ -1,11 +1,66 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { getSponsorshipCredential, updateModelSponsorship } from '@/lib/api/facemarket.js';
+import { getSponsorshipCredential, updateModelSecondaryUse, updateModelSponsorship } from '@/lib/api/facemarket.js';
 import { BOTTOM_WAIST_SIZES, TOP_SIZES, sponsorshipDraft, sponsorshipPayload } from './sponsorshipOptions.js';
 import {
   SPONSORSHIP_OFF_NOTICE, sponsorshipCredentialPollDelay,
   sponsorshipCredentialCopy, sponsorshipOffNeedsNotice,
 } from './sponsorshipCredential.js';
 import s from './SponsorshipSettings.module.css';
+
+export function SecondaryUseSettings({ enabled, onChange, disabled = false }) {
+  const id = useId();
+  return <section className={s.card} aria-labelledby={`${id}-title`}>
+    <div className={s.heading}>
+      <h2 id={`${id}-title`}>2차 활용 허용</h2>
+      <button type="button" role="switch" aria-checked={enabled} aria-label="2차 활용 허용" className={s.toggle} disabled={disabled} onClick={() => onChange(!enabled)}><span /></button>
+    </div>
+    <p className={s.description}>셀러가 내 이미지를 셀러 자신의 SNS 속 피드에 게시물로 올릴 수가 있어요. 셀러 브랜드 피드에 노출되고 싶다면 허용해 주세요. 허용한 모델들은 모델 선택창에서 강조되어, 셀러들에게 더 많은 선택을 받을 수 있어요.</p>
+  </section>;
+}
+
+export function ModelSecondaryUseSettings({ model, onModelChange, disabled = false }) {
+  const [enabled, setEnabled] = useState(model?.secondaryUseEnabled === true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [failed, setFailed] = useState(false);
+  const inFlight = useRef(false);
+  const latestModel = useRef(model);
+  useEffect(() => {
+    latestModel.current = model;
+    setEnabled(model?.secondaryUseEnabled === true);
+  }, [model?.id, model?.secondaryUseEnabled]);
+  useEffect(() => {
+    setMessage('');
+    setFailed(false);
+  }, [model?.id]);
+  const change = async next => {
+    if (disabled || inFlight.current || !model?.id) return;
+    const modelId = model.id;
+    const previous = latestModel.current?.secondaryUseEnabled === true;
+    setEnabled(next); setBusy(true); setMessage(''); setFailed(false); inFlight.current = true;
+    try {
+      const updated = await updateModelSecondaryUse(modelId, next, 'model_mypage');
+      if (latestModel.current?.id !== modelId) return;
+      const updatedModel = { ...latestModel.current, ...updated };
+      latestModel.current = updatedModel;
+      setEnabled(updatedModel.secondaryUseEnabled === true);
+      onModelChange?.(updatedModel);
+      setMessage('2차 활용 설정을 저장했어요.');
+    } catch {
+      if (latestModel.current?.id !== modelId) return;
+      setEnabled(previous);
+      setFailed(true);
+      setMessage('2차 활용 설정을 저장하지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+  return <div className={s.settings}>
+    <SecondaryUseSettings enabled={enabled} onChange={change} disabled={disabled || busy} />
+    {message && <p className={s.message} role={failed ? 'alert' : 'status'}>{message}</p>}
+  </div>;
+}
 
 export function SponsorshipFields({ value, onChange, disabled = false, notice = null }) {
   const id = useId();

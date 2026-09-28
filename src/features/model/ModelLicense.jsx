@@ -34,6 +34,7 @@ import {
     fetchLicenseFaceUrl,
     getEnrollment,
     listLicenses,
+    listMyModels,
     listModelUsage,
     revokeLicense,
     verifyLicensePublic,
@@ -85,11 +86,8 @@ const USE_DESCRIPTIONS = {
     "홈웨어·잠옷": "파자마·라운지웨어",
 };
 
-/* ── 얼굴 VC 카드 (PDF step02 — 파란 카드, 모바일 폭 기준) ────────
-   앞면 = 얼굴 + 신원(마스킹) + VC ID + 용도 + 단가 + 유효기간, 뒷면 = QR.
-   신원(nameMasked·age)은 공개 검증 API 에서 읽는다 — LicenseCard 응답에 그 필드가 없고,
-   심사위원이 QR 로 보게 될 값과 카드가 **같은 소스**여야 어긋나지 않는다. */
-function VcCard({ license, onRevoked, push }) {
+/* 얼굴 VC 카드. 본인 목록의 holderName을 우선하고, 구 응답은 공개 검증의 가려진 이름으로 폴백한다. */
+export function VcCard({ license, secondaryUseEnabled = false, onRevoked, push }) {
     const [faceUrl, setFaceUrl] = useState(null);
     const [pub, setPub] = useState(null); // { model:{nameMasked,age}, valid, status, ... }
     const [qrUrl, setQrUrl] = useState(null);
@@ -97,8 +95,7 @@ function VcCard({ license, onRevoked, push }) {
     const [revoking, setRevoking] = useState(false);
 
     const verifyUrl = `${window.location.origin}/verify/${license.id}`;
-    // 카드 프로필 = 모델 대표 이미지(셀러가 고른 사진). 없으면(구 라이선스·생성 직후 RETURNING)
-    // 검증 얼굴로 폴백한다. 검증된 얼굴+digest 는 신뢰 핵심이라 사라지지 않고 코너 배지로 남는다.
+    // 카드 프로필 = 모델 대표 이미지(셀러가 고른 사진). 없으면 구 라이선스의 검증 얼굴로 폴백한다.
     const coverUrl = license.coverImageUrl || null;
 
     // 얼굴 — 인증 게이트로만(공개 URL 금지). 언마운트가 fetch 보다 빠르면 즉시 해제(누수 방지).
@@ -197,27 +194,25 @@ function VcCard({ license, onRevoked, push }) {
     };
 
     const vcShort = shortVc(license.vcId);
+    const holderName = license.holderName || pub?.model?.nameMasked || "";
+    const allowedUse = license.allowedUse?.join(" · ") || "";
+    const copyVcId = (event) => {
+        if (!license.vcId) return;
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", license.vcId);
+    };
 
     return (
-        <article className={`${s.vc}${isActive ? "" : " " + s.vcOff}`}>
-            <header className={s.vcTop}>
-                <span className={s.vcBrand}>
-                    <Icon name="checkSquare" size={13} />
-                    얼굴 라이선스 VC
-                </span>
-                {/* 상태는 색만으로 알리지 않는다 — 점(형태) + 글자를 함께 둔다(WCAG 1.4.1). */}
-                <span
-                    className={`${s.vcStatus}${isActive ? "" : " " + s.vcStatusOff}`}
-                >
-                    <i className={s.vcStatusDot} aria-hidden="true" />
-                    {statusLabel}
-                </span>
-            </header>
-
-            {/* 앞면·뒷면 높이가 달라 토글할 때 카드가 튀었다. 최소 높이를 주는 자리. */}
-            <div className={s.vcBody}>
+        <div className={s.vcWrap}>
+            <article className={s.vc}>
                 {showQr ? (
-                    <div className={s.vcQr}>
+                    <button
+                        type="button"
+                        className={s.vcQrPanel}
+                        aria-label="증서로 돌아가기"
+                        aria-pressed={true}
+                        onClick={() => setShowQr(false)}
+                    >
                         {qrUrl ? (
                             <img
                                 src={qrUrl}
@@ -227,138 +222,135 @@ function VcCard({ license, onRevoked, push }) {
                         ) : (
                             <div className={s.vcQrSkel} />
                         )}
-                        <p className={s.vcQrHint}>
+                        <span className={s.vcQrHint}>
                             스캔하면 이 라이선스가 유효한지 로그인 없이 확인할 수
                             있어요.
-                        </p>
+                        </span>
                         <code className={s.vcQrUrl}>{verifyUrl}</code>
-                    </div>
+                    </button>
                 ) : (
                     <>
-                        <div className={s.vcId}>
-                            {/* 얼굴 — objectURL 만. 파기 시 게이트가 닫히면 플레이스홀더로 강등된다. */}
-                            <div className={s.vcFaceWrap}>
-                                <div className={s.vcFace}>
-                                    {coverUrl ? (
-                                        <img
-                                            src={coverUrl}
-                                            alt="모델 대표 이미지"
-                                        />
-                                    ) : faceUrl ? (
-                                        <img src={faceUrl} alt="라이선스 얼굴" />
-                                    ) : (
-                                        <span className={s.vcFaceEmpty}>
-                                            <Icon name="person" size={22} />
-                                        </span>
-                                    )}
-                                </div>
-                                {coverUrl && faceUrl && (
-                                    <span
-                                        className={s.vcVerifiedBadge}
-                                        title="검증된 얼굴"
-                                    >
-                                        <img src={faceUrl} alt="검증된 얼굴" />
-                                    </span>
-                                )}
-                            </div>
-                            <div className={s.vcWho}>
-                                <div className={s.vcName}>
-                                    {pub?.model?.nameMasked ?? "—"}
-                                    {pub?.model?.age != null && (
-                                        <span className={s.vcAge}>
-                                            {" "}
-                                            · {pub.model.age}세
-                                        </span>
-                                    )}
-                                </div>
-                                {vcShort ? (
-                                    <div
-                                        className={s.vcVcid}
-                                        title={license.vcId}
-                                    >
-                                        <span>VC ID</span>{" "}
-                                        <code>{vcShort}</code>
-                                    </div>
-                                ) : (
-                                    <div className={s.vcVcid}>
-                                        <span>VC 발급 대기</span>
-                                    </div>
-                                )}
+                        <div className={s.vcHero}>
+                            {coverUrl ? (
+                                <img
+                                    src={coverUrl}
+                                    alt="모델 대표 이미지"
+                                    className={s.vcHeroImage}
+                                />
+                            ) : faceUrl ? (
+                                <img
+                                    src={faceUrl}
+                                    alt="라이선스 얼굴"
+                                    className={s.vcHeroImage}
+                                />
+                            ) : (
+                                <span className={s.vcFaceEmpty}>
+                                    <Icon name="person" size={32} />
+                                </span>
+                            )}
+                            <div className={s.vcOverlay}>
+                                <img
+                                    src="/assets/brand/facemarket-logo.svg"
+                                    alt="FaceMarket"
+                                    className={s.vcLogo}
+                                />
+                                <span
+                                    className={`${s.vcStatus}${isActive ? "" : " " + s.vcStatusOff}`}
+                                >
+                                    <i className={s.vcStatusDot} aria-hidden="true" />
+                                    {statusLabel}
+                                </span>
                             </div>
                         </div>
-
-                        {/* 단가·유효기간은 이 카드에서 가장 먼저 읽혀야 하는 두 숫자다.
-                            조건 목록 안의 한 줄이 아니라 나란한 두 칸으로 올렸다(정보는 그대로). */}
-                        <dl className={s.vcFigures}>
-                            <div className={s.vcFigure}>
-                                <dt>건당 단가</dt>
-                                <dd className={s.vcPrice}>
-                                    {won(license.unitPrice)}
-                                    <em>/건</em>
-                                </dd>
-                            </div>
-                            <div className={s.vcFigure}>
-                                <dt>유효기간</dt>
-                                <dd className={s.vcValid}>
-                                    {license.licenseValidUntil ? (
-                                        <>
-                                            ~{fmtYm(license.licenseValidUntil)}
-                                            <span className={s.vcDim}>
-                                                {fmtDate(license.licenseValidUntil)}까지
-                                            </span>
-                                        </>
-                                    ) : '철회 시까지'}
-                                </dd>
-                            </div>
-                        </dl>
-
-                        {/* 허용/금지가 둘 다 비면 이 <dl> 은 자식이 없다 — :empty 로 접는다.
-                            JSX 에 조건을 하나 더 얹는 대신 CSS 로 처리해 렌더 흐름을 그대로 뒀다. */}
-                        <dl className={s.vcRows}>
-                            {license.allowedUse?.length > 0 && (
-                                <div className={s.vcRow}>
-                                    <dt>허용 용도</dt>
-                                    <dd className={s.vcTags}>
-                                        {license.allowedUse.map((u) => (
-                                            <span
-                                                key={u}
-                                                className={s.tagAllow}
-                                            >
-                                                {u}
-                                            </span>
-                                        ))}
+                        <div className={s.vcInfo}>
+                            <h2 className={s.vcName}>{holderName}</h2>
+                            <p className={s.vcSub}>초상 라이선스 · OpenDID 발급</p>
+                            <dl className={s.vcTerms}>
+                                <div>
+                                    <dt>사용 범위</dt>
+                                    <dd>
+                                        {/* 좁은 칸에서 "공식 / SNS 게시물"처럼 말덩이 중간에서 끊기지 않게 묶어요. */}
+                                        {secondaryUseEnabled
+                                            ? <><span className={s.keep}>상세페이지 착용컷 ·</span> <span className={s.keep}>공식 SNS 게시물</span></>
+                                            : "상세페이지 착용컷"}
                                     </dd>
                                 </div>
-                            )}
-
-                        </dl>
+                                <div>
+                                    <dt>허용 품목</dt>
+                                    <dd>{allowedUse}</dd>
+                                </div>
+                                <div>
+                                    <dt>단가</dt>
+                                    <dd>{won(license.unitPrice)} / 건</dd>
+                                </div>
+                                <div>
+                                    <dt>유효기간</dt>
+                                    <dd>
+                                        {license.licenseValidUntil ? (
+                                            <>
+                                                ~{fmtYm(license.licenseValidUntil)}
+                                                <span className={s.vcValidDetail}>
+                                                    {fmtDate(license.licenseValidUntil)}까지
+                                                </span>
+                                            </>
+                                        ) : (
+                                            "철회 시까지"
+                                        )}
+                                    </dd>
+                                </div>
+                            </dl>
+                            <div className={s.vcStrip}>
+                                <button
+                                    type="button"
+                                    className={s.vcQrToggle}
+                                    aria-label="QR 크게 보기"
+                                    aria-pressed={false}
+                                    onClick={() => setShowQr(true)}
+                                >
+                                    {qrUrl ? (
+                                        <img
+                                            src={qrUrl}
+                                            alt=""
+                                            aria-hidden="true"
+                                            className={s.vcQrThumb}
+                                        />
+                                    ) : (
+                                        <span className={s.vcQrThumbSkel} />
+                                    )}
+                                </button>
+                                <p className={s.vcStripCopy}>
+                                    QR로 누구나 이 허락을 확인할 수 있어요
+                                    {vcShort ? (
+                                        <code
+                                            className={s.vcVcid}
+                                            title={license.vcId}
+                                            onCopy={copyVcId}
+                                        >
+                                            {vcShort}
+                                        </code>
+                                    ) : (
+                                        <span className={s.vcVcid}>VC 발급 대기</span>
+                                    )}
+                                </p>
+                            </div>
+                        </div>
                     </>
                 )}
-            </div>
+            </article>
 
-            <footer className={s.vcActions}>
-                <button
-                    type="button"
-                    className={s.vcBtn}
-                    aria-pressed={showQr}
-                    onClick={() => setShowQr((v) => !v)}
-                >
-                    <Icon name={showQr ? "person" : "grid"} size={14} />
-                    {showQr ? "카드 보기" : "QR 보기"}
-                </button>
-                {isActive && (
+            {isActive && (
+                <div className={s.vcActions}>
                     <button
                         type="button"
                         className={`${s.vcBtn} ${s.vcBtnDanger}`}
                         onClick={onRevoke}
                         disabled={revoking}
                     >
-                        <Icon name="ban" size={14} />
                         {revoking ? "해지 중…" : "해지"}
                     </button>
-                )}
-            </footer>
-        </article>
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -541,6 +533,7 @@ export function ModelLicense() {
     const [issuedId, setIssuedId] = useState(null); // 방금 발급 — 카드로 스크롤·강조
     const issuedRef = useRef(null);
     const [usage, setUsage] = useState([]);
+    const [ownedModels, setOwnedModels] = useState([]);
     // 이 화면은 라이선스 "목록"이지만 실제로는 모델 1인당 모델도 하나다(라이선스는
     // 재등록 때마다 늘 수 있어도 model_id 는 같다) — 첫 라이선스의 modelId 로 조회한다.
     const usageModelId = licenses[0]?.modelId;
@@ -548,7 +541,9 @@ export function ModelLicense() {
     const load = useCallback(async () => {
         setPhase("loading");
         try {
-            setLicenses(await listLicenses());
+            const [nextLicenses, nextModels] = await Promise.all([listLicenses(), listMyModels().catch(() => [])]);
+            setLicenses(nextLicenses);
+            setOwnedModels(nextModels);
             if (termsRequested) {
                 try {
                     setEnrollmentRecord(await getEnrollment(requestedEnrollmentId));
@@ -708,6 +703,7 @@ export function ModelLicense() {
                                     >
                                         <VcCard
                                             license={lic}
+                                            secondaryUseEnabled={ownedModels.find(model => model.id === lic.modelId)?.secondaryUseEnabled === true}
                                             onRevoked={load}
                                             push={push}
                                         />

@@ -862,6 +862,13 @@ export async function updateModelSponsorship(modelId, settings, screen = 'sponso
   return updated;
 }
 
+export async function updateModelSecondaryUse(modelId, enabled, screen = 'model_mypage') {
+  if (MOCK) return (await mockApi()).updateModelSecondaryUse(modelId, enabled, screen);
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/secondary-use`, {
+    method: 'PATCH', body: { enabled }, headers: { 'X-Facemarket-Screen': screen },
+  });
+}
+
 // GET …/sponsorship/credential — 협찬 동의 증명서(VC) 상태(본인 모델만).
 // → { featureEnabled, status: none|waiting_license|pending|active, vcId, issuedAt }.
 // featureEnabled=false 면 화면은 지금과 똑같이 아무것도 더 그리지 않아요.

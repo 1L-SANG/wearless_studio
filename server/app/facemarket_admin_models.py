@@ -121,6 +121,7 @@ class ProfileLicenseView(CamelModel):
 
 class ModelProfileView(SponsorshipFields):
     display_name: str
+    secondary_use_enabled: bool = False
     gender: str | None = None
     #: "20대 초반"처럼 구간만. 생년월일·정확한 나이는 절대 내보내지 않는다(명세 §3.4).
     age_band: str | None = None
@@ -234,6 +235,7 @@ select m.id::text as id, m.display_name, m.gender,
        m.sponsorship_enabled, m.instagram_handle, m.instagram_followers,
        m.instagram_followers_reported_at, m.size_top, m.size_bottom_waist,
        m.sponsorship_profile_consent_at,
+       m.secondary_use_enabled,
        """ + ACTIVE_CREDENTIAL_SQL + """ as sponsorship_credential_active
   from fm_models m
   join fm_biometric_enrollments e
@@ -315,6 +317,7 @@ def _profile_view(row: dict, *, owner: bool = False, details: bool = True,
                   credential_gate: bool = False) -> dict:
     return {
         **sponsorship_view(row, owner=owner, details=details, credential_gate=credential_gate),
+        "secondary_use_enabled": bool(row.get("secondary_use_enabled")),
         "display_name": row["display_name"],
         "gender": row.get("gender"),
         "age_band": _age_band(row.get("birthdate")),
