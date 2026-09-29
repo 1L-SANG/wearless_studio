@@ -12,6 +12,8 @@
    MID 가 하나뿐인 상점이면 VITE_TOSS_BILLING_CLIENT_KEY 를 비워 두면 된다 —
    일반결제 키로 떨어진다. 서버의 fallback 규칙과 같은 모양이다. */
 
+import { IS_PG_REVIEW_HOST } from './host.js';
+
 /** 1회 충전(requestPayment) 용 — 일반결제 MID 의 클라이언트 키. */
 export const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
 
@@ -41,8 +43,10 @@ export const TOPUP_ENABLED = false;
    지시서 docs/superpowers/plans/2026-09-22-bank-transfer-payments.md. 사용자가 사업자 통장으로
    입금하고 관리자가 확인해 지급한다(충전 팩 + 구독 플랜 1개월 이용권). 켜져 있으면 요금제
    버튼이 토스 결제창 대신 신청 창을 열고, 충전 탭도 보인다(계좌이체로는 충전을 팔 수 있다).
-   토스가 열리면 false 로 바꾼다. 코드는 남긴다. 계좌 정보는 서버(/v1/bank-transfer/info)가 준다. */
-export const BANK_TRANSFER_ENABLED = true;
+   토스가 열리면 false 로 바꾼다. 코드는 남긴다. 계좌 정보는 서버(/v1/bank-transfer/info)가 준다.
+   심사 전용 호스트(toss.wearless.kr)만 예외로 끈다 — 토스가 그 주소에서 결제창까지 심사한다
+   (lib/host.js IS_PG_REVIEW_HOST). ai.wearless.kr 손님은 계속 계좌이체다. */
+export const BANK_TRANSFER_ENABLED = !IS_PG_REVIEW_HOST;
 
 // 토스 심사용 임시 이메일 로그인. 심사 종료 후 false로 바꾸고 재배포한다.
 // 화면 노출만 제어한다. 사용한 심사 계정과 세션도 별도로 비활성화해야 한다.

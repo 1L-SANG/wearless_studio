@@ -84,6 +84,21 @@ function detectAdmin() {
 
 export const IS_ADMIN = detectAdmin();
 
+/* toss.wearless.kr — 토스페이먼츠 심사 전용 셀러 호스트(2026-09-29).
+   ai.wearless.kr 과 같은 셀러 문서·API·계정·세션(.wearless.kr 쿠키)이다. 다른 건 결제 경로
+   하나 — 운영(ai)은 PG 심사 전이라 계좌이체로 받고, 이 호스트만 토스 정기결제 창을 연다
+   (lib/tossKeys.js BANK_TRANSFER_ENABLED). 토스가 이 주소로 심사하겠다고 했다.
+   정확히 이 호스트명일 때만 켠다 — 접두사·접미사 매칭이면 남의 도메인에서 켜질 수 있다.
+   심사가 끝나 ai 도 토스로 돌아가면 이 호스트는 내린다(docs/runbooks/pg-review-login.md). */
+export const PG_REVIEW_HOST = 'toss.wearless.kr';
+
+export function isPgReviewHost(hostname) {
+  return (hostname || '').toLowerCase() === PG_REVIEW_HOST;
+}
+
+export const IS_PG_REVIEW_HOST =
+  typeof window !== 'undefined' && isPgReviewHost(window.location?.hostname);
+
 /* 진입 문서 ↔ 호스트 불일치 가드.
 
    Vercel 은 **파일이 실제로 있는 경로**에 rewrite 를 태우지 않는다. 그래서 셀러 도메인에서

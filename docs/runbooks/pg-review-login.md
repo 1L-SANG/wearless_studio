@@ -6,8 +6,23 @@
 
 심사 전에 일반 셀러 권한의 이메일·비밀번호 계정을 Supabase에 준비하고, 이메일 확인이 완료된 계정으로 실제 로그인과 요금제 진입을 검증한다. 계정 생성과 운영 배포는 이 코드 변경에 포함되지 않는다. 계정 정보는 소스나 공개 환경변수에 넣지 않는다.
 
+## 심사 전용 호스트 toss.wearless.kr (2026-09-29)
+
+운영(ai.wearless.kr)은 PG 심사 전이라 계좌이체로 받는다. 토스는 별도 주소에서 결제창까지 심사할 수 있다고 해서 `toss.wearless.kr`을 연다. 셀러 번들·API·계정·세션은 ai와 같고, 다른 건 결제 경로 하나다. `src/lib/host.js`의 `IS_PG_REVIEW_HOST`가 참이면 `tossKeys.js`의 `BANK_TRANSFER_ENABLED`가 거짓이 되어 구독 카드가 토스 정기결제 창(`구매하기`)을 연다. 충전은 일반결제 계약 전이라(`TOPUP_ENABLED=false`) 이 호스트에서도 보이지 않는다.
+
+심사 진입은 `https://toss.wearless.kr/pricing` → `로그인하고 시작하기` → 이메일 로그인이다. 구글·카카오 로그인은 이 호스트의 복귀 주소가 등록돼 있지 않아 쓰지 않는다(카카오는 `server/app/kakao_oidc.py`의 목록과 카카오 콘솔 둘 다 필요).
+
+⚠️ 서버의 자동결제 키는 라이브(`live_sk_`)다. 심사자가 카드 등록을 끝까지 하면 첫 달 요금이 **실제로 청구**된다. 심사 결제는 토스 상점관리자에서 취소하고, 생긴 구독은 해지한다.
+
+연결 순서:
+1. 이 PR 머지 → 프론트는 Vercel이, api(CORS에 `https://toss.wearless.kr` 추가)는 `deploy-server` CI가 배포한다. api 배포가 끝나야 심사 호스트에서 API가 열린다.
+2. Vercel 스튜디오 프로젝트에 도메인 `toss.wearless.kr` 추가.
+3. Cloudflare DNS에 `toss` CNAME → Vercel이 알려주는 대상, **DNS only**(회색 구름). ai와 같은 방식.
+4. `https://toss.wearless.kr/pricing`에서 구독 카드 3개가 `구매하기`인지, 응답 헤더에 `X-Robots-Tag: noindex`가 있는지, 이메일 로그인 후 카드 등록창이 열리는지 확인한다.
+
 ## 심사 종료 후
 
+0. 심사 호스트를 내린다: Vercel 도메인과 Cloudflare 레코드를 지우고, `copilot/api/manifest.yml`의 `CORS_ORIGINS`에서 `https://toss.wearless.kr`을 뺀다. ai도 토스로 돌아간다면 `BANK_TRANSFER_ENABLED`를 `false`로 바꾼다.
 1. `PG_REVIEW_LOGIN_ENABLED`를 `false`로 바꾸고 재배포한다. 일반 서비스에는 구글·카카오 로그인만 남는다.
 2. 심사용 계정을 비활성화하고 세션을 회수한다. 표시 설정은 로그인창만 숨기며 계정이나 Supabase 인증 자체를 비활성화하지 않는다.
 3. 코드까지 정리할 때는 심사용 표시 설정과 조건을 제거하고 `EMAIL_LOGIN_ENABLED`를 `IS_LOCAL_SUPABASE`로 되돌린다. 로컬 QA 폼과 기존 소셜 로그인은 유지한다.
