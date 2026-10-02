@@ -3,6 +3,10 @@
 # ALB DNS 로 직접 때리되 Host 헤더는 api.wearless.kr 로 보낸다 — 그래야 실제 컷오버
 # 이후와 같은 경로(호스트 기반 리스너 룰 + TLS SNI)를 지난다.
 #
+# ⚠️ ALB 보안그룹이 Cloudflare 엣지만 받도록 잠긴 뒤(copilot/environments/use1/manifest.yml
+# 의 source_ips)에는 로컬에서 ALB 로 직접 붙지 못해 전부 curl_error 가 난다. 잠긴 환경은
+# ALB 대신 https://api.wearless.kr 로 확인한다.
+#
 # 사용: scripts/smoke-api.sh <alb-dns-name>
 set -uo pipefail
 
