@@ -53,7 +53,8 @@
 **비목표**
 - 실트래픽 응답 중앙값(p50) 알람의 동등 대체(§7 에 사각지대로 남긴다).
 - ARM64 전환, opendid, Argo(유료), 리전 이전.
-- 보안그룹을 Cloudflare 대역으로 잠그기(PR #315) — 들어오는 포트가 0개가 되므로 불필요해진다.
+- 보안그룹 잠금 — PR #315 로 2026-10-02 이미 적용됐다(ALB SG 80·443 = Cloudflare 15대역). ALB 를 걷어내면
+  인바운드 포트가 0개라 잠금은 ALB 와 함께 사라진다. 되돌리기(ALB 복구) 중에도 Cloudflare 경유라 잠금과 충돌하지 않는다.
 
 ---
 
@@ -94,7 +95,7 @@
 | 2. DNS 전환 | `api.wearless.kr` 을 터널로. 같은 날 업타임 모니터·Tunnel Health Alert 설정. **3일 관찰** | 오너(대시보드), 나(폴링·검증) | §8 전환 판정 통과, 3일간 장애 0 | CNAME 을 ALB 로(수 초) |
 | 3. PR B1 | ALB 지표 알람 정리 | 나(PR) → CI + 오너 `env deploy` ① | 계정에 `PublicLoadBalancerFullName` 을 import 하는 스택 0개(§6.5 확인 명령) | PR revert + `env deploy` |
 | 4. PR B2 | api `type: Backend Service`, `http` 블록 삭제 → ALB 자동 철거 | 나(PR) → CI | ALB 0개 · Elastic IP 0개 · CI `/readyz` 게이트 green | PR revert → ALB 가 **새 DNS 이름**으로 재생성 → CNAME 교체(~10분) |
-| 5. 마무리 | 죽은 설정 정리, #315 닫기, 메모리·런북 | 나(PR) + 오너 `env deploy` ② | §9 완료 조건 | PR revert + `env deploy` |
+| 5. 마무리 | 죽은 설정(인증서·#315 SG 잠금·유휴 180초 패치) 정리, 메모리·런북 | 나(PR) + 오너 `env deploy` ② | §9 완료 조건 | PR revert + `env deploy` |
 
 3 → 4 를 나누는 이유는 §4 첫째·둘째 줄. 마무리를 철거 며칠 뒤로 미루는 이유: 환경 매니페스트의 ACM 인증서가
 남아 있어야 4단계 revert 때 ALB 가 HTTPS 리스너까지 그대로 살아난다.
@@ -122,15 +123,16 @@ sidecars:
     # 2026.9.3 멀티아키 인덱스 digest(amd64·arm64 둘 다 — ARM64 전환 때 그대로 쓴다).
     image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     essential: true            # 터널이 죽으면 그 태스크는 아무도 못 부른다 → 태스크째 교체
-    command: ["tunnel", "--grace-period", "15s", "run"]
+    command: ["tunnel", "--grace-period", "25s", "run"]
     depends_on:
       api: healthy             # 기동: api healthy 뒤에 붙는다 / 종료: 역순이라 api 보다 먼저 빠진다
     secrets:
       TUNNEL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_TUNNEL_TOKEN
 ```
 
-- 종료 시간: cloudflared 는 기본 StopTimeout 30s 안에 `--grace-period 15s` 로 끝난다. api 는 기존 90s.
-  컨테이너별 상한이라 Fargate 120s 한도와 충돌하지 않는다.
+- 종료 시간: cloudflared 는 ECS 기본 StopTimeout 30s 안에 `--grace-period 25s` 로 끝난다. api 는 기존 90s.
+  컨테이너별 상한이라 Fargate 120s 한도와 충돌하지 않는다. 25s 인 이유: 공개 분석 요청이 실측 최대 53.5초라
+  길수록 배포 때 덜 끊기는데, 지금 ALB 드레인(`deregistration_delay: 10s`)보다는 길고 30s 는 넘을 수 없다.
 - 사이드카에 cpu/memory 를 따로 주지 않는다 — 태스크 1 vCPU/4GB 를 같이 쓴다(추가 비용 0).
 - 이미지를 Docker Hub 에서 받는다. 익명 풀 한도(IP 당 6시간 100회)는 태스크마다 공인 IP 가 달라 문제없다.
 - `test_api_stop_timeout_covers_dispatcher_drain_and_shutdown_finalize` 가 `ContainerDefinitions[0]`
@@ -173,7 +175,7 @@ sidecars:
 | `copilot/api/addons/api-alarms.yml` (no-healthy-target) | 삭제 |
 | `copilot/api/addons/addons.parameters.yml` (`TargetGroupFullName` 만 있음) | 삭제 — Backend Service 에는 `TargetGroup` 이 없어 남기면 B2 배포가 깨진다 |
 | `alarm-slack.yml` `Alarm5xx` · `AlarmLatency` · `AlarmElb5xx` | 삭제 |
-| `alarm-slack.yml` SNS 토픽 · Slack 람다 · `AlarmTopicArn` export | **유지** — sam·opendid 알림(`SAM_ALERT_TOPIC_ARN`)이 쓴다 |
+| `alarm-slack.yml` SNS 토픽 · Slack 람다 · `AlarmTopicArn` export | **유지** — 이 토픽을 쓰는 알람은 0개가 된다(sam·opendid 는 `sam-autoscale.yml` 의 별도 `SamAlertTopic` 을 쓴다). 비용 0 이고 다음 지표 알람(앱 지연 지표 등)이 같은 Slack 경로를 쓰도록 남긴다 |
 | `test_api_addon_parameters_are_declared_by_an_addon_template` | 파일 부재를 허용하도록 고친다 |
 | `docs/runbooks/cloudwatch-alarms.md` | ALB 알람 절을 업타임 모니터·Tunnel Health Alert 로 교체 |
 
@@ -186,14 +188,20 @@ sidecars:
 - 머지 전: `AWS_REGION=ap-northeast-2 copilot-aws svc package --name api --env use1 --diff`(읽기 전용)로
   ECS `Service` 가 **교체(Replacement)되지 않고** 지워지는 것이 `TargetGroup`·리스너 규칙·`EnvControllerAction`
   파라미터 변경뿐인지 확인한다. 교체가 보이면 멈추고 설계로 돌아온다(Service Connect 이름 충돌 함정 — `aws-cost-audit` 메모).
+- 2026-10-02 로컬 렌더 실측(`svc package`, 읽기 전용): 지워지는 리소스는 `TargetGroup`·`HTTPListenerRuleWithDomain`·
+  `HTTPRuleWithDomainPriorityAction`·`HTTPSListenerRule`·`HTTPSRulePriorityAction`·`RulePriorityFunction`·
+  `RulePriorityFunctionRole` 7개, 추가 0개. `Service` 는 같은 논리 ID 이고 바뀌는 속성은 `HealthCheckGracePeriodSeconds`·
+  `LoadBalancers`·`ServiceRegistries`(값은 동일) — CloudFormation 문서상 셋 다 "No interruption", `ServiceName` 불변.
+  `EnvControllerAction` 파라미터 `[ALBWorkloads, Aliases] → []`.
 - `server/tests/test_analyze.py` 의 `alb_idle_timeout = 180` 을 Cloudflare 100초 상한 기준으로 바꾼다.
 
 ### 6.7 마무리 (5단계)
 
-- 환경 매니페스트 `http.public.certificates` 삭제, `cfn.patches.yml` 의 유휴 180초 패치 삭제 → `env deploy` ②.
+- 환경 매니페스트 `http:` 블록 삭제(`certificates` + #315 의 `ingress.source_ips`), `cfn.patches.yml` 의 유휴 180초
+  패치 삭제 → `env deploy` ②.
 - `test_alb_security_group_admits_exactly_the_ranges_trusted_as_cloudflare` 삭제(검사 대상 SG 가 없어짐).
 - `scripts/smoke-api.sh` — ALB DNS `--resolve` 방식에서 기본 URL 인자 방식으로.
-- `docs/runbooks/cloudflare-origin-lock.md` — 2단계(SG 잠금)를 "터널로 대체, 불필요"로 정리. PR #315 닫기.
+- `docs/runbooks/cloudflare-origin-lock.md` — 2단계(SG 잠금, #315)가 ALB 와 함께 사라졌다고 상태 블록을 단다.
 - ACM 인증서 `8120f0ff` 는 무료라 남겨도 되지만, 남길 이유가 사라지면 삭제.
 - 1주 뒤 Cost Explorer 로 `LoadBalancerUsage` 0, `PublicIPv4:InUseAddress` 일 ~24시간(=1개) 확인.
 
@@ -225,7 +233,7 @@ sidecars:
 | 위험 | 완화 |
 |---|---|
 | DNS 전환 때 기존 CNAME 삭제 → 터널 라우트 추가 사이 공백 | 저트래픽 시간대. 런북에 현재 대시보드 기준 정확한 순서. 공백 목표 ≤1분. 여유가 생기면 Cloudflare API 토큰(터널·DNS 한정)으로 원자적 전환 가능 |
-| 배포 중 502 (커넥터 교대) | dependsOn 역순 종료 + `--grace-period 15s`. 전환 당일 롤링 배포 1회를 1초 폴링으로 실측 — 200 아닌 응답이 1건이라도 나오면 DNS 원복 후 원인 조사 |
+| 배포 중 502 (커넥터 교대) | dependsOn 역순 종료 + `--grace-period 25s`. 전환 당일 롤링 배포 1회를 1초 폴링으로 실측 — 200 아닌 응답이 1건이라도 나오면 DNS 원복 후 원인 조사 |
 | 방문자 IP 판정 오류 → 요청 한도(공개 분석 10/h, 카카오 30/h)가 엉뚱하게 묶임 | §6.2 loopback 보강 + 테스트 3종 + 전환 직후 로그에서 실제 방문자 IP 확인 |
 | 토큰 시크릿 누락·태그 누락 → 배포 롤백 | 0단계 확인 명령을 PR A 머지 조건으로 |
 | B2 배포에서 ECS 서비스 교체 → Service Connect 이름 충돌·롤백 | 머지 전 `svc package --diff` 로 교체 여부 확인 |
