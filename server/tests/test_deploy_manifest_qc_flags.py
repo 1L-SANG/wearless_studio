@@ -618,3 +618,38 @@ def test_opendid_manifest_declares_setup_path():
     assert "/opt/opendid/data" in mount, (
         "holder-state EFS 마운트가 사라졌다 — SETUP_PATH 가 tmpfs 를 가리키게 된다"
     )
+
+
+# ── Cloudflare Tunnel 인그레스(설계 docs/superpowers/specs/2026-10-02-cloudflare-tunnel-ingress-design.md) ──
+
+CLOUDFLARED_IMAGE_RE = re.compile(r"^cloudflare/cloudflared@sha256:[0-9a-f]{64}$")
+
+
+def _api_manifest() -> dict:
+    return yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+
+
+def test_api_container_has_its_own_healthcheck():
+    """ALB 를 걷어내면 컨테이너 헬스체크가 유일한 헬스 판정이고, cloudflared 사이드카의
+    depends_on: healthy 가 이걸 기다린다. 기동 유예가 짧으면 느린 부팅이 재시작 루프에 빠진다
+    — 지금 ALB 서비스의 HealthCheckGracePeriod(60s)보다 짧게 두지 않는다."""
+    hc = _api_manifest()["image"]["healthcheck"]
+    assert "localhost:8080/healthz" in " ".join(hc["command"])
+    assert hc["retries"] >= 2
+    assert int(str(hc["start_period"]).rstrip("s")) >= 60
+
+
+def test_cloudflared_sidecar_is_wired_for_tunnel_ingress():
+    side = _api_manifest()["sidecars"]["cloudflared"]
+    assert CLOUDFLARED_IMAGE_RE.match(side["image"]), "digest 로 고정 — 태그·latest 는 조용히 바뀐다"
+    assert side["essential"] is True  # 터널이 죽은 태스크는 아무도 못 부른다 → 태스크째 교체
+    assert side["depends_on"] == {"api": "healthy"}  # 기동은 api 뒤, 종료는 역순으로 api 앞
+    assert side["secrets"]["TUNNEL_TOKEN"] == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_TUNNEL_TOKEN"
+    )
+    assert "TUNNEL_TOKEN" not in (side.get("variables") or {}), "토큰을 평문 변수로 두지 않는다"
+    cmd = side["command"]
+    assert cmd[0] == "tunnel" and cmd[-1] == "run"
+    grace = int(cmd[cmd.index("--grace-period") + 1].rstrip("s"))
+    # 진행 중 요청을 마칠 시간: 지금 ALB 드레인(10s)보다 길고 ECS 기본 StopTimeout(30s) 안.
+    assert 20 <= grace < 30
