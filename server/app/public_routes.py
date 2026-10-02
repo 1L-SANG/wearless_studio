@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from . import rate_limit
 from .agents import product_evidence_contract, detail_recommendations
 from .agents.vision_llm import VisionError
 from .auth import optional_user
@@ -108,20 +109,15 @@ async def public_analyze(
     authenticated_user: str | None = Depends(optional_user),
 ):
     """상품 사진 1~4장을 기존 AG-01 코어로 분석한다. 인증·프로젝트·DB 저장은 없다."""
+    # 비로그인은 IP, 로그인은 사용자 기준. 로그인 한도가 없으면 무료 가입 한 번으로 과금 LLM 을
+    # 끝없이 부를 수 있다(2026-10-02 보안 점검). 로그인 한도는 프로젝트 /analyze 와 나눠 쓴다.
     if authenticated_user is None:
-        client_ip = _client_ip(request)
-        try:
-            limiter = request.app.state.public_analysis_limiter
-            allowed = limiter.allow(client_ip)
-        except Exception:
-            # 리미터 장애가 공개 체험 자체를 막지 않게 fail-open.
-            logger.exception("public analysis rate limiter unavailable")
-            allowed = True
-        if not allowed:
-            raise HTTPException(
-                status_code=429,
-                detail={"code": "rate_limited", "message": "잠시 후 다시 시도해주세요."},
-            )
+        rate_limit.enforce(
+            getattr(request.app.state, "public_analysis_limiter", None), _client_ip(request))
+    else:
+        rate_limit.enforce(
+            getattr(request.app.state, "user_analysis_limiter", None),
+            rate_limit.user_key(authenticated_user))
 
     if not 1 <= len(images) <= 4:
         raise _bad_request("invalid_image_count", "상품 사진은 1장부터 4장까지 올려주세요.")

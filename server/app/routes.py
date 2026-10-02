@@ -19,7 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_versions, personalization, plan_pricing, repo
+from . import admin_guard, app_origin, detail_cut_preview, facemarket, legal_versions, personalization, plan_pricing, rate_limit, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -1398,6 +1398,9 @@ async def analyze_product(
       (더블클릭 시 LLM 2회 호출 방지). 완료된 분석은 재호출 시 재분석(무과금)됩니다.
     """
     scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
+    # 무과금이라도 LLM 은 우리 돈이다 — 공개 분석과 같은 사용자 한도를 나눠 쓴다.
+    rate_limit.enforce(
+        getattr(request.app.state, "user_analysis_limiter", None), rate_limit.user_key(user_id))
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -2133,6 +2136,11 @@ async def complete_upload(
     meta = await asyncio.to_thread(r2.head, key)  # 네트워크 → 스레드 격리 (§5)
     if meta is None:
         raise _bad_request("upload_incomplete", "업로드가 완료되지 않았어요. 다시 시도해 주세요.")
+    # presigned PUT 은 크기를 강제하지 않는다 — 발급 때 신고한 size 가 아니라 실제 객체로 다시 본다.
+    if int(meta.get("size") or 0) > MAX_UPLOAD_BYTES:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(r2.delete, key)
+        raise _bad_request("file_too_large", "사진 한 장은 25MB보다 작아야 해요.")
 
     # 입력측 QC (FR-D4) — off면 완전 skip. shadow=로그만, enforce=불합격 시 400.
     settings = request.app.state.settings
