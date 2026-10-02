@@ -247,6 +247,8 @@ CHANGE_MATRIX = [
     ("server/Dockerfile", True, False),
     ("copilot/api/manifest.yml", True, False),
     ("copilot/detail-worker/manifest.yml", True, False),
+    # api 서비스 오버라이드(LoadBalancers: [] 등) — 바뀌면 api 를 다시 배포해야 반영된다.
+    ("copilot/api/overrides/cfn.patches.yml", True, False),
     ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True, False),
     ("server/sam_service/segmentation.py", False, True),
     ("server/sam_service/requirements.txt", False, True),
@@ -545,6 +547,7 @@ def test_workflows_pin_copilot_and_deploy_server_watches_addons():
         assert "copilot --version" in text, f"{wf}: 설치 검증 누락"
     server_wf = (root / ".github/workflows/deploy-server.yml").read_text(encoding="utf-8")
     assert server_wf.count("copilot/api/addons/**") >= 3, "push·pull_request·filters 세 곳"
+    assert server_wf.count("copilot/api/overrides/**") >= 3, "오버라이드만 바꿔도 api 가 다시 배포돼야 한다"
 
 
 def test_kakao_rest_api_key_is_declared_as_a_plain_variable(manifest_vars):
@@ -692,3 +695,25 @@ def test_api_addons_do_not_reference_the_removed_target_group():
     addons_dir = MANIFEST.parent / "addons"
     offenders = sorted(p.name for p in addons_dir.glob("*.yml") if "TargetGroup" in p.read_text(encoding="utf-8"))
     assert offenders == []
+
+
+def test_api_is_a_backend_service_behind_the_tunnel():
+    """ALB 를 걷어낸 뒤 api 는 인바운드 없는 Backend Service 다. `http:` 블록이 되살아나면 Copilot 이
+    ALB 를 다시 만든다(ALB $16.7 + 공인 IPv4 2개 $7.4/월) — 설계 2026-10-02."""
+    doc = _api_manifest()
+    assert doc["type"] == "Backend Service"
+    assert "http" not in doc
+    assert "cloudflared" in doc["sidecars"]
+    assert doc["image"]["port"] == 8080  # Service Connect 와 사이드카가 이 포트로 붙는다
+    assert doc["network"]["connect"] is True
+
+
+def test_api_service_explicitly_detaches_the_removed_target_group():
+    """LBWS → Backend Service 전환에서 Copilot 의 Backend 템플릿은 Service.LoadBalancers 를 **생략**한다.
+    CloudFormation(AWS::ECS::Service 스키마 원문)은 생략을 "변경 없음"으로 본다 — "To remove this
+    property from your service resource, specify an empty LoadBalancer array." 생략한 채 배포하면 ECS
+    서비스가 같은 배포가 지우는 TargetGroup 을 계속 가리켜, 다음 태스크 기동이 전부
+    TargetGroupNotFound 로 죽는다(다음 배포 실패, 태스크 교체 시 전면 장애 — PR B2 리뷰 C1)."""
+    patch_file = MANIFEST.parent / "overrides" / "cfn.patches.yml"
+    patches = yaml.safe_load(patch_file.read_text(encoding="utf-8"))
+    assert {"op": "add", "path": "/Resources/Service/Properties/LoadBalancers", "value": []} in patches

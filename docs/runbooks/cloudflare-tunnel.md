@@ -95,6 +95,7 @@ aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless
 | 시점 | 방법 |
 |---|---|
 | DNS 전환 후 ~ ALB 철거 전 | 터널 라우트 `api.wearless.kr` 삭제 → DNS → Records 에 `api` CNAME → 위 ALB 주소 · Proxied 로 추가. 수 초 |
+| ALB 철거 배포가 **실패로 끝났는데** ALB 가 새로 보일 때 | revert 가 된 게 아니다 — api 스택 업데이트가 env-controller 뒤에서 실패하면 CloudFormation 롤백이 env-controller 를 이전 값으로 다시 불러 **ALB 를 새로 만든다**(새 주소, api 리스너 규칙 없음). 터널은 그대로라 사용자 영향은 없다. 원인을 고친 뒤 같은 커밋을 다시 배포한다(PR B2 리뷰 I1) |
 | ALB 철거 후(api 가 Backend Service) | 전환 PR 을 revert → CI 가 Load Balanced Web Service 로 재배포하며 ALB 가 **새 주소**로 생긴다 → `aws elbv2 describe-load-balancers --region us-east-1 --query 'LoadBalancers[0].DNSName' --output text` → 그 주소로 CNAME 교체(위와 같이). 환경 매니페스트에 인증서가 남아 있어야 HTTPS 리스너가 같이 생긴다 |
 | 마무리(인증서 제거) 후 | 마무리 PR revert + `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1` → 그다음 위 줄 |
 

@@ -27,6 +27,7 @@ on:
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
+            - "copilot/api/overrides/**"
             - "copilot/detail-worker/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     pull_request:
@@ -53,6 +54,7 @@ on:
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
+            - "copilot/api/overrides/**"
             - "copilot/detail-worker/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     workflow_dispatch: {} # 수동 배포 버튼
@@ -151,6 +153,7 @@ jobs:
                         - 'server/scripts/face_render_bundle.sh'
                         - 'copilot/api/manifest.yml'
                         - 'copilot/api/addons/**'
+                        - 'copilot/api/overrides/**'
                         - 'copilot/detail-worker/manifest.yml'
                         - 'supabase/migrations/**'
                         - '.github/workflows/deploy-server.yml'
