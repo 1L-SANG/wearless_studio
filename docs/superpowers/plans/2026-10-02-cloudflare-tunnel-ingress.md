@@ -45,7 +45,7 @@
 | `scripts/api-watch.sh` (신규) | A | 1초 폴링 — 전환·배포·원복 때 200 아닌 응답 세기 |
 | `docs/runbooks/cloudflare-tunnel.md` (신규) | A, B1 | 터널 운영 런북(A), 알림 설정 기록(B1) |
 | `copilot/api/addons/api-alarms.yml`, `addons.parameters.yml` | B1 | 삭제 |
-| `copilot/environments/addons/alarm-slack.yml` | B1 | ALB 알람 3개 삭제, 토픽·램다·export 유지 |
+| `copilot/environments/addons/alarm-slack.yml` | B1 | ALB 알람 3개 삭제, 토픽·램다·export·예산 알림(#451) 유지 |
 | `docs/runbooks/cloudwatch-alarms.md` | B1 | 현재 상태 갱신 |
 | `server/tests/test_analyze.py` | B2 | ALB 180s → Cloudflare 100s 기준 |
 | `copilot/environments/use1/manifest.yml`, `copilot/environments/overrides/` | C | 인증서·SG 잠금(#315)·유휴 180초 패치 제거 |
@@ -676,7 +676,8 @@ python3 - <<'EOF'
 p = "copilot/environments/addons/alarm-slack.yml"
 s = open(p, encoding="utf-8").read()
 
-header = '''# CloudWatch 알람 → Slack 경로(SNS 토픽 + 램다). **지금 이 경로를 쓰는 알람은 0개다.**
+header = '''# CloudWatch 알람·예산 알림 → Slack 경로(SNS 토픽 + 램다). ALB 지표 알람은 0개, 지금 이 경로를 쓰는 건
+# 아래 예산 알림 2개(MonthlyNetBudget·MonthlyGrossBudget, #451)다.
 #
 # ── 2026-10-02: ALB 지표 알람을 걷어냈다 ─────────────────────────────────
 #   api 앞단이 ALB 에서 Cloudflare Tunnel 로 바뀌면서(설계
@@ -689,22 +690,23 @@ header = '''# CloudWatch 알람 → Slack 경로(SNS 토픽 + 램다). **지금 
 #   환경에서 env 배포가 실패한다(server/tests/test_deploy_manifest_qc_flags.py 가 막는다).
 #   이 주석에도 그 export 이름을 그대로 적지 않는다 — 가드가 문자열로 검사한다.
 #
-# ── 왜 남겨 두나 ──────────────────────────────────────────────────────────
-#   토픽·램다·export 는 비용이 0 이고, 다음 지표 알람(예: 앱이 직접 내는 지연 지표)이 같은 Slack
-#   채널로 오게 하는 경로다. 새 알람의 AlarmActions·OKActions 에 AlarmTopicArn export 를 준다.
+# ── 토픽·램다를 남기는 이유 ────────────────────────────────────────────────
+#   예산 알림이 이 토픽 → 램다 → Slack 으로 온다(램다가 평문 예산 메시지도 처리한다). 다음 지표 알람
+#   (예: 앱이 직접 내는 지연 지표)도 AlarmActions·OKActions 에 AlarmTopicArn export 를 주면 같은 채널로 온다.
 #   sam·opendid 알림은 이 토픽이 아니라 copilot/api/addons/sam-autoscale.yml 의 SamAlertTopic 을 쓴다.
 #
 # 램다를 log-slack-alert 와 따로 두는 이유: 그쪽 인라인 소스가 4,060/4,096 바이트라 SNS 처리를
 # 얹을 수 없다.
 #
-# 되돌리기: 이 파일을 지우고 `copilot env deploy --name use1`. export 를 가져다 쓰는 스택이 있으면
-# 그것부터 지운다(2026-10-02 기준 없음).
+# 되돌리기: 이 파일을 지우면 예산 알림도 같이 사라진다. export 를 가져다 쓰는 스택이 있으면 그것부터
+# 지운다(2026-10-02 기준 없음).
 '''
 s = header + s[s.index("Parameters:\n"):]
 
+# ALB 알람 3개만 지운다 — 바로 뒤의 예산 알림 절(#451)은 남긴다.
 start = s.index("  # ── 알람 셋 ")
-end = s.index("\nOutputs:\n")
-s = s[:start].rstrip() + "\n" + s[end:]
+end = s.index("  # ── 예산 알림 (2026-10-02)")
+s = s[:start] + s[end:]
 
 old = """    # copilot/api/addons/api-alarms.yml 이 ImportValue 로 쓴다. 이 export 를 지우거나 이름을
     # 바꾸면 env 배포가 막힌다(가져다 쓰는 스택이 있으면 CloudFormation 이 거부한다).
@@ -720,7 +722,7 @@ grep -c "AWS::CloudWatch::Alarm" copilot/environments/addons/alarm-slack.yml
 $PY -c "import yaml,sys; L=type('L',(yaml.SafeLoader,),{}); L.add_multi_constructor('!', lambda l,s,n: None); d=yaml.load(open('copilot/environments/addons/alarm-slack.yml'),Loader=L); print(sorted(d['Resources']), sorted(d['Outputs']))"
 ```
 
-Expected: `0`, 그리고 `['AlarmSlackFunction', 'AlarmSlackOwnLogGroup', 'AlarmSlackPermission', 'AlarmSlackRole', 'AlarmSlackSubscription', 'AlarmTopic', 'AlarmTopicPolicy'] ['AlarmTopicArn']`.
+Expected: `0`, 그리고 `['AlarmSlackFunction', 'AlarmSlackOwnLogGroup', 'AlarmSlackPermission', 'AlarmSlackRole', 'AlarmSlackSubscription', 'AlarmTopic', 'AlarmTopicPolicy', 'MonthlyGrossBudget', 'MonthlyNetBudget'] ['AlarmTopicArn']` — 예산 2개가 남아 있어야 한다.
 
 - [ ] **Step 6: 통과 확인**
 
@@ -754,10 +756,10 @@ p = "docs/runbooks/cloudwatch-alarms.md"
 s = open(p, encoding="utf-8").read()
 banner = '''# CloudWatch 알람 → Slack
 
-> **2026-10-02 현재: 지표 알람 0개.** api 앞단이 ALB 에서 Cloudflare Tunnel 로 바뀌면서 아래 ALB
+> **2026-10 현재: ALB 지표 알람 0개.** api 앞단이 ALB 에서 Cloudflare Tunnel 로 바뀌면서 아래 ALB
 > 지표 알람 4개를 모두 걷어냈다. 지금 장애 신호는 ① 로그 알림(이 문서 첫 표의 윗줄, 그대로)
 > ② 외부 업타임 모니터 ③ Cloudflare Tunnel Health Alert 다 — `docs/runbooks/cloudflare-tunnel.md` "알림".
-> SNS 토픽·Slack 램다·`AlarmTopicArn` export 는 다음 지표 알람용으로 남아 있다(`alarm-slack.yml`).
+> SNS 토픽·Slack 램다·`AlarmTopicArn` export 는 그대로다 — 예산 알림(아래 "예산 알림" 절)이 계속 쓴다.
 > 아래 "알람 넷"부터 "남는 사각지대"까지는 ALB 시절(2026-09-23 ~ 10-02) 기록이다.
 '''
 assert s.startswith("# CloudWatch 알람 → Slack\n")

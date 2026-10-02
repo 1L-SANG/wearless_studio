@@ -176,7 +176,7 @@ sidecars:
 | `copilot/api/addons/api-alarms.yml` (no-healthy-target) | 삭제 |
 | `copilot/api/addons/addons.parameters.yml` (`TargetGroupFullName` 만 있음) | 삭제 — Backend Service 에는 `TargetGroup` 이 없어 남기면 B2 배포가 깨진다 |
 | `alarm-slack.yml` `Alarm5xx` · `AlarmLatency` · `AlarmElb5xx` | 삭제 |
-| `alarm-slack.yml` SNS 토픽 · Slack 람다 · `AlarmTopicArn` export | **유지** — 이 토픽을 쓰는 알람은 0개가 된다(sam·opendid 는 `sam-autoscale.yml` 의 별도 `SamAlertTopic` 을 쓴다). 비용 0 이고 다음 지표 알람(앱 지연 지표 등)이 같은 Slack 경로를 쓰도록 남긴다 |
+| `alarm-slack.yml` SNS 토픽 · Slack 람다 · `AlarmTopicArn` export · 예산 알림 2개 | **유지** — ALB 알람이 빠져도 예산 알림(`MonthlyNetBudget`·`MonthlyGrossBudget`, #451 · 2026-10-02)이 이 토픽을 쓴다(sam·opendid 는 `sam-autoscale.yml` 의 별도 `SamAlertTopic`). 삭제 범위는 ALB 알람 3개 리소스까지만 |
 | `test_api_addon_parameters_are_declared_by_an_addon_template` | 파일 부재를 허용하도록 고친다 |
 | `docs/runbooks/cloudwatch-alarms.md` | ALB 알람 절을 업타임 모니터·Tunnel Health Alert 로 교체 |
 
