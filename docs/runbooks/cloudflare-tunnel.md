@@ -1,13 +1,13 @@
 # api.wearless.kr — Cloudflare Tunnel 인그레스
 
 `api.wearless.kr` 은 ALB 가 아니라 **Cloudflare Tunnel** 로 들어온다(2026-10 전환). api 태스크 안의
-`cloudflared` 사이드카가 Cloudflare 로 바깥 연결을 열어 두고, 요청을 같은 태스크의 `localhost:8080`
+`cloudflared` 사이드카가 Cloudflare 로 바깥 연결을 열어 두고, 요청을 같은 태스크의 `127.0.0.1:8080`
 으로 넘긴다. 인바운드 포트는 없다. 설계: `docs/superpowers/specs/2026-10-02-cloudflare-tunnel-ingress-design.md`.
 
 | 무엇 | 어디 |
 |---|---|
 | 터널 | Cloudflare Zero Trust → Networks → Tunnels → `wearless-api-use1` |
-| 라우트 | `api.wearless.kr` → `http://localhost:8080` |
+| 라우트 | `api.wearless.kr` → `http://127.0.0.1:8080`(2026-10-02 전환 때 이 값으로 저장 — uvicorn 이 IPv4 로만 듣는다) |
 | 토큰 | SSM `/copilot/wearless/use1/secrets/CLOUDFLARE_TUNNEL_TOKEN`(us-east-1) → 사이드카 환경변수 `TUNNEL_TOKEN` |
 | 사이드카 | `copilot/api/manifest.yml` 의 `sidecars.cloudflared`(cloudflared 2026.9.3, digest 고정) |
 | 로그 | CloudWatch `/copilot/wearless-use1-api`, 스트림 `copilot/cloudflared/<task-id>` |
@@ -53,20 +53,22 @@ aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless
 
 1. DNS → Records 에서 `api` CNAME 의 지금 대상을 적어 둔다(되돌리기용).
    2026-10-02 값: `wearle-Publi-n7eZ27fYallL-825254557.us-east-1.elb.amazonaws.com`, Proxied.
-2. 터널 `wearless-api-use1` → 라우트 추가: Subdomain `api` · Domain `wearless.kr` · Service `HTTP` · URL `localhost:8080`.
+2. 터널 `wearless-api-use1` → 라우트 추가: Subdomain `api` · Domain `wearless.kr` · Service `HTTP` · URL `127.0.0.1:8080`.
    "이미 레코드가 있다" 오류가 나면 DNS → Records 에서 `api` CNAME 을 지우고 **곧바로** 라우트를 다시 저장한다
    (그 사이가 공백이다 — 목표 1분 이내).
 3. DNS → Records 의 `api` 가 `<터널 UUID>.cfargotunnel.com` · Proxied 인지 본다.
 4. 확인 — 전부 통과해야 전환 완료:
    ```bash
-   curl -sI https://api.wearless.kr/healthz | grep -iE '^(HTTP|server|cf-ray)'     # 200 · cloudflare
+   curl -s -o /dev/null -D - https://api.wearless.kr/healthz | grep -iE '^(HTTP|server|cf-ray)'   # 200 · cloudflare
+   # ⚠️ curl -sI(HEAD) 는 쓰지 않는다 — /healthz 는 GET 전용이라 HEAD 에 405 를 준다
    curl -s https://api.wearless.kr/readyz                                          # {"status":"ok",…}
    curl -s -o /dev/null -D - -X OPTIONS https://api.wearless.kr/v1/projects \
      -H 'Origin: https://ai.wearless.kr' -H 'Access-Control-Request-Method: POST' \
      -H 'Access-Control-Request-Headers: authorization,content-type' | grep -i '^access-control-allow-origin'
    # → access-control-allow-origin: https://ai.wearless.kr
    curl -s -o /dev/null -w '%{http_code}\n' https://api.wearless.kr/v1/webhooks/toss/not-the-secret
-   # → 전환 전에 같은 명령으로 잰 값과 같아야 한다(앱 404 — Cloudflare 403 이면 봇 차단 설정을 본다)
+   # → 전환 전에 같은 명령으로 잰 값과 같아야 한다. GET 이라 405(POST 전용 라우트, 2026-10-02 실측).
+   #   Cloudflare 403 이면 봇 차단 설정을 본다
    ```
 5. 방문자 IP — 내 IP 가 api 접근 로그에 그대로 찍혀야 한다(127.0.0.1·Cloudflare 대역이면 실패):
    ```bash
@@ -75,6 +77,8 @@ aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless
    aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless-use1-api \
      --log-stream-name-prefix copilot/api/ --filter-pattern "\"$MYIP\"" \
      --start-time $(( ($(date +%s) - 300) * 1000 )) --query 'events[].message' --output text | head -3
+   # 찾는 줄은 uvicorn 접근 로그다: INFO:     211.196.2.173:0 - "GET /healthz HTTP/1.1" 200 OK
+   # (앱 자체의 http request 로그는 /healthz 를 빼고 IP 칸도 없다 — 거기서 찾으면 안 나온다)
    ```
 6. 롤링 배포 실측 — api-watch 를 띄운 채 `gh workflow run deploy-server.yml --ref main`. 배포가 끝날 때까지
    api-watch 의 `bad` 가 0 이어야 한다. 하나라도 늘면 아래 되돌리기 후 원인을 본다.
@@ -97,6 +101,15 @@ ALB 지표 알람을 걷어낸 자리를 둘이 메운다.
   터널 `wearless-api-use1` → 메일(오너 주소).
 
 5xx 는 계속 로그 알림(`log-slack-alerts.yml` 의 `http error status=5`)이 건별로 Slack 에 보낸다.
+
+### 설정 기록 (2026-10-02)
+
+| 항목 | 값 |
+|---|---|
+| 업타임 서비스 | Better Stack(무료 플랜 — UptimeRobot 무료는 Slack 알림이 없다) |
+| 대상 | `https://api.wearless.kr/healthz` · 간격은 Better Stack 모니터 설정 화면 기준 |
+| 알림 | Slack `#aws-critical-log`(CloudWatch 로그 알림과 같은 채널) + 메일. 2026-10-02 15:21 테스트 인시던트 도착 확인 |
+| Tunnel Health Alert | Cloudflare 계정 Notifications → Tunnel Health Alert(`wearless-api-use1`), 메일 |
 
 ## 토큰 교체
 
