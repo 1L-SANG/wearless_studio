@@ -1,0 +1,56 @@
+name: vercel-deploy
+
+# 프론트 운영 배포를 Vercel 배포 훅으로 건다.
+#
+# 왜 필요한가: Vercel Hobby 는 **비공개** 레포에서 커밋 작성자가 팀 소유자(로그인 연결 GitHub)일
+# 때만 Git 자동 배포를 허용한다. 레포가 8/14~9/29 공개라 그동안은 검사가 안 걸렸고, 비공개로
+# 바뀐 10/02 부터 모든 자동 배포가 "commit author did not have contributing access" 로 막혔다.
+# 배포 훅은 프로젝트 소유자 권한으로 main 의 최신 커밋을 빌드하므로 작성자 검사를 받지 않는다.
+#
+# Git 자동 배포(프리뷰·Vercel 체크)는 그대로 둔다 — 비공개인 동안은 계속 Blocked 로 뜨지만,
+# 레포가 다시 공개되거나 Pro 로 올라가면 그대로 살아난다.
+#
+# 준비: Vercel 프로젝트 Settings → Git → Deploy Hooks 에서 브랜치 main 훅을 만들고,
+# 그 URL 을 레포 시크릿 VERCEL_DEPLOY_HOOK_URL 에 넣는다(URL 자체가 배포 권한 — 어디에도 붙여넣지 말 것).
+on:
+    push:
+        branches: [main]
+        # 서버·인프라·문서만 바뀐 머지는 프론트 빌드가 필요 없다. 그 외(src·public·html·
+        # vercel.json·package 등)는 전부 배포한다 — 빠뜨려서 안 나가는 쪽보다 한 번 더 빌드하는 쪽이 낫다.
+        paths-ignore:
+            - "server/**"
+            - "copilot/**"
+            - "deploy/**"
+            - "docs/**"
+            - "documents/**"
+            - "supabase/**"
+            - "services/**"
+            - "contracts/**"
+            - "**/*.md"
+    workflow_dispatch:
+
+# 연달아 머지되면 마지막 것만 의미 있다 — 훅은 늘 main 최신 커밋을 빌드한다.
+concurrency:
+    group: vercel-deploy-main
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - name: Vercel 배포 훅 호출
+              env:
+                  HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+              run: |
+                  if [ -z "$HOOK" ]; then
+                    echo "::error::VERCEL_DEPLOY_HOOK_URL 시크릿이 없어요 — Vercel 프로젝트 Settings → Git → Deploy Hooks 에서 만들어 넣어 주세요."
+                    exit 1
+                  fi
+                  # -f: 4xx/5xx 면 실패로 끝낸다(없으면 에러 본문을 성공으로 삼킨다 — #233 교훈).
+                  curl -fsS --retry 3 --retry-all-errors --retry-delay 5 -X POST "$HOOK" -o /tmp/hook.json
+                  # 응답에는 job id 만 있다(훅 URL 은 마스킹됨).
+                  echo "훅 응답: $(cat /tmp/hook.json)"
