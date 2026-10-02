@@ -80,8 +80,15 @@ aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless
    # 찾는 줄은 uvicorn 접근 로그다: INFO:     211.196.2.173:0 - "GET /healthz HTTP/1.1" 200 OK
    # (앱 자체의 http request 로그는 /healthz 를 빼고 IP 칸도 없다 — 거기서 찾으면 안 나온다)
    ```
-6. 롤링 배포 실측 — api-watch 를 띄운 채 `gh workflow run deploy-server.yml --ref main`. 배포가 끝날 때까지
+6. 롤링 배포 실측 — api-watch 를 띄운 채 태스크를 실제로 교체한다(빌드·템플릿 변경 없음):
+   ```bash
+   aws ecs update-service --region us-east-1 --cluster wearless-use1-Cluster-hYAqwp9HcIdj \
+     --service wearless-use1-api-Service-QliObqw9TgGI --force-new-deployment --query 'service.deployments[0].id'
+   ```
+   새 태스크가 뜨고 옛 태스크가 빠질 때까지(ECS 서비스 이벤트 `has stopped 1 running tasks` → `steady state`)
    api-watch 의 `bad` 가 0 이어야 한다. 하나라도 늘면 아래 되돌리기 후 원인을 본다.
+   ⚠️ 같은 커밋으로 `gh workflow run deploy-server.yml` 을 돌리면 태스크 정의가 같아 **교체가 일어나지 않는다**
+   (2026-10-02 실측) — 확인한 것처럼 보여도 아무것도 시험하지 않은 것이다.
 
 ## 되돌리기
 
@@ -125,14 +132,19 @@ cloudflared 가 옛 토큰으로 못 붙는다. 그 태스크로는 터널 요�
 1. 대시보드에서 터널 토큰을 새로 받는다(Refresh token). 지금 태스크는 계속 트래픽을 받는다.
 2. **곧바로** `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN --overwrite`
    로 새 값을 넣는다. 이 순간부터 새로 뜨는 태스크는 새 토큰을 쓴다.
-3. `gh workflow run deploy-server.yml --ref main` — 옛 토큰으로 붙어 있던 커넥터까지 새 토큰으로 바꾼다.
+3. 태스크를 새로 띄워 옛 토큰으로 붙어 있던 커넥터까지 새 토큰으로 바꾼다(같은 커밋 `gh workflow run` 은
+   태스크를 교체하지 않아 이 목적에 안 맞는다):
+   ```bash
+   aws ecs update-service --region us-east-1 --cluster wearless-use1-Cluster-hYAqwp9HcIdj \
+     --service wearless-use1-api-Service-QliObqw9TgGI --force-new-deployment --query 'service.deployments[0].id'
+   ```
    api-watch 로 `bad=0` 을 본다.
 
 증상(1·2 사이가 벌어졌거나 SSM 에 틀린 값이 들어갔을 때) — 로그 스트림 `copilot/cloudflared/<task-id>` 에:
 - `Unauthorized` 가 반복 → 폐기된 옛 토큰(1 다음에 2 를 안 했다). 터널 대시보드에 커넥터가 0개로 보인다.
 - `Provided Tunnel token is not valid.` 후 종료 → 형식이 깨진 값(복사 실수). 태스크가 뜨자마자 멈추기를 반복한다.
 
-처치: 대시보드의 **현재** 토큰을 다시 복사해 2 를 실행한 뒤 3 으로 태스크를 새로 띄운다
+처치: 대시보드의 **현재** 토큰을 다시 복사해 2 를 실행한 뒤 3 의 명령으로 태스크를 새로 띄운다
 (폐기된 토큰으로 재시도 중인 태스크는 스스로 새 값을 읽지 않는다).
 
 ## Cloudflare 앞단 제약 (터널 전과 같다)

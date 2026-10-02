@@ -87,10 +87,24 @@
 - `copilot/environments/addons/**`(Slack 경로·예산 알림·로그 알림): CI 가 배포하지 않는다. 아래 명령을 IAM 사용자 자격으로 돌린다. 루트 자격(`aws login` 루트)으로는 copilot 이 역할 전환을 못 해서 실패한다(`Roles may not be assumed by root accounts`).
 
 ```bash
-copilot-aws env deploy --name use1
+# AWS_PROFILE=wearless 필수 — default 프로필(aws login 토큰)은 Copilot 이 못 읽어 context deadline exceeded 로 죽는다.
+AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1 --diff   # 미리보기
+AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1
 ```
 
-앱 재배포와 무관하다. 환경 애드온만 바뀐다. 두 곳을 같이 바꾼 변경은 **둘 다 반영해야 끝난다.** 한쪽만 나가면 옛 알람과 새 알람이 같이 돌거나 main 설명과 실제가 어긋난다. 순서는 머지 직후 환경 쪽 먼저다. Slack 램다 같은 공용 부분이 환경 쪽에 있어서, CI 가 api 를 배포하기(수 분 걸림) 전에 올라가 있어야 한다. 이번(#415)처럼 환경 쪽이 옛 정상 서버 알람을 지우고 api 쪽이 새로 만드는 경우, CI 배포가 실패하면 그동안 정상 서버 알람이 없다. CI 가 끝날 때까지 지켜보고 실패하면 바로 다시 돌린다. ⚠️ **CF 원본 잠금(#315)과 순서가 얽힌다**: 그 작업도 `env deploy` 를 쓴다. 두 개를 같은 시점에 밀면 어느 쪽이 깨졌는지 못 가른다. 하나씩.
+⚠️ `--diff` 는 **환경 스택 템플릿만** 비교한다. 애드온(알람·예산·로그 알림)은 중첩 스택이라 diff 에는 `AddonsStack` 의
+`TemplateURL` 한 줄만 바뀐 것으로 나오고, 애드온 안의 리소스 추가·삭제는 보이지 않는다. 애드온 내용의 정본은 레포의
+`copilot/environments/addons/*.yml` 이고, 실제로 바뀌었는지는 배포 **뒤에** 읽기 전용으로 확인한다:
+
+```bash
+aws cloudwatch describe-alarms --region us-east-1 --alarm-name-prefix wearless-use1- --query 'MetricAlarms[].AlarmName' --output text
+aws budgets describe-budgets --account-id 439328746001 --query 'Budgets[].BudgetName' --output text   # wearless-monthly-net / -gross
+```
+
+앱 재배포와 무관하다. 환경 애드온만 바뀐다. 두 곳을 같이 바꾼 변경은 **둘 다 반영해야 끝난다.** 순서는 변경마다 따진다 —
+공용 부분(Slack 램다·토픽 export)을 새로 쓰기 시작하는 쪽이 있으면 그 공용 부분을 담은 환경 쪽이 먼저다. 2026-10 ALB
+알람 삭제(#458)처럼 양쪽이 지우기만 하면 어느 순서든 안전하다. ⚠️ 다른 `env deploy` 작업과 같은 시점에 밀지 않는다 —
+어느 쪽이 깨졌는지 못 가른다. 하나씩.
 
 ## 알람을 추가할 때
 
