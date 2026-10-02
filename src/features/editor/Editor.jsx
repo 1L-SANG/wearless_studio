@@ -17,7 +17,9 @@ import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, incompleteSummary, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
-import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
+import {
+  clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraft, loadEditorWaitDraftBaseRevision, saveEditorWaitDraft,
+} from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
@@ -125,6 +127,9 @@ function waitForImageSource(src, timeoutMs = 12000) {
     if (image.complete && image.naturalWidth > 0) finish();
   });
 }
+
+// 다른 탭·기기가 먼저 저장해 서버가 이 화면의 저장을 거절했다(409, editor_revision 불일치).
+const isEditorConflict = (error) => error?.code === 'editor_conflict';
 
 async function getFinalEditorBlocks(projectId) {
   let lastError;
@@ -1088,7 +1093,9 @@ export function Editor() {
   const { openLogin } = useAuth();
   const backupLatestEditorDraft = useCallback((source = latestBlocks.current, { reportFailure = true } = {}) => {
     if (!Array.isArray(source)) return false;
-    const backedUp = saveEditorWaitDraft(projectId, persistable(source));
+    // 기준 리비전을 함께 남겨, 그새 다른 탭·기기가 저장했으면 다음 진입 때 이 작업본이 덮지 않게 한다.
+    const backedUp = saveEditorWaitDraft(projectId, persistable(source), undefined,
+      { baseRevision: api.editorRevisionOf?.(projectId) ?? null });
     pendingGenerationDraft.current = backedUp;
     if (!backedUp && reportFailure) {
       setSaveError({
@@ -1312,7 +1319,22 @@ export function Editor() {
             withH = applyInfoTemplate(withH, ctx).blocks;
             toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
           }
-          if (savedDraft) withH = mergeServerBlocks(savedDraft, withH);
+          // 이 브라우저의 작업본은 같은 서버 리비전 위의 편집일 때만 복원한다 — 그새 다른 탭·기기가
+          // 저장했으면 오래된 작업본이 새 내용을 덮던 LWW 유실(2026-09-30 레이스 감사 High)을 막는다.
+          const draftDecision = editorWaitDraftDecision({
+            draft: savedDraft,
+            draftBase: loadEditorWaitDraftBaseRevision(projectId),
+            server: b,
+            serverRevision: api.editorRevisionOf?.(projectId) ?? null,
+          });
+          if (draftDecision === 'apply') withH = mergeServerBlocks(savedDraft, withH);
+          else if (draftDecision !== 'none') {
+            clearEditorWaitDraft(projectId);
+            pendingGenerationDraft.current = false;
+            if (draftDecision === 'stale') {
+              toast.push('다른 곳에서 더 최근에 저장된 내용이 있어 그 내용으로 불러왔어요', { icon: 'alertTri' });
+            }
+          }
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
         withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
@@ -1462,9 +1484,26 @@ export function Editor() {
     backupLatestEditorDraft(cleaned);
   }, [genActive, dpJob.status, dpJob.jobId, dpJob.revokedPreviewUrls, blocks, backupLatestEditorDraft]);
 
+  const saveTimer = useRef(null);
+  /* 409 editor_conflict — 다른 탭·기기가 이 화면이 본 뒤에 먼저 저장했다. 이 화면의 편집으로
+     덮어쓰지 않고(그게 LWW 유실이다) 서버 최신본을 다시 불러온다. 밀려 있던 저장들이 같은
+     409 를 연달아 받아도 다시 불러오기는 한 번만 한다. */
+  const conflictReloadAt = useRef(0);
+  const reloadAfterEditorConflict = useCallback(() => {
+    clearTimeout(saveTimer.current);
+    saveGuard.current.invalidate();
+    if (Date.now() - conflictReloadAt.current < 3000) return;
+    conflictReloadAt.current = Date.now();
+    clearEditorWaitDraft(projectId);
+    pendingGenerationDraft.current = false;
+    hist.current = { past: [], future: [] };
+    prevBlocks.current = null;
+    setSaveError(null);
+    toast.push('다른 창에서 더 최근에 저장된 내용이 있어 최신 내용으로 다시 불러왔어요', { icon: 'alertTri' });
+    setLoadAttempt((n) => n + 1);
+  }, [projectId, toast]);
   // 자동 저장 — 생성 중에는 브라우저 임시 작업본, 완료 뒤에는 서버 완성본으로 분리한다.
   // 이 구분이 서버 조립 완료와 미완성 스켈레톤 PUT의 덮어쓰기 경합을 막는다.
-  const saveTimer = useRef(null);
   useEffect(() => {
     if (blocks == null) return;
     clearTimeout(saveTimer.current);
@@ -1491,6 +1530,7 @@ export function Editor() {
         }
         setSaveError(null);
       }).catch((error) => {
+        if (isEditorConflict(error)) { reloadAfterEditorConflict(); return; }
         if (!saveGuard.current.isNewest(ticket)) return;
         /* 저장 실패를 삼키면 안 된다. 화면은 멀쩡해 보이는데 편집만 사라져, 셀러는 한참
            작업한 뒤 탭을 닫고서야(또는 다음 접속에서) 전부 날아간 걸 안다(오너 신고
@@ -1502,7 +1542,7 @@ export function Editor() {
         setSaveError({ ...classifyEditorLoadError(error), backedUp });
       });
     }, 1500);
-  }, [blocks, genActive, projectId, backupLatestEditorDraft]);
+  }, [blocks, genActive, projectId, backupLatestEditorDraft, reloadAfterEditorConflict]);
   /* 배너의 [다시 저장] — 자동 저장과 같은 경로. 성공하면 배너가 사라지고 임시 보관본도 정리된다. */
   const retrySaveNow = () => {
     const source = latestBlocks.current;
@@ -1527,6 +1567,7 @@ export function Editor() {
       setSaveError(null);
       toast.push('저장했어요', { icon: 'check' });
     }).catch((error) => {
+      if (isEditorConflict(error)) { reloadAfterEditorConflict(); return; }
       if (!saveGuard.current.isNewest(ticket)) return;
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
       setSaveError({ ...classifyEditorLoadError(error), backedUp });
@@ -2646,6 +2687,7 @@ export function Editor() {
     try {
       await api.saveEditorBlocks(projectId, persistable(source));
     } catch (error) {
+      if (isEditorConflict(error)) { reloadAfterEditorConflict(); return; }
       if (!saveGuard.current.isNewest(ticket)) return;
       // 눌렀는데 아무 반응이 없으면 저장된 줄 안다 — 실패는 반드시 말한다.
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
