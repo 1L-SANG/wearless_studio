@@ -184,7 +184,9 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
+          # 문이 둘 이상이면 SNS 는 문마다 고유 Sid 를 요구한다(없으면 400 — 2026-10-02 롤백).
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
             Principal: {Service: cloudwatch.amazonaws.com}
             Action: sns:Publish
             Resource: !Ref AlarmTopic
@@ -192,7 +194,8 @@ Resources:
               StringEquals:
                 AWS:SourceAccount: !Ref AWS::AccountId
           # 예산 알림(아래 MonthlyNetBudget·MonthlyGrossBudget)도 같은 토픽으로 들어온다.
-          - Effect: Allow
+          - Sid: AllowBudgets
+            Effect: Allow
             Principal: {Service: budgets.amazonaws.com}
             Action: sns:Publish
             Resource: !Ref AlarmTopic
