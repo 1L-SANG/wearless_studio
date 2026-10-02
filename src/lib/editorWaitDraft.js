@@ -44,6 +44,24 @@ export function saveEditorWaitDraft(projectId, blocks, storage, { baseRevision =
   } catch { return false; }
 }
 
+/** 작업본 내용과 기준 리비전을 **한 번에** 읽는다({blocks, baseRevision} 또는 null).
+    키는 이 브라우저의 모든 탭이 같이 쓴다. 내용과 기준을 따로 읽으면 그 사이 다른 탭의 저장
+    성공이 키를 지워 기준이 null(=옛 작업본)로 읽히고, 오래된 내용이 복원돼 다른 탭의 최신
+    저장을 덮는다(2026-10-02 로컬 두 탭 실측). */
+export function loadEditorWaitDraftEntry(projectId, storage) {
+  if (!projectId) return null;
+  const target = browserStorage(storage);
+  if (!target) return null;
+  try {
+    const saved = JSON.parse(target.getItem(keyFor(projectId)));
+    if (!(saved?.version === 1 && Array.isArray(saved.blocks))) return null;
+    return {
+      blocks: rebaseAssetUrls(saved.blocks),
+      baseRevision: Number.isInteger(saved.baseRevision) ? saved.baseRevision : null,
+    };
+  } catch { return null; }
+}
+
 export function loadEditorWaitDraftBaseRevision(projectId, storage) {
   if (!projectId) return null;
   const target = browserStorage(storage);

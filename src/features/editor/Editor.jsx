@@ -18,7 +18,7 @@ import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { incompleteMessage, incompleteSummary, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
-  clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraft, loadEditorWaitDraftBaseRevision, saveEditorWaitDraft,
+  clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft,
 } from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
@@ -1235,7 +1235,10 @@ export function Editor() {
   useEffect(() => {
     setLoadError(null);
     const enteringJob = useAppStore.getState().detailPageJob;
-    const savedDraft = loadEditorWaitDraft(projectId);
+    // 내용과 기준 리비전을 지금 한 번에 읽는다 — 서버 응답 뒤에 기준만 다시 읽으면 그새 다른
+    // 탭이 공유 키를 지워 짝이 어긋난다(loadEditorWaitDraftEntry 주석).
+    const savedDraftEntry = loadEditorWaitDraftEntry(projectId);
+    const savedDraft = savedDraftEntry?.blocks ?? null;
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
       && (enteringJob.status === 'running'
         || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
@@ -1323,7 +1326,7 @@ export function Editor() {
           // 저장했으면 오래된 작업본이 새 내용을 덮던 LWW 유실(2026-09-30 레이스 감사 High)을 막는다.
           const draftDecision = editorWaitDraftDecision({
             draft: savedDraft,
-            draftBase: loadEditorWaitDraftBaseRevision(projectId),
+            draftBase: savedDraftEntry?.baseRevision ?? null,
             server: b,
             serverRevision: api.editorRevisionOf?.(projectId) ?? null,
           });
