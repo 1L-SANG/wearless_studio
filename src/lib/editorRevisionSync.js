@@ -23,6 +23,8 @@ export function sameEditorJson(a, b) {
   return stableJson(a) === stableJson(b);
 }
 
+const SUPERSEDED = Symbol('superseded');
+
 export function createEditorRevisionSync({ load, put, normalize = (blocks) => blocks }) {
   const states = new Map();
   const stateOf = (projectId) => {
@@ -53,20 +55,27 @@ export function createEditorRevisionSync({ load, put, normalize = (blocks) => bl
     },
 
     /** 저장 — 앞 저장이 끝난 뒤에 나가고, 그사이 더 새 저장이 들어왔으면 이건 건너뛴다
-        (그 새 저장이 이 내용을 포함한다). 409 면 editor_conflict 에러를 그대로 던진다. */
+        (그 새 저장이 이 내용을 포함한다). 건너뛴 호출은 **그 새 저장의 결과**로 끝난다 —
+        새 저장이 409 면 건너뛴 쪽도 실패한다(성공으로 끝내면 [저장]이 "저장했어요" 를 띄운다,
+        2026-10-02 로컬 두 탭 실측). 409 면 editor_conflict 에러를 그대로 던진다. */
     save(projectId, body) {
       const state = stateOf(projectId);
       const ticket = ++state.latestTicket;
       const run = state.tail.then(async () => {
-        if (ticket !== state.latestTicket) return;
+        if (ticket !== state.latestTicket) return SUPERSEDED;
         const json = stableJson(normalize(body));
-        if (json === state.saved) return;
+        if (json === state.saved) return undefined;
         const res = await put(projectId, body, state.revision);
         if (Number.isInteger(res?.revision)) state.revision = res.revision;
         state.saved = json;
+        return undefined;
       });
       state.tail = run.catch(() => {});
-      return run;
+      // 체인(tail) 밖에서 최신 저장을 기다린다 — 체인 안에서 기다리면 최신 저장이 이 호출 뒤에
+      // 줄 서 있어 서로를 기다린다.
+      const result = run.then((outcome) => (outcome === SUPERSEDED ? state.latestResult : outcome));
+      state.latestResult = result;
+      return result;
     },
   };
 }

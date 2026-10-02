@@ -100,3 +100,37 @@ test('sameEditorJson 은 키 순서를 무시하고 배열 순서는 본다', ()
   assert.equal(sameEditorJson([1, 2], [2, 1]), false);
   assert.equal(sameEditorJson({ a: 1 }, { a: 1, b: undefined }), true);
 });
+
+test('더 새 저장에 밀린 호출은 그 새 저장의 결과를 받는다 — 새 저장이 409 면 밀린 쪽도 실패', async () => {
+  // 실측(2026-10-02 로컬 두 탭): [저장] 직후 자동 저장이 이어 들어와 [저장]이 밀렸고, 자동 저장은
+  // 409 로 거절됐는데 [저장] 쪽은 성공으로 끝나 "저장했어요" 가 충돌 안내와 함께 떴다.
+  const server = fakeServer({ revision: 1, blocks: [{ id: 'a' }] });
+  const sync = createEditorRevisionSync({ load: server.load, put: server.put });
+  await sync.load('p1');
+  server.revision = 2; // 다른 탭이 먼저 저장
+  let release;
+  server.gate = new Promise((r) => { release = r; });
+  const first = sync.save('p1', [{ id: 'x' }]);   // 나가서 대기 중
+  while (server.puts.length < 1) await new Promise((r) => setImmediate(r));
+  const manual = sync.save('p1', [{ id: 'y' }]);  // 밀릴 호출
+  const auto = sync.save('p1', [{ id: 'z' }]);    // 최신
+  release();
+  await assert.rejects(first, { code: 'editor_conflict' });
+  await assert.rejects(auto, { code: 'editor_conflict' });
+  await assert.rejects(manual, { code: 'editor_conflict' });
+});
+
+test('밀린 호출은 새 저장이 성공하면 성공으로 끝난다', async () => {
+  const server = fakeServer({ revision: 1, blocks: [{ id: 'a' }] });
+  const sync = createEditorRevisionSync({ load: server.load, put: server.put });
+  await sync.load('p1');
+  let release;
+  server.gate = new Promise((r) => { release = r; });
+  const first = sync.save('p1', [{ id: 'x' }]);
+  while (server.puts.length < 1) await new Promise((r) => setImmediate(r));
+  const skipped = sync.save('p1', [{ id: 'y' }]);
+  const latest = sync.save('p1', [{ id: 'z' }]);
+  release();
+  await Promise.all([first, skipped, latest]);
+  assert.deepEqual(server.puts.map((p) => p.body), [[{ id: 'x' }], [{ id: 'z' }]]);
+});
