@@ -18,7 +18,7 @@
 - 서비스 배포는 CI(`deploy-server`)로만. `env deploy`·`secret init`·Cloudflare 대시보드·PR 머지·`gh workflow run`·PR 닫기는 **오너가 하거나 오너 승인 후**.
 - cloudflared 이미지: `cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c`(2026.9.3 멀티아키 인덱스).
 - 시크릿: SSM `/copilot/wearless/use1/secrets/CLOUDFLARE_TUNNEL_TOKEN` → 사이드카 환경변수 `TUNNEL_TOKEN`. 터널 이름 `wearless-api-use1`, 라우트 `api.wearless.kr → http://localhost:8080`.
-- 사이드카 명령 `["tunnel", "--grace-period", "25s", "run"]`, `depends_on: {api: healthy}`, `essential: true`.
+- 사이드카 명령 `["tunnel", "--grace-period", "55s", "run"]` + `taskdef_overrides` `ContainerDefinitions[1].StopTimeout: 60`, `depends_on: {api: healthy}`, `essential: true` (PR A 리뷰로 25s → 55s — 원장 Final 참고).
 - api 컨테이너 헬스체크: `localhost:8080/healthz`, interval 10s · retries 3 · timeout 5s · start_period 60s.
 - **알람 삭제(B1)와 서비스 타입 전환(B2)을 같은 배포에 넣지 않는다**(스펙 §4).
 - 원복용 ALB 주소: `wearle-Publi-n7eZ27fYallL-825254557.us-east-1.elb.amazonaws.com`.
@@ -28,7 +28,7 @@
 
 1. **IPv6 방문자가 터널로 들어올 때**(XFF 에 loopback 이 덧붙은 경우 포함) — 한도 판정이 IPv6 방문자 주소를 써야 한다. → Task 1 테스트 케이스.
 2. **터널 경로인데 `CF-Connecting-IP` 가 없거나 깨진 요청** — 느슨해지지 않고 `127.0.0.1` 한 버킷으로 좁혀 묶여야 한다. → Task 1 테스트 케이스.
-3. **롤링 배포 중 오래 걸리는 요청**(공개 분석 실측 최대 53.5초) — 커넥터 교대 때 25초까지는 끝까지 응답해야 하고, 200 아닌 응답이 사용자에게 가지 않아야 한다. → Task 2 grace 범위 가드, Task 5 실측.
+3. **롤링 배포 중 오래 걸리는 요청**(공개 분석 실측 최대 53.5초) — 커넥터 교대 때 55초까지는 끝까지 응답해야 하고, 200 아닌 응답이 사용자에게 가지 않아야 한다. → Task 2 `test_cloudflared_drains_the_longest_known_request_before_it_is_killed`, Task 5 실측.
 4. **부팅이 헬스체크 예산보다 느린 경우** — 재시작 루프에 빠지지 않아야 한다. → Task 2 `start_period ≥ 60` 가드 + 실측 부팅 시간 확인 단계.
 5. **누군가 `http:` 블록이나 ALB export import 를 되살리는 경우** — ALB 가 몰래 다시 생기거나(월 $24) ALB 없는 환경에서 env 배포가 깨진다. → Task 6·8 가드.
 

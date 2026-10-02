@@ -100,12 +100,26 @@ ALB 지표 알람을 걷어낸 자리를 둘이 메운다.
 ## 토큰 교체
 
 토큰을 새로 받으면 옛 토큰으로 이미 붙은 커넥터는 계속 돌지만 **새 연결은 못 연다**(Cloudflare 문서
-"Tunnel tokens"). 그래서 순서가 중요하다.
+"Tunnel tokens"). 새 태스크는 기동할 때 SSM 값을 읽으므로, **토큰을 새로 받은 순간부터 SSM 을 바꿀
+때까지**가 위험 구간이다 — 그 사이에 태스크가 교체되면(헬스체크 실패·Fargate 정비·AZ 재배치) 새 태스크의
+cloudflared 가 옛 토큰으로 못 붙는다. 그 태스크로는 터널 요청이 하나도 안 들어오고(사용자는 Cloudflare
+530/1033), cloudflared 가 재시도 끝에 종료하면 `essential: true` 라 태스크째 죽어 교체가 반복된다.
+배포 중이 아니면 서킷브레이커도 없다(ALB 가 남아 있는 동안엔 태스크가 죽을 때 ALB 경로도 같이 끊긴다).
+
+**1·2 를 한자리에서 연달아(1분 안에) 한다.** 미리 두 창을 열어 두고 시작한다.
 
 1. 대시보드에서 터널 토큰을 새로 받는다(Refresh token). 지금 태스크는 계속 트래픽을 받는다.
-2. `AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN --overwrite` 로 새 값을 넣는다.
-3. `gh workflow run deploy-server.yml --ref main` — 새 태스크가 새 토큰으로 붙고 옛 태스크가 빠진다.
+2. **곧바로** `AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN --overwrite`
+   로 새 값을 넣는다. 이 순간부터 새로 뜨는 태스크는 새 토큰을 쓴다.
+3. `gh workflow run deploy-server.yml --ref main` — 옛 토큰으로 붙어 있던 커넥터까지 새 토큰으로 바꾼다.
    api-watch 로 `bad=0` 을 본다.
+
+증상(1·2 사이가 벌어졌거나 SSM 에 틀린 값이 들어갔을 때) — 로그 스트림 `copilot/cloudflared/<task-id>` 에:
+- `Unauthorized` 가 반복 → 폐기된 옛 토큰(1 다음에 2 를 안 했다). 터널 대시보드에 커넥터가 0개로 보인다.
+- `Provided Tunnel token is not valid.` 후 종료 → 형식이 깨진 값(복사 실수). 태스크가 뜨자마자 멈추기를 반복한다.
+
+처치: 대시보드의 **현재** 토큰을 다시 복사해 2 를 실행한 뒤 3 으로 태스크를 새로 띄운다
+(폐기된 토큰으로 재시도 중인 태스크는 스스로 새 값을 읽지 않는다).
 
 ## Cloudflare 앞단 제약 (터널 전과 같다)
 

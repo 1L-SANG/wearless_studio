@@ -123,18 +123,19 @@ sidecars:
     # 2026.9.3 멀티아키 인덱스 digest(amd64·arm64 둘 다 — ARM64 전환 때 그대로 쓴다).
     image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     essential: true            # 터널이 죽으면 그 태스크는 아무도 못 부른다 → 태스크째 교체
-    command: ["tunnel", "--grace-period", "25s", "run"]
+    command: ["tunnel", "--grace-period", "55s", "run"]
     depends_on:
       api: healthy             # 기동: api healthy 뒤에 붙는다 / 종료: 역순이라 api 보다 먼저 빠진다
     secrets:
       TUNNEL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_TUNNEL_TOKEN
 ```
 
-- 종료 시간: cloudflared 는 ECS 기본 StopTimeout 30s 안에 `--grace-period 25s` 로 끝난다. api 는 기존 90s.
-  컨테이너별 상한이라 Fargate 120s 한도와 충돌하지 않는다. 25s 인 이유: 공개 분석 요청이 실측 최대 53.5초라
-  길수록 배포 때 덜 끊기는데, 지금 ALB 드레인(`deregistration_delay: 10s`)보다는 길고 30s 는 넘을 수 없다.
+- 종료 시간: `--grace-period 55s` + `taskdef_overrides` 의 `ContainerDefinitions[1].StopTimeout: 60`(사이드카가
+  하나뿐이라 인덱스 1 — 렌더 실측). 공개 분석(동기)이 실측 최대 53.5초라 그걸 담는다. 30s 는 ECS **기본값**일 뿐
+  한도가 아니다(PR A 리뷰 지적으로 25s → 55s). 종료는 cloudflared(≤60s) → api(≤90s) 순이고 각각 Fargate
+  컨테이너 상한 120s 안. 지금 ALB 드레인(`deregistration_delay: 10s`)보다 훨씬 덜 끊긴다.
 - 사이드카에 cpu/memory 를 따로 주지 않는다 — 태스크 1 vCPU/4GB 를 같이 쓴다(추가 비용 0).
-- 이미지를 Docker Hub 에서 받는다. 익명 풀 한도(IP 당 6시간 100회)는 태스크마다 공인 IP 가 달라 문제없다.
+- 이미지를 Docker Hub 에서 받는다. 익명 풀 한도(2025-04 부터 IPv4 당 시간 10회)는 태스크마다 공인 IP 가 달라 문제없다.
 - `test_api_stop_timeout_covers_dispatcher_drain_and_shutdown_finalize` 가 `ContainerDefinitions[0]`
   (= api) 를 보는 가정은 사이드카를 추가해도 유지돼야 한다 — 렌더 결과로 확인(계획 단계).
 
@@ -233,7 +234,7 @@ sidecars:
 | 위험 | 완화 |
 |---|---|
 | DNS 전환 때 기존 CNAME 삭제 → 터널 라우트 추가 사이 공백 | 저트래픽 시간대. 런북에 현재 대시보드 기준 정확한 순서. 공백 목표 ≤1분. 여유가 생기면 Cloudflare API 토큰(터널·DNS 한정)으로 원자적 전환 가능 |
-| 배포 중 502 (커넥터 교대) | dependsOn 역순 종료 + `--grace-period 25s`. 전환 당일 롤링 배포 1회를 1초 폴링으로 실측 — 200 아닌 응답이 1건이라도 나오면 DNS 원복 후 원인 조사 |
+| 배포 중 502 (커넥터 교대) | dependsOn 역순 종료 + `--grace-period 55s`(StopTimeout 60). 전환 당일 롤링 배포 1회를 1초 폴링으로 실측 — 200 아닌 응답이 1건이라도 나오면 DNS 원복 후 원인 조사 |
 | 방문자 IP 판정 오류 → 요청 한도(공개 분석 10/h, 카카오 30/h)가 엉뚱하게 묶임 | §6.2 loopback 보강 + 테스트 3종 + 전환 직후 로그에서 실제 방문자 IP 확인 |
 | 토큰 시크릿 누락·태그 누락 → 배포 롤백 | 0단계 확인 명령을 PR A 머지 조건으로 |
 | B2 배포에서 ECS 서비스 교체 → Service Connect 이름 충돌·롤백 | 머지 전 `svc package --diff` 로 교체 여부 확인 |
