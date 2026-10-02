@@ -343,19 +343,29 @@ jobs:
 
             - name: 상세 워커 배포 (Spot 0대)
               run: |
+                  # --detach + 직접 대기: Copilot v1.34.1 진행 표시가 2026-09-28 부터 끝나지 않을 수 있다
+                  # (scripts/ci/wait-copilot-stack.sh 머리 주석).
+                  started=$(date -u +%Y-%m-%dT%H:%M:%S)
                   copilot svc deploy \
                     --app "$COPILOT_APP" \
                     --name detail-worker \
                     --env "$COPILOT_ENV" \
-                    --tag "$GITHUB_SHA"
+                    --tag "$GITHUB_SHA" \
+                    --detach
+                  scripts/ci/wait-copilot-stack.sh "$COPILOT_APP-$COPILOT_ENV-detail-worker" "$started"
 
             - name: 배포 (이미지 빌드→ECR→ECS 롤링)
               run: |
+                  # --detach + 직접 대기: Copilot v1.34.1 진행 표시가 2026-09-28 부터 끝나지 않을 수 있다
+                  # (scripts/ci/wait-copilot-stack.sh 머리 주석).
+                  started=$(date -u +%Y-%m-%dT%H:%M:%S)
                   copilot svc deploy \
                     --app "$COPILOT_APP" \
                     --name "$COPILOT_SVC" \
                     --env "$COPILOT_ENV" \
-                    --tag "$GITHUB_SHA"
+                    --tag "$GITHUB_SHA" \
+                    --detach
+                  scripts/ci/wait-copilot-stack.sh "$COPILOT_APP-$COPILOT_ENV-$COPILOT_SVC" "$started"
 
 
             # ALB 헬스체크(/healthz)는 프로세스가 살아 있는지만 본다 — 의존성은 안 본다.
