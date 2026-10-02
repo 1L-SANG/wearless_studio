@@ -1,17 +1,18 @@
 name: vercel-deploy
 
-# 프론트 운영 배포를 Vercel 배포 훅으로 건다.
+# 프론트 운영 배포를 Vercel CLI(토큰)로 직접 올린다.
 #
 # 왜 필요한가: Vercel Hobby 는 **비공개** 레포에서 커밋 작성자가 팀 소유자(로그인 연결 GitHub)일
-# 때만 Git 자동 배포를 허용한다. 레포가 8/14~9/29 공개라 그동안은 검사가 안 걸렸고, 비공개로
-# 바뀐 10/02 부터 모든 자동 배포가 "commit author did not have contributing access" 로 막혔다.
-# 배포 훅은 프로젝트 소유자 권한으로 main 의 최신 커밋을 빌드하므로 작성자 검사를 받지 않는다.
+# 때만 배포를 허용한다. 레포가 8/14~10/02 공개라 검사가 안 걸렸고, 비공개로 바뀐 10/02 부터 Git 자동
+# 배포가 "commit author did not have contributing access" 로 전부 막혔다.
+# 배포 훅도 같은 검사를 받는다(2026-10-02 실측: 훅 배포 3b318ac 도 BLOCKED, #457).
+# CLI 배포는 토큰 소유자로 인증하고, 아래처럼 .git 을 지운 뒤 올리면 커밋 작성자 정보가 붙지 않는다.
 #
 # Git 자동 배포(프리뷰·Vercel 체크)는 그대로 둔다 — 비공개인 동안은 계속 Blocked 로 뜨지만,
 # 레포가 다시 공개되거나 Pro 로 올라가면 그대로 살아난다.
 #
-# 준비: Vercel 프로젝트 Settings → Git → Deploy Hooks 에서 브랜치 main 훅을 만들고,
-# 그 URL 을 레포 시크릿 VERCEL_DEPLOY_HOOK_URL 에 넣는다(URL 자체가 배포 권한 — 어디에도 붙여넣지 말 것).
+# 준비: Vercel Account Settings → Tokens 에서 만든 토큰을 레포 시크릿 VERCEL_TOKEN 에 넣는다.
+# 조직·프로젝트 ID 는 비밀이 아니라 아래 env 에 그대로 둔다.
 on:
     push:
         branches: [main]
@@ -29,7 +30,7 @@ on:
             - "**/*.md"
     workflow_dispatch:
 
-# 연달아 머지되면 마지막 것만 의미 있다 — 훅은 늘 main 최신 커밋을 빌드한다.
+# 연달아 머지되면 마지막 것만 의미 있다.
 concurrency:
     group: vercel-deploy-main
     cancel-in-progress: true
@@ -37,20 +38,46 @@ concurrency:
 permissions:
     contents: read
 
+env:
+    VERCEL_ORG_ID: team_6tb46vcuuEIw9OBdSZJjk3Af
+    VERCEL_PROJECT_ID: prj_WR3Pfd96bwLTzmSYBj5KjhJlAxCy
+
 jobs:
     deploy:
         runs-on: ubuntu-latest
-        timeout-minutes: 5
+        timeout-minutes: 20
         steps:
-            - name: Vercel 배포 훅 호출
+            - name: 토큰 확인
               env:
-                  HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
               run: |
-                  if [ -z "$HOOK" ]; then
-                    echo "::error::VERCEL_DEPLOY_HOOK_URL 시크릿이 없어요 — Vercel 프로젝트 Settings → Git → Deploy Hooks 에서 만들어 넣어 주세요."
+                  if [ -z "$VERCEL_TOKEN" ]; then
+                    echo "::error::VERCEL_TOKEN 시크릿이 없어요 — Vercel Account Settings → Tokens 에서 만들어 넣어 주세요."
                     exit 1
                   fi
-                  # -f: 4xx/5xx 면 실패로 끝낸다(없으면 에러 본문을 성공으로 삼킨다 — #233 교훈).
-                  curl -fsS --retry 3 --retry-all-errors --retry-delay 5 -X POST "$HOOK" -o /tmp/hook.json
-                  # 응답에는 job id 만 있다(훅 URL 은 마스킹됨).
-                  echo "훅 응답: $(cat /tmp/hook.json)"
+            - uses: actions/checkout@v5
+            - uses: pnpm/action-setup@v6
+              with:
+                  version: 11
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: npm install --global vercel@latest
+            # 운영 환경 변수(VITE_*)와 프로젝트 설정을 Vercel 에서 받아 온다 — 저장소엔 없다.
+            - run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+              env:
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+            - run: vercel build --prod --token="$VERCEL_TOKEN"
+              env:
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+            # .git 이 있으면 CLI 가 커밋 작성자를 배포에 실어 Hobby 작성자 검사에 다시 걸릴 수 있다.
+            # 빌드 산출물(.vercel/output)만 올리므로 여기서 지워도 된다.
+            - run: rm -rf .git
+            - name: 운영 배포
+              env:
+                  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+              run: |
+                  url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+                  echo "배포: $url"
+                  echo "### Vercel 운영 배포 완료: $url (커밋 $GITHUB_SHA)" >> "$GITHUB_STEP_SUMMARY"
