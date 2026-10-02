@@ -692,3 +692,14 @@ def test_api_addons_do_not_reference_the_removed_target_group():
     addons_dir = MANIFEST.parent / "addons"
     offenders = sorted(p.name for p in addons_dir.glob("*.yml") if "TargetGroup" in p.read_text(encoding="utf-8"))
     assert offenders == []
+
+
+def test_api_is_a_backend_service_behind_the_tunnel():
+    """ALB 를 걷어낸 뒤 api 는 인바운드 없는 Backend Service 다. `http:` 블록이 되살아나면 Copilot 이
+    ALB 를 다시 만든다(ALB $16.7 + 공인 IPv4 2개 $7.4/월) — 설계 2026-10-02."""
+    doc = _api_manifest()
+    assert doc["type"] == "Backend Service"
+    assert "http" not in doc
+    assert "cloudflared" in doc["sidecars"]
+    assert doc["image"]["port"] == 8080  # Service Connect 와 사이드카가 이 포트로 붙는다
+    assert doc["network"]["connect"] is True
