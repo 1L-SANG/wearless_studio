@@ -12,7 +12,8 @@
 | 사이드카 | `copilot/api/manifest.yml` 의 `sidecars.cloudflared`(cloudflared 2026.9.3, digest 고정) |
 | 로그 | CloudWatch `/copilot/wearless-use1-api`, 스트림 `copilot/cloudflared/<task-id>` |
 
-아래 명령은 `export AWS_PROFILE=wearless` 를 전제로 한다.
+아래 명령은 `export AWS_PROFILE=wearless` 를 전제로 한다. ⚠️ copilot 명령은 `AWS_PROFILE=wearless` 가 꼭 필요하다 —
+`default` 프로필은 `aws login` 토큰이라 Copilot(Go SDK)이 못 읽고 `RequestCanceled … context deadline exceeded` 로 죽는다.
 
 ## 0. 터널 만들기 (처음 한 번)
 
@@ -22,7 +23,7 @@
 4. 토큰 저장 — 반드시 copilot 으로. raw `aws ssm put-parameter` 는 copilot 태그가 없어 태스크가 못 읽고
    배포가 롤백된다(2026-07-17 FM_CI_PEPPER 사고).
    ```bash
-   AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
+   AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
    ```
    환경별 값을 물으면 `use1` 에만 붙여 넣고 나머지는 빈칸으로 넘긴다(`--values` 는 셸 히스토리에 남아 쓰지 않는다).
 5. 확인 — 두 태그가 나와야 한다:
@@ -84,7 +85,7 @@ aws logs filter-log-events --region us-east-1 --log-group-name /copilot/wearless
 |---|---|
 | DNS 전환 후 ~ ALB 철거 전 | 터널 라우트 `api.wearless.kr` 삭제 → DNS → Records 에 `api` CNAME → 위 ALB 주소 · Proxied 로 추가. 수 초 |
 | ALB 철거 후(api 가 Backend Service) | 전환 PR 을 revert → CI 가 Load Balanced Web Service 로 재배포하며 ALB 가 **새 주소**로 생긴다 → `aws elbv2 describe-load-balancers --region us-east-1 --query 'LoadBalancers[0].DNSName' --output text` → 그 주소로 CNAME 교체(위와 같이). 환경 매니페스트에 인증서가 남아 있어야 HTTPS 리스너가 같이 생긴다 |
-| 마무리(인증서 제거) 후 | 마무리 PR revert + `AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1` → 그다음 위 줄 |
+| 마무리(인증서 제거) 후 | 마무리 PR revert + `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1` → 그다음 위 줄 |
 
 ## 알림
 
@@ -109,7 +110,7 @@ cloudflared 가 옛 토큰으로 못 붙는다. 그 태스크로는 터널 요�
 **1·2 를 한자리에서 연달아(1분 안에) 한다.** 미리 두 창을 열어 두고 시작한다.
 
 1. 대시보드에서 터널 토큰을 새로 받는다(Refresh token). 지금 태스크는 계속 트래픽을 받는다.
-2. **곧바로** `AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN --overwrite`
+2. **곧바로** `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN --overwrite`
    로 새 값을 넣는다. 이 순간부터 새로 뜨는 태스크는 새 토큰을 쓴다.
 3. `gh workflow run deploy-server.yml --ref main` — 옛 토큰으로 붙어 있던 커넥터까지 새 토큰으로 바꾼다.
    api-watch 로 `bad=0` 을 본다.

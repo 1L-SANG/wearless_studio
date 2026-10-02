@@ -99,7 +99,7 @@ network:
 #    시크릿이 없으면 태스크가 기동조차 못 해 배포가 롤백된다. 값이 무효(대시보드에서 토큰을 새로 받고
 #    SSM 을 안 바꿈)면 새 태스크의 cloudflared 가 못 붙어 터널 요청이 끊기고, 재시도 끝에 죽으면
 #    essential 이라 태스크째 죽는다 — 배포 밖이면 교체가 반복된다. 교체 절차는 런북 "토큰 교체".
-#      AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
+#      AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
 sidecars:
   cloudflared:
     image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
