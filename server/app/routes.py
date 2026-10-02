@@ -3022,23 +3022,40 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
 
 @router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
             tags=["Detail Page"], summary="에디터 블록 조회")
-async def get_editor_blocks(request: Request, project_id: str, user_id: str = Depends(require_user)):
+async def get_editor_blocks(request: Request, project_id: str, user_id: str = Depends(require_user),
+                            with_revision: bool = Query(False, alias="withRevision")):
+    # withRevision 이 없으면 예전처럼 배열만 — 배포 도중 캐시된 옛 프론트가 그대로 읽는다.
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        return await repo.get_editor_blocks(conn, project_id)
+        if not with_revision:
+            return await repo.get_editor_blocks(conn, project_id)
+        blocks, revision = await repo.get_editor_state(conn, project_id)
+        return {"blocks": blocks, "revision": revision}
 
 
-@router.put("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+@router.put("/projects/{project_id}/editor-blocks",
+            responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse, "description": "다른 곳에서 먼저 저장됨"}},
             tags=["Detail Page"], summary="에디터 블록 저장")
 async def save_editor_blocks(request: Request, project_id: str, blocks: list = Body(...),
-                             user_id: str = Depends(require_user)):
+                             user_id: str = Depends(require_user),
+                             base_revision: int | None = Query(None, alias="baseRevision", ge=0)):
+    """baseRevision = 이 화면이 마지막으로 본 리비전. 그 사이 다른 탭·기기·생성 완료가 먼저
+    저장했으면 409 editor_conflict(meta.revision = 현재값) — 오래된 화면이 새 내용을 덮지 않는다."""
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        await repo.save_editor_blocks(conn, user_id, project_id, blocks)
+        revision = await repo.save_editor_blocks(conn, user_id, project_id, blocks,
+                                                 base_revision=base_revision)
+        if revision is None:
+            current = await repo.get_editor_revision(conn, project_id)
+            raise HTTPException(status_code=409, detail={
+                "code": "editor_conflict",
+                "message": "다른 창에서 더 최근에 저장된 내용이 있어요. 최신 내용을 다시 불러올게요.",
+                "meta": {"revision": current},
+            })
         await conn.commit()
-    return {"ok": True}
+    return {"ok": True, "revision": revision}
 
 
 # ---------- 에디터 의류 탭(Wardrobe, PL-5/6 · AG-06/07) ----------

@@ -20,6 +20,7 @@ import { jobFailure } from './jobFailure.js';
 import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
+import { createEditorRevisionSync } from '@/lib/editorRevisionSync.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -59,6 +60,17 @@ const browserOrigin = () => globalThis.location?.origin || 'unknown';
 // 상대경로뿐 아니라 옛 빌드가 오염 저장한 절대 URL(잘못된 호스트)도 현재 BASE_URL 로 재기준화해
 // 자가치유한다(공용 로직 = @/lib/assetUrl).
 const absolutizeAssetUrls = rebaseAssetUrls;
+
+// 에디터 블록 리비전 — 프로젝트별로 마지막에 본 editor_revision 을 기억해 PUT 에 싣는다.
+// 저장 본문은 상대경로(relativizeAssetUrls)로 비교해야 서버가 돌려준 블록과 같은 기준이 된다.
+const editorRevisions = createEditorRevisionSync({
+  load: (projectId) => http(`/v1/projects/${projectId}/editor-blocks?withRevision=1`),
+  put: (projectId, body, baseRevision) => http(
+    `/v1/projects/${projectId}/editor-blocks${baseRevision == null ? '' : `?baseRevision=${baseRevision}`}`,
+    { method: 'PUT', body },
+  ),
+  normalize: relativizeAssetUrls,
+});
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
@@ -571,10 +583,15 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: relativizeAssetUrls(blocks), ...options });
   },
   async getEditorBlocks(projectId) {
-    return http(`/v1/projects/${projectId}/editor-blocks`);
+    return editorRevisions.load(projectId);
   },
+  /** 이 탭이 마지막으로 본 editor_revision(모르면 null) — 브라우저 임시 작업본의 기준점. */
+  editorRevisionOf(projectId) {
+    return editorRevisions.revisionOf(projectId);
+  },
+  // 리비전 동기화(editorRevisionSync) — 다른 탭이 먼저 저장했으면 409 editor_conflict 로 던진다.
   async saveEditorBlocks(projectId, blocks) {
-    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: relativizeAssetUrls(blocks) });
+    await editorRevisions.save(projectId, relativizeAssetUrls(blocks));
   },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
   async generateDetailPage(projectId, { onProgress } = {}) {
