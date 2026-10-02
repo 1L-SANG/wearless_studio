@@ -618,3 +618,52 @@ def test_opendid_manifest_declares_setup_path():
     assert "/opt/opendid/data" in mount, (
         "holder-state EFS 마운트가 사라졌다 — SETUP_PATH 가 tmpfs 를 가리키게 된다"
     )
+
+
+# ── Cloudflare Tunnel 인그레스(설계 docs/superpowers/specs/2026-10-02-cloudflare-tunnel-ingress-design.md) ──
+
+CLOUDFLARED_IMAGE_RE = re.compile(r"^cloudflare/cloudflared@sha256:[0-9a-f]{64}$")
+
+
+def _api_manifest() -> dict:
+    return yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+
+
+def test_api_container_has_its_own_healthcheck():
+    """ALB 를 걷어내면 컨테이너 헬스체크가 유일한 헬스 판정이고, cloudflared 사이드카의
+    depends_on: healthy 가 이걸 기다린다. 기동 유예가 짧으면 느린 부팅이 재시작 루프에 빠진다
+    — 지금 ALB 서비스의 HealthCheckGracePeriod(60s)보다 짧게 두지 않는다."""
+    hc = _api_manifest()["image"]["healthcheck"]
+    assert "localhost:8080/healthz" in " ".join(hc["command"])
+    assert hc["retries"] >= 2
+    assert int(str(hc["start_period"]).rstrip("s")) >= 60
+
+
+def test_cloudflared_sidecar_is_wired_for_tunnel_ingress():
+    side = _api_manifest()["sidecars"]["cloudflared"]
+    assert CLOUDFLARED_IMAGE_RE.match(side["image"]), "digest 로 고정 — 태그·latest 는 조용히 바뀐다"
+    assert side["essential"] is True  # 터널이 죽은 태스크는 아무도 못 부른다 → 태스크째 교체
+    assert side["depends_on"] == {"api": "healthy"}  # 기동은 api 뒤, 종료는 역순으로 api 앞
+    assert side["secrets"]["TUNNEL_TOKEN"] == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_TUNNEL_TOKEN"
+    )
+    assert "TUNNEL_TOKEN" not in (side.get("variables") or {}), "토큰을 평문 변수로 두지 않는다"
+    cmd = side["command"]
+    assert cmd[0] == "tunnel" and cmd[-1] == "run"
+
+
+def test_cloudflared_drains_the_longest_known_request_before_it_is_killed():
+    """배포 때 커넥터가 빠지는 동안 진행 중 요청을 끝까지 돌려줘야 한다. 공개 분석은 동기 요청이고
+    실측 최대 53.5초다(cfn.patches.yml 주석) — 그보다 짧게 끊으면 돈은 쓰고 응답은 못 받는다.
+
+    유예는 그 컨테이너의 StopTimeout(기본 30s) 안에서만 의미가 있어서 taskdef_overrides 로 함께
+    올린다. override 의 ContainerDefinitions[1] 이 cloudflared 를 가리키려면 사이드카가 하나뿐이어야
+    한다(Copilot 은 본 컨테이너를 0번, 사이드카를 그 뒤에 렌더한다 — 2026-10-02 렌더 실측)."""
+    doc = _api_manifest()
+    assert list(doc["sidecars"]) == ["cloudflared"], "사이드카를 더하면 ContainerDefinitions 인덱스부터 다시 확인"
+    cmd = doc["sidecars"]["cloudflared"]["command"]
+    grace = int(cmd[cmd.index("--grace-period") + 1].rstrip("s"))
+    overrides = {o["path"]: o["value"] for o in doc.get("taskdef_overrides", [])}
+    sidecar_stop = overrides.get("ContainerDefinitions[1].StopTimeout", 30)  # ECS 기본값
+    assert grace >= 55, "공개 분석 실측 최대 53.5초를 담아야 한다"
+    assert grace < sidecar_stop <= 120, "유예가 StopTimeout 보다 길면 SIGKILL 이 먼저 온다(Fargate 상한 120s)"

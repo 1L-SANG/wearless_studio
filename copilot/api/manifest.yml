@@ -33,6 +33,15 @@ image:
     args:
       BUILDKIT_INLINE_CACHE: "1" # 다음 배포가 레지스트리 이미지에서 캐시 메타데이터를 복원
   port: 8080
+  # 컨테이너 헬스체크(2026-10-02). cloudflared 사이드카의 depends_on: healthy 가 이걸 기다리고,
+  # ALB 를 걷어낸 뒤에는 이것이 유일한 헬스 판정이다. 기동 유예 60s = 지금 ALB 서비스의
+  # HealthCheckGracePeriod 와 같다. python 은 이미지에 항상 있다(curl 은 빌드 도구라 빠질 수 있다).
+  healthcheck:
+    command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=4)\" || exit 1"]
+    interval: 10s
+    retries: 3
+    timeout: 5s
+    start_period: 60s
 
 # 0.5 vCPU → 1 vCPU (2026-09-15 리뷰 결정). 등록 사진을 원본으로 받으면서 서버가 정규화본
 # (EXIF 적용 PNG)을 만든다 — 48MP 한 장이 to_thread 안에서 1.4초(4096 상한 실측, 맥 기준)를
@@ -70,8 +79,36 @@ exec: true
 taskdef_overrides:
   - path: ContainerDefinitions[0].StopTimeout
     value: 90
+  # cloudflared 사이드카(아래 sidecars — 사이드카가 하나뿐이라 인덱스 1). --grace-period 55s 보다
+  # 길어야 유예가 SIGKILL 에 잘리지 않는다(기본 30s). 2026-10-02 렌더 실측으로 인덱스 확인.
+  - path: ContainerDefinitions[1].StopTimeout
+    value: 60
 network:
   connect: true
+
+# Cloudflare Tunnel 커넥터(2026-10-02). api.wearless.kr 요청이 이 컨테이너를 거쳐 같은 태스크의
+# localhost:8080 으로 들어온다 — 설계 docs/superpowers/specs/2026-10-02-cloudflare-tunnel-ingress-design.md,
+# 런북 docs/runbooks/cloudflare-tunnel.md.
+#  · 이미지는 2026.9.3 멀티아키 인덱스 digest(amd64·arm64)로 고정. 올릴 때 digest 를 같이 바꾼다.
+#  · depends_on healthy: 기동은 api 가 healthy 가 된 뒤, 종료는 그 역순이라 api 보다 먼저 빠진다
+#    (ECS dependsOn 규칙) → 배포 때 죽어 가는 api 로 새 요청이 가지 않는다.
+#  · --grace-period 55s: 진행 중 요청을 마칠 시간. 공개 분석(동기)이 실측 최대 53.5초라 그걸 담는다.
+#    유예는 이 컨테이너의 StopTimeout 안에서만 의미가 있어 아래 taskdef_overrides 의
+#    ContainerDefinitions[1].StopTimeout(60)과 짝이다. 종료는 cloudflared(≤60s) → api(≤90s) 순.
+#  · ⚠️ 토큰 시크릿이 SSM 에 copilot 태그와 함께 **먼저** 있어야 하고, 그 값이 **유효한 토큰**이어야 한다.
+#    시크릿이 없으면 태스크가 기동조차 못 해 배포가 롤백된다. 값이 무효(대시보드에서 토큰을 새로 받고
+#    SSM 을 안 바꿈)면 새 태스크의 cloudflared 가 못 붙어 터널 요청이 끊기고, 재시도 끝에 죽으면
+#    essential 이라 태스크째 죽는다 — 배포 밖이면 교체가 반복된다. 교체 절차는 런북 "토큰 교체".
+#      AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
+sidecars:
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+    essential: true
+    command: ["tunnel", "--grace-period", "55s", "run"]
+    depends_on:
+      api: healthy
+    secrets:
+      TUNNEL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_TUNNEL_TOKEN
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
