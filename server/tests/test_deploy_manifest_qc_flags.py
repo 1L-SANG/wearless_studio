@@ -717,3 +717,21 @@ def test_api_service_explicitly_detaches_the_removed_target_group():
     patch_file = MANIFEST.parent / "overrides" / "cfn.patches.yml"
     patches = yaml.safe_load(patch_file.read_text(encoding="utf-8"))
     assert {"op": "add", "path": "/Resources/Service/Properties/LoadBalancers", "value": []} in patches
+
+
+def test_copilot_deploys_detach_and_wait_for_the_stack_themselves():
+    """Copilot v1.34.1 진행 표시 버그(2026-09-28~): CloudFormation 이 ECS 서비스에 "Eventual consistency
+    check initiated" UPDATE_IN_PROGRESS 이벤트를 하나 더 보내면 Copilot 이 새 배포로 착각해 끝나지 않고,
+    1시간 뒤 OIDC 자격증명이 만료되며 ExpiredToken 으로 실패한다. 2026-10-02 두 번 실측 — 스택은 이미
+    UPDATE_COMPLETE 였고, 두 번째는 api 배포 단계가 아예 돌지 못했다. Copilot 은 2026-06-12 지원 종료라
+    공식 수정이 없다 → --detach 로 진행 표시를 끄고 스택 완료를 scripts/ci/wait-copilot-stack.sh 로 직접 본다."""
+    root = MANIFEST.parents[2]
+    for wf in ("deploy-server.yml", "deploy-sam2.yml"):
+        text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
+        blocks = re.findall(r"copilot svc deploy(?:[^\n]*\\\n)*[^\n]*", text)
+        assert blocks, wf
+        for block in blocks:
+            assert "--detach" in block, f"{wf}: --detach 없는 배포 — {block.splitlines()[0]}"
+        assert text.count("scripts/ci/wait-copilot-stack.sh") >= len(blocks), f"{wf}: 배포마다 스택 대기"
+    script = (root / "scripts/ci/wait-copilot-stack.sh").read_text(encoding="utf-8")
+    assert "ROLLBACK" in script and "--region" in script
