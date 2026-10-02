@@ -509,18 +509,21 @@ def test_autoscale_addon_exists_with_scoped_permissions():
 def test_api_addon_parameters_are_declared_by_an_addon_template():
     """addons.parameters.yml 의 값과 addon 템플릿 Parameters(Copilot 이 주는 App·Env·Name 제외)는
     양쪽으로 짝이 맞아야 한다. 한쪽만 지우거나 이름을 바꾸거나 새 파라미터에 값을 안 주면
-    PR CI 는 통과하고 main 의 copilot svc deploy 에서야 깨진다."""
+    PR CI 는 통과하고 main 의 copilot svc deploy 에서야 깨진다.
+
+    addons.parameters.yml 이 없으면 Copilot 은 App·Env·Name 만 넘긴다 — 그때는 어느 템플릿도 그 밖의
+    파라미터를 요구하면 안 된다(2026-10-02 api-alarms.yml 과 함께 파일을 지웠다)."""
     addons_dir = MANIFEST.parent / "addons"
-    params = yaml.load((addons_dir / "addons.parameters.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
+    params_file = addons_dir / "addons.parameters.yml"
+    provided = set()
+    if params_file.exists():
+        provided = set(yaml.load(params_file.read_text(encoding="utf-8"), Loader=_CfnLoader)["Parameters"])
     declared = set()
     for tpl in [*addons_dir.glob("*.yml"), *addons_dir.glob("*.yaml")]:
         if tpl.name.startswith("addons.parameters."):
             continue
         declared |= set(yaml.load(tpl.read_text(encoding="utf-8"), Loader=_CfnLoader).get("Parameters") or {})
-    assert declared - {"App", "Env", "Name"} == set(params["Parameters"])
-    alarms = yaml.load((addons_dir / "api-alarms.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
-    assert "TargetGroupFullName" in params["Parameters"]
-    assert "TargetGroupFullName" in alarms["Parameters"]
+    assert declared - {"App", "Env", "Name"} == provided
 
 
 def test_workflows_pin_copilot_and_deploy_server_watches_addons():
@@ -667,3 +670,25 @@ def test_cloudflared_drains_the_longest_known_request_before_it_is_killed():
     sidecar_stop = overrides.get("ContainerDefinitions[1].StopTimeout", 30)  # ECS 기본값
     assert grace >= 55, "공개 분석 실측 최대 53.5초를 담아야 한다"
     assert grace < sidecar_stop <= 120, "유예가 StopTimeout 보다 길면 SIGKILL 이 먼저 온다(Fargate 상한 120s)"
+
+
+COPILOT_DIR = MANIFEST.parents[1]
+
+
+def test_no_stack_imports_the_public_load_balancer_export():
+    """api 를 Backend Service 로 바꾸는 배포 안에서 Copilot env-controller 가 ALB 를 지운다. 그때
+    `${App}-${Env}-PublicLoadBalancerFullName` export 를 import 하는 스택이 남아 있으면 환경 스택
+    업데이트가 실패하고 api 배포가 롤백된다(설계 2026-10-02 §4)."""
+    offenders = sorted(
+        str(p.relative_to(COPILOT_DIR))
+        for p in COPILOT_DIR.rglob("*.yml")
+        if "PublicLoadBalancerFullName" in p.read_text(encoding="utf-8")
+    )
+    assert offenders == []
+
+
+def test_api_addons_do_not_reference_the_removed_target_group():
+    """Backend Service 스택에는 TargetGroup 이 없다 — 애드온이 참조하면 B2 배포가 깨진다."""
+    addons_dir = MANIFEST.parent / "addons"
+    offenders = sorted(p.name for p in addons_dir.glob("*.yml") if "TargetGroup" in p.read_text(encoding="utf-8"))
+    assert offenders == []
