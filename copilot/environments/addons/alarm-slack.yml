@@ -108,12 +108,26 @@ Resources:
                   _cache["url"] = got["Parameter"]["Value"]
               return _cache["url"]
 
+          def _post(payload):
+              req = urllib.request.Request(_webhook(), data=json.dumps(payload).encode("utf-8"),
+                                           headers={"Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      resp.read()
+              except urllib.error.HTTPError as exc:
+                  print("slack_post_failed status=%s body=%r" % (exc.code, exc.read()[:200]))
+
           def handler(event, context):
               for rec in event.get("Records", []):
+                  sns = rec["Sns"]
                   try:
-                      msg = json.loads(rec["Sns"]["Message"])
+                      msg = json.loads(sns["Message"])
                   except Exception:
-                      print("unparseable sns message")
+                      msg = None
+                  # 예산 알림(AWS Budgets)은 JSON 이 아니라 평문이다 — 제목·본문 그대로 보낸다.
+                  if not isinstance(msg, dict) or "AlarmName" not in msg:
+                      subject = sns.get("Subject") or "AWS 알림"
+                      _post({"text": ":moneybag: *%s*\n```%s```" % (subject, sns["Message"][:1500])})
                       continue
                   state = msg.get("NewStateValue", "")
                   # 새로 만든 알람의 첫 판정(INSUFFICIENT_DATA 에서 OK)은 복구가 아니다.
@@ -141,17 +155,10 @@ Resources:
                   blocks.append({"type": "actions", "elements": [
                       {"type": "button", "text": {"type": "plain_text", "text": "CloudWatch 에서 보기"},
                        "url": url}]})
-                  body = json.dumps({
+                  _post({
                       "text": "%s %s: %s (%s)" % (icon, name, state, region),
                       "blocks": blocks,
-                  }).encode("utf-8")
-                  req = urllib.request.Request(_webhook(), data=body,
-                                               headers={"Content-Type": "application/json"})
-                  try:
-                      with urllib.request.urlopen(req, timeout=10) as resp:
-                          resp.read()
-                  except urllib.error.HTTPError as exc:
-                      print("slack_post_failed status=%s body=%r" % (exc.code, exc.read()[:200]))
+                  })
 
   AlarmSlackPermission:
     Type: AWS::Lambda::Permission
@@ -179,6 +186,14 @@ Resources:
         Statement:
           - Effect: Allow
             Principal: {Service: cloudwatch.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+          # 예산 알림(아래 MonthlyNetBudget·MonthlyGrossBudget)도 같은 토픽으로 들어온다.
+          - Effect: Allow
+            Principal: {Service: budgets.amazonaws.com}
             Action: sns:Publish
             Resource: !Ref AlarmTopic
             Condition:
@@ -325,6 +340,44 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
+
+  # ── 예산 알림 (2026-10-02) ───────────────────────────────────────────────
+  # 계정은 크레딧으로 굴러가는데 9월부터 크레딧이 ECS·ELB 만 덮어 나머지가 실제로 청구된다
+  # (9월 실청구 $20.5, 크레딧 차감 전 총사용 $68.8). 비용이 튀어도 알려주는 곳이 없었다.
+  # 예산은 계정 전역이라 리전과 무관하다. 알림은 위 알람과 같은 토픽 → Slack 으로 간다.
+  #   실청구(크레딧 반영): 월 $30 — 80%·100% 실제 도달, 100% 초과 예측.
+  #   총사용(크레딧 차감 전): 월 $150 — 크레딧이 빨리 닳는지 본다.
+  MonthlyNetBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      Budget:
+        BudgetName: !Sub '${App}-monthly-net'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: 30, Unit: USD}
+        CostTypes: {IncludeCredit: true, IncludeRefund: true}
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlarmTopic}]
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlarmTopic}]
+        - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlarmTopic}]
+
+  MonthlyGrossBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: AlarmTopicPolicy
+    Properties:
+      Budget:
+        BudgetName: !Sub '${App}-monthly-gross'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: 150, Unit: USD}
+        CostTypes: {IncludeCredit: false, IncludeRefund: false}
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlarmTopic}]
 
 Outputs:
   AlarmTopicArn:
