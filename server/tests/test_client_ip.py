@@ -52,6 +52,31 @@ def test_client_ip_falls_back_to_socket_peer_without_forwarded_header():
     assert client_ip(_request({}, peer="10.0.1.9")) == "10.0.1.9"
 
 
+@pytest.mark.parametrize(("headers", "want"), [
+    # cloudflared 가 XFF 를 그대로 넘기는 경우 — 마지막 값이 Cloudflare 가 쓴 방문자다.
+    ({"x-forwarded-for": "203.0.113.7", "cf-connecting-ip": "203.0.113.7"}, "203.0.113.7"),
+    # cloudflared 가 자기 주소(loopback)를 덧붙이는 경우 — 그때도 CF-Connecting-IP 를 쓴다.
+    ({"x-forwarded-for": "203.0.113.7, 127.0.0.1", "cf-connecting-ip": "203.0.113.7"},
+     "203.0.113.7"),
+    ({"x-forwarded-for": "203.0.113.7, ::1", "cf-connecting-ip": "203.0.113.7"}, "203.0.113.7"),
+    # 방문자가 XFF 를 꾸며 보내도 Cloudflare 가 진짜 IP 를 뒤에 덧붙인다.
+    ({"x-forwarded-for": "192.0.2.99, 203.0.113.7", "cf-connecting-ip": "203.0.113.7"},
+     "203.0.113.7"),
+    ({"x-forwarded-for": "192.0.2.99, 203.0.113.7, 127.0.0.1", "cf-connecting-ip": "203.0.113.7"},
+     "203.0.113.7"),
+    # IPv6 방문자 + loopback 첨가.
+    ({"x-forwarded-for": "2001:db8::1, 127.0.0.1", "cf-connecting-ip": "2001:db8::1"},
+     "2001:db8::1"),
+    # loopback 인데 CF-Connecting-IP 가 없거나 깨졌다 → loopback 한 버킷으로 좁혀 묶는다
+    # (한도가 느슨해지는 쪽이 아니다).
+    ({"x-forwarded-for": "127.0.0.1"}, "127.0.0.1"),
+    ({"x-forwarded-for": "127.0.0.1", "cf-connecting-ip": "not-an-ip"}, "127.0.0.1"),
+])
+def test_client_ip_through_tunnel_sidecar(headers, want):
+    """api 태스크 안 cloudflared → localhost:8080 경로(설계 2026-10-02). 접속자는 loopback 이다."""
+    assert client_ip(_request(headers, peer="127.0.0.1")) == want
+
+
 def test_alb_security_group_admits_exactly_the_ranges_trusted_as_cloudflare():
     """SG 허용 대역과 코드의 엣지 판정 대역이 어긋나면 두 방향으로 깨진다.
 
