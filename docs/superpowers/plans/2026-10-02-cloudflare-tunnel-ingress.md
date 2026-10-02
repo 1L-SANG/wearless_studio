@@ -809,7 +809,7 @@ gh pr create --base main --title "chore(ops): ALB 지표 알람을 걷어내요 
 
 ## ⛔ 배포 순서 (오너)
 1. 머지 → CI 가 api 배포(api-alarms 삭제)
-2. `AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1 --diff` 로 알람 3개 삭제만 보이는지 확인 → `env deploy --name use1`
+2. `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1` (`--diff` 에는 AddonsStack `TemplateURL` 한 줄만 나온다 — 애드온 리소스 diff 는 안 보인다. 확인은 배포 뒤 Step 5 명령으로)
 3. 둘 다 끝나야 B2 진행
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -817,7 +817,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 4 (오너):** PR B1 머지 → CI api 배포 완료 → `env deploy --diff` 확인 → `env deploy`.
+- [ ] **Step 4 (오너):** PR B1 머지 → CI api 배포 완료 → `env deploy`(PR #458 리뷰 I1: `--diff` 는 애드온 내용을 보여 주지 않는다).
 - [ ] **Step 5: 머지 조건 확인(읽기 전용)**
 
 ```bash
