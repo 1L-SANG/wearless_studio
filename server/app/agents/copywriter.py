@@ -11,6 +11,7 @@ import re
 
 from ..config import Settings
 from .content_roles import resolve_content_role
+from .fit_axes import confirmed_copy_fit
 from .prompts import _sanitize, clean_text
 from .vision_llm import complete_json
 
@@ -166,6 +167,7 @@ def _shot_label(block: dict, clothing_type: str) -> str:
 
 
 def _facts_lines(product: dict, analysis: dict) -> list[str]:
+    fit = confirmed_copy_fit(analysis)
     clothing_type = product.get("clothing_type") or product.get("clothingType") or ""
     materials = []
     for material in analysis.get("materials") or product.get("materials") or []:
@@ -176,7 +178,7 @@ def _facts_lines(product: dict, analysis: dict) -> list[str]:
     lines = [
         product.get("name") and f"- 상품명: {_sanitize(product.get('name'))}",
         clothing_type and f"- 종류: {_CLOTHING_LABELS.get(str(clothing_type), '의류')}",
-        analysis.get("fit") and f"- 핏: {_FIT_LABELS.get(str(analysis.get('fit')), '확인된 핏')}",
+        fit and f"- 핏: {_FIT_LABELS.get(fit, '확인된 핏')}",
         points and f"- 셀러 강조 특징: {'; '.join(points)}",
         materials and f"- 셀러 확인 소재: {', '.join(materials)}",
     ]

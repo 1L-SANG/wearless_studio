@@ -379,20 +379,20 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       const title = hookTitleLayout(product.name);
       els.push(Object.assign(
         T(60, imageY + (560 - title.h) / 2, 880, title.h, title.text, hookTitleStyle('#ffffff')),
-        { sourceBlockId: b.id, copyRole: 'hookTitle' },
+        { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
       ));
     }
     if (tag) {
       els.push(Object.assign(
         T(60, 44, 400, TAG_HEIGHT, tag, TAG_STYLE),
-        { sourceBlockId: b.id, copyRole: 'label' },
+        { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
       ));
     }
     if (!signature) {
       const text = captionText(contentRole);
       els.push(Object.assign(
         T(60, imageY + 560 + CAPTION_GAP, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: b.id, copyRole: 'headline', placeholder: CAPTION_PLACEHOLDER },
+        { sourceBlockId: b.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
       ));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: blockHeight(els), elements: els });
@@ -423,14 +423,14 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       const text = captionText(CONTENT_ROLES.HERO);
       els.push(Object.assign(
         T(60, copyTop, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: hero.id, copyRole: 'headline', placeholder: CAPTION_PLACEHOLDER },
+        { sourceBlockId: hero.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
       ));
     } else if (layout === 'twoColumn' || layout === 'threeColumn') {
       const labelY = imgTop + h + 16;
       chunk.forEach((rowBlock, column) => {
         els.push(Object.assign(
           T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, rowLabel(rowBlock), ROW_LABEL_STYLE),
-          { sourceBlockId: rowBlock.id, copyRole: 'label', placeholder: ROW_LABEL_PLACEHOLDER },
+          { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
         ));
       });
     }

@@ -10,6 +10,21 @@ def run(coro):
     return asyncio.run(coro)
 
 
+@pytest.mark.parametrize('profile, expected', [
+    ({'axes': {'fit': 'over'}}, '오버핏'),
+    ({'axes': {'fit': 'regular'}}, '레귤러핏'),
+    (None, None),
+    ({'axes': {'length': 'long'}}, None),
+])
+def test_copy_facts_use_selected_fit_not_stale_flat_analysis(profile, expected):
+    prompt = cw.build_prompt(_blocks(), PRODUCT, {**ANALYSIS, 'fit': 'slim', 'fitProfile': profile})
+    assert '- 핏: 슬림핏' not in prompt
+    if expected:
+        assert f'- 핏: {expected}' in prompt
+    else:
+        assert '- 핏:' not in prompt
+
+
 PRODUCT = {
     "name": "핀턱 와이드 슬랙스",
     "clothingType": "bottom",

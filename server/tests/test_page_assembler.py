@@ -48,6 +48,7 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
     assert caption["text"] == ""
     assert caption["placeholder"] == "사진을 설명하는 소제목 (17자 내외)"
     assert caption["copyRole"] == "headline"
+    assert caption["textSlotVersion"] == 1  # 위치를 바꿔도 옛 사진 위 카피로 삭제하지 않는다.
 
 
 # ── 이미지 비율 보존 (WS2: 에디터·산출물 크롭 회귀 방지) ──────────────────────

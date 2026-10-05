@@ -11,6 +11,15 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_feature_copy_uses_the_selected_fit_and_omits_photo_as_is_claims():
+    product = {"name": "티셔츠", "clothingType": "top"}
+    selected = {"fit": "slim", "fitProfile": {"axes": {"fit": "over"}}}
+    facts = fc._facts_block(product, selected)
+    assert '- fit: over' in facts
+    assert '- fit: slim' not in facts
+    assert '- fit:' not in fc._facts_block(product, {"fit": "slim", "fitProfile": None})
+
+
 def test_lookup_exact_alias():
     assert fc.lookup("하이웨이스트") == "하이웨이스트 디테일을 확인할 수 있습니다."
 

@@ -81,6 +81,7 @@ const LEGACY_OVERLAY_COPY_ROLES = new Set(['headline', 'body']);
 
 function isLegacyOverlayCopy(element, images) {
   if (element?.type !== 'text'
+      || element.textSlotVersion >= 1 || element.placeholder
       || !LEGACY_OVERLAY_COPY_ROLES.has(element.copyRole)
       || !element.sourceBlockId) return false;
   const textX = Number(element.x);

@@ -4,6 +4,17 @@
 실제 출력은 고정 promptEn 문구만 사용한다.
 """
 
+def confirmed_copy_fit(analysis: dict) -> str | None:
+    """사용자가 고른 버전의 명시된 핏만 카피의 근거로 쓴다."""
+    if "fitProfile" not in analysis:
+        value = analysis.get("fit")
+    else:
+        profile = analysis.get("fitProfile")
+        axes = profile.get("axes") if isinstance(profile, dict) else None
+        value = axes.get("fit") if isinstance(axes, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
 FIT_AXES = {
     "top": {
         "fit": {
