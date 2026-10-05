@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import Settings
+from ..openai_key_fallback import has_openai_api_key
 from .content_roles import _STUDIO_POSE_ROTATION, canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
@@ -1376,9 +1377,7 @@ def _resolve_generation_model(settings: Settings, spec: dict) -> str:
     model = resolve_model(settings, "image_high")
     if is_signature_cut(spec):
         signature_model = resolve_model(settings, "image_signature")
-        if not signature_model.startswith("gpt-image") or getattr(
-            settings, "openai_api_key", None
-        ):
+        if not signature_model.startswith("gpt-image") or has_openai_api_key(settings):
             model = signature_model
     return model
 
@@ -1592,8 +1591,8 @@ def _base_request(
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
-    # gpt-image 경로는 OPENAI_API_KEY 가 있어야 한다(gemini_image.py:239). 프로덕션에 키가
-    # 아직 없으므로, 없으면 첫 화면이 통째로 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
+    # gpt-image 경로는 주 키나 fallback 키가 있어야 한다. 둘 다 없으면 첫 화면이 통째로
+    # 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
     model = _resolve_generation_model(settings, spec)
     crop_pose_medium = (
         spec["refScope"] == "pose"

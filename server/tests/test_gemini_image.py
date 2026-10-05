@@ -10,13 +10,16 @@ import pytest
 from app.agents import gemini_image
 
 
-def settings():
-    return SimpleNamespace(
+def settings(**overrides):
+    values = dict(
         gemini_api_key="test-key",
         openai_api_key="openai-test-key",
+        openai_api_key_fallback=None,
         vertex_project=None,
         vertex_location="global",
     )
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def test_image_cpu_work_runs_off_loop_with_process_concurrency_one():
@@ -652,3 +655,168 @@ def test_openai_transport_is_one_shot_without_hidden_retry(
 
     assert calls["n"] == 1
     assert raised.value.billable is expected_billable
+
+
+def _openai_response(status_code=200, code=None, image=b"image", usage=None):
+    payload = (
+        {"error": {"code": code}}
+        if code
+        else {
+            "data": [{"b64_json": base64.b64encode(image).decode()}],
+            "usage": usage or {},
+        }
+    )
+    return SimpleNamespace(
+        status_code=status_code,
+        text=str(payload),
+        headers={},
+        json=lambda: payload,
+    )
+
+
+def _reset_openai_fallback(monkeypatch):
+    from app import openai_key_fallback
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
+
+
+def test_openai_image_quota_switches_once_and_later_starts_with_fallback(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+    recorded = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            if authorization == "Bearer school-key":
+                return _openai_response(429, "insufficient_quota")
+            return _openai_response(usage={"input_tokens": 3})
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
+    client = gemini_image.GeminiImageClient(settings(
+        openai_api_key="school-key", openai_api_key_fallback="owner-key"))
+
+    first = asyncio.run(client.generate_content_image(
+        "gpt-image-2", "prompt", [], "1K", aspect_ratio="2:3"))
+    second = asyncio.run(client.generate_content_image(
+        "gpt-image-2", "prompt", [], "1K", aspect_ratio="2:3"))
+
+    assert first.image == second.image == b"image"
+    assert seen == ["Bearer school-key", "Bearer owner-key", "Bearer owner-key"]
+    assert [row["openai_account"] for row in recorded] == ["fallback", "fallback"]
+
+
+def test_openai_image_rate_limit_keeps_primary_and_existing_backoff(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+    sleeps = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            if len(seen) == 1:
+                response = _openai_response(429, "rate_limit_exceeded")
+                response.headers = {"retry-after": "0"}
+                return response
+            return _openai_response()
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+
+    asyncio.run(gemini_image.GeminiImageClient(settings(
+        openai_api_key="school-key", openai_api_key_fallback="owner-key",
+    )).generate_content_image("gpt-image-2", "prompt", [], "1K"))
+
+    assert seen == ["Bearer school-key", "Bearer school-key"]
+    assert sleeps == [0.0]
+
+
+def test_openai_image_without_fallback_raises_the_original_quota_error(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            return _openai_response(429, "insufficient_quota")
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+
+    with pytest.raises(gemini_image.GeminiError, match="insufficient_quota"):
+        asyncio.run(gemini_image.GeminiImageClient(settings(
+            openai_api_key="school-key", openai_api_key_fallback=None,
+        )).generate_content_image("gpt-image-2", "prompt", [], "1K"))
+
+    assert seen == ["Bearer school-key"]
+
+
+def test_openai_image_stops_when_both_accounts_are_exhausted_without_key_leak(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            code = "insufficient_quota" if authorization == "Bearer school-key" else "credit_balance_exhausted"
+            return _openai_response(429, code)
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+
+    with pytest.raises(gemini_image.GeminiError, match="credit_balance_exhausted") as raised:
+        asyncio.run(gemini_image.GeminiImageClient(settings(
+            openai_api_key="school-key", openai_api_key_fallback="owner-key",
+        )).generate_content_image("gpt-image-2", "prompt", [], "1K"))
+
+    assert seen == ["Bearer school-key", "Bearer owner-key"]
+    assert "school-key" not in str(raised.value)
+    assert "owner-key" not in str(raised.value)
+
+
+def test_openai_image_does_not_backoff_when_fallback_hits_billing_hard_limit(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+    sleeps = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            code = "insufficient_quota" if authorization == "Bearer school-key" else "billing_hard_limit_reached"
+            return _openai_response(429, code)
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(gemini_image.GeminiError, match="billing_hard_limit_reached"):
+        asyncio.run(gemini_image.GeminiImageClient(settings(
+            openai_api_key="school-key", openai_api_key_fallback="owner-key",
+        )).generate_content_image("gpt-image-2", "prompt", [], "1K"))
+
+    assert seen == ["Bearer school-key", "Bearer owner-key"]
+    assert sleeps == []

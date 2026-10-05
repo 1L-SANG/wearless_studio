@@ -129,6 +129,7 @@ def settings(**overrides):
     return SimpleNamespace(**{
         "analysis_model_order": "gemini,gpt", "model_text_gemini": "gemini-3.1-pro-preview",
         "model_text": "gpt-5.4-mini", "gemini_api_key": "test", "openai_api_key": "test",
+        "openai_api_key_fallback": None,
         "analysis_timeout_seconds": 30, "analysis_thinking_level": "low",
         "model_detail_specialist": "gpt-5.4-2026-03-05", "detail_specialist_timeout_seconds": 90,
         "model_detail_core": "gpt-5.4-2026-03-05", "detail_core_timeout_seconds": 90,
@@ -326,6 +327,122 @@ def test_only_configured_primary_is_called_no_pass_from_fallback(qc, monkeypatch
     calls.clear()
     out = asyncio.run(qc.verdict(settings(openai_api_key=None), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and calls == []
+
+
+def test_fallback_only_key_keeps_detail_qc_available(qc, monkeypatch):
+    out = asyncio.run(qc.verdict(
+        settings(openai_api_key=None, openai_api_key_fallback="owner-key"),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "PASS"
+    assert out["specialist"]["status"] == "COMPLETE"
+
+
+def test_detail_qc_quota_switches_core_and_specialist_to_fallback(monkeypatch):
+    from app import openai_key_fallback
+    from app.agents import detail_output_qc as detail_qc
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
+    seen = []
+
+    class ProviderResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            if authorization == "Bearer school-key":
+                return ProviderResponse(429, {"error": {"code": "insufficient_quota"}})
+            schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
+            codes = set(schema["properties"]["gates"]["items"]["properties"]["code"]["enum"])
+            raw = response(detail_qc)
+            raw = primary_response(detail_qc, raw) if codes == set(detail_qc.CORE_GATES) else specialist_response(detail_qc, raw)
+            return ProviderResponse(200, {
+                "model": "gpt-5.4-2026-03-05",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(raw)}}],
+            })
+
+    monkeypatch.setattr(detail_qc.vision_llm.httpx, "AsyncClient", Client)
+
+    out = asyncio.run(detail_qc.verdict(
+        settings(openai_api_key="school-key", openai_api_key_fallback="owner-key"),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "PASS"
+    assert out["specialist"]["status"] == "COMPLETE"
+    assert seen == ["Bearer school-key", "Bearer owner-key", "Bearer owner-key"]
+
+
+@pytest.mark.parametrize(
+    "fallback_key,primary_code,owner_code,expected",
+    [
+        ("owner-key", "rate_limit_exceeded", None, ["Bearer school-key"]),
+        (None, "insufficient_quota", None, ["Bearer school-key"]),
+        (
+            "owner-key",
+            "insufficient_quota",
+            "credit_balance_exhausted",
+            ["Bearer school-key", "Bearer owner-key"],
+        ),
+    ],
+)
+def test_detail_qc_nonrecovering_openai_errors_keep_existing_unknown_result(
+    monkeypatch, fallback_key, primary_code, owner_code, expected,
+):
+    from app import openai_key_fallback
+    from app.agents import detail_output_qc as detail_qc
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
+    seen = []
+
+    class ProviderResponse:
+        status_code = 429
+
+        def __init__(self, code):
+            self.payload = {"error": {"code": code}}
+            self.text = json.dumps(self.payload)
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            code = primary_code if authorization == "Bearer school-key" else owner_code
+            return ProviderResponse(code)
+
+    monkeypatch.setattr(detail_qc.vision_llm.httpx, "AsyncClient", Client)
+
+    out = asyncio.run(detail_qc.verdict(
+        settings(
+            openai_api_key="school-key",
+            openai_api_key_fallback=fallback_key,
+        ),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "UNKNOWN"
+    assert out["errorCode"] == "judge_unavailable_or_invalid"
+    assert seen == expected
 
 
 def test_model_and_complete_envelope_options_are_explicit(qc, monkeypatch):

@@ -19,6 +19,11 @@ import httpx
 
 from .. import image_usage
 from ..config import Settings
+from ..openai_key_fallback import (
+    has_openai_api_key,
+    is_openai_terminal_account_error,
+    request_with_openai_key_fallback,
+)
 
 log = logging.getLogger(__name__)
 
@@ -58,9 +63,6 @@ _OPENAI_MAX_ATTEMPTS = 4
 _OPENAI_RETRY_CAP_SECONDS = 60.0
 #: 대기 시간을 못 읽었을 때. 0 으로 즉시 재시도하면 같은 429 를 한 번 더 받는다.
 _OPENAI_RETRY_FALLBACK_SECONDS = 5.0
-#: 기다려도 안 풀리는 429. 잔액 소진은 재시도가 잡만 길게 만든다
-#: (2026-08-27 프로덕션에서 실제로 겪었다).
-_OPENAI_TERMINAL_429_CODES = ("credit_balance_exhausted", "insufficient_quota")
 #: 프로바이더가 요청을 **거절**한 5xx — 그림이 안 그려졌고 원장에도 과금이 없다(2026-09-23).
 #: 502/504 는 게이트웨이가 답을 못 받은 것이라 이미 그려졌을 수 있어 넣지 않는다.
 #: 2026-09-23 운영: 마네킹 잡 5건 중 2건이 OpenAI 500 한 번에 잡 전체를 잃었다.
@@ -77,10 +79,9 @@ def openai_retry_delay(res) -> float | None:
     """
     if getattr(res, "status_code", None) != 429:
         return None
-    body = (getattr(res, "text", "") or "")
-    low = body.lower()
-    if any(code in low for code in _OPENAI_TERMINAL_429_CODES):
+    if is_openai_terminal_account_error(res):
         return None
+    body = (getattr(res, "text", "") or "")
     header = (getattr(res, "headers", {}) or {}).get("retry-after")
     if header:
         try:
@@ -93,7 +94,10 @@ def openai_retry_delay(res) -> float | None:
     return _OPENAI_RETRY_FALLBACK_SECONDS
 
 
-def _record_unbilled_failure(model: str, image_size: str, t0: float, reason: str) -> None:
+def _record_unbilled_failure(
+    model: str, image_size: str, t0: float, reason: str,
+    openai_account: str | None = None,
+) -> None:
     """응답을 못 받았지만 프로바이더는 이미 그렸을 수 있는 실패를 원장에 남긴다.
 
     usage 를 못 받았으므로 토큰 수는 알 수 없다(추정 단가만 남는다). 그래도 남겨야
@@ -105,7 +109,8 @@ def _record_unbilled_failure(model: str, image_size: str, t0: float, reason: str
         log.warning("image_usage unbilled_failure model=%s size=%s reason=%s latency_ms=%d",
                     model, image_size, reason, latency_ms)
         image_usage.record(model=model, image_size=image_size, usage=None,
-                           latency_ms=latency_ms, has_image=False)
+                           latency_ms=latency_ms, has_image=False,
+                           openai_account=openai_account)
     except Exception:  # 계측 실패가 생성 경로를 깨뜨리지 않게
         log.exception("unbilled failure record failed (ignored)")
 
@@ -178,13 +183,13 @@ async def normalize_openai_images(
 
 
 class GeminiImageClient:
-    """앱 1개당 1개. app.state.gemini 에 둔다. settings.gemini_api_key 없으면 생성 안 함."""
+    """앱 1개당 1개. Gemini 또는 OpenAI 키가 있으면 app.state.gemini에 둔다."""
 
     def __init__(self, settings: Settings):
         self._key = settings.gemini_api_key
-        # getattr — 테스트·부분 설정 객체가 openai 키를 안 가질 수 있다. 없으면 gpt-image
-        # 모델을 호출할 때에만 GeminiError 로 드러난다(기존 gemini 경로는 영향 0).
-        self._openai_key = getattr(settings, "openai_api_key", None)
+        # settings 전체를 중앙 OpenAI 키 선택기에 넘긴다. 부분 설정 객체의 fallback 필드는
+        # 중앙 선택기가 getattr로 처리하므로 기존 테스트·Gemini 경로는 영향이 없다.
+        self._settings = settings
         self._vertex_project = settings.vertex_project
         self._vertex_location = settings.vertex_location
 
@@ -400,7 +405,7 @@ class GeminiImageClient:
         Gemini generateContent 와 의미가 다르다(캔버스 편집 vs 조건부 생성) — 동등 품질 보장 아님.
         키·엔드포인트·multipart·응답(b64_json) 전부 Gemini 와 다르므로 별도 경로다.
         """
-        if not self._openai_key:
+        if not has_openai_api_key(self._settings):
             raise GeminiError("OPENAI_API_KEY 미설정")
         size = size_override or self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -436,23 +441,33 @@ class GeminiImageClient:
             "n": "1",
         }
         t0 = time.perf_counter()
+        openai_account = None
         # 429 백오프. 상세페이지 컷은 전부 이 경로라, 없으면 레이트리밋에 걸린 컷이
         # 그대로 빈 슬롯이 된다(2026-08-28: 14컷 중 4컷 유실). 대기 시간은 프로바이더가
         # 알려주는 값을 그대로 쓴다 — 임의 백오프보다 정확하고 짧다.
         for attempt in range(max_attempts):
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    res = await client.post(
-                        "https://api.openai.com/v1/images/edits",
-                        headers={"Authorization": f"Bearer {self._openai_key}"},
-                        data=data, files=files)
+                    async def send(key: str):
+                        return await client.post(
+                            "https://api.openai.com/v1/images/edits",
+                            headers={"Authorization": f"Bearer {key}"},
+                            data=data, files=files)
+
+                    selected = await request_with_openai_key_fallback(
+                        self._settings, send)
+                    res = selected.response
+                    openai_account = selected.account
             except httpx.RequestError as exc:
                 # Gemini 경로와 같은 규칙 — 연결이 안 선 경우만 '아직 안 그려졌다'로 본다.
                 # 안 맞추면 이미지 모델을 바꾸는 순간 이중 과금 방어가 통째로 사라진다
                 # (2026-08-17 검증: 프로바이더별 비대칭).
                 billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
                 if billable:
-                    _record_unbilled_failure(model, size, t0, type(exc).__name__)
+                    _record_unbilled_failure(
+                        model, size, t0, type(exc).__name__,
+                        getattr(exc, "openai_account", None),
+                    )
                 raise GeminiError(
                     f"OpenAI request failed: {type(exc).__name__}: {exc}",
                     billable=billable, transient=not billable) from exc
@@ -466,7 +481,8 @@ class GeminiImageClient:
         if res.status_code != 200:
             billable = res.status_code in (502, 504)
             if billable:
-                _record_unbilled_failure(model, size, t0, f"http_{res.status_code}")
+                _record_unbilled_failure(
+                    model, size, t0, f"http_{res.status_code}", openai_account)
             raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}", billable=billable,
                               transient=res.status_code in _UNBILLED_TRANSIENT_STATUS)
         payload = None
@@ -501,6 +517,7 @@ class GeminiImageClient:
         image_usage.record(
             model=model, image_size=size, usage=usage,
             latency_ms=latency_ms, has_image=img is not None,
+            openai_account=openai_account,
         )
         if parse_error is not None:
             raise GeminiError(f"OpenAI 200 응답 형식 오류: {parse_error}", billable=True) from parse_error

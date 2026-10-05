@@ -66,27 +66,36 @@ def job_scope(job_id: str | None = None, user_id: str | None = None, stage: str 
 
 
 def record(*, model: str, image_size: str, usage: dict | None, latency_ms: int,
-           has_image: bool = True) -> None:
+           has_image: bool = True, openai_account: str | None = None) -> None:
     """호출 1건 기록. 동기 함수 — 호출자를 절대 기다리게 하지 않는다."""
     try:
         cost = estimate_cost(model, image_size, usage, has_image=has_image)
         ctx = _ctx.get()
         log.info(
             "image_usage model=%s size=%s stage=%s job=%s in_tok=%d out_img_tok=%d "
-            "usd=%s src=%s latency_ms=%d image=%s",
+            "usd=%s src=%s latency_ms=%d image=%s openai_account=%s",
             model, image_size, ctx.stage or "-", ctx.job_id or "-",
             cost.input_tokens, cost.output_image_tokens,
             "?" if cost.usd is None else f"{cost.usd:.6f}",
-            cost.source, latency_ms, has_image,
+            cost.source, latency_ms, has_image, openai_account or "-",
         )
         if not (_persist and _pool is not None):
             return
         task = asyncio.create_task(
-            _insert(ctx, model, image_size, cost, latency_ms, has_image, usage))
+            _insert(ctx, model, image_size, cost, latency_ms, has_image, usage,
+                    openai_account))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
     except Exception:  # 계측 실패가 생성을 깨뜨리지 않게
         log.exception("image_usage record failed (ignored)")
+
+
+def _usage_raw_metadata(usage, openai_account: str | None):
+    if not openai_account:
+        return usage or {}
+    if isinstance(usage, dict):
+        return {**usage, "openai_account": openai_account}
+    return {"provider_usage": usage, "openai_account": openai_account}
 
 
 async def drain(timeout_seconds: float = 5.0) -> None:
@@ -107,8 +116,10 @@ async def drain(timeout_seconds: float = 5.0) -> None:
 
 
 async def _insert(ctx: JobContext, model: str, image_size: str, cost, latency_ms: int,
-                  has_image: bool, usage: dict | None) -> None:
+                  has_image: bool, usage: dict | None,
+                  openai_account: str | None = None) -> None:
     try:
+        usage_raw = _usage_raw_metadata(usage, openai_account)
         async with _pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -123,7 +134,7 @@ async def _insert(ctx: JobContext, model: str, image_size: str, cost, latency_ms
                      cost.input_tokens, cost.output_text_tokens, cost.output_image_tokens,
                      cost.usd, cost.source, latency_ms, has_image,
                      # 원본 usage 를 남긴다 — 단가가 바뀌면 과거 행을 재계산할 수 있어야 한다.
-                     Json(usage or {})),
+                     Json(usage_raw)),
                 )
             await conn.commit()
     except Exception:

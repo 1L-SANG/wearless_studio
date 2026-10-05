@@ -603,6 +603,8 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  # SSM 값이 없으면 ECS 기동 실패, 배포 전 copilot secret init --name OPENAI_API_KEY_FALLBACK 필수
+  OPENAI_API_KEY_FALLBACK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY_FALLBACK
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CI_PEPPER
