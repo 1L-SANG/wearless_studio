@@ -22,6 +22,11 @@ from datetime import datetime, timedelta, timezone
 MAX_RETRIES = 4
 BACKOFF_SECONDS = (15, 60, 90, 120)
 
+#: 오너 결정(2026-10-05): 복구 누락보다 오래된 결과가 나중에 교체되는 일이 더 나쁘다.
+#: 30분은 재시도 사다리 15, 60, 90, 120초와 sam2 콜드스타트 약 101초, 배포 재시작 여유를 덮는다.
+#: 그보다 오래 전에 끝난 잡은 화면이 이미 실패나 원본으로 내려간 뒤라 나중에 결과가 바뀌면 안 된다.
+REVIVE_WINDOW_SECONDS = 1800
+
 #: 이 상태로 끝난 잡은 더 기다릴 게 없다 — 다음 세대를 걸지 말지 판단할 시점이다.
 TERMINAL_STATUSES = ("done", "error", "cancelled")
 
@@ -43,8 +48,8 @@ def job_retry_count(job: dict) -> int:
 def job_is_retryable(job: dict, *, states: tuple[str, ...] = RETRYABLE_STATES) -> bool:
     """이 종결이 판정이 아니라 일시 장애인가.
 
-    `result.state` 로 판별한다 — 구버전 워커가 `error` 로 종결해 둔 과거 잡도 state 는 같으므로
-    배포 이전에 막힌 것들도 이 판별을 지나 되살아난다.
+    `result.state` 로 판별하며 구버전 워커가 `error` 로 종결한 잡에도 같은 판정을 적용한다.
+    푸셔의 되살림 허용 창은 within_revive_window 에서 별도로 제한한다.
     """
     result = (job or {}).get("result") or {}
     state = str(result.get("state") or "")
@@ -58,6 +63,19 @@ def job_is_retryable(job: dict, *, states: tuple[str, ...] = RETRYABLE_STATES) -
 def budget_left(job: dict, *, max_retries: int = MAX_RETRIES) -> bool:
     """이 세대 다음에 또 걸 수 있는가. 화면이 "처리 중"을 유지할지 가르는 판정이다."""
     return job_retry_count(job) < int(max_retries)
+
+
+def within_revive_window(job: dict, *, now: datetime | None = None) -> bool:
+    """푸셔가 되살릴 수 있는 종료 시각인가. 종료 시각이 없거나 파싱 불가면 False."""
+    finished_at = (job or {}).get("finished_at")
+    if isinstance(finished_at, str):
+        with contextlib.suppress(ValueError):
+            finished_at = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    if not isinstance(finished_at, datetime):
+        return False
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+    return finished_at > (now or datetime.now(timezone.utc)) - timedelta(seconds=REVIVE_WINDOW_SECONDS)
 
 
 def backoff_elapsed(job: dict, *, waits: tuple[int, ...] = BACKOFF_SECONDS,
