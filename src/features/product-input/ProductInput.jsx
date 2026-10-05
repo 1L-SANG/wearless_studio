@@ -76,6 +76,7 @@ import { restoreDraftProduct } from './draftProductRestore.js';
 import { photoCaption } from './photoCaption.js';
 import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
 import { autofillColorGroups } from './colorAutofill.js';
+import { getSwatchScrollThumb } from './swatchScrollIndicator.js';
 import {
   invalidateStoryboardEntryPrefetch,
   prefetchStoryboardAfterProductPhotos,
@@ -96,18 +97,47 @@ const chipWidth = (value) => [...value].reduce(
   0,
 ).toFixed(1);
 
-function ColorSwatchPicker({ swatchColors, value, name, onChange, onNameChange, disabled = false }) {
+function ColorSwatchPicker({ mobile = false, swatchColors, value, name, onChange, onNameChange, disabled = false }) {
   const [nameDraft, setNameDraft] = useState(name || '');
   const [nameFocused, setNameFocused] = useState(false);
   useEffect(() => { setNameDraft(name || ''); }, [name]);
 
-  return (
-    <div className="color-pick">
-      <div className="color-pick-head">
-        <label className="lbl">색상 선택</label>
-        <span className="hint">색 계열을 골라주세요 · 세부 색 이름(연청 등)은 직접 입력</span>
-      </div>
-      <div className="swatch-grid">
+  const gridRef = useRef(null);
+  const trackRef = useRef(null);
+  useEffect(() => {
+    if (!mobile) return;
+    const grid = gridRef.current;
+    const track = trackRef.current;
+    if (!grid || !track) return;
+    let frame = null;
+    // 스크롤 중에는 React 상태 대신 표시기의 CSS 변수만 갱신한다.
+    const update = () => {
+      frame = null;
+      const thumb = getSwatchScrollThumb(grid.clientHeight, grid.scrollHeight, grid.scrollTop);
+      track.hidden = !thumb;
+      if (!thumb) return;
+      track.style.setProperty('--swatch-thumb-height', `${thumb.height}px`);
+      track.style.setProperty('--swatch-thumb-offset', `${thumb.offset}px`);
+    };
+    const schedule = () => {
+      if (frame === null) frame = requestAnimationFrame(update);
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(grid);
+    for (const chip of grid.children) observer.observe(chip);
+    grid.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    schedule();
+    return () => {
+      observer.disconnect();
+      grid.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [mobile, swatchColors]);
+
+  const grid = (
+      <div className="swatch-grid" ref={gridRef}>
         {swatchColors.map((s) => {
           const on = value === s.id;
           return (
@@ -139,6 +169,22 @@ function ColorSwatchPicker({ swatchColors, value, name, onChange, onNameChange, 
             }} />
         </span>
       </div>
+  );
+
+  return (
+    <div className="color-pick">
+      <div className="color-pick-head">
+        <label className="lbl">색상 선택</label>
+        <span className="hint">색 계열을 골라주세요 · 세부 색 이름(연청 등)은 직접 입력</span>
+      </div>
+      {mobile ? (
+        <div className="swatch-scroll-area">
+          {grid}
+          <div className="swatch-scroll-track" ref={trackRef} hidden aria-hidden="true">
+            <div className="swatch-scroll-thumb" />
+          </div>
+        </div>
+      ) : grid}
     </div>
   );
 }
@@ -302,7 +348,7 @@ function ProductPhotoPreview({ image, displayUrl }) {
     : <span className="product-photo-preview-pending" aria-hidden="true" />;
 }
 
-function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false, readOnly = false, onPendingChange }) {
+function ColorImageGroup({ mobile = false, group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false, readOnly = false, onPendingChange }) {
   const base = group.isBase;
   const used = group.images.length;
   const [pendingBySlot, setPendingBySlot] = useState({});
@@ -408,7 +454,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
       )}
 
       {used > 0 && !readOnly && (
-        <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} name={group.name}
+        <ColorSwatchPicker mobile={mobile} swatchColors={swatchColors} value={group.swatchId} name={group.name}
           onChange={onPickColor} onNameChange={onRename} />
       )}
 
@@ -1328,7 +1374,7 @@ export function ProductInput() {
       </div>
       <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16, lineHeight: 1.75 }}>앞면, 뒷면은 필수에요.<br />디테일란에 의류의 특징적인 부분들을 찍어서 업로드해주시면 훨씬 정확해져요.</div>
       {product.colors.map((c) => (
-        <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
+        <ColorImageGroup key={c.id} mobile={mobile} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
           onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)}
           displayUrl={(imageId, originalUrl) => photoPreviewRegistryRef.current.displayUrl(imageId, originalUrl)}

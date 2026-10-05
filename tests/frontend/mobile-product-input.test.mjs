@@ -317,7 +317,9 @@ test('mobile photo and swatch grids use two full-width columns without a width g
   assert.match(mobile, /\.pi-handoff \.slot-tiles \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); gap: var\(--sp-8\)/);
   assert.match(mobile, /\.pi-handoff \.tile \{ width: 100%; height: auto; aspect-ratio: 156 \/ 200;/);
   assert.match(mobile, /\.pi-handoff \.slot-well \.tile \{ aspect-ratio: 3 \/ 4;/);
-  assert.match(mobile, /\.pi-handoff \.swatch-grid \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); justify-items: stretch;[^}]*height: calc\(var\(--pi-swatch-height\) \* 2[^}]*overflow-y: auto;[^}]*mask-image: linear-gradient/);
+  assert.match(mobile, /\.pi-handoff \.swatch-grid \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); justify-items: stretch;[^}]*height: calc\(var\(--pi-swatch-height\) \* 2[^}]*overflow-y: auto;/);
+  assert.doesNotMatch(mobile, /mask-image/);
+  assert.match(mobile, /padding-right: var\(--sp-12\)/);
   assert.match(mobile, /\.pi-handoff \.swatch, \.pi-handoff \.color-name-input-wrap, \.pi-handoff \.color-name-input \{[^}]*width: 100%;/);
   assert.match(mobile, /\.pi-handoff \.color-name-input \{ min-width: 100%; max-width: 100%;/);
   assert.doesNotMatch(css, /\.pi-handoff \.tile\.add/);
@@ -329,3 +331,11 @@ test('header width fallbacks hide crowded controls independently of device detec
   assert.match(css, /@media \(max-width: 520px\) \{\s*\.topnav \{ gap: var\(--sp-12\); padding-inline: var\(--sp-16\); \}\s*\.topnav \.nav-links, \.topnav \.credit-badge, \.topnav \.plan-badge \{ display: none; \}\s*\.topnav \.nav-right \{ flex-shrink: 0; \}/);
   assert.match(css, /\.topnav-handoff \.nav-stepper,\s*\.topnav-handoff \.nav-links,\s*\.topnav-handoff \.credit-badge,\s*\.topnav-handoff \.plan-badge \{ display: none; \}/);
 });
+
+for (const mobile of [true, false]) {
+  test(`swatch picker receives mobile=${mobile} from the input screen`, async () => {
+    const h = harness({ mobile });
+    const group = h.expand(await h.settle(), 'ColorImageGroup');
+    assert.equal(node(group, 'ColorSwatchPicker').props.mobile, mobile);
+  });
+}

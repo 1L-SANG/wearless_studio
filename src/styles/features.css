@@ -3534,8 +3534,14 @@
 .pi-handoff .swatch-grid { --pi-swatch-height: calc(var(--sp-20) * 2); --pi-swatch-row-gap: var(--sp-8);
   grid-template-columns: repeat(2, minmax(0, 1fr)); justify-items: stretch; align-content: start; gap: var(--pi-swatch-row-gap);
   height: calc(var(--pi-swatch-height) * 2 + var(--pi-swatch-row-gap) + var(--sp-2) * 2);
-  padding: var(--sp-2); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-  mask-image: linear-gradient(to bottom, var(--fg-1) calc(100% - var(--sp-16)), transparent); }
+  padding: var(--sp-2); padding-right: var(--sp-12); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; }
+.pi-handoff .swatch-grid::-webkit-scrollbar { display: none; }
+.pi-handoff .swatch-scroll-area { position: relative; }
+.pi-handoff .swatch-scroll-track { position: absolute; top: 0; right: 0; bottom: 0; width: var(--sp-4);
+  border-radius: var(--r-pill); background: var(--bg-2); pointer-events: none; }
+.pi-handoff .swatch-scroll-thumb { width: 100%; height: var(--swatch-thumb-height); border-radius: var(--r-pill);
+  background: var(--fg-3); transform: translateY(var(--swatch-thumb-offset)); }
 .pi-handoff .swatch, .pi-handoff .color-name-input-wrap, .pi-handoff .color-name-input { height: var(--pi-swatch-height); min-width: 0; width: 100%; }
 .pi-handoff .swatch { gap: var(--sp-4); padding-inline: var(--sp-8); white-space: nowrap; }
 .pi-handoff .color-name-input { min-width: 100%; max-width: 100%; }
