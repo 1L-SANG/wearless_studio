@@ -252,16 +252,11 @@ export function Pricing() {
         </section>
       ))}
 
+      {/* 계좌이체 모드의 결제 조건은 구석의 가벼운 링크 하나로 둔다(오너 10/5). */}
       {bankTransfer && (
-        <p className={s.bankTermsSummary} role="note">
-          <PIcon name="info" size={18} />
-          <span>
-            1개월 이용권은 자동으로 다시 결제되지 않고, 끝나면 남은 구독 크레딧이 사라져요. 충전 크레딧은 기간 제한 없이 쓰며, 미사용 결제는 7일 안에 전액 환불돼요.{' '}
-            <a href={WEARLESS_LEGAL_URLS.refund}>자세히</a>
-          </span>
-        </p>
+        <p className={s.bankTermsLink}><a href={WEARLESS_LEGAL_URLS.refund}>결제·환불 조건</a></p>
       )}
-      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. */}
+      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 배지 한 줄이 전부다. */}
       {!bankTransfer && (
         <p className={s.tabDesc}>
           월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.

@@ -89,23 +89,9 @@
 .taxBody .input { height: 44px; font-size: 15px; }
 .due { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 500; color: var(--fg-1); }
 .due svg { color: var(--fg-2); }
-.purchaseTerms {
-  padding: var(--sp-12); border-radius: var(--r-5); background: var(--bg-2); color: var(--fg-1);
-  box-shadow: inset 0 0 0 1px var(--ring-strong);
-}
-.purchaseTermsList { display: grid; gap: var(--sp-8); margin: 0; padding: 0; list-style: none; }
-.purchaseTermsList li {
-  display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: var(--sp-8);
-  font-size: 15px; line-height: 1.6; word-break: keep-all; overflow-wrap: anywhere;
-}
-.purchaseTermsList strong { font-weight: 750; }
-.purchaseTermIcon { margin-top: var(--sp-3); color: var(--fg-1); }
-.purchaseLinks {
-  display: flex; flex-wrap: wrap; gap: var(--sp-6) var(--sp-16); margin-top: var(--sp-12); padding-top: var(--sp-12);
-  border-top: 1px solid var(--ring-strong); font-size: 15px; line-height: 1.5;
-}
-.purchaseLinks a { color: var(--fg-1); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
-.purchaseLinks a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.dueRow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); }
+.termsLink { flex: none; font-size: 12px; color: var(--fg-2); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.termsLink:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
 .primary {
   width: 100%; height: 52px; border: 0; border-radius: var(--r-pill); background: var(--cta-bg); color: var(--cta-fg);
   font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: var(--cta-sheen-inset); transition: background-color .15s;
@@ -186,7 +172,6 @@
   .body { padding: 20px 16px; gap: 16px; }
   .taxBody { grid-template-columns: 1fr; }
   .foot { position: sticky; bottom: 0; margin: 0 -16px -20px; padding: 12px 16px 16px; background: var(--bg-1); box-shadow: 0 -1px 0 var(--ring); }
-  .purchaseTermsList li, .purchaseLinks { font-size: 16px; }
   .steps { margin-top: 20px; }
   .stateInk { margin-bottom: 14px; }
   .isDone .sum { padding: 18px 16px 20px; }

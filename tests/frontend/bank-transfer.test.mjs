@@ -9,8 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { createServer } from 'vite';
 
-let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, BankTransferSubmitSection;
-let runtime, api, plans, tossKeys;
+let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys;
 before(async () => {
   vite = await createServer({
     configFile: false,
@@ -51,7 +50,7 @@ before(async () => {
   });
   ({ runtime } = await vite.ssrLoadModule('virtual:bt-runtime'));
   ({ Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx'));
-  ({ BankTransferModal, BankTransferSubmitSection } = await vite.ssrLoadModule('/src/features/pricing/BankTransferModal.jsx'));
+  ({ BankTransferModal } = await vite.ssrLoadModule('/src/features/pricing/BankTransferModal.jsx'));
   ({ SubscriptionManage } = await vite.ssrLoadModule('/src/features/subscription/Subscription.jsx'));
   ({ AdminBankTransfers } = await vite.ssrLoadModule('/src/features/admin/AdminBankTransfers.jsx'));
   ({ api } = await vite.ssrLoadModule('/src/mock/api.js'));
@@ -97,18 +96,20 @@ test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에
   assert.match(html, /상시 확인/);
   assert.match(html, /영업시간 10분 안에 크레딧 지급/);
   assert.doesNotMatch(html, /<b>10분<\/b>/);
-  // 계좌이체 이용권은 정기결제가 아니므로 토스용 고지 대신 핵심 조건만 짧게 보여준다.
-  assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|부가가치세|자동 갱신/);
+  // 계좌이체 모드에서는 긴 고지문을 그리지 않는다(오너 9/24).
+  assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|부가가치세/);
   assert.match(html, /결제하면 <a/);
   assert.doesNotMatch(html, /입금 확인 중/);
 });
 
-test('계좌이체 요금제 화면은 이용권·충전·환불 조건을 한 줄로 요약하고 자세히 링크를 제공한다', () => {
+test('계좌이체 모드의 결제 조건은 구석의 회색 링크 하나로 둔다(오너 10/5)', async () => {
   const html = renderPricing();
-  assert.match(html, /1개월 이용권은 자동으로 다시 결제되지 않고, 끝나면 남은 구독 크레딧이 사라져요\./);
-  assert.match(html, /충전 크레딧은 기간 제한 없이 쓰며, 미사용 결제는 7일 안에 전액 환불돼요\./);
-  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">자세히<\/a>/);
-  assert.doesNotMatch(html, /자동 갱신|매월 자동 갱신/);
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">결제·환불 조건<\/a>/);
+  // 신청 창은 포탈이라 SSR 로 못 그린다 — 소스에서 신청 버튼보다 앞에 같은 링크가 있는지 본다.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../../src/features/pricing/BankTransferModal.jsx', import.meta.url), 'utf8');
+  const link = src.indexOf('결제·환불 조건</a>');
+  assert.ok(link > 0 && link < src.indexOf('<button type="submit"'));
 });
 
 test('현재 플랜과 같은 카드는 1개월 연장 신청이다', () => {
@@ -212,37 +213,9 @@ test('충전 신청은 목 저장소에서도 종류당 한 건만 열린다', a
 
 test('신청 창은 상품·금액·계좌와 필수 입력을 보여준다', () => {
   const plan = plans.find((p) => p.code === 'seller');
+  // Modal 은 document.body 로 포탈하므로 SSR 에서는 내용을 직접 렌더할 수 없다 — 안내 문구 상수만 고정한다.
   assert.equal(typeof BankTransferModal, 'function');
   assert.equal(plan.price, 69900);
-});
-
-test('구독형 신청 창은 신청 버튼 직전에 1개월·소멸·환불 조건과 문의 링크를 보여준다', () => {
-  assert.equal(typeof BankTransferSubmitSection, 'function');
-  const html = renderToStaticMarkup(React.createElement(BankTransferSubmitSection, {
-    kind: 'subscription', pending: false, serverError: '',
-  }));
-  for (const text of [
-    '1개월 이용권', '자동으로 다시 결제되지 않아요', '남은 구독 크레딧은 사라져요',
-    '따로 충전한 크레딧은 남아요', '하나도 안 썼다면 7일 안에 전액 환불',
-    '쓴 부분은 환불이 제한될 수 있어요',
-  ]) assert.ok(html.includes(text), text);
-  assert.equal((html.match(/<li>/g) || []).length, 3);
-  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">환불 정책 자세히 보기<\/a>/);
-  assert.match(html, /<a href="https:\/\/wearless\.kr\/terms">이용약관<\/a>/);
-  assert.match(html, /<a href="mailto:contact@wearless\.kr">contact@wearless\.kr<\/a>/);
-  assert.ok(html.indexOf('aria-label="결제 전 꼭 확인해 주세요"') < html.indexOf('<button type="submit"'));
-});
-
-test('충전 팩 신청 창은 신청 버튼 직전에 무기한·환불 조건만 보여준다', () => {
-  assert.equal(typeof BankTransferSubmitSection, 'function');
-  const html = renderToStaticMarkup(React.createElement(BankTransferSubmitSection, {
-    kind: 'topup', pending: false, serverError: '',
-  }));
-  assert.match(html, /충전한 크레딧은 <strong>기간 제한 없이<\/strong> 써요\./);
-  assert.match(html, /크레딧을 <strong>하나도 안 썼다면 7일 안에 전액 환불<\/strong>돼요\./);
-  assert.equal((html.match(/<li>/g) || []).length, 2);
-  assert.doesNotMatch(html, /1개월 이용권|남은 구독 크레딧은 사라져요/);
-  assert.ok(html.indexOf('aria-label="결제 전 꼭 확인해 주세요"') < html.indexOf('<button type="submit"'));
 });
 
 test('구독 화면은 토스 구독이 없어도 계좌이체 이용권을 그린다', () => {
