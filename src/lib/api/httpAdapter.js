@@ -442,8 +442,8 @@ export const httpAdapter = {
   async putDraftSlot(body) {
     return http('/v1/draft-slot', { method: 'PUT', body });
   },
-  async takeoverDraftSlot() {
-    return http('/v1/draft-slot:takeover', { method: 'POST' });
+  async takeoverDraftSlot(body = {}) {
+    return http('/v1/draft-slot:takeover', { method: 'POST', body });
   },
   async deleteDraftSlot(token) {
     return http('/v1/draft-slot', {

@@ -78,6 +78,7 @@ function setup(t, adapter = {}) {
         return adapter.discardDraftSlotPhoto?.(id);
       },
       getDraftSlot: adapter.getDraftSlot,
+      takeoverDraftSlot: adapter.takeoverDraftSlot,
     },
   });
   t.after(() => {
@@ -266,10 +267,10 @@ for (const meta of [{ deviceLabel: 'PC', updatedAt: 'server-2' }, null]) {
     });
     const saving = sync.saveAll(snapshot(photo('front')));
     timers.run(500);
-    assert.deepEqual(await saving, { status: 'locked', photoCount: 0 });
+    assert.deepEqual(await saving, { status: meta ? 'locked' : 'gone', photoCount: 0 });
     assert.equal(sync.isLocked(), true);
     assert.deepEqual(timers.delays(), []);
-    assert.deepEqual(await sync.saveAll(snapshot(photo('front'))), { status: 'locked', photoCount: 0 });
+    assert.deepEqual(await sync.saveAll(snapshot(photo('front'))), { status: meta ? 'locked' : 'gone', photoCount: 0 });
     upload.resolve(asset('late'));
     await tick();
   });
@@ -470,4 +471,74 @@ test('an empty product saves with zero photos', async (t) => {
   const saving = sync.saveAll(snapshot());
   await sync.flush();
   assert.deepEqual(await saving, { status: 'saved', photoCount: 0 });
+});
+
+for (const mode of ['ownership', 'takeover']) {
+  test(`gone ${mode} reuploads local photos and drops remote-only references`, async (t) => {
+    const h = setup(t, { getDraftSlot: async () => null, takeoverDraftSlot: async () => null });
+    const remote = { id: 'remote', src: 'https://img.test/old.jpg' };
+    const draft = snapshot(photo('front'), remote);
+    const first = h.sync.saveAll(draft);
+    await tick(); await h.sync.flush(); await first;
+    if (mode === 'ownership') {
+      await h.sync.checkOwnership();
+      assert.equal((await h.sync.saveAll(draft)).status, 'gone');
+      h.sync.restartAfterGone();
+    } else await h.sync.takeover();
+    const saving = h.sync.saveAll(draft);
+    const result = observe(saving);
+    await tick(); await h.sync.flush();
+    assert.equal(h.uploads.length, 2);
+    assert.deepEqual(payloadImages(h.puts.at(-1)).map((image) => image.id), ['asset-2']);
+    assert.deepEqual(result(), { status: 'saved', photoCount: 1, missingPhotoCount: 1 });
+  });
+}
+
+test('late pre-gone upload cannot replace a fresh upload of the same image', async (t) => {
+  const old = deferred(), fresh = deferred();
+  let count = 0;
+  const h = setup(t, { getDraftSlot: async () => null,
+    uploadDraftSlotPhoto: () => ++count === 1 ? old.promise : fresh.promise });
+  const draft = snapshot(photo('front'));
+  h.sync.queue(draft); await h.sync.flush(); await tick();
+  await h.sync.checkOwnership(); h.sync.restartAfterGone();
+  const saving = h.sync.saveAll(draft), result = observe(saving);
+  await tick();
+  old.resolve(asset('stale')); await tick(); await h.sync.flush();
+  assert.equal(result(), undefined);
+  assert.deepEqual(payloadImages(h.puts.at(-1)), []);
+  fresh.resolve(asset('fresh')); await tick(); await h.sync.flush();
+  assert.deepEqual(await saving, { status: 'saved', photoCount: 1 });
+  assert.equal(payloadImages(h.puts.at(-1))[0].id, 'fresh');
+});
+
+test('a delayed empty takeover restarts the snapshot that began uploading while it waited', async (t) => {
+  const takeover = deferred(), old = deferred(), fresh = deferred();
+  let count = 0;
+  const h = setup(t, { takeoverDraftSlot: () => takeover.promise,
+    uploadDraftSlotPhoto: () => ++count === 1 ? old.promise : fresh.promise });
+  const taking = h.sync.takeover();
+  const saving = h.sync.saveAll(snapshot(photo('front'))), result = observe(saving);
+  await h.sync.flush(); await tick();
+  takeover.resolve(null); await taking; await tick();
+  assert.equal(count, 2);
+  assert.equal(result()?.status, 'gone');
+  old.resolve(asset('stale')); fresh.resolve(asset('fresh'));
+  await tick(); await h.sync.flush();
+  assert.equal(payloadImages(h.puts.at(-1))[0].id, 'fresh');
+  assert.equal(h.puts.at(-1).photosPending, false);
+});
+
+test('visible retry restarts failed uploads before the retry timer fires', async (t) => {
+  let count = 0;
+  const h = setup(t, { uploadDraftSlotPhoto: () => {
+    if (++count === 1) throw new Error('offline');
+    return asset('fresh');
+  } });
+  assert.equal((await h.sync.saveAll(snapshot(photo('front')))).status, 'failed');
+  h.sync.retryFailedUploads();
+  await tick(); await h.sync.flush();
+  assert.equal(count, 2);
+  assert.equal(h.timers.delays().includes(2000), false);
+  assert.equal(payloadImages(h.puts.at(-1))[0].id, 'fresh');
 });

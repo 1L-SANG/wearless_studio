@@ -812,9 +812,9 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
   const entry = read('../../src/lib/draftEntry.js');
   assert.match(app, /const slotEnabled = Boolean\(session\) \|\| isMockMode/);
   assert.match(app, /Promise\.all\(\[[\s\S]*?draftSlot\.get\(\)[\s\S]*?loadDraft\(\)/);
-  assert.match(app, /id: 'local'[\s\S]*?formatDraftRelativeTime\(localMeta\.updatedAt\)/);
+  assert.match(app, /id: 'local'[\s\S]*?draftSavedTime\(localMeta\.updatedAt\)/);
   assert.match(app, /sources\.push\(remoteDraftSource\(slot\.meta/);
-  assert.match(entry, /id: 'remote'[\s\S]*?formatDraftRelativeTime\(meta\?\.updatedAt\)/);
+  assert.match(entry, /id: 'remote'[\s\S]*?draftSavedTime\(meta\?\.updatedAt\)/);
   assert.match(app, /slot\.meta\?\.updatedAt !== draftSlot\.getServerSyncedAt\(\)/);
   assert.match(entry, /slotClient\.takeover\(\)[\s\S]*?slotClient\.stage/);
   assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 시작하기/);
@@ -972,3 +972,14 @@ class EventedStorage extends MapStorage {
 
   dispatchToken(value) { this.dispatch('wl_draftSlotToken', value); }
 }
+
+test('takeover identifies this device in subsequent remote cards', async (t) => {
+  const memory = createDraftSlotMemory();
+  memory.put({ payload: { product: { name: '셔츠', colors: [{ images: [{ src: '/photo.jpg' }] }] } }, deviceLabel: 'iPhone Safari' });
+  const sync = createDraftSlotSync({ storage: new MapStorage(), adapter: { takeoverDraftSlot: (body) => memory.takeover(body) } });
+  t.after(() => sync.dispose());
+  const result = await sync.takeover();
+  assert.equal(result.meta.deviceLabel, getDraftSlotDeviceLabel());
+  assert.equal(result.meta.productName, '셔츠');
+  assert.equal(result.meta.thumbnailUrl, '/photo.jpg');
+});

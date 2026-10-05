@@ -4,3 +4,7 @@ export function getDraftDeviceNoun(label) {
   if (label.startsWith('iPhone') || /^Android(?: (?:Chrome|Safari|Firefox|Edge))?$/.test(label)) return '스마트폰';
   return null;
 }
+
+export function isMobileDraftWriter(meta) {
+  return Boolean(getDraftDeviceNoun(meta?.deviceLabel));
+}

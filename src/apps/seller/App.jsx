@@ -56,9 +56,12 @@ import {
   markProductInfoConfirmed,
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
+import { flowScreenName, shouldWarnFlowAbandon } from '@/lib/flowAbandon.js';
+import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
+import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
 import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
 import { DraftEntryDialog } from '@/features/shell/DraftEntryDialog.jsx';
-import { getFlowDraftSources, getInputEntryDecision, remoteDraftSource } from '@/lib/draftEntry.js';
+import { draftSavedTime, isVisibleDraftSlot, getFlowDraftSources, getInputEntryDecision, remoteDraftSource } from '@/lib/draftEntry.js';
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { PcOnlyPage } from '@/features/shell/PcOnlyPage.jsx';
@@ -66,7 +69,6 @@ import { PhoneUploadIntro } from '@/features/shell/PhoneUploadIntro.jsx';
 import { NotFound } from '@/components/NotFound.jsx';
 import {
   draftSlot,
-  formatDraftRelativeTime,
   localDraftMeta,
 } from '@/lib/draftSlot.js';
 
@@ -215,24 +217,14 @@ function ResumeTracker() {
   return null;
 }
 
-/* 재개 카드에 보여줄 화면 이름 — 셀러에게 라우트 경로(/create/…)를 그대로 노출하지 않는다. */
-const FLOW_SCREEN_NAMES = [
-  ['/create/storyboard', '콘티 화면'],
-  ['/create/mannequin', '마네킹 화면'],
-  ['/editor', '에디터 화면'],
-  ['/create/input', '입력 화면'],
-];
-function flowScreenName(path) {
-  return FLOW_SCREEN_NAMES.find(([prefix]) => path?.startsWith(prefix))?.[1] || '진행하던 화면';
-}
-
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
    remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
 function ProductInputRoute() {
   const navigate = useNavigate();
   const { key: locationKey } = useLocation();
   const { session, loading: authLoading, signingOut, openLogin } = useAuth();
-  const loginRequired = isMobileDevice() && !session && !isMockMode;
+  const mobile = isMobileDevice();
+  const loginRequired = mobile && !session && !isMockMode;
   const userId = session?.user?.id || null;
   const [entryUserId, setEntryUserId] = useState(userId);
   const userChanged = entryUserId !== userId;
@@ -244,18 +236,26 @@ function ProductInputRoute() {
     const { projectId, projectPersisted } = useAppStore.getState();
     return getInputEntryDecision({
       slotClient: draftSlot,
-      confirmed: projectPersisted && projectId
+      confirmed: !mobile && projectPersisted && projectId
         && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId)),
     });
   });
   const [entrySources, setEntrySources] = useState([]);
+  const [mobileEntry, setMobileEntry] = useState(null);
+  const [abandonApproved, setAbandonApproved] = useState(false);
+  const inputHasContent = useRef(true);
+  const lastReturnCheck = useRef(-Infinity);
+  const onContentChange = (hasContent) => { inputHasContent.current = hasContent; };
   const slotEnabled = Boolean(session) || isMockMode;
   const finishEntry = () => {
     flowRouteSeenThisSession = true;
     setEntryDecision('continue');
   };
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
-    beginProject, onOpened: finishEntry, onStarted: finishEntry, onError: pushToast,
+    beginProject,
+    onOpened: (meta) => { setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null); finishEntry(); },
+    onKept: (meta) => { setMobileEntry({ state: 'pc', meta }); finishEntry(); },
+    onStarted: () => { setMobileEntry(null); finishEntry(); }, onError: pushToast,
   });
 
   useEffect(() => {
@@ -271,7 +271,7 @@ function ProductInputRoute() {
     let alive = true;
     (async () => {
       const { projectId, projectPersisted, resumePath } = useAppStore.getState();
-      const hasFlow = Boolean(projectPersisted && projectId);
+      const hasFlow = !mobile && Boolean(projectPersisted && projectId);
       if (hasFlow && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId))) {
         if (alive) setEntryDecision('confirmed');
         return;
@@ -287,7 +287,7 @@ function ProductInputRoute() {
       if (draftSlot.hasPendingRemoval()) await draftSlot.retryPendingRemoval();
       const pendingRemoval = draftSlot.hasPendingRemoval();
       const [slot, localDraft] = await Promise.all([
-        draftSlot.get().catch(() => null),
+        draftSlot.get(),
         hasPendingDraft() ? loadDraft().catch(() => null) : Promise.resolve(null),
       ]);
       if (!alive) return;
@@ -325,7 +325,7 @@ function ProductInputRoute() {
         sources.push({
           id: 'local',
           title: splitCards ? '이 기기에서 입력하던 내용' : '입력하던 상품 정보',
-          description: `${formatDraftRelativeTime(localMeta.updatedAt)}에 저장 · 사진 ${localMeta.photoCount}장`,
+          description: `${draftSavedTime(localMeta.updatedAt)} · 사진 ${localMeta.photoCount}장`,
           meta: localMeta,
           draft: localDraft,
         });
@@ -337,12 +337,15 @@ function ProductInputRoute() {
           localMatchesSlot ? localDraft : null));
       }
       setEntrySources(sources);
+      if (mobile && sources.length === 1 && sources[0].id === 'remote' && !sources[0].photosPending) {
+        entryActions.showMobile(sources[0].meta, { entry: true });
+      }
       setEntryDecision(sources.length ? 'ask' : 'continue');
     })().catch(() => {
-      if (alive) setEntryDecision('continue');
+      if (alive) setEntryDecision(slotEnabled ? 'error' : 'continue');
     });
     return () => { alive = false; };
-  }, [authLoading, entryDecision, signingOut, slotEnabled, loginRequired, userChanged, userId]);
+  }, [mobile, authLoading, entryDecision, signingOut, slotEnabled, loginRequired, userChanged, userId]);
 
   useEffect(() => {
     if (signingOut || loginRequired || userChanged) return;
@@ -352,7 +355,7 @@ function ProductInputRoute() {
       (async () => {
         const { resumePath } = useAppStore.getState();
         const sources = await getFlowDraftSources({
-          slotClient: draftSlot, enabled: slotEnabled,
+          slotClient: draftSlot, enabled: slotEnabled, throwOnError: true,
           flowSource: {
             id: 'flow', title: '만들던 상세페이지',
             description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
@@ -383,7 +386,7 @@ function ProductInputRoute() {
           Date.now(),
           `${flowDocumentEntryId}:${locationKey}`,
         ));
-      })();
+      })().catch(() => { if (alive) setEntryDecision('error'); });
       return () => { alive = false; };
     }
     if (entryDecision === 'redirect') {
@@ -392,6 +395,7 @@ function ProductInputRoute() {
       return;
     }
     if (entryDecision !== 'start-new') return;
+    if (shouldWarnFlowAbandon(useAppStore.getState()) && !abandonApproved) return;
     let alive = true;
     beginProject().then(() => {
       if (!alive) return;
@@ -400,7 +404,7 @@ function ProductInputRoute() {
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged, abandonApproved]);
 
   useEffect(() => {
     if (loginRequired || userChanged || entryDecision !== 'continue') return;
@@ -410,6 +414,36 @@ function ProductInputRoute() {
     markFlowSession(projectId, '/create/input');
   }, [entryDecision, loginRequired, userChanged]);
 
+  useEffect(() => {
+    if (mobile || !slotEnabled || authLoading || signingOut || userChanged || entryDecision !== 'continue') return;
+    let alive = true;
+    let checking = false;
+    const eligible = () => !inputHasContent.current && !draftSlot.getToken() && !draftSlot.hasStaged();
+    const check = async () => {
+      if (document.visibilityState === 'hidden' || checking || !eligible()) return;
+      if (Date.now() - lastReturnCheck.current < 15000) return;
+      lastReturnCheck.current = Date.now();
+      checking = true;
+      try {
+        const slot = await draftSlot.get();
+        if (!alive || !eligible()) return;
+        if (isVisibleDraftSlot(slot, draftSlot) && slot.holdsToken !== true) {
+          setEntrySources([remoteDraftSource(slot.meta)]);
+          setEntryDecision('ask');
+        }
+      } catch {
+        // 재진입 조회 실패는 현재 입력 화면을 유지한다.
+      } finally { checking = false; }
+    };
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [mobile, slotEnabled, authLoading, signingOut, userChanged, entryDecision]);
+
   const resume = () => {
     flowRouteSeenThisSession = true;
     const { projectId, resumePath } = useAppStore.getState();
@@ -417,16 +451,18 @@ function ProductInputRoute() {
     setEntryDecision('continue');
     if (resumePath && resumePath !== '/create/input') navigate(resumePath, { replace: true });
   };
-  const startNew = () => entryActions.startNew({
-    enabled: slotEnabled,
-    ...(isMobileDevice() ? { mobilePhotoCount: Math.max(0, ...entrySources.map((source) => source.meta?.photoCount || 0)) } : {}),
-  });
+  const startNew = () => mobile ? entryActions.nextMobile({ enabled: slotEnabled, entry: true })
+    : entryActions.startNew({ enabled: slotEnabled });
 
   const chooseSource = async (sourceId) => {
     const source = entrySources.find((candidate) => candidate.id === sourceId);
     if (!source) return;
     if (sourceId === 'flow') {
       resume();
+      return;
+    }
+    if (mobile && sourceId === 'remote' && !isMobileDraftWriter(source.meta)) {
+      entryActions.showMobile(source.meta, { entry: true });
       return;
     }
     const { projectId, projectPersisted } = useAppStore.getState();
@@ -443,6 +479,8 @@ function ProductInputRoute() {
   // 이메일 로그인도 새로고침 없이 재판정한다. 이전 계정의 입력 화면은 먼저 그리지 않는다.
   if (userChanged) {
     setEntryUserId(userId);
+    setMobileEntry(null);
+    entryActions.cancel();
     setEntrySources([]);
     setEntryDecision('checking');
     return null;
@@ -450,6 +488,15 @@ function ProductInputRoute() {
   if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;
   if (loginRequired) {
     return <PhoneUploadIntro onLogin={() => openLogin('/create/input')} />;
+  }
+  if (entryDecision === 'error') {
+    return <div className="wizard narrow"><div className="surface">
+      <p>저장된 상품을 확인하지 못했어요.</p>
+      <Button variant="primary" onClick={() => setEntryDecision('checking')}>다시 확인</Button>
+    </div></div>;
+  }
+  if (entryDecision === 'start-new' && !abandonApproved && shouldWarnFlowAbandon(useAppStore.getState())) {
+    return <ResumeChoiceModal abandonOnOpen onResume={resume} onNew={() => setAbandonApproved(true)} />;
   }
   if (entryDecision === 'ask') {
     if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;
@@ -465,7 +512,11 @@ function ProductInputRoute() {
   // ChromeLayout이 이미 상단 헤더와 배경을 렌더한다. 짧은 진입 판정 동안에는
   // 본문을 비워 두어 별도의 흰 로딩 화면이나 전환 문구가 배경을 가리지 않게 한다.
   if (entryDecision !== 'continue') return null;
-  return <ProductInput key={`${generation}:${session?.user?.id || 'guest'}`} />;
+  if (mobile && mobileEntry?.state === 'pc') return <div className="wizard pi-handoff">
+    <MobileDraftStatus meta={mobileEntry.meta} busy={entryBusy} onNext={() => entryActions.nextMobile({ enabled: slotEnabled })} />
+    <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
+  </div>;
+  return <ProductInput onFreshStart={() => setMobileEntry(null)} initialSavedMeta={mobileEntry?.state === 'saved' && mobileEntry.generation === generation ? mobileEntry.meta : null} key={`${generation}:${session?.user?.id || 'guest'}`} onContentChange={onContentChange} />;
 }
 
 /* '/' 복귀의 리다이렉트. (Option B 재활성) 익명 입력+분석 draft(사진 blob 포함)를 로그인 후

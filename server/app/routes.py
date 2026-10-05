@@ -55,6 +55,7 @@ from .models import (
     CreditSource,
     CustomMatchItemRequest,
     DraftSlotPutRequest,
+    DraftSlotTakeoverRequest,
     ErrorResponse,
     ExpectedMannequinQuote,
     InProgressProjectSummary,
@@ -449,16 +450,26 @@ def _draft_slot_meta(row: dict) -> dict:
         updated_at = updated_at.isoformat()
     payload = row.get("payload") or {}
     product = payload.get("product") or {}
+    product_name = str(product.get("name") or "").strip() or None
+    colors = product.get("colors")
+    colors = [color for color in colors if isinstance(color, dict)] if isinstance(colors, list) else []
+    base_color = next(
+        (color for color in colors if color.get("isBase")), colors[0] if colors else {}
+    )
+    images = base_color.get("images") or []
+    first_image = images[0] if isinstance(images, list) and images else None
     return {
         "updatedAt": updated_at,
         "deviceLabel": row.get("device_label"),
+        "productName": product_name,
+        "thumbnailUrl": (first_image.get("src") or None) if isinstance(first_image, dict) else None,
         "photoCount": len(_draft_slot_images(payload)),
         "photosPending": bool(row.get("photos_pending")),
         # 사진·상품명·분석이 전무한 빈 슬롯은 이어갈 내용이 없다 — 프론트 진입 카드가
         # 이 값으로 팬텀 슬롯(빈 화면이 만든 임시저장)을 숨긴다.
         "hasContent": bool(
             _draft_slot_images(payload)
-            or str(product.get("name") or "").strip()
+            or product_name
             or payload.get("analysis")
         ),
     }
@@ -470,10 +481,14 @@ def _draft_slot_expired(row: dict) -> bool:
 
 
 async def _remove_draft_slot(
-    conn, user_id: str, row: dict, *, keep_asset_ids: set[str] | None = None
+    conn, user_id: str, row: dict, *, cleanup_assets: bool = False,
+    keep_asset_ids: set[str] | None = None
 ) -> list[dict]:
-    asset_ids = _draft_slot_asset_ids(row.get("payload") or {}) - (keep_asset_ids or set())
     await repo.delete_draft_slot(conn, user_id)
+    # 다른 기기 화면이 사진을 계속 쓸 수 있으므로 일반 삭제는 7일 정리 작업에 맡긴다.
+    if not cleanup_assets:
+        return []
+    asset_ids = _draft_slot_asset_ids(row.get("payload") or {}) - (keep_asset_ids or set())
     return await repo.soft_delete_unreferenced_draft_assets(
         conn, user_id, sorted(asset_ids)
     )
@@ -1870,7 +1885,7 @@ async def get_draft_slot(
     async with get_conn(request) as conn:
         row = await repo.lock_draft_slot(conn, user_id)
         if row and _draft_slot_expired(row):
-            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row, cleanup_assets=True)
             await conn.commit()
             row = None
     if cleanup_assets:
@@ -1906,7 +1921,7 @@ async def put_draft_slot(
         row = await repo.lock_draft_slot(conn, user_id)
         if row and _draft_slot_expired(row):
             cleanup_assets = await _remove_draft_slot(
-                conn, user_id, row, keep_asset_ids=incoming_asset_ids
+                conn, user_id, row, cleanup_assets=True, keep_asset_ids=incoming_asset_ids
             )
             row = None
 
@@ -1937,7 +1952,7 @@ async def put_draft_slot(
                         "meta": _draft_slot_meta(row),
                     },
                 )
-            removed_ids = _draft_slot_asset_ids(row.get("payload") or {}) - incoming_asset_ids
+            # 빠진 사진도 다른 기기가 쓸 수 있어 7일 정리 작업까지 보존한다.
             saved = await repo.update_draft_slot(
                 conn,
                 user_id=user_id,
@@ -1945,9 +1960,6 @@ async def put_draft_slot(
                 device_label=body.device_label,
                 photos_pending=body.photos_pending,
             )
-            cleanup_assets.extend(await repo.soft_delete_unreferenced_draft_assets(
-                conn, user_id, sorted(removed_ids)
-            ))
             status_code = 200
         if not consumed_token_conflict:
             await conn.commit()
@@ -1977,18 +1989,21 @@ async def put_draft_slot(
 async def takeover_draft_slot(
     request: Request,
     background_tasks: BackgroundTasks,
+    body: DraftSlotTakeoverRequest | None = None,
     user_id: str = Depends(require_user),
 ):
     cleanup_assets: list[dict] = []
     async with get_conn(request) as conn:
         row = await repo.lock_draft_slot(conn, user_id)
         if row and _draft_slot_expired(row):
-            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row, cleanup_assets=True)
             await conn.commit()
             row = None
         if row:
             token = str(uuid.uuid4())
-            row = await repo.takeover_draft_slot(conn, user_id, token)
+            row = await repo.takeover_draft_slot(
+                conn, user_id, token, device_label=body.device_label if body else None
+            )
             await conn.commit()
     if cleanup_assets:
         background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
@@ -2017,6 +2032,15 @@ async def delete_draft_slot(
     cleanup_assets: list[dict] = []
     async with get_conn(request) as conn:
         row = await repo.lock_draft_slot(conn, user_id)
+        if row is None and x_draft_token is not None:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {
+                    "code": "token_mismatch",
+                    "message": "저장해 둔 내용이 다른 곳에서 정리돼 이 화면의 저장을 멈췄어요.",
+                    "meta": None,
+                }},
+            )
         if row:
             if x_draft_token != row["active_token"]:
                 raise HTTPException(

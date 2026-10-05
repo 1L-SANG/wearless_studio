@@ -3549,3 +3549,17 @@
   /* 하단 버튼 배경(.wizard-cta::before)이 양옆 40px 넘쳐 폰에서 화면이 옆으로 밀린다. clip 은 sticky 를 깨지 않는다. */
   .pi-handoff { overflow-x: clip; }
 }
+
+/* 저장된 상품 행은 사진과 설명을 나란히 둔다. */
+.draft-entry-source.has-thumbnail { grid-template-columns: 40px minmax(0, 1fr); column-gap: var(--sp-12); }
+.draft-entry-source.has-thumbnail > :not(img) { grid-column: 2; }
+.draft-entry-thumbnail { grid-column: 1; grid-row: 1 / span 4; width: 40px; height: 40px; object-fit: cover; border-radius: var(--r-4); }
+.handoff-product-row { display: flex; align-items: center; gap: var(--sp-12); text-align: left; width: 100%; margin-block: var(--sp-16); }
+.handoff-product-row img { width: 56px; height: 56px; flex-shrink: 0; object-fit: cover; border-radius: var(--r-4); }
+.handoff-product-row > div { min-width: 0; }
+.handoff-product-row p { margin: var(--sp-4) 0 0; color: var(--fg-2); font-size: 13px; }
+.handoff-account { max-width: 100%; white-space: normal; margin-bottom: var(--sp-12); }
+.handoff-title { text-wrap: balance; }
+/* 폰 저장 뒤 두 버튼은 화면 폭을 반씩 나눠 쓴다(한쪽으로 몰리지 않게). */
+.pi-handoff .wizard-cta > .handoff-actions { flex: 1; flex-wrap: nowrap; }
+.pi-handoff .wizard-cta > .handoff-actions .btn { flex: 1; min-width: 0; padding-inline: var(--sp-12); }

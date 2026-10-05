@@ -173,6 +173,10 @@ class DraftSlotPutRequest(CamelModel):
     photos_pending: bool
 
 
+class DraftSlotTakeoverRequest(CamelModel):
+    device_label: str | None = None
+
+
 class CustomMatchItemRequest(CamelModel):
     """POST /analysis/custom-match-item — one garment represented by 1-4 uploads."""
 

@@ -10,7 +10,8 @@ export function useDraftEntryActions(options) {
   const [actions] = useState(() => createDraftEntryActions({
     slotClient: draftSlot,
     beginProject: () => latest.current.beginProject(),
-    onOpened: () => latest.current.onOpened(),
+    onOpened: (...args) => latest.current.onOpened(...args),
+    onKept: (meta) => latest.current.onKept?.(meta),
     onStarted: () => latest.current.onStarted(),
     onError: (...args) => latest.current.onError(...args),
     onChange: setDialog,

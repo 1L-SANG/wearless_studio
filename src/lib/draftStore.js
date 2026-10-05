@@ -88,10 +88,11 @@ const fetchPhotoBlob = async (src) => {
   }
 };
 
-export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
+export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob, storedPhotos = []) {
   const photos = [];
   const okIds = new Set();
   const failedIds = [];
+  const failures = [];
   for (const color of product?.colors || []) {
     for (const img of color.images || []) {
       try {
@@ -113,6 +114,14 @@ export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
         });
         okIds.add(img.id);
       } catch (e) {
+        const stored = storedPhotos.find((photo) => photo.imageId === img.id
+          && photo.blob?.size && isUploadablePhotoMime(photo.mime));
+        if (stored && (isRemoteAssetPhoto(img.src) || /^https?:/i.test(img.src))) {
+          photos.push({ ...stored, colorId: color.id, slot: img.slot, filename: img.name || stored.filename });
+          okIds.add(img.id);
+          continue;
+        }
+        if (e?.status) failures.push({ imageId: img.id, status: e.status });
         // objectURL revoke·메모리 소실 등으로 blob 읽기 실패 — 조용히 누락하지 않고 집계+경고.
         failedIds.push(img.id);
         console.warn(`[draft] 사진 blob 추출 실패 — imageId=${img.id}`, e);
@@ -124,7 +133,7 @@ export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
   const cleanProduct = product
     ? { ...product, colors: (product.colors || []).map((c) => ({ ...c, images: (c.images || []).filter((im) => okIds.has(im.id) || isRemoteAssetPhoto(im.src)) })) }
     : product;
-  return { photos, cleanProduct, failed: failedIds.length, failedIds };
+  return { photos, cleanProduct, failed: failedIds.length, failedIds, ...(failures.length ? { failures } : {}) };
 }
 
 /** 로컬 바이트가 없는 원격 사진도 승격 전에 확보한다. 실패하면 승격을 중단한다. */
@@ -145,7 +154,8 @@ export async function ensureDraftRemotePhotos(draft, fetchBlob = fetchPhotoBlob)
 }
 
 export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null) {
-  const { photos, cleanProduct, failed, failedIds } = await collectDraftPhotos(product);
+  const stored = await loadDraft().catch(() => null);
+  const { photos, cleanProduct, failed, failedIds, failures } = await collectDraftPhotos(product, fetchPhotoBlob, stored?.photos);
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).
@@ -160,7 +170,7 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
-  return { saved: photos.length, failed, failedIds }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
+  return { saved: photos.length, failed, failedIds, ...(failures ? { failures } : {}) }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
 }
 
 function commitPendingSnapshot() {

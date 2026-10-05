@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
-import { createDraftEntryActions } from '../../src/lib/draftEntry.js';
+import { isMobileDraftWriter } from '../../src/lib/draftDeviceNoun.js';
+import { draftSavedTime, createDraftEntryActions } from '../../src/lib/draftEntry.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from '../../src/features/product-input/pendingTiles.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
 const { code } = await transformWithEsbuild([
   'src/features/product-input/ProductInput.jsx', 'src/features/product-input/MobileInputHandoff.jsx',
-  'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
-  'src/lib/useDraftEntryActions.js', 'src/features/shell/DraftEntryDialog.jsx',
+  'src/features/shell/MobileDraftDialog.jsx', 'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
+  'src/features/library/Library.jsx', 'src/lib/useDraftEntryActions.js', 'src/features/shell/DraftEntryDialog.jsx',
 ].map((path) => clean(read(path))).join('\n'), 'MobileInput.jsx', { jsx: 'transform' });
 const product = () => ({ name: '니트', colors: [{ id: 'base', isBase: true, images: [
   { id: 'front', slot: 'Front', src: '/front.jpg' }, { id: 'back', slot: 'Back', src: '/back.jpg' },
@@ -29,17 +30,26 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product() } = {}) {
+function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } } } = {}) {
   const calls = [];
+  const content = [];
+  const onContentChange = (value) => content.push(value);
+  const documentEvents = new EventTarget();
+  documentEvents.visibilityState = 'visible';
+  let pendingHandler, conflictHandler;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
-  let staged = { payload: { product: photos, analysis, composeMode: 'basic' } };
-  const state = { composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
-    restoreComposeMode() {}, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
+  let staged = stagedDraft ? { payload: { product: photos, analysis, composeMode: 'basic' } } : null;
+  const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
+    restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
   const useAppStore = (select) => select(state);
   useAppStore.getState = () => state;
   const slot = {
-    configure() {}, onConflict: () => () => {}, activate() {}, queue(snapshot) { calls.push(['queue', snapshot]); },
+    onPhotosPending(handler) { pendingHandler = handler; handler(true); return () => { pendingHandler = null; }; },
+    retryFailedUploads() { calls.push('retryUploads'); },
+    async checkOwnership() { calls.push('ownership'); },
+    configure() {}, onConflict: (handler) => { conflictHandler = handler; return () => {}; },
+    resetIdentity() { calls.push('reset'); }, activate() {}, queue(snapshot) { calls.push(['queue', snapshot]); },
     consumeStaged() { const next = staged; staged = null; return next; },
     get: async () => ({ meta: { photoCount: 2, updatedAt: 'v1' } }),
     getServerSyncedAt: () => 'v1', hasPendingRemoval: () => false,
@@ -62,10 +72,12 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
       }
     },
     useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => ({ state: null }),
-    useAuth: () => ({ session: { user: { id: 'seller' } }, loading: false }),
-    useDoneGuard: () => false, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
-    useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions,
-    api: { getProduct: async () => photos, getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
+    useAuth: () => ({ session, loading: false }),
+    useDoneGuard: () => doneBlocked, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
+    useQuery: () => ({ data: [{ id: 'finished', title: '완성본' }], isLoading: false }),
+    useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
+    api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
+      getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
       analyzeProduct: async () => { calls.push('analyze'); return { suggestedName: '니트' }; } },
     createProductPhotoPreviewRegistry: () => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src }),
     createTrailingPatchScheduler: () => ({ flush() {}, schedule() {} }),
@@ -80,29 +92,32 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     toUploadableImages: transcode || (async () => ({ files: [], failed: [] })),
     getUploadValidationError: () => null, MAX_UPLOAD_BYTES: 25000000,
     window: { addEventListener() {}, removeEventListener() {}, scrollTo() {}, location: { origin: 'https://ai.wearless.kr', host: 'ai.wearless.kr' } },
-    document: { addEventListener() {}, removeEventListener() {} },
+    document: documentEvents,
     copyHandoffAddress: async (pushToast) => pushToast('주소를 복사했어요'),
     s: new Proxy({}, { get: (_, key) => key }),
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
     'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
-  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name); cursor = 0; dirty = false;
-    return components[name](props);
+    return components[name](name === 'ProductInput' ? { onContentChange, initialSavedMeta, ...props } : props);
   }
-  async function settle() {
-    let tree = render();
+  async function settle(name = 'ProductInput') {
+    let tree = render(name);
     for (let i = 0; i < 30; i++) {
       const batch = effects; effects = []; batch.forEach((effect) => effect());
       await new Promise(setImmediate);
       if (!dirty && !effects.length) return tree;
-      tree = render();
+      tree = render(name);
     }
     throw new Error('did not settle');
   }
-  return { calls, render, settle, components,
+  return { calls, content, render, settle, components, documentEvents, slot,
+    emitConflict: (meta) => conflictHandler(meta),
+    emitPending: (value) => pendingHandler?.(value),
+    cleanup() { for (const frame of frames.values()) frame.forEach((record) => record?.cleanup?.()); },
     expand: (tree, name) => render(name, node(tree, name).props),
   };
 }
@@ -132,7 +147,7 @@ test('M2 mobile CTA saves the full snapshot, locks editing, and never analyzes',
   assert.equal(node(tree, 'MobileSaveStatus'), undefined);
   const saved = h.expand(tree, 'MobileSaveModal');
   assert.equal(text(node(saved, 'h3')), '사진 2장을 저장했어요');
-  assert.equal(text(node(saved, 'p')), 'PC에서 같은 계정으로 로그인하면 바로 이어져요.');
+  assert.equal(text(node(saved, 'p')), 'PC에서도 같은 계정으로 로그인해 주세요.');
   const tag = h.expand(saved, 'HangTag');
   assert.equal(tag.props['aria-label'], '사진 2장 저장됨이라고 적힌 옷 태그');
   assert.equal(tag.props.className, 'pi-save-tag');
@@ -159,6 +174,9 @@ test('M2 mobile CTA saves the full snapshot, locks editing, and never analyzes',
   assert.ok(text(banner).includes('사진 2장을 저장했어요'));
   assert.ok(text(banner).includes('PC에서 ai.wearless.kr로 이어서 만들어요.'));
   assert.equal(node(banner, 'Icon').props.name, 'check');
+  assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+  button(h.expand(tree, 'InputMainAction'), '사진 고치기').props.onClick();
+  tree = await h.settle();
   node(tree, 'ColorImageGroup').props.onRemove('front');
   tree = await h.settle();
   const changed = h.expand(tree, 'MobileSaveStatus');
@@ -194,7 +212,7 @@ test('M2 conversion signal blocks mobile save until every slot finishes; desktop
       tree = await h.settle();
       assert.equal(button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.disabled, false);
     } else {
-      assert.equal(group.props.onPendingChange, undefined);
+      assert.equal(typeof group.props.onPendingChange, 'function');
       await button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
       assert.ok(h.calls.includes('analyze'));
       assert.ok(!h.calls.some((call) => call[0] === 'saveAll'));
@@ -244,10 +262,11 @@ test('M2-1 restored analyzed mobile draft is read-only and requires confirmation
     assert.ok(!h.calls.some((call) => call[0] === 'queue'));
     await button(notice, '지우고 새 상품 업로드').props.onClick();
     tree = await h.settle();
-    const warning = h.expand(tree, 'DraftEntryDialog');
-    assert.ok(text(warning).includes('업로드한 사진 2장이 지워져요. 한 번에 한 상품만 저장할 수 있어요.'));
+    const wrapper = h.expand(tree, 'DraftEntryDialog');
+    const warning = h.render('MobileDraftDialog', wrapper.props);
+    assert.ok(text(warning).includes('한 번에 한 상품만 저장할 수 있어요.'));
     assert.ok(!h.calls.includes('remove'));
-    await button(warning, '지우고 계속').props.onClick();
+    await button(warning, '버리고 새로 올리기').props.onClick();
     assert.deepEqual(h.calls.filter((call) => typeof call === 'string'), ['remove', 'begin']);
     assert.deepEqual(analysis, { fit: 'original', preserved: true });
   }
@@ -339,3 +358,286 @@ for (const mobile of [true, false]) {
     assert.equal(node(group, 'ColorSwatchPicker').props.mobile, mobile);
   });
 }
+
+test('mobile library shows a PC notice without adopting or navigating', async () => {
+  for (const mobile of [true, false]) {
+    const h = harness({ mobile });
+    const tree = await h.settle('Library');
+    find(tree, (value) => value.props.className === 'lib-card').props.onClick();
+    assert.deepEqual(h.calls, mobile ? [['toast', '완성본은 PC에서 열어 주세요']]
+      : [['adopt', 'finished'], ['navigate', '/editor/finished']]);
+  }
+});
+
+test('mobile input hides DoneGuardModal even for a persisted completed project', async () => {
+  for (const mobile of [true, false]) {
+    const h = harness({ mobile, doneBlocked: true });
+    const tree = await h.settle();
+    assert.equal(Boolean(node(tree, 'DoneGuardModal')), !mobile);
+    h.cleanup();
+  }
+});
+
+test('unresolved mobile save fails at 120 seconds and a late success updates the open modal', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish;
+  const h = harness({ saveAll: () => new Promise((resolve) => { finish = resolve; }) });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  const saving = button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  t.mock.timers.tick(119999);
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'saving');
+  t.mock.timers.tick(1);
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'failed');
+  finish({ status: 'saved', photoCount: 2 }); await saving;
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'saved');
+  button(h.expand(tree, 'MobileSaveModal'), '확인').props.onClick();
+  tree = await h.settle();
+  assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+  assert.deepEqual(actionLabels(h.expand(tree, 'InputMainAction')), ['사진 고치기', '다음 상품 올리기']);
+});
+
+test('failed open modal waits for the final successful PUT after background uploads recover', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0, finish;
+  const h = harness({ saveAll: () => ++attempts === 1 ? { status: 'failed' }
+    : new Promise((resolve) => { finish = resolve; }) });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  await button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  tree = await h.settle();
+  h.emitPending(false);
+  tree = await h.settle();
+  assert.equal(attempts, 2);
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'failed');
+  finish({ status: 'saved', photoCount: 2 });
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'saved');
+  button(h.expand(tree, 'MobileSaveModal'), '확인').props.onClick();
+  tree = await h.settle();
+  assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+  assert.deepEqual(actionLabels(h.expand(tree, 'InputMainAction')), ['사진 고치기', '다음 상품 올리기']);
+});
+
+test('visible saving screen retries failed uploads and checks ownership immediately', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ saveAll: () => new Promise(() => {}) });
+  t.after(() => h.cleanup());
+  const tree = await h.settle();
+  button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  await h.settle();
+  h.documentEvents.visibilityState = 'hidden';
+  h.documentEvents.dispatchEvent(new Event('visibilitychange'));
+  assert.ok(!h.calls.includes('ownership'));
+  h.documentEvents.visibilityState = 'visible';
+  h.documentEvents.dispatchEvent(new Event('visibilitychange'));
+  assert.ok(h.calls.includes('retryUploads'));
+  assert.ok(h.calls.includes('ownership'));
+});
+
+test('closing a timed-out modal allows another save and ignores the old completion', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const finishes = [];
+  const h = harness({ saveAll: () => new Promise((resolve) => finishes.push(resolve)) });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  t.mock.timers.tick(120000);
+  tree = await h.settle();
+  button(h.expand(tree, 'MobileSaveModal'), '닫기').props.onClick();
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result, null);
+  button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  finishes[0]({ status: 'saved', photoCount: 9 });
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.status, 'saving');
+  finishes[1]({ status: 'saved', photoCount: 2 });
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileSaveModal').props.result.photoCount, 2);
+});
+
+test('gone save modal describes a finished or removed product and only offers confirmation', () => {
+  const h = harness();
+  const tree = h.render('MobileSaveModal', { result: { status: 'gone' } });
+  assert.equal(text(node(tree, 'h3')), '이 상품은 PC에서 마무리됐거나 정리됐어요');
+  assert.deepEqual(actionLabels(tree), ['확인']);
+});
+
+test('mobile empty entry never loads the persisted desktop product or analysis', async () => {
+  const h = harness({ persisted: true, stagedDraft: false });
+  const tree = await h.settle();
+  assert.ok(h.calls.some((call) => call[0] === 'getProduct' && call[1] === null));
+  assert.equal(node(tree, 'MobileAnalyzedNotice'), undefined);
+  assert.ok(node(tree, 'InputMainAction'));
+  h.cleanup();
+});
+
+test('desktop reports photo conversion as content before an empty-input return check', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish;
+  const h = harness({ mobile: false, photos: { name: '', colors: [{ id: 'base', isBase: true, images: [] }] },
+    transcode: () => new Promise((resolve) => { finish = resolve; }) });
+  t.after(() => h.cleanup());
+  let tree = await h.settle();
+  assert.equal(h.content.at(-1), false);
+  const group = h.expand(tree, 'ColorImageGroup');
+  const picker = h.render('AddDrop', node(group, 'AddDrop').props);
+  node(picker, 'input').props.onChange({ target: { files: [{ name: 'photo.heic', type: 'image/heic' }], value: '' } });
+  tree = await h.settle();
+  assert.equal(h.content.at(-1), true);
+  finish({ files: [], failed: [] });
+  await h.settle();
+  assert.equal(h.content.at(-1), false);
+});
+
+for (const visible of [true, false]) {
+  test(`B locks all edits, next product checks the visible slot: ${visible}`, async () => {
+    const h = harness({ initialSavedMeta: { photoCount: 2 } });
+    let tree = await h.settle();
+    assert.ok(node(tree, 'MobileSaveStatus'));
+    const group = h.expand(tree, 'ColorImageGroup');
+    assert.equal(node(group, 'ColorSwatchPicker'), undefined);
+    assert.equal(node(group, 'AddDrop'), undefined);
+    assert.equal(find(group, (n) => n.props.className === 'rm'), undefined);
+    const name = find(tree, (n) => n.type === 'input' && n.props.className === 'field');
+    assert.equal(name.props.disabled, true);
+    const callbacks = node(tree, 'ColorImageGroup').props;
+    callbacks.onRename('다른 이름');
+    callbacks.onRemove('front');
+    callbacks.onAddFiles('Detail', [{ src: '/new.jpg' }]);
+    name.props.onChange({ target: { value: '바뀐 이름' } });
+    tree = await h.settle();
+    assert.equal(find(tree, (n) => n.type === 'input' && n.props.className === 'field').props.value, '니트');
+    assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+    assert.ok(!h.calls.some((c) => c[0] === 'queue'));
+    h.slot.get = async () => visible ? { meta: { updatedAt: 'v1', deviceLabel: 'iPhone', photoCount: 2 } } : null;
+    await button(h.expand(tree, 'InputMainAction'), '다음 상품 올리기').props.onClick();
+    tree = await h.settle();
+    if (visible) {
+      assert.equal(node(tree, 'DraftEntryDialog').props.dialog.kind, 'mobile');
+      await node(tree, 'DraftEntryDialog').props.actions.keepMobile();
+      tree = await h.settle();
+      assert.equal(node(tree, 'ColorImageGroup').props.readOnly, true);
+      assert.ok(!h.calls.includes('begin'));
+      button(h.expand(tree, 'InputMainAction'), '사진 고치기').props.onClick();
+      tree = await h.settle();
+      assert.equal(node(tree, 'ColorImageGroup').props.readOnly, false);
+      assert.ok(button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기'));
+      assert.ok(text(h.expand(tree, 'MobileSaveStatus')).includes('사진이 바뀌었어요'));
+    } else {
+      assert.ok(h.calls.includes('begin'));
+      assert.ok(!h.calls.includes('remove'));
+    }
+    h.cleanup();
+  });
+}
+
+for (const deviceLabel of ['Windows Chrome', 'iPhone Safari', 'iPad Safari']) {
+  test(`mobile conflict shows C for PC and EditingRightsLock for mobile writer: ${deviceLabel}`, async () => {
+    const h = harness();
+    await h.settle();
+    h.calls.length = 0;
+    h.emitConflict({ state: 'conflict', deviceLabel, photoCount: 2 });
+    let tree = await h.settle();
+    if (isMobileDraftWriter({ deviceLabel })) assert.ok(node(tree, 'EditingRightsLock'));
+    else {
+      assert.equal(node(tree, 'ColorImageGroup'), undefined);
+      assert.equal(node(tree, 'EditingRightsLock'), undefined);
+      const status = h.expand(tree, 'MobileDraftStatus');
+      assert.ok(text(status).includes('PC에서 이 상품을 이어서 만들고 있어요'));
+      assert.deepEqual(actionLabels(status), ['다음 상품 올리기']);
+      h.documentEvents.dispatchEvent(new Event('visibilitychange'));
+      tree = await h.settle();
+      assert.deepEqual(h.calls, []);
+      await button(status, '다음 상품 올리기').props.onClick();
+      assert.equal(node(await h.settle(), 'DraftEntryDialog').props.dialog.kind, 'mobile');
+      assert.ok(!h.calls.includes('remove'));
+    }
+    h.cleanup();
+  });
+}
+
+for (const mobile of [true, false]) {
+  test(`gone lock uses D only on mobile: ${mobile}`, async () => {
+    const h = harness({ mobile });
+    await h.settle();
+    h.emitConflict({ state: 'gone' });
+    const tree = await h.settle();
+    if (mobile) {
+      assert.equal(node(tree, 'EditingRightsLock'), undefined);
+      assert.equal(node(tree, 'ColorImageGroup'), undefined);
+      const status = h.expand(tree, 'MobileDraftStatus');
+      assert.ok(text(status).includes('이 상품은 PC에서 마무리됐거나 정리됐어요'));
+      await button(status, '다음 상품 올리기').props.onClick();
+      assert.ok(h.calls.includes('begin'));
+      assert.ok(!h.calls.includes('remove'));
+    } else assert.ok(node(tree, 'EditingRightsLock'));
+    h.cleanup();
+  });
+}
+
+test('gone save closes into D even without a conflict notification', async () => {
+  const h = harness({ saveAll: async () => ({ status: 'gone' }) });
+  let tree = await h.settle();
+  await button(h.expand(tree, 'InputMainAction'), '저장하고 PC에서 이어하기').props.onClick();
+  tree = await h.settle();
+  button(h.expand(tree, 'MobileSaveModal'), '확인').props.onClick();
+  tree = await h.settle();
+  assert.equal(node(tree, 'MobileDraftStatus').props.gone, true);
+  assert.equal(node(tree, 'ColorImageGroup'), undefined);
+  h.cleanup();
+});
+
+for (const [provider, metadata, expected] of [
+  ['kakao', { full_name: '전체 이름', name: '이름' }, '카카오 · 전체 이름'],
+  ['kakao', { name: '이름' }, '카카오 · 이름'],
+  ['kakao', { nickname: '별명' }, '카카오 · 별명'],
+  ['kakao', { preferred_username: '닉네임' }, '카카오 · 닉네임'],
+  ['kakao', {}, '카카오 · seller@example.com'],
+  ['google', { name: '이름' }, '구글 · seller@example.com'],
+  ['email', {}, '이메일 · seller@example.com'],
+  ['unknown', {}, null], ['toString', {}, null], [null, {}, null],
+]) {
+  test(`D4 account pill ${provider} ${JSON.stringify(metadata)}`, () => {
+    const h = harness({ session: provider ? { user: { app_metadata: { provider }, user_metadata: metadata, email: 'seller@example.com' } } : null });
+    const modal = h.render('MobileSaveModal', { result: { status: 'saved', photoCount: 2 } });
+    const pill = find(modal, (n) => n.props.className === 'pill pill-soft handoff-account');
+    assert.equal(pill ? text(pill) : null, expected);
+    assert.ok(text(modal).includes(expected ? 'PC에서도 이 계정으로 로그인해 주세요.' : 'PC에서도 같은 계정으로 로그인해 주세요.'));
+  });
+}
+
+test('D1 product row includes optional 56px thumbnail, name fallback and saved time', () => {
+  const h = harness();
+  for (const thumbnailUrl of ['/photo.jpg', null]) {
+    const row = h.render('DraftProductRow', { meta: { thumbnailUrl, photoCount: 3, updatedAt: new Date().toISOString() } });
+    assert.ok(text(row).includes('이름 없는 상품'));
+    assert.ok(text(row).includes('사진 3장 · 방금 저장'));
+    assert.equal(Boolean(node(row, 'img')), Boolean(thumbnailUrl));
+    if (thumbnailUrl) assert.equal(node(row, 'img').props.width, 56);
+  }
+  for (const deviceLabel of ['iPhone', 'Mac Chrome']) {
+    const modal = h.render('MobileDraftDialog', { dialog: { meta: { deviceLabel } }, actions: {} });
+    assert.ok(text(modal).includes(deviceLabel === 'iPhone' ? 'PC에서 아직 열지 않았어요.' : 'PC에서 만드는 중이에요. 버리면 PC 화면의 작업도 사라져요.'));
+    assert.deepEqual(actionLabels(modal), ['그대로 두기', '버리고 새로 올리기']);
+    assert.equal(button(modal, '버리고 새로 올리기').props.variant, 'danger');
+  }
+});
+
+test('handoff rows and entry thumbnails use token radius, cover and a left photo column', () => {
+  const css = read('src/styles/features.css');
+  assert.match(css, /\.draft-entry-source\.has-thumbnail \{ grid-template-columns: 40px minmax\(0, 1fr\)/);
+  assert.match(css, /\.draft-entry-thumbnail \{[^}]*grid-column: 1;[^}]*object-fit: cover; border-radius: var\(--r-4\)/);
+  assert.match(css, /\.handoff-product-row img \{[^}]*width: 56px; height: 56px;[^}]*object-fit: cover; border-radius: var\(--r-4\)/);
+});
+
+test('mobile gone notification before restoration still lands in D', async () => {
+  const h = harness({ stagedDraft: false });
+  await h.settle();
+  h.emitConflict({ state: 'gone' });
+  assert.equal(node(await h.settle(), 'MobileDraftStatus').props.gone, true);
+  h.cleanup();
+});

@@ -1,6 +1,6 @@
 import { selectPublicAnalysisPhotos } from './publicAnalysisPhotos.js';
 
-export function photoCollectionFailure(product, { failed = 0, failedIds = [] } = {}) {
+export function photoCollectionFailure(product, { failed = 0, failedIds = [], failures = [] } = {}) {
   if (!failed) return null;
   const colors = product?.colors || [];
   const base = colors.find((color) => color.isBase) || colors[0];
@@ -8,6 +8,7 @@ export function photoCollectionFailure(product, { failed = 0, failedIds = [] } =
   return {
     failed,
     failedIds,
+    removed: failures.length === failed && failures.every((failure) => failure.status === 404),
     canOmit: failedIds.length === failed && !failedIds.some((id) => sources.has(id)),
   };
 }

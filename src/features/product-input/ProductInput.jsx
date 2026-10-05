@@ -28,6 +28,8 @@ import {
   queueProductDraftSave,
 } from '@/lib/draftStore.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
+import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
+import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
 import { DraftEntryDialog } from '@/features/shell/DraftEntryDialog.jsx';
 import { InputMainAction, MobileAnalyzedNotice, MobileSaveModal, MobileSaveStatus, useMobileInputSave } from './MobileInputHandoff.jsx';
@@ -494,7 +496,7 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard, mobile 
   );
 }
 
-export function ProductInput() {
+export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart } = {}) {
   const navigate = useNavigate();
   const mobile = isMobileDevice();
   const location = useLocation();
@@ -507,8 +509,8 @@ export function ProductInput() {
   // onFinished 로 수행한다 (애니메이션 끝 ≈ 전환, 2026-07-13 A안 결정).
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
-  const mobileReadOnly = mobile && phase === 'done';
-  const handoff = useMobileInputSave(product);
+  const handoff = useMobileInputSave(product, initialSavedMeta);
+  const mobileReadOnly = mobile && (phase === 'done' || handoff.readOnly);
   const [pendingConversions, setPendingConversions] = useState({});
   const hasPendingConversions = Object.values(pendingConversions).some(Boolean);
   const reportPending = (groupId, slot, count) => setPendingConversions((current) => {
@@ -549,7 +551,7 @@ export function ProductInput() {
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
     beginProject: () => useAppStore.getState().beginProject(),
     onOpened: () => {},
-    onStarted: () => navigate('/create/input', { replace: true }),
+    onStarted: () => { onFreshStart?.(); navigate('/create/input', { replace: true }); },
     onError: pushToast,
   });
   const [, refreshPhotoPreviews] = useState(0);
@@ -570,8 +572,12 @@ export function ProductInput() {
     });
   }
 
+  useEffect(() => {
+    onContentChange?.(!product || draftHasContent(product, analysis) || hasPendingConversions);
+  }, [product, analysis, hasPendingConversions, onContentChange]);
+
   useEffect(() => draftSlot.onConflict((meta) => {
-    if (meta?.state === 'gone'
+    if (!mobile && meta?.state === 'gone'
         && !draftHasContent(latestProductRef.current, latestAnalysisRef.current)) {
       // 이 화면에 지킬 입력이 없다 — 고를 것도 없으니 잠금 화면 대신 조용히 새 저장 상태로 되돌린다.
       draftSlot.restartAfterGone();
@@ -586,7 +592,7 @@ export function ProductInput() {
   }, [slotEnabled]);
 
   useEffect(() => {
-    if (!product || mobileReadOnly) return;
+    if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone))) return;
     const hasContent = draftHasContent(product, analysis);
     // 구경만 한 빈 화면은 임시저장을 만들지 않는다. 단 내용이 있다가 다 지워진 상태는
     // '비움'도 최신 상태이므로 계속 저장한다(안 하면 지운 사진이 복원에서 되살아난다).
@@ -598,12 +604,13 @@ export function ProductInput() {
     if (slotEnabled) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
-  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly]);
+  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly, mobile, slotLock, handoff.gone, entryBusy]);
 
   useEffect(() => {
     if (!slotEnabled) return;
     let lastCheckAt = 0;
     const check = () => {
+      if (!draftSlot.getToken()) return;
       const now = Date.now();
       if (now - lastCheckAt < 60000) return;
       lastCheckAt = now;
@@ -1114,7 +1121,7 @@ export function ProductInput() {
       // cold input 은 라우트 계층이 stale flow 를 먼저 비운다. 같은 탭에서 돌아온 input 만
       // 현재 project 를 읽고, project 가 없으면 null 계약의 클라이언트 시드 템플릿을 쓴다.
       const { projectId: currentProjectId, projectPersisted } = useAppStore.getState();
-      const editingProjectId = projectPersisted && currentProjectId ? currentProjectId : null;
+      const editingProjectId = !mobile && projectPersisted && currentProjectId ? currentProjectId : null;
       const [p, c, existingAnalysis] = await Promise.all([
         api.getProduct(editingProjectId),
         api.getCatalogs(),
@@ -1234,10 +1241,22 @@ export function ProductInput() {
     return () => { alive = false; };
   }, [loadAttempt]);
 
+  const nextMobile = () => entryActions.nextMobile({ enabled: slotEnabled });
+  const freshMobile = () => entryActions.nextMobile({ enabled: false });
+  if (mobile && (handoff.gone || slotLock?.state === 'gone'
+      || (slotLock && !isMobileDraftWriter(slotLock)))) return (
+    <div className="wizard pi-handoff">
+      <MobileDraftStatus meta={slotLock} gone={handoff.gone || slotLock?.state === 'gone'}
+        busy={entryBusy} onNext={handoff.gone || slotLock?.state === 'gone' ? freshMobile : nextMobile} />
+      <MobileSaveModal result={handoff.result} onClose={handoff.close} />
+      <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
+    </div>
+  );
+
   if (loadError) return (
     <div className="wizard">
       {editingRightsLock}
-      {doneBlocked && <DoneGuardModal />}
+      {!mobile && doneBlocked && <DoneGuardModal />}
       <div className="surface">
         <ErrorState desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
       </div>
@@ -1246,7 +1265,7 @@ export function ProductInput() {
   if (!product || !catalogs) return (
     <div className="wizard" aria-busy="true" aria-label="입력 화면 불러오는 중">
       {editingRightsLock}
-      {doneBlocked && <DoneGuardModal />}
+      {!mobile && doneBlocked && <DoneGuardModal />}
     </div>
   );
 
@@ -1256,18 +1275,21 @@ export function ProductInput() {
     return handoff.save({ product, analysis, composeMode,
       localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() });
   };
-  const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
+  const set = (patch) => { if (!mobileEditingLocked) setProduct((p) => ({ ...p, ...patch })); };
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => {
+    if (mobileEditingLocked) return;
     invalidateStoryboardForProductPhotoEdit(analysisProjectId, invalidateStoryboardEntryPrefetch);
     setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
   };
   const removeImage = (colorId, imgId) => {
+    if (mobileEditingLocked) return;
     photoPreviewRegistryRef.current.release(imgId);
     invalidateStoryboardForProductPhotoEdit(analysisProjectId, invalidateStoryboardEntryPrefetch);
     setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
   };
   const editColors = (change) => {
+    if (mobileEditingLocked) return;
     const colors = change(product.colors);
     if (colors === product.colors) return;
     setProduct((p) => ({ ...p, colors }));
@@ -1362,7 +1384,6 @@ export function ProductInput() {
     </div>
   );
 
-  const allUploaded = product.colors.flatMap((c) => c.images);
   const imgCount = product.colors[0] ? product.colors[0].images.length : 0;
   const images = (
     <div className="surface pi-images">
@@ -1379,7 +1400,7 @@ export function ProductInput() {
           onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)}
           displayUrl={(imageId, originalUrl) => photoPreviewRegistryRef.current.displayUrl(imageId, originalUrl)}
           photosLocked={phase === 'done' || mobileEditingLocked} readOnly={mobileEditingLocked}
-          onPendingChange={mobile ? reportPending : undefined} />
+          onPendingChange={reportPending} />
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
@@ -1455,7 +1476,9 @@ export function ProductInput() {
       {photoFailure && (
         <Modal onClose={() => setPhotoFailure(null)}>
           <h3>사진 {photoFailure.failed}장을 불러오지 못했어요.</h3>
-          <p>인터넷 연결을 확인하고 다시 시도해 주세요.{!photoFailure.canOmit && ' 분석에 쓴 사진이라 빼고 진행할 수 없어요.'}</p>
+          <p>{photoFailure.removed
+            ? `사진 ${photoFailure.failed}장이 정리돼 다시 받을 수 없어요. 휴대폰에서 다시 올려 주세요.`
+            : <>인터넷 연결을 확인하고 다시 시도해 주세요.{!photoFailure.canOmit && ' 분석에 쓴 사진이라 빼고 진행할 수 없어요.'}</>}</p>
           <div className="modal-actions">
             {photoFailure.canOmit && (
               <Button variant="ghost" onClick={() => {
@@ -1471,7 +1494,7 @@ export function ProductInput() {
           </div>
         </Modal>
       )}
-      {doneBlocked && <DoneGuardModal />}
+      {!mobile && doneBlocked && <DoneGuardModal />}
       {creditShortfall && (
         <CreditShortfallModal
           shortfall={creditShortfall}
@@ -1526,9 +1549,7 @@ export function ProductInput() {
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 
-      {mobileReadOnly && <MobileAnalyzedNotice busy={entryBusy} onNew={() => entryActions.startNew({
-        enabled: slotEnabled, mobilePhotoCount: allUploaded.length,
-      })} />}
+      {mobile && phase === 'done' && !handoff.readOnly && <MobileAnalyzedNotice busy={entryBusy} onNew={nextMobile} />}
       {mobile && handoff.banner && <MobileSaveStatus {...handoff.banner} />}
       {mobile || phase === 'input' ? inputSection : summaryCard}
 
@@ -1551,8 +1572,9 @@ export function ProductInput() {
         </div>
       )}
 
-      {phase === 'input' && (
+      {(phase === 'input' || (mobile && handoff.readOnly)) && (
         <InputMainAction mobile={mobile} canDone={canDone} pending={hasPendingConversions}
+          saved={handoff.readOnly} onEdit={() => { handoff.edit(); setPhase('input'); }} onNext={nextMobile} busy={entryBusy}
           saving={handoff.saving} disabledReason={disabledReason} onSave={saveForPC} onAnalyze={submit} />
       )}
 

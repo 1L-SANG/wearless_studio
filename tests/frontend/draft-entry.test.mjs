@@ -255,3 +255,60 @@ test('C5 refresh and partial query errors keep the flow untouched', async () => 
   assert.equal(h.flow, 'existing');
   assert.deepEqual(h.errors, ['잠시 후 다시 시도해 주세요.', '잠시 후 다시 시도해 주세요.']);
 });
+
+test('remote card uses product name, thumbnail and grammatical save time', () => {
+  const card = remoteDraftSource({ productName: '여름 니트', thumbnailUrl: '/knit.jpg', updatedAt: new Date().toISOString() });
+  assert.equal(card.title, '여름 니트');
+  assert.equal(card.thumbnailUrl, '/knit.jpg');
+  assert.match(card.description, /^방금 저장/);
+});
+
+test('pending dialog carries the last save time', async () => {
+  const h = harness();
+  await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true, updatedAt: new Date(Date.now() - 180000).toISOString() }).meta));
+  assert.equal(h.dialog.savedAt, '3분 전 저장');
+});
+
+for (const deviceLabel of ['iPhone Safari', 'Android Chrome', 'iPad Safari', 'Android 태블릿 Chrome', 'Mac Chrome', 'Windows Edge', undefined]) {
+  test(`writer helper uses deviceLabel: ${deviceLabel}`, async () => {
+    const { isMobileDraftWriter } = await import('../../src/lib/draftDeviceNoun.js');
+    assert.equal(isMobileDraftWriter({ deviceLabel }), Boolean(getDraftDeviceNoun(deviceLabel)));
+    assert.equal(isMobileDraftWriter({ productName: '스마트폰 작업 이어가기' }), false);
+  });
+}
+
+test('D1 destructive recheck refreshes changed own-write meta, unchanged removes then starts', async () => {
+  const h = harness();
+  await h.actions.nextMobile();
+  assert.equal(h.dialog.kind, 'mobile');
+  h.setSlot(remote({ updatedAt: 'v2', photoCount: 8 }));
+  h.slotClient.getServerSyncedAt = () => 'v2';
+  await h.actions.confirm();
+  assert.equal(h.dialog.meta.photoCount, 8);
+  assert.deepEqual(h.calls, ['get', 'get']);
+  await h.actions.confirm();
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'remove', 'begin', 'start']);
+});
+
+for (const value of [null, remote({ hasContent: false })]) {
+  test(`next product without visible slot starts empty without asking: ${Boolean(value)}`, async () => {
+    const h = harness(value);
+    h.slotClient.resetIdentity = () => h.calls.push('reset');
+    await h.actions.nextMobile();
+    assert.equal(h.dialog, null);
+    assert.deepEqual(h.calls, ['get', 'reset', 'begin', 'start']);
+  });
+}
+
+test('D1 keep from B or C only closes, and gone during confirmation starts without deleting', async () => {
+  const h = harness();
+  h.slotClient.resetIdentity = () => h.calls.push('reset');
+  await h.actions.nextMobile();
+  await h.actions.keepMobile();
+  assert.equal(h.dialog, null);
+  assert.deepEqual(h.calls, ['get']);
+  await h.actions.nextMobile();
+  h.setSlot(null);
+  await h.actions.confirm();
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'reset', 'begin', 'start']);
+});

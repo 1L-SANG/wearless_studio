@@ -134,10 +134,20 @@ export function createDraftSlotSync({
   // 서버 슬롯에서 영영 빠지는 일을 막는다. 산 탭이 확인되면 버리는 게 맞다(단일 작성자).
   let probeDroppedSnapshot = null;
   const uploads = new Map();
+  let remotePhotosGone = false;
+  const missingPhotos = (product) => (product?.colors || []).flatMap((color) => color.images || [])
+    .filter((image) => remotePhotosGone && !image.src?.startsWith('blob:') && !isPlaceholderPhotoSrc(image.src));
+  const clearGoneUploads = () => {
+    for (const upload of uploads.values()) clearTimer(upload.retryTimer);
+    uploads.clear();
+    remotePhotosGone = true;
+    setSyncedAt(null);
+    setServerSyncedAt(null);
+  };
   const saves = new Set();
   const finishSave = (save, status, photoCount = 0) => {
     saves.delete(save);
-    save.resolve({ status, photoCount });
+    save.resolve({ status, photoCount, ...(save.missingPhotoCount ? { missingPhotoCount: save.missingPhotoCount } : {}) });
   };
   const finishSaves = (status) => {
     for (const save of saves) finishSave(save, status);
@@ -179,7 +189,7 @@ export function createDraftSlotSync({
       setPendingRemoval(null);
       return;
     }
-    const grabbed = await api.takeoverDraftSlot?.();
+    const grabbed = await api.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() });
     if (!stillValid()) return;
     if (grabbed?.token) await api.deleteDraftSlot(grabbed.token);
     if (stillValid()) setPendingRemoval(null);
@@ -219,7 +229,8 @@ export function createDraftSlotSync({
     suspended = false;
     stopProbe();
     stopScheduledWrites();
-    finishSaves('locked');
+    clearGoneUploads();
+    finishSaves('gone');
     notifyLock({ state: 'gone' });
   };
   const clearLock = () => {
@@ -352,15 +363,16 @@ export function createDraftSlotSync({
         purpose: 'draft_slot',
       }))
       .then(async (uploaded) => {
-        if (!shouldKeepUpload(image.id) || locked) {
+        if (uploads.get(image.id) !== record || !shouldKeepUpload(image.id) || locked) {
           await discardUploaded(uploaded);
-          uploads.delete(image.id);
+          if (uploads.get(image.id) === record) uploads.delete(image.id);
           return;
         }
         uploads.set(image.id, { status: 'uploaded', image, ...uploaded, uploadedAt: now() });
         if (latestSnapshot) queue(latestSnapshot);
       })
       .catch(() => {
+        if (uploads.get(image.id) !== record) return;
         if (!shouldKeepUpload(image.id) || locked) {
           uploads.delete(image.id);
           return;
@@ -412,7 +424,7 @@ export function createDraftSlotSync({
           // 실려 나가면 복원된 화면의 상품 사진이 되고, 확정 업로드에서 서버가 거부한다
           // (2026-08-17 사고). blob: 이 아니라는 이유로 통과시키던 자리다.
           if (isPlaceholderPhotoSrc(image.src)) return [];
-          if (!image.src?.startsWith('blob:')) return [image];
+          if (!image.src?.startsWith('blob:')) return remotePhotosGone ? [] : [image];
           const upload = uploads.get(image.id);
           if (upload?.status === 'uploaded' || upload?.status === 'synced') {
             includedUploadIds.push(image.id);
@@ -598,12 +610,13 @@ export function createDraftSlotSync({
           resolve,
           version: snapshotVersion + 1,
           images: (snapshot?.product?.colors || []).flatMap((color) => color.images || [])
-            .filter((image) => !isPlaceholderPhotoSrc(image.src)),
+            .filter((image) => !isPlaceholderPhotoSrc(image.src) && (!remotePhotosGone || image.src?.startsWith('blob:'))),
+          missingPhotoCount: missingPhotos(snapshot?.product).length,
         };
         saves.add(save);
         queue(snapshot);
         if (locked) {
-          finishSave(save, 'locked');
+          finishSave(save, goneLocked ? 'gone' : 'locked');
           return;
         }
         for (const image of save.images) {
@@ -617,6 +630,12 @@ export function createDraftSlotSync({
           image.src?.startsWith('blob:') && uploads.get(image.id)?.status === 'failed'
         ))) finishSave(save, 'failed');
       });
+    },
+    retryFailedUploads() {
+      if (locked) return;
+      for (const upload of uploads.values()) {
+        if (upload.status === 'failed' && upload.retryTimer != null) startPhotoUpload(upload.image);
+      }
     },
     syncPhotos,
     async flush() { await commit(); return putChain; },
@@ -679,7 +698,7 @@ export function createDraftSlotSync({
       return slot;
     },
     async takeover() {
-      const result = await api?.takeoverDraftSlot?.();
+      const result = await api?.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() });
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       claimTab({ force: true });
@@ -689,10 +708,13 @@ export function createDraftSlotSync({
         // 서버에 슬롯이 없다(204). 낡은 토큰을 남겨두면 다음 저장이 옛 토큰으로 409를 맞아
         // '다른 곳에서 정리됐어요' 잠금이 오발된다 — 비워서 새 슬롯 생성(token=null)으로 가게 한다.
         setToken(null);
-        setServerSyncedAt(null);
+        clearGoneUploads();
+        finishSaves('gone');
         clearLock();
+        if (latestSnapshot) queue(latestSnapshot);
         return null;
       }
+      remotePhotosGone = false;
       setToken(result.token);
       setServerSyncedAt(result.meta?.updatedAt);
       clearLock();
@@ -700,6 +722,7 @@ export function createDraftSlotSync({
     },
     restartAfterGone() {
       if (!goneLocked) return false;
+      clearGoneUploads();
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       setToken(null);
@@ -779,6 +802,7 @@ export function createDraftSlotSync({
       notifyPhotosPending();
     },
     resetIdentity() {
+      remotePhotosGone = false;
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       this.discard();

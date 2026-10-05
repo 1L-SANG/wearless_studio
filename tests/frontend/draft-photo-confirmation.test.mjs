@@ -150,3 +150,17 @@ test('ProductInput uses the tested gate for same-device, guest, and logged-in co
   assert.match(source, /Modal onClose=\{\(\) => setPhotoFailure\(null\)\}/);
   assert.doesNotMatch(source, /장은 저장되지 않았어요/);
 });
+
+test('only all-404 failures are removed photos, with the same analysis-source omit rule', () => {
+  for (const [failedIds, statuses, removed, canOmit] of [
+    [['front'], [404], true, false],
+    [['detail-3', 'other-front'], [404, 404], true, true],
+    [['detail-3', 'other-front'], [404, 503], false, true],
+    [['detail-3'], [undefined], false, true],
+  ]) {
+    const failure = photoCollectionFailure(product, { failed: failedIds.length, failedIds,
+      failures: failedIds.map((imageId, i) => ({ imageId, status: statuses[i] })) });
+    assert.equal(failure.removed, removed);
+    assert.equal(failure.canOmit, canOmit);
+  }
+});

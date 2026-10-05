@@ -96,9 +96,12 @@ test('flush returns failed ids and IndexedDB preserves remote references for res
           close() {},
           transaction() {
             const tx = {
-              objectStore: () => ({ put(value) { saved = value; return {}; } }),
+              objectStore: () => ({
+                get() { const request = {}; queueMicrotask(() => { request.result = saved; request.onsuccess(); }); return request; },
+                put(value) { saved = value; return {}; },
+              }),
             };
-            queueMicrotask(() => tx.oncomplete());
+            queueMicrotask(() => queueMicrotask(() => tx.oncomplete()));
             return tx;
           },
         };
@@ -113,6 +116,11 @@ test('flush returns failed ids and IndexedDB preserves remote references for res
   const restored = restoreDraftProduct(saved);
   assert.equal(restored.colors[0].images[0].src, remote);
   assert.deepEqual(saved.photos, []);
+  saved.photos = [{ imageId: 'remote', mime: 'image/jpeg', blob: new Blob(['cached'], { type: 'image/jpeg' }) }];
+  queueProductDraftSave(productWith({ id: 'remote', src: remote, slot: 'Front' }));
+  assert.deepEqual(await flushProductDraftSave(), { saved: 1, failed: 0, failedIds: [] });
+  assert.equal(await saved.photos[0].blob.text(), 'cached');
+  assert.equal(saved.photos[0].slot, 'Front');
 });
 
 test('promotion fetches missing remote bytes, preserves order, and fails on unavailable bytes', async (t) => {
@@ -180,4 +188,23 @@ test('actual draftSync uploads a remote image without a local blob or fails befo
   globalThis.fetch.mock.mockImplementation(async () => { events.push('fetch'); return new Response('missing', { status: 404 }); });
   await assert.rejects(promoteDraftToProject(draft), /사진 1장을 불러오지 못했어요/);
   assert.deepEqual(events, ['fetch']);
+});
+
+test('HTTP photo errors retain status and cached remote bytes survive a failed fetch', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('missing', { status: 404 }));
+  await assert.rejects(fetchPhotoBytes(remote), { status: 404 });
+  const blob = new Blob(['cached'], { type: 'image/jpeg' });
+  const cached = { imageId: 'remote', blob, mime: 'image/jpeg', colorId: 'old', slot: 'Back' };
+  const result = await collectDraftPhotos(productWith({ id: 'remote', src: remote, slot: 'Front' }), undefined, [cached]);
+  assert.equal(result.failed, 0);
+  assert.equal(await result.photos[0].blob.text(), 'cached');
+  assert.equal(result.photos[0].slot, 'Front');
+  assert.equal(result.photos[0].colorId, 'base');
+});
+
+test('collection reports each HTTP failure for all-404 versus mixed error copy', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (src) => new Response('error', { status: src.includes('second') ? 503 : 404 }));
+  const result = await collectDraftPhotos(productWith({ id: 'first', src: remote }, { id: 'second', src: `${remote}?second=1` }));
+  assert.deepEqual(result.failures, [{ imageId: 'first', status: 404 }, { imageId: 'second', status: 503 }]);
+  assert.equal(result.failed, 2);
 });

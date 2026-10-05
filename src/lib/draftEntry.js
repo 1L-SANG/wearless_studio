@@ -1,16 +1,21 @@
 import { formatDraftRelativeTime } from './draftSlot.js';
-import { getDraftDeviceNoun } from './draftDeviceNoun.js';
+import { getDraftDeviceNoun, isMobileDraftWriter } from './draftDeviceNoun.js';
 
 export function isVisibleDraftSlot(slot, slotClient) {
   return Boolean(slot) && slot.meta?.hasContent !== false && !slotClient.hasPendingRemoval();
+}
+
+export function draftSavedTime(updatedAt) {
+  return `${formatDraftRelativeTime(updatedAt)} 저장`;
 }
 
 export function remoteDraftSource(meta, fallbackTitle = '입력하던 상품 정보', localFallback = null) {
   const noun = getDraftDeviceNoun(meta?.deviceLabel);
   return {
     id: 'remote',
-    title: noun ? `${noun} 작업 이어가기` : fallbackTitle,
-    description: `${formatDraftRelativeTime(meta?.updatedAt)}에 저장 · ${meta?.deviceLabel || '다른 기기'} · 사진 ${meta?.photoCount || 0}장`,
+    title: meta?.productName || (noun ? `${noun} 작업 이어가기` : fallbackTitle),
+    thumbnailUrl: meta?.thumbnailUrl || null,
+    description: `${draftSavedTime(meta?.updatedAt)} · ${meta?.deviceLabel || '다른 기기'} · 사진 ${meta?.photoCount || 0}장`,
     meta,
     photosPending: Boolean(meta?.photosPending),
     localFallback,
@@ -22,10 +27,10 @@ export function getInputEntryDecision({ slotClient, confirmed }) {
   return confirmed ? 'confirmed' : 'checking';
 }
 
-export async function getFlowDraftSources({ slotClient, enabled, flowSource }) {
+export async function getFlowDraftSources({ slotClient, enabled, flowSource, throwOnError = false }) {
   if (!enabled) return null;
   // 조회 실패는 기존 작업을 이어가는 비파괴적 진입을 막지 않는다.
-  const slot = await slotClient.get().catch(() => null);
+  const slot = await slotClient.get().catch((error) => { if (throwOnError) throw error; return null; });
   if (!isVisibleDraftSlot(slot, slotClient)) return null;
   return [flowSource, {
     ...remoteDraftSource(slot.meta),
@@ -45,7 +50,7 @@ export async function openRemoteDraft({ slotClient, beginProject }) {
 }
 
 export function createDraftEntryActions({
-  slotClient, beginProject, onOpened, onStarted, onChange, onError, onBusy = () => {},
+  slotClient, beginProject, onOpened, onStarted, onChange, onError, onKept = () => {}, onBusy = () => {},
 }) {
   let dialog = null;
   let confirmation = null;
@@ -83,20 +88,50 @@ export function createDraftEntryActions({
     await action();
     clear();
   };
-  const open = async () => {
+  const open = async (savedMeta) => {
     await openRemoteDraft({ slotClient, beginProject });
     clear();
-    onOpened();
+    onOpened(savedMeta);
   };
   const chooseRemote = async (source) => {
     if (source.meta?.photosPending) {
-      show({ kind: 'pending', meta: { ...source.meta },
+      show({ kind: 'pending', meta: { ...source.meta }, savedAt: draftSavedTime(source.meta.updatedAt),
         message: `${getDraftDeviceNoun(source.meta.deviceLabel) || '다른 기기'}에서 아직 사진을 올리고 있어요. 잠시 후 다시 확인해 주세요.` });
       return;
     }
     await open();
   };
+  const startMobile = async () => {
+    await slotClient.removeForNewFlow();
+    await beginProject();
+    clear();
+    onStarted();
+  };
+  const showMobile = (meta, entry) => {
+    confirmation = { action: startMobile, updatedAt: meta.updatedAt, mobile: true, entry };
+    show({ kind: 'mobile', meta: { ...meta }, entry });
+  };
   return {
+    showMobile(meta, { entry = false } = {}) { showMobile(meta, entry); },
+    keepMobile() {
+      if (dialog?.kind !== 'mobile') return;
+      return run(async () => {
+        const { meta, entry } = dialog;
+        if (!entry) { clear(); return; }
+        if (isMobileDraftWriter(meta)) await open(meta);
+        else { clear(); onKept(meta); }
+      });
+    },
+    nextMobile({ enabled = true, entry = false } = {}) {
+      return run(async () => {
+        const slot = enabled ? await readVisible() : null;
+        if (slot) { showMobile(slot.meta, entry); return; }
+        slotClient.resetIdentity();
+        await beginProject();
+        clear();
+        onStarted();
+      });
+    },
     startNew({ enabled = true, mobilePhotoCount } = {}) {
       return run(async () => {
         const start = async () => {
@@ -144,7 +179,14 @@ export function createDraftEntryActions({
     confirm() {
       if (!confirmation) return;
       return run(async () => {
-        const { action, partial, mobilePhotoCount, updatedAt } = confirmation;
+        const { action, partial, mobilePhotoCount, updatedAt, mobile, entry } = confirmation;
+        if (mobile) {
+          const slot = await readVisible();
+          if (slot && slot.meta?.updatedAt !== updatedAt) { showMobile(slot.meta, entry); return; }
+          if (slot) await action();
+          else { slotClient.resetIdentity(); await beginProject(); clear(); onStarted(); }
+          return;
+        }
         const slot = await readVisible();
         if ((mobilePhotoCount != null || requiresConfirmation(slot, partial)) && slot?.meta?.updatedAt !== updatedAt) {
           showConfirmation(slot || { meta: {} }, action, partial, mobilePhotoCount);

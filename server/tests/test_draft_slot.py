@@ -127,8 +127,10 @@ def _patch_slot_repo(monkeypatch):
         })
         return state["slot"]
 
-    async def takeover_slot(conn, user_id, active_token):
+    async def takeover_slot(conn, user_id, active_token, device_label=None):
         state["slot"]["active_token"] = active_token
+        if device_label is not None:
+            state["slot"]["device_label"] = device_label
         state["slot"]["updated_at"] = datetime.now(timezone.utc)  # 실제 SQL과 동일하게 갱신
         return state["slot"]
 
@@ -183,6 +185,8 @@ def test_draft_slot_crud_and_get_token_metadata(client, make_token, monkeypatch)
         "meta": {
             "updatedAt": state["slot"]["updated_at"].isoformat(),
             "deviceLabel": "Mac Chrome",
+            "productName": "니트",
+            "thumbnailUrl": None,
             "photoCount": 1,
             "photosPending": True,
             "hasContent": True,
@@ -232,6 +236,7 @@ def test_takeover_invalidates_old_token(client, make_token, monkeypatch):
     new_token = takeover.json()["token"]
     assert new_token != old_token
     assert takeover.json()["payload"] == _payload()
+    assert takeover.json()["meta"]["deviceLabel"] == "Mac Chrome"
 
     assert _put(client, headers, _payload(), token=old_token).status_code == 409
     assert _put(client, headers, _payload(), token=new_token).status_code == 200
@@ -292,20 +297,58 @@ def test_expired_takeover_is_absent_and_cleans_assets(client, make_token, monkey
     assert r2.deletes == [f"draft/{ASSET_A}.jpg"]
 
 
-def test_replace_and_delete_cleanup_removed_draft_assets(client, make_token, monkeypatch):
+def test_replace_and_delete_keep_draft_assets(client, make_token, monkeypatch):
     state, r2 = _patch_slot_repo(monkeypatch)
     headers = _auth(make_token)
     token = _put(client, headers, _payload(ASSET_A, ASSET_B)).json()["token"]
 
     replaced = _put(client, headers, _payload(ASSET_B), token=token)
+    assert replaced.status_code == 200
+    assert state["slot"]["payload"] == _payload(ASSET_B)
+    assert state["cleaned"] == []
+    assert r2.deletes == []
     deleted = client.delete(
         "/v1/draft-slot", headers={**headers, "X-Draft-Token": token}
     )
 
-    assert replaced.status_code == 200
     assert deleted.status_code == 204
-    assert state["cleaned"] == [[ASSET_A], [ASSET_B]]
-    assert r2.deletes == [f"draft/{ASSET_A}.jpg", f"draft/{ASSET_B}.jpg"]
+    assert state["slot"] is None
+    assert state["cleaned"] == []
+    assert r2.deletes == []
+
+
+@pytest.mark.parametrize("token", [str(UUID(int=7)), ""])
+def test_missing_slot_delete_with_token_returns_consumed_token_conflict(
+    client, make_token, monkeypatch, token
+):
+    _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    response = client.delete(
+        "/v1/draft-slot", headers={**headers, "X-Draft-Token": token}
+    )
+    expected = _put(client, headers, _payload(), token=str(UUID(int=7)))
+    assert response.status_code == 409
+    assert response.json() == expected.json()
+    assert response.json()["error"]["code"] == "token_mismatch"
+    assert response.json()["error"]["meta"] is None
+
+
+def test_missing_slot_delete_without_token_remains_idempotent(client, make_token, monkeypatch):
+    _patch_slot_repo(monkeypatch)
+    response = client.delete("/v1/draft-slot", headers=_auth(make_token))
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_repeated_slot_delete_with_consumed_token_returns_409(client, make_token, monkeypatch):
+    _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    token = _put(client, headers, _payload()).json()["token"]
+    headers["X-Draft-Token"] = token
+    assert client.delete("/v1/draft-slot", headers=headers).status_code == 204
+    response = client.delete("/v1/draft-slot", headers=headers)
+    assert response.status_code == 409
+    assert response.json()["error"]["meta"] is None
 
 
 def test_delete_rejects_token_invalidated_by_takeover(client, make_token, monkeypatch):
@@ -463,7 +506,7 @@ def test_real_postgres_serializes_takeover_against_old_token_delete():
                     await conn.commit()
                     return 204, None
                 new_token = str(uuid4())
-                await repo.takeover_draft_slot(conn, user_id, new_token)
+                await repo.takeover_draft_slot(conn, user_id, new_token, device_label="PC Chrome")
                 await asyncio.sleep(0.05)
                 await conn.commit()
                 return 200, new_token
@@ -497,6 +540,7 @@ def test_real_postgres_serializes_takeover_against_old_token_delete():
             if takeover_result[0] == 200:
                 assert delete_status == 409
                 assert row["active_token"] == takeover_result[1]
+                assert row["device_label"] == "PC Chrome"
             else:
                 assert takeover_result[0] == 204
                 assert delete_status == 204
@@ -527,7 +571,7 @@ def test_stale_reclaimer_keeps_referenced_asset_and_reclaims_orphan():
                       (id, user_id, source, visibility, r2_bucket, r2_key, mime_type,
                        metadata, created_at)
                     values (%s, %s, 'upload', 'private', 'test', %s, 'image/jpeg',
-                            '{"purpose":"draft_slot"}'::jsonb, now() - interval '2 hours')
+                            '{"purpose":"draft_slot"}'::jsonb, now() - interval '8 days')
                     """,
                     (asset_id, user_id, f"draft/{asset_id}.jpg"),
                 )
@@ -539,8 +583,32 @@ def test_stale_reclaimer_keeps_referenced_asset_and_reclaims_orphan():
                 device_label="client-a",
                 photos_pending=False,
             )
-            reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(conn)
+            reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(
+                conn, older_than_minutes=7 * 24 * 60
+            )
             assert [asset["id"] for asset in reclaimed] == [orphan_id]
+            # 슬롯 삭제 직후에는 사진을 남기고, 다음 정리 주기에 회수한다.
+            row = await repo.lock_draft_slot(conn, user_id)
+            assert await routes._remove_draft_slot(conn, user_id, row) == []
+            cur = await conn.execute(
+                "select deleted_at from assets where id = %s", (referenced_id,)
+            )
+            assert (await cur.fetchone())["deleted_at"] is None
+            await conn.execute(
+                "update assets set created_at = now() - interval '6 days' where id = %s",
+                (referenced_id,),
+            )
+            assert await repo.reclaim_stale_unreferenced_draft_assets(
+                conn, older_than_minutes=7 * 24 * 60
+            ) == []
+            await conn.execute(
+                "update assets set created_at = now() - interval '8 days' where id = %s",
+                (referenced_id,),
+            )
+            reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(
+                conn, older_than_minutes=7 * 24 * 60
+            )
+            assert [asset["id"] for asset in reclaimed] == [referenced_id]
             await conn.rollback()
 
     asyncio.run(run())
@@ -577,3 +645,62 @@ def test_draft_slot_meta_marks_contentless_payload(client, make_token, monkeypat
     fetched = client.get("/v1/draft-slot", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["meta"]["hasContent"] is False
+
+
+@pytest.mark.parametrize(("product", "name", "thumbnail"), [
+    ({"name": "  니트 \n", "colors": [
+        {"images": [{"src": "https://r2.test/other.jpg"}]},
+        {"isBase": True, "images": [
+            {"src": "https://r2.test/first.jpg"}, {"src": "https://r2.test/second.jpg"},
+        ]},
+    ]}, "니트", "https://r2.test/first.jpg"),
+    ({"name": " \t", "colors": []}, None, None),
+    ({}, None, None),
+    ({"colors": [{"images": [{"src": "https://r2.test/fallback.jpg"}]}]},
+     None, "https://r2.test/fallback.jpg"),
+    ({"colors": [
+        {"images": [{"src": "https://r2.test/other.jpg"}]},
+        {"isBase": True, "images": []},
+    ]}, None, None),
+    ({"colors": [{"isBase": True, "images": [{"id": ASSET_A},
+        {"src": "https://r2.test/second.jpg"}]}]}, None, None),
+    ({"colors": [None, {"isBase": True, "images": [None]}]}, None, None),
+    ({"colors": "invalid"}, None, None),
+])
+def test_slot_meta_product_preview(client, make_token, monkeypatch, product, name, thumbnail):
+    _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    created = _put(client, headers, {"product": product})
+    fetched = client.get("/v1/draft-slot", headers=headers)
+    takeover = client.post("/v1/draft-slot:takeover", headers=headers)
+    conflict = _put(client, headers, _payload(), token=created.json()["token"])
+    assert conflict.status_code == 409
+    for meta in (created.json()["meta"], fetched.json()["meta"],
+                 takeover.json()["meta"], conflict.json()["error"]["meta"]):
+        assert meta["productName"] == name
+        assert meta["thumbnailUrl"] == thumbnail
+
+
+@pytest.mark.parametrize("body", [{"deviceLabel": "PC Chrome"}, {"deviceLabel": ""}, {}])
+def test_takeover_updates_device_label_when_given(client, make_token, monkeypatch, body):
+    state, _r2 = _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    created = _put(client, headers, _payload(ASSET_A), device="iPhone", pending=True).json()
+    expires_at = state["slot"]["expires_at"]
+    response = client.post("/v1/draft-slot:takeover", headers=headers, json=body)
+    assert response.status_code == 200
+    assert response.json()["token"] != created["token"]
+    assert response.json()["meta"]["deviceLabel"] == body.get("deviceLabel", "iPhone")
+    assert state["slot"]["device_label"] == body.get("deviceLabel", "iPhone")
+    assert response.json()["payload"] == _payload(ASSET_A)
+    assert response.json()["meta"]["photosPending"] is True
+    assert state["slot"]["expires_at"] == expires_at
+
+
+def test_takeover_rejects_non_string_device_label(client, make_token, monkeypatch):
+    state, _r2 = _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    token = _put(client, headers, _payload()).json()["token"]
+    response = client.post("/v1/draft-slot:takeover", headers=headers, json={"deviceLabel": 123})
+    assert response.status_code == 422
+    assert state["slot"]["active_token"] == token
