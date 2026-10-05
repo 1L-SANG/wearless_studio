@@ -50,7 +50,7 @@ import {
   updateMannequinJob,
 } from './generationRunner.js';
 import { fitHotspotsFor } from './fitHotspots.js';
-import { analysisForCutFitProfile, cutFitProfileRecord } from './cutFitProfile.js';
+import { analysisForCutFitProfile, cutFitProfileRecord, regenerateWithPersistedSelectedVersion } from './cutFitProfile.js';
 import { ToneEditor } from './ToneEditor.jsx';
 import {
   isNonRetryableRegenerateError,
@@ -580,6 +580,7 @@ function MineColumn({
               onClick={() => onSelect(cut.id)}
               aria-label={`버전 ${cut.version} 선택`}
               aria-pressed={cut.id === selectedCutId}
+              disabled={adjustmentDisabled}
             >
               <img src={thumbUrl(cutImage(cut), 120)} alt="" loading="lazy" decoding="async" />
               <span className="fit-ver-chip">v{cut.version}</span>
@@ -993,6 +994,7 @@ export function Mannequin() {
   }, [changingStep]);
 
   const chooseCut = (cutId) => {
+    if (busy || submittingRef.current) return;
     const cut = cutsRef.current.find((item) => item.id === cutId);
     if (!cut) return;
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
@@ -1344,6 +1346,7 @@ export function Mannequin() {
     setRegenerateImageReady(false);
     setRegenerateState('generating');
     startWaitCopyClock(runId);
+    let generationStarted = false;
     try {
       let succeededReported = false;
       const reportSuccess = () => {
@@ -1354,8 +1357,27 @@ export function Mannequin() {
         }
         onGenerationSucceeded();
       };
-      return await runGenerationAttempts(runId, profile, reportSuccess, generationAttempt);
+      return await regenerateWithPersistedSelectedVersion({
+        pendingPersistence: selectionFitSaveRef.current,
+        selectedCut: selected,
+        adjustedProfile: profile,
+        persistSelection: selectMannequin,
+        persistFitProfile: (fitProfile) => api.saveAnalysis(generationProjectId, { fitProfile }),
+        isCurrent: () => runIsCurrent(runId),
+        regenerate: (adjustedProfile) => {
+          generationStarted = true;
+          return runGenerationAttempts(runId, adjustedProfile, reportSuccess, generationAttempt);
+        },
+      });
     } catch {
+      if (!generationStarted && runIsCurrent(runId)) {
+        clearWaitCopyTimers();
+        submittingRef.current = false;
+        setBusy(false);
+        setRegenerateState('idle');
+        pushToast('선택한 버전의 핏 정보를 저장하지 못했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+        return false;
+      }
       failGeneration(runId);
       return false;
     }
