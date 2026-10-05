@@ -75,7 +75,8 @@ class Settings:
     # GPT로 생성하고 Qwen 얼굴 교체까지 성공한 REAL 호리존 최종본만 한 번 보정한다.
     real_horizon_neck_repair_enabled: bool = True
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
-    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
+    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 주 키
+    openai_api_key_fallback: str | None = None  # 주 키 영구 실패 때 쓰는 오너 계정 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
     # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
@@ -813,6 +814,7 @@ def load_settings() -> Settings:
         detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(

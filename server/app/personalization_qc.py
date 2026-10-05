@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError, analyze_with_fallback
 from .config import Settings
+from .openai_key_fallback import has_openai_api_key
 
 logger = logging.getLogger("wearless.personalization_qc")
 
@@ -110,7 +111,7 @@ async def evaluate_face_qc(
 
     §1.4: 이미지·임베딩·랜드마크·파일명 로그 금지 — verdict·reasons·provider 만 관측.
     """
-    if not (settings.gemini_api_key or settings.openai_api_key):
+    if not (settings.gemini_api_key or has_openai_api_key(settings)):
         # 비전 키 전무 = 판정 불가 → fail-safe 503 (검증 안 된 얼굴 저장 금지).
         raise FaceQcUnavailable("qc_provider_unconfigured")
 

@@ -20,6 +20,7 @@ from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
 from . import image_usage
+from .openai_key_fallback import has_openai_api_key
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher, configured_job_kinds
@@ -344,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if (
                 settings.job_dispatcher_enabled
                 and app.state.r2 is not None
-                and (app.state.gemini is not None or settings.openai_api_key)
+                and (app.state.gemini is not None or has_openai_api_key(settings))
             ):
                 dispatcher = JobDispatcher(app, kinds=job_kinds)
                 await dispatcher.start()
@@ -444,7 +445,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.r2_face = None
     app.state.gemini = (
         GeminiImageClient(settings)
-        if settings.gemini_api_key or settings.openai_api_key
+        if settings.gemini_api_key or has_openai_api_key(settings)
         else None
     )
     # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.

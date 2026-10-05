@@ -86,6 +86,14 @@ def test_signature_falls_back_when_openai_key_is_missing(monkeypatch):
     assert chosen(_settings(model_image_signature="gemini-3-pro-image", openai_api_key=None)) == "gemini-3-pro-image"
 
 
+def test_signature_gpt_model_accepts_fallback_only_key():
+    settings = _settings(openai_api_key=None, openai_api_key_fallback="owner-key")
+
+    assert cut_generator._resolve_generation_model(
+        settings, {"exampleId": "sig_women_01"}
+    ) == "gpt-image-2"
+
+
 def test_signature_stage1_and_local_stage2_use_the_same_gpt_tier():
     calls = []
 

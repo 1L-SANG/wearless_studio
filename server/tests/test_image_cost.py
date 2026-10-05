@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 
 import pytest
@@ -353,3 +354,56 @@ def test_drain_waits_for_pending_usage_tasks():
     asyncio.run(scenario())
     assert finished == [True]
     assert not image_usage._tasks
+
+
+def test_openai_account_is_persisted_in_existing_usage_raw_metadata():
+    captured = {}
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, sql, params):
+            captured.update(sql=sql, params=params)
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        async def commit(self):
+            return None
+
+    class Pool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield Connection()
+
+    usage = {"input_tokens": 5, "output_tokens": 7}
+    cost = estimate_cost(GPT_IMAGE_2, "1024x1536", usage)
+    previous_pool = image_usage._pool
+    image_usage._pool = Pool()
+    try:
+        asyncio.run(image_usage._insert(
+            image_usage.JobContext(), GPT_IMAGE_2, "1024x1536", cost, 12, True,
+            usage, "fallback",
+        ))
+    finally:
+        image_usage._pool = previous_pool
+
+    assert "usage_raw" in captured["sql"]
+    assert captured["params"][-1].obj == {
+        "input_tokens": 5,
+        "output_tokens": 7,
+        "openai_account": "fallback",
+    }
+
+
+def test_non_openai_usage_raw_shape_is_not_changed_by_account_metadata_support():
+    malformed_provider_usage = ["unexpected", "provider", "shape"]
+
+    assert image_usage._usage_raw_metadata(
+        malformed_provider_usage, None
+    ) is malformed_provider_usage
