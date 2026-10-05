@@ -50,7 +50,7 @@ export function licenseStatusLabel(status) {
 export function targetLabel(candidate) {
   if (candidate?.target === 'cut') return '생성 컷';
   return {
-    long_png: '배포본 · 긴 PNG', block_png: '배포본 · 블록 PNG', zip: '배포본 · ZIP',
+    long_png: '배포본 · 긴 PNG', block_png: '배포본 · 블록 PNG', zip: '배포본 · ZIP', jpeg: '배포본 · JPG',
   }[candidate?.publicationKind] || '배포본';
 }
 
