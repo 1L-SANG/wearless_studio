@@ -59,6 +59,25 @@ test('a block belonging to a space-set group is left to the sibling module', () 
   assert.equal(staleExampleReason(grouped, catalog, { gender: 'women', clothingType: 'top' }), null);
 });
 
+test('new bottom signature ids stay outside ordinary example cleanup', () => {
+  const signature = block('signature', {
+    hookSlotRole: 'signature',
+    cutType: 'horizon',
+    shot: 'medium',
+    exampleId: 'sig_women_bottom_skirt_02',
+    exampleSelectionOrigin: 'user',
+  });
+  const input = [signature];
+  assert.equal(
+    staleExampleReason(signature, catalog, { gender: 'women', clothingType: 'bottom' }),
+    null,
+  );
+  assert.equal(
+    stripStaleExampleSelections(input, catalog, { gender: 'women', clothingType: 'bottom' }),
+    input,
+  );
+});
+
 test('a valid example (gender/clothingType/cutType all match) is kept as-is', () => {
   const b = block('a', { exampleId: 'ex_women_top_styling', exampleSelectionOrigin: 'auto' });
   const context = { gender: 'women', clothingType: 'top' };

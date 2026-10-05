@@ -195,6 +195,8 @@ export const api = {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
+        subCategory: DB.analysis.subCategory,
+        customCategory: DB.analysis.customCategory,
         matchClothing: DB.analysis.matchClothing,
         detailRecommendations: DB.analysis.detailRecommendations,
         sellingPoints: DB.analysis.sellingPoints,
@@ -423,6 +425,7 @@ export const api = {
       DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id, clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders, matchClothing: DB.analysis.matchClothing,
+        subCategory: DB.analysis.subCategory, customCategory: DB.analysis.customCategory,
         detailRecommendations: DB.analysis.detailRecommendations, sellingPoints: DB.analysis.sellingPoints,
         previewProductName: DB.product.name,
       });

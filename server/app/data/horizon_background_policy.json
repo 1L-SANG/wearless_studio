@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "wallHueSwatchLightness": 0.86,
   "wallHueSwatchContrastOffset": 0.02,
   "darkBranchMinimum": 0.84,
@@ -16,6 +16,13 @@
   "maximumWallLightness": 0.94,
   "yellowHueRange": [60, 120],
   "darkenedYellowMaxChroma": 0.02,
+  "signature": {
+    "backgroundLightness": 0.94,
+    "backgroundContrastOffset": 0.01,
+    "subtleChroma": 0.006,
+    "mutedChroma": 0.014,
+    "yellowMaxChroma": 0.01
+  },
   "swatches": {
     "white": "#ffffff",
     "gray": "#9a9aa1",

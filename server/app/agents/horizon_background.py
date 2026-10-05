@@ -22,6 +22,8 @@ def normalize_block(block: dict) -> dict:
     out.pop("_horizonLayoutReference", None)
     out.pop("_horizonReferenceShot", None)
     out.pop("_horizonBackgroundFallback", None)
+    out.pop("_signatureBackground", None)
+    out.pop("_signatureBackgroundFallback", None)
     if out.get("cutType") == "horizon":
         if "horizonBackgroundMode" in out:
             out["horizonBackgroundMode"] = mode(out)
@@ -57,28 +59,20 @@ def reference(reason: str) -> dict:
     return {"mode": "reference", "reason": reason, "policyVersion": POLICY["version"]}
 
 
-def palette_for_observed(target: str, *, lightness_range=None) -> dict:
-    """Muted hue suggestion; the example, not this swatch, owns wall luminance.
-
-    Used only AFTER source verification in generation. The review tool may call
-    this pure function with hypothetical RGB inputs, never as product evidence.
-    """
+def _observed_profile(target: str, lightness_range):
     if not isinstance(target, str) or not _HEX.fullmatch(target):
-        return reference("measurement-unavailable")
+        return None
     lightness, a, b = hex_to_oklab(target)
     bounds = lightness_range if lightness_range is not None else [lightness, lightness]
     if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2
             or any(type(v) not in (int, float) or not math.isfinite(v) for v in bounds)
             or not 0 <= bounds[0] <= bounds[1] <= 1.001):
-        return reference("measurement-unavailable")
+        return None
     # Large lightness ranges are expected in ordinary folded white garments.
     # They are not grounds to disable a hue-only backdrop option. The generated
     # wall keeps the example's existing luminance and shadows (see prompt).
     band = "white" if lightness >= POLICY["whiteGarmentMinimum"] else (
         "dark" if lightness >= POLICY["darkBranchMinimum"] else "light")
-    wall_l = POLICY["wallHueSwatchLightness"] + (
-        -POLICY["wallHueSwatchContrastOffset"] if band in {"dark", "white"}
-        else POLICY["wallHueSwatchContrastOffset"])
     chroma = math.hypot(a, b)
     hue = (math.degrees(math.atan2(b, a)) + 360) % 360
     hue = (int((hue + POLICY["hueStep"] / 2) // POLICY["hueStep"]) * POLICY["hueStep"]) % 360
@@ -88,22 +82,72 @@ def palette_for_observed(target: str, *, lightness_range=None) -> dict:
     neutral_cutoff = (POLICY["darkGarmentAchromaticThreshold"]
                       if lightness <= POLICY["darkGarmentLightnessMaximum"]
                       else POLICY["achromaticThreshold"])
-    wall_c = 0 if chroma < neutral_cutoff else POLICY["subtleChroma"]
+    return lightness, band, chroma, hue, neutral_cutoff
+
+
+def _palette_for_observed(
+    target: str, *, lightness_range, surface_lightness: float, contrast_offset: float,
+    subtle_chroma: float, muted_chroma: float, yellow_max_chroma: float,
+    output_hex_key: str,
+) -> dict:
+    profile = _observed_profile(target, lightness_range)
+    if profile is None:
+        return reference("measurement-unavailable")
+    _lightness, band, chroma, hue, neutral_cutoff = profile
+    surface_l = surface_lightness + (
+        -contrast_offset if band in {"dark", "white"} else contrast_offset)
+    surface_c = 0 if chroma < neutral_cutoff else subtle_chroma
     if chroma >= POLICY["strongGarmentChroma"]:
-        wall_c = POLICY["mutedChroma"]
+        surface_c = muted_chroma
     if POLICY["yellowHueRange"][0] <= hue <= POLICY["yellowHueRange"][1]:
-        wall_c = min(wall_c, POLICY["darkenedYellowMaxChroma"])
+        surface_c = min(surface_c, yellow_max_chroma)
     radians = math.radians(hue)
-    wall = _oklab_hex(wall_l, wall_c * math.cos(radians), wall_c * math.sin(radians))
-    return {"mode": "garment-tone", "wallHex": wall, "targetHex": target.lower(),
+    surface = _oklab_hex(
+        surface_l, surface_c * math.cos(radians), surface_c * math.sin(radians))
+    return {"mode": "garment-tone", output_hex_key: surface, "targetHex": target.lower(),
             "reason": "measured-color", "paletteBand": band, "policyVersion": POLICY["version"]}
 
 
-def resolve(product: dict, color_id=None, *, analysis=None, sources=None) -> dict:
-    """Only source-bound server measurements may supply the hue (never PATCH hex)."""
-    from . import garment_color_evidence as evidence
+def palette_for_observed(target: str, *, lightness_range=None) -> dict:
+    """Muted wall-hue suggestion; the example, not this swatch, owns wall luminance."""
+    return _palette_for_observed(
+        target,
+        lightness_range=lightness_range,
+        surface_lightness=POLICY["wallHueSwatchLightness"],
+        contrast_offset=POLICY["wallHueSwatchContrastOffset"],
+        subtle_chroma=POLICY["subtleChroma"],
+        muted_chroma=POLICY["mutedChroma"],
+        yellow_max_chroma=POLICY["darkenedYellowMaxChroma"],
+        output_hex_key="wallHex",
+    )
+
+
+def signature_palette_for_observed(target: str, *, lightness_range=None) -> dict:
+    """Very pale signature surface using the horizon hue buckets and evidence rules."""
+    policy = POLICY["signature"]
+    return _palette_for_observed(
+        target,
+        lightness_range=lightness_range,
+        surface_lightness=policy["backgroundLightness"],
+        contrast_offset=policy["backgroundContrastOffset"],
+        subtle_chroma=policy["subtleChroma"],
+        muted_chroma=policy["mutedChroma"],
+        yellow_max_chroma=policy["yellowMaxChroma"],
+        output_hex_key="backgroundHex",
+    )
+
+
+def _selected_color(product: dict, color_id=None) -> dict | None:
     colors = [c for c in product.get("colors", []) if isinstance(c, dict)]
-    color = next((c for c in colors if str(c.get("id")) == str(color_id)), None) if color_id is not None else next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    return (next((c for c in colors if str(c.get("id")) == str(color_id)), None)
+            if color_id is not None
+            else next((c for c in colors if c.get("isBase")), colors[0] if colors else None))
+
+
+def _resolve(product: dict, color_id, *, analysis, sources, palette_builder) -> dict:
+    from . import garment_color_evidence as evidence
+
+    color = _selected_color(product, color_id)
     if color is None or color.get("id") is None:
         return reference("measurement-unavailable")
     selected_id = str(color["id"])
@@ -121,9 +165,27 @@ def resolve(product: dict, color_id=None, *, analysis=None, sources=None) -> dic
         bounds = profile.get("lightnessRange")
         if bounds is None:
             return reference("measurement-unavailable")
-        return palette_for_observed(profile["observedHex"], lightness_range=bounds)
+        return palette_builder(profile["observedHex"], lightness_range=bounds)
     except (ValueError, KeyError, TypeError):
         return reference("measurement-unavailable")
+
+
+def resolve(product: dict, color_id=None, *, analysis=None, sources=None) -> dict:
+    """Only source-bound server measurements may supply the hue (never PATCH hex)."""
+    return _resolve(
+        product, color_id, analysis=analysis, sources=sources,
+        palette_builder=palette_for_observed)
+
+
+def resolve_signature(product: dict, color_id=None, *, analysis=None, sources=None) -> dict:
+    """Resolve a signature surface from the same source-bound evidence as horizon walls."""
+    palette = _resolve(
+        product, color_id, analysis=analysis, sources=sources,
+        palette_builder=signature_palette_for_observed)
+    color = _selected_color(product, color_id)
+    if color is not None and color.get("id") is not None:
+        palette = {**palette, "colorId": str(color["id"])}
+    return palette
 
 
 def normalize_runtime(value) -> dict | None:
@@ -138,6 +200,96 @@ def normalize_runtime(value) -> dict | None:
             "targetHex": target.lower() if isinstance(target, str) and _HEX.fullmatch(target) else None,
             "reason": "measured-color",
             "policyVersion": POLICY["version"]}
+
+
+def _is_signature(block: dict) -> bool:
+    example_id = (block or {}).get("exampleId") or (block or {}).get("example_id") or ""
+    return isinstance(example_id, str) and example_id.startswith("sig_")
+
+
+def normalize_signature_runtime(value) -> dict | None:
+    if not isinstance(value, dict) or value.get("mode") != "garment-tone":
+        return None
+    background = value.get("backgroundHex")
+    if not isinstance(background, str) or not _HEX.fullmatch(background):
+        return None
+    target = value.get("targetHex")
+    color_id = value.get("colorId")
+    return {
+        "mode": "garment-tone",
+        "backgroundHex": background.lower(),
+        "targetHex": target.lower() if isinstance(target, str) and _HEX.fullmatch(target) else None,
+        "reason": "measured-color",
+        **({"paletteBand": value["paletteBand"]}
+           if value.get("paletteBand") in {"light", "dark", "white"} else {}),
+        "policyVersion": POLICY["version"],
+        **({"colorId": str(color_id)} if color_id not in (None, "") else {}),
+    }
+
+
+def normalize_signature_decision(value) -> dict | None:
+    if not isinstance(value, dict) or value.get("requested") != "garment-tone":
+        return None
+    color_id = value.get("colorId")
+    if value.get("effective") == "garment-tone":
+        runtime = normalize_signature_runtime(value)
+        if runtime is None:
+            return None
+        return {"requested": "garment-tone", "effective": "garment-tone", **runtime}
+    reason = value.get("reason")
+    if value.get("effective") != "reference" or reason not in {
+        "measurement-unavailable", "measurement-stale",
+    }:
+        return None
+    return {
+        "requested": "garment-tone",
+        "effective": "reference",
+        "reason": reason,
+        "policyVersion": POLICY["version"],
+        **({"colorId": str(color_id)} if color_id not in (None, "") else {}),
+    }
+
+
+def apply_signature_runtime(block: dict, palette: dict) -> dict:
+    out = dict(block)
+    out.pop("_signatureBackground", None)
+    out.pop("_signatureBackgroundFallback", None)
+    if not _is_signature(out):
+        return out
+    color_id = palette.get("colorId") if isinstance(palette, dict) else None
+    if color_id in (None, ""):
+        color_id = out.get("colorId")
+    runtime = normalize_signature_runtime({**(palette or {}), "colorId": color_id})
+    if runtime is not None:
+        out["_signatureBackground"] = runtime
+    else:
+        reason = palette.get("reason") if isinstance(palette, dict) else None
+        out["_signatureBackgroundFallback"] = {
+            "reason": reason if reason in {"measurement-unavailable", "measurement-stale"}
+            else "measurement-unavailable",
+            **({"colorId": str(color_id)} if color_id not in (None, "") else {}),
+        }
+    return out
+
+
+def signature_decision(spec: dict) -> dict | None:
+    if not _is_signature(spec):
+        return None
+    runtime = normalize_signature_runtime(spec.get("_signatureBackground"))
+    if runtime is not None:
+        return {"requested": "garment-tone", "effective": "garment-tone", **runtime}
+    fallback = spec.get("_signatureBackgroundFallback")
+    fallback = fallback if isinstance(fallback, dict) else {}
+    color_id = fallback.get("colorId", spec.get("colorId"))
+    reason = fallback.get("reason")
+    return {
+        "requested": "garment-tone",
+        "effective": "reference",
+        "reason": reason if reason in {"measurement-unavailable", "measurement-stale"}
+        else "measurement-unavailable",
+        "policyVersion": POLICY["version"],
+        **({"colorId": str(color_id)} if color_id not in (None, "") else {}),
+    }
 
 
 def active(block: dict) -> bool:
@@ -199,6 +351,23 @@ def garment_tone_color_ids(blocks: list, product: dict) -> list[str]:
     return ids[:4]
 
 
+def signature_color_ids(blocks: list, product: dict) -> list[str]:
+    """Signature colors needing the same photo-bound evidence, in storyboard order."""
+    colors = [c for c in (product or {}).get("colors") or [] if isinstance(c, dict)]
+    known = {str(c["id"]) for c in colors if c.get("id") is not None}
+    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    ids = []
+    for block in blocks or []:
+        if not isinstance(block, dict) or block.get("source") == "mine" or not _is_signature(block):
+            continue
+        color_id = block.get("colorId")
+        color_id = (str(color_id) if color_id is not None
+                    else str(base["id"]) if base and base.get("id") is not None else None)
+        if color_id in known and color_id not in ids:
+            ids.append(color_id)
+    return ids[:4]
+
+
 def apply_runtime(block: dict, palettes: dict) -> dict:
     out = dict(block)
     out.pop("_horizonBackground", None)
@@ -239,6 +408,19 @@ def decision(spec: dict) -> dict | None:
     if palette:
         return {"requested": "garment-tone", "effective": "garment-tone", **palette}
     return None
+
+
+def signature_prompt(value) -> str:
+    palette = normalize_signature_runtime(value)
+    if not palette:
+        return ""
+    return (
+        f"BACKGROUND: use a soft, plain, detail-free surface in a very pale tone around "
+        f"{palette['backgroundHex']}. Treat this HEX as a hue-family suggestion, not an exact "
+        "final brightness or RGB target. Do not follow the attached reference photo's background "
+        "color; derive the background family only from the measured PRODUCT garment color. Keep "
+        "clear visual separation between the garment silhouette and the background. "
+    )
 
 
 def restore_failed_retry(request: dict, storyboard: list, editor_blocks: list) -> dict:

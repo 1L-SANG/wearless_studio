@@ -611,6 +611,8 @@ function buildDraft() {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
+    subCategory: analysis.subCategory,
+    customCategory: analysis.customCategory,
     matchClothing: analysis.matchClothing,
     detailRecommendations: analysis.detailRecommendations,
     sellingPoints: analysis.sellingPoints,

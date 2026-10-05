@@ -556,6 +556,8 @@ export const httpAdapter = {
       projectId,
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
+      subCategory: analysis?.subCategory || null,
+      customCategory: analysis?.customCategory || null,
       matchClothing: analysis?.matchClothing || [],
       detailRecommendations: analysis?.detailRecommendations,
       sellingPoints: analysis?.sellingPoints || [],
@@ -702,7 +704,7 @@ export const httpAdapter = {
     analysisCache = { projectId, analysis: normalized };
     return normalized;
   },
-  // 호리존 세트 벽 색 '옷 색에 맞춤'용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
+  // 시그니처와 호리존 세트 배경용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
   // 콘티·원본 사진을 읽어 필요한 색만 재고 analysis 에 저장한다. {status, garmentColorEvidence(요약|null)}.
   async measureGarmentColors(projectId) {
     return http(`/v1/projects/${projectId}/analysis/garment-colors:measure`, { method: 'POST' });

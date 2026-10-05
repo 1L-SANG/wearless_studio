@@ -17,6 +17,7 @@ RecipeFamily = Literal["styling", "horizon", "product"]
 CaptureMode = Literal["lifestyle", "mirrorSelfie", "studio"]
 ProductVariant = Literal["ghost", "detail"]
 ReferenceMode = Literal["none", "all", "pose", "bg"]
+SignatureFraming = Literal["bottom", "dress"]
 AttributeOwner = Literal[
     "productTruth",
     "storyboard",
@@ -87,6 +88,8 @@ class CutPlan:
     reference_face_visibility: Literal["hidden", "visible"] | None = None
     example_repeat_index: int = 0
     horizon_background: Mapping[str, Any] | None = None
+    signature_framing: SignatureFraming | None = None
+    signature_background: Mapping[str, Any] | None = None
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -153,6 +156,10 @@ class CutPlan:
             out["referenceFaceVisibility"] = self.reference_face_visibility
         if self.horizon_background is not None:
             out["horizonBackground"] = dict(self.horizon_background)
+        if self.signature_framing is not None:
+            out["signatureFraming"] = self.signature_framing
+        if self.signature_background is not None:
+            out["signatureBackground"] = dict(self.signature_background)
         return out
 
     def render_prompt_contract(self) -> str:
@@ -250,6 +257,21 @@ def _reference_mode(spec: Mapping[str, Any], recipe_family: RecipeFamily) -> Ref
     return mode
 
 
+def _signature_framing(
+    spec: Mapping[str, Any], clothing_type: str,
+) -> SignatureFraming | None:
+    example_id = spec.get("exampleId") or spec.get("example_id") or ""
+    if not isinstance(example_id, str) or not example_id.startswith("sig_"):
+        return None
+    if clothing_type == "bottom":
+        return "bottom"
+    if clothing_type == "dress" and example_id in {
+        "sig_women_dress_01", "sig_women_dress_02",
+    }:
+        return "dress"
+    return None
+
+
 def _recipe(spec: Mapping[str, Any]) -> tuple[
     RecipeFamily, CaptureMode | None, ProductVariant | None
 ]:
@@ -294,6 +316,8 @@ def compile_cut_plan(
     if not isinstance(spec, Mapping):
         raise CutPlanError("invalid_cut_spec")
     normalized_clothing_type = _normalized_clothing_type(clothing_type)
+    signature_framing = _signature_framing(spec, normalized_clothing_type)
+    signature_background = horizon_background.signature_decision(dict(spec))
     recipe_family, capture_mode, product_variant = _recipe(spec)
     reference_mode = _reference_mode(spec, recipe_family)
     reference_direction_compatible = spec.get("_referenceDirectionCompatible", True)
@@ -409,6 +433,9 @@ def compile_cut_plan(
         attribute_owners=MappingProxyType(owners),
         storyboard_values=MappingProxyType(storyboard_values),
         horizon_background=MappingProxyType(background) if background is not None else None,
+        signature_framing=signature_framing,
+        signature_background=(MappingProxyType(signature_background)
+                              if signature_background is not None else None),
     )
 
 

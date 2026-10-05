@@ -91,6 +91,71 @@ def test_palette_provides_muted_hue_for_every_normal_garment_color(swatch):
     assert abs(l - hb.POLICY["wallHueSwatchLightness"]) <= hb.POLICY["wallHueSwatchContrastOffset"] + .003
 
 
+@pytest.mark.parametrize("swatch", list(hb.POLICY["swatches"]))
+def test_signature_palette_is_lighter_and_less_saturated_than_horizon(swatch):
+    assert hb.POLICY["version"] == 4
+    observed = hb.POLICY["swatches"][swatch]
+    horizon = hb.palette_for_observed(observed)
+    signature = hb.signature_palette_for_observed(observed)
+    horizon_l, horizon_a, horizon_b = hb.hex_to_oklab(horizon["wallHex"])
+    signature_l, signature_a, signature_b = hb.hex_to_oklab(signature["backgroundHex"])
+
+    assert signature["mode"] == "garment-tone"
+    assert signature_l > horizon_l
+    assert math.hypot(signature_a, signature_b) <= math.hypot(horizon_a, horizon_b) + .001
+    assert signature["policyVersion"] == hb.POLICY["version"]
+
+
+def test_signature_runtime_records_applied_color_and_measurement_fallback():
+    spec = {"source": "ai", "exampleId": "sig_women_01", "colorId": "base"}
+    palette = hb.signature_palette_for_observed("#2A5DB0")
+    applied = hb.apply_signature_runtime(spec, palette)
+    decision = hb.signature_decision(applied)
+
+    assert decision == {
+        "requested": "garment-tone",
+        "effective": "garment-tone",
+        "mode": "garment-tone",
+        "backgroundHex": palette["backgroundHex"],
+        "targetHex": "#2a5db0",
+        "reason": "measured-color",
+        "paletteBand": palette["paletteBand"],
+        "policyVersion": 4,
+        "colorId": "base",
+    }
+
+    fallback = hb.apply_signature_runtime(spec, hb.reference("measurement-unavailable"))
+    assert hb.signature_decision(fallback) == {
+        "requested": "garment-tone",
+        "effective": "reference",
+        "reason": "measurement-unavailable",
+        "policyVersion": 4,
+        "colorId": "base",
+    }
+
+
+def test_detail_worker_resolves_signature_runtime_and_result_metadata_from_bound_sources():
+    analysis, sources = measurement_fixture([("base", "#2a5db0")])
+    product = {
+        "clothingType": "top",
+        "colors": [{"id": "base", "isBase": True}],
+    }
+    spec = {
+        "id": "signature", "source": "ai", "cutType": "horizon",
+        "exampleId": "sig_women_01", "colorId": "base",
+    }
+    assets = [{"slot": row["slot"]} for row in sources]
+    images = [InlineImage(row["mime"], row["data"]) for row in sources]
+
+    runtime = dpj._resolve_signature_background_runtime(
+        spec, product, analysis, assets, images)
+    metadata = dpj._background_result_metadata(runtime)
+
+    assert runtime["_signatureBackground"]["backgroundHex"] == (
+        hb.signature_palette_for_observed("#2A5DB0")["backgroundHex"])
+    assert metadata == {"signature_background": hb.signature_decision(runtime)}
+
+
 def test_known_white_is_not_mistaken_for_black_and_unknown_names_cannot_supply_hue():
     assert hb.hex_to_oklab("#ffffff")[0] == pytest.approx(1, abs=1e-6)
     assert hb.hex_to_oklab("#000000")[0] == 0
@@ -400,3 +465,86 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     assert cut_output_qc.normalize_plan(plan)["horizonBackground"] == runtime
     assert plan.reference_mode == "all"
     assert all(plan.attribute_owners[key] == "reference" for key in ("scene", "light", "captureTone"))
+
+
+@pytest.mark.parametrize(
+    ("clothing_type", "sub_category", "expected_prefix"),
+    [
+        ("bottom", "mini_skirt", "sig_women_bottom_skirt_"),
+        ("dress", None, "sig_women_dress_"),
+    ],
+)
+@pytest.mark.parametrize("measured", [True, False])
+def test_editor_failed_signature_retry_repairs_pool_applies_background_and_records_metadata(
+    monkeypatch, measured, clothing_type, sub_category, expected_prefix,
+):
+    saved = {
+        "id": "signature", "source": "ai", "contentRole": "hero",
+        "cutType": "horizon", "shot": "medium", "direction": "front",
+        "faceExposure": "same", "pose": "auto", "refScope": "all",
+        "exampleId": "sig_women_01", "colorId": "base",
+    }
+    product = {"name": "상품", "clothingType": clothing_type, "colors": [{
+        "id": "base", "isBase": True,
+        "images": [{"id": "base-photo", "slot": "Front"}],
+    }]}
+    evidence, sources = measurement_fixture([("base", "#1f2a44")], clothing_type)
+    analysis = {"targetGenders": ["women"], "subCategory": sub_category}
+    if measured:
+        analysis.update(evidence)
+    captured = {}
+
+    async def get_product(*args): return product
+    async def get_analysis(*args): return analysis
+    async def get_project(*args): return {"copywriting": False}
+    async def get_asset(conn, user, asset_id):
+        return {"id": asset_id, "mime_type": "image/png", "r2_key": "product/" + asset_id}
+    async def emit(*args, **kwargs): return None
+    async def fail(*args, **kwargs): captured["failure"] = kwargs
+    async def finalize(*args, **kwargs):
+        captured["image"] = kwargs["image"]
+        captured["success"] = kwargs["metadata"]
+        return {"id": "result"}
+    async def provider(settings, gemini, spec, prod, images, **kwargs):
+        captured["spec"] = spec
+        captured["prompt"] = cg.build_prompt(spec, prod, manifest=kwargs["manifest"])
+        return b"GENERATED", "image/png"
+    async def load_example(*args, **kwargs):
+        return InlineImage("image/png", b"SIGNATURE-EXAMPLE")
+
+    for name, function in {
+        "get_product": get_product,
+        "get_analysis": get_analysis,
+        "get_project": get_project,
+        "get_asset_for_user": get_asset,
+        "finalize_editor_image_failure": fail,
+        "finalize_editor_image_success": finalize,
+    }.items():
+        monkeypatch.setattr(eij.repo, name, function)
+    monkeypatch.setattr(eij, "_emit", emit)
+    monkeypatch.setattr(cg, "generate", provider)
+    monkeypatch.setattr(cg, "load_example_image", load_example)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app.state.r2.get_bytes = lambda key: (
+        sources[0]["data"] if key == "product/base-photo" else key.encode())
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({**saved, "mode": "new"})))
+
+    assert "failure" not in captured
+    assert captured["spec"]["exampleId"].startswith(expected_prefix)
+    decision = captured["image"]["metadata"]["signature_background"]
+    assert captured["success"]["signatureBackground"] == decision
+    assert decision["colorId"] == "base"
+    if measured:
+        assert decision["effective"] == "garment-tone"
+        assert decision["backgroundHex"] in captured["prompt"]
+        assert "Do not follow the attached reference photo's background color" in captured["prompt"]
+    else:
+        assert decision == {
+            "requested": "garment-tone",
+            "effective": "reference",
+            "reason": "measurement-unavailable",
+            "policyVersion": hb.POLICY["version"],
+            "colorId": "base",
+        }
+        assert "BACKGROUND: same hue family as the garment's dominant color" in captured["prompt"]

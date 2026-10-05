@@ -130,6 +130,57 @@ def _storyboard_digest(storyboard) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _repair_signature_storyboard(
+    storyboard: list, *, product: dict, analysis: dict, project_id: str,
+) -> list:
+    """Generation-time backstop for storyboards saved before signature pool repair."""
+
+    clothing_type = (
+        product.get("clothing_type") or product.get("clothingType") or "top"
+    )
+    repaired, remaps = cut_generator.repair_signature_cut_selections(
+        storyboard,
+        project_id=project_id,
+        gender=mannequin.select_base_gender(analysis, clothing_type),
+        clothing_type=clothing_type,
+        sub_category=analysis.get("subCategory"),
+        custom_category=analysis.get("customCategory"),
+    )
+    for remap in remaps:
+        log.warning(
+            "AG-06 signature example remapped project %s block %s: %s -> %s",
+            project_id,
+            remap["blockId"],
+            remap["fromExampleId"],
+            remap["toExampleId"],
+        )
+    return repaired
+
+
+def _resolve_signature_background_runtime(
+    cut_spec: dict, product: dict, analysis: dict, assets: list, images: list,
+) -> dict:
+    if not cut_generator.is_signature_cut(cut_spec):
+        return cut_spec
+    palette = horizon_background.resolve_signature(
+        product,
+        cut_spec.get("colorId"),
+        analysis=analysis,
+        sources=horizon_background.loaded_sources(
+            product, cut_spec.get("colorId"), assets, images),
+    )
+    return horizon_background.apply_signature_runtime(cut_spec, palette)
+
+
+def _background_result_metadata(block: dict) -> dict:
+    horizon = horizon_background.decision(block)
+    signature = horizon_background.signature_decision(block)
+    return {
+        **({"horizon_background": horizon} if horizon else {}),
+        **({"signature_background": signature} if signature else {}),
+    }
+
+
 def _incomplete_cuts_message(requested: int, failed: int, retained: int) -> str:
     """부분 실패 문구(2026-09-28) — 몇 장 중 몇 장이 실패했고, 완성 컷 중 몇 장이 보관됐는지 사실대로.
 
@@ -400,8 +451,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
-                 **({"horizon_background": horizon_background.decision(b)}
-                    if horizon_background.decision(b) else {}),
+                 **_background_result_metadata(b),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
                     if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
                  **({"neck_repair": neck_repair_metadata}
@@ -1260,6 +1310,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 or product.get("clothingType")
                 or "top"
             )
+            storyboard = _repair_signature_storyboard(
+                storyboard,
+                product=product,
+                analysis=analysis,
+                project_id=project_id,
+            )
             space_set_bindings = space_set_assets.bind_storyboard_space_sets(
                 storyboard,
                 clothing_type=clothing_type,
@@ -1616,8 +1672,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _refs, getattr(s, "fm_face_qc_dir", None),
                     )
 
-        # 옷 색 백스톱: 스토리보드 이탈 때 측정이 끝나지 않았으면 가로 세트 벽 색을 정하기
-        # 전에 한 번 잰다. 실패하면 그대로 두고, 해당 컷은 기존 배경으로 만든다(fail-open).
+        # 옷 색 백스톱: 스토리보드 이탈 때 측정이 끝나지 않았으면 호리존 벽과 시그니처
+        # 배경색을 정하기 전에 한 번 잰다. 실패하면 해당 컷은 기본 배경 문장으로 만든다(fail-open).
         tone_colors = garment_color_measure.measurable_color_ids(ai_blocks, product)
         if tone_colors and not garment_color_measure.is_covered(
                 analysis.get("garmentColorEvidence"), tone_colors, clothing_type):
@@ -1660,6 +1716,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec = dict(b)
             cut_spec.pop("_horizonBackground", None)
             cut_spec.pop("_horizonBackgroundFallback", None)
+            cut_spec.pop("_signatureBackground", None)
+            cut_spec.pop("_signatureBackgroundFallback", None)
             cut_spec.pop("_horizonLayoutReference", None)
             cut_spec.pop("_horizonReferenceShot", None)
             space_binding = space_set_bindings.get(id(b))
@@ -1855,6 +1913,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                 product_image = await _img(a)
                 imgs.append(product_image)
                 product_images.append(product_image)
+            if cut_generator.is_signature_cut(cut_spec):
+                cut_spec = _resolve_signature_background_runtime(
+                    cut_spec, product, analysis, prods, product_images)
+                normalized = cut_generator.normalize_spec(
+                    cut_spec, clothing_type=clothing_type)
             if horizon_background.mode(cut_spec) == "garment-tone":
                 palette_key = (cut_spec.get("spaceGroupId"), cut_spec.get("colorId"))
                 if palette_key not in horizon_palettes:
