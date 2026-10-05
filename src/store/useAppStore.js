@@ -164,6 +164,7 @@ let flowValidationInflight = null;
 // 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
 let composeModePatchChain = Promise.resolve();
 let copywritingPatchChain = Promise.resolve();
+let mannequinSelectionPatchChain = Promise.resolve();
 let accountGeneration = 0;
 
 const persistedFlow = loadPersistedFlow();
@@ -409,7 +410,12 @@ export const useAppStore = create((set, get) => ({
   selectMannequin(id) {
     set({ selectedMannequinId: id });
     persistFlow(get());
-    api.patchProject(get().projectId, { selectedMannequinId: id });
+    const projectId = get().projectId;
+    if (!projectId) return mannequinSelectionPatchChain;
+    mannequinSelectionPatchChain = mannequinSelectionPatchChain
+      .catch(() => {})
+      .then(() => api.patchProject(projectId, { selectedMannequinId: id }));
+    return mannequinSelectionPatchChain;
   },
   setComposeMode(composeMode) {
     composeMode = normalizeComposeMode(composeMode);

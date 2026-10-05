@@ -1577,6 +1577,7 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
                    mc.length_adjust, mc.match_adjust, mc.qc_scores,
+                   a.metadata->'fitProfileSnapshot' as fit_profile_snapshot,
                    a.id::text as asset_id, a.r2_key,
                    tone.id::text as active_asset_id, tone.r2_key as active_r2_key
             from mannequin_cuts mc
@@ -2841,6 +2842,7 @@ async def finalize_mannequin_success(
     reserved: int,
     charge: int,
     metadata: dict,
+    fit_profile_snapshot: dict | None = None,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
     async with conn.cursor() as cur:
@@ -2852,13 +2854,16 @@ async def finalize_mannequin_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         cuts = []
         for c in candidates:
+            generation_metadata = dict(c.get("generation_metadata") or {})
+            if fit_profile_snapshot is not None:
+                generation_metadata["fitProfileSnapshot"] = fit_profile_snapshot
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
                 "r2_key, mime_type, byte_size, width, height, metadata) "
                 "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
                  c.get("size"), c.get("width"), c.get("height"),
-                 Json(_mannequin_asset_metadata(c.get("generation_metadata")))),
+                 Json(_mannequin_asset_metadata(generation_metadata))),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
@@ -2881,7 +2886,23 @@ async def finalize_mannequin_success(
                 # 재생성 경로는 이 봉투를 버리고 GET /mannequins 를 재조회하므로, 컬럼(위)과
                 # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
                 "qcScores": qc_scores,
+                "fitProfile": (
+                    fit_profile_snapshot.get("profile")
+                    if fit_profile_snapshot is not None else None
+                ),
+                "fitProfileRecorded": fit_profile_snapshot is not None,
             })
+        if fit_profile_snapshot is not None:
+            # 컷 생성과 같은 트랜잭션에서만 확정한다. 요청 시점에는 analysis 를 건드리지
+            # 않으므로 실패한 조정이 상세페이지 핏으로 새는 일이 없다. JSON null은
+            # "사진 그대로"인 유효한 기록이며, 다른 analysis 필드는 그대로 보존한다.
+            await cur.execute(
+                "insert into analyses (project_id, payload, locked) "
+                "values (%s, jsonb_build_object('fitProfile', %s::jsonb), false) "
+                "on conflict (project_id) do update set payload = "
+                "jsonb_set(analyses.payload, '{fitProfile}', excluded.payload->'fitProfile', true)",
+                (project_id, Json(fit_profile_snapshot.get("profile"))),
+            )
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
     available = await _consume_buckets(

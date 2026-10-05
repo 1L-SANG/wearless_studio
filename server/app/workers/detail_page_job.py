@@ -1163,6 +1163,31 @@ def _fallback_product_name(product: dict, analysis: dict) -> str:
 _INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
 
 
+def _analysis_for_selected_mannequin(
+    analysis: dict, selected_cut: dict | None,
+) -> dict:
+    """선택 컷의 기록된 핏을 상세 잡의 정본으로 쓴다.
+
+    snapshot 자체가 없는 구버전 컷은 기존 analysis 폴백을 유지한다. profile=null은
+    첫 생성 당시의 "사진 그대로"를 뜻하므로 fitProfile 키를 null로 명시한다.
+    """
+    snapshot = (
+        selected_cut.get("fit_profile_snapshot")
+        if isinstance(selected_cut, dict) else None
+    )
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("version") != 1
+        or "profile" not in snapshot
+        or (
+            snapshot.get("profile") is not None
+            and not isinstance(snapshot.get("profile"), dict)
+        )
+    ):
+        return analysis
+    return {**analysis, "fitProfile": snapshot.get("profile")}
+
+
 async def run_detail_page_job(app, job: dict) -> None:
     s, pool = app.state.settings, app.state.pool
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
@@ -1252,6 +1277,21 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            selected_mannequin_id = (
+                project.get("selected_mannequin_id")
+                or project.get("selectedMannequinId")
+            )
+            mannequin_cuts = (
+                await repo.list_mannequin_cuts(conn, user_id, project_id)
+                if selected_mannequin_id else []
+            )
+            selected_mannequin_cut = next((
+                cut for cut in mannequin_cuts
+                if f"{cut.get('candidate')}-{cut.get('version')}" == selected_mannequin_id
+            ), None)
+            analysis = _analysis_for_selected_mannequin(
+                analysis, selected_mannequin_cut
+            )
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
             storyboard = content_roles.canonicalize_storyboard(storyboard)
@@ -1377,13 +1417,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                 notice_ctx = None
 
             mannequin_asset = None
-            sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
-            if sel:
-                for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
-                    if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
-                        asset_id = c.get("active_asset_id") or c["asset_id"]
-                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(asset_id))
-                        break
+            if selected_mannequin_cut and selected_mannequin_cut.get("asset_id"):
+                asset_id = (
+                    selected_mannequin_cut.get("active_asset_id")
+                    or selected_mannequin_cut["asset_id"]
+                )
+                mannequin_asset = await repo.get_asset_for_user(
+                    conn, user_id, str(asset_id)
+                )
             color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
             detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None
             match_assets: dict = {}   # matchingItemId → asset|None

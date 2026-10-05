@@ -225,6 +225,10 @@ class MannequinCut(CamelModel):
     # AG-P2 4축 점수 스냅샷. None = 판정 없음(QC off·판정 실패·구 행). response_model 이
     # 미선언 필드를 걸러내므로 여기 없으면 라우트가 실어도 클라에 안 나간다.
     qc_scores: dict | None = None
+    # 컷을 실제로 만든 fitProfile. 기록 여부를 별도로 내려 null(사진 그대로)과
+    # 이 필드가 없던 구버전 컷을 구분한다.
+    fit_profile: dict | None = None
+    fit_profile_recorded: bool = False
 
 
 class ToneAdjustment(CamelModel):

@@ -71,7 +71,7 @@ def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
     _no_db(monkeypatch)
 
 
-def test_regenerate_snapshots_profile_and_server_computed_adjusted_axes(client, make_token, monkeypatch):
+def test_regenerate_request_snapshots_profile_without_overwriting_analysis(client, make_token, monkeypatch):
     captured = {}
     _wire_route_fakes(monkeypatch, stored_profile={
         "category": "top", "gender": "women", "source": "auto",
@@ -89,7 +89,7 @@ def test_regenerate_snapshots_profile_and_server_computed_adjusted_axes(client, 
     assert snap["profile"]["axes"] == {"fit": "slim", "length": "long"}
     assert snap["profile"]["source"] == "seller"
     assert snap["adjustedAxes"] == ["fit", "length"]  # regular→slim, basic→long (서버 diff)
-    assert captured["saved_analysis"]["fitProfile"]["axes"]["length"] == "long"  # UI 연속성 유지
+    assert "saved_analysis" not in captured  # 성공 종결 전에는 기존 analysis를 보존
 
 
 def test_generate_snapshots_stored_profile_without_inventing(client, make_token, monkeypatch):
@@ -182,6 +182,11 @@ def test_worker_prefers_payload_snapshot_over_latest_analysis(monkeypatch):
     assert only["fit_profile"]["axes"] == {"fit": "slim", "length": "long"}  # 최신 analysis 무시
     assert only["adjusted_axes"] == ("length",)
     assert only["fit_profile_source"] == "payload_snapshot"
+    assert calls["success"][0]["fit_profile_snapshot"] == {
+        "version": 1,
+        "profile": SNAP_PROFILE,
+        "adjustedAxes": ["length"],
+    }
 
 
 def test_worker_null_snapshot_profile_is_authoritative(monkeypatch):
