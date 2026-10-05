@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(라이브) → M-01(라이브) | — | `Analysis` (실측 null) |
 | PL-2 마네킹 생성 | 마네킹 최초 진입 시 **자동** → `generateMannequins` | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
-| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — fitProfile을 analysis에 영속 후 같은 파이프라인 재실행 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) — *구 `adjustMannequin`(AG-05)·adjustCount 흐름 폐기* |
+| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — 요청 스냅샷으로 재실행하고 성공 종결 때 analysis와 버전 핏을 함께 확정 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) — *구 `adjustMannequin`(AG-05)·adjustCount 흐름 폐기* |
 | PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시 `EditorBlock[]` |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
 | PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정` → `generateImage(mode:'vary')` | AG-07(라이브) | `editorImage` | `WardrobeImage` |
@@ -64,11 +64,13 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 ### PL-3 마네킹 재생성 — `regenerateMannequin(projectId, { fitProfile })`
 
 ```
-핏 확인 스텝에서 확정한 fitProfile(축 + matchCut)을 analysis에 영속(garment_ref)
-  → AG-04 재실행(같은 파이프라인, 프로필만 갱신)
-  → 새 버전 MannequinCut 저장 → 자동 선택·스텝 리셋 → { data, credits }
+핏 확인 스텝에서 확정한 fitProfile(축 + matchCut)을 잡 입력에 스냅샷
+  → AG-04 재실행(같은 파이프라인, 스냅샷 프로필 사용)
+  → 성공 종결에서 새 버전 MannequinCut의 fitProfile과 analysis.fitProfile을 함께 저장
+  → 자동 선택·스텝 리셋 → { data, credits }
 ```
 - 크레딧: `mannequinGenerate`(=45). **횟수 제한 없음** — 크레딧이 자연 제한.
+- 실패: 새 버전과 analysis.fitProfile 모두 바꾸지 않는다.
 - *구 `adjustMannequin`(AG-05, slimmer/looser enum + adjustCount 제한) 흐름은 폐기(2026-07) — fitProfile 재생성으로 통합.*
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심

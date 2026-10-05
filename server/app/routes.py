@@ -2195,6 +2195,16 @@ def _cut_to_api(c: dict) -> dict:
     """mannequin_cuts row → MannequinCut. src=안정 앱 URL `/v1/assets/{id}/file` (만료 없음, §3).
     finalize_mannequin_success가 만드는 result/SSE done의 shape와 동일하게 유지."""
     display_asset_id = c.get("active_asset_id") or c["asset_id"]
+    fit_profile_snapshot = c.get("fit_profile_snapshot")
+    fit_profile_recorded = (
+        isinstance(fit_profile_snapshot, dict)
+        and fit_profile_snapshot.get("version") == 1
+        and "profile" in fit_profile_snapshot
+        and (
+            fit_profile_snapshot.get("profile") is None
+            or isinstance(fit_profile_snapshot.get("profile"), dict)
+        )
+    )
     return {
         "id": f"{c['candidate']}-{c['version']}",
         "src": f"/v1/assets/{display_asset_id}/file",
@@ -2207,6 +2217,8 @@ def _cut_to_api(c: dict) -> dict:
         # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
         # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
         "qcScores": c.get("qc_scores"),
+        "fitProfile": fit_profile_snapshot.get("profile") if fit_profile_recorded else None,
+        "fitProfileRecorded": fit_profile_recorded,
     }
 
 
@@ -2901,16 +2913,6 @@ async def regenerate_mannequins(
                     conn, user_id=user_id, project_id=project_id, job_id=job["id"],
                     metadata=pricing_metadata,
                 )
-            # fit-profile 반영: 클라가 조정한 fitProfile 을 analysis 에 영속 → 워커의
-            # generation_spec(analysis) 이 이를 읽어 재생성 컷에 반영한다(mannequin_job.py:205,
-            # agents/mannequin.generation_spec = analysis["fitProfile"]). save_analysis 는 REPLACE 라
-            # 저장된 analysis 가 있을 때만 full payload 에 머지한다(빈 {}에 넣어 다른 필드 유실 방지).
-            fit_profile = body.get("fitProfile")
-            if fit_profile:
-                analysis = await repo.get_analysis(conn, project_id)
-                if analysis:
-                    analysis["fitProfile"] = fit_profile
-                    await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
         if created:
             await _enqueue_base_fidelity_observation(

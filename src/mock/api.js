@@ -108,11 +108,13 @@ const syncSelectedCut = (cutId) => {
   DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: !!selected && m.id === selected.id }));
   return selected;
 };
-const makeMannequinCut = (version) => ({
+const makeMannequinCut = (version, fitProfile) => ({
   id: uid('mq'),
   version,
   imageUrl: Placeholder.photo(`mq${version}_${Date.now()}`, 'mannequin'),
   isSelected: true,
+  fitProfile: fitProfile ? clone(fitProfile) : null,
+  fitProfileRecorded: true,
   createdAt: new Date().toISOString(),
 });
 
@@ -616,7 +618,7 @@ export const api = {
       if (activeJob.cancelled) throw jobCancelledError();
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
-        DB.mannequins.push(makeMannequinCut(0));
+        DB.mannequins.push(makeMannequinCut(0, DB.analysis.fitProfile));
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
@@ -647,7 +649,7 @@ export const api = {
       DB.analysis.fitProfile = clone(fitProfile);
     }
     const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, cut.version ?? -1), -1);
-    const next = makeMannequinCut(prevMax + 1);
+    const next = makeMannequinCut(prevMax + 1, fitProfile ?? DB.analysis.fitProfile);
     DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
     DB.mannequins.push(next);
     syncSelectedCut(next.id);
