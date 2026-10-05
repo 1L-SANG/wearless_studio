@@ -229,7 +229,11 @@ export function BankTransferModal({ plan, info, defaultEmail, extend = false, on
                     {field('invoiceEmail', '받을 이메일', { inputMode: 'email', maxLength: 254 })}
                   </div>
                 )}
-                <p className={s.due}><PIcon name="clock" size={16} />신청 후 3일 안에 입금해 주세요</p>
+                <div className={s.dueRow}>
+                  <p className={s.due}><PIcon name="clock" size={16} />신청 후 3일 안에 입금해 주세요</p>
+                  {/* 결제 전 조건 고지 — 상자 대신 구석의 가벼운 링크로 둔다(오너 10/5). */}
+                  <a className={s.termsLink} href={WEARLESS_LEGAL_URLS.refund}>결제·환불 조건</a>
+                </div>
                 {serverError && <p className={s.err} role="alert"><PIcon name="alert" size={15} />{serverError}</p>}
                 <button type="submit" className={s.primary} disabled={pending}>
                   {pending ? '접수하는 중…' : '신청하기'}

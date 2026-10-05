@@ -102,6 +102,16 @@ test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에
   assert.doesNotMatch(html, /입금 확인 중/);
 });
 
+test('계좌이체 모드의 결제 조건은 구석의 회색 링크 하나로 둔다(오너 10/5)', async () => {
+  const html = renderPricing();
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">결제·환불 조건<\/a>/);
+  // 신청 창은 포탈이라 SSR 로 못 그린다 — 소스에서 신청 버튼보다 앞에 같은 링크가 있는지 본다.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../../src/features/pricing/BankTransferModal.jsx', import.meta.url), 'utf8');
+  const link = src.indexOf('결제·환불 조건</a>');
+  assert.ok(link > 0 && link < src.indexOf('<button type="submit"'));
+});
+
 test('현재 플랜과 같은 카드는 1개월 연장 신청이다', () => {
   const html = renderPricing({ currentPlan: 'seller' });
   assert.equal((html.match(/1개월 연장 신청/g) || []).length, 1);

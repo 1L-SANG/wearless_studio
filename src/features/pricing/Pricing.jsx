@@ -252,6 +252,10 @@ export function Pricing() {
         </section>
       ))}
 
+      {/* 계좌이체 모드의 결제 조건은 구석의 가벼운 링크 하나로 둔다(오너 10/5). */}
+      {bankTransfer && (
+        <p className={s.bankTermsLink}><a href={WEARLESS_LEGAL_URLS.refund}>결제·환불 조건</a></p>
+      )}
       {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 배지 한 줄이 전부다. */}
       {!bankTransfer && (
         <p className={s.tabDesc}>
