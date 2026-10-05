@@ -1778,16 +1778,47 @@ async def list_retryable_sam_jobs(
     `idempotency_key` 를 함께 돌려주는 이유는 푸셔가 base 키를 되찾아야 하기 때문이다.
     조회는 `jobs_sam_retry_idx`(partial) 가 받친다.
     """
+    from app.services import sam_retry
+
+    # 종료 시각 하한으로 오래된 잡의 되살림을 막고 jobs_sam_retry_idx의 범위 스캔을 제한한다.
+    # state의 거짓값도 job_is_retryable의 `state or ""`와 맞춘다.
+    # 세대 비교는 get_latest_job_generation의 사용자, LIKE, payload 순서를 보존한다.
+    # 동률은 여기서 제외하지 않고 푸셔의 최신 행 재확인과 create_job의 멱등성에 맡긴다.
+    # kind와 status 목록을 글자로 적은 것은 jobs_sam_retry_idx의 partial 조건과 같아야 인덱스를 타기 때문이다.
     async with conn.cursor() as cur:
         await cur.execute(
-            f"select {_JOB_COLS}, idempotency_key from jobs "
-            "where kind = any(%s) and status = any(%s) "
-            "and finished_at is not null "
-            "and finished_at < now() - make_interval(secs => %s) "
-            "and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s "
-            "order by finished_at desc limit %s",
-            (list(kinds), ["done", "error"], float(min_age_seconds),
-             int(max_retries), int(limit)),
+            """
+            select id::text as id, user_id::text as user_id, project_id::text as project_id,
+                   kind, status, payload, result, finished_at, idempotency_key
+            from jobs
+            where kind = any(%s)
+              and kind in ('sam_preprocess', 'matching_cutout', 'editor_garment_mask')
+              and status in ('done', 'error')
+              and finished_at is not null
+              and finished_at > now() - make_interval(secs => %s)
+              and finished_at < now() - make_interval(secs => %s)
+              and (case when payload->>'retry' ~ '^[0-9]+$'
+                        then (payload->>'retry')::int else 0 end) < %s
+              and (result->>'state' = any(%s)
+                   or (status = 'error' and coalesce(result->'state', 'null'::jsonb)
+                       in ('null'::jsonb, '""'::jsonb, 'false'::jsonb,
+                           '0'::jsonb, '[]'::jsonb, '{}'::jsonb)))
+              and idempotency_key is not null and idempotency_key <> ''
+              and not exists (
+                  select 1 from jobs newer
+                  where newer.user_id = jobs.user_id
+                    and (newer.idempotency_key = regexp_replace(jobs.idempotency_key, ':r[0-9]+$', '')
+                         or newer.idempotency_key like
+                            regexp_replace(jobs.idempotency_key, ':r[0-9]+$', '') || ':r%%')
+                    and (case when newer.payload->>'retry' ~ '^[0-9]+$'
+                              then (newer.payload->>'retry')::int else 0 end)
+                        > (case when jobs.payload->>'retry' ~ '^[0-9]+$'
+                                then (jobs.payload->>'retry')::int else 0 end)
+              )
+            order by finished_at desc limit %s
+            """,
+            (list(kinds), sam_retry.REVIVE_WINDOW_SECONDS, float(min_age_seconds), int(max_retries),
+             list(sam_retry.RETRYABLE_STATES), int(limit)),
         )
         return await cur.fetchall()
 

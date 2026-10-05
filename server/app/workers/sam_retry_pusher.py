@@ -108,6 +108,8 @@ class SamRetryPusher:
     async def _push_one(self, repo, conn, job: dict, sam_ready=None) -> bool:
         if not sam_retry.job_is_retryable(job):
             return False                       # 판정 실패 — 다시 돌려도 같은 답이다
+        if not sam_retry.within_revive_window(job):
+            return False
         if not sam_retry.backoff_elapsed(job):
             # 백오프는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다. 살아난 걸 실제로
             # 확인했으면 더 기다릴 이유가 없다 — 예산(MAX_RETRIES)은 그대로 지킨다.
