@@ -28,6 +28,39 @@ for (const [name, userAgent, maxTouchPoints, userAgentDataMobile, expected] of c
   });
 }
 
+for (const [name, input, expected] of [
+  ['desktop UA on phone screen', { userAgent: 'X11; Linux x86_64', maxTouchPoints: 5, userAgentDataMobile: false, screenShortSide: 412 }, 'phone'],
+  ['Windows touch laptop screen', { userAgent: 'Windows NT 10.0', maxTouchPoints: 10, screenShortSide: 900 }, 'desktop'],
+  ['iPad Mac UA screen', { userAgent: 'Macintosh', maxTouchPoints: 5, screenShortSide: 820 }, 'tablet'],
+  ['below phone boundary', { userAgent: 'Windows NT 10.0', screenShortSide: 599 }, 'phone'],
+  ['at phone boundary', { userAgent: 'Windows NT 10.0', screenShortSide: 600 }, 'desktop'],
+  ['zero screen', { userAgent: 'Windows NT 10.0', screenShortSide: 0 }, 'desktop'],
+  ['missing screen preserves tablet', { userAgent: 'Macintosh', maxTouchPoints: 5 }, 'tablet'],
+  ['phone UA has priority', { userAgent: 'iPhone', screenShortSide: 820 }, 'phone'],
+]) {
+  test(`device screen safety net: ${name}`, () => {
+    assert.equal(classifyDevice(input), expected);
+  });
+}
+
+test('device policy reads physical screen once, uses either orientation and tolerates missing dimensions', () => {
+  const source = readFileSync(new URL('../../src/lib/deviceClass.js', import.meta.url), 'utf8').replace(/^export /gm, '');
+  const load = (context) => new Function('globalThis', `${source}; return isMobileDevice;`)(context);
+  for (const [width, height] of [[412, 915], [915, 412]]) {
+    let reads = 0;
+    const browser = load({ navigator: { userAgent: 'Windows NT 10.0' }, get screen() {
+      reads += 1;
+      return reads === 1 ? { width, height } : { width: 1920, height: 1080 };
+    } });
+    assert.equal(browser(), true);
+    assert.equal(browser(), true);
+    assert.equal(reads, 1);
+  }
+  for (const screen of [undefined, {}, { width: 412 }]) {
+    assert.equal(load({ navigator: { userAgent: 'Windows NT 10.0' }, screen })(), false);
+  }
+});
+
 test('device policy reads navigator only once and survives missing navigator', () => {
   const source = readFileSync(new URL('../../src/lib/deviceClass.js', import.meta.url), 'utf8').replace(/^export /gm, '');
   const load = (context) => new Function('globalThis', `${source}; return isMobileDevice;`)(context);

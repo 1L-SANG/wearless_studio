@@ -62,6 +62,7 @@ import { getFlowDraftSources, getInputEntryDecision, remoteDraftSource } from '@
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
 import { PcOnlyPage } from '@/features/shell/PcOnlyPage.jsx';
+import { PhoneUploadIntro } from '@/features/shell/PhoneUploadIntro.jsx';
 import { NotFound } from '@/components/NotFound.jsx';
 import {
   draftSlot,
@@ -448,14 +449,7 @@ function ProductInputRoute() {
   }
   if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;
   if (loginRequired) {
-    return (
-      <div className="wizard narrow">
-        <div className="surface handoff-panel">
-          <p>상품 사진을 여기서 담아두면, PC에서 바로 이어서 만들 수 있어요.</p>
-          <Button variant="primary" onClick={() => openLogin('/create/input')}>로그인하고 사진 담기</Button>
-        </div>
-      </div>
-    );
+    return <PhoneUploadIntro onLogin={() => openLogin('/create/input')} />;
   }
   if (entryDecision === 'ask') {
     if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;

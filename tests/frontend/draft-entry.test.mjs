@@ -152,12 +152,12 @@ for (const choice of ['entry-new', 'nav-new', 'local']) {
     await choose(h);
     assert.deepEqual(h.calls, ['get']);
     assert.equal(h.dialog.kind, 'confirm');
-    assert.equal(h.dialog.message, '스마트폰에서 담아둔 사진 3장이 지워져요.');
+    assert.equal(h.dialog.message, '스마트폰에서 업로드한 사진 3장이 지워져요.');
     h.setSlot(remote({ updatedAt: 'v2', photoCount: 5, deviceLabel: 'iPad Safari' }));
     await h.actions.confirm();
     assert.deepEqual(h.calls, ['get', 'get']);
     assert.equal(h.dialog.meta.updatedAt, 'v2');
-    assert.equal(h.dialog.message, '태블릿에서 담아둔 사진 5장이 지워져요.');
+    assert.equal(h.dialog.message, '태블릿에서 업로드한 사진 5장이 지워져요.');
     await h.actions.confirm();
     assert.deepEqual(h.calls, ['get', 'get', 'get', ...mutations]);
     assert.equal(h.dialog, null);

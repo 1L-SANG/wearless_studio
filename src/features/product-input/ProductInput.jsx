@@ -352,7 +352,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
             ) : (
               <>
                 <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
-                <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
+                <span className="add-cap">이미지 업로드</span>
               </>
             )}
           </AddDrop>
@@ -429,8 +429,8 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard, mobile 
             <h3>{mobile ? '이 상품은 다른 곳에서 마무리됐거나, 보관 기간이 지나 정리됐어요.' : '다른 곳에서 이 작업을 끝내거나 새로 시작했어요'}</h3>
             <p>지금 화면에 남아 있는 내용을 계속 쓸지 골라주세요.</p>
             <div className="modal-actions">
-              <Button variant={mobile ? "primary" : "ghost"} onClick={onDiscard}>{mobile ? '새 상품 담기' : '지우고 새로 시작'}</Button>
-              <Button variant={mobile ? "ghost" : "primary"} onClick={onRestartLocal}>{mobile ? '이 사진으로 다시 담기' : '이 내용 계속 쓰기'}</Button>
+              <Button variant={mobile ? "primary" : "ghost"} onClick={onDiscard}>{mobile ? '새 상품 업로드' : '지우고 새로 시작'}</Button>
+              <Button variant={mobile ? "ghost" : "primary"} onClick={onRestartLocal}>{mobile ? '이 사진으로 다시 업로드' : '이 내용 계속 쓰기'}</Button>
             </div>
           </>
         ) : (

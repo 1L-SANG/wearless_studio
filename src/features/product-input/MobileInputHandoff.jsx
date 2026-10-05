@@ -65,7 +65,7 @@ export function MobileAnalyzedNotice({ onNew, busy }) {
     <div className="surface handoff-panel pi-handoff-notice">
       <p>이 상품은 PC에서 분석까지 마쳤어요. PC에서 이어서 진행해 주세요.</p>
       <div className="handoff-actions">
-        <Button variant="ghost" disabled={busy} onClick={onNew}>지우고 새 상품 담기</Button>
+        <Button variant="ghost" disabled={busy} onClick={onNew}>지우고 새 상품 업로드</Button>
       </div>
     </div>
   );

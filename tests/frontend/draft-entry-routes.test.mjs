@@ -17,7 +17,9 @@ const navSource = shell.slice(shell.indexOf('export function TopNav()'), shell.i
 const dialogSource = read('src/features/shell/DraftEntryDialog.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const profileSource = shell.slice(shell.indexOf('function ProfileMenu()'), shell.indexOf('export function Stepper'));
 const rootSource = app.slice(app.indexOf('function RootRedirect()'), app.indexOf('/* 모델 섹션')).replace("import.meta.env.VITE_API_MODE", "'http'");
-const { code } = await transformWithEsbuild(`${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}`, 'DraftEntryRoutes.jsx', { jsx: 'transform' });
+const introSource = ['HangTag.jsx', 'PhoneUploadIntro.jsx'].map((file) =>
+  read(`src/features/shell/${file}`).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
+const { code } = await transformWithEsbuild(`${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}`, 'DraftEntryRoutes.jsx', { jsx: 'transform' });
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
@@ -102,10 +104,11 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     DRAFT_SYNC_TIMEOUT_MS: 20000, setTimeout() {},
     ProductInput: 'ProductInput', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
     Stepper: 'Stepper', ProfileMenuIcon: 'ProfileMenuIcon',
+    s: new Proxy({}, { get: (_, key) => key }),
     document: { addEventListener() {}, removeEventListener() {} }, Link: 'Link', STEPPER_STEPS: [],
   };
   function navigate(path) { calls.push(`navigate:${path}`); }
-  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
   function render(name) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name);
@@ -304,9 +307,24 @@ for (const confirmed of [false, true]) {
     h.auth.session = null;
     const tree = await h.settle('ProductInputRoute');
     assert.equal(find(tree, (node) => node.type === 'ProductInput'), null);
-    const login = find(tree, (node) => node.type === 'Button' && node.props.children.includes('로그인하고 사진 담기'));
+    assert.equal(tree.type, h.components.PhoneUploadIntro);
+    const intro = h.components.PhoneUploadIntro(tree.props);
+    assert.equal(intro.props.className, 'page');
+    assert.equal(intro.props['aria-labelledby'], 'phone-upload-title');
+    const login = find(intro, (node) => node.type === 'button' && node.props.children.includes('로그인하고 사진 업로드'));
     assert.ok(login);
-    assert.ok(find(tree, (node) => node.props.children.includes('상품 사진을 여기서 담아두면, PC에서 바로 이어서 만들 수 있어요.')));
+    assert.equal(login.props.className, 'btn btn-primary btn-block');
+    assert.ok(find(intro, (node) => node.props.className === 'eyebrow' && node.props.children.includes('PHONE UPLOAD')));
+    assert.ok(find(intro, (node) => node.type === 'h1' && node.props.id === 'phone-upload-title' && node.props.children.includes('휴대폰으로 사진부터 업로드해요')));
+    assert.ok(find(intro, (node) => node.props.className === 'desc' && node.props.children.includes('로그인하고 사진을 업로드하면 PC에서 바로 이어서 만들어요.')));
+    const tagNode = find(intro, (node) => node.type === h.components.HangTag);
+    const tag = h.components.HangTag(tagNode.props);
+    assert.equal(tag.props['aria-label'], 'UPLOAD ON PHONE 이라고 적힌 옷 태그');
+    assert.equal(tag.props.viewBox, '0 0 280 230');
+    assert.ok(find(tag, (node) => node.type === 'rect' && node.props.width === '22' && node.props.height === '38'));
+    assert.ok(find(tag, (node) => node.props.className === 'mono accentFill' && node.props.children.includes('UPLOAD ON PHONE')));
+    assert.ok(find(tag, (node) => node.props.className === 'mono mutedFill' && node.props.children.includes('FINISH ON PC')));
+    assert.equal(find(tag, (node) => node.props.className === 'stroke care'), null);
     assert.deepEqual(h.calls, []);
     login.props.onClick();
     assert.deepEqual(h.calls, ['login:/create/input']);
@@ -404,11 +422,11 @@ for (const source of ['remote', 'local']) {
     const h = harness({ mobile: true, confirmed: false, remote: source === 'remote' ? slot() : null, local });
     const tree = await h.settle('ProductInputRoute');
     const modal = h.components.ResumeChoiceModal(tree.props);
-    assert.ok(find(modal, (node) => node.props.children.includes('담아둔 상품이 있어요')));
-    const button = find(modal, (node) => node.props.children.includes('지우고 새 상품 담기'));
+    assert.ok(find(modal, (node) => node.props.children.includes('업로드한 상품이 있어요')));
+    const button = find(modal, (node) => node.props.children.includes('지우고 새 상품 업로드'));
     await button.props.onClick();
     const warning = dialog(h, await h.settle('ProductInputRoute'));
-    assert.equal(warning.props.dialog.message, '담아둔 사진 2장이 지워져요. 한 번에 한 상품만 담아둘 수 있어요.');
+    assert.equal(warning.props.dialog.message, '업로드한 사진 2장이 지워져요. 한 번에 한 상품만 저장할 수 있어요.');
     assert.ok(!h.calls.includes('remove'));
     await warning.props.actions.confirm();
     assert.ok(h.calls.includes('remove'));
@@ -422,7 +440,7 @@ test('M4 mobile card nouns and desktop modal copy', () => {
       { id: 'local', title: '이 기기에서 입력하던 내용', meta: { deviceLabel: 'iPad Safari' } },
       { id: 'remote', title: '입력하던 상품 정보', meta: { deviceLabel: 'iPhone Safari' } },
     ] });
-    assert.ok(find(modal, (node) => node.props.children.includes(mobile ? '담아둔 상품이 있어요' : '하던 작업이 있어요')));
+    assert.ok(find(modal, (node) => node.props.children.includes(mobile ? '업로드한 상품이 있어요' : '하던 작업이 있어요')));
     assert.ok(find(modal, (node) => node.props.children.includes(mobile ? '태블릿 작업 이어가기' : '이 기기에서 입력하던 내용')));
     assert.ok(find(modal, (node) => node.props.children.includes(mobile ? '스마트폰 작업 이어가기' : '입력하던 상품 정보')));
   }

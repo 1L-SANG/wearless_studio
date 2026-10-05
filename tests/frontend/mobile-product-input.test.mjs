@@ -242,10 +242,10 @@ test('M2-1 restored analyzed mobile draft is read-only and requires confirmation
     assert.equal(node(group, 'ColorSwatchPicker'), undefined);
     assert.equal(find(group, (value) => value.props.className === 'rm'), undefined);
     assert.ok(!h.calls.some((call) => call[0] === 'queue'));
-    await button(notice, '지우고 새 상품 담기').props.onClick();
+    await button(notice, '지우고 새 상품 업로드').props.onClick();
     tree = await h.settle();
     const warning = h.expand(tree, 'DraftEntryDialog');
-    assert.ok(text(warning).includes('담아둔 사진 2장이 지워져요. 한 번에 한 상품만 담아둘 수 있어요.'));
+    assert.ok(text(warning).includes('업로드한 사진 2장이 지워져요. 한 번에 한 상품만 저장할 수 있어요.'));
     assert.ok(!h.calls.includes('remove'));
     await button(warning, '지우고 계속').props.onClick();
     assert.deepEqual(h.calls.filter((call) => typeof call === 'string'), ['remove', 'begin']);
@@ -260,10 +260,10 @@ test('M6 gone lock mobile actions and desktop copy; conflict remains identical',
     const tree = h.render('EditingRightsLock', { mobile, meta: { state: 'gone' },
       onDiscard: () => calls.push('discard'), onRestartLocal: () => calls.push('restart') });
     assert.equal(text(node(tree, 'h3')), mobile ? '이 상품은 다른 곳에서 마무리됐거나, 보관 기간이 지나 정리됐어요.' : '다른 곳에서 이 작업을 끝내거나 새로 시작했어요');
-    const discard = button(tree, mobile ? '새 상품 담기' : '지우고 새로 시작');
+    const discard = button(tree, mobile ? '새 상품 업로드' : '지우고 새로 시작');
     assert.equal(discard.props.variant, mobile ? 'primary' : 'ghost');
     discard.props.onClick();
-    button(tree, mobile ? '이 사진으로 다시 담기' : '이 내용 계속 쓰기').props.onClick();
+    button(tree, mobile ? '이 사진으로 다시 업로드' : '이 내용 계속 쓰기').props.onClick();
     assert.deepEqual(calls, ['discard', 'restart']);
   }
   const props = { meta: { state: 'conflict' }, onReclaim() {} };
@@ -271,6 +271,15 @@ test('M6 gone lock mobile actions and desktop copy; conflict remains identical',
 });
 
 for (const mobile of [true, false]) {
+  test(`M2 ${mobile ? 'mobile' : 'desktop'} add tile has one short caption`, async () => {
+    const h = harness({ mobile });
+    const tree = await h.settle();
+    const group = h.expand(tree, 'ColorImageGroup');
+    const caption = find(group, (value) => value.props.className === 'add-cap');
+    assert.deepEqual(caption.props.children, ['이미지 업로드']);
+    assert.ok(!text(group).includes('업로드해주세요'));
+  });
+
   test(`M2 ${mobile ? 'mobile' : 'desktop'} needs both base Front and Back photos`, async () => {
     const photos = product();
     photos.colors[0].images.pop();
@@ -294,4 +303,29 @@ test('M2 actual picker reports HEIC conversion before the delayed placeholder an
   await new Promise(setImmediate);
   cta = h.expand(await h.settle(), 'InputMainAction');
   assert.equal(node(cta, 'Button').props.disabled, false);
+});
+
+test('mobile photo and swatch grids use two full-width columns without a width gate', () => {
+  const css = read('src/styles/features.css');
+  const mobile = css.slice(css.indexOf('.wizard.pi-handoff'), css.lastIndexOf('@media (max-width: 560px)'));
+  assert.doesNotMatch(mobile, /@media|word-break/);
+  assert.match(mobile, /\.wizard\.pi-handoff \{ padding-inline: var\(--sp-16\); \}/);
+  assert.match(mobile, /\.pi-handoff \.surface\.pi-images \{ padding-inline: var\(--sp-16\); \}/);
+  assert.match(mobile, /\.pi-handoff \.color-group \{ padding-inline: var\(--sp-12\); \}/);
+  assert.match(mobile, /\.pi-handoff \.slot-well \{ border: 0; background: none; box-shadow: none; padding: 0; \}/);
+  assert.match(mobile, /\.pi-handoff \.slot-well-head \{ margin-bottom: var\(--sp-8\); \}/);
+  assert.match(mobile, /\.pi-handoff \.slot-tiles \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); gap: var\(--sp-8\)/);
+  assert.match(mobile, /\.pi-handoff \.tile \{ width: 100%; height: auto; aspect-ratio: 156 \/ 200;/);
+  assert.match(mobile, /\.pi-handoff \.slot-well \.tile \{ aspect-ratio: 3 \/ 4;/);
+  assert.match(mobile, /\.pi-handoff \.swatch-grid \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); justify-items: stretch;[^}]*height: calc\(var\(--pi-swatch-height\) \* 2[^}]*overflow-y: auto;[^}]*mask-image: linear-gradient/);
+  assert.match(mobile, /\.pi-handoff \.swatch, \.pi-handoff \.color-name-input-wrap, \.pi-handoff \.color-name-input \{[^}]*width: 100%;/);
+  assert.match(mobile, /\.pi-handoff \.color-name-input \{ min-width: 100%; max-width: 100%;/);
+  assert.doesNotMatch(css, /\.pi-handoff \.tile\.add/);
+});
+
+test('header width fallbacks hide crowded controls independently of device detection', () => {
+  const css = read('src/styles/app.css');
+  assert.match(css, /@media \(max-width: 720px\) \{\s*\.topnav \.nav-stepper \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 520px\) \{\s*\.topnav \{ gap: var\(--sp-12\); padding-inline: var\(--sp-16\); \}\s*\.topnav \.nav-links, \.topnav \.credit-badge, \.topnav \.plan-badge \{ display: none; \}\s*\.topnav \.nav-right \{ flex-shrink: 0; \}/);
+  assert.match(css, /\.topnav-handoff \.nav-stepper,\s*\.topnav-handoff \.nav-links,\s*\.topnav-handoff \.credit-badge,\s*\.topnav-handoff \.plan-badge \{ display: none; \}/);
 });

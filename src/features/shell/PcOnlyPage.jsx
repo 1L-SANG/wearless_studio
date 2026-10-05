@@ -28,7 +28,7 @@ export function PcOnlyPage() {
       <p className={`${s.desc} ${p.description}`}>PC에서 같은 계정으로 로그인하면 바로 이어져요.</p>
       <div className={p.addressRow}><AddressCopyChip /></div>
       <div className={s.actions}>
-        <button type="button" className="btn btn-primary btn-block" onClick={() => navigate('/create/input')}>사진 담기 화면으로</button>
+        <button type="button" className="btn btn-primary btn-block" onClick={() => navigate('/create/input')}>사진 업로드 화면으로</button>
       </div>
     </section>
   );

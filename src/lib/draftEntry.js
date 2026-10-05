@@ -72,8 +72,8 @@ export function createDraftEntryActions({
     show({ kind: 'confirm', meta, partial, message: partial
       ? '아직 올라오지 않은 사진은 빠져요.'
       : mobilePhotoCount != null
-        ? `담아둔 사진 ${Math.max(meta.photoCount || 0, mobilePhotoCount)}장이 지워져요. 한 번에 한 상품만 담아둘 수 있어요.`
-        : `${getDraftDeviceNoun(meta.deviceLabel) || '다른 기기'}에서 담아둔 사진 ${meta.photoCount || 0}장이 지워져요.` });
+        ? `업로드한 사진 ${Math.max(meta.photoCount || 0, mobilePhotoCount)}장이 지워져요. 한 번에 한 상품만 저장할 수 있어요.`
+        : `${getDraftDeviceNoun(meta.deviceLabel) || '다른 기기'}에서 업로드한 사진 ${meta.photoCount || 0}장이 지워져요.` });
   };
   const requiresConfirmation = (slot, partial) => Boolean(slot)
     && (partial || slot.meta?.updatedAt !== slotClient.getServerSyncedAt());

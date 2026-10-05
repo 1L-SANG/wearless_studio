@@ -157,7 +157,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
   if (sources?.length) {
     return (
       <Modal onClose={onClose}>
-        <h3>{mobile ? '담아둔 상품이 있어요' : '하던 작업이 있어요'}</h3>
+        <h3>{mobile ? '업로드한 상품이 있어요' : '하던 작업이 있어요'}</h3>
         <p>이어서 열 내용을 고르거나, 새로 시작할 수 있어요.</p>
         <div className="draft-entry-sources">
           {sources.map((source) => {
@@ -177,17 +177,17 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
           })}
         </div>
         <div className="modal-actions">
-          <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 담기' : '새로 시작하기'}</Button>
+          <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
         </div>
       </Modal>
     );
   }
   return (
     <Modal onClose={onClose}>
-      <h3>{mobile ? '담아둔 상품이 있어요' : '이어서 작업할까요?'}</h3>
+      <h3>{mobile ? '업로드한 상품이 있어요' : '이어서 작업할까요?'}</h3>
       <p>만들던 상세페이지가 있어요. 이어서 하거나 새로 시작할 수 있어요.</p>
       <div className="modal-actions">
-        <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 담기' : '새로 시작하기'}</Button>
+        <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
         <Button variant="primary" onClick={onResume} disabled={busy}>이어서 하기</Button>
       </div>
     </Modal>

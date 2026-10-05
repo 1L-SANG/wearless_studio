@@ -3521,21 +3521,25 @@
 .pi-save-progress { width: var(--sp-section); height: var(--sp-section); border-radius: var(--r-5); }
 /* 아이폰은 16px 미만 입력칸을 누르면 화면을 확대한 채로 둔다. 가로 모드에서도 같아 폭이 아니라 기기 기준으로 건다. */
 .pi-handoff .field, .pi-handoff .color-name-input { font-size: 16px; }
+.wizard.pi-handoff { padding-inline: var(--sp-16); }
+.pi-handoff .surface.pi-images { padding-inline: var(--sp-16); }
+.pi-handoff .color-group { padding-inline: var(--sp-12); }
+.pi-handoff .slot-wells { grid-template-columns: minmax(0, 1fr); }
+.pi-handoff .slot-well { border: 0; background: none; box-shadow: none; padding: 0; }
+.pi-handoff .slot-well-head { margin-bottom: var(--sp-8); }
+.pi-handoff .slot-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8); }
+.pi-handoff .tile { width: 100%; height: auto; aspect-ratio: 156 / 200; }
+.pi-handoff .slot-well .tile { aspect-ratio: 3 / 4; }
+.pi-handoff .color-pick-head { flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
+.pi-handoff .swatch-grid { --pi-swatch-height: calc(var(--sp-20) * 2); --pi-swatch-row-gap: var(--sp-8);
+  grid-template-columns: repeat(2, minmax(0, 1fr)); justify-items: stretch; align-content: start; gap: var(--pi-swatch-row-gap);
+  height: calc(var(--pi-swatch-height) * 2 + var(--pi-swatch-row-gap) + var(--sp-2) * 2);
+  padding: var(--sp-2); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(to bottom, var(--fg-1) calc(100% - var(--sp-16)), transparent); }
+.pi-handoff .swatch, .pi-handoff .color-name-input-wrap, .pi-handoff .color-name-input { height: var(--pi-swatch-height); min-width: 0; width: 100%; }
+.pi-handoff .swatch { gap: var(--sp-4); padding-inline: var(--sp-8); white-space: nowrap; }
+.pi-handoff .color-name-input { min-width: 100%; max-width: 100%; }
 @media (max-width: 560px) {
-  .pi-handoff .slot-well .slot-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* 하단 버튼 배경(.wizard-cta::before)이 양옆 40px 넘쳐 폰에서 화면이 옆으로 밀린다. clip 은 sticky 를 깨지 않는다. */
   .pi-handoff { overflow-x: clip; }
-  /* 360px 폭의 2열 칸에서 "업로드해주세요"가 한 글자만 다음 줄로 떨어지지 않게 여백을 줄이고 줄바꿈을 막는다. */
-  .pi-handoff .tile.add { padding: var(--sp-6); }
-  .pi-handoff .tile.add .add-cap span { white-space: nowrap; }
-  .pi-handoff .color-pick-head { flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
-  .pi-handoff .swatch-grid { --pi-swatch-height: calc(var(--sp-20) * 2); --pi-swatch-row-gap: var(--sp-8);
-    display: flex; flex-wrap: wrap; align-content: flex-start; gap: var(--pi-swatch-row-gap);
-    height: calc(var(--pi-swatch-height) * 2 + var(--pi-swatch-row-gap) + var(--sp-2) * 2);
-    padding: var(--sp-2); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-    mask-image: linear-gradient(to bottom, var(--fg-1) calc(100% - var(--sp-16)), transparent); }
-  .pi-handoff .swatch, .pi-handoff .color-name-input-wrap, .pi-handoff .color-name-input { height: var(--pi-swatch-height); }
-  .pi-handoff .swatch { white-space: nowrap; }
-  .pi-handoff .color-name-input-wrap { min-width: 0; max-width: 100%; }
-  .pi-handoff .color-name-input { max-width: 100%; }
 }

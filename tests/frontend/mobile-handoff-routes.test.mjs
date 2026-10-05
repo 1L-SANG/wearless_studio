@@ -76,7 +76,7 @@ for (const [path, component] of [
     assert.deepEqual(h.calls.filter((call) => call[0] === 'mount' && call[1] !== 'ChromeLayout'), []);
     const guard = h.page();
     await find(guard, '주소 복사').props.onClick();
-    const primary = find(guard, '사진 담기 화면으로');
+    const primary = find(guard, '사진 업로드 화면으로');
     assert.equal(primary.props.className, 'btn btn-primary btn-block');
     const tag = find(guard, 'CONTINUE ON PC 라고 적힌 옷 태그');
     assert.equal(tag.props.className, 'art');

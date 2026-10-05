@@ -15,6 +15,9 @@ html, body { height: 100%; }
 body {
   font-family: var(--font-body); color: var(--fg-1); background: #fff;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  /* 한국어는 단어(어절) 단위로만 줄을 바꾼다. 기본값은 글자 단위라 폰에서 "이|어서"처럼 끊긴다.
+     공백 없는 긴 주소·파일명은 칸을 넘칠 때만 끊어 레이아웃을 뚫지 않게 한다. */
+  word-break: keep-all; overflow-wrap: break-word;
 }
 #root { min-height: 100%; }
 button { font-family: inherit; }
@@ -99,6 +102,14 @@ input, textarea, select { font-family: inherit; }
 .topnav-handoff .credit-badge,
 .topnav-handoff .plan-badge { display: none; }
 .topnav-handoff .profile-btn { min-width: var(--cta-height); min-height: var(--cta-height); }
+@media (max-width: 720px) {
+  .topnav .nav-stepper { display: none; }
+}
+@media (max-width: 520px) {
+  .topnav { gap: var(--sp-12); padding-inline: var(--sp-16); }
+  .topnav .nav-links, .topnav .credit-badge, .topnav .plan-badge { display: none; }
+  .topnav .nav-right { flex-shrink: 0; }
+}
 
 .handoff-panel { display: flex; flex-direction: column; align-items: center; gap: var(--sp-24);
   padding: var(--sp-28) var(--sp-20); color: var(--fg-1); text-align: center; }
