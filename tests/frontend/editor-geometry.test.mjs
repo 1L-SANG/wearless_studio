@@ -8,6 +8,7 @@ import {
   expandBlockHeights,
   getBlockContentBottom,
   getBlockRenderHeight,
+  isEmptyTextElement,
   pointMissesTextLines,
 } from '../../src/features/editor/editorGeometry.js';
 
@@ -38,6 +39,47 @@ test('editor geometry keeps derived heights and selections inside the canvas', (
 
   assert.deepEqual(clampElementRect(-10, -20, 110, 120), { x: 0, y: 0, w: 100, h: 100 });
   assert.deepEqual(clampElementRect(950, 20, 100, 40), { x: 950, y: 20, w: 50, h: 40 });
+});
+
+test('빈 placeholder 텍스트는 편집 높이만 차지하고 preview/export 높이에서는 빠진다', () => {
+  const image = { id: 'photo', type: 'image', y: 50, h: 560 };
+  const caption = {
+    id: 'caption', type: 'text', y: 642, h: 60, text: '',
+    placeholder: '사진을 설명하는 소제목 (17자 내외)',
+  };
+  const block = { h: 752, elements: [image, caption] };
+
+  assert.equal(isEmptyTextElement(caption), true);
+  assert.equal(isEmptyTextElement({ ...caption, text: '   ' }), true, '공백은 결과 콘텐츠가 아니다');
+  assert.equal(isEmptyTextElement({ ...caption, text: '셀러 소제목' }), false);
+  assert.equal(getBlockRenderHeight(block), 752, '편집 화면은 빈 슬롯 자리를 유지한다');
+  assert.equal(getBlockRenderHeight(block, { forExport: true }), 660, '결과물은 사진 아래 여백까지만 남긴다');
+  assert.equal(
+    getBlockRenderHeight({ ...block, elements: [image, { ...caption, text: '셀러 소제목' }] }, { forExport: true }),
+    752,
+    '실제 카피가 있으면 높이를 유지한다',
+  );
+  assert.equal(
+    getBlockRenderHeight({
+      h: 812,
+      elements: [image, { ...caption, h: 120, text: '가'.repeat(21) }],
+    }, { forExport: true }),
+    812,
+    '두 줄 카피는 미리보기와 내보내기에서도 두 줄 높이를 유지한다',
+  );
+});
+
+test('행 placeholder 여러 개도 결과물 높이를 한 번만 줄인다', () => {
+  const block = {
+    h: 658,
+    elements: [
+      { type: 'image', y: 50, h: 500 },
+      { type: 'image', y: 50, h: 500 },
+      { type: 'text', y: 566, h: 42, text: '', placeholder: '소제목' },
+      { type: 'text', y: 566, h: 42, text: '', placeholder: '소제목' },
+    ],
+  };
+  assert.equal(getBlockRenderHeight(block, { forExport: true }), 600);
 });
 
 test('dragging a photo down stops exactly at the current parent block bottom', () => {

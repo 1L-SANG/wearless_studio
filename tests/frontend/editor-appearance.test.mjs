@@ -99,31 +99,62 @@ test('speech bubbles hide the neutral editor outline outside the actual bubble b
   assert.match(editorStylesSource, /\.el-speech-bubble:not\(\.on\)\s*\{[^}]*outline:\s*none/);
 });
 
-test('photo content blocks discard every text layer while non-photo blocks keep theirs', () => {
-  const photoText = { id: 'copy', type: 'text', text: '사진 위 카피', sourceBlockId: 'shot-1' };
-  const photo = { id: 'photo', type: 'image', src: '/cut.png', sourceBlockId: 'shot-1' };
+test('photo content blocks discard only source-linked legacy AI copy inside the photo', () => {
+  const legacyHeadline = {
+    id: 'legacy-headline', type: 'text', text: '사진 위 카피', sourceBlockId: 'shot-1', copyRole: 'headline',
+    x: 120, y: 110, w: 600, h: 80,
+  };
+  const legacyBody = {
+    id: 'legacy-body', type: 'text', text: '사진 아래쪽 카피', sourceBlockId: 'shot-1', copyRole: 'body',
+    x: 120, y: 560, w: 760, h: 40,
+  };
+  const photo = {
+    id: 'photo', type: 'image', src: '/cut.png', sourceBlockId: 'shot-1', x: 60, y: 50, w: 880, h: 560,
+  };
   const faqText = { id: 'faq', type: 'text', text: 'FAQ' };
+  const preserved = [
+    { id: 'seller', type: 'text', text: '셀러가 쓴 말풍선', x: 120, y: 160, w: 200, h: 40 },
+    { id: 'badge', type: 'text', text: 'SALE', x: 720, y: 90, w: 120, h: 34 },
+    { id: 'hook-title', type: 'text', text: '제품명', sourceBlockId: 'shot-1', copyRole: 'hookTitle', x: 60, y: 275, w: 880, h: 110 },
+    { id: 'caption', type: 'text', text: '사진 밖 캡션', sourceBlockId: 'shot-1', copyRole: 'headline', x: 60, y: 642, w: 880, h: 34 },
+    { id: 'label', type: 'text', text: 'POINT 01', sourceBlockId: 'shot-1', copyRole: 'label', x: 60, y: 44, w: 400, h: 24 },
+  ];
   const input = [
-    { id: 'shot', contentRole: 'hero', elements: [photo, photoText, { id: 'badge', type: 'text', text: 'SALE' }] },
+    { id: 'shot', contentRole: 'hero', elements: [photo, legacyHeadline, legacyBody, ...preserved] },
     { id: 'faq-block', kind: 'faq', elements: [faqText] },
   ];
 
   const output = stripPhotoBlockTextElements(input);
 
-  assert.deepEqual(output[0].elements, [photo]);
+  assert.deepEqual(output[0].elements, [photo, ...preserved]);
   assert.deepEqual(output[1].elements, [faqText]);
   assert.equal(output[1], input[1], 'unrelated blocks keep their object identity');
 });
 
-test('row photo blocks are recognized by source-linked images even without contentRole', () => {
+test('row photo blocks remove linked overlay copy but preserve seller text and row labels', () => {
   const output = stripPhotoBlockTextElements([{
     id: 'row', kind: 'twocol', elements: [
-      { id: 'image', type: 'image', src: '/row.png', sourceBlockId: 'shot-2' },
-      { id: 'copy', type: 'text', text: '행 카피' },
+      { id: 'image', type: 'image', src: '/row.png', sourceBlockId: 'shot-2', x: 60, y: 50, w: 430, h: 500 },
+      { id: 'old-copy', type: 'text', text: '옛 행 카피', sourceBlockId: 'shot-2', copyRole: 'body', x: 80, y: 500, w: 360, h: 34 },
+      { id: 'row-label', type: 'text', text: 'FRONT', sourceBlockId: 'shot-2', copyRole: 'label', x: 60, y: 566, w: 430, h: 26 },
+      { id: 'seller', type: 'text', text: '셀러 배지', x: 100, y: 100, w: 120, h: 30 },
     ],
   }]);
 
-  assert.deepEqual(output[0].elements.map((element) => element.id), ['image']);
+  assert.deepEqual(output[0].elements.map((element) => element.id), ['image', 'row-label', 'seller']);
+});
+
+test('빈 캡션 placeholder는 편집 화면에만 점선 안내로 보이고 preview에서는 렌더하지 않는다', () => {
+  const textBranch = editorSource.slice(
+    editorSource.indexOf("if (el.type === 'text')"),
+    editorSource.indexOf("if (el.type === 'license-verify')"),
+  );
+  assert.match(textBranch, /const emptyText = isEmptyTextElement\(el\)/);
+  assert.match(textBranch, /if \(preview && emptyText\) return null/);
+  assert.match(textBranch, /emptyText \? el\.placeholder : display/);
+  assert.match(textBranch, /el-placeholder/);
+  assert.match(textBranch, /el-empty-text/, '말풍선을 포함한 모든 빈 텍스트에 export 제거 표식이 필요하다');
+  assert.match(editorStylesSource, /\.el-placeholder:not\(\.editing\)\s*\{[^}]*color:\s*var\(--fg-3\)[^}]*font-style:\s*italic[^}]*outline:\s*1px dashed var\(--fg-3\)/s);
 });
 
 test('ordinary text resizes horizontally only — height is content-derived (auto render)', () => {
@@ -392,16 +423,16 @@ test('프레임 슬롯 채움(frameSlot+sourceBlockId)은 templateId 없어도 �
   assert.ok(out[0].elements.some((el) => el.type === 'text'), 'frameSlot 채움은 생성 카피 블록이 아니다');
 });
 
-test('진짜 생성 컷 블록(frameSlot 아님 + sourceBlockId)의 카피는 여전히 걷는다', () => {
+test('생성 컷 블록이어도 copyRole 없는 셀러 텍스트는 보존한다', () => {
   const cutBlock = {
     id: 'b', kind: 'styling', contentRole: 'hero',
     elements: [
-      { id: 'img', type: 'image', src: 'cut.jpg', sourceBlockId: 'sb-1' }, // frameSlot 없음 = native 컷
-      { id: 'copy', type: 'text', text: 'AI 카피' },
+      { id: 'img', type: 'image', src: 'cut.jpg', sourceBlockId: 'sb-1', x: 60, y: 50, w: 880, h: 560 },
+      { id: 'copy', type: 'text', text: '셀러가 직접 쓴 글자', x: 120, y: 110, w: 300, h: 40 },
     ],
   };
   const out = stripPhotoBlockTextElements([cutBlock]);
-  assert.ok(!out[0].elements.some((el) => el.type === 'text'), 'native 생성 블록 카피는 걷힌다');
+  assert.ok(out[0].elements.some((el) => el.type === 'text'), 'sourceBlockId 없는 셀러 글자는 보존한다');
 });
 
 test('선 색: 템플릿 선(stroke)도 패널에서 바꾼 색이 그대로 보인다', async () => {

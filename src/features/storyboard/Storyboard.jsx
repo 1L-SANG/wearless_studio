@@ -4271,7 +4271,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={onCopywritingChange} label="카피라이팅" />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
-              <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
+              <div className="hint" style={{ marginTop: 1 }}>AI가 사진마다 소제목을 써 넣어요</div></div>
           </div>
           <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={goToMannequin}
             disabled={blocks.length === 0 || Boolean(unsupportedAiBlock) || blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))}

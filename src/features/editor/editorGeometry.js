@@ -8,12 +8,29 @@ export function getBlockContentBottom(block) {
   );
 }
 
-export function getBlockRenderHeight(block) {
+export function isEmptyTextElement(element) {
+  return element?.type === 'text' && String(element.text ?? '').trim() === '';
+}
+
+function exportContentBottom(block) {
+  return block.elements.reduce(
+    (bottom, element) => element.system || isEmptyTextElement(element)
+      ? bottom
+      : Math.max(bottom, (element.y || 0) + (element.h || 40)),
+    0,
+  );
+}
+
+export function getBlockRenderHeight(block, { forExport = false } = {}) {
   const contentBottom = getBlockContentBottom(block);
   const blockHeight = block.h || 220;
   // 이미 부모 안에 들어온 요소에는 여백을 다시 더하지 않는다. 요소가 실제로 넘친
   // 경우에만 한 번 50px 안전 여백과 함께 확장해야, 하단에 딱 맞춘 뒤 높이가 반복 증가하지 않는다.
-  return contentBottom > blockHeight ? contentBottom + 50 : blockHeight;
+  const editorHeight = contentBottom > blockHeight ? contentBottom + 50 : blockHeight;
+  if (!forExport) return editorHeight;
+  // 편집 높이에서 빈 텍스트가 만든 맨 아래 구간만 뺀다. 이렇게 해야 생성 캡션 자리는
+  // 결과물에서 사라지면서도 셀러가 수동으로 늘린 블록 여백은 그대로 보존된다.
+  return editorHeight - Math.max(0, contentBottom - exportContentBottom(block));
 }
 
 export function expandBlockHeights(blocks) {

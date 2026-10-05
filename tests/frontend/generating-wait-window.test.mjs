@@ -15,7 +15,13 @@ import {
   bindEditorExitBackup,
   createLatestEditorSaveGuard,
 } from '../../src/lib/editorSaveLifecycle.js';
-import { canSafelyMergeServerBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import {
+  alignSkeletonToServer,
+  canSafelyMergeServerBlocks,
+  decorateGenBlocks,
+  fillGenBlocks,
+  mergeServerBlocks,
+} from '../../src/lib/editorWaitSkeleton.js';
 
 const httpAdapter = readFileSync(
   new URL('../../src/lib/api/httpAdapter.js', import.meta.url),
@@ -101,6 +107,66 @@ test('재수신한 생성 이벤트는 자동 이미지 URL만 갱신하고 사�
     id: 'i1', type: 'image', sourceBlockId: 'sb1', src: 'seller-image', genAutoSrc: 'old-preview',
   }] }];
   assert.equal(fillGenBlocks(replaced, job)[0].elements[0].src, 'seller-image');
+});
+
+test('대기 캡션은 서버 사진 높이에 맞고 셀러 편집이 완료 병합에서도 이긴다', () => {
+  const base = [{ id: 'b1', contentRole: 'fit', elements: [
+    { id: 'i1', type: 'image', sourceBlockId: 'sb1', src: '/mock.jpg', x: 60, y: 50, w: 880, h: 560 },
+    { id: 't1', type: 'text', sourceBlockId: 'sb1', copyRole: 'headline', text: '',
+      placeholder: '사진을 설명하는 소제목 (17자 내외)', x: 60, y: 642, w: 880, h: 60,
+      style: { size: 44, weight: 600, color: '#0e0d14', lineHeight: 60 } },
+  ] }];
+  const [aligned] = alignSkeletonToServer(base, true);
+  const image = aligned.elements.find((element) => element.type === 'image');
+  const caption = aligned.elements.find((element) => element.copyRole === 'headline');
+  assert.equal(image.h, 1320);
+  assert.equal(caption.y, image.y + image.h + 32);
+  assert.equal(caption.h, 60);
+  assert.equal(aligned.h, caption.y + caption.h + 50);
+
+  const initialJob = { cuts: {}, copy: {}, live: [], failedCuts: [] };
+  const decorated = decorateGenBlocks([aligned], initialJob, {});
+  const sellerEdited = [{ ...decorated[0], elements: decorated[0].elements.map((element) => (
+    element.copyRole === 'headline' ? { ...element, text: '셀러가 고친 소제목' } : element
+  )) }];
+  const copyJob = { ...initialJob, copy: { sb1: [{ role: 'headline', text: 'AI 소제목' }] } };
+  assert.equal(
+    fillGenBlocks(sellerEdited, copyJob)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '셀러가 고친 소제목',
+  );
+  assert.equal(
+    fillGenBlocks(decorated, copyJob)[0].elements.find((element) => element.copyRole === 'headline').text,
+    'AI 소제목',
+  );
+
+  const longCopyJob = { ...initialJob, copy: { sb1: [{ role: 'headline', text: '가'.repeat(21) }] } };
+  const longFilled = fillGenBlocks(decorated, longCopyJob)[0];
+  const longCaption = longFilled.elements.find((element) => element.copyRole === 'headline');
+  assert.equal(longCaption.h, 120, '21자 카피는 두 줄 높이를 즉시 확보한다');
+  assert.equal(longFilled.h, longCaption.y + longCaption.h + 50);
+
+  const server = [{ id: 'server', elements: [
+    { id: 'si', type: 'image', sourceBlockId: 'sb1', src: '/stable.jpg' },
+    { id: 'st', type: 'text', sourceBlockId: 'sb1', copyRole: 'headline', text: '가'.repeat(21), h: 120,
+      style: { size: 44, weight: 600, color: '#0e0d14', lineHeight: 60 } },
+  ] }];
+  assert.equal(
+    mergeServerBlocks(sellerEdited, server)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '셀러가 고친 소제목',
+  );
+  assert.equal(
+    mergeServerBlocks(decorated, server)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '가'.repeat(21),
+  );
+  assert.equal(
+    mergeServerBlocks(decorated, server)[0].elements.find((element) => element.copyRole === 'headline').h,
+    120,
+  );
+  assert.equal(
+    mergeServerBlocks([{ ...decorated[0], h: 2000 }], server)[0].h,
+    2000,
+    '카피 높이를 맞춰도 셀러가 늘린 블록 높이는 줄이지 않는다',
+  );
 });
 
 test('로컬 스켈레톤에 없는 서버 컷이 있으면 서버 완성본 전체를 보존한다', () => {

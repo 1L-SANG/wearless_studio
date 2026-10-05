@@ -3,26 +3,88 @@
    콘티 → 스켈레톤 블록(서버 조립 규칙 정렬) → 생성 이벤트 채움 → 완료 병합.
    전부 순수 함수 — Editor/Generating 어디서든 재사용, node 테스트 가능.
    ============================================================= */
-import { TEXT_MUTED } from '../features/editor/presets/textPresets.js';
+import {
+  CAPTION_GAP,
+  CAPTION_STYLE,
+  captionHeight,
+  hookTitleLayout,
+  hookTitleStyle,
+} from './editorTextSlots.js';
+
+const autoBlockHeight = (elements) => Math.max(
+  0,
+  ...(elements || []).map((element) => (element.y || 0) + (element.h || 0)),
+) + 50;
+
+const copyTextPatch = (element, text) => element.copyRole === 'headline'
+  ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
+  : { text };
+
+const copyGeometry = ({ x, y, w, h }) => ({ x, y, w, h });
+const markAutoCopy = (element) => ({ ...element, genAutoText: element.text,
+  genAutoStyle: { ...(element.style || {}) }, genAutoGeometry: copyGeometry(element) });
+
+function mergeAutoCopy(element, incoming) {
+  const style = { ...(element.style || {}) };
+  const baseline = element.genAutoStyle;
+  if (baseline) {
+    for (const [key, value] of Object.entries(incoming.style || {})) {
+      if (Object.is(style[key], baseline[key])) style[key] = value;
+    }
+  }
+  const geometry = element.genAutoGeometry;
+  const untouchedBox = geometry && Object.entries(geometry).every(([key, value]) => Object.is(element[key], value));
+  const unchangedTextSize = baseline && ['size', 'lineHeight', 'font', 'weight', 'tracking']
+    .every(key => Object.is(element.style?.[key], baseline[key]));
+  return { ...element, text: incoming.text, style,
+    ...(incoming.h != null && untouchedBox && unchangedTextSize ? { h: incoming.h } : {}),
+    genAutoText: incoming.text,
+    genAutoStyle: { ...(baseline || {}), ...(incoming.style || {}) },
+    genAutoGeometry: geometry ? { ...geometry, ...(incoming.h != null ? { h: incoming.h } : {}) } : undefined,
+  };
+}
 
 /* mock 조립기는 구조(블록·행 분할·자동 블록)의 정본이지만, 단일 AI 컷의 지오메트리가
-   서버 조립기와 다르다 — 서버는 이미지 비율(미상 시 2:3 폴백=880×1320)로 높이를 잡고
-   hero 외 모든 역할에 body 카피 요소를 만든다(page_assembler.py, codex 리뷰 F4).
-   구조는 그대로 쓰고 단일 AI 블록만 서버 규칙으로 보정한다. */
+   서버 조립기와 다르다 — 서버는 이미지 비율(미상 시 2:3 폴백=880×1320)로 높이를 잡는다.
+   구조는 그대로 쓰고 단일 AI 블록의 사진과 사진 아래 headline 캡션만 함께 내린다. */
 export function alignSkeletonToServer(blocks, copywriting) {
-  const IMG_Y = 50, IMG_H = 1320, MARGIN = 50;   // 서버 _image_box 2:3 폴백 + _IMG_MARGIN_B
+  const IMG_H = 1320, MARGIN = 50;
+  const PLACEHOLDER = '사진을 설명하는 소제목 (17자 내외)';
   return (blocks || []).map((b) => {
     const els = b.elements || [];
     const imgs = els.filter((e) => e.type === 'image');
     const img = imgs.length === 1 && imgs[0].sourceBlockId ? imgs[0] : null;
     if (!img) return b;                            // 행 배치·내 이미지·자동 블록 = 서버와 동일
-    const out = els.map((e) => (
-      e === img ? { ...e, h: IMG_H }
-        : e.type === 'text' && e.copyRole === 'body' ? { ...e, y: IMG_Y + IMG_H - MARGIN } : e));
-    const isHero = b.contentRole === 'hero';
-    if (copywriting && !isHero && !out.some((e) => e.type === 'text' && e.copyRole === 'body')) {
-      out.push({ id: `${b.id}-ewbody`, type: 'text', x: 120, y: IMG_Y + IMG_H - MARGIN, w: 760, h: 40,
-        text: '', style: { size: 17, color: TEXT_MUTED, lineHeight: 26 }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
+    let out = els.map((e) => {
+      if (e === img) return { ...e, h: IMG_H };
+      if (e.type === 'text' && e.copyRole === 'headline') {
+        return {
+          ...e,
+          y: (img.y || 0) + IMG_H + CAPTION_GAP,
+          h: captionHeight(e.text),
+          style: { ...(e.style || {}), ...CAPTION_STYLE },
+        };
+      }
+      if (e.type === 'text' && e.copyRole === 'hookTitle') {
+        const title = hookTitleLayout(e.text);
+        return {
+          ...e,
+          text: title.text,
+          y: (img.y || 0) + (IMG_H - title.h) / 2,
+          h: title.h,
+          style: hookTitleStyle(e.style?.color || '#ffffff'),
+        };
+      }
+      return e;
+    });
+    const signature = out.some((e) => e.type === 'text' && e.copyRole === 'hookTitle');
+    if (!signature && !out.some((e) => e.type === 'text' && e.copyRole === 'headline')) {
+      out = [...out, {
+        id: `${b.id}-ewheadline`, type: 'text', x: 60, y: (img.y || 0) + IMG_H + CAPTION_GAP,
+        w: 880, h: captionHeight(''), text: '', placeholder: PLACEHOLDER, textSlotVersion: 1,
+        style: CAPTION_STYLE,
+        sourceBlockId: img.sourceBlockId, copyRole: 'headline',
+      }];
     }
     const bottom = Math.max(...out.map((e) => (e.y || 0) + (e.h || 0)));
     return { ...b, elements: out, h: bottom + MARGIN };
@@ -40,9 +102,9 @@ const cutStateOf = (job, sbId) => (
 /* 생성 모드 진입 장식 — 빈 이미지 슬롯에 상태 플래그+잠금+호버용 예시 썸네일, 카피 슬롯에
    자동 텍스트 마커(genAutoText: 이 값과 같으면 "셀러가 아직 안 고침" = 서버본으로 교체 가능). */
 export function decorateGenBlocks(blocks, job, exThumbById) {
-  return (blocks || []).map((b) => ({
-    ...b,
-    elements: (b.elements || []).map((el) => {
+  return (blocks || []).map((b) => {
+    let copyChanged = false;
+    const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) return { ...el, src: cut.url, genAutoSrc: cut.url };
@@ -54,19 +116,28 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
-        return t ? { ...el, text: t, genAutoText: t } : { ...el, genAutoText: el.text };
+        if (t) {
+          copyChanged = true;
+          return markAutoCopy({ ...el, ...copyTextPatch(el, t) });
+        }
+        return markAutoCopy(el);
       }
       return el;
-    }),
-  }));
+    });
+    return {
+      ...b,
+      elements,
+      ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
+    };
+  });
 }
 
 /* 이벤트 도착분 반영 — 셀러가 이미 손댄 것(src 채워진 슬롯·genAutoText 와 달라진 텍스트)은
    건드리지 않는다(셀러 편집 승리). */
 export function fillGenBlocks(blocks, job) {
-  return (blocks || []).map((b) => ({
-    ...b,
-    elements: (b.elements || []).map((el) => {
+  return (blocks || []).map((b) => {
+    let copyChanged = false;
+    const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId && !el.slotCleared
           && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
@@ -83,12 +154,20 @@ export function fillGenBlocks(blocks, job) {
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
-        if (t && t !== el.text && el.text === el.genAutoText) return { ...el, text: t, genAutoText: t };
+        if (t && t !== el.text && el.text === el.genAutoText) {
+          copyChanged = true;
+          return mergeAutoCopy(el, copyTextPatch(el, t));
+        }
         return el;
       }
       return el;
-    }),
-  }));
+    });
+    return {
+      ...b,
+      elements,
+      ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
+    };
+  });
 }
 
 /* 전체 잡 실패 시 진행 중 노출했던 임시 컷은 결과가 아니다. 브라우저 임시 작업본·undo
@@ -163,13 +242,17 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
     for (const el of (b.elements || [])) {
       if (el.type === 'image' && el.sourceBlockId && el.src) srcById[el.sourceBlockId] = el.src;
       if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
-        (copyById[el.sourceBlockId] ||= {})[el.copyRole] = el.text;
+        (copyById[el.sourceBlockId] ||= {})[el.copyRole] = {
+          text: el.text,
+          h: el.h,
+          style: el.style,
+        };
       }
     }
   }
-  const out = (blocks || []).map((b) => ({
-    ...b,
-    elements: (b.elements || []).map((el) => {
+  const out = (blocks || []).map((b) => {
+    let copyChanged = false;
+    const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
         // 대기 중 자동으로 채운 미리보기(1h 서명 주소)는 임시다. 완료 병합(failedSourceIds 를
@@ -188,13 +271,28 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
         return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
-        const { genAutoText, ...rest } = el;
-        const t = copyById[el.sourceBlockId]?.[el.copyRole];
-        return t && el.text === genAutoText ? { ...rest, text: t } : rest;
+        const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
+        const serverCopy = copyById[el.sourceBlockId]?.[el.copyRole];
+        if (serverCopy && el.text === genAutoText) {
+          copyChanged = true;
+          const merged = mergeAutoCopy(el, {
+            ...copyTextPatch(rest, serverCopy.text),
+            ...(serverCopy.h != null ? { h: serverCopy.h } : {}),
+            ...(serverCopy.style ? { style: serverCopy.style } : {}),
+          });
+          const { genAutoText: _text, genAutoStyle: _style, genAutoGeometry: _geometry, ...result } = merged;
+          return result;
+        }
+        return rest;
       }
       return el;
-    }),
-  }));
+    });
+    return {
+      ...b,
+      elements,
+      ...(copyChanged ? { h: Math.max(Number(b.h) || 0, autoBlockHeight(elements)) } : {}),
+    };
+  });
   if (serverNotice) {
     const i = out.findIndex(noticeBlock);
     if (i >= 0) out[i] = serverNotice; else out.push(serverNotice);

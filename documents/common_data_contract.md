@@ -287,6 +287,7 @@ Element (type='image') + {
 }
 Element (type='text') + {
   text: string                     // 자유 텍스트
+  placeholder?: string             // text가 비었을 때 편집 화면에만 보이는 안내 문구. 정본·미리보기·내보내기에는 포함하지 않음
   style: TextStyle                 // h는 렌더 시 auto
 }
 Element (type='shape') + {
@@ -308,6 +309,7 @@ TextStyle {
   size: number  weight: number  color: string
   opacity?: number  tracking?: number  lineHeight?: number
   align?: 'left' | 'center' | 'right'
+  maxLines?: number                 // 비편집 렌더 최대 줄 수. 시그니처 제품명은 2
   italic?: boolean  underline?: boolean  strike?: boolean
   list?: 'none' | 'bullet' | 'ordered'
   bg?: string | 'none'             // 하이라이트

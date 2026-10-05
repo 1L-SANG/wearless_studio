@@ -32,14 +32,23 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
     assert block["kind"] == "styling"
     assert block["contentRole"] == "coordination"
     assert block["name"] == "코디 활용"
-    # dims 미제공 → 기본 세로비(2:3) 폴백. 블록은 이미지+여백을 담는다.
-    assert block["h"] == 1420
+    # dims 미제공 → 기본 세로비(2:3) 폴백. 빈 캡션도 편집 자리를 차지한다.
+    assert block["h"] == 1512
     img = block["elements"][0]
     assert img["type"] == "image"
     assert img["src"] == "https://cdn.example.com/blk3.png"
     assert img["cutType"] == "styling"
     assert img["radius"] == 12
     assert img["x"] == 60 and img["y"] == 50 and img["w"] == 880 and img["h"] == 1320
+    caption = block["elements"][1]
+    assert (caption["x"], caption["y"], caption["w"], caption["h"]) == (60, 1402, 880, 60)
+    assert caption["style"] == {
+        "size": 44, "weight": 600, "color": "#0e0d14", "lineHeight": 60,
+    }
+    assert caption["text"] == ""
+    assert caption["placeholder"] == "사진을 설명하는 소제목 (17자 내외)"
+    assert caption["copyRole"] == "headline"
+    assert caption["textSlotVersion"] == 1  # 위치를 바꿔도 옛 사진 위 카피로 삭제하지 않는다.
 
 
 # ── 이미지 비율 보존 (WS2: 에디터·산출물 크롭 회귀 방지) ──────────────────────
@@ -100,16 +109,40 @@ def test_short_image_still_contains_headline():
         assert el["y"] + el["h"] <= block["h"], f"{el['type']} 이 블록 밖으로 넘침"
 
 
-def test_body_copy_sits_near_image_bottom_inside_block():
-    # 이미지가 커지면 body 카피도 따라 내려가야 한다(하드코딩 y=560 이면 이미지 한가운데 박힘).
+def test_headline_copy_sits_below_dynamic_image_and_body_is_ignored():
     storyboard = [_storyboard()[2]]
     cut_results = [{"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264}]
-    copy_results = [{"blockId": "blk3", "texts": [{"role": "body", "text": "부드러운 촉감"}]}]
+    copy_results = [{"blockId": "blk3", "texts": [
+        {"role": "body", "text": "이 본문은 쓰지 않는다"},
+        {"role": "headline", "text": "부드러운 촉감"},
+    ]}]
     block = assemble(storyboard, cut_results, copy_results, PRODUCT, True)[0]
     img = block["elements"][0]
-    body = next(el for el in block["elements"] if el["type"] == "text")
-    assert img["y"] + img["h"] - 100 <= body["y"] <= img["y"] + img["h"]  # 이미지 하단 근처
-    assert body["y"] + body["h"] <= block["h"]                            # 블록 안
+    caption = next(el for el in block["elements"] if el.get("copyRole") == "headline")
+    assert caption["text"] == "부드러운 촉감"
+    assert caption["y"] == img["y"] + img["h"] + 32
+    assert caption["style"] == {
+        "size": 44, "weight": 600, "color": "#0e0d14", "lineHeight": 60,
+    }
+    assert caption["y"] + caption["h"] <= block["h"]
+    assert all(el.get("copyRole") != "body" for el in block["elements"])
+
+
+def test_caption_height_keeps_twenty_korean_characters_on_one_line_and_wraps_twenty_one():
+    storyboard = [_storyboard()[2]]
+    cut_results = [{"blockId": "blk3", "imageUrl": "u"}]
+
+    one_line = assemble(storyboard, cut_results, [{
+        "blockId": "blk3", "texts": [{"role": "headline", "text": "가" * 20}],
+    }], PRODUCT, True)[0]
+    two_lines = assemble(storyboard, cut_results, [{
+        "blockId": "blk3", "texts": [{"role": "headline", "text": "가" * 21}],
+    }], PRODUCT, True)[0]
+
+    one_caption = next(el for el in one_line["elements"] if el.get("copyRole") == "headline")
+    two_caption = next(el for el in two_lines["elements"] if el.get("copyRole") == "headline")
+    assert one_caption["h"] == 60 and one_line["h"] == 1512
+    assert two_caption["h"] == 120 and two_lines["h"] == 1572
 
 
 # ── source='mine' 블록 ───────────────────────────────────────────────────────
@@ -301,28 +334,33 @@ def test_ai_notice_without_license_has_no_badge_qr_or_license_meta():
 
 
 # ── copywriting on/off ───────────────────────────────────────────────────────
-def test_copywriting_on_places_headline_and_selling_text():
+def test_copywriting_on_uses_headline_for_every_single_photo_caption():
     storyboard = _storyboard()
     cut_results = [{"blockId": b["id"], "imageUrl": f"https://cdn.example.com/{b['id']}.png"} for b in storyboard]
     copy_results = [
         {"blockId": "blk1", "texts": [{"role": "headline", "text": "겨울을 부드럽게"}]},
-        {"blockId": "blk2", "texts": [{"role": "body", "text": "강조 포인트를 살린 카피"}]},
+        {"blockId": "blk2", "texts": [
+            {"role": "body", "text": "무시할 본문"},
+            {"role": "headline", "text": "강조 포인트를 살린 카피"},
+        ]},
     ]
     blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, True)
 
     hero_block, benefit_block, coordination_block = blocks[0], blocks[1], blocks[2]
-    assert len(hero_block["elements"]) == 2
-    assert hero_block["elements"][1]["type"] == "text"
-    assert hero_block["elements"][1]["text"] == "겨울을 부드럽게"
+    hero_caption = next(el for el in hero_block["elements"] if el.get("copyRole") == "headline")
+    assert hero_caption["text"] == "겨울을 부드럽게"
 
-    assert len(benefit_block["elements"]) == 2
-    assert benefit_block["elements"][1]["text"] == "강조 포인트를 살린 카피"
+    benefit_caption = next(el for el in benefit_block["elements"] if el.get("copyRole") == "headline")
+    assert benefit_caption["text"] == "강조 포인트를 살린 카피"
+    assert all(el.get("copyRole") != "body" for el in benefit_block["elements"])
 
-    # 카피 결과가 없으면 coordination 블록은 이미지만 남는다.
-    assert len(coordination_block["elements"]) == 1
+    # 카피 결과가 없어도 셀러가 고칠 수 있는 빈 캡션 슬롯은 남는다.
+    coordination_caption = next(el for el in coordination_block["elements"] if el.get("copyRole") == "headline")
+    assert coordination_caption["text"] == ""
+    assert coordination_caption["placeholder"] == "사진을 설명하는 소제목 (17자 내외)"
 
 
-def test_copywriting_places_body_for_non_hero_content_roles():
+def test_copywriting_ignores_body_for_non_hero_content_roles():
     storyboard = [{
         "id": "fit-1", "sectionRole": "studio", "contentRole": "fit",
         "source": "ai", "cutType": "horizon",
@@ -331,10 +369,12 @@ def test_copywriting_places_body_for_non_hero_content_roles():
     block = assemble(storyboard, [], copy_results, PRODUCT, True)[0]
     assert block["kind"] == "studio"
     assert block["contentRole"] == "fit"
-    assert block["elements"][1]["text"] == "실루엣을 확인해보세요"
+    caption = next(el for el in block["elements"] if el.get("copyRole") == "headline")
+    assert caption["text"] == ""
+    assert caption["placeholder"] == "사진을 설명하는 소제목 (17자 내외)"
 
 
-def test_copywriting_off_has_no_text_elements():
+def test_copywriting_off_keeps_empty_caption_and_deterministic_labels():
     storyboard = _storyboard()
     cut_results = [{"blockId": b["id"], "imageUrl": f"https://cdn.example.com/{b['id']}.png"} for b in storyboard]
     copy_results = [
@@ -343,14 +383,133 @@ def test_copywriting_off_has_no_text_elements():
     ]
     blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, False)
 
-    for block in blocks[:3]:
-        assert all(e["type"] != "text" for e in block["elements"])
+    assert [
+        next(e for e in block["elements"] if e.get("copyRole") == "headline")["text"]
+        for block in blocks[:3]
+    ] == ["", "", ""]
+    assert not any(e.get("copyRole") == "label" for e in blocks[0]["elements"])
+    assert next(e for e in blocks[1]["elements"] if e.get("copyRole") == "label")["text"] == "POINT 01"
+    assert next(e for e in blocks[2]["elements"] if e.get("copyRole") == "label")["text"] == "STYLING"
 
 
-def test_copywriting_on_but_no_matching_copy_result_omits_text():
+def test_copywriting_on_but_no_matching_copy_result_keeps_placeholder_slot():
     storyboard = [_storyboard()[0]]  # hero block, no copy_results entry
     blocks = assemble(storyboard, [], [], PRODUCT, True)
-    assert len(blocks[0]["elements"]) == 1  # image only, no headline injected
+    caption = next(e for e in blocks[0]["elements"] if e.get("copyRole") == "headline")
+    assert caption["text"] == ""
+    assert caption["placeholder"] == "사진을 설명하는 소제목 (17자 내외)"
+
+
+def test_single_photo_labels_follow_content_role_and_point_sequence():
+    storyboard = [
+        {"id": "hero", "sectionRole": "hooking", "contentRole": "hero", "source": "ai", "cutType": "styling"},
+        {"id": "point-a", "sectionRole": "hooking", "contentRole": "benefit", "source": "ai", "cutType": "styling"},
+        {"id": "point-b", "sectionRole": "hooking", "contentRole": "benefit", "source": "ai", "cutType": "horizon"},
+        {"id": "fit", "sectionRole": "studio", "contentRole": "fit", "source": "ai", "cutType": "horizon"},
+        {"id": "front", "sectionRole": "product", "contentRole": "productOverview", "source": "ai", "cutType": "product", "direction": "front"},
+        {"id": "back", "sectionRole": "product", "contentRole": "productOverview", "source": "ai", "cutType": "product", "direction": "back"},
+        {"id": "detail", "sectionRole": "product", "contentRole": "detail", "source": "ai", "cutType": "product"},
+        {"id": "coord", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling"},
+        {"id": "wear", "sectionRole": "styling", "contentRole": "realWear", "source": "ai", "cutType": "mirror"},
+    ]
+    blocks = assemble(storyboard, [], [], PRODUCT, False)[:len(storyboard)]
+
+    labels = [
+        next((e for e in block["elements"] if e.get("copyRole") == "label"), None)
+        for block in blocks
+    ]
+    assert labels[0] is None, "첫 장에는 꼬리표가 없다"
+    assert [label["text"] for label in labels[1:]] == [
+        "POINT 01", "POINT 02", "FIT", "FRONT", "BACK", "DETAIL", "STYLING", "STYLING",
+    ]
+    assert all((label["x"], label["y"], label["w"], label["h"]) == (60, 44, 400, 38)
+               for label in labels[1:])
+    assert all(label["style"] == {
+        "size": 28, "weight": 700, "tracking": 3, "color": "#9a9aa2", "lineHeight": 38,
+    } for label in labels[1:])
+    first_image = next(e for e in blocks[0]["elements"] if e["type"] == "image")
+    assert first_image["y"] == 50
+    for block in blocks[1:]:
+        image = next(e for e in block["elements"] if e["type"] == "image")
+        caption = next(e for e in block["elements"] if e.get("copyRole") == "headline")
+        assert image["y"] == 114
+        assert caption["y"] == image["y"] + image["h"] + 32
+
+
+def test_signature_first_cut_keeps_only_contrast_aware_hook_title():
+    storyboard = [{
+        "id": "signature", "sectionRole": "hooking", "contentRole": "hero",
+        "source": "ai", "cutType": "horizon", "hookTitleOverlay": True,
+    }]
+    cut_results = [{
+        "blockId": "signature", "imageUrl": "signature.png", "width": 1000, "height": 1000,
+        "hookTitleColor": "#111111",
+    }]
+    copy_results = [{"blockId": "signature", "texts": [{"role": "headline", "text": "쓰지 않는 캡션"}]}]
+    block = assemble(storyboard, cut_results, copy_results, PRODUCT, True)[0]
+
+    texts = [element for element in block["elements"] if element["type"] == "text"]
+    assert len(texts) == 1
+    assert texts[0]["copyRole"] == "hookTitle"
+    assert texts[0]["text"] == PRODUCT["name"]
+    assert (texts[0]["y"], texts[0]["h"]) == (454, 72)
+    assert texts[0]["style"] == {
+        "font": "Pretendard", "size": 60, "weight": 700,
+        "color": "#111111", "align": "center", "lineHeight": 72, "maxLines": 2,
+    }
+    assert texts[0]["style"]["color"] == "#111111"
+    assert all(element.get("copyRole") not in {"headline", "label"} for element in texts)
+
+
+def test_signature_long_product_name_wraps_at_words_into_two_centered_lines():
+    product = {**PRODUCT, "name": "프리미엄 울 블렌드 오버핏 케이블 라운드 니트"}
+    storyboard = [{
+        "id": "signature", "sectionRole": "hooking", "contentRole": "hero",
+        "source": "ai", "cutType": "horizon", "hookTitleOverlay": True,
+    }]
+    cut_results = [{
+        "blockId": "signature", "imageUrl": "signature.png", "width": 1000, "height": 1000,
+        "hookTitleColor": "#ffffff",
+    }]
+
+    block = assemble(storyboard, cut_results, [], product, True)[0]
+    title = next(element for element in block["elements"] if element.get("copyRole") == "hookTitle")
+    assert title["text"] == "프리미엄 울 블렌드\n오버핏 케이블 라운드 니트"
+    assert title["text"].count("\n") == 1
+    assert (title["y"], title["h"]) == (418, 144)
+    assert title["style"]["size"] == 60
+    assert title["style"]["lineHeight"] == 72
+
+
+def test_two_and_three_column_rows_place_labels_below_each_photo():
+    product_row = [
+        {"id": direction, "sectionRole": "product", "contentRole": "productOverview",
+         "source": "ai", "cutType": "product", "direction": direction,
+         "sectionId": "product-row", "sectionLayout": "twoColumn", "layoutRowId": "row-product"}
+        for direction in ("front", "back")
+    ]
+    product_block = assemble(product_row, [], [], PRODUCT, False)[0]
+    labels = [element for element in product_block["elements"] if element.get("copyRole") == "label"]
+    assert [label["text"] for label in labels] == ["FRONT", "BACK"]
+    assert [(label["x"], label["y"], label["w"], label["h"]) for label in labels] == [
+        (60, 566, 430, 42), (510, 566, 430, 42),
+    ]
+    assert product_block["h"] == 658
+
+    fit_row = [
+        {"id": f"fit-{index}", "sectionRole": "studio", "contentRole": "fit",
+         "source": "ai", "cutType": "horizon", "direction": "front",
+         "sectionId": "fit-row", "sectionLayout": "threeColumn", "layoutRowId": "row-fit"}
+        for index in range(3)
+    ]
+    fit_block = assemble(fit_row, [], [], PRODUCT, False)[0]
+    fit_labels = [element for element in fit_block["elements"] if element.get("copyRole") == "label"]
+    assert [label["text"] for label in fit_labels] == ["", "", ""]
+    assert all(label["placeholder"] == "짧은 라벨 (선택)" for label in fit_labels)
+    assert all(label["style"] == {
+        "size": 30, "weight": 600, "color": "#0e0d14", "align": "center", "lineHeight": 42,
+    } for label in fit_labels)
+    assert all(label["h"] == 42 for label in fit_labels)
 
 
 # ── 영속 행 조립 + 오프닝 카피 ───────────────────────────────────────────────
@@ -393,11 +552,15 @@ def test_four_cut_grid_merges_into_one_block_with_adjacent_images():
     ]
     assert all(image["radius"] == 0 for image in images)
 
-    headline, subtitle = [element for element in grid["elements"] if element["type"] == "text"]
-    # 격자 두 줄(560×2) 아래 32 여백 — 2단 행의 582/650 과 같은 규칙
-    assert headline["y"] == 1202 and subtitle["y"] == 1270, "카피는 사진 아래"
+    captions = [element for element in grid["elements"] if element.get("copyRole") == "headline"]
+    assert len(captions) == 1
+    headline = captions[0]
+    assert (headline["x"], headline["y"], headline["w"], headline["h"]) == (60, 1202, 880, 60)
     assert headline["text"] == "겨울을 부드럽게"
-    assert subtitle["text"] == "골지 짜임의 포인트"
+    assert headline["style"] == {
+        "size": 44, "weight": 600, "color": "#0e0d14", "lineHeight": 60,
+    }
+    assert grid["h"] == 1312
 
 
 def test_two_column_opening_row_merges_and_keeps_copy_below_images():
@@ -435,16 +598,16 @@ def test_two_column_opening_row_merges_and_keeps_copy_below_images():
     ]
     assert [image["cutType"] for image in images] == ["styling", "horizon"]
 
-    headline, subtitle = [
-        element for element in opening["elements"] if element["type"] == "text"
-    ]
-    assert (headline["x"], headline["y"], headline["w"], headline["h"]) == (60, 582, 880, 56)
+    captions = [element for element in opening["elements"] if element.get("copyRole") == "headline"]
+    assert len(captions) == 1
+    headline = captions[0]
+    assert (headline["x"], headline["y"], headline["w"], headline["h"]) == (60, 582, 880, 60)
     assert headline["text"] == "겨울을 부드럽게"
-    assert headline["style"]["size"] == 40 and headline["style"]["weight"] == 600
-    assert (subtitle["x"], subtitle["y"], subtitle["w"], subtitle["h"]) == (60, 650, 880, 34)
-    assert subtitle["text"] == "골지 짜임의 포인트"
-    assert subtitle["style"] == {"size": 17, "color": "#6b6b73", "lineHeight": 26}
+    assert headline["style"] == {
+        "size": 44, "weight": 600, "color": "#0e0d14", "lineHeight": 60,
+    }
     assert headline["y"] >= max(image["y"] + image["h"] for image in images)
+    assert opening["h"] == 692
 
 
 def _colorway_pair(match_ids=None):

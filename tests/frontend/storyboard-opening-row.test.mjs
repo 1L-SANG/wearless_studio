@@ -9,6 +9,7 @@ import react from '@vitejs/plugin-react';
 
 import { defaultStoryboard } from '../../src/lib/api/shapes.js';
 import { getBlockRenderHeight } from '../../src/features/editor/editorGeometry.js';
+import { alignSkeletonToServer } from '../../src/lib/editorWaitSkeleton.js';
 import { applyOpeningRow } from '../../src/lib/storyboardEntryPlacement.js';
 
 const PRODUCT = {
@@ -90,18 +91,17 @@ test('mock opening renders as one medium two-column row with copy below the imag
     { x: 510, y: 50, w: 430, h: 500 },
   ]);
 
-  const [headline, subtitle] = opening.elements.filter((element) => element.type === 'text');
+  const [headline] = opening.elements.filter((element) => element.type === 'text');
   assert.equal(headline.text, `${PRODUCT.name}와 함께하는 하루`);
   assert.deepEqual(
     { x: headline.x, y: headline.y, w: headline.w, h: headline.h },
-    { x: 60, y: 582, w: 880, h: 56 },
+    { x: 60, y: 582, w: 880, h: 120 },
   );
+  assert.deepEqual(headline.style, {
+    size: 44, weight: 600, color: '#0e0d14', lineHeight: 60,
+  });
   assert.ok(headline.y >= Math.max(...images.map((image) => image.y + image.h)));
-  assert.deepEqual(
-    { x: subtitle.x, y: subtitle.y, w: subtitle.w, h: subtitle.h },
-    { x: 60, y: 650, w: 880, h: 34 },
-  );
-  assert.equal(getBlockRenderHeight(opening), 734);
+  assert.equal(getBlockRenderHeight(opening), 752);
 });
 
 test('mock colorway assembly renders a full-medium pair with product and matching labels', () => {
@@ -208,16 +208,10 @@ test('mock and server assemblers emit the same opening-row block structure', () 
       blockId: block.id,
       imageUrl: mockImages[index].src,
     })),
-    copy_results: [
-      {
-        blockId: storyboard[0].id,
-        texts: [{ role: 'headline', text: `${PRODUCT.name}와 함께하는 하루` }],
-      },
-      {
-        blockId: storyboard[1].id,
-        texts: [{ role: 'body', text: '강조 포인트를 살린 카피가 들어가는 자리예요.' }],
-      },
-    ],
+    copy_results: [{
+      blockId: storyboard[0].id,
+      texts: [{ role: 'headline', text: `${PRODUCT.name}와 함께하는 하루` }],
+    }],
     product: PRODUCT,
   };
   const python = spawnSync(PYTHON, ['-c', [
@@ -235,6 +229,124 @@ test('mock and server assemblers emit the same opening-row block structure', () 
 
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockOpening));
+});
+
+test('mock single-cut skeleton and server assembler emit the same caption-slot shape', () => {
+  const storyboard = [
+    { id: 'hero', source: 'ai', sectionRole: 'hooking', contentRole: 'hero', cutType: 'styling' },
+    { id: 'fit', source: 'ai', sectionRole: 'studio', contentRole: 'fit', cutType: 'horizon' },
+  ];
+  const mockBlocks = alignSkeletonToServer(
+    buildEditorBlocksFromStoryboard(storyboard, PRODUCT, false),
+    false,
+  ).slice(0, 2);
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({
+      blockId: block.id,
+      imageUrl: mockBlocks[index].elements.find((element) => element.type === 'image').src,
+      width: 2,
+      height: 3,
+    })),
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'blocks = assemble(payload["storyboard"], payload["cut_results"], [], payload["product"], False)[:2]',
+    'print(json.dumps(blocks, ensure_ascii=False))',
+  ].join('\n')], {
+    cwd: SERVER_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: '.' },
+    input: JSON.stringify(payload),
+  });
+
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockBlocks));
+});
+
+test('long signature title stays at two centered lines in mock, skeleton, and server', () => {
+  const product = { ...PRODUCT, name: '프리미엄 울 블렌드 오버핏 케이블 라운드 니트' };
+  const storyboard = [{
+    id: 'signature', source: 'ai', sectionRole: 'hooking', contentRole: 'hero', cutType: 'horizon',
+    hookTitleOverlay: true,
+  }];
+  const mockBlock = alignSkeletonToServer(
+    buildEditorBlocksFromStoryboard(storyboard, product, true),
+    true,
+  )[0];
+  const title = mockBlock.elements.find((element) => element.copyRole === 'hookTitle');
+  assert.equal(title.text, '프리미엄 울 블렌드\n오버핏 케이블 라운드 니트');
+  assert.deepEqual(
+    { y: title.y, h: title.h, size: title.style.size, lineHeight: title.style.lineHeight },
+    { y: 638, h: 144, size: 60, lineHeight: 72 },
+  );
+
+  const image = mockBlock.elements.find((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: [{ blockId: 'signature', imageUrl: image.src, width: 2, height: 3 }],
+    product,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], [], payload["product"], True)[0]',
+    'print(json.dumps(block, ensure_ascii=False))',
+  ].join('\n')], {
+    cwd: SERVER_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: '.' },
+    input: JSON.stringify(payload),
+  });
+
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockBlock));
+});
+
+test('product two-column row uses the same 30px labels in mock and server', () => {
+  const storyboard = ['front', 'back'].map((direction) => ({
+    id: direction,
+    source: 'ai',
+    sectionRole: 'product',
+    contentRole: 'productOverview',
+    cutType: 'product',
+    direction,
+    sectionId: 'product-row',
+    sectionLayout: 'twoColumn',
+    layoutRowId: 'row-product',
+  }));
+  const mockBlock = buildEditorBlocksFromStoryboard(storyboard, PRODUCT, false)[0];
+  const labels = mockBlock.elements.filter((element) => element.copyRole === 'label');
+  assert.deepEqual(labels.map((label) => ({ h: label.h, style: label.style })), [
+    { h: 42, style: { size: 30, weight: 600, color: '#0e0d14', align: 'center', lineHeight: 42 } },
+    { h: 42, style: { size: 30, weight: 600, color: '#0e0d14', align: 'center', lineHeight: 42 } },
+  ]);
+
+  const images = mockBlock.elements.filter((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: images[index].src })),
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], [], payload["product"], False)[0]',
+    'print(json.dumps(block, ensure_ascii=False))',
+  ].join('\n')], {
+    cwd: SERVER_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: '.' },
+    input: JSON.stringify(payload),
+  });
+
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockBlock));
 });
 
 /* 후킹 섹션 4컷 = 2×2 격자 한 덩어리. 사진 넷이 붙고 카피는 격자 위에 온다(오너 2026-08-16).
@@ -265,9 +377,12 @@ test('mock 4컷 격자는 한 블록에 사진 넷이 딱 붙는다 (카피는 �
   ]);
   assert.ok(images.every((i) => !i.radius), '붙은 격자는 모서리를 각지게 둔다');
   const texts = grid.elements.filter((element) => element.type === 'text');
-  // 카피를 격자 **위**에 두면, 에디터가 사진 행의 카피를 걷어내는 규칙과 맞물려
-  // 격자 위에 빈 띠(190px)만 남는다 — 2026-08-16 리뷰에서 실측하고 아래로 되돌렸다.
-  assert.deepEqual(texts.map((t) => t.y), [1202, 1270], '카피는 사진 아래(2단 행과 같은 규칙)');
+  assert.equal(texts.length, 1);
+  assert.deepEqual(
+    { x: texts[0].x, y: texts[0].y, w: texts[0].w, h: texts[0].h },
+    { x: 60, y: 1202, w: 880, h: 120 },
+  );
+  assert.equal(getBlockRenderHeight(grid), 1372);
 });
 
 test('mock and server assemblers emit the same 4-cut grid block structure', () => {
@@ -279,7 +394,6 @@ test('mock and server assemblers emit the same 4-cut grid block structure', () =
     cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: mockImages[index].src })),
     copy_results: [
       { blockId: storyboard[0].id, texts: [{ role: 'headline', text: `${PRODUCT.name}와 함께하는 하루` }] },
-      { blockId: storyboard[1].id, texts: [{ role: 'body', text: '강조 포인트를 살린 카피가 들어가는 자리예요.' }] },
     ],
     product: PRODUCT,
   };

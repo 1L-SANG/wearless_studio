@@ -35,6 +35,18 @@ import {
   inferContentRole,
   inferSectionRole,
 } from '@/lib/storyboardTaxonomy.js';
+import {
+  CAPTION_GAP,
+  CAPTION_STYLE,
+  ROW_LABEL_HEIGHT,
+  ROW_LABEL_STYLE,
+  TAG_HEIGHT,
+  TAG_SHIFT,
+  TAG_STYLE,
+  captionHeight,
+  hookTitleLayout,
+  hookTitleStyle,
+} from '@/lib/editorTextSlots.js';
 
 const nowIso = () => new Date().toISOString();
 const copyFitProfile = (profile) => ({
@@ -318,6 +330,29 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
   };
   const arr = storyboard || [];
   const blocks = [];
+  const CAPTION_PLACEHOLDER = '사진을 설명하는 소제목 (17자 내외)';
+  const ROW_LABEL_PLACEHOLDER = '짧은 라벨 (선택)';
+  const captionText = (contentRole) => !copywriting ? ''
+    : contentRole === CONTENT_ROLES.HERO ? `${product.name || '상품'}와 함께하는 하루`
+      : '강조 포인트를 살린 소제목이 들어가는 자리예요.';
+  const blockHeight = (elements) => Math.max(
+    0, ...elements.map((element) => (element.y || 0) + (element.h || 0)),
+  ) + 50;
+  let aiCutCount = 0;
+  let pointLabelCount = 0;
+  const singleTag = (contentRole, direction) => {
+    if (contentRole === CONTENT_ROLES.HERO || contentRole === CONTENT_ROLES.BENEFIT) {
+      pointLabelCount += 1;
+      return `POINT ${String(pointLabelCount).padStart(2, '0')}`;
+    }
+    if (contentRole === CONTENT_ROLES.FIT) return 'FIT';
+    if (contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW) return direction === 'back' ? 'BACK' : 'FRONT';
+    if (contentRole === CONTENT_ROLES.DETAIL) return 'DETAIL';
+    if (contentRole === CONTENT_ROLES.COORDINATION || contentRole === CONTENT_ROLES.REAL_WEAR) return 'STYLING';
+    return null;
+  };
+  const rowLabel = (rowBlock) => inferContentRole(rowBlock) === CONTENT_ROLES.PRODUCT_OVERVIEW
+    ? (rowBlock.direction === 'back' ? 'BACK' : 'FRONT') : '';
   const persistentRowSections = new Set(arr
     .filter((b) => b.source !== 'mine' && (b.layoutRowId || b.layoutRowVersion))
     .map((b) => b.sectionId));
@@ -333,22 +368,34 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const name = contentTitle(contentRole);
     // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
     // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
-    const els = [Object.assign(IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
-    // 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 — 카피 토글과 무관.
-    if (b.hookTitleOverlay && (product.name || '').trim()) {
+    const firstCut = aiCutCount === 0;
+    aiCutCount += 1;
+    const signature = Boolean(b.hookTitleOverlay);
+    const tag = !firstCut && !signature ? singleTag(contentRole, b.direction) : null;
+    const imageY = firstCut || signature || !tag ? 50 : 50 + TAG_SHIFT;
+    const els = [Object.assign(IMG(60, imageY, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
+    // mock에는 생성 픽셀이 없으므로 시그니처 제목은 서버의 측정 실패 폴백과 같은 흰색이다.
+    if (signature && (product.name || '').trim()) {
+      const title = hookTitleLayout(product.name);
       els.push(Object.assign(
-        T(60, 275, 880, 110, product.name.trim(),
-          { font: 'Pretendard', size: 34, weight: 700, color: '#ffffff', align: 'center' }),
-        { sourceBlockId: b.id, copyRole: 'hookTitle' },
+        T(60, imageY + (560 - title.h) / 2, 880, title.h, title.text, hookTitleStyle('#ffffff')),
+        { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
       ));
     }
-    if (copywriting && contentRole === CONTENT_ROLES.HERO) {
-      els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
+    if (tag) {
+      els.push(Object.assign(
+        T(60, 44, 400, TAG_HEIGHT, tag, TAG_STYLE),
+        { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
+      ));
     }
-    if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 17, color: '#6b6b73', lineHeight: 26 }), { sourceBlockId: b.id, copyRole: 'body' }));
+    if (!signature) {
+      const text = captionText(contentRole);
+      els.push(Object.assign(
+        T(60, imageY + 560 + CAPTION_GAP, 880, captionHeight(text), text, CAPTION_STYLE),
+        { sourceBlockId: b.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
+      ));
     }
-    blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
+    blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: blockHeight(els), elements: els });
   };
   const pushRow = (chunk, layout) => {
     const rowLayout = ROW_LAYOUTS[layout];
@@ -359,8 +406,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
     const h = grid ? 560 : 500;
     const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
-    const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
-    const hasCopy = Boolean(copywriting && hero);
+    aiCutCount += n;
     // 사진 시작 y 는 어느 배치든 같다. 격자만 카피를 위로 올려 자리를 비워 뒀더니,
     // 에디터가 사진 행의 카피를 통째로 걷어내는 규칙(stripPhotoBlockTextElements —
     // grid2x2 도 PHOTO_ROW_KINDS 다) 때문에 격자 위에 190px 빈 띠만 남았다.
@@ -372,20 +418,25 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
         : IMG(60 + c * (w + 20), imgTop, w, h, generatedImageFor(rb, w, h), 12, rb.cutType || undefined),
       { sourceBlockId: rb.id },
     ));
-    if (hasCopy) {
-      const copyTop = imgTop + (grid ? h * 2 : h) + 32;
-      els.push(Object.assign(T(60, copyTop, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
-        size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
-      }), { sourceBlockId: hero.id, copyRole: 'headline' }));
-      if (subtitle) {
-        els.push(Object.assign(T(60, copyTop + 68, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
-          size: 17, color: '#6b6b73', lineHeight: 26,
-        }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
-      }
+    if (hero) {
+      const copyTop = imgTop + (grid ? h * 2 : h) + CAPTION_GAP;
+      const text = captionText(CONTENT_ROLES.HERO);
+      els.push(Object.assign(
+        T(60, copyTop, 880, captionHeight(text), text, CAPTION_STYLE),
+        { sourceBlockId: hero.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
+      ));
+    } else if (layout === 'twoColumn' || layout === 'threeColumn') {
+      const labelY = imgTop + h + 16;
+      chunk.forEach((rowBlock, column) => {
+        els.push(Object.assign(
+          T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, rowLabel(rowBlock), ROW_LABEL_STYLE),
+          { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
+        ));
+      });
     }
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', elements: els,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: blockHeight(els), elements: els,
     });
   };
 
@@ -429,6 +480,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     return [productLabel, colorName ? `${name} [${colorName}]` : name];
   };
   const pushColorwayPair = (pair) => {
+    aiCutCount += pair.length;
     const ordered = pair.slice().sort((left, right) => (left.shot === 'full' ? -1 : 1) - (right.shot === 'full' ? -1 : 1));
     const width = 430;
     const height = 645;
