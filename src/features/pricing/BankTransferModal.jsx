@@ -52,6 +52,51 @@ function Summary({ plan, info }) {
   );
 }
 
+export function BankTransferSubmitSection({ kind, pending, serverError }) {
+  const subscription = kind === 'subscription';
+  return (
+    <>
+      {serverError && <p className={s.err} role="alert"><PIcon name="alert" size={15} />{serverError}</p>}
+      <section className={s.purchaseTerms} role="note" aria-label="결제 전 꼭 확인해 주세요">
+        <ul className={s.purchaseTermsList}>
+          {subscription ? (
+            <>
+              <li>
+                <PIcon name="info" size={18} className={s.purchaseTermIcon} />
+                <span><strong>1개월 이용권</strong>이에요. 자동으로 다시 결제되지 않아요.</span>
+              </li>
+              <li>
+                <PIcon name="info" size={18} className={s.purchaseTermIcon} />
+                <span>기간이 끝나면 <strong>남은 구독 크레딧은 사라져요</strong>. 따로 충전한 크레딧은 남아요.</span>
+              </li>
+            </>
+          ) : (
+            <li>
+              <PIcon name="info" size={18} className={s.purchaseTermIcon} />
+              <span>충전한 크레딧은 <strong>기간 제한 없이</strong> 써요.</span>
+            </li>
+          )}
+          <li>
+            <PIcon name="info" size={18} className={s.purchaseTermIcon} />
+            <span>크레딧을 <strong>하나도 안 썼다면 7일 안에 전액 환불</strong>돼요. 쓴 부분은 환불이 제한될 수 있어요.</span>
+          </li>
+        </ul>
+        <div className={s.purchaseLinks}>
+          <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책 자세히 보기</a>
+          <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>
+          <span>문의 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a></span>
+        </div>
+      </section>
+      <button type="submit" className={s.primary} disabled={pending}>
+        {pending ? '접수하는 중…' : '신청하기'}
+      </button>
+      <p className={s.consent}>
+        결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
+      </p>
+    </>
+  );
+}
+
 function DoneView({ done, plan, info, onClose, titleId }) {
   const recurring = done.kind === 'subscription';
   return (
@@ -230,13 +275,7 @@ export function BankTransferModal({ plan, info, defaultEmail, extend = false, on
                   </div>
                 )}
                 <p className={s.due}><PIcon name="clock" size={16} />신청 후 3일 안에 입금해 주세요</p>
-                {serverError && <p className={s.err} role="alert"><PIcon name="alert" size={15} />{serverError}</p>}
-                <button type="submit" className={s.primary} disabled={pending}>
-                  {pending ? '접수하는 중…' : '신청하기'}
-                </button>
-                <p className={s.consent}>
-                  결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
-                </p>
+                <BankTransferSubmitSection kind={plan.kind} pending={pending} serverError={serverError} />
               </div>
             </form>
           </>
