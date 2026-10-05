@@ -289,7 +289,8 @@ test('시뮬레이션 실패는 사유를 화면에 남겨요', async () => {
 /* ---- 중간 정산(2026-09-27) ------------------------------------------------
    이번 달을 누른 시각까지 먼저 지급 확인서로. 돈은 움직이지 않고, 지급 완료는 같은 이체 기록 폼으로만. */
 
-test('이번 달로 옮기면 [중간 정산 실행]이 열리고 결과에 기준 시각과 "실제 이체 없음"을 보여 줘요', async () => {
+test('이번 달로 옮기면 [중간 정산 실행]이 열리고 결과에 기준 시각과 "실제 이체 없음"을 보여 줘요', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-27T05:05:00Z') });
   const calls = [];
   const thisMonth = currentSeoulMonth();
   const h = await harness({ adminListPayoutStatements: async ({ month }) => ({ items: [{ ...row, periodMonth: month, open: month === thisMonth }] }),
