@@ -74,9 +74,9 @@ after(async () => {
 async function loadAs(hostname) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
   vite.moduleGraph.invalidateAll();
-  ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   const tossKeys = await vite.ssrLoadModule('/src/lib/tossKeys.js');
   const { Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx');
+  ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   const { api } = await vite.ssrLoadModule('/src/mock/api.js');
   const plans = await api.getPricingPlans();
 

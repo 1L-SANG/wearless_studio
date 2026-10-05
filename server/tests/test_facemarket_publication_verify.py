@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app import facemarket_provenance
+from app import facemarket, facemarket_provenance
 from app.facemarket_provenance import PublicationVerifyResult
 from app.main import create_app
 from conftest import make_settings
@@ -53,6 +53,12 @@ _WHITELIST_KEYS = {
     "valid", "status", "publishedAt", "imageHashPrefix", "kind",
     "allowedUse", "forbiddenUse", "licenseValidUntil", "chain", "model",
 }
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is None else NOW.astimezone(tz)
 
 
 def _row(**overrides):
@@ -128,6 +134,7 @@ def pub_client(keypair, monkeypatch):
         yield FakePubConn(store)
 
     monkeypatch.setattr(facemarket_provenance, "get_conn", fake_get_conn)
+    monkeypatch.setattr(facemarket, "datetime", _FixedDatetime)
     return TestClient(app), store
 
 
