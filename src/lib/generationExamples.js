@@ -255,6 +255,9 @@ export function repickExampleForDirection(block, catalog, {
   clothingType, gender, identityKind = null, direction, sideStyle = null,
 }) {
   if (!block || block.source !== 'ai' || block.spaceGroupId) return null;
+  if (block.hookSlotRole === 'signature' || String(block.exampleId || '').startsWith('sig_')) {
+    return null;
+  }
   if (block.exampleSelectionOrigin !== 'auto' || !block.exampleId) return null;
   const source = Array.isArray(catalog) ? catalog : [];
   const current = source.find((example) => example.id === block.exampleId);

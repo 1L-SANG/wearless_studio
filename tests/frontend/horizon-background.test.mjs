@@ -76,10 +76,18 @@ test('failed-cut retry preserves horizon group selection without copying a clien
   assert.equal(buildFailedCutRetry([{ ...block, cutType: 'styling' }], 'failed').request.horizonBackgroundMode, undefined);
 });
 
-test('leaving the storyboard asks for a garment color measurement only for AI horizon set cuts on garment tone', () => {
+test('leaving the storyboard also measures the AI signature color while preserving horizon gates', () => {
   const tone = { horizonBackgroundMode: 'garment-tone' };
+  const signature = {
+    id: 'signature', source: 'ai', cutType: 'horizon', exampleId: 'sig_women_01',
+    hookTitleOverlay: true, colorId: 'base',
+  };
   assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', tone)]), true);
   assert.equal(needsGarmentColorMeasurement([horizon('a'), horizon('b', 'set:instance-b', tone)]), true);
+  assert.equal(needsGarmentColorMeasurement([signature]), true);
+  assert.equal(needsGarmentColorMeasurement([{ ...signature, source: 'mine' }]), false);
+  assert.equal(needsGarmentColorMeasurement([{ ...signature, exampleId: 'ex_horizon_women_top_medium_01' }]), false);
+  assert.equal(needsGarmentColorMeasurement([{ ...signature, exampleId: null }]), false);
   assert.equal(needsGarmentColorMeasurement([horizon('a')]), false);
   assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', { ...tone, source: 'mine' })]), false);
   assert.equal(needsGarmentColorMeasurement([horizon('a', 'set:instance-a', { ...tone, cutType: 'styling' })]), false);

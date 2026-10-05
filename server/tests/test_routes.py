@@ -387,6 +387,58 @@ def test_save_storyboard_rejects_invalid_example_selection_origin_before_db(clie
     assert res.json()["error"]["code"] == "invalid_example_selection_origin"
 
 
+def test_save_storyboard_accepts_bottom_signature_without_flat_catalog_lookup(
+    client, make_token, monkeypatch,
+):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_product(conn, project_id):
+        return {"clothingType": "bottom"}
+
+    async def fake_analysis(conn, project_id):
+        return {"targetGenders": ["women"], "subCategory": "mini_skirt"}
+
+    async def fake_save(conn, user_id, project_id, blocks):
+        seen["blocks"] = blocks
+        return blocks
+
+    def flat_registry_must_not_load():
+        raise AssertionError("sig_* must stay outside the ordinary example catalog")
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "save_storyboard", fake_save)
+    monkeypatch.setattr(
+        routes.cut_generator, "load_example_asset_registry", flat_registry_must_not_load,
+    )
+    patch_route_db(monkeypatch, routes)
+
+    res = client.put(
+        "/v1/projects/p1/storyboard",
+        headers=_auth(make_token),
+        json=[{
+            "id": "opening",
+            "source": "ai",
+            "sectionRole": "hooking",
+            "contentRole": "hero",
+            "cutType": "horizon",
+            "direction": "front",
+            "shot": "medium",
+            "hookSlotRole": "signature",
+            "exampleId": "sig_women_bottom_skirt_02",
+            "exampleSelectionOrigin": "user",
+        }],
+    )
+
+    assert res.status_code == 200, res.text
+    assert seen["blocks"][0]["exampleId"] == "sig_women_bottom_skirt_02"
+    assert seen["blocks"][0]["hookSlotRole"] == "signature"
+
+
 def test_save_storyboard_rejects_pre_release_space_group_ids(
     client, make_token, monkeypatch
 ):

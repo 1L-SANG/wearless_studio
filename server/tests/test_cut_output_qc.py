@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 
 from app.agents import cut_output_qc as qc
+from app.agents import cut_plan
+from app.agents import cut_generator
+from app.agents import horizon_background
 from app.agents.gemini_image import InlineImage
 from app.agents.vision_llm import VisionError
 from conftest import make_settings
@@ -390,6 +393,114 @@ def test_hidden_back_or_headless_worn_cut_still_requires_model_body_gate(
     applicability = qc.gate_applicability(contract)
     assert applicability["modelIdentity"] is False
     assert applicability["modelBodyProportions"] is True
+
+
+@pytest.mark.parametrize(
+    ("clothing_type", "example_id", "expected_framing", "prompt_fragment"),
+    [
+        ("bottom", "sig_women_bottom_pants_01", "bottom", "just above the waistband"),
+        ("dress", "sig_women_dress_01", "dress", "just below the collarbone"),
+    ],
+)
+def test_signature_qc_contract_is_headless_and_carries_exact_framing(
+    clothing_type, example_id, expected_framing, prompt_fragment,
+):
+    spec = {
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": example_id,
+        "modelId": "real-model",
+    }
+    contract = qc.normalize_plan(cut_plan.compile_cut_plan(spec, clothing_type))
+
+    assert contract["signatureFraming"] == expected_framing
+    assert contract["storyboard"]["face"] == "none"
+    assert qc.gate_applicability(contract)["modelIdentity"] is False
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("modelBody", _img(b"MODEL-BODY")),
+    ])
+    assert prompt_fragment in prompt
+
+
+def test_signature_qc_ignores_reference_background_color_and_checks_only_separation():
+    palette = horizon_background.signature_palette_for_observed("#2a5db0")
+    spec = horizon_background.apply_signature_runtime({
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_women_01",
+        "modelId": "real-model",
+        "colorId": "base",
+    }, palette)
+    contract = qc.normalize_plan(cut_plan.compile_cut_plan(spec, "top"))
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ])
+
+    assert contract["signatureBackground"]["backgroundHex"] == palette["backgroundHex"]
+    assert "Do not fail for any background hue difference from the EXAMPLE" in prompt
+    assert "garment silhouette remains clearly separated from the background" in prompt
+
+
+def test_dress_signature_qc_failure_routes_exact_crop_correction(monkeypatch):
+    raw = _raw()
+    raw["gates"][qc.GATES.index("framingCrop")]["status"] = "FAIL"
+    raw["gates"][qc.GATES.index("modelIdentity")]["status"] = "FAIL"
+
+    async def fake_analyze(settings, prompt, images, schema):
+        assert "just below the collarbone" in prompt
+        return raw, "gemini"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
+    plan = cut_plan.compile_cut_plan({
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_women_dress_01",
+        "modelId": "real-model",
+    }, "dress")
+    references = [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("modelFace", _img(b"MODEL-FACE")),
+        qc.LabeledReference("modelBody", _img(b"MODEL-BODY")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ]
+
+    result = asyncio.run(qc.verdict(
+        make_settings(), plan, references, _img(b"GENERATED"),
+    ))
+
+    assert result["contract"]["signatureFraming"] == "dress"
+    assert result["gates"]["modelIdentity"]["status"] == "NA"
+    assert qc.repair_route(result) == "EDIT_STAGE1"
+    instructions = qc.repair_instructions(result)
+    assert len(instructions) == 1
+    assert "just below the collarbone" in instructions[0]
+    assert "mid-thigh or the knee" in instructions[0]
+    assert "face and hair out of frame" in instructions[0]
+    repair_prompt = cut_generator.build_qc_repair_prompt(
+        {
+            "cutType": "horizon",
+            "shot": "medium",
+            "direction": "front",
+            "exampleId": "sig_women_dress_01",
+        },
+        {"clothingType": "dress"},
+        instructions,
+    )
+    assert cut_generator.SIGNATURE_DIRECTION_DRESS in repair_prompt
 
 
 def test_model_body_gate_requires_a_selected_model_and_a_worn_recipe():

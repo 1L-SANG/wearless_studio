@@ -215,6 +215,14 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     if horizon_background.active({**raw, "cutType": cut}):
         spec["horizonBackgroundMode"] = "garment-tone"
         spec["_horizonBackground"] = horizon_background.normalize_runtime(raw.get("_horizonBackground"))
+    if is_signature_cut(spec):
+        signature_background = horizon_background.normalize_signature_runtime(
+            raw.get("_signatureBackground"))
+        if signature_background is not None:
+            spec["_signatureBackground"] = signature_background
+        fallback = raw.get("_signatureBackgroundFallback")
+        if isinstance(fallback, dict):
+            spec["_signatureBackgroundFallback"] = dict(fallback)
     return spec
 
 
@@ -232,6 +240,10 @@ def _is_bottom(clothing_type) -> bool:
     return str(clothing_type).lower() in ("bottom", "하의")
 
 
+def _is_dress(clothing_type) -> bool:
+    return str(clothing_type).lower() in ("dress", "원피스")
+
+
 def _face_fits(spec: dict, is_bottom: bool) -> bool:
     """정규화된 스펙 기준 — 이 컷에 라이선스 얼굴이 **실제로 담기는가**(FM-31).
 
@@ -245,6 +257,8 @@ def _face_fits(spec: dict, is_bottom: bool) -> bool:
       · direction='back' — 뒷모습이라 얼굴이 프레임 밖
       · 머리가 프레임에 없는 샷 — 하의의 medium 프레이밍
     """
+    if (is_bottom and is_signature_cut(spec)) or is_dress_signature_cut(spec):
+        return False
     if spec["faceExposure"] not in ("same", "show"):
         return False
     if spec["direction"] == "back":
@@ -762,13 +776,15 @@ def render_cut_prompt(
         else:
             raise ValueError("detail_reference_required")
     is_bottom = _is_bottom(clothing_type)
+    signature_kind = _signature_crop_kind(spec, clothing_type)
+    is_framed_signature = signature_kind in ("bottom", "dress")
     # identity pair(가상/실존 모델)와 FaceMarket 라이선스 얼굴은 모두
     # 매니페스트에 실제 라벨이 있을 때만 지시한다. has_face 불리언만 믿으면
     # 가상모델을 실존·라이선스 인물로 오표기하거나, 첨부 없는 얼굴을 보라고 한다.
     identity_labels = (
         _MODEL_LABEL, _MODEL_SHEET_LABEL, _MODEL_FACE_LABEL, _FACE_LABEL,
     )
-    has_identity_reference = cut in _WORN_CUTS and any(
+    has_identity_reference = not is_framed_signature and cut in _WORN_CUTS and any(
         label in image_manifest for label in identity_labels
     )
     has_body_reference = cut in _WORN_CUTS and (
@@ -795,7 +811,15 @@ def render_cut_prompt(
             and spec.get("_referenceDirectionCompatible") is not False
             and _EXAMPLE_ALL_LABEL in image_manifest):
         shot_key = "horizon_reference"
-    if cut == "mirror":
+    if is_framed_signature:
+        face_line = ""
+        subject = "the lower garment" if signature_kind == "bottom" else "the dress"
+        direction_line = {
+            "front": f"Camera angle: front view of {subject}.",
+            "side": f"Camera angle: clear side view of {subject}.",
+            "back": f"Camera angle: rear view with the back of {subject} as the subject.",
+        }[spec["direction"]]
+    elif cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
     elif cut == "product":
@@ -981,6 +1005,17 @@ def render_cut_prompt(
             .replace("${targetColor}", target)
             .replace("${referenceColor}", transfer.get("referenceName") or "another colorway")
         )
+    shot_line = need(f"SHOT:{shot_key}")
+    if signature_kind == "bottom":
+        shot_line = (
+            "lower-body signature framing from just above the waistband to about mid-thigh; "
+            "for short skirts or shorts, include the garment hem and stop there"
+        )
+    elif signature_kind == "dress":
+        shot_line = (
+            "dress signature framing from just below the collarbone to mid-thigh or the knee; "
+            "keep the waistline, closure, skirt drape and silhouette dominant"
+        )
 
     text = (
         need("BASE")
@@ -997,7 +1032,7 @@ def render_cut_prompt(
             else need("CUT:horizon_tone") if horizon_tone
             else need(f"CUT:{cut}"),
         )
-        .replace("${shotLine}", need(f"SHOT:{shot_key}"))
+        .replace("${shotLine}", shot_line)
         .replace("${directionLine}", direction_line)
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
@@ -1044,9 +1079,15 @@ def render_cut_prompt(
     body_block = build_body_profile_block(body_profile)
     # 머리는 착장 컷에서만 의미가 있다(product 컷은 사람이 없다). 값이 없으면 블록을 내지 않으므로
     # 기존 프롬프트는 바이트 단위로 동일하다.
-    hair_block = build_hair_block(hair_profile) if spec["cutType"] in _WORN_CUTS else ""
+    hair_block = (
+        build_hair_block(hair_profile)
+        if spec["cutType"] in _WORN_CUTS and not is_framed_signature else ""
+    )
     # 얼굴형도 착장 컷에서만. 생성 단계에서 턱 실루엣을 맞춰 얼굴 패스의 턱 유령을 줄이는 목적이다(§24).
-    face_shape_block = build_face_shape_block(face_shape_profile) if spec["cutType"] in _WORN_CUTS else ""
+    face_shape_block = (
+        build_face_shape_block(face_shape_profile)
+        if spec["cutType"] in _WORN_CUTS and not is_framed_signature else ""
+    )
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
     return "\n\n".join(
         part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block)
@@ -1365,10 +1406,181 @@ def build_manifest(
 # exampleId 는 'sig_' 접두를 쓴다. 저장 계약에 새 필드를 더하지 않고 이 표식만으로 구분한다.
 SIGNATURE_EXAMPLE_PREFIX = "sig_"
 
+_SIGNATURE_UPPER_IDS = {
+    "men": (
+        "sig_men_01", "sig_men_02", "sig_men_03", "sig_men_04", "sig_men_05",
+    ),
+    "women": (
+        "sig_women_01", "sig_women_02", "sig_women_03", "sig_women_04",
+    ),
+}
+_SIGNATURE_BOTTOM_PANTS_IDS = {
+    "men": (
+        "sig_men_bottom_pants_01", "sig_men_bottom_pants_02",
+    ),
+    "women": (
+        "sig_women_bottom_pants_01", "sig_women_bottom_pants_02",
+    ),
+}
+_SIGNATURE_BOTTOM_SKIRT_IDS = (
+    "sig_women_bottom_skirt_01", "sig_women_bottom_skirt_02",
+)
+_SIGNATURE_DRESS_IDS = ("sig_women_dress_01", "sig_women_dress_02")
+
 
 def is_signature_cut(spec: dict) -> bool:
     example_id = (spec or {}).get("exampleId") or (spec or {}).get("example_id") or ""
     return isinstance(example_id, str) and example_id.startswith(SIGNATURE_EXAMPLE_PREFIX)
+
+
+def is_dress_signature_cut(spec: dict) -> bool:
+    example_id = (spec or {}).get("exampleId") or (spec or {}).get("example_id") or ""
+    return example_id in _SIGNATURE_DRESS_IDS
+
+
+def _signature_crop_kind(spec: dict, clothing_type) -> str | None:
+    if not is_signature_cut(spec):
+        return None
+    if _is_bottom(clothing_type):
+        return "bottom"
+    if _is_dress(clothing_type) and is_dress_signature_cut(spec):
+        return "dress"
+    return "upper"
+
+
+def _signature_recipe_supported(spec: dict) -> bool:
+    return spec.get("cutType") in ("styling", "horizon")
+
+
+def _is_skirt_category(sub_category=None, custom_category=None) -> bool:
+    category = f"{sub_category or ''} {custom_category or ''}".lower()
+    return any(token in category for token in ("skirt", "스커트", "치마"))
+
+
+def signature_cut_ids_for(
+    *, gender=None, clothing_type="top", sub_category=None, custom_category=None,
+) -> tuple[str, ...]:
+    wanted_gender = "men" if gender == "men" else "women"
+    if _is_dress(clothing_type) and wanted_gender == "women":
+        return _SIGNATURE_DRESS_IDS
+    if not _is_bottom(clothing_type):
+        return _SIGNATURE_UPPER_IDS[wanted_gender]
+    if wanted_gender == "women" and _is_skirt_category(sub_category, custom_category):
+        return _SIGNATURE_BOTTOM_SKIRT_IDS
+    return _SIGNATURE_BOTTOM_PANTS_IDS[wanted_gender]
+
+
+def signature_cut_matches(
+    example_id, *, gender=None, clothing_type="top", sub_category=None,
+    custom_category=None,
+) -> bool:
+    return example_id in signature_cut_ids_for(
+        gender=gender,
+        clothing_type=clothing_type,
+        sub_category=sub_category,
+        custom_category=custom_category,
+    )
+
+
+def _hash_seed(value) -> int:
+    """Frontend storyboardEntryPlacement.hashSeed, including UTF-16 code units."""
+
+    encoded = str(value).encode("utf-16-le", "surrogatepass")
+    result = 0x811C9DC5
+    for index in range(0, len(encoded), 2):
+        result ^= int.from_bytes(encoded[index:index + 2], "little")
+        result = (result * 0x01000193) & 0xFFFFFFFF
+    return result
+
+
+def _mulberry32_once(seed: int) -> float:
+    value = (seed + 0x6D2B79F5) & 0xFFFFFFFF
+    value = ((value ^ (value >> 15)) * (value | 1)) & 0xFFFFFFFF
+    value ^= (
+        value + (((value ^ (value >> 7)) * (value | 61)) & 0xFFFFFFFF)
+    ) & 0xFFFFFFFF
+    return ((value ^ (value >> 14)) & 0xFFFFFFFF) / 4294967296
+
+
+def pick_signature_cut(
+    *, project_id=None, slot_key="signature", gender=None, clothing_type="top",
+    sub_category=None, custom_category=None,
+) -> str | None:
+    pool = sorted(signature_cut_ids_for(
+        gender=gender,
+        clothing_type=clothing_type,
+        sub_category=sub_category,
+        custom_category=custom_category,
+    ))
+    if not pool:
+        return None
+    seed_key = f"{project_id or 'default'}:hook:{slot_key}"
+    return pool[int(_mulberry32_once(_hash_seed(seed_key)) * len(pool))]
+
+
+def repair_signature_cut_selections(
+    blocks: list, *, project_id=None, gender=None, clothing_type="top",
+    sub_category=None, custom_category=None,
+) -> tuple[list, list[dict]]:
+    """Replace only signature example IDs that belong to the wrong product pool."""
+
+    picked = pick_signature_cut(
+        project_id=project_id,
+        gender=gender,
+        clothing_type=clothing_type,
+        sub_category=sub_category,
+        custom_category=custom_category,
+    )
+    if not isinstance(blocks, list) or not picked:
+        return blocks, []
+    remaps = []
+    repaired = []
+    for block in blocks:
+        example_id = (
+            (block.get("exampleId") or block.get("example_id"))
+            if isinstance(block, dict) else None
+        )
+        belongs_to_signature = isinstance(block, dict) and (
+            is_signature_cut(block) or block.get("hookSlotRole") == "signature"
+        )
+        if (
+            belongs_to_signature
+            and block.get("cutType") is not None
+            and not _signature_recipe_supported(block)
+        ):
+            updated = {
+                **block,
+                "exampleId": None,
+                "exampleSelectionOrigin": None,
+                "refScope": None,
+            }
+            updated.pop("example_id", None)
+            repaired.append(updated)
+            remaps.append({
+                "blockId": block.get("id"),
+                "fromExampleId": example_id,
+                "toExampleId": None,
+                "reason": "unsupported_signature_recipe",
+            })
+            continue
+        if not belongs_to_signature or signature_cut_matches(
+            example_id,
+            gender=gender,
+            clothing_type=clothing_type,
+            sub_category=sub_category,
+            custom_category=custom_category,
+        ):
+            repaired.append(block)
+            continue
+        updated = {**block, "exampleId": picked}
+        updated.pop("example_id", None)
+        repaired.append(updated)
+        remaps.append({
+            "blockId": block.get("id"),
+            "fromExampleId": example_id,
+            "toExampleId": picked,
+        })
+    return (repaired if remaps else blocks), remaps
 
 
 def _resolve_generation_model(settings: Settings, spec: dict) -> str:
@@ -1409,6 +1621,36 @@ SIGNATURE_DIRECTION_FACE_PASS = (
     "No props, no text, no busy scenery."
 )
 
+SIGNATURE_DIRECTION_BOTTOM = (
+    "SIGNATURE OPENING CUT — extreme close crop of the lower body, from just above the "
+    "waistband down to about mid-thigh. For short skirts or shorts, extend the crop only "
+    "far enough to show the garment hem. The waistband, front closure, pockets, pleats, "
+    "and the way the fabric falls are the hero. The face and hair must not appear. Show "
+    "only a very small amount of the top at the waist. "
+    "BACKGROUND: same hue family as the garment's dominant color but much lighter and "
+    "desaturated — a soft, detail-free surface so the person and the garment stay dominant. "
+    "No props, no text, no busy scenery."
+)
+
+SIGNATURE_DIRECTION_DRESS = (
+    "SIGNATURE OPENING CUT — extreme close crop from just below the collarbone down to "
+    "mid-thigh or the knee. The waistline, closure, skirt drape and silhouette are the hero. "
+    "The face and hair must not appear. "
+    "BACKGROUND: same hue family as the garment's dominant color but much lighter and "
+    "desaturated — a soft, detail-free surface so the person and the garment stay dominant. "
+    "No props, no text, no busy scenery."
+)
+
+_SIGNATURE_BACKGROUND_DEFAULT = (
+    "BACKGROUND: same hue family as the garment's dominant color but much lighter and "
+    "desaturated — a soft, detail-free surface so the person and the garment stay dominant. "
+)
+
+
+def _signature_direction_background(direction: str, spec: dict) -> str:
+    measured = horizon_background.signature_prompt(spec.get("_signatureBackground"))
+    return direction.replace(_SIGNATURE_BACKGROUND_DEFAULT, measured) if measured else direction
+
 
 def build_prompt(
     cut_spec: dict, product: dict, *,
@@ -1425,6 +1667,8 @@ def build_prompt(
     첨부한다고 가정하고 동일 순서 목록을 만든다(+ has_face 면 얼굴)."""
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    if is_signature_cut(spec) and not _signature_recipe_supported(spec):
+        raise ValueError("unsupported_signature_recipe")
     spec = apply_reference_compatibility(spec)
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
     plan = compile_cut_plan(spec, clothing_type, fit_profile=fit_profile)
@@ -1436,6 +1680,7 @@ def build_prompt(
         and spec["shot"] == "medium"
         and not spec.get("spaceGroupId")
         and _is_bottom(clothing_type)
+        and not is_signature_cut(spec)
     ):
         spec = {**spec, "shot": "full"}
     if manifest is None:
@@ -1451,7 +1696,13 @@ def build_prompt(
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
     if is_signature_cut(spec):
         # 기존 컷 프롬프트는 건드리지 않고 시그니처 분기에서만 지시를 덧붙인다.
-        direction = SIGNATURE_DIRECTION_FACE_PASS if face_pass else SIGNATURE_DIRECTION
+        signature_kind = _signature_crop_kind(spec, clothing_type)
+        direction = (
+            SIGNATURE_DIRECTION_BOTTOM if signature_kind == "bottom"
+            else SIGNATURE_DIRECTION_DRESS if signature_kind == "dress"
+            else SIGNATURE_DIRECTION_FACE_PASS if face_pass else SIGNATURE_DIRECTION
+        )
+        direction = _signature_direction_background(direction, spec)
         authority_plan_line = f"{authority_plan_line}\n{direction}"
 
     prompt = render_cut_prompt(
@@ -1508,10 +1759,24 @@ def build_qc_repair_prompt(
             f"- face exposure/crop: {framing['faceExposure']}\n"
             f"- rough framing: {framing['roughFraming']}"
         )
+    signature_kind = _signature_crop_kind(spec, clothing_type)
+    signature_background_lock = (
+        horizon_background.signature_prompt(spec.get("_signatureBackground"))
+        or _SIGNATURE_BACKGROUND_DEFAULT
+    )
+    signature_lock = (
+        f"\n\n{_signature_direction_background(SIGNATURE_DIRECTION_BOTTOM, spec)}"
+        if signature_kind == "bottom"
+        else f"\n\n{_signature_direction_background(SIGNATURE_DIRECTION_DRESS, spec)}"
+        if signature_kind == "dress"
+        else f"\n\nSIGNATURE BACKGROUND LOCK:\n{signature_background_lock}"
+        if is_signature_cut(spec)
+        else ""
+    )
     return (
         "You are the AG-06 second-stage fashion cut generator. Edit the single attached "
         "STAGE-1 output; do not reconstruct a different photograph.\n\n"
-        f"COMPILED CUT INTENT: {intent}{framing_lock}\n\n"
+        f"COMPILED CUT INTENT: {intent}{framing_lock}{signature_lock}\n\n"
         "INDEPENDENT QC CORRECTIONS:\n"
         + "\n".join(f"- {instruction}" for instruction in qc_corrections)
         + "\n\nPRESERVATION CONTRACT:\n"
@@ -1599,6 +1864,7 @@ def _base_request(
         and spec["shot"] == "medium"
         and not spec.get("spaceGroupId")
         and _is_bottom(clothing_type)
+        and not is_signature_cut(spec)
     )
     if confirmed_prompt_input is not None:
         if (
@@ -1768,6 +2034,8 @@ def _angle_swap_direction(spec: dict, clothing_type, angle_swap) -> str | None:
     if spec.get("sideStyle") == "threeQuarter":
         return None
     if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
+        return None
+    if _signature_crop_kind(spec, clothing_type) in ("bottom", "dress"):
         return None
     direction = face_angle_swap.direction_of(spec)
     if direction is None:

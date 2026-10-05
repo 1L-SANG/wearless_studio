@@ -159,6 +159,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
         face_pass_outcome: dict = {}      # applied / skipped:<reason> / fallback:<reason> — 자산 메타·이벤트용
         horizon_decision = None
+        signature_decision = None
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -438,6 +439,20 @@ async def run_editor_image_job(app, job: dict) -> None:
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            repaired, signature_remaps = cut_generator.repair_signature_cut_selections(
+                [cut_spec],
+                project_id=project_id,
+                gender=mannequin.select_base_gender(analysis, clothing_type),
+                clothing_type=clothing_type,
+                sub_category=analysis.get("subCategory"),
+                custom_category=analysis.get("customCategory"),
+            )
+            cut_spec = repaired[0]
+            for remap in signature_remaps:
+                log.warning(
+                    "editor signature example remapped project %s: %s -> %s",
+                    project_id, remap["fromExampleId"], remap["toExampleId"],
+                )
             retry_binding = None
             if cut_spec.get("spaceGroupId"):
                 if not new_payload.get("retryBlockId") or cut_spec.get("cutType") != "horizon":
@@ -660,6 +675,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                     app.state.r2.get_bytes, a["r2_key"]))
                 for a in assets
             ]
+            if cut_generator.is_signature_cut(cut_spec):
+                signature_palette = horizon_background.resolve_signature(
+                    product,
+                    cut_spec.get("colorId"),
+                    analysis=analysis,
+                    sources=horizon_background.loaded_sources(
+                        product, cut_spec.get("colorId"), assets, product_images),
+                )
+                cut_spec = horizon_background.apply_signature_runtime(
+                    cut_spec, signature_palette)
+                normalized = cut_generator.normalize_spec(
+                    cut_spec, clothing_type=clothing_type)
             if horizon_background.mode(cut_spec) == "garment-tone":
                 cut_spec = horizon_background.apply_runtime(
                     cut_spec, horizon_background.palettes_for_blocks(
@@ -669,6 +696,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 )
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             horizon_decision = horizon_background.decision(cut_spec)
+            signature_decision = horizon_background.signature_decision(cut_spec)
             try:
                 matching_images = [
                     InlineImage(
@@ -1069,6 +1097,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
                 **({"horizon_background": horizon_decision} if horizon_decision else {}),
+                **({"signature_background": signature_decision} if signature_decision else {}),
                 **({"detail_recipe": detail_recipe_metadata} if detail_recipe_metadata else {}),
                 **({"neck_repair": neck_repair_metadata}
                    if neck_repair_metadata is not None else {}),
@@ -1085,6 +1114,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         success_metadata = {"creditCostVersion": s.credit_cost_version}
         if horizon_decision:
             success_metadata["horizonBackground"] = horizon_decision
+        if signature_decision:
+            success_metadata["signatureBackground"] = signature_decision
         if scene_qc_attempts is not None:
             success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
         if garment_qc_metadata is not None:
