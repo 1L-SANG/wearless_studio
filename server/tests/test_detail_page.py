@@ -6,6 +6,7 @@ import json
 import logging
 import types
 from dataclasses import replace
+from io import BytesIO
 
 import app.routes as routes
 import pytest
@@ -18,6 +19,38 @@ from conftest import auth_headers, fake_worker_app, make_settings, patch_route_d
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
+
+
+def _solid_png(rgb):
+    out = BytesIO()
+    dpj.Image.new("RGB", (120, 180), rgb).save(out, format="PNG")
+    return out.getvalue()
+
+
+def _center_band_png(outside, center):
+    image = dpj.Image.new("RGB", (120, 180), outside)
+    image.paste(center, (0, 72, 120, 108))
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_signature_title_color_uses_center_band_luminance_once_for_cut_metadata():
+    signature = {"id": "sig", "hookTitleOverlay": True}
+    assert dpj._image_metrics(_solid_png((245, 245, 245)), signature) == (
+        120, 180, {"hookTitleColor": "#111111"},
+    )
+    assert dpj._image_metrics(_solid_png((12, 12, 12)), signature) == (
+        120, 180, {"hookTitleColor": "#ffffff"},
+    )
+    assert dpj._image_metrics(_solid_png((245, 245, 245)), {"id": "ordinary"}) == (120, 180, {})
+    assert dpj._image_metrics(b"not-an-image", signature) == (None, None, {})
+    assert dpj._image_metrics(_center_band_png((12, 12, 12), (245, 245, 245)), signature)[2] == {
+        "hookTitleColor": "#111111",
+    }
+    assert dpj._image_metrics(_center_band_png((245, 245, 245), (12, 12, 12)), signature)[2] == {
+        "hookTitleColor": "#ffffff",
+    }
 
 
 @pytest.mark.parametrize("reason", ["detail_qc_failed", "detail_qc_unknown"])
@@ -2909,7 +2942,8 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
         ]}]}
 
     async def fake_analysis(conn, pid):
-        return {"sellingPoints": ["촉감"], "materials": []}
+        return {"sellingPoints": ["촉감"], "materials": [],
+                "suggestedName": "골지 데일리 니트"}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -2920,13 +2954,16 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
 
     async def fake_copy(settings, **kw):
         captured["copy_kwargs"] = kw
-        return {
-            "texts": [{"role": "body", "text": "원본 카피"}],
-            "productName": "골지 데일리 니트",
-        }
+        return [{"blockId": "b1", "texts": [
+            {"role": "headline", "text": "원본 카피"},
+        ]}]
 
     async def fake_review(settings, items, confirmed):
         raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
+
+    async def fake_feature(settings, points, product_row, analysis_row):
+        captured["feature_points"] = points
+        return []
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["storyboard"] = storyboard
@@ -2954,24 +2991,26 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
     monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
+    monkeypatch.setattr(dpj.feature_copy, "generate", fake_feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))  # ai 블록 1개 × 단가 1
     assert captured["charge"] == 1
-    assert captured["copy_kwargs"]["content_role"] == "detail"
-    assert captured["copy_kwargs"]["section_role"] == "product"
-    assert "block_kind" not in captured["copy_kwargs"]
-    assert captured["copy_kwargs"]["include_product_name"] is True
+    assert [block["id"] for block in captured["copy_kwargs"]["blocks"]] == ["b1"]
+    assert set(captured["copy_kwargs"]) == {"blocks", "product", "analysis"}
     assert captured["product_name"] == "골지 데일리 니트"
     assert captured["assembled_product_name"] == "골지 데일리 니트"
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
+    assert captured["feature_points"] == ["촉감"]
     assert captured["storyboard"][0]["sectionRole"] == "product"
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
-    assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "body", "text": "원본 카피"}]}]
+    assert captured["copy_results"] == [{"blockId": "b1", "texts": [
+        {"role": "headline", "text": "원본 카피"},
+    ]}]
 
 
 def test_copywriting_off_uses_analysis_name_without_another_llm_call():
@@ -3058,7 +3097,7 @@ def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monke
 
 
 def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
-    captured = {"detail_calls": 0, "events": [], "uploaded": []}
+    captured = {"detail_calls": 0, "events": [], "uploaded": [], "feature_calls": []}
 
     async def project(conn, user_id, project_id):
         return {"copywriting": False}
@@ -3084,6 +3123,10 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
         captured["detail_calls"] += 1
         return dpj.InlineImage("image/png", b"POLISHED-DETAIL"), {"passed": True}
 
+    async def feature(settings, points, product_row, analysis_row):
+        captured["feature_calls"].append((points, product_row.get("name")))
+        return []
+
     def assemble(storyboard_rows, cut_results, *args, **kwargs):
         captured["cut_results"] = cut_results
         return []
@@ -3101,6 +3144,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
+    monkeypatch.setattr(dpj.feature_copy, "generate", feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
     monkeypatch.setattr(dpj, "_emit", emit)
@@ -3116,6 +3160,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     assert captured["cut_results"][0]["imageUrl"] != "/v1/assets/source-detail/file"
     assert len(captured["finalize"]["cut_assets"]) == 1
     assert captured["finalize"]["charge"] == 95
+    assert captured["feature_calls"] == [([], "잔스트라이프 셔츠")]
     assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 
@@ -3154,8 +3199,10 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
         return b"IMGDATA", "image/png"
 
     async def fake_copy(settings, **kw):
-        return [{"role": "headline" if kw.get("content_role") == "hero" else "body",
-                 "text": "카피"}]
+        return [
+            {"blockId": block["id"], "texts": [{"role": "headline", "text": "카피"}]}
+            for block in kw["blocks"]
+        ]
 
     async def fake_review(settings, items, confirmed):
         return []  # 전건 pass

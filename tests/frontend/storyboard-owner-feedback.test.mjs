@@ -13,6 +13,11 @@ import {
 const storyboardSource = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const featureStyles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
 
+test('카피라이팅 토글은 사진별 소제목을 만드는 실제 동작을 설명한다', () => {
+  assert.match(storyboardSource, /AI가 사진마다 소제목을 써 넣어요/);
+  assert.doesNotMatch(storyboardSource, /AI가 카피를 자동으로 넣어요/);
+});
+
 test('replacing a generation example resets per-cut settings but preserves its structural recipe', () => {
   const block = {
     id: 'cut-1', sectionRole: 'styling', contentRole: 'coordination',

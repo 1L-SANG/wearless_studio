@@ -65,6 +65,17 @@ export function fitPixelRatio(totalCssHeight, wanted = PIXEL_RATIO) {
   return Math.max(1, Math.min(wanted, Math.floor((MAX_CANVAS_DIM / totalCssHeight) * 100) / 100));
 }
 
+// 편집 DOM의 offsetHeight에는 .canvas-block padding이 포함된다. dataset 값은 콘텐츠 높이이므로
+// 기존 콘텐츠 높이만 export 높이로 갈아 끼워 긴 PNG 예약 높이와 실제 clone 캡처를 맞춘다.
+export function exportNodeHeight(node) {
+  const offsetHeight = Number(node?.offsetHeight) || 0;
+  const editorHeight = Number.parseFloat(node?.style?.height);
+  const exportHeight = Number(node?.dataset?.exportHeight);
+  if (!Number.isFinite(exportHeight) || exportHeight <= 0) return offsetHeight;
+  if (!Number.isFinite(editorHeight)) return exportHeight;
+  return Math.max(1, offsetHeight - editorHeight + exportHeight);
+}
+
 // 파일명 — 상품명에서 파일시스템 금지문자만 걷어낸다. 빈 값은 '상세페이지'.
 export function exportFileName(productName, suffix) {
   const base = String(productName || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -79,6 +90,7 @@ const CHROME_SELECTOR = [
   '.quick', '.blk-label', '.blk-resize', '.selection-marquee', '.crop-bar', '.crop-layer',
   '.align-bar', '.rot', '.hdl', '.edge', '.moveable-control-box',
   '.ed-genwait', '.ed-uploadwait', '.canvas-dropline', '.slot-add', '.image-drop-guide',
+  '.el-empty-text',
   // 빈 사진 자리(.el-slot)는 "여기에 넣으세요"라는 편집기 안내지 상품 페이지의 내용이
   // 아니다. 남겨 두면 완성본 PNG에 회색 네모가 그대로 찍힌다 — 사진을 비워 둔 채
   // 내려받는 순간 상품 페이지에 빈 상자가 인쇄되는 셈이다(2026-08-17).
@@ -129,6 +141,8 @@ async function prepareClone(blockNode) {
   clone.style.boxShadow = 'none';
   clone.style.margin = '0';
   clone.querySelectorAll(CHROME_SELECTOR).forEach((n) => n.remove());
+  const exportHeight = Number(clone.dataset.exportHeight);
+  if (Number.isFinite(exportHeight) && exportHeight > 0) clone.style.height = `${exportHeight}px`;
   clone.querySelectorAll('.el').forEach((n) => {
     n.classList.remove('on');
     n.style.outline = 'none';
@@ -240,7 +254,7 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
 // ② 전체 블록 → 세로로 이어붙인 긴 PNG 1장.
 // 스티치 캔버스를 먼저 만들고 블록을 그리는 즉시 해제해 피크 메모리를 절반으로(리뷰 반영).
 export async function exportLongPng(blockNodes, productName, onProgress, opts = {}) {
-  const heights = blockNodes.map((n) => n.offsetHeight);
+  const heights = blockNodes.map(exportNodeHeight);
   const totalCssHeight = heights.reduce((a, b) => a + b, 0);
   const ratio = fitPixelRatio(totalCssHeight);
   if (ratio == null) {

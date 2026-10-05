@@ -24,7 +24,7 @@ def _el_id(i: int, j: int) -> str:
 
 
 def _text_el(block_i: int, el_j: int, x, y, w, h, text: str, style: dict | None = None,
-             source_block_id=None, copy_role=None) -> dict:
+             source_block_id=None, copy_role=None, placeholder=None) -> dict:
     """mock T(x,y,w,h,text,style) 포팅 — id만 결정적으로 대체.
     sourceBlockId+copyRole = 셀러가 대기 화면에서 고친 카피를 로드 시점에
     되살리는 매칭 키(editor_wait_dev_spec §4 — 셀러 편집이 항상 이긴다)."""
@@ -39,6 +39,8 @@ def _text_el(block_i: int, el_j: int, x, y, w, h, text: str, style: dict | None 
         el["sourceBlockId"] = source_block_id
     if copy_role:
         el["copyRole"] = copy_role
+    if placeholder:
+        el["placeholder"] = placeholder
     return el
 
 
@@ -69,11 +71,28 @@ def _image_el(block_i: int, el_j: int, x, y, w, h, src, radius=None, cut_type=No
 _IMG_X, _IMG_Y = 60, 50
 _IMG_W = 880
 _IMG_MARGIN_B = 50          # 이미지 하단 ~ 블록 바닥 여백
-_BODY_INSET_B = 50          # body 카피를 이미지 하단 근처에 두는 오프셋(구 레이아웃 관계 보존)
 _FALLBACK_RATIO = (2, 3)    # dims 미상 시 기본 세로비(현 mannequin_aspect_ratio=2:3)
 # 파손·조작된 dims(예: 10000×1, 1×10000)가 레이아웃을 무너뜨리지 않게 유도 높이를 가둔다.
 # 정상 컷(2:3≈1320)은 이 범위 한가운데라 실사용에선 발화하지 않는다.
 _IMG_MIN_H, _IMG_MAX_H = 200, 2400
+
+_CAPTION_GAP = 32
+_CAPTION_SIZE = 44
+_CAPTION_LINE_HEIGHT = 60
+_CAPTION_CHARS_PER_LINE = 20
+_CAPTION_PLACEHOLDER = "사진을 설명하는 소제목 (17자 내외)"
+_ROW_LABEL_PLACEHOLDER = "짧은 라벨 (선택)"
+_TAG_SIZE = 28
+_TAG_H = 38
+_TAG_SHIFT = 64
+_ROW_LABEL_SIZE = 30
+_ROW_LABEL_H = 42
+_HOOK_TITLE_SIZE = 60
+_HOOK_TITLE_LINE_HEIGHT = 72
+_HOOK_TITLE_CHARS_PER_LINE = 14
+_HOOK_TITLE_MAX_LINES = 2
+_INK = "#0e0d14"
+_FAINT = "#9a9aa2"
 
 _ROW_LAYOUTS = {
     "twoColumn": {"name": "2단 구성", "kind": "twocol"},
@@ -112,6 +131,39 @@ def _image_box(width, height) -> tuple[int, int]:
     return _image_box_for_width(_IMG_W, width, height)
 
 
+def _caption_height(text) -> int:
+    lines = str(text or "").split("\n")
+    line_count = sum(
+        max(1, (len(line) + _CAPTION_CHARS_PER_LINE - 1) // _CAPTION_CHARS_PER_LINE)
+        for line in lines
+    )
+    return line_count * _CAPTION_LINE_HEIGHT
+
+
+def _hook_title_layout(value) -> tuple[str, int]:
+    title = " ".join(str(value or "").strip().split())
+    if len(title) <= _HOOK_TITLE_CHARS_PER_LINE:
+        return title, _HOOK_TITLE_LINE_HEIGHT
+
+    words = title.split(" ")
+    if len(words) > 1:
+        candidates = []
+        for index in range(1, len(words)):
+            left = " ".join(words[:index])
+            right = " ".join(words[index:])
+            overflow = max(0, len(left) - _HOOK_TITLE_CHARS_PER_LINE)
+            overflow += max(0, len(right) - _HOOK_TITLE_CHARS_PER_LINE)
+            score = overflow * 1000 + abs(len(left) - len(right))
+            candidates.append((score, index, left, right))
+        _, _, left, right = min(candidates)
+    else:
+        split_at = (len(title) + 1) // 2
+        left, right = title[:split_at], title[split_at:]
+
+    wrapped = "\n".join((left, right))
+    return wrapped, _HOOK_TITLE_LINE_HEIGHT * _HOOK_TITLE_MAX_LINES
+
+
 def _block_height(elements: list[dict]) -> int:
     """모든 요소를 담는 블록 높이 — 이미지뿐 아니라 카피까지(짧은 이미지에서 헤드라인이
     블록 밖으로 잘리던 문제 방지)."""
@@ -129,6 +181,7 @@ def _cut_meta_by_block(cut_results: list[dict] | None) -> dict:
                 "imageUrl": r.get("imageUrl"),
                 "width": r.get("width"),
                 "height": r.get("height"),
+                "hookTitleColor": r.get("hookTitleColor"),
             }
     return out
 
@@ -146,6 +199,27 @@ def _text_for_role(texts: list[dict], role: str) -> str | None:
         if isinstance(t, dict) and t.get("role") == role and t.get("text"):
             return t["text"]
     return None
+
+
+def _single_tag(content_role: str, direction, point_number: int) -> tuple[str | None, int]:
+    if content_role in {"hero", "benefit"}:
+        point_number += 1
+        return f"POINT {point_number:02d}", point_number
+    if content_role == "fit":
+        return "FIT", point_number
+    if content_role == "productOverview":
+        return ("BACK" if str(direction or "").lower() == "back" else "FRONT"), point_number
+    if content_role == "detail":
+        return "DETAIL", point_number
+    if content_role in {"coordination", "realWear"}:
+        return "STYLING", point_number
+    return None, point_number
+
+
+def _row_label(row_block: dict) -> str:
+    if resolve_content_role(row_block) != "productOverview":
+        return ""
+    return "BACK" if str(row_block.get("direction") or "").lower() == "back" else "FRONT"
 
 
 def _colorway_pair(first: dict, second: dict) -> bool:
@@ -377,8 +451,11 @@ def assemble(
     copy_by_block = _copy_texts_by_block(copy_results)
 
     blocks: list[dict] = []
+    ai_cut_count = 0
+    point_label_count = 0
 
     def push_single(b: dict) -> None:
+        nonlocal ai_cut_count, point_label_count
         block_i = len(blocks)
         bg = "#f5f5f5" if block_i % 2 else "#ffffff"
         if b.get("source") == "mine":
@@ -402,37 +479,55 @@ def assemble(
         meta = cut_meta_by_block.get(b.get("id")) or {}
         src = meta.get("imageUrl")  # 없으면 None → 빈 슬롯 (생성 실패해도 크래시 안 함)
         img_w, img_h = _image_box(meta.get("width"), meta.get("height"))
-        els = [_image_el(block_i, 0, _IMG_X, _IMG_Y, img_w, img_h, src, 12, cut_type,
+        first_cut = ai_cut_count == 0
+        ai_cut_count += 1
+        signature = bool(b.get("hookTitleOverlay"))
+        tag_text = None
+        if not first_cut and not signature:
+            tag_text, point_label_count = _single_tag(
+                content_role, b.get("direction"), point_label_count,
+            )
+        image_y = _IMG_Y if first_cut or signature or not tag_text else _IMG_Y + _TAG_SHIFT
+        els = [_image_el(block_i, 0, _IMG_X, image_y, img_w, img_h, src, 12, cut_type,
                           source_block_id=b.get("id"))]
         el_j = 1
 
-        if b.get("hookTitleOverlay") and str(product.get("name") or "").strip():
-            # 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 얹는다 —
-            # 카피라이팅 토글과 무관한 첫 화면 구성 요소이며, 셀러는 에디터에서 자유 수정한다.
-            els.append(_text_el(block_i, el_j, _IMG_X, _IMG_Y + img_h // 2 - 55, img_w, 110,
-                                 str(product.get("name")).strip(),
-                                 {"font": "Pretendard", "size": 34, "weight": 700,
-                                  "color": "#ffffff", "align": "center"},
+        if signature and str(product.get("name") or "").strip():
+            # 시그니처 컷은 제품명만 오버레이한다. 생성 직후 중앙 띠에서 고른 대비색을 쓰고,
+            # 구 데이터·측정 실패는 기존 흰색으로 안전하게 폴백한다.
+            title_color = meta.get("hookTitleColor")
+            if title_color not in {"#111111", "#ffffff"}:
+                title_color = "#ffffff"
+            title_text, title_h = _hook_title_layout(product.get("name"))
+            els.append(_text_el(block_i, el_j, _IMG_X, image_y + (img_h - title_h) // 2,
+                                 img_w, title_h, title_text,
+                                 {"font": "Pretendard", "size": _HOOK_TITLE_SIZE, "weight": 700,
+                                  "color": title_color, "align": "center",
+                                  "lineHeight": _HOOK_TITLE_LINE_HEIGHT,
+                                  "maxLines": _HOOK_TITLE_MAX_LINES},
                                  source_block_id=b.get("id"), copy_role="hookTitle"))
             el_j += 1
 
-        if copywriting:
-            texts = copy_by_block.get(b.get("id"), [])
-            if content_role == "hero":
-                headline = _text_for_role(texts, "headline")
-                if headline:
-                    els.append(_text_el(block_i, el_j, 120, 110, 600, 80, headline,
-                                         {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
-                                         source_block_id=b.get("id"), copy_role="headline"))
-                    el_j += 1
-            else:
-                body = _text_for_role(texts, "body")
-                if body:
-                    # 이미지 하단 근처(구 레이아웃의 시각 관계) — 이미지 높이에서 유도한다.
-                    els.append(_text_el(block_i, el_j, 120, _IMG_Y + img_h - _BODY_INSET_B, 760, 40, body,
-                                         {"size": 17, "color": "#6b6b73", "lineHeight": 26},
-                                         source_block_id=b.get("id"), copy_role="body"))
-                    el_j += 1
+        if tag_text:
+            els.append(_text_el(
+                block_i, el_j, 60, 44, 400, _TAG_H, tag_text,
+                {"size": _TAG_SIZE, "weight": 700, "tracking": 3, "color": _FAINT,
+                 "lineHeight": _TAG_H},
+                source_block_id=b.get("id"), copy_role="label",
+            ))
+            el_j += 1
+
+        if not signature:
+            headline = _text_for_role(copy_by_block.get(b.get("id"), []), "headline") if copywriting else None
+            caption_text = headline or ""
+            els.append(_text_el(
+                block_i, el_j, 60, image_y + img_h + _CAPTION_GAP, 880,
+                _caption_height(caption_text), caption_text,
+                {"size": _CAPTION_SIZE, "weight": 600, "color": _INK,
+                 "lineHeight": _CAPTION_LINE_HEIGHT},
+                source_block_id=b.get("id"), copy_role="headline",
+                placeholder=_CAPTION_PLACEHOLDER,
+            ))
 
         editor_block = {
             "id": _block_id(block_i), "name": name, "kind": section_role,
@@ -442,6 +537,7 @@ def assemble(
         blocks.append(editor_block)
 
     def push_row(chunk: list[dict], layout: str) -> None:
+        nonlocal ai_cut_count
         block_i = len(blocks)
         row_layout = _ROW_LAYOUTS[layout]
         count = len(chunk)
@@ -452,14 +548,13 @@ def assemble(
         grid = layout == "grid2x2" and count == 4
         width = 440 if grid else (880 - (count - 1) * 20) // count
         height = 560 if grid else 500
+        ai_cut_count += count
         hero = next((row_block for row_block in chunk
-                     if resolve_content_role(row_block) == "hero"), None) if copywriting else None
-        subtitle_block = next((row_block for row_block in chunk
-                               if resolve_content_role(row_block) == "benefit"), None)
-        headline = _text_for_role(copy_by_block.get(hero.get("id"), []), "headline") if hero else None
-        subtitle = _text_for_role(
-            copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [], "body",
-        ) if hero else None
+                     if resolve_content_role(row_block) == "hero"), None)
+        headline = (
+            _text_for_role(copy_by_block.get(hero.get("id"), []), "headline")
+            if copywriting and hero else None
+        )
         img_top = 50
         copy_top = img_top + (height * 2 if grid else height) + 32
         els: list[dict] = []
@@ -479,18 +574,24 @@ def assemble(
             ))
 
         if hero:
-            if headline:
+            caption_text = headline or ""
+            els.append(_text_el(
+                block_i, len(els), 60, copy_top, 880, _caption_height(caption_text), caption_text,
+                {"size": _CAPTION_SIZE, "weight": 600, "color": _INK,
+                 "lineHeight": _CAPTION_LINE_HEIGHT},
+                source_block_id=hero.get("id"), copy_role="headline",
+                placeholder=_CAPTION_PLACEHOLDER,
+            ))
+        elif layout in {"twoColumn", "threeColumn"}:
+            label_y = img_top + height + 16
+            for column, row_block in enumerate(chunk):
                 els.append(_text_el(
-                    block_i, len(els), 60, copy_top, 880, 56, headline,
-                    {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
-                    source_block_id=hero.get("id"), copy_role="headline",
-                ))
-            if subtitle:
-                els.append(_text_el(
-                    block_i, len(els), 60, copy_top + 68, 880, 34, subtitle,
-                    {"size": 17, "color": "#6b6b73", "lineHeight": 26},
-                    source_block_id=subtitle_block.get("id") if subtitle_block else None,
-                    copy_role="body",
+                    block_i, len(els), 60 + column * (width + 20), label_y, width, _ROW_LABEL_H,
+                    _row_label(row_block),
+                    {"size": _ROW_LABEL_SIZE, "weight": 600, "color": _INK,
+                     "align": "center", "lineHeight": _ROW_LABEL_H},
+                    source_block_id=row_block.get("id"), copy_role="label",
+                    placeholder=_ROW_LABEL_PLACEHOLDER,
                 ))
 
         blocks.append({
@@ -498,10 +599,13 @@ def assemble(
             "name": row_layout["name"],
             "kind": row_layout["kind"],
             "bg": "#f5f5f5" if block_i % 2 else "#ffffff",
+            "h": _block_height(els),
             "elements": els,
         })
 
     def push_colorway_pair(pair: list[dict]) -> None:
+        nonlocal ai_cut_count
+        ai_cut_count += len(pair)
         block_i = len(blocks)
         ordered = sorted(pair, key=lambda block: 0 if block.get("shot") == "full" else 1)
         width = 430

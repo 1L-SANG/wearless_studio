@@ -1504,6 +1504,8 @@
 .el img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* text boxes: no permanent gray fill/box. selected text keeps the sky bounding box from .el.on. */
 .el-text { line-height: 1.4; outline: none; background: transparent; }
+.el-placeholder:not(.editing) { color: var(--fg-3) !important; font-style: italic !important;
+  outline: 1px dashed var(--fg-3); outline-offset: 4px; }
 .el-text:not(.editing) { user-select: none; -webkit-user-select: none; touch-action: none; }
 .el-text.editing { cursor: text; outline: 1.5px solid var(--link); outline-offset: 2px;
   user-select: text; -webkit-user-select: text; touch-action: auto; }

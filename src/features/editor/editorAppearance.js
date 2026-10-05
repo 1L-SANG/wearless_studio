@@ -77,13 +77,36 @@ function isGeneratedPhotoBlock(block) {
   );
 }
 
-/** Remove copy layers only from generated photo blocks. Information/FAQ blocks
- * may contain image slots, so source linkage and block semantics are required. */
+const LEGACY_OVERLAY_COPY_ROLES = new Set(['headline', 'body']);
+
+function isLegacyOverlayCopy(element, images) {
+  if (element?.type !== 'text'
+      || !LEGACY_OVERLAY_COPY_ROLES.has(element.copyRole)
+      || !element.sourceBlockId) return false;
+  const textX = Number(element.x);
+  const textY = Number(element.y);
+  if (!Number.isFinite(textX) || !Number.isFinite(textY)) return false;
+  return images.some((image) => {
+    if (image.sourceBlockId !== element.sourceBlockId) return false;
+    const x = Number(image.x); const y = Number(image.y);
+    const w = Number(image.w); const h = Number(image.h);
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return false;
+    return textX >= x && textX < x + w && textY >= y && textY < y + h;
+  });
+}
+
+/** Remove only the pre-caption AI copy overlays from generated photo blocks.
+ * Seller text, hook titles, deterministic labels, and copy below the photo are content. */
 export function stripPhotoBlockTextElements(blocks) {
   let changed = false;
   const next = (blocks || []).map((block) => {
     if (!isGeneratedPhotoBlock(block)) return block;
-    const elements = (block.elements || []).filter((element) => element.type !== 'text');
+    const images = (block.elements || []).filter(
+      (element) => element.type === 'image' && element.sourceBlockId && !element.frameSlot,
+    );
+    const elements = (block.elements || []).filter(
+      (element) => !isLegacyOverlayCopy(element, images),
+    );
     if (elements.length === (block.elements || []).length) return block;
     changed = true;
     return { ...block, elements };

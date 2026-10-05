@@ -42,9 +42,10 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
+import { textLineClampStyle } from '@/lib/editorTextSlots.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
@@ -514,9 +515,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   if (el.type === 'text') {
     const s = el.style || {};
     const isBubbleText = isSpeechBubbleElement(el);
+    const emptyText = isEmptyTextElement(el);
+    if (preview && emptyText) return null;
     const lines = (el.text || '').split('\n');
-    const display = (!s.list || s.list === 'none') ? el.text
-      : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
+    const display = emptyText ? (el.placeholder || '')
+      : (!s.list || s.list === 'none') ? el.text
+        : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
     const hasBg = s.bg && s.bg !== 'none';
     if (isBubbleText) {
       const fit = speechBubbleFitOptions(el);
@@ -526,7 +530,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       const radius = el.radius ?? DEFAULT_BUBBLE_RADIUS;
       const bubblePath = speechBubblePath({ width: el.w, height: el.h, radius });
       return (
-        <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}`)} style={{ ...base, overflow: 'visible' }}
+        <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, overflow: 'visible' }}
           onDoubleClick={preview ? undefined : (e) => {
             e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id);
           }}>
@@ -567,13 +571,14 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return (
       /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
         fontStyle: s.italic ? 'italic' : 'normal',
-        textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
+        textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
+        ...textLineClampStyle(s, editing) }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */
@@ -590,7 +595,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
-        {editing ? el.text : display}</div>
+        {editing ? el.text : (emptyText ? el.placeholder : display)}</div>
     );
   }
   if (el.type === 'license-verify') {
@@ -749,6 +754,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   return (
     <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
+      data-export-height={getBlockRenderHeight(block, { forExport: true })}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
       onClick={(e) => {
@@ -898,7 +904,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
     <div className="ed-right">
       <div className="mini-head">상세페이지 · 드래그로 순서 변경</div>
       {blocks.map((b, i) => {
-        const blockH = getBlockRenderHeight(b);
+        const blockH = getBlockRenderHeight(b, { forExport: true });
         return (
         <div key={b.id} style={{ display: 'contents' }}>
           <div className={`mini-dropline${lineAt === i ? ' on' : ''}`} />
@@ -3619,7 +3625,7 @@ export function Editor() {
           <div className="preview-close"><IconButton name="x" onClick={() => setPreview(false)} /></div>
           <div className="preview-sheet">
             {blocks.map((b) => (
-              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
+              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b, { forExport: true }), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
                 {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}

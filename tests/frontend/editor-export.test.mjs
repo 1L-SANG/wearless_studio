@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 import {
   EXPORT_WIDTH,
+  exportNodeHeight,
   exportFileName,
   fitPixelRatio,
   isAssetBytesUrl,
@@ -12,6 +13,7 @@ import {
 } from '../../src/features/editor/editorExport.js';
 
 const AID = '123e4567-e89b-42d3-a456-426614174000';
+const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 
 test('toBytesUrl: /file 자산 URL을 /bytes로 바꾼다 (상대·절대·비uuid id — id 검증은 서버 몫)', () => {
   // 기본은 안전한 레거시 e=1. 백엔드 선배포 뒤 VITE gate로만 e=2를 켠다.
@@ -85,6 +87,22 @@ test('내보내기 캡처에서 빈 사진 자리는 빠진다 — 완성본에 
   assert.match(chrome, /'\.slot-add'/, '＋ 버튼도 함께 빠진다');
   // 실제로 제거하는 코드와 이어져 있어야 목록이 의미가 있다.
   assert.match(source, /clone\.querySelectorAll\(CHROME_SELECTOR\)\.forEach\(\(n\) => n\.remove\(\)\)/);
+});
+
+test('빈 텍스트 placeholder는 다운로드 DOM에서 제거되고 export 전용 높이를 쓴다', () => {
+  const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
+  const chrome = source.slice(source.indexOf('const CHROME_SELECTOR'), source.indexOf("].join(',')"));
+  assert.match(chrome, /'\.el-empty-text'/, 'placeholder 없는 빈 텍스트도 결과물에서 빠져야 한다');
+  assert.match(source, /clone\.dataset\.exportHeight/);
+  assert.match(source, /clone\.style\.height = `\$\{exportHeight\}px`/);
+  assert.match(editorSource, /data-export-height=\{getBlockRenderHeight\(block, \{ forExport: true \}\)\}/);
+  assert.match(editorSource, /height: getBlockRenderHeight\(b, \{ forExport: true \}\)/,
+    '전체화면 미리보기 높이도 다운로드와 같아야 한다');
+  assert.equal(exportNodeHeight({
+    offsetHeight: 826,
+    style: { height: '726px' },
+    dataset: { exportHeight: '660' },
+  }), 760, '긴 PNG도 CSS padding은 유지하고 빈 캡션이 만든 66px만 뺀다');
 });
 
 test('내보내기 캡처는 블록 배경색을 덮어쓰지 않는다(backgroundColor 옵션 금지) — 흰 바탕은 합성으로', () => {

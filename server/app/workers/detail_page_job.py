@@ -52,8 +52,8 @@ from ._common import emit_job_event as _emit
 log = logging.getLogger("wearless.detail_page_job")
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
-# 컷·카피 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
-# 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다).
+# 컷 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
+# 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다). 카피는 페이지 1콜이다.
 _GEN_CONCURRENCY = 3
 _WORN_CUT_TYPES = ("styling", "horizon", "mirror")
 
@@ -222,12 +222,53 @@ async def _tag_preview_block(app, job_id, intent_id, block_id, *, conn=None) -> 
                     job_id, block_id, type(e).__name__)
 
 
-def _dims(data: bytes):
+def _relative_luminance(rgb) -> float:
+    channels = []
+    for value in rgb[:3]:
+        channel = value / 255
+        channels.append(channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _hook_title_metadata(block: dict, image) -> dict:
+    """시그니처 제목 중앙 띠의 평균 상대 명도에서 더 강한 대비색을 고른다."""
+    if not block.get("hookTitleOverlay"):
+        return {}
+    opened = None
     try:
-        im = Image.open(BytesIO(data))
-        return im.width, im.height
+        if isinstance(image, (bytes, bytearray)):
+            opened = Image.open(BytesIO(image))
+            image = opened
+        rgb = image.convert("RGB")
+        width, height = rgb.size
+        if width <= 0 or height <= 0:
+            return {}
+        band = rgb.crop((round(width * 0.1), round(height * 0.4),
+                         max(round(width * 0.9), 1), max(round(height * 0.6), 1)))
+        band.thumbnail((64, 32))
+        raw = band.tobytes()
+        pixels = zip(raw[0::3], raw[1::3], raw[2::3])
+        pixel_count = band.width * band.height
+        if not pixel_count:
+            return {}
+        luminance = sum(_relative_luminance(pixel) for pixel in pixels) / pixel_count
+        dark_luminance = _relative_luminance((17, 17, 17))
+        dark_contrast = (luminance + 0.05) / (dark_luminance + 0.05)
+        white_contrast = 1.05 / (luminance + 0.05)
+        return {"hookTitleColor": "#111111" if dark_contrast >= white_contrast else "#ffffff"}
     except Exception:
-        return None, None
+        return {}
+    finally:
+        if opened is not None:
+            opened.close()
+
+
+def _image_metrics(data: bytes, block: dict) -> tuple[int | None, int | None, dict]:
+    try:
+        with Image.open(BytesIO(data)) as image:
+            return image.width, image.height, _hook_title_metadata(block, image)
+    except Exception:
+        return None, None, {}
 
 
 async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str | None = None):
@@ -370,7 +411,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 아직 없다. 저장 직후 외부 목록에 기록해 실패 종결에서 즉시 철회한다.
         if stored_outputs is not None:
             stored_outputs.append({"key": key, "cleanup_intent_id": cleanup_intent_id})
-        w, h = _dims(img)
+        w, h, hook_title_meta = _image_metrics(img, b)
         # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
         # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
         if face_pass_outcome.get("face_pass"):
@@ -391,7 +432,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
             # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
             {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
-             "width": w, "height": h},
+             "width": w, "height": h, **hook_title_meta},
             {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
              "size": len(img), "width": w, "height": h,
              "cleanup_intent_id": cleanup_intent_id,
@@ -1085,59 +1126,71 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
-    """블록별 AG-02 카피와, 필요하면 첫 기존 호출에 묶은 상품명을 생성한다."""
+    """페이지 단위 AG-02 생성과 AG-03 검수를 전체 30초 상한 안에서 수행한다."""
     s = app.state.settings
-    sem = asyncio.Semaphore(_GEN_CONCURRENCY)
-    needs_name = not str(product.get("name") or "").strip() or str(product.get("name")).strip() == "새 상품"
-    naming_block_id = ai_blocks[0].get("id") if needs_name and ai_blocks else None
 
-    async def _one(b):
-        """블록 1개 카피 생성. 실패면 None(카피는 게이트 아님, 블록 생략)."""
-        async with sem:
-            try:
-                generated = await copywriter.generate(
-                    s, content_role=b.get("contentRole"), section_role=b.get("sectionRole"),
-                    cut_type=b.get("cutType"), product=product, analysis=analysis,
-                    color_label=b.get("colorId"),
-                    include_product_name=b.get("id") == naming_block_id)
-            except Exception as e:  # VisionError 포함 — 카피는 게이트 아님, 실패 블록 생략
-                log.warning("AG-02 copy failed for job %s block %s: %r", job["id"], b.get("id"), e)
-                return None
-            if isinstance(generated, dict):
-                texts = generated.get("texts") or []
-                product_name = generated.get("productName")
-            else:
-                texts, product_name = generated, None
-            return (b.get("id"), texts, product_name) if texts or product_name else None
+    async def _within_budget():
+        try:
+            drafts = await copywriter.generate(
+                s, blocks=ai_blocks, product=product, analysis=analysis)
+        except Exception as e:  # 카피는 게이트 아님 — 페이지 카피 전체를 비운다
+            log.warning("AG-02 page copy failed for job %s: %r", job["id"], e)
+            return [], None
+        items = []
+        for draft in drafts or []:
+            bid = str(draft.get("blockId"))
+            for text in draft.get("texts") or []:
+                role = text.get("role") or "headline"
+                items.append({
+                    "textId": f"{bid}:{role}",
+                    "blockId": bid,
+                    "text": text.get("text", ""),
+                })
+        if not items:
+            return [], None
 
-    # gather 는 순서 보존 — drafts 삽입 순서(=콘티 순서)를 유지한다.
-    items, drafts, generated_name = [], {}, None
-    for r in await asyncio.gather(*[_one(b) for b in ai_blocks]):
-        if r:
-            bid, texts, product_name = r
-            generated_name = generated_name or product_name
-            if texts:
-                drafts[bid] = texts
-            for t in texts:
-                items.append({"blockId": bid, "text": t.get("text", "")})
-    if not items:
-        return [], generated_name
-    # AG-03 검수 — revise면 수정 텍스트로 교체(첫 항목 role 유지). 실패 시 원문 유지.
+        try:
+            confirmed = {
+                "materials": analysis.get("materials"),
+                "sellingPoints": analysis.get("sellingPoints"),
+                "measurementsKnown": not analysis.get("measurementsUnknown"),
+            }
+            results = await copy_qc.review(s, items, confirmed)
+            revisions = {
+                result["textId"]: result["revisedText"]
+                for result in results
+                if result.get("verdict") == "revise" and result.get("revisedText")
+            }
+        except Exception as e:  # 검수 실패 시 코드 필터를 통과한 원문 유지
+            log.warning("AG-03 copy-qc failed for job %s: %r", job["id"], e)
+            revisions = {}
+
+        final_by_id = {}
+        block_ids = []
+        for draft in drafts:
+            bid = str(draft.get("blockId"))
+            for text in draft.get("texts") or []:
+                role = text.get("role") or "headline"
+                revised = revisions.get(f"{bid}:{role}")
+                final_by_id[bid] = revised if revised is not None else text.get("text")
+                block_ids.append(bid)
+                break
+        valid, _invalid = copywriter.validate_headlines(
+            final_by_id, block_ids, analysis or {})
+        copy_results = [
+            {"blockId": bid, "texts": [{"role": "headline", "text": valid[bid]}]}
+            for bid in block_ids if bid in valid
+        ]
+        return copy_results, None
+
     try:
-        confirmed = {"materials": analysis.get("materials"),
-                     "sellingPoints": analysis.get("sellingPoints"),
-                     "measurementsKnown": not analysis.get("measurementsUnknown")}
-        results = await copy_qc.review(s, items, confirmed)
-        rev = {r["blockId"]: r for r in results if r.get("verdict") == "revise" and r.get("revisedText")}
-    except Exception as e:  # VisionError 포함 — 검수 실패 시 원문 유지(게이트 아님)
-        log.warning("AG-03 copy-qc failed for job %s: %r", job["id"], e)
-        rev = {}
-    copy_results = []
-    for bid, texts in drafts.items():
-        if bid in rev:  # 첫 텍스트를 검수 수정안으로 교체
-            texts = [{"role": texts[0].get("role", "body"), "text": rev[bid]["revisedText"]}] + texts[1:]
-        copy_results.append({"blockId": bid, "texts": texts})
-    return copy_results, generated_name
+        return await asyncio.wait_for(_within_budget(), timeout=s.analysis_timeout_seconds)
+    except TimeoutError:
+        log.warning(
+            "page copy exceeded %.1fs for job %s; continuing without copy",
+            s.analysis_timeout_seconds, job["id"],
+        )
+        return [], None
 
 
 _CATEGORY_NAMES = {
@@ -2112,7 +2165,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                                "storyboardDigest": loaded_storyboard_digest})
 
         # 2) 카피(선택) + 검수 — **컷보다 먼저**. 카피는 컷 이미지를 입력으로 쓰지 않아
-        # (copywriter.generate: product·analysis·role만) 순서를 당길 수 있고, 셀러는 컷을
+        # (copywriter.generate: product·analysis·스토리보드만) 순서를 당길 수 있고, 셀러는 컷을
         # 기다리는 몇 분 동안 문구를 다듬을 수 있다(editor_wait_dev_spec §2-1).
         copy_results = []
         generated_name = None
@@ -2129,26 +2182,24 @@ async def run_detail_page_job(app, job: dict) -> None:
             generated_name = generated_name or _fallback_product_name(product, analysis)
             product["name"] = generated_name
 
-            # 특징 포인트 설명 문구 — 에디터의 정보 블록이 프리필로 읽는다(analysis.featureCopy).
-            # 컷 카피와 달리 블록 단위가 아니라 강조특징 단위라 1콜이면 끝난다.
-            # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위 — 셀러가 칩을
-            # 직접 채웠으면 그걸, 비워뒀으면 AI 제안을 쓴다. 다르면 제목(칩)과 설명이 어긋난다.
-            points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+        # 특징 포인트 설명은 상품명 생성 여부와 사진 카피 토글과 무관한 상세페이지 기본 단계다.
+        # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위다.
+        points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+        try:
+            items = await feature_copy.generate(s, points, product, analysis)
+        except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
+            log.warning("feature copy failed for job %s: %r", job_id, e)
+            items = []
+        if items:
             try:
-                items = await feature_copy.generate(s, points, product, analysis)
-            except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
-                log.warning("feature copy failed for job %s: %r", job_id, e)
-                items = []
-            if items:
-                try:
-                    async with pool.connection() as conn:
-                        # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
-                        # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
-                        fresh = await repo.get_analysis(conn, project_id) or {}
-                        await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
-                        await conn.commit()
-                except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
-                    log.warning("feature copy persist failed for job %s: %r", job_id, e)
+                async with pool.connection() as conn:
+                    # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
+                    # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
+                    fresh = await repo.get_analysis(conn, project_id) or {}
+                    await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
+                    await conn.commit()
+            except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
+                log.warning("feature copy persist failed for job %s: %r", job_id, e)
 
         # 3) 컷 생성 — 컷 단위 progress(20→80)는 _gen_cuts 안에서 emit
         # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
