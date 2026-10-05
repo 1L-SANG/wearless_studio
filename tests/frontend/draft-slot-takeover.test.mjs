@@ -809,20 +809,23 @@ test('logout invalidates an in-flight failure so it cannot schedule an old-draft
 test('logged-in and mock entry use one priority-4 modal with local and remote timestamps', () => {
   const app = read('../../src/apps/seller/App.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
+  const entry = read('../../src/lib/draftEntry.js');
   assert.match(app, /const slotEnabled = Boolean\(session\) \|\| isMockMode/);
   assert.match(app, /Promise\.all\(\[[\s\S]*?draftSlot\.get\(\)[\s\S]*?loadDraft\(\)/);
   assert.match(app, /id: 'local'[\s\S]*?formatDraftRelativeTime\(localMeta\.updatedAt\)/);
-  assert.match(app, /id: 'remote'[\s\S]*?formatDraftRelativeTime\(slot\.meta\?\.updatedAt\)/);
+  assert.match(app, /sources\.push\(remoteDraftSource\(slot\.meta/);
+  assert.match(entry, /id: 'remote'[\s\S]*?formatDraftRelativeTime\(meta\?\.updatedAt\)/);
   assert.match(app, /slot\.meta\?\.updatedAt !== draftSlot\.getServerSyncedAt\(\)/);
-  assert.match(app, /draftSlot\.takeover\(\)[\s\S]*?draftSlot\.stage/);
+  assert.match(entry, /slotClient\.takeover\(\)[\s\S]*?slotClient\.stage/);
   assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 시작하기/);
 });
 
 test('a device-local draft opens without waiting for the server, and phantom slots stay hidden', () => {
   const app = read('../../src/apps/seller/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
+  const entry = read('../../src/lib/draftEntry.js');
   // 로컬 카드 열기: 복원을 먼저 확정하고 작업권 인수는 뒤에서 — 서버 장애가 복원을 막지 않는다
-  assert.match(app, /draftSlot\.stage\(\{ payload: draft, meta: source\.meta \}\);\s*\n\s*void draftSlot\.takeover\(\)\.catch/);
+  assert.match(entry, /slotClient\.stage\(\{ payload: source\.draft, meta: source\.meta \}\);\s*\n\s*void slotClient\.takeover\(\)\.catch/);
   // 사진·이름·분석이 전무한 슬롯(팬텀)과 지연 삭제 중인 슬롯은 이어가기 카드로 권하지 않는다
   assert.match(app, /slot\.meta\?\.hasContent !== false/);
   assert.match(app, /draftSlot\.hasPendingRemoval\(\)/);
@@ -840,12 +843,11 @@ test('a device-local draft opens without waiting for the server, and phantom slo
 });
 
 test('photo pending is hidden while editing but warned when a remote draft may omit photos', () => {
-  const app = read('../../src/apps/seller/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
   const slot = read('../../src/lib/draftSlot.js');
   assert.match(slot, /photosPending/);
-  assert.match(app, /photosPending: Boolean\(slot\.meta\?\.photosPending\)/);
+  assert.match(read('../../src/lib/draftEntry.js'), /photosPending: Boolean\(meta\?\.photosPending\)/);
   assert.doesNotMatch(input, /일부 사진은 아직 동기화 중/);
   assert.match(shell, /사진 몇 장은 아직 저장 중이라 빠져 있을 수 있어요/);
 });

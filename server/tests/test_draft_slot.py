@@ -334,7 +334,7 @@ def test_discard_unreferenced_draft_asset_cleans_r2(client, make_token, monkeypa
     assert r2.deletes == [f"draft/{ASSET_A}.jpg"]
 
 
-def test_stale_reclaimer_commits_before_deleting_r2(monkeypatch):
+def test_stale_reclaimer_uses_seven_days_and_commits_before_deleting_r2(monkeypatch):
     events = []
 
     class Conn:
@@ -350,7 +350,8 @@ def test_stale_reclaimer_commits_before_deleting_r2(monkeypatch):
         def delete(self, key):
             events.append(f"delete:{key}")
 
-    async def reclaim(conn):
+    async def reclaim(conn, *, older_than_minutes):
+        assert older_than_minutes == 7 * 24 * 60
         events.append("select")
         return [{"id": ASSET_A, "r2_key": f"draft/{ASSET_A}.jpg"}]
 

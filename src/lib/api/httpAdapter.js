@@ -13,6 +13,7 @@ import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matching
 import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { fetchPhotoBytes } from '../photoBytes.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
@@ -461,7 +462,7 @@ export const httpAdapter = {
     const form = new FormData();
     onProgress?.(10);
     for (const [index, photo] of photos.entries()) {
-      const blob = await fetch(photo.src, { signal }).then((response) => response.blob());
+      const blob = await fetchPhotoBytes(photo.src, { signal });
       form.append('images', blob, photo.name || `product-${index + 1}`);
       form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
     }

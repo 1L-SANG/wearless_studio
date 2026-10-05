@@ -16,6 +16,11 @@ import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
 import { recordCreditReturn } from '@/lib/creditReturn.js';
 import { draftSlot } from '@/lib/draftSlot.js';
+import { getDraftDeviceNoun } from '@/lib/draftDeviceNoun.js';
+import { getFlowDraftSources } from '@/lib/draftEntry.js';
+import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
+import { isMobileDevice } from '@/lib/deviceClass.js';
+import { DraftEntryDialog } from './DraftEntryDialog.jsx';
 import { ProfileMenuIcon } from './ProfileMenuIcon.jsx';
 
 draftSlot.configure(api);
@@ -33,25 +38,40 @@ export function TopNav() {
   const beginProject = useAppStore((s) => s.beginProject);
   const inputPromotionLocked = useAppStore((s) => s.inputPromotionLocked);
   const [resumeAsk, setResumeAsk] = useState(false);
+  const [resumeSources, setResumeSources] = useState(null);
+  const openInput = () => { setResumeAsk(false); navigate('/create/input'); };
+  const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
+    beginProject, onOpened: openInput, onStarted: openInput, onError: toast.push,
+  });
+  useEffect(() => {
+    if (!resumeAsk) return;
+    let alive = true;
+    setResumeSources(null);
+    getFlowDraftSources({
+      slotClient: draftSlot, enabled: Boolean(session),
+      flowSource: { id: 'flow', title: '만들던 상세페이지', description: '진행하던 작업이 있어요' },
+    }).then((sources) => { if (alive) setResumeSources(sources); });
+    return () => { alive = false; };
+  }, [resumeAsk, session]);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
   // '새로 만들기' = 숨은 슬롯과 로컬 플로우를 비운 뒤 입력 화면. 보관함 project는 확정 때 생성한다.
-  const startNew = async () => {
+  const startNew = () => {
     if (inputPromotionLocked) return;
-    setResumeAsk(false);
-    try {
-      await draftSlot.removeForNewFlow();
-    } catch (error) {
-      toast.push(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
-      return;
-    }
-    await beginProject();
-    navigate('/create/input');
+    return entryActions.startNew(isMobileDevice()
+      ? { mobilePhotoCount: Math.max(0, ...(resumeSources || []).map((source) => source.meta?.photoCount || 0)) }
+      : undefined);
   };
   // '이어서 작업' = 마지막으로 머문 create/editor 경로로 복귀(없으면 콘티 단계). 생성이 도는 동안
   // 사용자가 있어야 할 곳도 콘티라 강제 이동 없이 이 폴백 하나로 자연스럽게 돌아간다.
   const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/storyboard'); };
+  const chooseSource = (sourceId) => {
+    if (inputPromotionLocked) return;
+    if (sourceId === 'flow') { resumeWork(); return; }
+    const source = resumeSources?.find((candidate) => candidate.id === sourceId);
+    if (source) return entryActions.openRemote(source);
+  };
   const onNav = async (r) => {
     if (inputPromotionLocked) return;
     if (r === 'create') {
@@ -86,7 +106,7 @@ export function TopNav() {
 
   return (
     <>
-    <nav className="topnav">
+    <nav className={`topnav${!IS_FACEMARKET && isMobileDevice() ? ' topnav-handoff' : ''}`}>
       {/* facemarket 은 '/' 가 랜딩이라 브랜드가 홈 진입점이어야 한다. 이게 없으면 등록에
           들어간 모델이 랜딩(제품 설명 전체)으로 돌아갈 길이 주소창뿐이다 — 앱 안의 '/' 링크는
           비로그인 전용 화면(FacemarketLoginPrompt)에 하나 있는 게 전부라 로그인 사용자에겐 0개다.
@@ -122,42 +142,53 @@ export function TopNav() {
         )}
       </div>
     </nav>
-    {resumeAsk && <ResumeChoiceModal onResume={resumeWork} onNew={startNew} onClose={() => setResumeAsk(false)} />}
+    {resumeAsk && (entryDialog
+      ? <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
+      : <ResumeChoiceModal sources={resumeSources} onChoose={chooseSource} onResume={resumeWork}
+          onNew={startNew} busy={entryBusy} onClose={entryBusy ? undefined : () => setResumeAsk(false)} />)}
     </>
   );
 }
 
 /* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
    과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
-export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, onChoose }) {
+export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, onChoose, busy = false }) {
+  const mobile = isMobileDevice();
   if (sources?.length) {
     return (
       <Modal onClose={onClose}>
-        <h3>하던 작업이 있어요</h3>
+        <h3>{mobile ? '담아둔 상품이 있어요' : '하던 작업이 있어요'}</h3>
         <p>이어서 열 내용을 고르거나, 새로 시작할 수 있어요.</p>
         <div className="draft-entry-sources">
-          {sources.map((source) => (
-            <button type="button" className="draft-entry-source" key={source.id}
-              onClick={() => onChoose(source.id)}>
-              <span>{source.title}</span>
-              <small>{source.description}</small>
-              {source.photosPending && <em>사진 몇 장은 아직 저장 중이라 빠져 있을 수 있어요.</em>}
-            </button>
-          ))}
+          {sources.map((source) => {
+            const title = mobile && getDraftDeviceNoun(source.meta?.deviceLabel)
+              ? `${getDraftDeviceNoun(source.meta.deviceLabel)} 작업 이어가기` : source.title;
+            const kind = source.id === 'flow' ? ' is-flow'
+              : /^(스마트폰|태블릿) 작업 이어가기$/.test(title) ? ' is-handoff' : '';
+            return (
+              <button type="button" className={`draft-entry-source${kind}`} key={source.id} disabled={busy}
+                onClick={() => onChoose(source.id)}>
+                <span>{title}</span>
+                <small>{source.description}</small>
+                {source.notice && <small>{source.notice}</small>}
+                {source.photosPending && <em>사진 몇 장은 아직 저장 중이라 빠져 있을 수 있어요.</em>}
+              </button>
+            );
+          })}
         </div>
         <div className="modal-actions">
-          <Button variant="ghost" onClick={onNew}>새로 시작하기</Button>
+          <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 담기' : '새로 시작하기'}</Button>
         </div>
       </Modal>
     );
   }
   return (
     <Modal onClose={onClose}>
-      <h3>이어서 작업할까요?</h3>
+      <h3>{mobile ? '담아둔 상품이 있어요' : '이어서 작업할까요?'}</h3>
       <p>만들던 상세페이지가 있어요. 이어서 하거나 새로 시작할 수 있어요.</p>
       <div className="modal-actions">
-        <Button variant="ghost" onClick={onNew}>새로 시작하기</Button>
-        <Button variant="primary" onClick={onResume}>이어서 하기</Button>
+        <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 담기' : '새로 시작하기'}</Button>
+        <Button variant="primary" onClick={onResume} disabled={busy}>이어서 하기</Button>
       </div>
     </Modal>
   );
@@ -205,6 +236,12 @@ function ProfileMenu() {
             </div>
           </div>
           <div className="profile-sep" />
+          {!IS_FACEMARKET && (
+            <button className="profile-item" role="menuitem"
+              onClick={() => { setOpen(false); navigate('/library'); }}>
+              <Icon name="library" size={24} />보관함
+            </button>
+          )}
           {/* 모델 등록은 facemarket.wearless.kr 전용 — ai 프로필 메뉴에서는 숨긴다(도메인 분리). */}
           {IS_FACEMARKET && (
             <button className="profile-item" role="menuitem"

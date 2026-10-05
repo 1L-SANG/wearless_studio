@@ -1,0 +1,17 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-8);
+  min-height: 40px;
+  padding: 0 var(--sp-16);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font: 500 13px/1.5 var(--font-mono);
+  cursor: pointer;
+}
+.icon { display: inline-flex; color: var(--fg-2); }
+.chip:hover { box-shadow: var(--elev-card); }
+.chip:focus-visible { outline: 2px solid var(--focus); outline-offset: var(--sp-2); }

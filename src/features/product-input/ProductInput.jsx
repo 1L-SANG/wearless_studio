@@ -27,6 +27,12 @@ import {
   clearDraftIfCurrent,
   queueProductDraftSave,
 } from '@/lib/draftStore.js';
+import { isMobileDevice } from '@/lib/deviceClass.js';
+import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
+import { DraftEntryDialog } from '@/features/shell/DraftEntryDialog.jsx';
+import { InputMainAction, MobileAnalyzedNotice, MobileSaveModal, MobileSaveStatus, useMobileInputSave } from './MobileInputHandoff.jsx';
+import { confirmDraftPhotos } from '@/lib/draftPhotoConfirmation.js';
+import { isRemoteAssetPhoto } from '@/lib/photoBytes.js';
 import { isAnalysisRunning, setAnalysisRunning } from '@/lib/flowSession.js';
 import {
   getUploadValidationError,
@@ -51,7 +57,7 @@ import {
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
 import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
-import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
@@ -209,7 +215,7 @@ function MetaCap({ im, caption }) {
 }
 
 // add target that ALSO accepts drag-drop + click-to-pick (keeps original .tile.add / .up-empty styles)
-function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children }) {
+function AddDrop({ className, slot, room, onAddFiles, onPendingChange, immediatePending = false, children }) {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);   // HEIC 변환 중 — 큰 사진은 1~2초 걸린다
   const inputRef = useRef(null);
@@ -234,6 +240,7 @@ function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children 
     const pendingCount = getPendingTileCount(selected, room);
     setBusy(true);
     clearTimeout(pendingTimerRef.current);
+    if (pendingCount && immediatePending) onPendingChange(slot, pendingCount);
     if (pendingCount) {
       pendingTimerRef.current = setTimeout(() => {
         if (mountedRef.current) onPendingChange(slot, pendingCount);
@@ -295,11 +302,13 @@ function ProductPhotoPreview({ image, displayUrl }) {
     : <span className="product-photo-preview-pending" aria-hidden="true" />;
 }
 
-function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false }) {
+function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false, readOnly = false, onPendingChange }) {
   const base = group.isBase;
   const used = group.images.length;
   const [pendingBySlot, setPendingBySlot] = useState({});
+  useEffect(() => () => onPendingChange?.(group.id, null, 0), []);
   const setSlotPending = (slot, count) => {
+    onPendingChange?.(group.id, slot, count);
     setPendingBySlot((current) => {
       if (count) return { ...current, [slot]: count };
       if (!current[slot]) return current;
@@ -337,7 +346,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         ))}
         {!photosLocked && (
           <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={room}
-            onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+            onAddFiles={onAddFiles} onPendingChange={setSlotPending} immediatePending={Boolean(onPendingChange)}>
             {base && room <= 0 ? (
               <span className="add-limit">최대 6장까지 이미지를 업로드할 수 있습니다.</span>
             ) : (
@@ -391,14 +400,14 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
           ))}
           {!photosLocked && (
             <AddDrop className="tile add" slot="Front" room={3 - used}
-              onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+              onAddFiles={onAddFiles} onPendingChange={setSlotPending} immediatePending={Boolean(onPendingChange)}>
               <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
             </AddDrop>
           )}
         </div>
       )}
 
-      {used > 0 && (
+      {used > 0 && !readOnly && (
         <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} name={group.name}
           onChange={onPickColor} onNameChange={onRename} />
       )}
@@ -409,7 +418,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   );
 }
 
-function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
+function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard, mobile = isMobileDevice() }) {
   const gone = meta?.state === 'gone';
   return (
     <div className="draft-slot-lock" role="alertdialog" aria-modal="true">
@@ -417,11 +426,11 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
         <Icon name="lock" size={28} />
         {gone ? (
           <>
-            <h3>다른 곳에서 이 작업을 끝내거나 새로 시작했어요</h3>
+            <h3>{mobile ? '이 상품은 다른 곳에서 마무리됐거나, 보관 기간이 지나 정리됐어요.' : '다른 곳에서 이 작업을 끝내거나 새로 시작했어요'}</h3>
             <p>지금 화면에 남아 있는 내용을 계속 쓸지 골라주세요.</p>
             <div className="modal-actions">
-              <Button variant="ghost" onClick={onDiscard}>지우고 새로 시작</Button>
-              <Button variant="primary" onClick={onRestartLocal}>이 내용 계속 쓰기</Button>
+              <Button variant={mobile ? "primary" : "ghost"} onClick={onDiscard}>{mobile ? '새 상품 담기' : '지우고 새로 시작'}</Button>
+              <Button variant={mobile ? "ghost" : "primary"} onClick={onRestartLocal}>{mobile ? '이 사진으로 다시 담기' : '이 내용 계속 쓰기'}</Button>
             </div>
           </>
         ) : (
@@ -441,6 +450,7 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
 
 export function ProductInput() {
   const navigate = useNavigate();
+  const mobile = isMobileDevice();
   const location = useLocation();
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
@@ -451,6 +461,18 @@ export function ProductInput() {
   // onFinished 로 수행한다 (애니메이션 끝 ≈ 전환, 2026-07-13 A안 결정).
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const mobileReadOnly = mobile && phase === 'done';
+  const handoff = useMobileInputSave(product);
+  const [pendingConversions, setPendingConversions] = useState({});
+  const hasPendingConversions = Object.values(pendingConversions).some(Boolean);
+  const reportPending = (groupId, slot, count) => setPendingConversions((current) => {
+    const next = { ...current };
+    if (slot == null) {
+      for (const key of Object.keys(next)) if (key.startsWith(`${groupId}:`)) delete next[key];
+    } else if (count) next[`${groupId}:${slot}`] = count;
+    else delete next[`${groupId}:${slot}`];
+    return next;
+  });
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
   const composeMode = useAppStore((s) => s.composeMode);
   const [expanded, setExpanded] = useState(false);
@@ -460,6 +482,7 @@ export function ProductInput() {
   const [inputConsistency, setInputConsistency] = useState(null);
   const [consistencyAck, setConsistencyAck] = useState(false);   // '계속 진행' 누른 뒤 재차 막지 않는다
   const [consistencyOpen, setConsistencyOpen] = useState(false);
+  const [photoFailure, setPhotoFailure] = useState(null);
   // 성별·의류 종류 등 생성 관련 필드를 바꾸면 콘티/마네킹의 기존 작업이 무효화된다 — 적용을
   // 보류하고 대가를 먼저 보여준다. 확정 전엔 화면·서버 어느 쪽에도 반영하지 않는다(취소=무해).
   const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
@@ -477,6 +500,12 @@ export function ProductInput() {
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
   const pushToast = toast.push;
+  const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
+    beginProject: () => useAppStore.getState().beginProject(),
+    onOpened: () => {},
+    onStarted: () => navigate('/create/input', { replace: true }),
+    onError: pushToast,
+  });
   const [, refreshPhotoPreviews] = useState(0);
   const photoPreviewRegistryRef = useRef(null);
   const latestLocalUpdatedAtRef = useRef(null);
@@ -511,7 +540,7 @@ export function ProductInput() {
   }, [slotEnabled]);
 
   useEffect(() => {
-    if (!product) return;
+    if (!product || mobileReadOnly) return;
     const hasContent = draftHasContent(product, analysis);
     // 구경만 한 빈 화면은 임시저장을 만들지 않는다. 단 내용이 있다가 다 지워진 상태는
     // '비움'도 최신 상태이므로 계속 저장한다(안 하면 지운 사진이 복원에서 되살아난다).
@@ -523,7 +552,7 @@ export function ProductInput() {
     if (slotEnabled) {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
-  }, [analysis, composeMode, product, slotEnabled]);
+  }, [analysis, composeMode, product, slotEnabled, mobileReadOnly]);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -663,6 +692,7 @@ export function ProductInput() {
   // phase==='done'(기존 프로젝트 재진입·초안 동기화·최초 분석 완료 세 경로 모두 이 시점엔
   // 관련 저장이 끝나 있다)까지 함께 기다린다.
   useEffect(() => {
+    if (mobile) return;
     if (!analysisProjectId || phase !== 'done') return;
     if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
     storyboardPrefetchProjectRef.current = analysisProjectId;
@@ -674,9 +704,10 @@ export function ProductInput() {
       isActive: () => alive,
     });
     return () => { alive = false; };
-  }, [analysisProjectId, phase]);
+  }, [analysisProjectId, phase, mobile]);
 
   useEffect(() => {
+    if (mobile) return;
     if (!analysisProjectId || phase !== 'done') return;
     if (mannequinWorkCheckProjectRef.current === analysisProjectId) return;
     mannequinWorkCheckProjectRef.current = analysisProjectId;
@@ -685,10 +716,11 @@ export function ProductInput() {
       if (alive) hasExistingGenerationWorkRef.current = (cuts || []).length > 0;
     }).catch(() => { /* 조회 실패는 경고를 생략한다 — 방해가 안전보다 나쁘다 */ });
     return () => { alive = false; };
-  }, [analysisProjectId, phase]);
+  }, [analysisProjectId, phase, mobile]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
   const goToStoryboard = async (opts) => {
+    if (mobile) return;
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     if (!guardMannequinCredits()) return;
@@ -728,80 +760,97 @@ export function ProductInput() {
         composeMode: latestComposeModeRef.current,
         localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString(),
       };
-      queueProductDraftSave(
-        latestSnapshot.product,
-        latestSnapshot.analysis,
-        latestSnapshot.composeMode,
-        latestSnapshot.localUpdatedAt,
-      );
-      const { failed = 0 } = await flushProductDraftSave() || {};
-      // 유실 경고는 전환 오버레이(3.5s)보다 오래 살아남아야 한다 — 도착 후에도 읽히게 6s.
-      if (failed) toast.push(`사진 ${failed}장은 저장되지 않았어요. 다음 화면에서 확인해 주세요.`, { icon: 'alertTri', duration: 6000 });
-      if (session || isMockMode) {
-        const draft = await loadDraft();
-        if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
-        await draftSlot.flush();
-        // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
-        // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
-        await draftSlot.remove();
-        // CTA 는 **프로젝트 신원까지만** 기다린다. 사진 업로드·상품 저장은 그 뒤로 계속 돌고,
-        // 콘티보드가 그 프라미스를 구독해 진행률을 보여주고 마네킹 생성 전에 정착을 기다린다.
-        // 이 대기를 CTA 에 두면 사진 용량에 정비례해 화면이 멈춘다(실측 44~211초, 2026-08-17).
-        const promotedDraftRevision = draft.updatedAt;
-        // 버려진 이전 시도(전환 전 실패·이탈)의 임시 키 task 가 pending 으로 남아 있으면
-        // startProductPhotoPromotion 이 그걸 돌려줘 이번 run 이 아예 실행되지 않는다.
-        // 동시 실행은 redirectingRef 가 이미 막으므로, 여기 남아 있는 것은 항상 잔재다.
-        clearProductPhotoPromotionTask(NEW_PROJECT_KEY);
-        let promotion;
-        const projectId = await new Promise((resolve, reject) => {
-          let settled = false;
-          const task = startProductPhotoPromotion(
-            NEW_PROJECT_KEY,
-            ({ onPhotoProgress }) => promoteDraftToProject(draft, {
-              onProjectReady: (id) => {
-                if (settled) return;
-                settled = true;
-                // 진행률 task 를 실제 projectId 로 옮겨 붙인다 — 콘티보드는 그 키로 구독한다.
-                adoptProductPhotoPromotion(NEW_PROJECT_KEY, id);
-                resolve(id);
-              },
-              onPhotoProgress,
-            }),
-            { draftSlotSnapshot: latestSnapshot },
+      await confirmDraftPhotos({
+        product: latestSnapshot.product,
+        omitIds: opts?.omitPhotoIds || [],
+        onProductChange: (nextProduct) => {
+          latestProductRef.current = nextProduct;
+          setProduct(nextProduct);
+          latestSnapshot.product = nextProduct;
+          latestSnapshot.localUpdatedAt = new Date().toISOString();
+          latestLocalUpdatedAtRef.current = latestSnapshot.localUpdatedAt;
+        },
+        save: async (nextProduct) => {
+          queueProductDraftSave(
+            nextProduct,
+            latestSnapshot.analysis,
+            latestSnapshot.composeMode,
+            latestSnapshot.localUpdatedAt,
           );
-          promotion = task;
-          task.promise.then((value) => {
-            if (!settled) { settled = true; resolve(value?.projectId); }
-          }, (error) => {
-            if (!settled) { settled = true; reject(error); }
-          });
-        });
-        promotedProjectId = projectId;
-        if (!isCurrentRun()) return;
-        // 여기부터는 CTA 비대기 구간이다. 내 옷 승격도 이미 시작됐고 콘티보드가 그 프라미스를
-        // 구독해 준비 상태·완료 반영·실패 안내를 맡는다.
-        // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
-        // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
-        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
-        setAnalysisProjectId(projectId);
-        useAppStore.getState().confirmProductInfo(projectId);
-        navigate('/create/storyboard', {
-          state: storyboardTransitionState(draft),
-        });
-        // 로컬 draft 는 **업로드가 끝난 뒤에** 지운다 — 업로드 중 탭이 닫히면 그 draft 가 유일한
-        // 사진 원본이라, 먼저 지우면 재시도할 재료가 없어진다.
-        void promotion.promise
-          .then(async () => {
-            // 두 정리는 관심사가 다르다. draft 삭제는 "그 사이 새 입력이 없을 때만"이지만,
-            // single-flight 신원 정리는 이 승격이 끝나면 언제나 해야 한다 — 조건을 묶어 두면
-            // 새 입력이 생긴 경우에 앞 projectId 가 남아 다음 상품이 거기에 덮어써진다.
-            await clearDraftIfCurrent(promotedDraftRevision);
-            resetDraftSyncSingleFlight();
-          })
-          .catch(() => {});
-        return;
-      }
-      openLogin('/create/storyboard');
+          return flushProductDraftSave();
+        },
+        onFailure: (failure) => {
+          if (isCurrentRun()) setPhotoFailure(failure);
+        },
+        confirm: async () => {
+          if (!isCurrentRun()) return;
+          if (session || isMockMode) {
+            const draft = await loadDraft();
+            if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
+            await draftSlot.flush();
+            // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
+            // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
+            await draftSlot.remove();
+            // CTA 는 **프로젝트 신원까지만** 기다린다. 사진 업로드·상품 저장은 그 뒤로 계속 돌고,
+            // 콘티보드가 그 프라미스를 구독해 진행률을 보여주고 마네킹 생성 전에 정착을 기다린다.
+            // 이 대기를 CTA 에 두면 사진 용량에 정비례해 화면이 멈춘다(실측 44~211초, 2026-08-17).
+            const promotedDraftRevision = draft.updatedAt;
+            // 버려진 이전 시도(전환 전 실패·이탈)의 임시 키 task 가 pending 으로 남아 있으면
+            // startProductPhotoPromotion 이 그걸 돌려줘 이번 run 이 아예 실행되지 않는다.
+            // 동시 실행은 redirectingRef 가 이미 막으므로, 여기 남아 있는 것은 항상 잔재다.
+            clearProductPhotoPromotionTask(NEW_PROJECT_KEY);
+            let promotion;
+            const projectId = await new Promise((resolve, reject) => {
+              let settled = false;
+              const task = startProductPhotoPromotion(
+                NEW_PROJECT_KEY,
+                ({ onPhotoProgress }) => promoteDraftToProject(draft, {
+                  onProjectReady: (id) => {
+                    if (settled) return;
+                    settled = true;
+                    // 진행률 task 를 실제 projectId 로 옮겨 붙인다, 콘티보드는 그 키로 구독한다.
+                    adoptProductPhotoPromotion(NEW_PROJECT_KEY, id);
+                    resolve(id);
+                  },
+                  onPhotoProgress,
+                }),
+                { draftSlotSnapshot: latestSnapshot },
+              );
+              promotion = task;
+              task.promise.then((value) => {
+                if (!settled) { settled = true; resolve(value?.projectId); }
+              }, (error) => {
+                if (!settled) { settled = true; reject(error); }
+              });
+            });
+            promotedProjectId = projectId;
+            if (!isCurrentRun()) return;
+            // 여기부터는 CTA 비대기 구간이다. 내 옷 승격도 이미 시작됐고 콘티보드가 그 프라미스를
+            // 구독해 준비 상태·완료 반영·실패 안내를 맡는다.
+            // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로,
+            // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
+            useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
+            setAnalysisProjectId(projectId);
+            useAppStore.getState().confirmProductInfo(projectId);
+            navigate('/create/storyboard', {
+              state: storyboardTransitionState(draft),
+            });
+            // 로컬 draft 는 **업로드가 끝난 뒤에** 지운다, 업로드 중 탭이 닫히면 그 draft 가 유일한
+            // 사진 원본이라, 먼저 지우면 재시도할 재료가 없어진다.
+            void promotion.promise
+              .then(async () => {
+                // 두 정리는 관심사가 다르다. draft 삭제는 "그 사이 새 입력이 없을 때만"이지만,
+                // single-flight 신원 정리는 이 승격이 끝나면 언제나 해야 한다, 조건을 묶어 두면
+                // 새 입력이 생긴 경우에 앞 projectId 가 남아 다음 상품이 거기에 덮어써진다.
+                await clearDraftIfCurrent(promotedDraftRevision);
+                resetDraftSyncSingleFlight();
+              })
+              .catch(() => {});
+            return;
+          }
+          openLogin('/create/storyboard');
+        },
+      });
     } catch (error) {
       if (promotedProjectId) {
         retryDraftPromotion(promotedProjectId);
@@ -887,13 +936,14 @@ export function ProductInput() {
     projectId: analysisProjectId,
   });
   useEffect(() => {
+    if (mobile) return;
     if (!analysisProjectId || phase !== 'done') return undefined;
     let alive = true;
     api.getCreditQuote(analysisProjectId, { selectedModelId: analysis?.selectedModelId })
       .then((quote) => { if (alive) setCreditQuote(quote); })
       .catch(() => { /* 즉시 계산값과 서버 생성 요청의 402 판정을 유지한다. */ });
     return () => { alive = false; };
-  }, [analysis?.selectedModelId, analysisProjectId, phase]);
+  }, [analysis?.selectedModelId, analysisProjectId, phase, mobile]);
 
   // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷이 있거나, 지금 생성이 도는 중)이 있으면
   // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
@@ -932,10 +982,10 @@ export function ProductInput() {
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
     setProduct(restored);
-    setAnalysis(normalizeAnalysisFit(payload.analysis) || null);
+    setAnalysis((mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null);
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
-    setPhase(payload.analysis && hasRequiredDraftPhotos(restored) ? 'done' : 'input');
+    setPhase(payload.analysis && (mobile || hasRequiredDraftPhotos(restored)) ? 'done' : 'input');
     return true;
   };
 
@@ -1043,10 +1093,10 @@ export function ProductInput() {
       if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1
           && (!analysisWasRunning || !isMockMode)) {
         setAnalysisRunning(editingProjectId, false);
-        const nextProduct = withAutofilledColors(p, existingAnalysis);
+        const nextProduct = mobile ? p : withAutofilledColors(p, existingAnalysis);
         persistedColorsRef.current = nextProduct.colors || [];
         setProduct(nextProduct);
-        setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, nextProduct));
+        setAnalysis(mobile ? existingAnalysis : mergeProductOwnedAnalysisFields(existingAnalysis, nextProduct));
         // 저장분에서 경고를 복원한다 — 이게 없으면 새로고침·재진입한 탭에서만 게이트가
         // 사라져 그대로 통과한다(분석 직후 탭에서는 멀쩡히 뜨므로 재현이 헷갈린다).
         setInputConsistency(existingAnalysis.inputConsistency || null);
@@ -1057,7 +1107,7 @@ export function ProductInput() {
 
       // 분석 요청 직후 새로고침된 탭은 서버 상품(영속 asset URL 포함)을 먼저 보여주고,
       // 같은 analyze 호출로 활성 job 에 합류한다. 완료된 분석이 방금 저장됐다면 위 분기가 맡는다.
-      if (analysisWasRunning) {
+      if (analysisWasRunning && !mobile) {
         // mock 은 메모리 DB도 새로 로드되므로 서버 역할의 seed만으로는 방금 올린 blob을
         // 복구할 수 없다. 같은 탭 IndexedDB draft를 사진 소스로 사용하되 getProduct 호출은 유지한다.
         const mockDraft = isMockMode && hasPendingDraft()
@@ -1112,17 +1162,15 @@ export function ProductInput() {
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
         useAppStore.getState().restoreComposeMode(draft.composeMode);
-        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
-        // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
-        // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준이고,
-        // 입력 게이트와 동일하게 **기준 색상**의 사진만 인정한다 — 추가 색상 Front 가
-        // 기준 색상 Front 유실을 가리면 안 된다 (2026-08-07 Codex 리뷰 P2).
+        // 원격 주소는 로컬 바이트가 없어도 복원한다. 확정할 때 다시 수집하고 실패하면 막는다.
+        // 로컬 사진은 저장된 blob이 있어야 필수 사진으로 인정한다.
         const draftColors = draft.product?.colors || [];
         const draftBase = draftColors.find((c) => c.isBase) || draftColors[0];
         const restoredHasRequired = !!draftBase
-          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Front')
-          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Back');
-        if (draft.analysis && restoredHasRequired) { setAnalysis(draft.analysis); setPhase('done'); }
+          && ['Front', 'Back'].every((slot) =>
+            (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === slot)
+            || (draftBase.images || []).some((image) => image.slot === slot && isRemoteAssetPhoto(image.src)));
+        if (draft.analysis && (mobile || restoredHasRequired)) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }
 
@@ -1156,6 +1204,12 @@ export function ProductInput() {
     </div>
   );
 
+  const mobileEditingLocked = mobile && (mobileReadOnly || handoff.saving);
+  const saveForPC = () => {
+    if (!canDone || hasPendingConversions || mobileReadOnly) return;
+    return handoff.save({ product, analysis, composeMode,
+      localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() });
+  };
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => {
@@ -1208,10 +1262,10 @@ export function ProductInput() {
   // 사진 요구 문구는 CTA 옆에 두지 않는다(2026-08-14 사용자 결정) — 필수 표시는
   // 슬롯의 파란 별과 상단 안내문이 맡고, 버튼은 조용히 비활성. 로그인 확인만 일시 안내.
   const disabledReason = authLoading ? '로그인 상태를 확인하고 있어요.' : '';
-  const locked = phase !== 'input';
+  const locked = phase !== 'input' || mobileEditingLocked;
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
-    if (authLoading) return;
+    if (authLoading || mobile) return;
     setAnalysisReady(false);
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1254,7 +1308,7 @@ export function ProductInput() {
       </div>
       <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
-        disabled={phase === 'analyzing'} onChange={(e) => {
+        disabled={phase === 'analyzing' || mobileEditingLocked} onChange={(e) => {
           const name = e.target.value;
           set({ name });
           if (phase === 'done') colorSaveSchedulerRef.current.schedule({ name });
@@ -1278,7 +1332,8 @@ export function ProductInput() {
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
           onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)}
           displayUrl={(imageId, originalUrl) => photoPreviewRegistryRef.current.displayUrl(imageId, originalUrl)}
-          photosLocked={phase === 'done'} />
+          photosLocked={phase === 'done' || mobileEditingLocked} readOnly={mobileEditingLocked}
+          onPendingChange={mobile ? reportPending : undefined} />
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
@@ -1292,7 +1347,7 @@ export function ProductInput() {
   // 입력 섹션: 상품명 + 이미지를 한 카드로
   const inputSection = <div className="merged-card">{nameCard}{images}</div>;
 
-  const wide = phase !== 'input';
+  const wide = !mobile && phase !== 'input';
 
   // after AI analysis starts, the input collapses into a compact summary above the analysis
   const allImages = product.colors.flatMap((c) => c.images);
@@ -1320,7 +1375,7 @@ export function ProductInput() {
   );
 
   return (
-    <div className={`wizard${wide ? ' wide' : ''}`}>
+    <div className={`wizard${wide ? ' wide' : ''}${mobile ? ' pi-handoff' : ''}`}>
       {/* 확정 대기는 '잠금 경고'가 아니라 '이미 시작된 페이지 전환'으로 보여준다(2026-08-14 사용자
           지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
           도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이
@@ -1334,7 +1389,9 @@ export function ProductInput() {
           <span className="sr-only">상세페이지 구성으로 넘어가고 있어요</span>
         </div>
       ), document.body)}
-      {editingRightsLock}
+      {!handoff.result && editingRightsLock}
+      {mobile && <MobileSaveModal result={handoff.result} onRetry={saveForPC} onClose={handoff.close} />}
+      {mobile && <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />}
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
           <h3>어느 내용으로 이어갈까요?</h3>
@@ -1346,6 +1403,25 @@ export function ProductInput() {
             <Button variant="primary" onClick={chooseRemoteContent}>
               다른 기기의 내용 ({formatDraftClock(slotLock.updatedAt)} 저장)
             </Button>
+          </div>
+        </Modal>
+      )}
+      {photoFailure && (
+        <Modal onClose={() => setPhotoFailure(null)}>
+          <h3>사진 {photoFailure.failed}장을 불러오지 못했어요.</h3>
+          <p>인터넷 연결을 확인하고 다시 시도해 주세요.{!photoFailure.canOmit && ' 분석에 쓴 사진이라 빼고 진행할 수 없어요.'}</p>
+          <div className="modal-actions">
+            {photoFailure.canOmit && (
+              <Button variant="ghost" onClick={() => {
+                const omitPhotoIds = photoFailure.failedIds;
+                setPhotoFailure(null);
+                goToStoryboard({ force: true, omitPhotoIds });
+              }}>이 사진을 빼고 계속</Button>
+            )}
+            <Button variant="primary" onClick={() => {
+              setPhotoFailure(null);
+              goToStoryboard({ force: true });
+            }}>다시 시도</Button>
           </div>
         </Modal>
       )}
@@ -1404,14 +1480,18 @@ export function ProductInput() {
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 
-      {phase === 'input' ? inputSection : summaryCard}
+      {mobileReadOnly && <MobileAnalyzedNotice busy={entryBusy} onNew={() => entryActions.startNew({
+        enabled: slotEnabled, mobilePhotoCount: allUploaded.length,
+      })} />}
+      {mobile && handoff.banner && <MobileSaveStatus {...handoff.banner} />}
+      {mobile || phase === 'input' ? inputSection : summaryCard}
 
       {/* 경고를 CTA 모달에만 걸면 그 버튼을 누르기 전까지 화면에 아무 흔적이 없어, 셀러 눈에는
           "다른 옷을 넣었는데 아무 일도 안 일어난" 것으로 보인다(2026-07-31 실측). 분석 직후
           바로 보이는 배너를 함께 둔다 — 모달은 진행 직전 마지막 확인용으로 남긴다. */}
       {/* 판정 근거(슬롯별 상세)는 배너에서 뺀다 — 셀러에게 필요한 건 "무엇을 하면 되는가"뿐
           (2026-08-14 사용자 결정). 상세 근거는 진행 직전 확인 모달에만 남긴다. */}
-      {inputConsistency && (
+      {!mobile && inputConsistency && (
         <div className="surface" style={{ marginTop: 12, borderColor: '#f0b429', background: '#fffaf0' }}>
           <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
             <Icon name="alertTri" size={17} /> 다른 옷이 섞인 것 같아요
@@ -1426,16 +1506,12 @@ export function ProductInput() {
       )}
 
       {phase === 'input' && (
-        <>
-          <WizardCTA>
-            {disabledReason && <span className="wizard-cta-reason">{disabledReason}</span>}
-            <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
-          </WizardCTA>
-        </>
+        <InputMainAction mobile={mobile} canDone={canDone} pending={hasPendingConversions}
+          saving={handoff.saving} disabledReason={disabledReason} onSave={saveForPC} onAnalyze={submit} />
       )}
 
       <div className="af-anchor" />
-      {phase === 'analyzing' && (
+      {!mobile && phase === 'analyzing' && (
         <>
           <AnalysisProgress
             photoSrc={product.colors?.[0]?.images?.[0]?.src}
@@ -1444,7 +1520,7 @@ export function ProductInput() {
           <AnalysisSkeleton />
         </>
       )}
-      {phase === 'done' && (
+      {!mobile && phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
             projectId={analysisProjectId}

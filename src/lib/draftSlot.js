@@ -10,6 +10,8 @@ const PENDING_REMOVE_KEY = 'wl_draftSlotPendingRemove';
 const TAB_CHANNEL_NAME = 'wl_draftSlotTabs';
 const DEFAULT_DEBOUNCE_MS = 500;
 const PHOTO_RETRY_MS = 2000;
+// 서버 draft_asset_reclaimer.py의 7일 회수까지 6일의 여유를 남긴다.
+const UNSYNCED_UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PUT_RETRY_MAX_MS = 30000;
 // 다른 탭 생존 확인(ping) 응답 대기 — 크래시로 pagehide 없이 죽은 탭의 소유권이
 // localStorage 에 남아 방문마다 잠금이 뜨는 것을 막는다.
@@ -40,12 +42,13 @@ function browserName(ua) {
   return '';
 }
 
-export function getDraftSlotDeviceLabel(ua = globalThis.navigator?.userAgent || '') {
+export function getDraftSlotDeviceLabel(ua = globalThis.navigator?.userAgent || '', maxTouchPoints = globalThis.navigator?.maxTouchPoints || 0) {
   const device = /iPhone/.test(ua) ? 'iPhone'
-    : /Android/.test(ua) ? 'Android'
-      : /Macintosh|Mac OS X/.test(ua) ? 'Mac'
-        : /Windows/.test(ua) ? 'Windows'
-          : '기기';
+    : /iPad/.test(ua) || (/Macintosh/.test(ua) && maxTouchPoints > 1) ? 'iPad'
+      : /Android/.test(ua) || (/Linux/.test(ua) && !/CrOS/.test(ua) && maxTouchPoints > 1) ? (/Mobile/.test(ua) ? 'Android' : 'Android 태블릿')
+        : /Macintosh|Mac OS X/.test(ua) ? 'Mac'
+          : /Windows/.test(ua) ? 'Windows'
+            : '기기';
   const browser = browserName(ua);
   return browser ? `${device} ${browser}` : device;
 }
@@ -94,18 +97,21 @@ export function createDraftSlotSync({
   debounceMs = DEFAULT_DEBOUNCE_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
+  now = null,
 } = {}) {
   // 기본 매개변수 자리에 옵셔널 호출(?.())을 두면 esbuild(safari14 타깃)가
   // 임시변수를 스코프 밖에서 참조하는 코드를 만들어 프로덕션 번들이 부팅에서
   // 죽는다(ReferenceError). 반드시 함수 본문에서 채울 것.
   documentId = documentId
     ?? (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+  now = now ?? (() => Date.now());
   let api = adapter;
   let token = readStorage(storage, TOKEN_KEY);
   let syncedAt = readStorage(storage, SYNCED_AT_KEY);
   let serverSyncedAt = readStorage(storage, SERVER_SYNCED_AT_KEY);
   let pendingSnapshot = null;
   let latestSnapshot = null;
+  let snapshotVersion = 0;
   let timer = null;
   let putRetryTimer = null;
   let putRetryAttempt = 0;
@@ -128,6 +134,14 @@ export function createDraftSlotSync({
   // 서버 슬롯에서 영영 빠지는 일을 막는다. 산 탭이 확인되면 버리는 게 맞다(단일 작성자).
   let probeDroppedSnapshot = null;
   const uploads = new Map();
+  const saves = new Set();
+  const finishSave = (save, status, photoCount = 0) => {
+    saves.delete(save);
+    save.resolve({ status, photoCount });
+  };
+  const finishSaves = (status) => {
+    for (const save of saves) finishSave(save, status);
+  };
 
   const setToken = (value) => {
     token = value || null;
@@ -193,6 +207,7 @@ export function createDraftSlotSync({
     suspended = false;
     stopProbe();
     stopScheduledWrites();
+    finishSaves('locked');
     if (silent) lockMeta = meta || { deviceLabel: '다른 탭 또는 기기' };
     else notifyLock(meta || { deviceLabel: '다른 탭 또는 기기' });
   };
@@ -204,6 +219,7 @@ export function createDraftSlotSync({
     suspended = false;
     stopProbe();
     stopScheduledWrites();
+    finishSaves('locked');
     notifyLock({ state: 'gone' });
   };
   const clearLock = () => {
@@ -341,7 +357,7 @@ export function createDraftSlotSync({
           uploads.delete(image.id);
           return;
         }
-        uploads.set(image.id, { status: 'uploaded', image, ...uploaded });
+        uploads.set(image.id, { status: 'uploaded', image, ...uploaded, uploadedAt: now() });
         if (latestSnapshot) queue(latestSnapshot);
       })
       .catch(() => {
@@ -355,6 +371,11 @@ export function createDraftSlotSync({
           ? null
           : setTimer(() => startPhotoUpload(image), PHOTO_RETRY_MS);
         uploads.set(image.id, failed);
+        for (const save of saves) {
+          if (save.images.some((required) => required.id === image.id && required.src === image.src)) {
+            finishSave(save, 'failed');
+          }
+        }
       })
       .finally(notifyPhotosPending);
   };
@@ -363,7 +384,9 @@ export function createDraftSlotSync({
     if (!api?.uploadDraftSlotPhoto || locked) return;
     const liveIds = imageIds(product);
     for (const [imageId, upload] of uploads) {
-      if (liveIds.has(imageId)) continue;
+      const stale = upload.status === 'uploaded'
+        && now() - upload.uploadedAt > UNSYNCED_UPLOAD_MAX_AGE_MS;
+      if (liveIds.has(imageId) && !stale) continue;
       clearTimer(upload.retryTimer);
       uploads.delete(imageId);
       void discardUploaded(upload);
@@ -411,6 +434,26 @@ export function createDraftSlotSync({
     };
   };
 
+  const finishSaved = (snapshot, version, payload, photosPending) => {
+    if (photosPending) return;
+    const images = (snapshot.product.colors || []).flatMap((color) => color.images || []);
+    const savedImages = (payload.product.colors || []).flatMap((color) => color.images || []);
+    for (const save of saves) {
+      // 호출 전 PUT 응답이나 사진이 빠진 후속 스냅샷으로 완료 처리하지 않는다.
+      if (version < save.version) continue;
+      const complete = save.images.every((required) => {
+        if (!images.some((image) => image.id === required.id && image.src === required.src)) return false;
+        if (!required.src?.startsWith('blob:')) {
+          return savedImages.some((image) => image.id === required.id && image.src === required.src);
+        }
+        const upload = uploads.get(required.id);
+        return upload?.status === 'synced' && upload.image.src === required.src
+          && savedImages.some((image) => image.id === upload.assetId && image.src === upload.url);
+      });
+      if (complete) finishSave(save, 'saved', savedImages.length);
+    }
+  };
+
   const handleConflict = (error) => {
     if (error?.status !== 409 || error?.code !== 'token_mismatch') {
       return false;
@@ -434,11 +477,9 @@ export function createDraftSlotSync({
     }, delay);
   };
 
-  const put = async (snapshot) => {
+  const put = async (snapshot, version) => {
     if (!api?.putDraftSlot || locked || !snapshot?.product) return null;
     if (!claimTab()) return null;
-    syncPhotos(snapshot.product);
-    const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
     slotWritePending = true;
     notifyPhotosPending();
     const epoch = requestEpoch;
@@ -446,6 +487,9 @@ export function createDraftSlotSync({
       try {
         // '새로 시작' 때 서버 장애로 못 지운 옛 슬롯이 있으면 새 저장 전에 마저 정리한다.
         if (getPendingRemoval()) await resolvePendingRemoval();
+        syncPhotos(snapshot.product);
+        const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
+        const includedUploads = new Map(includedUploadIds.map((id) => [id, uploads.get(id)]));
         const requestToken = token;
         const result = await api.putDraftSlot({
           payload,
@@ -468,14 +512,18 @@ export function createDraftSlotSync({
           putRetryTimer = null;
           for (const imageId of includedUploadIds) {
             const upload = uploads.get(imageId);
-            if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+            if (upload && upload === includedUploads.get(imageId)) {
+              uploads.set(imageId, { ...upload, status: 'synced' });
+            }
           }
+          finishSaved(snapshot, version, payload, photosPending);
         }
         return result;
       } catch (error) {
         if (epoch === requestEpoch) {
           const handled = handleConflict(error);
           if (!handled) {
+            finishSaves('failed');
             pendingSnapshot = latestSnapshot || snapshot;
             schedulePutRetry();
           }
@@ -493,8 +541,9 @@ export function createDraftSlotSync({
     timer = null;
     if (!pendingSnapshot || locked) return putChain;
     const snapshot = pendingSnapshot;
+    const version = snapshotVersion;
     pendingSnapshot = null;
-    putChain = putChain.catch(() => null).then(() => put(snapshot));
+    putChain = putChain.catch(() => null).then(() => put(snapshot, version));
     notifyPhotosPending();
     return putChain;
   };
@@ -506,6 +555,7 @@ export function createDraftSlotSync({
       return;
     }
     latestSnapshot = snapshot;
+    snapshotVersion += 1;
     pendingSnapshot = snapshot;
     syncPhotos(snapshot.product);
     clearTimer(timer);
@@ -542,6 +592,32 @@ export function createDraftSlotSync({
       return claimTab();
     },
     queue,
+    saveAll(snapshot) {
+      return new Promise((resolve) => {
+        const save = {
+          resolve,
+          version: snapshotVersion + 1,
+          images: (snapshot?.product?.colors || []).flatMap((color) => color.images || [])
+            .filter((image) => !isPlaceholderPhotoSrc(image.src)),
+        };
+        saves.add(save);
+        queue(snapshot);
+        if (locked) {
+          finishSave(save, 'locked');
+          return;
+        }
+        for (const image of save.images) {
+          const upload = uploads.get(image.id);
+          // 명시적 재시도는 대기 타이머를 건너뛰되, 읽을 수 없는 원본은 다시 시도하지 않는다.
+          if (image.src?.startsWith('blob:') && upload?.status === 'failed' && upload.retryTimer != null) {
+            startPhotoUpload(image);
+          }
+        }
+        if (!snapshot?.product || !api?.putDraftSlot || save.images.some((image) => (
+          image.src?.startsWith('blob:') && uploads.get(image.id)?.status === 'failed'
+        ))) finishSave(save, 'failed');
+      });
+    },
     syncPhotos,
     async flush() { await commit(); return putChain; },
     discard() {
@@ -718,6 +794,7 @@ export function createDraftSlotSync({
       notifyPhotosPending();
     },
     stage(payload) { stagedPayload = payload || null; },
+    hasStaged() { return Boolean(stagedPayload?.payload); },
     consumeStaged() {
       const payload = stagedPayload;
       stagedPayload = null;

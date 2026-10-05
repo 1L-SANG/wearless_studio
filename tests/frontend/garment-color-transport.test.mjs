@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { withUploadedSrcs } from '../../src/lib/draftPromotionProduct.js';
+import { ensureDraftRemotePhotos } from '../../src/lib/draftStore.js';
 
 test('public analysis sends only the base color photos and returns no garment color keys', async t => {
   const server = await createServer({
@@ -53,7 +54,7 @@ test('draft promotion never promotes garment color evidence', async () => {
     patchProject: async () => { events.push('project'); },
   };
   globalThis.__garmentColorHarness = {
-    api, withUploadedSrcs, isUploadablePhotoMime: () => true,
+    api, withUploadedSrcs, ensureDraftRemotePhotos, isUploadablePhotoMime: () => true,
     createDraftSyncSingleFlight: sync => ({ sync }),
     draftPromotionSession: { read: () => ({}), rememberProject() {}, rememberAsset() {} },
     startCustomMatchPromotion: () => null, stripLocalCustomMatch: analysis => analysis,
