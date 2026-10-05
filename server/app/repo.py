@@ -3179,16 +3179,39 @@ async def get_editor_blocks(conn: AsyncConnection, project_id: str) -> list:
     return eb if isinstance(eb, list) else []
 
 
-async def save_editor_blocks(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
-    """에디터 블록 저장 (owner 스코프)."""
+async def get_editor_state(conn: AsyncConnection, project_id: str) -> tuple[list, int]:
+    """(editor_blocks, editor_revision). 소유권은 라우트 선검증."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "update projects set editor_blocks = %s where id = %s and user_id = %s "
-            "and deleted_at is null returning editor_blocks",
-            (Json(blocks), project_id, user_id),
+            "select editor_blocks, editor_revision from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    eb = (row or {}).get("editor_blocks")
+    return (eb if isinstance(eb, list) else []), int((row or {}).get("editor_revision") or 0)
+
+
+async def get_editor_revision(conn: AsyncConnection, project_id: str) -> int:
+    async with conn.cursor() as cur:
+        await cur.execute("select editor_revision from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    return int((row or {}).get("editor_revision") or 0)
+
+
+async def save_editor_blocks(conn: AsyncConnection, user_id: str, project_id: str, blocks: list,
+                             base_revision: int | None = None) -> int | None:
+    """에디터 블록 저장 (owner 스코프) — 저장마다 editor_revision 을 1 올리고 새 값을 돌려준다.
+
+    base_revision 이 있으면 그 리비전 위에서만 쓴다(낙관적 동시성). 그 사이 다른 탭·기기·생성
+    완료가 먼저 썼으면 None — 라우트가 409 로 돌려보내 오래된 화면이 새 내용을 덮지 못한다.
+    None(옛 번들)이면 조건 없이 쓴다 — 배포 도중 캐시된 프론트가 깨지지 않게."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update projects set editor_blocks = %s, editor_revision = editor_revision + 1 "
+            "where id = %s and user_id = %s and deleted_at is null "
+            "and (%s::integer is null or editor_revision = %s::integer) returning editor_revision",
+            (Json(blocks), project_id, user_id, base_revision, base_revision),
         )
         row = await cur.fetchone()
-    return (row or {}).get("editor_blocks") or []
+    return None if row is None else int(row["editor_revision"])
 
 
 # ---------- 상세페이지(PL-4) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
@@ -3252,7 +3275,9 @@ async def finalize_detail_page_success(
                 })
         await insert_output_records(cur, records=ledger_records)
         await cur.execute(
-            "update projects set editor_blocks = %s, status = 'done' where id = %s",
+            # 완성본도 저장 한 번이다 — 리비전을 올려야 생성 전에 열어 둔 다른 탭이 덮지 못한다.
+            "update projects set editor_blocks = %s, editor_revision = editor_revision + 1, "
+            "status = 'done' where id = %s",
             (Json(editor_blocks), project_id),
         )
     # 크레딧 확정 — 버킷 FIFO 차감. 멱등 = job.status(위 running FOR UPDATE). charge=0이면 정산 skip.

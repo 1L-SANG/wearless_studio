@@ -86,6 +86,8 @@ reference/genexamples/
 women_ex/
 generated-assets/
 reference/competitive-analysis/
+# 인스타·노션에서 수집한 외부 인사이트 원문(타인 저작물, 로컬 참고용)
+reference/insta/
 
 # 얼굴 대조 QC weights (OpenCV Zoo, Apache-2.0) — Docker 빌드시 재다운로드+checksum
 server/app/data/face_models/*.onnx

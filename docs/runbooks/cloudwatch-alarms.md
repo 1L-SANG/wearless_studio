@@ -1,17 +1,23 @@
 # CloudWatch 알람 → Slack
 
+> **2026-10 현재: ALB 지표 알람 0개.** api 앞단이 ALB 에서 Cloudflare Tunnel 로 바뀌면서 ALB 지표 알람
+> 4개(`target-5xx`·`slow-response`·`elb-502-504`·`api-no-healthy-target`)를 모두 걷어냈다. 지금 장애 신호는
+> ① 로그 알림(아래 첫 표 윗줄, 그대로) ② 외부 업타임 모니터(Better Stack) ③ Cloudflare Tunnel Health Alert 다 —
+> `docs/runbooks/cloudflare-tunnel.md` "알림". SNS 토픽·Slack 램다·`AlarmTopicArn` export 는 그대로다 —
+> **"예산 알림" 절(현행)** 이 계속 쓴다. 제목에 "(기록)" 이 붙은 절은 ALB 시절(2026-09-23 ~ 10-02) 기록이다.
+
 ## 알림이 두 갈래인 이유
 
 | | 보는 것 | 파일 |
 |---|---|---|
 | 로그 알림 | 로그에 찍힌 **글자** (`CRITICAL`·`Traceback`·`http error status=5`) | `copilot/environments/addons/log-slack-alerts.yml` |
-| 지표 알람 | AWS 가 세는 **숫자** (5xx 건수·응답시간·정상 서버 수) | `copilot/environments/addons/alarm-slack.yml`, 정상 서버 수만 `copilot/api/addons/api-alarms.yml` |
+| 지표·예산 알림 | AWS 가 세는 **숫자** — 지금은 예산 알림만(ALB 지표 알람은 2026-10 삭제) | `copilot/environments/addons/alarm-slack.yml` |
 
 앱이 조용히 느려지거나 붙을 서버가 없어지면 **로그에는 아무것도 안 남는다**. 2026-08-26 장애가 그랬다 — 동기 이미지 작업이 이벤트루프를 얼려 `/healthz` 가 37초 공백이었고 ALB 가 서버를 죽은 것으로 판정했다. 그건 숫자로만 보인다.
 
 도착지는 같은 Slack 채널(`SLACK_ALERT_WEBHOOK_URL`)이다.
 
-## 지금 걸린 알람 넷
+## (기록) ALB 시절 알람 넷
 
 | 알람 | 조건 | 무슨 뜻 |
 |---|---|---|
@@ -22,13 +28,13 @@
 
 복구(`OK`)도 Slack 으로 온다 — 울고 끝나면 회복됐는지 모른다.
 
-## 처음 임계를 잡은 근거 (2026-09-23 prod 3시간 실측, 503·p95 는 아래에서 교체됨)
+## (기록) 처음 임계를 잡은 근거 (2026-09-23 prod 3시간 실측, 503·p95 는 아래에서 교체됨)
 
 - 요청 3,283건, **Target 5xx 0건**, 응답 p95 **0.69초**
 - **ELB 503 43건(1.3%) — 우리 장애가 아니다.** ALB 뒤 Copilot 기본 타깃그룹은 타깃이 0대인데, 호스트명 없이 IP 로 직접 들어오는 봇 스캔이 거기로 떨어져 503 이 난다. 5분당 1~7건이 바닥.
 - 그래서 503 임계는 바닥의 4배인 **30**. api 가 실제로 내려가면 사용자 요청이 전부 503 이 되어 이 선을 금방 넘는다.
 
-## 2026-09-26 개정: 헛경보를 고치고 사각지대를 메웠다 (PR #414, 사후 리뷰 후속)
+## (기록) 2026-09-26 개정: 헛경보를 고치고 사각지대를 메웠다 (PR #414, 사후 리뷰 후속)
 
 9/25 에 알람이 세 번 울렸는데 셋 다 장애가 아니었다.
 
@@ -57,7 +63,7 @@
 근거: 9월 실청구 $20.5, 총사용 $68.8. 예산 알림은 평문이라 알람 램다가 JSON 이 아니면 제목·본문을 그대로 보낸다.
 예산은 계정 전역 리소스지만 이 env 애드온 스택이 만들고 지운다.
 
-## 남는 사각지대
+## (기록) ALB 시절 사각지대
 
 - **1분이 안 되는 동결**: `HealthyHostCount` 는 1분에 SampleCount 2 로 찍히는데 두 값이 같은 순간의 것일 수 있다. 헬스체크가 10초 간격, 2회 실패라 37초 동결은 20~40초 비정상으로 끝나고, 측정 사이에 끼면 안 보인다. 더 촘촘한 지표가 ALB 에는 없다.
 - **업로드 몰림**: `slow-response` 는 로드밸런서 전체의 중앙값이라 업로드 같은 느린 경로가 섞인다. 15분 안에 업로드가 많은 5분이 두 번 생기면 서버가 멀쩡해도 울 수 있다(60일 동안 0회). 근본 해결은 앱이 업로드 같은 느린 경로를 뺀 응답 시간을 직접 지표로 내는 것이다(후속 과제).
@@ -67,7 +73,7 @@
 - **서버가 통째로 사라지는 경우**: 타깃이 0개가 되면 타깃그룹이 `HealthyHostCount` 를 아예 안 낸다. 빈 데이터는 장애로 보게 했지만(`breaching`), CloudWatch 는 평가 구간에 이전 값(1)이 남아 있는 동안 그 값으로 판정하므로 몇 분 늦게 울 수 있다. 부팅이 실패하면 로그 알림(`Application startup failed`)이 먼저 온다.
 - **리스너 규칙이 깨져 사용자 요청이 기본 타깃그룹으로 가는 경우**: ELB 503 만 늘고 api 쪽 지표는 조용하다. 봇 503 과 구분할 수 없어서 알람이 없다. 근본 원인은 봇 요청이 빈 기본 타깃그룹에서 503 을 받는 것이다. Cloudflare 원본 잠금(#315)이 붙거나 리스너 기본 동작을 고정 응답(예: 404)으로 바꿔 봇 503 바닥이 0 이 되면 ELB 503 알람을 다시 걸 수 있다.
 
-## ECS CPU 알람이 없는 이유
+## (기록) ECS CPU 알람이 없는 이유
 
 `AWS/ECS CPUUtilization` 은 `(ClusterName, ServiceName)` 차원으로만 온다. 서비스 이름이 `wearless-use1-api-Service-QliObqw9TgGI` 처럼 난수가 붙고 Copilot 이 export 하지 않아 환경 애드온에서 지목할 수 없다(클러스터 차원만으로는 지표 자체가 안 온다 — 확인함).
 
@@ -77,26 +83,40 @@
 
 두 곳이 따로 배포된다.
 
-- `copilot/api/addons/**`(정상 서버 알람): main 에 머지되면 `deploy-server` 워크플로가 반영한다. ⚠️ 알람만 바꿔도 **api 전체 배포**(이미지 빌드, 롤링 재시작)가 돈다. 옛 태스크는 SIGTERM 때 실행 중인 마네킹·분석 잡을 `error(worker_shutdown)` 로 닫으므로(`copilot/api/manifest.yml`), 실행 중인 잡이 없는 한가한 시간에 머지한다.
-- `copilot/environments/addons/**`(나머지 알람): CI 가 배포하지 않는다. 아래 명령을 IAM 사용자 자격으로 돌린다. 루트 자격(`aws login` 루트)으로는 copilot 이 역할 전환을 못 해서 실패한다(`Roles may not be assumed by root accounts`).
+- `copilot/api/addons/**`(지금은 `sam-autoscale.yml` 만 — 정상 서버 알람은 2026-10 삭제): main 에 머지되면 `deploy-server` 워크플로가 반영한다. ⚠️ 알람만 바꿔도 **api 전체 배포**(이미지 빌드, 롤링 재시작)가 돈다. 옛 태스크는 SIGTERM 때 실행 중인 마네킹·분석 잡을 `error(worker_shutdown)` 로 닫으므로(`copilot/api/manifest.yml`), 실행 중인 잡이 없는 한가한 시간에 머지한다.
+- `copilot/environments/addons/**`(Slack 경로·예산 알림·로그 알림): CI 가 배포하지 않는다. 아래 명령을 IAM 사용자 자격으로 돌린다. 루트 자격(`aws login` 루트)으로는 copilot 이 역할 전환을 못 해서 실패한다(`Roles may not be assumed by root accounts`).
 
 ```bash
-copilot-aws env deploy --name use1
+# AWS_PROFILE=wearless 필수 — default 프로필(aws login 토큰)은 Copilot 이 못 읽어 context deadline exceeded 로 죽는다.
+AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1 --diff   # 미리보기
+AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1
 ```
 
-앱 재배포와 무관하다. 환경 애드온만 바뀐다. 두 곳을 같이 바꾼 변경은 **둘 다 반영해야 끝난다.** 한쪽만 나가면 옛 알람과 새 알람이 같이 돌거나 main 설명과 실제가 어긋난다. 순서는 머지 직후 환경 쪽 먼저다. Slack 램다 같은 공용 부분이 환경 쪽에 있어서, CI 가 api 를 배포하기(수 분 걸림) 전에 올라가 있어야 한다. 이번(#415)처럼 환경 쪽이 옛 정상 서버 알람을 지우고 api 쪽이 새로 만드는 경우, CI 배포가 실패하면 그동안 정상 서버 알람이 없다. CI 가 끝날 때까지 지켜보고 실패하면 바로 다시 돌린다. ⚠️ **CF 원본 잠금(#315)과 순서가 얽힌다**: 그 작업도 `env deploy` 를 쓴다. 두 개를 같은 시점에 밀면 어느 쪽이 깨졌는지 못 가른다. 하나씩.
+⚠️ `--diff` 는 **환경 스택 템플릿만** 비교한다. 애드온(알람·예산·로그 알림)은 중첩 스택이라 diff 에는 `AddonsStack` 의
+`TemplateURL` 한 줄만 바뀐 것으로 나오고, 애드온 안의 리소스 추가·삭제는 보이지 않는다. 애드온 내용의 정본은 레포의
+`copilot/environments/addons/*.yml` 이고, 실제로 바뀌었는지는 배포 **뒤에** 읽기 전용으로 확인한다:
+
+```bash
+aws cloudwatch describe-alarms --region us-east-1 --alarm-name-prefix wearless-use1- --query 'MetricAlarms[].AlarmName' --output text
+aws budgets describe-budgets --account-id 439328746001 --query 'Budgets[].BudgetName' --output text   # wearless-monthly-net / -gross
+```
+
+앱 재배포와 무관하다. 환경 애드온만 바뀐다. 두 곳을 같이 바꾼 변경은 **둘 다 반영해야 끝난다.** 순서는 변경마다 따진다 —
+공용 부분(Slack 램다·토픽 export)을 새로 쓰기 시작하는 쪽이 있으면 그 공용 부분을 담은 환경 쪽이 먼저다. 2026-10 ALB
+알람 삭제(#458)처럼 양쪽이 지우기만 하면 어느 순서든 안전하다. ⚠️ 다른 `env deploy` 작업과 같은 시점에 밀지 않는다 —
+어느 쪽이 깨졌는지 못 가른다. 하나씩.
 
 ## 알람을 추가할 때
 
-SNS 토픽이 `${App}-${Env}-AlarmTopicArn` 으로 export 돼 있다. 새 알람의 `AlarmActions`·`OKActions` 에 그걸 주면 같은 채널로 온다. `api-alarms.yml` 이 이미 이 export 를 가져다 쓰므로 export 이름을 바꾸거나 지우면 env 배포가 막힌다.
+SNS 토픽이 `${App}-${Env}-AlarmTopicArn` 으로 export 돼 있다. 새 알람의 `AlarmActions`·`OKActions` 에 그걸 주면 같은 채널로 온다. 지금 이 export 를 가져다 쓰는 스택은 없다(2026-10 `api-alarms.yml` 삭제). 쓰기 시작하면 그때부터 export 이름을 바꾸거나 지울 때 env 배포가 막힌다. ⚠️ ALB 지표(`AWS/ApplicationELB`)는 더 이상 없다 — ALB 이름 export 를 import 하면 env 배포가 실패한다.
 
 ## 되돌리기
 
-먼저 `copilot/api/addons/api-alarms.yml` 과 `addons.parameters.yml` 을 지워 api 를 배포한다(토픽 export 를 가져다 쓰는 쪽이 먼저 빠져야 한다). 그다음 `alarm-slack.yml` 을 지우고 `env deploy`. 알람·토픽·램다가 같이 사라진다. 로그 알림은 별개 파일이라 영향 없다.
+`alarm-slack.yml` 을 지우고 `env deploy` 하면 토픽·램다·**예산 알림**이 같이 사라진다(2026-10 기준 export 를 가져다 쓰는 스택 없음). 로그 알림은 별개 파일이라 영향 없다.
 
 ## 시끄러우면
 
-- 특정 알람만 끄기: 해당 리소스에 `ActionsEnabled: false` 를 넣고 `env deploy`. `api-no-healthy-target` 은 `api-alarms.yml` 에 넣고 api 배포(env 배포로는 안 바뀐다. api 배포는 롤링 재시작이 따른다)
+- 특정 알람만 끄기: 해당 리소스에 `ActionsEnabled: false` 를 넣고 `env deploy`.
 - 급할 때 배포 없이 잠시 끄기: `aws cloudwatch disable-alarm-actions --region us-east-1 --alarm-names <이름>`. **다음 배포로 되돌아오지 않는다.** CloudFormation 은 그 알람 속성이 바뀔 때만 다시 적용하므로, 끈 채로 계속 남는다. 원인을 고친 뒤 `enable-alarm-actions` 로 반드시 다시 켠다
-- 임계 조정: `Threshold`·`EvaluationPeriods` 를 고쳐 `env deploy`(정상 서버 알람은 api 배포). `slow-response` 만 `DatapointsToAlarm: 2` 를 함께 쓴다("3구간 중 2"). `EvaluationPeriods` 를 2 밑으로 내리면 그 값도 같이 내려야 배포가 된다
-- 새벽에 데이터가 없어 우는 경우: 환경 애드온 알람은 모두 `TreatMissingData: notBreaching` 이다(`slow-response` 는 `FILL` 로 빈 값 자체가 없다). `api-no-healthy-target` 만 일부러 `breaching` 이다(위 사각지대 절 참고)
+- 임계 조정: 알람은 `Threshold`·`EvaluationPeriods`, 예산은 `BudgetLimit`·`Threshold` 를 고쳐 `env deploy`.
+- 새벽에 데이터가 없어 우는 경우: 새 지표 알람을 걸 때 `TreatMissingData: notBreaching` 을 기본으로 둔다(ALB 시절 기록 참고).

@@ -1,0 +1,13 @@
+# api 서비스 CloudFormation 패치(Copilot YAML patch — copilot/<svc>/overrides/cfn.patches.yml).
+#
+# 2026-10-02 Load Balanced Web Service → Backend Service 전환(ALB 철거, Cloudflare Tunnel).
+# Copilot 의 Backend 템플릿은 Service.LoadBalancers 를 아예 생략하는데, CloudFormation
+# (AWS::ECS::Service 스키마 원문)은 생략을 "변경 없음"으로 본다:
+#   "To remove this property from your service resource, specify an empty LoadBalancer array."
+# 생략한 채 배포하면 ECS 서비스가 같은 배포가 지우는 api TargetGroup 을 계속 가리켜, 다음 태스크
+# 기동이 전부 TargetGroupNotFound 로 죽는다(다음 배포 실패, 태스크 교체 시 전면 장애 — PR B2 리뷰 C1).
+# 빈 배열은 이미 떨어져 있는 서비스에는 아무 일도 하지 않으므로 전환 뒤에도 남겨 둔다.
+# 가드: server/tests/test_deploy_manifest_qc_flags.py::test_api_service_explicitly_detaches_the_removed_target_group
+- op: add
+  path: /Resources/Service/Properties/LoadBalancers
+  value: []

@@ -576,12 +576,12 @@ def test_aux_agents_cannot_stall_the_analysis_response(monkeypatch):
         "예산을 넘긴 부가 호출은 취소돼야 한다 — 안 그러면 응답 뒤에도 계속 돈다")
 
 
-def test_provider_timeout_leaves_room_for_the_fallback_under_the_alb_limit():
-    """provider 상한이 ALB idle timeout 과 같으면 폴백이 구조적으로 무의미하다.
+def test_provider_timeout_leaves_room_for_the_fallback_under_the_edge_limit():
+    """provider 상한이 앞단 응답 대기 상한과 같으면 폴백이 구조적으로 무의미하다.
 
-    1차가 상한을 다 쓰는 순간 ALB 는 이미 504 를 내보낸 뒤라 2차가 돌 시간이 없다.
-    ALB 는 copilot/environments/overrides/cfn.patches.yml 에서 180 으로 올려 두었다.
+    1차가 상한을 다 쓰는 순간 앞단은 이미 타임아웃(Cloudflare 524)을 내보낸 뒤라 2차가 돌 시간이 없다.
+    api 앞단은 Cloudflare 무료 플랜(응답 대기 100초)이다 — 2026-10-02 ALB(유휴 180초)를 걷어냈다.
     """
     s = make_settings()
-    alb_idle_timeout = 180
-    assert s.analysis_timeout_seconds * 2 + s.analysis_aux_timeout_seconds < alb_idle_timeout
+    cloudflare_proxy_read_timeout = 100
+    assert s.analysis_timeout_seconds * 2 + s.analysis_aux_timeout_seconds < cloudflare_proxy_read_timeout

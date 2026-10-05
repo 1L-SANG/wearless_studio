@@ -809,7 +809,7 @@ gh pr create --base main --title "chore(ops): ALB 지표 알람을 걷어내요 
 
 ## ⛔ 배포 순서 (오너)
 1. 머지 → CI 가 api 배포(api-alarms 삭제)
-2. `AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1 --diff` 로 알람 3개 삭제만 보이는지 확인 → `env deploy --name use1`
+2. `AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws env deploy --name use1` (`--diff` 에는 AddonsStack `TemplateURL` 한 줄만 나온다 — 애드온 리소스 diff 는 안 보인다. 확인은 배포 뒤 Step 5 명령으로)
 3. 둘 다 끝나야 B2 진행
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -817,7 +817,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 4 (오너):** PR B1 머지 → CI api 배포 완료 → `env deploy --diff` 확인 → `env deploy`.
+- [ ] **Step 4 (오너):** PR B1 머지 → CI api 배포 완료 → `env deploy`(PR #458 리뷰 I1: `--diff` 는 애드온 내용을 보여 주지 않는다).
 - [ ] **Step 5: 머지 조건 확인(읽기 전용)**
 
 ```bash
@@ -955,9 +955,14 @@ aws cloudformation describe-stacks --region us-east-1 --stack-name wearless-use1
   --query "Stacks[0].Parameters[?ParameterKey=='ALBWorkloads'].ParameterValue" --output text
 aws ec2 describe-network-interfaces --region us-east-1 \
   --query 'NetworkInterfaces[?Association.PublicIp!=`null`].Description' --output text
+# PR B2 리뷰 C1: ECS 서비스가 지워진 타깃그룹을 가리키지 않는지(오버라이드 LoadBalancers: [] 반영)
+aws ecs describe-services --region us-east-1 --cluster wearless-use1-Cluster-hYAqwp9HcIdj \
+  --services wearless-use1-api-Service-QliObqw9TgGI --query 'services[0].loadBalancers'
+aws elbv2 describe-target-groups --region us-east-1 --query 'length(TargetGroups)'
 ```
 
-Expected: `0`, `0`, 빈 줄, ECS attachment 1개(api — Spot 서비스가 떠 있으면 그만큼 더). api-watch `200 아닌 응답 0건`, CI `/readyz`·CORS 게이트 green.
+Expected: `0`, `0`(ALB 에 붙어 있던 주소 2개 — 2026-10-02 아침 실측으로 describe-addresses 에 보였다), 빈 줄, ECS attachment 1개(api — Spot 서비스가 떠 있으면 그만큼 더), `[]`, `0`. api-watch `200 아닌 응답 0건`.
+CI 의 copilot 단계는 CloudFormation 이 끝나도 멈춰 있다가 1시간 뒤 `ExpiredToken` 으로 실패할 수 있다(B1 배포 실측) — 판정은 위 명령과 `aws cloudformation describe-stacks --stack-name wearless-use1-api` 상태로 하고, `/readyz`·CORS 게이트는 직접 돌린다.
 
 ---
 

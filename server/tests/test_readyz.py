@@ -8,6 +8,7 @@ import contextlib
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from psycopg_pool import PoolTimeout
 
@@ -90,11 +91,18 @@ def test_readyz_tolerates_a_dbless_deployment(app):
     assert res.json()["db"] == "not_configured"
 
 
-def test_alb_healthcheck_still_points_at_healthz():
-    """ALB 를 /readyz 로 옮기면 DB 블립이 전면 장애가 된다 — 의도적으로 healthz 다."""
-    manifest = (Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml").read_text()
-    assert "path: '/healthz'" in manifest
-    assert "path: '/readyz'" not in manifest
+def test_container_healthcheck_still_points_at_healthz():
+    """헬스 판정을 /readyz 로 옮기면 DB 블립이 전면 장애가 된다 — 의도적으로 healthz 다.
+
+    2026-10-02 ALB 를 걷어낸 뒤(Cloudflare Tunnel) 헬스 판정은 컨테이너 헬스체크가 한다 — 실패하면
+    ECS 가 태스크를 죽이고 바꾼다. DB 가 잠깐 흔들려 readyz 가 실패해도 태스크는 살아 있어야 한다."""
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml").read_text(encoding="utf-8")
+    )
+    command = " ".join(manifest["image"]["healthcheck"]["command"])
+    assert "localhost:8080/healthz" in command
+    assert "readyz" not in command
+    assert "http" not in manifest, "ALB 가 되살아났다면 그 헬스체크 경로도 healthz 여야 한다"
 
 
 def test_deploy_gate_checks_readyz():

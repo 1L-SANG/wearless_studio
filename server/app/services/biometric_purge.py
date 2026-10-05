@@ -884,7 +884,8 @@ async def _cleanup(
             )
         if project_ids:
             await cur.execute(
-                "update projects set editor_blocks=null, selected_mannequin_id=null where id = any(%s)",
+                "update projects set editor_blocks=null, editor_revision=editor_revision+1, "
+                "selected_mannequin_id=null where id = any(%s)",
                 (list(project_ids),),
             )
         if job_ids:

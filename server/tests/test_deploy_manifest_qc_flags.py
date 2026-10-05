@@ -247,6 +247,8 @@ CHANGE_MATRIX = [
     ("server/Dockerfile", True, False),
     ("copilot/api/manifest.yml", True, False),
     ("copilot/detail-worker/manifest.yml", True, False),
+    # api 서비스 오버라이드(LoadBalancers: [] 등) — 바뀌면 api 를 다시 배포해야 반영된다.
+    ("copilot/api/overrides/cfn.patches.yml", True, False),
     ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True, False),
     ("server/sam_service/segmentation.py", False, True),
     ("server/sam_service/requirements.txt", False, True),
@@ -509,18 +511,21 @@ def test_autoscale_addon_exists_with_scoped_permissions():
 def test_api_addon_parameters_are_declared_by_an_addon_template():
     """addons.parameters.yml 의 값과 addon 템플릿 Parameters(Copilot 이 주는 App·Env·Name 제외)는
     양쪽으로 짝이 맞아야 한다. 한쪽만 지우거나 이름을 바꾸거나 새 파라미터에 값을 안 주면
-    PR CI 는 통과하고 main 의 copilot svc deploy 에서야 깨진다."""
+    PR CI 는 통과하고 main 의 copilot svc deploy 에서야 깨진다.
+
+    addons.parameters.yml 이 없으면 Copilot 은 App·Env·Name 만 넘긴다 — 그때는 어느 템플릿도 그 밖의
+    파라미터를 요구하면 안 된다(2026-10-02 api-alarms.yml 과 함께 파일을 지웠다)."""
     addons_dir = MANIFEST.parent / "addons"
-    params = yaml.load((addons_dir / "addons.parameters.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
+    params_file = addons_dir / "addons.parameters.yml"
+    provided = set()
+    if params_file.exists():
+        provided = set(yaml.load(params_file.read_text(encoding="utf-8"), Loader=_CfnLoader)["Parameters"])
     declared = set()
     for tpl in [*addons_dir.glob("*.yml"), *addons_dir.glob("*.yaml")]:
         if tpl.name.startswith("addons.parameters."):
             continue
         declared |= set(yaml.load(tpl.read_text(encoding="utf-8"), Loader=_CfnLoader).get("Parameters") or {})
-    assert declared - {"App", "Env", "Name"} == set(params["Parameters"])
-    alarms = yaml.load((addons_dir / "api-alarms.yml").read_text(encoding="utf-8"), Loader=_CfnLoader)
-    assert "TargetGroupFullName" in params["Parameters"]
-    assert "TargetGroupFullName" in alarms["Parameters"]
+    assert declared - {"App", "Env", "Name"} == provided
 
 
 def test_workflows_pin_copilot_and_deploy_server_watches_addons():
@@ -542,6 +547,7 @@ def test_workflows_pin_copilot_and_deploy_server_watches_addons():
         assert "copilot --version" in text, f"{wf}: 설치 검증 누락"
     server_wf = (root / ".github/workflows/deploy-server.yml").read_text(encoding="utf-8")
     assert server_wf.count("copilot/api/addons/**") >= 3, "push·pull_request·filters 세 곳"
+    assert server_wf.count("copilot/api/overrides/**") >= 3, "오버라이드만 바꿔도 api 가 다시 배포돼야 한다"
 
 
 def test_kakao_rest_api_key_is_declared_as_a_plain_variable(manifest_vars):
@@ -667,3 +673,65 @@ def test_cloudflared_drains_the_longest_known_request_before_it_is_killed():
     sidecar_stop = overrides.get("ContainerDefinitions[1].StopTimeout", 30)  # ECS 기본값
     assert grace >= 55, "공개 분석 실측 최대 53.5초를 담아야 한다"
     assert grace < sidecar_stop <= 120, "유예가 StopTimeout 보다 길면 SIGKILL 이 먼저 온다(Fargate 상한 120s)"
+
+
+COPILOT_DIR = MANIFEST.parents[1]
+
+
+def test_no_stack_imports_the_public_load_balancer_export():
+    """api 를 Backend Service 로 바꾸는 배포 안에서 Copilot env-controller 가 ALB 를 지운다. 그때
+    `${App}-${Env}-PublicLoadBalancerFullName` export 를 import 하는 스택이 남아 있으면 환경 스택
+    업데이트가 실패하고 api 배포가 롤백된다(설계 2026-10-02 §4)."""
+    offenders = sorted(
+        str(p.relative_to(COPILOT_DIR))
+        for p in COPILOT_DIR.rglob("*.yml")
+        if "PublicLoadBalancerFullName" in p.read_text(encoding="utf-8")
+    )
+    assert offenders == []
+
+
+def test_api_addons_do_not_reference_the_removed_target_group():
+    """Backend Service 스택에는 TargetGroup 이 없다 — 애드온이 참조하면 B2 배포가 깨진다."""
+    addons_dir = MANIFEST.parent / "addons"
+    offenders = sorted(p.name for p in addons_dir.glob("*.yml") if "TargetGroup" in p.read_text(encoding="utf-8"))
+    assert offenders == []
+
+
+def test_api_is_a_backend_service_behind_the_tunnel():
+    """ALB 를 걷어낸 뒤 api 는 인바운드 없는 Backend Service 다. `http:` 블록이 되살아나면 Copilot 이
+    ALB 를 다시 만든다(ALB $16.7 + 공인 IPv4 2개 $7.4/월) — 설계 2026-10-02."""
+    doc = _api_manifest()
+    assert doc["type"] == "Backend Service"
+    assert "http" not in doc
+    assert "cloudflared" in doc["sidecars"]
+    assert doc["image"]["port"] == 8080  # Service Connect 와 사이드카가 이 포트로 붙는다
+    assert doc["network"]["connect"] is True
+
+
+def test_api_service_explicitly_detaches_the_removed_target_group():
+    """LBWS → Backend Service 전환에서 Copilot 의 Backend 템플릿은 Service.LoadBalancers 를 **생략**한다.
+    CloudFormation(AWS::ECS::Service 스키마 원문)은 생략을 "변경 없음"으로 본다 — "To remove this
+    property from your service resource, specify an empty LoadBalancer array." 생략한 채 배포하면 ECS
+    서비스가 같은 배포가 지우는 TargetGroup 을 계속 가리켜, 다음 태스크 기동이 전부
+    TargetGroupNotFound 로 죽는다(다음 배포 실패, 태스크 교체 시 전면 장애 — PR B2 리뷰 C1)."""
+    patch_file = MANIFEST.parent / "overrides" / "cfn.patches.yml"
+    patches = yaml.safe_load(patch_file.read_text(encoding="utf-8"))
+    assert {"op": "add", "path": "/Resources/Service/Properties/LoadBalancers", "value": []} in patches
+
+
+def test_copilot_deploys_detach_and_wait_for_the_stack_themselves():
+    """Copilot v1.34.1 진행 표시 버그(2026-09-28~): CloudFormation 이 ECS 서비스에 "Eventual consistency
+    check initiated" UPDATE_IN_PROGRESS 이벤트를 하나 더 보내면 Copilot 이 새 배포로 착각해 끝나지 않고,
+    1시간 뒤 OIDC 자격증명이 만료되며 ExpiredToken 으로 실패한다. 2026-10-02 두 번 실측 — 스택은 이미
+    UPDATE_COMPLETE 였고, 두 번째는 api 배포 단계가 아예 돌지 못했다. Copilot 은 2026-06-12 지원 종료라
+    공식 수정이 없다 → --detach 로 진행 표시를 끄고 스택 완료를 scripts/ci/wait-copilot-stack.sh 로 직접 본다."""
+    root = MANIFEST.parents[2]
+    for wf in ("deploy-server.yml", "deploy-sam2.yml"):
+        text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
+        blocks = re.findall(r"copilot svc deploy(?:[^\n]*\\\n)*[^\n]*", text)
+        assert blocks, wf
+        for block in blocks:
+            assert "--detach" in block, f"{wf}: --detach 없는 배포 — {block.splitlines()[0]}"
+        assert text.count("scripts/ci/wait-copilot-stack.sh") >= len(blocks), f"{wf}: 배포마다 스택 대기"
+    script = (root / "scripts/ci/wait-copilot-stack.sh").read_text(encoding="utf-8")
+    assert "ROLLBACK" in script and "--region" in script
