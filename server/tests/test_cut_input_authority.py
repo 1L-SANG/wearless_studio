@@ -1374,7 +1374,7 @@ def test_editor_active_job_cleanup_claim_does_not_delete_published_output(monkey
     captured = {}
     _patch_editor_common(monkeypatch, captured)
 
-    async def reclaim_drafts(conn):
+    async def reclaim_drafts(conn, *, older_than_minutes):
         return []
 
     async def active_job_claim(conn):

@@ -13,6 +13,7 @@ import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matching
 import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { fetchPhotoBytes } from '../photoBytes.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
@@ -76,32 +77,43 @@ const editorRevisions = createEditorRevisionSync({
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
   method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
-  requireAuth = true, suppressErrorLog = false,
+  requireAuth = true, suppressErrorLog = false, isCurrent = () => true,
 } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
   } catch (cause) {
-    throw networkError(
+    const error = networkError(
       'auth_session_network',
       '로그인 상태를 확인하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'auth_session', path, origin: browserOrigin() },
       cause,
       !suppressErrorLog,
     );
+    error.requestNotSent = true;
+    throw error;
   }
   // 다른 탭의 계정 변경은 React에 늦게 도착할 수 있다. 이 요청의 동의 당사자를
   // 실제 Bearer 토큰을 꺼내는 같은 세션과 대조한다.
   if (expectedUserId !== undefined && data?.session?.user?.id !== expectedUserId) {
     const error = new Error('로그인 계정이 바뀌었어요. 현재 계정에서 다시 확인해 주세요.');
     error.code = 'auth_user_changed';
+    error.requestNotSent = true;
+    throw error;
+  }
+  if (!isCurrent()) {
+    const error = new Error('이전 임시저장 요청이 취소됐어요.');
+    error.code = 'draft_request_cancelled';
+    error.requestNotSent = true;
     throw error;
   }
   const token = data?.session?.access_token;
   if (!token && requireAuth) {
     // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
     if (!suppressErrorLog) console.error(`API no-session ${path}`);
-    throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+    const error = new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+    error.requestNotSent = true;
+    throw error;
   }
   // requireAuth:false — 서버가 인증을 요구하지 않는 **공개 엔드포인트** 전용 탈출구.
   // 위 가드는 "세션이 필요한 화면에서 무세션 호출이 401 폭탄으로 번지는 것"을 막으려고 있는데,
@@ -115,13 +127,15 @@ export async function http(path, {
   // Chrome DevTools의 Offline 에뮬레이션을 포함해 브라우저가 오프라인이면 요청 자체를 보내지
   // 않는다. 응답이 아예 없을 때 뒤따르는 가짜 CORS 메시지를 서버 장애로 오진하지 않게 한다.
   if (isBrowserOffline()) {
-    throw networkError(
+    const error = networkError(
       'api_network',
       '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'api', method, path, origin: browserOrigin() },
       undefined,
       !suppressErrorLog,
     );
+    error.requestNotSent = true;
+    throw error;
   }
 
   // 관리자 기기 토큰. 토큰이 있으면 싣는다 — IS_ADMIN 을 보지 않는다. 스토리지가 이미 오리진으로
@@ -433,19 +447,21 @@ export const httpAdapter = {
   async uploadDraftSlotPhoto(photo, options) {
     return uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
   },
-  async getDraftSlot(token, { full = false } = {}) {
+  async getDraftSlot(token, { full = false, ...options } = {}) {
     return http(`/v1/draft-slot${full ? '?full=1' : ''}`, {
+      ...options,
       headers: token ? { 'X-Draft-Token': token } : undefined,
     });
   },
-  async putDraftSlot(body) {
-    return http('/v1/draft-slot', { method: 'PUT', body });
+  async putDraftSlot(body, options) {
+    return http('/v1/draft-slot', { ...options, method: 'PUT', body });
   },
-  async takeoverDraftSlot() {
-    return http('/v1/draft-slot:takeover', { method: 'POST' });
+  async takeoverDraftSlot(body = {}, options) {
+    return http('/v1/draft-slot:takeover', { ...options, method: 'POST', body });
   },
-  async deleteDraftSlot(token) {
+  async deleteDraftSlot(token, options) {
     return http('/v1/draft-slot', {
+      ...options,
       method: 'DELETE',
       headers: token ? { 'X-Draft-Token': token } : undefined,
     });
@@ -461,7 +477,7 @@ export const httpAdapter = {
     const form = new FormData();
     onProgress?.(10);
     for (const [index, photo] of photos.entries()) {
-      const blob = await fetch(photo.src, { signal }).then((response) => response.blob());
+      const blob = await fetchPhotoBytes(photo.src, { signal });
       form.append('images', blob, photo.name || `product-${index + 1}`);
       form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
     }

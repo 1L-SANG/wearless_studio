@@ -12,6 +12,8 @@
 
 import { normalizeAnalysisFit } from './fitAxes.js';
 import { isUploadablePhotoMime } from './imageTranscode.js';
+import { fetchPhotoBytes, isRemoteAssetPhoto } from './photoBytes.js';
+import { draftSlot } from './draftSlot.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -53,10 +55,10 @@ async function withStore(mode, run) {
 
 /** ProductInput 의 product 에서 사진 blob 을 추출해 draft 를 IndexedDB 에 저장한다.
     blob 추출(fetch(objectURL))은 페이지가 살아있을 때만 가능 → 리다이렉트 직전에 호출. */
-/** product 의 사진을 draft 에 담을 수 있는 형태로 모은다. → {photos, cleanProduct, failed}
+/** product 의 사진을 draft 에 담을 수 있는 형태로 모은다. {photos, cleanProduct, failed, failedIds}
  *
  * 담는 조건은 두 개다: blob 을 읽을 수 있고, **서버에 올릴 수 있는 mime** 이어야 한다.
- * mime 은 셀러 파일의 type 을 먼저 믿되 화이트리스트에 없으면 blob 의 실제 타입으로 고친다
+ * 원격 자산은 응답 MIME을 사용한다. 로컬 파일은 type이 허용 목록에 없으면 blob 타입으로 고친다
  * (filesToMetas 폴백이 남긴 'image' 같은 잘못된 값이 그대로 확정 업로드까지 가면 서버가
  * 400 으로 거부하고, 셀러는 자기가 올린 jpg 가 거부됐다고 읽는다 — 2026-08-17 사고).
  * 목 데모의 SVG 플레이스홀더도 여기서 걸린다: data: 는 fetch 가 성공하므로 mime 검사만이
@@ -80,25 +82,26 @@ async function withStore(mode, run) {
  * R2 응답에 Vary 를 강제하는 것이고, 이건 이미 오염된 캐시까지 푸는 우회다. */
 const fetchPhotoBlob = async (src) => {
   try {
-    return await fetch(src).then((r) => r.blob());
+    return await fetchPhotoBytes(src);
   } catch (e) {
-    if (!/^https?:/i.test(String(src || ''))) throw e;  // objectURL·data: 는 캐시 문제가 아니다
-    return fetch(src, { cache: 'reload' }).then((r) => r.blob());
+    if (isRemoteAssetPhoto(src) || !/^https?:/i.test(String(src || ''))) throw e;
+    return fetchPhotoBytes(src, { cache: 'reload' });
   }
 };
 
-export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
+export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob, storedPhotos = []) {
   const photos = [];
   const okIds = new Set();
-  let failed = 0;
+  const failedIds = [];
+  const failures = [];
   for (const color of product?.colors || []) {
     for (const img of color.images || []) {
       try {
         const blob = await fetchBlob(img.src);
-        const mime = isUploadablePhotoMime(img.type) ? img.type : blob?.type;
+        const mime = !isRemoteAssetPhoto(img.src) && isUploadablePhotoMime(img.type) ? img.type : blob?.type;
         if (!isUploadablePhotoMime(mime)) {
           // 올릴 수 없는 사진 — 담아 두면 확정 단계에서 서버 400 으로 진행이 막힌다.
-          failed += 1;
+          failedIds.push(img.id);
           console.warn(`[draft] 업로드할 수 없는 사진 형식 — imageId=${img.id} mime=${mime}`);
           continue;
         }
@@ -112,37 +115,66 @@ export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
         });
         okIds.add(img.id);
       } catch (e) {
+        const stored = storedPhotos.find((photo) => photo.imageId === img.id
+          && photo.blob?.size && isUploadablePhotoMime(photo.mime));
+        if (stored && (isRemoteAssetPhoto(img.src) || /^https?:/i.test(img.src))) {
+          photos.push({ ...stored, colorId: color.id, slot: img.slot, filename: img.name || stored.filename });
+          okIds.add(img.id);
+          continue;
+        }
+        if (e?.status) failures.push({ imageId: img.id, status: e.status });
         // objectURL revoke·메모리 소실 등으로 blob 읽기 실패 — 조용히 누락하지 않고 집계+경고.
-        failed += 1;
+        failedIds.push(img.id);
         console.warn(`[draft] 사진 blob 추출 실패 — imageId=${img.id}`, e);
       }
     }
   }
-  // 담긴 이미지만 product 에 남긴다 — 담기지 않은 사진이 죽은 src 로 '정상 이미지인 척'
-  // 복원되는(좀비) 것을 막는다. photos[] 와 product.images[] 가 항상 일치.
+  // 원격 자산은 바이트가 없어도 주소를 보존한다. 다음 저장과 확정에서 다시 받는다.
+  // 로컬 사진은 담긴 항목만 남겨 죽은 objectURL이 복원되지 않게 한다.
   const cleanProduct = product
-    ? { ...product, colors: (product.colors || []).map((c) => ({ ...c, images: (c.images || []).filter((im) => okIds.has(im.id)) })) }
+    ? { ...product, colors: (product.colors || []).map((c) => ({ ...c, images: (c.images || []).filter((im) => okIds.has(im.id) || isRemoteAssetPhoto(im.src)) })) }
     : product;
-  return { photos, cleanProduct, failed };
+  return { photos, cleanProduct, failed: failedIds.length, failedIds, ...(failures.length ? { failures } : {}) };
 }
 
-export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null) {
-  const { photos, cleanProduct, failed } = await collectDraftPhotos(product);
+/** 로컬 바이트가 없는 원격 사진도 승격 전에 확보한다. 실패하면 승격을 중단한다. */
+export async function ensureDraftRemotePhotos(draft, fetchBlob = fetchPhotoBlob) {
+  const photos = draft.photos || [];
+  const available = new Set(photos.filter((photo) => photo.blob?.size && isUploadablePhotoMime(photo.mime)).map((photo) => photo.imageId));
+  const missingProduct = {
+    ...draft.product,
+    colors: (draft.product?.colors || []).map((color) => ({
+      ...color,
+      images: (color.images || []).filter((image) => isRemoteAssetPhoto(image.src) && !available.has(image.id)),
+    })),
+  };
+  const collected = await collectDraftPhotos(missingProduct, fetchBlob);
+  if (collected.failed) throw new Error(`사진 ${collected.failed}장을 불러오지 못했어요.`);
+  const replaced = new Set(collected.photos.map((photo) => photo.imageId));
+  return { ...draft, photos: [...photos.filter((photo) => !replaced.has(photo.imageId)), ...collected.photos] };
+}
+
+export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null, isCurrent = () => true) {
+  const stored = await loadDraft().catch(() => null);
+  if (!isCurrent()) return null;
+  const { photos, cleanProduct, failed, failedIds, failures } = await collectDraftPhotos(product, fetchPhotoBlob, stored?.photos);
+  if (!isCurrent()) return null;
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).
-  await withStore('readwrite', (s) => s.put({
+  await withStore('readwrite', (s) => isCurrent() ? s.put({
     product: cleanProduct,
     analysis,
     composeMode: composeMode === 'extended' ? 'extended' : 'basic',
     updatedAt,
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
-  }, KEY));
+  }, KEY) : null);
+  if (!isCurrent()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
-  return { saved: photos.length, failed }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
+  return { saved: photos.length, failed, failedIds, ...(failures ? { failures } : {}) }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
 }
 
 function commitPendingSnapshot() {
@@ -151,9 +183,14 @@ function commitPendingSnapshot() {
   if (!pendingSnapshot) return saveChain;
   const snapshot = pendingSnapshot;
   pendingSnapshot = null;
+  // 계정 전환 뒤 늦게 끝난 사진 읽기도 이전 신원으로 저장하지 않는다.
+  const isCurrent = () => snapshot.userId === draftSlot.getUserId()
+    && snapshot.identityEpoch === draftSlot.getIdentityEpoch();
+  if (!isCurrent()) return saveChain;
   // 커스텀 매칭 blob 은 저장 직전에 읽는다 — 스냅샷 큐에 blob 을 들고 있지 않아도 되고,
   // 커밋 시점의 최신 상태가 저장된다. api 는 지연 임포트(모듈 순환 회피).
   saveChain = saveChain.catch(() => null).then(async () => {
+    if (!isCurrent()) return null;
     let customMatch = null;
     try {
       const { api } = await import('@/lib/api/index.js');
@@ -165,6 +202,7 @@ function commitPendingSnapshot() {
       snapshot.composeMode,
       snapshot.updatedAt,
       customMatch,
+      isCurrent,
     );
   });
   return saveChain;
@@ -178,15 +216,27 @@ export function queueProductDraftSave(
   composeMode = 'basic',
   updatedAt = new Date().toISOString(),
 ) {
-  pendingSnapshot = { product, analysis, composeMode, updatedAt };
+  pendingSnapshot = { product, analysis, composeMode, updatedAt,
+    userId: draftSlot.getUserId(), identityEpoch: draftSlot.getIdentityEpoch() };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
 }
 
 /** OAuth 이동처럼 페이지가 사라지기 전, 예약·진행 중 저장을 모두 기다린다. */
-export async function flushProductDraftSave() {
-  await commitPendingSnapshot();
-  return saveChain;
+export async function flushProductDraftSave({
+  userId = draftSlot.getUserId(), identityEpoch = draftSlot.getIdentityEpoch(),
+  timeoutMs = null, setTimer = setTimeout, clearTimer = clearTimeout,
+} = {}) {
+  if (userId !== draftSlot.getUserId() || identityEpoch !== draftSlot.getIdentityEpoch()) return null;
+  const saving = commitPendingSnapshot().then(() => saveChain);
+  if (timeoutMs == null) return saving;
+  let timer;
+  try {
+    return await Promise.race([
+      saving,
+      new Promise((_, reject) => { timer = setTimer(() => reject(new Error('draft_save_timeout')), timeoutMs); }),
+    ]);
+  } finally { clearTimer(timer); }
 }
 
 export function discardPendingDraftSave() {

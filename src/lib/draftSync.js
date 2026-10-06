@@ -16,6 +16,7 @@
    멱등: 확보한 projectId와 사진별 asset 매핑을 localStorage에 즉시 기록한다. 같은 페이지의
    재시도뿐 아니라 새로고침 뒤에도 같은 프로젝트·업로드에 합류한다.
    ============================================================= */
+import { ensureDraftRemotePhotos } from './draftStore.js';
 import { api } from '@/lib/api/index.js';
 import { isUploadablePhotoMime } from '@/lib/imageTranscode.js';
 import { withUploadedSrcs } from '@/lib/draftPromotionProduct.js';
@@ -27,6 +28,7 @@ import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storybo
 async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
   // localStorage 에 기록해 새로고침 뒤에도 같은 행으로 합류한다.
+  draft = await ensureDraftRemotePhotos(draft);
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
   draftPromotionSession.rememberProject(projectId);

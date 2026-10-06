@@ -1,0 +1,8 @@
+.product { display: flex; justify-content: center; width: min(100%, 24rem); }
+.product > :global(.handoff-product-row) { width: auto; margin-block: var(--sp-8) var(--sp-16); }
+.actions { display: flex; justify-content: center; width: auto; gap: var(--sp-8); }
+.actions > button { justify-content: center; border-radius: var(--r-pill); }
+@media (max-width: 560px) {
+  .actions { flex-direction: column; width: 100%; }
+  .actions > button { width: 100%; }
+}

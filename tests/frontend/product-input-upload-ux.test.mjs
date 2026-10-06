@@ -32,7 +32,7 @@ test('비활성 분석 버튼 이유와 선택 상품명 안내가 sticky CTA �
     '앞면·뒷면 사진이 각 1장 필요해요',
   ]) assert.doesNotMatch(productInput, new RegExp(removed));
   assert.match(productInput, /로그인 상태를 확인하고 있어요/);
-  assert.match(productInput, /<WizardCTA>[\s\S]*wizard-cta-reason[\s\S]*AI 분석하기[\s\S]*<\/WizardCTA>/);
+  assert.match(readFileSync(new URL('../../src/features/product-input/MobileInputHandoff.jsx', import.meta.url), 'utf8'), /<WizardCTA>[\s\S]*wizard-cta-reason[\s\S]*AI 분석하기[\s\S]*<\/WizardCTA>/);
   // 상품명 보조 라벨은 오너 결정으로 제거(2026-08-14) — 되살아나지 않게 부재를 고정
   assert.doesNotMatch(productInput, /선택 — 비우면 AI가 지어드려요/);
 });

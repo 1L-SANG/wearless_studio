@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { withUploadedSrcs } from '../../src/lib/draftPromotionProduct.js';
+import { ensureDraftRemotePhotos } from '../../src/lib/draftStore.js';
 
 // Execute the actual promotion orchestration with boundary doubles; no network or auth session.
 test('signed detail handoff is promoted only after source upload, product and analysis save', async () => {
@@ -16,7 +17,7 @@ test('signed detail handoff is promoted only after source upload, product and an
     patchProject: async () => { events.push('project'); },
   };
   globalThis.__detailPromotionHarness = {
-    api, withUploadedSrcs, isUploadablePhotoMime: () => true,
+    api, withUploadedSrcs, ensureDraftRemotePhotos, isUploadablePhotoMime: () => true,
     createDraftSyncSingleFlight: (sync) => ({ sync }),
     draftPromotionSession: { read: () => ({}), rememberProject() {}, rememberAsset() {} },
     startCustomMatchPromotion: () => null, stripLocalCustomMatch: (analysis) => analysis,

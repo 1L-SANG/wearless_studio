@@ -249,7 +249,7 @@ async def update_draft_slot(
 
 
 async def takeover_draft_slot(
-    conn: AsyncConnection, user_id: str, active_token: str
+    conn: AsyncConnection, user_id: str, active_token: str, device_label: str | None = None
 ) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -258,13 +258,13 @@ async def takeover_draft_slot(
             # 이어받은 슬롯을 '오래된 것'으로 보고 지우지 않게 막는 근거가 된다.
             """
             update draft_slots
-            set active_token = %s, updated_at = now()
+            set active_token = %s, device_label = coalesce(%s, device_label), updated_at = now()
             where user_id = %s
             returning user_id::text as user_id, payload,
                       active_token::text as active_token, device_label,
                       photos_pending, updated_at, expires_at
             """,
-            (active_token, user_id),
+            (active_token, device_label, user_id),
         )
         return await cur.fetchone()
 

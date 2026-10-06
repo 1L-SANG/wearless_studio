@@ -207,9 +207,9 @@ export function LoginGate() {
     setPending(null);
   };
 
-  /* 앱 안 브라우저 판별은 facemarket 에서만 한다(셀러 화면은 그대로). 테스트가 이 모달을
+  /* 앱 안 브라우저 판별은 셀러와 facemarket 에서 한다. 테스트가 이 모달을
      node 에서 그리므로 navigator 가 없어도 안전해야 한다. */
-  const inApp = IS_FACEMARKET && typeof navigator !== 'undefined' && IN_APP_UA.test(navigator.userAgent || '')
+  const inApp = (IS_FACEMARKET || IS_SELLER) && typeof navigator !== 'undefined' && IN_APP_UA.test(navigator.userAgent || '')
     ? (/KAKAOTALK/i.test(navigator.userAgent) ? 'kakaotalk' : 'other')
     : null;
   /* 다른 브라우저에서 열 주소. 이번 로그인의 복귀 경로(openLogin 이 심은 앱 내 경로)가 있으면

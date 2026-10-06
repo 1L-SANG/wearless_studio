@@ -372,9 +372,9 @@ export const api = {
     await wait(20);
     return mockDraftSlot.put(body);
   },
-  async takeoverDraftSlot() {
+  async takeoverDraftSlot(body = {}) {
     await wait(20);
-    return mockDraftSlot.takeover();
+    return mockDraftSlot.takeover(body);
   },
   async deleteDraftSlot(token) {
     await wait(20);
