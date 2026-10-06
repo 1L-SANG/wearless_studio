@@ -134,12 +134,12 @@ export function MobileSaveModal({ result, onRetry, onClose }) {
   const identity = provider === 'kakao'
     ? metadata?.full_name || metadata?.name || metadata?.nickname || metadata?.preferred_username || user?.email
     : user?.email;
-  const account = providerName && identity ? `${providerName} · ${identity}` : null;
+  const account = providerName && identity ? identity : null;
   if (!result) return null;
   const { status, photoCount } = result;
   const copy = {
     saving: ['사진을 저장하고 있어요', '다 저장될 때까지 이 화면을 닫지 말아 주세요.'],
-    saved: [`사진 ${photoCount}장을 저장했어요`, account ? 'PC에서도 이 계정으로 로그인해 주세요.' : 'PC에서도 같은 계정으로 로그인해 주세요.'],
+    saved: [`사진 ${photoCount}장을 저장했어요`, providerName ? `PC에서도 ${providerName}로 로그인해 주세요.` : 'PC에서도 같은 계정으로 로그인해 주세요.'],
     failed: ['사진을 다 저장하지 못했어요', '인터넷 연결을 확인하고 다시 시도해 주세요.'],
     gone: ['이 상품은 PC에서 마무리됐거나 정리됐어요', '지금 화면의 저장을 멈췄어요.'],
     locked: ['다른 곳에서 이 상품을 이어서 작업하고 있어요', '지금 화면의 저장을 멈췄어요.'],

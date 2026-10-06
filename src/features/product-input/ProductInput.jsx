@@ -1566,7 +1566,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       )}
       <PageHead
         title="의류 이미지를 올려주세요"
-        sub={mobile ? '사진만 올려 두면 PC에서 이어서 만들 수 있어요.'
+        sub={mobile ? '사진만 올리면 PC에서 이어서 만들어요.'
           : <>사진 몇 장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 

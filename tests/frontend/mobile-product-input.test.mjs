@@ -594,24 +594,36 @@ test('gone save closes into D even without a conflict notification', async () =>
   h.cleanup();
 });
 
-for (const [provider, metadata, expected] of [
-  ['kakao', { full_name: '전체 이름', name: '이름' }, '카카오 · 전체 이름'],
-  ['kakao', { name: '이름' }, '카카오 · 이름'],
-  ['kakao', { nickname: '별명' }, '카카오 · 별명'],
-  ['kakao', { preferred_username: '닉네임' }, '카카오 · 닉네임'],
-  ['kakao', {}, '카카오 · seller@example.com'],
-  ['google', { name: '이름' }, '구글 · seller@example.com'],
-  ['email', {}, '이메일 · seller@example.com'],
-  ['unknown', {}, null], ['toString', {}, null], [null, {}, null],
+for (const [provider, metadata, expected, sentence] of [
+  ['kakao', { full_name: '전체 이름', name: '이름' }, '전체 이름', 'PC에서도 카카오로 로그인해 주세요.'],
+  ['kakao', { name: '이름' }, '이름', 'PC에서도 카카오로 로그인해 주세요.'],
+  ['kakao', { nickname: '별명' }, '별명', 'PC에서도 카카오로 로그인해 주세요.'],
+  ['kakao', { preferred_username: '닉네임' }, '닉네임', 'PC에서도 카카오로 로그인해 주세요.'],
+  ['kakao', {}, 'seller@example.com', 'PC에서도 카카오로 로그인해 주세요.'],
+  ['google', { name: '이름' }, 'seller@example.com', 'PC에서도 구글로 로그인해 주세요.'],
+  ['email', {}, 'seller@example.com', 'PC에서도 이메일로 로그인해 주세요.'],
+  ['unknown', {}, null, 'PC에서도 같은 계정으로 로그인해 주세요.'],
+  ['toString', {}, null, 'PC에서도 같은 계정으로 로그인해 주세요.'],
+  [null, {}, null, 'PC에서도 같은 계정으로 로그인해 주세요.'],
 ]) {
   test(`D4 account pill ${provider} ${JSON.stringify(metadata)}`, () => {
     const h = harness({ session: provider ? { user: { app_metadata: { provider }, user_metadata: metadata, email: 'seller@example.com' } } : null });
     const modal = h.render('MobileSaveModal', { result: { status: 'saved', photoCount: 2 } });
     const pill = find(modal, (n) => n.props.className === 'pill pill-soft handoff-account');
     assert.equal(pill ? text(pill) : null, expected);
-    assert.ok(text(modal).includes(expected ? 'PC에서도 이 계정으로 로그인해 주세요.' : 'PC에서도 같은 계정으로 로그인해 주세요.'));
+    assert.equal(text(node(modal, 'p')), sentence);
   });
 }
+
+test('mobile input subtitle explains the PC handoff while desktop copy stays unchanged', async () => {
+  for (const mobile of [true, false]) {
+    const h = harness({ mobile });
+    const head = node(await h.settle(), 'PageHead');
+    assert.equal(text(head.props.sub), mobile ? '사진만 올리면 PC에서 이어서 만들어요.'
+      : '사진 몇 장만으로 경험해보세요.부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.');
+    h.cleanup();
+  }
+});
 
 test('D1 product row includes optional 56px thumbnail, name fallback and saved time', () => {
   const h = harness();

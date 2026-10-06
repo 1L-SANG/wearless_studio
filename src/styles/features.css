@@ -3522,6 +3522,7 @@
 /* 아이폰은 16px 미만 입력칸을 누르면 화면을 확대한 채로 둔다. 가로 모드에서도 같아 폭이 아니라 기기 기준으로 건다. */
 .pi-handoff .field, .pi-handoff .color-name-input { font-size: 16px; }
 .wizard.pi-handoff { padding-inline: var(--sp-16); }
+.pi-handoff .page-head p { text-wrap: balance; }
 .pi-handoff .surface.pi-images { padding-inline: var(--sp-16); }
 .pi-handoff .color-group { padding-inline: var(--sp-12); }
 .pi-handoff .slot-wells { grid-template-columns: minmax(0, 1fr); }
@@ -3558,7 +3559,10 @@
 .handoff-product-row img { width: 56px; height: 56px; flex-shrink: 0; object-fit: cover; border-radius: var(--r-4); }
 .handoff-product-row > div { min-width: 0; }
 .handoff-product-row p { margin: var(--sp-4) 0 0; color: var(--fg-2); font-size: 13px; }
-.handoff-account { font-size: 14px; max-width: 100%; white-space: normal; margin-bottom: var(--sp-12); }
+.handoff-account { font-size: 14px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; margin-bottom: var(--sp-12); }
+@media (max-width: 360px) {
+  .handoff-account { font-size: 13px; }
+}
 .handoff-title { text-wrap: balance; }
 /* 폰 저장 뒤 두 버튼은 화면 폭을 반씩 나눠 쓴다(한쪽으로 몰리지 않게). */
 .pi-handoff .wizard-cta > .handoff-actions { flex: 1; flex-wrap: nowrap; }
