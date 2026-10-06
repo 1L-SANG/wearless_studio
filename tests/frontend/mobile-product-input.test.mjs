@@ -4,15 +4,24 @@ import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
 import { isMobileDraftWriter } from '../../src/lib/draftDeviceNoun.js';
 import { draftSavedTime, createDraftEntryActions } from '../../src/lib/draftEntry.js';
+import * as entry from '../../src/lib/draftEntry.js';
+import * as flow from '../../src/lib/flowSession.js';
+import * as localStore from '../../src/lib/draftStore.js';
+import { draftSlot as localIdentity, localDraftMeta } from '../../src/lib/draftSlot.js';
+import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
+import { draftStoreFixture, drainDraftTasks } from './helpers/draft-store-fixture.mjs';
+import { createProductPhotoPreviewRegistry } from '../../src/features/product-input/productPhotoPreviewRegistry.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from '../../src/features/product-input/pendingTiles.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
+const app = read('src/apps/seller/App.jsx');
+const inputRoute = app.slice(app.indexOf('function ProductInputRoute()'), app.indexOf("/* '/' 복귀의 리다이렉트"));
 const { code } = await transformWithEsbuild([
   'src/features/product-input/ProductInput.jsx', 'src/features/product-input/MobileInputHandoff.jsx',
   'src/features/shell/MobileDraftDialog.jsx', 'src/features/shell/DraftProductRow.jsx', 'src/features/shell/HandoffStatusPage.jsx', 'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
   'src/features/library/Library.jsx', 'src/lib/useDraftEntryActions.js', 'src/features/shell/DraftEntryDialog.jsx',
-].map((path) => clean(read(path))).join('\n'), 'MobileInput.jsx', { jsx: 'transform' });
+].map((path) => clean(read(path))).join('\n') + '\n' + inputRoute, 'MobileInput.jsx', { jsx: 'transform' });
 const product = () => ({ name: '니트', colors: [{ id: 'base', isBase: true, images: [
   { id: 'front', slot: 'Front', src: '/front.jpg' }, { id: 'back', slot: 'Back', src: '/back.jpg' },
 ] }] });
@@ -30,7 +39,7 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } } } = {}) {
+function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
   const calls = [];
   const content = [];
   const onContentChange = (value) => content.push(value);
@@ -41,10 +50,11 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
   let active, cursor, effects = [], dirty = false;
   let staged = stagedDraft ? { payload: { product: photos, analysis, composeMode: 'basic' } } : null;
   const state = { projectId: persisted ? 'desktop' : null, projectPersisted: persisted, composeMode: 'basic', mannequinJob: {}, projectGeneration: 0,
-    restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
+    markFlowUsed() {}, resumePath: '/create/input', restoreComposeMode() {}, adoptProject(id) { calls.push(['adopt', id]); }, async beginProject() { calls.push('begin'); }, setInputPromotionLocked() {} };
   const useAppStore = (select) => select(state);
   useAppStore.getState = () => state;
-  const slot = {
+  const location = { key: 'input', pathname: '/create/input', state: null };
+  const slot = slotClient || {
     onPhotosPending(handler) { pendingHandler = handler; handler(true); return () => { pendingHandler = null; }; },
     retryFailedUploads() { calls.push('retryUploads'); },
     async checkOwnership() { calls.push('ownership'); },
@@ -58,6 +68,9 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
+    ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
+    flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
+    flowScreenName: () => '입력 화면', shouldWarnFlowAbandon: () => false,
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment' },
     useState(initial) {
       const frame = active, index = cursor++;
@@ -72,7 +85,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
         effects.push(() => { prior?.cleanup?.(); record.cleanup = effect(); });
       }
     },
-    useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => ({ state: null }),
+    useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => location,
     useAuth: () => ({ session, loading: false }),
     useDoneGuard: () => doneBlocked, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
     useQuery: () => ({ data: [{ id: 'finished', title: '완성본' }], isLoading: false }),
@@ -80,11 +93,12 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
       getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
       analyzeProduct: async () => { calls.push('analyze'); return { suggestedName: '니트' }; } },
-    createProductPhotoPreviewRegistry: () => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src }),
+    createProductPhotoPreviewRegistry: previewRegistry || (() => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src })),
     createTrailingPatchScheduler: () => ({ flush() {}, schedule() {} }),
     generationWorkWarningKind: () => 'none', restoreDraftProduct: (draft) => draft.product,
     normalizeAnalysisFit: (value) => value, isAnalysisRunning: () => false,
     queueProductDraftSave: () => {}, flushProductDraftSave: async () => {}, hasPendingDraft: () => false,
+    ...(draftStore || {}),
     formatDraftRelativeTime: () => '1분 전', getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS,
     invalidateStoryboardForProductPhotoEdit() {}, invalidateStoryboardEntryPrefetch() {},
     analysisResponseProductPatch: () => ({}), autofillColorGroups: (colors) => colors,
@@ -99,8 +113,8 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     s: new Proxy({}, { get: (_, key) => key }),
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
-    'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
-  const components = new Function(...Object.keys(bindings), `${code}; return { HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
+    'ResumeChoiceModal', 'PhoneUploadIntro', 'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
+  const components = new Function(...Object.keys(bindings), `${code}; return { ProductInputRoute, HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name); cursor = 0; dirty = false;
@@ -116,9 +130,10 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     }
     throw new Error('did not settle');
   }
-  return { calls, content, render, settle, components, documentEvents, slot,
+  return { calls, content, location, render, settle, components, documentEvents, slot,
     emitConflict: (meta) => conflictHandler(meta),
     emitPending: (value) => pendingHandler?.(value),
+    unmount(name) { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); },
     cleanup() { for (const frame of frames.values()) frame.forEach((record) => record?.cleanup?.()); },
     expand: (tree, name) => render(name, node(tree, name).props),
   };
@@ -696,3 +711,117 @@ test('narrow dialog pills, balanced titles, clamped names, and saved modal spaci
   assert.match(status, /flex-direction: column; width: 100%/);
   assert.doesNotMatch(status, /word-break|#[0-9a-f]{3,8}\b/);
 });
+
+const priorDraftTime = '2026-10-05T01:00:00.000Z';
+const priorProduct = () => ({ name: '수정 전 상품', colors: [{ id: 'base', isBase: true, images: [] }] });
+function entrySlot({ token = 'owned' } = {}) {
+  const remote = { meta: { hasContent: true, deviceLabel: 'Mac Chrome', photoCount: 0, updatedAt: priorDraftTime },
+    payload: { product: priorProduct(), photos: [], updatedAt: priorDraftTime } };
+  let staged = { payload: remote.payload };
+  let paused = false;
+  const calls = [];
+  return {
+    calls, get staged() { return staged; }, get paused() { return paused; },
+    configure() {}, activate() {}, queue() {}, onConflict: () => () => {}, onPhotosPending: () => () => {},
+    checkOwnership: async () => {}, consumeStaged() { const value = staged; staged = null; return value; },
+    hasStaged: () => Boolean(staged), stage(value) { staged = value; },
+    getIdentityEpoch: () => localIdentity.getIdentityEpoch(), getToken: () => token,
+    getSyncedAt: () => priorDraftTime, getServerSyncedAt: () => priorDraftTime, getSyncedUserId: () => 'seller',
+    hasPendingRemoval: () => false, hasOtherTabOwner: () => false,
+    pauseEntryWrites() { paused = true; }, resumeEntryWrites() { paused = false; },
+    async get() { calls.push('get'); return remote; }, async takeover() { calls.push('takeover'); return remote; },
+    continueWithoutSlotCheck() { calls.push('continueUnchecked'); return true; },
+  };
+}
+
+for (const delay of ['debounce', 'photo-debounce', 'photo', 'indexeddb']) {
+  test(`PC edit, leave for library, and return before ${delay} save finishes keeps the latest local draft`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const storage = draftStoreFixture(t, { product: priorProduct(), photos: [], updatedAt: priorDraftTime });
+    let finishPhoto;
+    if (delay === 'photo') t.mock.method(globalThis, 'fetch', () => new Promise((resolve) => { finishPhoto = () => resolve(new Response('new photo', { headers: { 'Content-Type': 'image/jpeg' } })); }));
+    const photoUrl = URL.createObjectURL(new Blob(['new photo'], { type: 'image/jpeg' }));
+    t.after(() => URL.revokeObjectURL(photoUrl));
+    storage.onCleanup(() => finishPhoto?.());
+    const slot = entrySlot();
+    const h = harness({ mobile: false, photos: priorProduct(), draftStore: localStore, slotClient: slot,
+      previewRegistry: delay === 'photo-debounce' ? (options) => createProductPhotoPreviewRegistry({ ...options, createThumbnail: async () => { throw new Error('no canvas'); } }) : null });
+    t.after(() => h.cleanup());
+    let tree = await h.settle('ProductInput');
+    find(tree, (value) => value.type === 'input' && value.props.placeholder === '예: 소프트 골지 라운드 니트')
+      .props.onChange({ target: { value: '방금 수정한 상품' } });
+    if (delay.startsWith('photo')) {
+      node(tree, 'ColorImageGroup').props.onAddFiles('Front', [{ id: 'new-photo', src: photoUrl, type: 'image/jpeg' }]);
+    }
+    await h.settle('ProductInput');
+    h.unmount('ProductInput');
+    h.location.pathname = '/library';
+    assert.equal(storage.saved.product.name, '수정 전 상품');
+    if (delay === 'indexeddb') storage.pauseWrites();
+    if (['photo', 'indexeddb'].includes(delay)) {
+      t.mock.timers.tick(500);
+      await drainDraftTasks();
+      if (delay === 'photo') assert.equal(typeof finishPhoto, 'function');
+      else assert.equal(storage.waitingWrites, 1);
+    }
+    h.location.pathname = '/create/input';
+    h.location.key = 'return-from-library';
+    tree = await h.settle('ProductInputRoute');
+    if (['photo', 'indexeddb'].includes(delay)) {
+      assert.equal(tree, null, 'entry waits for the in-flight local save');
+      assert.equal(slot.paused, true);
+      assert.deepEqual(slot.calls, [], 'the older slot is not read before local persistence');
+      if (delay === 'photo') finishPhoto();
+      else storage.releaseWrites();
+      tree = await h.settle('ProductInputRoute');
+    }
+    if (delay === 'photo-debounce') {
+      await localStore.flushProductDraftSave();
+      tree = await h.settle('ProductInputRoute');
+    }
+    assert.equal(tree.type, h.components.ProductInput);
+    assert.equal(slot.staged.payload.product.name, '방금 수정한 상품');
+    assert.equal(storage.saved.product.name, '방금 수정한 상품');
+    if (delay.startsWith('photo')) {
+      assert.deepEqual(slot.staged.payload.product.colors[0].images.map((image) => image.id), ['new-photo']);
+      assert.equal(await slot.staged.payload.photos[0].blob.text(), 'new photo');
+    }
+    assert.equal(h.calls.includes('begin'), false, 'auto-open must not clear the freshly saved local draft');
+    assert.equal(slot.paused, false);
+    tree = await h.settle('ProductInput');
+    assert.equal(find(tree, (value) => value.type === 'input' && value.props.placeholder === '예: 소프트 골지 라운드 니트').props.value, '방금 수정한 상품');
+  });
+}
+
+for (const token of ['owned', null]) {
+  test(`PC local save timeout releases entry checking without reading or discarding edits, token ${token}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const storage = draftStoreFixture(t, { product: priorProduct(), photos: [], updatedAt: priorDraftTime });
+    const slot = entrySlot({ token });
+    const h = harness({ mobile: false, photos: priorProduct(), draftStore: localStore, slotClient: slot });
+    t.after(() => h.cleanup());
+    let tree = await h.settle('ProductInput');
+    find(tree, (value) => value.type === 'input' && value.props.placeholder === '예: 소프트 골지 라운드 니트')
+      .props.onChange({ target: { value: '느린 저장 중 수정' } });
+    await h.settle('ProductInput');
+    h.unmount('ProductInput');
+    storage.pauseWrites();
+    h.location.pathname = '/library';
+    h.location.pathname = '/create/input';
+    tree = await h.settle('ProductInputRoute');
+    t.mock.timers.tick(8000);
+    tree = await h.settle('ProductInputRoute');
+    assert.equal(tree.type, h.components.HandoffStatusPage);
+    assert.equal(tree.props.variant, 'error');
+    assert.equal(tree.props.onUpload, undefined, 'a timed-out save cannot open an older draft through unchecked entry');
+    assert.deepEqual(slot.calls, []);
+    assert.equal(h.calls.includes('begin'), false);
+    storage.releaseWrites();
+    await drainDraftTasks();
+    tree.props.onRetry();
+    tree = await h.settle('ProductInputRoute');
+    assert.equal(tree.type, h.components.ProductInput);
+    assert.equal(slot.staged.payload.product.name, '느린 저장 중 수정');
+    assert.equal(storage.saved.product.name, '느린 저장 중 수정');
+  });
+}

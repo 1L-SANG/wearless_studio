@@ -648,7 +648,15 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     photoPreviewRegistryRef.current.sync(images);
   }, [product]);
 
-  useEffect(() => () => photoPreviewRegistryRef.current.dispose(), []);
+  useEffect(() => {
+    const registry = photoPreviewRegistryRef.current;
+    const userId = entryUserRef.current;
+    const identityEpoch = draftSlot.getIdentityEpoch();
+    // 입력 화면을 떠나도 저장 중인 사진 원본은 로컬 저장이 끝날 때까지 유지한다.
+    return () => {
+      void flushProductDraftSave({ userId, identityEpoch }).catch(() => null).finally(() => registry.dispose());
+    };
+  }, []);
   useEffect(() => {
     mountedRef.current = true;
     return () => {

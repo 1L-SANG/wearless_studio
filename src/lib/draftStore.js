@@ -13,6 +13,7 @@
 import { normalizeAnalysisFit } from './fitAxes.js';
 import { isUploadablePhotoMime } from './imageTranscode.js';
 import { fetchPhotoBytes, isRemoteAssetPhoto } from './photoBytes.js';
+import { draftSlot } from './draftSlot.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -153,20 +154,23 @@ export async function ensureDraftRemotePhotos(draft, fetchBlob = fetchPhotoBlob)
   return { ...draft, photos: [...photos.filter((photo) => !replaced.has(photo.imageId)), ...collected.photos] };
 }
 
-export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null) {
+export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null, isCurrent = () => true) {
   const stored = await loadDraft().catch(() => null);
+  if (!isCurrent()) return null;
   const { photos, cleanProduct, failed, failedIds, failures } = await collectDraftPhotos(product, fetchPhotoBlob, stored?.photos);
+  if (!isCurrent()) return null;
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).
-  await withStore('readwrite', (s) => s.put({
+  await withStore('readwrite', (s) => isCurrent() ? s.put({
     product: cleanProduct,
     analysis,
     composeMode: composeMode === 'extended' ? 'extended' : 'basic',
     updatedAt,
     photos,
     customMatch: customMatch && customMatch.uploads?.length ? customMatch : null,
-  }, KEY));
+  }, KEY) : null);
+  if (!isCurrent()) return null;
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
@@ -179,9 +183,14 @@ function commitPendingSnapshot() {
   if (!pendingSnapshot) return saveChain;
   const snapshot = pendingSnapshot;
   pendingSnapshot = null;
+  // 계정 전환 뒤 늦게 끝난 사진 읽기도 이전 신원으로 저장하지 않는다.
+  const isCurrent = () => snapshot.userId === draftSlot.getUserId()
+    && snapshot.identityEpoch === draftSlot.getIdentityEpoch();
+  if (!isCurrent()) return saveChain;
   // 커스텀 매칭 blob 은 저장 직전에 읽는다 — 스냅샷 큐에 blob 을 들고 있지 않아도 되고,
   // 커밋 시점의 최신 상태가 저장된다. api 는 지연 임포트(모듈 순환 회피).
   saveChain = saveChain.catch(() => null).then(async () => {
+    if (!isCurrent()) return null;
     let customMatch = null;
     try {
       const { api } = await import('@/lib/api/index.js');
@@ -193,6 +202,7 @@ function commitPendingSnapshot() {
       snapshot.composeMode,
       snapshot.updatedAt,
       customMatch,
+      isCurrent,
     );
   });
   return saveChain;
@@ -206,15 +216,27 @@ export function queueProductDraftSave(
   composeMode = 'basic',
   updatedAt = new Date().toISOString(),
 ) {
-  pendingSnapshot = { product, analysis, composeMode, updatedAt };
+  pendingSnapshot = { product, analysis, composeMode, updatedAt,
+    userId: draftSlot.getUserId(), identityEpoch: draftSlot.getIdentityEpoch() };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
 }
 
 /** OAuth 이동처럼 페이지가 사라지기 전, 예약·진행 중 저장을 모두 기다린다. */
-export async function flushProductDraftSave() {
-  await commitPendingSnapshot();
-  return saveChain;
+export async function flushProductDraftSave({
+  userId = draftSlot.getUserId(), identityEpoch = draftSlot.getIdentityEpoch(),
+  timeoutMs = null, setTimer = setTimeout, clearTimer = clearTimeout,
+} = {}) {
+  if (userId !== draftSlot.getUserId() || identityEpoch !== draftSlot.getIdentityEpoch()) return null;
+  const saving = commitPendingSnapshot().then(() => saveChain);
+  if (timeoutMs == null) return saving;
+  let timer;
+  try {
+    return await Promise.race([
+      saving,
+      new Promise((_, reject) => { timer = setTimer(() => reject(new Error('draft_save_timeout')), timeoutMs); }),
+    ]);
+  } finally { clearTimer(timer); }
 }
 
 export function discardPendingDraftSave() {

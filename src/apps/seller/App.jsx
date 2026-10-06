@@ -37,7 +37,7 @@ import { SignupCompletion } from '@/features/auth/SignupCompletion.jsx';
 import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
-import { loadDraft, clearDraft, hasPendingDraft, ensureDraftRemotePhotos } from '@/lib/draftStore.js';
+import { loadDraft, clearDraft, hasPendingDraft, ensureDraftRemotePhotos, flushProductDraftSave } from '@/lib/draftStore.js';
 import {
   promoteDraftToProject,
   resetDraftSyncSingleFlight,
@@ -244,6 +244,7 @@ function ProductInputRoute() {
     });
   });
   const [entrySources, setEntrySources] = useState([]);
+  const [localSaveBlocked, setLocalSaveBlocked] = useState(false);
   const [mobileEntry, setMobileEntry] = useState(null);
   const [abandonApproved, setAbandonApproved] = useState(false);
   const [resumeNewAsk, setResumeNewAsk] = useState(false);
@@ -287,6 +288,14 @@ function ProductInputRoute() {
       && project.projectGeneration === useAppStore.getState().projectGeneration
       && project.projectId === useAppStore.getState().projectId;
     (async () => {
+      // 이탈 직전 입력은 슬롯 쓰기를 멈춘 동안 로컬에 먼저 저장하고 비교한다.
+      try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
+      catch {
+        if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+        return;
+      }
+      if (!current()) return;
+      setLocalSaveBlocked(false);
       const { projectId, projectPersisted, resumePath } = useAppStore.getState();
       const hasFlow = !mobile && Boolean(projectPersisted && projectId);
       if (hasFlow && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId))) {
@@ -406,6 +415,13 @@ function ProductInputRoute() {
         && project.projectGeneration === useAppStore.getState().projectGeneration
         && project.projectId === useAppStore.getState().projectId;
       (async () => {
+        try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
+        catch {
+          if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+          return;
+        }
+        if (!current()) return;
+        setLocalSaveBlocked(false);
         const { resumePath } = useAppStore.getState();
         const sources = await getFlowDraftSources({
           slotClient: draftSlot, enabled: slotEnabled, throwOnError: true,
@@ -588,7 +604,7 @@ function ProductInputRoute() {
   }
   if (entryDecision === 'error') {
     return <HandoffStatusPage variant="error" onRetry={() => setEntryDecision('checking')}
-      onUpload={!draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
+      onUpload={!localSaveBlocked && !draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
   }
   if (resumeNewAsk) return <ResumeChoiceModal abandonOnOpen onResume={() => { setResumeNewAsk(false); resume(); }}
     onNew={() => { setResumeNewAsk(false); setEntryDecision('continue'); void startNew(); }} />;

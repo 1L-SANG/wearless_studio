@@ -111,7 +111,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     useAuth: () => auth, useToast: () => ({ push }), useLocation: () => location,
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
-    hasPendingDraft: () => Boolean(local), loadDraft: async () => local,
+    hasPendingDraft: () => Boolean(local), loadDraft: async () => local, flushProductDraftSave: async () => null,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
     ensureDraftRemotePhotos: async (draft) => draft,

@@ -946,6 +946,7 @@ export function createDraftSlotSync({
     getSyncedAt() { return syncedAt; },
     getServerSyncedAt() { return serverSyncedAt; },
     getIdentityEpoch() { return identityEpoch; },
+    getUserId() { return userId || null; },
     getSyncedUserId() { return syncedUserId; },
     hasOtherTabOwner() {
       const owner = readStorage(storage, TAB_OWNER_KEY);
