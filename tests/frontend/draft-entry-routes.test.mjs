@@ -5,6 +5,7 @@ import { transformWithEsbuild } from 'vite';
 import { getDraftDeviceNoun, isMobileDraftWriter } from '../../src/lib/draftDeviceNoun.js';
 import { flowScreenName, shouldWarnFlowAbandon } from '../../src/lib/flowAbandon.js';
 import * as entry from '../../src/lib/draftEntry.js';
+import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
 import { formatDraftRelativeTime, localDraftMeta } from '../../src/lib/draftSlot.js';
 
@@ -22,12 +23,13 @@ const introSource = ['HangTag.jsx', 'PhoneUploadIntro.jsx'].map((file) =>
   read(`src/features/shell/${file}`).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
 const mobileDialogSource = read('src/features/shell/MobileDraftDialog.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const guardSource = app.slice(app.indexOf('function RequireProject()'), app.indexOf('/* editor 는'));
-const { code } = await transformWithEsbuild(`${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}`, 'DraftEntryRoutes.jsx', { jsx: 'transform' });
+const statusSource = ['DraftProductRow.jsx', 'HandoffStatusPage.jsx'].map((file) => read(`src/features/shell/${file}`).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
+const { code } = await transformWithEsbuild(`${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}`, 'DraftEntryRoutes.jsx', { jsx: 'transform' });
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
 function harness({ remote = slot(), confirmed = true, local = null, loading = false,
-  syncedAt = null, serverSyncedAt = null, takeover = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
+  syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
   const calls = [];
   const windowEvents = new EventTarget();
   const documentEvents = new EventTarget();
@@ -44,7 +46,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
   const location = { key: 'first', pathname: '/library' };
   const state = {
     projectId: confirmed ? 'project' : null, projectPersisted: confirmed,
-    productInfoConfirmed: confirmed, projectGeneration: 0, resumePath: '/create/storyboard',
+    productInfoConfirmed: confirmed, projectGeneration: 0, resumePath: '/create/storyboard', ...savedFlow,
     async beginProject() {
       calls.push('begin');
       state.projectId = null;
@@ -64,15 +66,19 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     async remove() { calls.push('remove'); },
     stage(value) { calls.push('stage'); staged = value; },
     hasStaged: () => Boolean(staged?.payload),
-    getToken: () => null, hasPendingRemoval: () => false, getSyncedAt: () => syncedAt, getServerSyncedAt: () => serverSyncedAt,
+    discard() {}, getIdentityEpoch: () => 0, hasOtherTabOwner: () => otherTab, getSyncedUserId: () => syncedUserId,
+    continueWithoutSlotCheck() { if (token) return false; calls.push('continueUnchecked'); return true; },
+    getToken: () => token, hasPendingRemoval: () => false, getSyncedAt: () => syncedAt, getServerSyncedAt: () => serverSyncedAt,
   };
-  const push = (message) => toasts.push(message);
+  const toastOptions = [];
+  const push = (message, options) => { toasts.push(message); toastOptions.push(options); };
   const useAppStore = (select) => select(state);
   useAppStore.getState = () => state;
+  state.markFlowUsed = () => {};
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
-    ...entry, ...flow, getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
+    ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment' },
     useState(initial) {
@@ -111,11 +117,12 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     DRAFT_SYNC_TIMEOUT_MS: 20000, setTimeout() {},
     ProductInput: 'ProductInput', Modal: 'Modal', Button: 'Button', Icon: 'Icon',
     Stepper: 'Stepper', ProfileMenuIcon: 'ProfileMenuIcon',
+    p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
     window: windowEvents, document: documentEvents, Link: 'Link', STEPPER_STEPS: [],
   };
-  function navigate(path) { calls.push(`navigate:${path}`); }
-  const components = new Function(...Object.keys(bindings), `${code}; return { RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
+  function navigate(path, options) { calls.push(`navigate:${path}`); if (options?.state) { location.state = options.state; location.key = `nav-${calls.length}`; } }
+  const components = new Function(...Object.keys(bindings), `${code}; return { HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
   function render(name, props) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name);
@@ -123,19 +130,19 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     dirty = false;
     return components[name](props);
   }
-  async function settle(name) {
-    let tree = render(name);
+  async function settle(name, props) {
+    let tree = render(name, props);
     for (let i = 0; i < 20; i += 1) {
       const pending = effects;
       effects = [];
       pending.forEach((effect) => effect());
       await new Promise(setImmediate);
-      if (!dirty && !effects.length) return tree;
-      tree = render(name);
+      if (!dirty && !effects.length && i >= 6) return tree;
+      tree = render(name, props);
     }
     throw new Error('route did not settle');
   }
-  return { calls, toasts, auth, state, windowEvents, documentEvents, draftSlot, location, components, render, settle,
+  return { calls, toasts, toastOptions, auth, state, windowEvents, documentEvents, draftSlot, location, components, render, settle,
     setRemote(value) { currentRemote = value; }, get staged() { return staged; },
     remount(name) { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); },
   };
@@ -214,7 +221,7 @@ test('C3 actual TopNav selects remote and input mounts directly with staged payl
   const input = await h.settle('ProductInputRoute');
   assert.equal(input.type, 'ProductInput');
   assert.equal(h.staged.payload.product.name, 'remote');
-  assert.deepEqual(h.calls, ['get', 'takeover', 'begin', 'stage', 'navigate:/create/input']);
+  assert.deepEqual(h.calls, ['get', 'get', 'takeover', 'begin', 'stage', 'navigate:/create/input']);
 });
 
 test('C3 TopNav without a slot keeps the original resume choice and route', async () => {
@@ -247,9 +254,25 @@ for (const location of ['input', 'nav', 'local']) {
     await confirmation.props.actions.confirm();
     await h.settle(component);
     assert.deepEqual(h.calls, ['get', 'get', 'get', 'get',
-      ...(location === 'local' ? ['stage', 'takeover'] : ['remove', 'begin']),
+      ...(location === 'local' ? ['takeover', 'stage'] : ['remove', 'begin']),
       ...(location === 'nav' ? ['navigate:/create/input'] : []),
     ]);
+  });
+}
+
+for (const entryPoint of ['input', 'nav']) {
+  test(`stale ${entryPoint} remote card waits for newly pending phone photos without taking ownership`, async () => {
+    const h = harness({ remote: slot({ photosPending: false }) });
+    const component = entryPoint === 'nav' ? 'TopNav' : 'ProductInputRoute';
+    const tree = entryPoint === 'nav' ? await openNav(h) : await h.settle(component);
+    h.setRemote(slot({ photosPending: true, updatedAt: 'v2', photoCount: 4 }));
+    await choice(h, tree).props.onChoose('remote');
+    const warning = dialog(h, await h.settle(component));
+    assert.equal(warning?.props.dialog.kind, 'pending');
+    assert.equal(warning.props.dialog.meta.photoCount, 4);
+    assert.equal(h.state.projectId, 'project');
+    assert.equal(h.staged, null);
+    assert.deepEqual(h.calls, ['get', 'get']);
   });
 }
 
@@ -259,44 +282,45 @@ test('C5 actual pending remote card opens warning and partial confirmation befor
   await tree.props.onChoose('remote');
   let warning = dialog(h, await h.settle('ProductInputRoute'));
   assert.equal(warning.props.dialog.kind, 'pending');
-  assert.deepEqual(h.calls, ['get']);
+  assert.deepEqual(h.calls, ['get', 'get']);
   const warningUI = h.components.DraftEntryDialog(warning.props);
-  const partial = find(warningUI, (node) => node.type === 'Button' && node.props.children.includes('지금 있는 사진 '));
+  const partial = find(warningUI, (node) => node.type === 'Button' && node.props.children.includes('이대로 열기'));
   await partial.props.onClick();
   warning = dialog(h, await h.settle('ProductInputRoute'));
   assert.equal(warning.props.dialog.message, '아직 올라오지 않은 사진은 빠져요.');
-  assert.deepEqual(h.calls, ['get', 'get']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get']);
   h.setRemote(slot({ photosPending: true, photoCount: 4, updatedAt: 'v2' }));
   await warning.props.actions.confirm();
   warning = dialog(h, await h.settle('ProductInputRoute'));
   const confirmUI = h.components.DraftEntryDialog(warning.props);
-  assert.deepEqual(find(confirmUI, (node) => node.type === 'h3').props.children, ['지금 있는 사진 4장으로 열기']);
-  assert.deepEqual(h.calls, ['get', 'get', 'get']);
+  assert.deepEqual(find(confirmUI, (node) => node.type === 'h3').props.children, ['이대로 열기']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'get']);
   await find(confirmUI, (node) => node.type === 'Button' && node.props.children.includes('이대로 열기')).props.onClick();
   assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
-  assert.deepEqual(h.calls, ['get', 'get', 'get', 'get', 'takeover', 'begin', 'stage']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'get', 'get', 'takeover', 'begin', 'stage']);
 });
 
 for (const photosPending of [false, true]) {
-  test(`matching localFallback opens before takeover settles and survives its failure (pending=${photosPending})`, async () => {
-    const local = { updatedAt: 'local-v1', product: { name: 'local copy', colors: [] } };
+  test(`matching localFallback waits for fresh ownership and pending photos: ${photosPending}`, async () => {
     let rejectTakeover;
-    const h = harness({
-      confirmed: false, local, remote: slot({ photosPending }),
-      syncedAt: 'local-v1', serverSyncedAt: 'v1',
-      takeover: () => new Promise((resolve, reject) => { rejectTakeover = reject; }),
+    const h = harness({ confirmed: false, syncedAt: 'v1', serverSyncedAt: 'v1',
+      remote: slot({ photosPending }), local: { updatedAt: 'v1', product: { name: 'local', colors: [] } },
+      takeover: () => new Promise((_, reject) => { rejectTakeover = reject; }),
     });
     const tree = await h.settle('ProductInputRoute');
-    assert.deepEqual(tree.props.sources.map((source) => source.id), ['remote']);
-    assert.equal(tree.props.sources[0].localFallback, local);
     const opening = tree.props.onChoose('remote');
-    assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
-    assert.equal(h.staged.payload, local);
-    assert.deepEqual(h.calls, ['get', 'stage', 'takeover']);
-    rejectTakeover(new Error('offline'));
-    await opening;
-    assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
-    assert.deepEqual(h.toasts, []);
+    await new Promise(setImmediate);
+    assert.equal(h.staged, null);
+    if (photosPending) {
+      assert.equal(dialog(h, await h.settle('ProductInputRoute')).props.dialog.kind, 'pending');
+      assert.equal(rejectTakeover, undefined);
+    } else {
+      assert.ok(choice(h, await h.settle('ProductInputRoute')));
+      rejectTakeover(new Error('offline'));
+      await opening;
+      assert.equal(h.staged, null);
+      assert.equal(h.toasts.length, 1);
+    }
   });
 }
 
@@ -477,18 +501,24 @@ test('entry card kind follows remote writer even with a product name', () => {
   }
 });
 
-for (const confirmed of [false, true]) {
-  test(`entry query failure blocks input and retry rechecks (confirmed=${confirmed})`, async () => {
-    const h = harness({ confirmed, remote: new Error('offline') });
-    let tree = await h.settle('ProductInputRoute');
-    assert.ok(find(tree, (node) => node.props.children.includes('저장된 상품을 확인하지 못했어요.')));
-    assert.deepEqual(h.calls, ['get']);
-    h.setRemote(slot());
-    find(tree, (node) => node.type === 'Button' && node.props.children.includes('다시 확인')).props.onClick();
-    tree = await h.settle('ProductInputRoute');
-    assert.ok(tree.props.sources.some((source) => source.id === 'remote'));
-  });
-}
+test('F8 entry query retries silently, shows status, and manual retry rechecks', async () => {
+  const h = harness({ confirmed: false, remote: new Error('offline') });
+  let tree = await h.settle('ProductInputRoute');
+  assert.equal(tree.type, h.components.HandoffStatusPage);
+  const status = h.render('HandoffStatusPage', tree.props);
+  assert.ok(find(status, (node) => node.props.children.includes('저장된 상품을 확인하지 못했어요')));
+  assert.deepEqual(h.calls, ['get', 'get', 'get']);
+  h.setRemote(slot());
+  tree.props.onRetry();
+  tree = await h.settle('ProductInputRoute');
+  assert.ok(tree.props.sources.some((source) => source.id === 'remote'));
+});
+
+test('F8 confirmed flow resumes after exhausted query retries', async () => {
+  const h = harness({ remote: new Error('offline') });
+  assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'navigate:/create/storyboard']);
+});
 
 test('mobile ignores a persisted desktop flow with or without remote content', async () => {
   for (const remote of [null, slot()]) {
@@ -580,41 +610,34 @@ for (const deviceLabel of ['iPhone Safari', 'iPad Safari', 'Mac Chrome']) {
     if (isMobileDraftWriter({ deviceLabel })) {
       assert.equal(tree.type, 'ProductInput');
       assert.equal(tree.props.initialSavedMeta.deviceLabel, deviceLabel);
-      assert.deepEqual(h.calls, ['get', 'takeover', 'begin', 'stage']);
+      assert.deepEqual(h.calls, ['get', 'get', 'takeover', 'begin', 'stage']);
       h.state.projectGeneration += 1;
       assert.equal((await h.settle('ProductInputRoute')).props.initialSavedMeta, null);
       tree.props.onFreshStart();
       assert.equal((await h.settle('ProductInputRoute')).props.initialSavedMeta, null);
     } else {
       assert.ok(find(tree, (n) => n.type === h.components.MobileDraftStatus));
-      assert.deepEqual(h.calls, ['get']);
+      assert.deepEqual(h.calls, ['get', 'get']);
       const card = find(tree, (n) => n.type === h.components.MobileDraftStatus);
       await card.props.onNext();
       tree = await h.settle('ProductInputRoute');
       const d1 = dialog(h, tree);
       assert.equal(d1.props.dialog.kind, 'mobile');
       await d1.props.actions.keepMobile();
-      assert.deepEqual(h.calls, ['get', 'get']);
+      assert.deepEqual(h.calls, ['get', 'get', 'get', 'get']);
     }
   });
 }
 
-test('mobile local plus PC remote card opens D1 before any takeover; new button also uses D1', async () => {
+test('F9 mobile PC-written remote hides the local copy and opens D1 directly', async () => {
   const h = harness({ mobile: true, confirmed: false, remote: slot({ deviceLabel: 'Mac Chrome', productName: '셔츠' }),
     local: { product: { name: 'local' }, updatedAt: 'local' } });
-  let tree = await h.settle('ProductInputRoute');
-  let modal = h.render('ResumeChoiceModal', tree.props);
-  const card = find(modal, (n) => n.type === 'button' && n.props.children.flat(Infinity).some((child) => child?.props?.children?.includes('PC에서 만드는 중인 상품')));
-  assert.ok(card);
-  await card.props.onClick();
-  tree = await h.settle('ProductInputRoute');
+  const tree = await h.settle('ProductInputRoute');
+  assert.equal(tree.type, h.components.DraftEntryDialog);
   assert.equal(tree.props.dialog.kind, 'mobile');
+  assert.equal(tree.props.dialog.meta.productName, '셔츠');
+  assert.equal(h.staged, null);
   assert.deepEqual(h.calls, ['get']);
-  tree.props.actions.cancel();
-  tree = await h.settle('ProductInputRoute');
-  await tree.props.onNew();
-  assert.equal((await h.settle('ProductInputRoute')).props.dialog.kind, 'mobile');
-  assert.deepEqual(h.calls, ['get', 'get']);
 });
 
 test('pending mobile single remote keeps the pending-photo choice', async () => {
@@ -685,3 +708,167 @@ for (const id of ['remote', 'local']) {
     assert.deepEqual(chosen, [id]);
   });
 }
+
+for (const event of ['online', 'visibilitychange']) {
+  test(`F8 failed entry automatically rechecks on ${event}`, async () => {
+    const h = harness({ confirmed: false, remote: new Error('offline') });
+    assert.equal((await h.settle('ProductInputRoute')).type, h.components.HandoffStatusPage);
+    h.setRemote(slot());
+    (event === 'online' ? h.windowEvents : h.documentEvents).dispatchEvent(new Event(event));
+    assert.deepEqual((await h.settle('ProductInputRoute')).props.sources.map((s) => s.id), ['remote']);
+    assert.deepEqual(h.calls, ['get', 'get', 'get', 'get']);
+  });
+}
+
+for (const token of [null, 'owned']) {
+  test(`F8 failure allows upload only without a slot token: ${token}`, async () => {
+    const h = harness({ confirmed: false, token, remote: new Error('offline') });
+    const tree = await h.settle('ProductInputRoute');
+    assert.equal(tree.type, h.components.HandoffStatusPage);
+    assert.equal(Boolean(tree.props.onUpload), !token);
+    if (!token) {
+      tree.props.onUpload();
+      assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+      assert.deepEqual(h.calls, ['get', 'get', 'get', 'continueUnchecked']);
+      assert.equal(h.calls.includes('takeover'), false);
+      assert.equal(h.calls.includes('remove'), false);
+    } else {
+      h.setRemote(null); tree.props.onRetry();
+      assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+    }
+  });
+}
+
+test('F8 persisted unconfirmed PC flow is not blocked by failed query', async () => {
+  const h = harness({ confirmed: false, remote: new Error('offline'), savedFlow: { projectId: 'existing', projectPersisted: true } });
+  assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'navigate:/create/storyboard']);
+});
+
+for (const variant of ['pc', 'gone', 'error']) {
+  test(`shared status ${variant} renders exact copy, brand tag, and actions`, () => {
+    const h = harness();
+    const props = { variant, meta: slot({ productName: '셔츠' }).meta, onNext() {}, onRetry() {}, onUpload() {} };
+    const tree = h.render('HandoffStatusPage', props);
+    const expected = {
+      pc: ['ON PC', 'IN PROGRESS', 'PC에서 이 상품을 이어서 만들고 있어요'],
+      gone: ['CLOSED', 'DONE', '이 상품은 PC에서 마무리됐거나 정리됐어요', '새 상품을 올릴 수 있어요.'],
+      error: ['RETRY', 'OFFLINE', '저장된 상품을 확인하지 못했어요', '인터넷 연결을 확인하고 다시 시도해 주세요.'],
+    }[variant];
+    for (const copy of expected) assert.ok(find(tree, (n) => n.props.children.includes(copy)));
+    assert.equal(tree.props.className, 'page');
+    assert.ok(find(tree, (n) => n.type === h.components.HangTag));
+    const row = find(tree, (n) => n.type === h.components.DraftProductRow);
+    assert.equal(Boolean(row), variant === 'pc');
+    const actionTree = find(tree, (n) => n.props.className === 'actions actions');
+    const buttons = variant === 'error' ? actionTree.props.children[0].props.children.flat(Infinity).filter(Boolean) : actionTree.props.children.flat(Infinity).filter(Boolean);
+    assert.deepEqual(buttons.map((n) => n.props.children[0]), variant === 'error' ? ['다시 확인', '사진부터 올리기'] : ['다음 상품 올리기']);
+    assert.equal(buttons[0].props.variant, 'primary');
+  });
+}
+
+test('F7 mobile C and D recheck on focus and visible with a 5s throttle', async (t) => {
+  let now = 100000;
+  t.mock.method(Date, 'now', () => now);
+  const h = harness({ mobile: true, confirmed: false, remote: slot({ deviceLabel: 'Mac Chrome' }) });
+  let tree = await h.settle('ProductInputRoute');
+  await tree.props.actions.keepMobile(); tree = await h.settle('ProductInputRoute');
+  let status = find(tree, (n) => n.type === h.components.MobileDraftStatus);
+  await h.settle('HandoffStatusPage', h.components.MobileDraftStatus(status.props).props);
+  h.setRemote(null); h.windowEvents.dispatchEvent(new Event('focus'));
+  tree = await h.settle('ProductInputRoute');
+  status = find(tree, (n) => n.type === h.components.MobileDraftStatus);
+  assert.equal(status.props.gone, true);
+  await h.settle('HandoffStatusPage', h.components.MobileDraftStatus(status.props).props);
+  h.setRemote(slot()); h.documentEvents.dispatchEvent(new Event('visibilitychange'));
+  await h.settle('ProductInputRoute');
+  assert.equal(h.calls.filter((c) => c === 'get').length, 3);
+  now += 5000;
+  h.documentEvents.dispatchEvent(new Event('visibilitychange'));
+  tree = await h.settle('ProductInputRoute');
+  assert.equal(dialog(h, tree).props.dialog.kind, 'mobile');
+  assert.equal(dialog(h, tree).props.dialog.meta.deviceLabel, 'Android Chrome');
+  assert.equal(h.calls.includes('takeover'), false);
+});
+
+test('own single remote auto-opens and its toast action runs fresh startNew', async () => {
+  const h = harness({ confirmed: false, syncedUserId: 'seller', serverSyncedAt: 'v1' });
+  assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+  assert.equal(h.staged.payload.product.name, 'remote');
+  assert.deepEqual(h.toasts, ['이어서 열었어요']);
+  assert.equal(h.toastOptions[0].action.label, '새로 시작');
+  h.toastOptions[0].action.onClick();
+  await h.settle('ProductInputRoute');
+  assert.ok(h.calls.includes('remove'));
+  assert.ok(h.calls.includes('begin'));
+  assert.equal(h.calls.at(-2), 'remove');
+  assert.equal(h.calls.at(-1), 'begin');
+});
+
+test('auto-open toast new start still asks C4 for a new other-device write', async () => {
+  const h = harness({ confirmed: false, syncedUserId: 'seller', serverSyncedAt: 'v1' });
+  await h.settle('ProductInputRoute'); h.setRemote(slot({ updatedAt: 'v2' }));
+  h.toastOptions[0].action.onClick();
+  const tree = await h.settle('ProductInputRoute');
+  assert.equal(dialog(h, tree).props.dialog.kind, 'confirm');
+  assert.equal(h.calls.includes('remove'), false);
+});
+
+for (const reason of ['other-device', 'two-candidates', 'pending', 'other-tab', 'unknown-user']) {
+  test(`PC input keeps asking for ${reason}`, async () => {
+    const h = harness({ confirmed: false, syncedUserId: reason === 'unknown-user' ? null : 'seller',
+      serverSyncedAt: reason === 'other-device' || reason === 'two-candidates' ? 'other-version' : 'v1',
+      otherTab: reason === 'other-tab', remote: slot({ photosPending: reason === 'pending' }),
+      local: reason === 'two-candidates' ? { product: { name: 'local' }, updatedAt: 'local' } : null });
+    const tree = await h.settle('ProductInputRoute');
+    assert.ok(choice(h, tree));
+    assert.equal(h.staged, null);
+    assert.deepEqual(h.toasts, []);
+    assert.equal(h.calls.includes('takeover'), false);
+  });
+}
+
+for (const kind of ['recent', 'stale', 'other-user', 'legacy']) {
+  test(`PC input auto-open policy for ${kind} persisted flow`, async () => {
+    const savedFlow = { projectId: 'flow', projectPersisted: true, resumePath: '/create/storyboard',
+      ...(kind !== 'legacy' ? { userId: kind === 'other-user' ? 'other' : 'seller', lastUsedAt: Date.now() - (kind === 'stale' ? 86400001 : 1000) } : {}) };
+    const h = harness({ confirmed: false, remote: null, savedFlow });
+    const tree = await h.settle('ProductInputRoute');
+    if (kind === 'recent') {
+      assert.equal(tree.type, 'ProductInput');
+      assert.deepEqual(h.toasts, ['이어서 열었어요']);
+      assert.ok(h.calls.includes('navigate:/create/storyboard'));
+    } else { assert.ok(choice(h, tree)); assert.deepEqual(h.toasts, []); }
+  });
+}
+
+test('recent confirmed flow toast new start retains warning E before C4', async () => {
+  const h = harness({ remote: null, savedFlow: { userId: 'seller', lastUsedAt: Date.now(), resumePath: '/create/storyboard' } });
+  await h.settle('ProductInputRoute');
+  assert.equal(h.toasts[0], '이어서 열었어요');
+  h.setRemote(slot({ updatedAt: 'new-phone' })); h.toastOptions[0].action.onClick();
+  const tree = await h.settle('ProductInputRoute');
+  assert.equal(tree.props.abandonOnOpen, true);
+  assert.equal(h.calls.includes('remove'), false);
+  const warning = h.render('ResumeChoiceModal', tree.props);
+  uiButton(warning, '새로 시작하기').props.onClick();
+  assert.equal(dialog(h, await h.settle('ProductInputRoute')).props.dialog.kind, 'confirm');
+});
+
+test('own merged newer local auto-opens after the same-product merge', async () => {
+  const h = harness({ confirmed: false, syncedUserId: 'seller', serverSyncedAt: '2026-10-06T01:00:00Z',
+    remote: slot({ updatedAt: '2026-10-06T01:00:00Z' }), local: { updatedAt: '2026-10-06T01:01:00Z', product: { name: 'newer local' } } });
+  assert.equal((await h.settle('ProductInputRoute')).type, 'ProductInput');
+  assert.equal(h.staged.payload.product.name, 'newer local');
+  assert.deepEqual(h.toasts, ['이어서 열었어요']);
+});
+
+test('F9 pending PC-written mobile slot still hides its local copy and shows remote-only D1', async () => {
+  const h = harness({ confirmed: false, mobile: true, remote: slot({ deviceLabel: 'Mac Chrome', photosPending: true }),
+    local: { updatedAt: 'local', product: { name: 'old phone copy' } } });
+  const tree = await h.settle('ProductInputRoute');
+  assert.equal(tree.props.dialog.kind, 'mobile');
+  await tree.props.actions.keepMobile();
+  assert.ok(find(await h.settle('ProductInputRoute'), (node) => node.type === h.components.MobileDraftStatus));
+  assert.equal(h.calls.includes('takeover'), false);
+});

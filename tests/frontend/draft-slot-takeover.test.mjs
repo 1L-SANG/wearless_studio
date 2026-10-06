@@ -811,21 +811,21 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
   const shell = read('../../src/features/shell/shell.jsx');
   const entry = read('../../src/lib/draftEntry.js');
   assert.match(app, /const slotEnabled = Boolean\(session\) \|\| isMockMode/);
-  assert.match(app, /Promise\.all\(\[[\s\S]*?draftSlot\.get\(\)[\s\S]*?loadDraft\(\)/);
+  assert.match(app, /Promise\.all\(\[[\s\S]*?checkDraftEntry\(draftSlot[\s\S]*?loadDraft\(\)/);
   assert.match(app, /id: 'local'[\s\S]*?draftSavedTime\(localMeta\.updatedAt\)/);
   assert.match(app, /sources\.push\(remoteDraftSource\(slot\.meta/);
   assert.match(entry, /id: 'remote'[\s\S]*?draftSavedTime\(meta\?\.updatedAt\)/);
   assert.match(app, /slot\.meta\?\.updatedAt !== draftSlot\.getServerSyncedAt\(\)/);
-  assert.match(entry, /slotClient\.takeover\(\)[\s\S]*?slotClient\.stage/);
+  assert.match(entry, /slotClient\.takeover\(\{ isCurrent \}\)[\s\S]*?slotClient\.stage/);
   assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 시작하기/);
 });
 
-test('a device-local draft opens without waiting for the server, and phantom slots stay hidden', () => {
+test('F1 a device-local draft waits for fresh ownership, and phantom slots stay hidden', () => {
   const app = read('../../src/apps/seller/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const entry = read('../../src/lib/draftEntry.js');
-  // 로컬 카드 열기: 복원을 먼저 확정하고 작업권 인수는 뒤에서 — 서버 장애가 복원을 막지 않는다
-  assert.match(entry, /slotClient\.stage\(\{ payload: source\.draft, meta: source\.meta \}\);\s*\n\s*void slotClient\.takeover\(\)\.catch/);
+  // 로컬 카드도 최신 슬롯을 확인하고 인수를 마친 뒤 복원한다.
+  assert.match(entry, /await current\.wait\(slotClient\.takeover\(\{ isCurrent: current\.isCurrent \}\)\)[\s\S]*?slotClient\.stage\(\{ payload: source\.draft, meta: source\.meta \}\)/);
   // 사진·이름·분석이 전무한 슬롯(팬텀)과 지연 삭제 중인 슬롯은 이어가기 카드로 권하지 않는다
   assert.match(app, /slot\.meta\?\.hasContent !== false/);
   assert.match(app, /draftSlot\.hasPendingRemoval\(\)/);

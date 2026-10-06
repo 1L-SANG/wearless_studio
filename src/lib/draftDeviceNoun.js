@@ -6,5 +6,6 @@ export function getDraftDeviceNoun(label) {
 }
 
 export function isMobileDraftWriter(meta) {
-  return Boolean(getDraftDeviceNoun(meta?.deviceLabel));
+  return meta?.state === 'other-tab' || meta?.deviceLabel === 'other-tab'
+    || meta?.deviceLabel === '이 브라우저의 다른 탭' || Boolean(getDraftDeviceNoun(meta?.deviceLabel));
 }

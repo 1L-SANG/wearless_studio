@@ -386,7 +386,7 @@ test('an old PUT response cannot mark its stale replacement as synced', async (t
   advance(DAY_MS + 1);
   sync.queue(draft);
   await tick();
-  assert.deepEqual(discarded, ['asset-1']);
+  assert.deepEqual(discarded, []);
   timers.run(500);
   firstPut.resolve({ token: 'owned' });
   await tick();

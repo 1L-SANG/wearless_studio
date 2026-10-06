@@ -457,6 +457,9 @@ def _draft_slot_meta(row: dict) -> dict:
         (color for color in colors if color.get("isBase")), colors[0] if colors else {}
     )
     images = base_color.get("images") or []
+    if not images:
+        images = next((color["images"] for color in colors
+                       if isinstance(color.get("images"), list) and color["images"]), [])
     first_image = images[0] if isinstance(images, list) and images else None
     return {
         "updatedAt": updated_at,

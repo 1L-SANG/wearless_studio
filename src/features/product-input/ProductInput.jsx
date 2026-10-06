@@ -549,8 +549,9 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const toast = useToast();
   const pushToast = toast.push;
   const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
-    beginProject: () => useAppStore.getState().beginProject(),
-    onOpened: () => {},
+    beginProject: (options) => useAppStore.getState().beginProject(options), mobile,
+    onOpened: (meta) => { onFreshStart?.(meta); navigate('/create/input', { replace: true }); },
+    onKept: (meta) => setSlotLock(meta),
     onStarted: () => { onFreshStart?.(); navigate('/create/input', { replace: true }); },
     onError: pushToast,
   });
@@ -562,6 +563,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const latestAnalysisRef = useRef(analysis);
   const latestComposeModeRef = useRef(composeMode);
   const promotionRunRef = useRef(0);
+  const entryUserRef = useRef(null);
+  entryUserRef.current = session?.user?.id || null;
   const mountedRef = useRef(false);
   latestProductRef.current = product;
   latestAnalysisRef.current = analysis;
@@ -1043,28 +1046,46 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   };
 
   const chooseRemoteContent = async () => {
+    const userId = entryUserRef.current;
+    const epoch = draftSlot.getIdentityEpoch();
+    const isCurrent = () => userId === entryUserRef.current && epoch === draftSlot.getIdentityEpoch();
     try {
-      const takeover = await draftSlot.takeover();
+      const slot = await draftSlot.get();
+      if (!isCurrent()) return;
+      if (!slot) throw new Error('저장돼 있던 내용이 다른 곳에서 이미 정리됐어요.');
+      if (mobile && !isMobileDraftWriter(slot.meta)) { setSlotLock(slot.meta); return; }
+      const takeover = await draftSlot.takeover({ isCurrent });
+      if (!isCurrent()) return;
       if (!takeover?.payload) throw new Error('다른 기기에서 저장한 내용을 불러오지 못했어요.');
       applyDraftPayload(takeover.payload);
       setReclaimChoiceOpen(false);
       setSlotLock(null);
     } catch (error) {
+      if (!isCurrent()) return;
       toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
   const chooseLocalContent = async () => {
+    const userId = entryUserRef.current;
+    const epoch = draftSlot.getIdentityEpoch();
+    const isCurrent = () => userId === entryUserRef.current && epoch === draftSlot.getIdentityEpoch();
     try {
-      await draftSlot.takeover();
+      const slot = await draftSlot.get();
+      if (!isCurrent()) return;
+      if (mobile && slot && !isMobileDraftWriter(slot.meta)) { setSlotLock(slot.meta); return; }
+      await draftSlot.takeover({ isCurrent });
+      if (!isCurrent()) return;
       setReclaimChoiceOpen(false);
       setSlotLock(null);
       if (product) {
         const localUpdatedAt = latestLocalUpdatedAtRef.current || new Date().toISOString();
         draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
         await draftSlot.flush();
+        if (!isCurrent()) return;
       }
     } catch (error) {
+      if (!isCurrent()) return;
       toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
@@ -1079,11 +1100,16 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
 
   const restartGoneWithLocal = async () => {
     try {
+      const epoch = draftSlot.getIdentityEpoch();
+      const snapshot = product ? await draftSlot.recoverGonePhotos({ product, analysis, composeMode,
+        localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString() }) : null;
+      if (epoch !== draftSlot.getIdentityEpoch()) return;
       if (!draftSlot.restartAfterGone()) return;
       setSlotLock(null);
-      if (product) {
-        const localUpdatedAt = latestLocalUpdatedAtRef.current || new Date().toISOString();
-        draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+      if (snapshot) {
+        setProduct(snapshot.product);
+        if (snapshot.missingPhotoCount) toast.push(`사진 ${snapshot.missingPhotoCount}장은 다시 골라 주세요.`, { icon: 'alertTri' });
+        draftSlot.queue(snapshot);
         await draftSlot.flush();
       }
     } catch (error) {
@@ -1093,16 +1119,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
 
   const startOver = async () => {
     setConsistencyOpen(false);
-    if (slotEnabled) {
-      try {
-        await draftSlot.removeForNewFlow();
-      } catch (error) {
-        toast.push(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
-        return;
-      }
-    }
-    await useAppStore.getState().beginProject();
-    navigate('/create/input', { replace: true });
+    await entryActions.startNew({ enabled: slotEnabled });
   };
 
   const editingRightsLock = slotLock && (
@@ -1242,15 +1259,18 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   }, [loadAttempt]);
 
   const nextMobile = () => entryActions.nextMobile({ enabled: slotEnabled });
-  const freshMobile = () => entryActions.nextMobile({ enabled: false });
   if (mobile && (handoff.gone || slotLock?.state === 'gone'
       || (slotLock && !isMobileDraftWriter(slotLock)))) return (
-    <div className="wizard pi-handoff">
+    <>
       <MobileDraftStatus meta={slotLock} gone={handoff.gone || slotLock?.state === 'gone'}
-        busy={entryBusy} onNext={handoff.gone || slotLock?.state === 'gone' ? freshMobile : nextMobile} />
+        busy={entryBusy} onNext={nextMobile} onSlotChange={(slot) => {
+          if (!slot || slot.meta?.hasContent === false) setSlotLock({ state: 'gone' });
+          else if (isMobileDraftWriter(slot.meta)) entryActions.showMobile(slot.meta, { entry: true });
+          else setSlotLock(slot.meta);
+        }} />
       <MobileSaveModal result={handoff.result} onClose={handoff.close} />
       <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
-    </div>
+    </>
   );
 
   if (loadError) return (
@@ -1458,7 +1478,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       ), document.body)}
       {!handoff.result && editingRightsLock}
       {mobile && <MobileSaveModal result={handoff.result} onRetry={saveForPC} onClose={handoff.close} />}
-      {mobile && <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />}
+      <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
           <h3>어느 내용으로 이어갈까요?</h3>

@@ -548,3 +548,6 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
   .pi-handoff .page-head { padding: var(--sp-28) 0 var(--sp-24); }
   .pi-handoff .page-head h1 { font-size: var(--sp-24); }
 }
+
+.toast-action { border: 0; background: none; color: var(--fg-1); font: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.toast-host:has(.toast-action) { top: auto; bottom: var(--sp-24); }

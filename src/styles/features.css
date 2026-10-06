@@ -3558,8 +3558,17 @@
 .handoff-product-row img { width: 56px; height: 56px; flex-shrink: 0; object-fit: cover; border-radius: var(--r-4); }
 .handoff-product-row > div { min-width: 0; }
 .handoff-product-row p { margin: var(--sp-4) 0 0; color: var(--fg-2); font-size: 13px; }
-.handoff-account { max-width: 100%; white-space: normal; margin-bottom: var(--sp-12); }
+.handoff-account { font-size: 14px; max-width: 100%; white-space: normal; margin-bottom: var(--sp-12); }
 .handoff-title { text-wrap: balance; }
 /* 폰 저장 뒤 두 버튼은 화면 폭을 반씩 나눠 쓴다(한쪽으로 몰리지 않게). */
 .pi-handoff .wizard-cta > .handoff-actions { flex: 1; flex-wrap: nowrap; }
 .pi-handoff .wizard-cta > .handoff-actions .btn { flex: 1; min-width: 0; padding-inline: var(--sp-12); }
+
+.handoff-product-row strong, .draft-entry-source > span {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-wrap: balance;
+}
+@media (max-width: 560px) {
+  .modal-actions.handoff-dialog-actions { flex-direction: column; gap: var(--sp-8); }
+  .modal-actions.handoff-dialog-actions .btn { width: 100%; }
+  .pi-save-modal.handoff-panel { padding-inline: 0; }
+}

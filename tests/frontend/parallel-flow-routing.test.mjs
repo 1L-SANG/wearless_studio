@@ -62,7 +62,7 @@ test('adoptProject preserves the dirty flag only when acquiring identity for the
 
 test('starting an isolated input flow does not delete another project\'s scoped dirty marker', () => {
   const beginProjectSource = storeSource.slice(
-    storeSource.indexOf('async beginProject()'),
+    storeSource.indexOf('async beginProject('),
     storeSource.indexOf('async ensureProject()'),
   );
   assert.match(beginProjectSource, /generationRelevantEditsDirty: false/);

@@ -661,7 +661,9 @@ def test_draft_slot_meta_marks_contentless_payload(client, make_token, monkeypat
     ({"colors": [
         {"images": [{"src": "https://r2.test/other.jpg"}]},
         {"isBase": True, "images": []},
-    ]}, None, None),
+    ]}, None, "https://r2.test/other.jpg"),
+    ({"colors": [{"isBase": True}, {"images": [{"src": "https://r2.test/fallback.jpg"}]}]},
+     None, "https://r2.test/fallback.jpg"),
     ({"colors": [{"isBase": True, "images": [{"id": ASSET_A},
         {"src": "https://r2.test/second.jpg"}]}]}, None, None),
     ({"colors": [None, {"isBase": True, "images": [None]}]}, None, None),

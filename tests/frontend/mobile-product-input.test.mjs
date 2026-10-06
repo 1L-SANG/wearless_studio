@@ -10,7 +10,7 @@ const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), '
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
 const { code } = await transformWithEsbuild([
   'src/features/product-input/ProductInput.jsx', 'src/features/product-input/MobileInputHandoff.jsx',
-  'src/features/shell/MobileDraftDialog.jsx', 'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
+  'src/features/shell/MobileDraftDialog.jsx', 'src/features/shell/DraftProductRow.jsx', 'src/features/shell/HandoffStatusPage.jsx', 'src/features/shell/HangTag.jsx', 'src/features/shell/AddressCopyChip.jsx',
   'src/features/library/Library.jsx', 'src/lib/useDraftEntryActions.js', 'src/features/shell/DraftEntryDialog.jsx',
 ].map((path) => clean(read(path))).join('\n'), 'MobileInput.jsx', { jsx: 'transform' });
 const product = () => ({ name: '니트', colors: [{ id: 'base', isBase: true, images: [
@@ -49,6 +49,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     retryFailedUploads() { calls.push('retryUploads'); },
     async checkOwnership() { calls.push('ownership'); },
     configure() {}, onConflict: (handler) => { conflictHandler = handler; return () => {}; },
+    getIdentityEpoch: () => 0,
     resetIdentity() { calls.push('reset'); }, activate() {}, queue(snapshot) { calls.push(['queue', snapshot]); },
     consumeStaged() { const next = staged; staged = null; return next; },
     get: async () => ({ meta: { photoCount: 2, updatedAt: 'v1' } }),
@@ -94,11 +95,12 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     window: { addEventListener() {}, removeEventListener() {}, scrollTo() {}, location: { origin: 'https://ai.wearless.kr', host: 'ai.wearless.kr' } },
     document: documentEvents,
     copyHandoffAddress: async (pushToast) => pushToast('주소를 복사했어요'),
+    p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
   };
   for (const name of ['Button', 'Modal', 'Icon', 'IconButton', 'ErrorState', 'UploadPendingTile', 'PageHead',
     'WizardCTA', 'DoneGuardModal', 'CreditShortfallModal', 'AnalysisForm', 'AnalysisProgress', 'AnalysisSkeleton']) bindings[name] = name;
-  const components = new Function(...Object.keys(bindings), `${code}; return { MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { HandoffStatusPage, MobileDraftDialog, MobileDraftStatus, DraftProductRow, Library, ProductInput, ColorImageGroup, AddDrop, InputMainAction, MobileSaveModal, MobileSaveStatus, MobileAnalyzedNotice, EditingRightsLock, DraftEntryDialog, HangTag, AddressCopyChip };`)(...Object.values(bindings));
   function render(name = 'ProductInput', props = {}) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name); cursor = 0; dirty = false;
@@ -326,7 +328,7 @@ test('M2 actual picker reports HEIC conversion before the delayed placeholder an
 
 test('mobile photo and swatch grids use two full-width columns without a width gate', () => {
   const css = read('src/styles/features.css');
-  const mobile = css.slice(css.indexOf('.wizard.pi-handoff'), css.lastIndexOf('@media (max-width: 560px)'));
+  const mobile = css.slice(css.indexOf('.wizard.pi-handoff'), css.indexOf('@media (max-width: 560px)', css.indexOf('.wizard.pi-handoff')));
   assert.doesNotMatch(mobile, /@media|word-break/);
   assert.match(mobile, /\.wizard\.pi-handoff \{ padding-inline: var\(--sp-16\); \}/);
   assert.match(mobile, /\.pi-handoff \.surface\.pi-images \{ padding-inline: var\(--sp-16\); \}/);
@@ -546,7 +548,7 @@ for (const deviceLabel of ['Windows Chrome', 'iPhone Safari', 'iPad Safari']) {
     else {
       assert.equal(node(tree, 'ColorImageGroup'), undefined);
       assert.equal(node(tree, 'EditingRightsLock'), undefined);
-      const status = h.expand(tree, 'MobileDraftStatus');
+      const status = h.render('HandoffStatusPage', h.expand(tree, 'MobileDraftStatus').props);
       assert.ok(text(status).includes('PC에서 이 상품을 이어서 만들고 있어요'));
       assert.deepEqual(actionLabels(status), ['다음 상품 올리기']);
       h.documentEvents.dispatchEvent(new Event('visibilitychange'));
@@ -565,11 +567,12 @@ for (const mobile of [true, false]) {
     const h = harness({ mobile });
     await h.settle();
     h.emitConflict({ state: 'gone' });
+    h.slot.get = async () => null;
     const tree = await h.settle();
     if (mobile) {
       assert.equal(node(tree, 'EditingRightsLock'), undefined);
       assert.equal(node(tree, 'ColorImageGroup'), undefined);
-      const status = h.expand(tree, 'MobileDraftStatus');
+      const status = h.render('HandoffStatusPage', h.expand(tree, 'MobileDraftStatus').props);
       assert.ok(text(status).includes('이 상품은 PC에서 마무리됐거나 정리됐어요'));
       await button(status, '다음 상품 올리기').props.onClick();
       assert.ok(h.calls.includes('begin'));
@@ -640,4 +643,44 @@ test('mobile gone notification before restoration still lands in D', async () =>
   h.emitConflict({ state: 'gone' });
   assert.equal(node(await h.settle(), 'MobileDraftStatus').props.gone, true);
   h.cleanup();
+});
+
+test('F6 same-browser other-tab mobile lock keeps EditingRightsLock and reclaim', async () => {
+  const h = harness(); await h.settle();
+  h.emitConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+  const tree = await h.settle();
+  assert.ok(node(tree, 'EditingRightsLock'));
+  assert.equal(node(tree, 'MobileDraftStatus'), undefined);
+  const lock = h.expand(tree, 'EditingRightsLock');
+  assert.ok(button(lock, '이 화면에서 이어서 하기'));
+  h.cleanup();
+});
+
+test('F4 desktop gone continuation recovers bytes before restarting and reports only missing photos', async () => {
+  const h = harness({ mobile: false }); await h.settle();
+  h.slot.recoverGonePhotos = async (snapshot) => { h.calls.push('recover'); return { ...snapshot,
+    product: { ...snapshot.product, colors: [{ ...snapshot.product.colors[0], images: [snapshot.product.colors[0].images[0]] }] }, missingPhotoCount: 1 }; };
+  h.slot.restartAfterGone = () => { h.calls.push('restart'); return true; };
+  h.slot.flush = async () => { h.calls.push('flush'); };
+  h.emitConflict({ state: 'gone' });
+  const lock = node(await h.settle(), 'EditingRightsLock');
+  await lock.props.onRestartLocal(); await h.settle();
+  assert.ok(h.calls.indexOf('recover') < h.calls.indexOf('restart'));
+  assert.ok(h.calls.some((call) => call[0] === 'toast' && call[1] === '사진 1장은 다시 골라 주세요.'));
+  const queued = h.calls.filter((call) => call[0] === 'queue').at(-1)[1];
+  assert.equal(queued.product.colors[0].images.length, 1);
+  h.cleanup();
+});
+
+test('narrow dialog pills, balanced titles, clamped names, and saved modal spacing use scoped CSS', () => {
+  const css = read('src/styles/features.css');
+  const status = read('src/features/shell/HandoffStatusPage.module.css');
+  assert.match(css, /\.modal-actions\.handoff-dialog-actions \{ flex-direction: column; gap: var\(--sp-8\); \}/);
+  assert.match(css, /\.modal-actions\.handoff-dialog-actions \.btn \{ width: 100%; \}/);
+  assert.match(css, /\.pi-save-modal\.handoff-panel \{ padding-inline: 0; \}/);
+  assert.match(css, /\.handoff-account \{ font-size: 14px;/);
+  assert.match(css, /-webkit-line-clamp: 2; overflow: hidden; text-wrap: balance/);
+  assert.match(status, /gap: var\(--sp-8\)/);
+  assert.match(status, /flex-direction: column; width: 100%/);
+  assert.doesNotMatch(status, /word-break|#[0-9a-f]{3,8}\b/);
 });

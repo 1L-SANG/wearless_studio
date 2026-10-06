@@ -323,6 +323,7 @@ export function ToastProvider({ children }) {
               {t.thumb && <img className="toast-thumb" src={t.thumb} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />}
               {t.icon && <Icon name={t.icon} size={17} />}
               <span className="toast-message">{t.msg}</span>
+              {t.action && <button type="button" className="toast-action" onClick={(event) => { event.stopPropagation(); t.action.onClick(); dismiss(t.id, t.variant); }}>{t.action.label}</button>}
               {t.undo && <span className="undo" onClick={(event) => { event.stopPropagation(); t.undo(); dismiss(t.id, t.variant); }}>되돌리기</span>}
             </div>
           );

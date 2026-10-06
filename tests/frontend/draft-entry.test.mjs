@@ -109,7 +109,7 @@ test('C3 TopNav remote selection stages content and input entry bypasses the sec
   const h = harness();
   const sources = await getFlowDraftSources({ slotClient: h.slotClient, enabled: true, flowSource });
   await h.actions.openRemote(sources[1]);
-  assert.deepEqual(h.calls, ['get', 'takeover', 'begin', 'stage', 'open']);
+  assert.deepEqual(h.calls, ['get', 'get', 'takeover', 'begin', 'stage', 'open']);
   assert.equal(getInputEntryDecision({ slotClient: h.slotClient, confirmed: false }), 'continue');
   assert.equal(h.staged.payload.product.name, '휴대폰 상품');
 });
@@ -129,7 +129,7 @@ for (const choice of ['entry-new', 'nav-new', 'local']) {
   const choose = (h) => choice === 'local'
     ? h.actions.openLocal(local, { protectRemote: true, resetFlow: true })
     : h.actions.startNew();
-  const mutations = choice === 'local' ? ['begin', 'stage', 'takeover', 'open'] : ['remove', 'begin', 'start'];
+  const mutations = choice === 'local' ? ['takeover', 'begin', 'stage', 'open'] : ['remove', 'begin', 'start'];
   test(`C4 ${choice}: this browser's last write executes without confirmation`, async () => {
     const h = harness();
     h.slotClient.getServerSyncedAt = () => 'v1';
@@ -196,42 +196,73 @@ for (const choice of ['entry-new', 'nav-new', 'local']) {
   });
 }
 
-test('local-only card preserves immediate stage and background takeover behavior', async () => {
+test('F1 local-only card waits for a successful fresh query before opening', async () => {
   const h = harness(new Error('offline'));
   await h.actions.openLocal(local);
-  assert.deepEqual(h.calls, ['stage', 'takeover', 'open']);
-  assert.deepEqual(h.staged.payload, local.draft);
-  assert.deepEqual(h.errors, []);
+  assert.deepEqual(h.calls, ['get']);
+  assert.equal(h.staged, null);
+  assert.deepEqual(h.errors, ['잠시 후 다시 시도해 주세요.']);
 });
+
+test('remote selection rechecks a stale completed card before taking over pending photos', async () => {
+  const h = harness();
+  const card = remoteDraftSource(remote({ photosPending: false }).meta);
+  h.setSlot(remote({ updatedAt: 'v2', photosPending: true, photoCount: 4 }));
+  await h.actions.openRemote(card);
+  assert.equal(h.dialog?.kind, 'pending');
+  assert.equal(h.dialog.meta.photoCount, 4);
+  assert.equal(h.flow, 'existing');
+  assert.equal(h.staged, null);
+  assert.deepEqual(h.calls, ['get']);
+});
+
+test('remote selection opens a completed upload even when the displayed card was pending', async () => {
+  const h = harness(remote({ photosPending: false, updatedAt: 'v2' }));
+  await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true }).meta));
+  assert.equal(h.dialog, null);
+  assert.equal(h.staged?.meta.updatedAt, 'v2');
+  assert.deepEqual(h.calls, ['get', 'takeover', 'begin', 'stage', 'open']);
+});
+
+for (const [name, current] of [['offline', new Error('offline')], ['removed', null], ['empty', remote({ hasContent: false })]]) {
+  test(`remote selection preserves the current flow when latest slot is ${name}`, async () => {
+    const h = harness(current);
+    await h.actions.openRemote(remoteDraftSource(remote().meta));
+    assert.deepEqual(h.calls, ['get']);
+    assert.equal(h.flow, 'existing');
+    assert.equal(h.staged, null);
+    assert.equal(h.errors.length, 1);
+  });
+}
 
 test('C5 pending card never takes over, refresh re-queries and updates the count', async () => {
   const h = harness(remote({ photosPending: true }));
   await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true }).meta));
-  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.calls, ['get']);
   assert.equal(h.dialog.kind, 'pending');
   assert.equal(h.dialog.message, '스마트폰에서 아직 사진을 올리고 있어요. 잠시 후 다시 확인해 주세요.');
   h.setSlot(remote({ photosPending: true, updatedAt: 'v2', photoCount: 4 }));
   await h.actions.refreshRemote();
-  assert.deepEqual(h.calls, ['get']);
+  assert.deepEqual(h.calls, ['get', 'get']);
   assert.equal(h.dialog.meta.photoCount, 4);
   h.setSlot(remote({ photosPending: false }));
   await h.actions.refreshRemote();
-  assert.deepEqual(h.calls, ['get', 'get', 'takeover', 'begin', 'stage', 'open']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'takeover', 'begin', 'stage', 'open']);
 });
 
 test('C5 partial open requires confirmation and a stable updatedAt', async () => {
   const h = harness(remote({ photosPending: true }));
   await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true }).meta));
   await h.actions.openPartial();
-  assert.deepEqual(h.calls, ['get']);
+  assert.deepEqual(h.calls, ['get', 'get']);
   assert.equal(h.dialog.kind, 'confirm');
   assert.equal(h.dialog.message, '아직 올라오지 않은 사진은 빠져요.');
   h.setSlot(remote({ photosPending: true, photoCount: 5, updatedAt: 'v2' }));
   await h.actions.confirm();
-  assert.deepEqual(h.calls, ['get', 'get']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get']);
   assert.equal(h.dialog.meta.photoCount, 5);
   await h.actions.confirm();
-  assert.deepEqual(h.calls, ['get', 'get', 'get', 'takeover', 'begin', 'stage', 'open']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'get', 'takeover', 'begin', 'stage', 'open']);
 });
 
 test('C5 partial open still requires explicit consent for this browser\'s pending slot', async () => {
@@ -239,18 +270,19 @@ test('C5 partial open still requires explicit consent for this browser\'s pendin
   h.slotClient.getServerSyncedAt = () => 'v1';
   await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true }).meta));
   await h.actions.openPartial();
-  assert.deepEqual(h.calls, ['get']);
+  assert.deepEqual(h.calls, ['get', 'get']);
   assert.equal(h.dialog.kind, 'confirm');
   await h.actions.confirm();
-  assert.deepEqual(h.calls, ['get', 'get', 'takeover', 'begin', 'stage', 'open']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'takeover', 'begin', 'stage', 'open']);
 });
 
 test('C5 refresh and partial query errors keep the flow untouched', async () => {
-  const h = harness(new Error('offline'));
+  const h = harness(remote({ photosPending: true }));
   await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true }).meta));
+  h.setSlot(new Error('offline'));
   await h.actions.refreshRemote();
   await h.actions.openPartial();
-  assert.deepEqual(h.calls, ['get', 'get']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get']);
   assert.equal(h.dialog.kind, 'pending');
   assert.equal(h.flow, 'existing');
   assert.deepEqual(h.errors, ['잠시 후 다시 시도해 주세요.', '잠시 후 다시 시도해 주세요.']);
@@ -264,8 +296,9 @@ test('remote card uses product name, thumbnail and grammatical save time', () =>
 });
 
 test('pending dialog carries the last save time', async () => {
-  const h = harness();
-  await h.actions.openRemote(remoteDraftSource(remote({ photosPending: true, updatedAt: new Date(Date.now() - 180000).toISOString() }).meta));
+  const pending = remote({ photosPending: true, updatedAt: new Date(Date.now() - 180000).toISOString() });
+  const h = harness(pending);
+  await h.actions.openRemote(remoteDraftSource(pending.meta));
   assert.equal(h.dialog.savedAt, '3분 전 저장');
 });
 
@@ -306,9 +339,9 @@ test('D1 keep from B or C only closes, and gone during confirmation starts witho
   await h.actions.nextMobile();
   await h.actions.keepMobile();
   assert.equal(h.dialog, null);
-  assert.deepEqual(h.calls, ['get']);
+  assert.deepEqual(h.calls, ['get', 'get']);
   await h.actions.nextMobile();
   h.setSlot(null);
   await h.actions.confirm();
-  assert.deepEqual(h.calls, ['get', 'get', 'get', 'reset', 'begin', 'start']);
+  assert.deepEqual(h.calls, ['get', 'get', 'get', 'get', 'reset', 'begin', 'start']);
 });
