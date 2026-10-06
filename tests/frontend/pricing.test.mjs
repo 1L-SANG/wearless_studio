@@ -144,15 +144,10 @@ test('구독 카드의 상세페이지 예상 개수는 254크레딧 기준으�
   }
 });
 
-test('구독 카드가 보일 때만 평균 크레딧 안내 두 문장을 줄을 나누어 표시한다', () => {
+test('평균 크레딧 안내를 표시하지 않고 카드의 예상 개수만 유지한다', () => {
   const html = render(plans);
-  const note = html.match(/<p\b[^>]*>상세페이지 1개의 제작[\s\S]*?<\/p>/)?.[0];
-  assert.ok(note, '평균 크레딧 안내 문단');
-  assert.deepEqual(note.replace(/<br\s*\/?\s*>/g, '\n').replace(/<[^>]*>/g, '').split('\n'), [
-    '상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 약\u00a0250크레딧이 소모됩니다.',
-    '컷수에 따라 소모되는 비용은 상이합니다.',
-  ]);
-  assert.ok(html.indexOf(note) < html.indexOf('id="topup"'));
+  assert.doesNotMatch(html, /상세페이지 1개의 제작|평균적으로|250크레딧|컷수에 따라/);
+  assert.match(html, /상세페이지 약 <strong>2개<\/strong>/);
   for (const hidden of [
     render([]),
     render(undefined),
