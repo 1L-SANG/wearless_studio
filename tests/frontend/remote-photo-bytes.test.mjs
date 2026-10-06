@@ -176,6 +176,7 @@ test('actual draftSync uploads a remote image without a local blob or fails befo
     startCustomMatchPromotion: () => null,
     stripLocalCustomMatch: (analysis) => analysis,
     invalidateStoryboardEntryPrefetch() {},
+    mannequinQuoteConfirmation: { seen: () => null },
   };
   t.after(() => { delete globalThis.__remotePhotoPromotionHarness; });
   const source = readFileSync(new URL('../../src/lib/draftSync.js', import.meta.url), 'utf8').replace(/^import .+;\r?$/gm, '');

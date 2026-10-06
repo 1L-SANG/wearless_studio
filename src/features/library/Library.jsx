@@ -3,6 +3,7 @@
    Ported verbatim from reference/prototype/features/library.jsx.
    Only change: ES imports; onNew/onOpen wired to router + store.
    ============================================================= */
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
@@ -10,23 +11,70 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Skeleton, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
 
 import { isMobileDevice } from '@/lib/deviceClass.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { authorizeFlowContinuation } from '@/lib/flowSession.js';
+
+const STEP_LABELS = { storyboard: '콘티 단계', mannequin: '마네킹 단계', generating: '생성 중', failed: '생성 실패' };
+const resumePath = (project) => project.status === 'done'
+  || ['pending', 'running', 'error', 'cancelled', 'done'].includes(project.latestJobs?.detailPage?.status)
+  ? `/editor/${project.id}` : project.selectedMannequinId ? '/create/mannequin' : '/create/storyboard';
 
 export function Library() {
   const navigate = useNavigate();
   const { push } = useToast();
+  const { session } = useAuth();
+  const openingRef = useRef(false);
+  const entryToken = useRef(0);
+  const userRef = useRef(session?.user?.id || null);
+  userRef.current = session?.user?.id || null;
+  useEffect(() => () => { entryToken.current += 1; openingRef.current = false; }, []);
+  const [openingId, setOpeningId] = useState(null);
   const adoptProject = useAppStore((s) => s.adoptProject);
   // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
   // (과거엔 진행 중 마네킹 job 이 있으면 강제로 그 화면으로 보냈다 — 콘티가 마네킹보다 먼저
   // 오는 지금은 생성이 도는 동안 사용자가 있어야 할 곳도 콘티라, '새로 만들기' 를 다른 작업의
   // 진행 중 job 이 가로챌 이유가 없다.)
-  const onNew = () => navigate('/create/input');
+  const onNew = () => { entryToken.current += 1; navigate('/create/input'); };
   const onOpen = (it) => {
     if (isMobileDevice()) {
       push('완성본은 PC에서 열어 주세요');
       return;
     }
+    entryToken.current += 1;
     adoptProject(it.id);   // 보관함 선택은 해당 project 를 명시적으로 이어서 여는 경로다.
     navigate(`/editor/${it.id}`);
+  };
+  const onResume = async (item) => {
+    if (isMobileDevice()) { push('PC에서 열어 주세요'); return; }
+    if (openingRef.current) return;
+    const token = ++entryToken.current;
+    const userId = userRef.current;
+    const { projectGeneration, userId: flowUserId } = useAppStore.getState();
+    const isCurrent = () => token === entryToken.current && userId === userRef.current
+      && projectGeneration === useAppStore.getState().projectGeneration
+      && flowUserId === useAppStore.getState().userId;
+    openingRef.current = true;
+    setOpeningId(item.id);
+    try {
+      const project = await api.getProject(item.id);
+      if (!isCurrent()) return;
+      if (project?.id !== item.id) throw new Error('만들던 상품을 찾지 못했어요.');
+      const path = resumePath(project);
+      adoptProject(item.id, { serverSnapshot: project });
+      const store = useAppStore.getState();
+      store.confirmProductInfo(item.id);
+      authorizeFlowContinuation(item.id, path);
+      store.markFlowUsed(userId);
+      store.setResumePath(path);
+      navigate(path);
+    } catch (error) {
+      if (isCurrent()) push(error?.message || '만들던 상품을 열지 못했어요.');
+    } finally {
+      if (token === entryToken.current) {
+        openingRef.current = false;
+        setOpeningId(null);
+      }
+    }
   };
 
   // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).
@@ -39,6 +87,11 @@ export function Library() {
     staleTime: 0,
   });
   const phase = isLoading ? 'loading' : isError ? 'error' : 'ready';
+  const { data: inProgress = [], isLoading: progressLoading, isError: progressError, refetch: refetchProgress } = useQuery({
+    queryKey: ['library', 'in_progress'],
+    queryFn: () => api.getInProgressLibrary(),
+    staleTime: 0,
+  });
 
   const statusPill = (s) => s === 'done' ? <span className="pill pill-soft st"><span className="dot dot-done" />완료</span>
     : s === 'generating' ? <span className="pill pill-soft st"><span className="dot dot-busy" />생성 중</span>
@@ -62,16 +115,45 @@ export function Library() {
           <p className="sec-sub" style={{ marginTop: 6 }}>지금까지 만든 상세페이지를 모아봤어요.</p></div>
       </div>
 
+      {progressError && <div className="sec-head"><p className="sec-sub">만드는 중인 상품을 불러오지 못했어요.</p>
+        <Button variant="ghost" size="sm" onClick={refetchProgress}>다시 불러오기</Button></div>}
+      {inProgress.length > 0 && (
+        <section className="field-row" aria-labelledby="library-in-progress-title">
+          <div className="sec-head"><h2 id="library-in-progress-title" className="sec-title handoff-title">만드는 중</h2></div>
+          <div className="lib-grid">
+            {inProgress.slice(0, 20).map((item) => (
+              <div className="lib-card" key={item.id} role="button" tabIndex={0}
+                aria-label={`${item.title || '새 상품'}, ${STEP_LABELS[item.step]}`}
+                aria-busy={openingId === item.id} aria-disabled={openingId !== null}
+                onClick={() => onResume(item)} onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  void onResume(item);
+                }}>
+                <div className="lib-cover"><img src={item.cover || undefined} alt={item.title || '새 상품'} />
+                  <div className="st"><span className="pill pill-soft">{STEP_LABELS[item.step]}</span></div></div>
+                <div className="lib-info"><div className="t handoff-title">{item.title || '새 상품'}</div>
+                  <div className="m"><span>{timeAgo(item)}</span></div></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {inProgress.length > 0 && <div className="sec-head lib-done-head"><h2 className="sec-title handoff-title">완성본</h2></div>}
       {phase === 'loading' && (
         <div className="lib-grid">{Array.from({ length: 8 }).map((_, i) => <div key={i}><Skeleton h={240} r={12} /></div>)}</div>
       )}
       {phase === 'error' && <div className="surface"><ErrorState desc="보관함을 불러오지 못했어요." onRetry={refetch} /></div>}
-      {phase === 'ready' && items.length === 0 && (
+      {phase === 'ready' && items.length === 0 && inProgress.length > 0 && (
+        <p className="sec-sub">완성된 상세페이지가 여기에 모여요.</p>
+      )}
+      {phase === 'ready' && items.length === 0 && inProgress.length === 0 && !progressLoading && (
         <div className="surface"><EmptyState icon="library" title="아직 만든 상세페이지가 없어요"
           desc="상품 사진 몇 장이면 첫 상세페이지를 만들 수 있어요." action={<Button variant="primary" icon="plus" onClick={onNew}>첫 상세페이지 만들기</Button>} /></div>
       )}
       {phase === 'ready' && items.length > 0 && (
-        <div className="lib-grid">
+        <div className="lib-grid field-row">
           {items.map((it) => (
             <div className="lib-card" key={it.id} onClick={() => onOpen(it)}>
               <div className="lib-cover"><img src={it.cover || undefined} alt={it.title} /><div className="st">{statusPill(it.status)}</div></div>

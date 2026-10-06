@@ -2081,6 +2081,14 @@
 .lib-info { padding: 14px 16px; }
 .lib-info .t { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
 .lib-info .m { font-size: 12px; color: var(--fg-3); margin-top: 5px; display: flex; gap: 8px; }
+@media (max-width: 560px) {
+  .lib-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8); }
+  .lib-info { padding: var(--sp-12) var(--sp-8); min-width: 0; }
+  .lib-info .t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: normal; text-wrap: balance; }
+  .lib-info .m { gap: var(--sp-6); flex-wrap: wrap; }
+  .lib-info .m span { white-space: nowrap; }
+}
 .lib-new { display: grid; place-items: center; border-radius: var(--r-5); box-shadow: 0 0 0 1px var(--ring-strong); cursor: pointer;
   color: var(--fg-2); transition: all .16s; min-height: 200px; gap: 10px; flex-direction: column; }
 .lib-new:hover { color: var(--fg-1); box-shadow: 0 0 0 1px var(--fg-3); background: rgba(255,255,255,.5); }
@@ -3579,3 +3587,5 @@
 /* 폰 주 버튼도 저장 뒤 두 버튼처럼 화면 폭을 채운다. 안내 문구는 버튼 위 한 줄. */
 .pi-handoff .wizard-cta > .btn { flex: 1 1 100%; }
 .pi-handoff .wizard-cta > .wizard-cta-reason { flex-basis: 100%; text-align: center; }
+/* 만드는 중 줄 아래 완성본 제목은 위 카드와 띄운다. */
+.lib-done-head { margin-top: var(--sp-28); }

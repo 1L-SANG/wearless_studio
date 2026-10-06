@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
 import { getDraftDeviceNoun, isMobileDraftWriter } from '../../src/lib/draftDeviceNoun.js';
-import { flowScreenName, shouldWarnFlowAbandon } from '../../src/lib/flowAbandon.js';
+import { flowScreenName, shouldWarnFlowAbandon, notifyFlowKept } from '../../src/lib/flowAbandon.js';
 import * as entry from '../../src/lib/draftEntry.js';
 import { checkDraftEntry, canAutoOpenInput } from '../../src/lib/draftEntryCheck.js';
 import * as flow from '../../src/lib/flowSession.js';
@@ -81,7 +81,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
-    ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
+    ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment' },
     useState(initial) {
@@ -190,7 +190,7 @@ test('C2 checking effect detects a confirmed flow restored after the initial ren
 });
 
 for (const remote of [null]) {
-  test(`E ineligible confirmed input asks on every entry and warns before starting new`, async () => {
+  test(`M12 ineligible confirmed input asks on entry and starts new without a lost-work warning`, async () => {
     const h = harness({ remote });
     let tree = await h.settle('ProductInputRoute');
     assert.deepEqual(tree.props.sources.map((source) => source.id), ['flow']);
@@ -200,14 +200,14 @@ for (const remote of [null]) {
     tree = await h.settle('ProductInputRoute');
     assert.deepEqual(tree.props.sources.map((source) => source.id), ['flow']);
     assert.ok(!h.calls.includes('begin'));
-    let warning = h.render('ResumeChoiceModal', tree.props);
+    const warning = h.render('ResumeChoiceModal', tree.props);
     find(warning, (n) => n.type === 'Button' && n.props.children.includes('새로 시작하기')).props.onClick();
-    warning = h.render('ResumeChoiceModal', tree.props);
-    assert.ok(uiButton(warning, '만들던 것 이어서 하기'));
-    uiButton(warning, '새로 시작하기').props.onClick();
     tree = await h.settle('ProductInputRoute');
     assert.equal(tree.type, 'ProductInput');
     assert.deepEqual(h.calls, ['get', 'get', 'get', 'remove', 'begin']);
+    assert.deepEqual(h.toasts, ['만들던 상세페이지는 보관함의 만드는 중에 있어요']);
+    h.toastOptions[0].action.onClick();
+    assert.equal(h.calls.at(-1), 'navigate:/library');
   });
 }
 
@@ -761,7 +761,7 @@ for (const event of ['focus', 'visibilitychange']) {
 const uiButton = (tree, label) => find(tree, (n) => n.type === 'Button' && n.props.children.includes(label));
 for (const path of ['/create/storyboard', '/create/mannequin', '/create/input', '/editor/finished']) {
   for (const component of ['ProductInputRoute', 'TopNav', 'RequireProject']) {
-    test(`E ${component} new start protects only confirmed storyboard/mannequin: ${path}`, async () => {
+    test(`M12 ${component} new start keeps the project without warning: ${path}`, async () => {
       const h = harness({ remote: null });
       h.state.resumePath = path;
       let tree;
@@ -778,21 +778,17 @@ for (const path of ['/create/storyboard', '/create/mannequin', '/create/input', 
       uiButton(modal, '새로 시작하기').props.onClick();
       modal = h.render('ResumeChoiceModal', props);
       const warning = uiButton(modal, '만들던 것 이어서 하기');
-      assert.equal(Boolean(warning), path.startsWith('/create/storyboard') || path.startsWith('/create/mannequin'));
-      if (warning) {
-        assert.ok(find(modal, (n) => n.type === 'h3' && n.props.children.includes('만들던 상세페이지는 다시 열 수 없어요')));
-        assert.ok(!h.calls.includes('begin'));
-        assert.ok(!h.calls.includes('remove'));
-        warning.props.onClick();
-        await h.settle(component);
-        assert.ok(!h.calls.includes('begin'));
-      }
+      assert.equal(Boolean(warning), false);
+      await h.settle(component);
+      if (component !== 'ProductInputRoute') assert.ok(h.calls.includes('begin'));
+      if (h.calls.includes('begin')) assert.equal(h.toasts.includes('만들던 상세페이지는 보관함의 만드는 중에 있어요'),
+        path.startsWith('/create/storyboard') || path.startsWith('/create/mannequin'));
     });
   }
 }
 
 for (const id of ['remote', 'local']) {
-  test(`E choosing ${id} over flow warns before acting and danger continues`, async () => {
+  test(`M12 choosing ${id} over flow switches without a lost-work warning`, async () => {
     const h = harness();
     const original = await h.settle('ProductInputRoute');
     const source = id === 'remote' ? original.props.sources[1] : { id: 'local', draft: { product: { name: 'local' } }, meta: {} };
@@ -801,9 +797,6 @@ for (const id of ['remote', 'local']) {
     let modal = h.render('ResumeChoiceModal', props);
     find(modal, (n) => n.type === 'button' && n.props.key === id).props.onClick();
     modal = h.render('ResumeChoiceModal', props);
-    assert.deepEqual(chosen, []);
-    assert.equal(uiButton(modal, '이 상품으로 시작').props.variant, 'danger');
-    uiButton(modal, '이 상품으로 시작').props.onClick();
     assert.deepEqual(chosen, [id]);
   });
 }
@@ -941,17 +934,36 @@ for (const kind of ['recent', 'stale', 'other-user', 'legacy']) {
   });
 }
 
-test('recent confirmed flow toast new start retains warning E before C4', async () => {
+for (const path of ['/create/storyboard', '/create/mannequin']) {
+  for (const kind of ['recent', 'stale', 'other-user', 'legacy', 'other-tab']) {
+    test(`M13 guard auto-open and toast policy: ${path}, ${kind}`, async () => {
+      const h = harness({ remote: null, otherTab: kind === 'other-tab', savedFlow: kind === 'legacy' ? {} : {
+        userId: kind === 'other-user' ? 'other' : 'seller',
+        lastUsedAt: Date.now() - (kind === 'stale' ? 86400001 : 1000),
+      } });
+      h.location.pathname = path;
+      const tree = await h.settle('RequireProject');
+      assert.equal(tree.type, kind === 'recent' ? 'Outlet' : h.components.ResumeChoiceModal);
+      assert.equal(h.calls.includes('begin'), false);
+      assert.deepEqual(h.toasts, kind === 'recent' ? ['이어서 열었어요'] : []);
+      if (kind === 'recent') {
+        assert.equal(h.toastOptions[0].action.label, '새로 시작');
+        h.toastOptions[0].action.onClick();
+        assert.ok(h.calls.includes('navigate:/create/input'));
+        assert.equal(h.location.state.startNewFromResume, true);
+      }
+    });
+  }
+}
+
+test('M12 recent confirmed flow new start only asks C4 for the other-device draft', async () => {
   const h = harness({ remote: null, savedFlow: { userId: 'seller', lastUsedAt: Date.now(), resumePath: '/create/storyboard' } });
   await h.settle('ProductInputRoute');
   assert.equal(h.toasts[0], '이어서 열었어요');
   h.setRemote(slot({ updatedAt: 'new-phone' })); h.toastOptions[0].action.onClick();
   const tree = await h.settle('ProductInputRoute');
-  assert.equal(tree.props.abandonOnOpen, true);
+  assert.equal(dialog(h, tree).props.dialog.kind, 'confirm');
   assert.equal(h.calls.includes('remove'), false);
-  const warning = h.render('ResumeChoiceModal', tree.props);
-  uiButton(warning, '새로 시작하기').props.onClick();
-  assert.equal(dialog(h, await h.settle('ProductInputRoute')).props.dialog.kind, 'confirm');
 });
 
 test('own merged newer local auto-opens after the same-product merge', async () => {

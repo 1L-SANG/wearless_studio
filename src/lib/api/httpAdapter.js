@@ -22,6 +22,8 @@ import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 import { createEditorRevisionSync } from '@/lib/editorRevisionSync.js';
+import { createStoryboardRevisionSync } from '@/lib/storyboardRevisionSync.js';
+import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -71,6 +73,13 @@ const editorRevisions = createEditorRevisionSync({
     { method: 'PUT', body },
   ),
   normalize: relativizeAssetUrls,
+});
+
+const storyboardRevisions = createStoryboardRevisionSync({
+  load: (id) => http(`/v1/projects/${id}/storyboard?withRevision=1`),
+  put: (id, body, revision, options) => http(`/v1/projects/${id}/storyboard?baseRevision=${revision}`, {
+    ...options, method: 'PUT', body: relativizeAssetUrls(body),
+  }),
 });
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
@@ -176,7 +185,7 @@ export async function http(path, {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
-      if (payload?.error?.meta) meta = payload.error.meta;
+      if (payload?.error?.meta) meta = absolutizeAssetUrls(payload.error.meta);
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     if (!suppressErrorLog) console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
@@ -364,8 +373,7 @@ async function pickAndUploadImage(projectId) {
 }
 
 // ---- 매칭 의류 / analysis (US-4) --------------------------------------------
-// 서버는 GET /analysis 라우트가 없고 PATCH 가 REPLACE(payload=excluded.payload) 라, 전체 analysis 를
-// 이 모듈에 캐시해 delta 를 머지한 full payload 로 저장한다(delta 만 보내면 다른 필드가 유실됨).
+// 캐시는 화면 복원과 추천 문맥만 담당한다. 저장은 바뀐 최상위 키만 merge=1로 보낸다.
 // analyzeProduct 가 seed, saveAnalysis 가 갱신. 페이지 세션 동안 유지(하드 새로고침 시 리셋 → 재분석).
 // getMatchClothing 도 이 캐시를 읽어 화면 전환(분석→마네킹) 간 매칭 선택을 이월한다.
 // projectId 로 스코프 — 보관함에서 다른 프로젝트를 열어도 이전 프로젝트의 매칭이 새지 않게 한다.
@@ -380,7 +388,7 @@ export function resetAnalysisCache() {
 }
 
 const isMatchRefresh = (patch) =>
-  ['clothingType', 'targetGenders', 'styleTags'].some((k) => k in patch);
+  ['clothingType', 'targetGenders', 'styleTags'].some((k) => patch[k] != null);
 
 function mergeAnalysisResult(ai) {
   const base = defaultAnalysisShape(ai.clothingType || 'top');
@@ -555,13 +563,13 @@ export const httpAdapter = {
     try {
       merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
     } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
-    analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
+    analysisCache = { projectId, analysis: merged };   // 화면 복원과 매칭 추천 문맥의 프로젝트별 캐시
     return merged;
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
     const [saved, product, project, analysis] = await Promise.all([
-      http(`/v1/projects/${projectId}/storyboard`),
+      storyboardRevisions.load(projectId),
       http(`/v1/projects/${projectId}/product`),
       http(`/v1/projects/${projectId}`),
       http(`/v1/projects/${projectId}/analysis`),
@@ -598,7 +606,7 @@ export const httpAdapter = {
     return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, options = {}) {
-    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: relativizeAssetUrls(blocks), ...options });
+    return storyboardRevisions.save(projectId, blocks, options);
   },
   async getEditorBlocks(projectId) {
     return editorRevisions.load(projectId);
@@ -660,7 +668,7 @@ export const httpAdapter = {
     return httpBlob(detailCutPreviewPath(projectId, jobId, blockId), opts);
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
-  // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
+  // selectedMannequinId,adjustCount,createdAt,updatedAt,latestJobs}. projectId 필수:
   // store.loadProject 가 argless 로 부르던 과거 경로(mock 가짜 project 오염 → 404)는
   // useAppStore 에서 제거됐다. 방어적으로 pid 없으면 서버 호출 없이 null.
   async getProject(projectId) {
@@ -673,43 +681,25 @@ export const httpAdapter = {
   async getProduct(projectId) {
     return http(`/v1/projects/${projectId}/product`);
   },
-  // 분석 저장 (계약 §3.2) — 서버 PATCH 는 REPLACE 라 캐시에 delta 를 머지한 full payload 를 보낸다
-  // (delta 만 보내면 다른 analysis 필드가 유실). 매칭 추천 갱신·선택 토글을 반영해 반환 matchClothing 을
-  // 콜러(AnalysisForm)가 읽는다. projectId 없는 공개 분석은 api/index가 mock에 위임한다.
+  // 분석 저장은 바뀐 키만 병합한다. 매칭 선택에는 최신 후보를 읽어 선택 상태만 적용한다.
   async saveAnalysis(projectId, patch) {
-    const { matchClothing: matchPatch, ...rest } = patch;
+    const body = { ...patch };
     let cached = cachedAnalysisFor(projectId);
-    let serverEmpty = false;   // 하이드레이션이 "서버 저장분 없음"을 증명 — delta PATCH 로 유실될 게 없다
-    if (!cached && projectId) {   // 하드 새로고침 후에도 persist 되도록 저장분 1회 하이드레이션(getMatchClothing 동일)
-      const saved = await http(`/v1/projects/${projectId}/analysis`);
-      if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
-        analysisCache = { projectId, analysis: saved };
-        cached = saved;
-      } else {
-        serverEmpty = true;
-      }
+    if (projectId && (isMatchRefresh(patch) || Array.isArray(patch.matchClothing))) {
+      cached = await http(`/v1/projects/${projectId}/analysis`);
     }
-    const base = cached ? { ...cached } : {};
-    Object.assign(base, rest);
+    const base = mergeAnalysisPatch(cached, patch);
     if (isMatchRefresh(patch)) {
-      base.matchClothing = await recommendMatchHttp(projectId, base, base.matchClothing);
+      body.matchClothing = await recommendMatchHttp(projectId, base, cached?.matchClothing);
     }
-    if (Array.isArray(matchPatch)) {
-      base.matchClothing = mergeMatchSelection(
-        base.matchClothing || [], matchPatch, base.clothingType,
+    if (Array.isArray(patch.matchClothing)) {
+      body.matchClothing = patch.matchClothing.length === 0 ? [] : mergeMatchSelection(
+        body.matchClothing || cached?.matchClothing || [], patch.matchClothing, base.clothingType,
       );
     }
-    // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
-    // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
-    // — 분석 실패로 빈 프로젝트에 재진입해 모델만 고른 케이스(F3)에서 selectedModelId 무음 유실 방지.
-    // 캐시도 없고 하이드레이션도 안 뛴(비정상) 상태만 계속 스킵.
-    let savedAnalysis = base;
-    if (projectId && (cached || serverEmpty)) {
-      savedAnalysis = await http(`/v1/projects/${projectId}/analysis`, {
-        method: 'PATCH',
-        body: base,
-      });
-    }
+    const savedAnalysis = projectId
+      ? await http(`/v1/projects/${projectId}/analysis?merge=1`, { method: 'PATCH', body })
+      : mergeAnalysisPatch(base, body);
     analysisCache = { projectId, analysis: savedAnalysis };
     return savedAnalysis;
   },
@@ -784,8 +774,8 @@ export const httpAdapter = {
   },
   // 이 함수가 새로 아는 건 matchClothing 뿐이다. 왕복 두 번(GET /analysis → match-candidates)
   // 뒤에 착지하므로, 서버 응답을 통째로 캐시 베이스로 쓰면 그 사이 저장된 편집이 캐시에서
-  // 사라진다 — 그리고 saveAnalysis 는 이 캐시로 full REPLACE payload 를 만들기 때문에
-  // 다음 저장이 서버 값을 옛것으로 되돌린다(2026-08-14 재리뷰 I-A). 베이스는 항상
+  // 사라진다(2026-08-14 재리뷰 I-A). 부분 저장과 별개로 화면의 최신 문맥도 유지해야 하므로
+  // 베이스는 항상
   // "지금 캐시"(없을 때만 서버 응답)로 잡고, 캐시는 왕복이 끝난 뒤에 읽는다.
   async refreshMatchClothing(projectId) {
     const saved = await http(`/v1/projects/${projectId}/analysis`);
@@ -806,6 +796,9 @@ export const httpAdapter = {
   async getLibrary() {
     // mock 의 { forceEmpty, forceError } 옵션은 실서버에선 무의미 — 무시.
     return http('/v1/projects?view=library');
+  },
+  async getInProgressLibrary() {
+    return http('/v1/projects?view=in_progress');
   },
   async createProject() {
     return http('/v1/projects', { method: 'POST' });
@@ -904,11 +897,12 @@ export const httpAdapter = {
   // 폴링이 끝난 뒤라 늦다), 호출부는 이 신호로만 "생성이 시작됐다" 를 판단해야 한다 —
   // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
   // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
-  async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId } = {}) {
+  async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId, expectedQuote } = {}) {
     let jobId = resumeJobId;
     if (!jobId) {
       const res = await http(`/v1/projects/${projectId}/mannequins:generate`, {
         method: 'POST',
+        body: { expectedQuote },
         headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
       });
       if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
@@ -944,18 +938,24 @@ export const httpAdapter = {
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
-  async regenerateMannequin(projectId, { fitProfile, onProgress, idempotencyKey } = {}) {
-    const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
-      method: 'POST',
-      body: { fitProfile },
-      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
-    });
-    if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, {
+  async regenerateMannequin(projectId, { fitProfile, onProgress, onJobStarted, onJobSucceeded, idempotencyKey, resumeJobId, expectedQuote } = {}) {
+    let jobId = resumeJobId;
+    if (!jobId) {
+      const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
+        method: 'POST',
+        body: { fitProfile, expectedQuote },
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      });
+      if (res.data) return { data: res.data, credits: res.credits };
+      jobId = res.jobId;
+    }
+    onJobStarted?.(jobId);
+    const result = await pollJob(jobId, {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
     });
+    onJobSucceeded?.(jobId);
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
     // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
     const cuts = await http(`/v1/projects/${projectId}/mannequins`);

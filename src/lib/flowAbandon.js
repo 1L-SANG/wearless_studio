@@ -15,3 +15,10 @@ export function shouldWarnFlowAbandon(state) {
     && (state.productInfoConfirmed || isProductInfoConfirmed(state.projectId))
     && ['/create/storyboard', '/create/mannequin'].some((prefix) => state.resumePath?.startsWith(prefix)));
 }
+
+export function notifyFlowKept(state, push, navigate) {
+  if (!shouldWarnFlowAbandon(state)) return;
+  push('만들던 상세페이지는 보관함의 만드는 중에 있어요', {
+    action: { label: '보관함', onClick: () => navigate('/library') },
+  });
+}

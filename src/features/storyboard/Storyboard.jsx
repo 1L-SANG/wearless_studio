@@ -7,6 +7,7 @@
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
+import { mannequinQuoteConfirmation, mannequinQuoteLabel } from '@/features/mannequin/quoteConfirmation.js';
 import React, { useState, useEffect, useLayoutEffect, useRef, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -113,8 +114,10 @@ import {
   sbSaveIdle,
   sbSaveNow,
   sbSetSaveRepair,
+  sbSetConflictHandler,
   sbStable,
 } from './storyboardPersistence.js';
+import { storyboardWorkCopies, restoreWorkCopyOnce } from '@/lib/conflictWorkCopy.js';
 import { renderGroupKey, renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
@@ -125,6 +128,7 @@ import {
 } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
+import { retryInitialGeneration } from '@/features/mannequin/initialGenerationSession.js';
 import {
   getProductPhotoPromotionTask,
   resumeProductPhotoPromotionForStoryboard,
@@ -2168,6 +2172,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [openGroupKeys, setOpenGroupKeys] = useState([]); // 펼쳐 둔 렌더 그룹들 (다중 허용 · UI 전용)
   const [loadError, setLoadError] = useState(null);
   const [loadRetry, setLoadRetry] = useState(0);
+  const [mannequinFailure, setMannequinFailure] = useState(null);
+  const mannequinRetryRef = useRef(false);
   const [pendingSectionMove, setPendingSectionMove] = useState(null);
   const [atomicSaving, setAtomicSaving] = useState(false);
   const [undoEntry, setUndoEntry] = useState(null);
@@ -2398,7 +2404,9 @@ export function Storyboard({ toastOverride = null } = {}) {
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
         const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
-        void customMatchReady.then(() => requestMannequinGeneration(pid)).catch(() => {});
+        void customMatchReady.then(() => requestMannequinGeneration(pid)).catch((error) => {
+          if (active) setMannequinFailure(error?.message || '마네킹 생성에 실패했어요.');
+        });
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
@@ -2496,6 +2504,45 @@ export function Storyboard({ toastOverride = null } = {}) {
   const saveTimer = useRef(null);
   const latestBlocks = useRef(null);
   const pidRef = useRef(null);   // 이 인스턴스가 로드한 프로젝트 — 플러시가 스토어의 "현재" id(새 프로젝트로 바뀌었을 수 있음)를 쓰지 않게 고정
+  const conflictNoticeProject = useRef(null);
+  const showStoryboardConflict = (pid, copy) => {
+    pushToast('다른 곳에서 먼저 저장해서 최신 내용을 불러왔어요.', { action: {
+      label: '이 화면 내용으로 되돌리기',
+      onClick: restoreWorkCopyOnce(async () => {
+        if (pidRef.current !== pid) return;
+        const kept = copy.blocks;
+        directSaveSnapshots.current.add(kept);
+        latestBlocks.current = kept;
+        setBlocks(kept);
+        try {
+          await sbSaveNow(pid, () => kept, { restoreConflict: true });
+          storyboardWorkCopies.clear(pid, copy);
+          setAutosaveFailed(false);
+        } catch { setAutosaveFailed(true); }
+      }),
+    } });
+  };
+  useEffect(() => {
+    sbSetConflictHandler((pid, copy, server) => {
+      if (pidRef.current !== pid) return;
+      clearTimeout(saveTimer.current);
+      const kept = storyboardWorkCopies.keep(pid, { blocks: latestBlocks.current || copy.blocks });
+      latestBlocks.current = server;
+      directSaveSnapshots.current.add(server);
+      setBlocks(server);
+      setAutosaveFailed(false);
+      conflictNoticeProject.current = pid;
+      showStoryboardConflict(pid, kept);
+    });
+    return () => sbSetConflictHandler(null);
+  }, [pushToast]);
+  useEffect(() => {
+    if (!blocks || pidRef.current !== projectId || conflictNoticeProject.current === projectId) return;
+    const copy = storyboardWorkCopies.read(projectId);
+    if (!copy) return;
+    conflictNoticeProject.current = projectId;
+    showStoryboardConflict(projectId, copy);
+  }, [blocks, projectId, pushToast]);
   const flushLatest = (pid, options = {}) => {
     clearTimeout(saveTimer.current);
     saveTimer.current = null;
@@ -2505,7 +2552,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   // 저장이 다시 성공하면 배너를 거둔다.
   const retryAutosave = () => flushLatest(projectId)
     .then(() => setAutosaveFailed(false))
-    .catch(() => setAutosaveFailed(true));
+    .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
   }, [blocks]);
@@ -2536,7 +2583,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
       flushLatest(projectId)
         .then(() => setAutosaveFailed(false))     // 다시 성공하면 배너를 거둔다(오경보 방지)
-        .catch(() => setAutosaveFailed(true));
+        .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
     });
   }, [blocks, projectId]);
   // hidden/pagehide/unmount 모두 같은 latest snapshot을 keepalive로 직렬 체인에 enqueue한다.
@@ -2747,6 +2794,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       if (move) setPendingSectionMove(null);
       atomicRetryRef.current = null;
     } catch (error) {
+      if (error?.code === 'revision_conflict') throw error;
       if (sbPending.get(projectId) === next) sbPending.delete(projectId);
       atomicRetryRef.current = retryAtomic ? { previous, next } : null;
       directSaveSnapshots.current.add(previous);
@@ -2777,6 +2825,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       }
       return next;
     } catch (error) {
+      if (error?.code === 'revision_conflict') throw error;
       if (sbPending.get(projectId) === next) sbPending.delete(projectId);
       atomicRetryRef.current = null;
       directSaveSnapshots.current.add(previous);
@@ -4162,6 +4211,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       showUndo(atomicRetry.previous, atomicRetry.next, { blockId: 'retry', label: '설정' });
       return true;
     } catch (error) {
+      if (error?.code === 'revision_conflict') throw error;
       if (sbPending.get(projectId) === atomicRetry.next) sbPending.delete(projectId);
       directSaveSnapshots.current.add(atomicRetry.previous);
       setBlocks(atomicRetry.previous);
@@ -4232,6 +4282,19 @@ export function Storyboard({ toastOverride = null } = {}) {
       {/* 완료 가드는 게이트를 기다리지 않는다 — 기다리면 잠금 없이 보드가 활성화되는 창이 생긴다(리뷰 P1) */}
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="촬영 예시와 내 상품 원본으로 구성을 확인하세요. 각 컷의 연출과 촬영 대상을 바꿀 수 있어요." />
+      {mannequinFailure && <div className="sec-head" role="status">
+        <p className="sec-sub handoff-title">{mannequinFailure}</p>
+        <Button variant="ghost" size="sm" onClick={async () => {
+          if (mannequinRetryRef.current) return;
+          mannequinRetryRef.current = true;
+          retryInitialGeneration(projectId);
+          setMannequinFailure(null);
+          try { await requestMannequinGeneration(projectId, { confirmed: true }); }
+          catch (error) { setMannequinFailure(error?.message || '마네킹 생성에 실패했어요.'); }
+          finally { mannequinRetryRef.current = false; }
+        }}>마네킹 다시 만들기{mannequinQuoteConfirmation.pending(projectId)
+          ? ` · ${mannequinQuoteLabel(mannequinQuoteConfirmation.pending(projectId).quote)}` : ''}</Button>
+      </div>}
       {undoEntry && (
         <div className={`sb-undo-bar${undoExiting ? ' exiting' : ''}`} role="status" aria-live="polite"
           style={{ top: `${inspectorTop}px` }}

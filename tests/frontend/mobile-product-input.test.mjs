@@ -88,7 +88,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => location,
     useAuth: () => ({ session, loading: false }),
     useDoneGuard: () => doneBlocked, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
-    useQuery: () => ({ data: [{ id: 'finished', title: '완성본' }], isLoading: false }),
+    useQuery: ({ queryKey }) => ({ data: queryKey.length === 1 ? [{ id: 'finished', title: '완성본' }] : [], isLoading: false }),
     useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
     api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
       getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),

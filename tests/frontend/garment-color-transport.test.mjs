@@ -59,6 +59,7 @@ test('draft promotion never promotes garment color evidence', async () => {
     draftPromotionSession: { read: () => ({}), rememberProject() {}, rememberAsset() {} },
     startCustomMatchPromotion: () => null, stripLocalCustomMatch: analysis => analysis,
     invalidateStoryboardEntryPrefetch() {},
+    mannequinQuoteConfirmation: { seen: () => null },
   };
   try {
     const source = readFileSync(new URL('../../src/lib/draftSync.js', import.meta.url), 'utf8').replace(/^import .+;\r?$/gm, '');

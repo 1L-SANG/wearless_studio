@@ -579,12 +579,13 @@ export function buildStoryboard(mode, colors, context = {}) {
    and by api.createProject() so a new creation never inherits the
    prior session's mutations (mannequin variants, saved storyboard…).
    ============================================================= */
-function buildDraft() {
+export function buildDraft() {
   /* ---- Project — 플로우 최상위 엔티티 (ADR-0001) ---- */
   const project = {
     id: uid('prj'), status: 'draft', title: '',
     composeMode: 'basic', copywriting: true,
     selectedMannequinId: null, adjustCount: 0, fitProfile: null,
+    latestJobs: { mannequin: null, detailPage: null },
     createdAt: nowIso(), updatedAt: nowIso(),
   };
 

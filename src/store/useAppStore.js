@@ -21,6 +21,7 @@ import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMar
 import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
 import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
+import { initialGenerationAttempts } from '@/features/mannequin/initialGenerationAttempts.js';
 import {
   adoptGenerationRelevantEdits,
   clearGenerationRelevantEdits as clearGenerationRelevantEditsSession,
@@ -34,10 +35,19 @@ const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'bas
 // http 모드에서만 flow(projectId·resumePath·선택값)를 localStorage 에 영속한다.
 // 목적: 상세페이지 제작 중 다른 페이지로 이탈했다 돌아오거나 cold reload 해도 진행 중 프로젝트를
 // '이어서' 재개할 수 있게 한다(과거 http loadProject 가 null 을 반환해 재개 자체가 불가였음).
-// mock 은 localStorage 대신 같은 탭의 flowSession project 표식만 복원한다
-// (모드 간 stale id 교차 오염 방지 + F5 분석 합류 데모 유지).
+// 탭별 선택값을 먼저 복원하고, 없으면 http는 공유 wl_flow, mock은 flowSession을 읽는다.
 const FLOW_KEY = 'wl_flow';
+const TAB_FLOW_KEY = `wl_tab_flow:${mode}`;
 function loadPersistedFlow() {
+  // 이 탭의 선택이 공유 wl_flow보다 우선한다. 빈 새 제작도 다른 탭의 상품으로 바뀌지 않는다.
+  try {
+    const raw = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(TAB_FLOW_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if ('composeMode' in saved) saved.composeMode = normalizeComposeMode(saved.composeMode);
+      return saved;
+    }
+  } catch { /* 탭 저장소 불가 시 기존 복원 */ }
   if (mode !== 'http') {
     const saved = readFlowSession();
     if (!saved?.projectId) return {};
@@ -57,20 +67,24 @@ function loadPersistedFlow() {
   } catch { return {}; }
 }
 function persistFlow(s) {
+  const saved = {
+    projectId: s.projectId,
+    projectPersisted: s.projectPersisted,
+    resumePath: s.resumePath,
+    selectedMannequinId: s.selectedMannequinId,
+    composeMode: s.composeMode,
+    copywriting: s.copywriting,
+    adjustCount: s.adjustCount,
+    productInfoConfirmed: s.productInfoConfirmed,
+    userId: s.userId,
+    lastUsedAt: s.lastUsedAt,
+  };
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(TAB_FLOW_KEY, JSON.stringify(saved));
+  } catch { /* 탭 저장소 불가 시 세션 내 동작 유지 */ }
   if (mode !== 'http') return;
   try {
-    localStorage.setItem(FLOW_KEY, JSON.stringify({
-      projectId: s.projectId,
-      projectPersisted: s.projectPersisted,
-      resumePath: s.resumePath,
-      selectedMannequinId: s.selectedMannequinId,
-      composeMode: s.composeMode,
-      copywriting: s.copywriting,
-      adjustCount: s.adjustCount,
-      productInfoConfirmed: s.productInfoConfirmed,
-      userId: s.userId,
-      lastUsedAt: s.lastUsedAt,
-    }));
+    localStorage.setItem(FLOW_KEY, JSON.stringify(saved));
   } catch { /* localStorage 불가(사생활 모드 등) — 영속 생략, 세션 내 동작은 유지 */ }
 }
 
@@ -160,9 +174,8 @@ function notifyDetailPageDone() {
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
 
-// http 모드에서 loadPersistedFlow() 가 복원한 projectId 를 세션당 1회만 서버 유효성 확인한다.
+// 화면 진입마다 현재 프로젝트와 최신 잡을 확인한다.
 // StrictMode·여러 화면 가드의 동시 호출은 같은 Promise 에 합류시켜 검증 중인 id를 정상으로 오인하지 않는다.
-let flowValidated = false;
 let flowValidationInflight = null;
 // 사진 양 선택 PATCH를 직렬화한다. 사용자가 빠르게 바꾸고 다음으로 가도
 // 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
@@ -301,21 +314,25 @@ export const useAppStore = create((set, get) => ({
   async loadProject() {
     const pid = get().projectId;
     if (pid) {
-      // http: loadPersistedFlow() 가 복원한 projectId 를 세션당 1회 서버 유효성 확인한다. 확정 404만
+      // 화면 진입마다 최신 잡과 선택값을 읽는다. 확정 404만
       // 초기화하고, 인증·네트워크·서버 일시 장애에는 진행 정보를 보존한다.
-      if (mode !== 'http' || flowValidated) return pid;
       if (flowValidationInflight?.projectId === pid) return flowValidationInflight.promise;
       let validationPromise;
       validationPromise = (async () => {
         try {
           const p = await api.getProject(pid);
           if (get().projectId !== pid) return get().projectId;
-          if (p && p.id) { flowValidated = true; return pid; }
+          if (p && p.id === pid) {
+            get().adoptProject(pid, { serverSnapshot: p });
+            return pid;
+          }
         } catch (error) {
           if (get().projectId !== pid) return get().projectId;
-          if (error?.status !== 404) return pid;
+          if (error?.status !== 404) {
+            initialGenerationAttempts.seed(pid, undefined);
+            return pid;
+          }
         }
-        flowValidated = true;
         clearGenerationRelevantEditsSession(pid);
         set({ ...initialFlow, generationRelevantEditsDirty: false });
         clearDetailPageJobMarker();
@@ -327,9 +344,9 @@ export const useAppStore = create((set, get) => ({
       flowValidationInflight = { projectId: pid, promise: validationPromise };
       return validationPromise;
     }
-    flowValidated = true;   // 복원할 id 없음 — 이후 재검증 불필요(새 id 는 생성 시점에 신뢰)
     if (mode !== 'mock') return null;
     const p = await api.getProject();
+    initialGenerationAttempts.seed(p.id, p.latestJobs?.mannequin);
     set({
       projectId: p.id,
       projectPersisted: true,   // 기존 project 복원 — 이미 보관함에 존재
@@ -339,6 +356,7 @@ export const useAppStore = create((set, get) => ({
       adjustCount: p.adjustCount,
       generationRelevantEditsDirty: readGenerationRelevantEdits(p.id),
     });
+    persistFlow(get());
     return p.id;
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
@@ -362,7 +380,7 @@ export const useAppStore = create((set, get) => ({
      /editor/:id 로 직접 들어오는 경로는 실제로 '다른 작업'을 여는 것이므로 이 옵션을 넘기지
      않는다. 기본값(false)은 대상 project의 sessionStorage 신호만 읽어, 이전 project의 신호가
      새지 않게 한다. 이미 다른 project 로 작업 중이면 true 를 넘겨도 보존하지 않는다. */
-  adoptProject(projectId, { preserveGenerationDirty = false } = {}) {
+  adoptProject(projectId, { preserveGenerationDirty = false, serverSnapshot = null } = {}) {
     // 다른 프로젝트 채택 = 프로젝트 경계 전환 — 이전 상세페이지 폴링 루프를 무효화해
     // stale 루프가 초기화된 슬라이스를 나중에 덮지 않게 한다(codex F5).
     if (get().projectId !== projectId) {
@@ -371,8 +389,16 @@ export const useAppStore = create((set, get) => ({
       clearDetailPageJobMarker();
     }
     const current = get();
+    const serverValues = serverSnapshot ? {
+      selectedMannequinId: serverSnapshot.selectedMannequinId ?? null,
+      composeMode: normalizeComposeMode(serverSnapshot.composeMode),
+      copywriting: serverSnapshot.copywriting !== false,
+      adjustCount: serverSnapshot.adjustCount ?? 0,
+    } : {};
+    if (serverSnapshot) initialGenerationAttempts.seed(projectId, serverSnapshot.latestJobs?.mannequin);
     if (current.projectId === projectId) {
-      set({ projectPersisted: true });
+      set({ projectPersisted: true, ...serverValues });
+      if (serverSnapshot) get().seedDetailPageJob(serverSnapshot);
       persistFlow(get());
       return;
     }
@@ -389,7 +415,9 @@ export const useAppStore = create((set, get) => ({
       // 같은 작업이 서버 신원을 얻는 경로면 비로그인 때 고른 사진 양도 이어간다 —
       // initialFlow 스프레드가 basic 으로 되돌리면 게스트의 선택이 로그인 순간 조용히 사라진다.
       composeMode: sameWorkContinuation ? current.composeMode : initialFlow.composeMode,
+      ...serverValues,
     });
+    if (serverSnapshot) get().seedDetailPageJob(serverSnapshot);
     persistFlow(get());
   },
   /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
@@ -479,6 +507,26 @@ export const useAppStore = create((set, get) => ({
   /* ---- 상세페이지 생성 잡 (editor_wait_dev_spec §3) ----
      시작·폴링·이벤트 소비를 store 가 소유한다. 대기 화면(Generating)은 구독만 하고,
      셀러가 다른 화면으로 떠나도 루프는 계속 돌아 전역 리본이 진행을 보여준다. */
+  seedDetailPageJob(project) {
+    const latest = project.latestJobs?.detailPage;
+    const current = get().detailPageJob;
+    if (project.status === 'done' || latest === null) {
+      if (current.projectId === project.id) get().resetDetailPageJob();
+      return;
+    }
+    if (!latest?.id || !['pending', 'running', 'error', 'cancelled'].includes(latest.status)) return;
+    if (current.projectId === project.id && current.jobId === latest.id && current.status === 'running') return;
+    detailJobSeq += 1;
+    detailJobLoopProjectId = null;
+    const running = latest.status === 'pending' || latest.status === 'running';
+    const job = { ...initialDetailPageJob(), projectId: project.id, jobId: latest.id,
+      status: running ? 'running' : 'error', startedAt: Date.now(),
+      errorMessage: running ? '' : latest.status === 'cancelled'
+        ? '상세페이지 생성이 취소됐어요.' : '상세페이지 생성에 실패했어요.',
+      errorCode: latest.errorCode || null };
+    set({ detailPageJob: job });
+    if (running) saveDetailPageJobMarker(job);
+  },
   async startDetailPageGeneration(projectId, { retryOf = null } = {}) {
     const cur = get().detailPageJob;
     // 같은 프로젝트 생성이 이미 돌고 있으면 합류(마운트 중복·StrictMode 이중 실행 가드)
