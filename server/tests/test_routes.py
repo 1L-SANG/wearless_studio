@@ -91,7 +91,7 @@ def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     async def fake_get_product(conn, project_id):
         return {"clothingType": "dress"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -120,7 +120,7 @@ def test_save_analysis_normalizes_brand_use_category(client, make_token, monkeyp
     async def fake_get_product(conn, project_id):
         return {"clothingType": "top"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -145,7 +145,7 @@ def test_save_analysis_rejects_unknown_brand_use_category_before_persistence(
 ):
     called = False
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         nonlocal called
         called = True
 
@@ -169,7 +169,7 @@ def test_save_analysis_rejects_non_string_brand_use_category_before_persistence(
 ):
     called = False
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         nonlocal called
         called = True
 
@@ -198,7 +198,7 @@ def test_save_analysis_normalizes_empty_brand_use_category_to_none(
     async def fake_get_product(conn, project_id):
         return {"clothingType": "top"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen.append(analysis)
         return {"project_id": project_id, "payload": analysis}
 
@@ -237,7 +237,7 @@ def test_analysis_routes_normalize_retired_tight_fit(client, make_token, monkeyp
             },
         }
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -312,7 +312,6 @@ def test_save_product_atomically_repairs_dress_analysis_gender(
     assert seen["product"]["clothing_type"] == "dress"
     assert seen["analysis"] == {
         "targetGenders": ["women"],
-        "fit": "regular",
     }
 
 
@@ -322,9 +321,9 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     async def fake_get_project(conn, user_id, project_id):
         return {"id": project_id}
 
-    async def fake_save_storyboard(conn, user_id, project_id, blocks):
+    async def fake_save_storyboard(conn, user_id, project_id, blocks, base_revision=None):
         seen["blocks"] = blocks
-        return blocks
+        return 1
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "save_storyboard", fake_save_storyboard)
@@ -401,9 +400,9 @@ def test_save_storyboard_accepts_bottom_signature_without_flat_catalog_lookup(
     async def fake_analysis(conn, project_id):
         return {"targetGenders": ["women"], "subCategory": "mini_skirt"}
 
-    async def fake_save(conn, user_id, project_id, blocks):
+    async def fake_save(conn, user_id, project_id, blocks, base_revision=None):
         seen["blocks"] = blocks
-        return blocks
+        return 1
 
     def flat_registry_must_not_load():
         raise AssertionError("sig_* must stay outside the ordinary example catalog")
@@ -506,9 +505,9 @@ def test_save_storyboard_validates_production_set_without_flat_registry(
     async def fake_analysis(conn, project_id):
         return {"targetGenders": ["women"]}
 
-    async def fake_save(conn, user_id, project_id, blocks):
+    async def fake_save(conn, user_id, project_id, blocks, base_revision=None):
         seen["saved"] = blocks
-        return blocks
+        return 1
 
     def fake_validate(blocks, *, clothing_type, gender):
         seen["validated"] = (blocks, clothing_type, gender)

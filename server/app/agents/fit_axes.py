@@ -4,6 +4,20 @@
 실제 출력은 고정 promptEn 문구만 사용한다.
 """
 
+def analysis_for_selected_mannequin(analysis: dict, selected_cut: dict | None) -> dict:
+    """선택 컷의 핏 기록을 쓴다. 기록 없는 구버전 컷은 기존 분석을 유지한다."""
+    snapshot = selected_cut.get("fit_profile_snapshot") if isinstance(selected_cut, dict) else None
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("version") != 1
+        or "profile" not in snapshot
+        or (snapshot.get("profile") is not None and not isinstance(snapshot.get("profile"), dict))
+    ):
+        return analysis
+    # profile=null은 저장 키 삭제와 별개인 "사진 그대로" 기록이다.
+    return {**analysis, "fitProfile": snapshot.get("profile")}
+
+
 def confirmed_copy_fit(analysis: dict) -> str | None:
     """사용자가 고른 버전의 명시된 핏만 카피의 근거로 쓴다."""
     if "fitProfile" not in analysis:

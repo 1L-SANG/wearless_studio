@@ -77,13 +77,62 @@ def test_generate_reserves_plan_total(client, make_token, monkeypatch, plan, mod
     create, reserve, record = _wire(monkeypatch, plan=plan, model=model)
     response = client.post('/v1/projects/p1/mannequins:generate', headers=_headers(make_token))
     assert response.status_code == 202, response.text
-    assert create.call_args.kwargs['credits_reserved'] == total
-    assert create.call_args.kwargs['metadata'] == {
+    assert create.call_args.kwargs['credits_reserved'] == 0
+    assert repo.set_pending_job_pricing.call_args.kwargs['credits_reserved'] == total
+    assert repo.set_pending_job_pricing.call_args.kwargs['metadata'] == {
         'creditCostVersion': 'v6', 'extensionModelFee': total - 45,
         'plan': plan, 'selectedModelId': model,
     }
     assert reserve.call_args.args[-1] == total
     record.assert_not_awaited()
+
+
+@pytest.mark.parametrize('mode,done_count,expected,cost', [
+    ('generate', 0, {'free': False, 'credits': 64}, 64),
+    ('regenerate', 1, {'free': True, 'credits': 0}, 0),
+    ('regenerate', 2, {'free': False, 'credits': 45}, 45),
+    ('generate', 0, None, 64),
+    ('regenerate', 2, None, 45),
+])
+def test_expected_quote_matching_or_absent_reserves_current_cost(
+    client, make_token, monkeypatch, mode, done_count, expected, cost,
+):
+    _, reserve, _ = _wire(monkeypatch, done_count=done_count)
+    body = {} if expected is None else {'expectedQuote': expected}
+    response = client.post(f'/v1/projects/p1/mannequins:{mode}',
+                           headers=_headers(make_token), json=body)
+    assert response.status_code == 202, response.text
+    assert reserve.call_args.args[-1] == cost
+
+
+@pytest.mark.parametrize('mode,expected,current', [
+    ('generate', {'free': True, 'credits': 0}, {'free': False, 'credits': 64}),
+    ('generate', {'free': False, 'credits': 45}, {'free': False, 'credits': 64}),
+    ('regenerate', {'free': True, 'credits': 0}, {'free': False, 'credits': 45}),
+    ('regenerate', {'free': False, 'credits': 44}, {'free': False, 'credits': 45}),
+])
+def test_changed_quote_reserves_nothing_and_reports_current_quote(
+    client, make_token, monkeypatch, mode, expected, current,
+):
+    _, reserve, record = _wire(monkeypatch, done_count=2)
+    response = client.post(f'/v1/projects/p1/mannequins:{mode}',
+                           headers=_headers(make_token), json={'expectedQuote': expected})
+    assert response.status_code == 409, response.text
+    assert response.json()['error']['code'] == 'quote_changed'
+    assert response.json()['error']['meta'] == {'quote': current}
+    reserve.assert_not_awaited()
+    record.assert_not_awaited()
+    repo.set_pending_job_pricing.assert_not_awaited()
+    routes._enqueue_base_fidelity_observation.assert_not_awaited()
+
+
+@pytest.mark.parametrize('mode', ['generate', 'regenerate'])
+def test_join_ignores_old_quote_because_it_reserves_nothing(client, make_token, monkeypatch, mode):
+    _, reserve, _ = _wire(monkeypatch, created=False, done_count=2)
+    response = client.post(f'/v1/projects/p1/mannequins:{mode}',
+                           headers=_headers(make_token), json={'expectedQuote': {'free': True, 'credits': 0}})
+    assert response.status_code == 202, response.text
+    reserve.assert_not_awaited()
 
 
 def test_generate_extended_starter_402_at_60(client, make_token, monkeypatch):
@@ -332,6 +381,37 @@ def test_regenerate_prices_after_previous_free_job_completes(
         committed_job = next(j for j in conn.commits[0]['jobs'] if j['id'] == job['id'])
         assert committed_job == dict(job)
     assert conn.db.execute('select count(*) from credit_ledger').fetchone()[0] == 0
+
+
+def test_free_quote_changes_at_insert_boundary_and_rolls_back_every_reservation_write(
+    client, make_token, monkeypatch,
+):
+    conn = _wire_sql_regenerate(monkeypatch, plan='starter', done_count=1, balance=100, running=True)
+    def complete_previous_job():
+        conn.db.execute("update jobs set status = 'done' where id = 'old'")
+        conn.db.commit()
+    conn.before_insert = complete_previous_job
+    headers = {**_headers(make_token), 'Idempotency-Key': 'stale-free-quote'}
+    response = client.post('/v1/projects/p1/mannequins:regenerate', headers=headers,
+                           json={'expectedQuote': {'free': True, 'credits': 0}})
+    assert response.status_code == 409, response.text
+    assert response.json()['error']['meta'] == {'quote': {'free': False, 'credits': 45}}
+    assert conn.commits == []
+    assert conn.db.execute("select count(*) from jobs where status='pending'").fetchone()[0] == 0
+    assert conn.db.execute('select reserved from credit_accounts').fetchone()[0] == 0
+    assert conn.db.execute('select count(*) from mannequin_job_requests').fetchone()[0] == 0
+    assert conn.db.execute('select count(*) from credit_ledger').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('quote', [{'free': 'false', 'credits': 45}, {'free': False, 'credits': '45'},
+                                  {'free': False, 'credits': -1}, {'free': False}])
+def test_expected_quote_requires_boolean_and_nonnegative_integer(client, make_token, monkeypatch, quote):
+    _, reserve, _ = _wire(monkeypatch, done_count=2)
+    response = client.post('/v1/projects/p1/mannequins:regenerate', headers=_headers(make_token),
+                           json={'expectedQuote': quote})
+    assert response.status_code == 400, response.text
+    assert response.json()['error']['code'] == 'invalid_expected_quote'
+    reserve.assert_not_awaited()
 
 
 @pytest.mark.parametrize('plan,done_count', [('starter', 1), ('pro', 2)])

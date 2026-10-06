@@ -778,6 +778,111 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
         return await cur.fetchall()
 
 
+async def list_in_progress(conn: AsyncConnection, user_id: str) -> list[dict]:
+    # DB 접근 없는 U1에서는 EXPLAIN을 실행하지 않는다. 후속 확인은 이 쿼리에
+    # EXPLAIN (ANALYZE, BUFFERS)를 붙여 사용자별 프로젝트 수와 잡 이력 정렬 비용을 본다.
+    # projects_user_updated_idx와 jobs_project_kind_status_idx로 사용자/프로젝트를 좁힌다.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select pr.id::text as id,
+                coalesce(nullif(btrim(prod.name), ''), '새 상품') as title,
+                case when cutc.aid is not null then '/v1/assets/' || cutc.aid || '/file'
+                     else '/v1/assets/' || front.id::text || '/file' end as cover,
+                cova.r2_key as cover_r2_key, cova.source as cover_source,
+                cova.metadata as cover_metadata,
+                greatest(pr.updated_at, activity.updated_at) as updated_at,
+                case when dj.status in ('pending', 'running') then 'generating'
+                     when dj.status in ('error', 'cancelled') and
+                          jsonb_array_length(case when jsonb_typeof(pr.editor_blocks) = 'array'
+                              then pr.editor_blocks else '[]'::jsonb end) = 0 then 'failed'
+                     when selected.valid then 'mannequin'
+                     else 'storyboard' end as step,
+                mj.summary as latest_mannequin_job, dj.summary as latest_detail_page_job
+            from projects pr
+            join products prod on prod.project_id = pr.id
+            join lateral (
+                select col.value as color
+                from jsonb_array_elements(case when jsonb_typeof(prod.colors) = 'array'
+                    then prod.colors else '[]'::jsonb end) with ordinality col(value, position)
+                order by coalesce(col.value->'isBase' = 'true'::jsonb, false) desc, col.position
+                limit 1
+            ) base on true
+            join lateral (
+                select a.id
+                from jsonb_array_elements(case when jsonb_typeof(base.color->'images') = 'array'
+                    then base.color->'images' else '[]'::jsonb end) im
+                join assets a on a.id = case when im->>'id' ~*
+                    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    then (im->>'id')::uuid end and a.deleted_at is null
+                where im->>'slot' = 'Front'
+                limit 1
+            ) front on true
+            left join lateral (
+                select mc.asset_id as aid_uuid, mc.asset_id::text as aid
+                from mannequin_cuts mc where mc.project_id = pr.id
+                order by mc.version desc, mc.candidate limit 1
+            ) cutc on true
+            left join lateral (
+                select a.r2_key, a.source, a.metadata from assets a
+                where a.id = cutc.aid_uuid and a.deleted_at is null
+            ) cova on true
+            left join lateral (
+                select jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.project_id = pr.id and j.user_id = pr.user_id
+                    and j.kind = 'mannequin'
+                order by j.created_at desc, j.id desc limit 1
+            ) mj on true
+            left join lateral (
+                select j.status, jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.project_id = pr.id and j.user_id = pr.user_id
+                    and j.kind = 'detail_page'
+                order by j.created_at desc, j.id desc limit 1
+            ) dj on true
+            left join lateral (
+                select max(j.updated_at) as updated_at from jobs j
+                where j.project_id = pr.id and j.user_id = pr.user_id
+            ) activity on true
+            left join lateral (
+                select true as valid from mannequin_cuts mc
+                where mc.project_id = pr.id
+                    and mc.candidate || '-' || mc.version::text = pr.selected_mannequin_id
+                limit 1
+            ) selected on true
+            where pr.user_id = %s and pr.deleted_at is null and pr.status <> 'done'
+                and (jsonb_array_length(case when jsonb_typeof(pr.storyboard) = 'array'
+                         then pr.storyboard else '[]'::jsonb end) > 0
+                     or mj.summary is not null or cutc.aid is not null or dj.summary is not null)
+            order by updated_at desc, pr.id desc limit 20
+            """,
+            (user_id,),
+        )
+        return await cur.fetchall()
+
+
+async def get_latest_project_jobs(conn: AsyncConnection, user_id: str, project_id: str) -> dict:
+    """소유 확인 뒤 호출. 오래된 잡의 갱신이 새 생성 시도를 가리지 않도록 created_at 순."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select kinds.kind, latest.summary
+            from (values ('mannequin'), ('detail_page')) kinds(kind)
+            left join lateral (
+                select jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.user_id = %s and j.project_id = %s and j.kind = kinds.kind
+                order by j.created_at desc, j.id desc limit 1
+            ) latest on true
+            """,
+            (user_id, project_id),
+        )
+        rows = await cur.fetchall()
+    summaries = {row['kind']: row['summary'] for row in rows}
+    return {"mannequin": summaries.get("mannequin"), "detailPage": summaries.get("detail_page")}
+
+
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
         # 동시 요청(더블클릭·재시도·타임아웃 후 재호출)에서 아래 select-then-insert 가
@@ -949,11 +1054,9 @@ def garment_color_input_identity(product: dict) -> tuple:
     return (product.get("clothing_type") or product.get("clothingType"), tuple(sorted(colors)))
 
 
-# AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
-# 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
-# inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
-# 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
-# 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
+# AG-01이 파생하는 서버 소유 필드. 부분 병합은 클라이언트가 모르는 키도 보존한다.
+# sourceMirrored·inputConsistency·featureCopy의 명시적 수정은 기존 계약대로 허용한다.
+# 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
     "inputConsistency",
@@ -969,46 +1072,40 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
 _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence")
 
 
-async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증.
+async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,
+                        merge: bool = True, delete_nulls: bool = False) -> dict:
+    """내부 저장은 담당 키만 병합한다. 클라이언트는 merge=1일 때만 같은 계약을 쓴다.
 
-    REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
-    는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
-    신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
-    해시로 봉인된 confirmedGptProductEvidence 는 클라이언트가 보내도 기존 서버 값을 유지한다.
+    배열과 fitProfile은 통째로 교체한다. 클라이언트 병합의 null은 최상위 키 삭제다.
+    옛 클라이언트의 전문 교체도 누락된 서버 키와 잠금을 보존하고 불변 근거를 보호한다.
+    소유권은 라우트 선검증. 재분석 성공만 보호된 서버 근거까지 새 전문으로 교체한다.
     """
-    missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
-    immutable_supplied = any(k in analysis for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
-    if missing or immutable_supplied:
-        # 행을 잠그고 읽는다. 지연 옷 색 측정이 읽기와 upsert 사이에 쓰면 이월이 옛 값을
-        # 덮어 새 측정이 사라진다.
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select payload from analyses where project_id = %s for update", (project_id,)
-            )
-            prev = ((await cur.fetchone()) or {}).get("payload") or {}
-        carried = {k: prev[k] for k in missing if k in prev}
-        immutable = {
-            k: prev[k]
-            for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
-            if k in prev
-        }
-        if immutable_supplied:
-            analysis = {
-                k: value
-                for k, value in analysis.items()
-                if k not in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
-            }
-        if carried or immutable:
-            analysis = {**analysis, **carried, **immutable}
-    locked = bool(analysis.get("locked", False))
+    analysis = {k: value for k, value in analysis.items()
+                if k not in ("locked", *_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
+                and not (merge and delete_nulls and value is None and k in _SERVER_OWNED_ANALYSIS_KEYS)}
+    params = [project_id]
+    if merge:
+        removed = [k for k, value in analysis.items() if value is None] if delete_nulls else []
+        payload = {k: value for k, value in analysis.items() if k not in removed}
+        params.append(Json(payload))
+        update = "analyses.payload || excluded.payload"
+        if delete_nulls:
+            update = "(analyses.payload || excluded.payload) - %s::text[]"
+            params.append(removed)
+    else:
+        params.extend([Json(analysis), [*_SERVER_OWNED_ANALYSIS_KEYS, "locked"]])
+        # 전문에서 빠진 일반 키는 삭제한다. 서버 키 이월도 UPDATE 안에서 읽어 경합을 막는다.
+        update = """excluded.payload || (
+            select coalesce(jsonb_object_agg(previous.key, previous.value), '{}'::jsonb)
+            from jsonb_each(analyses.payload) previous
+            where previous.key = any(%s::text[]) and not (excluded.payload ? previous.key)
+        )"""
     async with conn.cursor() as cur:
         await cur.execute(
-            "insert into analyses (project_id, payload, locked) values (%s, %s, %s) "
-            "on conflict (project_id) do update set payload = excluded.payload, "
-            "locked = excluded.locked "
+            "insert into analyses (project_id, payload) values (%s, %s) "
+            f"on conflict (project_id) do update set payload = {update} "
             "returning project_id::text as project_id, payload, locked",
-            (project_id, Json(analysis), locked),
+            tuple(params),
         )
         return await cur.fetchone()
 
@@ -3210,16 +3307,27 @@ async def get_storyboard(conn: AsyncConnection, project_id: str) -> list:
     return sb if isinstance(sb, list) else []
 
 
-async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
-    """콘티 저장 (owner 스코프). 반환 = 저장된 블록."""
+async def get_storyboard_state(conn: AsyncConnection, project_id: str) -> tuple[list, int]:
+    """콘티와 공유 리비전을 같은 스냅샷에서 읽는다. 소유권은 라우트 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select storyboard, editor_revision from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    sb = (row or {}).get("storyboard")
+    return (sb if isinstance(sb, list) else []), int((row or {}).get("editor_revision") or 0)
+
+
+async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list,
+                          base_revision: int | None = None) -> int | None:
+    # 에디터 저장과 상세페이지 성공도 editor_revision을 올리므로 콘티 저장이 충돌할 수 있다.
     async with conn.cursor() as cur:
         await cur.execute(
-            "update projects set storyboard = %s where id = %s and user_id = %s "
-            "and deleted_at is null returning storyboard",
-            (Json(blocks), project_id, user_id),
+            "update projects set storyboard = %s, editor_revision = editor_revision + 1 "
+            "where id = %s and user_id = %s and deleted_at is null "
+            "and (%s::integer is null or editor_revision = %s::integer) returning editor_revision",
+            (Json(blocks), project_id, user_id, base_revision, base_revision),
         )
         row = await cur.fetchone()
-    return (row or {}).get("storyboard") or []
+    return None if row is None else int(row["editor_revision"])
 
 
 async def get_editor_blocks(conn: AsyncConnection, project_id: str) -> list:
