@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 
-async function harness(t, path, exportName, { accountPlan = 'pro', request = {}, result = {}, items = [] } = {}) {
+async function harness(t, path, exportName, { accountPlan = 'pro', topupBonusEnabled = false, request = {}, result = {}, items = [] } = {}) {
   const key = `__creditPayment${Math.random().toString(36).slice(2)}`;
   const previousWindow = globalThis.window, previousDocument = globalThis.document;
   globalThis.window = new EventTarget();
   globalThis.document = { body: {} };
   const runtime = {
-    frame: null, account: { plan: accountPlan }, toasts: [], balances: [], invalidations: [],
+    frame: null, account: { plan: accountPlan, topupBonusEnabled }, toasts: [], balances: [], invalidations: [],
     params: new URLSearchParams('paymentKey=key&orderId=order&amount=26000'),
     toast: { push: message => runtime.toasts.push(message) },
     api: {

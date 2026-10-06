@@ -515,6 +515,74 @@ test('가입 지급 전 시작한 같은 계정 조회가 늦게 끝나도 지�
   assert.equal(h.store.getState().account.credits, 150);
 });
 
+for (const oldSuccessFirst of [false, true]) {
+  test(`최신 계정 조회가 실패해도 기존 정상 응답의 잔액을 보존한다 (기존 응답 먼저=${oldSuccessFirst})`, async t => {
+    const h = await harness(t, { user: 'A', realAccountStore: true });
+    const initial = deferred();
+    const refresh = deferred();
+    let calls = 0;
+    h.runtime.api.getAccount = () => ++calls === 1 ? initial.promise : refresh.promise;
+    const oldLoad = h.store.getState().loadAccount();
+    const refreshFailure = assert.rejects(h.store.getState().loadAccount({ force: true }), /refresh offline/);
+    const account = { id: 'A', plan: 'seller', credits: 510 };
+    if (oldSuccessFirst) {
+      initial.resolve(account);
+      await oldLoad;
+      assert.equal(h.store.getState().account?.credits, 510);
+    }
+    refresh.reject(new Error('refresh offline'));
+    await refreshFailure;
+    if (!oldSuccessFirst) {
+      initial.resolve(account);
+      await oldLoad;
+    }
+    assert.deepEqual(h.store.getState().account, account);
+    assert.equal(h.store.getState().accountLoaded, true);
+  });
+}
+
+for (const oldSuccessFirst of [false, true]) {
+  test(`같은 계정의 겹친 정상 응답은 최신 조회 잔액을 유지한다 (기존 응답 먼저=${oldSuccessFirst})`, async t => {
+    const h = await harness(t, { user: 'A', realAccountStore: true });
+    const initial = deferred();
+    const refresh = deferred();
+    let calls = 0;
+    h.runtime.api.getAccount = () => ++calls === 1 ? initial.promise : refresh.promise;
+    const oldLoad = h.store.getState().loadAccount();
+    const newLoad = h.store.getState().loadAccount({ force: true });
+    if (oldSuccessFirst) {
+      initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+      await oldLoad;
+      assert.equal(h.store.getState().account?.credits, 510);
+    }
+    refresh.resolve({ id: 'A', plan: 'seller', credits: 660 });
+    await newLoad;
+    if (!oldSuccessFirst) {
+      initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+      assert.equal(await oldLoad, null);
+    }
+    assert.equal(h.store.getState().account.credits, 660);
+    assert.equal((await h.store.getState().loadAccount()).credits, 660);
+  });
+}
+
+test('새 계정 조회가 실패해도 이전 계정의 정상 응답을 캐시에 넣지 않는다', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const initial = deferred();
+  const refresh = deferred();
+  h.runtime.api.getAccount = () => h.runtime.user === 'A' ? initial.promise : refresh.promise;
+  const oldLoad = h.store.getState().loadAccount();
+  await h.user('B');
+  const refreshFailure = assert.rejects(h.store.getState().loadAccount({ force: true }), /new account offline/);
+  refresh.reject(new Error('new account offline'));
+  await refreshFailure;
+  initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+  assert.equal(await oldLoad, null);
+  assert.equal(h.store.getState().account, null);
+  assert.equal(h.store.getState().accountLoaded, false);
+  assert.equal(h.store.getState().accountUserId, 'B');
+});
+
 test('an old OAuth failure cannot discard a newer checked signup attempt in the same millisecond', async (t) => {
   const h = await harness(t);
   t.mock.method(Date, 'now', () => 1800000000000);

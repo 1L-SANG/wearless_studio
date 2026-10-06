@@ -5,6 +5,7 @@
 """
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -397,6 +398,7 @@ def test_create_snapshots_plan_and_notifies_admin(client, store, make_token):
 ])
 def test_topup_request_stores_plan_bonus_snapshot(
         client, store, make_token, profile_plan, base, bonus, percent, total):
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     store.profiles[USER]["plan"] = profile_plan
     store.plans["topup_finish"]["credits"] = base
     response = create(client, make_token, planCode="topup_finish")
@@ -406,6 +408,20 @@ def test_topup_request_stores_plan_bonus_snapshot(
     saved = store.requests[request["id"]]
     assert (saved["bonus_credits"], saved["bonus_percent"], saved["plan_at_order"]) == (
         bonus, percent, profile_plan if profile_plan != "unknown" else "free")
+
+
+@pytest.mark.parametrize("profile_plan", ["seller", "pro"])
+def test_topup_request_defaults_to_zero_bonus_during_rollout(client, store, make_token, profile_plan):
+    store.profiles[USER]["plan"] = profile_plan
+    store.plans["topup_finish"]["credits"] = 500
+    response = create(client, make_token, planCode="topup_finish")
+
+    assert response.status_code == 200, response.text
+    request = response.json()["request"]
+    assert (request["credits"], request["bonusCredits"], request["totalCredits"]) == (500, 0, 500)
+    saved = store.requests[request["id"]]
+    assert saved["bonus_credits"] == saved["bonus_percent"] == 0
+    assert saved["plan_at_order"] == profile_plan
 
 
 def test_subscription_request_has_no_topup_bonus(client, store, make_token):
@@ -565,10 +581,12 @@ def test_confirm_topup_grants_snapshot_and_is_idempotent(client, store, make_tok
 
 
 def test_confirm_preserves_pro_bonus_after_downgrade_once(client, store, make_token):
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     store.profiles[USER]["plan"] = "pro"
     store.plans["topup_finish"]["credits"] = 500
     assert create(client, make_token, planCode="topup_finish").status_code == 200
     rid = _uuidify(store)[0]
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=False)
     store.profiles[USER]["plan"] = "starter"
     store.plans["topup_finish"].update(price=1, credits=1, is_active=False)
     first = confirm(client, make_token, rid)
@@ -590,6 +608,7 @@ def test_legacy_topup_confirmation_does_not_add_current_plan_bonus(client, store
     rid = _uuidify(store)[0]
     for key in ("bonus_credits", "bonus_percent", "plan_at_order"):
         store.requests[rid].pop(key, None)
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     store.profiles[USER]["plan"] = "pro"
     result = confirm(client, make_token, rid)
     assert result.status_code == 200, result.text

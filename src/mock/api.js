@@ -355,14 +355,15 @@ export const api = {
     if (!plan) throw new Error('존재하지 않는 충전 상품이에요.');
     const orderId = uid('order');
     const planAtOrder = normalizePlanTier(DB.account.plan);
-    const bonusCredits = topupBonusCredits(DB.account.plan, plan.credits);
+    const topupBonusEnabled = DB.account.topupBonusEnabled === true;
+    const bonusCredits = topupBonusEnabled ? topupBonusCredits(planAtOrder, plan.credits) : 0;
     const order = {
       orderId,
       amount: plan.price,
       credits: plan.credits,
       bonusCredits,
       totalCredits: plan.credits + bonusCredits,
-      planAtOrder, bonusPercent: TOPUP_BONUS_PERCENT[planAtOrder],
+      planAtOrder, bonusPercent: topupBonusEnabled ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
       orderName: `크레딧 ${plan.credits}`,
       customerKey: 'mock-customer',
     };
@@ -383,11 +384,12 @@ export const api = {
       throw new Error('확인 중인 신청이 있어요.');
     }
     const planAtOrder = normalizePlanTier(DB.account.plan);
-    const bonusCredits = plan.kind === 'topup' ? topupBonusCredits(planAtOrder, plan.credits) : 0;
+    const topupBonusEnabled = plan.kind === 'topup' && DB.account.topupBonusEnabled === true;
+    const bonusCredits = topupBonusEnabled ? topupBonusCredits(planAtOrder, plan.credits) : 0;
     const request = {
       id: uid('btr'), planCode: plan.code, kind: plan.kind, amount: plan.price, credits: plan.credits,
       bonusCredits, totalCredits: plan.credits + bonusCredits,
-      planAtOrder, bonusPercent: plan.kind === 'topup' ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
+      planAtOrder, bonusPercent: topupBonusEnabled ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
       payerName: body.payerName, phone: body.phone || null, taxInvoice: Boolean(body.taxInvoice),
       note: body.note || null, status: 'requested',
       expiresAt: new Date(Date.now() + 3 * 864e5).toISOString(), createdAt: new Date().toISOString(),

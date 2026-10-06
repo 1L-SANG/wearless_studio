@@ -1,11 +1,11 @@
 """새 마이그레이션을 명시한 로컬 PostgreSQL의 격리 스키마에만 적용한다."""
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 import pytest
 
 
@@ -17,13 +17,13 @@ def migration_db():
     url = os.getenv('SIGNUP_BONUS_TEST_DATABASE_URL')
     if not url:
         pytest.skip('requires explicit local SIGNUP_BONUS_TEST_DATABASE_URL')
-    if urlsplit(url).hostname not in ('localhost', '127.0.0.1', '::1'):
+    options = conninfo_to_dict(url)
+    if (options.get('host') not in ('localhost', '127.0.0.1', '::1')
+            or options.get('hostaddr', '127.0.0.1') not in ('127.0.0.1', '::1')
+            or 'service' in options):
         pytest.fail('SIGNUP_BONUS_TEST_DATABASE_URL must point to a local disposable database')
     schema = f'signup_migration_test_{uuid4().hex}'
-    try:
-        conn = psycopg.connect(url, autocommit=True, connect_timeout=2)
-    except psycopg.OperationalError:
-        pytest.skip('disposable local PostgreSQL is unavailable')
+    conn = psycopg.connect(url, host='127.0.0.1', hostaddr='127.0.0.1', autocommit=True, connect_timeout=2)
     try:
         conn.execute(sql.SQL('create schema {}').format(sql.Identifier(schema)))
         conn.execute(sql.SQL('set search_path to {}').format(sql.Identifier(schema)))

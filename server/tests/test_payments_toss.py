@@ -5,6 +5,7 @@
 키가 없으면 조용히 목 성공을 주지 않는다. DB·네트워크 없이 검증한다."""
 
 import contextlib
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -150,12 +151,25 @@ def test_checkout_snapshots_server_side_price(pay, make_token):
 ])
 def test_checkout_stores_plan_bonus_snapshot(pay, make_token, profile_plan, base, bonus, percent, total):
     client, state = pay
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     state.update(profile_plan=profile_plan, sku_credits=base)
     checkout = _checkout(client, make_token)
     assert (checkout["credits"], checkout["bonusCredits"], checkout["totalCredits"]) == (base, bonus, total)
     order = state["orders"][checkout["orderId"]]
     assert (order["bonus_credits"], order["bonus_percent"], order["plan_at_order"]) == (
         bonus, percent, profile_plan if profile_plan != "unknown" else "free")
+
+
+@pytest.mark.parametrize("profile_plan", ["seller", "pro"])
+def test_checkout_defaults_to_zero_bonus_during_rollout(pay, make_token, profile_plan):
+    client, state = pay
+    state.update(profile_plan=profile_plan, sku_credits=500)
+    checkout = _checkout(client, make_token)
+
+    assert (checkout["credits"], checkout["bonusCredits"], checkout["totalCredits"]) == (500, 0, 500)
+    order = state["orders"][checkout["orderId"]]
+    assert order["bonus_credits"] == order["bonus_percent"] == 0
+    assert order["plan_at_order"] == profile_plan
 
 
 def test_checkout_unknown_plan_is_404(pay, make_token):
@@ -297,9 +311,11 @@ def test_confirm_grants_using_order_snapshot_not_current_catalog(pay, make_token
 
 def test_confirm_preserves_pro_bonus_after_downgrade_once(pay, make_token):
     client, state = pay
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     state.update(profile_plan="pro", sku_credits=500)
     order = _checkout(client, make_token)
     reads_at_checkout = state["profile_reads"]
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=False)
     state.update(profile_plan="starter", sku_credits=1, plan_ok=False)
     payload = {"paymentKey": "pk_1", "orderId": order["orderId"], "amount": order["amount"]}
     first = client.post("/v1/payments/toss/confirm", headers=_auth(make_token), json=payload)
@@ -323,6 +339,7 @@ def test_legacy_confirmation_has_zero_bonus_snapshot(pay, make_token):
     order = _checkout(client, make_token)
     for key in ("bonus_credits", "bonus_percent", "plan_at_order"):
         state["orders"][order["orderId"]].pop(key, None)
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     state["profile_plan"] = "pro"
     result = client.post("/v1/payments/toss/confirm", headers=_auth(make_token), json={
         "paymentKey": "pk_1", "orderId": order["orderId"], "amount": order["amount"]})

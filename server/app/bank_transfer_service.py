@@ -124,6 +124,7 @@ async def create_request(
     conn, *, user_id: str, plan_code: str, payer_name: str, phone: str | None,
     tax_invoice: bool, business_no: str | None, business_name: str | None,
     representative_name: str | None, invoice_email: str | None, note: str | None,
+    topup_bonus_enabled: bool = False,
 ) -> dict:
     """신청 생성. 같은 종류의 기한 지난 requested 는 먼저 expired 로 닫는다.
 
@@ -168,8 +169,9 @@ async def create_request(
             await cur.execute("select plan from profiles where user_id = %s", (user_id,))
             profile = await cur.fetchone()
             plan_at_order = plan_of((profile or {}).get("plan"))
-            bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
-            bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
+            if topup_bonus_enabled:
+                bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
+                bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
         await cur.execute(
             "insert into bank_transfer_requests (user_id, plan_code, kind, amount, credits, "
             "bonus_credits, bonus_percent, plan_at_order, "

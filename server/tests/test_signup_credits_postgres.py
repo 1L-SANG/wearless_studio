@@ -26,7 +26,7 @@ def signup_pg():
     assert options.get("hostaddr", "127.0.0.1") in {"127.0.0.1", "::1"}
     assert "service" not in options
     schema = "signup_test_" + uuid.uuid4().hex
-    db = psycopg.connect(dsn, host="127.0.0.1", hostaddr="127.0.0.1", autocommit=True, row_factory=dict_row)
+    db = psycopg.connect(dsn, host="127.0.0.1", hostaddr="127.0.0.1", autocommit=True, row_factory=dict_row, connect_timeout=2)
     db.execute(psycopg.sql.SQL("create schema {}").format(psycopg.sql.Identifier(schema)))
     db.execute(psycopg.sql.SQL("set search_path to {}").format(psycopg.sql.Identifier(schema)))
     db.execute("""
@@ -53,6 +53,7 @@ def wire_pg(monkeypatch, dsn, schema):
     async def connection(_request):
         async with await psycopg.AsyncConnection.connect(
             dsn, host="127.0.0.1", hostaddr="127.0.0.1", row_factory=dict_row,
+            connect_timeout=2,
             options=f"-c search_path={schema}",
         ) as conn:
             yield conn

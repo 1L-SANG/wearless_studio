@@ -53,13 +53,13 @@ before(async () => {
 });
 after(() => vite?.close());
 
-function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError = null) {
+function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError = null, topupBonusEnabled) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plansToShow);
   if (queryError) {
     client.getQueryCache().find({ queryKey: ['pricingPlans'] }).setState({ status: 'error', error: queryError });
   }
-  runtime.account = loggedIn ? { plan: currentPlan } : null;
+  runtime.account = loggedIn ? { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) } : null;
   runtime.session = loggedIn ? { user: { id: 'pricing-user' } } : null;
   try {
     return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(Pricing)));
@@ -72,7 +72,7 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError =
 // 고정하고 있었으므로 새 정책(구독 버튼 활성)으로 고쳐 쓴다 — 계획서
 // docs/plans/2026-09-09-toss-billing-subscription.md Task 10.
 test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
-  const html = render(plans);
+  const html = render(plans, 'free', true, null, true);
   assert.doesNotMatch(html, /상세페이지 한 개에 13,000원/);
   for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩69,900', '₩119,000',
     '200 크레딧 추가 증정', '400 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
@@ -115,26 +115,34 @@ test('충전 보너스는 현재 플랜에 따라 정수로 내림한다', () =>
   ]) assert.equal(limits.topupBonusCredits(plan, base), expected, `${plan}:${base}`);
 });
 
-test('충전 섹션은 로그인과 플랜, 결제 모드에 관계없이 보너스 안내를 표시한다', () => {
+test('서버가 충전 보너스를 켠 계정에만 구독 카드와 충전 안내를 표시한다', () => {
   const original = tossKeys.BANK_TRANSFER_ENABLED;
   try {
     for (const bankTransfer of [true, false]) {
       tossKeys.setBankTransferEnabled(bankTransfer);
-      for (const [plan, loggedIn] of [['free', false], ['free', true], ['starter', true], ['seller', true], ['pro', true]]) {
-        const html = render(plans, plan, loggedIn);
+      for (const plan of ['free', 'starter', 'seller', 'pro']) {
+        const html = render(plans, plan, true, null, true);
         const section = html.match(/<section\b[^>]*id="topup"[^>]*>([\s\S]*?)<\/section>/)?.[1];
         assert.ok(section, '크레딧 충전 섹션');
         assert.match(section, /<h2\b[^>]*>크레딧 충전<\/h2>/);
         // '5%,' 는 줄바꿈 방지용 span 에 들어 있으니 태그를 걷어낸 글자로 확인한다.
         assert.match(section.replace(/<[^>]+>/g, ''), /Seller는 충전할 때마다 5%, Pro는 10%를 더 드려요\./);
+        assert.match(html, /충전할 때마다 크레딧 5% 보너스/);
+        assert.match(html, /충전할 때마다 크레딧 10% 보너스/);
       }
+      for (const enabled of [undefined, false, null, 0, 1, 'true']) {
+        const html = render(plans, 'seller', true, null, enabled);
+        assert.doesNotMatch(html, /충전할 때마다|Pro는 10%|\+\d+ 보너스/);
+        assert.equal((html.match(/<li\b/g) || []).length, 10);
+      }
+      assert.doesNotMatch(render(plans, 'seller', false, null, true), /충전할 때마다|Pro는 10%|\+\d+ 보너스/);
     }
   } finally { tossKeys.setBankTransferEnabled(original); }
 });
 
 test('로그인한 Seller와 Pro의 충전 팩에 기본 수량 옆 보너스를 보여준다', () => {
   for (const [plan, small, large] of [['seller', 5, 25], ['pro', 10, 50]]) {
-    const html = render(plans, plan);
+    const html = render(plans, plan, true, null, true);
     assert.match(html, new RegExp(`\\+${small} 보너스`));
     assert.match(html, new RegExp(`\\+${large} 보너스`));
     assert.match(html, /크레딧당 55\.0원/);

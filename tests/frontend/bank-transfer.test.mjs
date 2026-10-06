@@ -69,12 +69,12 @@ const OPEN_SUB = {
   status: 'requested', expiresAt: '2026-09-25T12:00:00+09:00',
 };
 
-function renderPricing({ loggedIn = true, currentPlan = 'free', info = INFO, open = [] } = {}) {
+function renderPricing({ loggedIn = true, currentPlan = 'free', info = INFO, open = [], topupBonusEnabled } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plans);
   client.setQueryData(['bankTransferInfo'], info);
   client.setQueryData(['bankTransferOpen'], { open, recent: null });
-  runtime.account = loggedIn ? { plan: currentPlan } : null;
+  runtime.account = loggedIn ? { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) } : null;
   runtime.session = loggedIn ? { user: { id: 'u1', email: 'seller@example.com' } } : null;
   try {
     return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(Pricing)));
@@ -152,7 +152,7 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
 });
 
 test('계좌이체 모드에서도 Seller와 Pro의 충전 보너스를 안내한다', () => {
-  const html = renderPricing();
+  const html = renderPricing({ topupBonusEnabled: true });
   assert.match(html, /충전할 때마다 크레딧 5% 보너스/);
   assert.match(html, /충전할 때마다 크레딧 10% 보너스/);
   assert.doesNotMatch(html, /갱신 결제 실패 시 3일의 유예기간|이월분을 포함해 모두 소멸/);
@@ -183,12 +183,12 @@ test('계좌이체 신청 미리보기는 현재 플랜의 보너스를 포함�
   try {
     const plan = plans.find((p) => p.code === 'topup_500');
     for (const [currentPlan, total, bonus] of [['seller', 525, 25], ['pro', 550, 50]]) {
-      runtime.account = { plan: currentPlan };
+      runtime.account = { plan: currentPlan, topupBonusEnabled: true };
       const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
       assert.match(html, new RegExp(`${total} 크레딧`));
       assert.match(html, new RegExp(`보너스 ${bonus} 포함`));
     }
-    runtime.account = { plan: 'starter' };
+    runtime.account = { plan: 'starter', topupBonusEnabled: true };
     const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
     assert.match(html, /500 크레딧/);
     assert.doesNotMatch(html, /보너스 \d+ 포함/);
@@ -197,11 +197,49 @@ test('계좌이체 신청 미리보기는 현재 플랜의 보너스를 포함�
   }
 });
 
+test('계좌이체 신청 전 미리보기는 충전 보너스가 명시적으로 켜져야 추가 수량을 표시한다', () => {
+  const previous = globalThis.document;
+  globalThis.document = { body: {} };
+  try {
+    const plan = plans.find((p) => p.code === 'topup_500');
+    for (const currentPlan of ['seller', 'pro']) {
+      for (const topupBonusEnabled of [undefined, false, null, 0, 1, 'true']) {
+        runtime.account = { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) };
+        const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
+        assert.match(html, /500 크레딧/);
+        assert.doesNotMatch(html, /525 크레딧|550 크레딧|보너스 \d+ 포함/);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete globalThis.document; else globalThis.document = previous;
+  }
+});
+
+test('목 계좌이체 신청은 보너스가 꺼져 있거나 누락되면 현재 Pro도 기본 수량만 저장한다', async () => {
+  const original = { ...DB.account };
+  try {
+    for (const enabled of [undefined, false, 'true']) {
+      DB.account.plan = 'pro';
+      if (enabled === undefined) delete DB.account.topupBonusEnabled;
+      else DB.account.topupBonusEnabled = enabled;
+      const { request } = await api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' });
+      assert.equal(request.bonusCredits, 0);
+      assert.equal(request.totalCredits, 500);
+      assert.equal(request.bonusPercent, 0);
+      await api.cancelBankTransferRequest(request.id);
+    }
+  } finally {
+    for (const request of (await api.getOpenBankTransferRequests()).open) await api.cancelBankTransferRequest(request.id);
+    Object.assign(DB.account, original);
+  }
+});
+
 test('목 충전 신청은 신청 시점 보너스를 저장하고 변경된 플랜과 무관하게 한번 지급한다', async () => {
   const original = { ...DB.account };
   try {
     for (const [plan, bonus, total] of [['seller', 25, 525], ['pro', 50, 550], ['free', 0, 500]]) {
       DB.account.plan = plan;
+      DB.account.topupBonusEnabled = true;
       const start = DB.account.credits;
       const { request } = await api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' });
       assert.equal(request.credits, 500);
@@ -210,6 +248,7 @@ test('목 충전 신청은 신청 시점 보너스를 저장하고 변경된 플
       assert.equal(request.planAtOrder, plan);
       assert.equal(request.bonusPercent, plan === 'seller' ? 5 : plan === 'pro' ? 10 : 0);
       DB.account.plan = 'starter';
+      DB.account.topupBonusEnabled = false;
       const result = await api.adminConfirmBankTransfer(request.id, { paidAt: '2026-10-06' });
       assert.equal(result.credits, total);
       assert.equal(result.baseCredits, 500);

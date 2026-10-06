@@ -40,6 +40,23 @@ def test_account_reads_retired_plans_as_free(client, make_token, monkeypatch, pl
     assert response.json()["plan"] == expected
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_account_exposes_server_topup_bonus_flag(client, make_token, monkeypatch, enabled):
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=enabled)
+
+    async def fake_get_account(conn, user_id):
+        return {"name": "한지수", "avatar": "", "credits": 24, "plan": "pro",
+                "topup_bonus_enabled": not enabled}
+
+    monkeypatch.setattr(routes.repo, "get_account", fake_get_account)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.get("/v1/me/account", headers=_auth(make_token))
+
+    assert response.status_code == 200, response.text
+    assert response.json().get("topupBonusEnabled") is enabled
+
+
 def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_hosts():
     asset_id = "33333333-3333-3333-3333-333333333333"
 

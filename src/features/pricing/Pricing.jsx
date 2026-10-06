@@ -74,6 +74,7 @@ export function Pricing() {
   const account = useAppStore((a) => a.account);
   const loadAccount = useAppStore((a) => a.loadAccount);
   const currentPlan = (account?.plan || '').toLowerCase();
+  const topupBonusEnabled = account?.topupBonusEnabled === true;
   const { session, openLogin } = useAuth();
   const qc = useQueryClient();
   // 계좌이체(무통장입금) — PG 심사 전 결제 경로(lib/tossKeys.js BANK_TRANSFER_ENABLED).
@@ -296,7 +297,7 @@ export function Pricing() {
                   <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / STANDARD_PAGE_CREDITS)}개</strong></p>
                 </div>
                 {details && <ul className={s.features}>
-                  {[...details.features, ...(details.topupBonus ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
+                  {[...details.features, ...(topupBonusEnabled && details.topupBonus ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
                     <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
                     <span>{feature}</span>
                   </li>)}
@@ -361,14 +362,14 @@ export function Pricing() {
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
             <span className={s.topupMeta}>1회 결제 · 소멸 없음</span>
           </div>
-          <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>
+          {topupBonusEnabled && <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>}
           {entry.need > 0 && (
             <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
           )}
           <div className={s.topupList}>
             {topups.map((p) => {
               const locked = session && bankTransfer && (!bankReady || Boolean(openByKind('topup')));
-              const bonusCredits = session ? topupBonusCredits(currentPlan, p.credits) : 0;
+              const bonusCredits = session && topupBonusEnabled ? topupBonusCredits(currentPlan, p.credits) : 0;
               return (
                 <div key={p.id} className={`${s.topupRow}${p.code === recommendedCode ? ' ' + s.recommended : ''}`}>
                   {p.code === recommendedCode && <span className={s.recommendPill}>추천</span>}

@@ -1216,9 +1216,13 @@ async def admin_grant_credits(
             snapshot = None
             if sku is not None:
                 plan_at_order = plan_of(profile.get("plan"))
+                bonus_credits, bonus_percent = 0, 0
+                if request.app.state.settings.topup_bonus_enabled:
+                    bonus_credits = topup_bonus_credits(plan_at_order, sku["credits"])
+                    bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
                 snapshot = {"credits": sku["credits"], "price": sku["price"],
-                            "bonusCredits": topup_bonus_credits(plan_at_order, sku["credits"]),
-                            "bonusPercent": TOPUP_BONUS_PERCENT[plan_at_order],
+                            "bonusCredits": bonus_credits,
+                            "bonusPercent": bonus_percent,
                             "planAtOrder": plan_at_order}
         try:
             # repo가 대상 사용자 스코프를 붙인다. 다른 지급 경로와 키를 분리한다.

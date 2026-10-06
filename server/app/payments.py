@@ -98,8 +98,10 @@ async def create_checkout(
             await cur.execute("select plan from profiles where user_id = %s", (user_id,))
             profile = await cur.fetchone()
             plan_at_order = plan_of((profile or {}).get("plan"))
-            bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
-            bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
+            bonus_percent, bonus_credits = 0, 0
+            if request.app.state.settings.topup_bonus_enabled:
+                bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
+                bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
             order_id = _new_order_id()
             await cur.execute(
                 "insert into toss_payment_orders (order_id, user_id, plan_code, amount, credits, "

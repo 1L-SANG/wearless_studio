@@ -32,6 +32,7 @@ class Account(CamelModel):
     avatar: str
     credits: int  # = balance - reserved (§6)
     plan: PlanTier
+    topup_bonus_enabled: bool = False
 
 
 class MannequinGenerateQuote(CamelModel):

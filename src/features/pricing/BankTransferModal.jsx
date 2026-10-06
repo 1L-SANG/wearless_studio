@@ -25,9 +25,9 @@ function Amount({ value, className }) {
   return <span className={className}><span className={s.cur}>₩</span>{num(value)}</span>;
 }
 
-function Summary({ plan, info, currentPlan }) {
+function Summary({ plan, info, currentPlan, topupBonusEnabled }) {
   const recurring = plan.kind === 'subscription';
-  const bonusCredits = recurring ? 0 : topupBonusCredits(currentPlan, plan.credits);
+  const bonusCredits = !recurring && topupBonusEnabled ? topupBonusCredits(currentPlan, plan.credits) : 0;
   return (
     <aside className={s.sum} aria-label="주문 요약">
       <p className={s.sumEyebrow}>주문 요약</p>
@@ -123,6 +123,7 @@ function DoneView({ done, plan, info, onClose, titleId }) {
 
 export function BankTransferModal({ plan, info, defaultEmail, extend = false, onClose, onSubmitted }) {
   const currentPlan = useAppStore((a) => a.account?.plan);
+  const topupBonusEnabled = useAppStore((a) => a.account?.topupBonusEnabled === true);
   const titleId = useId();
   const [form, setForm] = useState({
     payerName: '', taxInvoice: false, businessNo: '', businessName: '',
@@ -204,7 +205,7 @@ export function BankTransferModal({ plan, info, defaultEmail, extend = false, on
           <DoneView done={done} plan={plan} info={info} onClose={onClose} titleId={titleId} />
         ) : (
           <>
-            <Summary plan={plan} info={info} currentPlan={currentPlan} />
+            <Summary plan={plan} info={info} currentPlan={currentPlan} topupBonusEnabled={topupBonusEnabled} />
             <header className={s.head}>
               <span className={s.grab} aria-hidden="true" />
               <h2 id={titleId} className={s.title}>{extend ? '이용권 1개월 연장 신청' : '계좌이체로 신청'}</h2>

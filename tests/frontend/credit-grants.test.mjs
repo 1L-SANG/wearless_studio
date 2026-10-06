@@ -105,11 +105,16 @@ test('가입 크레딧 원장은 화면에 사용자가 읽는 이름으로 표�
   } finally { client.clear(); }
 });
 
+test('목 기본 계정은 충전 보너스가 꺼졌다고 응답한다', async () => {
+  assert.equal((await api.getAccount()).topupBonusEnabled, false);
+});
+
 test('목 토스 결제는 주문 시점 보너스와 기본 수량을 구분하고 총량을 지급한다', async () => {
   const original = { ...DB.account };
   try {
     for (const [plan, bonus, total] of [['seller', 25, 525], ['pro', 50, 550], ['free', 0, 500]]) {
       DB.account.plan = plan;
+      DB.account.topupBonusEnabled = true;
       const start = DB.account.credits;
       const order = await api.createTossCheckout('topup_500');
       assert.equal(order.credits, 500);
@@ -118,6 +123,7 @@ test('목 토스 결제는 주문 시점 보너스와 기본 수량을 구분하
       assert.equal(order.planAtOrder, plan);
       assert.equal(order.bonusPercent, plan === 'seller' ? 5 : plan === 'pro' ? 10 : 0);
       DB.account.plan = 'starter';
+      DB.account.topupBonusEnabled = false;
       const result = await api.confirmTossPayment({ orderId: order.orderId, amount: order.amount });
       const { idempotent, ...grant } = result;
       assert.deepEqual(grant, { credits: total, baseCredits: 500, bonusCredits: bonus, totalCredits: total, available: start + total });
@@ -128,6 +134,21 @@ test('목 토스 결제는 주문 시점 보너스와 기본 수량을 구분하
       assert.equal(repeated.credits, total);
       assert.equal(repeated.available, start + total - 19);
       assert.equal(DB.account.credits, start + total - 19);
+    }
+  } finally { Object.assign(DB.account, original); }
+});
+
+test('목 토스 주문은 보너스가 켜지지 않은 Pro도 기본 수량만 저장한다', async () => {
+  const original = { ...DB.account };
+  try {
+    for (const enabled of [undefined, false, 'true']) {
+      DB.account.plan = 'pro';
+      if (enabled === undefined) delete DB.account.topupBonusEnabled;
+      else DB.account.topupBonusEnabled = enabled;
+      const order = await api.createTossCheckout('topup_500');
+      assert.equal(order.bonusCredits, 0);
+      assert.equal(order.totalCredits, 500);
+      assert.equal(order.bonusPercent, 0);
     }
   } finally { Object.assign(DB.account, original); }
 });

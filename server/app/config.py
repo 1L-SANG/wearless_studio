@@ -404,6 +404,9 @@ class Settings:
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
     detailpage_fallback_model_id: str = "mB"
+    # 새 보너스 주문은 모든 지급 서버가 스냅샷을 읽는 버전으로 교체된 뒤에만 켠다.
+    # 꺼도 이미 저장된 주문의 보너스 지급은 유지한다.
+    topup_bonus_enabled: bool = False
     # ---- 토스페이먼츠 크레딧 추가구매(WS3) — 시크릿 키가 있어야만 활성 ----
     # 시크릿 키는 **서버 전용**(결제 승인 API Basic auth). 없으면 checkout 이 503 으로 거절한다
     # — 키 없이 조용히 '목 성공'을 돌려주면 결제 안 하고 크레딧이 늘어나는 구멍이 된다.
@@ -975,6 +978,7 @@ def load_settings() -> Settings:
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
         fm_payout_account_key=os.getenv("FM_PAYOUT_ACCOUNT_KEY") or None,
         fm_payout_provider=os.getenv("FM_PAYOUT_PROVIDER", "manual"),
+        topup_bonus_enabled=(os.getenv("TOPUP_BONUS_ENABLED", "false").lower() == "true"),
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),

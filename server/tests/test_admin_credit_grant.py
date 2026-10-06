@@ -1,5 +1,6 @@
 """관리자 계좌이체 지급의 인증, 원장 기록, 재시도 계약."""
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -148,6 +149,7 @@ def test_retry_returns_same_grant_without_duplicate_credit(grant, make_token):
 def test_admin_grant_uses_target_plan_and_active_sku_bonus(
         grant, make_token, profile_plan, base, total, bonus, percent):
     client, conn = grant
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     conn.profiles[TARGET]["plan"] = profile_plan
     conn.sku_credits = base
     result = post(grant, make_token)
@@ -163,11 +165,31 @@ def test_admin_grant_uses_target_plan_and_active_sku_bonus(
     assert conn.payments[0]["amount"] == 9900
 
 
+@pytest.mark.parametrize("profile_plan", ["seller", "pro"])
+def test_admin_grant_defaults_to_zero_bonus_during_rollout(grant, make_token, profile_plan):
+    conn = grant[1]
+    conn.profiles[TARGET]["plan"] = profile_plan
+    conn.sku_credits = 500
+    response = post(grant, make_token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["credits"] == 500
+    assert response.json()["available"] == 515
+    assert conn.sources[0][2:4] == (500, 500)
+    assert conn.ledger[0]["credits"] == 500
+    metadata = conn.ledger[0]["metadata"]
+    assert metadata["bonusCredits"] == metadata["bonusPercent"] == 0
+    assert metadata["planAtOrder"] == profile_plan
+
+
 def test_admin_grant_retry_returns_original_bonus_after_plan_change(grant, make_token):
+    client = grant[0]
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
     conn = grant[1]
     conn.profiles[TARGET]["plan"] = "pro"
     conn.sku_credits = 500
     first = post(grant, make_token)
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=False)
     conn.profiles[TARGET]["plan"] = "starter"
     conn.sku_credits = 1
     retry = post(grant, make_token)

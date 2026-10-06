@@ -561,7 +561,7 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
     # 단일 배포 중 DB에 옛 요금제가 남아 있어도 계정 조회가 500으로 실패하지 않게 한다.
     if row.get("plan") not in get_args(PlanTier):
         row = {**row, "plan": "free"}
-    return row
+    return {**row, "topup_bonus_enabled": request.app.state.settings.topup_bonus_enabled}
 
 
 def _consent_payload(row: dict | None, *, today=None, signup_credits: int = 0) -> dict:
