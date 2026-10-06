@@ -122,7 +122,9 @@ async def confirm(
     if not result.get("idempotent"):
         await bank_transfer_notify.notify_user_confirmed(
             settings, to=email,
-            req={"kind": result["kind"], "plan_code": result["planCode"], "credits": result["credits"]},
+            req={"kind": result["kind"], "plan_code": result["planCode"], "credits": result["credits"],
+                 "baseCredits": result.get("baseCredits", result["credits"]),
+                 "bonusCredits": result.get("bonusCredits", 0)},
             ends_at=result.get("endsAt"),
         )
     return JSONResponse(result)

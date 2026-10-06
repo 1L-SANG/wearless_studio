@@ -96,7 +96,7 @@ async def upsert_seller_consent(
                    privacy_version = excluded.privacy_version,
                    age_attested = excluded.age_attested,
                    accepted_at = now()
-            returning terms_version, privacy_version, age_attested, accepted_at
+            returning terms_version, privacy_version, age_attested, accepted_at, (xmax = 0) as inserted
             """,
             (user_id, terms_version, privacy_version, age_attested),
         )
@@ -2785,7 +2785,9 @@ async def _consume_buckets(
         await cur.execute(
             "select id::text as id, remaining_credits from credit_sources "
             "where user_id = %s and status = 'active' and remaining_credits > 0 "
-            "order by source_type, created_at for update",  # 'subscription' < 'topup' → 구독 먼저
+            # 해지 시 소멸하는 구독부터 쓰고, 무료를 먼저 써 유료 충전의 환불 가능성을 보존한다.
+            "order by case source_type when 'subscription' then 0 when 'free' then 1 else 2 end, "
+            "created_at for update",
             (user_id,),
         )
         buckets = await cur.fetchall()
@@ -3704,7 +3706,7 @@ async def grant_subscription(
 
     2026-09-09 정책 변경: 예전에는 갱신 때 기존 구독 버킷을 만료시키고 새로 줬다(소멸).
     이제 소멸은 해지·유예만료라는 사건에서만 일어난다(expire_subscription_buckets).
-    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (source_type, created_at) 이라
+    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (종류별 소진 우선순위, created_at) 이라
     이월분이 자연히 먼저 소진된다 — 오래된 크레딧부터 쓰는 게 사용자에게 유리하다.
 
     credits: 지급량 override(업그레이드 비례분). None 이면 요금제 정가.
@@ -3808,11 +3810,48 @@ async def subscription_bucket_summary(conn: AsyncConnection, user_id: str) -> di
     return {"credits": int(row.get("credits") or 0), "expiresAt": row.get("expires_at")}
 
 
+async def grant_signup_credits(
+    conn: AsyncConnection, *, user_id: str, credits: int,
+) -> int:
+    """최초 셀러 동의 또는 소급 지급. 계정 잠금과 원장 키로 한 번만 지급한다."""
+    if credits <= 0:
+        return 0
+    key = f"signup:{user_id}"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        await cur.execute("select id from credit_ledger where idempotency_key = %s", (key,))
+        if await cur.fetchone() is not None:
+            return 0
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, initial_credits, remaining_credits, "
+            "status, period_end, plan_id, payment_id) "
+            "values (%s, 'free', %s, %s, 'active', null, null, null) returning id::text as id",
+            (user_id, credits, credits),
+        )
+        source_id = (await cur.fetchone())["id"]
+        running = acct["balance"] + credits
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, idempotency_key, metadata) "
+            "values (%s,%s,'grant_signup',%s,%s,%s,%s,%s)",
+            (user_id, source_id, credits, running, running - acct["reserved"], key, Json({"reason": "signup"})),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return credits
+
+
 async def purchase_topup(
     conn: AsyncConnection, *, user_id: str, plan_code: str,
     idempotency_key: str | None = None, metadata: dict | None = None,
     provider: str = "test", provider_ref: str | None = None,
-    snapshot: dict | None = None,   # {"credits": int, "price": int} — 결제 시점 확정값
+    snapshot: dict | None = None,   # credits, price, 선택 bonusCredits: 주문 시점 확정값
 ) -> dict:
     """추가구매(§3.2, 테스트용 provider='test'): payment + topup 버킷 + grant 원장.
     멱등: Idempotency-Key 주면 중복 지급 방지(더블클릭/재시도) — account FOR UPDATE가 동시
@@ -3861,6 +3900,12 @@ async def purchase_topup(
             plan = await cur.fetchone()
             if plan is None:
                 raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
+        base_credits = plan["credits"]
+        bonus_credits = (snapshot or {}).get("bonusCredits", 0)
+        granted_credits = base_credits + bonus_credits
+        metadata = {**metadata, "baseCredits": base_credits, "bonusCredits": bonus_credits,
+                    "bonusPercent": (snapshot or {}).get("bonusPercent", 0),
+                    "planAtOrder": (snapshot or {}).get("planAtOrder")}
         await cur.execute(
             # provider/provider_ref 는 PG 연동(토스)에서 채운다. 기본값 'test' 는 기존 테스트
             # 구매 경로 그대로 — 실 결제는 provider='toss', provider_ref=paymentKey.
@@ -3873,21 +3918,21 @@ async def purchase_topup(
             "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
             "remaining_credits, status, payment_id) "
             "values (%s, 'topup', %s, %s, %s, 'active', %s) returning id::text as id",
-            (user_id, plan["id"], plan["credits"], plan["credits"], pay_id),
+            (user_id, plan["id"], granted_credits, granted_credits, pay_id),
         )
         src_id = (await cur.fetchone())["id"]
-        running = acct["balance"] + plan["credits"]
+        running = acct["balance"] + granted_credits
         await cur.execute(
             "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
             "balance_after, available_after, idempotency_key, metadata) "
             "values (%s,%s,'grant_topup',%s,%s,%s,%s,%s)",
-            (user_id, src_id, plan["credits"], running, running - acct["reserved"],
+            (user_id, src_id, granted_credits, running, running - acct["reserved"],
              scoped_key, Json(metadata)),
         )
         await cur.execute(
             "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
         )
-    return {"creditSourceId": src_id, "paymentId": pay_id, "credits": plan["credits"],
+    return {"creditSourceId": src_id, "paymentId": pay_id, "credits": granted_credits,
             "available": running - acct["reserved"]}
 
 
@@ -3912,6 +3957,8 @@ async def request_refund(
         b = await cur.fetchone()
         if b is None:
             raise CreditError("refund_not_found", "구매 내역을 찾을 수 없어요.", 404)
+        if b["source_type"] == "free":
+            raise CreditError("free_not_refundable", "무료 크레딧은 환불 대상이 아니에요.", 400)
         if b["source_type"] != "topup":
             raise CreditError("subscription_not_refundable", "구독 크레딧은 환불 대상이 아니에요.", 400)
         if b["status"] != "active":

@@ -46,13 +46,14 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   };
   globalThis.window = Object.assign(new EventTarget(), { location: { origin: 'https://ai.wearless.kr', search: '' } });
   const runtime = {
-    frame: null, auth: null, user, listener: null, records: [], requests: [],
+    frame: null, auth: null, user, listener: null, records: [], requests: [], toasts: [], accountLoads: [],
     oauth: async () => ({ error: null }),
     password: async () => ({ error: null }),
     get: async (user) => user === 'existing-A' ? accepted : missing,
     post: async () => accepted,
     queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   };
+  runtime.toast = { push: msg => runtime.toasts.push(msg) };
   runtime.api = {
     getAccount: async () => ({ id: runtime.user, plan: runtime.user === 'A' ? 'seller' : 'free', credits: 0 }),
     resetInputDraft: async () => {},
@@ -74,6 +75,10 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
     }
     return runtime.get(user, options);
   };
+  runtime.api.getSellerConsent = (options) => runtime.http('/v1/me/consents', options);
+  runtime.api.acceptSellerConsent = ({ termsVersion, privacyVersion, ...options }) => runtime.http('/v1/me/consents', {
+    ...options, method: 'POST', body: { termsVersion, privacyVersion, ageAttested: true },
+  });
   if (realHttp) globalThis.fetch = async (url, options) => {
     assert.equal(new URL(url, 'https://api.test').pathname, '/v1/me/consents');
     const user = options.headers.Authorization.slice('Bearer '.length);
@@ -137,6 +142,9 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
             if (unchanged(f.hooks[i]?.deps, deps)) return;
             f.effects.push(() => { f.hooks[i]?.cleanup?.(); f.hooks[i] = { deps, cleanup: effect() }; });
           };
+          export const useSyncExternalStore = (_subscribe, getSnapshot) => getSnapshot();
+          export const useDebugValue = () => {};
+          export default { useCallback, useSyncExternalStore, useDebugValue };
         `;
         if (id === '\0signup-test-jsx') return "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment='Fragment';";
         if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase;`;
@@ -145,11 +153,14 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
         if (id === '\0signup-test-query') return `export const useQueryClient=()=>${access}.queryClient;`;
         if (id === '\0signup-test-host') return `export const IS_ADMIN=${admin}; export const IS_FACEMARKET=${facemarket};`;
         if (id === '\0signup-test-toss') return `export const PG_REVIEW_LOGIN_ENABLED=${reviewLogin};`;
-        if (id === '\0signup-test-ui') return "export const Modal='Modal';export const Button='Button';export const Icon='Icon';";
+        if (id === '\0signup-test-ui') return `export const Modal='Modal';export const Button='Button';export const Icon='Icon';export const useToast=()=>${access}.toast;`;
         if (id === '\0signup-test-css') return 'export default new Proxy({}, {get: (_, key) => key});';
         if (id === '\0signup-test-draft') return 'export const draftSlot={resetIdentity(){}};';
         if (id === '\0signup-test-origin') return 'export const stampAppOrigin=()=>{};';
-        if (id === '\0signup-test-store') return 'export const useAppStore={getState:()=>({beginProject:async()=>{},setAccountIdentity:()=>false})};';
+        if (id === '\0signup-test-store') return `
+          const state={beginProject:async()=>{},setAccountIdentity:()=>false,loadAccount:async(options)=>${access}.accountLoads.push(options)};
+          export const useAppStore=selector=>selector(state); useAppStore.getState=()=>state;
+        `;
       },
     }],
   });
@@ -158,6 +169,12 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   const { SignupCompletion } = await server.ssrLoadModule('/src/features/auth/SignupCompletion.jsx');
   const consent = await server.ssrLoadModule('/src/lib/signupConsent.js');
   const http = realHttp ? (await server.ssrLoadModule('/src/lib/api/httpAdapter.js')).http : null;
+  if (http) {
+    runtime.api.getSellerConsent = (options) => http('/v1/me/consents', options);
+    runtime.api.acceptSellerConsent = ({ termsVersion, privacyVersion, ...options }) => http('/v1/me/consents', {
+      ...options, method: 'POST', body: { termsVersion, privacyVersion, ageAttested: true },
+    });
+  }
   const store = realAccountStore ? (await server.ssrLoadModule('/src/store/useAppStore.js')).useAppStore : null;
   const frames = new Map();
   function render(name, component) {
@@ -444,6 +461,128 @@ test('checked signup survives OAuth and silently records the required versions a
   assert.equal(h.consent.hasFreshSignupConsent(), false);
 });
 
+for (const automatic of [false, true]) {
+  for (const signupCredits of [0, 150]) {
+    test(`consent success refreshes balance and announces only granted signup credits (automatic=${automatic}, credits=${signupCredits})`, async t => {
+      const h = await harness(t);
+      h.runtime.post = async () => ({ ...accepted, signupCredits });
+      if (automatic) await h.signup();
+      h.completion(); await h.user('new-B');
+      if (!automatic) {
+        checkbox(h.completion()).props.onChange({ target: { checked: true } });
+        await submit(h.completion()).props.onClick();
+      }
+      await h.flush();
+      assert.equal(h.completion(), null);
+      assert.deepEqual(h.runtime.accountLoads, [{ force: true }]);
+      assert.deepEqual(h.runtime.toasts, signupCredits > 0 ? ['가입 크레딧 150을 드렸어요'] : []);
+    });
+  }
+}
+
+test('가입 지급 후 잔액을 서버에서 다시 읽어 기존 계정 캐시를 갱신한다', async t => {
+  const h = await harness(t, { realAccountStore: true });
+  let credits = 0;
+  h.runtime.api.getAccount = async () => ({ id: 'new-B', plan: 'free', credits });
+  h.runtime.post = async () => { credits = 150; return { ...accepted, signupCredits: 150 }; };
+  h.completion(); await h.user('new-B');
+  await h.store.getState().loadAccount();
+  assert.equal(h.store.getState().account.credits, 0);
+  checkbox(h.completion()).props.onChange({ target: { checked: true } });
+  await submit(h.completion()).props.onClick();
+  await h.flush();
+  assert.equal(h.store.getState().account.credits, 150);
+  assert.deepEqual(h.runtime.toasts, ['가입 크레딧 150을 드렸어요']);
+});
+
+test('가입 지급 전 시작한 같은 계정 조회가 늦게 끝나도 지급 후 잔액을 덮지 않는다', async t => {
+  const h = await harness(t, { realAccountStore: true });
+  const beforeSignup = deferred();
+  const afterSignup = deferred();
+  let calls = 0;
+  h.runtime.api.getAccount = () => ++calls === 1 ? beforeSignup.promise : afterSignup.promise;
+  h.runtime.post = async () => ({ ...accepted, signupCredits: 150 });
+  h.completion(); await h.user('new-B');
+  const oldLoad = h.store.getState().loadAccount();
+  checkbox(h.completion()).props.onChange({ target: { checked: true } });
+  await submit(h.completion()).props.onClick();
+  assert.equal(calls, 2);
+  afterSignup.resolve({ id: 'new-B', plan: 'free', credits: 150 });
+  await h.flush();
+  assert.equal(h.store.getState().account.credits, 150);
+  beforeSignup.resolve({ id: 'new-B', plan: 'free', credits: 0 });
+  await oldLoad;
+  assert.equal(h.store.getState().account.credits, 150);
+});
+
+for (const oldSuccessFirst of [false, true]) {
+  test(`최신 계정 조회가 실패해도 기존 정상 응답의 잔액을 보존한다 (기존 응답 먼저=${oldSuccessFirst})`, async t => {
+    const h = await harness(t, { user: 'A', realAccountStore: true });
+    const initial = deferred();
+    const refresh = deferred();
+    let calls = 0;
+    h.runtime.api.getAccount = () => ++calls === 1 ? initial.promise : refresh.promise;
+    const oldLoad = h.store.getState().loadAccount();
+    const refreshFailure = assert.rejects(h.store.getState().loadAccount({ force: true }), /refresh offline/);
+    const account = { id: 'A', plan: 'seller', credits: 510 };
+    if (oldSuccessFirst) {
+      initial.resolve(account);
+      await oldLoad;
+      assert.equal(h.store.getState().account?.credits, 510);
+    }
+    refresh.reject(new Error('refresh offline'));
+    await refreshFailure;
+    if (!oldSuccessFirst) {
+      initial.resolve(account);
+      await oldLoad;
+    }
+    assert.deepEqual(h.store.getState().account, account);
+    assert.equal(h.store.getState().accountLoaded, true);
+  });
+}
+
+for (const oldSuccessFirst of [false, true]) {
+  test(`같은 계정의 겹친 정상 응답은 최신 조회 잔액을 유지한다 (기존 응답 먼저=${oldSuccessFirst})`, async t => {
+    const h = await harness(t, { user: 'A', realAccountStore: true });
+    const initial = deferred();
+    const refresh = deferred();
+    let calls = 0;
+    h.runtime.api.getAccount = () => ++calls === 1 ? initial.promise : refresh.promise;
+    const oldLoad = h.store.getState().loadAccount();
+    const newLoad = h.store.getState().loadAccount({ force: true });
+    if (oldSuccessFirst) {
+      initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+      await oldLoad;
+      assert.equal(h.store.getState().account?.credits, 510);
+    }
+    refresh.resolve({ id: 'A', plan: 'seller', credits: 660 });
+    await newLoad;
+    if (!oldSuccessFirst) {
+      initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+      assert.equal(await oldLoad, null);
+    }
+    assert.equal(h.store.getState().account.credits, 660);
+    assert.equal((await h.store.getState().loadAccount()).credits, 660);
+  });
+}
+
+test('새 계정 조회가 실패해도 이전 계정의 정상 응답을 캐시에 넣지 않는다', async t => {
+  const h = await harness(t, { user: 'A', realAccountStore: true });
+  const initial = deferred();
+  const refresh = deferred();
+  h.runtime.api.getAccount = () => h.runtime.user === 'A' ? initial.promise : refresh.promise;
+  const oldLoad = h.store.getState().loadAccount();
+  await h.user('B');
+  const refreshFailure = assert.rejects(h.store.getState().loadAccount({ force: true }), /new account offline/);
+  refresh.reject(new Error('new account offline'));
+  await refreshFailure;
+  initial.resolve({ id: 'A', plan: 'seller', credits: 510 });
+  assert.equal(await oldLoad, null);
+  assert.equal(h.store.getState().account, null);
+  assert.equal(h.store.getState().accountLoaded, false);
+  assert.equal(h.store.getState().accountUserId, 'B');
+});
+
 test('an old OAuth failure cannot discard a newer checked signup attempt in the same millisecond', async (t) => {
   const h = await harness(t);
   t.mock.method(Date, 'now', () => 1800000000000);
@@ -486,10 +625,12 @@ test('changing users resets a checked gate and ignores an old manual POST respon
   assert.equal(checkbox(h.completion()).props.checked, false);
   assert.equal(submit(h.completion()).props.disabled, true);
   h.consent.markSignupConsent();
-  oldPost.resolve(accepted); await saving; await h.flush();
+  oldPost.resolve({ ...accepted, signupCredits: 150 }); await saving; await h.flush();
   assert.ok(checkbox(h.completion()), 'old response must not dismiss the new user gate');
   assert.equal(h.consent.hasFreshSignupConsent(), true, 'old save must not clear the next signup attempt');
   assert.equal(h.runtime.requests.find((request) => request.method === 'POST').signal?.aborted, true);
+  assert.deepEqual(h.runtime.toasts, []);
+  assert.deepEqual(h.runtime.accountLoads, []);
 });
 
 test('old automatic POST cannot hide the next account gate or consume its signup marker', async (t) => {

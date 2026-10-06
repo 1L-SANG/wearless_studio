@@ -18,6 +18,7 @@ const ACTION_LABEL = {
   'mannequinGenerate.reserve': '마네킹 무료 수정',
   'mannequinGenerate.release': '예약 해제',
   grant_subscription: '구독 크레딧 충전',
+  grant_signup: '가입 크레딧',
   grant_topup: '추가 구매',
   expire_subscription: '구독 크레딧 만료',
   refund_request: '환불 요청',

@@ -6,11 +6,16 @@ from .models import PlanTier
 
 EXTENSION_MODEL_FEE = {"free": 19, "starter": 19, "seller": 10, "pro": 0}
 FREE_MANNEQUIN_ADJUSTS = {"free": 1, "starter": 1, "seller": 1, "pro": 2}
+TOPUP_BONUS_PERCENT = {"free": 0, "starter": 0, "seller": 5, "pro": 10}
 BASIC_VIRTUAL_MODEL_IDS = frozenset({"mA", "mB"})
 
 
 def plan_of(profile_plan: str | None) -> str:
     return profile_plan if profile_plan in get_args(PlanTier) else "free"
+
+
+def topup_bonus_credits(plan: str | None, base_credits: int) -> int:
+    return base_credits * TOPUP_BONUS_PERCENT[plan_of(plan)] // 100
 
 
 def extension_model_fee(plan: str | None, selected_model_id: str | None) -> int:

@@ -183,6 +183,8 @@ let composeModePatchChain = Promise.resolve();
 let copywritingPatchChain = Promise.resolve();
 let mannequinSelectionPatchChain = Promise.resolve();
 let accountGeneration = 0;
+let accountLoadSequence = 0;
+let accountLastSuccessfulSequence = 0;
 
 const persistedFlow = loadPersistedFlow();
 
@@ -204,14 +206,16 @@ export const useAppStore = create((set, get) => ({
   async loadAccount({ force = false } = {}) {
     if (get().accountLoaded && !force) return get().account;
     const generation = accountGeneration;
+    const sequence = ++accountLoadSequence;
     try {
       const account = await api.getAccount();
-      // 계정 전환 전에 시작한 요청이 늦게 도착해도 새 계정의 캐시를 덮지 않는다.
-      if (generation !== accountGeneration) return null;
+      // 최신 조회가 실패해도 정상 응답은 쓰고, 계정 전환이나 더 최근 성공 응답은 덮지 않는다.
+      if (generation !== accountGeneration || sequence < accountLastSuccessfulSequence) return null;
+      accountLastSuccessfulSequence = sequence;
       set({ account, accountLoaded: true });
       return account;
     } catch (error) {
-      if (generation !== accountGeneration) return null;
+      if (generation !== accountGeneration || sequence !== accountLoadSequence) return null;
       throw error;
     }
   },

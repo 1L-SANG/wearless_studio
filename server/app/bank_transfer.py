@@ -117,7 +117,10 @@ async def create_request(request: Request, body: RequestBody, user_id: str = Dep
     fields = _clean(body)
     async with get_conn(request) as conn:
         try:
-            row = await service.create_request(conn, user_id=user_id, plan_code=body.plan_code, **fields)
+            row = await service.create_request(
+                conn, user_id=user_id, plan_code=body.plan_code,
+                topup_bonus_enabled=settings.topup_bonus_enabled, **fields,
+            )
         except repo.CreditError as e:
             raise _credit_error(e)
         email = await service.user_email(conn, user_id)

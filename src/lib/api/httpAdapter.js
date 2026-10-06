@@ -818,6 +818,15 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
+  async getSellerConsent({ signal, expectedUserId } = {}) {
+    return http('/v1/me/consents', { signal, expectedUserId });
+  },
+  async acceptSellerConsent({ termsVersion, privacyVersion, signal, expectedUserId }) {
+    return http('/v1/me/consents', {
+      method: 'POST', signal, expectedUserId,
+      body: { termsVersion, privacyVersion, ageAttested: true },
+    });
+  },
   // ---- 토스 추가구매 (WS3) — 금액은 서버가 정한다. 클라이언트는 planCode 만 보낸다. ----
   // checkout 이 돌려준 orderId/amount 를 그대로 결제창에 넘기고, 승인도 그 값으로만 한다.
   async createTossCheckout(planCode) {

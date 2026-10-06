@@ -13,8 +13,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@/lib/api/index.js';
+import { useAppStore } from '@/store/useAppStore.js';
+import { topupBonusCredits } from '@/lib/limits.js';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
-import { CopyButton, PAYOUT_HOURS, PIcon, num, seoulShort } from './bankTransferParts.jsx';
+import { CopyButton, PAYOUT_HOURS, PIcon, TransferDeadline, num, seoulShort } from './bankTransferParts.jsx';
 import s from './BankTransferModal.module.css';
 
 const digits = (v) => v.replace(/\D/g, '');
@@ -23,8 +25,9 @@ function Amount({ value, className }) {
   return <span className={className}><span className={s.cur}>₩</span>{num(value)}</span>;
 }
 
-function Summary({ plan, info }) {
+function Summary({ plan, info, currentPlan, topupBonusEnabled }) {
   const recurring = plan.kind === 'subscription';
+  const bonusCredits = !recurring && topupBonusEnabled ? topupBonusCredits(currentPlan, plan.credits) : 0;
   return (
     <aside className={s.sum} aria-label="주문 요약">
       <p className={s.sumEyebrow}>주문 요약</p>
@@ -35,7 +38,9 @@ function Summary({ plan, info }) {
       <p className={s.sumLabel}>입금 금액</p>
       <p className={s.sumAmount}><Amount value={plan.price} /></p>
       <dl className={s.sumRows}>
-        <div><dt>지급 크레딧</dt><dd>{num(plan.credits)} 크레딧</dd></div>
+        <div><dt>지급 크레딧</dt><dd>{num(Number(plan.credits) + bonusCredits)} 크레딧
+          {bonusCredits > 0 && <small className={s.bonusNote}>보너스 {num(bonusCredits)} 포함</small>}
+        </dd></div>
         <div><dt>지급 시간대</dt><dd>{PAYOUT_HOURS}</dd></div>
       </dl>
       {info?.enabled && (
@@ -62,7 +67,9 @@ function DoneView({ done, plan, info, onClose, titleId }) {
           <strong>{plan.name}</strong>
           <span className={s.chipInk}>{recurring ? '1개월 이용권' : '1회 충전'}</span>
         </div>
-        <p className={s.sumSub}>{num(done.credits)} 크레딧</p>
+        <p className={s.sumSub}>{num(done.totalCredits ?? done.credits)} 크레딧
+          {done.bonusCredits > 0 && ` · 보너스 ${num(done.bonusCredits)} 포함`}
+        </p>
         <ol className={s.steps}>
           <li className={s.stepDone}>
             <span className={s.stDot}><PIcon name="check" size={14} stroke={3} /></span>
@@ -70,7 +77,7 @@ function DoneView({ done, plan, info, onClose, titleId }) {
           </li>
           <li className={s.stepNow}>
             <span className={s.stDot}><span className={`${s.dotPending} ${s.dotSm}`} /></span>
-            <div><b>입금</b><span className={s.t}>{seoulShort(done.expiresAt)}까지</span></div>
+            <div><b>입금</b><span className={s.t}><TransferDeadline iso={done.expiresAt} className={s.deadlinePart} /></span></div>
           </li>
           <li className={s.stepNext}>
             <span className={s.stDot} />
@@ -100,7 +107,7 @@ function DoneView({ done, plan, info, onClose, titleId }) {
             </div>
           )}
           <div className={s.rRow}><dt>입금자명</dt><dd>{done.payerName}</dd></div>
-          <div className={s.rRow}><dt>입금 기한</dt><dd>{seoulShort(done.expiresAt)}까지</dd></div>
+          <div className={s.rRow}><dt>입금 기한</dt><dd><TransferDeadline iso={done.expiresAt} className={s.deadlinePart} /></dd></div>
         </dl>
         <ul className={s.notes}>
           <li><PIcon name="info" size={15} />기한 안에 보냈다면 확인이 늦어도 지급해요</li>
@@ -115,6 +122,8 @@ function DoneView({ done, plan, info, onClose, titleId }) {
 }
 
 export function BankTransferModal({ plan, info, defaultEmail, extend = false, onClose, onSubmitted }) {
+  const currentPlan = useAppStore((a) => a.account?.plan);
+  const topupBonusEnabled = useAppStore((a) => a.account?.topupBonusEnabled === true);
   const titleId = useId();
   const [form, setForm] = useState({
     payerName: '', taxInvoice: false, businessNo: '', businessName: '',
@@ -196,7 +205,7 @@ export function BankTransferModal({ plan, info, defaultEmail, extend = false, on
           <DoneView done={done} plan={plan} info={info} onClose={onClose} titleId={titleId} />
         ) : (
           <>
-            <Summary plan={plan} info={info} />
+            <Summary plan={plan} info={info} currentPlan={currentPlan} topupBonusEnabled={topupBonusEnabled} />
             <header className={s.head}>
               <span className={s.grab} aria-hidden="true" />
               <h2 id={titleId} className={s.title}>{extend ? '이용권 1개월 연장 신청' : '계좌이체로 신청'}</h2>

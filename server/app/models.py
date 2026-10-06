@@ -32,6 +32,7 @@ class Account(CamelModel):
     avatar: str
     credits: int  # = balance - reserved (§6)
     plan: PlanTier
+    topup_bonus_enabled: bool = False
 
 
 class MannequinGenerateQuote(CamelModel):
@@ -341,7 +342,7 @@ class CreditSource(CamelModel):
     """GET /v1/credits/sources (구매건별 버킷). 환불 가능 여부는 프론트가 status·미사용으로 판단."""
 
     id: str
-    source_type: str  # subscription | topup
+    source_type: str  # subscription | free | topup
     status: str  # active | pending_refund | refunded | expired
     initial_credits: int
     remaining_credits: int
@@ -382,6 +383,20 @@ class SellerConsentIn(CamelModel):
     terms_version: str
     privacy_version: str
     age_attested: bool
+
+
+class SellerConsentAccepted(CamelModel):
+    terms_version: str
+    privacy_version: str
+    age_attested: bool
+    accepted_at: datetime
+
+
+class SellerConsentResponse(CamelModel):
+    required: dict[str, str]
+    accepted: SellerConsentAccepted | None = None
+    needs_consent: bool
+    signup_credits: int = 0
 
 
 class ErrorDetail(CamelModel):

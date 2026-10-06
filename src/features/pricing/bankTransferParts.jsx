@@ -40,6 +40,11 @@ export function seoulShort(iso) {
   return `${parts.month}/${parts.day}(${parts.weekday}) ${parts.hour}:${parts.minute}`;
 }
 
+export function TransferDeadline({ iso, className }) {
+  const [date, time] = seoulShort(iso).split(' ');
+  return <><span className={className}>{date}</span>{' '}<span className={className}>{time}까지</span></>;
+}
+
 // 크레딧 지급 시간대. 서버 지급은 사람이 하므로 화면 약속과 운영 시간이 같아야 한다(오너 9/24).
 export const PAYOUT_HOURS = '10:00 ~ 22:00';
 
