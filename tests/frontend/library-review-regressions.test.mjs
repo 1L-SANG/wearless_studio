@@ -147,7 +147,7 @@ for (const editing of [false, true]) test(`③ 409 최신본 대기 중 ${editin
     editorWorkCopies: copies, restoreWorkCopyOnce, loadEditorWaitDraftEntry: () => null, pendingGenerationDraft: { current: false },
     genActiveRef: { current: false }, wardrobeContext: { current: {} }, latestBlocks, hist,
     prevBlocks: { current: first }, fromHistory: { current: false }, saveTimer: { current: null }, saveGuard: { current: { invalidate() {} } },
-    conflictReloadAt: { current: 0 }, backupLatestEditorDraft() {}, setSaveError() {}, setLoadAttempt() {},
+    conflictReloadAt: { current: 0 }, editorConflictPending: { current: false }, backupLatestEditorDraft() {}, setSaveError() {}, setLoadAttempt() {},
     isMockMode: true, api: { getEditorBlocks: () => pending.promise, getWardrobe: async () => ({}), getCatalogs: async () => ({}),
       getProduct: async () => ({ colors: [] }), getAnalysis: async () => ({}), getStoryboard: async () => [], getMatchClothing: async () => [] },
     withStoryboardSpaceSetExamples: identity, normalizeEditorBlockRole: identity, buildColorOpts: () => [], visibleColorOpts: identity,

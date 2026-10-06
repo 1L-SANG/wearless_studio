@@ -350,7 +350,7 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
       const view = {};
       const identity = (value) => value;
       const bindings = { projectId: id, loadAttempt: 0, useEffect: (effect) => effect(), useAppStore: store,
-        editorWorkCopies: { read: () => null }, loadEditorWaitDraftEntry: () => null, pendingGenerationDraft: { current: false }, genActiveRef: { current: false },
+        editorWorkCopies: { read: () => null }, loadEditorWaitDraftEntry: () => null, pendingGenerationDraft: { current: false }, genActiveRef: { current: false }, editorConflictPending: { current: false },
         wardrobeContext: { current: {} }, isMockMode: true, api: globalThis.__libraryU2Api, retryRead: (get) => get(),
         withStoryboardSpaceSetExamples: identity, normalizeEditorBlockRole: identity, buildColorOpts: () => [], visibleColorOpts: identity,
         hexForCol: () => '', buildEditorBlocksFromStoryboard: () => [{ id: 'waiting', elements: [] }], alignSkeletonToServer: identity,

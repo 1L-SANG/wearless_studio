@@ -269,7 +269,7 @@ test('M11 actual editor conflict callback keeps local draft and undo, then resto
   const bindings = { projectId: 'p', latestBlocks, hist, editorWorkCopies: copies,
     backupLatestEditorDraft: (blocks) => { backup = { blocks, revision }; }, useCallback: (fn) => fn,
     clearTimeout() {}, saveTimer: { current: null }, saveGuard: { current: { invalidate() { invalidations += 1; } } },
-    conflictReloadAt: { current: 0 }, setSaveError() {}, setLoadAttempt: (fn) => { loadAttempt = fn(loadAttempt); } };
+    conflictReloadAt: { current: 0 }, editorConflictPending: { current: false }, setSaveError() {}, setLoadAttempt: (fn) => { loadAttempt = fn(loadAttempt); } };
   const callback = editorSource.slice(editorSource.indexOf('  const reloadAfterEditorConflict'), editorSource.indexOf('  // 자동 저장', editorSource.indexOf('  const reloadAfterEditorConflict')));
   const reload = new Function(...Object.keys(bindings), `${callback}; return reloadAfterEditorConflict;`)(...Object.values(bindings));
   reload(); reload();
@@ -279,7 +279,7 @@ test('M11 actual editor conflict callback keeps local draft and undo, then resto
   const conflictCopy = copies.read('p');
   assert.deepEqual(conflictCopy.history, hist.current);
   revision = 7;
-  const restoreBindings = { conflictCopy, loadAttempt, withH: [{ id: 'server' }], hist, latestBlocks, editorWorkCopies: copies,
+  const restoreBindings = { conflictCopy, loadAttempt, restoredSavedDraft: false, editorConflictPending: bindings.editorConflictPending, withH: [{ id: 'server' }], hist, latestBlocks, editorWorkCopies: copies,
     flushSync: (fn) => fn(), document: { activeElement: null },
     projectId: 'p', fromHistory: { current: false }, prevBlocks: { current: null }, restoreWorkCopyOnce,
     useAppStore: { getState: () => ({ projectId: 'p' }) }, backupLatestEditorDraft: bindings.backupLatestEditorDraft,
@@ -287,7 +287,7 @@ test('M11 actual editor conflict callback keeps local draft and undo, then resto
       assert.equal(message, '다른 곳에서 먼저 저장해서 최신 내용을 불러왔어요.');
       assert.equal(options.action.label, '이 화면 내용으로 되돌리기'); action = options.action.onClick;
     } } };
-  const start = editorSource.indexOf('        if (conflictCopy) {');
+  const start = editorSource.indexOf('        if (conflictCopy && (editorConflictPending.current || !restoredSavedDraft)) {');
   const restore = editorSource.slice(start, editorSource.indexOf('        setBlocks(withH);', start));
   new Function(...Object.keys(restoreBindings), restore)(...Object.values(restoreBindings));
   action(); action();
@@ -295,7 +295,6 @@ test('M11 actual editor conflict callback keeps local draft and undo, then resto
   assert.equal(backup.revision, 7);
   assert.deepEqual(hist.current, { past: [old], future: [future] });
   assert.equal(copies.read('p'), null);
-  assert.match(editorSource, /const savedDraftEntry = conflictCopy \? null : loadEditorWaitDraftEntry\(projectId\)/);
 });
 
 test('U3 editor error download label is 다운로드 and remains disabled while no finished page exists', async () => {

@@ -28,7 +28,7 @@ export function loadEditorWaitDraft(projectId, storage) {
     저장 공간 초과·사생활 모드에서는 조용히 실패하는데, 그걸 모르고 화면이 "보관해 뒀어요"
     라고 말하면 셀러는 안심하고 창을 닫고 편집을 잃는다(2026-08-19). 대기 화면 경로처럼
     반환값이 필요 없는 호출부는 그대로 무시하면 된다. */
-export function saveEditorWaitDraft(projectId, blocks, storage, { baseRevision = null } = {}) {
+export function saveEditorWaitDraft(projectId, blocks, storage, { baseRevision = null, conflictPending = false } = {}) {
   if (!projectId || !Array.isArray(blocks)) return false;
   const target = browserStorage(storage);
   if (!target) return false;
@@ -39,6 +39,7 @@ export function saveEditorWaitDraft(projectId, blocks, storage, { baseRevision =
     // 저장됐는지 가려, 오래된 작업본이 새 내용을 덮지 않게 한다(editorWaitDraftDecision).
     const entry = { version: 1, blocks: relativizeAssetUrls(blocks) };
     if (Number.isInteger(baseRevision)) entry.baseRevision = baseRevision;
+    if (conflictPending) entry.conflictPending = true;
     target.setItem(keyFor(projectId), JSON.stringify(entry));
     return true;
   } catch { return false; }
@@ -58,6 +59,7 @@ export function loadEditorWaitDraftEntry(projectId, storage) {
     return {
       blocks: rebaseAssetUrls(saved.blocks),
       baseRevision: Number.isInteger(saved.baseRevision) ? saved.baseRevision : null,
+      ...(saved.conflictPending === true ? { conflictPending: true } : {}),
     };
   } catch { return null; }
 }

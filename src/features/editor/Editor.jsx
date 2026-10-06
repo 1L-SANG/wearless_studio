@@ -1099,11 +1099,17 @@ export function Editor() {
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
   const { openLogin } = useAuth();
+  const editorConflictPending = useRef(false);
   const backupLatestEditorDraft = useCallback((source = latestBlocks.current, { reportFailure = true } = {}) => {
     if (!Array.isArray(source)) return false;
+    if (editorConflictPending.current) {
+      editorWorkCopies.keep(projectId, { blocks: source, history: {
+        past: [...hist.current.past], future: [...hist.current.future],
+      } });
+    }
     // 기준 리비전을 함께 남겨, 그새 다른 탭·기기가 저장했으면 다음 진입 때 이 작업본이 덮지 않게 한다.
     const backedUp = saveEditorWaitDraft(projectId, persistable(source), undefined,
-      { baseRevision: api.editorRevisionOf?.(projectId) ?? null });
+      { baseRevision: api.editorRevisionOf?.(projectId) ?? null, conflictPending: editorConflictPending.current });
     pendingGenerationDraft.current = backedUp;
     if (!backedUp && reportFailure) {
       setSaveError({
@@ -1246,7 +1252,9 @@ export function Editor() {
     // 내용과 기준 리비전을 지금 한 번에 읽는다 — 서버 응답 뒤에 기준만 다시 읽으면 그새 다른
     // 탭이 공유 키를 지워 짝이 어긋난다(loadEditorWaitDraftEntry 주석).
     const conflictCopy = editorWorkCopies.read(projectId);
-    const savedDraftEntry = conflictCopy ? null : loadEditorWaitDraftEntry(projectId);
+    const storedDraftEntry = loadEditorWaitDraftEntry(projectId);
+    // 충돌 중 보관한 편집은 명시적 복원만 허용한다. 충돌 해결 뒤의 새 임시본은 따로 판정한다.
+    const savedDraftEntry = storedDraftEntry?.conflictPending ? null : storedDraftEntry;
     const savedDraft = savedDraftEntry?.blocks ?? null;
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
       && (enteringJob.status === 'running'
@@ -1276,6 +1284,7 @@ export function Editor() {
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
+        let restoredSavedDraft = false;
         // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
         const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexForCol);
         const opts = visibleColorOpts(allColorOpts, p.colors);
@@ -1323,6 +1332,7 @@ export function Editor() {
           // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
           // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
           withH = savedDraft || skeleton;
+          restoredSavedDraft = Boolean(savedDraft);
           genActiveRef.current = true;
           setGenActive(true);
         } else {
@@ -1339,7 +1349,10 @@ export function Editor() {
             server: b,
             serverRevision: api.editorRevisionOf?.(projectId) ?? null,
           });
-          if (draftDecision === 'apply') withH = mergeServerBlocks(savedDraft, withH);
+          if (draftDecision === 'apply') {
+            withH = mergeServerBlocks(savedDraft, withH);
+            restoredSavedDraft = true;
+          }
           else if (draftDecision !== 'none') {
             clearEditorWaitDraft(projectId);
             pendingGenerationDraft.current = false;
@@ -1350,7 +1363,7 @@ export function Editor() {
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
         withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
-        if (conflictCopy) {
+        if (conflictCopy && (editorConflictPending.current || !restoredSavedDraft)) {
           // 최신본을 기다리며 입력한 내용과 이력도 응답 적용 직전에 다시 보관한다.
           if (loadAttempt > 0) flushSync(() => document.activeElement?.blur());
           const restoreCopy = loadAttempt > 0 && Array.isArray(latestBlocks.current)
@@ -1373,6 +1386,7 @@ export function Editor() {
             }),
           } });
         }
+        editorConflictPending.current = false;
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
@@ -1529,6 +1543,7 @@ export function Editor() {
     saveGuard.current.invalidate();
     if (Date.now() - conflictReloadAt.current < 3000) return;
     conflictReloadAt.current = Date.now();
+    editorConflictPending.current = true;
     const source = latestBlocks.current;
     if (Array.isArray(source)) {
       editorWorkCopies.keep(projectId, { blocks: source, history: {
