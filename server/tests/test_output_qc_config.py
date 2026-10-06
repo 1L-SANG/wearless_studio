@@ -88,9 +88,10 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     assert variables["MANNEQUIN_UNTUCK_GATE"] == "on"
     assert variables["MANNEQUIN_BUST_GATE"] == "on"
 
+    # 2026-10-07부터 api 는 detail_page 를 처리하지 않아 예산은 처리하는 매니페스트
+    # (현재 detail-worker)에 건다. JOB_KINDS 판정은 서버의 configured_job_kinds 를 따른다.
     # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
     # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).
-    concurrency = int(variables["DETAIL_CUT_CONCURRENCY"])
     # 상한을 5 → 9 로 올렸다(2026-08-27). 이 가드가 요구한 "CloudWatch 사용률 실측"을
     # 하고 나서다 — 14컷 잡에서 컷 5개 동시일 때 CPU 2.6~9.8%(피크는 준비 단계 96.6%),
     # 메모리 피크 1011MB/4096MB(24.7%) 였다.
@@ -101,7 +102,6 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 아래 주석대로 최악 입력의 reference 총량이 이 식에 안 들어간다. OOM 이 나면
     # 이미 만든 컷을 전부 버린다.
     # 0(무제한)도 쓰지 않는다 — 컷이 30장인 페이지에서 예측 불가가 된다.
-    assert 1 <= concurrency <= 9, "올리려면 CloudWatch 사용률부터"
 
     # 컷 하나가 잡는 최대치(4K 실측 기준 — 2K 로 내린 지금은 보수적인 상한이다):
     # repair 가 1차를 살려둔 채 2차를 만들어 이미지가 두 장이고
@@ -111,11 +111,27 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 최악 입력(색상당 사진 6장·장당 25MB)의 reference 총량은 이 식에 안 들어간다. 잡 단위
     # 상한이 생기기 전까지 이 계산은 '평균적으로 안전'까지만 보장한다(같은 리뷰 지적).
     per_cut_mb, baseline_mb = 360, 700
-    need = baseline_mb + concurrency * per_cut_mb
-    assert manifest["memory"] >= need, (
-        f"동시 {concurrency}컷에는 최소 {need}MB 가 필요한데 manifest 는 "
-        f"{manifest['memory']}MB 다 — OOM 이 나면 이미 만든 컷을 버리고 다시 생성한다"
-    )
+    from app.workers.dispatcher import configured_job_kinds
+
+    detail_page_manifests = []
+    for service in ("api", "detail-worker"):
+        service_manifest = yaml.safe_load(
+            (manifest_path.parents[1] / service / "manifest.yml").read_text(encoding="utf-8")
+        )
+        job_kinds = service_manifest["variables"].get("JOB_KINDS") or ""
+        if "detail_page" in configured_job_kinds(job_kinds):
+            detail_page_manifests.append(service_manifest)
+    assert detail_page_manifests, "detail_page 를 처리하는 매니페스트가 최소 하나는 있어야 한다"
+
+    for detail_manifest in detail_page_manifests:
+        concurrency = int(detail_manifest["variables"]["DETAIL_CUT_CONCURRENCY"])
+        assert 1 <= concurrency <= 9, "올리려면 CloudWatch 사용률부터"
+        need = baseline_mb + concurrency * per_cut_mb
+        assert detail_manifest["memory"] >= need, (
+            f"동시 {concurrency}컷에는 최소 {need}MB 가 필요한데 "
+            f"{detail_manifest['name']} manifest 는 {detail_manifest['memory']}MB 다 "
+            "— OOM 이 나면 이미 만든 컷을 버리고 다시 생성한다"
+        )
     # Fargate 제약: 0.5 vCPU(512) 는 메모리 4096 까지만 붙일 수 있다(초과 시 배포 거부).
     if manifest["cpu"] == 512:
         assert manifest["memory"] <= 4096
