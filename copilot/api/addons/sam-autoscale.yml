@@ -33,6 +33,25 @@ Resources:
       Protocol: email
       Endpoint: dlftkd3269@gmail.com
 
+  # 2026-10-06 이메일 구독이 사라졌고 오너가 Slack 알림을 원해 연결한다.
+  # 환경 애드온 alarm-slack.yml의 ${App}-${Env}-alarm-slack 함수 이름에 의존한다.
+  # 해당 함수가 없으면 이 스택 배포가 실패한다.
+  SamAlertSlackPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${App}-${Env}-alarm-slack'
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SamAlertTopic
+
+  SamAlertSlackSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: SamAlertSlackPermission
+    Properties:
+      TopicArn: !Ref SamAlertTopic
+      Protocol: lambda
+      Endpoint: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${App}-${Env}-alarm-slack'
+
   SamAutoscalePolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
