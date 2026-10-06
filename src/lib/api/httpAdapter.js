@@ -354,7 +354,7 @@ export async function uploadPhoto(
 
 // 브라우저 이미지 picker의 단일 경로 — 콘티의 내 이미지와 에디터 무드 레퍼런스가
 // 모두 실제 업로드를 거쳐 같은 {assetId, url} 계약을 받는다. 취소/빈 선택은 업로드하지 않는다.
-async function pickAndUploadImage(projectId) {
+async function pickAndUploadImage(projectId, purpose) {
   const file = await new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -368,6 +368,7 @@ async function pickAndUploadImage(projectId) {
     filename: file.name,
     mime: file.type || 'image/jpeg',
     blob: file,
+    purpose,
   });
   return { assetId, url };
 }
@@ -976,12 +977,12 @@ export const httpAdapter = {
   },
   // 콘티 '내 이미지' — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   async pickAnyImage(projectId) {
-    return pickAndUploadImage(projectId);
+    return pickAndUploadImage(projectId, 'storyboard_insert');
   },
   // '내 사진' 무드 레퍼런스 — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   // 서버 컷 생성이 assetId 로 이미지를 첨부하므로(refAssetIds), objectURL 이 아니라 업로드가 필수.
   async pickRefImage(projectId) {
-    return pickAndUploadImage(projectId);
+    return pickAndUploadImage(projectId, 'mood_reference');
   },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.

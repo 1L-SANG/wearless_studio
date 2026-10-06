@@ -17,6 +17,14 @@ log = logging.getLogger("wearless.sam_autoscale")
 #: 수요를 만드는 잡. 셋 중 하나라도 pending/running 이면 켜져 있어야 한다.
 SAM_KINDS = ("sam_preprocess", "matching_cutout", "editor_garment_mask")
 
+#: SAM 작업으로 이어지지 않는 업로드 용도. 예열 훅과 업로드 수요 SQL이 공유한다.
+NON_SAM_UPLOAD_PURPOSES = ("editor_insert", "storyboard_insert", "mood_reference", "tone_render")
+
+
+def upload_requires_sam(purpose: str) -> bool:
+    return purpose not in NON_SAM_UPLOAD_PURPOSES
+
+
 #: 세 태그 모두 정확히 일치해야 한다. 실측(2026-08-21): Copilot 이 ECS 서비스에 이 태그를 단다.
 #: 서비스명에는 랜덤 접미사가 붙어(…-6uWul9L25eM7) 박아 두면 스택 재생성 시 조용히 깨진다.
 #: service 만 바꿔 sam2·opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).

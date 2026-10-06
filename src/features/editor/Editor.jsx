@@ -2317,6 +2317,7 @@ export function Editor() {
         filename: prepared.name || file.name || 'editor-image.jpg',
         mime: prepared.type || 'image/jpeg',
         blob: prepared,
+        purpose: 'editor_insert',
       });
       const image = {
         id: uploaded.assetId || uid('w'),

@@ -36,29 +36,61 @@ class _Conn:
         return None
 
 
-def _issue(client, make_token, monkeypatch):
-    """draft_slot 용도 — 프로젝트 조회를 건너뛰므로 DB 대역이 가장 작다."""
+def _issue(client, make_token, monkeypatch, purpose="draft_slot"):
     client.app.state.r2 = _R2()
 
     @contextlib.asynccontextmanager
     async def fake_conn(_request):
         yield _Conn()
     monkeypatch.setattr(routes, "get_conn", fake_conn)
+
+    async def get_project(_conn, _user_id, project_id):
+        return {"id": project_id}
+    monkeypatch.setattr(routes.repo, "get_project", get_project)
+    body = {"filename": "a.jpg", "mime": "image/jpeg", "size": 10,
+            "projectId": None if purpose == "draft_slot" else "p1"}
+    if purpose is not None:
+        body["purpose"] = purpose
     return client.post(
         "/v1/assets/upload-url",
         headers={"Authorization": f"Bearer {make_token()}"},
-        json={"filename": "a.jpg", "mime": "image/jpeg", "size": 10,
-              "projectId": None, "purpose": "draft_slot"})
+        json=body)
 
 
 # ── 업로드 라우트 ──
 
-def test_upload_url_calls_prewarm_soon(client, make_token, monkeypatch):
+@pytest.mark.parametrize("purpose", [
+    None, "upload", "draft_slot", "custom_match_source", "custom_match_grid", "unknown",
+])
+def test_upload_url_calls_prewarm_soon(client, make_token, monkeypatch, purpose):
     sc = _Scaler()
     client.app.state.sam_autoscaler = sc
-    r = _issue(client, make_token, monkeypatch)
+    r = _issue(client, make_token, monkeypatch, purpose)
     assert r.status_code == 200, r.text
     assert sc.soon_calls == 1
+
+
+@pytest.mark.parametrize("purpose", [
+    "editor_insert", "storyboard_insert", "mood_reference", "tone_render",
+])
+def test_upload_url_skips_prewarm_for_non_sam_uploads(client, make_token, monkeypatch, purpose):
+    sc = _Scaler()
+    client.app.state.sam_autoscaler = sc
+    r = _issue(client, make_token, monkeypatch, purpose)
+    assert r.status_code == 200, r.text
+    assert sc.soon_calls == 0
+
+
+@pytest.mark.parametrize("purpose, expected", [
+    ("editor_insert", False), ("storyboard_insert", False),
+    ("mood_reference", False), ("tone_render", False),
+    ("upload", True), ("draft_slot", True), ("custom_match_source", True),
+    ("custom_match_grid", True), ("unknown", True), ("", True),
+])
+def test_upload_requires_sam(purpose, expected):
+    from app.services import sam_autoscale
+
+    assert sam_autoscale.upload_requires_sam(purpose) is expected
 
 
 def test_upload_url_succeeds_even_when_the_hook_raises(client, make_token, monkeypatch):

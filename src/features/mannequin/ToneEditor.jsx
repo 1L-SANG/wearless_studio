@@ -191,7 +191,7 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
       // uploadPhoto 는 (projectId, {filename, mime, blob}) 시그니처다 — File 을 통째로 넘기면
       // blob.size 접근에서 undefined 로 죽는다 (QA 에서 실측된 버그).
       const { assetId } = await api.uploadPhoto(
-        projectId, { filename: 'tone-adjusted.png', mime: 'image/png', blob });
+        projectId, { filename: 'tone-adjusted.png', mime: 'image/png', blob, purpose: 'tone_render' });
       const next = await api.applyToneEditor(projectId, cutId, { assetId, saturation, exposure });
       setState(next);
       setApplied(true);

@@ -143,8 +143,9 @@ test('1-01 HTTP image picker uploads the selected file once and returns assetId 
     mime: 'image/png',
     size: 4,
     projectId: 'project-upload',
-    purpose: 'upload',
+    purpose: 'storyboard_insert',
   });
+  assert.equal(JSON.parse(requests[2].options.body).purpose, 'storyboard_insert');
 });
 
 test('1-01 mock picker keeps its existing placeholder contract while HTTP owns the real picker', async () => {

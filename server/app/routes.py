@@ -41,7 +41,7 @@ from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_color_measure, garment_grid,
                        input_qc, mannequin_display,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval, sam_retry)
+                       retrieval, sam_autoscale, sam_retry)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -2141,7 +2141,7 @@ async def create_upload_url(
     # 무해 — reconciler 가 60초 안에 덮고, 어댑터가 off 면 즉시 return 한다. 동기 호출이라
     # 발급 응답을 기다리게 하지 않는다(task 생성·참조 보관은 SamAutoscaler.prewarm_soon 이 한다).
     scaler = getattr(request.app.state, "sam_autoscaler", None)
-    if scaler is not None:
+    if scaler is not None and sam_autoscale.upload_requires_sam(body.purpose):
         with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
             scaler.prewarm_soon()
 

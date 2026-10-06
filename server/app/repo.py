@@ -1927,7 +1927,9 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
     `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
     """
-    from app.services.sam_autoscale import DemandSnapshot
+    from app.services.mannequin_tone_render import RENDER_KIND
+    from app.services.sam_autoscale import DemandSnapshot, NON_SAM_UPLOAD_PURPOSES
+    purpose_placeholders = ", ".join("%s" for _ in NON_SAM_UPLOAD_PURPOSES)
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
@@ -1935,8 +1937,10 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
             "     and status in ('pending', 'running')) as active_sam_jobs, "
             "  (select max(finished_at) from jobs where kind = any(%s) "
             "     and finished_at is not null) as last_sam_finished_at, "
-            "  (select max(created_at) from assets where source = 'upload') as last_upload_at",
-            (list(kinds), list(kinds)),
+            "  (select max(created_at) from assets where source = 'upload' "
+            f"     and coalesce(metadata->>'purpose', 'upload') not in ({purpose_placeholders}) "
+            "     and coalesce(metadata->>'type', '') <> %s) as last_upload_at",
+            (list(kinds), list(kinds), *NON_SAM_UPLOAD_PURPOSES, RENDER_KIND),
         )
         row = await cur.fetchone() or {}
     return DemandSnapshot(
