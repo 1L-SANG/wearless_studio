@@ -53,7 +53,6 @@ import {
   isProductInfoConfirmed,
   isSameTabProjectReload,
   markFlowSession,
-  markProductInfoConfirmed,
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
 import { flowScreenName, shouldWarnFlowAbandon } from '@/lib/flowAbandon.js';
@@ -255,6 +254,7 @@ function ProductInputRoute() {
   const onContentChange = (hasContent) => { inputHasContent.current = hasContent; };
   const slotEnabled = Boolean(session) || isMockMode;
   const finishEntry = () => {
+    draftSlot.resumeEntryWrites();
     flowRouteSeenThisSession = true;
     setEntryDecision('continue');
   };
@@ -279,10 +279,13 @@ function ProductInputRoute() {
     if (signingOut || loginRequired || userChanged) return;
     if (entryDecision !== 'checking') return;
     if (!isMockMode && authLoading) return;
-    if (draftSlot.getToken()) draftSlot.discard();
+    if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
     let alive = true;
     const epoch = draftSlot.getIdentityEpoch();
-    const current = () => alive && epoch === draftSlot.getIdentityEpoch();
+    const project = useAppStore.getState();
+    const current = () => alive && epoch === draftSlot.getIdentityEpoch()
+      && project.projectGeneration === useAppStore.getState().projectGeneration
+      && project.projectId === useAppStore.getState().projectId;
     (async () => {
       const { projectId, projectPersisted, resumePath } = useAppStore.getState();
       const hasFlow = !mobile && Boolean(projectPersisted && projectId);
@@ -290,8 +293,9 @@ function ProductInputRoute() {
         if (alive) setEntryDecision('confirmed');
         return;
       }
-      const flowDecision = !hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
-        || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+      const foreignFlow = hasFlow && project.userId && project.userId !== userId;
+      const flowDecision = !foreignFlow && (!hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
+        || hasFlowContinuation(projectId)) ? 'continue' : 'ask';
       if (!slotEnabled) {
         if (alive) setEntryDecision(flowDecision);
         return;
@@ -309,6 +313,7 @@ function ProductInputRoute() {
         if (!current()) return;
       }
       const pendingRemoval = draftSlot.hasPendingRemoval();
+      draftSlot.resumeEntryWrites();
       const sources = [];
       if (flowDecision === 'ask') {
         sources.push({
@@ -363,6 +368,7 @@ function ProductInputRoute() {
           autoOpening.current = true;
           setEntryDecision('ask');
           await chooseSource(sources[0].id, sources, true);
+          if (!current()) return;
           autoOpening.current = false;
         }
         return;
@@ -373,8 +379,16 @@ function ProductInputRoute() {
       setEntryDecision(sources.length ? 'ask' : 'continue');
     })().catch(() => {
       if (!current()) return;
-      const { projectId, projectPersisted } = useAppStore.getState();
-      if (!mobile && projectId && projectPersisted) resume();
+      const state = useAppStore.getState();
+      if (!mobile && state.projectId && state.projectPersisted) {
+        if (state.userId && state.userId !== userId) {
+          setEntrySources([{
+            id: 'flow', title: '만들던 상세페이지',
+            description: state.resumePath ? `${flowScreenName(state.resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+          }]);
+          setEntryDecision('ask');
+        } else resume({ resumeWrites: false });
+      }
       else setEntryDecision(slotEnabled ? 'error' : 'continue');
     });
     return () => { alive = false; };
@@ -384,9 +398,13 @@ function ProductInputRoute() {
     if (signingOut || loginRequired || userChanged) return;
     if (entryDecision === 'confirmed') {
       if (!isMockMode && authLoading) return;
+      if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
       let alive = true;
       const epoch = draftSlot.getIdentityEpoch();
-      const current = () => alive && epoch === draftSlot.getIdentityEpoch();
+      const project = useAppStore.getState();
+      const current = () => alive && epoch === draftSlot.getIdentityEpoch()
+        && project.projectGeneration === useAppStore.getState().projectGeneration
+        && project.projectId === useAppStore.getState().projectId;
       (async () => {
         const { resumePath } = useAppStore.getState();
         const sources = await getFlowDraftSources({
@@ -398,6 +416,7 @@ function ProductInputRoute() {
           },
         });
         if (!current()) return;
+        draftSlot.resumeEntryWrites();
         if (sources) {
           setEntrySources(sources);
           setEntryDecision('ask');
@@ -421,14 +440,23 @@ function ProductInputRoute() {
           ));
           return;
         }
-        const { projectId } = useAppStore.getState();
-        if (!isProductInfoConfirmed(projectId)) markProductInfoConfirmed(projectId);
-        setEntryDecision(registerConfirmedInputEntry(
-          projectId,
-          Date.now(),
-          `${flowDocumentEntryId}:${locationKey}`,
-        ));
-      })().catch(() => { if (current()) resume(); });
+        setEntrySources([{
+          id: 'flow', title: '만들던 상세페이지',
+          description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+        }]);
+        setEntryDecision('ask');
+      })().catch(() => {
+        if (!current()) return;
+        const state = useAppStore.getState();
+        if (!session || canAutoOpenInput([{ id: 'flow' }], { userId, flow: state, slotClient: draftSlot })) resume({ resumeWrites: false });
+        else {
+          setEntrySources([{
+            id: 'flow', title: '만들던 상세페이지',
+            description: state.resumePath ? `${flowScreenName(state.resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+          }]);
+          setEntryDecision('ask');
+        }
+      });
       return () => { alive = false; };
     }
     if (entryDecision === 'redirect') {
@@ -506,7 +534,8 @@ function ProductInputRoute() {
     };
   }, [mobile, slotEnabled, authLoading, signingOut, userChanged, entryDecision]);
 
-  const resume = () => {
+  const resume = ({ resumeWrites = true } = {}) => {
+    if (resumeWrites) draftSlot.resumeEntryWrites();
     flowRouteSeenThisSession = true;
     const { projectId, resumePath } = useAppStore.getState();
     markFlowSession(projectId, resumePath || '/create/input');

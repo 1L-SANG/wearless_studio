@@ -114,6 +114,7 @@ export function createDraftSlotSync({
   let userId;
   let syncedUserId = readStorage(storage, SYNCED_USER_KEY);
   let pendingSnapshot = null;
+  let pendingIdentity = null;
   let latestSnapshot = null;
   let snapshotVersion = 0;
   let timer = null;
@@ -126,6 +127,7 @@ export function createDraftSlotSync({
   let conflictLocked = false;
   let goneLocked = false;
   let suspended = false;
+  let entryWritesPaused = false;
   let lockMeta = null;
   let slotWritePending = false;
   let stagedPayload = null;
@@ -184,8 +186,12 @@ export function createDraftSlotSync({
     // 각 응답 후 재검증해, Alice 의 삭제 결정이 Bob 세션으로 이어져 Bob 슬롯을
     // 지우는 교차 계정 사고를 막는다. 플래그가 지워졌으면 결정 자체가 철회된 것.
     const epoch = requestEpoch;
-    const stillValid = () => requestEpoch === epoch && getPendingRemoval() === decidedAtRaw;
-    const slot = await api.getDraftSlot?.(token);
+    const expectedUserId = userId;
+    const identity = identityEpoch;
+    const stillValid = () => requestEpoch === epoch && userId === expectedUserId
+      && identityEpoch === identity && getPendingRemoval() === decidedAtRaw;
+    const options = { expectedUserId, isCurrent: stillValid };
+    const slot = await api.getDraftSlot?.(token, options);
     if (!stillValid()) return;
     if (!slot) {
       setPendingRemoval(null);
@@ -197,9 +203,9 @@ export function createDraftSlotSync({
       setPendingRemoval(null);
       return;
     }
-    const grabbed = await api.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() });
+    const grabbed = await api.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() }, options);
     if (!stillValid()) return;
-    if (grabbed?.token) await api.deleteDraftSlot(grabbed.token);
+    if (grabbed?.token) await api.deleteDraftSlot(grabbed.token, options);
     if (stillValid()) setPendingRemoval(null);
   };
   const stopScheduledWrites = () => {
@@ -490,7 +496,7 @@ export function createDraftSlotSync({
   };
 
   const schedulePutRetry = () => {
-    if (locked || putRetryTimer) return;
+    if (locked || entryWritesPaused || putRetryTimer) return;
     const delay = Math.min(PHOTO_RETRY_MS * (2 ** putRetryAttempt), PUT_RETRY_MAX_MS);
     putRetryAttempt += 1;
     putRetryTimer = setTimer(() => {
@@ -499,17 +505,18 @@ export function createDraftSlotSync({
     }, delay);
   };
 
-  const put = async (snapshot, version) => {
-    if (!api?.putDraftSlot || locked || !snapshot?.product) return null;
+  const put = async (snapshot, version, identity) => {
+    const current = () => identity.userId === userId && identity.epoch === identityEpoch
+      && identity.requestEpoch === requestEpoch && !entryWritesPaused;
+    if (!current() || !api?.putDraftSlot || locked || !snapshot?.product) return null;
     if (!claimTab()) return null;
     slotWritePending = true;
     notifyPhotosPending();
-    const epoch = requestEpoch;
     try {
       try {
         // '새로 시작' 때 서버 장애로 못 지운 옛 슬롯이 있으면 새 저장 전에 마저 정리한다.
         if (getPendingRemoval()) await resolvePendingRemoval();
-        if (epoch !== requestEpoch) return null;
+        if (!current()) return null;
         syncPhotos(snapshot.product);
         const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
         const includedUploads = new Map(includedUploadIds.map((id) => [id, uploads.get(id)]));
@@ -522,21 +529,28 @@ export function createDraftSlotSync({
             token: requestToken,
             deviceLabel: getDraftSlotDeviceLabel(),
             photosPending,
-          });
+          }, { expectedUserId: identity.userId, isCurrent: current });
           // 늦은 응답이어도 성공한 PUT의 사진은 서버 보존 기간을 따른다.
           for (const upload of includedUploads.values()) {
             upload.everSynced = true;
             retainedAssets.add(upload.assetId);
           }
+        } catch (error) {
+          // 응답을 못 받은 요청도 서버가 사진을 참조했을 수 있어 7일 회수에 맡긴다.
+          if (!error?.requestNotSent) {
+            for (const upload of includedUploads.values()) retainedAssets.add(upload.assetId);
+          }
+          throw error;
         } finally {
           for (const upload of includedUploads.values()) {
             upload.pendingPuts -= 1;
             if (upload.discardRequested) void discardUploaded(upload);
           }
         }
+        if (!current()) return null;
         // 요청 중 다른 탭이 작업권을 가져갔다면 늦은 옛 응답으로 최신 토큰을 되돌리지 않는다.
         const storedToken = readStorage(storage, TOKEN_KEY);
-        const responseIsCurrent = epoch === requestEpoch
+        const responseIsCurrent = current()
           && ownsTab()
           && token === requestToken
           && (requestToken == null ? storedToken == null : storedToken === requestToken);
@@ -557,11 +571,12 @@ export function createDraftSlotSync({
         }
         return result;
       } catch (error) {
-        if (epoch === requestEpoch) {
+        if (current()) {
           const handled = handleConflict(error);
           if (!handled) {
             finishSaves('failed');
             pendingSnapshot = latestSnapshot || snapshot;
+            pendingIdentity = identity;
             schedulePutRetry();
           }
         }
@@ -576,17 +591,20 @@ export function createDraftSlotSync({
   const commit = () => {
     clearTimer(timer);
     timer = null;
-    if (!pendingSnapshot || locked) return putChain;
+    if (!pendingSnapshot || locked || entryWritesPaused) return putChain;
     const snapshot = pendingSnapshot;
     const version = snapshotVersion;
+    const identity = pendingIdentity;
     pendingSnapshot = null;
-    putChain = putChain.catch(() => null).then(() => put(snapshot, version));
+    pendingIdentity = null;
+    putChain = putChain.catch(() => null).then(() => put(snapshot, version, identity));
     notifyPhotosPending();
     return putChain;
   };
 
   function queue(snapshot) {
     if (!snapshot?.product) return;
+    if (entryWritesPaused) return;
     if (locked) {
       if (probeTimer != null) probeDroppedSnapshot = snapshot;
       return;
@@ -594,6 +612,7 @@ export function createDraftSlotSync({
     latestSnapshot = snapshot;
     snapshotVersion += 1;
     pendingSnapshot = snapshot;
+    pendingIdentity = { userId, epoch: identityEpoch, requestEpoch };
     syncPhotos(snapshot.product);
     clearTimer(timer);
     timer = setTimer(() => { void commit().catch(() => {}); }, debounceMs);
@@ -609,6 +628,7 @@ export function createDraftSlotSync({
     configure(nextAdapter) { api = nextAdapter; },
     setUserId(value) {
       if ((userId !== undefined && userId !== value) || (syncedUserId && syncedUserId !== value)) this.resetIdentity();
+      else if (userId !== value) this.discard();
       userId = value;
     },
     activate() {
@@ -644,6 +664,7 @@ export function createDraftSlotSync({
         };
         saves.add(save);
         queue(snapshot);
+        if (entryWritesPaused) { finishSave(save, 'failed'); return; }
         if (locked) {
           finishSave(save, goneLocked ? 'gone' : 'locked');
           return;
@@ -669,14 +690,24 @@ export function createDraftSlotSync({
     syncPhotos,
     async flush() { await commit(); return putChain; },
     discard() {
+      requestEpoch += 1;
       clearTimer(timer);
       clearTimer(putRetryTimer);
       timer = null;
       putRetryTimer = null;
       pendingSnapshot = null;
+      pendingIdentity = null;
       latestSnapshot = null;
+      probeDroppedSnapshot = null;
       notifyPhotosPending();
     },
+    pauseEntryWrites() {
+      if (entryWritesPaused) return;
+      entryWritesPaused = true;
+      this.discard();
+      finishSaves('failed');
+    },
+    resumeEntryWrites() { entryWritesPaused = false; },
     suspend() {
       requestEpoch += 1;
       locked = true;
@@ -712,7 +743,11 @@ export function createDraftSlotSync({
       releaseTab();
     },
     async get({ full = false } = {}) {
-      return api?.getDraftSlot ? api.getDraftSlot(token, { full }) : null;
+      const epoch = identityEpoch;
+      const expectedUserId = userId;
+      const current = () => epoch === identityEpoch && expectedUserId === userId;
+      const slot = api?.getDraftSlot ? await api.getDraftSlot(token, { full, expectedUserId, isCurrent: current }) : null;
+      return current() ? slot : null;
     },
     async checkOwnership() {
       const epoch = identityEpoch;
@@ -730,8 +765,13 @@ export function createDraftSlotSync({
     },
     async takeover({ isCurrent = () => true } = {}) {
       const epoch = identityEpoch;
-      const result = await api?.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() });
-      if (epoch !== identityEpoch || !isCurrent()) return null;
+      const request = requestEpoch;
+      const expectedUserId = userId;
+      const current = () => epoch === identityEpoch && request === requestEpoch
+        && expectedUserId === userId && isCurrent();
+      if (!current()) return null;
+      const result = await api?.takeoverDraftSlot?.({ deviceLabel: getDraftSlotDeviceLabel() }, { expectedUserId, isCurrent: current });
+      if (!current()) return null;
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       claimTab({ force: true });
@@ -812,7 +852,8 @@ export function createDraftSlotSync({
     },
     async remove({ isCurrent = () => true } = {}) {
       const epoch = identityEpoch;
-      const current = () => epoch === identityEpoch && isCurrent();
+      const expectedUserId = userId;
+      const current = () => epoch === identityEpoch && expectedUserId === userId && isCurrent();
       const resumeSnapshot = latestSnapshot;
       const wasLocked = locked;
       const wasConflictLocked = conflictLocked;
@@ -830,7 +871,7 @@ export function createDraftSlotSync({
         if (!current()) return;
         await waitForUploads();
         if (!current()) return;
-        if (api?.deleteDraftSlot) await api.deleteDraftSlot(deleteToken);
+        if (api?.deleteDraftSlot) await api.deleteDraftSlot(deleteToken, { expectedUserId, isCurrent: current });
         if (!current()) return;
       } catch (error) {
         if (!current()) return;
@@ -866,10 +907,12 @@ export function createDraftSlotSync({
     resetIdentity({ sameUser = false } = {}) {
       if (!sameUser) identityEpoch += 1;
       stagedPayload = null;
+      entryWritesPaused = false;
       remotePhotosGone = false;
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       this.discard();
+      finishSaves('failed');
       for (const upload of uploads.values()) clearTimer(upload.retryTimer);
       uploads.clear();
       setToken(null);

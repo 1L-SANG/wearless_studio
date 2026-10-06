@@ -234,7 +234,8 @@ export const useAppStore = create((set, get) => ({
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
      여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
-  async beginProject({ isCurrent = () => true } = {}) {
+  async beginProject({ isCurrent = () => true, onStarted = () => {} } = {}) {
+    if (!isCurrent()) return;
     // 이전 프로젝트의 '편집 시작' 표식은 **지우지 않는다**(2026-08-17 리뷰). 그 표식은
     // "이 프로젝트는 이미 편집했다"는 프로젝트별 사실이라, 새 제작을 시작했다고 사라지면
     // 나중에 보관함에서 그 프로젝트를 다시 열었을 때 앞 단계 복귀가 다시 열려 편집분이
@@ -258,6 +259,7 @@ export const useAppStore = create((set, get) => ({
     // 교체한다(2026-08-17 사고). mock 모드에선 종전처럼 데모 입력을 재시드한다.
     await api.resetInputDraft();
     if (!isCurrent()) return;
+    onStarted();
     set({
       ...initialFlow,
       mannequinJob: initialMannequinJob(),
@@ -266,7 +268,8 @@ export const useAppStore = create((set, get) => ({
       generationRelevantEditsDirty: false,
       inputPromotionLocked: false,
     });
-    persistFlow(get());   // 새 제작 시작 — 영속 flow 초기화(stale projectId 미복원)
+    persistFlow(get());   // 새 제작 시작, 영속 flow 초기화(stale projectId 미복원)
+    return true;
   },
   /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — 레거시 후속 경로용.
      이미 이 플로우에서 생성했으면(persisted) 재사용해 보관함 행 중복 생성을 막는다. */
@@ -397,6 +400,7 @@ export const useAppStore = create((set, get) => ({
   },
   markFlowUsed(userId, lastUsedAt = Date.now()) {
     if (!get().projectId || !get().projectPersisted) return;
+    if (get().userId && get().userId !== userId) return;
     set({ userId, lastUsedAt });
     persistFlow(get());
   },

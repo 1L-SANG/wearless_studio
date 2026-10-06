@@ -47,18 +47,21 @@ export async function openRemoteDraft({ slotClient, beginProject, context }) {
     error.icon = 'alertTri';
     throw error;
   }
-  await wait(beginProject({ isCurrent }));
+  if (context) await context.beginProject();
+  else await wait(beginProject({ isCurrent }));
+  if (!isCurrent()) return;
   slotClient.stage(takeover);
 }
 
 export function createDraftEntryActions({
   slotClient, beginProject, onOpened, onStarted, onChange, onError, onKept = () => {}, onBusy = () => {},
-  getUserId = () => null, mobile = () => false,
+  getUserId = () => null, mobile = () => false, getProjectState = () => null, getEntryKey = () => null,
 }) {
   let dialog = null;
   let confirmation = null;
   let busy = false;
   let actionEpoch = 0;
+  let currentAction = null;
   const stale = new Error('stale_entry');
   const show = (value) => { dialog = value; onChange(value); };
   const clear = () => { confirmation = null; show(null); };
@@ -66,11 +69,24 @@ export function createDraftEntryActions({
     if (busy) return;
     const userId = getUserId();
     const identityEpoch = slotClient.getIdentityEpoch?.();
+    let project = getProjectState();
+    const entryKey = getEntryKey();
     const epoch = ++actionEpoch;
     const isCurrent = () => epoch === actionEpoch && userId === getUserId()
       && identityEpoch === slotClient.getIdentityEpoch?.()
+      && entryKey === getEntryKey()
+      && (!project || (project.projectGeneration === getProjectState()?.projectGeneration
+        && project.projectId === getProjectState()?.projectId))
       && (!automatic || !slotClient.hasOtherTabOwner());
-    const context = { isCurrent, async wait(value) {
+    const checkCurrent = () => { if (!isCurrent()) throw stale; };
+    const context = { isCurrent, checkCurrent, async beginProject() {
+      checkCurrent();
+      const nextProject = project && { projectGeneration: project.projectGeneration + 1, projectId: null };
+      const started = await beginProject({ isCurrent, onStarted: () => { project = nextProject; } });
+      // 이 액션이 시작한 새 제작만 다음 세대로 이어간다.
+      if (started === true) project = nextProject;
+      checkCurrent();
+    }, async wait(value) {
       try {
         const result = await value;
         if (!isCurrent()) throw stale;
@@ -78,15 +94,17 @@ export function createDraftEntryActions({
       } catch (error) { if (!isCurrent()) throw stale; throw error; }
     } };
     busy = true;
+    currentAction = isCurrent;
     onBusy(true);
     try { await action(context); }
     catch (error) { if (error !== stale && isCurrent()) onError(error?.message || fallback, { icon: error?.icon || 'alert' }); }
-    finally { if (epoch === actionEpoch) { busy = false; onBusy(false); } }
+    finally { if (epoch === actionEpoch) { currentAction = null; busy = false; onBusy(false); } }
   };
   const readVisible = async (context) => {
     let slot;
     try { slot = await context.wait(slotClient.get()); }
     catch (error) { if (error === stale) throw error; throw new Error('잠시 후 다시 시도해 주세요.'); }
+    context.checkCurrent();
     return isVisibleDraftSlot(slot, slotClient) ? slot : null;
   };
   const gone = () => {
@@ -112,9 +130,11 @@ export function createDraftEntryActions({
     clear();
   };
   const open = async (context, slot, saved = false) => {
+    context.checkCurrent();
     if (!slot) gone();
     if (mobile() && !isMobileDraftWriter(slot.meta)) { clear(); onKept(slot.meta); return; }
     await context.wait(openRemoteDraft({ slotClient, beginProject, context }));
+    context.checkCurrent();
     clear();
     onOpened(saved ? slot.meta : undefined);
   };
@@ -128,13 +148,15 @@ export function createDraftEntryActions({
   };
   const startMobile = async (context) => {
     await context.wait(slotClient.removeForNewFlow({ isCurrent: context.isCurrent }));
-    await context.wait(beginProject({ isCurrent: context.isCurrent }));
+    await context.beginProject();
+    context.checkCurrent();
     clear();
     onStarted();
   };
   const startEmpty = async (context) => {
     slotClient.resetIdentity({ sameUser: true });
-    await context.wait(beginProject({ isCurrent: context.isCurrent }));
+    await context.beginProject();
+    context.checkCurrent();
     clear();
     onStarted();
   };
@@ -167,7 +189,8 @@ export function createDraftEntryActions({
       return run(async (context) => {
         const start = async (current) => {
           if (enabled) await current.wait(slotClient.removeForNewFlow({ isCurrent: current.isCurrent }));
-          await current.wait(beginProject({ isCurrent: current.isCurrent }));
+          await current.beginProject();
+          current.checkCurrent();
           clear();
           onStarted();
         };
@@ -183,7 +206,8 @@ export function createDraftEntryActions({
         const openLocal = async (current) => {
           if (automatic && slotClient.hasOtherTabOwner()) return;
           if (enabled) await current.wait(slotClient.takeover({ isCurrent: current.isCurrent }));
-          if (resetFlow) await current.wait(beginProject({ isCurrent: current.isCurrent }));
+          if (resetFlow) await current.beginProject();
+          current.checkCurrent();
           slotClient.stage({ payload: source.draft, meta: source.meta });
           clear();
           onOpened();
@@ -225,6 +249,7 @@ export function createDraftEntryActions({
         clear();
       });
     },
-    cancel() { actionEpoch += 1; busy = false; onBusy(false); clear(); },
+    cancelIfStale() { if (currentAction && !currentAction()) this.cancel(); },
+    cancel() { actionEpoch += 1; currentAction = null; busy = false; onBusy(false); clear(); },
   };
 }

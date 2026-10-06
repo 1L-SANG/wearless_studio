@@ -290,7 +290,7 @@ test('ownership loss resolves locked even while an upload is still pending', asy
   await tick();
 });
 
-test('a PUT retry discards an uploaded record older than 24 hours and re-uploads before saving', async (t) => {
+test('a PUT retry retains a possibly referenced record older than 24 hours and re-uploads before saving', async (t) => {
   const replacement = deferred();
   let attempts = 0;
   let offline = true;
@@ -313,7 +313,7 @@ test('a PUT retry discards an uploaded record older than 24 hours and re-uploads
   timers.run(2000);
   await sync.flush();
   await tick();
-  assert.deepEqual(discarded, ['stale']);
+  assert.deepEqual(discarded, []);
   assert.equal(uploads.length, 2);
   assert.equal(uploads[1].filename, 'front.jpg');
   assert.equal(await uploads[1].blob.text(), 'photo');

@@ -25,6 +25,17 @@ test('wl_flow persists current user and last use, while legacy flows remain unkn
   assert.equal(loadPersistedFlow().lastUsedAt, 2000);
 });
 
+test('R2-4 markFlowUsed never reattributes a foreign persisted flow', () => {
+  let state = { projectId: 'alice-project', projectPersisted: true, userId: 'alice', lastUsedAt: 1000 };
+  const persisted = [];
+  const methodSource = store.slice(store.indexOf('  markFlowUsed('), store.indexOf('  confirmProductInfo('));
+  const markFlowUsed = new Function('set', 'get', 'persistFlow', `return ({ ${methodSource} }).markFlowUsed;`)(
+    (next) => { state = { ...state, ...next }; }, () => state, (value) => persisted.push(value));
+  markFlowUsed('bob', 2000);
+  assert.deepEqual(state, { projectId: 'alice-project', projectPersisted: true, userId: 'alice', lastUsedAt: 1000 });
+  assert.deepEqual(persisted, []);
+});
+
 const ui = read('src/components/ui.jsx');
 const toastSource = ui.slice(ui.indexOf('const ToastCtx ='), ui.indexOf('export const useToast')).replace(/^export /gm, '');
 const { code } = await transformWithEsbuild(toastSource, 'Toast.jsx', { jsx: 'transform' });
