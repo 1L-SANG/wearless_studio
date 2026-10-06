@@ -35,7 +35,6 @@
 .dotOff { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); flex: none; }
 @keyframes pricingPing { 0% { transform: scale(.45); opacity: .9; } 75%, 100% { transform: scale(1.5); opacity: 0; } }
 
-.tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
 
 /* 입금 확인 중 카드(시안 C) */
@@ -79,11 +78,6 @@
 .copied svg { color: var(--accent-success); }
 .copyOnInk { background: transparent; }
 
-.billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }
-.billingNotice p + p { margin-top: var(--sp-8); }
-.billingNotice a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
-.billingNotice a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-
 .bankTermsLink { margin: var(--sp-8) 0 var(--sp-16); text-align: right; font-size: 12px; }
 .bankTermsLink a { color: var(--fg-2); text-decoration: underline; text-underline-offset: 2px; }
 .bankTermsLink a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
@@ -122,8 +116,6 @@
 .creditLine { display: flex; align-items: baseline; gap: var(--sp-8); font-size: 24px; font-weight: 800; line-height: 1.5; letter-spacing: -0.02em; color: var(--fg-1); white-space: nowrap; }
 .pageEstimate { margin: var(--sp-8) 0 0; font-size: 15px; font-weight: 500; color: var(--fg-2); }
 .pageEstimate strong { font-weight: 700; color: var(--fg-1); }
-.usageNote { margin: var(--sp-20) 0 0; text-align: center; font-size: 14px; line-height: 1.5; color: var(--fg-2); }
-.noWrap { white-space: nowrap; }
 .baseCredits { font-size: 18px; font-weight: 600; color: var(--fg-3); text-decoration-thickness: 2px; }
 .creditArrow { font-size: 18px; font-weight: 500; color: var(--fg-3); }
 .creditAmount { display: inline-block; }
@@ -188,7 +180,7 @@
 .purchaseButton:disabled { cursor: not-allowed; }
 /* 구독 준비 상태도 랜딩의 검정 버튼과 손가락 커서를 유지한다. */
 .subscriptionButton:disabled { opacity: 1; cursor: pointer; }
-.purchaseConsent { margin: 28px 0 0; text-align: center; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
+.purchaseConsent { margin: 28px 0 0; text-align: center; text-wrap: balance; word-break: keep-all; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
 .purchaseButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 /* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 무지개 링도 멈춘다. */
 .purchaseButton.locked, .subscriptionButton.locked:disabled, .topupButton.locked { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }

@@ -256,18 +256,6 @@ export function Pricing() {
       {bankTransfer && (
         <p className={s.bankTermsLink}><a href={WEARLESS_LEGAL_URLS.refund}>결제·환불 조건</a></p>
       )}
-      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 배지 한 줄이 전부다. */}
-      {!bankTransfer && (
-        <p className={s.tabDesc}>
-          월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.
-        </p>
-      )}
-      {!bankTransfer && (
-        <div className={s.billingNotice} aria-label="구독 크레딧 및 환불 안내">
-          <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>
-          <p>결제일부터 7일 이내에 해당 결제로 지급된 크레딧을 사용하지 않았다면 전액 환불을 신청할 수 있습니다. 사용한 부분의 청약철회는 제한될 수 있지만, 미제공 부분의 법령상 환불 권리는 제한하지 않습니다. 환불 및 중도해지는 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 신청해 주세요. <a href={WEARLESS_LEGAL_URLS.refund}>환불정책 보기</a></p>
-        </div>
-      )}
 
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
@@ -366,14 +354,6 @@ export function Pricing() {
         </div>
       )}
 
-      {ready && subs.length > 0 && (
-        <p className={s.usageNote}>
-          상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 <span className={s.noWrap}>약&nbsp;250크레딧이</span> 소모됩니다.
-          <br />
-          컷수에 따라 소모되는 비용은 상이합니다.
-        </p>
-      )}
-
       {/* 크레딧 충전 — 구독 카드보다 한 단계 가벼운 가로형 카드 두 장(구독이 주인공, 충전은 보조). */}
       {ready && topups.length > 0 && (
         <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
@@ -427,9 +407,16 @@ export function Pricing() {
       )}
 
       {ready && (subs.length > 0 || topups.length > 0) && (
-        <p className={s.purchaseConsent}>
-          결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
-        </p>
+        <>
+          {!bankTransfer && (
+            <p className={s.purchaseConsent}>
+              매월 자동 결제되고 언제든 해지할 수 있어요. 해지해도 결제한 기간까지 쓸 수 있어요. 부가세 포함.
+            </p>
+          )}
+          <p className={s.purchaseConsent}>
+            결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
+          </p>
+        </>
       )}
 
       {transferPlan && (
