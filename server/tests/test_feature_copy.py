@@ -232,8 +232,8 @@ def test_generate_survives_model_failure(monkeypatch):
     assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
 
 
-def test_feature_copy_is_carried_across_analysis_replaces():
-    # save_analysis 는 REPLACE 라, 셀러 클라가 안 보낸 서버 소유 키는 이월돼야 한다
+def test_feature_copy_is_preserved_across_analysis_merges():
+    # 부분 병합에서 셀러 클라이언트가 생략한 생성 카피도 보존한다.
     assert "featureCopy" in repo._SERVER_OWNED_ANALYSIS_KEYS
 
 

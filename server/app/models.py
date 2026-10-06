@@ -92,6 +92,43 @@ class ProjectSummary(CamelModel):
     updated_at: datetime
 
 
+class LatestJobSummary(CamelModel):
+    """재개용 최신 잡. 최신 여부는 생성 시각으로 정하고 오류 코드는 result에서 읽는다."""
+
+    id: str
+    status: Literal["pending", "running", "done", "error", "cancelled"]
+    error_code: str | None
+
+
+class LatestProjectJobs(CamelModel):
+    mannequin: LatestJobSummary | None
+    detail_page: LatestJobSummary | None
+
+
+class ProjectDetail(Project):
+    latest_jobs: LatestProjectJobs
+
+
+class InProgressProjectSummary(CamelModel):
+    """GET /projects?view=in_progress. updatedAt은 프로젝트와 잡의 최근 활동 시각이다.
+
+    진행 중 상세페이지 잡, 블록 없는 실패, 유효한 선택 컷, 콘티 순으로 step을 판정한다.
+    """
+
+    id: str
+    title: str
+    cover: str
+    updated_at: datetime
+    step: Literal["storyboard", "mannequin", "generating", "failed"]
+    latest_mannequin_job: LatestJobSummary | None
+    latest_detail_page_job: LatestJobSummary | None
+
+
+class ExpectedMannequinQuote(CamelModel):
+    free: bool = Field(strict=True)
+    credits: int = Field(strict=True, ge=0)
+
+
 class UploadUrlRequest(CamelModel):
     """POST /v1/assets/upload-url (§3 1단계)."""
 

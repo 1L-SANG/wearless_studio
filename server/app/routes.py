@@ -56,6 +56,8 @@ from .models import (
     CustomMatchItemRequest,
     DraftSlotPutRequest,
     ErrorResponse,
+    ExpectedMannequinQuote,
+    InProgressProjectSummary,
     JobView,
     MannequinCut,
     PlanTier,
@@ -63,6 +65,7 @@ from .models import (
     Product,
     ProductPatch,
     Project,
+    ProjectDetail,
     ProjectPatch,
     ProjectSummary,
     RefundRequestBody,
@@ -350,7 +353,7 @@ def _matching_product_color(product: dict | None, analysis: dict | None = None) 
 
 def _analysis_with_added_custom(payload: dict, item: dict) -> dict:
     existing = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item["id"]]
-    return {**payload, "matchClothing": [{**item, "selected": False}, *existing]}
+    return {"matchClothing": [{**item, "selected": False}, *existing]}
 
 
 def _analysis_without_custom(payload: dict, item_id: str) -> dict:
@@ -369,7 +372,8 @@ def _analysis_without_custom(payload: dict, item_id: str) -> dict:
             cleaned.pop("selOrder", None)
             normalized.append(cleaned)
 
-    next_payload = {**payload, "matchClothing": normalized}
+    # 내 옷 배열과 삭제된 옷의 핏 연결만 저장한다. 다른 분석 키는 원자 병합이 보존한다.
+    next_payload = {"matchClothing": normalized}
     fit_profile = payload.get("fitProfile")
     matching_fit = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
     if isinstance(matching_fit, dict) and matching_fit.get("clothingId") == item_id:
@@ -878,7 +882,7 @@ async def reject_refund(
 
 @router.get(
     "/projects",
-    response_model=list[ProjectSummary],
+    response_model=list[ProjectSummary] | list[InProgressProjectSummary],
     responses={**COMMON_RESPONSES},
     tags=["Projects"],
     summary="프로젝트 목록 (보관함) 조회",
@@ -888,12 +892,13 @@ async def get_library(
     view: str = Query("library"),
     user_id: str = Depends(require_user),
 ):
-    """현재 로그인한 사용자의 모든 프로젝트 요약 목록(보관함 카드 목록)을 조회합니다.
+    """보관함 완성본 목록. view=in_progress이면 최근 활동 순 최대 20개의 만드는 중 작업.
 
     - **Bearer Token**: 필수
     """
     async with get_conn(request) as conn:
-        rows = await repo.list_library(conn, user_id)
+        rows = await (repo.list_in_progress(conn, user_id) if view == "in_progress"
+                      else repo.list_library(conn, user_id))
     return [_with_resized_cover(request, row) for row in rows]
 
 
@@ -918,7 +923,7 @@ async def create_project(request: Request, user_id: str = Depends(require_user))
 
 @router.get(
     "/projects/{project_id}",
-    response_model=Project,
+    response_model=ProjectDetail,
     responses={**COMMON_RESPONSES},
     tags=["Projects"],
     summary="프로젝트 상세 조회",
@@ -934,8 +939,9 @@ async def get_project(
     """
     async with get_conn(request) as conn:
         row = await repo.get_project(conn, user_id, project_id)
-    if row is None:
-        raise _not_found()
+        if row is None:
+            raise _not_found()
+        row = {**row, "latestJobs": await repo.get_latest_project_jobs(conn, user_id, project_id)}
     return row
 
 
@@ -1062,7 +1068,7 @@ async def save_product(
                 await repo.save_analysis(
                     conn,
                     project_id,
-                    {**analysis, "targetGenders": ["women"]},
+                    {"targetGenders": ["women"]},
                 )
         await conn.commit()
         # 사진이 서버에 확정된 첫 지점이다. 컷아웃 큐잉 실패가 상품 저장을 500 으로 만들면
@@ -1094,8 +1100,11 @@ async def save_analysis(
     project_id: str,
     analysis: dict = Body(...),
     user_id: str = Depends(require_user),
+    merge: bool = Query(False),
 ):
-    """AI 제안(추천 제품명, 핏, 소재 등) 및 사용자 조정을 거친 상품 분석 정보를 JSONB 페이로드로 통째로 갱신하여 저장합니다.
+    """기본은 기존 전문 교체입니다. merge=1이면 보낸 최상위 키만 원자 병합합니다.
+
+    병합에서 null은 키 삭제입니다. 배열과 fitProfile은 통째로 교체하고 보호된 서버 키는 유지합니다.
 
     - **Bearer Token**: 필수
     - **에지 케이스**:
@@ -1131,7 +1140,7 @@ async def save_analysis(
             product.get("clothingType") or product.get("clothing_type")
         ) == "dress":
             analysis = {**analysis, "targetGenders": ["women"]}
-        row = await repo.save_analysis(conn, project_id, analysis)
+        row = await repo.save_analysis(conn, project_id, analysis, merge=merge, delete_nulls=merge)
         await conn.commit()
     payload = dict(row["payload"] or {})
     if detail_recommendations.PERSISTED_KEY in payload:
@@ -1354,10 +1363,16 @@ async def draft_feature_copy(
     """
     s = request.app.state.settings
     async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
+        project = await repo.get_project(conn, user_id, project_id)
+        if project is None:
             raise _not_found()
         product = await repo.get_product(conn, project_id) or {}
         analysis = await repo.get_analysis(conn, project_id) or {}
+        selected_id = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
+        cuts = await repo.list_mannequin_cuts(conn, user_id, project_id) if selected_id else []
+        selected_cut = next((cut for cut in cuts
+                             if f"{cut.get('candidate')}-{cut.get('version')}" == selected_id), None)
+        analysis = fit_axes.analysis_for_selected_mannequin(analysis, selected_cut)
     points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
     items = await feature_copy.generate(s, points, product, analysis)
     if not items:
@@ -1370,7 +1385,7 @@ async def draft_feature_copy(
         fresh = await repo.get_analysis(conn, project_id) or {}
         await repo.save_analysis(
             conn, project_id,
-            {**fresh, "featureCopy": feature_copy.merge_stored(fresh.get("featureCopy"), items)})
+            {"featureCopy": feature_copy.merge_stored(fresh.get("featureCopy"), items)})
         await conn.commit()
     return JSONResponse({"items": items})
 
@@ -2260,6 +2275,23 @@ async def get_credit_quote(
     }
 
 
+def _check_expected_mannequin_quote(body: dict, cost: int) -> None:
+    expected = body.get("expectedQuote") if isinstance(body, dict) else None
+    if expected is None:
+        return
+    try:
+        quote = ExpectedMannequinQuote.model_validate(expected)
+    except ValueError as exc:
+        raise _bad_request("invalid_expected_quote", "마네킹 견적 값이 올바르지 않아요.") from exc
+    current = {"free": cost == 0, "credits": cost}
+    if quote.model_dump() != current:
+        raise HTTPException(status_code=409, detail={
+            "code": "quote_changed",
+            "message": "마네킹 생성 견적이 바뀌었어요. 현재 견적을 확인해 주세요.",
+            "meta": {"quote": current},
+        })
+
+
 @router.post(
     "/projects/{project_id}/mannequins:generate",
     responses={
@@ -2267,7 +2299,7 @@ async def get_credit_quote(
         202: {"description": "새로운 마네킹 생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
-        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 생성 진행 중 또는 견적 변경"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 후보 생성 작업 시작",
@@ -2277,11 +2309,13 @@ async def generate_mannequins(
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    body: dict = Body(default={}),
 ):
     """지정된 프로젝트의 상품 이미지를 기반으로 AI 마네킹 합성 컷(후보군 A, B)을 생성하는 비동기 작업을 요청합니다.
 
     - **Bearer Token**: 필수
     - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
+    - **Body**: `expectedQuote?: {free: bool, credits: int}`. 예약 직전 다르면 409 quote_changed.
     - **에지 케이스 & 멱등성**:
       1. **완료된 결과가 이미 존재**: `200 OK`와 함께 기존 생성 결과를 그대로 반환하여 추가 크레딧 차감이 발생하지 않습니다.
       2. **이미 동일 작업이 진행 중**: 새로 작업을 띄우지 않고 `202 Accepted`와 함께 기존 실행 중인 `jobId`를 그대로 반환(작업 합류)합니다.
@@ -2306,21 +2340,25 @@ async def generate_mannequins(
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
         snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
-        pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
-        plan = plan_pricing.plan_of(pricing["plan"])
-        model_id = pricing["selected_model_id"]
-        fee = plan_pricing.extension_model_fee(plan, model_id)
-        cost = request.app.state.settings.credit_cost_mannequin_generate + fee
         job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot}
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload, idempotency_key=scoped_key,
-            credits_reserved=cost,
-            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version,
-                      "extensionModelFee": fee, "plan": plan, "selectedModelId": model_id})
+            credits_reserved=0, metadata={})
         if not created and not _mannequin_payload_matches(job, job_payload):
             raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            # 활성 unique 확보 뒤의 견적을 검사한다. 합류/완료 캐시에는 새 예약이 없다.
+            pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+            plan = plan_pricing.plan_of(pricing["plan"])
+            model_id = pricing["selected_model_id"]
+            fee = plan_pricing.extension_model_fee(plan, model_id)
+            cost = request.app.state.settings.credit_cost_mannequin_generate + fee
+            _check_expected_mannequin_quote(body, cost)
+            await repo.set_pending_job_pricing(
+                conn, user_id=user_id, job_id=job["id"], credits_reserved=cost,
+                metadata={"creditCostVersion": request.app.state.settings.credit_cost_version,
+                          "extensionModelFee": fee, "plan": plan, "selectedModelId": model_id})
             product = await repo.get_product(conn, project_id)
             if not mannequin.has_base_front(product or {}):  # A-6: 정면 사진 필수
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
@@ -2838,7 +2876,7 @@ async def _enqueue_base_fidelity_observation(conn, *, user_id, project_id):
         202: {"description": "마네킹 재생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
-        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 생성 진행 중 또는 견적 변경"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 재생성 작업 시작 (fit-profile 반영)",
@@ -2853,7 +2891,8 @@ async def regenerate_mannequins(
     """조정된 fit-profile 을 반영해 마네킹 후보를 **새 버전으로 재생성**합니다.
 
     - **Bearer Token**: 필수
-    - **Body**: `{ fitProfile? }` — 조정된 fit-profile(axes·matchingFit, legacy matchCut 호환).
+    - **Body**: `{ fitProfile?, expectedQuote?: {free: bool, credits: int} }`.
+      예약 직전 견적이 다르면 409 quote_changed로 돌려보낸다.
       없으면 저장된 analysis 기준.
     - generate 와 동일한 워커·크레딧 경로지만 **완료 캐시 게이트를 건너뛴다** — 매 호출이 새 버전을
       만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 플랜별 무료 수정 이후 기본 단가를 받는다.
@@ -2893,6 +2932,7 @@ async def regenerate_mannequins(
             cost = plan_pricing.mannequin_regenerate_cost(
                 plan, done_count, request.app.state.settings.credit_cost_mannequin_generate,
             )
+            _check_expected_mannequin_quote(body, cost)
             pricing_metadata = {
                 "creditCostVersion": request.app.state.settings.credit_cost_version,
                 "freeAdjust": cost == 0, "adjustIndex": done_count, "plan": plan,
@@ -2926,17 +2966,24 @@ async def regenerate_mannequins(
 
 @router.get("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
             tags=["Detail Page"], summary="콘티 조회")
-async def get_storyboard(request: Request, project_id: str, user_id: str = Depends(require_user)):
+async def get_storyboard(request: Request, project_id: str, user_id: str = Depends(require_user),
+                         with_revision: bool = Query(False, alias="withRevision")):
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        return await repo.get_storyboard(conn, project_id)
+        # 서버와 프론트 배포 순서가 달라도 열린 옛 탭은 기존 배열 계약을 계속 쓴다.
+        if not with_revision:
+            return await repo.get_storyboard(conn, project_id)
+        blocks, revision = await repo.get_storyboard_state(conn, project_id)
+        return {"blocks": blocks, "revision": revision}
 
 
-@router.put("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+@router.put("/projects/{project_id}/storyboard",
+            responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse, "description": "다른 곳에서 먼저 저장됨"}},
             tags=["Detail Page"], summary="콘티 저장")
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
-                          user_id: str = Depends(require_user)):
+                          user_id: str = Depends(require_user),
+                          base_revision: int | None = Query(None, alias="baseRevision", ge=0)):
     _require_bg_examples_enabled(request, blocks)
     try:
         canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
@@ -3017,9 +3064,17 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
                 )
                 if error:
                     raise _bad_request(*error)
-        out = await repo.save_storyboard(conn, user_id, project_id, canonical)
+        revision = await repo.save_storyboard(conn, user_id, project_id, canonical,
+                                             base_revision=base_revision)
+        if revision is None:
+            latest, current = await repo.get_storyboard_state(conn, project_id)
+            raise HTTPException(status_code=409, detail={
+                "code": "revision_conflict",
+                "message": "다른 창에서 더 최근에 저장된 내용이 있어요. 최신 내용을 다시 불러와 주세요.",
+                "meta": {"storyboard": latest, "revision": current},
+            })
         await conn.commit()
-    return out
+    return canonical if base_revision is None else {"blocks": canonical, "revision": revision}
 
 
 @router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},

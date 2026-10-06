@@ -31,6 +31,7 @@ from ..agents import (
     cut_plan,
     face_identity,
     feature_copy,
+    fit_axes,
     image_qc,
     horizon_background,
     mannequin,
@@ -1274,21 +1275,7 @@ def _analysis_for_selected_mannequin(
     snapshot 자체가 없는 구버전 컷은 기존 analysis 폴백을 유지한다. profile=null은
     첫 생성 당시의 "사진 그대로"를 뜻하므로 fitProfile 키를 null로 명시한다.
     """
-    snapshot = (
-        selected_cut.get("fit_profile_snapshot")
-        if isinstance(selected_cut, dict) else None
-    )
-    if (
-        not isinstance(snapshot, dict)
-        or snapshot.get("version") != 1
-        or "profile" not in snapshot
-        or (
-            snapshot.get("profile") is not None
-            and not isinstance(snapshot.get("profile"), dict)
-        )
-    ):
-        return analysis
-    return {**analysis, "fitProfile": snapshot.get("profile")}
+    return fit_axes.analysis_for_selected_mannequin(analysis, selected_cut)
 
 
 async def run_detail_page_job(app, job: dict) -> None:
@@ -2297,10 +2284,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         if items:
             try:
                 async with pool.connection() as conn:
-                    # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
-                    # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
-                    fresh = await repo.get_analysis(conn, project_id) or {}
-                    await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
+                    # 잡이 도는 동안의 셀러 편집을 보존하도록 생성한 카피 키만 병합한다.
+                    await repo.save_analysis(conn, project_id, {"featureCopy": items})
                     await conn.commit()
             except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
                 log.warning("feature copy persist failed for job %s: %r", job_id, e)
