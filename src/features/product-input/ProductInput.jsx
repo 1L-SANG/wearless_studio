@@ -1413,7 +1413,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           <span className="pill pill-soft">현재 {imgCount}장 / 최대 6장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16, lineHeight: 1.75 }}>앞면, 뒷면은 필수에요.<br />디테일란에 의류의 특징적인 부분들을 찍어서 업로드해주시면 훨씬 정확해져요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16, lineHeight: 1.75 }}>앞면, 뒷면은 필수예요.<br />디테일란에 의류의 특징적인 부분들을 찍어서 업로드해주시면 훨씬 정확해져요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} mobile={mobile} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
@@ -1566,7 +1566,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       )}
       <PageHead
         title="의류 이미지를 올려주세요"
-        sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
+        sub={mobile ? '사진만 올려 두면 PC에서 이어서 만들 수 있어요.'
+          : <>사진 몇 장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 
       {mobile && phase === 'done' && !handoff.readOnly && <MobileAnalyzedNotice busy={entryBusy} onNew={nextMobile} />}

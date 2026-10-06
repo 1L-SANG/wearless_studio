@@ -3572,3 +3572,6 @@
   .modal-actions.handoff-dialog-actions .btn { width: 100%; }
   .pi-save-modal.handoff-panel { padding-inline: 0; }
 }
+/* 폰 주 버튼도 저장 뒤 두 버튼처럼 화면 폭을 채운다. 안내 문구는 버튼 위 한 줄. */
+.pi-handoff .wizard-cta > .btn { flex: 1 1 100%; }
+.pi-handoff .wizard-cta > .wizard-cta-reason { flex-basis: 100%; text-align: center; }
