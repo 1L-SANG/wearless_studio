@@ -55,7 +55,7 @@ import {
   markFlowSession,
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
-import { flowScreenName, shouldWarnFlowAbandon } from '@/lib/flowAbandon.js';
+import { flowScreenName, notifyFlowKept } from '@/lib/flowAbandon.js';
 import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
 import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
 import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
@@ -100,10 +100,16 @@ function RequireProject() {
   const projectId = useAppStore((s) => s.projectId);
   const projectPersisted = useAppStore((s) => s.projectPersisted);
   const beginProject = useAppStore((s) => s.beginProject);
+  const { session } = useAuth();
+  const { push } = useToast();
+  const userId = session?.user?.id || null;
+  const recentFlow = canAutoOpenInput([{ id: 'flow' }], { userId, flow: useAppStore.getState(), slotClient: draftSlot });
+  const autoOpened = useRef(Boolean(projectId && projectPersisted && recentFlow
+    && !flowRouteSeenThisSession && !isSameTabProjectReload(projectId) && !hasFlowContinuation(projectId)));
   const [entryDecision, setEntryDecision] = useState(() => {
     if (!projectId || !projectPersisted) return 'continue';
     return flowRouteSeenThisSession || isSameTabProjectReload(projectId)
-      || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+      || hasFlowContinuation(projectId) || recentFlow ? 'continue' : 'ask';
   });
 
   useEffect(() => {
@@ -112,6 +118,15 @@ function RequireProject() {
     flowRouteSeenThisSession = true;
     markFlowSession(projectId, pathname);
   }, [entryDecision, pathname, projectId]);
+
+  useEffect(() => {
+    if (!autoOpened.current) return;
+    autoOpened.current = false;
+    push('이어서 열었어요', { duration: 8000, action: {
+      label: '새로 시작',
+      onClick: () => navigate('/create/input', { state: { startNewFromResume: true } }),
+    } });
+  }, [navigate, push]);
 
   // mock 데모 관례 — 주소창에 /create/storyboard·/create/generating 을 직접 쳐도
   // 시드 프로젝트를 만들어 통과시킨다(입력부터 걷지 않고 바로 확인). http 모드는 기존 가드 유지.
@@ -130,7 +145,9 @@ function RequireProject() {
     setEntryDecision('continue');
   };
   const startNew = async () => {
+    const previous = { ...useAppStore.getState() };
     await beginProject();
+    notifyFlowKept(previous, push, navigate);
     flowRouteSeenThisSession = true;
     navigate('/create/input', { replace: true });
   };
@@ -165,9 +182,7 @@ function RequireEditorProject() {
         const project = await api.getProject(routeProjectId);
         if (!alive) return;
         if (!project?.id || project.id !== routeProjectId) { setPhase('not-found'); return; }
-        if (shouldAdoptRouteProject(useAppStore.getState().projectId, project.id)) {
-          adoptProject(project.id);
-        }
+        adoptProject(project.id, { serverSnapshot: project });
         // 에디터가 실제로 열린 뒤에야 '편집 시작' 표식을 남긴다 — 이후 앞 단계(입력·
         // 마네킹·콘티) 재진입을 막는 근거다. 열리지도 않은 프로젝트에 표식을 남기면
         // 입력 화면과 무한히 왕복하게 된다.
@@ -246,8 +261,6 @@ function ProductInputRoute() {
   const [entrySources, setEntrySources] = useState([]);
   const [localSaveBlocked, setLocalSaveBlocked] = useState(false);
   const [mobileEntry, setMobileEntry] = useState(null);
-  const [abandonApproved, setAbandonApproved] = useState(false);
-  const [resumeNewAsk, setResumeNewAsk] = useState(false);
   const autoOpening = useRef(false);
   const newRequestHandled = useRef(null);
   const inputHasContent = useRef(true);
@@ -481,16 +494,17 @@ function ProductInputRoute() {
       return;
     }
     if (entryDecision !== 'start-new') return;
-    if (shouldWarnFlowAbandon(useAppStore.getState()) && !abandonApproved) return;
+    const previous = { ...useAppStore.getState() };
     let alive = true;
     beginProject().then(() => {
       if (!alive) return;
       flowRouteSeenThisSession = true;
+      notifyFlowKept(previous, pushToast, navigate);
       setEntryDecision('continue');
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged, abandonApproved]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged]);
 
   useEffect(() => {
     if (loginRequired || userChanged || entryDecision !== 'continue') return;
@@ -562,8 +576,8 @@ function ProductInputRoute() {
   const startNew = () => mobile ? entryActions.nextMobile({ enabled: slotEnabled, entry: true })
     : entryActions.startNew({ enabled: slotEnabled });
   const requestStartNew = () => {
-    if (shouldWarnFlowAbandon(useAppStore.getState())) setResumeNewAsk(true);
-    else { setEntryDecision('continue'); void startNew(); }
+    setEntryDecision('continue');
+    void startNew();
   };
   const showResumeToast = () => pushToast('이어서 열었어요', { duration: 8000, action: {
     label: '새로 시작', onClick: () => navigate('/create/input', { state: { startNewFromResume: true } }),
@@ -605,11 +619,6 @@ function ProductInputRoute() {
   if (entryDecision === 'error') {
     return <HandoffStatusPage variant="error" onRetry={() => setEntryDecision('checking')}
       onUpload={!localSaveBlocked && !draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
-  }
-  if (resumeNewAsk) return <ResumeChoiceModal abandonOnOpen onResume={() => { setResumeNewAsk(false); resume(); }}
-    onNew={() => { setResumeNewAsk(false); setEntryDecision('continue'); void startNew(); }} />;
-  if (entryDecision === 'start-new' && !abandonApproved && shouldWarnFlowAbandon(useAppStore.getState())) {
-    return <ResumeChoiceModal abandonOnOpen onResume={resume} onNew={() => setAbandonApproved(true)} />;
   }
   if (entryDecision === 'ask') {
     if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;

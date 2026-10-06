@@ -712,7 +712,7 @@ export function AnalysisForm({
     onConfirmingChange?.(true);
     try {
       await composeModeSaveRef.current;
-      await onNext();
+      await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
     } finally {
       setConfirming(false);
       onConfirmingChange?.(false);

@@ -227,7 +227,7 @@ test('N4 choosing an example ends manual waiting and HTTP save preserves the fie
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-token' } } });
   globalThis.fetch = async (url, options) => {
     request = { url, options };
-    return { ok: true, status: 204 };
+    return { ok: true, status: 200, json: async () => ({ blocks: [], revision: options?.method === 'PUT' ? 1 : 0 }) };
   };
   const blocks = [{ id: 'added', source: 'ai', exampleChoice: 'manual' }];
   try {
@@ -326,9 +326,9 @@ test('B5 HTTP PUT and reload preserve the same server-valid split board', async 
     const pathname = new URL(url, 'http://test.local').pathname;
     if (pathname.endsWith('/storyboard') && options.method === 'PUT') {
       stored = JSON.parse(options.body);
-      return jsonResponse(null, 204);
+      return jsonResponse({ blocks: stored, revision: 1 });
     }
-    if (pathname.endsWith('/storyboard')) return jsonResponse(stored);
+    if (pathname.endsWith('/storyboard')) return jsonResponse({ blocks: stored || [], revision: stored ? 1 : 0 });
     if (pathname.endsWith('/product')) return jsonResponse({ clothingType: 'top', colors: [] });
     if (pathname.endsWith('/analysis')) return jsonResponse({ targetGenders: ['women'] });
     if (pathname === '/v1/projects/http-b5') return jsonResponse({ composeMode: 'basic' });

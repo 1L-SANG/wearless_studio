@@ -473,7 +473,7 @@ test('dress is women-only even when stale input still says men', () => {
   assert.deepEqual(normalizeTargetGendersForClothingType('outer', ['men']), ['men']);
   assert.match(storyboardSource, /if \(clothingType === 'dress'\) return genderForClothingType/);
   assert.match(storyboardSource, /exampleGenderFromAnalysis\(\s*a,\s*hydratedCatalogs,\s*p\.clothingType/);
-  assert.match(httpAdapterSource, /savedAnalysis = await http\([^]*method: 'PATCH'/);
+  assert.match(httpAdapterSource, /await http\(`\/v1\/projects\/\$\{projectId\}\/analysis\?merge=1`, \{ method: 'PATCH'/);
   assert.match(httpAdapterSource, /analysisCache = \{ projectId, analysis: savedAnalysis \}/);
   assert.match(httpAdapterSource, /return savedAnalysis/);
 });

@@ -4,6 +4,7 @@
    Only change: ES imports/exports; onNext → React Router navigate.
    Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
+import { mannequinQuoteConfirmation, expectedMannequinQuote } from '@/features/mannequin/quoteConfirmation.js';
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -726,7 +727,12 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       : (currentQuote?.mannequinGenerate?.total
         ?? mannequinGenerationTotal(plan, analysis?.selectedModelId));
     const shortfall = mannequinGenerationCreditShortfall(cachedAccount, requiredCredits);
-    if (!shortfall) return true;
+    if (!shortfall) {
+      if (generationWorkKind === 'cuts' && analysisProjectId) {
+        mannequinQuoteConfirmation.remember(analysisProjectId, 'regenerate', expectedMannequinQuote(requiredCredits));
+      }
+      return true;
+    }
     setCreditShortfall(shortfall);
     return false;
   };
@@ -785,6 +791,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
   const goToStoryboard = async (opts) => {
     if (mobile) return;
+    if (opts?.expectedQuote) mannequinQuoteConfirmation.remember('draft', 'generate', opts.expectedQuote);
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     if (!guardMannequinCredits()) return;
@@ -889,6 +896,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
             });
             promotedProjectId = projectId;
             if (!isCurrentRun()) return;
+            mannequinQuoteConfirmation.remember(projectId, 'generate', mannequinQuoteConfirmation.seen(projectId, 'generate')
+              || mannequinQuoteConfirmation.seen('draft', 'generate') || opts?.expectedQuote
+              || expectedMannequinQuote(creditQuote?.mannequinGenerate?.total
+                ?? mannequinGenerationTotal(useAppStore.getState().account?.plan, latestSnapshot.analysis?.selectedModelId)));
             // 여기부터는 CTA 비대기 구간이다. 내 옷 승격도 이미 시작됐고 콘티보드가 그 프라미스를
             // 구독해 준비 상태·완료 반영·실패 안내를 맡는다.
             // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로,

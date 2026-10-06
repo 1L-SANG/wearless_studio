@@ -24,6 +24,7 @@ import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
+import { mannequinQuoteConfirmation } from '@/features/mannequin/quoteConfirmation.js';
 
 async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
@@ -32,6 +33,11 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
   draftPromotionSession.rememberProject(projectId);
+  const seenQuote = mannequinQuoteConfirmation.seen('draft', 'generate');
+  if (seenQuote) {
+    mannequinQuoteConfirmation.remember(projectId, 'generate', seenQuote);
+    mannequinQuoteConfirmation.clear('draft');
+  }
   // 프로젝트 신원이 생긴 순간 알린다 — CTA 는 여기까지만 기다리고 화면을 넘긴다. 남은 업로드·
   // 저장은 콘티보드가 구독하는 프라미스로 이어진다(2026-08-18: 업로드 대기 44~211초 제거).
   onProjectReady?.(projectId);
@@ -76,12 +82,12 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     const detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
     if (analysis) {
       analysis = { ...analysis };
-      delete analysis.confirmedGptProductEvidenceHandoff;
-      delete analysis.detailRecommendationsHandoff;
+      analysis.confirmedGptProductEvidenceHandoff = null;
+      analysis.detailRecommendationsHandoff = null;
       delete analysis.detailRecommendations;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
-        delete analysis[k];
+        analysis[k] = null;
       }
     }
 

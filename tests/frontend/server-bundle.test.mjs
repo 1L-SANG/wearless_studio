@@ -60,7 +60,7 @@ test('signed public evidence survives the draft and is promoted outside editable
   assert.match(adapterSource, /confirmedGptProductEvidenceHandoff: ai\.confirmedGptProductEvidenceHandoff/);
   assert.match(shapeSource, /confirmedGptProductEvidenceHandoff: null/);
   assert.match(syncSource, /const evidenceHandoff = analysis\?\.confirmedGptProductEvidenceHandoff/);
-  assert.match(syncSource, /delete analysis\.confirmedGptProductEvidenceHandoff/);
+  assert.match(syncSource, /analysis\.confirmedGptProductEvidenceHandoff = null/);
   assert.match(syncSource, /await api\.promoteConfirmedGptEvidence\(projectId, evidenceHandoff\)/);
 });
 

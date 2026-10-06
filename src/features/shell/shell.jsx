@@ -17,7 +17,6 @@ import { flushProductDraftSave } from '@/lib/draftStore.js';
 import { recordCreditReturn } from '@/lib/creditReturn.js';
 import { draftSlot } from '@/lib/draftSlot.js';
 import { getDraftDeviceNoun, isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
-import { flowScreenName, shouldWarnFlowAbandon } from '@/lib/flowAbandon.js';
 import { getFlowDraftSources } from '@/lib/draftEntry.js';
 import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
 import { isMobileDevice } from '@/lib/deviceClass.js';
@@ -151,23 +150,8 @@ export function TopNav() {
 
 /* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
    과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
-export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, onChoose, busy = false, abandonOnOpen = false }) {
+export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, onChoose, busy = false }) {
   const mobile = isMobileDevice();
-  const state = useAppStore.getState();
-  const [abandon, setAbandon] = useState(() => abandonOnOpen
-    ? { action: onNew, label: '새로 시작하기', path: state.resumePath } : null);
-  const protect = (action, label) => {
-    if (!mobile && shouldWarnFlowAbandon(state)) setAbandon({ action, label, path: state.resumePath });
-    else action();
-  };
-  if (abandon) return <Modal onClose={() => setAbandon(null)}>
-    <h3 className="handoff-title">만들던 상세페이지는 다시 열 수 없어요</h3>
-    <p>{flowScreenName(abandon.path)}까지 만든 작업이 사라지고, 이미 쓴 크레딧은 돌아오지 않아요.</p>
-    <div className="modal-actions">
-      <Button variant="primary" onClick={() => { setAbandon(null); if (onResume) onResume(); else onChoose('flow'); }}>만들던 것 이어서 하기</Button>
-      <Button variant="danger" onClick={() => { setAbandon(null); abandon.action(); }}>{abandon.label}</Button>
-    </div>
-  </Modal>;
   if (sources?.length) {
     return (
       <Modal onClose={onClose}>
@@ -182,8 +166,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
               : source.id === 'remote' && isMobileDraftWriter(source.meta) ? ' is-handoff' : '';
             return (
               <button type="button" className={`draft-entry-source${kind}${source.meta?.thumbnailUrl ? ' has-thumbnail' : ''}`} key={source.id} disabled={busy}
-                onClick={() => source.id !== 'flow' && sources.some((item) => item.id === 'flow')
-                  ? protect(() => onChoose(source.id), '이 상품으로 시작') : onChoose(source.id)}>
+                onClick={() => onChoose(source.id)}>
                 {source.meta?.thumbnailUrl && <img className="draft-entry-thumbnail" src={source.meta.thumbnailUrl} width={40} height={40} alt="" />}
                 <span>{title}</span>
                 <small>{source.description}</small>
@@ -194,7 +177,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
           })}
         </div>
         <div className="modal-actions">
-          <Button variant="ghost" onClick={() => protect(onNew, '새로 시작하기')} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
+          <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
         </div>
       </Modal>
     );
@@ -204,7 +187,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
       <h3 className="handoff-title">{mobile ? '업로드한 상품이 있어요' : '이어서 작업할까요?'}</h3>
       <p>열 상품을 골라 주세요.</p>
       <div className="modal-actions">
-        <Button variant="ghost" onClick={() => protect(onNew, '새로 시작하기')} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
+        <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
         <Button variant="primary" onClick={onResume} disabled={busy}>이어서 하기</Button>
       </div>
     </Modal>

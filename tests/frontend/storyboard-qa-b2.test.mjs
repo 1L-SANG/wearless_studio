@@ -293,7 +293,7 @@ test('HTTP saveStoryboard forwards keepalive to the actual fetch request and moc
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-token' } } });
   globalThis.fetch = async (url, options) => {
     request = { url, options };
-    return { ok: true, status: 204 };
+    return { ok: true, status: 200, json: async () => ({ blocks: [], revision: options?.method === 'PUT' ? 1 : 0 }) };
   };
   try {
     await httpAdapter.saveStoryboard('keepalive-project', [{ id: 'latest' }], { keepalive: true });
