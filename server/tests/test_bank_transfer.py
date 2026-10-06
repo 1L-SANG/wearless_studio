@@ -32,14 +32,6 @@ PLANS = {
                "price": 1000, "credits": 10, "is_active": False},
 }
 
-REQUEST_COLUMNS = [
-    "id", "user_id", "plan_code", "kind", "amount", "credits", "payer_name", "phone", "tax_invoice",
-    "business_no", "business_name", "representative_name", "invoice_email", "note", "status",
-    "expires_at", "paid_at", "confirmed_at", "admin_note", "payment_id", "credit_source_id",
-    "manual_plan_grant_id", "created_at",
-]
-
-
 class Store:
     """SQL 문자열을 표별 동작으로 옮기는 메모리 DB."""
 
@@ -104,6 +96,8 @@ class Cursor:
         # ---- 가드·계정 ----
         if "select role from profiles" in q:
             self._set([{"role": s.role}])
+        elif q.startswith("select plan from profiles"):
+            self._set([s.profiles.get(p[0])])
         elif q.startswith("select balance, reserved from credit_accounts"):
             self._set([s.accounts.get(p[0])])
         # ---- 요금제 ----
@@ -172,7 +166,8 @@ class Cursor:
                        if r["user_id"] == p[0] and r["kind"] == p[1] and r["status"] == "requested"][:1])
         elif q.startswith("insert into bank_transfer_requests"):
             rid = s.next_id("req")
-            row = dict(zip(REQUEST_COLUMNS[1:14], p))
+            columns = [col.strip() for col in q.split("(", 1)[1].split(")", 1)[0].split(",")]
+            row = dict(zip(columns, p))
             row.update({"id": rid, "status": "requested", "expires_at": s.now + timedelta(days=3),
                         "paid_at": None, "confirmed_at": None, "admin_note": None, "payment_id": None,
                         "credit_source_id": None, "manual_plan_grant_id": None, "created_at": s.now})
@@ -260,6 +255,7 @@ class Cursor:
             entry = {"user": p[0], "source": p[1], "delta": p[2], "key": None}
             if "idempotency_key" in q:
                 entry["key"] = p[5]
+                entry["metadata"] = p[6].obj
             s.ledger.append(entry)
         elif q.startswith("update credit_accounts set balance"):
             s.accounts[p[1]]["balance"] = p[0]
@@ -392,6 +388,35 @@ def test_create_snapshots_plan_and_notifies_admin(client, store, make_token):
     assert data["bank"]["account"] == "123-456-789"
     assert store.commits == 1
     assert store.notifications == [("admin", req["id"], "seller@example.com")]
+
+
+@pytest.mark.parametrize("profile_plan,base,bonus,percent,total", [
+    ("seller", 100, 5, 5, 105), ("pro", 500, 50, 10, 550),
+    ("starter", 100, 0, 0, 100), ("free", 100, 0, 0, 100),
+    ("unknown", 100, 0, 0, 100),
+])
+def test_topup_request_stores_plan_bonus_snapshot(
+        client, store, make_token, profile_plan, base, bonus, percent, total):
+    store.profiles[USER]["plan"] = profile_plan
+    store.plans["topup_finish"]["credits"] = base
+    response = create(client, make_token, planCode="topup_finish")
+    assert response.status_code == 200, response.text
+    request = response.json()["request"]
+    assert (request["credits"], request["bonusCredits"], request["totalCredits"]) == (base, bonus, total)
+    saved = store.requests[request["id"]]
+    assert (saved["bonus_credits"], saved["bonus_percent"], saved["plan_at_order"]) == (
+        bonus, percent, profile_plan if profile_plan != "unknown" else "free")
+
+
+def test_subscription_request_has_no_topup_bonus(client, store, make_token):
+    store.profiles[USER]["plan"] = "pro"
+    response = create(client, make_token)
+    assert response.status_code == 200, response.text
+    request = response.json()["request"]
+    assert request["credits"] == request["totalCredits"] == 1600
+    assert request["bonusCredits"] == 0
+    saved = store.requests[request["id"]]
+    assert saved["bonus_credits"] == saved["bonus_percent"] == 0
 
 
 def test_create_rejects_second_open_request_of_same_kind_but_allows_other_kind(client, store, make_token):
@@ -537,6 +562,41 @@ def test_confirm_topup_grants_snapshot_and_is_idempotent(client, store, make_tok
     assert again.json()["creditSourceId"] == "src-1" and again.json()["available"] == 280
     assert len(store.ledger) == len(store.payments) == 1 and len(store.audits) == 1
     assert store.notifications.count(("user", "seller@example.com", "topup_finish", None)) == 1
+
+
+def test_confirm_preserves_pro_bonus_after_downgrade_once(client, store, make_token):
+    store.profiles[USER]["plan"] = "pro"
+    store.plans["topup_finish"]["credits"] = 500
+    assert create(client, make_token, planCode="topup_finish").status_code == 200
+    rid = _uuidify(store)[0]
+    store.profiles[USER]["plan"] = "starter"
+    store.plans["topup_finish"].update(price=1, credits=1, is_active=False)
+    first = confirm(client, make_token, rid)
+    second = confirm(client, make_token, rid)
+    assert first.status_code == second.status_code == 200
+    assert first.json()["credits"] == second.json()["credits"] == 550
+    assert first.json()["available"] == second.json()["available"] == 650
+    assert second.json()["idempotent"] is True
+    assert len(store.sources) == len(store.ledger) == len(store.payments) == 1
+    assert store.sources["src-1"]["initial"] == store.ledger[0]["delta"] == 550
+    metadata = store.ledger[0]["metadata"]
+    assert {key: metadata[key] for key in ("baseCredits", "bonusCredits", "bonusPercent", "planAtOrder")} == {
+        "baseCredits": 500, "bonusCredits": 50, "bonusPercent": 10, "planAtOrder": "pro"}
+    assert metadata["request_id"] == rid and metadata["granted_by"] == USER
+
+
+def test_legacy_topup_confirmation_does_not_add_current_plan_bonus(client, store, make_token):
+    assert create(client, make_token, planCode="topup_finish").status_code == 200
+    rid = _uuidify(store)[0]
+    for key in ("bonus_credits", "bonus_percent", "plan_at_order"):
+        store.requests[rid].pop(key, None)
+    store.profiles[USER]["plan"] = "pro"
+    result = confirm(client, make_token, rid)
+    assert result.status_code == 200, result.text
+    assert result.json()["credits"] == 180
+    metadata = store.ledger[0]["metadata"]
+    assert metadata["bonusCredits"] == metadata["bonusPercent"] == 0
+    assert metadata["planAtOrder"] is None
 
 
 def test_confirm_subscription_creates_grant_bucket_payment_and_plan(client, store, make_token):
@@ -797,3 +857,43 @@ async def test_new_request_posts_to_slack_even_without_resend(monkeypatch):
     settings.fm_slack_webhook_url = None
     await bank_transfer_notify.notify_admin_new_request(settings, req, user_email=None)
     assert len(posted) == 1
+
+
+@pytest.mark.anyio
+async def test_topup_notifications_show_total_and_bonus(monkeypatch):
+    from types import SimpleNamespace
+    posted, emailed = [], []
+
+    async def fake_post(settings, text):
+        posted.append(text)
+
+    async def fake_email(settings, **kwargs):
+        emailed.append(kwargs)
+
+    monkeypatch.setattr(bank_transfer_notify, "_post_slack", fake_post)
+    monkeypatch.setattr(bank_transfer_notify, "_send_email", fake_email)
+    settings = SimpleNamespace(fm_slack_webhook_url="https://hooks.slack.test/x", resend_api_key="key",
+                               bank_transfer_notify_email="contact@wearless.kr")
+    req = {"kind": "topup", "plan_code": "topup_finish", "amount": 9900,
+           "credits": 500, "bonus_credits": 50, "payer_name": "홍길동"}
+    await bank_transfer_notify.notify_admin_new_request(settings, req, user_email="seller@example.com")
+    await bank_transfer_notify.notify_user_confirmed(settings, to="seller@example.com", req=req, ends_at=None)
+    assert "크레딧 550 (보너스 50 포함)" in posted[0]
+    assert all("크레딧 550 (보너스 50 포함)" in email["text"] for email in emailed)
+    assert len(emailed) == 2
+
+
+@pytest.mark.anyio
+async def test_confirmation_notification_uses_granted_total_without_adding_bonus_twice(monkeypatch):
+    from types import SimpleNamespace
+    emailed = []
+
+    async def fake_email(settings, **kwargs):
+        emailed.append(kwargs)
+
+    monkeypatch.setattr(bank_transfer_notify, "_send_email", fake_email)
+    req = {"kind": "topup", "plan_code": "topup_finish", "credits": 550,
+           "baseCredits": 500, "bonusCredits": 50}
+    await bank_transfer_notify.notify_user_confirmed(
+        SimpleNamespace(resend_api_key="key"), to="seller@example.com", req=req, ends_at=None)
+    assert "크레딧 550 (보너스 50 포함)" in emailed[0]["text"]

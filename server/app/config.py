@@ -287,6 +287,7 @@ class Settings:
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
     # 2026-09-11 v6: 1cr=50원 기준 행동별 단가, 정본 documents/research/2026-09-07-credit-pricing-plans.md §5·§5-1
+    signup_credits: int = 0
     credit_cost_version: str = "v6"
     credit_cost_mannequin_generate: int = 45
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
@@ -859,6 +860,7 @@ def load_settings() -> Settings:
         job_concurrency=_int_env("JOB_CONCURRENCY", 1),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
+        signup_credits=int(os.getenv("SIGNUP_CREDITS", "0")),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v6"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),

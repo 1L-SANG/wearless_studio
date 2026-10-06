@@ -60,6 +60,7 @@
 .sg:first-child { border-left: 0; }
 .sg dt { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
 .sg dd { margin: 0; font-size: 16px; font-weight: 700; color: var(--fg-1); font-variant-numeric: tabular-nums; word-break: keep-all; }
+.deadlinePart { white-space: nowrap; }
 .valLine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .money { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cur { font-weight: 800; }
@@ -137,6 +138,8 @@
 .topupHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 16px; }
 .topupTitle { margin: 0; font-family: var(--font-body); font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
 .topupMeta { font-size: 14px; color: var(--fg-2); }
+.topupBonusNotice { margin: 0 0 var(--sp-16); text-wrap: balance; }
+.bonusRate { white-space: nowrap; } /* WebKit이 '5%' 뒤에서 줄을 바꿔 쉼표가 다음 줄 앞에 오던 문제 */
 .needLine { display: flex; align-items: center; gap: 8px; margin: -4px 0 20px; font-size: 15px; font-weight: 600; color: var(--fg-1); }
 .needLine svg { color: var(--accent-error); }
 .topupList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-24); }
@@ -150,6 +153,8 @@
   background: var(--fg-1); color: var(--cta-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap;
 }
 .topupInfo { min-width: 0; }
+.topupCreditLine { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-8); }
+.topupBonus { padding: var(--sp-4) var(--sp-8); border-radius: var(--r-pill); background: var(--accent-success-ring); color: var(--accent-success); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .topupCredits { display: flex; align-items: baseline; gap: 6px; margin: 0; font-family: var(--font-body); font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
 .plus { font-weight: 500; color: var(--fg-3); margin-right: -4px; }
 .topupPrice { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
@@ -205,7 +210,7 @@
   .money { font-size: 26px; }
   .topupSection { margin-top: 40px; }
   .topupList { grid-template-columns: 1fr; gap: 16px; }
-  .topupRow { padding: 20px; }
+  .topupRow { padding: 20px; flex-wrap: wrap; }
   .topupCredits { font-size: 26px; }
   .topupButton { padding: 0 16px; font-size: 14px; }
   .needLine { margin: 0 0 16px; font-size: 14px; }

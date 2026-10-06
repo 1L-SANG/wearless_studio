@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from . import repo
 from .auth import require_user
 from .db import get_conn
+from .plan_pricing import TOPUP_BONUS_PERCENT, plan_of, topup_bonus_credits
 
 log = logging.getLogger("wearless.payments")
 
@@ -94,17 +95,25 @@ async def create_checkout(
             plan = await cur.fetchone()
             if plan is None:
                 raise _err("unknown_plan", "추가구매 상품을 찾을 수 없어요.", 404)
+            await cur.execute("select plan from profiles where user_id = %s", (user_id,))
+            profile = await cur.fetchone()
+            plan_at_order = plan_of((profile or {}).get("plan"))
+            bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
+            bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
             order_id = _new_order_id()
             await cur.execute(
-                "insert into toss_payment_orders (order_id, user_id, plan_code, amount, credits) "
-                "values (%s, %s, %s, %s, %s)",
-                (order_id, user_id, plan["code"], plan["price"], plan["credits"]),
+                "insert into toss_payment_orders (order_id, user_id, plan_code, amount, credits, "
+                "bonus_credits, bonus_percent, plan_at_order) values (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (order_id, user_id, plan["code"], plan["price"], plan["credits"],
+                 bonus_credits, bonus_percent, plan_at_order),
             )
         await conn.commit()
     return JSONResponse({
         "orderId": order_id,
         "amount": plan["price"],
         "credits": plan["credits"],
+        "bonusCredits": bonus_credits,
+        "totalCredits": plan["credits"] + bonus_credits,
         "orderName": plan["name"],
         # 토스 계약: 유추 가능한 값 금지 → 사용자 uuid(랜덤) 사용. 2~50자 조건 충족.
         "customerKey": user_id,
@@ -165,7 +174,8 @@ async def confirm_payment(
             # for update — 동시 confirm(더블클릭·재시도)을 직렬화한다.
             await cur.execute(
                 "select order_id, user_id::text as user_id, plan_code, amount, credits, status, "
-                "payment_key from toss_payment_orders where order_id = %s for update",
+                "payment_key, bonus_credits, bonus_percent, plan_at_order "
+                "from toss_payment_orders where order_id = %s for update",
                 (body.order_id,),
             )
             order = await cur.fetchone()
@@ -176,7 +186,11 @@ async def confirm_payment(
                 # 이미 승인·적립된 주문 — 재적립 없이 현재 잔액만 돌려준다.
                 acct = await repo.get_account(conn, user_id)
                 return JSONResponse({
-                    "orderId": order["order_id"], "credits": order["credits"],
+                    "orderId": order["order_id"],
+                    "credits": order["credits"] + (order.get("bonus_credits") or 0),
+                    "baseCredits": order["credits"],
+                    "bonusCredits": order.get("bonus_credits") or 0,
+                    "totalCredits": order["credits"] + (order.get("bonus_credits") or 0),
                     "available": (acct or {}).get("credits", 0), "idempotent": True,
                 })
             if order["status"] != "pending":
@@ -228,7 +242,10 @@ async def confirm_payment(
                 provider_ref=body.payment_key,
                 metadata={"orderId": order["order_id"], "method": payment.get("method")},
                 # 결제 시점 확정값으로 적립 — 그 사이 카탈로그가 바뀌어도 결제한 만큼만 준다.
-                snapshot={"credits": order["credits"], "price": order["amount"]},
+                snapshot={"credits": order["credits"], "price": order["amount"],
+                          "bonusCredits": order.get("bonus_credits") or 0,
+                          "bonusPercent": order.get("bonus_percent") or 0,
+                          "planAtOrder": order.get("plan_at_order")},
             )
         except repo.CreditError as e:
             raise _err(e.code, e.message, e.status)
@@ -238,6 +255,9 @@ async def confirm_payment(
     return JSONResponse({
         "orderId": order["order_id"],
         "credits": result.get("credits"),
+        "baseCredits": order["credits"],
+        "bonusCredits": order.get("bonus_credits") or 0,
+        "totalCredits": result.get("credits"),
         "available": result.get("available"),
         "idempotent": bool(result.get("idempotent")),
     })

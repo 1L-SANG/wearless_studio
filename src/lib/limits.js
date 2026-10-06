@@ -40,6 +40,12 @@ export const FREE_MANNEQUIN_ADJUSTS = Object.freeze({
   seller: 1,
   pro: 2,
 });
+// 서버 plan_pricing.py 와 같은 값.
+export const TOPUP_BONUS_PERCENT = Object.freeze({ free: 0, starter: 0, seller: 5, pro: 10 });
+
+export function topupBonusCredits(plan, base) {
+  return Math.floor(Number(base) * TOPUP_BONUS_PERCENT[normalizePlanTier(plan)] / 100);
+}
 export const BASIC_VIRTUAL_MODEL_IDS = new Set(['mA', 'mB']);
 
 const PLAN_TIERS = new Set(Object.keys(EXTENSION_MODEL_FEE));

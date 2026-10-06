@@ -18,9 +18,9 @@
    앱을 막는 것보다 다음 진입에서 다시 확인하는 편이 낫다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Icon, Modal } from '@/components/ui.jsx';
+import { Button, Icon, Modal, useToast } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { isMockMode } from '@/lib/api/index.js';
+import { useAppStore } from '@/store/useAppStore.js';
 import { acceptSellerConsent, getSellerConsent } from '@/lib/api/consents.js';
 import { claimSignupConsent, clearSignupConsent, hasFreshSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
@@ -28,6 +28,8 @@ import styles from './SignupCompletion.module.css';
 
 export function SignupCompletion() {
   const { session, loading, signOut } = useAuth();
+  const { push } = useToast();
+  const loadAccount = useAppStore((a) => a.loadAccount);
   const [state, setState] = useState(null); // 서버 응답 | null(미조회·불필요)
   const [checked, setChecked] = useState(false);
   const [pending, setPending] = useState(false);
@@ -43,11 +45,13 @@ export function SignupCompletion() {
     if (signal.aborted) return;
     clearSignupConsent(marker);
     setState({ ...res, userId });
-  }, [userId]);
+    if (res.signupCredits > 0) push(`가입 크레딧 ${res.signupCredits}을 드렸어요`);
+    void loadAccount({ force: true }).catch(() => {});
+  }, [userId, push, loadAccount]);
 
   useEffect(() => {
     setState(null); setChecked(false); setPending(false); setError('');
-    if (loading || !userId || isMockMode) return undefined;
+    if (loading || !userId) return undefined;
     const ctrl = new AbortController();
     request.current = ctrl;
     // 조회가 늦거나 실패해도 이 가입 동의는 처음 돌아온 계정의 것이다.

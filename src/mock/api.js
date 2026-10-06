@@ -30,11 +30,13 @@ import {
 import {
   CREDIT_COSTS,
   LIMITS,
+  TOPUP_BONUS_PERCENT,
   detailPageCreditCost,
   extensionModelFee,
   mannequinGenerationTotal,
   mannequinRegenerationQuote,
   normalizePlanTier,
+  topupBonusCredits,
 } from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
@@ -90,6 +92,10 @@ const mockSwatchSuggestions = (product) => {
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
 const mockBankTransfer = { requests: [] };
+const mockSellerConsents = new Map();
+const mockCreditHistory = [];
+const mockCreditSources = [];
+const mockConsentRequired = { terms: 'v1.0', privacy: 'v1.0' };
 const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
 const saveMockCheckout = (order) => {
   try { sessionStorage.setItem(MOCK_CHECKOUT_KEY, JSON.stringify(order)); } catch { /* same-page Map fallback */ }
@@ -100,9 +106,6 @@ const loadMockCheckout = (orderId) => {
     const order = JSON.parse(sessionStorage.getItem(MOCK_CHECKOUT_KEY) || 'null');
     return order?.orderId === orderId ? order : null;
   } catch { return null; }
-};
-const clearMockCheckout = () => {
-  try { sessionStorage.removeItem(MOCK_CHECKOUT_KEY); } catch { /* noop */ }
 };
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
 // 데모도 프로젝트별 작업을 보관해 카드 전환 뒤 원래 작업을 다시 열 수 있다.
@@ -262,6 +265,42 @@ export const api = {
   /* ---- reference / catalogs ---- */
   async getAccount() { await wait(120); return clone(DB.account); },
   async getCatalogs() { await wait(80); return clone(DB.catalogs); },
+  async getSellerConsent({ expectedUserId } = {}) {
+    await wait(40);
+    const accepted = mockSellerConsents.get(expectedUserId || 'mock-user') || null;
+    return { required: clone(mockConsentRequired), accepted: clone(accepted), needsConsent: !accepted, signupCredits: 0 };
+  },
+  async acceptSellerConsent({ termsVersion, privacyVersion, expectedUserId }) {
+    await wait(60);
+    if (termsVersion !== mockConsentRequired.terms || privacyVersion !== mockConsentRequired.privacy) {
+      const error = new Error('약관이 갱신됐어요.');
+      error.status = 409;
+      throw error;
+    }
+    const userId = expectedUserId || 'mock-user';
+    let signupCredits = 0;
+    if (!mockSellerConsents.has(userId)) {
+      mockSellerConsents.set(userId, { termsVersion, privacyVersion, ageAttested: true, acceptedAt: new Date().toISOString() });
+      signupCredits = Math.max(0, Math.floor(Number(DB.config.signupCredits) || 0));
+      if (signupCredits > 0) {
+        DB.account.credits += signupCredits;
+        const createdAt = new Date().toISOString();
+        const creditSourceId = uid('source');
+        mockCreditHistory.unshift({
+          id: uid('ledger'), actionKey: 'grant_signup', delta: signupCredits,
+          idempotencyKey: `signup:${userId}`, projectId: null, jobId: null,
+          balanceAfter: DB.account.credits, availableAfter: DB.account.credits, createdAt,
+          creditSourceId, metadata: { reason: 'signup' },
+        });
+        mockCreditSources.unshift({
+          id: creditSourceId, sourceType: 'free', status: 'active', initialCredits: signupCredits,
+          remainingCredits: signupCredits, periodEnd: null, planId: null, createdAt,
+          paymentId: null, metadata: { reason: 'signup' },
+        });
+      }
+    }
+    return { ...(await api.getSellerConsent({ expectedUserId: userId })), signupCredits };
+  },
 
   /* ---- credits (표시 전용; 실서버는 httpAdapter. 계약 §6) ---- */
   async getCreditQuote(_projectId, { selectedModelId } = {}) {
@@ -298,6 +337,7 @@ export const api = {
     const now = Date.now();
     // 정합 시나리오: 600 지급 후 마네킹 생성 2회(각 -45), 잔액 510 (account.credits 와 일치)
     return [
+      ...clone(mockCreditHistory),
       { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 510, availableAfter: 510, createdAt: new Date(now - 32e5).toISOString() },
       { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 555, availableAfter: 555, createdAt: new Date(now - 36e5).toISOString() },
       { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 600, balanceAfter: 600, availableAfter: 600, createdAt: new Date(now - 40e5).toISOString() },
@@ -306,6 +346,7 @@ export const api = {
   async getCreditSources() {
     await wait(100);
     return [
+      ...clone(mockCreditSources),
       { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 600, remainingCredits: 510, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-starter', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
@@ -313,10 +354,15 @@ export const api = {
     const plan = (await api.getPricingPlans()).find((p) => p.kind === 'topup' && p.code === planCode);
     if (!plan) throw new Error('존재하지 않는 충전 상품이에요.');
     const orderId = uid('order');
+    const planAtOrder = normalizePlanTier(DB.account.plan);
+    const bonusCredits = topupBonusCredits(DB.account.plan, plan.credits);
     const order = {
       orderId,
       amount: plan.price,
       credits: plan.credits,
+      bonusCredits,
+      totalCredits: plan.credits + bonusCredits,
+      planAtOrder, bonusPercent: TOPUP_BONUS_PERCENT[planAtOrder],
       orderName: `크레딧 ${plan.credits}`,
       customerKey: 'mock-customer',
     };
@@ -324,7 +370,7 @@ export const api = {
     saveMockCheckout(order);
     return clone(order);
   },
-  // ---- 계좌이체(무통장입금) 신청 — 메모리 저장. 관리자 확인은 실서버에서만 한다. ----
+  // ---- 계좌이체(무통장입금) 신청과 확인, 메모리 저장. ----
   async getBankTransferInfo() {
     await wait(40);
     return { enabled: true, bank: '목은행', account: '000-0000-0000', holder: '데일리모먼트', expiresInDays: 3 };
@@ -336,8 +382,12 @@ export const api = {
     if (mockBankTransfer.requests.some((r) => r.kind === plan.kind && r.status === 'requested')) {
       throw new Error('확인 중인 신청이 있어요.');
     }
+    const planAtOrder = normalizePlanTier(DB.account.plan);
+    const bonusCredits = plan.kind === 'topup' ? topupBonusCredits(planAtOrder, plan.credits) : 0;
     const request = {
       id: uid('btr'), planCode: plan.code, kind: plan.kind, amount: plan.price, credits: plan.credits,
+      bonusCredits, totalCredits: plan.credits + bonusCredits,
+      planAtOrder, bonusPercent: plan.kind === 'topup' ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
       payerName: body.payerName, phone: body.phone || null, taxInvoice: Boolean(body.taxInvoice),
       note: body.note || null, status: 'requested',
       expiresAt: new Date(Date.now() + 3 * 864e5).toISOString(), createdAt: new Date().toISOString(),
@@ -356,6 +406,24 @@ export const api = {
     request.status = 'canceled';
     return clone(request);
   },
+  async adminConfirmBankTransfer(requestId, { paidAt, adminNote } = {}) {
+    await wait(60);
+    const request = mockBankTransfer.requests.find((r) => r.id === requestId);
+    if (!request) throw new Error('신청을 찾지 못했어요.');
+    if (request.status === 'paid') return { ...clone(request.result), idempotent: true };
+    if (!['requested', 'expired'].includes(request.status)) throw new Error('지급할 수 없는 신청이에요.');
+    DB.account.credits += request.totalCredits;
+    if (request.kind === 'subscription') DB.account.plan = request.planCode;
+    request.status = 'paid';
+    request.paidAt = paidAt;
+    request.adminNote = adminNote || null;
+    request.confirmedAt = new Date().toISOString();
+    request.result = {
+      credits: request.totalCredits, baseCredits: request.credits, bonusCredits: request.bonusCredits, totalCredits: request.totalCredits,
+      available: DB.account.credits, idempotent: false,
+    };
+    return clone(request.result);
+  },
   async getManualEntitlement() {
     await wait(40);
     return { active: false };
@@ -365,10 +433,18 @@ export const api = {
     const order = loadMockCheckout(orderId);
     if (!order) throw new Error('결제 주문을 찾지 못했어요. 다시 충전을 시작해 주세요.');
     if (order.amount !== amount) throw new Error('결제 금액이 주문과 일치하지 않아요.');
-    DB.account.credits += order.credits;
-    mockCheckoutOrders.delete(orderId);
-    clearMockCheckout();
-    return { credits: order.credits, available: DB.account.credits };
+    if (order.status === 'paid') return { ...clone(order.result), idempotent: true, available: DB.account.credits };
+    const bonusCredits = order.bonusCredits || 0;
+    const totalCredits = order.totalCredits ?? order.credits + bonusCredits;
+    DB.account.credits += totalCredits;
+    order.status = 'paid';
+    order.result = {
+      credits: totalCredits, baseCredits: order.credits, bonusCredits, totalCredits,
+      available: DB.account.credits, idempotent: false,
+    };
+    mockCheckoutOrders.set(orderId, order);
+    saveMockCheckout(order);
+    return clone(order.result);
   },
 
   // store.loadProject 전용 '현재 프로젝트' (pl1 spec §7 — http 어댑터가 최근/생성 의미를

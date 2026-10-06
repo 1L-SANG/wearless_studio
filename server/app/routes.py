@@ -76,6 +76,7 @@ from .models import (
     ToneApplyRequest,
     ToneEditorState,
     SellerConsentIn,
+    SellerConsentResponse,
 )
 from .r2 import (
     ASSET_CACHE_VERSION,
@@ -563,7 +564,7 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
     return row
 
 
-def _consent_payload(row: dict | None, *, today=None) -> dict:
+def _consent_payload(row: dict | None, *, today=None, signup_credits: int = 0) -> dict:
     required = legal_versions.required_versions()
     accepted = None
     if row is not None:
@@ -581,11 +582,13 @@ def _consent_payload(row: dict | None, *, today=None) -> dict:
         or accepted["privacyVersion"] != required["privacy"]
         or not accepted["ageAttested"]
     )
-    return {"required": required, "accepted": accepted, "needsConsent": needs}
+    return {"required": required, "accepted": accepted, "needsConsent": needs,
+            "signupCredits": signup_credits}
 
 
 @router.get(
     "/me/consents",
+    response_model=SellerConsentResponse,
     responses={**COMMON_RESPONSES},
     tags=["User & Account"],
     summary="셀러 약관 동의 상태 조회",
@@ -604,6 +607,7 @@ async def get_consents(request: Request, user_id: str = Depends(require_user)):
 
 @router.post(
     "/me/consents",
+    response_model=SellerConsentResponse,
     responses={**COMMON_RESPONSES},
     tags=["User & Account"],
     summary="셀러 약관 동의 기록",
@@ -628,13 +632,24 @@ async def accept_consents(
                 "required": required,
             },
         )
+    signup_credits = 0
     async with get_conn(request) as conn:
         row = await repo.upsert_seller_consent(
             conn, user_id,
             terms_version=body.terms_version, privacy_version=body.privacy_version, age_attested=True,
         )
+        if row.get("inserted") and request.app.state.settings.signup_credits > 0:
+            try:
+                # 동의 INSERT가 연 트랜잭션 안에서 지급만 SAVEPOINT로 보호한다.
+                async with conn.transaction():
+                    signup_credits = await repo.grant_signup_credits(
+                        conn, user_id=user_id, credits=request.app.state.settings.signup_credits,
+                    )
+            except Exception:
+                signup_credits = 0
+                logger.exception("Signup credit grant failed user_id=%s", user_id)
         await conn.commit()
-    return _consent_payload(row)
+    return _consent_payload(row, signup_credits=signup_credits)
 
 @router.post(
     "/me/app-origin",

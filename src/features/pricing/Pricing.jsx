@@ -24,7 +24,8 @@ import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
   TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
-import { CopyButton, PIcon, num, seoulShort, won } from './bankTransferParts.jsx';
+import { topupBonusCredits } from '@/lib/limits.js';
+import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
 import s from './Pricing.module.css';
 
 // 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 수정 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
@@ -55,8 +56,6 @@ const PLAN_DETAILS = {
     baseCredits: 1400,
     bonusNote: '200 크레딧 추가 증정',
     features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능'],
-    // 충전 보너스는 아직 지급 코드가 없다. 토스 경로에서는 충전 탭이 닫혀 있어 약속이 깨질 일이
-    // 없지만, 계좌이체 모드는 충전을 실제로 팔므로 그 동안은 이 줄을 숨긴다(2026-09-23 리뷰 368F-6).
     topupBonus: '충전할 때마다 크레딧 5% 보너스',
   },
   pro: {
@@ -222,6 +221,7 @@ export function Pricing() {
             <span className={s.statusProduct}>
               {plans.find((p) => p.code === r.planCode)?.name || r.planCode}
               {r.kind === 'subscription' ? ' 1개월 이용권' : ' 1회 충전'}
+              {r.bonusCredits > 0 && ` · 보너스 ${num(r.bonusCredits)} 포함`}
             </span>
             <button type="button" className={s.textBtn} onClick={() => cancelTransfer.mutate(r.id)}
               disabled={cancelTransfer.isPending}>신청 취소</button>
@@ -247,7 +247,7 @@ export function Pricing() {
               </div>
             )}
             <div className={s.sg}><dt>입금자명</dt><dd>{r.payerName}</dd></div>
-            <div className={s.sg}><dt>입금 기한</dt><dd>{seoulShort(r.expiresAt)}까지</dd></div>
+            <div className={s.sg}><dt>입금 기한</dt><dd><TransferDeadline iso={r.expiresAt} className={s.deadlinePart} /></dd></div>
           </dl>
         </section>
       ))}
@@ -296,7 +296,7 @@ export function Pricing() {
                   <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / STANDARD_PAGE_CREDITS)}개</strong></p>
                 </div>
                 {details && <ul className={s.features}>
-                  {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
+                  {[...details.features, ...(details.topupBonus ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
                     <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
                     <span>{feature}</span>
                   </li>)}
@@ -361,19 +361,24 @@ export function Pricing() {
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
             <span className={s.topupMeta}>1회 결제 · 소멸 없음</span>
           </div>
+          <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>
           {entry.need > 0 && (
             <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
           )}
           <div className={s.topupList}>
             {topups.map((p) => {
               const locked = session && bankTransfer && (!bankReady || Boolean(openByKind('topup')));
+              const bonusCredits = session ? topupBonusCredits(currentPlan, p.credits) : 0;
               return (
                 <div key={p.id} className={`${s.topupRow}${p.code === recommendedCode ? ' ' + s.recommended : ''}`}>
                   {p.code === recommendedCode && <span className={s.recommendPill}>추천</span>}
                   <div className={s.topupInfo}>
-                    <h3 className={s.topupCredits} aria-label={p.name}>
-                      <span className={s.plus}>+</span>{num(p.credits)}<span className={s.creditUnit}>크레딧</span>
-                    </h3>
+                    <div className={s.topupCreditLine}>
+                      <h3 className={s.topupCredits} aria-label={p.name}>
+                        <span className={s.plus}>+</span>{num(p.credits)}<span className={s.creditUnit}>크레딧</span>
+                      </h3>
+                      {bonusCredits > 0 && <span className={s.topupBonus}>+{num(bonusCredits)} 보너스</span>}
+                    </div>
                     <p className={s.topupPrice}>
                       <strong>{won(p.price)}</strong>
                       <span>크레딧당 {perCredit(p)}원</span>

@@ -38,6 +38,7 @@
 .sumRows > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--on-ink-line); font-size: 14px; }
 .sumRows dt { color: var(--on-ink-3); white-space: nowrap; }
 .sumRows dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: var(--on-ink-1); }
+.bonusNote { display: block; margin-top: var(--sp-4); font-size: 12px; font-weight: 500; color: var(--on-ink-2); }
 .acctCard { margin-top: 28px; padding: 14px 14px 14px 16px; border-radius: var(--r-5); background: var(--on-ink-fill); box-shadow: inset 0 0 0 1px var(--on-ink-line); }
 .acctTop { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .acctLabel { margin: 0; font-size: 12px; font-weight: 500; color: var(--on-ink-3); }
@@ -132,6 +133,7 @@
 .steps b { display: block; font-size: 15px; font-weight: 700; line-height: 24px; }
 .stepNext b { color: var(--on-ink-2); }
 .t { display: block; margin-top: 2px; font-size: 13px; color: var(--on-ink-3); font-variant-numeric: tabular-nums; }
+.deadlinePart { white-space: nowrap; }
 .stepNow .t { color: var(--on-ink-1); font-weight: 600; }
 
 .receipt { margin: 0; border: 1.5px solid var(--ring-strong); border-radius: var(--r-6); overflow: hidden; }

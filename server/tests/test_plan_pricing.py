@@ -32,6 +32,17 @@ def test_plan_normalization(raw, expected):
     assert plan_pricing.plan_of(raw) == expected
 
 
+@pytest.mark.parametrize('plan,base,bonus', [
+    ('free', 100, 0), ('starter', 500, 0), ('seller', 100, 5), ('pro', 500, 50),
+    ('seller', 19, 0), ('seller', 21, 1), ('pro', 19, 1),
+    (None, 500, 0), ('enterprise', 500, 0), ('PRO', 500, 0),
+])
+def test_topup_bonus_uses_normalized_plan_and_floors(plan, base, bonus):
+    from app import plan_pricing
+    assert plan_pricing.topup_bonus_credits(plan, base) == bonus
+    assert plan_pricing.topup_bonus_credits(plan=plan, base_credits=base) == bonus
+
+
 class _Conn:
     async def commit(self):
         pass
