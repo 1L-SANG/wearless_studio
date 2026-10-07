@@ -17,6 +17,7 @@ from app import repo
 from app.agents import cut_generator as cg
 from app.agents import face_angle_swap as angle
 from app.agents import face_identity as fi
+from app.agents import garment_desquiggle as gd
 from app.agents.gemini_image import InlineImage
 from app.r2 import PRIVATE_NO_STORE
 from app.workers import cut_checkpoints as ckpts
@@ -501,6 +502,56 @@ def test_digest_ignores_an_invented_name_but_not_the_block(monkeypatch):
     assert other.base_digest != same.base_digest
     # 셀러가 직접 붙인 이름은 요청의 일부다 — 바뀌면 새로 그린다
     assert asyncio.run(digest("린넨 셔츠", False)) != asyncio.run(digest("코튼 셔츠", False))
+
+
+def test_protection_changes_final_checkpoint_but_keeps_raw_base(monkeypatch):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    s = _settings(garment_desquiggle_mode="on")
+    app = _app(s)
+    store = asyncio.run(_store(app, "j1"))
+    plain = gd.build_protection_info(PRODUCT, {"sellingPoints": ["무지", "매끈한 표면"]}, [])
+    striped = gd.build_protection_info(PRODUCT, {"sellingPoints": ["스트라이프", "매끈한 표면"]}, [])
+
+    async def cut(protection):
+        return await store.for_cut(STYLING, s, PRODUCT, [PRODUCT_IMG],
+                                   {"garment_protection": protection}, real_identity_attached=False)
+
+    first = asyncio.run(cut(plain))
+    second = asyncio.run(cut(striped))
+    assert first.base_digest == second.base_digest
+    assert first.final_digest != second.final_digest
+
+
+def test_flag_off_reuses_legacy_final_without_generating_again(monkeypatch):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    s = _settings(garment_desquiggle_mode="off")
+    app = _app(s)
+    first = asyncio.run(_store(app, "j1"))
+    original = asyncio.run(first.for_cut(STYLING, s, PRODUCT, [PRODUCT_IMG], {},
+                                         real_identity_attached=False))
+    # 배포 전 레시피에는 새 플래그가 없다. 완성본만 남긴 실패 작업을 재현한다.
+    legacy_recipe = {
+        "v": "cut-final-v1", "angle": angle.PROMPT_VERSION,
+        "settings": {name: getattr(s, name, None) for name in (
+            "face_identity_enabled", "face_angle_swap_enabled", "face_angle_seed",
+            "face_crop_upscale", "face_crop_pad", "face_mask_lock", "face_skin_negative_prompt",
+            "garment_qc_mode", "cut_output_qc_mode", "bg_scene_qc_attempts", "real_horizon_neck_repair_enabled",
+        )},
+    }
+    legacy_digest = ckpts._digest({"base": original.base_digest, "recipe": legacy_recipe})
+    asyncio.run(first.save(legacy_digest, "final", b"OLD FINAL", "image/png", {
+        "garmentQc": None, "cutQc": None, "warnings": [], "neckRepair": None, "facePass": {},
+    }))
+    db.error_jobs.add("j1")
+
+    second = asyncio.run(_store(app, "j2"))
+    again = asyncio.run(second.for_cut(STYLING, s, PRODUCT, [PRODUCT_IMG], {},
+                                       real_identity_attached=False))
+    assert again.final is not None
+    assert again.final.image == b"OLD FINAL"
+    assert again.base.image is None  # 완성 뒤 원본을 지워도 다시 생성할 필요가 없다.
 
 
 def test_a_failed_delete_falls_back_to_the_reclaimer(monkeypatch):

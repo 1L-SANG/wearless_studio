@@ -22,6 +22,7 @@ from ..agents import (
     cut_output_qc,
     cut_plan,
     cut_variator,
+    garment_desquiggle,
     identity_source,
     image_qc,
     horizon_background,
@@ -377,6 +378,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # item 해결과 소유 asset 해결을 모두 통과해야 하며, 두 장 중 하나라도
                 # 없으면 일부 코디만 임의로 생성하지 않고 아래에서 단건 잡을 실패시킨다.
                 matching_assets = []
+                matching_metadata = []
                 for matching_id in matching_ids:
                     matching_asset_id = await repo.get_matching_item_asset(
                         conn, matching_id, user_id, project_id
@@ -388,6 +390,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                         if matching_asset_id
                         else None
                     )
+                    if s.garment_desquiggle_mode == "on":
+                        matching_metadata.append(await repo.get_matching_item_metadata(
+                            conn, matching_id, user_id, project_id))
                 # 무드 레퍼런스(refAssetIds) — 분위기(조명·색감)만 참고, 최대 3장 (ADR-0004)
                 mood_rows = []
                 for rid in [str(r) for r in (new_payload.get("refAssetIds") or [])][:3]:
@@ -858,6 +863,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            if s.garment_desquiggle_mode == "on":
+                generate_kwargs["garment_protection"] = garment_desquiggle.build_protection_info(
+                    product, analysis, matching_metadata if matching_ids else None)
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}

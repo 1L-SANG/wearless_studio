@@ -36,7 +36,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import face_angle_swap, face_identity, pose_crop, space_set_assets
+from . import face_angle_swap, face_identity, garment_desquiggle, pose_crop, space_set_assets
 from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -1964,6 +1964,8 @@ async def generate(
     angle_swap: face_angle_swap.AngleSwapSpec | None = None,
     # 베이스컷 체크포인트(BaseCheckpoint). 없으면 기존 동작 그대로 — provider 1콜 + 후처리.
     base_checkpoint: BaseCheckpoint | None = None,
+    # 프롬프트 입력과 분리된 판매 상품·매칭 의류 보호 정보. 없으면 원단 필터를 건너뛴다.
+    garment_protection: garment_desquiggle.ProtectionInfo | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -2001,6 +2003,9 @@ async def generate(
             # 후처리(얼굴 패스·각도 교체)는 수십 초~수 분이고 실패하거나 잡이 죽을 수 있다.
             # 그 전에 베이스를 남겨야 다음 시도가 베이스 값을 다시 내지 않는다.
             await base_checkpoint.keep(image, mime)
+    # 체크포인트는 후처리 전 원본을 보존한다. 원단 필터는 얼굴 패스보다 먼저 돈다.
+    image, mime = await garment_desquiggle.maybe_apply(
+        settings, request.model, spec, garment_protection, image, mime)
     # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
     # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
     angle_direction = _angle_swap_direction(spec, clothing_type, angle_swap)
@@ -2109,6 +2114,7 @@ async def repair(
     *,
     qc_corrections: tuple[str, ...],
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    garment_protection: garment_desquiggle.ProtectionInfo | None = None,
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     face_pass_outcome: dict | None = None,
     face_pass_url_provider=None,
@@ -2134,9 +2140,11 @@ async def repair(
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     image, mime = res.image, res.mime
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    image, mime = await garment_desquiggle.maybe_apply(
+        settings, model, spec, garment_protection, image, mime)
     if face_identity_spec is not None:
-        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
-        spec = normalize_spec(cut_spec, clothing_type=clothing_type)
         identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
         if identity is not None:
             image, mime = await face_identity.apply_face_pass(

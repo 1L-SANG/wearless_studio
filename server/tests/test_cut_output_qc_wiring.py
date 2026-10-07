@@ -49,6 +49,7 @@ def _detail_spec():
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
     generated_outputs=None, confirmed_packet=None, spec=None, settings_overrides=None,
+    analysis=None, matching_metadata=None,
 ):
     events = [] if events is None else events
     captured = {}
@@ -94,7 +95,8 @@ def _run_detail_cut(
         worker_job(),
         [prepared],
         {"clothingType": "top"},
-        {"fitProfile": {"axes": {"fit": "regular"}}},
+        analysis if analysis is not None else {"fitProfile": {"axes": {"fit": "regular"}}},
+        **({"matching_metadata": matching_metadata} if matching_metadata is not None else {}),
     ))
     captured.update(events=events, r2=r2, result=result)
     return captured
@@ -553,7 +555,8 @@ def test_detail_job_persists_cut_qc_per_block(monkeypatch):
     assert "garmentQc" not in captured["metadata"]
 
 
-def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", settings_overrides=None):
+def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", settings_overrides=None,
+                analysis=None, matching_ids=None, matching_metadata=None):
     captured = {"events": [], "qcCalls": 0, "generateModels": []}
 
     async def fake_product(conn, pid):
@@ -563,7 +566,7 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
         }]}
 
     async def fake_analysis(conn, pid):
-        return {"fitProfile": {"axes": {"fit": "regular"}}}
+        return analysis if analysis is not None else {"fitProfile": {"axes": {"fit": "regular"}}}
 
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": "product", "mime_type": "image/png"}
@@ -571,7 +574,14 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
     async def fake_generate(settings, *_args, **_kwargs):
         captured["events"].append("generate")
         captured["generateModels"].append(settings.model_image_high)
+        captured.setdefault("generateKwargs", []).append(_kwargs)
         return b"INITIAL", "image/png"
+
+    async def fake_matching_asset(conn, mid, uid, pid):
+        return mid
+
+    async def fake_matching_metadata(conn, mid, uid, pid):
+        return (matching_metadata or {}).get(mid)
 
     async def fake_best_of(settings, product_images, initial, generate_candidate):
         captured["events"].append("garment")
@@ -597,6 +607,8 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
     monkeypatch.setattr(eij.repo, "get_product", fake_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_matching_item_metadata", fake_matching_metadata)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
     monkeypatch.setattr(eij.image_qc, "best_of", fake_best_of)
     monkeypatch.setattr(eij.cut_output_qc, "verdict", fake_cut_qc)
@@ -622,6 +634,7 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False, cut_type="product", set
         "cutType": cut_type,
         "direction": "front",
         "shot": "full" if worn else "ghost",
+        **({"matchIds": matching_ids} if matching_ids else {}),
         **({"faceExposure": "same", "pose": "auto"} if worn else {}),
     })))
     return captured, r2

@@ -204,11 +204,15 @@ def job_identity(source: str | None, *, selected_model_id=None, license_row=None
 
 
 def _final_recipe(settings) -> dict:
-    return {
+    recipe = {
         "v": FINAL_RECIPE_VERSION,
         "angle": face_angle_swap.PROMPT_VERSION,
         "settings": {name: getattr(settings, name, None) for name in _FINAL_RECIPE_SETTINGS},
     }
+    # off 배포는 이미 완성한 컷의 옛 캐시를 그대로 쓴다. on일 때만 새 레시피로 분리한다.
+    if getattr(settings, "garment_desquiggle_mode", "off") == "on":
+        recipe["settings"]["garment_desquiggle_mode"] = "on"
+    return recipe
 
 
 def base_survives(exc: BaseException) -> bool:
@@ -412,7 +416,14 @@ class CutCheckpointStore:
             "userId": self.user_id,
             "projectId": self.project_id,
         })
-        final_digest = _digest({"base": base_digest, "recipe": _final_recipe(settings)})
+        # 보호 정보는 provider 요청을 바꾸지 않지만 완성본을 바꾼다. 베이스 재사용은 유지한다.
+        protection = generate_kwargs.get("garment_protection")
+        final_recipe = _final_recipe(settings)
+        if getattr(settings, "garment_desquiggle_mode", "off") == "on":
+            from dataclasses import asdict
+
+            final_recipe["garmentProtection"] = asdict(protection) if protection is not None else None
+        final_digest = _digest({"base": base_digest, "recipe": final_recipe})
         cut = CutCheckpoint(self, base_digest, final_digest, block.get("id"))
         cut.final = await self._load(final_digest, STAGE_FINAL)
         if cut.final is not None:
