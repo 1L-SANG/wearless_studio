@@ -105,6 +105,9 @@ test('두 푸터에 같은 창 문의 링크가 있고 브랜드와 FaceMarket �
     assert.ok(contact);
     assert.doesNotMatch(contact, /target=/);
   }
+  const faq = seller.match(/<a\b[^>]*href="https:\/\/wearless.kr\/#faq"[^>]*>자주 묻는 질문<\/a>/)?.[0];
+  assert.ok(faq, '셀러 푸터에 홈페이지 FAQ 링크가 있어야 해요');
+  assert.doesNotMatch(faq, /target=/);
   assert.match(seller, /<img\b[^>]*src="\/assets\/brand\/logo.svg"[^>]*alt=""/);
   assert.match(seller, /<img\b[^>]*src="\/assets\/brand\/wordmark.png"[^>]*alt="Wearless"/);
   assert.match(seller, /쇼핑몰 촬영의 새로운 기준/);

@@ -47,6 +47,13 @@
   line-height: 1.5;
 }
 
+.site-footer__help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-24);
+}
+
 .site-footer__contact {
   font-size: 14px;
   line-height: 1.5;
@@ -125,6 +132,7 @@
   }
 
   .site-footer__brand,
+  .site-footer__help,
   .site-footer__links {
     justify-content: center;
   }

@@ -14,7 +14,10 @@ export function SiteFooter() {
             </div>
             <p className="site-footer__tagline">쇼핑몰 촬영의 새로운 기준</p>
           </div>
-          <a className="site-footer__contact" href="https://wearless.kr/#contact">문의하기</a>
+          <div className="site-footer__help">
+            <a className="site-footer__contact" href="https://wearless.kr/#faq">자주 묻는 질문</a>
+            <a className="site-footer__contact" href="https://wearless.kr/#contact">문의하기</a>
+          </div>
         </div>
         <hr className="site-footer__divider" />
         <nav className="site-footer__links" aria-label="법적 고지">
