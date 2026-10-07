@@ -6,6 +6,7 @@
 """
 
 import asyncio
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -79,6 +80,26 @@ def test_it_asks_the_repo_for_the_shared_budget():
     _push(rec)
     assert rec.list_calls[0]["max_retries"] == sam_retry.MAX_RETRIES
     assert rec.list_calls[0]["min_age_seconds"] == min(sam_retry.BACKOFF_SECONDS)
+
+
+@pytest.mark.parametrize("mode", ["on", "full"])
+def test_direct_matching_never_probes_sam_or_creates_a_paid_retry(mode):
+    class Endpoint:
+        asked = 0
+
+        async def ready(self):
+            self.asked += 1
+            return True
+
+    endpoint = Endpoint()
+    app = SimpleNamespace(state=SimpleNamespace(
+        settings=SimpleNamespace(matching_flatlay=mode), sam_endpoint=endpoint))
+    recent = datetime.now(timezone.utc) - timedelta(seconds=5)
+    rec = _Recorder([_job(finished_at=recent)])
+    assert asyncio.run(SamRetryPusher(app)._push_once(rec, None)) == 0
+    assert rec.list_calls[0]["kinds"] == ("sam_preprocess",)
+    assert endpoint.asked == 0
+    assert rec.created == []
 
 
 def test_it_does_not_retry_an_input_verdict():

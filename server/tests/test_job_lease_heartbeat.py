@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import inspect
 from types import SimpleNamespace
+import pytest
 
 import pytest
 
@@ -83,6 +84,24 @@ def test_heartbeat_is_a_noop_without_a_lease_token():
     disp = dispatcher_mod.JobDispatcher.__new__(dispatcher_mod.JobDispatcher)
     settings = SimpleNamespace(job_lease_timeout_seconds=30)
     asyncio.run(asyncio.wait_for(disp._keep_lease(settings, _pool([]), {"id": "j"}), timeout=2))
+
+
+@pytest.mark.parametrize("mode", ["on", "full", "off"])
+def test_direct_matching_lease_recovery_never_requeues_a_paid_generation(monkeypatch, mode):
+    captured = {}
+    async def recover(conn, seconds, kinds, **kwargs):
+        captured.update(kwargs)
+        return []
+    async def unsettled(conn):
+        return []
+    monkeypatch.setattr(dispatcher_mod.repo, "recover_stale_leases", recover)
+    monkeypatch.setattr(dispatcher_mod.repo, "list_unsettled_errored_jobs", unsettled)
+    dispatcher = dispatcher_mod.JobDispatcher.__new__(dispatcher_mod.JobDispatcher)
+    dispatcher.kinds = ("matching_cutout", "sam_preprocess", "editor_garment_mask")
+    settings = SimpleNamespace(job_lease_timeout_seconds=900, matching_flatlay=mode)
+    dispatcher.app = SimpleNamespace(state=SimpleNamespace(settings=settings))
+    asyncio.run(dispatcher._recover_stale(settings, _pool([])))
+    assert captured.get("no_requeue_kinds", ()) == (("matching_cutout",) if mode in ("on", "full") else ())
 
 
 def test_worker_run_is_wrapped_by_the_heartbeat():

@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from app.services.sam_autoscale import DemandSnapshot, EcsTarget, ServiceState
 from app.workers import sam_autoscaler as mod
@@ -81,6 +82,21 @@ def test_it_scales_up_when_demand_exists_and_service_is_down():
     a = _Adapter(ServiceState(0, 0, 0, None))
     assert _run(_scaler(a), _Repo(_busy())) == "up"
     assert a.set_calls == [1]
+
+
+@pytest.mark.parametrize("mode", ["on", "full"])
+def test_direct_matching_is_not_sam_demand(mode):
+    class Recorder(_Repo):
+        async def sam_demand_snapshot(self, conn, kinds, **kwargs):
+            self.kinds = kinds
+            self.excluded = kwargs.get("exclude_upload_purposes", ())
+            return _quiet()
+
+    rec = Recorder(_quiet())
+    scaler = _scaler(_Adapter(ServiceState(0, 0, 0, None)), matching_flatlay=mode)
+    assert _run(scaler, rec) == "noop"
+    assert rec.kinds == ("sam_preprocess", "editor_garment_mask")
+    assert rec.excluded == ("custom_match_source",)
 
 
 def test_it_scales_down_when_quiet_and_service_is_up():

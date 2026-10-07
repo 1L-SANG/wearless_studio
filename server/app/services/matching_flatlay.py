@@ -1,28 +1,30 @@
-"""커스텀 매칭 의류 누끼본을 시드 카탈로그와 같은 정면 flat-lay 로 다시 렌더한다.
+"""커스텀 매칭 의류 원본을 정면 flat-lay로 한 번에 정리한다.
 
 누끼(matching_cutout)는 **배경**만 지운다 — 매장 옷걸이에 걸린 채 찍힌 사진은 각도가
 그대로 남는다. 시드 카탈로그(seed/matching_items.json)는 전부 정면 flat-lay 상품컷이라,
-배경을 맞춰도 커스텀 아이템만 여전히 튄다. 이 단계는 누끼 성공본 한 장을 Gemini 로
-재렌더해 **카드 썸네일만** 교체한다.
+배경을 맞춰도 커스텀 아이템만 여전히 튄다. 원본 첫 사진을 Gemini에 직접 넣어
+배경과 옷걸이를 제거하고 펼친 사진을 만든다. full이면 같은 결과를 생성 입력에도 쓴다.
 
-규율(스파이크 2026-08-14 에서 실물 검증된 구성 그대로):
+규율(8/14의 프롬프트는 유지하고, 2026-10-08에 원본 직접 입력으로 변경):
 
-- 커스텀 아이템당 생성 1회. 생성 입력으로 쓰이는 grid 는 누끼 합성본 그대로 둔다 —
-  거긴 배경 오염이 이미 해결됐고, 원본 1~4장을 재렌더하면 비용이 그만큼 곱해진다.
+- 커스텀 아이템당 생성 1회. 나머지 사진은 원본으로 유지한다.
 - 무과금 잡 안에서 돈다. 실비는 `image_usage` 로만 드러난다(stage=`matching_flatlay`).
-- 어떤 실패도 None 으로 흡수한다. 호출자는 누끼 썸네일(그 폴백이 셀러 원본)을 그대로 쓴다.
+- 일반 실패는 None이며 원본을 유지한다. 서버 종료 취소는 다시 전파한다.
 - 프롬프트는 스파이크 **전략 B(Identity Lock)** 원문이다(flatlay-spike-inputs/out/report.html
   판정표: 두 의류 × 두 모델 모두 PASS, "추천 설정"). 의류 명사·배경 RGB 말고는 바꾸지 않는다.
   전략 C(시드 이미지 첨부)는 금지 — 시드 실루엣·색이 셀러 옷을 덮어쓴다(리포트 FAIL).
-- 모델 티어는 settings.matching_flatlay_tier, **기본 image_high(Gemini 3 Pro Image)** —
-  리포트의 추천 조합. flash 는 비용·속도 노브로 남는다.
+- 기본 image_high(Gemini 3 Pro Image)는 디테일을 우선한 8/15 오너 선택이다.
+  당시 Pro와 Flash 모두 보존 검사에 통과했고 기록은 Flash의 속도와 비용을 추천했다.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import time
 import logging
 from dataclasses import dataclass
+from PIL import Image, ImageOps
 
 from .. import image_usage
 from ..agents.gemini_image import InlineImage
@@ -34,7 +36,8 @@ log = logging.getLogger("wearless.matching_flatlay")
 #: 플랫레이 파생 asset 의 알고리즘 신원. 누끼 지문에 섞여 썸네일 신원을 분리한다.
 #: v2: 스파이크 전략 B(Identity Lock) 원문 프롬프트 + Pro 티어 기본. v1 시절 프롬프트로
 #: 구운 flat-lay 는 다른 산출물이므로 파생 신원을 갈라 캐시가 섞이지 않게 한다.
-ALGORITHM_VERSION = "matching-flatlay-v2"
+#: v3: SAM 누끼 대신 원본 사진을 직접 입력한다. 이전 결과와 신원을 분리한다.
+ALGORITHM_VERSION = "matching-flatlay-v3-original"
 PRODUCER = "gemini-matching-flatlay"
 #: 실비 귀속 라벨. 디스패처가 걸어 둔 잡 문맥 위에 stage 만 덮어쓴다.
 STAGE = "matching_flatlay"
@@ -156,32 +159,46 @@ def metadata_for(*, source_hash: str | None, source_asset_id: str | None,
     return meta
 
 
-async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
+async def render_thumbnail(gemini, *, settings, source_image: bytes,
                            clothing_type: str | None) -> FlatlayThumbnail | None:
-    """누끼 합성본 → 정면 flat-lay 카드 썸네일. 실패는 전부 None 으로 흡수한다.
+    """첫 원본 사진으로 배경 정리와 정면 사진 생성을 함께 한다. 실패는 None이다.
 
     호출자(무과금 워커)는 이 결과에 아무것도 걸지 않는다 — 키 미설정·GeminiError·
-    타임아웃·빈 응답·깨진 바이트 어느 쪽이든 누끼 썸네일이 그대로 남아야 한다.
+    타임아웃·빈 응답·깨진 바이트 어느 쪽이든 셀러 원본을 유지한다.
     """
     if gemini is None:  # GEMINI_API_KEY 미설정 → main 이 클라이언트를 아예 안 만든다
         log.info("matching_flatlay skipped: no gemini client")
         return None
     try:
+        # JPEG·WebP·EXIF 회전도 원본의 옷을 그대로 PNG로 전달한다. 생성은 한 번뿐이다.
+        with Image.open(io.BytesIO(source_image)) as source:
+            normalized = ImageOps.exif_transpose(source).convert("RGB")
+            png = io.BytesIO()
+            normalized.save(png, "PNG")
         # 모델 해석도 try 안에 둔다 — 라우팅 설정이 비어 있으면 여기서 터지는데, 밖에
         # 두면 그 예외가 워커의 광의 except 로 올라가 성공한 누끼까지 폐기된다(리뷰 I1).
         model = resolve_model(
             settings, getattr(settings, "matching_flatlay_tier", "image_high"))
         # 실비 귀속: 디스패처가 건 잡 문맥(job/user)은 두고 stage 만 이 단계로 덮는다.
-        with image_usage.job_scope(stage=STAGE):
-            res = await gemini.generate_content_image(
-                model, build_prompt(clothing_type),
-                [InlineImage("image/png", cutout_png)], IMAGE_SIZE,
-                aspect_ratio=ASPECT_RATIO, timeout=TIMEOUT_S)
+        # 200 응답 뒤 디코드 중 취소될 수 있으므로 이미 기록한 호출은 다시 적지 않는다.
+        with image_usage.job_scope(stage=STAGE), image_usage.observe_recording() as recording:
+            started = time.perf_counter()
+            try:
+                res = await asyncio.wait_for(gemini.generate_content_image(
+                    model, build_prompt(clothing_type),
+                    [InlineImage("image/png", png.getvalue())], IMAGE_SIZE,
+                    aspect_ratio=ASPECT_RATIO, timeout=TIMEOUT_S), timeout=TIMEOUT_S)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                if not recording.recorded:
+                    image_usage.record(model=model, image_size=IMAGE_SIZE, usage=None,
+                                       latency_ms=int((time.perf_counter() - started) * 1000),
+                                       has_image=False)
+                raise
         # 빈·깨진 바이트는 여기서 PIL 이 터뜨린다 — 저장 전에 걸러진다.
         image = await asyncio.to_thread(encode_thumbnail, res.image)
         return FlatlayThumbnail(image=image, raw=res.image, model=model,
                                 latency_ms=getattr(res, "latency_ms", 0))
     except Exception:  # noqa: BLE001 - 재렌더 실패가 누끼 결과를 되돌리지 않는다
-        log.warning("matching_flatlay render failed; keeping cutout thumbnail",
+        log.warning("matching_flatlay render failed; keeping original photos",
                     exc_info=True)
         return None

@@ -14,7 +14,72 @@ import pytest
 
 from app import repo
 from app.services import sam_retry
+from app.services import sam_autoscale
 from app.workers.sam_retry_pusher import PUSH_KINDS, SamRetryPusher
+
+
+def test_matching_status_uses_latest_generation_after_three_retries(local_dsn):
+    async def scenario():
+        async with database(local_dsn) as conn:
+            base = "project:matching_cutout:custom:v1"
+            for retry in range(4):
+                await add(conn, sam_retry.generation_key(base, retry), retry=retry,
+                          result={"state": "unavailable"})
+            await conn.execute("update jobs set project_id = 'project'")
+            assert await repo.has_active_matching_cutout_job(conn, "project") is False
+    asyncio.run(scenario())
+
+
+def test_direct_matching_ignores_terminal_sam_retry_wait(local_dsn):
+    async def scenario():
+        async with database(local_dsn) as conn:
+            await add(conn, "project:matching_cutout:custom:v1", result={"state": "unavailable"})
+            await conn.execute("update jobs set project_id = 'project'")
+            assert await repo.has_active_matching_cutout_job(
+                conn, "project", allow_sam_retry=False) is False
+    asyncio.run(scenario())
+
+
+def test_custom_gemini_upload_and_job_do_not_keep_sam_running(local_dsn):
+    async def scenario():
+        async with database(local_dsn) as conn:
+            await conn.execute("create temporary table assets (source text, created_at timestamptz, metadata jsonb)")
+            await add(conn, "matching", kind="matching_cutout", status="pending")
+            await conn.execute("insert into assets values ('upload', now(), '{\"purpose\":\"custom_match_source\"}')")
+            kinds = ("sam_preprocess", "editor_garment_mask")
+            snap = await repo.sam_demand_snapshot(
+                conn, kinds, exclude_upload_purposes=("custom_match_source",))
+            assert snap.active_sam_jobs == 0
+            assert snap.last_upload_at is None
+            assert sam_autoscale.want_running(snap, idle_minutes=30) is False
+            await conn.execute("insert into assets values ('upload', now(), '{\"purpose\":\"upload\"}')")
+            snap = await repo.sam_demand_snapshot(
+                conn, kinds, exclude_upload_purposes=("custom_match_source",))
+            assert snap.last_upload_at is not None
+            assert sam_autoscale.want_running(snap, idle_minutes=30) is True
+    asyncio.run(scenario())
+
+
+def test_a_stale_direct_matching_lease_is_terminal_while_sam_tasks_can_recover(local_dsn):
+    async def scenario():
+        async with database(local_dsn) as conn:
+            await conn.execute("alter table jobs add column locked_at timestamptz, add column locked_by text")
+            await conn.execute("create temporary table job_events (job_id uuid, event_type text, payload jsonb)")
+            for kind in ("matching_cutout", "sam_preprocess", "editor_garment_mask"):
+                await add(conn, kind, kind=kind, status="running")
+            await conn.execute("update jobs set locked_at = now() - interval '20 minutes', locked_by = 'worker', finished_at = null")
+            await repo.recover_stale_leases(
+                conn, 900, ("matching_cutout", "sam_preprocess", "editor_garment_mask"),
+                no_requeue_kinds=("matching_cutout",))
+            cur = await conn.execute("select kind, status, finished_at from jobs")
+            results = {row["kind"]: row for row in await cur.fetchall()}
+            assert results["matching_cutout"]["status"] == "error"
+            assert results["matching_cutout"]["finished_at"] is not None
+            assert results["sam_preprocess"]["status"] == "pending"
+            assert results["editor_garment_mask"]["status"] == "pending"
+            cur = await conn.execute("select count(*) as count from job_events where event_type = 'error'")
+            assert (await cur.fetchone())["count"] == 1
+    asyncio.run(scenario())
 
 
 @pytest.fixture

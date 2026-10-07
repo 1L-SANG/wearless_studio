@@ -2,6 +2,7 @@
 
 `editor_garment_mask` 가 2026-08-18 사고 2호 뒤에 갖춘 규칙을 `sam_preprocess`·
 `matching_cutout` 이 같이 쓰기 위해 뽑아낸 모듈이다. 순수 판정만 있고 DB·네트워크는 없다.
+Gemini 직접 처리로 바뀐 matching_cutout on/full은 이 재시도 대상에서 제외한다.
 
 원칙: **일시 장애는 판정이 아니다.** 인프라 장애(unavailable·unverified)는 다시 돌리면 답이
 바뀔 수 있으므로 유한 예산 안에서 재시도하고, 입력에 대한 판정(옷을 못 찾음 등)은 다시 돌려도

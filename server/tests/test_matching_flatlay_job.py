@@ -10,6 +10,7 @@
 import asyncio
 import base64
 import io
+import hashlib
 import types
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ from app.services import matching_cutout as mc
 from app.services import matching_flatlay as mf
 from app.services.sam_client import SamViewResult
 from app.workers import matching_cutout_job as job
-from test_matching_cutout_job import _cut_png, _job_dict, _run, _wire_worker
+from test_matching_cutout_job import _source_png, _cut_png, _job_dict, _run, _wire_worker
 
 GEN_COLOR = (17, 200, 90)
 
@@ -79,10 +80,10 @@ def _wire_flatlay(monkeypatch, *, gemini, flag="on", clothing_type="bottom",
     return app, r2, calls
 
 
-def _fingerprint():
-    """_wire_worker 의 가짜 SAM 이 내는 소스 해시로 만든 파생 지문."""
-    return mc.source_fingerprint(
-        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+def _fingerprint(*, direct=True):
+    hashes = ([hashlib.sha256(_source_png()).hexdigest()] * len(_job_dict()["payload"]["sourceKeys"])
+              if direct else ["h" + key for key in _job_dict()["payload"]["sourceKeys"]])
+    return mc.source_fingerprint(hashes)
 
 
 def _thumb_put(r2):
@@ -126,36 +127,28 @@ def test_missing_flag_attribute_is_treated_as_off(monkeypatch):
 
 # ── 누끼가 없으면 생성도 없다 ──────────────────────────────────────────────────
 
-def test_no_generation_when_the_cutout_failed(monkeypatch):
+def test_sam_rejection_does_not_block_direct_generation(monkeypatch):
     gemini = _FakeGemini(image=_gen_png())
-    app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
-
+    app, _, calls = _wire_flatlay(monkeypatch, gemini=gemini)
     async def not_ready(settings, views):
-        (v, _k), = views.items()
-        return {v: SamViewResult(view=v, ready=False)}
-
+        raise AssertionError("Gemini 직접 처리에서 SAM이 호출됐다")
     monkeypatch.setattr(job.sam_client, "segment_garment", not_ready)
     _run(app, _job_dict())
-
-    assert gemini.calls == [], "누끼 없는 원본을 재렌더하지 않는다"
-    assert calls["swap"] is None
-    assert calls["finalize"] == ("done", {"state": "failed", "reason": "no_cutout",
-                                          "matchingItemId": "custom_x"})
+    assert len(gemini.calls) == 1
+    assert calls["finalize"][1]["state"] == "ready"
 
 
-def test_no_generation_when_sam_is_unavailable(monkeypatch):
+def test_sam_outage_does_not_block_direct_generation(monkeypatch):
     from app.services.sam_client import SamUnavailable
     gemini = _FakeGemini(image=_gen_png())
-    app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
-
+    app, _, calls = _wire_flatlay(monkeypatch, gemini=gemini)
     async def down(settings, views):
         raise SamUnavailable("down")
-
     monkeypatch.setattr(job.sam_client, "segment_garment", down)
     _run(app, _job_dict())
-
-    assert gemini.calls == []
-    assert calls["swap"] is None
+    assert len(gemini.calls) == 1
+    assert calls["segment"] == []
+    assert calls["finalize"][1]["state"] == "ready"
 
 
 # ── 성공 경로 ──────────────────────────────────────────────────────────────────
@@ -172,8 +165,7 @@ def test_generated_flatlay_becomes_the_card_thumbnail(monkeypatch):
     img = Image.open(io.BytesIO(thumb_bytes))
     assert img.format == "JPEG" and max(img.size) == mc.THUMBNAIL_MAX_PX
 
-    fingerprint = mc.source_fingerprint(
-        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+    fingerprint = _fingerprint()
     flat_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash=fingerprint)
     assert calls["swap"][1] == flat_id
     assert thumb_key.endswith(f"{flat_id}.jpg")
@@ -186,24 +178,24 @@ def test_generated_flatlay_becomes_the_card_thumbnail(monkeypatch):
     assert calls["finalize"][1]["flatlay"] is True
 
 
-def test_generation_input_is_the_cutout_and_the_grid_is_untouched(monkeypatch):
+def test_generation_input_and_on_mode_grid_use_original_photos(monkeypatch):
+    captured = {}
+    compose = job.garment_grid.compose_garment_grid
+    def capture(images):
+        captured["images"] = list(images)
+        return compose(images)
+    monkeypatch.setattr(job.garment_grid, "compose_garment_grid", capture)
     gemini = _FakeGemini(image=_gen_png())
-    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
+    app, _, calls = _wire_flatlay(monkeypatch, gemini=gemini)
     _run(app, _job_dict())
-
     call = gemini.calls[0]
-    assert call["model"] == "gemini-3-pro-image", "settings.model_image_high (전략 B 추천 조합)"
-    assert (call["image_size"], call["aspect_ratio"]) == (mf.IMAGE_SIZE, mf.ASPECT_RATIO)
-    assert len(call["images"]) == 1, "레퍼런스 이미지 없음 — 스파이크 승자 구성"
+    assert call["model"] == "gemini-3-pro-image"
+    assert (call["image_size"], call["aspect_ratio"]) == ("1K", "1:1")
+    assert len(call["images"]) == 1
     assert call["images"][0].mime == "image/png"
-    assert call["images"][0].data == mc.flatten_on_bg(_cut_png()), "첫 누끼 합성본"
-
-    # grid(=생성 입력 asset)은 누끼 합성본 그대로다 — 재렌더는 카드 1장에만 든다.
-    baseline_app, baseline_r2, baseline_calls = _wire_flatlay(
-        monkeypatch, gemini=_ExplodingGemini(), flag="off")
-    _run(baseline_app, _job_dict())
-    assert _grid_put(r2) == _grid_put(baseline_r2)
-    assert calls["swap"][2] == baseline_calls["swap"][2]
+    assert call["images"][0].data == _source_png()
+    assert captured["images"] == [_source_png()] * 2
+    assert calls["finalize"][1]["flatlayGrid"] is False
 
 
 def test_full_mode_puts_the_flatlay_raw_in_the_grid_front_cell(monkeypatch):
@@ -227,7 +219,7 @@ def test_full_mode_puts_the_flatlay_raw_in_the_grid_front_cell(monkeypatch):
     assert len(gemini.calls) == 1, "full 이어도 생성은 아이템당 1회"
     assert captured["inputs"][0] == _gen_png(), "front 칸 = 재렌더 1K 원본 바이트"
     assert captured["inputs"][1:] == [
-        mc.flatten_on_bg(_cut_png())] * (len(captured["inputs"]) - 1), "나머지 칸 = 누끼본"
+        _source_png()] * (len(captured["inputs"]) - 1), "나머지 칸 = 원본"
     # 썸네일도 여전히 재렌더본(512 카드 계약)이다.
     _k, thumb_bytes, _m = _thumb_put(r2)
     assert _close(_avg_color(thumb_bytes), GEN_COLOR)
@@ -238,31 +230,27 @@ def test_full_mode_puts_the_flatlay_raw_in_the_grid_front_cell(monkeypatch):
     assert calls["finalize"][1]["flatlayGrid"] is True
 
 
-def test_full_mode_falls_back_to_cutout_grid_when_render_fails(monkeypatch):
-    """full 인데 재렌더 실패 → grid 는 기존 누끼 합성본 그대로(fail-open, #131 규율 유지)."""
+def test_full_mode_keeps_original_assets_when_render_fails(monkeypatch):
     gemini = _FakeGemini(error=gemini_image.GeminiError("boom"))
     app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="full")
     _run(app, _job_dict())
-
-    baseline_app, baseline_r2, _bc = _wire_flatlay(
-        monkeypatch, gemini=_ExplodingGemini(), flag="off")
-    _run(baseline_app, _job_dict())
-    assert _grid_put(r2) == _grid_put(baseline_r2), "실패 시 grid 는 누끼본과 동일"
-    meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
-    assert "flatlayFront" not in meta[calls["swap"][2]]
-    assert calls["finalize"][1]["flatlay"] is False
-    assert calls["finalize"][1]["flatlayGrid"] is False
+    assert calls["swap"] is None
+    assert calls["assets"] == []
+    assert r2.puts == []
+    assert calls["finalize"][1]["state"] == "failed"
 
 
-def test_on_mode_grid_contract_is_byte_identical_to_131(monkeypatch):
-    """on 은 #131 계약 그대로 — full 이 추가돼도 grid 는 한 바이트도 안 바뀐다."""
+def test_on_mode_does_not_use_the_generated_photo_in_the_grid(monkeypatch):
+    captured = {}
+    compose = job.garment_grid.compose_garment_grid
+    def capture(images):
+        captured["images"] = list(images)
+        return compose(images)
+    monkeypatch.setattr(job.garment_grid, "compose_garment_grid", capture)
     gemini = _FakeGemini(image=_gen_png())
-    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="on")
+    app, _, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="on")
     _run(app, _job_dict())
-    baseline_app, baseline_r2, _bc = _wire_flatlay(
-        monkeypatch, gemini=_ExplodingGemini(), flag="off")
-    _run(baseline_app, _job_dict())
-    assert _grid_put(r2) == _grid_put(baseline_r2)
+    assert captured["images"] == [_source_png()] * 2
     assert calls["finalize"][1]["flatlayGrid"] is False
 
 
@@ -321,11 +309,6 @@ def test_derived_identity_is_stable_across_reruns(monkeypatch):
 
 # ── fail-open ──────────────────────────────────────────────────────────────────
 
-def _cutout_thumb_id():
-    return mc.derived_asset_id(
-        role="thumb", matching_item_id="custom_x",
-        source_hash=mc.source_fingerprint(
-            ["h" + k for k in _job_dict()["payload"]["sourceKeys"]]))
 
 
 @pytest.mark.parametrize("failure", [
@@ -334,35 +317,33 @@ def _cutout_thumb_id():
     asyncio.TimeoutError(),
     RuntimeError("unexpected"),
 ])
-def test_generation_failure_keeps_the_cutout_thumbnail(monkeypatch, failure):
+def test_generation_failure_keeps_original_assets(monkeypatch, failure):
     gemini = _FakeGemini(error=failure)
     app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
     _run(app, _job_dict())
-
-    assert calls["swap"][1] == _cutout_thumb_id(), "누끼 썸네일이 남는다"
-    assert calls["finalize"][0] == "done", "잡은 반드시 종결된다"
-    assert calls["finalize"][1]["state"] == "ready"
-    assert calls["finalize"][1].get("flatlay") is False
-    assert _close(_avg_color(_thumb_put(r2)[1]), (10, 120, 200)), "누끼 컷 색"
+    assert len(gemini.calls) == 1
+    assert calls["swap"] is None
+    assert r2.puts == []
+    assert calls["finalize"][0] == "done"
+    assert calls["finalize"][1]["state"] == "failed"
 
 
 @pytest.mark.parametrize("bad", [b"", b"not-an-image", _gen_png()[:40]])
-def test_corrupt_or_empty_generation_keeps_the_cutout_thumbnail(monkeypatch, bad):
+def test_corrupt_or_empty_generation_keeps_original_assets(monkeypatch, bad):
     gemini = _FakeGemini(image=bad)
     app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
     _run(app, _job_dict())
+    assert calls["swap"] is None
+    assert r2.puts == []
+    assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "failed"
 
-    assert calls["swap"][1] == _cutout_thumb_id()
-    assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "ready"
-    assert _close(_avg_color(_thumb_put(r2)[1]), (10, 120, 200))
 
-
-def test_missing_gemini_client_keeps_the_cutout_thumbnail(monkeypatch):
-    app, _r2, calls = _wire_flatlay(monkeypatch, gemini=None)
+def test_missing_gemini_client_keeps_original_assets(monkeypatch):
+    app, r2, calls = _wire_flatlay(monkeypatch, gemini=None)
     _run(app, _job_dict())
-
-    assert calls["swap"][1] == _cutout_thumb_id()
-    assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "ready"
+    assert calls["swap"] is None
+    assert r2.puts == []
+    assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "failed"
 
 
 def test_a_slow_generation_cannot_wedge_the_job_forever(monkeypatch):
@@ -460,52 +441,28 @@ def test_worker_never_touches_credits():
         assert banned not in src, f"무과금 잡이 {banned} 를 부르면 안 된다"
 
 
-def test_model_routing_failure_does_not_discard_a_successful_cutout(monkeypatch):
-    """라우팅 설정이 비어도 누끼 결과는 살아남는다 (리뷰 I1).
-
-    resolve_model 이 fail-open try 밖에 있으면 그 예외가 워커의 광의 except 로 올라가
-    성공한 컷아웃까지 폐기된다 — R2 put 0, 스왑 0, 잡은 failed. 재렌더 실패는
-    누끼 썸네일로 떨어지는 것이지 누끼 자체를 버리는 게 아니다.
-    """
+def test_model_routing_failure_keeps_original_without_a_generation_call(monkeypatch):
     gemini = _FakeGemini(image=_gen_png())
     app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
-    app.state.settings.model_image_high = ""   # 라우팅 미설정(기본 티어 = image_high)
-
+    app.state.settings.model_image_high = ""
     _run(app, _job_dict())
-
-    assert gemini.calls == [], "모델을 못 고르면 생성 호출 자체가 없다"
+    assert gemini.calls == []
     assert calls["finalize"][0] == "done"
-    assert calls["finalize"][1]["state"] == "ready", "누끼는 성공했다"
-    assert calls["finalize"][1]["flatlay"] is False
-    assert calls["swap"] is not None, "스왑이 일어나야 한다"
-    assert calls["swap"][1] == mc.derived_asset_id(
-        role="thumb", matching_item_id="custom_x",
-        source_hash=_fingerprint()), "누끼 썸네일로 폴백"
-    assert len(r2.puts) == 2, "썸네일 + grid 가 그대로 올라간다"
+    assert calls["finalize"][1]["state"] == "failed"
+    assert calls["swap"] is None
+    assert r2.puts == []
 
 
-def test_both_thumbnail_candidates_stay_reclaimable_by_delete(monkeypatch):
-    """재실행이 다른 분기를 타도 이전 썸네일이 삭제 경로에서 사라지지 않는다 (리뷰 I2).
-
-    삭제 라우트는 현재 thumbnail_asset_id 와 grid metadata 의 sourceAssetIds 만 훑는다
-    (routes.py:1379-1381). 썸네일 신원이 재렌더 성패로 갈리므로 두 후보를 모두
-    실어 두지 않으면, 성공 → 실패(또는 그 반대) 재실행 뒤 한쪽이 영구 고아가 된다.
-    """
+def test_derived_assets_stay_reclaimable_by_delete(monkeypatch):
     fp = _fingerprint()
     flat_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash=fp)
     cut_id = mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fp)
-
-    for gemini, live, orphan in ((_FakeGemini(image=_gen_png()), flat_id, cut_id),
-                                 (_FakeGemini(error=gemini_image.GeminiError("boom")),
-                                  cut_id, flat_id)):
-        app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
-        _run(app, _job_dict())
-
-        assert calls["swap"][1] == live
-        grid_meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}[calls["swap"][2]]
-        reachable = set(grid_meta["sourceAssetIds"]) | {calls["swap"][1], calls["swap"][2]}
-        assert orphan in reachable, "다른 분기 썸네일도 회수 대상이어야 한다"
-        assert live in reachable
+    app, _, calls = _wire_flatlay(monkeypatch, gemini=_FakeGemini(image=_gen_png()))
+    _run(app, _job_dict())
+    assert calls["swap"][1] == flat_id
+    grid_meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}[calls["swap"][2]]
+    reachable = set(grid_meta["sourceAssetIds"]) | {calls["swap"][1], calls["swap"][2]}
+    assert {flat_id, cut_id, "a1", "a2", "old-grid"} <= reachable
 
 
 def test_flag_off_does_not_widen_the_cleanup_list(monkeypatch):
@@ -514,6 +471,6 @@ def test_flag_off_does_not_widen_the_cleanup_list(monkeypatch):
     _run(app, _job_dict())
 
     grid_meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}[calls["swap"][2]]
-    fp = _fingerprint()
+    fp = _fingerprint(direct=False)
     assert mf.derived_asset_id(
         matching_item_id="custom_x", source_hash=fp) not in grid_meta["sourceAssetIds"]

@@ -1407,7 +1407,8 @@ async def list_active_matching_items(
 MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES = 10
 
 
-async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str) -> bool:
+async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str, *,
+                                        allow_sam_retry: bool = True) -> bool:
     """프로젝트에 진행 중인 커스텀 매칭 누끼 잡이 있는지. 프로젝트당 커스텀 1개라 bool 하나로 충분.
 
     나이 상한을 넘긴 잡은 없는 것으로 본다. 상한을 넘겨도 잡 자체는 계속 살아 있고,
@@ -1415,8 +1416,9 @@ async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str)
     보여줄지 스켈레톤을 보여줄지만 가른다(fail-open).
 
     **재시도 대기 중인 잡도 진행 중이다**(2026-08-21). 일시 장애로 `done`+`unavailable` 로
-    끝났고 예산이 남은 세대는 푸셔가 15~120초 뒤 다음 세대를 건다 — 그 사이를 "끝남"으로
+    끝났고 예산이 남은 세대는 푸셔가 15~90초 뒤 다음 세대를 건다. 그 사이를 "끝남"으로
     보면 카드가 실패로 떨어졌다가 다시 처리 중으로 올라오며 깜빡인다.
+    Gemini 직접 처리에는 이 대기가 없다. 최신 세대가 끝나면 이전 세대를 기다리지 않는다.
     """
     from app.services import sam_retry  # repo→services 단방향은 이미 여러 곳에서 쓰는 결
     async with conn.cursor() as cur:
@@ -1424,11 +1426,21 @@ async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str)
             "select exists (select 1 from jobs where project_id = %s "
             "and kind = 'matching_cutout' "
             "and created_at > now() - (%s * interval '1 minute') "
+            "and not exists (select 1 from jobs newer "
+            "  where newer.user_id = jobs.user_id and newer.project_id = jobs.project_id "
+            "    and newer.kind = jobs.kind "
+            "    and regexp_replace(newer.idempotency_key, ':r[0-9]+$', '') = "
+            "        regexp_replace(jobs.idempotency_key, ':r[0-9]+$', '') "
+            "    and (case when newer.payload->>'retry' ~ '^[0-9]+$' "
+            "              then (newer.payload->>'retry')::int else 0 end) "
+            "      > (case when jobs.payload->>'retry' ~ '^[0-9]+$' "
+            "              then (jobs.payload->>'retry')::int else 0 end)) "
             "and (status in ('pending', 'running') "
             "     or (status = 'done' and result->>'state' = any(%s) "
-            "         and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s))) as active",
+            "         and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s "
+            "         and %s))) as active",
             (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES,
-             list(sam_retry.RETRYABLE_STATES), sam_retry.MAX_RETRIES),
+             list(sam_retry.RETRYABLE_STATES), sam_retry.MAX_RETRIES, allow_sam_retry),
         )
         row = await cur.fetchone()
     return bool(row and row["active"])
@@ -1921,13 +1933,19 @@ async def list_retryable_sam_jobs(
         return await cur.fetchall()
 
 
-async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
+async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...], *,
+                              exclude_upload_purposes: tuple[str, ...] = ()):
     """sam2 가 켜져 있어야 하는지 판단할 세 값을 한 왕복으로(2026-08-21, sam_autoscaler 전용).
 
     업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
     `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
     """
     from app.services.sam_autoscale import DemandSnapshot
+    upload_filter = ""
+    params = [list(kinds), list(kinds)]
+    if exclude_upload_purposes:
+        upload_filter = " and coalesce(metadata->>'purpose', '') != all(%s)"
+        params.append(list(exclude_upload_purposes))
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
@@ -1935,8 +1953,9 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
             "     and status in ('pending', 'running')) as active_sam_jobs, "
             "  (select max(finished_at) from jobs where kind = any(%s) "
             "     and finished_at is not null) as last_sam_finished_at, "
-            "  (select max(created_at) from assets where source = 'upload') as last_upload_at",
-            (list(kinds), list(kinds)),
+            "  (select max(created_at) from assets where source = 'upload'"
+            + upload_filter + ") as last_upload_at",
+            tuple(params),
         )
         row = await cur.fetchone() or {}
     return DemandSnapshot(
@@ -2527,13 +2546,15 @@ async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) 
 
 
 async def recover_stale_leases(
-    conn: AsyncConnection, lease_timeout_seconds: int, kinds: tuple[str, ...]
+    conn: AsyncConnection, lease_timeout_seconds: int, kinds: tuple[str, ...], *,
+    no_requeue_kinds: tuple[str, ...] = (),
 ) -> list[dict]:
     """lease 초과 running job을 복구한다.
 
     유료 상세페이지 잡은 provider 응답 여부를 알 수 없는 상태에서 전체를 재큐하면 중복
     청구될 수 있으므로 첫 회수부터 error로 종결한다. 다른 잡은 기존처럼 1회 재큐 후
-    error로 종결한다. error 전환과 SSE 종결 이벤트는 한 statement로 원자 기록한다.
+    error로 종결한다. Gemini 직접 처리처럼 재요청하면 과금될 수 있는 잡도 첫 회수에 끝낸다.
+    error 전환과 SSE 종결 이벤트는 한 statement로 원자 기록한다.
     """
     msg = "작업 서버가 응답하지 않아 작업을 중단했어요. 다시 시도해 주세요."
     async with conn.cursor() as cur:
@@ -2551,13 +2572,13 @@ async def recover_stale_leases(
               update jobs j
               set status = case
                     when stale.kind = 'personalization_purge' then 'pending'
-                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then 'error'
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 or stale.kind = any(%s) then 'error'
                     else 'pending'
                   end,
                   locked_by = null, locked_at = null,
                   error_message = case
                     when stale.kind = 'personalization_purge' then null
-                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then %s
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 or stale.kind = any(%s) then %s
                     else null
                   end,
                   metadata = case
@@ -2577,7 +2598,7 @@ async def recover_stale_leases(
                   end,
                   finished_at = case
                     when stale.kind = 'personalization_purge' then null
-                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then now()
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 or stale.kind = any(%s) then now()
                     else null
                   end
               from stale where j.id = stale.id
@@ -2594,7 +2615,8 @@ async def recover_stale_leases(
             select id::text as id, user_id::text as user_id, status, credits_reserved
             from updated
             """,
-            (lease_timeout_seconds, list(kinds), msg, msg),
+            (lease_timeout_seconds, list(kinds), list(no_requeue_kinds),
+             list(no_requeue_kinds), msg, list(no_requeue_kinds), msg),
         )
         return await cur.fetchall()
 

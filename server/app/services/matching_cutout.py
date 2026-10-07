@@ -18,7 +18,7 @@ from app.services import sam_retry
 #: 시드 카탈로그(seed/matching/*.png) 모서리에서 측정한 회색. 상수 하나로 고정.
 MATCHING_CUTOUT_BG = (232, 232, 230)
 #: 누끼 파생 asset 의 알고리즘 신원. 소스 해시와 함께 재처리 중복을 막는다.
-ALGORITHM_VERSION = "matching-cutout-v1"
+ALGORITHM_VERSION = "matching-cutout-v2"
 CUTOUT_KIND = "matchingCutout"
 PRODUCER = "sam2-matching-cutout"
 
