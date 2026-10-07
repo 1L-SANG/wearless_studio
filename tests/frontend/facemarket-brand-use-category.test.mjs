@@ -53,21 +53,21 @@ test('Editor AI panel remediates a missing persisted category in place', () => {
   assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
   assert.match(failedRetryBranch, /\{brandUseCategoryControl\}/);
-  assert.match(failedRetryBranch, /disabled=\{brandUseCategoryBlocked\}/);
+  assert.match(failedRetryBranch, /disabled=\{brandUseCategoryBlocked \|\| generateSubmitting\}/);
   assert.equal(aiPanel.match(/\{brandUseCategoryControl\}/g)?.length, 2);
-  assert.match(aiPanel, /disabled=\{brandUseCategoryBlocked\} onClick=\{\(\) => onGenerate/);
+  assert.match(aiPanel, /disabled=\{brandUseCategoryBlocked \|\| generateSubmitting\} onClick=\{\(\) => onGenerate/);
 });
 
 test('Editor persists category selection and keeps persisted analysis request-authoritative', () => {
   assert.match(editorSource, /const \[brandUseCategorySaving, setBrandUseCategorySaving\] = useState\(false\);/);
   assert.match(editorSource, /api\.saveAnalysis\(projectId, \{ brandUseCategory: value \}\)/);
   assert.match(editorSource, /setAnalysis\(\(current\) => \(\{ \.\.\.\(current \|\| \{\}\), \.\.\.\(saved \|\| \{\}\), brandUseCategory: value \}\)\)/);
-  assert.match(editorSource, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req,[^}]*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
+  assert.match(editorSource, /request: \{ mode: 'new', \.\.\.req,[^}]*brandUseCategory: analysis\?\.brandUseCategory \}/);
   assert.match(editorSource, /<AIPanel[\s\S]*?brandUseCategory=\{analysis\?\.brandUseCategory\}[\s\S]*?brandUseCategorySaving=\{brandUseCategorySaving\}[\s\S]*?onBrandUseCategoryChange=\{saveBrandUseCategory\}/);
 });
 
 test('Editor image generation fails closed before side effects for an unready real-model category', () => {
-  const generateImageStart = editorSource.indexOf('const generateImage = async (req) =>');
+  const generateImageStart = editorSource.indexOf('const generateImage = async (req');
   const generateImage = editorSource.slice(
     generateImageStart,
     editorSource.indexOf('const failedCutRetry =', generateImageStart),
@@ -83,11 +83,11 @@ test('Editor image generation fails closed before side effects for an unready re
 });
 
 test('Editor product cuts discard retained model identity without requiring a category', () => {
-  const generateImageStart = editorSource.indexOf('const generateImage = async (req) =>');
+  const generateImageStart = editorSource.indexOf('const generateImage = async (req');
   const generateImage = editorSource.slice(
     generateImageStart,
     editorSource.indexOf('const failedCutRetry =', generateImageStart),
   );
 
-  assert.match(generateImage, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req, colorId: group,\s*modelId: req\.cutType === 'product' \? null : req\.modelId,\s*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
+  assert.match(generateImage, /request: \{ mode: 'new', \.\.\.req, colorId: req\.colorId \|\| 'misc',\s*modelId: req\.cutType === 'product' \? null : req\.modelId,\s*brandUseCategory: analysis\?\.brandUseCategory \}/);
 });

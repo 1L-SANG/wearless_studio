@@ -388,7 +388,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ product, detailRecommendations, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ product, detailRecommendations, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, generateSubmitting = false, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -544,8 +544,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
         {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
         {brandUseCategoryControl}
         <Button variant="primary" block icon="sparkles" className="btn-glowring"
-          disabled={brandUseCategoryBlocked} onClick={onRetryFailedCut}>
-          {failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · {catalogs.creditCosts?.editorImage ?? 1} 크레딧
+          disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
+          {generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
         </Button>
         <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
       </div>
@@ -648,7 +648,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
           </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring"
-            disabled={brandUseCategoryBlocked} onClick={() => onGenerate({
+            disabled={brandUseCategoryBlocked || generateSubmitting} onClick={() => onGenerate({
             contentRole: effectiveRecipe.contentRole,
             colorId: colorVal, cutType: effectiveCutType,
             // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
@@ -660,7 +660,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
             matchIds: isProduct ? [] : matchIds,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
             refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
-          })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
+          })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}</Button>
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */

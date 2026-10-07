@@ -984,13 +984,26 @@ export const httpAdapter = {
     return pickAndUploadImage(projectId);
   },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
-  // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
+  // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
   async generateImage(projectId, req = {}) {
-    const { onProgress, ...body } = req;
-    const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
-      method: 'POST', body,
-    });
+    const { onProgress, onJobStarted, idempotencyKey, ...body } = req;
+    let res;
+    try {
+      res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+        method: 'POST', body,
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      });
+      if (!res?.data && !res?.jobId) throw new Error('이미지 접수를 확인하지 못했어요.');
+    } catch (e) {
+      // 통신 오류와 5xx는 서버 접수 여부를 모른다. 같은 키로 다시 확인해야 한다.
+      if (idempotencyKey && !e?.requestNotSent && (!e?.status || e.status >= 500)) {
+        e.submissionUnknown = true;
+        e.message = '접수를 확인하지 못했어요. 다시 누르면 같은 요청을 확인해요.';
+      }
+      throw e;
+    }
     if (res.data) return { data: res.data, credits: res.credits };
+    onJobStarted?.(res.jobId);
     try {
       const result = await pollJob(res.jobId, {
         onProgress,

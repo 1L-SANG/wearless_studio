@@ -1128,6 +1128,8 @@ export function Editor() {
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
+  const generateSubmission = useRef(null);
+  const [generateSubmitting, setGenerateSubmitting] = useState(false);
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
   // 드래그 중인 프레임(패널→캔버스) — 삽입 갭에 미니 미리보기를 그린다. 저장 대상 아님.
@@ -2487,29 +2489,53 @@ export function Editor() {
     }
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
-  const generateImage = async (req) => {
+  const generateImage = async (req, target = null) => {
+    if (generateSubmission.current?.busy) return null;
     // 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 막지 않는다.
-    if (isRealModelSelection(req.modelId)
+    if (!generateSubmission.current && isRealModelSelection(req.modelId)
       && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
       toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
       return null;
     }
-    const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
+    // 접수 응답을 잃으면 설정과 UUID를 보존해 다음 클릭도 같은 요청을 확인한다.
+    const submission = generateSubmission.current || {
+      idempotencyKey: crypto.randomUUID(),
+      target,
+      request: { mode: 'new', ...req, colorId: req.colorId || 'misc',
+        modelId: req.cutType === 'product' ? null : req.modelId,
+        brandUseCategory: analysis?.brandUseCategory },
+    };
+    submission.busy = true;
+    generateSubmission.current = submission;
+    setGenerateSubmitting(true);
+    const releaseSubmission = () => {
+      // 앞선 이미지가 완성돼도 다음 요청의 접수 잠금은 풀지 않는다.
+      if (generateSubmission.current !== submission) return;
+      generateSubmission.current = null;
+      setGenerateSubmitting(false);
+    };
+    const group = submission.request.colorId;
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group,
-        modelId: req.cutType === 'product' ? null : req.modelId,
-        brandUseCategory: analysis?.brandUseCategory });
+      const { data: img, credits } = await api.generateImage(projectId, { ...submission.request,
+        idempotencyKey: submission.idempotencyKey, onJobStarted: releaseSubmission });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
       return img;
     } catch (e) {
+      submission.unknown ||= e?.submissionUnknown === true;
       handleImageJobFailure(e, group, loadingId);
       return null;
     } finally {
+      if (generateSubmission.current === submission) {
+        if (submission.unknown) {
+          submission.busy = false;
+          setGenerateSubmitting(false);
+        } else releaseSubmission();
+      }
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
@@ -2524,8 +2550,15 @@ export function Editor() {
   const retryFailedCut = async () => {
     if (!failedCutRetry || !pendingSlot) return;
     const target = { blockId: pendingSlot.blockId, elId: pendingSlot.elId };
-    const img = await generateImage(failedCutRetry.request);
+    const previous = generateSubmission.current;
+    const canFillTarget = !previous || (previous.target?.blockId === target.blockId
+      && previous.target?.elId === target.elId);
+    const img = await generateImage(failedCutRetry.request, target);
     if (!img?.src) return;
+    if (!canFillTarget) {
+      toast.push('이전 요청을 확인했어요. 이 컷은 다시 눌러 만들어 주세요.', { icon: 'check' });
+      return;
+    }
     setSlotImage(target.blockId, target.elId, {
       src: img.src,
       cutType: img.cutType || failedCutRetry.request.cutType || null,
@@ -3118,7 +3151,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'ai': return <AIPanel generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
