@@ -1130,6 +1130,7 @@ export function Editor() {
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const generateSubmission = useRef(null);
   const [generateSubmitting, setGenerateSubmitting] = useState(false);
+  const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
   // 드래그 중인 프레임(패널→캔버스) — 삽입 갭에 미니 미리보기를 그린다. 저장 대상 아님.
@@ -2513,6 +2514,7 @@ export function Editor() {
       if (generateSubmission.current !== submission) return;
       generateSubmission.current = null;
       setGenerateSubmitting(false);
+      setPendingGenerateRequest(null);
     };
     const group = submission.request.colorId;
     const loadingId = uid('w');
@@ -2534,6 +2536,7 @@ export function Editor() {
         if (submission.unknown) {
           submission.busy = false;
           setGenerateSubmitting(false);
+          setPendingGenerateRequest(submission.request);
         } else releaseSubmission();
       }
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
@@ -3151,7 +3154,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}

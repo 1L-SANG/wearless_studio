@@ -30,6 +30,7 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
   const gate = deferred();
   const finish = deferred();
   const submitting = [];
+  const pendingRequests = [];
   const notifications = [];
   const placements = [];
   let wardrobe = {};
@@ -69,6 +70,7 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
     projectId: 'project-1', analysis, brandUseCategorySaving,
     isRealModelSelection, crypto: { randomUUID },
     generateSubmission: { current: null }, setGenerateSubmitting: (value) => submitting.push(value),
+    setPendingGenerateRequest: (value) => pendingRequests.push(value),
     uid: () => `tile-${++nextId}`, genCount: { current: 0 }, setGenDot: () => {},
     setWardrobe: (update) => { wardrobe = update(wardrobe); }, syncCredits: () => {},
     toast: { push: (message) => notifications.push(message) },
@@ -83,7 +85,7 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
     context.failedCutRetry = { request: cutRequest };
     return new Function(...Object.keys(context), `${imageHelpers}\n${handlerSource}\n${retrySource}\nreturn retryFailedCut;`)(...Object.values(context));
   };
-  return { generate, retryFor, placements, generateRemote, posts, jobs, polls, gate, finish, submitting, notifications, context, wardrobe: () => wardrobe };
+  return { generate, retryFor, placements, generateRemote, posts, jobs, polls, gate, finish, submitting, pendingRequests, notifications, context, wardrobe: () => wardrobe };
 }
 
 test('같은 틱에 세 번 누르면 요청과 로딩 타일, 크레딧 예약이 한 건이다', async () => {
@@ -114,6 +116,20 @@ test('접수 응답을 잃은 뒤 재전송하면 같은 UUID와 같은 요청�
   assert.deepEqual(h.posts[1].body, h.posts[0].body, '설정을 바꿔도 접수 여부를 모르는 기존 요청부터 확인한다');
   assert.equal(h.jobs.size, 1);
   assert.equal(h.wardrobe().white[0].src, '/images/job-1.png');
+});
+
+test('접수 응답을 잃으면 이전 요청을 화면에 표시하고 접수 확인 후에만 지운다', async () => {
+  const h = harness({ loseFirstResponse: true, holdPost: true });
+  await h.generate(request);
+  assert.equal(h.pendingRequests.at(-1)?.colorId, 'white');
+  assert.equal(h.pendingRequests.at(-1)?.shot, 'ghost');
+  const pending = h.generate({ ...request, colorId: 'black', shot: 'detail' });
+  try {
+    assert.equal(h.pendingRequests.at(-1)?.colorId, 'white', '재확인 중에도 이전 설정을 보여준다');
+    h.gate.resolve();
+    await flush();
+    assert.equal(h.pendingRequests.at(-1), null, '서버 접수 확인이 오면 새 생성 화면을 복원한다');
+  } finally { h.gate.resolve(); h.finish.resolve(); await pending; }
 });
 
 test('접수 여부가 불명확한 요청은 재전송 전 로그인 확인이 실패해도 UUID를 보존한다', async () => {
