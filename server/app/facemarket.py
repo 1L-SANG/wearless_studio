@@ -2608,7 +2608,7 @@ async def list_settlements(request: Request, user_id: str = Depends(require_user
                     left join lateral (
                         select pub.id from fm_publication_records pub
                          where pub.project_id = j.project_id and pub.model_id = m.id
-                           and pub.kind = 'long_png' and pub.revoked_at is null
+                           and pub.kind in ('long_png', 'jpeg') and pub.revoked_at is null
                            and pub.r2_key is not null
                          order by pub.created_at desc, pub.id desc limit 1
                     ) publication on true
@@ -2637,7 +2637,7 @@ async def model_publication_preview_url(
                 (publication_id, user_id),
             )
             row = await cur.fetchone()
-    if row is None or row["kind"] not in ("long_png", "block_png") or not row["r2_key"]:
+    if row is None or row["kind"] not in ("long_png", "block_png", "jpeg") or not row["r2_key"]:
         raise _err("not_found", "발행 기록을 찾을 수 없어요.", status=404)
     r2 = getattr(request.app.state, "r2", None)
     if r2 is None:
@@ -2673,7 +2673,7 @@ async def model_settlement_preview_url(
                      left join lateral (
                         select pub.r2_key from fm_publication_records pub
                          where pub.project_id = j.project_id and pub.model_id = m.id
-                           and pub.kind = 'long_png' and pub.revoked_at is null
+                           and pub.kind in ('long_png', 'jpeg') and pub.revoked_at is null
                            and pub.r2_key is not null
                          order by pub.created_at desc, pub.id desc limit 1
                      ) publication on true

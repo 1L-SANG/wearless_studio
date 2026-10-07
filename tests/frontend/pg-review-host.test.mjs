@@ -8,7 +8,7 @@
      · 심사 호스트에서는 구독 카드가 토스 결제창('구매하기')을 연다 — 계좌이체 CTA 가 남으면
        심사자가 카드 결제를 볼 수 없다.
      · ai.wearless.kr 은 그대로 계좌이체다 — 운영 손님에게 토스 결제창이 새면 안 된다. */
-import test, { before, after } from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -29,8 +29,8 @@ test('심사 호스트는 정확히 toss.wearless.kr 하나다', () => {
 let vite, runtime;
 const previousWindow = globalThis.window;
 
-before(async () => {
-  vite = await createServer({
+function createHarnessServer() {
+  return createServer({
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
@@ -61,7 +61,7 @@ before(async () => {
       },
     }],
   });
-});
+}
 
 after(async () => {
   if (previousWindow === undefined) delete globalThis.window;
@@ -73,7 +73,8 @@ after(async () => {
    비우고 새 window 로 다시 읽는다. */
 async function loadAs(hostname) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
-  vite.moduleGraph.invalidateAll();
+  await vite?.close();
+  vite = await createHarnessServer();
   const tossKeys = await vite.ssrLoadModule('/src/lib/tossKeys.js');
   const { Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx');
   ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));

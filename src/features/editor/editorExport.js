@@ -21,9 +21,226 @@ import { notarize } from './publicationNotarize.js';
 
 export const EXPORT_WIDTH = 1000; // .ed-canvas 설계 폭 — 캡처는 화면 scale 과 무관하게 이 폭 기준
 const PIXEL_RATIO = 2; // 상세페이지 업로드 기준 2000px — 쇼핑몰 권장폭(860~1280)을 여유 있게 커버
-const MAX_CANVAS_DIM = 30000; // 캔버스 한 변 한계(32767) 아래 여유 — 넘으면 긴 PNG 대신 ZIP 안내
+export const MAX_CANVAS_DIM = 30000; // 캔버스 한 변 한계(32767) 아래 여유 — 넘으면 긴 PNG 대신 ZIP 안내
+export const MAX_CAPTURE_DIM = 16384; // html-to-image가 이 길이를 넘으면 자동 축소한다
+export const MAX_CANVAS_AREA = 16_777_216; // Safari가 빈 캔버스로 돌려줄 수 있는 총 픽셀 상한
+export const MAX_SINGLE_PAGE_HEIGHT = 20000;
+export const MAX_SPLIT_HEIGHT = 3000;
+export const MAX_JPEG_BYTES = 3 * 1024 * 1024;
+export const JPEG_QUALITY = 0.9;
+export const ORIGINAL_PNG_MAX_HEIGHT = Math.min(
+  MAX_CAPTURE_DIM, MAX_CANVAS_DIM, Math.floor(MAX_CANVAS_AREA / (EXPORT_WIDTH * PIXEL_RATIO)),
+);
+export const EXPORT_SETTINGS_KEY = 'wearless.editor.export.v1';
+
+export const EXPORT_PRESETS = Object.freeze([
+  { id: 'smartstore', width: 860, label: '스마트스토어·통용 860px' },
+  { id: 'coupang', width: 780, label: '쿠팡 780px' },
+  { id: 'high', width: 1290, label: '고화질 1,290px', desc: '휴대폰에서 더 선명, 파일이 큼' },
+  { id: 'original', width: 2000, label: '원본 PNG(2,000px)', original: true },
+]);
+
+export const DEFAULT_EXPORT_SETTINGS = Object.freeze({
+  preset: 'smartstore',
+  format: 'jpeg',
+  delivery: 'split',
+});
+
+const EXPORT_FORMATS = new Set(['jpeg', 'png']);
+const EXPORT_DELIVERIES = new Set(['split', 'single']);
 
 /* ---- 순수 헬퍼 (테스트 대상) ---- */
+
+export function exportPreset(presetId) {
+  return EXPORT_PRESETS.find((preset) => preset.id === presetId) || EXPORT_PRESETS[0];
+}
+
+export function exportScaleForPreset(presetId) {
+  return exportPreset(presetId).width / EXPORT_WIDTH;
+}
+
+export function normalizeExportSettings(value) {
+  const preset = exportPreset(value?.preset).id;
+  const original = exportPreset(preset).original;
+  return {
+    preset,
+    format: original ? 'png' : (EXPORT_FORMATS.has(value?.format) ? value.format : DEFAULT_EXPORT_SETTINGS.format),
+    delivery: EXPORT_DELIVERIES.has(value?.delivery) ? value.delivery : DEFAULT_EXPORT_SETTINGS.delivery,
+  };
+}
+
+function resolveExportStorage(storage) {
+  if (storage !== undefined) return storage;
+  return typeof localStorage === 'undefined' ? null : localStorage;
+}
+
+export function readExportSettings(storage) {
+  try {
+    const target = resolveExportStorage(storage);
+    if (!target) return { ...DEFAULT_EXPORT_SETTINGS };
+    const raw = target.getItem(EXPORT_SETTINGS_KEY);
+    return raw ? normalizeExportSettings(JSON.parse(raw)) : { ...DEFAULT_EXPORT_SETTINGS };
+  } catch {
+    return { ...DEFAULT_EXPORT_SETTINGS };
+  }
+}
+
+export function writeExportSettings(storage, settings) {
+  try {
+    const target = resolveExportStorage(storage);
+    if (!target) return false;
+    target.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(normalizeExportSettings(settings)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function groupScaledBlockHeights(blockHeights, ratio, maxHeight = MAX_SPLIT_HEIGHT) {
+  const groups = [];
+  let current = 0;
+  const flush = () => {
+    if (current > 0) groups.push(current);
+    current = 0;
+  };
+  for (const cssHeight of blockHeights) {
+    let height = Math.max(0, Math.trunc((Number(cssHeight) || 0) * ratio));
+    if (height <= 0) continue;
+    if (height <= maxHeight) {
+      if (current + height > maxHeight) flush();
+      current += height;
+      continue;
+    }
+    flush();
+    while (height > maxHeight) {
+      groups.push(maxHeight);
+      height -= maxHeight;
+    }
+    current = height;
+  }
+  flush();
+  return groups;
+}
+
+export function singlePageFallbackReason({
+  width,
+  height,
+  maxCanvasDim = MAX_CAPTURE_DIM,
+  maxCanvasArea = MAX_CANVAS_AREA,
+  maxPageHeight = MAX_SINGLE_PAGE_HEIGHT,
+}) {
+  if (height > maxPageHeight) {
+    return `세로가 ${maxPageHeight.toLocaleString('ko-KR')}px를 넘어 나눠서 받기로 바꿨어요.`;
+  }
+  if (width > maxCanvasDim || height > maxCanvasDim || width * height > maxCanvasArea) {
+    return '브라우저가 안전하게 만들 수 있는 캔버스 크기를 넘어 나눠서 받기로 바꿨어요.';
+  }
+  return null;
+}
+
+export function detailFileName(index, count, format) {
+  const digits = Math.max(2, String(Math.max(1, count)).length);
+  const ext = format === 'png' ? 'png' : 'jpg';
+  return `detail_${String(index + 1).padStart(digits, '0')}.${ext}`;
+}
+
+export function publicationKindForSingle(format) {
+  return format === 'jpeg' ? 'jpeg' : 'long_png';
+}
+
+export function buildExportSummary(blockHeights, rawSettings) {
+  const settings = normalizeExportSettings(rawSettings);
+  const preset = exportPreset(settings.preset);
+  const ratio = preset.width / EXPORT_WIDTH;
+  const scaled = blockHeights.map((height) => Math.max(0, Math.trunc((Number(height) || 0) * ratio)));
+  const height = scaled.reduce((sum, value) => sum + value, 0);
+  const grouped = preset.original
+    ? scaled.flatMap((value) => {
+      const pieces = [];
+      for (let left = value; left > 0; left -= ORIGINAL_PNG_MAX_HEIGHT) pieces.push(Math.min(left, ORIGINAL_PNG_MAX_HEIGHT));
+      return pieces;
+    })
+    : groupScaledBlockHeights(blockHeights, ratio);
+  const fileCount = settings.delivery === 'single' ? (height > 0 ? 1 : 0) : grouped.length;
+  const bytesPerPixel = settings.format === 'jpeg' ? 0.24 : 1.1;
+  return {
+    width: preset.width,
+    height,
+    fileCount,
+    maxPieceHeight: settings.delivery === 'split' ? (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT) : null,
+    approxBytes: Math.round(preset.width * height * bytesPerPixel),
+    approximate: true,
+    fallbackReason: settings.delivery === 'single'
+      ? singlePageFallbackReason({ width: preset.width, height })
+      : null,
+  };
+}
+
+function rowIsUniform(pixels, width, y, tolerance) {
+  const start = y * width * 4;
+  for (let x = 1; x < width; x += 1) {
+    const at = start + x * 4;
+    for (let channel = 0; channel < 4; channel += 1) {
+      if (Math.abs(pixels[at + channel] - pixels[start + channel]) > tolerance) return false;
+    }
+  }
+  return true;
+}
+
+export function findUniformCutRow(
+  pixels,
+  width,
+  targetHeight,
+  { searchWindow = 400, tolerance = 2 } = {},
+) {
+  const height = Math.floor(pixels.length / Math.max(1, width * 4));
+  const target = Math.min(height, Math.max(1, Math.trunc(targetHeight)));
+  const first = Math.max(1, target - searchWindow);
+  for (let y = target - 1; y >= first; y -= 1) {
+    if (rowIsUniform(pixels, width, y, tolerance)) return y;
+  }
+  return target;
+}
+
+export function splitCanvasRanges(canvas, maxHeight = MAX_SPLIT_HEIGHT) {
+  if (canvas.height <= maxHeight) return [{ y: 0, height: canvas.height }];
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
+  const ranges = [];
+  let y = 0;
+  while (canvas.height - y > maxHeight) {
+    const sample = ctx.getImageData(0, y, canvas.width, maxHeight);
+    const height = findUniformCutRow(sample.data, canvas.width, maxHeight);
+    ranges.push({ y, height });
+    y += height;
+  }
+  if (canvas.height > y) ranges.push({ y, height: canvas.height - y });
+  return ranges;
+}
+
+export async function splitOversizeJpegRanges(
+  range,
+  encodeRange,
+  { maxBytes = MAX_JPEG_BYTES, quality = JPEG_QUALITY } = {},
+) {
+  const blob = await encodeRange(range, quality);
+  if (blob.size <= maxBytes) return [{ range, blob }];
+  if (range.height <= 1) {
+    throw new Error('JPG 조각을 3MB 이하로 만들 수 없어요. PNG로 다시 시도해 주세요.');
+  }
+  const firstHeight = Math.max(1, Math.floor(range.height / 2));
+  const first = { y: range.y, height: firstHeight };
+  const second = { y: range.y + firstHeight, height: range.height - firstHeight };
+  const left = await splitOversizeJpegRanges(first, encodeRange, { maxBytes, quality });
+  const right = await splitOversizeJpegRanges(second, encodeRange, { maxBytes, quality });
+  return [...left, ...right];
+}
+
+export function singlePageSizeWarning(byteSize) {
+  return byteSize > 5 * 1024 * 1024
+    ? '카페24 직접 등록, 쿠팡은 장당 5MB 한도라 나눠서 받기를 권해요.'
+    : null;
+}
 
 // `/v1/assets/{id}/file`(상대·절대 모두) → 같은 자산의 `/bytes`. 그 외 URL 은 그대로.
 // id 는 서버(/file 라우트)가 uuid 검증을 담당하므로 여기선 경로 모양만 본다 — 프론트가
@@ -197,6 +414,7 @@ async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS) {
       width: EXPORT_WIDTH,
       height: clone.offsetHeight,
       fontEmbedCSS,
+      skipAutoScale: true,
     });
     return { canvas: flattenOnWhite(captured), softFailed };
   } finally {
@@ -204,8 +422,83 @@ async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS) {
   }
 }
 
+async function captureBlockCanvasSlices(
+  blockNode,
+  pixelRatio,
+  fontEmbedCSS,
+  maxHeight = MAX_SPLIT_HEIGHT,
+) {
+  maxHeight = Math.min(maxHeight, MAX_CAPTURE_DIM, MAX_CANVAS_DIM,
+    Math.floor(MAX_CANVAS_AREA / Math.trunc(EXPORT_WIDTH * pixelRatio)));
+  const { clone, softFailed, dispose } = await prepareClone(blockNode);
+  const canvases = [];
+  try {
+    const totalCssHeight = clone.offsetHeight;
+    const totalHeight = Math.trunc(totalCssHeight * pixelRatio);
+    const holder = clone.parentElement;
+    if (!holder) throw new Error('내보내기용 블록을 준비하지 못했어요. 다시 시도해 주세요.');
+    const viewport = document.createElement('div');
+    viewport.style.cssText = `position:relative;width:${EXPORT_WIDTH}px;overflow:hidden;background:#ffffff;`;
+    holder.appendChild(viewport);
+    viewport.appendChild(clone);
+    clone.style.position = 'absolute';
+    clone.style.left = '0';
+    clone.style.width = `${EXPORT_WIDTH}px`;
+    clone.style.margin = '0';
+
+    let y = 0;
+    while (y < totalHeight) {
+      const wantedHeight = Math.min(maxHeight, totalHeight - y);
+      const cssY = y / pixelRatio;
+      const cssHeight = wantedHeight / pixelRatio;
+      viewport.style.height = `${cssHeight}px`;
+      clone.style.top = `${-cssY}px`;
+      const captured = await toCanvas(viewport, {
+        pixelRatio,
+        width: EXPORT_WIDTH,
+        height: cssHeight,
+        canvasWidth: EXPORT_WIDTH,
+        canvasHeight: cssHeight,
+        fontEmbedCSS,
+        skipAutoScale: true,
+      }); // eslint-disable-line no-await-in-loop
+      let flattened = flattenOnWhite(captured);
+      if (flattened.width !== Math.trunc(EXPORT_WIDTH * pixelRatio)
+        || Math.abs(flattened.height - wantedHeight) > 1) {
+        releaseExportCanvas(flattened);
+        throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요.');
+      }
+      let keepHeight = flattened.height;
+      if (y + keepHeight < totalHeight) {
+        const ctx = flattened.getContext('2d');
+        if (!ctx) throw new Error('이미지를 나눌 수 없어요. 다시 시도해 주세요.');
+        const pixels = ctx.getImageData(0, 0, flattened.width, flattened.height).data;
+        keepHeight = findUniformCutRow(pixels, flattened.width, flattened.height);
+      }
+      if (keepHeight < flattened.height) {
+        const trimmed = drawCanvasRange(
+          createExportCanvas,
+          flattened,
+          { y: 0, height: keepHeight },
+          flattened.width,
+        );
+        releaseExportCanvas(flattened);
+        flattened = trimmed;
+      }
+      canvases.push(flattened);
+      y += keepHeight;
+    }
+    return { canvases, softFailed };
+  } catch (error) {
+    canvases.forEach(releaseExportCanvas);
+    throw error;
+  } finally {
+    dispose();
+  }
+}
+
 // canvas.toBlob 은 초대형 캔버스에서 콜백이 영영 안 올 수 있다(리뷰 반영) — 타임아웃 방어.
-function canvasToBlob(canvas, timeoutMs = 30_000) {
+function canvasToBlob(canvas, mime = 'image/png', quality, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('이미지 변환이 너무 오래 걸려 중단했어요. 블록별 ZIP으로 시도해 주세요.')),
@@ -214,9 +507,179 @@ function canvasToBlob(canvas, timeoutMs = 30_000) {
     canvas.toBlob((b) => {
       clearTimeout(timer);
       if (b) resolve(b);
-      else reject(new Error('PNG 인코딩에 실패했어요. 페이지가 길면 블록별 ZIP으로 시도해 주세요.'));
-    }, 'image/png');
+      else reject(new Error('이미지 인코딩에 실패했어요. 페이지가 길면 나눠서 받아주세요.'));
+    }, mime, quality);
   });
+}
+
+function createExportCanvas(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 다시 시도해 주세요.');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  return canvas;
+}
+
+function releaseExportCanvas(canvas) {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+function drawCanvasRange(createCanvas, source, range, width = source.width) {
+  const out = createCanvas(width, range.height);
+  const ctx = out.getContext('2d');
+  if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 다시 시도해 주세요.');
+  ctx.drawImage(
+    source,
+    0, range.y, source.width, range.height,
+    0, 0, width, range.height,
+  );
+  return out;
+}
+
+export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) {
+  const settings = normalizeExportSettings(rawSettings);
+  const preset = exportPreset(settings.preset);
+  const width = preset.width;
+  const ratio = width / EXPORT_WIDTH;
+  const maxHeight = deps.maxHeight || (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT);
+  const createCanvas = deps.createCanvas || createExportCanvas;
+  const releaseCanvas = deps.releaseCanvas || releaseExportCanvas;
+  const encodeCanvas = deps.encodeCanvas || canvasToBlob;
+  const captureBlock = deps.captureBlock;
+  const measureBlock = deps.measureBlock || exportNodeHeight;
+  if (!captureBlock) throw new Error('내보내기 캡처 함수를 찾지 못했어요.');
+  const mime = settings.format === 'png' ? 'image/png' : 'image/jpeg';
+  let softFailed = 0;
+  let totalHeight = 0;
+  const validateCapture = (canvases, node) => {
+    const expectedHeight = Math.trunc(measureBlock(node) * ratio);
+    const actualHeight = canvases.reduce((sum, canvas) => sum + canvas.height, 0);
+    if (canvases.some((canvas) => canvas.width !== width)
+      || Math.abs(actualHeight - expectedHeight) > 1) {
+      canvases.forEach(releaseCanvas);
+      throw new Error('브라우저 한계로 이미지 아랫부분이 잘릴 수 있어 다운로드를 중단했어요. 나눠서 다시 시도해 주세요.');
+    }
+    return actualHeight;
+  };
+
+  if (settings.delivery === 'single') {
+    const plannedHeight = blockNodes.reduce(
+      (sum, node) => sum + Math.trunc(measureBlock(node) * ratio), 0,
+    );
+    const fallbackReason = singlePageFallbackReason({ width, height: plannedHeight });
+    if (fallbackReason) throw new Error(fallbackReason);
+    const out = createCanvas(width, plannedHeight);
+    const ctx = out.getContext('2d');
+    if (!ctx) {
+      releaseCanvas(out);
+      throw new Error('저장용 캔버스를 만들지 못했어요. 나눠서 받아주세요.');
+    }
+    try {
+      let y = 0;
+      for (let i = 0; i < blockNodes.length; i += 1) {
+        deps.onProgress?.(i, blockNodes.length);
+        const captured = await captureBlock(blockNodes[i], ratio); // eslint-disable-line no-await-in-loop
+        try {
+          validateCapture([captured.canvas], blockNodes[i]);
+          if (y + captured.canvas.height > out.height) {
+            throw new Error('예상한 캔버스 높이와 실제 높이가 달라 한 장 저장을 중단했어요. 나눠서 받아주세요.');
+          }
+          ctx.drawImage(captured.canvas, 0, y);
+          y += captured.canvas.height;
+          totalHeight += captured.canvas.height;
+          softFailed += captured.softFailed;
+        } finally {
+          releaseCanvas(captured.canvas);
+        }
+      }
+      const blob = await encodeCanvas(out, mime, settings.format === 'jpeg' ? JPEG_QUALITY : undefined);
+      return { files: [blob], softFailed, width, height: totalHeight };
+    } finally {
+      releaseCanvas(out);
+    }
+  }
+
+  const files = [];
+  let current = null;
+  let currentHeight = 0;
+
+  const flush = async () => {
+    if (!current || currentHeight <= 0) return;
+    const active = current;
+    let exact = null;
+    try {
+      exact = drawCanvasRange(createCanvas, active, { y: 0, height: currentHeight }, width);
+      if (settings.format === 'jpeg') {
+        const parts = await splitOversizeJpegRanges(
+          { y: 0, height: currentHeight },
+          async (range, quality) => {
+            const slice = drawCanvasRange(createCanvas, exact, range, width);
+            try {
+              return await encodeCanvas(slice, mime, quality);
+            } finally {
+              releaseCanvas(slice);
+            }
+          },
+        );
+        files.push(...parts.map(({ blob }) => blob));
+      } else {
+        files.push(await encodeCanvas(exact, mime));
+      }
+    } finally {
+      if (exact) releaseCanvas(exact);
+      releaseCanvas(active);
+      current = null;
+      currentHeight = 0;
+    }
+  };
+
+  const append = async (source, range) => {
+    if (!current) current = createCanvas(width, maxHeight);
+    if (currentHeight + range.height > maxHeight) {
+      await flush();
+      current = createCanvas(width, maxHeight);
+    }
+    const ctx = current.getContext('2d');
+    if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 다시 시도해 주세요.');
+    ctx.drawImage(
+      source,
+      0, range.y, source.width, range.height,
+      0, currentHeight, width, range.height,
+    );
+    currentHeight += range.height;
+  };
+
+  try {
+    for (let i = 0; i < blockNodes.length; i += 1) {
+      deps.onProgress?.(i, blockNodes.length);
+      const captured = await captureBlock(blockNodes[i], ratio); // eslint-disable-line no-await-in-loop
+      const canvases = captured.canvases || [captured.canvas];
+      totalHeight += validateCapture(canvases, blockNodes[i]);
+      softFailed += captured.softFailed;
+      try {
+        for (const canvas of canvases) {
+          if (preset.original && canvas.height <= maxHeight) {
+            // 이미 2배율로 안전하게 캡처한 PNG 조각이다. 다시 그리거나 축소하지 않는다.
+            files.push(await encodeCanvas(canvas, 'image/png')); // eslint-disable-line no-await-in-loop
+            releaseCanvas(canvas);
+            continue;
+          }
+          const ranges = splitCanvasRanges(canvas, maxHeight);
+          for (const range of ranges) await append(canvas, range); // eslint-disable-line no-await-in-loop
+        }
+      } finally {
+        canvases.forEach(releaseCanvas);
+      }
+    }
+    await flush();
+  } finally {
+    if (current) releaseCanvas(current);
+  }
+  return { files, softFailed, width, height: totalHeight };
 }
 
 function saveBlob(blob, filename) {
@@ -239,6 +702,7 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
   const { canvas, softFailed } = await captureBlockCanvas(blockNode, PIXEL_RATIO, fontEmbedCSS);
   let out = await canvasToBlob(canvas);
+  releaseExportCanvas(canvas);
   let verifyUrl = null;
   let notarizeWarning = null;
   if (opts.provenance?.projectId) {
@@ -281,6 +745,7 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
     r.canvas.height = 0;
   }
   let outBlob = await canvasToBlob(out);
+  releaseExportCanvas(out);
   let verifyUrl = null;
   let notarizeWarning = null;
   if (opts.provenance?.projectId) {
@@ -290,30 +755,89 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
     notarizeWarning = n.warning;
   }
   saveBlob(outBlob, exportFileName(productName));
-  return { softFailed, verifyUrl, notarizeWarning };
+  return {
+    softFailed,
+    verifyUrl,
+    notarizeWarning,
+    byteSize: outBlob.size,
+    fileCount: 1,
+    sizeWarning: singlePageSizeWarning(outBlob.size),
+  };
 }
 
 // ③ 전체 블록 → 블록별 PNG 를 담은 ZIP
 export async function exportBlocksZip(blockNodes, productName, onProgress, opts = {}) {
-  const zip = new JSZip();
-  const pad = (n) => String(n).padStart(2, '0');
-  const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
-  let softFailed = 0;
-  for (let i = 0; i < blockNodes.length; i += 1) {
-    onProgress?.(i, blockNodes.length);
-    const r = await captureBlockCanvas(blockNodes[i], PIXEL_RATIO, fontEmbedCSS); // eslint-disable-line no-await-in-loop
-    zip.file(exportFileName(productName, `블록${pad(i + 1)}`), await canvasToBlob(r.canvas)); // eslint-disable-line no-await-in-loop
-    softFailed += r.softFailed;
+  return exportStorefrontDownload(blockNodes, productName, onProgress,
+    { preset: 'original', format: 'png', delivery: 'split' }, opts);
+}
+
+export async function exportStorefrontDownload(
+  blockNodes,
+  productName,
+  onProgress,
+  rawSettings,
+  opts = {},
+) {
+  const settings = normalizeExportSettings(rawSettings);
+  const heights = blockNodes.map(exportNodeHeight);
+  const summary = buildExportSummary(heights, settings);
+  const autoSwitchReason = summary.fallbackReason;
+  const effective = autoSwitchReason ? { ...settings, delivery: 'split' } : settings;
+  const preset = exportPreset(effective.preset);
+
+  if (preset.original && effective.delivery === 'single') {
+    const result = await exportLongPng(blockNodes, productName, onProgress, opts);
+    return { ...result, autoSwitchReason, delivery: effective.delivery };
   }
-  let blob = await zip.generateAsync({ type: 'blob' }); // PNG 는 이미 압축 — STORE 기본이면 충분
+
+  const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
+  const rendered = await renderStorefrontFiles(blockNodes, effective, {
+    onProgress,
+    captureBlock: effective.delivery === 'split'
+      ? (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
+        preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT)
+      : (node, ratio) => captureBlockCanvas(node, ratio, fontEmbedCSS),
+  });
+  let blob;
   let verifyUrl = null;
   let notarizeWarning = null;
-  if (opts.provenance?.projectId) {
-    const n = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
-    blob = n.blob;
-    verifyUrl = n.verifyUrl;
-    notarizeWarning = n.warning;
+
+  if (effective.delivery === 'split') {
+    const zip = new JSZip();
+    rendered.files.forEach((file, index) => {
+      zip.file(detailFileName(index, rendered.files.length, effective.format), file);
+    });
+    blob = await zip.generateAsync({ type: 'blob' });
+    if (opts.provenance?.projectId) {
+      const result = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
+      blob = result.blob;
+      verifyUrl = result.verifyUrl;
+      notarizeWarning = result.warning;
+    }
+    saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
+  } else {
+    [blob] = rendered.files;
+    if (opts.provenance?.projectId) {
+      const result = await notarize(blob, {
+        projectId: opts.provenance.projectId,
+        kind: publicationKindForSingle(effective.format),
+      });
+      blob = result.blob;
+      verifyUrl = result.verifyUrl;
+      notarizeWarning = result.warning;
+    }
+    const ext = effective.format === 'jpeg' ? '.jpg' : '.png';
+    saveBlob(blob, exportFileName(productName).replace(/\.png$/, ext));
   }
-  saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
-  return { softFailed, verifyUrl, notarizeWarning };
+
+  return {
+    softFailed: rendered.softFailed,
+    verifyUrl,
+    notarizeWarning,
+    autoSwitchReason,
+    delivery: effective.delivery,
+    fileCount: rendered.files.length,
+    byteSize: blob.size,
+    sizeWarning: effective.delivery === 'single' ? singlePageSizeWarning(blob.size) : null,
+  };
 }

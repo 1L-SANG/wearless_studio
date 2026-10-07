@@ -42,6 +42,7 @@ test('근거 문구 — 워터마크·구간·컷을 구분한다', () => {
   assert.equal(evidenceText({ watermark: true, phashDistance: null }), '워터마크');
   assert.equal(licenseStatusLabel('deleted'), '삭제됨');
   assert.equal(targetLabel({ target: 'publication', publicationKind: 'zip' }), '배포본 · ZIP');
+  assert.equal(targetLabel({ target: 'publication', publicationKind: 'jpeg' }), '배포본 · JPG');
   assert.equal(targetLabel({ target: 'cut' }), '생성 컷');
 });
 

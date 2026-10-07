@@ -43,6 +43,11 @@ def test_upload_token_roundtrip():
     assert parsed["kind"] == "long_png"
 
 
+def test_jpeg_publication_kind_uses_jpeg_mime():
+    assert "jpeg" in fp._KINDS
+    assert fp._MIME["jpeg"] == "image/jpeg"
+
+
 def test_upload_token_rejects_tamper():
     # 원 브리핑의 `.replace("u1", "u2", 1)` 은 base64 인코딩된 페이로드 안에서 리터럴 "u1"
     # 부분 문자열이 살아남는다고 가정했는데, 실측(2000회 샘플, 0건 일치)해 보니 이 특정
@@ -640,6 +645,12 @@ def _real_png(seed=1, w=1000, h=1800) -> bytes:
     return buf.getvalue()
 
 
+def _real_jpeg(seed=1, w=860, h=1200) -> bytes:
+    buf = io.BytesIO()
+    procedural_photo(w, h, seed).convert("RGB").save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
 def _upload(client, make_token, r2, data, *, kind="long_png"):
     p = _presign(client, make_token, kind=kind)
     upload_token = p.json()["uploadToken"]
@@ -747,3 +758,37 @@ def test_route_sign_zip_watermarks_each_png_entry(prov, make_token):
     for name in ("블록01.png", "블록02.png"):
         got = fm_watermark.read_image(Image.open(io.BytesIO(z.read(name)))).code
         assert got == pub["wm_code"]
+
+
+def test_route_sign_zip_accepts_jpeg_entries_without_inspecting_their_format(prov, make_token):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("detail_01.jpg", _real_jpeg(seed=7))
+        z.writestr("detail_02.jpg", _real_jpeg(seed=8))
+    raw = buf.getvalue()
+
+    r = _sign(client, make_token, _upload(client, make_token, r2, raw, kind="zip"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["c2paStatus"] == "skipped"
+    assert r2.put_calls[-1][1] == raw
+    assert store["fingerprints"], "JPG ZIP도 파일 바이트를 바꾸지 않고 지문 추적은 남겨야 한다"
+    assert store["anchor_jobs"] == [body["publicationId"]]
+
+
+def test_route_sign_jpeg_keeps_jpeg_bytes_mime_and_extension(prov, make_token):
+    client, store, r2 = prov
+    _seed_output_record(store)
+    store["evidence"][(MODEL_ID, LICENSE_ID)] = _evidence_row()
+    raw = _real_jpeg(seed=9)
+
+    r = _sign(client, make_token, _upload(client, make_token, r2, raw, kind="jpeg"))
+    assert r.status_code == 200, r.text
+    stored_key, stored, mime = r2.put_calls[-1]
+    assert stored_key.endswith("/signed.jpg")
+    assert mime == "image/jpeg"
+    assert stored[:2] == b"\xff\xd8"
+    assert Image.open(io.BytesIO(stored)).format == "JPEG"

@@ -45,7 +45,14 @@ import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
-import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
+import {
+  buildExportSummary,
+  exportBlockPng,
+  exportNodeHeight,
+  exportStorefrontDownload,
+  readExportSettings,
+  writeExportSettings,
+} from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { textLineClampStyle } from '@/lib/editorTextSlots.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
@@ -57,6 +64,7 @@ import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImage
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
+import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -1124,7 +1132,12 @@ export function Editor() {
   const [genReceipt, setGenReceipt] = useState(null);
   const [genNotif, setGenNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
-  const [dlFormat, setDlFormat] = useState('long');
+  const [dlSettings, setDlSettings] = useState(() => readExportSettings());
+  const [dlNotice, setDlNotice] = useState('');
+  const [dlBlockHeights, setDlBlockHeights] = useState([]);
+  useEffect(() => {
+    writeExportSettings(undefined, dlSettings);
+  }, [dlSettings]);
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
@@ -1193,6 +1206,26 @@ export function Editor() {
   const fromHistory = useRef(false);
   const failedCleanupJobRef = useRef(null);
   const lastPush = useRef(0);
+
+  useLayoutEffect(() => {
+    if (!download) return;
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    setDlBlockHeights(nodes.map(exportNodeHeight));
+  }, [download, blocks]);
+  const dlEstimatedHeights = useMemo(() => {
+    if (dlBlockHeights.length) return dlBlockHeights;
+    // .canvas-block 은 세로 padding 50px씩을 갖는다. DOM 측정 전 첫 모달 프레임의 폴백이다.
+    return (blocks || []).map((block) => getBlockRenderHeight(block, { forExport: true }) + 100);
+  }, [blocks, dlBlockHeights]);
+  const dlSummary = useMemo(
+    () => buildExportSummary(dlEstimatedHeights, dlSettings),
+    [dlEstimatedHeights, dlSettings],
+  );
+  useEffect(() => {
+    if (!download || dlBusy || dlSettings.delivery !== 'single' || !dlSummary.fallbackReason) return;
+    setDlSettings((current) => ({ ...current, delivery: 'split' }));
+    setDlNotice(dlSummary.fallbackReason);
+  }, [download, dlBusy, dlSettings.delivery, dlSummary.fallbackReason]);
 
   useEffect(() => {
     if (
@@ -2060,14 +2093,22 @@ export function Editor() {
   // 소스 내보내기 한 번에 둘 다 날 수 있다(외부 썸네일도 못 불러오고 공증 서버도 응답 없는
   // 경우 등). 각자 자기 토스트를 낸다 — 하나를 감추면 셀러가 그 실패를 영영 모른다.
   // 성공 토스트는 정말 보고할 게 없을 때만 — 둘 중 하나라도 있으면 자리를 내준다.
-  const finishExport = (successMsg, { softFailed, notarizeWarning }) => {
+  const finishExport = (successMsg, {
+    softFailed, notarizeWarning, sizeWarning, autoSwitchReason,
+  }) => {
     if (softFailed > 0) {
       toast.push(`저장했지만 외부 이미지 ${softFailed}장은 불러오지 못해 빈 자리로 남았어요`, { icon: 'x' });
     }
     if (notarizeWarning) {
       toast.push(notarizeWarning, { icon: 'alertTri' });
     }
-    if (softFailed <= 0 && !notarizeWarning) {
+    if (autoSwitchReason) {
+      toast.push(autoSwitchReason, { icon: 'alertTri' });
+    }
+    if (sizeWarning) {
+      toast.push(sizeWarning, { icon: 'alertTri' });
+    }
+    if (softFailed <= 0 && !notarizeWarning && !autoSwitchReason && !sizeWarning) {
       toast.push(successMsg, { icon: 'download' });
     }
   };
@@ -2092,10 +2133,13 @@ export function Editor() {
     setDlBusy(true);
     const onProgress = (done, total) => setDlProg(`${done + 1}/${total}`);
     try {
-      const run = dlFormat === 'zip' ? exportBlocksZip : exportLongPng;
-      const result = await run(nodes, productName, onProgress, provenanceOpts());
+      const result = await exportStorefrontDownload(
+        nodes, productName, onProgress, dlSettings, provenanceOpts(),
+      );
       setDownload(false);
-      finishExport(dlFormat === 'zip' ? '블록별 PNG를 ZIP으로 저장했어요' : '전체 상세페이지를 PNG로 저장했어요', result);
+      finishExport(result.delivery === 'split'
+        ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
+        : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
       toast.push(e?.message || '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
     } finally {
@@ -3396,7 +3440,7 @@ export function Editor() {
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
           <Button variant="primary" size="sm" icon="download" disabled={genActive}
-            onClick={() => setDownload(true)}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
+            onClick={() => { setDlNotice(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
         </div>
       </div>
 
@@ -3716,32 +3760,17 @@ export function Editor() {
       {/* onClose 도 dlBusy 게이트 — ESC·배경클릭으로 닫혀도 내보내기는 계속 돌아 유령 완료가 된다(리뷰 반영) */}
       {download && (
         <Modal onClose={() => { if (!dlBusy) setDownload(false); }} wide>
-          <div className="dl-modal">
-            <div className="dl-head">
-              <div className="dl-eyebrow">다운로드</div>
-              <h3 className="dl-title">상세페이지를 내보내기</h3>
-              <p className="dl-sub">형식과 해상도를 고르면 바로 저장돼요.</p>
-            </div>
-            <div className="dl-opts">
-              {catalogs.downloadOptions.map((o) => {
-                const on = dlFormat === o.id;
-                return (
-                  <button key={o.id} className={`dl-opt${on ? ' on' : ''}`} onClick={() => setDlFormat(o.id)}>
-                    <span className="dl-opt-ico"><Icon name={o.id === 'zip' ? 'layers' : 'image'} size={20} /></span>
-                    <span className="dl-opt-meta">
-                      <span className="dl-opt-title">{o.title}</span>
-                      <span className="dl-opt-desc">{o.desc}</span>
-                    </span>
-                    <span className={`dl-radio${on ? ' on' : ''}`}>{on && <Icon name="check" size={13} />}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="dl-foot">
-              <Button variant="quiet" onClick={() => setDownload(false)} disabled={dlBusy}>취소</Button>
-              <Button variant="primary" icon="download" onClick={runDownload} disabled={dlBusy}>{dlBusy ? `만드는 중…${dlProg ? ` ${dlProg}` : ''}` : '다운로드'}</Button>
-            </div>
-          </div>
+          <EditorDownloadModal
+            settings={dlSettings}
+            summary={dlSummary}
+            blocks={blocks}
+            notice={dlNotice}
+            busy={dlBusy}
+            progress={dlProg}
+            onChange={(next) => { setDlNotice(''); setDlSettings(next); }}
+            onCancel={() => setDownload(false)}
+            onDownload={runDownload}
+          />
         </Modal>
       )}
 
