@@ -4,11 +4,6 @@ import { readFileSync } from 'node:fs';
 import { validityLabel } from '../../src/features/model/modelProfilePreview.js';
 import { formatValidity, formatValidUntil, toBrowseModel } from '../../src/features/facemarket-landing/data/publicModels.js';
 import { normalizeSettlementRow } from '../../src/features/facemarket-landing/payoutData.js';
-import { seoulDate } from '../../src/lib/datetime.js';
-import { FACEMARKET_PRICING } from '../../src/lib/facemarketPricing.js';
-import { transformWithEsbuild } from 'vite';
-import { createElement, Fragment } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
@@ -48,20 +43,4 @@ test('settlement status does not expire a permanent active license', () => {
   assert.equal(normalizeSettlementRow(row, [license], now).status, '활성');
   assert.equal(normalizeSettlementRow(row, [{ ...license, status: 'revoked' }], now).status, '만료');
   assert.equal(normalizeSettlementRow(row, [{ ...license, licenseValidUntil: '2027-09-11T00:00:00Z' }], now).status, '만료');
-});
-
-test('seller model details retain the expiry row for permanent licenses and dated history', async () => {
-  const source = read('src/features/analysis/AnalysisForm.jsx');
-  // Compile the actual private component without loading the unrelated analysis form.
-  const component = source.slice(source.indexOf('const _won ='), source.indexOf('// 글자 폭 추정'));
-  const { code } = await transformWithEsbuild(component, 'ModelDetailModal.jsx', { jsx: 'transform' });
-  for (const [validUntil, expected] of [[null, '철회 시까지'], ['2027-09-07T22:00:00Z', '2027. 9. 8.까지']]) {
-    const states = [{ validUntil, allowedUse: [] }, 'ready', null];
-    const Detail = new Function('React', 'useState', 'useEffect', 'seoulDate', 'FACEMARKET_PRICING', 'Modal', 'ModelThumb', 'Icon', 'Button', `${code}; return ModelDetailModal;`)(
-      { createElement, Fragment }, () => [states.shift(), () => {}], () => {}, seoulDate, FACEMARKET_PRICING,
-      ({ children }) => createElement('div', null, children), () => null, () => null, ({ children }) => createElement('button', null, children),
-    );
-    const html = renderToStaticMarkup(createElement(Detail, { model: { id: 'model-1', displayName: '모델' } }));
-    assert.ok(html.includes(`<div class="lic-valid">${expected}</div>`), html);
-  }
 });

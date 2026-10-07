@@ -313,6 +313,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
+  # 2026-10-07 셀러 앱 실제 모델 입구 닫음, 되돌리기는 on
+  FM_REAL_MODEL_GENERATION: "off"
   # production+FaceMarket 이면 VC 발급이 필수다(main.py _validate_facemarket_vc_settings 기동검사).
   # holder(opendid) 배포·배선을 마쳤으므로 이제 켠다 — 안 켜면 api 가 기동 실패(RuntimeError).
   # 이게 켜지면 revoke/cutover 리컨실러도 함께 활성(mandatory VC 폐기 큐).

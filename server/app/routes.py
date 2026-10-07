@@ -3231,6 +3231,7 @@ async def generate_editor_image(
     _requested = (body or {})
     if (
         s.facemarket_enabled
+        and s.fm_real_model_generation != "off"
         and _requested.get("mode") == "new"
         and cut_generator.real_identity_plan(_requested.get("cutType"), wants_face=False)[0]
         and facemarket.is_real_model_id(
@@ -3359,6 +3360,16 @@ async def generate_editor_image(
                 raise _bad_request(
                     "invalid_spec", "컷 설정이 올바르지 않아요. 다시 시도해 주세요."
                 ) from exc
+        if (
+            s.fm_real_model_generation == "off"
+            and payload.get("mode") == "new"
+            and facemarket.is_real_model_id(selected_model_id)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "real_model_unavailable",
+                        "message": "실제 모델 생성은 지금 제공하지 않아요. AI 모델로 바꿔 주세요."},
+            )
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
@@ -3448,6 +3459,12 @@ async def generate_detail_page(
             facemarket.real_identity_allowed_cut(block.get("cutType"))
             for block in ai_worn_blocks
         )
+        if s.fm_real_model_generation == "off" and uses_real_identity:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "real_model_unavailable",
+                        "message": "실제 모델 생성은 지금 제공하지 않아요. AI 모델로 바꿔 주세요."},
+            )
         payload = {"mode": "generate"}
         if uses_model_identity:
             # 실제 모델도 대역 없이 그대로 간다 — 예전의 stylingModelId(가상 대역)는

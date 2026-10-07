@@ -82,7 +82,6 @@ test('날짜를 그리는 화면은 전부 이 모듈을 쓴다', () => {
     'src/features/admin/AdminModels.jsx',
     'src/features/verify/PublicVerify.jsx',
     'src/features/verify/PublicVerifyPublication.jsx',
-    'src/features/analysis/AnalysisForm.jsx',
     'src/features/credits/CreditsHistory.jsx',
     'src/features/model/mypage/MyPageConditions.jsx',
     'src/features/model/mypage/MyPageTimeline.jsx',

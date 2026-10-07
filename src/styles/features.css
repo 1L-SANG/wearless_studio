@@ -516,14 +516,6 @@
 .model-grid { display: flex; gap: 12px; flex-wrap: wrap; }
 .ai-model-groups { display: grid; gap: 18px; }
 .ai-model-group-title { margin-bottom: 9px; color: var(--fg-2); font-size: 12.5px; font-weight: 650; }
-.fm-model-state { display: flex; align-items: center; gap: 10px; }
-.fm-license-pending { margin-top: 16px; }
-.fm-license-pending summary { display: flex; align-items: center; gap: 6px; width: fit-content; cursor: pointer; color: var(--fg-2); font-size: 13px; font-weight: 600; list-style: none; }
-.fm-license-pending summary::-webkit-details-marker { display: none; }
-.fm-license-pending summary span { color: var(--fg-3); font-weight: 500; }
-.fm-license-pending summary svg { transition: transform .18s; }
-.fm-license-pending[open] summary svg { transform: rotate(180deg); }
-.fm-license-pending .model-grid { margin-top: 12px; }
 .model-card { width: 110px; border-radius: var(--r-4); overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--ring);
   cursor: pointer; transition: box-shadow .14s; position: relative; }
 .model-card:hover { box-shadow: var(--elev-card); }
@@ -597,18 +589,6 @@
 @media (max-width: 1000px) { .custom-match-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 620px) { .custom-match-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .custom-match-previews { grid-template-columns: 1fr; } }
 
-/* FaceMarket 검증 모델 카드 — 커버 + 검증 배지 + 이름/단가. 라이선스 비활성은 비활성화(회색) */
-.fm-model.disabled { cursor: not-allowed; }
-.fm-model.disabled img, .fm-model.disabled .fm-empty { filter: grayscale(1); opacity: .55; }
-.fm-model.disabled:hover { box-shadow: 0 0 0 1px var(--ring); }
-.fm-empty { width: 100%; height: 130px; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-3); }
-.fm-verified { position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 2px;
-  font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: var(--r-pill); background: var(--accent-success); color: #fff; line-height: 1.5; }
-.fm-secondary-use { position: absolute; top: 72px; right: 8px; z-index: 2; }
-.fm-studio-only { position: absolute; top: 104px; right: 8px; z-index: 1; padding: 2px 7px;
-  border-radius: var(--r-pill); background: var(--glass-bg); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring);
-  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
-  font-size: 9.5px; font-weight: 700; line-height: 1.6; white-space: nowrap; }
 /* AI(가상) 모델 카드 — 사진만 두고 이름을 우측 하단에 흰 글씨로 얹는다 (2026-08-01 사용자 결정).
    사진이 밝아도 읽히도록 아래쪽에 옅은 그라데이션을 깔고 글자에 그림자를 준다. */
 .ai-model img { height: 150px; }
@@ -617,51 +597,12 @@
 .ai-name { position: absolute; right: 9px; bottom: 7px; z-index: 1; display: inline-flex; align-items: center; gap: 3px;
   font-size: 12.5px; font-weight: 600; color: #fff; letter-spacing: .01em;
   text-shadow: 0 1px 3px rgba(0,0,0,.55); pointer-events: none; }
-.fm-meta { padding: 8px 10px; }
-.fm-name { font-size: 12.5px; font-weight: 600; color: var(--fg-1); display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.fm-price { font-size: 12px; font-weight: 500; color: var(--fg-2); margin-top: 3px; }
-.fm-model.disabled .fm-price { color: var(--fg-3); }
-.fm-styling-model, .fm-use-category { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--ring); }
-.fm-styling-model .sec-sub, .fm-use-category .sec-sub { margin-bottom: 14px; }
+.fm-styling-model { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--ring); }
+.fm-styling-model .sec-sub { margin-bottom: 14px; }
 
-/* 얼굴 라이선스 카드 (모델 카드 클릭 → 상세) — 무채색+단일 액센트, 신분증/VC 카드 톤 */
-.lic-card-wrap { display: flex; flex-direction: column; gap: 16px; width: 320px; max-width: 100%; margin: 0 auto; }
-.lic-card { border-radius: var(--r-6); overflow: hidden; background: var(--bg-1);
-  box-shadow: var(--elev-card), 0 12px 30px -18px rgba(19,19,22,.5); border: 1px solid var(--ring); }
-.lic-card-face { position: relative; aspect-ratio: 4 / 3; background: var(--bg-2); }
-.lic-card-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.lic-card-face .fm-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--fg-3); }
-.lic-card-brand { position: absolute; top: 11px; left: 12px; font-size: 10px; font-weight: 800; letter-spacing: .14em;
-  color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.55); }
-.lic-card-badge { position: absolute; top: 9px; right: 10px; display: inline-flex; align-items: center; gap: 2px;
-  font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: var(--r-pill);
-  background: var(--accent-success); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
-.lic-card-who { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 14px 12px;
-  background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,0)); }
-.lic-card-name { font-size: 19px; font-weight: 800; color: #fff; letter-spacing: -.01em; }
-.lic-card-name em { font-style: normal; font-weight: 500; opacity: .82; font-size: 14px; }
-.lic-card-vc { margin-top: 3px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
-  color: #7ee2b8; }
-.lic-card-vc.off { color: rgba(255,255,255,.6); }
-.lic-card-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.lic-row { display: flex; flex-direction: column; gap: 6px; }
-.lic-k { font-size: 11px; font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
-.lic-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag-allow, .tag-forbid { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600;
+.tag-forbid { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600;
   padding: 3px 10px; border-radius: var(--r-pill); }
-.tag-allow { background: var(--accent-success-ring); color: var(--accent-success); }
 .tag-forbid { background: var(--accent-error-ring); color: var(--accent-error); }
-.lic-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
-  border-top: 1px solid var(--ring); padding-top: 12px; }
-.lic-foot-info { min-width: 0; }
-.lic-price { font-size: 22px; font-weight: 800; color: var(--fg-1); letter-spacing: -.02em; }
-.lic-price em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--fg-3); }
-.lic-valid { font-size: 12px; color: var(--fg-2); margin-top: 2px; }
-.lic-vcid { display: block; margin-top: 6px; font-size: 10px; color: var(--fg-3);
-  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lic-qr { width: 68px; height: 68px; flex-shrink: 0; border-radius: var(--r-2); background: #fff;
-  box-shadow: 0 0 0 1px var(--ring); }
-.lic-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 /* FaceMarket 온체인 정산 영수증 (Generating 완료 · 장면③) */
 .fm-receipt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }

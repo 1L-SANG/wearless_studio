@@ -8,7 +8,6 @@ import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
-import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
@@ -389,7 +388,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ product, detailRecommendations, catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ product, detailRecommendations, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -398,11 +397,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
   const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
-  // 실존(FaceMarket) 검증 모델 — 활성 라이선스 + 그리드 자산(assetsReady)까지 갖춰야 컷 생성 가능.
-  // 장소·스타일링 컷에서도 가상모델을 고를 수 있어야 하므로 실존/가상 목록을 함께 보여준다.
-  const fmList = (fmModels || []).filter((m) => m.hasActiveLicense && m.assetsReady);
   const virtualModels = catalogs.models || [];
-  const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0] || fmList[0];
+  const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
@@ -476,9 +472,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
   const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
   const colorVal = activeColorOpts.some((option) => option.id === color)
     ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
-  // 갤러리·게이트용 성별 — 고른 모델(가상·실존)의 성별 우선, 못 찾으면 분석 기반(콘티보드 exampleGender 규칙).
-  // 실존 모델은 catalogs.models 에 없어서 이 폴백이 없으면 null 이 되고, null 이면 착용컷 예시가 전부 닫힌다.
-  const modelGender = [...virtualModels, ...fmList].find((item) => item.id === model)?.gender
+  // 갤러리·게이트용 성별은 고른 가상 모델을 우선하고, 못 찾으면 분석 값을 쓴다.
+  const modelGender = virtualModels.find((item) => item.id === model)?.gender
     || exampleGender || null;
   const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
@@ -639,17 +634,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
           {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
             <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {fmList.map((m) => (
-                /* 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 비활성화하지 않는다. */
-                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
-                  title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
-                  {m.coverImageUrl
-                    ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
-                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                </div>
-              ))}
               {virtualModels.map((m) => (
                 /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
                    되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
