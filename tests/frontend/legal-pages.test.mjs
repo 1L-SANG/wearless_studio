@@ -245,20 +245,18 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
       );
       if (BANK_TRANSFER_ENABLED) {
         // 계좌이체 모드(PG 심사 전)는 정기결제 고지문 대신 한 줄 안내만 둔다(오너 9/24).
-        // 약관·환불 링크는 카드의 동의 문장이 계속 책임진다.
+        // 약관·환불 링크는 카드의 동의 문장이 계속 책임지고, 결제 조건은 구석의 가벼운 링크로 둔다(오너 10/5).
         assert.match(html, /영업시간 10분 안에 크레딧 지급/);
         assert.doesNotMatch(html, /구독 크레딧 및 환불 안내/);
         assert.match(html, /결제하면/);
-        assert.deepEqual(hrefs(html), ['https://wearless.kr/terms', 'https://wearless.kr/refund']);
+        assert.deepEqual(hrefs(html), [
+          'https://wearless.kr/refund', 'https://wearless.kr/terms', 'https://wearless.kr/refund',
+        ]);
       } else {
-        assert.match(html, /구독 유지 중 다음 달로 이월/);
-        assert.match(html, /이월분을 포함해 모두 소멸/);
-        assert.match(html, /7일 이내/);
-        assert.match(html, /미제공 부분의 법령상 환불 권리는 제한하지 않습니다/);
-        assert.ok(html.indexOf('구독 크레딧 및 환불 안내') < html.indexOf('로그인하고 시작하기'));
+        assert.match(html, /매월 자동 결제되고 언제든 해지할 수 있어요\. 해지해도 결제한 기간까지 쓸 수 있어요\. 부가세 포함\./);
+        assert.doesNotMatch(html, /월간 정기결제 상품입니다|구독 크레딧 및 환불 안내|7일 이내/);
         assert.match(html, /결제하면/);
         assert.deepEqual(hrefs(html), [
-          'mailto:contact@wearless.kr', 'https://wearless.kr/refund',
           'https://wearless.kr/terms', 'https://wearless.kr/refund',
         ]);
       }

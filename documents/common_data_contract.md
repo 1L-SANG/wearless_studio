@@ -137,7 +137,7 @@ MatchClothing {
 
 ### 3.3 MannequinCut — 마네킹 컷 버전 (단일컷 전환)
 
-마네킹컷은 **단일 컷 + 버전 스트립**이다(구 A/B 2후보안 폐기, 2026-07). 핏 상태는 `analysis.fitProfile`(→ `fit_profile_spec.md`)이 소유하고, 컷 엔티티는 버전 이미지만 담는다.
+마네킹컷은 **단일 컷 + 버전 스트립**이다(구 A/B 2후보안 폐기, 2026-07). 현재 선택 핏은 `analysis.fitProfile`(→ `fit_profile_spec.md`)에 두고, 각 컷은 자신을 실제로 만든 fitProfile 스냅샷을 원본 asset metadata에 함께 보관한다.
 
 ```ts
 MannequinCut {
@@ -153,6 +153,8 @@ MannequinCut {
     fitAdjust: AdjustFit | null
     lengthAdjust: AdjustLength | null
   } | null                         // @deprecated — 매칭 핏은 fitProfile.matchCut이 소유
+  fitProfile: FitProfile | null    // 이 버전을 만든 핏. null은 "사진 그대로"
+  fitProfileRecorded: boolean      // false면 스냅샷이 없던 구버전 컷이며 analysis.fitProfile 폴백
 }
 // 폐기: selected (선택은 project.selectedMannequinId가 소유),
 //       fitLabel / lengthLabel / matchName / matchFit / matchLength / matchLabel (전부 파생)
@@ -501,7 +503,7 @@ GenerationExample {
 | `getMannequins(projectId)` | | `MannequinCut[]` | |
 | `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
 | `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | ~~`{ data: MannequinCut, credits }`~~ | **@deprecated (2026-07)** — fitProfile 재생성으로 통합, 페이지에서 미호출 (`mannequinAdjust`=0). 서버 `:adjust`는 항상 **410 Gone**(잡 미생성) |
-| `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · fitProfile을 analysis에 영속 후 새 버전 생성·자동 선택 (구 `regenerateMannequins` 대체) |
+| `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 요청 시에는 잡 스냅샷만 남기고, 성공 종결에서 새 버전과 analysis.fitProfile을 함께 확정·자동 선택 (구 `regenerateMannequins` 대체) |
 | `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
 | `generateDetailPage(projectId, { onProgress, onStep })` | | 모든 AI 컷 자리가 채워지면 `{ data: EditorBlock[], credits }` | 생성 후보가 없는 AI 컷 자리가 하나라도 있으면 결과 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지 블록은 제외 |

@@ -48,7 +48,8 @@ function ProductCell({ item }) {
   return (
     <div className="flex flex-col">
       <span className="font-medium">{item.planName || item.planCode}{item.kind === 'subscription' ? ' · 1개월' : ' · 충전'}</span>
-      <span className="text-xs text-muted-foreground">{won(item.amount)} · {num(item.credits)} 크레딧</span>
+      <span className="text-xs text-muted-foreground">{won(item.amount)} · {num(item.totalCredits ?? item.credits)} 크레딧</span>
+      {item.bonusCredits > 0 && <span className="text-xs text-muted-foreground">보너스 {num(item.bonusCredits)} 포함</span>}
     </div>
   );
 }
@@ -71,7 +72,7 @@ function ConfirmForm({ item, onDone, onClose }) {
       const result = await adminConfirmBankTransfer(item.id, { paidAt, adminNote: note.trim() || null });
       push(result.idempotent
         ? '이미 지급된 신청이에요. 저장된 결과를 보여드려요.'
-        : `지급 완료 · ${num(result.credits)} 크레딧${result.endsAt ? ` · ${day(result.endsAt)}까지` : ''}`);
+        : `지급 완료 · ${num(result.totalCredits ?? result.credits)} 크레딧${result.bonusCredits > 0 ? ` · 보너스 ${num(result.bonusCredits)} 포함` : ''}${result.endsAt ? ` · ${day(result.endsAt)}까지` : ''}`);
       onDone();
     } catch (e) {
       const message = e.status ? e.message

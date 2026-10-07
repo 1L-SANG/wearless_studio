@@ -113,6 +113,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   BANK_TRANSFER_BANK: "농축협"
   BANK_TRANSFER_ACCOUNT: "352-2407-2408-13"
   BANK_TRANSFER_HOLDER: "정일상(데일리모먼트)"
+  # 충전 보너스(Seller 5%, Pro 10%). 켜는 조건과 끄는 법은 docs/runbooks/topup-bonus-rollout.md.
+  # 10/7 확인: 마이그레이션 20261006120000 물리 적용, api 태스크는 5250a7f3 한 대뿐, 보너스 주문 0건.
+  TOPUP_BONUS_ENABLED: "true"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -313,6 +316,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
+  # 2026-10-07 셀러 앱 실제 모델 입구 닫음, 되돌리기는 on
+  FM_REAL_MODEL_GENERATION: "off"
   # production+FaceMarket 이면 VC 발급이 필수다(main.py _validate_facemarket_vc_settings 기동검사).
   # holder(opendid) 배포·배선을 마쳤으므로 이제 켠다 — 안 켜면 api 가 기동 실패(RuntimeError).
   # 이게 켜지면 revoke/cutover 리컨실러도 함께 활성(mandatory VC 폐기 큐).
@@ -603,6 +608,8 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  # SSM 값이 없으면 ECS 기동 실패, 배포 전 copilot secret init --name OPENAI_API_KEY_FALLBACK 필수
+  OPENAI_API_KEY_FALLBACK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY_FALLBACK
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CI_PEPPER

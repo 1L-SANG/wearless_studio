@@ -11,6 +11,15 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_feature_copy_uses_the_selected_fit_and_omits_photo_as_is_claims():
+    product = {"name": "티셔츠", "clothingType": "top"}
+    selected = {"fit": "slim", "fitProfile": {"axes": {"fit": "over"}}}
+    facts = fc._facts_block(product, selected)
+    assert '- fit: over' in facts
+    assert '- fit: slim' not in facts
+    assert '- fit:' not in fc._facts_block(product, {"fit": "slim", "fitProfile": None})
+
+
 def test_lookup_exact_alias():
     assert fc.lookup("하이웨이스트") == "하이웨이스트 디테일을 확인할 수 있습니다."
 
@@ -223,8 +232,8 @@ def test_generate_survives_model_failure(monkeypatch):
     assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
 
 
-def test_feature_copy_is_carried_across_analysis_replaces():
-    # save_analysis 는 REPLACE 라, 셀러 클라가 안 보낸 서버 소유 키는 이월돼야 한다
+def test_feature_copy_is_preserved_across_analysis_merges():
+    # 부분 병합에서 셀러 클라이언트가 생략한 생성 카피도 보존한다.
     assert "featureCopy" in repo._SERVER_OWNED_ANALYSIS_KEYS
 
 

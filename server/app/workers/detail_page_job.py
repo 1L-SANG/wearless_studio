@@ -31,6 +31,7 @@ from ..agents import (
     cut_plan,
     face_identity,
     feature_copy,
+    fit_axes,
     image_qc,
     horizon_background,
     mannequin,
@@ -128,6 +129,57 @@ def _storyboard_digest(storyboard) -> str:
     payload = json.dumps(storyboard or [], sort_keys=True, ensure_ascii=False,
                          separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _repair_signature_storyboard(
+    storyboard: list, *, product: dict, analysis: dict, project_id: str,
+) -> list:
+    """Generation-time backstop for storyboards saved before signature pool repair."""
+
+    clothing_type = (
+        product.get("clothing_type") or product.get("clothingType") or "top"
+    )
+    repaired, remaps = cut_generator.repair_signature_cut_selections(
+        storyboard,
+        project_id=project_id,
+        gender=mannequin.select_base_gender(analysis, clothing_type),
+        clothing_type=clothing_type,
+        sub_category=analysis.get("subCategory"),
+        custom_category=analysis.get("customCategory"),
+    )
+    for remap in remaps:
+        log.warning(
+            "AG-06 signature example remapped project %s block %s: %s -> %s",
+            project_id,
+            remap["blockId"],
+            remap["fromExampleId"],
+            remap["toExampleId"],
+        )
+    return repaired
+
+
+def _resolve_signature_background_runtime(
+    cut_spec: dict, product: dict, analysis: dict, assets: list, images: list,
+) -> dict:
+    if not cut_generator.is_signature_cut(cut_spec):
+        return cut_spec
+    palette = horizon_background.resolve_signature(
+        product,
+        cut_spec.get("colorId"),
+        analysis=analysis,
+        sources=horizon_background.loaded_sources(
+            product, cut_spec.get("colorId"), assets, images),
+    )
+    return horizon_background.apply_signature_runtime(cut_spec, palette)
+
+
+def _background_result_metadata(block: dict) -> dict:
+    horizon = horizon_background.decision(block)
+    signature = horizon_background.signature_decision(block)
+    return {
+        **({"horizon_background": horizon} if horizon else {}),
+        **({"signature_background": signature} if signature else {}),
+    }
 
 
 def _incomplete_cuts_message(requested: int, failed: int, retained: int) -> str:
@@ -441,8 +493,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
-                 **({"horizon_background": horizon_background.decision(b)}
-                    if horizon_background.decision(b) else {}),
+                 **_background_result_metadata(b),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
                     if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
                  **({"neck_repair": neck_repair_metadata}
@@ -1216,6 +1267,17 @@ def _fallback_product_name(product: dict, analysis: dict) -> str:
 _INTERNAL_FAILURE_CODES = {"holder_starting", "holder_unavailable"}
 
 
+def _analysis_for_selected_mannequin(
+    analysis: dict, selected_cut: dict | None,
+) -> dict:
+    """선택 컷의 기록된 핏을 상세 잡의 정본으로 쓴다.
+
+    snapshot 자체가 없는 구버전 컷은 기존 analysis 폴백을 유지한다. profile=null은
+    첫 생성 당시의 "사진 그대로"를 뜻하므로 fitProfile 키를 null로 명시한다.
+    """
+    return fit_axes.analysis_for_selected_mannequin(analysis, selected_cut)
+
+
 async def run_detail_page_job(app, job: dict) -> None:
     s, pool = app.state.settings, app.state.pool
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
@@ -1305,6 +1367,21 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            selected_mannequin_id = (
+                project.get("selected_mannequin_id")
+                or project.get("selectedMannequinId")
+            )
+            mannequin_cuts = (
+                await repo.list_mannequin_cuts(conn, user_id, project_id)
+                if selected_mannequin_id else []
+            )
+            selected_mannequin_cut = next((
+                cut for cut in mannequin_cuts
+                if f"{cut.get('candidate')}-{cut.get('version')}" == selected_mannequin_id
+            ), None)
+            analysis = _analysis_for_selected_mannequin(
+                analysis, selected_mannequin_cut
+            )
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
             storyboard = content_roles.canonicalize_storyboard(storyboard)
@@ -1312,6 +1389,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 product.get("clothing_type")
                 or product.get("clothingType")
                 or "top"
+            )
+            storyboard = _repair_signature_storyboard(
+                storyboard,
+                product=product,
+                analysis=analysis,
+                project_id=project_id,
             )
             space_set_bindings = space_set_assets.bind_storyboard_space_sets(
                 storyboard,
@@ -1430,13 +1513,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                 notice_ctx = None
 
             mannequin_asset = None
-            sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
-            if sel:
-                for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
-                    if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
-                        asset_id = c.get("active_asset_id") or c["asset_id"]
-                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(asset_id))
-                        break
+            if selected_mannequin_cut and selected_mannequin_cut.get("asset_id"):
+                asset_id = (
+                    selected_mannequin_cut.get("active_asset_id")
+                    or selected_mannequin_cut["asset_id"]
+                )
+                mannequin_asset = await repo.get_asset_for_user(
+                    conn, user_id, str(asset_id)
+                )
             color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
             detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None
             match_assets: dict = {}   # matchingItemId → asset|None
@@ -1669,8 +1753,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _refs, getattr(s, "fm_face_qc_dir", None),
                     )
 
-        # 옷 색 백스톱: 스토리보드 이탈 때 측정이 끝나지 않았으면 가로 세트 벽 색을 정하기
-        # 전에 한 번 잰다. 실패하면 그대로 두고, 해당 컷은 기존 배경으로 만든다(fail-open).
+        # 옷 색 백스톱: 스토리보드 이탈 때 측정이 끝나지 않았으면 호리존 벽과 시그니처
+        # 배경색을 정하기 전에 한 번 잰다. 실패하면 해당 컷은 기본 배경 문장으로 만든다(fail-open).
         tone_colors = garment_color_measure.measurable_color_ids(ai_blocks, product)
         if tone_colors and not garment_color_measure.is_covered(
                 analysis.get("garmentColorEvidence"), tone_colors, clothing_type):
@@ -1713,6 +1797,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec = dict(b)
             cut_spec.pop("_horizonBackground", None)
             cut_spec.pop("_horizonBackgroundFallback", None)
+            cut_spec.pop("_signatureBackground", None)
+            cut_spec.pop("_signatureBackgroundFallback", None)
             cut_spec.pop("_horizonLayoutReference", None)
             cut_spec.pop("_horizonReferenceShot", None)
             space_binding = space_set_bindings.get(id(b))
@@ -1908,6 +1994,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                 product_image = await _img(a)
                 imgs.append(product_image)
                 product_images.append(product_image)
+            if cut_generator.is_signature_cut(cut_spec):
+                cut_spec = _resolve_signature_background_runtime(
+                    cut_spec, product, analysis, prods, product_images)
+                normalized = cut_generator.normalize_spec(
+                    cut_spec, clothing_type=clothing_type)
             if horizon_background.mode(cut_spec) == "garment-tone":
                 palette_key = (cut_spec.get("spaceGroupId"), cut_spec.get("colorId"))
                 if palette_key not in horizon_palettes:
@@ -2193,10 +2284,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         if items:
             try:
                 async with pool.connection() as conn:
-                    # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
-                    # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
-                    fresh = await repo.get_analysis(conn, project_id) or {}
-                    await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
+                    # 잡이 도는 동안의 셀러 편집을 보존하도록 생성한 카피 키만 병합한다.
+                    await repo.save_analysis(conn, project_id, {"featureCopy": items})
                     await conn.commit()
             except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
                 log.warning("feature copy persist failed for job %s: %r", job_id, e)

@@ -171,7 +171,7 @@ test('target-gender chips disable deselection, photo-volume options stay exclusi
   );
   assert.match(ui, /allowDeselect = true/);
   assert.match(ui, /v === value && allowDeselect \? null : v/);
-  assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 4);
+  assert.match(analysis, /<Chips options=\{genderOptions\} value=\{a.targetGenders\?\.\[0\] \|\| null\}[\s\S]*?allowDeselect=\{false\}/);
   assert.match(analysis, /role="listbox" aria-label="상세페이지 사진 양"/);
   assert.match(analysis, /role="option" aria-selected=\{composeMode === mode\.value\}/);
   assert.match(analysis, /controllerRef\.current\.abort\(\)/);
@@ -202,7 +202,7 @@ test('type changes synchronously deselect and disable stale incompatible matches
   assert.match(analysis, /if \(!item \|\| !isMatchCompatible\(item\)\) return/);
   // 선택 머지는 matchSelection.js 로 분리됐다(node --test 가 직접 실행 검증하려고).
   // 어댑터는 그 함수에 clothingType 을 넘기는 배선만 유지한다.
-  assert.match(adapter, /mergeMatchSelection\(\s*base\.matchClothing \|\| \[\], matchPatch, base\.clothingType/);
+  assert.match(adapter, /mergeMatchSelection\(\s*body\.matchClothing \|\| cached\?\.matchClothing \|\| \[\], patch\.matchClothing, base\.clothingType/);
   const selection = readFileSync(
     new URL('../../src/lib/api/matchSelection.js', import.meta.url), 'utf8',
   );

@@ -1,4 +1,4 @@
-"""가로 세트 벽 색('옷 색에 맞춤')용 옷 색 지연 측정.
+"""호리존 벽과 시그니처 첫 장 배경용 옷 색 지연 측정.
 
 상품 분석이 아니라 셀러가 스토리보드를 떠날 때, 필요한 색만 잰다. 상세 생성 잡도 그
 측정이 끝나지 않았으면 한 번 백스톱으로 부른다. 측정 소스는 생성 검증과 같은 규칙
@@ -25,7 +25,12 @@ def _clothing_type(product: dict) -> str:
 
 def measurable_color_ids(blocks: list, product: dict) -> list[str]:
     """측정이 필요한 색 중 정면·뒷면 사진이 있는 색만. 사진이 없는 색은 재도 행이 안 생긴다."""
-    return [cid for cid in horizon_background.garment_tone_color_ids(blocks, product)
+    needed = horizon_background.garment_tone_color_ids(blocks, product)
+    needed.extend(
+        cid for cid in horizon_background.signature_color_ids(blocks, product)
+        if cid not in needed
+    )
+    return [cid for cid in needed[:4]
             if any(slot in {"Front", "Back"} for slot, _ in cut_generator.color_images(product, cid))]
 
 

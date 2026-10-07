@@ -17,8 +17,32 @@ const autoBlockHeight = (elements) => Math.max(
 ) + 50;
 
 const copyTextPatch = (element, text) => element.copyRole === 'headline'
-  ? { text, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
+  ? { text, textSlotVersion: 1, h: captionHeight(text), style: { ...(element.style || {}), ...CAPTION_STYLE } }
   : { text };
+
+const copyGeometry = ({ x, y, w, h }) => ({ x, y, w, h });
+const markAutoCopy = (element) => ({ ...element, genAutoText: element.text,
+  genAutoStyle: { ...(element.style || {}) }, genAutoGeometry: copyGeometry(element) });
+
+function mergeAutoCopy(element, incoming) {
+  const style = { ...(element.style || {}) };
+  const baseline = element.genAutoStyle;
+  if (baseline) {
+    for (const [key, value] of Object.entries(incoming.style || {})) {
+      if (Object.is(style[key], baseline[key])) style[key] = value;
+    }
+  }
+  const geometry = element.genAutoGeometry;
+  const untouchedBox = geometry && Object.entries(geometry).every(([key, value]) => Object.is(element[key], value));
+  const unchangedTextSize = baseline && ['size', 'lineHeight', 'font', 'weight', 'tracking']
+    .every(key => Object.is(element.style?.[key], baseline[key]));
+  return { ...element, text: incoming.text, style,
+    ...(incoming.h != null && untouchedBox && unchangedTextSize ? { h: incoming.h } : {}),
+    genAutoText: incoming.text,
+    genAutoStyle: { ...(baseline || {}), ...(incoming.style || {}) },
+    genAutoGeometry: geometry ? { ...geometry, ...(incoming.h != null ? { h: incoming.h } : {}) } : undefined,
+  };
+}
 
 /* mock 조립기는 구조(블록·행 분할·자동 블록)의 정본이지만, 단일 AI 컷의 지오메트리가
    서버 조립기와 다르다 — 서버는 이미지 비율(미상 시 2:3 폴백=880×1320)로 높이를 잡는다.
@@ -57,7 +81,7 @@ export function alignSkeletonToServer(blocks, copywriting) {
     if (!signature && !out.some((e) => e.type === 'text' && e.copyRole === 'headline')) {
       out = [...out, {
         id: `${b.id}-ewheadline`, type: 'text', x: 60, y: (img.y || 0) + IMG_H + CAPTION_GAP,
-        w: 880, h: captionHeight(''), text: '', placeholder: PLACEHOLDER,
+        w: 880, h: captionHeight(''), text: '', placeholder: PLACEHOLDER, textSlotVersion: 1,
         style: CAPTION_STYLE,
         sourceBlockId: img.sourceBlockId, copyRole: 'headline',
       }];
@@ -94,9 +118,9 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t) {
           copyChanged = true;
-          return { ...el, ...copyTextPatch(el, t), genAutoText: t };
+          return markAutoCopy({ ...el, ...copyTextPatch(el, t) });
         }
-        return { ...el, genAutoText: el.text };
+        return markAutoCopy(el);
       }
       return el;
     });
@@ -132,7 +156,7 @@ export function fillGenBlocks(blocks, job) {
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
         if (t && t !== el.text && el.text === el.genAutoText) {
           copyChanged = true;
-          return { ...el, ...copyTextPatch(el, t), genAutoText: t };
+          return mergeAutoCopy(el, copyTextPatch(el, t));
         }
         return el;
       }
@@ -247,16 +271,17 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
         return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
-        const { genAutoText, ...rest } = el;
+        const { genAutoText, genAutoStyle, genAutoGeometry, ...rest } = el;
         const serverCopy = copyById[el.sourceBlockId]?.[el.copyRole];
         if (serverCopy && el.text === genAutoText) {
           copyChanged = true;
-          return {
-            ...rest,
+          const merged = mergeAutoCopy(el, {
             ...copyTextPatch(rest, serverCopy.text),
             ...(serverCopy.h != null ? { h: serverCopy.h } : {}),
             ...(serverCopy.style ? { style: serverCopy.style } : {}),
-          };
+          });
+          const { genAutoText: _text, genAutoStyle: _style, genAutoGeometry: _geometry, ...result } = merged;
+          return result;
         }
         return rest;
       }

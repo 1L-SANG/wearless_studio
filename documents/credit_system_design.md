@@ -232,3 +232,16 @@ reject_refund(admin, req):
 2. ✅ 백엔드: `recompute_balance`/reserve·confirm·release 버킷화 + 마네킹 job confirm 연결. *(크레딧 모델 LIVE, 2026-06-29)* 충전·환불 HTTP 엔드포인트는 결제(PG) 단계로 분리(미구현).
 3. pytest(돈 로직 — 불변식 4개·FIFO·멱등·동시성 시나리오).
 4. 프론트(nav·/pricing·/credits/history·환불 모달)는 **auth 에이전트 조율 후 별도**.
+
+## 8. 가입 무료 크레딧과 충전 보너스 계약 (2026-10-06)
+
+이 절은 앞선 출처 종류와 소비 순서, 충전 지급량 설명을 확장한다.
+
+- **A. 가입 지급:** 셀러 약관에 처음 동의하면 `SIGNUP_CREDITS` 설정값을 한 번 지급하며 기본값은 0cr로 운영에서 꺼져 있다(2026-10-07). 충전 보너스를 먼저 배포하며, 가입 무료 크레딧은 가입 뒤 설문과 휴대폰 인증을 마치면 받는 방식으로 바뀔 예정이다. `credit_accounts` 행 잠금과 고유 원장키 `signup:{user_id}`로 중복 지급을 막는다. 출처는 `free`, 원장 action은 `grant_signup`이며 만료와 현금 환불이 없다. 지급 실패는 SAVEPOINT 안에서 되돌려 동의 저장은 유지한다.
+- **B. 소비와 잔액:** 활성 버킷을 구독, 무료, 충전 순서로 쓰며 같은 종류에서는 생성 시각이 오래된 것부터 소비한다. 무료 잔액도 총 잔액과 가용 잔액에 포함한다. `subscription`은 `period_end`가 필수이고 `free`와 `topup`은 `period_end=null`이다. 무료 버킷은 충전 환불 대상에 포함하지 않는다.
+- **C. 충전 보너스:** `TOPUP_BONUS_ENABLED`는 기본 false이며 명시적으로 true일 때만 새 충전에 보너스를 붙인다. 켜진 상태에서는 주문 생성 당시 Seller는 기본 구매량의 5%, Pro는 10%, 나머지 플랜은 0%를 추가한다. 보너스는 `floor(baseCredits * bonusPercent / 100)`으로 계산한다. 계좌이체와 토스 주문은 기본량 `credits`, 추가량 `bonus_credits`, 비율 `bonus_percent`, 당시 플랜 `plan_at_order`를 저장한다. 꺼진 상태의 새 주문은 보너스량과 비율을 0으로 저장한다. 결제 확인 때는 설정이나 플랜 변경과 관계없이 이 스냅샷을 그대로 지급하며 다시 계산하지 않는다. 과거 주문은 보너스 0과 플랜 null을 유지한다. 기본량과 보너스 합계를 하나의 `topup` 버킷으로 지급하고, 전액 환불 때도 합계를 함께 회수한다. 부분 환불은 고객센터가 `baseCredits`를 기준으로 수동 처리한다. 지급 원장 metadata에는 `baseCredits`, `bonusCredits`, `bonusPercent`, `planAtOrder`와 기존 결제 식별 필드를 남긴다.
+- **가입 경계:** 재동의와 셀러 동의를 하지 않는 FaceMarket 지원자는 지급 대상이 아니다. `handle_new_user`는 바꾸지 않는다. 무료 버킷의 `initial=remaining=SIGNUP_CREDITS`, `plan_id=payment_id=period_end=null`이며 원장 metadata는 `{"reason":"signup"}`이다. 응답 `signupCredits`는 이번 호출의 실제 지급량이며 실패와 미지급은 0이다.
+- **지급과 환불:** 관리자 수동 충전도 `TOPUP_BONUS_ENABLED=true`일 때만 지급 시점 플랜으로 보너스를 계산한다. 같은 지급의 멱등 재시도는 설정을 꺼도 최초 지급량을 유지한다. 개발용 `topups:purchase`는 보너스를 주지 않는다. 첫 결제 보너스는 없다. 보너스를 포함한 버킷 전체가 미사용이고 7일 안인 경우 기존 전액 환불 규칙을 적용하며, 한 크레딧이라도 사용하면 자동 환불할 수 없다. 구독을 먼저 쓰는 이유는 해지 시 소멸하기 때문이고, 무료를 충전보다 먼저 쓰는 이유는 유료 충전의 미사용 환불 가능성을 보존하기 위해서다.
+- **화면과 알림:** 동의 응답의 지급량이 양수일 때만 가입 토스트를 한 번 띄우고 잔액을 다시 읽는다. `GET /v1/me/account`의 불리언 `topupBonusEnabled`는 서버 설정을 그대로 전달한다. 충전 카드는 이 값이 true인 로그인한 Seller와 Pro에만 보너스를 표시하며, 필드가 없거나 false면 표시하지 않는다. 신청 전 미리보기는 서버 정책의 프론트 미러를 쓰고, 신청 뒤 화면과 관리자 확인, 메일과 슬랙은 현재 설정 대신 저장된 합계와 보너스 포함량을 표시한다. 목 어댑터도 같은 지급과 스냅샷 규칙을 따른다.
+
+배포와 활성화 순서는 [충전 보너스 운영 절차](../docs/runbooks/topup-bonus-rollout.md)를 따른다. 마이그레이션과 모든 지급 서버를 먼저 배포하고 구버전 태스크가 모두 종료된 뒤에만 설정을 켠다.

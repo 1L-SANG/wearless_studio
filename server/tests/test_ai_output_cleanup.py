@@ -71,7 +71,7 @@ def test_reclaimer_drains_unpublished_ai_output_after_restart(monkeypatch):
     events = []
     key = "users/u1/projects/p1/ai/j1/a1.png"
 
-    async def reclaim_drafts(conn):
+    async def reclaim_drafts(conn, *, older_than_minutes):
         events.append("drafts")
         return []
 
@@ -117,7 +117,7 @@ def test_reclaimer_keeps_retry_state_when_delete_fails(monkeypatch):
     events = []
     key = "users/u1/projects/p1/ai/j1/a1.png"
 
-    async def reclaim_drafts(conn):
+    async def reclaim_drafts(conn, *, older_than_minutes):
         return []
 
     async def claim_outputs(conn):
@@ -152,7 +152,7 @@ def test_reclaimer_keeps_retry_state_when_delete_fails(monkeypatch):
 def test_reclaimer_does_not_delete_when_repo_reports_no_unpublished_outputs(monkeypatch):
     events = []
 
-    async def reclaim_drafts(conn):
+    async def reclaim_drafts(conn, *, older_than_minutes):
         return []
 
     async def claim_outputs(conn):

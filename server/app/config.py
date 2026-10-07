@@ -75,7 +75,8 @@ class Settings:
     # GPT로 생성하고 Qwen 얼굴 교체까지 성공한 REAL 호리존 최종본만 한 번 보정한다.
     real_horizon_neck_repair_enabled: bool = True
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
-    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
+    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 주 키
+    openai_api_key_fallback: str | None = None  # 주 키 영구 실패 때 쓰는 오너 계정 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
     # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
@@ -286,6 +287,7 @@ class Settings:
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
     # 2026-09-11 v6: 1cr=50원 기준 행동별 단가, 정본 documents/research/2026-09-07-credit-pricing-plans.md §5·§5-1
+    signup_credits: int = 0
     credit_cost_version: str = "v6"
     credit_cost_mannequin_generate: int = 45
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
@@ -313,6 +315,8 @@ class Settings:
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    # 셀러 생성 입구만 제어한다. 모델 등록과 관리, 정산은 그대로 유지한다.
+    fm_real_model_generation: str = "on"  # on | off
     #: 모델 사용 조건 화면의 **선택 동의 항목**(장소 컷·룩북 인물 교체) 노출 여부.
     #: 법률 검토 전에는 모델에게 보이면 안 된다 — 꺼져 있으면 요청에 값이 와도 저장하지 않는다.
     facemarket_opt_uses_enabled: bool = False
@@ -402,6 +406,9 @@ class Settings:
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
     detailpage_fallback_model_id: str = "mB"
+    # 새 보너스 주문은 모든 지급 서버가 스냅샷을 읽는 버전으로 교체된 뒤에만 켠다.
+    # 꺼도 이미 저장된 주문의 보너스 지급은 유지한다.
+    topup_bonus_enabled: bool = False
     # ---- 토스페이먼츠 크레딧 추가구매(WS3) — 시크릿 키가 있어야만 활성 ----
     # 시크릿 키는 **서버 전용**(결제 승인 API Basic auth). 없으면 checkout 이 503 으로 거절한다
     # — 키 없이 조용히 '목 성공'을 돌려주면 결제 안 하고 크레딧이 늘어나는 구멍이 된다.
@@ -813,6 +820,7 @@ def load_settings() -> Settings:
         detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
@@ -857,6 +865,7 @@ def load_settings() -> Settings:
         job_concurrency=_int_env("JOB_CONCURRENCY", 1),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
+        signup_credits=int(os.getenv("SIGNUP_CREDITS", "0")),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v6"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
@@ -907,6 +916,7 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        fm_real_model_generation=_flag("FM_REAL_MODEL_GENERATION", "on", {"off", "on"}),
         facemarket_opt_uses_enabled=(
             os.getenv("FACEMARKET_OPT_USES_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
@@ -971,6 +981,7 @@ def load_settings() -> Settings:
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
         fm_payout_account_key=os.getenv("FM_PAYOUT_ACCOUNT_KEY") or None,
         fm_payout_provider=os.getenv("FM_PAYOUT_PROVIDER", "manual"),
+        topup_bonus_enabled=(os.getenv("TOPUP_BONUS_ENABLED", "false").lower() == "true"),
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),

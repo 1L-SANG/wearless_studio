@@ -23,6 +23,7 @@ from .auth import require_user
 from .db import get_conn
 from .facemarket_admin_devices import revoke_devices_for_user
 from .models import CamelModel
+from .plan_pricing import TOPUP_BONUS_PERCENT, plan_of, topup_bonus_credits
 from .routes import _credit_error
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
@@ -1198,13 +1199,31 @@ async def admin_grant_credits(
         target_user_id = str(user_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                "select p.user_id::text as user_id "
+                "select p.user_id::text as user_id, p.plan "
                 "from profiles p join auth.users u on u.id = p.user_id "
                 "where p.user_id = %s",
                 (target_user_id,),
             )
-            if await cur.fetchone() is None:
+            profile = await cur.fetchone()
+            if profile is None:
                 raise _err("user_not_found", "사용자를 찾을 수 없어요.", 404)
+            await cur.execute(
+                "select credits, price from pricing_plans "
+                "where code = %s and kind = 'topup' and is_active",
+                (body.plan_code,),
+            )
+            sku = await cur.fetchone()
+            snapshot = None
+            if sku is not None:
+                plan_at_order = plan_of(profile.get("plan"))
+                bonus_credits, bonus_percent = 0, 0
+                if request.app.state.settings.topup_bonus_enabled:
+                    bonus_credits = topup_bonus_credits(plan_at_order, sku["credits"])
+                    bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
+                snapshot = {"credits": sku["credits"], "price": sku["price"],
+                            "bonusCredits": bonus_credits,
+                            "bonusPercent": bonus_percent,
+                            "planAtOrder": plan_at_order}
         try:
             # repo가 대상 사용자 스코프를 붙인다. 다른 지급 경로와 키를 분리한다.
             scoped_key = f"admin-grant:{idempotency_key}" if idempotency_key else None
@@ -1215,6 +1234,7 @@ async def admin_grant_credits(
                 metadata={"granted_by": actor_user_id, "payer_name": body.payer_name,
                           "amount_krw": body.amount_krw, "paid_at": body.paid_at,
                           "note": body.note},
+                snapshot=snapshot,
             )
         except repo.CreditError as e:
             if e.code == "unknown_plan":

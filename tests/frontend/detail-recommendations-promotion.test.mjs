@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { withUploadedSrcs } from '../../src/lib/draftPromotionProduct.js';
+import { ensureDraftRemotePhotos } from '../../src/lib/draftStore.js';
 
 // Execute the actual promotion orchestration with boundary doubles; no network or auth session.
 test('signed detail handoff is promoted only after source upload, product and analysis save', async () => {
@@ -11,16 +12,18 @@ test('signed detail handoff is promoted only after source upload, product and an
     createProject: async () => { events.push('create'); return { id: 'p' }; },
     uploadPhoto: async () => { events.push('upload'); return { assetId: 'asset', url: 'https://test/photo.jpg' }; },
     saveProduct: async (_id, product) => { events.push('product'); assert.equal(product.colors[0].images[0].id, 'asset'); },
-    saveAnalysis: async (_id, analysis) => { events.push('analysis'); assert.equal('detailRecommendations' in analysis, false); assert.equal('detailRecommendationsHandoff' in analysis, false); },
+    saveAnalysis: async (_id, analysis) => { events.push('analysis'); assert.equal('detailRecommendations' in analysis, false); assert.equal(analysis.detailRecommendationsHandoff, null);
+      for (const key of ['confirmedGptProductEvidenceHandoff', 'clothingType', 'measurements', 'measurementsUnknown']) assert.equal(analysis[key], null); },
     promoteDetailRecommendations: async (id, value) => { events.push('promote'); assert.equal(id, 'p'); assert.deepEqual(value, handoff); },
     patchProject: async () => { events.push('project'); },
   };
   globalThis.__detailPromotionHarness = {
-    api, withUploadedSrcs, isUploadablePhotoMime: () => true,
+    api, withUploadedSrcs, ensureDraftRemotePhotos, isUploadablePhotoMime: () => true,
     createDraftSyncSingleFlight: (sync) => ({ sync }),
     draftPromotionSession: { read: () => ({}), rememberProject() {}, rememberAsset() {} },
     startCustomMatchPromotion: () => null, stripLocalCustomMatch: (analysis) => analysis,
     invalidateStoryboardEntryPrefetch() {},
+    mannequinQuoteConfirmation: { seen: () => null },
   };
   try {
     const source = readFileSync(new URL('../../src/lib/draftSync.js', import.meta.url), 'utf8')

@@ -72,6 +72,6 @@ test('원본 2,000px 선택은 형식을 PNG로 고정한다', () => {
   assert.match(html, /name="export-format"[^>]*disabled[^>]*value="jpeg"/);
   assert.match(html, /name="export-format"[^>]*disabled[^>]*checked[^>]*value="png"/);
   assert.match(html, /원본 2,000px는 PNG로만 저장해요/);
-  assert.match(html, /각 블록을 2,000px PNG로 저장/);
+  assert.match(html, /폭 2,000px PNG로 저장하고, 긴 블록은 안전하게 나눠요/);
   assert.doesNotMatch(html, /블록 경계를 살려 3,000px 이하 조각/);
 });

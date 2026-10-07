@@ -67,7 +67,7 @@ const defaultFitProfile = (product, analysis) => {
 };
 
 /* ---- Account (stable) ---- */
-const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 510, plan: 'free' };
+const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 510, plan: 'free', topupBonusEnabled: false };
 
 // 추가 색상 모두가 같은 풀샷/중간샷 촬영 예시 템플릿을 공유한다. 색상마다 별도 예시를
 // 만들지 않고, 실제 생성에서 현재 colorId의 셀러 사진과 자연스러운 미세 포즈 변주를 쓴다.
@@ -379,20 +379,20 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       const title = hookTitleLayout(product.name);
       els.push(Object.assign(
         T(60, imageY + (560 - title.h) / 2, 880, title.h, title.text, hookTitleStyle('#ffffff')),
-        { sourceBlockId: b.id, copyRole: 'hookTitle' },
+        { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
       ));
     }
     if (tag) {
       els.push(Object.assign(
         T(60, 44, 400, TAG_HEIGHT, tag, TAG_STYLE),
-        { sourceBlockId: b.id, copyRole: 'label' },
+        { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
       ));
     }
     if (!signature) {
       const text = captionText(contentRole);
       els.push(Object.assign(
         T(60, imageY + 560 + CAPTION_GAP, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: b.id, copyRole: 'headline', placeholder: CAPTION_PLACEHOLDER },
+        { sourceBlockId: b.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
       ));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: blockHeight(els), elements: els });
@@ -423,14 +423,14 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       const text = captionText(CONTENT_ROLES.HERO);
       els.push(Object.assign(
         T(60, copyTop, 880, captionHeight(text), text, CAPTION_STYLE),
-        { sourceBlockId: hero.id, copyRole: 'headline', placeholder: CAPTION_PLACEHOLDER },
+        { sourceBlockId: hero.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
       ));
     } else if (layout === 'twoColumn' || layout === 'threeColumn') {
       const labelY = imgTop + h + 16;
       chunk.forEach((rowBlock, column) => {
         els.push(Object.assign(
           T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, rowLabel(rowBlock), ROW_LABEL_STYLE),
-          { sourceBlockId: rowBlock.id, copyRole: 'label', placeholder: ROW_LABEL_PLACEHOLDER },
+          { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
         ));
       });
     }
@@ -579,12 +579,13 @@ export function buildStoryboard(mode, colors, context = {}) {
    and by api.createProject() so a new creation never inherits the
    prior session's mutations (mannequin variants, saved storyboard…).
    ============================================================= */
-function buildDraft() {
+export function buildDraft() {
   /* ---- Project — 플로우 최상위 엔티티 (ADR-0001) ---- */
   const project = {
     id: uid('prj'), status: 'draft', title: '',
     composeMode: 'basic', copywriting: true,
     selectedMannequinId: null, adjustCount: 0, fitProfile: null,
+    latestJobs: { mannequin: null, detailPage: null },
     createdAt: nowIso(), updatedAt: nowIso(),
   };
 
@@ -663,6 +664,8 @@ function buildDraft() {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
+    subCategory: analysis.subCategory,
+    customCategory: analysis.customCategory,
     matchClothing: analysis.matchClothing,
     detailRecommendations: analysis.detailRecommendations,
     sellingPoints: analysis.sellingPoints,
@@ -731,6 +734,7 @@ function buildDraft() {
 }
 
 export const DB = {
+  config: { signupCredits: 0 },
   account, catalogs, models, matchClothing, genSteps, library,
   ...buildDraft(),
 };

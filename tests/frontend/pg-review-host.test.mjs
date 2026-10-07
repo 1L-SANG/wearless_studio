@@ -75,9 +75,9 @@ async function loadAs(hostname) {
   globalThis.window = { location: { hostname, search: '', origin: `https://${hostname}` } };
   await vite?.close();
   vite = await createHarnessServer();
-  ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   const tossKeys = await vite.ssrLoadModule('/src/lib/tossKeys.js');
   const { Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx');
+  ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   const { api } = await vite.ssrLoadModule('/src/mock/api.js');
   const plans = await api.getPricingPlans();
 
@@ -99,6 +99,11 @@ test('심사 호스트에서는 구독 카드가 토스 결제창을 연다', as
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, false);
   assert.equal((html.match(/구매하기/g) || []).length, 3);
   assert.doesNotMatch(html, /계좌이체로 시작하기|계좌이체로 충전하기/);
+  assert.match(html, /<p\b[^>]*>매월 자동 결제되고 언제든 해지할 수 있어요\. 해지해도 결제한 기간까지 쓸 수 있어요\. 부가세 포함\.<\/p><p\b[^>]*>결제하면 /);
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/terms">이용약관<\/a>/);
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">환불 정책<\/a>에 동의하는 것으로 봐요\./);
+  assert.doesNotMatch(html, /상세페이지 1개의 제작|평균적으로|250크레딧|컷수에 따라/);
+  assert.doesNotMatch(html, /월간 정기결제 상품입니다|결제 완료 즉시|구독 크레딧 및 환불 안내|미사용 구독 크레딧|이월분을 포함해|3일의 유예기간|7일 이내|환불 및 중도해지는|환불정책 보기|mailto:contact@wearless\.kr/);
 });
 
 test('ai.wearless.kr 은 계좌이체 그대로다', async () => {
@@ -106,4 +111,7 @@ test('ai.wearless.kr 은 계좌이체 그대로다', async () => {
   assert.equal(tossKeys.BANK_TRANSFER_ENABLED, true);
   assert.equal((html.match(/계좌이체로 시작하기/g) || []).length, 3);
   assert.doesNotMatch(html, /구매하기/);
+  assert.doesNotMatch(html, /매월 자동 결제되고|해지해도 결제한 기간까지 쓸 수 있어요|부가세 포함/);
+  assert.doesNotMatch(html, /상세페이지 1개의 제작|평균적으로|250크레딧|컷수에 따라/);
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">결제·환불 조건<\/a>/);
 });

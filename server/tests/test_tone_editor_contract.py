@@ -394,8 +394,10 @@ def test_detail_page_generation_uses_the_active_tone_render():
     src = (SERVER / "app" / "workers" / "detail_page_job.py").read_text(encoding="utf-8")
     block = src[src.index("mannequin_asset = None"):
                 src.index("color_assets: dict", src.index("mannequin_asset = None"))]
-    assert 'asset_id = c.get("active_asset_id") or c["asset_id"]' in block
-    assert "repo.get_asset_for_user(conn, user_id, str(asset_id))" in block
+    assert 'selected_mannequin_cut.get("active_asset_id")' in block
+    assert 'or selected_mannequin_cut["asset_id"]' in block
+    assert "repo.get_asset_for_user(" in block
+    assert "conn, user_id, str(asset_id)" in block
 
 
 def test_editor_new_image_generation_uses_the_active_tone_render():

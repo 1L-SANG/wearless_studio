@@ -8,6 +8,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.services import sam_retry
 from app.workers import sam_retry_pusher
 from app.workers.sam_retry_pusher import PUSH_KINDS, SamRetryPusher
@@ -114,7 +116,7 @@ def test_it_skips_while_the_latest_generation_is_still_running():
 
 
 def test_it_revives_a_pre_fix_error_job_without_a_generation_suffix():
-    """배포 이전에 error 로 닫힌 sam_preprocess 도 state 가 같으므로 되살아난다."""
+    """허용 창 안에서 error 로 닫힌 구버전 sam_preprocess 도 state 가 같으면 되살아난다."""
     legacy = _job(kind="sam_preprocess", status="error",
                   payload={"mode": "canonical_cutout"},
                   idempotency_key="p:sam_preprocess:abcd1234abcd1234")
@@ -238,3 +240,77 @@ def test_the_budget_still_wins_over_a_live_sam():
     """살아 있다고 예산을 넘겨 쓰면 안 된다 — 285초/4회는 오너 결정이다."""
     rec = _Recorder([_fresh(payload={"retry": sam_retry.MAX_RETRIES})])
     assert _push_with(rec, _Resolver(ready=True)) == 0
+
+
+def test_an_old_lease_error_is_not_retried_after_a_long_downtime():
+    rec = _Recorder([_job(status="error", result=None,
+                          finished_at=datetime.now(timezone.utc) - timedelta(days=40))])
+    assert _push(rec) == 0
+    assert rec.created == []
+
+
+@pytest.mark.parametrize("age, expected", [(1799.999, True), (1800, False), (1800.001, False)])
+@pytest.mark.parametrize("ready", [False, True])
+def test_push_one_respects_the_revive_window_boundary(monkeypatch, age, expected, ready):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 5, 12, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sam_retry, "datetime", FrozenDatetime)
+    job = _job(finished_at=FrozenDatetime.now() - timedelta(seconds=age))
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=ready)
+    pusher = SamRetryPusher(app=None)
+    assert asyncio.run(pusher._push_one(rec, None, job, resolver.ready)) is expected
+    assert len(rec.created) == int(expected)
+    assert resolver.asked == 0
+
+
+@pytest.mark.parametrize("finished_at", [None, "not-a-timestamp"])
+def test_push_one_rejects_missing_or_invalid_finish_time_even_with_a_live_sam(finished_at):
+    job = _job(finished_at=finished_at)
+    rec = _Recorder([job])
+    resolver = _Resolver(ready=True)
+    pusher = SamRetryPusher(app=None)
+    assert asyncio.run(pusher._push_one(rec, None, job, resolver.ready)) is False
+    assert rec.created == []
+    assert resolver.asked == 0
+
+
+def test_revive_window_parses_iso_strings_and_assumes_utc_when_naive():
+    now = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+    for finished_at in ("2026-10-05T11:45:00Z", "2026-10-05T20:45:00+09:00",
+                        datetime(2026, 10, 5, 11, 45)):
+        assert sam_retry.within_revive_window(_job(finished_at=finished_at), now=now) is True
+    for finished_at in (None, "not-a-timestamp", "2026-10-05T11:30:00Z",
+                        "2026-08-26T12:00:00Z"):
+        assert sam_retry.within_revive_window(_job(finished_at=finished_at), now=now) is False
+
+
+def test_candidate_query_does_not_transfer_unused_job_columns():
+    from app import repo
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def execute(self, sql, params):
+            self.sql = sql
+
+        async def fetchall(self):
+            return []
+
+    class Conn:
+        def cursor(self):
+            return cursor
+
+    cursor = Cursor()
+    asyncio.run(repo.list_retryable_sam_jobs(
+        Conn(), PUSH_KINDS, max_retries=4, min_age_seconds=15))
+    projection = cursor.sql.lower().split("from jobs", 1)[0]
+    for unused in ("steps", "metadata", "error_message", "credits_reserved", "progress"):
+        assert unused not in projection

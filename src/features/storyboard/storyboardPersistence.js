@@ -1,5 +1,6 @@
 import { api } from '@/lib/api/index.js';
 import { invalidateStoryboardEntryPrefetch } from './storyboardEntryPrefetch.js';
+import { storyboardWorkCopies } from '../../lib/conflictWorkCopy.js';
 
 /* 콘티 저장 직렬 체인 — 모듈 스코프: 컴포넌트 수명(빠른 이탈→재진입의 구·신 인스턴스)과
    프로젝트 경계를 넘어 전 저장의 순서를 보장한다. 늦게 도착한 옛 PUT이 최신을 덮어쓸 수 없다.
@@ -19,11 +20,16 @@ export function createStoryboardPersistence({
   clearTimer = globalThis.clearTimeout,
   onlineTarget = globalThis.window,
   retryDelays = DEFAULT_RETRY_DELAYS,
+  workCopies = storyboardWorkCopies,
 } = {}) {
   let saveChain = Promise.resolve();
   const lastSaved = new Map();
   const pending = new Map();
   const retries = new Map();
+  const conflictEpochs = new Map();
+  const lastConflicts = new Map();
+  const conflictedSnapshots = new WeakSet();
+  let onConflict = null;
   // 4xx(결정적 거절) 복구 훅 — 화면이 카탈로그·성별 문맥으로 스냅샷을 고쳐 되돌려주면
   // 그 복구본을 즉시 저장한다. 스냅샷당 1회만 시도해 무한 복구 루프를 막는다.
   let repairRejected = null;
@@ -71,9 +77,12 @@ export function createStoryboardPersistence({
   function saveNow(projectId, getSnapshot, options = {}) {
     // 예약된 저장이 착지하기 전의 서버본을 프리패치가 노출하지 않도록 즉시 무효화한다.
     if (projectId) invalidate(projectId);
+    const epoch = conflictEpochs.get(projectId);
     const run = saveChain.catch(() => {}).then(() => {
+      if (epoch !== conflictEpochs.get(projectId)) throw lastConflicts.get(projectId);
       const snapshot = getSnapshot();
       if (!projectId || !snapshot) return;
+      if (conflictedSnapshots.has(snapshot) && !options.restoreConflict) throw lastConflicts.get(projectId);
       if (lastSaved.get(projectId) === snapshot) {
         if (pending.get(projectId) === snapshot) pending.delete(projectId);
         if (retries.get(projectId)?.snapshot === snapshot) clearRetry(projectId);
@@ -86,6 +95,18 @@ export function createStoryboardPersistence({
           clearRetry(projectId);
         },
         (error) => {
+          if (error?.status === 409 && error.code === 'revision_conflict') {
+            lastConflicts.set(projectId, error);
+            conflictedSnapshots.add(snapshot);
+            conflictEpochs.set(projectId, (conflictEpochs.get(projectId) || 0) + 1);
+            clearRetry(projectId);
+            pending.delete(projectId);
+            const server = error.meta.storyboard;
+            lastSaved.set(projectId, server);
+            const copy = workCopies.keep(projectId, { blocks: snapshot });
+            onConflict?.(projectId, copy, server);
+            throw error;
+          }
           pending.set(projectId, snapshot);
           const deterministic = Number.isInteger(error?.status)
             && error.status >= 400 && error.status < 500;
@@ -140,6 +161,7 @@ export function createStoryboardPersistence({
     saveIdle: () => saveChain.catch(() => {}),
     saveNow,
     setRepairRejected(fn) { repairRejected = typeof fn === 'function' ? fn : null; },
+    setConflictHandler(fn) { onConflict = typeof fn === 'function' ? fn : null; },
     dispose() {
       onlineTarget?.removeEventListener?.('online', retryOnline);
       for (const projectId of retries.keys()) clearRetry(projectId);
@@ -153,3 +175,4 @@ export const sbPending = storyboardPersistence.pending;
 export const sbSaveIdle = storyboardPersistence.saveIdle;
 export const sbSaveNow = storyboardPersistence.saveNow;
 export const sbSetSaveRepair = storyboardPersistence.setRepairRejected;
+export const sbSetConflictHandler = storyboardPersistence.setConflictHandler;

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from app.config import Settings, load_settings
@@ -137,3 +138,16 @@ def test_detail_cut_image_size_inherits_mannequin_size_when_unset(monkeypatch):
 
     assert settings.mannequin_image_size == "2K"
     assert settings.detail_cut_image_size == "2K"
+
+
+@pytest.mark.parametrize("service", ["api", "detail-worker"])
+def test_openai_fallback_secret_uses_the_current_copilot_environment(service):
+    manifest_path = (
+        Path(__file__).resolve().parents[2] / "copilot" / service / "manifest.yml"
+    )
+    secrets = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["secrets"]
+
+    assert secrets["OPENAI_API_KEY_FALLBACK"] == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}"
+        "/secrets/OPENAI_API_KEY_FALLBACK"
+    )

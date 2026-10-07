@@ -62,7 +62,7 @@ test('adoptProject preserves the dirty flag only when acquiring identity for the
 
 test('starting an isolated input flow does not delete another project\'s scoped dirty marker', () => {
   const beginProjectSource = storeSource.slice(
-    storeSource.indexOf('async beginProject()'),
+    storeSource.indexOf('async beginProject('),
     storeSource.indexOf('async ensureProject()'),
   );
   assert.match(beginProjectSource, /generationRelevantEditsDirty: false/);
@@ -152,7 +152,11 @@ test('the library "새로 만들기" is no longer hijacked by another project\'s
   // own validation gate.
   assert.doesNotMatch(librarySource, /mannequinJob/);
   assert.doesNotMatch(librarySource, /navigate\('\/create\/mannequin'\)/);
-  assert.match(librarySource, /const onNew = \(\) => navigate\('\/create\/input'\)/);
+  const onNew = librarySource.slice(librarySource.indexOf('  const onNew ='), librarySource.indexOf('  const onOpen ='));
+  const entryToken = { current: 4 }, paths = [];
+  new Function('entryToken', 'navigate', `${onNew}; onNew();`)(entryToken, (path) => paths.push(path));
+  assert.deepEqual(paths, ['/create/input']);
+  assert.equal(entryToken.current, 5);
   assert.doesNotMatch(librarySource, /beginProject/);
 });
 
@@ -169,7 +173,7 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
   // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 최소 과금을 반영한다.
   assert.match(
     mannequinSource,
-    /aiCutCount == null \? '—' : detailPageCreditCost\(aiCutCount\)/,
+    /aiCutCount == null \? '…' : detailPageCreditCost\(aiCutCount\)/,
   );
   assert.match(
     mannequinSource,
@@ -181,7 +185,9 @@ test('the storyboard loads immediately but waits for custom-match material befor
   assert.match(storyboardSource, /import \{ requestMannequinGeneration \} from '@\/features\/mannequin\/generationRunner\.js'/);
   // 보드 GET은 승격과 병렬로 시작하되, 마네킹 재료인 내 옷만 정착한 뒤 생성한다.
   assert.match(storyboardSource, /customMatchReady\.then\(\(\) => requestMannequinGeneration\(pid\)\)/);
-  assert.doesNotMatch(storyboardSource, /await requestMannequinGeneration/);
+  const autoRequest = storyboardSource.slice(storyboardSource.indexOf('const customMatchTask ='), storyboardSource.indexOf('await sbSaveIdle();'));
+  assert.doesNotMatch(autoRequest, /await requestMannequinGeneration/);
+  assert.match(storyboardSource, /마네킹 다시 만들기/);
 });
 
 const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');

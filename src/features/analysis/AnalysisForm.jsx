@@ -6,14 +6,6 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
-import {
-  listModels,
-  fetchLicenseFaceUrl,
-  verifyLicensePublic,
-  warmFaceRender,
-} from '@/lib/api/facemarket.js';
-import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
@@ -30,114 +22,14 @@ import {
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
 import { mergeMatchClothing, reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
-import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import {
   isRealModelSelection,
   resolveSelectedModelId,
 } from './modelSelection.js';
-import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
-import { SecondaryUseBadge } from '@/features/model/SecondaryUseBadge.jsx';
-
-// 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
-// Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
-// export: 에디터 AI 탭 실존 모델 피커(EditorPanels.AIPanel)도 같은 게이트 썸네일을 쓴다.
-export function ModelThumb({ uri, alt }) {
-  const [url, setUrl] = useState(null);
-  useEffect(() => {
-    if (!uri) return undefined;
-    let objUrl = null, alive = true;
-    fetchLicenseFaceUrl(uri).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => {});
-    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
-  }, [uri]);
-  if (url) return <img src={url} alt={alt} />;
-  return <div className="fm-empty"><Icon name="person" size={24} /></div>;
-}
-
-const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
-const _fmtDate = (iso) => (iso ? seoulDate(iso, iso) : null);
-
-// 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
-// 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
-// PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
-function ModelDetailModal({ model, onClose, onSelect, selectable }) {
-  const [data, setData] = useState(null);
-  const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
-  const [qr, setQr] = useState(null);
-
-  useEffect(() => {
-    if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
-    let alive = true;
-    verifyLicensePublic(model.licenseId)
-      .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
-      .catch(() => { if (alive) setPhase('error'); });
-    const verifyUrl = `${window.location.origin}/verify/${model.licenseId}`;
-    QRCode.toDataURL(verifyUrl, { width: 160, margin: 0, errorCorrectionLevel: 'M' })
-      .then((u) => { if (alive) setQr(u); }).catch(() => {});
-    return () => { alive = false; };
-  }, [model]);
-
-  const age = data?.model?.age;
-  return (
-    <Modal onClose={onClose}>
-      <div className="lic-card-wrap">
-        <div className="lic-card">
-          {/* 얼굴 밴드 */}
-          <div className="lic-card-face">
-            <ModelThumb uri={model.faceThumbUri} alt={model.displayName} />
-            <span className="lic-card-brand">FACE&nbsp;LICENSE</span>
-            {model.status === 'verified' && (
-              <span className="lic-card-badge"><Icon name="check" size={11} />검증</span>
-            )}
-            <div className="lic-card-who">
-              <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
-              {model.vcId
-                ? <div className="lic-card-vc"><Icon name="check" size={10} />라이선스 검증서 발급 완료</div>
-                : <div className="lic-card-vc off">라이선스 검증서 발급 전</div>}
-            </div>
-          </div>
-
-          {/* 본문 */}
-          <div className="lic-card-body">
-            {phase === 'loading' && <div className="hint" style={{ padding: '8px 0' }}>불러오는 중…</div>}
-            {phase === 'nolicense' && <div className="hint" style={{ padding: '8px 0' }}>활성 라이선스가 없어 조건을 볼 수 없어요.</div>}
-            {phase === 'error' && <div className="hint" style={{ padding: '8px 0' }}>상세 정보를 불러오지 못했어요.</div>}
-            {phase === 'ready' && data && (
-              <>
-                {data.allowedUse?.length > 0 && (
-                  <div className="lic-row"><span className="lic-k">허용 용도</span>
-                    <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
-                  </div>
-                )}
-                <div className="lic-foot">
-                  <div className="lic-foot-info">
-                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 상세페이지 1건당</em></div>
-                    <div className="lic-valid">{data.validUntil ? `${_fmtDate(data.validUntil)}까지` : '철회 시까지'}</div>
-                    {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
-                  </div>
-                  {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="lic-actions">
-          <Button variant="ghost" onClick={onClose}>닫기</Button>
-          {selectable && (
-            <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>
-              이 모델로 선택
-            </Button>
-          )}
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
@@ -146,7 +38,6 @@ import {
   mannequinGenerationCtaLabel,
   mannequinGenerationTotal,
 } from '@/lib/limits.js';
-import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
   normalizeMeasurementValue,
@@ -580,7 +471,6 @@ export function AnalysisForm({
 }) {
   const a = analysis;
   const toast = useToast();
-  const { session, loading: authLoading } = useAuth();
   const composeMode = useAppStore((s) => s.composeMode);
   const account = useAppStore((s) => s.account);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
@@ -684,76 +574,22 @@ export function AnalysisForm({
       if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
     });
   };
-  // 모델을 **고르는 순간** 파드를 미리 켠다. 확인 버튼까지 기다리면 그만큼 콜드스타트가
-  // 첫 컷 앞에 그대로 남는다. 같은 id 로 다시 렌더링될 때는 보내지 않는다(서버도 60초 중복을
-  // 무시하지만, 안 보내는 게 낫다). 실패는 조용히 무시 — 생성 흐름과 무관한 부가 신호다.
-  const warmedModelRef = useRef(null);
-  useEffect(() => {
-    const modelId = a.selectedModelId;
-    if (!isRealModelSelection(modelId)) { warmedModelRef.current = null; return; }
-    if (warmedModelRef.current === modelId) return;
-    warmedModelRef.current = modelId;
-    void warmFaceRender(modelId);
-  }, [a.selectedModelId]);
-
   const confirmAnalysis = async () => {
-    // 실제 모델은 모든 컷에 그대로 들어간다 — 대역(가상 모델)을 고르게 하지 않는다.
-    // 얼굴 렌더 파드를 미리 켠다 — 여기서 확정한 모델의 첫 컷이 콜드스타트를 통째로 기다리지
-    // 않게 하려는 것이다. 실패는 무시한다(생성 흐름과 무관한 부가 신호).
-    if (isRealModelSelection(a.selectedModelId)) void warmFaceRender(a.selectedModelId);
-    if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
-      toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
-        icon: 'alertCircle',
-      });
-      return;
-    }
     if (confirming) return;
     setConfirming(true);
     onConfirmingChange?.(true);
     try {
       await composeModeSaveRef.current;
-      await onNext();
+      await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
     } finally {
       setConfirming(false);
       onConfirmingChange?.(false);
     }
   };
-  // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
-  // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
-  const [models, setModels] = useState([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelsError, setModelsError] = useState('');
-  const [modelsAttempt, setModelsAttempt] = useState(0);
-  const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   const [customMatchOpen, setCustomMatchOpen] = useState(false);
   // 누른 '의류 추가하기' 타일의 화면상 위치 — 모달을 그 바로 위에 띄운다(Modal anchorRect).
   const [customMatchAnchor, setCustomMatchAnchor] = useState(null);
   const [customMatchDeleting, setCustomMatchDeleting] = useState(false);
-  // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
-  const [modelTab, setModelTab] = useState(() =>
-    isRealModelSelection(a.selectedModelId) ? 'real' : 'ai');
-  useEffect(() => {
-    if (authLoading) return undefined;
-    if (!session) {
-      setModels([]);
-      setModelsError('');
-      setModelsLoading(false);
-      return undefined;
-    }
-    let alive = true;
-    setModelsLoading(true);
-    setModelsError('');
-    listModels()
-      .then((list) => { if (alive) setModels(Array.isArray(list) ? list : []); })
-      .catch((error) => {
-        if (!alive) return;
-        setModels([]);
-        setModelsError(error?.message || '검증 모델을 불러오지 못했어요.');
-      })
-      .finally(() => { if (alive) setModelsLoading(false); });
-    return () => { alive = false; };
-  }, [authLoading, modelsAttempt, session]);
-
   useEffect(() => {
     const normalized = normalizeTargetGendersForClothingType(
       a.clothingType,
@@ -771,35 +607,37 @@ export function AnalysisForm({
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, SELLING_POINTS_MAX) });
   }, []);
 
-  // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
-  // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
-  // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
+  const visibleAiModels = AI_MODELS.filter(
+    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
+  );
+  // 옛 프로젝트의 실제 모델 선택은 이 화면에 들어오면 기본 AI 모델로 한 번 바꾼다.
+  const realModelReplacedRef = useRef(false);
   useEffect(() => {
-    const nextSelectedModelId = resolveSelectedModelId({
+    const realSelected = isRealModelSelection(a.selectedModelId);
+    if (realSelected && realModelReplacedRef.current) return;
+    const defaultAiModel = visibleAiModels.find((model) => model.recommended)
+      || visibleAiModels.find((model) => model.tier === 'basic')
+      || visibleAiModels[0] || AI_MODELS[0];
+    const nextSelectedModelId = realSelected ? defaultAiModel?.id : resolveSelectedModelId({
       selectedModelId: a.selectedModelId,
       targetGenders: a.targetGenders,
-      models,
-      modelsLoading,
+      models: [],
+      modelsLoading: false,
       aiModels: AI_MODELS,
     });
-    const patch = {};
     if (nextSelectedModelId !== a.selectedModelId) {
-      patch.selectedModelId = nextSelectedModelId;
+      if (realSelected) realModelReplacedRef.current = true;
+      onChange({ selectedModelId: nextSelectedModelId });
+      if (realSelected) toast.push('실제 모델은 지금 제공하지 않아 AI 모델로 바꿨어요.');
     }
-    if (Object.keys(patch).length) onChange(patch);
-  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
+  }, [a.selectedModelId, a.targetGenders, onChange, toast]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
-  const selectableModels = models.filter((model) => model.hasActiveLicense);
-  const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
   const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === a.selectedModelId
     ? creditQuote
     : null;
   const quotePlan = currentQuote?.plan || account?.plan;
   const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
     ?? mannequinGenerationTotal(account?.plan, a.selectedModelId);
-  const visibleAiModels = AI_MODELS.filter(
-    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
-  );
   const applyAnalysisReplacement = useCallback((nextAnalysis) => {
     if (!nextAnalysis) return;
     if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
@@ -1242,131 +1080,39 @@ export function AnalysisForm({
         </div>
       </div>
 
-      {/* 5. model select — AI(가상) 모델 / 실제(FaceMarket 라이선스) 모델 탭 구분 (2026-07-21) */}
+      {/* 5. model select, AI 모델만 제공 */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <Chips className="model-tabs" options={[{ value: 'ai', label: 'AI 모델' }, { value: 'real', label: '실제 모델' }]}
-          value={modelTab} onChange={(v) => v && setModelTab(v)} />
         <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
-          {modelTab === 'ai'
-            ? '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'
-            : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
+          가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.
         </div>
-        {modelTab === 'ai' ? (
-          /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
-             이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
-          <div className="ai-model-groups">
-            {['basic', 'extension'].map((tier) => {
-              const group = visibleAiModels.filter((model) => model.tier === tier);
-              if (!group.length) return null;
-              return (
-                <div className="ai-model-group" key={tier}>
-                  <div className="ai-model-group-title">
-                    {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
-                  </div>
-                  <div className="model-grid">
-                    {group.map((m) => {
-                      const on = a.selectedModelId === m.id;
-                      return (
-                        <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                          onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                          <img src={m.thumb} alt={m.displayName} />
-                          <span className="ai-name">
-                            {m.displayName}{on && <Icon name="check" size={12} />}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+        <div className="ai-model-groups">
+          {['basic', 'extension'].map((tier) => {
+            const group = visibleAiModels.filter((model) => model.tier === tier);
+            if (!group.length) return null;
+            return (
+              <div className="ai-model-group" key={tier}>
+                <div className="ai-model-group-title">
+                  {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
                 </div>
-              );
-            })}
-          </div>
-        ) : authLoading || modelsLoading ? (
-          <div className="hint">검증 모델을 불러오는 중이에요…</div>
-        ) : !session ? (
-          <div className="hint">로그인하면 실제 모델을 선택할 수 있어요</div>
-        ) : modelsError ? (
-          <div className="fm-model-state">
-            <div className="hint">{modelsError}</div>
-            <Button variant="quiet" size="sm" onClick={() => setModelsAttempt((attempt) => attempt + 1)}>다시 시도</Button>
-          </div>
-        ) : models.length === 0 ? (
-          <div className="hint">아직 등록된 검증 모델이 없어요.</div>
-        ) : (
-          <>
-            <div className="model-grid">
-            {selectableModels.map((m) => {
-              const on = a.selectedModelId === m.id;
-              return (
-                <div key={m.id}
-                  className={`model-card fm-model${on ? ' on' : ''}`}
-                  onClick={() => setDetailFor(m)}
-                  title="눌러서 상세 정보 보기">
-                  {m.coverImageUrl
-                    ? <img src={m.coverImageUrl} alt={m.displayName} />
-                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                  <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
-                  <span className="fm-studio-only">스튜디오 컷 전용</span>
-                  <div className="fm-meta">
-                    <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
-                    <div className="fm-price">
-                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 상세페이지 1건당`}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            </div>
-            {pendingLicenseModels.length > 0 && (
-              <details className="fm-license-pending">
-                <summary>라이선스 준비 중 <span>{pendingLicenseModels.length}</span><Icon name="chevDown" size={15} /></summary>
                 <div className="model-grid">
-                  {pendingLicenseModels.map((m) => (
-                    <div key={m.id} className="model-card fm-model disabled"
-                      onClick={() => setDetailFor(m)} title="눌러서 상세 정보 보기">
-                      {m.coverImageUrl
-                        ? <img src={m.coverImageUrl} alt={m.displayName} />
-                        : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                      {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                      <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
-                      <span className="fm-studio-only">스튜디오 컷 전용</span>
-                      <div className="fm-meta">
-                        <div className="fm-name">{m.displayName}</div>
-                        <div className="fm-price">라이선스 없음</div>
+                  {group.map((m) => {
+                    const on = a.selectedModelId === m.id;
+                    return (
+                      <div key={m.id} className={`model-card ai-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                        <img src={m.thumb} alt={m.displayName} />
+                        <span className="ai-name">
+                          {m.displayName}{on && <Icon name="check" size={12} />}
+                        </span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              </details>
-            )}
-          </>
-        )}
-        {detailFor && (
-          <ModelDetailModal
-            model={detailFor}
-            selectable={!!detailFor.hasActiveLicense}
-            onSelect={(id) => onChange({
-              selectedModelId: id,
-            })}
-            onClose={() => setDetailFor(null)}
-          />
-        )}
-        {isRealModelSelection(a.selectedModelId) && (
-          <>
-            <div className="fm-use-category">
-              <div className="sec-title">사용 브랜드 유형</div>
-              <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
-              <Chips
-                options={BRAND_USE_CATEGORIES}
-                value={a.brandUseCategory}
-                allowDeselect={false}
-                onChange={(value) => onChange({ brandUseCategory: value })}
-              />
-            </div>
-          </>
-        )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* 6. match clothing — full width */}

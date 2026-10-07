@@ -21,6 +21,7 @@ from app.personalization_qc import (
 class _StubSettings:
     gemini_api_key = "stub-key"
     openai_api_key = None
+    openai_api_key_fallback = None
 
 
 def _stub_vision(monkeypatch, orientation, defects=()):
@@ -100,3 +101,17 @@ def test_defect_and_angle_both_reported(monkeypatch):
     qc = _qc("side", "front", defects=["low_resolution"], monkeypatch=monkeypatch)
     assert qc.passed is False
     assert set(qc.reasons) == {"low_resolution", "angle_mismatch"}
+
+
+def test_fallback_only_openai_key_counts_as_a_configured_qc_provider(monkeypatch):
+    class FallbackOnlySettings:
+        gemini_api_key = None
+        openai_api_key = None
+        openai_api_key_fallback = "owner-key"
+
+    _stub_vision(monkeypatch, "front")
+
+    result = asyncio.run(pq.evaluate_face_qc(
+        FallbackOnlySettings(), image_bytes=b"x", mime="image/jpeg", angle="front"))
+
+    assert result.passed is True

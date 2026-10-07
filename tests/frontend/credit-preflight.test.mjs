@@ -217,6 +217,6 @@ test('an insufficient preflight leaves an existing mannequin dirty revision unto
     productInput.indexOf('// 콘티 이동은 아래에서 명시적으로 flush한다.'),
   );
   assert.match(guardBody, /setCreditShortfall\(shortfall\)/);
-  assert.match(guardBody, /if \(!shortfall\) return true;[\s\S]*?return false;/);
+  assert.match(guardBody, /if \(!shortfall\) \{[\s\S]*?return true;\s*\}[\s\S]*?return false;/);
   assert.doesNotMatch(guardBody, /clearGenerationRelevantEdits|applyAnalysisPatch/);
 });

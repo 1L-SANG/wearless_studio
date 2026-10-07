@@ -4,8 +4,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createServer } from 'vite';
+import * as limits from '../../src/lib/limits.js';
 
-let vite, Pricing, runtime, api, plans;
+let vite, Pricing, runtime, api, plans, tossKeys;
 before(async () => {
   vite = await createServer({
     configFile: false,
@@ -17,6 +18,12 @@ before(async () => {
     plugins: [{
       name: 'pricing-test-harness',
       enforce: 'pre',
+      transform(code, id) {
+        if (id.endsWith('/src/lib/tossKeys.js')) return code
+          .replace(/export const BANK_TRANSFER_ENABLED =[^;]+;/, 'export let BANK_TRANSFER_ENABLED = true;')
+          .replace(/export const TOPUP_ENABLED =[^;]+;/, 'export const TOPUP_ENABLED = true;')
+          + '\nexport function setBankTransferEnabled(value) { BANK_TRANSFER_ENABLED = value; }';
+      },
       resolveId(id) {
         if (id === 'virtual:pricing-runtime') return '\0pricing-runtime';
         if (id === '@/store/useAppStore.js') return '\0pricing-store';
@@ -41,17 +48,18 @@ before(async () => {
   ({ runtime } = await vite.ssrLoadModule('virtual:pricing-runtime'));
   ({ Pricing } = await vite.ssrLoadModule('/src/features/pricing/Pricing.jsx'));
   ({ api } = await vite.ssrLoadModule('/src/mock/api.js'));
+  tossKeys = await vite.ssrLoadModule('/src/lib/tossKeys.js');
   plans = await api.getPricingPlans();
 });
 after(() => vite?.close());
 
-function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError = null) {
+function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError = null, topupBonusEnabled) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plansToShow);
   if (queryError) {
     client.getQueryCache().find({ queryKey: ['pricingPlans'] }).setState({ status: 'error', error: queryError });
   }
-  runtime.account = loggedIn ? { plan: currentPlan } : null;
+  runtime.account = loggedIn ? { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) } : null;
   runtime.session = loggedIn ? { user: { id: 'pricing-user' } } : null;
   try {
     return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(Pricing)));
@@ -64,7 +72,7 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true, queryError =
 // 고정하고 있었으므로 새 정책(구독 버튼 활성)으로 고쳐 쓴다 — 계획서
 // docs/plans/2026-09-09-toss-billing-subscription.md Task 10.
 test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
-  const html = render(plans);
+  const html = render(plans, 'free', true, null, true);
   assert.doesNotMatch(html, /상세페이지 한 개에 13,000원/);
   for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩69,900', '₩119,000',
     '200 크레딧 추가 증정', '400 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
@@ -82,9 +90,7 @@ test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 
   assert.equal(disabled, 5);
   assert.equal(notice, 5);
   assert.doesNotMatch(html, /결제 키가 설정되지 않았어요/);
-  // 계좌이체 모드에서는 Seller·Pro 의 '충전할 때마다 크레딧 5%/10% 보너스' 줄을 숨긴다 — 지급 코드가
-  // 없는데 충전 탭이 열려 있어 약속을 못 지키기 때문(bank-transfer.test.mjs). 그래서 12 가 아니라 10.
-  assert.equal((html.match(/<li\b/g) || []).length, 10);
+  assert.equal((html.match(/<li\b/g) || []).length, 12);
 });
 
 test('표에 없는 구독 코드도 이름과 가격, 크레딧만 안전하게 렌더링한다', () => {
@@ -99,6 +105,52 @@ test('표에 없는 구독 코드도 이름과 가격, 크레딧만 안전하게
 
 test('로그인한 Seller 계정은 이용 중으로 표시한다', () => {
   assert.match(render(plans, 'seller'), /이용 중/);
+});
+
+test('충전 보너스는 현재 플랜에 따라 정수로 내림한다', () => {
+  assert.equal(typeof limits.topupBonusCredits, 'function');
+  for (const [plan, base, expected] of [
+    ['free', 500, 0], ['starter', 500, 0], ['seller', 100, 5], ['seller', 500, 25],
+    ['pro', 100, 10], ['pro', 500, 50], ['seller', 39, 1], ['unknown', 500, 0],
+  ]) assert.equal(limits.topupBonusCredits(plan, base), expected, `${plan}:${base}`);
+});
+
+test('서버가 충전 보너스를 켠 계정에만 구독 카드와 충전 안내를 표시한다', () => {
+  const original = tossKeys.BANK_TRANSFER_ENABLED;
+  try {
+    for (const bankTransfer of [true, false]) {
+      tossKeys.setBankTransferEnabled(bankTransfer);
+      for (const plan of ['free', 'starter', 'seller', 'pro']) {
+        const html = render(plans, plan, true, null, true);
+        const section = html.match(/<section\b[^>]*id="topup"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+        assert.ok(section, '크레딧 충전 섹션');
+        assert.match(section, /<h2\b[^>]*>크레딧 충전<\/h2>/);
+        // '5%,' 는 줄바꿈 방지용 span 에 들어 있으니 태그를 걷어낸 글자로 확인한다.
+        assert.match(section.replace(/<[^>]+>/g, ''), /Seller는 충전할 때마다 5%, Pro는 10%를 더 드려요\./);
+        assert.match(html, /충전할 때마다 크레딧 5% 보너스/);
+        assert.match(html, /충전할 때마다 크레딧 10% 보너스/);
+      }
+      for (const enabled of [undefined, false, null, 0, 1, 'true']) {
+        const html = render(plans, 'seller', true, null, enabled);
+        assert.doesNotMatch(html, /충전할 때마다|Pro는 10%|\+\d+ 보너스/);
+        assert.equal((html.match(/<li\b/g) || []).length, 10);
+      }
+      assert.doesNotMatch(render(plans, 'seller', false, null, true), /충전할 때마다|Pro는 10%|\+\d+ 보너스/);
+    }
+  } finally { tossKeys.setBankTransferEnabled(original); }
+});
+
+test('로그인한 Seller와 Pro의 충전 팩에 기본 수량 옆 보너스를 보여준다', () => {
+  for (const [plan, small, large] of [['seller', 5, 25], ['pro', 10, 50]]) {
+    const html = render(plans, plan, true, null, true);
+    assert.match(html, new RegExp(`\\+${small} 보너스`));
+    assert.match(html, new RegExp(`\\+${large} 보너스`));
+    assert.match(html, /크레딧당 55\.0원/);
+    assert.match(html, /크레딧당 52\.0원/);
+  }
+  for (const html of [render(plans, 'free'), render(plans, 'starter'), render(plans, 'seller', false)]) {
+    assert.doesNotMatch(html, /\+\d+ 보너스/);
+  }
 });
 
 test('비로그인 방문자는 세 구독 카드의 활성 버튼으로 로그인할 수 있다', () => {
@@ -144,15 +196,10 @@ test('구독 카드의 상세페이지 예상 개수는 254크레딧 기준으�
   }
 });
 
-test('구독 카드가 보일 때만 평균 크레딧 안내 두 문장을 줄을 나누어 표시한다', () => {
+test('평균 크레딧 안내를 표시하지 않고 카드의 예상 개수만 유지한다', () => {
   const html = render(plans);
-  const note = html.match(/<p\b[^>]*>상세페이지 1개의 제작[\s\S]*?<\/p>/)?.[0];
-  assert.ok(note, '평균 크레딧 안내 문단');
-  assert.deepEqual(note.replace(/<br\s*\/?\s*>/g, '\n').replace(/<[^>]*>/g, '').split('\n'), [
-    '상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 약\u00a0250크레딧이 소모됩니다.',
-    '컷수에 따라 소모되는 비용은 상이합니다.',
-  ]);
-  assert.ok(html.indexOf(note) < html.indexOf('id="topup"'));
+  assert.doesNotMatch(html, /상세페이지 1개의 제작|평균적으로|250크레딧|컷수에 따라/);
+  assert.match(html, /상세페이지 약 <strong>2개<\/strong>/);
   for (const hidden of [
     render([]),
     render(undefined),

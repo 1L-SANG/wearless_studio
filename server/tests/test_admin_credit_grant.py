@@ -1,5 +1,6 @@
 """관리자 계좌이체 지급의 인증, 원장 기록, 재시도 계약."""
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +25,8 @@ class CreditConn:
         self.role = "admin"
         self.accounts = {TARGET: {"balance": 20, "reserved": 5},
                          OTHER: {"balance": 0, "reserved": 0}}
+        self.profiles = {TARGET: {"plan": "free"}, OTHER: {"plan": "free"}}
+        self.sku_credits = 100
         self.payments, self.sources, self.ledger = [], [], []
         self.commits = 0
 
@@ -46,7 +49,7 @@ class CreditCursor:
         if "select role from profiles" in q:
             self.row = {"role": c.role}
         elif "from profiles" in q and "auth.users" in q:
-            self.row = {"user_id": params[0]} if params[0] in c.accounts else None
+            self.row = {"user_id": params[0], **c.profiles[params[0]]} if params[0] in c.accounts else None
         elif "from credit_accounts" in q:
             self.row = c.accounts.get(params[0])
         elif "from credit_ledger cl" in q:
@@ -54,9 +57,9 @@ class CreditCursor:
             if entry:
                 self.row = {"src": entry["source"], "initial_credits": entry["credits"]}
         elif "from pricing_plans" in q:
-            assert "kind = 'topup'" in q and "is_active" in q
+            assert "kind = 'topup'" in q
             if params[0] == "topup_finish":
-                self.row = {"id": "plan-1", "credits": 100, "price": 9900}
+                self.row = {"id": "plan-1", "credits": c.sku_credits, "price": 9900}
         elif q.startswith("insert into payment_history"):
             c.payments.append({"user": params[0], "amount": params[2],
                                "provider": params[3], "provider_ref": params[4]})
@@ -123,7 +126,8 @@ def test_admin_grants_in_production_and_records_transfer(grant, make_token):
                            "provider_ref": "홍길동/2026-09-10"}]
     assert c.ledger[0]["metadata"] == {"granted_by": "user-1", "payer_name": "홍길동",
                                        "amount_krw": 12345, "paid_at": "2026-09-10",
-                                       "note": "계좌이체 확인"}
+                                       "note": "계좌이체 확인", "baseCredits": 100,
+                                       "bonusCredits": 0, "bonusPercent": 0, "planAtOrder": "free"}
     assert c.accounts[TARGET]["balance"] == 120
     assert c.commits == 1
 
@@ -136,6 +140,63 @@ def test_retry_returns_same_grant_without_duplicate_credit(grant, make_token):
                             "credits": 100, "available": 115, "idempotent": True}
     assert len(grant[1].ledger) == len(grant[1].payments) == len(grant[1].sources) == 1
     assert grant[1].accounts[TARGET]["balance"] == 120
+
+
+@pytest.mark.parametrize("profile_plan,base,total,bonus,percent", [
+    ("seller", 100, 105, 5, 5), ("pro", 500, 550, 50, 10),
+    ("starter", 100, 100, 0, 0), ("unknown", 100, 100, 0, 0),
+])
+def test_admin_grant_uses_target_plan_and_active_sku_bonus(
+        grant, make_token, profile_plan, base, total, bonus, percent):
+    client, conn = grant
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
+    conn.profiles[TARGET]["plan"] = profile_plan
+    conn.sku_credits = base
+    result = post(grant, make_token)
+    assert result.status_code == 200, result.text
+    assert result.json()["credits"] == total and result.json()["available"] == total + 15
+    assert conn.sources[0][2:4] == (total, total)
+    assert conn.ledger[0]["credits"] == total
+    metadata = conn.ledger[0]["metadata"]
+    assert {key: metadata[key] for key in ("baseCredits", "bonusCredits", "bonusPercent", "planAtOrder")} == {
+        "baseCredits": base, "bonusCredits": bonus, "bonusPercent": percent,
+        "planAtOrder": profile_plan if profile_plan != "unknown" else "free"}
+    assert metadata["payer_name"] == "홍길동" and metadata["amount_krw"] == 12345
+    assert conn.payments[0]["amount"] == 9900
+
+
+@pytest.mark.parametrize("profile_plan", ["seller", "pro"])
+def test_admin_grant_defaults_to_zero_bonus_during_rollout(grant, make_token, profile_plan):
+    conn = grant[1]
+    conn.profiles[TARGET]["plan"] = profile_plan
+    conn.sku_credits = 500
+    response = post(grant, make_token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["credits"] == 500
+    assert response.json()["available"] == 515
+    assert conn.sources[0][2:4] == (500, 500)
+    assert conn.ledger[0]["credits"] == 500
+    metadata = conn.ledger[0]["metadata"]
+    assert metadata["bonusCredits"] == metadata["bonusPercent"] == 0
+    assert metadata["planAtOrder"] == profile_plan
+
+
+def test_admin_grant_retry_returns_original_bonus_after_plan_change(grant, make_token):
+    client = grant[0]
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
+    conn = grant[1]
+    conn.profiles[TARGET]["plan"] = "pro"
+    conn.sku_credits = 500
+    first = post(grant, make_token)
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=False)
+    conn.profiles[TARGET]["plan"] = "starter"
+    conn.sku_credits = 1
+    retry = post(grant, make_token)
+    assert first.status_code == retry.status_code == 200
+    assert first.json()["credits"] == retry.json()["credits"] == 550
+    assert retry.json()["idempotent"] is True
+    assert len(conn.sources) == len(conn.payments) == len(conn.ledger) == 1
 
 
 def test_same_key_for_different_targets_does_not_collide(grant, make_token):

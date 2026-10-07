@@ -15,6 +15,9 @@ html, body { height: 100%; }
 body {
   font-family: var(--font-body); color: var(--fg-1); background: #fff;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  /* 한국어는 단어(어절) 단위로만 줄을 바꾼다. 기본값은 글자 단위라 폰에서 "이|어서"처럼 끊긴다.
+     공백 없는 긴 주소·파일명은 칸을 넘칠 때만 끊어 레이아웃을 뚫지 않게 한다. */
+  word-break: keep-all; overflow-wrap: break-word;
 }
 #root { min-height: 100%; }
 button { font-family: inherit; }
@@ -93,6 +96,25 @@ input, textarea, select { font-family: inherit; }
 .nav-link:hover { background: var(--bg-2); color: var(--fg-1); }
 .nav-link.active { color: var(--fg-1); background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.topnav-handoff { gap: var(--sp-12); padding-inline: var(--sp-16); }
+.topnav-handoff .nav-stepper,
+.topnav-handoff .nav-links,
+.topnav-handoff .credit-badge,
+.topnav-handoff .plan-badge { display: none; }
+.topnav-handoff .profile-btn { min-width: var(--cta-height); min-height: var(--cta-height); }
+@media (max-width: 720px) {
+  .topnav .nav-stepper { display: none; }
+}
+@media (max-width: 520px) {
+  .topnav { gap: var(--sp-12); padding-inline: var(--sp-16); }
+  .topnav .nav-links, .topnav .credit-badge, .topnav .plan-badge { display: none; }
+  .topnav .nav-right { flex-shrink: 0; }
+}
+
+.handoff-panel { display: flex; flex-direction: column; align-items: center; gap: var(--sp-24);
+  padding: var(--sp-28) var(--sp-20); color: var(--fg-1); text-align: center; }
+.handoff-panel p { margin: 0; line-height: 1.6; }
+.handoff-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-12); }
 .credit-badge { display: inline-flex; align-items: center; gap: 7px; height: 32px; font-size: 13px; font-weight: 500;
   color: var(--fg-1); padding: 0 12px; border-radius: var(--r-pill); background: #fff; box-shadow: var(--elev-card);
   border: 0; font-family: inherit; cursor: pointer; transition: box-shadow .15s, transform .15s; }
@@ -252,7 +274,7 @@ input, textarea, select { font-family: inherit; }
 /* 모달·선택지처럼 버튼이 짝으로 놓이는 곳은 모양을 통일한다 — 색(주=검정 채움, 보조=흰색)만
    다르고 형태는 같은 알약. 기본 .btn(8px 라운드)과 primary(pill)가 나란히 서면
    '하나는 네모, 하나는 동그라미'로 보여 짝 선택지가 아니라 다른 종류의 버튼처럼 읽힌다. */
-.modal-actions .btn, .draft-source-options .btn {
+.modal-actions .btn, .draft-source-options .btn, .handoff-actions .btn {
   border-radius: var(--cta-radius); min-height: var(--cta-height); justify-content: center; }
 
 .iconbtn { width: 34px; height: 34px; border-radius: var(--r-4); background: #fff; border: 0;
@@ -481,7 +503,7 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 /* 3) 페이지 전환 — 라우트 이동 시 아래에서 올라오며 블러 해제, 상단 블록부터 스태거.
    ChromeLayout 에서 .app-main 에 page-enter + key(pathname) 리마운트로 재생. */
 .fx-pagefade .app-main.page-enter > * {
-  animation: fxPageIn .52s cubic-bezier(.16, 1, .3, 1) both;
+  animation: fxPageIn .52s cubic-bezier(.16, 1, .3, 1) backwards;
 }
 .fx-pagefade .app-main.page-enter > *:nth-child(2)   { animation-delay: .07s; }
 .fx-pagefade .app-main.page-enter > *:nth-child(3)   { animation-delay: .13s; }
@@ -499,3 +521,11 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
   .fx-lift .ward-cell:hover { transform: none; }
   .fx-pagefade .app-main.page-enter > * { animation: none; }
 }
+
+@media (max-width: 560px) {
+  .pi-handoff .page-head { padding: var(--sp-28) 0 var(--sp-24); }
+  .pi-handoff .page-head h1 { font-size: var(--sp-24); }
+}
+
+.toast-action { border: 0; background: none; color: var(--fg-1); font: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.toast-host:has(.toast-action) { top: auto; bottom: var(--sp-24); }

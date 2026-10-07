@@ -14,6 +14,7 @@ import logging
 import os
 
 from ..config import Settings
+from .fit_axes import confirmed_copy_fit
 from .prompts import _sanitize, clean_text
 from .vision_llm import complete_json
 
@@ -179,7 +180,7 @@ def _facts_block(product: dict, analysis: dict) -> str:
         product.get("name") and f"- name: {_sanitize(product.get('name'))}",
         (product.get("clothing_type") or product.get("clothingType"))
         and f"- clothingType: {_sanitize(product.get('clothing_type') or product.get('clothingType'))}",
-        analysis.get("fit") and f"- fit: {_sanitize(analysis.get('fit'))}",
+        confirmed_copy_fit(analysis) and f"- fit: {_sanitize(confirmed_copy_fit(analysis))}",
         materials and f"- materials: {', '.join(materials)}",
     ]
     body = "\n".join(x for x in lines if x)

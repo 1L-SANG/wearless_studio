@@ -54,7 +54,7 @@ export function EditorDownloadModal({
   const update = (patch) => onChange(normalizeExportSettings({ ...settings, ...patch }));
   const deliveryOptions = original
     ? DELIVERY_OPTIONS.map((option) => option.id === 'split'
-      ? { ...option, desc: '기존 방식 그대로 각 블록을 2,000px PNG로 저장' }
+      ? { ...option, desc: '폭 2,000px PNG로 저장하고, 긴 블록은 안전하게 나눠요' }
       : option)
     : DELIVERY_OPTIONS;
 

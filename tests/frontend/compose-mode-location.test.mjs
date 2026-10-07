@@ -40,7 +40,7 @@ test('the analysis confirmation CTA owns the catalog-backed split compose menu',
   // 팝오버는 왼칸 위에만 머문다 — 폭 상한이 없으면 확정 버튼 위까지 뻗는다 (2026-08-12)
   assert.match(analysisStyles, /\.af-compose-popover \{[\s\S]*?min-width: 240px; max-width: 264px/);
   assert.match(analysisStyles, /opacity: 0; transform: translateY\(6px\); pointer-events: none/);
-  assert.match(analysisSource, /await composeModeSaveRef\.current;[\s\S]*?await onNext\(\);/);
+  assert.match(analysisSource, /await composeModeSaveRef\.current;[\s\S]*?await onNext\(\{ expectedQuote:/);
   assert.match(ctaSource, /disabled=\{composeModeSaving \|\| confirming\}[\s\S]*?onClick=\{confirmAnalysis\}/);
 });
 

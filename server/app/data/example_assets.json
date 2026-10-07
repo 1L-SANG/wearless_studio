@@ -2433,7 +2433,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_01.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2448,7 +2447,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_02.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2463,7 +2461,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_03.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2478,7 +2475,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_04.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2493,7 +2489,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_05.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2508,7 +2503,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_01.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2523,7 +2517,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_02.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2538,7 +2531,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_03.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2553,7 +2545,6 @@
       "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_04.png",
       "applicableClothingTypes": [
         "top",
-        "bottom",
         "outer",
         "dress"
       ],
@@ -2563,6 +2554,102 @@
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_04.webp"
+    },
+    "sig_women_bottom_pants_01": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_bottom_pants_01.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_bottom_pants_01.webp"
+    },
+    "sig_women_bottom_pants_02": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_bottom_pants_02.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_bottom_pants_02.webp"
+    },
+    "sig_women_bottom_skirt_01": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_bottom_skirt_01.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_bottom_skirt_01.webp"
+    },
+    "sig_women_bottom_skirt_02": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_bottom_skirt_02.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_bottom_skirt_02.webp"
+    },
+    "sig_women_dress_01": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_dress_01.png",
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_dress_01.webp"
+    },
+    "sig_women_dress_02": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_dress_02.png",
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "women",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_women_dress_02.webp"
+    },
+    "sig_men_bottom_pants_01": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_bottom_pants_01.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "men",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_men_bottom_pants_01.webp"
+    },
+    "sig_men_bottom_pants_02": {
+      "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_bottom_pants_02.png",
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "confirmedGptEligibleV1": false,
+      "cutType": "signature",
+      "direction": "front",
+      "gender": "men",
+      "shot": "medium",
+      "thumb": "https://images.wearless.kr/seed/genexamples/signature/v1/thumb/sig_men_bottom_pants_02.webp"
     }
   }
 }

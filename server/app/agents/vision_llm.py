@@ -18,6 +18,10 @@ import time
 import httpx
 
 from ..config import Settings
+from ..openai_key_fallback import (
+    has_openai_api_key,
+    request_with_openai_key_fallback,
+)
 from .gemini_image import InlineImage, run_cpu_bound
 
 logger = logging.getLogger("wearless.vision_llm")
@@ -98,14 +102,18 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
                     thinking_level: str | None = None, *, reasoning_effort=None,
                     image_detail=None, max_completion_tokens=None, metadata=None) -> dict:
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
-    if not settings.openai_api_key:
+    if not has_openai_api_key(settings):
         raise VisionError("OPENAI_API_KEY 미설정")
     body = await run_cpu_bound(_gpt_body, model, prompt, images, schema,
                                reasoning_effort, image_detail, max_completion_tokens)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.post(
-            _OPENAI_URL, json=body,
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"})
+        async def send(key: str):
+            return await client.post(
+                _OPENAI_URL, json=body,
+                headers={"Authorization": f"Bearer {key}"})
+
+        selected = await request_with_openai_key_fallback(settings, send)
+        res = selected.response
     if res.status_code != 200:
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
     return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
@@ -205,7 +213,7 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
 
 # provider 이름 → (호출 함수, 모델 selector, 키 selector). ANALYSIS_MODEL_ORDER 가 순서를 정한다.
 _PROVIDERS = {
-    "gpt": (_call_gpt, lambda s: s.model_text, lambda s: s.openai_api_key),
+    "gpt": (_call_gpt, lambda s: s.model_text, has_openai_api_key),
     "gemini": (_call_gemini, lambda s: s.model_text_gemini, lambda s: s.gemini_api_key),
 }
 

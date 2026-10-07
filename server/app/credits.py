@@ -1,7 +1,7 @@
 """크레딧 버킷 FIFO 배분 — 순수 함수 (DB/IO 없음). credit_system_design.md §1·§3.3.
 
-소진 순서: 구독 버킷 먼저 → 추가구매(topup) FIFO(오래된 순). 정렬은 호출측(repo)이
-`order by source_type, created_at`으로 보장한다('subscription' < 'topup' 사전순).
+소진 순서: 구독, 무료, 추가구매(topup). 같은 종류는 오래된 순이다.
+정렬은 호출측(repo)이 source_type의 명시적 우선순위와 created_at으로 보장한다.
 실제 DB 차감·원장 기록은 repo가 한다.
 """
 

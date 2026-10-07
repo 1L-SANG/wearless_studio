@@ -15,6 +15,7 @@ from app.routes import _cut_to_api
 ENVELOPE_CUT_KEYS = {
     "id", "src", "candidate", "version", "baseFit",
     "fitAdjust", "lengthAdjust", "matchAdjust", "qcScores",
+    "fitProfile", "fitProfileRecorded",
 }
 
 _SCORES = {
@@ -46,6 +47,17 @@ def test_model_declares_qc_scores_or_response_filters_it():
     assert "qc_scores" in MannequinCut.model_fields
     dumped = MannequinCut(**_cut_to_api(_row())).model_dump(by_alias=True)
     assert dumped["qcScores"] == _SCORES
+
+
+def test_cut_api_distinguishes_photo_as_is_from_legacy_missing_record():
+    recorded = _cut_to_api(_row() | {
+        "fit_profile_snapshot": {"version": 1, "profile": None, "adjustedAxes": []},
+    })
+    legacy = _cut_to_api(_row())
+    assert recorded["fitProfile"] is None and recorded["fitProfileRecorded"] is True
+    assert legacy["fitProfile"] is None and legacy["fitProfileRecorded"] is False
+    assert "fit_profile" in MannequinCut.model_fields
+    assert "fit_profile_recorded" in MannequinCut.model_fields
 
 
 QC_SCORE_KEYS = {

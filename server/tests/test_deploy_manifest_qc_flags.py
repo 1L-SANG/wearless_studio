@@ -508,6 +508,26 @@ def test_autoscale_addon_exists_with_scoped_permissions():
     assert "SamAlertTopicArn" in addon["Outputs"]
 
 
+def test_autoscale_addon_subscribes_slack_with_scoped_permission():
+    """오토스케일 알림은 환경의 Slack 함수로 보내고 SNS 호출 권한은 알림 토픽으로 제한한다."""
+    addon = yaml.load(ADDON.read_text(encoding="utf-8"), Loader=_CfnLoader)
+    res = addon["Resources"]
+    subscription = res["SamAlertSlackSubscription"]
+    permission = res["SamAlertSlackPermission"]
+    assert subscription["Type"] == "AWS::SNS::Subscription"
+    assert permission["Type"] == "AWS::Lambda::Permission"
+    sub_props = subscription["Properties"]
+    perm_props = permission["Properties"]
+    assert sub_props["Protocol"] == "lambda"
+    assert sub_props["TopicArn"] == "SamAlertTopic"
+    assert sub_props["Endpoint"] == perm_props["FunctionName"]
+    assert sub_props["Endpoint"].endswith("alarm-slack")
+    assert perm_props["Action"] == "lambda:InvokeFunction"
+    assert perm_props["Principal"] == "sns.amazonaws.com"
+    assert perm_props["SourceArn"] == "SamAlertTopic"
+    assert subscription["DependsOn"] == "SamAlertSlackPermission"
+
+
 def test_api_addon_parameters_are_declared_by_an_addon_template():
     """addons.parameters.yml 의 값과 addon 템플릿 Parameters(Copilot 이 주는 App·Env·Name 제외)는
     양쪽으로 짝이 맞아야 한다. 한쪽만 지우거나 이름을 바꾸거나 새 파라미터에 값을 안 주면

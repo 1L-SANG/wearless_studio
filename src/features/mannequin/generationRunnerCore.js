@@ -28,7 +28,7 @@ export function createMannequinGenerationRunner({
   let nextRunId = 0;
 
   return {
-    request(projectId) {
+    request(projectId, options = {}) {
       if (!projectId) return Promise.resolve(null);
       if (inflight && inflightProjectId === projectId) return inflight;
 
@@ -53,6 +53,7 @@ export function createMannequinGenerationRunner({
 
       inflightProjectId = projectId;
       inflight = generate(projectId, {
+        ...options,
         onJobStarted: markStarted,
         onProgress: (next) => {
           if (!isActiveRun()) return;

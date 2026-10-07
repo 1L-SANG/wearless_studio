@@ -54,11 +54,10 @@ test('adjustment hotspots are immediately available without the old question car
   assert.match(source, /onAdjustmentSelect=\{openAdjustmentExamples\}/);
   assert.match(source, /continueLabel=\{continueLabel\}/);
   assert.match(source, /mannequinRegenerationCtaLabel\(regenerationQuote\)/);
-  assert.match(source, /listModels\(\)\.catch\(\(\) => \[\]\)/);
-  assert.match(source, /realModelFeeLabel\([\s\S]*analysis\?\.selectedModelId,[\s\S]*realModels,[\s\S]*horizonCutCount \|\| 0,[\s\S]*\)/);
+  assert.doesNotMatch(source, /listModels|realModelFeeLabel|realModels/);
   assert.match(
     source,
-    /`이대로 진행 · \$\{aiCutCount == null \? '—' : detailPageCreditCost\(aiCutCount\)\} 크레딧\$\{realModelFee\}`/,
+    /`이대로 진행 · \$\{aiCutCount == null \? '…' : detailPageCreditCost\(aiCutCount\)\} 크레딧`/,
   );
   assert.match(
     source,
@@ -120,7 +119,7 @@ test('picked adjustments stay visible, can be cleared, and lock while proceeding
   assert.match(source, /adjustmentDisabled=\{busy\}/);
   assert.match(source, /disabled=\{disabled\}/);
 
-  const continueStart = source.indexOf('const onCta = async () =>');
+  const continueStart = source.indexOf('const continueWithSelectedVersion = async');
   const navigateStart = source.indexOf("navigate('/create/generating')", continueStart);
   const continueSource = source.slice(continueStart, navigateStart);
   assert.ok(

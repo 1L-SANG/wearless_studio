@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from ..openai_key_fallback import has_openai_api_key
 from . import vision_llm
 from .gemini_image import InlineImage
 
@@ -334,8 +335,11 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         return _unknown(out, "invalid_input")
     out["provider"] = "gpt"
     out["requestedModel"] = getattr(settings, "model_detail_core", None)
-    key = getattr(settings, "openai_api_key", None)
-    if not key or not isinstance(out["requestedModel"], str) or not out["requestedModel"].strip():
+    if (
+        not has_openai_api_key(settings)
+        or not isinstance(out["requestedModel"], str)
+        or not out["requestedModel"].strip()
+    ):
         return _unknown(out, "primary_judge_unavailable")
     metadata = {}
     core_failure = None
@@ -371,7 +375,7 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         return _unknown(out, "judge_unavailable_or_invalid")
     specialist = out["specialist"]
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
-    if not getattr(settings, "openai_api_key", None) or not specialist["requestedModel"]:
+    if not has_openai_api_key(settings) or not specialist["requestedModel"]:
         specialist.update(status="UNAVAILABLE", errorCode="specialist_unavailable")
         return core_failure or _unknown(out, "specialist_unavailable")
     specialist_metadata = {}

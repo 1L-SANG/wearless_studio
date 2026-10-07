@@ -40,6 +40,23 @@ def test_account_reads_retired_plans_as_free(client, make_token, monkeypatch, pl
     assert response.json()["plan"] == expected
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_account_exposes_server_topup_bonus_flag(client, make_token, monkeypatch, enabled):
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=enabled)
+
+    async def fake_get_account(conn, user_id):
+        return {"name": "한지수", "avatar": "", "credits": 24, "plan": "pro",
+                "topup_bonus_enabled": not enabled}
+
+    monkeypatch.setattr(routes.repo, "get_account", fake_get_account)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.get("/v1/me/account", headers=_auth(make_token))
+
+    assert response.status_code == 200, response.text
+    assert response.json().get("topupBonusEnabled") is enabled
+
+
 def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_hosts():
     asset_id = "33333333-3333-3333-3333-333333333333"
 
@@ -91,7 +108,7 @@ def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     async def fake_get_product(conn, project_id):
         return {"clothingType": "dress"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -120,7 +137,7 @@ def test_save_analysis_normalizes_brand_use_category(client, make_token, monkeyp
     async def fake_get_product(conn, project_id):
         return {"clothingType": "top"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -145,7 +162,7 @@ def test_save_analysis_rejects_unknown_brand_use_category_before_persistence(
 ):
     called = False
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         nonlocal called
         called = True
 
@@ -169,7 +186,7 @@ def test_save_analysis_rejects_non_string_brand_use_category_before_persistence(
 ):
     called = False
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         nonlocal called
         called = True
 
@@ -198,7 +215,7 @@ def test_save_analysis_normalizes_empty_brand_use_category_to_none(
     async def fake_get_product(conn, project_id):
         return {"clothingType": "top"}
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen.append(analysis)
         return {"project_id": project_id, "payload": analysis}
 
@@ -237,7 +254,7 @@ def test_analysis_routes_normalize_retired_tight_fit(client, make_token, monkeyp
             },
         }
 
-    async def fake_save_analysis(conn, project_id, analysis):
+    async def fake_save_analysis(conn, project_id, analysis, **options):
         seen["analysis"] = analysis
         return {"project_id": project_id, "payload": analysis}
 
@@ -312,7 +329,6 @@ def test_save_product_atomically_repairs_dress_analysis_gender(
     assert seen["product"]["clothing_type"] == "dress"
     assert seen["analysis"] == {
         "targetGenders": ["women"],
-        "fit": "regular",
     }
 
 
@@ -322,9 +338,9 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     async def fake_get_project(conn, user_id, project_id):
         return {"id": project_id}
 
-    async def fake_save_storyboard(conn, user_id, project_id, blocks):
+    async def fake_save_storyboard(conn, user_id, project_id, blocks, base_revision=None):
         seen["blocks"] = blocks
-        return blocks
+        return 1
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "save_storyboard", fake_save_storyboard)
@@ -385,6 +401,58 @@ def test_save_storyboard_rejects_invalid_example_selection_origin_before_db(clie
 
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "invalid_example_selection_origin"
+
+
+def test_save_storyboard_accepts_bottom_signature_without_flat_catalog_lookup(
+    client, make_token, monkeypatch,
+):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_product(conn, project_id):
+        return {"clothingType": "bottom"}
+
+    async def fake_analysis(conn, project_id):
+        return {"targetGenders": ["women"], "subCategory": "mini_skirt"}
+
+    async def fake_save(conn, user_id, project_id, blocks, base_revision=None):
+        seen["blocks"] = blocks
+        return 1
+
+    def flat_registry_must_not_load():
+        raise AssertionError("sig_* must stay outside the ordinary example catalog")
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "save_storyboard", fake_save)
+    monkeypatch.setattr(
+        routes.cut_generator, "load_example_asset_registry", flat_registry_must_not_load,
+    )
+    patch_route_db(monkeypatch, routes)
+
+    res = client.put(
+        "/v1/projects/p1/storyboard",
+        headers=_auth(make_token),
+        json=[{
+            "id": "opening",
+            "source": "ai",
+            "sectionRole": "hooking",
+            "contentRole": "hero",
+            "cutType": "horizon",
+            "direction": "front",
+            "shot": "medium",
+            "hookSlotRole": "signature",
+            "exampleId": "sig_women_bottom_skirt_02",
+            "exampleSelectionOrigin": "user",
+        }],
+    )
+
+    assert res.status_code == 200, res.text
+    assert seen["blocks"][0]["exampleId"] == "sig_women_bottom_skirt_02"
+    assert seen["blocks"][0]["hookSlotRole"] == "signature"
 
 
 def test_save_storyboard_rejects_pre_release_space_group_ids(
@@ -454,9 +522,9 @@ def test_save_storyboard_validates_production_set_without_flat_registry(
     async def fake_analysis(conn, project_id):
         return {"targetGenders": ["women"]}
 
-    async def fake_save(conn, user_id, project_id, blocks):
+    async def fake_save(conn, user_id, project_id, blocks, base_revision=None):
         seen["saved"] = blocks
-        return blocks
+        return 1
 
     def fake_validate(blocks, *, clothing_type, gender):
         seen["validated"] = (blocks, clothing_type, gender)

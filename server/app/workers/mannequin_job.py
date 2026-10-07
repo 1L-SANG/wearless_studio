@@ -2736,6 +2736,11 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 화면에 없는 별도 의류의 지시가 프롬프트로 전달되지 않게 두 버전 키를 함께 제거한다.
         fit_profile = _fit_profile_for_match_image(fit_profile, match_img is not None)
         resolved_match_id = match_id if match_img is not None else None
+        persisted_fit_profile_snapshot = {
+            "version": 1,
+            "profile": fit_profile,
+            "adjustedAxes": list(adjusted_axes),
+        }
 
         # 조정 편집 자격은 전부 best-effort다. 어느 조건이든 빠지면 기존 fresh 경로로 조용히
         # 돌아가며, 부모 조회/R2 로드 실패가 잡 실패로 번지지 않는다.
@@ -2923,7 +2928,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                 metadata={**(job.get("metadata") or {}),
                           "creditCostVersion": s.credit_cost_version,
                           "promptVersion": cut_generation_metadata["promptVersion"],
-                          "gender": gender})
+                          "gender": gender},
+                fit_profile_snapshot=persisted_fit_profile_snapshot)
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:

@@ -39,6 +39,7 @@ def _text_el(block_i: int, el_j: int, x, y, w, h, text: str, style: dict | None 
         el["sourceBlockId"] = source_block_id
     if copy_role:
         el["copyRole"] = copy_role
+        el["textSlotVersion"] = 1
     if placeholder:
         el["placeholder"] = placeholder
     return el

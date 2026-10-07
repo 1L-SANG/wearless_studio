@@ -37,14 +37,14 @@ import { SignupCompletion } from '@/features/auth/SignupCompletion.jsx';
 import { KakaoCallback } from '@/features/auth/KakaoCallback.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
-import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
+import { loadDraft, clearDraft, hasPendingDraft, ensureDraftRemotePhotos, flushProductDraftSave } from '@/lib/draftStore.js';
 import {
   promoteDraftToProject,
   resetDraftSyncSingleFlight,
   retryDraftPromotion,
 } from '@/lib/draftSync.js';
 import { api, isMockMode } from '@/lib/api/index.js';
-import { Button, ErrorState, useToast } from '@/components/ui.jsx';
+import { ErrorState, useToast } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
 import { markEditorEntered } from '@/lib/editorEntered.js';
 import {
@@ -53,14 +53,23 @@ import {
   isProductInfoConfirmed,
   isSameTabProjectReload,
   markFlowSession,
-  markProductInfoConfirmed,
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
+import { flowScreenName, notifyFlowKept } from '@/lib/flowAbandon.js';
+import { isMobileDraftWriter } from '@/lib/draftDeviceNoun.js';
+import { MobileDraftStatus } from '@/features/shell/MobileDraftDialog.jsx';
 import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
+import { DraftEntryDialog } from '@/features/shell/DraftEntryDialog.jsx';
+import { draftSavedTime, isVisibleDraftSlot, getFlowDraftSources, getInputEntryDecision, remoteDraftSource } from '@/lib/draftEntry.js';
+import { checkDraftEntry, canAutoOpenInput } from '@/lib/draftEntryCheck.js';
+import { HandoffStatusPage } from '@/features/shell/HandoffStatusPage.jsx';
+import { useDraftEntryActions } from '@/lib/useDraftEntryActions.js';
+import { isMobileDevice } from '@/lib/deviceClass.js';
+import { PcOnlyPage } from '@/features/shell/PcOnlyPage.jsx';
+import { PhoneUploadIntro } from '@/features/shell/PhoneUploadIntro.jsx';
 import { NotFound } from '@/components/NotFound.jsx';
 import {
   draftSlot,
-  formatDraftRelativeTime,
   localDraftMeta,
 } from '@/lib/draftSlot.js';
 
@@ -78,6 +87,11 @@ draftSlot.configure(api);
 let flowRouteSeenThisSession = false;
 const flowDocumentEntryId = Math.random().toString(36).slice(2);
 
+function MobileHandoffGuard() {
+  if (!isMobileDevice()) return <Outlet />;
+  return <PcOnlyPage />;
+}
+
 /* 마네킹 이후 단계는 현재 프로젝트가 있어야 한다. 복원된 프로젝트도 유효하므로 동기 pair 만
    확인하고, 서버 유효성 검증/404 정리는 각 화면의 기존 loadProject 경로가 계속 담당한다. */
 function RequireProject() {
@@ -86,10 +100,16 @@ function RequireProject() {
   const projectId = useAppStore((s) => s.projectId);
   const projectPersisted = useAppStore((s) => s.projectPersisted);
   const beginProject = useAppStore((s) => s.beginProject);
+  const { session } = useAuth();
+  const { push } = useToast();
+  const userId = session?.user?.id || null;
+  const recentFlow = canAutoOpenInput([{ id: 'flow' }], { userId, flow: useAppStore.getState(), slotClient: draftSlot });
+  const autoOpened = useRef(Boolean(projectId && projectPersisted && recentFlow
+    && !flowRouteSeenThisSession && !isSameTabProjectReload(projectId) && !hasFlowContinuation(projectId)));
   const [entryDecision, setEntryDecision] = useState(() => {
     if (!projectId || !projectPersisted) return 'continue';
     return flowRouteSeenThisSession || isSameTabProjectReload(projectId)
-      || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+      || hasFlowContinuation(projectId) || recentFlow ? 'continue' : 'ask';
   });
 
   useEffect(() => {
@@ -98,6 +118,15 @@ function RequireProject() {
     flowRouteSeenThisSession = true;
     markFlowSession(projectId, pathname);
   }, [entryDecision, pathname, projectId]);
+
+  useEffect(() => {
+    if (!autoOpened.current) return;
+    autoOpened.current = false;
+    push('이어서 열었어요', { duration: 8000, action: {
+      label: '새로 시작',
+      onClick: () => navigate('/create/input', { state: { startNewFromResume: true } }),
+    } });
+  }, [navigate, push]);
 
   // mock 데모 관례 — 주소창에 /create/storyboard·/create/generating 을 직접 쳐도
   // 시드 프로젝트를 만들어 통과시킨다(입력부터 걷지 않고 바로 확인). http 모드는 기존 가드 유지.
@@ -116,7 +145,9 @@ function RequireProject() {
     setEntryDecision('continue');
   };
   const startNew = async () => {
+    const previous = { ...useAppStore.getState() };
     await beginProject();
+    notifyFlowKept(previous, push, navigate);
     flowRouteSeenThisSession = true;
     navigate('/create/input', { replace: true });
   };
@@ -151,9 +182,7 @@ function RequireEditorProject() {
         const project = await api.getProject(routeProjectId);
         if (!alive) return;
         if (!project?.id || project.id !== routeProjectId) { setPhase('not-found'); return; }
-        if (shouldAdoptRouteProject(useAppStore.getState().projectId, project.id)) {
-          adoptProject(project.id);
-        }
+        adoptProject(project.id, { serverSnapshot: project });
         // 에디터가 실제로 열린 뒤에야 '편집 시작' 표식을 남긴다 — 이후 앞 단계(입력·
         // 마네킹·콘티) 재진입을 막는 근거다. 열리지도 않은 프로젝트에 표식을 남기면
         // 입력 화면과 무한히 왕복하게 된다.
@@ -187,12 +216,14 @@ function RequireEditorProject() {
    editor 는 chrome 밖 라우트라 여기(App 레벨 location 감시)서 함께 잡는다. */
 function ResumeTracker() {
   const { pathname } = useLocation();
+  const { session } = useAuth();
   const setResumePath = useAppStore((s) => s.setResumePath);
   const projectId = useAppStore((s) => s.projectId);
   const projectPersisted = useAppStore((s) => s.projectPersisted);
   useEffect(() => {
     if (projectId && projectPersisted && (pathname.startsWith('/create/') || pathname.startsWith('/editor/'))) {
       markFlowSession(projectId, pathname);
+      if (!pathname.startsWith('/create/input')) useAppStore.getState().markFlowUsed(session?.user?.id || null);
     }
     // 재개 대상은 서버 상태가 있는(projectPersisted) 단계만. /create/input 은 분석 전이라 복원할
     // 서버 상태가 없어, 여기로 '이어서' 하면 첫 페이지로 튕기는 것처럼 보인다 → 기록 제외.
@@ -200,38 +231,57 @@ function ResumeTracker() {
         || (pathname.startsWith('/create/') && !pathname.startsWith('/create/input'))) {
       setResumePath(pathname);
     }
-  }, [pathname, projectId, projectPersisted, setResumePath]);
+  }, [pathname, projectId, projectPersisted, setResumePath, session?.user?.id]);
   return null;
-}
-
-/* 재개 카드에 보여줄 화면 이름 — 셀러에게 라우트 경로(/create/…)를 그대로 노출하지 않는다. */
-const FLOW_SCREEN_NAMES = [
-  ['/create/storyboard', '콘티 화면'],
-  ['/create/mannequin', '마네킹 화면'],
-  ['/editor', '에디터 화면'],
-  ['/create/input', '입력 화면'],
-];
-function flowScreenName(path) {
-  return FLOW_SCREEN_NAMES.find(([prefix]) => path?.startsWith(prefix))?.[1] || '진행하던 화면';
 }
 
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
    remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
 function ProductInputRoute() {
   const navigate = useNavigate();
-  const { key: locationKey } = useLocation();
-  const { session, loading: authLoading, signingOut } = useAuth();
+  const { key: locationKey, state: locationState } = useLocation();
+  const { session, loading: authLoading, signingOut, openLogin } = useAuth();
+  const mobile = isMobileDevice();
+  const loginRequired = mobile && !session && !isMockMode;
+  const userId = session?.user?.id || null;
+  const [entryUserId, setEntryUserId] = useState(userId);
+  const userChanged = entryUserId !== userId;
   const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
   const [entryDecision, setEntryDecision] = useState(() => {
+    if (loginRequired) return 'checking';
     const { projectId, projectPersisted } = useAppStore.getState();
-    if (!projectPersisted || !projectId) return 'checking';
-    if (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId)) return 'confirmed';
-    return 'checking';
+    return getInputEntryDecision({
+      slotClient: draftSlot,
+      confirmed: !mobile && projectPersisted && projectId
+        && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId)),
+    });
   });
   const [entrySources, setEntrySources] = useState([]);
+  const [localSaveBlocked, setLocalSaveBlocked] = useState(false);
+  const [mobileEntry, setMobileEntry] = useState(null);
+  const autoOpening = useRef(false);
+  const newRequestHandled = useRef(null);
+  const inputHasContent = useRef(true);
+  const lastReturnCheck = useRef(-Infinity);
+  const onContentChange = (hasContent) => { inputHasContent.current = hasContent; };
   const slotEnabled = Boolean(session) || isMockMode;
+  const finishEntry = () => {
+    draftSlot.resumeEntryWrites();
+    flowRouteSeenThisSession = true;
+    setEntryDecision('continue');
+  };
+  const { actions: entryActions, dialog: entryDialog, busy: entryBusy } = useDraftEntryActions({
+    beginProject, mobile,
+    onOpened: (meta) => {
+      setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null);
+      finishEntry();
+      if (autoOpening.current) { autoOpening.current = false; showResumeToast(); }
+    },
+    onKept: (meta) => { setMobileEntry({ state: 'pc', meta }); finishEntry(); },
+    onStarted: () => { setMobileEntry(null); finishEntry(); }, onError: pushToast,
+  });
 
   useEffect(() => {
     if (!signingOut) return;
@@ -240,28 +290,52 @@ function ProductInputRoute() {
   }, [signingOut]);
 
   useEffect(() => {
-    if (signingOut) return;
+    if (signingOut || loginRequired || userChanged) return;
     if (entryDecision !== 'checking') return;
     if (!isMockMode && authLoading) return;
+    if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
     let alive = true;
+    const epoch = draftSlot.getIdentityEpoch();
+    const project = useAppStore.getState();
+    const current = () => alive && epoch === draftSlot.getIdentityEpoch()
+      && project.projectGeneration === useAppStore.getState().projectGeneration
+      && project.projectId === useAppStore.getState().projectId;
     (async () => {
+      // 이탈 직전 입력은 슬롯 쓰기를 멈춘 동안 로컬에 먼저 저장하고 비교한다.
+      try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
+      catch {
+        if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+        return;
+      }
+      if (!current()) return;
+      setLocalSaveBlocked(false);
       const { projectId, projectPersisted, resumePath } = useAppStore.getState();
-      const hasFlow = Boolean(projectPersisted && projectId);
-      const flowDecision = !hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
-        || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+      const hasFlow = !mobile && Boolean(projectPersisted && projectId);
+      if (hasFlow && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId))) {
+        if (alive) setEntryDecision('confirmed');
+        return;
+      }
+      const foreignFlow = hasFlow && project.userId && project.userId !== userId;
+      const flowDecision = !foreignFlow && (!hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
+        || hasFlowContinuation(projectId)) ? 'continue' : 'ask';
       if (!slotEnabled) {
         if (alive) setEntryDecision(flowDecision);
         return;
       }
-      // '새로 시작'을 결정했는데 서버 장애로 못 지운 슬롯은 조회 전에 정리를 먼저 끝낸다 —
-      // 정리가 포기됐다면(그 뒤 다른 기기가 슬롯을 새로 씀) 그 카드를 정상적으로 권해야 한다.
-      if (draftSlot.hasPendingRemoval()) await draftSlot.retryPendingRemoval();
-      const pendingRemoval = draftSlot.hasPendingRemoval();
-      const [slot, localDraft] = await Promise.all([
-        draftSlot.get().catch(() => null),
+      // 지연 삭제도 진입 조회가 성공한 뒤에만 재개한다. 그사이 바뀐 슬롯은 다시 카드로 권한다.
+      let [slot, localDraft] = await Promise.all([
+        checkDraftEntry(draftSlot, { isCurrent: current }),
         hasPendingDraft() ? loadDraft().catch(() => null) : Promise.resolve(null),
       ]);
-      if (!alive) return;
+      if (!current()) return;
+      if (draftSlot.hasPendingRemoval()) {
+        await draftSlot.retryPendingRemoval();
+        if (!current()) return;
+        slot = await checkDraftEntry(draftSlot, { isCurrent: current });
+        if (!current()) return;
+      }
+      const pendingRemoval = draftSlot.hasPendingRemoval();
+      draftSlot.resumeEntryWrites();
       const sources = [];
       if (flowDecision === 'ask') {
         sources.push({
@@ -272,6 +346,7 @@ function ProductInputRoute() {
       }
       // 사진·상품명·분석이 하나도 없는 빈 슬롯(과거 버그로 생긴 팬텀 포함)은 이어갈 것이 없다.
       const slotVisible = Boolean(slot) && slot.meta?.hasContent !== false && !pendingRemoval;
+      const mobilePcSlot = mobile && slotVisible && !isMobileDraftWriter(slot.meta);
       const localMeta = localDraftMeta(localDraft);
       // 내용을 전부 지운 로컬 임시저장도 서버 hasContent 와 같은 기준으로 권하지 않는다.
       const localHasContent = Boolean(localMeta) && Boolean(
@@ -288,64 +363,130 @@ function ProductInputRoute() {
       // 두 장 대신 더 새로운 이 기기 내용 한 장으로 합친다. 같은 브라우저 판정은 UA 라벨이
       // 아니라 "슬롯의 마지막 쓰기가 이 브라우저였는가"(serverSyncedAt 일치)로 한다 —
       // 같은 기종 두 대(Mac Chrome ×2)가 서로의 카드를 가리면 안 된다.
-      const sameDeviceNewerLocal = localDiffers && slotVisible
+      const sameDeviceNewerLocal = localDiffers && slotVisible && !slot.meta?.photosPending
         && slot.meta?.updatedAt === draftSlot.getServerSyncedAt()
         && Date.parse(localDraft.updatedAt || 0) >= Date.parse(slot.meta?.updatedAt || 0);
       const splitCards = localDiffers && slotVisible && !sameDeviceNewerLocal;
-      if (localDiffers) {
+      if (localDiffers && !mobilePcSlot) {
         sources.push({
           id: 'local',
           title: splitCards ? '이 기기에서 입력하던 내용' : '입력하던 상품 정보',
-          description: `${formatDraftRelativeTime(localMeta.updatedAt)}에 저장 · 사진 ${localMeta.photoCount}장`,
+          description: `${draftSavedTime(localMeta.updatedAt)} · 사진 ${localMeta.photoCount}장`,
           meta: localMeta,
+          slotMeta: sameDeviceNewerLocal ? slot.meta : null,
           draft: localDraft,
         });
       }
-      if (slotVisible && !sameDeviceNewerLocal) {
-        // 로컬이 서버 슬롯과 완전히 같은 상태면(마지막 저장까지 동기화됨) 복원은 로컬 사본으로
-        // 한다 — 서버가 잠시 응답하지 않아도 이어서 열기가 실패하지 않는다.
+      if (slotVisible && (!sameDeviceNewerLocal || mobilePcSlot)) {
         const localMatchesSlot = Boolean(localMeta) && !localDiffers;
-        sources.push({
-          id: 'remote',
-          title: splitCards ? '다른 기기에서 입력하던 내용' : '입력하던 상품 정보',
-          description: `${formatDraftRelativeTime(slot.meta?.updatedAt)}에 저장 · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
-          meta: slot.meta,
-          photosPending: Boolean(slot.meta?.photosPending),
-          localFallback: localMatchesSlot ? localDraft : null,
-        });
+        sources.push(remoteDraftSource(slot.meta,
+          splitCards ? '다른 기기에서 입력하던 내용' : '입력하던 상품 정보',
+          localMatchesSlot ? localDraft : null));
       }
       setEntrySources(sources);
-      setEntryDecision(sources.length ? 'ask' : 'continue');
-    })().catch(() => {
-      if (alive) setEntryDecision('continue');
-    });
-    return () => { alive = false; };
-  }, [authLoading, entryDecision, signingOut, slotEnabled]);
-
-  useEffect(() => {
-    if (signingOut) return;
-    if (entryDecision === 'confirmed') {
-      if (!isMockMode && authLoading) return;
-      // http 모드의 세션 만료 리다이렉트는 사용자의 잠금 화면 재진입이 아니다.
-      // 로그인 유도 경로가 입력 화면을 맡도록 두고, 잠금 연타 카운트도 올리지 않는다.
-      if (!isMockMode && !session) {
-        const { projectId } = useAppStore.getState();
-        setEntryDecision(registerConfirmedInputEntry(
-          projectId,
-          Date.now(),
-          `${flowDocumentEntryId}:${locationKey}`,
-          { countAsUserEntry: false },
-        ));
+      if (!mobile && !locationState?.startNewFromResume && canAutoOpenInput(sources, { userId, flow: useAppStore.getState(), slotClient: draftSlot })) {
+        if (sources[0].id === 'flow') { resume(); showResumeToast(); }
+        else {
+          autoOpening.current = true;
+          setEntryDecision('ask');
+          await chooseSource(sources[0].id, sources, true);
+          if (!current()) return;
+          autoOpening.current = false;
+        }
         return;
       }
-      const { projectId } = useAppStore.getState();
-      if (!isProductInfoConfirmed(projectId)) markProductInfoConfirmed(projectId);
-      setEntryDecision(registerConfirmedInputEntry(
-        projectId,
-        Date.now(),
-        `${flowDocumentEntryId}:${locationKey}`,
-      ));
-      return;
+      if (mobile && sources.length === 1 && sources[0].id === 'remote' && (mobilePcSlot || !sources[0].photosPending)) {
+        entryActions.showMobile(sources[0].meta, { entry: true });
+      }
+      setEntryDecision(sources.length ? 'ask' : 'continue');
+    })().catch(() => {
+      if (!current()) return;
+      const state = useAppStore.getState();
+      if (!mobile && state.projectId && state.projectPersisted) {
+        if (state.userId && state.userId !== userId) {
+          setEntrySources([{
+            id: 'flow', title: '만들던 상세페이지',
+            description: state.resumePath ? `${flowScreenName(state.resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+          }]);
+          setEntryDecision('ask');
+        } else resume({ resumeWrites: false });
+      }
+      else setEntryDecision(slotEnabled ? 'error' : 'continue');
+    });
+    return () => { alive = false; };
+  }, [mobile, authLoading, entryDecision, signingOut, slotEnabled, loginRequired, userChanged, userId]);
+
+  useEffect(() => {
+    if (signingOut || loginRequired || userChanged) return;
+    if (entryDecision === 'confirmed') {
+      if (!isMockMode && authLoading) return;
+      if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
+      let alive = true;
+      const epoch = draftSlot.getIdentityEpoch();
+      const project = useAppStore.getState();
+      const current = () => alive && epoch === draftSlot.getIdentityEpoch()
+        && project.projectGeneration === useAppStore.getState().projectGeneration
+        && project.projectId === useAppStore.getState().projectId;
+      (async () => {
+        try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
+        catch {
+          if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+          return;
+        }
+        if (!current()) return;
+        setLocalSaveBlocked(false);
+        const { resumePath } = useAppStore.getState();
+        const sources = await getFlowDraftSources({
+          slotClient: draftSlot, enabled: slotEnabled, throwOnError: true,
+          check: () => checkDraftEntry(draftSlot, { isCurrent: current }),
+          flowSource: {
+            id: 'flow', title: '만들던 상세페이지',
+            description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+          },
+        });
+        if (!current()) return;
+        draftSlot.resumeEntryWrites();
+        if (sources) {
+          setEntrySources(sources);
+          setEntryDecision('ask');
+          return;
+        }
+        const state = useAppStore.getState();
+        if (!locationState?.startNewFromResume && canAutoOpenInput([{ id: 'flow' }], { userId, flow: state, slotClient: draftSlot })) {
+          resume();
+          showResumeToast();
+          return;
+        }
+        // http 모드의 세션 만료 리다이렉트는 사용자의 잠금 화면 재진입이 아니다.
+        // 로그인 유도 경로가 입력 화면을 맡도록 두고, 잠금 연타 카운트도 올리지 않는다.
+        if (!isMockMode && !session) {
+          const { projectId } = useAppStore.getState();
+          setEntryDecision(registerConfirmedInputEntry(
+            projectId,
+            Date.now(),
+            `${flowDocumentEntryId}:${locationKey}`,
+            { countAsUserEntry: false },
+          ));
+          return;
+        }
+        setEntrySources([{
+          id: 'flow', title: '만들던 상세페이지',
+          description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+        }]);
+        setEntryDecision('ask');
+      })().catch(() => {
+        if (!current()) return;
+        const state = useAppStore.getState();
+        if (!session || canAutoOpenInput([{ id: 'flow' }], { userId, flow: state, slotClient: draftSlot })) resume({ resumeWrites: false });
+        else {
+          setEntrySources([{
+            id: 'flow', title: '만들던 상세페이지',
+            description: state.resumePath ? `${flowScreenName(state.resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
+          }]);
+          setEntryDecision('ask');
+        }
+      });
+      return () => { alive = false; };
     }
     if (entryDecision === 'redirect') {
       pushToast('의류 정보는 확정돼 수정할 수 없어요', { icon: 'alertTri' });
@@ -353,95 +494,158 @@ function ProductInputRoute() {
       return;
     }
     if (entryDecision !== 'start-new') return;
+    const previous = { ...useAppStore.getState() };
     let alive = true;
     beginProject().then(() => {
       if (!alive) return;
       flowRouteSeenThisSession = true;
+      notifyFlowKept(previous, pushToast, navigate);
       setEntryDecision('continue');
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut, slotEnabled, loginRequired, userChanged]);
 
   useEffect(() => {
-    if (entryDecision !== 'continue') return;
+    if (loginRequired || userChanged || entryDecision !== 'continue') return;
     consumeFlowContinuation(useAppStore.getState().projectId);
     flowRouteSeenThisSession = true;
     const { projectId } = useAppStore.getState();
     markFlowSession(projectId, '/create/input');
+    useAppStore.getState().markFlowUsed(userId);
+  }, [entryDecision, loginRequired, userChanged]);
+
+  useEffect(() => {
+    if (entryDecision !== 'error') return;
+    const retry = () => setEntryDecision('checking');
+    const visible = () => { if (document.visibilityState === 'visible') retry(); };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', visible);
+    };
   }, [entryDecision]);
 
-  const resume = () => {
+  useEffect(() => {
+    if (!locationState?.startNewFromResume || newRequestHandled.current === locationKey
+        || ['checking', 'confirmed', 'error'].includes(entryDecision)) return;
+    newRequestHandled.current = locationKey;
+    requestStartNew();
+  }, [locationKey, locationState, entryDecision]);
+
+  useEffect(() => {
+    if (mobile || !slotEnabled || authLoading || signingOut || userChanged || entryDecision !== 'continue') return;
+    let alive = true;
+    let checking = false;
+    const eligible = () => !inputHasContent.current && !draftSlot.getToken() && !draftSlot.hasStaged();
+    const check = async () => {
+      if (document.visibilityState === 'hidden' || checking || !eligible()) return;
+      if (Date.now() - lastReturnCheck.current < 15000) return;
+      lastReturnCheck.current = Date.now();
+      checking = true;
+      try {
+        const slot = await draftSlot.get();
+        if (!alive || !eligible()) return;
+        if (isVisibleDraftSlot(slot, draftSlot) && slot.holdsToken !== true) {
+          setEntrySources([remoteDraftSource(slot.meta)]);
+          setEntryDecision('ask');
+        }
+      } catch {
+        // 재진입 조회 실패는 현재 입력 화면을 유지한다.
+      } finally { checking = false; }
+    };
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [mobile, slotEnabled, authLoading, signingOut, userChanged, entryDecision]);
+
+  const resume = ({ resumeWrites = true } = {}) => {
+    if (resumeWrites) draftSlot.resumeEntryWrites();
     flowRouteSeenThisSession = true;
     const { projectId, resumePath } = useAppStore.getState();
     markFlowSession(projectId, resumePath || '/create/input');
+    useAppStore.getState().markFlowUsed(userId);
     setEntryDecision('continue');
     if (resumePath && resumePath !== '/create/input') navigate(resumePath, { replace: true });
   };
-  const startNew = async () => {
-    if (slotEnabled) {
-      try {
-        await draftSlot.removeForNewFlow();
-      } catch (error) {
-        pushToast(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
-        return;
-      }
-    }
-    await beginProject();
-    flowRouteSeenThisSession = true;
+  const startNew = () => mobile ? entryActions.nextMobile({ enabled: slotEnabled, entry: true })
+    : entryActions.startNew({ enabled: slotEnabled });
+  const requestStartNew = () => {
     setEntryDecision('continue');
+    void startNew();
   };
+  const showResumeToast = () => pushToast('이어서 열었어요', { duration: 8000, action: {
+    label: '새로 시작', onClick: () => navigate('/create/input', { state: { startNewFromResume: true } }),
+  } });
 
-  const chooseSource = async (sourceId) => {
-    const source = entrySources.find((candidate) => candidate.id === sourceId);
+  const chooseSource = async (sourceId, sources = entrySources, automatic = false) => {
+    const source = sources.find((candidate) => candidate.id === sourceId);
     if (!source) return;
     if (sourceId === 'flow') {
       resume();
       return;
     }
     const { projectId, projectPersisted } = useAppStore.getState();
-    if (sourceId === 'remote' && !source.localFallback) {
-      // 내용이 서버에만 있다 — 가져와야 열 수 있다.
-      try {
-        const takeover = await draftSlot.takeover();
-        if (!takeover?.payload) {
-          pushToast('저장돼 있던 내용이 다른 곳에서 이미 정리됐어요.', { icon: 'alertTri' });
-          setEntrySources([]);
-          setEntryDecision('checking');
-          return;
-        }
-        if (projectId && projectPersisted) await beginProject();
-        draftSlot.stage(takeover);
-      } catch (error) {
-        pushToast(error?.message || '저장된 내용을 열지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
-        return;
-      }
+    if (sourceId === 'remote') {
+      await entryActions.openRemote(source, { automatic });
     } else {
-      // 내용이 이 기기에 있다 — 서버를 기다리지 않고 바로 연다. 이어쓰기 권한(작업권)은
-      // 뒤에서 확보하고, 실패해도 저장 재시도 경로가 처리한다(복원 자체를 막지 않는다).
-      const draft = source.draft || source.localFallback;
-      if (projectId && projectPersisted) await beginProject();
-      draftSlot.stage({ payload: draft, meta: source.meta });
-      void draftSlot.takeover().catch(() => {});
+      await entryActions.openLocal({ ...source, draft: source.draft || source.localFallback }, {
+        enabled: slotEnabled,
+        automatic,
+        resetFlow: Boolean(projectId && projectPersisted),
+      });
     }
-    flowRouteSeenThisSession = true;
-    setEntryDecision('continue');
   };
 
+  // 이메일 로그인도 새로고침 없이 재판정한다. 이전 계정의 입력 화면은 먼저 그리지 않는다.
+  if (userChanged) {
+    setEntryUserId(userId);
+    setMobileEntry(null);
+    autoOpening.current = false;
+    entryActions.cancel();
+    setEntrySources([]);
+    setEntryDecision('checking');
+    return null;
+  }
   if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;
+  if (loginRequired) {
+    return <PhoneUploadIntro onLogin={() => openLogin('/create/input')} />;
+  }
+  if (entryDecision === 'error') {
+    return <HandoffStatusPage variant="error" onRetry={() => setEntryDecision('checking')}
+      onUpload={!localSaveBlocked && !draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
+  }
   if (entryDecision === 'ask') {
+    if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;
     return (
       <ResumeChoiceModal
         sources={entrySources}
         onChoose={chooseSource}
         onNew={startNew}
+        busy={entryBusy}
       />
     );
   }
   // ChromeLayout이 이미 상단 헤더와 배경을 렌더한다. 짧은 진입 판정 동안에는
   // 본문을 비워 두어 별도의 흰 로딩 화면이나 전환 문구가 배경을 가리지 않게 한다.
   if (entryDecision !== 'continue') return null;
-  return <ProductInput key={`${generation}:${session?.user?.id || 'guest'}`} />;
+  if (mobile && ['pc', 'gone'].includes(mobileEntry?.state)) return <>
+    <MobileDraftStatus meta={mobileEntry.meta} gone={mobileEntry.state === 'gone'} busy={entryBusy}
+      onNext={() => entryActions.nextMobile({ enabled: slotEnabled })}
+      onSlotChange={(slot) => {
+        if (!isVisibleDraftSlot(slot, draftSlot)) setMobileEntry({ state: 'gone' });
+        else if (isMobileDraftWriter(slot.meta)) entryActions.showMobile(slot.meta, { entry: true });
+        else setMobileEntry({ state: 'pc', meta: slot.meta });
+      }} />
+    <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />
+  </>;
+  if (entryDialog) return <DraftEntryDialog dialog={entryDialog} actions={entryActions} busy={entryBusy} />;
+  return <ProductInput onFreshStart={(meta) => setMobileEntry(meta ? { state: 'saved', meta, generation: useAppStore.getState().projectGeneration } : null)} initialSavedMeta={mobileEntry?.state === 'saved' && mobileEntry.generation === generation ? mobileEntry.meta : null} key={`${generation}:${session?.user?.id || 'guest'}`} onContentChange={onContentChange} />;
 }
 
 /* '/' 복귀의 리다이렉트. (Option B 재활성) 익명 입력+분석 draft(사진 blob 포함)를 로그인 후
@@ -487,6 +691,7 @@ function LoginQueryGate() {
 
 function RootRedirect() {
   const { session, loading } = useAuth();
+  const mobile = isMobileDevice();
   // 저장소 접근은 AuthProvider 의 헬퍼를 지난다. **이 읽기는 useState 초기화 함수라 렌더
   // 중에 돈다** — 쿠키·사이트 데이터를 막은 브라우저(사파리 프라이빗, Chrome 사이트별 차단,
   // 일부 인앱 웹뷰)에서 sessionStorage 는 접근만으로 SecurityError 를 던지고, 이 레포엔
@@ -501,6 +706,13 @@ function RootRedirect() {
   const [destState, setDestState] = useState(null);
 
   useEffect(() => {
+    if (mobile) {
+      if (loading) return;
+      forgetPostLogin();
+      setDest('/create/input');
+      setPhase('done');
+      return;
+    }
     // 일반 첫 진입(/create/input)은 인증 확인과 무관하게 연다. 로그인 복귀처럼 세션이
     // 실제로 필요한 목표만 bootstrap 완료를 기다린다. AuthProvider는 session을 확정한 뒤
     // loading=false로 내리므로 그 전환에서 한 번만 실행한다(토큰 갱신 때 sync 재시작 금지).
@@ -521,10 +733,11 @@ function RootRedirect() {
       }
       setPhase('syncing');
       try {
-        const draft = await loadDraft();
+        let draft = await loadDraft();
         if (!draft?.product) { setDest(target); setPhase('done'); return; }
         // 로그인 복귀 승격도 입력 화면과 같은 작업권 계약을 따른다. active token을 서버 잠금
         // 안에서 먼저 소비해야만 프로젝트 생성을 시작할 수 있다.
+        draft = await ensureDraftRemotePhotos(draft);
         await draftSlot.remove();
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
         const { projectId, customMatchPromotion } = await Promise.race([promoteDraftToProject(draft), timeout]);
@@ -548,7 +761,7 @@ function RootRedirect() {
       }
     })();
     return () => { alive = false; };
-  }, [loading, returnIntent, target]);
+  }, [loading, returnIntent, target, mobile]);
 
   if (phase === 'syncing') return <div className="route-loading">입력 내용을 안전하게 저장하고 있어요…</div>;
   if (phase === 'done' && dest) return <Navigate to={dest} replace state={destState} />;
@@ -649,19 +862,23 @@ export default function App() {
             {/* 입력·분석은 공개 */}
             <Route path="input" element={<ProductInputRoute />} />
             {/* 마네킹 이후 단계는 로그인 필요 */}
-            <Route element={<RequireAuth />}>
-              <Route element={<RequireProject />}>
-                <Route path="mannequin" element={<Mannequin />} />
-                <Route path="storyboard" element={<Storyboard />} />
-                <Route path="generating" element={<Generating />} />
+            <Route element={<MobileHandoffGuard />}>
+              <Route element={<RequireAuth />}>
+                <Route element={<RequireProject />}>
+                  <Route path="mannequin" element={<Mannequin />} />
+                  <Route path="storyboard" element={<Storyboard />} />
+                  <Route path="generating" element={<Generating />} />
+                </Route>
               </Route>
             </Route>
           </Route>
         </Route>
         {/* editor lives outside the chrome (full-screen workspace) — 로그인 필요 */}
-        <Route element={<RequireAuth />}>
-          <Route element={<RequireEditorProject />}>
-            <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
+        <Route element={<MobileHandoffGuard />}>
+          <Route element={<RequireAuth />}>
+            <Route element={<RequireEditorProject />}>
+              <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
+            </Route>
           </Route>
         </Route>
         {/* 얼굴 라이선스 공개 검증(step02 QR 대상) — **RequireAuth 밖**. 심사위원·구매자가

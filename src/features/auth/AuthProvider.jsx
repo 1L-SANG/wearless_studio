@@ -118,6 +118,7 @@ export function AuthProvider({ children }) {
   const [signingOut, setSigningOut] = useState(false);
 
   const publishSession = useCallback((next) => {
+    draftSlot.setUserId?.(next?.user?.id ?? null);
     // 새 세션이 화면에 보이기 전에 이전 계정 정보와 진행 중 조회를 버린다.
     // 같은 사용자의 토큰 갱신은 캐시를 유지한다.
     if (useAppStore.getState().setAccountIdentity(next?.user?.id ?? null)) {
