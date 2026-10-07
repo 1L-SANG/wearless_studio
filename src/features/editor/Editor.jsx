@@ -3727,6 +3727,7 @@ export function Editor() {
           <EditorDownloadModal
             settings={dlSettings}
             summary={dlSummary}
+            blocks={blocks}
             notice={dlNotice}
             busy={dlBusy}
             progress={dlProg}

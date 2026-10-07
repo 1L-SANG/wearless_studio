@@ -4,6 +4,7 @@ import {
   normalizeExportSettings,
 } from '@/features/editor/editorExport.js';
 import styles from './EditorDownloadModal.module.css';
+import { missingNoticeFields } from './editorDownloadWarnings.js';
 
 const FORMAT_OPTIONS = [
   { id: 'jpeg', title: 'JPG', desc: '가볍게, 품질 90' },
@@ -43,6 +44,7 @@ export function EditorDownloadModal({
   settings: rawSettings,
   summary,
   notice,
+  blocks = [],
   busy,
   progress,
   onChange,
@@ -51,6 +53,7 @@ export function EditorDownloadModal({
 }) {
   const settings = normalizeExportSettings(rawSettings);
   const original = settings.preset === 'original';
+  const missingFields = missingNoticeFields(blocks);
   const update = (patch) => onChange(normalizeExportSettings({ ...settings, ...patch }));
   const deliveryOptions = original
     ? DELIVERY_OPTIONS.map((option) => option.id === 'split'
@@ -65,6 +68,10 @@ export function EditorDownloadModal({
         <h3 className={styles.title}>쇼핑몰에 올릴 파일 만들기</h3>
         <p className={styles.subtitle}>올릴 곳에 맞는 폭과 파일 형식을 골라 주세요.</p>
       </header>
+
+      {missingFields.length > 0 && (
+        <p className={styles.notice} role="status">고시정보 입력 필요: {missingFields.join(', ')}</p>
+      )}
 
       <div className={styles.groups}>
         <fieldset className={styles.group}>
@@ -145,10 +152,10 @@ export function EditorDownloadModal({
         <p>카페24에서는 한글 파일명이 안 보일 수 있어 ZIP 안 파일명은 영문과 숫자로 저장해요.</p>
       </div>
 
-      <footer className={styles.footer}>
+      <footer className={`modal-actions ${styles.footer}`}>
         <Button variant="quiet" onClick={onCancel} disabled={busy}>취소</Button>
         <Button variant="primary" icon="download" onClick={onDownload} disabled={busy}>
-          {busy ? `만드는 중…${progress ? ` ${progress}` : ''}` : '다운로드'}
+          {busy ? `만드는 중…${progress ? ` ${progress}` : ''}` : missingFields.length ? '그대로 받기' : '다운로드'}
         </Button>
       </footer>
     </div>
