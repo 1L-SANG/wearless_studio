@@ -178,7 +178,8 @@ export function defaultInfoFor(type, ctx = {}) {
         .map((p) => ({ title: p, desc: '', src: null }));
       // 새 블록 기본 칸수는 3 (분석 특징이 더 많으면 그 수) — MIN 이 3을 넘게 바뀌어도 하한은 지킨다
       while (points.length < Math.max(3, FEATURE_ITEMS_MIN)) points.push({ title: '', desc: '', src: null });
-      return fillFeatureCopy({ layout: 'stack', items: points }, ctx);
+      // 새 기본 문서는 큰 빈 사진 칸을 잡지 않는다. 저장된 info.layout은 그대로 사용한다.
+      return fillFeatureCopy({ layout: 'compact', items: points }, ctx);
     }
     case 'faq':
       return {
