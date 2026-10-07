@@ -28,6 +28,9 @@ export const MAX_SINGLE_PAGE_HEIGHT = 20000;
 export const MAX_SPLIT_HEIGHT = 3000;
 export const MAX_JPEG_BYTES = 3 * 1024 * 1024;
 export const JPEG_QUALITY = 0.9;
+export const ORIGINAL_PNG_MAX_HEIGHT = Math.min(
+  MAX_CAPTURE_DIM, MAX_CANVAS_DIM, Math.floor(MAX_CANVAS_AREA / (EXPORT_WIDTH * PIXEL_RATIO)),
+);
 export const EXPORT_SETTINGS_KEY = 'wearless.editor.export.v1';
 
 export const EXPORT_PRESETS = Object.freeze([
@@ -152,7 +155,11 @@ export function buildExportSummary(blockHeights, rawSettings) {
   const scaled = blockHeights.map((height) => Math.max(0, Math.trunc((Number(height) || 0) * ratio)));
   const height = scaled.reduce((sum, value) => sum + value, 0);
   const grouped = preset.original
-    ? scaled.filter((value) => value > 0)
+    ? scaled.flatMap((value) => {
+      const pieces = [];
+      for (let left = value; left > 0; left -= ORIGINAL_PNG_MAX_HEIGHT) pieces.push(Math.min(left, ORIGINAL_PNG_MAX_HEIGHT));
+      return pieces;
+    })
     : groupScaledBlockHeights(blockHeights, ratio);
   const fileCount = settings.delivery === 'single' ? (height > 0 ? 1 : 0) : grouped.length;
   const bytesPerPixel = settings.format === 'jpeg' ? 0.24 : 1.1;
@@ -160,7 +167,7 @@ export function buildExportSummary(blockHeights, rawSettings) {
     width: preset.width,
     height,
     fileCount,
-    maxPieceHeight: settings.delivery === 'split' && !preset.original ? MAX_SPLIT_HEIGHT : null,
+    maxPieceHeight: settings.delivery === 'split' ? (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT) : null,
     approxBytes: Math.round(preset.width * height * bytesPerPixel),
     approximate: true,
     fallbackReason: settings.delivery === 'single'
@@ -421,6 +428,8 @@ async function captureBlockCanvasSlices(
   fontEmbedCSS,
   maxHeight = MAX_SPLIT_HEIGHT,
 ) {
+  maxHeight = Math.min(maxHeight, MAX_CAPTURE_DIM, MAX_CANVAS_DIM,
+    Math.floor(MAX_CANVAS_AREA / Math.trunc(EXPORT_WIDTH * pixelRatio)));
   const { clone, softFailed, dispose } = await prepareClone(blockNode);
   const canvases = [];
   try {
@@ -533,9 +542,10 @@ function drawCanvasRange(createCanvas, source, range, width = source.width) {
 
 export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) {
   const settings = normalizeExportSettings(rawSettings);
-  const width = exportPreset(settings.preset).width;
+  const preset = exportPreset(settings.preset);
+  const width = preset.width;
   const ratio = width / EXPORT_WIDTH;
-  const maxHeight = deps.maxHeight || MAX_SPLIT_HEIGHT;
+  const maxHeight = deps.maxHeight || (preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT);
   const createCanvas = deps.createCanvas || createExportCanvas;
   const releaseCanvas = deps.releaseCanvas || releaseExportCanvas;
   const encodeCanvas = deps.encodeCanvas || canvasToBlob;
@@ -652,6 +662,12 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
       softFailed += captured.softFailed;
       try {
         for (const canvas of canvases) {
+          if (preset.original && canvas.height <= maxHeight) {
+            // 이미 2배율로 안전하게 캡처한 PNG 조각이다. 다시 그리거나 축소하지 않는다.
+            files.push(await encodeCanvas(canvas, 'image/png')); // eslint-disable-line no-await-in-loop
+            releaseCanvas(canvas);
+            continue;
+          }
           const ranges = splitCanvasRanges(canvas, maxHeight);
           for (const range of ranges) await append(canvas, range); // eslint-disable-line no-await-in-loop
         }
@@ -751,34 +767,8 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
 
 // ③ 전체 블록 → 블록별 PNG 를 담은 ZIP
 export async function exportBlocksZip(blockNodes, productName, onProgress, opts = {}) {
-  const zip = new JSZip();
-  const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
-  let softFailed = 0;
-  for (let i = 0; i < blockNodes.length; i += 1) {
-    onProgress?.(i, blockNodes.length);
-    const r = await captureBlockCanvas(blockNodes[i], PIXEL_RATIO, fontEmbedCSS); // eslint-disable-line no-await-in-loop
-    zip.file(detailFileName(i, blockNodes.length, 'png'), await canvasToBlob(r.canvas)); // eslint-disable-line no-await-in-loop
-    softFailed += r.softFailed;
-    releaseExportCanvas(r.canvas);
-  }
-  let blob = await zip.generateAsync({ type: 'blob' }); // PNG 는 이미 압축 — STORE 기본이면 충분
-  let verifyUrl = null;
-  let notarizeWarning = null;
-  if (opts.provenance?.projectId) {
-    const n = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
-    blob = n.blob;
-    verifyUrl = n.verifyUrl;
-    notarizeWarning = n.warning;
-  }
-  saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
-  return {
-    softFailed,
-    verifyUrl,
-    notarizeWarning,
-    byteSize: blob.size,
-    fileCount: blockNodes.length,
-    sizeWarning: null,
-  };
+  return exportStorefrontDownload(blockNodes, productName, onProgress,
+    { preset: 'original', format: 'png', delivery: 'split' }, opts);
 }
 
 export async function exportStorefrontDownload(
@@ -795,10 +785,8 @@ export async function exportStorefrontDownload(
   const effective = autoSwitchReason ? { ...settings, delivery: 'split' } : settings;
   const preset = exportPreset(effective.preset);
 
-  if (preset.original) {
-    const result = effective.delivery === 'split'
-      ? await exportBlocksZip(blockNodes, productName, onProgress, opts)
-      : await exportLongPng(blockNodes, productName, onProgress, opts);
+  if (preset.original && effective.delivery === 'single') {
+    const result = await exportLongPng(blockNodes, productName, onProgress, opts);
     return { ...result, autoSwitchReason, delivery: effective.delivery };
   }
 
@@ -806,7 +794,8 @@ export async function exportStorefrontDownload(
   const rendered = await renderStorefrontFiles(blockNodes, effective, {
     onProgress,
     captureBlock: effective.delivery === 'split'
-      ? (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS)
+      ? (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
+        preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT)
       : (node, ratio) => captureBlockCanvas(node, ratio, fontEmbedCSS),
   });
   let blob;

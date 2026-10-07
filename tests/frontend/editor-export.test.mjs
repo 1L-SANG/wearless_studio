@@ -85,6 +85,60 @@ test('fitPixelRatio: 한계 안에서 2 유지, 넘치면 축소, 한 장이 불
   assert.equal(fitPixelRatio(0), 2);
 });
 
+test('원본 PNG도 큰 블록을 안전한 파일 수로 안내하고 폭 2000을 유지한다', () => {
+  const summary = buildExportSummary([10000], { preset: 'original', format: 'png', delivery: 'split' });
+  assert.equal(summary.width, 2000);
+  assert.equal(summary.height, 20000);
+  assert.equal(summary.fileCount, 3);
+  assert.ok(summary.maxPieceHeight * summary.width <= 16777216);
+});
+
+test('원본 PNG는 2배율·무손실 형식으로 기존 블록 경계를 유지한다', async () => {
+  const encoded = [];
+  const result = await renderStorefrontFiles([{ h: 100 }, { h: 150 }],
+    { preset: 'original', delivery: 'split' }, {
+      measureBlock: node => node.h,
+      captureBlock: async (node, ratio) => {
+        assert.equal(ratio, 2);
+        return { canvases: [{ width: 2000, height: node.h * ratio }], softFailed: 0 };
+      },
+      createCanvas: (width, height) => ({ width, height, getContext: () => ({ drawImage() {} }) }),
+      releaseCanvas() {},
+      encodeCanvas: async (canvas, mime, quality) => {
+        encoded.push({ width: canvas.width, height: canvas.height, mime, quality });
+        return new Blob(['png'], { type: mime });
+      },
+    });
+  assert.equal(result.files.length, 2);
+  assert.deepEqual(encoded, [
+    { width: 2000, height: 200, mime: 'image/png', quality: undefined },
+    { width: 2000, height: 300, mime: 'image/png', quality: undefined },
+  ]);
+});
+
+test('긴 원본 PNG 조각은 새 축소 캔버스 없이 모든 행을 순서대로 인코딩한다', async () => {
+  const heights = [8388, 8388, 3224];
+  let offset = 0;
+  const slices = heights.map(height => {
+    const canvas = { width: 2000, height, rows: Array.from({ length: height }, (_, index) => offset + index) };
+    offset += height;
+    return canvas;
+  });
+  const files = await renderStorefrontFiles([10000], { preset: 'original', delivery: 'split' }, {
+    measureBlock: height => height,
+    captureBlock: async (_node, ratio) => { assert.equal(ratio, 2); return { canvases: slices, softFailed: 0 }; },
+    createCanvas: () => { throw new Error('원본 PNG를 다시 그리거나 축소하면 안 된다'); },
+    releaseCanvas() {},
+    encodeCanvas: async (canvas, mime, quality) => {
+      assert.equal(mime, 'image/png'); assert.equal(quality, undefined);
+      assert.ok(canvas.width * canvas.height <= 16777216);
+      return { rows: canvas.rows, width: canvas.width };
+    },
+  });
+  assert.deepEqual(files.files.flatMap(file => file.rows), Array.from({ length: 20000 }, (_, i) => i));
+  assert.ok(files.files.every(file => file.width === 2000));
+});
+
 test('쇼핑몰 폭 프리셋은 1,000px 설계 캔버스의 정확한 배율을 쓴다', () => {
   assert.deepEqual(EXPORT_PRESETS.map(({ id, width }) => [id, width]), [
     ['smartstore', 860],
