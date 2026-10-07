@@ -1,33 +1,17 @@
 name: vercel-deploy
 
-# 프론트 운영 배포를 Vercel CLI(토큰)로 직접 올린다.
+# Git 자동 배포가 커밋 작성자 검사로 막혔을 때만 수동 실행하는 비상 배포다.
 #
-# 왜 필요한가: Vercel Hobby 는 **비공개** 레포에서 커밋 작성자가 팀 소유자(로그인 연결 GitHub)일
-# 때만 배포를 허용한다. 레포가 8/14~10/02 공개라 검사가 안 걸렸고, 비공개로 바뀐 10/02 부터 Git 자동
-# 배포가 "commit author did not have contributing access" 로 전부 막혔다.
-# 배포 훅도 같은 검사를 받는다(2026-10-02 실측: 훅 배포 3b318ac 도 BLOCKED, #457).
-# CLI 배포는 토큰 소유자로 인증하고, 아래처럼 .git 을 지운 뒤 올리면 커밋 작성자 정보가 붙지 않는다.
-#
-# Git 자동 배포(프리뷰·Vercel 체크)는 그대로 둔다 — 비공개인 동안은 계속 Blocked 로 뜨지만,
-# 레포가 다시 공개되거나 Pro 로 올라가면 그대로 살아난다.
+# 2026-10-07: 10/02 비공개 전환 뒤 Hobby 작성자 검사를 우회하려고 push 배포를 추가했다.
+# vercel pull은 Sensitive VITE_ 값을 [SENSITIVE]로 받아, CLI 빌드가 목 모드로 실행됐다.
+# 이 CLI 배포가 정상 Git 배포의 운영 도메인을 덮어써 정상과 장애가 반복됐다.
+# 10/05 이후 오너 커밋의 Git 자동 배포가 정상화됐으므로 운영 배포는 Git에 맡긴다.
+# 수동 실행 전 Vercel의 VITE_ 변수를 Sensitive가 아닌 값으로 다시 저장해야 한다.
+# 절차와 복구 방법: docs/runbooks/vercel-frontend-deploy.md
 #
 # 준비: Vercel Account Settings → Tokens 에서 만든 토큰을 레포 시크릿 VERCEL_TOKEN 에 넣는다.
 # 조직·프로젝트 ID 는 비밀이 아니라 아래 env 에 그대로 둔다.
 on:
-    push:
-        branches: [main]
-        # 서버·인프라·문서만 바뀐 머지는 프론트 빌드가 필요 없다. 그 외(src·public·html·
-        # vercel.json·package 등)는 전부 배포한다 — 빠뜨려서 안 나가는 쪽보다 한 번 더 빌드하는 쪽이 낫다.
-        paths-ignore:
-            - "server/**"
-            - "copilot/**"
-            - "deploy/**"
-            - "docs/**"
-            - "documents/**"
-            - "supabase/**"
-            - "services/**"
-            - "contracts/**"
-            - "**/*.md"
     workflow_dispatch:
 
 # 연달아 머지되면 마지막 것만 의미 있다.
@@ -63,11 +47,25 @@ jobs:
               with:
                   node-version: 24
                   cache: pnpm
-            - run: npm install --global vercel@latest
+            - run: npm install --global vercel@62.5.0
             # 운영 환경 변수(VITE_*)와 프로젝트 설정을 Vercel 에서 받아 온다 — 저장소엔 없다.
             - run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
               env:
                   VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+            - name: 운영 프론트 환경변수 확인
+              run: |
+                  node --input-type=module <<'NODE'
+                  import { readFileSync } from 'node:fs';
+                  const lines = readFileSync('.vercel/.env.production.local', 'utf8').split(/\r?\n/);
+                  const placeholders = lines.flatMap((line) => {
+                    const match = line.match(/^\s*(?:export\s+)?(VITE_[A-Za-z0-9_]+)\s*=\s*(?:"\[SENSITIVE\]"|'\[SENSITIVE\]'|\[SENSITIVE\])\s*(?:#.*)?$/);
+                    return match ? [match[1]] : [];
+                  });
+                  if (placeholders.length) {
+                    console.error(`::error::${placeholders.join(', ')}: vercel pull이 Sensitive 값을 [SENSITIVE] 자리표시로 받았습니다. 이 값으로 빌드하면 운영이 목 모드 또는 잘못된 설정으로 실행됩니다. Vercel에서 해당 VITE_ 변수를 Sensitive가 아닌 값으로 다시 저장하세요.`);
+                    process.exit(1);
+                  }
+                  NODE
             - run: vercel build --prod --token="$VERCEL_TOKEN"
               env:
                   VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

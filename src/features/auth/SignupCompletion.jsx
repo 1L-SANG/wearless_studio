@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Icon, Modal, useToast } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
+import { isMockMode } from '@/lib/api/index.js';
 import { acceptSellerConsent, getSellerConsent } from '@/lib/api/consents.js';
 import { claimSignupConsent, clearSignupConsent, hasFreshSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
@@ -51,7 +52,7 @@ export function SignupCompletion() {
 
   useEffect(() => {
     setState(null); setChecked(false); setPending(false); setError('');
-    if (loading || !userId) return undefined;
+    if (loading || !userId || isMockMode) return undefined;
     const ctrl = new AbortController();
     request.current = ctrl;
     // 조회가 늦거나 실패해도 이 가입 동의는 처음 돌아온 계정의 것이다.

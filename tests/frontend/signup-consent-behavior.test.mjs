@@ -33,7 +33,7 @@ function openEmail(h) {
 // harness, hooks retain state/dependencies between renders; cleanup runs before a
 // changed effect. Only browser rendering, Supabase, and HTTP are replaced.
 async function harness(t, { storage = new Map(), user = null, realHttp = false,
-  reviewLogin = true, facemarket = false, admin = false, localSupabase = false, realAccountStore = false } = {}) {
+  reviewLogin = true, facemarket = false, admin = false, localSupabase = false, realAccountStore = false, mockMode = false } = {}) {
   const key = `__signupTest${Math.random().toString(36).slice(2)}`;
   const previousStorage = globalThis.sessionStorage;
   const previousWindow = globalThis.window;
@@ -149,7 +149,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
         if (id === '\0signup-test-jsx') return "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment='Fragment';";
         if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase;`;
         if (id === '\0signup-test-http') return `export const http=(...args)=>${access}.http(...args); export const resetAnalysisCache=()=>{};`;
-        if (id === '\0signup-test-mode') return `export const isMockMode=false; export const api=${access}.api;`;
+        if (id === '\0signup-test-mode') return `export const isMockMode=${mockMode}; export const api=${access}.api;`;
         if (id === '\0signup-test-query') return `export const useQueryClient=()=>${access}.queryClient;`;
         if (id === '\0signup-test-host') return `export const IS_ADMIN=${admin}; export const IS_FACEMARKET=${facemarket};`;
         if (id === '\0signup-test-toss') return `export const PG_REVIEW_LOGIN_ENABLED=${reviewLogin};`;
@@ -224,6 +224,23 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   await h.flush();
   return h;
 }
+
+test('mock mode skips consent lookup and never shows signup completion for a real session', async t => {
+  const h = await harness(t, { user: 'new-B', mockMode: true });
+  h.completion(); await h.flush();
+  assert.equal(h.completion(), null);
+  assert.deepEqual(h.runtime.requests, []);
+  assert.deepEqual(h.runtime.records, []);
+});
+
+test('http mode still checks consent and shows signup completion when consent is missing', async t => {
+  const h = await harness(t, { user: 'new-B' });
+  h.completion(); await h.flush();
+  assert.ok(checkbox(h.completion()));
+  assert.equal(submit(h.completion()).props.disabled, true);
+  assert.equal(h.runtime.requests.length, 1);
+  assert.equal(h.runtime.requests[0].expectedUserId, 'new-B');
+});
 
 test('email account switch reloads the account and discards the previous subscription cache', async t => {
   const h = await harness(t, { user: 'A', realAccountStore: true });
