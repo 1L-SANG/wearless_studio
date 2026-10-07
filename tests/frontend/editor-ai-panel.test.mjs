@@ -55,20 +55,16 @@ test('isDetail 은 검증된 effectiveShotVal 을 읽는다 — raw shot 은 카
   assert.match(aiPanel, /const isDetail = isProduct && effectiveShotVal === 'detail'/);
 });
 
-test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않는다 — 분석 기반 exampleGender 폴백', () => {
+test('갤러리·게이트 성별은 가상 모델 또는 분석 기반 exampleGender를 쓴다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.match(aiPanel, /\[\.\.\.virtualModels, \.\.\.fmList\]\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
+  assert.match(aiPanel, /virtualModels\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
   assert.match(editorSource, /exampleGender=\{exampleGenderFromAnalysis\(analysis, catalogs, clothingType\)\}/);
 });
 
-test('실제 모델은 모든 컷에서 고를 수 있다', () => {
-  // 2026-09-11 사용자 결정 — 컷 종류로 모델 카드를 비활성화하거나, 컷을 바꿨다고
-  // 가상 모델로 되돌리지 않는다. 되살아나면 셀러가 고른 얼굴이 조용히 바뀐다.
+test('새 컷은 가상 모델만 고르고 옛 실패 컷의 실제 모델 판정은 유지한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.doesNotMatch(aiPanel, /const disabled = effectiveCutType !== 'horizon'/);
-  assert.doesNotMatch(aiPanel, /실제 모델은 스튜디오 컷에만 쓸 수 있어요/);
-  assert.doesNotMatch(aiPanel, /if \(effectiveCutType === 'horizon' \|\| !isRealModelSelection\(model\)\) return/);
-  // 브랜드 유형은 컷 종류와 무관하게 실제 모델이면 요구한다.
+  assert.doesNotMatch(aiPanel, /fmList|fmModels|ModelThumb/);
+  assert.match(aiPanel, /virtualModels\.map/);
   assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*isRealModelSelection\(model\);/);
 });
 

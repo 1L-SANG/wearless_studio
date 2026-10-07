@@ -30,12 +30,10 @@ test('ModelLicense reuses the shared categories for toggles', () => {
   assert.doesNotMatch(modelLicenseSource, /forbiddenUse|FORBIDDEN_BRAND_USE_CATEGORIES/);
 });
 
-test('analysis shape and form require an explicit category for a real model', () => {
+test('saved analysis keeps its category while the form removes the seller category input', () => {
   assert.match(shapesSource, /selectedModelId: null, stylingModelId: null, brandUseCategory: null, models: \[\]/);
-  assert.match(analysisFormSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
-  assert.match(analysisFormSource, /isRealModelSelection,[\s\S]*resolveSelectedModelId,[\s\S]*from '\.\/modelSelection\.js';/);
-  assert.match(analysisFormSource, /isRealModelSelection\(a\.selectedModelId\)[\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{a\.brandUseCategory\}/);
-  assert.match(analysisFormSource, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
+  assert.doesNotMatch(analysisFormSource, /BRAND_USE_CATEGORIES|fm-use-category/);
+  assert.doesNotMatch(analysisFormSource, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
 });
 
 test('Editor AI panel remediates a missing persisted category in place', () => {

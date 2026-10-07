@@ -426,9 +426,3 @@ test('셀러 목록과 상세는 허용한 실제 모델에만 공용 배지를 
     assert.equal(collectTree(detail.render({ model: disabled, onClose: () => {} }), isBadge).length, 0);
   } finally { await Promise.all([list.close(), detail.close()]); }
 });
-
-test('Wearless 셀러 모델 선택 카드도 서버의 2차 활용 값으로 공용 배지를 표시해요', async () => {
-  const source = await readFile(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
-  assert.match(source, /import \{ SecondaryUseBadge \} from '@\/features\/model\/SecondaryUseBadge\.jsx';/);
-  assert.match(source, /<SecondaryUseBadge enabled=\{m\.secondaryUseEnabled === true\}/);
-});

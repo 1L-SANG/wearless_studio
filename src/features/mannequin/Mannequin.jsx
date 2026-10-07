@@ -3,8 +3,7 @@ import { mannequinQuoteConfirmation, expectedMannequinQuote, mannequinQuoteLabel
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, isMockMode } from '@/lib/api/index.js';
-import { listModels } from '@/lib/api/facemarket.js';
+import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import {
   detailPageGenerationCreditShortfall,
@@ -28,10 +27,6 @@ import {
 import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import {
-  realFaceAllowedCut,
-  realModelFeeLabel,
-} from '@/features/analysis/modelSelection.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -686,9 +681,7 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
-  const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
-  const [horizonCutCount, setHorizonCutCount] = useState(null);
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditQuote, setCreditQuote] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
@@ -784,12 +777,11 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, loadedAnalysis, nextCatalogs, nextStoryboard, nextRealModels, nextCreditQuote] = await Promise.all([
+      const [nextProduct, loadedAnalysis, nextCatalogs, nextStoryboard, nextCreditQuote] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
-        isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
         api.getCreditQuote(pid).catch(() => null),
       ]);
       const nextAnalysis = loadedAnalysis;
@@ -798,15 +790,9 @@ export function Mannequin() {
       setProduct(nextProduct);
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
-      setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       setCreditQuote(nextCreditQuote);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
-      // 실제 모델 얼굴이 들어가는 컷 = 착용 컷 전부(2026-09-11 사용자 결정).
-      setHorizonCutCount(Array.isArray(nextStoryboard)
-        ? uniqueGenerationCutCount(nextStoryboard.filter(
-            (block) => realFaceAllowedCut(block?.cutType)))
-        : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
@@ -961,19 +947,14 @@ export function Mannequin() {
       pickLb: stepState[step.key]?.pickLb,
     }))
   ));
-  const realModelFee = realModelFeeLabel(
-    analysis?.selectedModelId,
-    realModels,
-    horizonCutCount || 0,
-  );
   const regenerationQuote = changedQuote?.operation === 'regenerate'
     ? { ...(creditQuote?.mannequinRegenerate || {}), nextCost: changedQuote.quote.credits }
     : creditQuote?.mannequinRegenerate
     || mannequinRegenerationQuote(useAppStore.getState().account?.plan, cuts.length);
   const continueLabel = needsRegen
     ? mannequinRegenerationCtaLabel(regenerationQuote)
-    : `이대로 진행 · ${aiCutCount == null ? '—' : detailPageCreditCost(aiCutCount)} 크레딧${realModelFee}`;
-  const currentVersionContinueLabel = `현재 버전으로 진행 · ${aiCutCount == null ? '—' : detailPageCreditCost(aiCutCount)} 크레딧${realModelFee}`;
+    : `이대로 진행 · ${aiCutCount == null ? '…' : detailPageCreditCost(aiCutCount)} 크레딧`;
+  const currentVersionContinueLabel = `현재 버전으로 진행 · ${aiCutCount == null ? '…' : detailPageCreditCost(aiCutCount)} 크레딧`;
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   const openAdjustmentExamples = (key) => {
