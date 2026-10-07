@@ -113,6 +113,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   BANK_TRANSFER_BANK: "농축협"
   BANK_TRANSFER_ACCOUNT: "352-2407-2408-13"
   BANK_TRANSFER_HOLDER: "정일상(데일리모먼트)"
+  # 충전 보너스(Seller 5%, Pro 10%). 켜는 조건과 끄는 법은 docs/runbooks/topup-bonus-rollout.md.
+  # 10/7 확인: 마이그레이션 20261006120000 물리 적용, api 태스크는 5250a7f3 한 대뿐, 보너스 주문 0건.
+  TOPUP_BONUS_ENABLED: "true"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
