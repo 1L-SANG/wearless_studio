@@ -9,6 +9,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
@@ -658,3 +659,158 @@ def test_absent_no_text_is_absence_not_an_ambiguous_judgment(qc, monkeypatch, ch
     assert out["decision"] == expected
     assert out["specialist"]["rawJudge"]["permanentMarkings"]["candidateReadability"] == "no_text"
     assert out["markings"]["candidateReadability"] == "not_applicable"
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+@pytest.mark.parametrize('failure,cause', [
+    (TimeoutError('temporary'), 'timeout'),
+    (httpx.ConnectError('temporary'), 'provider_error'),
+])
+def test_transient_unknown_has_an_explicit_retry_cause(qc, monkeypatch, stage, failure, cause):
+    async def fail(*args, **kwargs):
+        raise failure
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, fail)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_malformed_response_is_retryable_without_changing_the_judge_contract(qc, monkeypatch, stage):
+    async def malformed(*args, **kwargs):
+        return {'gates': []}
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, malformed)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'invalid_response'
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('changes,cause', [
+    ({'model_detail_core': None}, 'configuration'),
+    ({'model_detail_specialist': None}, 'configuration'),
+    ({'model_detail_specialist': '  '}, 'configuration'),
+    ({'openai_api_key': None}, 'configuration'),
+    ({'detail_core_timeout_seconds': 'bad'}, 'configuration'),
+    ({'detail_core_timeout_seconds': 0}, 'configuration'),
+    ({'detail_specialist_timeout_seconds': 'bad'}, 'configuration'),
+    ({'detail_specialist_timeout_seconds': float('nan')}, 'configuration'),
+])
+def test_configuration_unknown_is_never_retried(qc, changes, cause):
+    out = asyncio.run(qc.verdict(settings(**changes), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is False
+
+
+def test_input_and_visual_uncertainty_are_not_transient(qc, monkeypatch):
+    invalid = asyncio.run(qc.verdict(settings(), [], picture('red')))
+    assert invalid.get('unknownCause') == 'invalid_input'
+    assert qc.is_transient_unknown(invalid) is False
+    raw = response(qc)
+    raw['gates'][0]['status'] = 'UNKNOWN'
+    uncertain = evaluate(qc, monkeypatch, raw)
+    assert uncertain.get('unknownCause') == 'uncertain_evidence'
+    assert qc.is_transient_unknown(uncertain) is False
+    raw = response(qc)
+    raw['temporaryArtifacts'].update(candidatePresence='uncertain', candidateKind='uncertain')
+    uncertain = evaluate(qc, monkeypatch, raw)
+    assert uncertain.get('unknownCause') == 'uncertain_evidence'
+    assert qc.is_transient_unknown(uncertain) is False
+
+
+@pytest.mark.parametrize('status,cause,retryable', [
+    (400, 'invalid_input', False), (401, 'configuration', False),
+    (403, 'configuration', False), (404, 'configuration', False),
+    (429, 'provider_error', True), (500, 'provider_error', True),
+    (503, 'provider_error', True),
+    (200, 'invalid_response', True),
+])
+def test_real_provider_boundary_classifies_unknown_without_exception_text(monkeypatch, status, cause, retryable):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(status, json={'choices': 'malformed'}, request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is retryable
+    assert 'malformed' not in str(out)
+
+
+@pytest.mark.parametrize('payload', [
+    {'error': {'code': 'insufficient_quota'}},
+    {'error': {'code': 'credit_balance_exhausted'}},
+])
+def test_account_quota_unknown_is_not_a_transient_provider_error(monkeypatch, payload):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(429, json=payload, request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'configuration'
+    assert qc.is_transient_unknown(out) is False
+
+
+@pytest.mark.parametrize('finish,refusal', [('stop', 'refused'), ('content_filter', None)])
+def test_provider_refusal_unknown_is_not_a_response_format_retry(monkeypatch, finish, refusal):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json={'model': 'judge-returned', 'usage': {'total_tokens': 10},
+                                            'choices': [{'finish_reason': finish,
+                                                        'message': {'refusal': refusal}}]},
+                                  request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'provider_rejection'
+    assert qc.is_transient_unknown(out) is False
+    assert out['returnedModel'] == 'judge-returned'
+    assert out['usage'] == {'total_tokens': 10}
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_local_header_configuration_error_is_not_transient(qc, monkeypatch, stage):
+    import h11
+    calls = []
+    async def invalid_header(*args, **kwargs):
+        calls.append(stage)
+        try:
+            h11.Request(method=b'POST', target=b'/', headers=[
+                (b'host', b'api.openai.com'), (b'authorization', b'Bearer test\n')])
+        except h11.LocalProtocolError as exc:
+            # httpcore/httpx maps the local h11 validation error to this type.
+            raise httpx.LocalProtocolError('invalid local header') from exc
+        pytest.fail('the malformed API key must fail local header validation')
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, invalid_header)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert calls == [stage]
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'configuration'
+    assert qc.is_transient_unknown(out) is False
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_corrupt_compressed_provider_response_is_a_retryable_format_error(qc, monkeypatch, stage):
+    async def broken_response(*args, **kwargs):
+        # httpx decodes provider responses during client.post, before JSON parsing.
+        return httpx.Response(200, headers={'content-encoding': 'gzip'}, content=b'not-gzip')
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, broken_response)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'invalid_response'
+    assert qc.is_transient_unknown(out) is True

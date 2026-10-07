@@ -188,6 +188,10 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
     fp = fingerprint(settings, sources, target, direction, style_reference,
                      framing_source_index=framing_source_index)
     state = await progress.read()
+    if state.get('phase') == 'rejudging':
+        if state.get('fingerprint') != fp:
+            raise DetailShotRejected('detail_attempt_unavailable', state.get('qc'))
+        state = await progress.recover_judgment_retry()
     prior_judgments = list((state.get('qc') or {}).get('judgments') or [])
     recover_final = (state.get('attempts') == 3
                      and state.get('phase') in {'generating', 'judging', 'judged'}
@@ -212,6 +216,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
               'requestedGenerationModel': settings.model_product_detail,
               'passed': False, 'attempts': state.get('attempts', 0),
               'judgments': prior_judgments,
+              'judgmentRetries': list(state.get('judgmentRetries') or []),
               'fallbackUsed': (state.get('attempts', 0) >= 3
                                and [j.get('decision') for j in prior_judgments[:2]] == ['FAIL', 'FAIL'])}
     resumed_judgment = report['judgments'][-1] if state.get('phase') == 'judged' and report['judgments'] else None
@@ -347,8 +352,26 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                 judgment = {'passed': False, 'decision': 'UNKNOWN', 'reason': 'judge_unavailable'}
             judgment = {**judgment, 'attempt': report['attempts']}
             report['judgments'].append(judgment)
+            report['decision'] = judgment.get('decision', 'UNKNOWN')
+            await progress.record_judgment(report)
+        if (detail_output_qc.is_transient_unknown(judgment)
+                and not any(row.get('attempt') == report['attempts'] for row in report['judgmentRetries'])):
+            # Commit a separate claim before the call. This is the same candidate,
+            # not a new generation or a second entry in the candidate judgments.
+            report['judgmentRetries'] = await progress.claim_judgment_retry(
+                fp, report['attempts'], hashlib.sha256(candidate.data).hexdigest())
+            try:
+                judgment = await detail_output_qc.verdict(
+                    settings, sources, candidate, target=target, direction=direction)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                judgment = {'passed': False, 'decision': 'UNKNOWN', 'reason': 'judge_unavailable'}
+            judgment = {**judgment, 'attempt': report['attempts']}
+            report['judgments'][-1] = judgment
+            report['decision'] = judgment.get('decision', 'UNKNOWN')
+            report = await progress.record_judgment_retry(report)
         report['decision'] = judgment.get('decision', 'UNKNOWN')
-        await progress.record_judgment(report)
         if judgment.get('passed') is True and judgment.get('decision') == 'PASS':
             report['passed'] = True
             await progress.finish(report)

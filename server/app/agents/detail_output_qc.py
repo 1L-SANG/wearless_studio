@@ -14,6 +14,7 @@ from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageOps
+import httpx
 
 from ..openai_key_fallback import has_openai_api_key
 from . import vision_llm
@@ -290,8 +291,27 @@ def _normalize(raw):
             "temporaryArtifacts": dict(artifacts)}
 
 
-def _unknown(out, code):
-    return {**out, "passed": False, "decision": "UNKNOWN", "errorCode": code,
+def is_transient_unknown(judgment):
+    return (judgment.get("decision") == "UNKNOWN"
+            and judgment.get("unknownCause") in {"provider_error", "timeout", "invalid_response"})
+
+
+def _failure_cause(exc):
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return "timeout"
+    if isinstance(exc, httpx.LocalProtocolError):
+        return "configuration"
+    if isinstance(exc, httpx.DecodingError):
+        return "invalid_response"
+    if isinstance(exc, httpx.TransportError):
+        return "provider_error"
+    if isinstance(exc, vision_llm.VisionError):
+        return exc.unknown_cause
+    return "unexpected_error"
+
+
+def _unknown(out, code, cause):
+    return {**out, "passed": False, "decision": "UNKNOWN", "errorCode": code, "unknownCause": cause,
             "gates": [{"code": gate, "status": "UNKNOWN", "evidence": "QC could not establish a complete valid judgment."} for gate in GATES]}
 
 
@@ -300,7 +320,7 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
            "gates": [], "markings": None, "temporaryArtifacts": None, "provider": None,
            "requestedModel": None, "returnedModel": None, "promptHash": None,
            "sourceHashes": [], "sourceHash": None, "resultHash": None, "targetHash": None,
-           "judgeImageHashes": [], "rawJudge": None, "errorCode": None, "usage": None,
+           "judgeImageHashes": [], "rawJudge": None, "errorCode": None, "unknownCause": None, "usage": None,
            "specialist": {"status": "NOT_RUN", "provider": "gpt", "requestedModel": None,
                           "returnedModel": None, "promptHash": None, "judgeImageHashes": [],
                           "rawJudge": None, "usage": None, "errorCode": None}}
@@ -332,7 +352,7 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                                else "Not evaluated after source-photo copy detection."}
                               for code in GATES]}
     except (ValueError, TypeError, OSError):
-        return _unknown(out, "invalid_input")
+        return _unknown(out, "invalid_input", "invalid_input")
     out["provider"] = "gpt"
     out["requestedModel"] = getattr(settings, "model_detail_core", None)
     if (
@@ -340,13 +360,16 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         or not isinstance(out["requestedModel"], str)
         or not out["requestedModel"].strip()
     ):
-        return _unknown(out, "primary_judge_unavailable")
-    metadata = {}
-    core_failure = None
+        return _unknown(out, "primary_judge_unavailable", "configuration")
     try:
         timeout = float(getattr(settings, "detail_core_timeout_seconds", 90))
         if not math.isfinite(timeout) or timeout <= 0:
-            return _unknown(out, "invalid_judge_timeout")
+            raise ValueError("invalid_judge_timeout")
+    except (TypeError, ValueError, OverflowError):
+        return _unknown(out, "invalid_judge_timeout", "configuration")
+    metadata = {}
+    core_failure = None
+    try:
         args = (settings, out["requestedModel"], prompt, images, response_schema(), min(timeout, 120.0))
         raw = await asyncio.wait_for(vision_llm._call_gpt(
             *args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000,
@@ -354,36 +377,41 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
         out["rawJudge"] = raw  # audit-only; repair_instructions never reads this field
         if not isinstance(raw, dict) or set(raw) != {"gates"}:
-            return _unknown(out, "invalid_primary_contract")
+            return _unknown(out, "invalid_primary_contract", "invalid_response")
         try:
             primary = _validate_gates(raw["gates"], CORE_GATES)
         except ValueError as exc:
-            return _unknown(out, str(exc))
+            return _unknown(out, str(exc), "invalid_response")
         states = {gate["status"] for gate in primary.values()}
         if states != {"PASS"}:
             decision = "UNKNOWN" if "UNKNOWN" in states else "FAIL"
             gates = [primary.get(code, {"code": code, "status": "UNKNOWN", "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."}) for code in GATES]
             if decision == "UNKNOWN":
-                return {**out, "decision": decision, "gates": gates}
+                return {**out, "decision": decision, "gates": gates, "unknownCause": "uncertain_evidence"}
             # Known core failure still needs marking evidence to choose the least
             # harmful candidate if all three attempts fail. Keep the core FAIL even
             # when the specialist is unavailable or uncertain.
             core_failure = {**out, "decision": "FAIL", "gates": gates}
-    except Exception:
+    except Exception as exc:
         # Do not log provider exception text: it can include sensitive request data.
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
-        return _unknown(out, "judge_unavailable_or_invalid")
+        return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc))
     specialist = out["specialist"]
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
-    if not has_openai_api_key(settings) or not specialist["requestedModel"]:
+    if (not has_openai_api_key(settings) or not isinstance(specialist["requestedModel"], str)
+            or not specialist["requestedModel"].strip()):
         specialist.update(status="UNAVAILABLE", errorCode="specialist_unavailable")
-        return core_failure or _unknown(out, "specialist_unavailable")
+        return core_failure or _unknown(out, "specialist_unavailable", "configuration")
     specialist_metadata = {}
     try:
         specialist_timeout = float(getattr(settings, "detail_specialist_timeout_seconds", 90))
         if not math.isfinite(specialist_timeout) or specialist_timeout <= 0:
             raise ValueError("invalid_specialist_timeout")
         specialist_prompt = build_prompt(len(sources), bound, direction, has_crop=has_crop, specialist=True)
+    except (TypeError, ValueError, OverflowError, OSError) as exc:
+        specialist.update(status="UNKNOWN", errorCode=type(exc).__name__)
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", "configuration")
+    try:
         specialist.update(status="RUN", promptHash=_hash(specialist_prompt.encode()),
                           judgeImageHashes=[_hash(im.data) for im in all_images])
         specialist_raw = await asyncio.wait_for(vision_llm._call_gpt(
@@ -398,11 +426,13 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         normalized = _normalize({**specialist_raw, "gates": [*primary.values(), *specialist_raw["gates"]]})
         if core_failure is not None:
             normalized.update(passed=False, decision="FAIL")
-        return {**out, **normalized}
+        return {**out, **normalized,
+                "unknownCause": "uncertain_evidence" if normalized["decision"] == "UNKNOWN" else None}
     except Exception as exc:
         specialist.update(status="UNKNOWN", returnedModel=specialist_metadata.get("returned_model"),
                           usage=specialist_metadata.get("usage"), errorCode=type(exc).__name__)
-        return core_failure or _unknown(out, "specialist_unavailable_or_invalid")
+        cause = "invalid_response" if isinstance(exc, (ValueError, TypeError)) else _failure_cause(exc)
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause)
 
 
 def repair_instructions(verdict):
