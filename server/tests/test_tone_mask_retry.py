@@ -245,7 +245,7 @@ def test_lease_recovery_error_without_result_advances_generation(
 def test_retries_stop_at_the_budget_and_only_then_admit_failure(client, make_token, monkeypatch):
     """무한 재시도는 SAM 을 다시 눕힌다 — 예산이 다하면 실패를 인정한다."""
     seeded = {egm.mask_job_key("p1", "A-1", retry=n): _terminal_job("unavailable", n)
-              for n in range(egm.TONE_MASK_MAX_RETRIES + 1)}
+              for n in range(4)}
     res, created = _tone_query(client, make_token, monkeypatch, seeded_jobs=seeded)
 
     assert res.status_code == 200, res.text

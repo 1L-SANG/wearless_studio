@@ -529,7 +529,7 @@
 .match-role.sub { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring); }
 
 /* 프로젝트 전용 매칭 의류 — 15개 큐레이션 + 추가/내 옷 1칸 */
-.custom-match-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.custom-match-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-items: start; }
 .custom-match-card, .custom-match-add { width: 100%; min-width: 0; border: 0; padding: 0; text-align: left; }
 .custom-match-card.incompatible { cursor: default; background: var(--bg-2); }
 .custom-match-card.incompatible img { filter: grayscale(1); opacity: .45; }
@@ -547,7 +547,10 @@
   justify-content: center; gap: 8px; padding: 10px; text-align: center;
   background: linear-gradient(100deg, var(--bg-2) 30%, #eee 50%, var(--bg-2) 70%); background-size: 200% 100%;
   animation: shimmer 1.3s linear infinite; color: var(--fg-2); }
-.custom-match-cutout-pending span { font-size: 10.5px; line-height: 1.35; }
+.custom-match-cutout-pending span { font-size: 10.5px; line-height: 1.35; text-wrap: balance; }
+.custom-match-cutout-failed { margin: 0; padding: 8px 10px; color: var(--fg-2); font-size: 11px;
+  line-height: 1.5; text-wrap: balance; }
+.custom-match-card:has(.custom-match-cutout-failed) .match-role { top: 104px; bottom: auto; }
 /* 추가 타일은 큐레이션 카드와 같은 해부구조(이미지 영역 130px + 이름 줄)를 쓴다 —
    라벨이 옆 15장의 이름과 같은 baseline 에 서고, 아이콘은 이미지 영역 한가운데에 크게. */
 .custom-match-add { display: block; background: #fff; color: var(--fg-3); }

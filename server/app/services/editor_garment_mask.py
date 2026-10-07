@@ -67,7 +67,7 @@ MATCH_GUARD_VERSION = "main-garment-guard-v1"
 
 #: 재시도 정책(상한·백오프·재시도 가능 상태)은 `sam_retry` 가 단일 출처다 — 세 SAM 잡
 #: (톤 마스크·sam_preprocess·matching_cutout)이 같은 예산을 써야 한다(2026-08-21). 값의
-#: 근거(5분 상한 = 오너 결정, 콜드스타트 실측)는 그 모듈 주석에 있다.
+#: 근거(약 3분 예산의 오너 결정, 콜드스타트 실측)는 그 모듈 주석에 있다.
 #: 이 이름들은 기존 호출부·테스트 호환을 위해 남긴다.
 TONE_MASK_MAX_RETRIES = sam_retry.MAX_RETRIES
 TONE_MASK_RETRY_BACKOFF_SECONDS = sam_retry.BACKOFF_SECONDS

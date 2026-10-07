@@ -465,6 +465,37 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   );
 }
 
+export function MatchingCutoutPreview({ m }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (m.cutoutStatus !== 'processing') return undefined;
+    const timer = setTimeout(() => setSlow(true), 60000);
+    return () => clearTimeout(timer);
+  }, [m.id, m.cutoutStatus]);
+
+  if (m.cutoutStatus === 'processing') {
+    return (
+      <div className="custom-match-cutout-pending" role="status">
+        <Icon name="loader" className="spin" size={16} />
+        <span>{slow
+          ? '생각보다 오래 걸려요. 기다리지 않고 다음으로 넘어가도 돼요.'
+          : '이미지 업로드됐어요! 지금 배경 정리 중이에요'}</span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <img src={m.thumb} alt={m.name} />
+      {m.cutoutStatus === 'failed' && (
+        <p className="custom-match-cutout-failed" role="status">
+          배경 정리를 못 해서 원본으로 보여 드려요. 다시 올리면 다시 시도해요.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function AnalysisForm({
   inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
   onConfirmingChange,
@@ -669,7 +700,7 @@ export function AnalysisForm({
     }
   }, [applyAnalysisReplacement, customMatchDeleting, projectId, toast]);
 
-  // 커스텀 매칭 누끼는 백그라운드에서 ~25s 처리된다(Task 5). processing 인 아이템이 하나라도
+  // 커스텀 매칭 누끼는 백그라운드에서 처리된다. processing 인 아이템이 하나라도
   // 있는 동안만 기존 refreshMatchClothing 을 5s 간격으로 폴링해 ready/failed 로 교체한다 —
   // 새 API 는 만들지 않는다. 더 이상 processing 이 없으면 인터벌을 정리해 폴링을 멈춘다.
   // 폴링 결과는 matchClothing 만 머지한다(전체 치환 금지). onAnalysisReplace 는 상위의
@@ -1126,14 +1157,7 @@ export function AnalysisForm({
               <div key={m.id}
                 className={`model-card custom-match-card${m.selected ? ' on' : ''}${compatible ? '' : ' incompatible'}`}
                 onClick={() => toggleMatch(m.id)}>
-                {m.cutoutStatus === 'processing' ? (
-                  <div className="custom-match-cutout-pending">
-                    <Icon name="loader" className="spin" size={16} />
-                    <span>이미지 업로드됐어요! 지금 배경 정리 중이에요</span>
-                  </div>
-                ) : (
-                  <img src={m.thumb} alt={m.name} />
-                )}
+                <MatchingCutoutPreview m={m} />
                 {m.isCustom && <span className="custom-match-badge">내 옷</span>}
                 {m.isCustom && (
                   <button className="custom-match-delete" disabled={customMatchDeleting}

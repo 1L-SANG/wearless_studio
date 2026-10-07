@@ -17,10 +17,21 @@ def _job(**over):
     return {**base, **over}
 
 
-def test_budget_is_four_generations_over_285_seconds():
-    assert sam_retry.MAX_RETRIES == 4
-    assert sam_retry.BACKOFF_SECONDS == (15, 60, 90, 120)
-    assert sum(sam_retry.BACKOFF_SECONDS) == 285
+@pytest.mark.parametrize("kind", ["matching_cutout", "sam_preprocess", "editor_garment_mask"])
+def test_three_retries_wait_165_seconds_and_never_allow_a_fourth(kind):
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    waits = []
+    for retry, wait in enumerate((15, 60, 90)):
+        job = _job(kind=kind, payload={"retry": retry}, finished_at=now)
+        assert sam_retry.budget_left(job) is True
+        assert sam_retry.backoff_elapsed(job, now=now + timedelta(seconds=wait - 1)) is False
+        assert sam_retry.backoff_elapsed(job, now=now + timedelta(seconds=wait)) is True
+        now += timedelta(seconds=wait)
+        waits.append(wait)
+    spent = _job(kind=kind, payload={"retry": 3}, finished_at=now)
+    assert sam_retry.budget_left(spent) is False
+    assert sam_retry.backoff_elapsed(spent, now=now + timedelta(days=1)) is False
+    assert sum(waits) == 165
 
 
 @pytest.mark.parametrize("state", ["unavailable", "unverified"])

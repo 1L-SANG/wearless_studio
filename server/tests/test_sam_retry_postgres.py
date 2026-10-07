@@ -153,9 +153,9 @@ def test_minimum_age_budget_and_missing_identity_boundaries(local_dsn):
                 ident = await add(conn, result=transient, age=age)
                 if 15 < age < 1800:
                     expected.add(ident)
-            for retry in (3, 4, "bad"):
+            for retry in (2, 3, "bad"):
                 ident = await add(conn, retry=retry, result=transient)
-                if retry != 4:
+                if retry != 3:
                     expected.add(ident)
             await add(conn, result=transient, age=None)
             await add(conn, result=transient, kind="editor_garment_mask")
