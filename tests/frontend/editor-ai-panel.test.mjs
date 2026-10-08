@@ -38,7 +38,8 @@ test('컷 종류 기본 샷은 원본 기반 디테일을 포함한 사용 가�
 test('고스트→디테일 샷 전환은 이전 뒷면 방향을 리셋한다 (콘티보드 Codex 리뷰 P1 가드)', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   const onShotChange = aiPanel.slice(aiPanel.indexOf('onShotChange={'), aiPanel.indexOf('clothingType={clothingType}'));
-  assert.match(onShotChange, /if \(isProduct\) setDir\('front'\)/);
+  assert.match(onShotChange, /setExampleId\(null\)/);
+  assert.match(onShotChange, /setDetailTargetId\(null\)/);
 });
 
 test('컷 종류 전환·예시 교체는 매칭 의류·아우터 열림·내 레퍼런스를 전면 리셋한다 (settingsReset 동일 규칙)', () => {
@@ -75,7 +76,7 @@ test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드�
   assert.match(aiPanel, /const galleryShotVal = galleryShotOptions\.some/);
   assert.match(aiPanel, /contentRole: inferContentRole\(\{ source: 'ai', cutType: galleryCutType, shot: galleryShotVal \}\)/);
   assert.match(aiPanel, /<MoodGuide catalogs=\{catalogs\} cut=\{galleryCutType\} blockCutType=\{effectiveCutType\}/);
-  assert.match(aiPanel, /direction=\{galleryDirectionVal\} shot=\{galleryShotVal\}/);
+  assert.match(aiPanel, /direction=\{galleryDirectionVal\} sideStyle=\{directionSpec\.sideStyle\} shot=\{galleryShotVal\}/);
   assert.match(aiPanel, /includeMirrorExamples=\{galleryCutType === 'styling'\}/);
   assert.match(aiPanel, /contentRole: effectiveRecipe\.contentRole/);
   // 거울은 방향이 없고(null), 그 외에는 **화면 값이 아니라 컷 스펙**이 나간다 —

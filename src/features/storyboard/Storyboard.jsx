@@ -23,7 +23,7 @@ import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, EmptyState, Modal, ProgressBar, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, EmptyState, Modal, ProgressBar, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
@@ -43,13 +43,10 @@ import {
   sectionRoleForContentRole,
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
-import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
-import { repickExampleForDirection } from '@/lib/generationExamples.js';
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
   generationExampleImageSources,
-  groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
   hasAvailableGenerationRecipe,
   isGenerationCombinationPublic,
@@ -123,6 +120,7 @@ import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
   detailDirectionFromExample,
+  directionSpecFromExample,
   generationExampleSelectionPatch,
   generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
@@ -251,6 +249,10 @@ function referenceFeedbackPatch(block, changes, catalogs) {
   const effScope = spaceGroupId ? ((changes.cutType ?? block.cutType) === 'horizon' ? 'all' : 'pose') : refScope;
   const next = { ...preserveDetailTargetBinding(block, changes) };
   if (isProductDetail({ ...block, ...changes })) return next;
+  const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
+  if (example?.direction) Object.assign(next, directionSpecFromExample(example, {
+    cutType: changes.cutType ?? block.cutType,
+  }));
   if (exampleId && effScope === 'all') {
     if (block.baseThumb == null) next.baseThumb = block.thumb;
     next.thumb = exampleThumbFor(catalogs, exampleId, changes.cutType ?? block.cutType);
@@ -326,15 +328,10 @@ function StoryboardInsertControl({
 
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
-  // 착용컷 방향 목록은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 블록은 서버 값 셋을 든다.
-  // 그대로 찾으면 'side' 가 목록에 없어 캡션이 '—' 로 뜬다 — 그래서 화면 값으로 바꿔 찾는다.
-  const direction = isProduct
-    ? (catalogs.productDirections.find((item) => item.value === block.direction)?.label || '앞면')
-    : (catalogs.directions.find((item) => item.value === directionChoiceFromSpec(block))?.label || '—');
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
-  return { direction, shot, isProduct };
+  return { shot, isProduct };
 }
 
 /* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
@@ -351,7 +348,7 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
     .map((id) => colorOpts.find((color) => color.id === id))
     .filter(Boolean);
-  const { direction, shot } = cardLabels(block, catalogs);
+  const { shot } = cardLabels(block, catalogs);
   /* 셀러가 방향·샷을 원래 값에서 바꿨으면 그 값을 색으로 표시한다(2026-08-16 오너).
      기준(원래 값)은 컷의 성격에 따라 다르다:
      · 장소세트 멤버 — 세트가 정해 둔 그 자리의 컷(예시는 포즈 참조라 기준이 못 된다)
@@ -380,8 +377,6 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
-        {block.cutType !== 'mirror' && <span>{direction}</span>}
-        {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
         <span>{shot}</span>
         {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
         {exampleDiffers && <span className="sb-val-changed" title="열었을 때와 다른 예시"> · 예시 변경</span>}
@@ -1206,12 +1201,11 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       shot: shotVal,
       clothingType,
       gender,
-      direction,
-      sideStyle,
+      limit: (catalogs.genExamples || []).length,
       appendSetOnly: cut !== 'product',
       appendMirror: includeMirrorExamples && galleryCut === 'styling',
     }), identityKind,
-    { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope, pose: 'auto' },
+    { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope },
   ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, sideStyle,
     includeMirrorExamples, identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
@@ -1231,8 +1225,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     ? 'changed' : conditionStatus;
   const galleryRef = useRef(null);
   const [mineTab, setMineTab] = useState(false);
-  // 갤러리는 방향 묶음을 세로로 쌓아 한 화면에 보여준다 — 페이지 넘김을 없앴다(2026-09-22 오너:
-  // "분류했으면 여러 창 옮기게 하지 말고"). 인스펙터 세로 스크롤이 그대로 이어진다.
+  // 예시 사진은 방향 분류 없이 한 갤러리에 표시한다.
   useEffect(() => {
     galleryRef.current?.scrollTo?.({ top: 0 });
   }, [cut, shotVal, clothingType, gender, direction]);
@@ -1282,11 +1275,6 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     );
   };
   const exampleCells = examples.map(renderExampleCell);
-  // 방향 묶음마다 최대 6장 — 페이지 넘김을 없앴으니 한 방향이 스냅 26장처럼 길어지면
-  // 다른 방향이 화면 밖으로 밀린다. 순서는 이미 rank·무드로 정렬돼 있다.
-  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle })
-    .map((section) => ({ ...section, examples: section.examples.slice(0, 6) }));
-  const labelledSections = gallerySections.length > 1;
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
@@ -1338,14 +1326,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
         <p className="hint">예시 없이 내 상품 원본으로 디테일을 촬영해요. 촬영 연출 예시는 선택 사항이에요.</p>
       ) : <div className="sb-exgallery" ref={galleryRef}
         role="region" aria-label="생성예시 갤러리">
-        {gallerySections.length ? gallerySections.map((section) => (
-          <div className="sb-exsection" key={`sec:${section.key}`}>
-            {labelledSections && <div className="sb-expage-label">{section.label}</div>}
-            <div className="sb-expage-cells">
-              {section.examples.map((example) => exampleCells[examples.indexOf(example)])}
-            </div>
-          </div>
-        )) : (
+        {exampleCells.length ? <div className="sb-expage-cells">{exampleCells}</div> : (
           <div className="sb-exempty">
             {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
               ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
@@ -1496,8 +1477,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       source: 'ai',
       shot: recipePatch.shot,
       colorId,
-      pose: 'auto',
-      poseLabel: 'AI 자동',
       angle: 'same',
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
@@ -1561,44 +1540,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     });
     return undefined;
   };
-  // 제품컷은 사람이 없어 앞/뒷면 둘뿐이고 sideStyle 개념도 없다 — 서버 값 그대로 보낸다.
-  const onProductDirectionChange = (direction) => onChange(() => ({ direction }));
-  // 착용컷은 화면 칩이 4개(정면·사선·옆모습·뒷면)지만 서버 계약은 front/side/back 셋이다.
-  // 변환은 lib/directionChoice 한 곳에서만 한다 — 에디터도 같은 모듈을 쓴다.
-  const onDirectionChange = (choice) => onChange((current) => {
-    const patch = specFromDirectionChoice(choice);
-    const { direction, sideStyle } = patch;
-    if (!current.exampleId) return patch;
-    if (!current.spaceGroupId && current.refScope !== 'pose') {
-      // 자동배정 예시가 새 방향과 안 맞으면 같은 방향 예시로 갈아 끼운다 — 안 그러면 사선
-      // 카드에 정면 예시가 남아 캡션이 영원히 "변경됨"이고 갤러리 선택도 어긋난다.
-      // 셀러가 직접 고른 예시는 그대로 둔다(그건 "변경됨"이 맞다).
-      const repick = repickExampleForDirection(current, catalogs.genExamples, {
-        clothingType, gender: exampleGender, identityKind, direction, sideStyle,
-      });
-      return repick ? { ...patch, ...repick } : patch;
-    }
-    const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
-    const compatible = (current.cutType === 'horizon' || (example?.variants || []).includes('pose'))
-      && poseExampleDirectionCompatible(example, {
-        cutType: current.cutType,
-        direction,
-        sideStyle,
-      });
-    if (compatible) {
-      return {
-        ...patch,
-        ...(current.spaceGroupId ? { refScope: current.cutType === 'horizon' ? 'all' : 'pose' } : {}),
-      };
-    }
-    // 방향이 예시 포즈와 안 맞아도 생성예시는 유지한다(2026-08-15 오너 — 예시를 비워
-    // "준비하지 못했어요" 빈 카드를 만들지 않는다). 캡션의 방향 표시만 바뀌고,
-    // 서버는 방향 비호환 시 포즈 권한만 내려놓고 생성한다(reference_direction_compatible).
-    return {
-      ...patch,
-      ...(current.spaceGroupId && current.cutType !== 'horizon' ? {} : { refScope: 'all' }),
-    };
-  });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
@@ -1723,23 +1664,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             }}>다시 시도</button>
           </div>}
         </>
-      )}
-
-      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004).
-          디테일 컷도 숨김 — 방향은 셀러가 고르지 않고 선택한 생성예시의 direction 라벨이
-          내부적으로 결정한다(2026-08-07 오너 결정, generationExampleSelectionPatch). */}
-      {!isMirror && !isDetail && (
-        <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
-          {/* 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다. 착용컷만 4칩으로 갈린다. */}
-          {/* allowDeselect=false — 선택된 칩을 다시 누르면 null 이 가고, null 은 정면으로
-              떨어진다(specFromDirectionChoice). 사선에서 사선을 한 번 더 누르면 조용히 정면이
-              됐다(2026-09-22 실측). 방향은 항상 하나가 선택돼 있어야 한다. */}
-          <Chips className="direction-chips" options={isProduct ? catalogs.productDirections : catalogs.directions}
-            allowDeselect={false}
-            value={isProduct
-              ? (catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front')
-              : directionChoiceFromSpec(block)}
-            onChange={isProduct ? onProductDirectionChange : onDirectionChange} /></div>
       )}
 
       {showOuterClosure && (
@@ -2982,10 +2906,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 내부 역할은 현재 섹션의 안전한 기본값으로 시작하고, normalizeBoard가
     // 핵심 장점 첫 카드의 hero 여부를 실제 카드 순서에 맞춰 다시 확정한다.
     const nb = { id: uid('blk'), sectionRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION, colorId: initialColorOpts[0]?.id || 'col1',
-      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
+      matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       ...(!droppedExample ? { exampleChoice: 'manual' } : {}),
       ...insertionRecipe,
-      thumb: Placeholder.photo('new' + Date.now(), insertionRecipe.cutType === 'product' ? 'product' : insertionRecipe.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
+      thumb: Placeholder.photo('new' + Date.now(), insertionRecipe.cutType === 'product' ? 'product' : insertionRecipe.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320) };
     const m = [...blocks]; m.splice(idx, 0, nb);
       let out = adoptSection(m, nb.id, targetSid, sectionRole);             // 이웃/명시된 섹션 소속으로 삽입
       // 빈 보드 등 이웃이 없으면 기본 섹션 부여 — 무소속(unsupported state) 블록 방지
@@ -3087,8 +3011,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const mineBlock = (src, n) => ({
     id: uid('blk'), sectionRole: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
     title: '내 이미지', source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
-    poseThumb: Placeholder.pose('stand'), poseLabel: '-',
+    ownImages: [src], thumb: src, matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
   });
   const addMineBlock = async (srcOrIndex = null) => {
     const picked = typeof srcOrIndex === 'string' ? srcOrIndex : await api.pickAnyImage(projectId);
@@ -3500,7 +3423,6 @@ export function Storyboard({ toastOverride = null } = {}) {
           colorId: colorOpts[0]?.id || 'col1',
           matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
           thumb: Placeholder.photo('new-set', 'styling', 240, 320),
-          poseThumb: Placeholder.pose('stand'),
         };
         await atomicBoardChange((current) => {
           let inserted = insertSpaceSet(current, setPicker.index, set, template, {
@@ -3629,9 +3551,6 @@ export function Storyboard({ toastOverride = null } = {}) {
       direction: slot.direction || 'front',
       shot: slot.shot,
       colorId: slot.colorId || baseColorId,
-      pose: 'auto',
-      poseLabel: 'AI 자동',
-      poseThumb: template.poseThumb,
       matchIds: [...(template.matchIds || [])],
       faceExposure: 'same',
       angle: 'same',

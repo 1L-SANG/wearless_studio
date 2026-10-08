@@ -211,7 +211,7 @@ export function selectGenerationExamples(catalog, rawOptions) {
   };
   const {
     cutType, shot, clothingType, gender, includeSetOnly, appendSetOnly,
-    appendMirror, mixMoodBuckets,
+    appendMirror, mixMoodBuckets, limit = 6,
   } = options;
   const flatCombinationPublished = flatCombinationIsPublished(options);
   if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
@@ -237,13 +237,13 @@ export function selectGenerationExamples(catalog, rawOptions) {
       )).sort(byRankThenId)
       : [];
     return [
-      ...grouped(ordinary, { cutType, shot }),
+      ...grouped(ordinary, { cutType, shot, limit }),
       ...grouped(setMembers, { cutType, shot, limit: setMembers.length, groupByMood: false }),
       ...mirrorExamples,
     ];
   }
   return grouped(matched, {
-    cutType, shot, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
+    cutType, shot, limit, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
   });
 }
 

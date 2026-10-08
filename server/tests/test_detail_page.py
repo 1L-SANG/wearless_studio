@@ -1980,6 +1980,8 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
 
 def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(monkeypatch):
     captured = {}
+    # This test exercises generic all/pose inputs rather than the confirmed packet.
+    monkeypatch.setattr(dpj.confirmed_gpt_runtime, "profile_requested", lambda _spec: False)
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -2077,9 +2079,9 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     assert "EXAMPLE REFERENCE as art direction" in captured["all"]["prompt"]
     assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
     assert "EXAMPLE REFERENCE as art direction" not in captured["pose"]["prompt"]
-    assert len(captured["named"]["images"]) == 1
-    assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
-    assert "REFERENCE SCOPE" not in captured["named"]["prompt"]
+    assert len(captured["named"]["images"]) == 2
+    assert "POSE CONTROL" in captured["named"]["manifest"]
+    assert "Pose: walk" not in captured["named"]["prompt"]
     for block_id in ("mismatch", "unpublished"):
         assert len(captured[block_id]["images"]) == 1
         assert captured[block_id]["cut_spec"]["exampleId"] is None
@@ -2337,7 +2339,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     ]
     for block_id, item in captured["cuts"].items():
         assert "EXAMPLE REFERENCE (scope: bg)" not in item["manifest"]
-        assert item["cutSpec"]["pose"] == "auto"
+        assert "pose" not in item["cutSpec"]
         expected_scope = "all" if block_id == "standalone-all" else "pose"
         assert item["cutSpec"]["refScope"] == expected_scope
         if expected_scope == "pose":

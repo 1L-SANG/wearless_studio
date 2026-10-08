@@ -33,9 +33,8 @@ import {
 const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
   id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
   title: contentTitle(contentRole), source: 'ai', cutType, direction, shot, colorId,
-  pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+  matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
   thumb: P.photo(contentRole + shot, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
-  poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
   ...(extra || {}),
 });
 
@@ -228,7 +227,6 @@ function storyboardTemplateFingerprint(blocks) {
     detailTargetOrigin: block.detailTargetOrigin ?? null,
     colorId: block.colorId ?? null,
     colorIds: block.colorIds || [],
-    pose: block.pose ?? null,
     matchIds: block.matchIds || [],
     faceExposure: block.faceExposure ?? null,
     angle: block.angle ?? null,
@@ -264,7 +262,6 @@ export function applySeededHookStyle(seeded, style, colors) {
     ...sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, slot.cutType, 'front', slot.shot,
       slot.colorId || template.colorId),
     matchIds: [...(template.matchIds || [])],
-    poseThumb: template.poseThumb,
     thumb: template.thumb,
   });
   return applyHookStyle(seeded, 'pair', { colors: colors || [], createBlock });

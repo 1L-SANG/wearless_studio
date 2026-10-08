@@ -214,7 +214,6 @@ or physical occlusion mechanism; do not reveal a lower face beneath an umbrella,
   crop or pose, and never blend it with a face appearing in a MOOD reference.
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
-[[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
 [[OUTER_CLOSURE:guard]]OUTER FRONT OPENING — USER-SELECTED REQUIREMENT:
 - This opening state overrides any different open/closed styling shown in EXAMPLE or MOOD images.
 - Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count

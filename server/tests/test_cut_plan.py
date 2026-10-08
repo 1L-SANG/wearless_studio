@@ -72,7 +72,7 @@ def test_mirror_maps_to_styling_recipe_with_mirror_capture():
     assert plan.attribute_owners["direction"] == "storyboard"
 
 
-def test_horizon_all_reference_loses_explicit_pose_and_direction():
+def test_horizon_all_reference_ignores_retired_pose_override():
     plan = compile_cut_plan(
         worn_spec(
             "horizon",
@@ -86,13 +86,13 @@ def test_horizon_all_reference_loses_explicit_pose_and_direction():
 
     assert plan.recipe_family == "horizon"
     assert plan.capture_mode == "studio"
-    assert plan.attribute_owners["pose"] == "storyboard"
-    assert "pose" not in plan.reference_attributes
+    assert plan.attribute_owners["pose"] == "reference"
+    assert "pose" in plan.reference_attributes
     assert plan.attribute_owners["direction"] == "storyboard"
     assert plan.attribute_owners["camera"] == "reference"
-    assert plan.to_dict()["conflictResolution"]["storyboardDirectionOverridesReference"]
-    assert plan.to_dict()["conflictResolution"]["explicitStoryboardPoseOverridesReference"]
-    assert plan.to_dict()["conflictResolution"]["explicitStoryboardPoseApplied"]
+    assert not plan.to_dict()["conflictResolution"]["storyboardDirectionOverridesReference"]
+    assert not plan.to_dict()["conflictResolution"]["explicitStoryboardPoseOverridesReference"]
+    assert not plan.to_dict()["conflictResolution"]["explicitStoryboardPoseApplied"]
 
 
 def test_all_reference_with_changed_direction_loses_pose_and_camera_authority():
@@ -146,8 +146,8 @@ def test_repeated_example_index_is_audited_only_when_micro_variation_is_active()
     assert active.example_repeat_index == 1
     assert active.to_dict()["exampleRepeatIndex"] == 1
     assert active.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
-    assert inactive.to_dict()["exampleRepeatIndex"] == 0
-    assert not inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
+    assert inactive.to_dict()["exampleRepeatIndex"] == 1
+    assert inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
 
 
 def test_horizon_colorway_repeat_is_audited_as_micro_variation():
@@ -244,7 +244,7 @@ def test_space_set_forces_pose_reference_and_owns_only_continuity():
     assert plan.to_dict()["conflictResolution"]["spaceSetCameraAndPoseRemainCutSpecific"]
 
 
-def test_explicit_pose_still_wins_inside_space_set():
+def test_retired_pose_does_not_override_space_set_reference():
     plan = compile_cut_plan(
         worn_spec(
             pose="crossed arms",
@@ -255,8 +255,8 @@ def test_explicit_pose_still_wins_inside_space_set():
     )
 
     assert plan.reference_mode == "pose"
-    assert plan.attribute_owners["pose"] == "storyboard"
-    assert "pose" not in plan.reference_attributes
+    assert plan.attribute_owners["pose"] == "reference"
+    assert "pose" in plan.reference_attributes
 
 
 def test_fit_profile_owns_only_declared_axes():
@@ -292,8 +292,8 @@ def test_contract_renderer_is_compact_and_names_ownership_rules():
     assert "storyboard:" in rendered and "pose" in rendered
     assert "modelFace: faceIdentity" in rendered
     assert "modelFullBody: bodyProportions" in rendered
-    assert "reference: camera, captureTone, light, scene" in rendered
-    assert "explicit pose override the example" in rendered
+    assert "reference: camera, captureTone, light, pose, scene" in rendered
+    assert "selected example owns direction and pose" in rendered
     assert "example person owns neither" in rendered
     assert "Seller name/category/sales/legacy-fit text owns no geometry" in rendered
     assert "Styling/all keeps scene type, ordinary ambience, palette, time" in rendered
