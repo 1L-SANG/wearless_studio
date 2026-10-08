@@ -161,7 +161,7 @@ def test_unknown_action_and_route_never_store_free_text():
                                          error_code='a@example.com', device='secret input'))
     assert event['action'] == 'unknown'
     assert event['route'] == '/:segment/:segment'
-    assert event['error_code'] is None and event['device'] == 'unknown'
+    assert event['error_code'] == 'other' and event['device'] == 'unknown'
 
 
 def test_ip_hmac_uses_secret():
@@ -202,3 +202,14 @@ def test_daily_ip_hash_is_also_the_rate_limit_key(ingestion):
     assert response.status_code == 202
     assert store[event['event_id']]['ip_hmac'] == events.hash_ip('testclient', b's' * 32)
     assert client.app.state.test_client_event_limit_keys['ip'] == store[event['event_id']]['ip_hmac']
+
+
+@pytest.mark.parametrize('value', ['a' * 33, 'ErrorCode', 'attack_123', 'code.with.dots', 'a@example.com', None])
+def test_unsafe_or_long_error_codes_collapse_to_other(value):
+    clean = events.sanitize_event(sample(error_code=value, breadcrumbs=[{'error_code': value}]))
+    assert clean['error_code'] == 'other'
+    assert clean['breadcrumbs'][0]['error_code'] == 'other'
+
+
+def test_short_safe_error_code_is_preserved():
+    assert events.sanitize_event(sample(error_code='save_failed'))['error_code'] == 'save_failed'

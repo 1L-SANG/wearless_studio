@@ -19,6 +19,7 @@ from test_client_events import sample
 DB_URL = os.environ.get('CLIENT_EVENTS_TEST_DATABASE_URL', 'postgresql://postgres:postgres@127.0.0.1:54322/postgres')
 assert urlparse(DB_URL).hostname in ('127.0.0.1', 'localhost', '::1'), '로컬 테스트 DB만 허용해요.'
 MIGRATION = Path(__file__).resolve().parents[2] / 'supabase/migrations/20261008090000_client_error_events.sql'
+LIMITS_MIGRATION = MIGRATION.with_name('20261008100000_client_alert_limits.sql')
 
 
 @pytest.fixture(scope='module')
@@ -27,8 +28,13 @@ def local_db():
         with psycopg.connect(DB_URL, connect_timeout=3, row_factory=dict_row) as conn:
             if conn.execute("select to_regclass('public.client_error_events') as t").fetchone()['t'] is None:
                 conn.execute(MIGRATION.read_text())
+            if conn.execute("select to_regclass('public.client_alert_progress') as t").fetchone()['t'] is None:
+                conn.execute(LIMITS_MIGRATION.read_text())
     except psycopg.OperationalError as exc:
-        pytest.skip('로컬 테스트 DB에 연결할 수 없어 migration 적용 검사를 건너뛰어요: ' + str(exc).splitlines()[0])
+        message = '로컬 테스트 DB 연결 실패: ' + str(exc).splitlines()[0]
+        if os.environ.get('CLIENT_EVENTS_REQUIRE_TEST_DB') == '1':
+            pytest.fail(message, pytrace=False)
+        pytest.skip(message)
     return DB_URL
 
 
@@ -52,7 +58,7 @@ def test_migration_security_and_indexes(local_db):
         for role in ('anon', 'authenticated'):
             for table in ('client_error_events', 'client_alert_ledger', 'client_event_rate_limits', 'client_event_salts'):
                 assert not conn.execute("select has_table_privilege(%s, %s, 'select') as granted", (role, table)).fetchone()['granted']
-        assert len(conn.execute("select indexname from pg_indexes where tablename='client_error_events'").fetchall()) == 5
+        assert len(conn.execute("select indexname from pg_indexes where tablename='client_error_events'").fetchall()) == 6
 
 
 def test_real_dedupe_and_signature(local_db):
@@ -140,27 +146,4 @@ def test_two_database_workers_respect_lock_and_committed_ledger(local_db):
                     async with conn1.cursor() as cur:
                         await cur.execute('delete from client_alert_ledger where key=%s', (key,))
                     await conn1.commit()
-    asyncio.run(body())
-
-
-def test_real_daily_salt_is_shared_across_connections(local_db):
-    async def body():
-        now = datetime.now(timezone.utc) + timedelta(days=36500)
-        day = now.astimezone(events.KST).date()
-        async with await psycopg.AsyncConnection.connect(local_db, row_factory=dict_row) as first:
-            async with await psycopg.AsyncConnection.connect(local_db, row_factory=dict_row) as second:
-                try:
-                    salt1, salt2 = await asyncio.gather(events.get_daily_salt(first, {}, now=now),
-                                                      events.get_daily_salt(second, {}, now=now))
-                    assert len(salt1) == 32 and salt1 == salt2
-                    assert events.hash_ip('1.2.3.4', salt1) == events.hash_ip('1.2.3.4', salt2)
-                    async with first.cursor() as cur:
-                        await cur.execute('select count(*) as n from client_event_salts where day=%s', (day,))
-                        assert (await cur.fetchone())['n'] == 1
-                finally:
-                    await first.rollback()
-                    await second.rollback()
-                    async with first.cursor() as cur:
-                        await cur.execute('delete from client_event_salts where day=%s', (day,))
-                    await first.commit()
     asyncio.run(body())

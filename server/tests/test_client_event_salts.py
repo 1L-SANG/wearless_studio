@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from app import client_events as events
+from test_client_events_db import local_db  # noqa: F401
 
 
 class SaltConn:
@@ -125,3 +126,29 @@ def test_retention_deletes_salts_older_than_two_kst_days():
     assert query[1] == (date(2026, 10, 7),)
     assert 'where day < %s' in query[0]
     assert conn.commits == 1
+
+def test_real_daily_salt_is_shared_across_connections(local_db):
+    from datetime import timedelta
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async def body():
+        now = datetime.now(timezone.utc) + timedelta(days=36500)
+        day = now.astimezone(events.KST).date()
+        async with await psycopg.AsyncConnection.connect(local_db, row_factory=dict_row) as first:
+            async with await psycopg.AsyncConnection.connect(local_db, row_factory=dict_row) as second:
+                try:
+                    salt1, salt2 = await asyncio.gather(events.get_daily_salt(first, {}, now=now),
+                                                      events.get_daily_salt(second, {}, now=now))
+                    assert len(salt1) == 32 and salt1 == salt2
+                    assert events.hash_ip('1.2.3.4', salt1) == events.hash_ip('1.2.3.4', salt2)
+                    async with first.cursor() as cur:
+                        await cur.execute('select count(*) as n from client_event_salts where day=%s', (day,))
+                        assert (await cur.fetchone())['n'] == 1
+                finally:
+                    await first.rollback()
+                    await second.rollback()
+                    async with first.cursor() as cur:
+                        await cur.execute('delete from client_event_salts where day=%s', (day,))
+                    await first.commit()
+    asyncio.run(body())

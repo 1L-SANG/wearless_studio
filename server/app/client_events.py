@@ -58,6 +58,10 @@ def _code(value, limit=64):
     return value if re.fullmatch(r"[A-Za-z0-9_.:-]+", value) else None
 
 
+def _error_code(value):
+    return value if isinstance(value, str) and re.fullmatch(r"[a-z][a-z_]{0,31}", value) else "other"
+
+
 def _integer(value, low, high):
     return value if type(value) is int and low <= value <= high else None
 
@@ -94,7 +98,7 @@ def _breadcrumb(raw):
         ("action", raw.get("action") if isinstance(raw.get("action"), str) and raw.get("action") in ACTIONS else "unknown"),
         ("request_id", valid_request_id(raw.get("request_id"))),
         ("status", _integer(raw.get("status"), 0, 599)),
-        ("error_code", _code(raw.get("error_code"))),
+        ("error_code", _error_code(raw.get("error_code"))),
         ("count", _integer(raw.get("count"), 1, 10000)),
         ("duration_ms", _integer(raw.get("duration_ms"), 0, 3600000)),
     ):
@@ -120,7 +124,7 @@ def sanitize_event(raw):
         "event_id": event_id, "schema_version": 1, "occurred_at": occurred_at,
         "kind": raw["kind"], "action": action if isinstance(action, str) and action in ACTIONS else "unknown",
         "route": normalize_route(raw.get("route")), "status": _integer(raw.get("status"), 0, 599),
-        "error_code": _code(raw.get("error_code")), "request_id": valid_request_id(raw.get("request_id")),
+        "error_code": _error_code(raw.get("error_code")), "request_id": valid_request_id(raw.get("request_id")),
         "project_id": valid_request_id(raw.get("project_id")), "job_id": valid_request_id(raw.get("job_id")),
         "build_sha": _code(raw.get("build_sha")),
         "device": device if isinstance(device, str) and device in ("desktop", "mobile", "tablet") else "unknown",
@@ -217,6 +221,9 @@ async def store_event(conn, event, user_id, ip_hmac):
         await lock_user_events(conn, user_id)
         if await user_account_purge_closed(conn, user_id):
             return
+    # 커서 조회가 진행 중인 INSERT의 커밋을 기다리도록 짧은 공유 잠금을 잡는다.
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_advisory_xact_lock_shared(%s, %s)", (0x4345, 2))
     columns = ("event_id", "schema_version", "occurred_at", "build_sha", "kind", "route", "action",
                "status", "error_code", "request_id", "project_id", "job_id", "device", "blocking")
     values = tuple(event[key] for key in columns)
