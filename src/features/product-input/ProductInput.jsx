@@ -1404,7 +1404,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 

@@ -93,11 +93,13 @@ function MannequinJobRibbon() {
   if (!visible) return null;
 
   const isError = job.status === 'error';
-  const label = isError ? '마네킹컷 생성에 실패했어요' : '마네킹컷을 만들고 있어요';
+  const label = isError ? '서버 연결이 불안정해요' : '마네킹컷을 만들고 있어요';
   /* 진행 중엔 퍼센트 숫자를 쓰지 않는다. 바 폭은 시간 추정이어도 되지만 정수 퍼센트는
      검증 가능한 주장이라, 추정이 서버보다 앞서면 그대로 거짓말이 된다. 마네킹 대기화면이
      퍼센트를 걷어낸 결정(Mannequin.jsx MannequinLoading)과도 어긋난다. */
-  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : '완성되면 알려드릴게요';
+  // 오류 설명이 제목과 같은 문장으로 시작하면 겹치는 앞부분은 빼고 나머지만 보인다.
+  const detail = isError ? ((job.errorMessage || '').replace(label, '').replace(/^[.\s]+/, '').trim()
+    || '잠시 후 다시 시도해 주세요.') : '완성되면 알려드릴게요';
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">

@@ -52,7 +52,8 @@ export function createInitialGenerationAttempts({ storage, keyPrefix = KEY_PREFI
       return save(pid, { idempotencyKey, terminalFailure: true,
         serverStatus: job?.status || 'unknown', serverJobId: job?.id || null, code,
         message: code === 'mannequin_state_unknown' ? '마네킹 생성 상태를 확인하지 못했어요.'
-          : code === 'job_cancelled' ? '마네킹 생성이 취소됐어요.' : '마네킹 생성에 실패했어요.' });
+          : code === 'job_cancelled' ? '마네킹 생성이 취소됐어요.' : '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.'
+            + (job?.status === 'error' ? ' 크레딧은 빠지지 않았어요.' : '') });
     },
     begin: (pid, idempotencyKey) => read(pid) || save(pid, { idempotencyKey: idempotencyKey || `initial-mannequin-${nextId()}` }),
     clear,

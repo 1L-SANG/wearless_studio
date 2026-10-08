@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
+import { jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
@@ -666,7 +667,7 @@ function ImageImportWait({ item, scale }) {
     uploading: '업로드 중',
     placing: '프레임 적용 중',
     done: '완료',
-    error: '불러오기 실패',
+    error: '연결이 불안정해요',
   }[phase];
   const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
 
@@ -2121,7 +2122,7 @@ export function Editor() {
     try {
       finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
     } catch (e) {
-      toast.push(e?.message || '블록 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
     } finally {
       setDlBusy(false);
     }
@@ -2141,7 +2142,7 @@ export function Editor() {
         ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
         : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
-      toast.push(e?.message || '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
     } finally {
       setDlBusy(false);
       setDlProg(null);
@@ -2493,7 +2494,7 @@ export function Editor() {
         if (job?.status === 'error' || job?.status === 'cancelled') {
           slowJobs.current.delete(jobId);
           dropLoadingTile(group, loadingId);
-          toast.push(job.errorMessage || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+          toast.push(jobFailureMessage(job.errorMessage, { creditsReleased: job.status === 'error' }), { icon: 'x' });
           return;
         }
       } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
@@ -2516,7 +2517,7 @@ export function Editor() {
     }
     // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
     dropLoadingTile(group, loadingId);
-    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
     return false;
   };
   const saveBrandUseCategory = async (value) => {

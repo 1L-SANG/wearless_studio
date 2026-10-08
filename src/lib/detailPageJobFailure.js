@@ -70,10 +70,10 @@ export function incompleteMessage(incomplete, serverMessage) {
   return serverMessage || '';
 }
 
-/** "19장 완성 · 1장 실패" */
+/** "19장 완성 · 1장 미완성" */
 export function incompleteSummary(incomplete) {
   if (!incomplete) return '';
-  return `${incomplete.completed.length}장 완성 · ${incomplete.failed.length}장 실패`;
+  return `${incomplete.completed.length}장 완성 · ${incomplete.failed.length}장 미완성`;
 }
 
 /** [실패한 컷만 다시 만들기] — 새 잡이 앞선 실패와 같은 콘티로 도는지 대조할 기준. */

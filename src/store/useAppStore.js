@@ -20,6 +20,7 @@ import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/l
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
 import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
+import { jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import { initialGenerationAttempts } from '@/features/mannequin/initialGenerationAttempts.js';
 import {
@@ -615,7 +616,7 @@ export const useAppStore = create((set, get) => ({
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
         cuts: {},
         live: [],
-        errorMessage: job.errorMessage
+        errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage) : '')
           || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
         ...incompleteFailurePatch(job),

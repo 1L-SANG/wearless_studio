@@ -17,7 +17,7 @@ import { fetchPhotoBytes } from '../photoBytes.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
-import { jobFailure } from './jobFailure.js';
+import { jobFailure, jobFailureMessage } from './jobFailure.js';
 import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
@@ -197,7 +197,8 @@ export async function http(path, {
     }
     // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
     // 404 무효 상태 vs 일시 장애 구분). message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
-    const err = new Error(message);
+    const err = new Error(res.status >= 500 && /^\/v1\/projects(?:[/?]|$)/.test(path)
+      ? jobFailureMessage(message) : message);
     err.status = res.status;
     if (code) err.code = code;
     if (meta) err.meta = meta;
@@ -255,14 +256,14 @@ async function publicHttp(path, formData, { signal } = {}) {
     );
   }
   if (!res.ok) {
-    let message = '상품 분석에 실패했어요. 잠시 후 다시 시도해 주세요.';
+    let message = '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.';
     let code;
     try {
       const payload = await res.json();
       message = payload?.error?.message || message;
       code = payload?.error?.code;
     } catch { /* 기본 메시지 유지 */ }
-    const error = new Error(message);
+    const error = new Error(res.status >= 500 ? jobFailureMessage(message) : message);
     error.status = res.status;
     if (code) error.code = code;
     throw error;
@@ -275,7 +276,7 @@ async function publicHttp(path, formData, { signal } = {}) {
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
 async function pollJob(
   jobId,
-  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE } = {},
+  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE, creditsReleased = false } = {},
 ) {
   const start = Date.now();
   let last = -1;
@@ -292,7 +293,7 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') {
-      throw jobFailure(job);
+      throw jobFailure(job, { creditsReleased });
     }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
@@ -339,7 +340,7 @@ export async function uploadPhoto(
     );
   }
   if (!put.ok) {
-    const error = new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+    const error = new Error('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     error.code = 'photo_upload_failed';
     error.status = put.status;
     throw error;
@@ -923,6 +924,7 @@ export const httpAdapter = {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+      creditsReleased: true,
     });
     return { data: result.data, credits: result.credits };
   },
@@ -963,6 +965,7 @@ export const httpAdapter = {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+      creditsReleased: true,
     });
     onJobSucceeded?.(jobId);
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
@@ -1009,6 +1012,7 @@ export const httpAdapter = {
         onProgress,
         timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
         timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
+        creditsReleased: true,
       });
       return { data: result.data, credits: result.credits };
     } catch (e) {
