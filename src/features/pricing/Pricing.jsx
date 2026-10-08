@@ -168,7 +168,7 @@ export function Pricing() {
     }
   }
 
-  const { data: plans = [], isLoading, isError, refetch } = useQuery({
+  const { data: plans = [], isLoading, isError, error: queryError, refetch } = useQuery({
     queryKey: ['pricingPlans'],
     queryFn: () => api.getPricingPlans(),
     staleTime: 5 * 60 * 1000,
@@ -261,7 +261,7 @@ export function Pricing() {
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
       )}
-      {isError && <div className="surface"><ErrorState desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
+      {isError && <div className="surface"><ErrorState error={queryError} desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
       {ready && subs.length === 0 && topups.length === 0 && (
         <div className="surface"><EmptyState icon="coins" title="요금제를 준비 중이에요" desc="잠시 후 다시 확인해 주세요." /></div>
       )}

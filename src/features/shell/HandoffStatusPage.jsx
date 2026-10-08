@@ -1,3 +1,4 @@
+import { useClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 import { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -13,7 +14,8 @@ const COPY = {
   error: { tag: 'RETRY', eyebrow: 'OFFLINE', title: '저장된 상품을 확인하지 못했어요', desc: '인터넷 연결을 확인하고 다시 시도해 주세요.' },
 };
 
-export function HandoffStatusPage({ variant, meta, busy, onNext, onRetry, onUpload, onSlotChange }) {
+export function HandoffStatusPage({ variant, error, meta, busy, onNext, onRetry, onUpload, onSlotChange }) {
+  useClientErrorCapture({ point: 'handoff', active: variant === 'error', error });
   const { session } = useAuth();
   const latest = useRef(null);
   latest.current = { onSlotChange, userId: session?.user?.id || null };

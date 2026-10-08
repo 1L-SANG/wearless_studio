@@ -17,7 +17,7 @@ const { code: ribbonCode } = await transformWithEsbuild(ribbon, 'Ribbon.jsx', { 
 const incomplete = { requested: 2, completed: ['cut1'], failed: ['cut2'], retained: ['cut1'], expired: false };
 
 function failureViews(job, overrides = {}) {
-  const bindings = { React, dpJob: job, projectId: 'p', genActive: false, genFinalizeError: null,
+  const bindings = { ClientErrorCapture: () => null, genFinalizeOriginalError: null, React, dpJob: job, projectId: 'p', genActive: false, genFinalizeError: null,
     incompleteMessage, retryOfIncomplete, retryReuseHint, genNotif: 'denied',
     genMergedRef: { current: false }, genActiveRef: { current: false }, setGenActive() {},
     useAppStore: Object.assign((select) => select({ detailPageJob: job }), { getState: () => ({}) }),

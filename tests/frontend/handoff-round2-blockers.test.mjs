@@ -58,7 +58,7 @@ function httpHarness() {
   const httpSource = source.slice(source.indexOf('export async function http('), source.indexOf('\n/* 톤 에디터')).replace('export ', '');
   const methodSource = source.slice(source.indexOf('  async putDraftSlot('), source.indexOf('  async discardDraftSlotPhoto('));
   const response = deferred(), requests = [];
-  const bindings = { supabase: { auth: { getSession: () => response.promise } },
+  const bindings = { clientEvents: { getAccountGeneration: () => 0, bindGeneration: (value) => value }, supabase: { auth: { getSession: () => response.promise } },
     networkError: (code, message) => Object.assign(new Error(message), { code }),
     browserOrigin: () => 'test', isBrowserOffline: () => false, readDeviceToken: () => null,
     BASE_URL: '', DEVICE_HEADER: 'test', absolutizeAssetUrls: (value) => value,

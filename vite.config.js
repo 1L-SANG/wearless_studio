@@ -52,6 +52,7 @@ const facemarketDevDocument = {
 // Vite handles .ts/.tsx out of the box, so TS can be adopted incrementally
 // (contracts → store → api) without a full migration. JS/JSX stays default.
 const config = {
+  define: { __BUILD_SHA__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA || 'dev') },
   // Tailwind 는 CSS 를 import 하는 진입(admin.html → admin.css)에만 실린다.
   // 플러그인 등록 자체는 전역이지만, 셀러·facemarket 은 admin.css 를 물지 않으므로
   // 산출 CSS 에 유틸리티가 한 줄도 들어가지 않는다.

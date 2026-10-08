@@ -122,7 +122,7 @@ export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob, st
           okIds.add(img.id);
           continue;
         }
-        if (e?.status) failures.push({ imageId: img.id, status: e.status });
+        failures.push(Object.defineProperty({ imageId: img.id, ...(e?.status ? { status: e.status } : {}) }, 'error', { value: e }));
         // objectURL revoke·메모리 소실 등으로 blob 읽기 실패 — 조용히 누락하지 않고 집계+경고.
         failedIds.push(img.id);
         console.warn(`[draft] 사진 blob 추출 실패 — imageId=${img.id}`, e);

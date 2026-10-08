@@ -68,6 +68,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
+    useClientErrorCapture() {}, ClientErrorCapture: () => null, recordClientAction() {},
     ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     flowScreenName: () => '입력 화면', shouldWarnFlowAbandon: () => false,

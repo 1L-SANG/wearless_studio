@@ -5,12 +5,33 @@
    레이어 안의 유틸리티를 명시도와 무관하게 이긴다. 그래서 스타일은 각 진입점이 문다. */
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/features/auth/AuthProvider.jsx';
 import { ToastProvider } from '@/components/ui.jsx';
+import { AppErrorBoundary } from '@/components/AppErrorBoundary.jsx';
+import { clientEvents } from '@/lib/clientEvents.js';
+import { draftSlot } from '@/lib/draftSlot.js';
+import { useAppStore } from '@/store/useAppStore.js';
+import { hasPendingDraft } from '@/lib/draftStore.js';
+import { hasEditorWaitDraft } from '@/lib/editorWaitDraft.js';
+
+function ClientEventNavigation() {
+  const { pathname } = useLocation();
+  React.useEffect(() => {
+    clientEvents.addBreadcrumb({ type: 'navigation', route: pathname, action: 'navigate' });
+  }, [pathname]);
+  return null;
+}
 
 export function renderApp(App) {
+  clientEvents.install();
+  clientEvents.setSnapshotProvider(() => {
+    const projectId = useAppStore.getState().projectId;
+    let localBackup = hasEditorWaitDraft(projectId);
+    try { localBackup ||= hasPendingDraft(); } catch { /* 저장소 접근이 막히면 내용은 읽지 않는다. */ }
+    return { ...draftSlot.getDiagnosticState(), projectId, local_backup: localBackup };
+  });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 60_000, retry: 1, refetchOnWindowFocus: false } },
   });
@@ -29,15 +50,18 @@ export function renderApp(App) {
 
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
+      <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter future={{ v7_startTransition: true }}>
+            <ClientEventNavigation />
             <ToastProvider>
               <App />
             </ToastProvider>
           </BrowserRouter>
         </AuthProvider>
       </QueryClientProvider>
+      </AppErrorBoundary>
     </React.StrictMode>
   );
 }

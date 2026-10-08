@@ -197,9 +197,9 @@ test('wardrobe upload picks several files; one file keeps the old insert-on-canv
   );
   assert.match(editorSource, /input\.multiple = multiple/);
   assert.match(pick, /pickEditorImageFile\(\{ multiple: true \}\)/);
-  assert.match(pick, /picked\.length === 1\) \{\s*await uploadEditorImage\(picked\[0\]\)/);
+  assert.match(pick, /picked\.length === 1\) \{\s*await uploadEditorImage\(picked\[0\], undefined, null, \{ accountGeneration \}\)/);
   assert.match(pick, /runWithConcurrency\(files, WARDROBE_UPLOAD_CONCURRENCY/);
-  assert.match(pick, /\{ insert: false, quiet: true \}/);
+  assert.match(pick, /\{ insert: false, quiet: true, accountGeneration \}/);
   assert.match(pick, /MAX_WARDROBE_UPLOADS/);
 });
 

@@ -16,6 +16,7 @@
    토큰을 컴포넌트로 흘리지 않는다 — API 호출은 httpAdapter 가 supabase 에서 직접 읽는다.
    ============================================================= */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { clientEvents } from '@/lib/clientEvents.js';
 import { useQueryClient } from '@tanstack/react-query';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { supabase } from '@/lib/supabase.js';
@@ -118,6 +119,7 @@ export function AuthProvider({ children }) {
   const [signingOut, setSigningOut] = useState(false);
 
   const publishSession = useCallback((next) => {
+    clientEvents.setSession(next);
     draftSlot.setUserId?.(next?.user?.id ?? null);
     // 새 세션이 화면에 보이기 전에 이전 계정 정보와 진행 중 조회를 버린다.
     // 같은 사용자의 토큰 갱신은 캐시를 유지한다.
@@ -222,6 +224,7 @@ export function AuthProvider({ children }) {
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
+    clientEvents.setSession(null);
     clearApplyDraft(userId);
     if (MOCK_FACEMARKET) { publishSession(null); return; }
     clearSignupConsent();

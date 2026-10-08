@@ -1,3 +1,4 @@
+import { clientApiFetch, readClientResponse } from './api/clientRequest.js';
 import { isPlaceholderPhotoSrc } from './imageTranscode.js';
 import { seoulClock } from './datetime.js';
 import { fetchPhotoBytes } from './photoBytes.js';
@@ -153,12 +154,14 @@ export function createDraftSlotSync({
     setServerSyncedAt(null);
   };
   const saves = new Set();
-  const finishSave = (save, status, photoCount = 0) => {
+  const finishSave = (save, status, photoCount = 0, error) => {
     saves.delete(save);
-    save.resolve({ status, photoCount, ...(save.missingPhotoCount ? { missingPhotoCount: save.missingPhotoCount } : {}) });
+    const result = { status, photoCount, ...(save.missingPhotoCount ? { missingPhotoCount: save.missingPhotoCount } : {}) };
+    if (error) Object.defineProperty(result, 'error', { value: error });
+    save.resolve(result);
   };
-  const finishSaves = (status) => {
-    for (const save of saves) finishSave(save, status);
+  const finishSaves = (status, error) => {
+    for (const save of saves) finishSave(save, status, 0, error);
   };
 
   const setToken = (value) => {
@@ -369,8 +372,8 @@ export function createDraftSlotSync({
     // 승격 실패 복구가 폐기된 사진을 담은 초안을 되살리자 2초마다 무한 재시도했다(2026-09-26).
     // 재시도는 업로드(네트워크·서버) 실패에만 건다.
     let sourceUnreadable = false;
-    record.promise = fetch(image.src)
-      .then((response) => response.blob())
+    record.promise = clientApiFetch(image.src)
+      .then((response) => readClientResponse(response, 'blob'))
       .catch((error) => { sourceUnreadable = true; throw error; })
       .then((blob) => api.uploadDraftSlotPhoto({
         filename: image.name || `${image.id}.jpg`,
@@ -387,7 +390,7 @@ export function createDraftSlotSync({
         uploads.set(image.id, { status: 'uploaded', image, ...uploaded, uploadedAt: now() });
         if (latestSnapshot) queue(latestSnapshot);
       })
-      .catch(() => {
+      .catch((error) => {
         if (uploads.get(image.id) !== record) return;
         if (!shouldKeepUpload(image.id) || locked) {
           uploads.delete(image.id);
@@ -395,13 +398,14 @@ export function createDraftSlotSync({
         }
         const failed = uploads.get(image.id) || {};
         failed.status = 'failed';
+        failed.error = error;
         failed.retryTimer = sourceUnreadable
           ? null
           : setTimer(() => startPhotoUpload(image), PHOTO_RETRY_MS);
         uploads.set(image.id, failed);
         for (const save of saves) {
           if (save.images.some((required) => required.id === image.id && required.src === image.src)) {
-            finishSave(save, 'failed');
+            finishSave(save, 'failed', 0, error);
           }
         }
       })
@@ -574,7 +578,7 @@ export function createDraftSlotSync({
         if (current()) {
           const handled = handleConflict(error);
           if (!handled) {
-            finishSaves('failed');
+            finishSaves('failed', error);
             pendingSnapshot = latestSnapshot || snapshot;
             pendingIdentity = identity;
             schedulePutRetry();
@@ -626,6 +630,10 @@ export function createDraftSlotSync({
 
   return {
     configure(nextAdapter) { api = nextAdapter; },
+    getDiagnosticState() {
+      return { photo_pending_count: Math.min(1000, [...uploads.values()].filter((upload) => upload.status !== 'synced').length),
+        draft_slot_status: locked ? 'lost' : token ? 'owned' : userId === undefined ? 'unknown' : 'none' };
+    },
     setUserId(value) {
       if ((userId !== undefined && userId !== value) || (syncedUserId && syncedUserId !== value)) this.resetIdentity();
       else if (userId !== value) this.discard();
@@ -678,7 +686,7 @@ export function createDraftSlotSync({
         }
         if (!snapshot?.product || !api?.putDraftSlot || save.images.some((image) => (
           image.src?.startsWith('blob:') && uploads.get(image.id)?.status === 'failed'
-        ))) finishSave(save, 'failed');
+        ))) finishSave(save, 'failed', 0, save.images.map((image) => uploads.get(image.id)?.error).find(Boolean));
       });
     },
     retryFailedUploads() {

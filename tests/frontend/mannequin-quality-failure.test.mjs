@@ -175,14 +175,14 @@ for (const mode of ['cached', 'new', 'resume']) {
     // 브라우저 전용 import는 제외하고 실제 어댑터 메서드를 가짜 HTTP 경계에 연결한다.
     const method = source.slice(source.indexOf('async generateMannequins'), source.indexOf('async adjustMannequin'));
     const posts = [], polls = [], started = [];
-    const adapter = new Function('http', 'pollJob', 'LONG_IMAGE_JOB_TIMEOUT_MS', 'MANNEQUIN_JOB_TIMEOUT_MESSAGE',
+    const adapter = new Function('http', 'pollJob', 'LONG_IMAGE_JOB_TIMEOUT_MS', 'MANNEQUIN_JOB_TIMEOUT_MESSAGE', 'recordClientAction',
       `return ({ ${method} });`)(
       async (url, options) => {
         posts.push(options);
         return mode === 'cached' ? { data: ['existing'], credits: 7 } : { jobId: 'joined-job' };
       },
       async (id) => { polls.push(id); return { data: ['generated'], credits: 5 }; },
-      900000, 'wait',
+      900000, 'wait', () => {},
     );
     const result = await adapter.generateMannequins('p', {
       idempotencyKey: 'request-key', resumeJobId: mode === 'resume' ? 'joined-job' : undefined,

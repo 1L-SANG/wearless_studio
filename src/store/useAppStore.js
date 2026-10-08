@@ -20,7 +20,7 @@ import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/l
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
 import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
-import { jobFailureMessage } from '@/lib/api/jobFailure.js';
+import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import { initialGenerationAttempts } from '@/features/mannequin/initialGenerationAttempts.js';
 import {
@@ -619,6 +619,7 @@ export const useAppStore = create((set, get) => ({
         errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage) : '')
           || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
+        error: jobFailure(job),
         ...incompleteFailurePatch(job),
       });
       void get().loadAccount({ force: true }).catch(() => {});
@@ -626,11 +627,11 @@ export const useAppStore = create((set, get) => ({
       if (!alive()) return;
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
       if (e?.status === 409) {
-        patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
+        patch({ status: 'blocked', error: e, errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
         return;
       }
       // 잡이 사라졌거나(404) 일시 장애가 아닌 오류 — 임시 컷을 최종 출력으로 남기지 않는다.
-      patch({ status: 'error', slow: false,
+      patch({ status: 'error', slow: false, error: e,
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
         cuts: {}, live: [], errorMessage: e?.message || '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.' });
       void get().loadAccount({ force: true }).catch(() => {});

@@ -170,6 +170,7 @@ function RequireEditorProject() {
   const projectId = useAppStore((s) => s.projectId);
   const adoptProject = useAppStore((s) => s.adoptProject);
   const [phase, setPhase] = useState('loading'); // loading | ready | not-found | error
+  const [projectError, setProjectError] = useState(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => { flowRouteSeenThisSession = true; }, []);
@@ -190,6 +191,7 @@ function RequireEditorProject() {
         setPhase('ready');
       } catch (error) {
         if (!alive) return;
+        setProjectError(error);
         setPhase(error?.status === 404 ? 'not-found' : 'error');
       }
     })();
@@ -201,7 +203,7 @@ function RequireEditorProject() {
     return (
       <div className="wizard narrow">
         <div className="surface">
-          <ErrorState desc="에디터 프로젝트를 확인하지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
+          <ErrorState error={projectError} projectId={routeProjectId} desc="에디터 프로젝트를 확인하지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
         </div>
       </div>
     );
@@ -259,6 +261,7 @@ function ProductInputRoute() {
     });
   });
   const [entrySources, setEntrySources] = useState([]);
+  const [entryError, setEntryError] = useState(null);
   const [localSaveBlocked, setLocalSaveBlocked] = useState(false);
   const [mobileEntry, setMobileEntry] = useState(null);
   const autoOpening = useRef(false);
@@ -303,8 +306,8 @@ function ProductInputRoute() {
     (async () => {
       // 이탈 직전 입력은 슬롯 쓰기를 멈춘 동안 로컬에 먼저 저장하고 비교한다.
       try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
-      catch {
-        if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+      catch (error) {
+        if (current()) { setEntryError(error); setLocalSaveBlocked(true); setEntryDecision('error'); }
         return;
       }
       if (!current()) return;
@@ -399,8 +402,9 @@ function ProductInputRoute() {
         entryActions.showMobile(sources[0].meta, { entry: true });
       }
       setEntryDecision(sources.length ? 'ask' : 'continue');
-    })().catch(() => {
+    })().catch((error) => {
       if (!current()) return;
+      setEntryError(error);
       const state = useAppStore.getState();
       if (!mobile && state.projectId && state.projectPersisted) {
         if (state.userId && state.userId !== userId) {
@@ -429,8 +433,8 @@ function ProductInputRoute() {
         && project.projectId === useAppStore.getState().projectId;
       (async () => {
         try { await flushProductDraftSave({ userId, identityEpoch: epoch, timeoutMs: 8000 }); }
-        catch {
-          if (current()) { setLocalSaveBlocked(true); setEntryDecision('error'); }
+        catch (error) {
+          if (current()) { setEntryError(error); setLocalSaveBlocked(true); setEntryDecision('error'); }
           return;
         }
         if (!current()) return;
@@ -617,7 +621,7 @@ function ProductInputRoute() {
     return <PhoneUploadIntro onLogin={() => openLogin('/create/input')} />;
   }
   if (entryDecision === 'error') {
-    return <HandoffStatusPage variant="error" onRetry={() => setEntryDecision('checking')}
+    return <HandoffStatusPage variant="error" error={entryError} onRetry={() => setEntryDecision('checking')}
       onUpload={!localSaveBlocked && !draftSlot.getToken() ? () => { if (draftSlot.continueWithoutSlotCheck()) finishEntry(); } : undefined} />;
   }
   if (entryDecision === 'ask') {
