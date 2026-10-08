@@ -917,7 +917,8 @@ export const api = {
       const latest = draft.project.latestJobs.detailPage;
       if (latest?.id === jobId && ewSim?.jobId !== jobId) return {
         id: jobId, status: latest.status, progress: latest.status === 'running' ? 36 : 0,
-        result: null, errorMessage: latest.status === 'error' ? '상세페이지 생성에 실패했어요.' : null,
+        result: null, errorMessage: latest.status === 'error' ? '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'
+          : latest.status === 'cancelled' ? '다시 만들 수 있어요.' : null,
       };
     }
     return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,

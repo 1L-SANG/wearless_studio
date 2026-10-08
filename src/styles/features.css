@@ -2013,6 +2013,36 @@
 .preview-close { position: fixed; top: 20px; right: 20px; }
 
 /* ============ LIBRARY (0) ============ */
+.library {
+  --stage-storyboard: color-mix(in srgb, var(--glow-sky) 40%, var(--bg-1));
+  --stage-mannequin: color-mix(in srgb, var(--glow-sage) 40%, var(--bg-1));
+  --stage-editor: color-mix(in srgb, var(--accent-success) 22%, var(--bg-1));
+  padding-top: var(--sp-28);
+}
+.lib-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: calc(var(--sp-16) + var(--sp-6)); }
+.lib-heading h1 { font-family: var(--font-display); font-size: 28px; color: var(--fg-1); text-wrap: balance; }
+.lib-heading .sec-sub { margin-top: var(--sp-6); text-wrap: balance; }
+.lib-tabs { display: flex; width: fit-content; max-width: 100%; padding: var(--sp-4); gap: var(--sp-4);
+  margin-bottom: var(--sp-16); border-radius: var(--r-pill); background: var(--bg-2); }
+.lib-tab, .lib-filter { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-8);
+  min-height: var(--cta-height); padding: var(--sp-8) var(--sp-12); border: 0; border-radius: var(--r-pill);
+  font: inherit; font-size: 14px; font-weight: 500; color: var(--fg-1); background: transparent;
+  white-space: nowrap; cursor: pointer; }
+.lib-tab[aria-selected="true"] { background: var(--bg-1); box-shadow: var(--elev-card); }
+.lib-tab:focus-visible, .lib-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.lib-filters { display: flex; flex-wrap: nowrap; gap: var(--sp-8); overflow-x: auto;
+  padding: var(--sp-4); margin-bottom: var(--sp-12); }
+.lib-filter { flex: 0 0 auto; background: var(--bg-2); }
+.lib-filter[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--fg-1); }
+.stage-storyboard { --stage-fill: var(--stage-storyboard); }
+.stage-mannequin { --stage-fill: var(--stage-mannequin); }
+.stage-editor { --stage-fill: var(--stage-editor); }
+.lib-stage { background: var(--stage-fill); color: var(--fg-1); white-space: nowrap; }
+.lib-stage-dot { width: var(--sp-8); height: var(--sp-8); border-radius: var(--r-pill);
+  background: var(--stage-fill); flex: none; }
+.ed-genbar-msg > b { text-wrap: balance; }
+.ed-genbar-detail { display: block; }
+
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
 .lib-card { background: #fff; border-radius: var(--r-5); box-shadow: var(--elev-card); overflow: hidden; cursor: pointer; transition: box-shadow .16s, transform .16s; }
 .lib-card:hover { box-shadow: var(--elev-lift); transform: translateY(-2px); }
@@ -3371,7 +3401,7 @@
 .ed-genwait:hover .ed-genwait-hint { opacity: 1; transform: none; }
 .ed-genwait.failed { background: #f0e5e7 !important; }
 /* 부분 실패(2026-09-28) — 실패한 자리에 '실패' 꼬리표(생성 중 꼬리표와 같은 자리·다른 색) */
-.ed-genwait-tag.fail { background: #b44655; }
+.ed-genwait-tag.fail { background: var(--fg-3); }
 .ed-genwait-fail { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px; text-align: center;
   font-size: 26px; font-weight: 600; color: #8e4a55; line-height: 1.5; }
@@ -3528,5 +3558,3 @@
 /* 폰 주 버튼도 저장 뒤 두 버튼처럼 화면 폭을 채운다. 안내 문구는 버튼 위 한 줄. */
 .pi-handoff .wizard-cta > .btn { flex: 1 1 100%; }
 .pi-handoff .wizard-cta > .wizard-cta-reason { flex-basis: 100%; text-align: center; }
-/* 만드는 중 줄 아래 완성본 제목은 위 카드와 띄운다. */
-.lib-done-head { margin-top: var(--sp-28); }

@@ -174,7 +174,8 @@ function DetailPageJobRibbon() {
 
   const isError = job.status === 'error';
   // 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말한다(2026-09-26).
-  const label = isError ? '상세페이지 생성에 실패했어요'
+  const label = isError ? (job.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
+    : (job.incomplete?.completed.length > 0 || job.errorCode === 'incomplete_cuts') ? '아직 못 만든 컷이 있어요' : '상세페이지를 아직 만들지 못했어요')
     : job.slow ? '오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요';
   /* cutsTotal 은 첫 cut 진행 이벤트에서야 채워진다(lib/detailPageJobEvents.applyDetailJobEvents). 그 전엔
      추정값밖에 없는데, 그걸 퍼센트로 내보내면 aria-live 로 보조기기까지 추정 숫자를 사실처럼

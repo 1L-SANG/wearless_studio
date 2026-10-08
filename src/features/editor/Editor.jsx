@@ -17,7 +17,7 @@ import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
-import { incompleteMessage, incompleteSummary, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
+import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
   clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft,
 } from '@/lib/editorWaitDraft.js';
@@ -467,7 +467,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           {el.genPending === 'live' && <span className="ed-genwait-shim" aria-hidden="true" />}
           {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
           {/* 부분 실패(2026-09-28) — 완성 컷 사이에서 어느 자리가 실패했는지 한눈에 보이게. */}
-          {el.genPending === 'failed' && <span className="ed-genwait-tag fail">실패</span>}
+          {el.genPending === 'failed' && <span className="ed-genwait-tag fail">미완성</span>}
           {el.genPending === 'failed'
             ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
             : el.genPending === 'done'
@@ -3370,9 +3370,11 @@ export function Editor() {
   const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
   // 부분 실패(incomplete_cuts, 2026-09-28) — "모두 못 만들었다"가 아니라 몇 장 완성·몇 장 실패인지.
   const genIncomplete = (dpJob.status === 'error' && !genFinalizeError && dpJob.incomplete) || null;
+  const genFailureHeading = dpJob.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
+    : (genIncomplete?.completed.length > 0 || dpJob.errorCode === 'incomplete_cuts') ? '아직 못 만든 컷이 있어요' : '상세페이지를 아직 만들지 못했어요';
   const genFailureMessage = genFinalizeError
     || (genIncomplete ? incompleteMessage(genIncomplete, dpJob.errorMessage) : dpJob.errorMessage)
-    || '생성을 끝내지 못했어요';
+    || '';
   // [실패한 컷만 다시 만들기]로 시작한 잡의 진행 중 한 줄 — "보관된 N장은 그대로 써요"(콘티가 바뀌었으면 사실대로).
   const genReuseHint = dpJob.status === 'running' ? retryReuseHint(dpJob) : '';
 
@@ -3454,9 +3456,10 @@ export function Editor() {
             {/* 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말하고
                 진행(몇 장 중 몇 장)을 그대로 보여 준다(2026-09-26). 실패는 서버가 error 라고
                 답했을 때만 뜬다(store.startDetailPageGeneration). */}
-            {genFailed ? (genIncomplete
-              ? <><b>{incompleteSummary(genIncomplete)}</b> — {genFailureMessage}</>
-              : genFailureMessage)
+            {genFailed ? <><b>{genFailureHeading}</b>
+              {genFailureMessage && genFailureMessage !== genFailureHeading && (
+                <span className="ed-genbar-detail">{genFailureMessage}</span>
+              )}</>
               : dpJob.cutsTotal
                 ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료{genReuseHint ? ` · ${genReuseHint}` : ''}</>
                 : <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}{genReuseHint ? ` · ${genReuseHint}` : ''}</>}
@@ -3498,7 +3501,7 @@ export function Editor() {
                       useAppStore.getState().startDetailPageGeneration(projectId, { retryOf });
                       genActiveRef.current = true;
                       setGenActive(true);
-                    }}>실패한 컷만 다시 만들기</Button>
+                    }}>다시 만들기</Button>
                   </>
                 ) : (
                   /* 다시 시도 = POST detail-page:generate. 중복 과금이 없는 근거는 서버 멱등이다
@@ -3513,7 +3516,7 @@ export function Editor() {
                     useAppStore.getState().startDetailPageGeneration(projectId);
                     genActiveRef.current = true;
                     setGenActive(true);
-                  }}>다시 시도</Button>
+                  }}>다시 만들기</Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
               </>
