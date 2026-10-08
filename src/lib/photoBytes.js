@@ -1,3 +1,5 @@
+import { attachResponseError, clientApiFetch, readClientResponse } from './api/clientRequest.js';
+
 const ASSET_FILE_URL = /^(https?:\/\/[^/?#]+)?(\/v1\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/file(\?[^#]*)?(#.*)?$/i;
 
 export function photoBytesUrl(src) {
@@ -11,12 +13,12 @@ export function isRemoteAssetPhoto(src) {
 }
 
 export async function fetchPhotoBytes(src, options) {
-  const response = await fetch(photoBytesUrl(src), options);
-  const fail = (message) => { throw Object.assign(new Error(message), { status: response.status }); };
+  const response = await clientApiFetch(photoBytesUrl(src), options);
+  const fail = (message) => { throw attachResponseError(Object.assign(new Error(message), { status: response.status }), response); };
   if (!response.ok) fail(`사진을 불러오지 못했어요. (${response.status})`);
   const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   if (!/^image\/[^\s/]+$/.test(mime)) fail('사진 응답 형식이 올바르지 않아요.');
-  const blob = await response.blob();
+  const blob = await readClientResponse(response, 'blob');
   if (!blob.size) fail('사진 응답이 비어 있어요.');
   return blob.type === mime ? blob : blob.slice(0, blob.size, mime);
 }

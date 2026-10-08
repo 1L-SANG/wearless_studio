@@ -10,6 +10,9 @@ export function jobFailureMessage(message, { creditsReleased = false } = {}) {
 export function jobFailure(job, options) {
   const error = new Error(jobFailureMessage(job.errorMessage, options));
   const code = job.result?.errorCode;
-  error.code = PASS_THROUGH_CODES.has(code) ? code : 'job_failed';
+  error.code = job.status === 'cancelled' ? 'job_cancelled' : PASS_THROUGH_CODES.has(code) ? code : 'job_failed';
+  const requestId = job.requestId || job.metadata?.requestId || job.meta?.requestId;
+  if (requestId) error.requestId = requestId;
+  if (job.id || job.jobId) error.jobId = job.id || job.jobId;
   return error;
 }

@@ -128,7 +128,7 @@ test('the storyboard hands off to the mannequin without reopening confirmed inpu
   // 죽는 문제가 생겼다). 성공 시에만 saveNow 뒤에 마네킹으로 이동한다.
   assert.match(
     storyboardSource,
-    /await continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?navigate: \(\) => navigate\('\/create\/mannequin'\),[\s\S]*?onFailure: \(message\) => toast\.push\(message\)/,
+    /await continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?navigate: \(\) => navigate\('\/create\/mannequin'\),[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/,
   );
   assert.doesNotMatch(storyboardSource, /이전<\/button>/);
   assert.doesNotMatch(storyboardSource, /navigate\('\/create\/input'\)/);

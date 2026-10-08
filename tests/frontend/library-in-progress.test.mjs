@@ -451,7 +451,7 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
       assert.equal(view.GenActive, status === 'done' ? undefined : true);
       assert.equal(view.Blocks[0].id, status === 'done' ? 'finished' : 'waiting');
       assert.equal(polls > 0, status !== 'done');
-      const bandBindings = { React, dpJob, projectId: id, genActive: view.GenActive, genFailed: dpJob.status === 'error',
+      const bandBindings = { ClientErrorCapture: () => null, genFinalizeOriginalError: null, React, dpJob, projectId: id, genActive: view.GenActive, genFailed: dpJob.status === 'error',
         genIncomplete: null, genFinalizeError: null, genFailureHeading: status === 'cancelled' ? '생성을 멈췄어요' : '상세페이지를 아직 만들지 못했어요', genFailureMessage: dpJob.errorMessage, genReuseHint: '', genNotif: 'denied',
         genMergedRef: { current: false }, genActiveRef: { current: false }, setGenActive() {}, useAppStore: store,
         Icon: 'svg', Button: 'button', SmoothProgressTrack: 'span', EXPECTED_MS: { detailPage: 1 }, leaveToLibrary() {} };

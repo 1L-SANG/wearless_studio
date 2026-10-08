@@ -1,3 +1,5 @@
+import { useClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
+import { recordClientAction } from '@/lib/clientEvents.js';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Icon, Modal, UploadPendingTile } from '@/components/ui.jsx';
 import { WizardCTA } from '@/features/shell/shell.jsx';
@@ -17,21 +19,22 @@ export function useMobileInputSave(product, initialSavedMeta) {
   const publish = (attempt, next) => {
     if (active.current !== attempt) return;
     attempt.status = next.status;
-    setResult({ ...next, product: attempt.snapshot.product });
+    setResult({ ...next, error: next.error, product: attempt.snapshot.product });
   };
   const sync = async (attempt) => {
     if (attempt.inFlight || active.current !== attempt) return;
     attempt.inFlight = true;
     try {
       publish(attempt, await draftSlot.saveAll(attempt.snapshot));
-    } catch {
-      publish(attempt, { status: 'failed' });
+    } catch (error) {
+      publish(attempt, { status: 'failed', error });
     } finally {
       attempt.inFlight = false;
       clearTimeout(attempt.timer);
     }
   };
   const save = (snapshot) => {
+    recordClientAction('save');
     if (active.current?.status === 'saving') return;
     clearTimeout(active.current?.timer);
     const attempt = { snapshot, status: 'saving', inFlight: false };
@@ -135,6 +138,7 @@ export function MobileSaveModal({ result, onRetry, onClose }) {
     ? metadata?.full_name || metadata?.name || metadata?.nickname || metadata?.preferred_username || user?.email
     : user?.email;
   const account = providerName && identity ? identity : null;
+  useClientErrorCapture({ point: 'mobileSave', active: result?.status === 'failed', error: result?.error });
   if (!result) return null;
   const { status, photoCount } = result;
   const copy = {

@@ -10,6 +10,11 @@ function browserStorage(storage) {
 
 const keyFor = (projectId) => `${EDITOR_WAIT_DRAFT_PREFIX}${projectId}`;
 
+export function hasEditorWaitDraft(projectId, storage) {
+  if (!projectId) return false;
+  try { return Boolean(browserStorage(storage)?.getItem(keyFor(projectId))); } catch { return false; }
+}
+
 export function loadEditorWaitDraft(projectId, storage) {
   if (!projectId) return null;
   const target = browserStorage(storage);

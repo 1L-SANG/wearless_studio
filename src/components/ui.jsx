@@ -6,6 +6,8 @@
    ============================================================= */
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
+import { useClientErrorCapture } from './ClientErrorCapture.jsx';
+import { reportUserVisibleError } from '../lib/clientEvents.js';
 
 /* ---- Lucide icon paths (stroke, 24x24) ---- */
 const ICONS = {};
@@ -245,7 +247,8 @@ export function EmptyState({ icon = 'image', title, desc, action }) {
     </div>
   );
 }
-export function ErrorState({ title = '문제가 발생했어요', desc, onRetry }) {
+export function ErrorState({ title = '문제가 발생했어요', desc, onRetry, error, kind, action, messageCode, blocking = true, projectId, jobId }) {
+  useClientErrorCapture({ error, kind, action, messageCode, blocking, projectId, jobId });
   return (
     <div className="error-state">
       <div className="ico"><Icon name="alertTri" size={24} /></div>
@@ -285,6 +288,11 @@ export function ToastProvider({ children }) {
     setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), 420);
   }, []);
   const push = useCallback((msg, opts = {}) => {
+    if (opts.variant === 'error') {
+      reportUserVisibleError({ kind: opts.kind || 'toast_error', action: opts.actionName || 'unknown',
+        messageCode: opts.messageCode || 'toast_failed', blocking: opts.blocking === true,
+        error: opts.error, context: opts.context });
+    }
     const id = Math.random().toString(36).slice(2);
     setList((l) => [...l, { id, msg, ...opts }]);
     if (!opts.sticky) {

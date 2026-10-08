@@ -1,3 +1,4 @@
+import { acceptMockClientEvent } from './clientEvents.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -210,6 +211,7 @@ function checkMannequinQuote(expected, cost) {
 }
 
 export const api = {
+  reportClientEvent: acceptMockClientEvent,
   /* ---- project (계약 §2, ADR-0001) ---- */
   // 새 제작 시작 — draft 전체를 재시드해 이전 세션의 변형이 새 생성에 새지 않게 한다.
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.

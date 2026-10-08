@@ -401,12 +401,12 @@ function MannequinLoading({ progress, category }) {
   );
 }
 
-function MannequinError({ message, onRetry, quote }) {
+function MannequinError({ error, message, onRetry, quote }) {
   return (
     <div className="wizard">
       <PageHead title="마네킹컷 생성" sub="입력한 상품 사진을 기준으로 다시 시도할 수 있어요." />
       <div className="surface">
-        <ErrorState
+        <ErrorState error={error} kind="generation_error" action="mannequinGenerate"
           title="마네킹컷을 만들지 못했어요"
           desc={message || '생성 서버에 일시적인 문제가 발생했어요.'}
           onRetry={quote ? undefined : onRetry}
@@ -667,6 +667,7 @@ export function Mannequin() {
   const navigate = useNavigate();
   const location = useLocation();
   const [phase, setPhase] = useState('loading');
+  const [originalError, setOriginalError] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
   const [cuts, setCuts] = useState([]);
@@ -899,6 +900,7 @@ export function Mannequin() {
         });
       }
       if (loadRunRef.current !== runId) return;
+      setOriginalError(err);
       setErrorMsg(message);
       setPhase('error');
       pushToast(message, { icon: 'alertTri' });
@@ -1105,7 +1107,7 @@ export function Mannequin() {
     setProgress(0);
     setBusy(false);
     submittingRef.current = false;
-    pushToast(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
+    pushToast(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri', variant: 'error', error: error, kind: 'toast_error', actionName: 'mannequinGenerate', messageCode: 'action_failed', blocking: true });
   };
 
   const reconcileLandedVersion = async (runId) => {
@@ -1525,7 +1527,7 @@ export function Mannequin() {
         : runningWaitStep >= 0 ? `${waitLabels[runningWaitStep]} 중` : '';
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
-  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} quote={changedQuote?.quote} onRetry={() => {
+  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError error={originalError} message={errorMsg} quote={changedQuote?.quote} onRetry={() => {
     retryInitialGeneration(projectId);
     void loadMannequins({ confirmed: Boolean(changedQuote), expectedQuote: changedQuote?.quote });
   }} /></>;

@@ -81,6 +81,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
+    useClientErrorCapture() {},
     ...entry, ...flow, canAutoOpenInput, checkDraftEntry: (client, options) => checkDraftEntry(client, { ...options, setTimer: (fn, ms) => ms === 8000 ? setTimeout(fn, ms) : setImmediate(fn), clearTimer: clearTimeout }), getDraftDeviceNoun, isMobileDraftWriter, flowScreenName, shouldWarnFlowAbandon, notifyFlowKept, draftSlot, useAppStore, formatDraftRelativeTime, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment' },

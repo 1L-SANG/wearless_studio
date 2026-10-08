@@ -79,7 +79,7 @@ test('유료 잡의 오류 종결을 확인한 경우에만 미차감 안내를 
   for (const status of ['error', 'cancelled', 'running']) {
     const error = jobFailure({ status, errorMessage: '생성 실패' }, { creditsReleased: status === 'error' });
     assert.equal(error.message, status === 'error' ? uncharged : connection);
-    assert.equal(error.code, 'job_failed');
+    assert.equal(error.code, status === 'cancelled' ? 'job_cancelled' : 'job_failed');
   }
   assert.equal(jobFailure({ status: 'error' }, { creditsReleased: true }).message, uncharged);
   assert.equal(jobFailure({ status: 'error', errorMessage: '필수 사진을 추가해 주세요.' }, { creditsReleased: true }).message,
@@ -111,12 +111,12 @@ test('서버의 연결 오류 문구는 셀러 API에만 적용하고 입력, �
     ['/v1/facemarket/models', 500, '모델 조회 실패', '모델 조회 실패'],
     ['/v1/personalization/profile', 500, '프로필 조회 실패', '프로필 조회 실패'],
   ]) {
-    const http = new Function('supabase', 'isBrowserOffline', 'readDeviceToken', 'fetch', 'BASE_URL',
-      'absolutizeAssetUrls', 'jobFailureMessage', `${source}; return http;`)(
+    const http = new Function('supabase', 'isBrowserOffline', 'readDeviceToken', 'clientApiFetch', 'BASE_URL',
+      'absolutizeAssetUrls', 'jobFailureMessage', 'attachResponseError', `${source}; return http;`)(
       { auth: { getSession: async () => ({ data: { session: { access_token: 'test' } } }) } },
       () => false, () => null,
       async () => ({ ok: false, status, json: async () => ({ error: { code: 'unchanged', message } }) }),
-      '', (value) => value, jobFailureMessage,
+      '', (value) => value, jobFailureMessage, (error) => error,
     );
     await assert.rejects(http(path, { suppressErrorLog: true }),
       { message: expected, status, code: 'unchanged' });
@@ -141,8 +141,8 @@ test('마네킹 생성과 재생성, 에디터 이미지 잡은 오류 종결에
       const pollJob = new Function('http', 'jobFailure', 'DEFAULT_JOB_TIMEOUT_MESSAGE',
         `${pollSource}; return (id, options) => pollJob(id, {...options, timeoutMs: -1});`)(http, jobFailure, '진행 중이에요.');
       const api = new Function('http', 'pollJob', 'LONG_IMAGE_JOB_TIMEOUT_MS', 'MANNEQUIN_JOB_TIMEOUT_MESSAGE',
-        'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', `return ({${methodSource}});`)(
-        http, pollJob, 1, '계속 만들고 있어요.', 1, '이미지가 아직 만들어지고 있어요.',
+        'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction', `return ({${methodSource}});`)(
+        http, pollJob, 1, '계속 만들고 있어요.', 1, '이미지가 아직 만들어지고 있어요.', () => {},
       );
       await assert.rejects(api[method]('p'), { message: outcome === 'error' ? uncharged
         : outcome === 'network' ? '조회가 끊겼어요.'

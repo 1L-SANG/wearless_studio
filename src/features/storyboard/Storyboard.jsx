@@ -1,3 +1,4 @@
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/storyboard — ⑤ 콘티보드 (PRD §8)
    blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
@@ -2442,7 +2443,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           await sbSaveNow(pid, () => kept, { restoreConflict: true });
           storyboardWorkCopies.clear(pid, copy);
           setAutosaveFailed(false);
-        } catch { setAutosaveFailed(true); }
+        } catch (error) { setAutosaveFailed(error); }
       }),
     } });
   };
@@ -2476,7 +2477,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   // 저장이 다시 성공하면 배너를 거둔다.
   const retryAutosave = () => flushLatest(projectId)
     .then(() => setAutosaveFailed(false))
-    .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
+    .catch((error) => setAutosaveFailed(error?.code === 'revision_conflict' ? false : error));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
   }, [blocks]);
@@ -2507,7 +2508,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
       flushLatest(projectId)
         .then(() => setAutosaveFailed(false))     // 다시 성공하면 배너를 거둔다(오경보 방지)
-        .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
+        .catch((error) => setAutosaveFailed(error?.code === 'revision_conflict' ? false : error));
     });
   }, [blocks, projectId]);
   // hidden/pagehide/unmount 모두 같은 latest snapshot을 keepalive로 직렬 체인에 enqueue한다.
@@ -3900,6 +3901,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     <div className="sb-canvas-board">
       {autosaveFailed && (
         <div className="sb-save-error sb-autosave-error" role="alert">
+          <ClientErrorCapture point="storyboardSave" error={autosaveFailed instanceof Error ? autosaveFailed : undefined} projectId={projectId} />
           <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span>
           <button type="button" onClick={retryAutosave}>다시 저장</button>
         </div>
@@ -4140,8 +4142,9 @@ export function Storyboard({ toastOverride = null } = {}) {
       setAtomicSaving(false);
     }
   }
-  function onComposeModeError() {
-    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
+  function onComposeModeError(error) {
+    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.', { variant: 'error', error,
+      kind: 'save_error', actionName: 'save', messageCode: 'compose_mode_save_failed', blocking: true });
   }
   // 사진 양 변경 계약: 현재 보드 flush → composeMode PATCH → 성공 시에만 reload.
   // helper가 false를 반환하면 현재 분할 선택 상태를 그대로 유지한다.
@@ -4169,7 +4172,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       setCopywriting: setCopyOn,
       restoreCopywriting: restoreCopyOn,
       selectionState: copywritingSelectionRef,
-      onFailure: () => toast.push('카피라이팅 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
+      onFailure: (error) => toast.push('카피라이팅 설정을 저장하지 못했어요. 다시 시도해 주세요.', {
+        variant: 'error', error, kind: 'save_error', actionName: 'save', messageCode: 'copywriting_save_failed', blocking: true }),
     });
   };
   const goToMannequin = async () => {
@@ -4185,7 +4189,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     await continueAfterStoryboardFlush({
       flush: () => saveNow(projectId),
       navigate: () => navigate('/create/mannequin'),
-      onFailure: (message) => toast.push(message),
+      onFailure: (message, error) => toast.push(message, { variant: 'error', error,
+        kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
       // 시그니처 또는 호리존 세트의 배경에 필요하면 저장된 콘티 기준으로 옷 색 확인을 맡긴다. 기다리지 않는다.
       afterFlush: () => {
         if (needsGarmentColorMeasurement(latestBlocks.current || blocks)) void api.measureGarmentColors(projectId).catch(() => {});

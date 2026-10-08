@@ -5,7 +5,7 @@ export async function continueAfterStoryboardFlush({ flush, navigate, onFailure,
   try {
     await flush();
   } catch (error) {
-    onFailure(error?.message || STORYBOARD_SAVE_FAILURE_MESSAGE);
+    onFailure(error?.message || STORYBOARD_SAVE_FAILURE_MESSAGE, error);
     return false;
   }
   try { afterFlush?.(); } catch { /* 부가 작업 실패가 다음 단계 이동을 막지 않는다 */ }

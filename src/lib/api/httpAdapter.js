@@ -4,6 +4,8 @@
    나머지는 mock 이 계속 담당한다 (부분 스왑).
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
+import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
+import { clientEvents, recordClientAction } from '../clientEvents.js';
 import { supabase } from '@/lib/supabase.js';
 import { identityKindOf } from '../identityScope.js';
 import { isRealModelSelection } from '../../features/analysis/modelSelection.js';
@@ -51,6 +53,9 @@ function networkError(code, message, context, cause, logError = true) {
   const error = new Error(finalMessage);
   error.code = finalCode;
   error.cause = cause;
+  if (cause?.requestId) error.requestId = cause.requestId;
+  if (cause?.clientApi) error.clientApi = cause.clientApi;
+  if (cause?.requestNotSent) error.requestNotSent = true;
   return error;
 }
 
@@ -133,27 +138,13 @@ export async function http(path, {
   // 올라와 사용자에게 "요청을 처리하지 못했어요" 만 남는다.
   // 세션이 있으면 토큰은 그대로 실어 보낸다 — 서버가 무시할 뿐 거부하지 않는다.
 
-  // Chrome DevTools의 Offline 에뮬레이션을 포함해 브라우저가 오프라인이면 요청 자체를 보내지
-  // 않는다. 응답이 아예 없을 때 뒤따르는 가짜 CORS 메시지를 서버 장애로 오진하지 않게 한다.
-  if (isBrowserOffline()) {
-    const error = networkError(
-      'api_network',
-      '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
-      { stage: 'api', method, path, origin: browserOrigin() },
-      undefined,
-      !suppressErrorLog,
-    );
-    error.requestNotSent = true;
-    throw error;
-  }
-
   // 관리자 기기 토큰. 토큰이 있으면 싣는다 — IS_ADMIN 을 보지 않는다. 스토리지가 이미 오리진으로
   // 갈라져 있어 admin 문서 밖에서는 토큰 자체가 없고, 로컬 ?admin=1 오버라이드 오리진에서도
   // 그 오리진의 토큰으로 동작해야 한다. 서버는 관리자 라우트에서만 이 헤더를 본다.
   const deviceToken = readDeviceToken();
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await clientApiFetch(`${BASE_URL}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -202,10 +193,15 @@ export async function http(path, {
     err.status = res.status;
     if (code) err.code = code;
     if (meta) err.meta = meta;
-    throw err;
+    throw attachResponseError(err, res);
   }
   if (res.status === 204) return null;
-  return absolutizeAssetUrls(await res.json());
+  const result = absolutizeAssetUrls(await readClientResponse(res));
+  if (/^\/v1\/jobs\//.test(path) && result && typeof result === 'object') {
+    Object.defineProperty(result, 'requestId', { value: res.headers.get('X-Request-Id'), configurable: true });
+    clientEvents.updateJobPoll(path, result);
+  }
+  return result;
 }
 
 /* 톤 에디터 전용 바이트 취득.
@@ -218,16 +214,16 @@ export async function httpBlob(path, { signal } = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
   if (!token) throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await clientApiFetch(`${BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
   });
   if (!res.ok) {
     const err = new Error('이미지를 불러오지 못했어요.');
     err.status = res.status;
-    throw err;
+    throw attachResponseError(err, res);
   }
-  return res.blob();
+  return readClientResponse(res, 'blob');
 }
 
 // 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
@@ -240,7 +236,7 @@ async function publicHttp(path, formData, { signal } = {}) {
   } catch { /* 공개 분석은 인증 bootstrap 실패에도 익명으로 계속 가능 */ }
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await clientApiFetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       body: formData,
@@ -266,9 +262,9 @@ async function publicHttp(path, formData, { signal } = {}) {
     const error = new Error(res.status >= 500 ? jobFailureMessage(message) : message);
     error.status = res.status;
     if (code) error.code = code;
-    throw error;
+    throw attachResponseError(error, res);
   }
-  return res.json();
+  return readClientResponse(res);
 }
 
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
@@ -285,6 +281,8 @@ async function pollJob(
     if (job.status === 'cancelled') {
       const error = new Error('마네킹컷 생성이 취소됐어요.');
       error.code = 'job_cancelled';
+      if (job.requestId) error.requestId = job.requestId;
+      error.jobId = jobId;
       throw error;
     }
     if (typeof job.progress === 'number' && job.progress !== last) {
@@ -301,6 +299,8 @@ async function pollJob(
       // 정상 진행 중인 생성이 실패 토스트 + 콘티보드 복귀로 처리됐다).
       const err = new Error(timeoutMessage);
       err.code = 'job_timeout';
+      if (job.requestId) err.requestId = job.requestId;
+      err.jobId = jobId;
       throw err;
     }
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -315,6 +315,7 @@ export async function uploadPhoto(
   { filename, mime, blob, purpose = 'upload' },
   { signal } = {},
 ) {
+  recordClientAction('upload');
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
     method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal,
   });
@@ -514,7 +515,7 @@ export const httpAdapter = {
     const colors = await Promise.all((product.colors ?? []).map(async (c) => {
       const images = await Promise.all((c.images ?? []).map(async (im) => {
         if (!im.src || !im.src.startsWith('blob:')) return im;
-        const blob = await fetch(im.src).then((r) => r.blob());
+        const blob = await clientApiFetch(im.src).then((r) => readClientResponse(r, 'blob'));
         // im.type 은 파일 감지 실패 시 'image'(잘못된 MIME)일 수 있다(filesToMetas 폴백) —
         // '/' 가 있는 진짜 MIME 일 때만 쓰고, 아니면 blob.type / jpeg 로. (upload-url 400 방지)
         const mime = (im.type && im.type.includes('/')) ? im.type : (blob.type || 'image/jpeg');
@@ -547,6 +548,7 @@ export const httpAdapter = {
   // 기본 shape(shapes.defaultAnalysisShape)를 베이스로 두고 AI 산출 필드만 덮어써 shape 를 보존한다.
   // (과거엔 mock db.js 의 DB.analysis 를 베이스로 썼으나 mock 결합을 끊고 클라 상수로 대체.)
   async analyzeProduct(projectId, { onProgress } = {}) {
+    recordClientAction('analyze');
     const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
     // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
     // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
@@ -607,6 +609,7 @@ export const httpAdapter = {
     return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, options = {}) {
+    recordClientAction('save');
     return storyboardRevisions.save(projectId, blocks, options);
   },
   async getEditorBlocks(projectId) {
@@ -618,6 +621,7 @@ export const httpAdapter = {
   },
   // 리비전 동기화(editorRevisionSync) — 다른 탭이 먼저 저장했으면 409 editor_conflict 로 던진다.
   async saveEditorBlocks(projectId, blocks) {
+    recordClientAction('save');
     await editorRevisions.save(projectId, relativizeAssetUrls(blocks));
   },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
@@ -650,6 +654,7 @@ export const httpAdapter = {
      같이 소비해야 하므로 시작만 하는 start + 잡/이벤트 폴링을 분리한다. 폴링 주기·수명은
      store(startDetailPageGeneration)가 소유 — 화면을 떠나도 생성 추적이 살아있게. */
   async startDetailPage(projectId) {
+    recordClientAction('detailPageGenerate');
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     // 완료 재호출(202 아님) — 새 잡 없이 기존 결과 반환(무차감·멱등)
     if (res.data) return { data: res.data, credits: res.credits };
@@ -908,6 +913,7 @@ export const httpAdapter = {
   // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
   // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
   async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId, expectedQuote } = {}) {
+    recordClientAction('mannequinGenerate');
     let jobId = resumeJobId;
     if (!jobId) {
       const res = await http(`/v1/projects/${projectId}/mannequins:generate`, {
@@ -950,6 +956,7 @@ export const httpAdapter = {
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
   async regenerateMannequin(projectId, { fitProfile, onProgress, onJobStarted, onJobSucceeded, idempotencyKey, resumeJobId, expectedQuote } = {}) {
+    recordClientAction('mannequinAdjust');
     let jobId = resumeJobId;
     if (!jobId) {
       const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
@@ -989,6 +996,7 @@ export const httpAdapter = {
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
   async generateImage(projectId, req = {}) {
+    recordClientAction('editorImage');
     const { onProgress, onJobStarted, idempotencyKey, ...body } = req;
     let res;
     try {

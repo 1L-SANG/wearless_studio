@@ -1,3 +1,4 @@
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/editor/Editor.jsx — ⑦ 상세페이지 에디터 (PRD §10)
    Structure/markup/classNames ported verbatim from the prototype
@@ -13,7 +14,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
-import { jobFailureMessage } from '@/lib/api/jobFailure.js';
+import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
@@ -1039,6 +1040,7 @@ export function Editor() {
   const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 퀵바와 모달의 공용 잠금
   const [dlProg, setDlProg] = useState(null); // 처리 단계와 현재 블록 수
   const [dlError, setDlError] = useState('');
+  const [dlOriginalError, setDlOriginalError] = useState(null);
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -1105,6 +1107,7 @@ export function Editor() {
     slowJobTimers.current.clear();
   }, []);
   const genMergedRef = useRef(false);
+  const [genFinalizeOriginalError, setGenFinalizeOriginalError] = useState(null);
   const [genFinalizeError, setGenFinalizeError] = useState('');
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
@@ -1438,9 +1441,9 @@ export function Editor() {
       // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
       // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
       // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
-      .catch((error) => setLoadError(classifyEditorLoadError(
+      .catch((error) => setLoadError({ error, ...classifyEditorLoadError(
         fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
-      )));
+      ) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAttempt]);
 
@@ -1523,6 +1526,7 @@ export function Editor() {
       } catch (error) {
         if (cancelled) return;
         genMergedRef.current = false;
+        setGenFinalizeOriginalError(error);
         setGenFinalizeError(error?.message || '완성본을 불러오지 못했어요.');
       }
     })();
@@ -1629,7 +1633,7 @@ export function Editor() {
            ② 배너로 알리고 ③ 다음 편집 때 자동으로 다시 시도한다(전체 문서 PUT 이라
            여러 번 보내도 안전하다). */
         const backedUp = backupLatestEditorDraft(latestBlocks.current);
-        setSaveError({ ...classifyEditorLoadError(error), backedUp });
+        setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
       });
     }, 1500);
   }, [blocks, genActive, projectId, backupLatestEditorDraft, reloadAfterEditorConflict]);
@@ -1660,7 +1664,7 @@ export function Editor() {
       if (isEditorConflict(error)) { reloadAfterEditorConflict(); return; }
       if (!saveGuard.current.isNewest(ticket)) return;
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
-      setSaveError({ ...classifyEditorLoadError(error), backedUp });
+      setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
     });
   };
   // 탭 닫기·새로고침에서는 React 언마운트 정리가 실행된다는 보장이 없다. 브라우저가
@@ -1898,6 +1902,7 @@ export function Editor() {
   if (loadError) return (
     <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
       <ErrorState
+        error={loadError.error}
         desc={loadError.message}
         /* 없는 작업·조립 실패는 다시 시도해도 결과가 같다 — 버튼을 주면 무한 왕복이 된다.
            로그인이 풀린 경우도 마찬가지다: 다시 시도해 봐야 토큰이 없어 똑같이 실패하므로
@@ -2123,7 +2128,7 @@ export function Editor() {
     try {
       finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
     } catch (e) {
-      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true });
     } finally {
       setDlBusy(false);
     }
@@ -2133,6 +2138,7 @@ export function Editor() {
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
     setDlError('');
+    setDlOriginalError(null);
     setDlBusy(true);
     setDlProg({ done: 0, total: nodes.length, stage: 'capture' });
     const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
@@ -2145,6 +2151,7 @@ export function Editor() {
         ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
         : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
+      setDlOriginalError(e);
       setDlError(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setDlBusy(false);
@@ -2387,7 +2394,7 @@ export function Editor() {
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
       if (quiet) throw error;
-      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true });
     } finally {
       if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
     }
@@ -2497,7 +2504,7 @@ export function Editor() {
         if (job?.status === 'error' || job?.status === 'cancelled') {
           slowJobs.current.delete(jobId);
           dropLoadingTile(group, loadingId);
-          toast.push(jobFailureMessage(job.errorMessage, { creditsReleased: job.status === 'error' }), { icon: 'x' });
+          toast.push(jobFailureMessage(job.errorMessage, { creditsReleased: job.status === 'error' }), { icon: 'x', variant: 'error', kind: 'generation_error', actionName: 'editorImage', blocking: true, error: jobFailure(job) });
           return;
         }
       } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
@@ -2520,7 +2527,7 @@ export function Editor() {
     }
     // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
     dropLoadingTile(group, loadingId);
-    toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'generation_error', actionName: 'editorImage', messageCode: 'editor_image_failed', blocking: true });
     return false;
   };
   const saveBrandUseCategory = async (value) => {
@@ -2827,7 +2834,7 @@ export function Editor() {
       if (!saveGuard.current.isNewest(ticket)) return;
       // 눌렀는데 아무 반응이 없으면 저장된 줄 안다 — 실패는 반드시 말한다.
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
-      setSaveError({ ...classifyEditorLoadError(error), backedUp });
+      setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
       toast.push(backedUp
         ? '저장하지 못했어요 — 편집 내용은 이 브라우저에 보관해 뒀어요'
         : '저장하지 못했어요 — 창을 닫지 말고 다시 시도해 주세요', { icon: 'x' });
@@ -2906,7 +2913,7 @@ export function Editor() {
       genActiveRef.current = true;
       setGenActive(true);
     } catch (e) {
-      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
@@ -3390,6 +3397,7 @@ export function Editor() {
           할 수 있는 행동(로그인 / 새로고침 / 다시 저장)을 하나만 준다(2026-08-19 오너 신고). */}
       {saveError && (
         <div className="ed-savebar" role="status">
+          <ClientErrorCapture point="editorSave" error={saveError.error} projectId={projectId} localBackup={saveError.backedUp} />
           <Icon name="alertTri" size={15} />
           <span className="esb-msg">
             {saveError.kind === 'auth' ? '로그인이 풀려서 저장되지 않고 있어요' : '저장되지 않고 있어요'}
@@ -3455,6 +3463,8 @@ export function Editor() {
       {((genActive && dpJob.status !== 'blocked')
           || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
         <div className={`ed-genbar${genFailed ? ' error' : ''}`} role="status" aria-live="polite">
+          <ClientErrorCapture point="editorGeneration" active={genFailed && dpJob.errorCode !== 'job_cancelled'} error={genFinalizeError ? genFinalizeOriginalError : dpJob.error}
+            projectId={projectId} jobId={dpJob.jobId} />
           <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
             className={genFailed ? '' : 'spin'} />
           <span className="ed-genbar-msg">
@@ -3547,6 +3557,7 @@ export function Editor() {
       {/* FaceMarket 차단(409) — 생성이 라이선스 게이트에서 멈춤 */}
       {dpJob.projectId === projectId && dpJob.status === 'blocked' && (
         <div className="ed-genoverlay">
+          <ClientErrorCapture point="editorGeneration" error={dpJob.error} projectId={projectId} jobId={dpJob.jobId} />
           <div className="surface fm-blocked">
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
@@ -3768,6 +3779,8 @@ export function Editor() {
       {/* onClose 도 dlBusy 게이트 — ESC·배경클릭으로 닫혀도 내보내기는 계속 돌아 유령 완료가 된다(리뷰 반영) */}
       {download && (
         <Modal onClose={() => { if (!dlBusy) setDownload(false); }} wide>
+          <ClientErrorCapture point="errorState" action="download" messageCode="download_failed"
+            active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
           <EditorDownloadModal
             settings={dlSettings}
             summary={dlSummary}

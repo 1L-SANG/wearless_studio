@@ -63,8 +63,8 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
   const pollJob = new Function('http', 'Date', 'setTimeout', 'jobFailure', `${pollSource}; return pollJob;`)(
     http, { now: () => now }, (fn) => fn(), (job) => Object.assign(new Error(job.errorMessage), { code: 'job_failed' }),
   );
-  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE',
-    `return ({${adapterSource}}).generateImage;`)(http, pollJob, 180_000, '아직 만들고 있어요.');
+  const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction',
+    `return ({${adapterSource}}).generateImage;`)(http, pollJob, 180_000, '아직 만들고 있어요.', () => {});
   const context = {
     api: { generateImage: generateRemote, getJob: (id) => http(`/v1/jobs/${id}`) },
     projectId: 'project-1', analysis, brandUseCategorySaving,

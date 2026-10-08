@@ -231,7 +231,7 @@ test('M9 HTTP generate and regenerate carry expectedQuote, and runner forwards i
   const calls = [];
   const http = async (path, options) => { calls.push({ path, options }); return { data: ['cut'], credits: 1 }; };
   const methods = httpSource.slice(httpSource.indexOf('  async generateMannequins('), httpSource.indexOf('  // 에디터 Wardrobe'));
-  const adapter = new Function('http', `return ({ ${methods} });`)(http);
+  const adapter = new Function('http', 'recordClientAction', `return ({ ${methods} });`)(http, () => {});
   const expectedQuote = expectedMannequinQuote(45);
   await adapter.generateMannequins('p', { expectedQuote });
   await adapter.regenerateMannequin('p', { expectedQuote, fitProfile: { version: 2 } });
