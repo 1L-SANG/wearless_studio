@@ -57,7 +57,7 @@ test('compact affiliation shows actual set membership without duplicating the st
   const html = renderToStaticMarkup(React.createElement(Header, { set, siblings: [{ id: 'a' }, selected], block: selected, onChangeSet() {} }));
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /현재 2장/); assert.doesNotMatch(html, /src="\/cover.png"|sb-set-card/);
-  assert.match(html, /2\/2/); assert.match(html, /2\/2/); assert.match(html, /세트 설정/); assert.match(html, /세트 공통/);
+  assert.match(html, /2\/2/); assert.match(html, /세트 설정/); assert.match(html, /세트 공통/);
 });
 
 test('individual cut header labels the effective background when a saved request is stale', () => {

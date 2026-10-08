@@ -38,7 +38,7 @@
 .sb-page .sb-excell.sel .ck { background: var(--fg-1); color: var(--bg-1); }
 .sb-page .sb-canvas-shell .insp-col:has(.ds-selection-summary) { padding: 0; background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
 .sb-page .insp-col:has(.ds-selection-summary) .inspector { background: transparent; border-radius: 0; padding: 20px; }
-.sb-page .ds-selection-summary { padding: 16px 20px; }
+.sb-page .ds-selection-summary { padding: 12px 20px; }
 .fig-panel .text-quick-styles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .fig-panel .text-quick-styles .chip { min-width: 0; justify-content: center; padding: 9px 6px; white-space: nowrap; }
 .fig-panel .text-quick-styles .chip.on { box-shadow: inset 0 0 0 1.5px var(--fg-1); }
@@ -60,18 +60,32 @@
 /* Inspector identity stays visible within its own scroll container. */
 .sb-page .ds-selection-summary { position: sticky; top: 0; z-index: 5; background: var(--bg-1); border-radius: var(--r-6) var(--r-6) 0 0; }
 .ds-selection-title { align-items: center; }
-.ds-selection-thumb { display: block; flex: 0 0 42px; width: 42px; height: 56px; object-fit: cover; border-radius: var(--r-2); background: var(--bg-2); }
+.ds-selection-thumb { display: block; flex: 0 0 36px; width: 36px; height: 48px; object-fit: cover; border-radius: var(--r-2); background: var(--bg-2); }
 .ds-selection-placeholder { display: grid; place-items: center; color: var(--fg-2); }
 .ds-selection-identity { min-width: 0; flex: 1; }
 .ds-selection-identity strong { display: block; }
-.ds-selection-identity > span { display: block; color: var(--fg-2); font-size: 11px; margin-top: 3px; }
+.ds-selection-identity > span { display: block; color: var(--fg-1); font-size: 12px; margin-top: 3px; }
 .ds-selection-title > button { flex-shrink: 0; }
-.ds-field-scope { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--bg-2); color: var(--fg-2); font: 400 11px/1.5 var(--font-body); white-space: nowrap; vertical-align: middle; }
+.ds-field-scope { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--bg-2); color: var(--fg-1); font: 400 12px/1.5 var(--font-body); white-space: nowrap; vertical-align: middle; }
 .ds-scoped-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px; }
-.ds-scope-help { margin-top: 8px; font-size: 11px; color: var(--fg-2); }
+.ds-scope-help { margin-top: 8px; font-size: 12px; color: var(--fg-1); }
 .ds-scope-preview { margin: 0 0 20px; }
 .ds-scope-preview strong { font-size: 12px; }
 .ds-scope-thumbs { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding: 3px; }
 .ds-scope-thumbs > div { flex: 0 0 48px; text-align: center; }
 .ds-scope-thumbs .ds-selection-thumb { width: 48px; height: 64px; box-shadow: 0 0 0 2px var(--fg-1); }
-.ds-scope-thumbs span { display: block; margin-top: 5px; font-size: 10px; color: var(--fg-2); }
+.ds-scope-thumbs span { display: block; margin-top: 5px; font-size: 12px; color: var(--fg-1); }
+
+.sb-page .insp-col:has(.ds-selection-summary) { scroll-padding-top: 92px; }
+.sb-page .ds-set-picker-head { display: block; margin-bottom: 14px; }
+.ds-inspector-back { padding: 6px 0; border: 0; background: transparent; color: var(--fg-1); font: 500 13px/1.5 var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.ds-inspector-back:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.ds-inspector-back:disabled { color: var(--fg-disabled); cursor: default; }
+.ds-set-picker-head p { margin-top: 6px; font-size: 12px; color: var(--fg-1); }
+.ds-scope-preview { padding: 10px 12px; border-radius: var(--r-3); background: var(--bg-2); }
+.ds-scope-preview > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
+.ds-scope-preview > summary::-webkit-details-marker { display: none; }
+.ds-scope-preview > summary::after { content: '+'; }
+.ds-scope-preview[open] > summary::after { content: '−'; }
+.ds-scope-preview > summary > span { margin-left: auto; color: var(--fg-1); font-size: 12px; }
+.ds-scope-preview > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }

@@ -1060,11 +1060,7 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
   </div>;
 }
 
-function InspectorScope({ children = '이 사진만' }) {
-  return <span className="ds-field-scope">{children}</span>;
-}
-
-function InspectorSelectionThumbnail({ src }) {
+function StoryboardSelectionThumbnail({ src }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [src]);
   return src && !failed
@@ -1087,7 +1083,7 @@ function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet, background
   );
 }
 
-function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
+function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMember, onClose, returnLabel, gender, clothingType, sectionRole = null,
   identityKind = null, busy = false, currentMembers = [], product, colorEvidence, onBackgroundChange,
   catalog = [], onCatalogDragStart, onCatalogDragEnd }) {
   const replacing = mode === 'replace';
@@ -1153,15 +1149,16 @@ function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMembe
   const availability = horizonBackgroundAvailability(currentMembers, product, colorEvidence, currentSet?.id);
   return <div className="surface inspector sb-set-picker" ref={pickerRef}
     onKeyDown={event => { if (event.key === 'Escape' && preview) { event.preventDefault(); event.stopPropagation(); dismissPreview(); } }}>
-    <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
-      <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
-      <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
-    {currentMembers.length > 0 && <div className="ds-scope-preview" aria-label="세트 설정 적용 대상">
-      <div className="ds-scoped-label"><strong>설정 적용 대상</strong><InspectorScope>이 세트 전체 · {currentMembers.length}장</InspectorScope></div>
+    <div className="sb-set-picker-head ds-set-picker-head">
+      <button type="button" className="ds-inspector-back" disabled={busy} onClick={onClose}>{returnLabel || '콘티로 돌아가기'}</button>
+      <p>{replacing ? '세트를 눌러 바꾸거나 한 컷만 끌어서 추가하세요.' : '세트를 눌러 추가하거나 한 컷만 끌어서 추가하세요.'}</p>
+    </div>
+    {currentMembers.length > 0 && <details key={currentBlock?.spaceGroupId} className="ds-scope-preview" aria-label="세트 설정 적용 대상">
+      <summary><strong>이 세트 전체 · {currentMembers.length}장</strong><span>대상 사진 보기</span></summary>
       <div className="ds-scope-thumbs">{currentMembers.map((member, index) => <div key={member.id}>
-        <InspectorSelectionThumbnail src={storyboardPreviewSource(member, previewCatalogs)} /><span>세트 {index + 1}번</span>
+        <StoryboardSelectionThumbnail src={storyboardPreviewSource(member, previewCatalogs)} /><span>세트 {index + 1}번</span>
       </div>)}</div>
-    </div>}
+    </details>}
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
       disabled={busy} onChange={onBackgroundChange} availability={availability} />}
     <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
@@ -1181,7 +1178,7 @@ function SignatureCutGallery({ gender, clothingType, subCategory, customCategory
   const cuts = signatureCutsFor({ gender, clothingType, subCategory, customCategory });
   return (
     <div className="insp-sec sb-signature-gallery">
-      <label className="lbl ds-scoped-label">첫 화면 분위기<InspectorScope /></label>
+      <label className="lbl">첫 화면 분위기</label>
       <div className="sb-signature-grid">
         {cuts.map((cut) => (
           <button
@@ -1209,7 +1206,7 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ scopeLabel = null, catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
+export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
   const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
@@ -1304,7 +1301,7 @@ export function MoodGuide({ scopeLabel = null, catalogs, cut, blockCutType = cut
   return (
     <div className="insp-sec">
       <div className="sb-exhead">
-        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}{scopeLabel && <InspectorScope>{scopeLabel}</InspectorScope>}</label>
+        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
         {onShotChange
           ? <ShotSegment options={(cut === 'styling' || cut === 'horizon') ? [
             ...shotOpts, { ...MINE_SHOT_OPTION, disabled: !onRefsChange || !onUseMine },
@@ -1389,7 +1386,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   if (!block) return (
     <div className="surface inspector">
       <div className="sb-exhead">
-        <label className="lbl ds-scoped-label">샷 종류<InspectorScope /></label>
+        <label className="lbl">샷 종류</label>
         <ShotSegment options={catalogs.shotTypes.map((option) => ({ ...option, disabled: true })).concat(MINE_SHOT_OPTION)}
           value="mine" onChange={() => {}} cut="styling" clothingType={clothingType} gender={exampleGender}
           isOptionPublished={(value) => value === 'mine'} />
@@ -1567,7 +1564,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
-            <label className="lbl ds-scoped-label">샷 종류<InspectorScope /></label>
+            <label className="lbl">샷 종류</label>
             <ShotSegment options={catalogs.shotTypes.map((option) => ({ ...option, disabled: true })).concat(MINE_SHOT_OPTION)}
               value="mine" onChange={() => {}} cut="styling" clothingType={clothingType} gender={exampleGender}
               isOptionPublished={(value) => value === 'mine'} />
@@ -1598,7 +1595,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {/* 세트 멤버는 컷 종류가 세트에 고정 — 잠금 표시 대신 아예 숨긴다(2026-08-15 오너). */}
       {!spaceContext && (
         <div className="insp-sec">
-          <div className="sb-cut-label-row"><label className="lbl ds-scoped-label">컷 종류<InspectorScope /></label></div>
+          <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
           <UnderlineTabs
             options={cutTypeOptions}
             value={pendingRecipe?.cutType || (isMirror ? 'styling' : block.cutType)}
@@ -1613,7 +1610,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide scopeLabel="이 사진만" identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
+            <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
               direction={pendingRecipe.cutType === 'mirror' ? null : block.direction}
               sideStyle={pendingRecipe.cutType === 'mirror' ? null : (block.sideStyle ?? null)}
               shot={pendingRecipe.shot}
@@ -1631,7 +1628,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          {isDetail && <DetailTargetPicker scopeLabel="이 사진만" block={block} product={catalogs.detailProduct}
+          {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
             recommendations={catalogs.detailRecommendations} onChange={onChange} />}
           {isSignatureSlot && (
             <SignatureCutGallery
@@ -1648,7 +1645,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             />
           )}
           {shouldRenderGenerationExamples && !isSignatureSlot && (
-            <MoodGuide scopeLabel="이 사진만" identityKind={identityKind} onUseMine={(ref) => onChange({
+            <MoodGuide identityKind={identityKind} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
@@ -1688,7 +1685,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
       {showOuterClosure && (
         <div className="insp-sec outer-closure-field">
-          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도<InspectorScope /></div>
+          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도</div>
           <div className="outer-closure-options" role="radiogroup" aria-labelledby={`outer-closure-label-${block.id}`}>
             {closureOptions.map((option) => {
               const on = outerClosureState === option.value;
@@ -1706,7 +1703,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       )}
 
-      <div className="insp-sec"><label className="lbl ds-scoped-label">대상 색상<InspectorScope /></label>
+      <div className="insp-sec"><label className="lbl">대상 색상</label>
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
           value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
 
@@ -1716,7 +1713,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         && ((Array.isArray(matchClothing) && matchClothing.length > 0) || customMatchPromotionPending) && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
-            <Icon name="settings" size={17} />매칭 의류 바꾸기<InspectorScope />
+            <Icon name="settings" size={17} />매칭 의류 바꾸기
           </button>
           {matchOpen && (
             <div className="sb-match-inline">
@@ -2137,6 +2134,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
+  const inspectorReturnFocus = useRef(null);
+  const setPickerReturnFocus = useRef(null);
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
@@ -2782,6 +2781,29 @@ export function Storyboard({ toastOverride = null } = {}) {
     }
   };
   const finishEdit = () => { setPendingSectionMove(null); setSelectedId(null); };
+  const restoreInspectorFocus = (target) => requestAnimationFrame(() => {
+    const fallback = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected, .sb-board-tool');
+    (target?.isConnected && target.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
+  });
+  const closeInspector = () => {
+    if (atomicSavingRef.current) return;
+    const target = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || inspectorReturnFocus.current;
+    finishEdit();
+    setSetPicker(null);
+    setSetPickerError(null);
+    setSplitOpen(false);
+    restoreInspectorFocus(target);
+  };
+  const returnFromSetPicker = () => {
+    if (atomicSavingRef.current) return;
+    if (!selectedId) { closeInspector(); return; }
+    setSetPicker(null);
+    setSetPickerError(null);
+    requestAnimationFrame(() => {
+      const target = setPickerReturnFocus.current;
+      (target?.isConnected && target.getClientRects().length ? target : document.querySelector('.insp-col .sb-space-set-change'))?.focus({ preventScroll: true });
+    });
+  };
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
@@ -3363,6 +3385,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     setBlocks((bs) => patchSection(bs, sec.id, { sectionLayout: v, sectionCustom: true }));
   };
   const openSetPicker = (picker) => {
+    setPickerReturnFocus.current = document.activeElement;
+    inspectorReturnFocus.current = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || document.activeElement;
     setPickerScrollY.current = window.scrollY;
     setSetPickerError(null);
     setSetPicker(picker);
@@ -4103,7 +4127,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       )}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       identityKind={identityKind}
-      onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
+      returnLabel={selectedId ? '컷 설정으로 돌아가기' : '콘티로 돌아가기'} onClose={returnFromSetPicker} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory} exampleGender={exampleGender} signatureGender={signatureGenderNow} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
@@ -4140,17 +4164,12 @@ export function Storyboard({ toastOverride = null } = {}) {
       {splitOpen && <div className="insp-col">
         <div className="ds-selection-summary">
           <div className="ds-selection-title">
-            {!setPicker && selected && <InspectorSelectionThumbnail src={selectedThumbnail} />}
-            <div className="ds-selection-identity"><strong>{setPicker ? '세트 설정' : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
-              {selected && !setPicker && <span>{selected.source === 'mine' ? '내 상품 사진' : '지금 수정 중인 사진'}</span>}
+            {!setPicker && selected && <StoryboardSelectionThumbnail src={selectedThumbnail} />}
+            <div className="ds-selection-identity"><strong>{setPicker ? (setPicker.mode === 'replace' ? '장소 세트 변경' : '장소 세트 추가') : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
+              {selected && !setPicker && <span>{selected.source === 'mine' ? '내 상품 사진 · 이 사진에만 적용' : '아래 설정은 이 사진에만 적용'}</span>}
               {setPicker && <span>{setPicker.mode === 'replace' ? `현재 세트 ${pickerMembers.length}장` : '새 촬영 세트 추가'}</span>}
             </div>
-            <button type="button" onClick={() => {
-              finishEdit();
-              setSetPicker(null);
-              setSetPickerError(null);
-              setSplitOpen(false);
-            }} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>
+            <button type="button" disabled={atomicSaving} onClick={closeInspector} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>
           </div>
           {!selected && !setPicker && <p>수정할 사진을 선택해주세요.</p>}
         </div>
