@@ -5,16 +5,13 @@
  * 필요한데 `/v1/assets/{id}/file` 은 R2 로 302 라 보장이 없다 → 같은 계약의 바이트 직접
  * 서빙 라우트 `/v1/assets/{id}/bytes` 로 바꿔 읽는다 (routes.py `_tone_bytes` 와 같은 근거).
  *
- * 이미지 실패 정책 (리뷰 반영): html-to-image 는 이미지 fetch 실패를 빈 칸으로 삼키고
- * 모듈 캐시에 실패까지 저장한다 — 그래서 캡처 전에 이미지를 직접 프리플라이트한다.
- *   - /bytes 자산(핵심 상품컷, CORS 는 우리 서버가 보장): 1장이라도 실패하면 **중단**.
- *     빈 상세페이지를 "저장 완료"로 속이지 않고, 재시도가 실제로 통하게 한다.
- *   - 그 외 외부 URL(모델 썸네일 등, CORS 보장 불가): 실패 시 그 이미지만 비우고 진행,
- *     저장 후 경고를 돌려준다. 외부 한 장 때문에 전체 다운로드를 막지 않는다.
+ * 이미지 실패 정책: 사진 바이트를 읽지 못하거나 캡처에서 사진이 빠지면 저장을 중단한다.
+ * 원래 빈 블록은 저장하고, 실패한 다운로드는 새 캐시로 재시도할 수 있다.
  *
  * 경로 3개: ① 블록 1개 PNG(퀵바) ② 전체 세로 이어붙인 긴 PNG ③ 블록별 PNG ZIP (다운로드 모달).
  */
-import { getFontEmbedCSS, toCanvas } from 'html-to-image';
+import { getFontEmbedCSS, toSvg } from 'html-to-image';
+import { collectExportImageProbes, rasterizeExportSvg } from './editorExportRaster.js';
 import JSZip from 'jszip';
 import { ASSET_CACHE_VERSION } from '../../lib/assetUrl.js';
 import { notarize } from './publicationNotarize.js';
@@ -314,42 +311,43 @@ const CHROME_SELECTOR = [
   '.el-slot',
 ].join(',');
 
-const isRemoteSrc = (src) => !!src && !src.startsWith('data:') && !src.startsWith('blob:');
-
-// 이미지 프리플라이트 — 정책은 파일 머리 주석 참조. { softFailed } 반환, 핵심 자산 실패는 throw.
-async function preflightImages(clone) {
-  const imgs = [...clone.querySelectorAll('img')];
-  const bySrc = new Map();
-  imgs.forEach((img) => {
+// 한 번의 다운로드 안에서만 성공한 이미지 바이트를 재사용한다. 재시도는 새 캐시다.
+async function preflightImages(clone, imageCache) {
+  const imgs = [...clone.querySelectorAll('img[src]')];
+  let failed = 0;
+  await Promise.all(imgs.map(async (img) => {
     const src = img.getAttribute('src');
-    if (isRemoteSrc(src)) bySrc.set(src, [...(bySrc.get(src) || []), img]);
-  });
-  let coreFailed = 0;
-  let softFailed = 0;
-  await Promise.all([...bySrc.keys()].map(async (src) => {
-    let ok = false;
+    if (!src || src.startsWith('data:')) return;
+    if (!imageCache.has(src)) {
+      imageCache.set(src, (async () => {
+        const res = await fetch(src);
+        const type = res.headers.get('content-type') || '';
+        if (!res.ok || (type && !type.startsWith('image/') && type !== 'application/octet-stream')
+          || (isAssetBytesUrl(src) && !type.startsWith('image/'))) {
+          throw new Error('image unavailable');
+        }
+        const blob = await res.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      })());
+    }
     try {
-      const res = await fetch(src);
-      // 핵심 자산은 이미지 타입까지 확인 — SPA 리라이트가 index.html 을 200으로 주는 함정 차단.
-      ok = res.ok && (!isAssetBytesUrl(src)
-        || (res.headers.get('content-type') || '').startsWith('image/'));
-    } catch { /* 네트워크/CORS 실패 → 아래에서 분류 */ }
-    if (ok) return;
-    if (isAssetBytesUrl(src)) {
-      coreFailed += 1;
-    } else {
-      softFailed += bySrc.get(src).length;
-      // src 를 비워 html-to-image 가 실패를 모듈 캐시에 박제하는 것(재시도 불가)을 막는다.
-      bySrc.get(src).forEach((img) => img.removeAttribute('src'));
+      img.removeAttribute('srcset');
+      img.setAttribute('src', await imageCache.get(src));
+    } catch {
+      imageCache.delete(src);
+      failed += 1;
     }
   }));
-  if (coreFailed) {
-    throw new Error(`상품 이미지 ${coreFailed}장을 불러오지 못해 다운로드를 중단했어요. 잠시 후 다시 시도해 주세요.`);
-  }
-  return { softFailed };
+  if (failed) throw new Error(`사진 ${failed}장을 불러오지 못해 다운로드를 중단했어요. 다시 시도해 주세요.`);
+  return { softFailed: 0 };
 }
 
-async function prepareClone(blockNode) {
+async function prepareClone(blockNode, imageCache = new Map()) {
   const holder = document.createElement('div');
   holder.style.cssText = `position:fixed;left:-100000px;top:0;width:${EXPORT_WIDTH}px;pointer-events:none;`;
   const clone = blockNode.cloneNode(true);
@@ -380,7 +378,7 @@ async function prepareClone(blockNode) {
   holder.appendChild(clone);
   document.body.appendChild(holder);
   try {
-    const { softFailed } = await preflightImages(clone);
+    const { softFailed } = await preflightImages(clone, imageCache);
     return { clone, softFailed, dispose: () => holder.remove() };
   } catch (e) {
     holder.remove();
@@ -402,21 +400,23 @@ export function flattenOnWhite(canvas) {
   return out;
 }
 
-async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS) {
-  const { clone, softFailed, dispose } = await prepareClone(blockNode);
+async function captureBlockCanvas(blockNode, pixelRatio, fontEmbedCSS, imageCache, onVerify) {
+  const { clone, softFailed, dispose } = await prepareClone(blockNode, imageCache);
   try {
     // backgroundColor 옵션을 넘기면 html-to-image 가 **캡처 대상(블록) 자체의 배경색을 그 값으로
     // 덮어쓴다**(apply-style: style.backgroundColor = options.backgroundColor). 그래서 셀러가 바꾼
     // 블록 배경이 다운로드에서 전부 흰색이 됐다(2026-09-28). 블록 배경은 그대로 캡처하고,
     // 흰 바탕 합성은 우리가 한다 — 반투명 배경(bgOpacity)도 화면처럼 흰 바탕 위에 보인다.
-    const captured = await toCanvas(clone, {
-      pixelRatio,
-      width: EXPORT_WIDTH,
-      height: clone.offsetHeight,
-      fontEmbedCSS,
-      skipAutoScale: true,
+    const height = clone.offsetHeight;
+    const probes = await collectExportImageProbes(clone, { ratio: pixelRatio, height });
+    const svg = await toSvg(clone, { width: EXPORT_WIDTH, height, fontEmbedCSS });
+    onVerify?.();
+    const canvas = await rasterizeExportSvg(svg, {
+      width: Math.trunc(EXPORT_WIDTH * pixelRatio),
+      height: Math.trunc(height * pixelRatio),
+      probes,
     });
-    return { canvas: flattenOnWhite(captured), softFailed };
+    return { canvas, softFailed };
   } finally {
     dispose();
   }
@@ -427,10 +427,12 @@ async function captureBlockCanvasSlices(
   pixelRatio,
   fontEmbedCSS,
   maxHeight = MAX_SPLIT_HEIGHT,
+  imageCache,
+  onVerify,
 ) {
   maxHeight = Math.min(maxHeight, MAX_CAPTURE_DIM, MAX_CANVAS_DIM,
     Math.floor(MAX_CANVAS_AREA / Math.trunc(EXPORT_WIDTH * pixelRatio)));
-  const { clone, softFailed, dispose } = await prepareClone(blockNode);
+  const { clone, softFailed, dispose } = await prepareClone(blockNode, imageCache);
   const canvases = [];
   try {
     const totalCssHeight = clone.offsetHeight;
@@ -453,16 +455,13 @@ async function captureBlockCanvasSlices(
       const cssHeight = wantedHeight / pixelRatio;
       viewport.style.height = `${cssHeight}px`;
       clone.style.top = `${-cssY}px`;
-      const captured = await toCanvas(viewport, {
-        pixelRatio,
-        width: EXPORT_WIDTH,
-        height: cssHeight,
-        canvasWidth: EXPORT_WIDTH,
-        canvasHeight: cssHeight,
-        fontEmbedCSS,
-        skipAutoScale: true,
+      const probes = await collectExportImageProbes(clone, { ratio: pixelRatio, top: cssY, height: cssHeight });
+      const svg = await toSvg(viewport, { width: EXPORT_WIDTH, height: cssHeight, fontEmbedCSS });
+      // 최종 픽셀 수를 직접 지정해 CSS 높이 왕복에서 생기는 1px 손실을 막는다.
+      onVerify?.();
+      let flattened = await rasterizeExportSvg(svg, {
+        width: Math.trunc(EXPORT_WIDTH * pixelRatio), height: wantedHeight, probes,
       }); // eslint-disable-line no-await-in-loop
-      let flattened = flattenOnWhite(captured);
       if (flattened.width !== Math.trunc(EXPORT_WIDTH * pixelRatio)
         || Math.abs(flattened.height - wantedHeight) > 1) {
         releaseExportCanvas(flattened);
@@ -582,7 +581,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
       let y = 0;
       for (let i = 0; i < blockNodes.length; i += 1) {
         deps.onProgress?.(i, blockNodes.length);
-        const captured = await captureBlock(blockNodes[i], ratio); // eslint-disable-line no-await-in-loop
+        const captured = await captureBlock(blockNodes[i], ratio, i); // eslint-disable-line no-await-in-loop
         try {
           validateCapture([captured.canvas], blockNodes[i]);
           if (y + captured.canvas.height > out.height) {
@@ -596,6 +595,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
           releaseCanvas(captured.canvas);
         }
       }
+      deps.onProgress?.(blockNodes.length - 1, blockNodes.length, 'encode');
       const blob = await encodeCanvas(out, mime, settings.format === 'jpeg' ? JPEG_QUALITY : undefined);
       return { files: [blob], softFailed, width, height: totalHeight };
     } finally {
@@ -656,7 +656,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
   try {
     for (let i = 0; i < blockNodes.length; i += 1) {
       deps.onProgress?.(i, blockNodes.length);
-      const captured = await captureBlock(blockNodes[i], ratio); // eslint-disable-line no-await-in-loop
+      const captured = await captureBlock(blockNodes[i], ratio, i); // eslint-disable-line no-await-in-loop
       const canvases = captured.canvases || [captured.canvas];
       totalHeight += validateCapture(canvases, blockNodes[i]);
       softFailed += captured.softFailed;
@@ -675,6 +675,7 @@ export async function renderStorefrontFiles(blockNodes, rawSettings, deps = {}) 
         canvases.forEach(releaseCanvas);
       }
     }
+    deps.onProgress?.(blockNodes.length - 1, blockNodes.length, 'encode');
     await flush();
   } finally {
     if (current) releaseCanvas(current);
@@ -701,8 +702,9 @@ function saveBlob(blob, filename) {
 export async function exportBlockPng(blockNode, productName, blockIndex, opts = {}) {
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
   const { canvas, softFailed } = await captureBlockCanvas(blockNode, PIXEL_RATIO, fontEmbedCSS);
-  let out = await canvasToBlob(canvas);
-  releaseExportCanvas(canvas);
+  let out;
+  try { out = await canvasToBlob(canvas); }
+  finally { releaseExportCanvas(canvas); }
   let verifyUrl = null;
   let notarizeWarning = null;
   if (opts.provenance?.projectId) {
@@ -725,27 +727,32 @@ export async function exportLongPng(blockNodes, productName, onProgress, opts = 
     throw new Error('페이지가 너무 길어 한 장으로는 저장할 수 없어요. 블록별 ZIP으로 받아주세요.');
   }
   const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
+  const imageCache = new Map();
   const out = document.createElement('canvas');
   out.width = Math.trunc(EXPORT_WIDTH * ratio);
   // 블록별 캔버스 높이는 trunc(offsetHeight×ratio) — 합계도 같은 식으로 예약해 이음새를 없앤다.
   out.height = heights.reduce((sum, h) => sum + Math.trunc(h * ratio), 0);
-  const ctx = out.getContext('2d');
-  if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 블록별 ZIP으로 시도해 주세요.');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, out.width, out.height);
-  let y = 0;
   let softFailed = 0;
-  for (let i = 0; i < blockNodes.length; i += 1) {
-    onProgress?.(i, blockNodes.length);
-    const r = await captureBlockCanvas(blockNodes[i], ratio, fontEmbedCSS); // eslint-disable-line no-await-in-loop
-    ctx.drawImage(r.canvas, 0, y);
-    y += r.canvas.height;
-    softFailed += r.softFailed;
-    r.canvas.width = 0; // 그린 즉시 픽셀 버퍼 해제
-    r.canvas.height = 0;
-  }
-  let outBlob = await canvasToBlob(out);
-  releaseExportCanvas(out);
+  let outBlob;
+  try {
+    const ctx = out.getContext('2d');
+    if (!ctx) throw new Error('저장용 캔버스를 만들지 못했어요. 블록별 ZIP으로 시도해 주세요.');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    let y = 0;
+    for (let i = 0; i < blockNodes.length; i += 1) {
+      onProgress?.(i, blockNodes.length);
+      const r = await captureBlockCanvas(blockNodes[i], ratio, fontEmbedCSS, imageCache,
+        () => onProgress?.(i, blockNodes.length, 'verify')); // eslint-disable-line no-await-in-loop
+      try {
+        ctx.drawImage(r.canvas, 0, y);
+        y += r.canvas.height;
+        softFailed += r.softFailed;
+      } finally { releaseExportCanvas(r.canvas); }
+    }
+    onProgress?.(blockNodes.length - 1, blockNodes.length, 'encode');
+    outBlob = await canvasToBlob(out);
+  } finally { releaseExportCanvas(out); imageCache.clear(); }
   let verifyUrl = null;
   let notarizeWarning = null;
   if (opts.provenance?.projectId) {
@@ -791,13 +798,19 @@ export async function exportStorefrontDownload(
   }
 
   const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
-  const rendered = await renderStorefrontFiles(blockNodes, effective, {
-    onProgress,
-    captureBlock: effective.delivery === 'split'
-      ? (node, ratio) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
-        preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT)
-      : (node, ratio) => captureBlockCanvas(node, ratio, fontEmbedCSS),
-  });
+  const imageCache = new Map();
+  let rendered;
+  try {
+    rendered = await renderStorefrontFiles(blockNodes, effective, {
+      onProgress,
+      captureBlock: effective.delivery === 'split'
+        ? (node, ratio, index) => captureBlockCanvasSlices(node, ratio, fontEmbedCSS,
+          preset.original ? ORIGINAL_PNG_MAX_HEIGHT : MAX_SPLIT_HEIGHT, imageCache,
+          () => onProgress?.(index, blockNodes.length, 'verify'))
+        : (node, ratio, index) => captureBlockCanvas(node, ratio, fontEmbedCSS, imageCache,
+          () => onProgress?.(index, blockNodes.length, 'verify')),
+    });
+  } finally { imageCache.clear(); }
   let blob;
   let verifyUrl = null;
   let notarizeWarning = null;
@@ -807,6 +820,7 @@ export async function exportStorefrontDownload(
     rendered.files.forEach((file, index) => {
       zip.file(detailFileName(index, rendered.files.length, effective.format), file);
     });
+    onProgress?.(blockNodes.length - 1, blockNodes.length, 'zip');
     blob = await zip.generateAsync({ type: 'blob' });
     if (opts.provenance?.projectId) {
       const result = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });

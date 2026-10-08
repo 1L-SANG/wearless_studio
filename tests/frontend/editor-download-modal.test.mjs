@@ -33,7 +33,7 @@ const summary = {
   approximate: true,
 };
 
-function render(settings = { preset: 'smartstore', format: 'jpeg', delivery: 'split' }, notice = '', blocks = [], busy = false) {
+function render(settings = { preset: 'smartstore', format: 'jpeg', delivery: 'split' }, notice = '', blocks = [], busy = false, state = {}) {
   return renderToStaticMarkup(React.createElement(EditorDownloadModal, {
     settings,
     summary,
@@ -41,9 +41,11 @@ function render(settings = { preset: 'smartstore', format: 'jpeg', delivery: 'sp
     blocks,
     busy,
     progress: null,
+    error: '',
     onChange() {},
     onCancel() {},
     onDownload() {},
+    ...state,
   }));
 }
 
@@ -61,58 +63,73 @@ test('다운로드 모달은 폭·형식·받는 방식을 기본값과 함께 �
 const noticeBlock = () => buildInfoBlock('required_notice', defaultInfoFor('required_notice', {
   productName: '셔츠', materials: [{ name: '면', ratio: 100 }], colorLabels: ['흰색'],
 }));
-const warningText = (html) => html.match(/<p[^>]*role="status"[^>]*>(.*?)<\/p>/s)?.[1] || '';
+const buttons = (html) => [...html.matchAll(/<button\b[^>]*>.*?<\/button>/gs)].map(([button]) => button);
 
-test('고시정보의 빈 항목 이름을 안내하고 그대로 받기를 막지 않는다', () => {
+test('빈 고시정보가 있어도 다운로드 창에 입력 안내를 띄우거나 문서를 바꾸지 않는다', () => {
   const block = noticeBlock();
   const before = structuredClone(block);
   const html = render(undefined, '', [block]);
-  const warning = warningText(html);
-  for (const label of ['치수', '제조자(수입자)', '제조국', '제조연월', '품질보증기준', 'A/S 책임자와 전화번호']) {
-    assert.ok(warning.includes(label), label);
-  }
-  assert.doesNotMatch(warning, /품명|소재|색상|세탁방법/);
-  const downloadButton = [...html.matchAll(/<button\b[^>]*>.*?<\/button>/gs)].map(([button]) => button)
-    .find((button) => button.includes('그대로 받기'));
+  assert.doesNotMatch(html, /고시정보 입력 필요|치수|제조자\(수입자\)|제조국|제조연월|품질보증기준|A\/S 책임자와 전화번호|그대로 받기/);
+  const downloadButton = buttons(html).find((button) => button.endsWith('다운로드</button>'));
   assert.ok(downloadButton);
   assert.doesNotMatch(downloadButton, /\bdisabled/);
-  assert.deepEqual(block, before, '경고 때문에 고시 내용이나 저장 문서를 바꾸지 않는다');
+  assert.deepEqual(block, before, '다운로드 창이 고시 내용이나 저장 문서를 바꾸지 않는다');
 });
 
-test('직접 고친 출력 문구를 기준으로 감지하고 빈 항목이 없으면 안내하지 않는다', () => {
+test('고시정보 입력 여부와 관계없이 기본 다운로드 행동을 유지한다', () => {
   const block = noticeBlock();
   block.elements = block.elements.map((el) => el.text === '정보 입력 필요' ? { ...el, text: '셀러 입력값' } : el);
   const html = render(undefined, '', [block]);
-  assert.equal(warningText(html), '');
+  assert.doesNotMatch(html, /고시정보 입력 필요/);
   assert.doesNotMatch(html, /그대로 받기/);
   assert.match(html, />다운로드<\/button>/);
 });
 
-test('일반 블록과 숨긴 문구는 경고하지 않고 중복 고시 항목은 한 번만 안내한다', () => {
-  const first = noticeBlock();
-  const maker = first.elements.find((el) => el.text === '제조자(수입자)');
-  first.elements = first.elements.map((el) => el.text === '정보 입력 필요' && el.y !== maker.y ? { ...el, hidden: true } : el);
-  const second = structuredClone(first);
-  const ordinary = { kind: 'info', infoType: 'benefit_copy', elements: [{ type: 'text', text: '정보 입력 필요' }] };
-  const warning = warningText(render(undefined, '', [first, second, ordinary]));
-  assert.equal((warning.match(/제조자\(수입자\)/g) || []).length, 1);
-  assert.doesNotMatch(warning, /치수|제조국|제조연월|품질보증|전화번호/);
-  assert.equal(warningText(render(undefined, '', [ordinary])), '');
-});
-
-test('고시정보 레이어 순서가 바뀌어도 같은 행의 항목을 찾는다', () => {
-  const block = noticeBlock();
-  const size = block.elements.find((el) => el.text === '치수');
-  const value = block.elements.find((el) => el.y === size.y && el.text === '정보 입력 필요');
-  block.elements = [...block.elements.filter((el) => el !== value).map((el) => el.text === '정보 입력 필요' ? { ...el, text: '입력함' } : el), value];
-  assert.match(warningText(render(undefined, '', [block])), /치수/);
-  assert.doesNotMatch(warningText(render(undefined, '', [block])), /전화번호/);
-});
-
-test('빈 항목 안내가 있어도 처리 중에는 중복 다운로드를 막는다', () => {
+test('처리 중에는 다운로드와 취소와 옵션을 잠그고 준비 상태를 알린다', () => {
   const html = render(undefined, '', [noticeBlock()], true);
-  assert.match(warningText(html), /제조국/);
-  assert.match(html, /<button\b[^>]*disabled[^>]*>.*?만드는 중/s);
+  assert.equal(buttons(html).length, 2);
+  for (const button of buttons(html)) assert.match(button, /\bdisabled/);
+  for (const [input] of html.matchAll(/<input\b[^>]*>/g)) assert.match(input, /\bdisabled/);
+  assert.match(html, /role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /다운로드 준비 중/);
+});
+
+test('블록 처리 진행 상태는 작업 단계와 완료 수를 분리해서 보여준다', () => {
+  const html = render(undefined, '', [], true, { progress: { done: 2, total: 8, stage: 'capture' } });
+  assert.match(html, /페이지를 이미지로 만드는 중/);
+  assert.match(html, /2[^<]*\/[^<]*8개 블록/);
+  assert.match(html, /<progress\b[^>]*max="8"[^>]*value="2"/);
+  assert.doesNotMatch(html, /\[object Object\]/);
+});
+
+test('검사와 변환과 ZIP 단계는 완료 전 저장 결과를 단정하지 않는다', () => {
+  for (const [stage, title] of [
+    ['verify', '이미지 확인 중'],
+    ['encode', '파일로 변환 중'],
+    ['zip', 'ZIP으로 묶는 중'],
+  ]) {
+    const html = render(undefined, '', [], true, { progress: { done: 8, total: 8, stage } });
+    assert.ok(html.includes(title), stage);
+    assert.match(html, /<progress\b[^>]*aria-label="다운로드 처리 중"/);
+    assert.doesNotMatch(html, /<progress\b[^>]*\bvalue=/);
+  }
+});
+
+test('이전 진행 문자열도 준비 문구와 함께 표시한다', () => {
+  const html = render(undefined, '', [], true, { progress: '3/12' });
+  assert.match(html, /다운로드 준비 중/);
+  assert.match(html, /3\/12/);
+});
+
+test('실패 이유를 창 안에 남기고 다운로드를 다시 시도할 수 있다', () => {
+  const html = render(undefined, '', [], false, { error: '이미지를 만들지 못했어요. 나눠서 받아주세요.' });
+  assert.match(html, /role="alert"/);
+  assert.match(html, /이미지를 만들지 못했어요\. 나눠서 받아주세요/);
+  assert.match(html, /설정을 바꾸거나 다시 시도해 주세요/);
+  const retry = buttons(html).find((button) => button.endsWith('다시 시도</button>'));
+  assert.ok(retry);
+  assert.doesNotMatch(retry, /\bdisabled/);
+  assert.doesNotMatch(html, /<progress/);
 });
 
 test('요약은 최종 px·파일 수·예상 용량과 업로드 순서 안내를 표시한다', () => {
