@@ -7,21 +7,21 @@ import {
 
 // 회전 없는 사진과 직사각형 덮개에 필요한 브라우저 좌표 경계만 모사한다.
 class TestMatrix {
-  constructor() { this.x = 0; this.y = 0; }
+  constructor(values = [1, 0, 0, 1, 0, 0]) { [this.a, this.b, this.c, this.d, this.x, this.y] = values; }
   translate(x, y) {
-    const result = new TestMatrix();
-    result.x = this.x + x;
-    result.y = this.y + y;
-    return result;
+    return this.multiply(new TestMatrix([1, 0, 0, 1, x, y]));
   }
-  multiply(other) { return this.translate(other.x, other.y); }
+  multiply(o) { return new TestMatrix([
+    this.a * o.a + this.c * o.b, this.b * o.a + this.d * o.b,
+    this.a * o.c + this.c * o.d, this.b * o.c + this.d * o.d,
+    this.a * o.x + this.c * o.y + this.x, this.b * o.x + this.d * o.y + this.y,
+  ]); }
   inverse() {
-    const result = new TestMatrix();
-    result.x = -this.x;
-    result.y = -this.y;
-    return result;
+    const det = this.a * this.d - this.b * this.c;
+    return new TestMatrix([this.d / det, -this.b / det, -this.c / det, this.a / det,
+      (this.c * this.y - this.d * this.x) / det, (this.b * this.x - this.a * this.y) / det]);
   }
-  transformPoint(point) { return { x: point.x + this.x, y: point.y + this.y }; }
+  transformPoint(p) { return { x: p.x * this.a + p.y * this.c + this.x, y: p.x * this.b + p.y * this.d + this.y }; }
 }
 
 function node({ parent = null, className = '', css = {}, width = 1000, height = 500 } = {}) {
@@ -56,6 +56,7 @@ function node({ parent = null, className = '', css = {}, width = 1000, height = 
       if (selector === '*') return descendants;
       if (selector === '.el') return descendants.filter((child) => child.classList.contains('el'));
       if (selector === 'img' || selector === 'img[src]') return descendants.filter((child) => child.tagName === 'IMG');
+      if (selector === 'svg') return descendants.filter((child) => child.tagName === 'svg');
       return [];
     },
     closest(selector) {
@@ -93,7 +94,7 @@ function overlappingPhotos() {
 }
 
 function installBrowserBoundary(t, sourceRgba = [40, 70, 110, 255]) {
-  const prior = new Map(['DOMMatrix', 'DOMPoint', 'getComputedStyle', 'document']
+  const prior = new Map(['DOMMatrix', 'DOMPoint', 'getComputedStyle', 'document', 'Image', 'XMLSerializer']
     .map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   globalThis.DOMMatrix = TestMatrix;
   globalThis.DOMPoint = class { constructor(x, y) { this.x = x; this.y = y; } };
@@ -107,7 +108,7 @@ function installBrowserBoundary(t, sourceRgba = [40, 70, 110, 255]) {
           let sourcePixel = sourceRgba;
           return {
             clearRect() {},
-            drawImage(image) { sourcePixel = image.sourceRgba || sourceRgba; },
+            drawImage(image, x, y) { sourcePixel = image.sampleRgba?.(x, y) || image.sourceRgba || sourceRgba; },
             getImageData: () => ({ data: new Uint8ClampedArray(sourcePixel) }),
           };
         },
@@ -146,8 +147,8 @@ function rasterBoundary(rgba) {
   };
 }
 
-async function raster(root, boundary) {
-  const probes = await collectExportImageProbes(root, { ratio: 0.86, height: 500 });
+async function raster(root, boundary, probeDeps = {}) {
+  const probes = await collectExportImageProbes(root, { ratio: 0.86, height: 500 }, probeDeps);
   return rasterizeExportSvg('검사용 SVG', { width: 860, height: 430, probes }, boundary.deps);
 }
 
@@ -213,4 +214,104 @@ test('겹친 앞쪽 사진과 아래 사진이 모두 그려졌으면 정상 캔
   const boundary = rasterBoundary((x) => x < 172 ? [200, 121, 50, 255] : [40, 70, 110, 255]);
   const canvas = await raster(overlappingPhotos(), boundary);
   assert.deepEqual([canvas.width, canvas.height], [860, 430]);
+});
+
+function translucentPhotoStack() {
+  const root = fixture();
+  const frame = node({ parent: root, className: 'el', css: { opacity: '0.5' } });
+  const image = node({ parent: frame });
+  Object.assign(image, { tagName: 'IMG', naturalWidth: 1000, naturalHeight: 500,
+    sourceRgba: [200, 120, 50, 255], decode: async () => {} });
+  return root;
+}
+
+test('반투명 사진 아래의 사진 색까지 합성된 정상 출력은 허용한다', async (t) => {
+  installBrowserBoundary(t);
+  const canvas = await raster(translucentPhotoStack(), rasterBoundary([120, 95, 80, 255]));
+  assert.deepEqual([canvas.width, canvas.height], [860, 430]);
+});
+
+for (const [name, actual] of [['아래 사진', [228, 188, 153, 255]], ['위 사진', [40, 70, 110, 255]]]) {
+  test(`반투명 사진이 겹쳐 있어도 ${name}이 빠지면 저장을 막는다`, async (t) => {
+    installBrowserBoundary(t);
+    await assert.rejects(raster(translucentPhotoStack(), rasterBoundary(actual)), /사진.*빠져/);
+  });
+}
+
+function svgOverlay() {
+  const root = fixture();
+  const layer = node({ parent: root, className: 'el el-speech-bubble' });
+  const svg = node({ parent: layer });
+  svg.tagName = 'svg';
+  return root;
+}
+
+test('불투명 SVG 말풍선에 가려진 사진은 정상 출력으로 허용한다', async (t) => {
+  installBrowserBoundary(t);
+  const canvas = await raster(svgOverlay(), rasterBoundary([200, 200, 202, 255]), {
+    // 브라우저의 SVG fill 래스터 경계만 대체한다. 가림 판정과 합성은 실제 코드를 쓴다.
+    createSvgSampler: async () => () => [200, 200, 202, 255],
+  });
+  assert.deepEqual([canvas.width, canvas.height], [860, 430]);
+});
+
+test('반투명 SVG 말풍선 아래 사진이 보이면 정상 출력을 허용한다', async (t) => {
+  installBrowserBoundary(t);
+  const canvas = await raster(svgOverlay(), rasterBoundary([120, 135, 156, 255]), {
+    createSvgSampler: async () => () => [200, 200, 202, 128],
+  });
+  assert.deepEqual([canvas.width, canvas.height], [860, 430]);
+});
+
+test('SVG의 투명한 부분에 보여야 하는 사진이 빠지면 저장을 막는다', async (t) => {
+  installBrowserBoundary(t);
+  await assert.rejects(raster(svgOverlay(),
+    rasterBoundary((x) => x < 430 ? [200, 200, 202, 255] : [255, 255, 255, 255]), {
+      createSvgSampler: async () => (point) => point.x < 500 ? [200, 200, 202, 255] : [0, 0, 0, 0],
+    }), /사진.*빠져/);
+});
+
+test('SVGMatrix에 transformPoint가 없는 브라우저에서도 실제 SVG 표본 경로를 쓴다', async (t) => {
+  installBrowserBoundary(t);
+  const root = svgOverlay();
+  const svg = root.querySelectorAll('svg')[0];
+  svg.viewBox = { baseVal: { x: 0, y: 0, width: 1000, height: 500 } };
+  const matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  svg.getScreenCTM = () => ({ ...matrix, inverse: () => matrix });
+  svg.cloneNode = () => ({ style: {}, setAttribute() {}, removeAttribute() {} });
+  globalThis.XMLSerializer = class { serializeToString() { return '<svg/>'; } };
+  globalThis.Image = class {
+    sourceRgba = [200, 200, 202, 255];
+    set src(_value) { queueMicrotask(() => this.onload()); }
+    async decode() {}
+  };
+  const canvas = await raster(root, rasterBoundary([200, 200, 202, 255]));
+  assert.deepEqual([canvas.width, canvas.height], [860, 430]);
+});
+
+test('확대한 SVG의 고정 두께 테두리 밖에서 보이는 사진은 누락 검사를 유지한다', async (t) => {
+  installBrowserBoundary(t);
+  const root = node({ height: 1000, css: { backgroundColor: 'rgb(255,255,255)' } });
+  const frame = node({ parent: root, className: 'el', width: 100, height: 100 });
+  frame.offsetLeft = 150; frame.offsetTop = 150;
+  const image = node({ parent: frame, width: 100, height: 100 });
+  Object.assign(image, { tagName: 'IMG', naturalWidth: 100, naturalHeight: 100, decode: async () => {} });
+  frame.getBoundingClientRect = image.getBoundingClientRect = () => ({ left: 150, top: 150, right: 250, bottom: 250 });
+  const layer = node({ parent: root, className: 'el el-shape', height: 1000 });
+  const svg = node({ parent: layer, height: 1000 });
+  svg.tagName = 'svg'; svg.viewBox = { baseVal: { x: 0, y: 0, width: 100, height: 100 } };
+  svg.preserveAspectRatio = { baseVal: { align: 1, meetOrSlice: 1 } };
+  svg.getScreenCTM = () => ({ a: 10, b: 0, c: 0, d: 10, e: 0, f: 0 });
+  const attributes = {};
+  svg.cloneNode = () => ({ style: {}, setAttribute(k, v) { attributes[k] = v; }, removeAttribute() {} });
+  globalThis.XMLSerializer = class { serializeToString() { return '<svg/>'; } };
+  globalThis.Image = class {
+    // 마름모 왼쪽 위 변은 x+y=폭/2. non-scaling-stroke의 반폭은 항상 20px다.
+    sampleRgba(x, y) { return Math.abs(x + y - Number(attributes.width) / 2) / Math.SQRT2 <= 20
+      ? [0, 0, 0, 255] : [0, 0, 0, 0]; }
+    set src(_value) { queueMicrotask(() => this.onload()); }
+    async decode() {}
+  };
+  await assert.rejects(raster(root, rasterBoundary([255, 255, 255, 255])), /사진.*빠져/);
+  assert.equal(Number(attributes.width), 1000);
 });

@@ -151,7 +151,47 @@ function imageSampler(image, root, ctx) {
   };
 }
 
-// 실제 채워진 도형과 앞쪽 사진의 픽셀만 가림으로 처리한다.
+// SVG 자체를 읽어 채움/선/투명한 구멍까지 구분한다. foreignObject는 사용하지 않는다.
+async function svgSampler(svg, root, ctx) {
+  const viewBox = svg.viewBox.baseVal;
+  // 실제 viewport 크기로 읽어야 non-scaling-stroke 굵기도 화면과 같다.
+  const width = svg.clientWidth;
+  const height = svg.clientHeight;
+  const screenMatrix = svg.getScreenCTM();
+  if (!width || !height || !screenMatrix) return () => null;
+  // 일부 브라우저는 transformPoint가 없는 SVGMatrix를 반환한다.
+  const inverse = new DOMMatrix([screenMatrix.a, screenMatrix.b, screenMatrix.c,
+    screenMatrix.d, screenMatrix.e, screenMatrix.f]).inverse();
+  const boxWidth = viewBox.width || width, boxHeight = viewBox.height || height;
+  let scaleX = width / boxWidth, scaleY = height / boxHeight, offsetX = 0, offsetY = 0;
+  const aspect = svg.preserveAspectRatio?.baseVal;
+  const align = aspect?.align || 6; // 기본 xMidYMid
+  if (align !== 1) { // none 외에는 meet/slice와 정렬 여백을 함께 반영한다.
+    scaleX = scaleY = aspect?.meetOrSlice === 2 ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+    offsetX = (width - boxWidth * scaleX) * ((align - 2) % 3) / 2;
+    offsetY = (height - boxHeight * scaleY) * Math.floor((align - 2) / 3) / 2;
+  }
+  const rootRect = root.getBoundingClientRect();
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(width));
+  clone.setAttribute('height', String(height));
+  clone.removeAttribute('transform');
+  Object.assign(clone.style, { width: `${width}px`, height: `${height}px`,
+    transform: 'none', opacity: '1', color: getComputedStyle(svg).color });
+  const source = await loadDecodedSvg(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`);
+  return (point) => {
+    const local = inverse.transformPoint(new DOMPoint(rootRect.left + point.x, rootRect.top + point.y));
+    const x = (local.x - (viewBox.x || 0)) * scaleX + offsetX;
+    const y = (local.y - (viewBox.y || 0)) * scaleY + offsetY;
+    if (x < 0 || y < 0 || x >= width || y >= height) return null;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.drawImage(source, Math.floor(x), Math.floor(y), 1, 1, 0, 0, 1, 1);
+    return [...ctx.getImageData(0, 0, 1, 1).data];
+  };
+}
+
+// 실제로 칠해진 부분만 합성한다. SVG 바깥 사각형 전체를 덮개로 보지 않는다.
 function layerPaints(layer, point, root, samplers) {
   const paints = [];
   for (const node of [layer, ...layer.children]) {
@@ -160,20 +200,27 @@ function layerPaints(layer, point, root, samplers) {
       paints.push({ color, opacity: effectiveOpacity(node, root) });
     }
   }
-  for (const image of layer.querySelectorAll('img[src]')) {
-    const color = samplers.get(image)?.(point);
-    if (color && color[3] > 0) paints.push({ color: [color[0], color[1], color[2], color[3] / 255], opacity: effectiveOpacity(image, root) });
+  for (const visual of [...layer.querySelectorAll('img[src]'), ...layer.querySelectorAll('svg')]) {
+    const color = samplers.get(visual)?.(point);
+    if (color && color[3] > 0) paints.push({ color: [color[0], color[1], color[2], color[3] / 255], opacity: effectiveOpacity(visual, root) });
   }
   return paints;
 }
 
-function imageBackdrop(image, root) {
+function imageBackdrop(image, root, point, below, samplers) {
+  let background = blend(rgbaFor(getComputedStyle(root).backgroundColor), [255, 255, 255]);
+  for (const layer of below) {
+    if (effectiveOpacity(layer, root) === 0 || !insideBox(point, layer, root)) continue;
+    for (const paint of layerPaints(layer, point, root, samplers)) {
+      background = blend(paint.color, background, paint.opacity);
+    }
+  }
   const parents = [];
-  for (let node = image.parentElement; node && node !== root.parentElement; node = node.parentElement) parents.unshift(node);
-  return parents.reduce((color, node) => blend(rgbaFor(getComputedStyle(node).backgroundColor), color), [255, 255, 255]);
+  for (let node = image.parentElement; node && node !== root; node = node.parentElement) parents.unshift(node);
+  return parents.reduce((color, node) => blend(rgbaFor(getComputedStyle(node).backgroundColor), color), background);
 }
 
-export async function collectExportImageProbes(root, { ratio, top = 0, height }) {
+export async function collectExportImageProbes(root, { ratio, top = 0, height }, deps = {}) {
   const probes = [];
   const rootRect = root.getBoundingClientRect();
   const layers = [...root.querySelectorAll('.el')];
@@ -186,11 +233,16 @@ export async function collectExportImageProbes(root, { ratio, top = 0, height })
     try { await Promise.all(images.map((image) => image.decode())); }
     catch { throw new Error('사진을 읽지 못해 다운로드를 중단했어요. 다시 시도해 주세요.'); }
     const samplers = new Map(images.map((image) => [image, imageSampler(image, root, ctx)]));
+    // 중첩 SVG는 가장 바깥 SVG에 포함된다. 같은 채움을 두 번 합성하지 않는다.
+    const svgs = [...root.querySelectorAll('svg')].filter((svg) => !svg.ownerSVGElement && svg.closest('.el'));
+    const createSvgSampler = deps.createSvgSampler || svgSampler;
+    await Promise.all(svgs.map(async (svg) => {
+      samplers.set(svg, await createSvgSampler(svg, root, ctx));
+    }));
     for (const image of images) {
       const frame = image.closest('.el');
       const opacity = effectiveOpacity(image, root);
       if (opacity === 0 || !image.naturalWidth || !image.naturalHeight) continue;
-      const backdrop = imageBackdrop(image, root);
       const rect = image.getBoundingClientRect();
       let left = Math.max(0, rect.left - rootRect.left), right = Math.min(1000, rect.right - rootRect.left);
       let first = Math.max(top, rect.top - rootRect.top), last = Math.min(top + height, rect.bottom - rootRect.top);
@@ -206,6 +258,7 @@ export async function collectExportImageProbes(root, { ratio, top = 0, height })
       }
       if ((right - left) * ratio < 4 || (last - first) * ratio < 4) continue;
       const above = frame ? layers.slice(layers.indexOf(frame) + 1).filter((layer) => !layer.contains(image)) : [];
+      const below = frame ? layers.slice(0, layers.indexOf(frame)).filter((layer) => !layer.contains(image)) : [];
       const points = [];
       for (let row = 1; row <= 7; row += 1) {
         for (let column = 1; column <= 7; column += 1) {
@@ -218,6 +271,7 @@ export async function collectExportImageProbes(root, { ratio, top = 0, height })
           if (paints.some(({ color, opacity: layerOpacity }) => color[3] * layerOpacity >= 0.999)) continue;
           const source = samplers.get(image)(point);
           if (!source) continue;
+          const backdrop = imageBackdrop(image, root, point, below, samplers);
           let expected = blend([source[0], source[1], source[2], source[3] / 255], backdrop, opacity);
           for (const paint of paints) expected = blend(paint.color, expected, paint.opacity);
           points.push({ x: Math.floor(point.x * ratio), y: Math.floor((point.y - top) * ratio),
