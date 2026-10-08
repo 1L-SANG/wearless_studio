@@ -1,11 +1,11 @@
 import { detailRecommendationMessage, detailTargetPatch, detailTargetPresentation, selectableDetailTargets } from '../../lib/detailRecommendations.js';
 
-export function DetailTargetPicker({ block, product, recommendations, onChange }) {
+export function DetailTargetPicker({ block, product, recommendations, onChange, scopeLabel = null }) {
   const targets = selectableDetailTargets(recommendations);
   const presentation = detailTargetPresentation(block, product, recommendations);
   return (
     <div className="insp-sec detail-target-picker">
-      <label className="lbl" htmlFor={`detail-target-${block.id || 'new'}`}>촬영 대상</label>
+      <label className="lbl" htmlFor={`detail-target-${block.id || 'new'}`}>촬영 대상{scopeLabel && <span className="ds-field-scope">{scopeLabel}</span>}</label>
       {presentation?.src && <img className="detail-target-image" src={presentation.src} alt={`내 상품 원본 · ${presentation.label}`} />}
       <p className="hint">내 상품 원본 · 촬영 대상: {presentation?.label}</p>
       <select id={`detail-target-${block.id || 'new'}`} value={block.detailTargetId || ''}

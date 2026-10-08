@@ -412,7 +412,7 @@ function ColorImageGroup({ mobile = false, group, catalogs, swatchColors, onAddF
   // 2×2 angle "wells" — all four angles at a glance, images stack inside each
   const wellSlot = (s) => (
     <div className="slot-well" key={s}>
-      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{(s === 'Front' || s === 'Back') && <span className="req-star">*</span>}</span></div>
+      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}</span><span className={`ds-field-status${s === 'Front' || s === 'Back' ? ' required' : ''}`}>{s === 'Front' || s === 'Back' ? '필수' : '선택'}</span></div>
       {tiles(s, true)}
     </div>
   );
@@ -1411,10 +1411,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명</div></div>
+        <div><label className="sec-title" htmlFor="product-name">상품명 <span className="ds-optional">선택</span></label></div>
       </div>
       <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
-      <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
+      <input id="product-name" className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing' || mobileEditingLocked} onChange={(e) => {
           const name = e.target.value;
           set({ name });

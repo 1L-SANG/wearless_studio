@@ -71,6 +71,7 @@ import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from 
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 import { cssWeight } from '@/features/editor/fontWeights.js';
+import { resolveTextSpacing } from './textSpacing.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
 
@@ -398,7 +399,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     const h = Math.max(1, Math.ceil(node.offsetHeight));
     if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.font, s0.list, editing, preview, el.hidden]);
+  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden]);
   // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
   // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
   // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
@@ -554,8 +555,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             position: 'absolute', left: fit.padX, top: fit.padTop,
             width: Math.max(1, el.w - fit.padX * 2), height: 'auto',
             fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
-            color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
-            lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
+            color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
+            lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere', opacity: s.opacity ?? 1,
             background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined,
             borderRadius: hasBg ? 4 : undefined, fontStyle: s.italic ? 'italic' : 'normal',
@@ -584,8 +585,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
       <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
-        color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
-        lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
+        color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
+        lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
@@ -818,7 +819,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
           left: textGhost.x, top: textGhost.y, width: textGhost.box.w, minHeight: textGhost.box.h,
           fontSize: textGhost.box.style.size, fontWeight: cssWeight(textGhost.box.style.font, textGhost.box.style.weight),
           color: textGhost.box.style.color,
-          lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
+          lineHeight: `${resolveTextSpacing(textGhost.box.style).lineHeight}px`,
+          letterSpacing: resolveTextSpacing(textGhost.box.style).tracking,
         }}>{textGhost.box.text}</div>
       )}
       {objGhost && (

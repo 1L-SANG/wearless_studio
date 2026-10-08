@@ -484,6 +484,15 @@ function BundleSwapArrows({ move }) {
   );
 }
 
+function storyboardPreviewSource(block, catalogs) {
+  if (!block) return null;
+  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+  if (detail) return detail.src;
+  if (block.source === 'mine') return block.thumb || mineImageUrl(block.ownImages?.[0]);
+  const example = catalogs?.genExamples?.find((item) => item.id === block.exampleId);
+  return block.previewThumb || (example ? generationExampleImageSources(example).src : null) || block.thumb;
+}
+
 function StoryboardMedia({
   block, catalogs, matchClothing = null, index, total,
   showPoseVariation = false,
@@ -496,9 +505,7 @@ function StoryboardMedia({
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const image = example ? generationExampleImageSources(example) : null;
-  const src = detail ? detail.src : block.source === 'mine'
-    ? (block.thumb || block.ownImages?.[0])
-    : (block.previewThumb || image?.src || block.thumb);
+  const src = storyboardPreviewSource(block, catalogs);
   // 매칭 의류 표시는 셀러가 인스펙터에서 직접 바꾼 컷에만(자동 배정 컷은 조용히) —
   // 이미지 우측 하단 오버레이(2026-08-14 오너 확정).
   const userMatch = block.source !== 'mine' && block.cutType !== 'product'
@@ -1053,27 +1060,34 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
   </div>;
 }
 
+function InspectorScope({ children = '이 사진만' }) {
+  return <span className="ds-field-scope">{children}</span>;
+}
+
+function InspectorSelectionThumbnail({ src }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  return src && !failed
+    ? <img className="ds-selection-thumb" src={src} alt="선택한 컷" onError={() => setFailed(true)} />
+    : <span className="ds-selection-thumb ds-selection-placeholder" aria-label="사진 미리보기 없음"><Icon name="image" size={20} /></span>;
+}
+
 function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet, backgroundAvailability }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
   const ordinal = siblingIndex >= 0 ? siblingIndex + 1 : (block.spaceSetMemberOrder || 1);
   const count = siblings.length || set?.members?.length || 1;
-  const thumb = block.previewThumb || block.thumb || set?.members?.[ordinal - 1]?.thumb;
   return (
     <div className="sb-space-inspector-context">
-      <div className="sb-space-current-cut">
-        {thumb && <img className="sb-space-current-thumb" src={thumb} alt="" />}
-        <div><strong>{ordinal}번째 컷</strong>
-          <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
-            <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
-          </div>
-        </div>
+      <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
+        <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
       </div>
+      <p className="ds-scope-help">세트 변경은 이 묶음 전체에 적용돼요. 현재 {siblings.length}장</p>
       {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {effectiveHorizonBackgroundMode(block, backgroundAvailability) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
     </div>
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
+function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
   identityKind = null, busy = false, currentMembers = [], product, colorEvidence, onBackgroundChange,
   catalog = [], onCatalogDragStart, onCatalogDragEnd }) {
   const replacing = mode === 'replace';
@@ -1142,6 +1156,12 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
     <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
       <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
       <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
+    {currentMembers.length > 0 && <div className="ds-scope-preview" aria-label="세트 설정 적용 대상">
+      <div className="ds-scoped-label"><strong>설정 적용 대상</strong><InspectorScope>이 세트 전체 · {currentMembers.length}장</InspectorScope></div>
+      <div className="ds-scope-thumbs">{currentMembers.map((member, index) => <div key={member.id}>
+        <InspectorSelectionThumbnail src={storyboardPreviewSource(member, previewCatalogs)} /><span>세트 {index + 1}번</span>
+      </div>)}</div>
+    </div>}
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
       disabled={busy} onChange={onBackgroundChange} availability={availability} />}
     <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
@@ -1161,7 +1181,7 @@ function SignatureCutGallery({ gender, clothingType, subCategory, customCategory
   const cuts = signatureCutsFor({ gender, clothingType, subCategory, customCategory });
   return (
     <div className="insp-sec sb-signature-gallery">
-      <label className="lbl">첫 화면 분위기</label>
+      <label className="lbl ds-scoped-label">첫 화면 분위기<InspectorScope /></label>
       <div className="sb-signature-grid">
         {cuts.map((cut) => (
           <button
@@ -1189,7 +1209,7 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
+export function MoodGuide({ scopeLabel = null, catalogs, cut, blockCutType = cut, direction, sideStyle = null, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
   const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
@@ -1284,7 +1304,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
   return (
     <div className="insp-sec">
       <div className="sb-exhead">
-        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
+        <label className="lbl">{cut === 'product' && shotVal === 'detail' ? '촬영 연출 예시 (선택)' : cut === 'product' ? '생성 예시' : '분위기 예시'}{scopeLabel && <InspectorScope>{scopeLabel}</InspectorScope>}</label>
         {onShotChange
           ? <ShotSegment options={(cut === 'styling' || cut === 'horizon') ? [
             ...shotOpts, { ...MINE_SHOT_OPTION, disabled: !onRefsChange || !onUseMine },
@@ -1369,7 +1389,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   if (!block) return (
     <div className="surface inspector">
       <div className="sb-exhead">
-        <label className="lbl">샷 종류</label>
+        <label className="lbl ds-scoped-label">샷 종류<InspectorScope /></label>
         <ShotSegment options={catalogs.shotTypes.map((option) => ({ ...option, disabled: true })).concat(MINE_SHOT_OPTION)}
           value="mine" onChange={() => {}} cut="styling" clothingType={clothingType} gender={exampleGender}
           isOptionPublished={(value) => value === 'mine'} />
@@ -1547,7 +1567,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
-            <label className="lbl">샷 종류</label>
+            <label className="lbl ds-scoped-label">샷 종류<InspectorScope /></label>
             <ShotSegment options={catalogs.shotTypes.map((option) => ({ ...option, disabled: true })).concat(MINE_SHOT_OPTION)}
               value="mine" onChange={() => {}} cut="styling" clothingType={clothingType} gender={exampleGender}
               isOptionPublished={(value) => value === 'mine'} />
@@ -1578,7 +1598,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {/* 세트 멤버는 컷 종류가 세트에 고정 — 잠금 표시 대신 아예 숨긴다(2026-08-15 오너). */}
       {!spaceContext && (
         <div className="insp-sec">
-          <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
+          <div className="sb-cut-label-row"><label className="lbl ds-scoped-label">컷 종류<InspectorScope /></label></div>
           <UnderlineTabs
             options={cutTypeOptions}
             value={pendingRecipe?.cutType || (isMirror ? 'styling' : block.cutType)}
@@ -1593,7 +1613,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
+            <MoodGuide scopeLabel="이 사진만" identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
               direction={pendingRecipe.cutType === 'mirror' ? null : block.direction}
               sideStyle={pendingRecipe.cutType === 'mirror' ? null : (block.sideStyle ?? null)}
               shot={pendingRecipe.shot}
@@ -1611,7 +1631,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
+          {isDetail && <DetailTargetPicker scopeLabel="이 사진만" block={block} product={catalogs.detailProduct}
             recommendations={catalogs.detailRecommendations} onChange={onChange} />}
           {isSignatureSlot && (
             <SignatureCutGallery
@@ -1628,7 +1648,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             />
           )}
           {shouldRenderGenerationExamples && !isSignatureSlot && (
-            <MoodGuide identityKind={identityKind} onUseMine={(ref) => onChange({
+            <MoodGuide scopeLabel="이 사진만" identityKind={identityKind} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
@@ -1668,7 +1688,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
       {showOuterClosure && (
         <div className="insp-sec outer-closure-field">
-          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도</div>
+          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도<InspectorScope /></div>
           <div className="outer-closure-options" role="radiogroup" aria-labelledby={`outer-closure-label-${block.id}`}>
             {closureOptions.map((option) => {
               const on = outerClosureState === option.value;
@@ -1686,7 +1706,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       )}
 
-      <div className="insp-sec"><label className="lbl">대상 색상</label>
+      <div className="insp-sec"><label className="lbl ds-scoped-label">대상 색상<InspectorScope /></label>
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
           value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
 
@@ -1696,7 +1716,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         && ((Array.isArray(matchClothing) && matchClothing.length > 0) || customMatchPromotionPending) && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
-            <Icon name="settings" size={17} />매칭 의류 바꾸기
+            <Icon name="settings" size={17} />매칭 의류 바꾸기<InspectorScope />
           </button>
           {matchOpen && (
             <div className="sb-match-inline">
@@ -3896,8 +3916,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const allGroupKeys = boardGroups.map((group) => group.key);
   const allOpen = allGroupKeys.length > 0 && allGroupKeys.every((key) => openGroupKeys.includes(key));
 
-  const list = (
-    <div className="sb-canvas-board">
+  const boardControls = (
+    <div className="sb-board-controls">
       {autosaveFailed && (
         <div className="sb-save-error sb-autosave-error" role="alert">
           <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span>
@@ -3926,6 +3946,11 @@ export function Storyboard({ toastOverride = null } = {}) {
           {allOpen ? '전체 접기' : '전체 펼치기'}
         </button>
       </div>
+    </div>
+  );
+
+  const list = (
+    <div className="sb-canvas-board">
       {boardGroups.map((group, groupIndex) => {
         const open = openGroupKeys.includes(group.key);
         const range = cutRangeLabel(group.items);
@@ -4067,7 +4092,7 @@ export function Storyboard({ toastOverride = null } = {}) {
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const inspector = setPicker ? (
-    <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
+    <SpaceSetGallery previewCatalogs={catalogs} mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
       catalog={catalogContext.catalog} busy={atomicSaving || locked}
       onCatalogDragStart={(set, member) => { setCatalogDrag({ setId: set.id, exampleId: member?.exampleId || null }); setDragId(null); setDragSpaceGroupId(null); setDragExampleId(null); }}
       onCatalogDragEnd={onDragEnd}
@@ -4100,14 +4125,37 @@ export function Storyboard({ toastOverride = null } = {}) {
     }}
     />;
 
+  const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
+  const selectedSection = selected ? deriveSections(blocks).find((section) => section.id === selected.sectionId) : null;
+  const selectedRoleLabel = selected ? sectionTitle(selectedSection?.role || selected.sectionRole || sectionRoleForContentRole(selected.contentRole)) : '';
+  const selectedThumbnail = storyboardPreviewSource(selected, catalogs);
   const cutCount = blocks.length;
   const body = (
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
+      {boardControls}
       <div className="sb-canvas-main">
         {list}
       </div>
-      {splitOpen && <div className="insp-col">{inspector}</div>}
+      {splitOpen && <div className="insp-col">
+        <div className="ds-selection-summary">
+          <div className="ds-selection-title">
+            {!setPicker && selected && <InspectorSelectionThumbnail src={selectedThumbnail} />}
+            <div className="ds-selection-identity"><strong>{setPicker ? '세트 설정' : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
+              {selected && !setPicker && <span>{selected.source === 'mine' ? '내 상품 사진' : '지금 수정 중인 사진'}</span>}
+              {setPicker && <span>{setPicker.mode === 'replace' ? `현재 세트 ${pickerMembers.length}장` : '새 촬영 세트 추가'}</span>}
+            </div>
+            <button type="button" onClick={() => {
+              finishEdit();
+              setSetPicker(null);
+              setSetPickerError(null);
+              setSplitOpen(false);
+            }} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>
+          </div>
+          {!selected && !setPicker && <p>수정할 사진을 선택해주세요.</p>}
+        </div>
+        {inspector}
+      </div>}
     </div>
   );
   // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)
