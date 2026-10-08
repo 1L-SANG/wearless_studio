@@ -19,12 +19,14 @@ from .agents.gemini_image import GeminiImageClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
+from .request_id import RequestIdMiddleware
 from . import image_usage
 from .openai_key_fallback import has_openai_api_key
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
+from .workers.client_alerts import ClientAlerts
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.fm_license_revoke_alert_reconciler import LicenseRevokeAlertReconciler
 from .workers.fm_enrollment_completed_alert_reconciler import EnrollmentCompletedAlertReconciler
@@ -161,8 +163,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subscription_biller = None
         subscription_expirer = None
         bank_transfer_expirer = None
+        client_alerts = None
         if pool is not None:
             await pool.open()
+            if not detail_worker_only:
+                client_alerts = ClientAlerts(app)
+                await client_alerts.start()
+                app.state.client_alerts = client_alerts
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
             # 내구성 폐기 잡을 적재한다 — Holder 가 설정돼 있으면(그 잡을 드레인할 대상이
             # 있으면) 리컨실러를 켠다. fm_vc_required 는 배포 게이트가 이미 Holder
@@ -375,6 +382,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await subscription_expirer.stop()
         if bank_transfer_expirer is not None:
             await bank_transfer_expirer.stop()
+        if client_alerts is not None:
+            await client_alerts.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:
@@ -420,6 +429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.pool = pool
+    app.state.client_event_salt_cache = {}
     if settings.fm_biometric_enrollment_enabled and settings.fm_liveness_enabled:
         app.state.fm_rekognition, app.state.fm_sts = build_biometric_aws_clients(settings)
     else:
@@ -481,9 +491,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await call_next(request)
         except Exception:
             logging.getLogger("wearless.api").exception(
-                "unhandled request error method=%s path=%s",
+                "unhandled request error method=%s path=%s request_id=%s",
                 request.method,
                 request.url.path,
+                request.state.request_id,
             )
             request.state.error_code = "internal_error"
             return JSONResponse(
@@ -526,8 +537,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.method,
                 path,
                 duration_ms,
-                # ALB 가 붙이는 추적 헤더. ALB 액세스 로그와 대조할 때 쓴다.
-                request.headers.get("x-amzn-trace-id", "-"),
+                request.state.request_id,
                 code,
             )
         # 요청마다 한 줄 — 경로별 소요시간을 CloudWatch Logs Insights 로 잰다(2026-09-26 전엔
@@ -537,12 +547,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if path not in ("/healthz", "/readyz") and request.method != "OPTIONS":
             route = getattr(request.scope.get("route"), "path", None) or "-"
             logger.info(
-                "http request status=%s method=%s route=%s duration_ms=%d code=%s",
+                "http request status=%s method=%s route=%s duration_ms=%d code=%s request_id=%s",
                 status,
                 request.method,
                 route,
                 duration_ms,
                 code,
+                request.state.request_id,
             )
         return response
 
@@ -553,7 +564,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=[
-            "Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token",
+            "Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token", "X-Client-Request-Id",
             # 관리자 콘솔 기기 토큰(admin_guard). 빠지면 admin.wearless.kr 의 모든 요청이
             # preflight 에서 죽는다 — 로그인은 되니 화면엔 "서버에 연결하지 못했어요" 만 남는다.
             "X-Admin-Device",
@@ -562,7 +573,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # 켜 둔 모델은 등록 위저드의 증서 발급도 못 한다(2026-09-23 리뷰 375S-1).
             "X-Facemarket-Screen",
         ],
+        expose_headers=["X-Request-Id"],
     )
+    app.add_middleware(RequestIdMiddleware)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
@@ -660,6 +673,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Phase 0 완료 기준(JWT 검증 통과) 확인용 — Phase 1에서 /v1/me/account로 대체
         return {"userId": user_id}
 
+    from .client_events import router as client_events_router
+
+    app.include_router(client_events_router)
     app.include_router(v1_router)
 
     from .public_routes import router as public_router

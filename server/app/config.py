@@ -338,6 +338,7 @@ class Settings:
     fm_usage_report_to_email: str | None = None
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
+    slack_alert_webhook_url: str | None = None
     # 관리자 콘솔 기기 게이트(admin_guard). off=검사 안 함 / shadow=검사하고 실패해도 통과·
     # 로그만 / enforce=실패 시 403. 코드 기본 shadow — 배포 직후 아무도 잠기지 않고, 두 관리자가
     # 콘솔에서 서로 기기를 승인한 뒤 env 로 enforce 를 올린다(런북 docs/runbooks/admin-device-gate.md).
@@ -937,6 +938,7 @@ def load_settings() -> Settings:
         ).rstrip("/"),
         fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
+        slack_alert_webhook_url=os.getenv("SLACK_ALERT_WEBHOOK_URL") or None,
         admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
         admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),

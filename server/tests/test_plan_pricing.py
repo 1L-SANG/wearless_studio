@@ -243,7 +243,7 @@ def test_credit_quote_openapi(client):
 
 
 class _SqlConn:
-    """실제 쿼리를 SQLite에서 실행. 드라이버 표기와 행 잠금만 치환한다."""
+    """실제 쿼리를 SQLite에서 실행. 드라이버 표기, 행 잠금, JSONB 병합을 치환한다."""
     def __init__(self):
         import sqlite3
         self.db = sqlite3.connect(':memory:', check_same_thread=False)
@@ -288,6 +288,7 @@ class _SqlConn:
                         conn.before_insert()
                         conn.before_insert = None
                     conn.db.execute('begin')
+                sql = sql.replace('metadata || %s::jsonb', 'json_patch(metadata, %s)')
                 sql = sql.replace('%s', '?').replace(' for update', '').replace('::text', '')
                 params = tuple(json.dumps(p.obj) if hasattr(p, 'obj') else p for p in params)
                 self.cur = conn.db.execute(sql, params)
@@ -386,6 +387,7 @@ def test_regenerate_prices_after_previous_free_job_completes(
         assert json.loads(job['metadata']) == {
             'creditCostVersion': 'v6', 'freeAdjust': False,
             'adjustIndex': last_free_index + 1, 'plan': plan,
+            'requestId': response.headers['X-Request-Id'],
         }
         assert len(conn.commits) == 1
         assert conn.commits[0]['reserved'] == 45
@@ -440,7 +442,9 @@ def test_regenerate_last_free_job_and_ledger_commit_together(
     ledger = committed['ledger'][0]
     assert ledger['job_id'] == job['id']
     assert ledger['delta'] == 0
-    assert json.loads(job['metadata']) == json.loads(ledger['metadata']) == {
+    job_metadata = json.loads(job['metadata'])
+    assert job_metadata.pop('requestId') == response.headers['X-Request-Id']
+    assert job_metadata == json.loads(ledger['metadata']) == {
         'creditCostVersion': 'v6', 'freeAdjust': True, 'adjustIndex': done_count, 'plan': plan,
     }
 

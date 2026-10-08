@@ -658,6 +658,8 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 크리티컬 로그 알림(addons/log-slack-alerts.yml)의 SLACK_ALERT_WEBHOOK_URL 과 **다른 파라미터**다.
   # 운영 장애 알림과 지원서 접수 알림이 한 채널에 섞이면 둘 다 안 보게 된다.
   FM_SLACK_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_SLACK_WEBHOOK_URL
+  # 화면 오류는 기존 운영 알림 채널로 보낸다. SSM의 copilot 태그를 먼저 붙인다.
+  SLACK_ALERT_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SLACK_ALERT_WEBHOOK_URL
   # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name RESEND_API_KEY (프로드 SSM). 없으면 배포가
   #   "secret not found" 로 실패한다(앱은 키가 없어도 뜨지만 — 메일은 원장에 failed 로 남고 "메일 미발송"
   #   뱃지·재발송으로 복구 — copilot 이 참조를 먼저 검사한다).

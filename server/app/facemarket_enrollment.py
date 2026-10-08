@@ -21,6 +21,8 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
+from .request_id import job_metadata
+
 from . import cx_identity, facemarket_id_document, facemarket_id_mask_verify, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
@@ -617,12 +619,12 @@ async def bind_model_and_enqueue_asset_build(
     await cur.execute(
         """
         insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
-        values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
+        values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, %s)
         """,
         (
             user_id,
             Json({"modelId": model_id, "enrollmentId": enrollment_id,
-                  "photoRevision": row.get("photo_revision", 0)}),
+                  "photoRevision": row.get("photo_revision", 0)}), Json(job_metadata({})),
         ),
     )
     return model_id
@@ -747,9 +749,9 @@ async def _consume_reshoot_slot(cur, enrollment_id: str, user_id: str, slot: str
         )
         await cur.execute(
             """insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
-               values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)""",
+               values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, %s)""",
             (user_id, Json({"modelId": rebuilding["model_id"], "enrollmentId": enrollment_id,
-                           "photoRevision": rebuilding["photo_revision"]})),
+                           "photoRevision": rebuilding["photo_revision"]}), Json(job_metadata({}))),
         )
 
 

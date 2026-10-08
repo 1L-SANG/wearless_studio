@@ -36,6 +36,8 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
+from .request_id import job_metadata
+
 from . import cx_identity, facemarket_cutover, repo
 from .auth import require_user
 from .db import get_conn
@@ -496,7 +498,7 @@ async def _start_purge(conn, user_id: str, profile: dict | None = None, *, reaso
             values (%s, null, 'personalization_purge', 'pending', %s, 0, %s)
             returning id::text as id
             """,
-            (user_id, Json({"reason": reason}), Json({"reason": reason})),
+            (user_id, Json({"reason": reason}), Json(job_metadata({"reason": reason}))),
         )
         job = await cur.fetchone()
     if profile is not None:
