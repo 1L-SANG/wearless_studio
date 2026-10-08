@@ -295,6 +295,25 @@ def test_digest_top_thirty_and_remainder_under_slack_limit(store):
     assert len(text) < 30000
 
 
+@pytest.mark.parametrize('delivery', ['digest', 'overflow'])
+def test_summary_lookup_ids_remain_complete_for_operator_investigation(store, delivery):
+    from uuid import UUID
+
+    case = event(blocking=True, at=NOW - timedelta(
+        days=1 if delivery == 'digest' else 0, seconds=1))
+    store['events'] = [case]
+    worker = MemoryWorker(store)
+    if delivery == 'overflow':
+        store['attempts'] = [('immediate', NOW - timedelta(minutes=1))] * 9
+    tick(worker)
+    title = '하루 요약' if delivery == 'digest' else '알림이 많아 일부를 묶었어요'
+    text = next(payload['text'] for payload in store['sent'] if title in payload['text'])
+    lookup = next(line for line in text.splitlines() if '사례 event_id' in line)
+    parts = lookup.split()
+    assert str(UUID(parts[2])) == case['event_id']
+    assert str(UUID(parts[5])) == case['request_id']
+
+
 def test_overflow_failure_restored_before_failed_state_is_committed(store):
     store['events'] = [event(signature=str(i), blocking=True, at=NOW - timedelta(seconds=1)) for i in range(12)]
 

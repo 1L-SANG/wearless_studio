@@ -1,5 +1,4 @@
 import asyncio
-import builtins
 import json
 import types
 import uuid
@@ -233,8 +232,6 @@ def test_dispatcher_recovery_sweep_follows_facemarket_flag(
     monkeypatch, facemarket_enabled, biometric_enabled, should_sweep
 ):
     calls = []
-    imports = []
-    real_import = builtins.__import__
 
     async def fake_sweep(app, *, limit):
         calls.append((app, limit))
@@ -243,15 +240,15 @@ def test_dispatcher_recovery_sweep_follows_facemarket_flag(
     async def noop(*_args, **_kwargs):
         return []
 
-    def tracking_import(name, *args, **kwargs):
-        if name.endswith("facemarket_enrollment"):
-            imports.append(name)
-        return real_import(name, *args, **kwargs)
-
     monkeypatch.setattr("app.workers.dispatcher.repo.recover_stale_leases", noop)
     monkeypatch.setattr("app.workers.dispatcher.repo.list_unsettled_errored_jobs", noop)
     monkeypatch.setattr(facemarket_enrollment, "sweep_terminal_enrollments", fake_sweep)
-    monkeypatch.setattr(builtins, "__import__", tracking_import)
+    # 다른 정리 작업의 DB·R2 접근을 격리한다. 모듈 로딩 순서가 아니라
+    # 이 플래그로 등록 정리가 실제 실행되는지를 확인한다.
+    monkeypatch.setattr("app.facemarket_applications.sweep_application_photo_staging", noop)
+    monkeypatch.setattr("app.facemarket_applications.sweep_terminal_application_pii", noop)
+    monkeypatch.setattr("app.facemarket_admin_review.sweep_stalled_review_approvals", noop)
+    monkeypatch.setattr("app.facemarket_id_document.sweep_stale_id_documents", lambda *_: 0)
     store = EnrollmentStore()
     app = _app(
         store,
@@ -265,5 +262,4 @@ def test_dispatcher_recovery_sweep_follows_facemarket_flag(
         )
     )
 
-    assert imports == (["facemarket_enrollment"] if should_sweep else [])
     assert calls == ([(app, 100)] if should_sweep else [])

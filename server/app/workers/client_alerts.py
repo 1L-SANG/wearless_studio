@@ -69,7 +69,7 @@ def _case_lines(cases):
         event_id = valid_request_id(str(case.get('event_id', '')))
         request_id = valid_request_id(str(case.get('request_id', '')))
         if event_id:
-            lines.append(f"  사례 event_id {event_id[:8]} · request_id {(request_id or '-')[:8]}")
+            lines.append(f"  사례 event_id {event_id} · request_id {request_id or '-'}")
     return lines
 
 
