@@ -17,6 +17,8 @@ import types
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import app.routes as routes
 from app import detail_cut_preview, facemarket, repo
 from app.agents.gemini_image import GeminiError
@@ -329,6 +331,61 @@ def test_repo_failure_without_extras_is_unchanged(monkeypatch):
     assert not any(sql.startswith("update jobs set result") for sql, _ in conn.log)
     event = next(params for sql, params in conn.log if "insert into job_events" in sql)
     assert event[1].obj == {"code": "generation_failed", "message": "m"}
+
+
+@pytest.mark.parametrize('code', ['generation_failed', 'worker_shutdown', 'incomplete_cuts'])
+def test_detail_failure_interrupts_claims_without_changing_credit_release(monkeypatch, code):
+    import copy
+    initial = {'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'timeout'}
+    claimed = {'attempt': 1, 'status': 'CLAIMED', 'initialJudgment': initial}
+    complete = {'attempt': 1, 'status': 'COMPLETE', 'judgment': {'decision': 'PASS'}}
+    shots = {
+        'inflight': {'phase': 'rejudging', 'judgmentRetryLease': 't',
+                     'judgmentRetries': [complete, claimed], 'qc': {'judgments': [initial]}},
+        'held': {'phase': 'held', 'judgmentRetries': [claimed], 'qc': {'passed': False}},
+        'done': {'phase': 'accepted', 'judgmentRetries': [complete], 'qc': {'passed': True}},
+        'phase-only': {'phase': 'rejudging', 'judgmentRetryLease': 't'},
+    }
+    before = copy.deepcopy(shots)
+    conn = _SqlConn(rows=[{'id': 'j1'}, {'metadata': {'detailShots': shots, 'other': 'keep'}}])
+    settled = []
+    async def settle(conn, **kw):
+        settled.append(kw)
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    assert asyncio.run(repo.finalize_detail_page_failure(
+        conn, job_id='j1', lease_token='t', user_id='u1', project_id='p1', reserved=38,
+        settle_key='k', message='m', metadata={'error': code}, code=code,
+        result={'errorCode': code}, job_metadata={'retainedCutKeys': {'b': 'private'}},
+        event_extra={'failedBlockIds': ['b']})) is True
+    updates = [params for sql, params in conn.log if sql.startswith('update jobs set metadata = jsonb_set')]
+    assert len(updates) == 1, 'Terminal detail retries must be cleaned in the same transaction'
+    cleaned = updates[0][0].obj
+    assert cleaned['inflight']['phase'] == 'held'
+    assert cleaned['inflight']['judgmentRetryLease'] is None
+    assert [row['status'] for row in cleaned['inflight']['judgmentRetries']] == ['COMPLETE', 'INTERRUPTED']
+    assert cleaned['inflight']['qc']['judgments'] == [initial]
+    assert cleaned['inflight']['qc']['judgmentRetries'] == cleaned['inflight']['judgmentRetries']
+    assert cleaned['held']['phase'] == 'held'
+    assert cleaned['held']['judgmentRetries'][-1]['status'] == 'INTERRUPTED'
+    assert cleaned['done'] == before['done']
+    assert cleaned['phase-only']['phase'] == 'held'
+    assert cleaned['phase-only']['judgmentRetryLease'] is None
+    assert settled == [{'user_id': 'u1', 'project_id': 'p1', 'job_id': 'j1', 'reserved': 38,
+                        'charge': 0, 'action_key': 'detailPageGenerate.release',
+                        'settle_key': 'k', 'metadata': {'error': code}}]
+    event = next(params[1].obj for sql, params in conn.log if 'insert into job_events' in sql)
+    assert event == {'failedBlockIds': ['b'], 'code': code, 'message': 'm'}
+
+
+def test_detail_failure_with_lost_lease_does_not_clean_or_release(monkeypatch):
+    async def settle(*args, **kwargs):
+        pytest.fail('A lost lease cannot release credits')
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    conn = _SqlConn()
+    assert asyncio.run(repo.finalize_detail_page_failure(
+        conn, job_id='j1', lease_token='lost', user_id='u1', project_id='p1', reserved=38,
+        settle_key='k', message='m', metadata={})) is False
+    assert len(conn.log) == 1
 
 
 def test_repo_retention_lookup_matches_the_reuse_conditions():

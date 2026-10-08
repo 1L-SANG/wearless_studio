@@ -3505,6 +3505,39 @@ async def finalize_detail_page_failure(
                 (Json(result) if result is not None else None,
                  Json(job_metadata or {}), job_id),
             )
+    if finalized:
+        # The failure finalizer still holds the job lock. Rejudgments remain
+        # consumed; only their audit state changes, in the terminal transaction.
+        async with conn.cursor() as cur:
+            await cur.execute("select metadata from jobs where id = %s", (job_id,))
+            row = await cur.fetchone()
+            shots = dict(((row or {}).get('metadata') or {}).get('detailShots') or {})
+            changed = False
+            for key, state in shots.items():
+                # Audit cleanup must never abort the credit release above.
+                if not isinstance(state, dict) or not isinstance(state.get('judgmentRetries') or [], list):
+                    continue
+                retries = list(state.get('judgmentRetries') or [])
+                interrupted = bool(retries and isinstance(retries[-1], dict)
+                                   and retries[-1].get('status') == 'CLAIMED')
+                rejudging = state.get('phase') == 'rejudging'
+                if not interrupted and not rejudging:
+                    continue
+                state = {**state, 'judgmentRetryLease': None}
+                if interrupted:
+                    retries[-1] = {**retries[-1], 'status': 'INTERRUPTED'}
+                    state.update(judgmentRetries=retries,
+                                 qc={**(state.get('qc') or {}), 'judgmentRetries': retries})
+                if rejudging:
+                    state['phase'] = 'held'
+                shots[key] = state
+                changed = True
+            if changed:
+                await cur.execute(
+                    "update jobs set metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), "
+                    "'{detailShots}', %s::jsonb) where id = %s",
+                    (Json(shots), job_id),
+                )
     return finalized
 
 

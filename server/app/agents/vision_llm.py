@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import time
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -34,9 +35,24 @@ _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:g
 class VisionError(RuntimeError):
     """분석 LLM 호출/파싱 실패 — 워커·라우트가 한국어 error 봉투로 매핑."""
 
-    def __init__(self, message, *, unknown_cause="provider_error"):
+    def __init__(self, message, *, unknown_cause="provider_error", retry_after_seconds=None):
         super().__init__(message)
         self.unknown_cause = unknown_cause
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_after_seconds(header):
+    """Only rate-limit rejudgments wait, for at most ten seconds."""
+    try:
+        value = (header or "").strip()
+        if value.isascii() and value.isdigit():
+            return min(int(value), 10)
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            raise ValueError("Retry-After date has no timezone")
+        return min(10, max(0, date.timestamp() - time.time()))
+    except (ValueError, TypeError, OverflowError):
+        return 2
 
 
 def _b64(data: bytes) -> str:
@@ -133,7 +149,10 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
                  else "provider_error" if res.status_code in {408, 409, 429} or res.status_code >= 500
                  else "configuration" if res.status_code in {401, 402, 403, 404}
                  else "invalid_input")
-        raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}", unknown_cause=cause)
+        retry_after = (_retry_after_seconds(getattr(res, "headers", {}).get("Retry-After"))
+                       if res.status_code == 429 and cause == "provider_error" else None)
+        raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}", unknown_cause=cause,
+                          retry_after_seconds=retry_after)
     return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
 
 

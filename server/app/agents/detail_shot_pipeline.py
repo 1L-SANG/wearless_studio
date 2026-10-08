@@ -361,6 +361,8 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
             report['judgmentRetries'] = await progress.claim_judgment_retry(
                 fp, report['attempts'], hashlib.sha256(candidate.data).hexdigest())
             try:
+                if judgment.get('retryAfterSeconds') is not None:
+                    await asyncio.sleep(judgment['retryAfterSeconds'])
                 judgment = await detail_output_qc.verdict(
                     settings, sources, candidate, target=target, direction=direction)
             except asyncio.CancelledError:

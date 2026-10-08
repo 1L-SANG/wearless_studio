@@ -10,6 +10,41 @@ from conftest import make_settings
 RAW = {"clothingType": "top", "fit": "regular", "styleTags": ["basic"]}
 
 
+@pytest.mark.parametrize('header,expected', [
+    ('7', 7), ('10', 10), ('60', 10), ('0', 0), (' 3 ', 3),
+    (None, 2), ('', 2), ('bad', 2), ('1.5', 2), ('-1', 2),
+    ('Thu, 08 Oct 2026 00:00:06 GMT', 6),
+    ('Thu, 08 Oct 2026 00:01:00 GMT', 10),
+    ('Wed, 07 Oct 2026 23:59:59 GMT', 0),
+])
+def test_rate_limit_retains_bounded_retry_after(monkeypatch, header, expected):
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(vision_llm.time, 'time', lambda: now)
+    response = httpx.Response(429, headers={'Retry-After': header} if header is not None else {},
+                              json={'error': {'code': 'rate_limit_exceeded'}})
+    monkeypatch.setattr(vision_llm.httpx, 'AsyncClient', fake_client_factory(lambda url: response))
+    with pytest.raises(vision_llm.VisionError) as result:
+        run(vision_llm._call_gpt(make_settings(openai_api_key='test'), 'judge', 'inspect', [], {}, 5))
+    assert result.value.unknown_cause == 'provider_error'
+    assert getattr(result.value, 'retry_after_seconds', None) == expected
+
+
+@pytest.mark.parametrize('status,code,cause', [
+    (500, None, 'provider_error'), (503, None, 'provider_error'),
+    (429, 'insufficient_quota', 'configuration'),
+    (429, 'credit_balance_exhausted', 'configuration'),
+    (429, 'billing_hard_limit_reached', 'configuration'),
+])
+def test_other_provider_failures_have_no_rate_limit_wait(monkeypatch, status, code, cause):
+    response = httpx.Response(status, headers={'Retry-After': '8'}, json={'error': {'code': code}})
+    monkeypatch.setattr(vision_llm.httpx, 'AsyncClient', fake_client_factory(lambda url: response))
+    with pytest.raises(vision_llm.VisionError) as result:
+        run(vision_llm._call_gpt(make_settings(openai_api_key='test'), 'judge', 'inspect', [], {}, 5))
+    assert result.value.unknown_cause == cause
+    assert getattr(result.value, 'retry_after_seconds', None) is None
+
+
 def test_specialist_options_and_usage_are_opt_in(monkeypatch):
     seen = []
     payload = {"model": "gpt-6-astra", "usage": {"prompt_tokens": 10, "completion_tokens": 4},
