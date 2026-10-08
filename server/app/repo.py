@@ -1333,11 +1333,11 @@ async def get_matching_item_asset(
 async def get_matching_item_metadata(
     conn: AsyncConnection, item_id: str, user_id: str, project_id: str
 ) -> dict | None:
-    """활성 매칭의류의 핏 카테고리 판정용 구조화 메타데이터."""
+    """활성 매칭의류의 핏 카테고리와 후처리 원단 보호 판정용 메타데이터."""
     async with conn.cursor() as cur:
         await cur.execute(
             # owner_user_id 도 같이 — matching.fit_category 가 custom 이면 조정 축을 닫는다(D11).
-            "select clothing_type, category, length, owner_user_id::text as owner_user_id "
+            "select name, style_tags, clothing_type, category, length, owner_user_id::text as owner_user_id "
             "from matching_items "
             "where id = %s and is_active "
             "and (owner_user_id is null or (owner_user_id = %s and project_id = %s))",

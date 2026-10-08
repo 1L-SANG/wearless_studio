@@ -30,6 +30,7 @@ from ..agents import (
     cut_output_qc,
     cut_plan,
     face_identity,
+    garment_desquiggle,
     feature_copy,
     fit_axes,
     image_qc,
@@ -376,7 +377,7 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
-                    stored_outputs=None):
+                    stored_outputs=None, matching_metadata=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -628,6 +629,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         back=angle_photos.get("sh_back")), pod_id=_angle_pod)
                     if _angle_spec is not None:
                         generate_kwargs["angle_swap"] = _angle_spec
+            if s.garment_desquiggle_mode == "on":
+                mids = (b.get("matchIds") or b.get("match_ids") or [])[:2]
+                generate_kwargs["garment_protection"] = garment_desquiggle.build_protection_info(
+                    product, analysis,
+                    [(matching_metadata or {}).get(str(mid)) for mid in mids] if mids else None)
             # 결정적 실패는 베이스 값을 내기 **전에** 끝낸다(2026-09-23). 각도 교체로 갈 컷인데
             # 쓸 등록 사진이 없으면 swap 이 베이스를 다 그린 뒤 no_angle_photo 로 떨어진다 —
             # 결과는 같고 gpt-image 값만 나간다. 같은 사유·같은 빈 슬롯(미차감)으로 닫는다.
@@ -898,6 +904,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                             try:
                                 if route == "EDIT_STAGE1":
                                     repair_kwargs = {"qc_corrections": instructions}
+                                    if "garment_protection" in generate_kwargs:
+                                        repair_kwargs["garment_protection"] = generate_kwargs["garment_protection"]
                                     if confirmed_packet is not None:
                                         repair_kwargs["confirmed_prompt_input"] = (
                                             confirmed_packet.prompt_input
@@ -1524,6 +1532,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
             detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None
             match_assets: dict = {}   # matchingItemId → asset|None
+            matching_metadata: dict = {}  # 원단 보호용. 정보가 부족한 매칭 의류는 불명으로 남긴다.
             mood_assets: dict = {}    # refAssetId → asset|None (소유 검증 겸함)
             def _color_key(block: dict) -> str | None:
                 value = block.get("colorId")
@@ -1595,6 +1604,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                             if m_aid
                             else None
                         )
+                        if s.garment_desquiggle_mode == "on":
+                            matching_metadata[matching_id] = await repo.get_matching_item_metadata(
+                                conn, matching_id, user_id, project_id)
                 for rid in (b.get("refAssetIds") or [])[:3]:
                     if str(rid) not in mood_assets:
                         mood_assets[str(rid)] = await repo.get_asset_for_user(conn, user_id, str(rid))
@@ -2294,6 +2306,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
         # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(A4/A5와 동일 관례).
         _gen_cuts_kwargs = {}
+        if s.garment_desquiggle_mode == "on":
+            _gen_cuts_kwargs["matching_metadata"] = matching_metadata
         if body_profile is not None:
             _gen_cuts_kwargs["body_profile"] = body_profile
         if hair_profile is not None:

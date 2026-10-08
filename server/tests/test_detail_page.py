@@ -1632,7 +1632,8 @@ def test_confirmed_profile_cut_also_gets_two_safe_retries(monkeypatch):
     assert len(assets) == 1
 
 
-def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
+@pytest.mark.parametrize("desquiggle_mode", ["off", "on"])
+def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch, desquiggle_mode):
     captured = {"matching_item_ids": [], "loaded_asset_ids": []}
 
     async def fake_gp(conn, uid, pid):
@@ -1662,12 +1663,17 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         captured["matching_item_ids"].append(matching_item_id)
         return f"{matching_item_id}-asset"
 
+    async def fake_matching_metadata(conn, matching_item_id, user_id, project_id):
+        assert desquiggle_mode == "on", "off must not add metadata queries"
+        return {"name": "스트라이프 팬츠"} if matching_item_id == "match-2" else None
+
     async def fake_asset(conn, uid, aid):
         captured["loaded_asset_ids"].append(aid)
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         captured["cut_spec"] = cut_spec
+        captured["protection"] = _kw.get("garment_protection")
         captured["image_data"] = [image.data for image in images]
         captured["manifest"] = manifest
         captured["prompt"] = dpj.cut_generator.build_prompt(
@@ -1696,13 +1702,15 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(dpj.repo, "get_matching_item_metadata", fake_matching_metadata)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2())
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b",
+                                       garment_desquiggle_mode=desquiggle_mode), r2=KeyR2())
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
     assert captured["matching_item_ids"] == ["match-1", "match-2"]
@@ -1717,6 +1725,12 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         "MATCHING — the user-selected coordinating garment"
     ) == 2
     assert "- matching bottom" in captured["prompt"]
+    if desquiggle_mode == "on":
+        assert len(captured["protection"].matching) == 2
+        assert captured["protection"].matching[0].has_pattern is None
+        assert captured["protection"].matching[1].has_pattern is True
+    else:
+        assert captured["protection"] is None
 
 
 def test_run_detail_page_job_separates_detail_manifests_by_direction(monkeypatch):
