@@ -3370,7 +3370,8 @@ export function Editor() {
   const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
   // 부분 실패(incomplete_cuts, 2026-09-28) — "모두 못 만들었다"가 아니라 몇 장 완성·몇 장 실패인지.
   const genIncomplete = (dpJob.status === 'error' && !genFinalizeError && dpJob.incomplete) || null;
-  const genFailureHeading = dpJob.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
+  const genFailureHeading = genFinalizeError ? '생성은 완료됐어요. 완성본을 다시 불러와 주세요.'
+    : dpJob.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
     : (genIncomplete?.completed.length > 0 || dpJob.errorCode === 'incomplete_cuts') ? '아직 못 만든 컷이 있어요' : '상세페이지를 아직 만들지 못했어요';
   const genFailureMessage = genFinalizeError
     || (genIncomplete ? incompleteMessage(genIncomplete, dpJob.errorMessage) : dpJob.errorMessage)

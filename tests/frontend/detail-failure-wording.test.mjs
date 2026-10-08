@@ -16,16 +16,40 @@ const ribbon = shell.slice(shell.indexOf('function DetailPageJobRibbon()'), shel
 const { code: ribbonCode } = await transformWithEsbuild(ribbon, 'Ribbon.jsx', { jsx: 'transform' });
 const incomplete = { requested: 2, completed: ['cut1'], failed: ['cut2'], retained: ['cut1'], expired: false };
 
-function failureViews(job) {
+function failureViews(job, overrides = {}) {
   const bindings = { React, dpJob: job, projectId: 'p', genActive: false, genFinalizeError: null,
     incompleteMessage, retryOfIncomplete, retryReuseHint, genNotif: 'denied',
     genMergedRef: { current: false }, genActiveRef: { current: false }, setGenActive() {},
     useAppStore: Object.assign((select) => select({ detailPageJob: job }), { getState: () => ({}) }),
     Icon: 'svg', Button: 'button', SmoothProgressTrack: 'span', EXPECTED_MS: { detailPage: 1 }, leaveToLibrary() {},
-    useNavigate: () => () => {}, useLocation: () => ({ pathname: '/library' }), useEffect() {}, useSmoothProgress: () => 0 };
+    useNavigate: () => () => {}, useLocation: () => ({ pathname: '/library' }), useEffect() {}, useSmoothProgress: () => 0,
+    ...overrides };
   const Band = new Function(...Object.keys(bindings), `${bandCode}; return Band;`)(...Object.values(bindings));
   const Ribbon = new Function(...Object.keys(bindings), `${ribbonCode}; return DetailPageJobRibbon;`)(...Object.values(bindings));
   return { Band, Ribbon };
+}
+
+for (const message of ['완성본을 불러오지 못했어요.', '편집 내용을 저장하지 못했어요.']) {
+  test(`생성 완료 후 마무리 오류는 생성 성공을 안내하고 다시 불러오기만 실행한다: ${message}`, () => {
+    let attempts = 0;
+    const job = { projectId: 'p', jobId: 'j', status: 'done', progress: 100 };
+    const { Band } = failureViews(job, {
+      genActive: true, genFinalizeError: message,
+      setGenFinalizeAttempt: (update) => { attempts = update(attempts); },
+      useAppStore: { getState() { throw new Error('완료된 생성 작업을 다시 시작하면 안 된다'); } },
+    });
+    const html = renderToStaticMarkup(React.createElement(Band));
+    assert.match(html, /생성은 완료됐어요/);
+    assert.ok(html.includes(message));
+    assert.doesNotMatch(html, /상세페이지를 아직 만들지 못했어요|아직 못 만든 컷|크레딧 미차감|>다시 만들기</);
+    const descendants = (node) => !node || typeof node !== 'object' ? []
+      : [node, ...React.Children.toArray(node.props?.children).flatMap(descendants)];
+    const retry = descendants(Band()).find((node) => node.type === 'button'
+      && node.props.children === '완성본 다시 불러오기');
+    assert.ok(retry);
+    retry.props.onClick();
+    assert.equal(attempts, 1);
+  });
 }
 
 for (const [name, extra, heading] of [
