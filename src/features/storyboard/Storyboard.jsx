@@ -485,6 +485,15 @@ function BundleSwapArrows({ move }) {
   );
 }
 
+function storyboardPreviewSource(block, catalogs) {
+  if (!block) return null;
+  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+  if (detail) return detail.src;
+  if (block.source === 'mine') return block.thumb || mineImageUrl(block.ownImages?.[0]);
+  const example = catalogs?.genExamples?.find((item) => item.id === block.exampleId);
+  return block.previewThumb || (example ? generationExampleImageSources(example).src : null) || block.thumb;
+}
+
 function StoryboardMedia({
   block, catalogs, matchClothing = null, index, total,
   showPoseVariation = false,
@@ -497,9 +506,7 @@ function StoryboardMedia({
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const image = example ? generationExampleImageSources(example) : null;
-  const src = detail ? detail.src : block.source === 'mine'
-    ? (block.thumb || block.ownImages?.[0])
-    : (block.previewThumb || image?.src || block.thumb);
+  const src = storyboardPreviewSource(block, catalogs);
   // 매칭 의류 표시는 셀러가 인스펙터에서 직접 바꾼 컷에만(자동 배정 컷은 조용히) —
   // 이미지 우측 하단 오버레이(2026-08-14 오너 확정).
   const userMatch = block.source !== 'mine' && block.cutType !== 'product'
@@ -1054,27 +1061,30 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
   </div>;
 }
 
+function StoryboardSelectionThumbnail({ src }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  return src && !failed
+    ? <img className="ds-selection-thumb" src={src} alt="선택한 컷" onError={() => setFailed(true)} />
+    : <span className="ds-selection-thumb ds-selection-placeholder" aria-label="사진 미리보기 없음"><Icon name="image" size={20} /></span>;
+}
+
 function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet, backgroundAvailability }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
   const ordinal = siblingIndex >= 0 ? siblingIndex + 1 : (block.spaceSetMemberOrder || 1);
   const count = siblings.length || set?.members?.length || 1;
-  const thumb = block.previewThumb || block.thumb || set?.members?.[ordinal - 1]?.thumb;
   return (
     <div className="sb-space-inspector-context">
-      <div className="sb-space-current-cut">
-        {thumb && <img className="sb-space-current-thumb" src={thumb} alt="" />}
-        <div><strong>{ordinal}번째 컷</strong>
-          <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
-            <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
-          </div>
-        </div>
+      <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
+        <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
       </div>
+      <p className="ds-scope-help">세트 변경은 이 묶음 전체에 적용돼요. 현재 {siblings.length}장</p>
       {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {effectiveHorizonBackgroundMode(block, backgroundAvailability) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
     </div>
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
+function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMember, onClose, returnLabel, gender, clothingType, sectionRole = null,
   identityKind = null, busy = false, currentMembers = [], product, colorEvidence, onBackgroundChange,
   catalog = [], onCatalogDragStart, onCatalogDragEnd }) {
   const replacing = mode === 'replace';
@@ -1140,9 +1150,16 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
   const availability = horizonBackgroundAvailability(currentMembers, product, colorEvidence, currentSet?.id);
   return <div className="surface inspector sb-set-picker" ref={pickerRef}
     onKeyDown={event => { if (event.key === 'Escape' && preview) { event.preventDefault(); event.stopPropagation(); dismissPreview(); } }}>
-    <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
-      <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
-      <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
+    <div className="sb-set-picker-head ds-set-picker-head">
+      <button type="button" className="ds-inspector-back" disabled={busy} onClick={onClose}>{returnLabel || '콘티로 돌아가기'}</button>
+      <p>{replacing ? '세트를 눌러 바꾸거나 한 컷만 끌어서 추가하세요.' : '세트를 눌러 추가하거나 한 컷만 끌어서 추가하세요.'}</p>
+    </div>
+    {currentMembers.length > 0 && <details key={currentBlock?.spaceGroupId} className="ds-scope-preview" aria-label="세트 설정 적용 대상">
+      <summary><strong>이 세트 전체 · {currentMembers.length}장</strong><span>대상 사진 보기</span></summary>
+      <div className="ds-scope-thumbs">{currentMembers.map((member, index) => <div key={member.id}>
+        <StoryboardSelectionThumbnail src={storyboardPreviewSource(member, previewCatalogs)} /><span>세트 {index + 1}번</span>
+      </div>)}</div>
+    </details>}
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
       disabled={busy} onChange={onBackgroundChange} availability={availability} />}
     <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
@@ -2118,6 +2135,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
+  const inspectorReturnFocus = useRef(null);
+  const setPickerReturnFocus = useRef(null);
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
@@ -2763,6 +2782,29 @@ export function Storyboard({ toastOverride = null } = {}) {
     }
   };
   const finishEdit = () => { setPendingSectionMove(null); setSelectedId(null); };
+  const restoreInspectorFocus = (target) => requestAnimationFrame(() => {
+    const fallback = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected, .sb-board-tool');
+    (target?.isConnected && target.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
+  });
+  const closeInspector = () => {
+    if (atomicSavingRef.current) return;
+    const target = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || inspectorReturnFocus.current;
+    finishEdit();
+    setSetPicker(null);
+    setSetPickerError(null);
+    setSplitOpen(false);
+    restoreInspectorFocus(target);
+  };
+  const returnFromSetPicker = () => {
+    if (atomicSavingRef.current) return;
+    if (!selectedId) { closeInspector(); return; }
+    setSetPicker(null);
+    setSetPickerError(null);
+    requestAnimationFrame(() => {
+      const target = setPickerReturnFocus.current;
+      (target?.isConnected && target.getClientRects().length ? target : document.querySelector('.insp-col .sb-space-set-change'))?.focus({ preventScroll: true });
+    });
+  };
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
@@ -3344,6 +3386,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     setBlocks((bs) => patchSection(bs, sec.id, { sectionLayout: v, sectionCustom: true }));
   };
   const openSetPicker = (picker) => {
+    setPickerReturnFocus.current = document.activeElement;
+    inspectorReturnFocus.current = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || document.activeElement;
     setPickerScrollY.current = window.scrollY;
     setSetPickerError(null);
     setSetPicker(picker);
@@ -3897,8 +3941,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const allGroupKeys = boardGroups.map((group) => group.key);
   const allOpen = allGroupKeys.length > 0 && allGroupKeys.every((key) => openGroupKeys.includes(key));
 
-  const list = (
-    <div className="sb-canvas-board">
+  const boardControls = (
+    <div className="sb-board-controls">
       {autosaveFailed && (
         <div className="sb-save-error sb-autosave-error" role="alert">
           <ClientErrorCapture point="storyboardSave" error={autosaveFailed instanceof Error ? autosaveFailed : undefined} projectId={projectId} />
@@ -3928,6 +3972,11 @@ export function Storyboard({ toastOverride = null } = {}) {
           {allOpen ? '전체 접기' : '전체 펼치기'}
         </button>
       </div>
+    </div>
+  );
+
+  const list = (
+    <div className="sb-canvas-board">
       {boardGroups.map((group, groupIndex) => {
         const open = openGroupKeys.includes(group.key);
         const range = cutRangeLabel(group.items);
@@ -4069,7 +4118,7 @@ export function Storyboard({ toastOverride = null } = {}) {
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const inspector = setPicker ? (
-    <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
+    <SpaceSetGallery previewCatalogs={catalogs} mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
       catalog={catalogContext.catalog} busy={atomicSaving || locked}
       onCatalogDragStart={(set, member) => { setCatalogDrag({ setId: set.id, exampleId: member?.exampleId || null }); setDragId(null); setDragSpaceGroupId(null); setDragExampleId(null); }}
       onCatalogDragEnd={onDragEnd}
@@ -4080,7 +4129,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       )}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       identityKind={identityKind}
-      onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
+      returnLabel={selectedId ? '컷 설정으로 돌아가기' : '콘티로 돌아가기'} onClose={returnFromSetPicker} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory} exampleGender={exampleGender} signatureGender={signatureGenderNow} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
@@ -4102,14 +4151,32 @@ export function Storyboard({ toastOverride = null } = {}) {
     }}
     />;
 
+  const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
+  const selectedSection = selected ? deriveSections(blocks).find((section) => section.id === selected.sectionId) : null;
+  const selectedRoleLabel = selected ? sectionTitle(selectedSection?.role || selected.sectionRole || sectionRoleForContentRole(selected.contentRole)) : '';
+  const selectedThumbnail = storyboardPreviewSource(selected, catalogs);
   const cutCount = blocks.length;
   const body = (
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
+      {boardControls}
       <div className="sb-canvas-main">
         {list}
       </div>
-      {splitOpen && <div className="insp-col">{inspector}</div>}
+      {splitOpen && <div className="insp-col">
+        <div className="ds-selection-summary">
+          <div className="ds-selection-title">
+            {!setPicker && selected && <StoryboardSelectionThumbnail src={selectedThumbnail} />}
+            <div className="ds-selection-identity"><strong>{setPicker ? (setPicker.mode === 'replace' ? '장소 세트 변경' : '장소 세트 추가') : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
+              {selected && !setPicker && <span>{selected.source === 'mine' ? '내 상품 사진 · 이 사진에만 적용' : '아래 설정은 이 사진에만 적용'}</span>}
+              {setPicker && <span>{setPicker.mode === 'replace' ? `현재 세트 ${pickerMembers.length}장` : '새 촬영 세트 추가'}</span>}
+            </div>
+            <button type="button" disabled={atomicSaving} onClick={closeInspector} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>
+          </div>
+          {!selected && !setPicker && <p>수정할 사진을 선택해주세요.</p>}
+        </div>
+        {inspector}
+      </div>}
     </div>
   );
   // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)

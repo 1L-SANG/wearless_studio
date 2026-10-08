@@ -24,6 +24,7 @@ import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, li
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
+import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
@@ -884,7 +885,8 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
-  const setS = (p) => onChange({ style: { ...s, ...p } });
+  const setS = (p) => onChange({ style: patchTextStyle(s, p) });
+  const spacing = resolveTextSpacing(s);
   const changeBubbleAppearance = onBubbleAppearanceChange || onChange;
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
@@ -932,7 +934,7 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               칩 시각은 앱 공용 Chips — 활성 칩 재클릭은 가드로 무시(불필요한 히스토리 방지). */}
           {!isBubble && (
             <PanelSection title="빠른 스타일" first>
-              <Chips className="quad-chips" allowDeselect={false}
+              <Chips className="text-quick-styles" allowDeselect={false}
                 options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
                 value={activePresetKey}
                 onChange={(key) => {
@@ -961,13 +963,9 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
                 disabled={weightOptions(s.font).length < 2} onChange={(v) => setS({ weight: v })} />
               <NumStepper value={s.size || 18} min={8} max={200} onChange={(v) => setS({ size: v })} />
             </div>
-            <div className="field-2up" style={{ marginTop: 8 }}>
-              <NumField icon="lineHeight" labelText="행간" value={s.lineHeight || Math.round((s.size || 18) * 1.4)} min={0} max={400} onChange={(v) => setS({ lineHeight: v })} />
-              <NumField icon="letterSpacing" labelText="자간" value={s.tracking || 0} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
-            </div>
             <div className="text-tool-row">
               <div className="seg-icons">
-                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
+                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} title={{ left: '왼쪽 정렬', center: '가운데 정렬', right: '오른쪽 정렬' }[a]} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
               </div>
               <div className="seg-icons">
                 <IconButton name="bold" size="sm" active={isBold(s.font, s.weight)} disabled={!boldToggle(s.font)}
@@ -987,6 +985,19 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               </div>
             </div>
           </PanelSection>
+
+          <details className="text-spacing-controls">
+            <summary>
+              <span>간격</span>
+              <span className="text-spacing-status">{s.spacingMode === 'auto' ? '자동' : '현재 값 유지'} · 행간 {spacing.lineHeight}px</span>
+            </summary>
+            <div className="field-2up">
+              <NumField icon="lineHeight" labelText="행간" value={spacing.lineHeight} min={1} max={400} onChange={(v) => setS({ lineHeight: v })} />
+              <NumField icon="letterSpacing" labelText="자간" value={spacing.tracking} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
+            </div>
+            <p className="text-spacing-help">자동은 글자 크기에 맞춰 권장 간격을 적용해요. 직접 바꾼 값은 크기를 바꿔도 유지돼요.</p>
+            <Button variant="ghost" size="sm" onClick={() => setS({ spacingMode: 'auto' })}>권장 간격 자동 적용</Button>
+          </details>
 
           <PanelSection title="글자 색상">
             <SwatchField value={s.color || '#0e0d14'} opacity={Math.round((s.opacity ?? 1) * 100)} palette={TEXT_PALETTE}
@@ -1094,7 +1105,8 @@ export function FrameMini({ frame }) {
           return <div key={i} style={{
             ...base, fontFamily: fminiFont(s.font), fontSize: s.size || 20, fontWeight: s.weight || 400,
             color: s.color || '#222', textAlign: s.align || 'left',
-            lineHeight: `${s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            lineHeight: `${s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight : s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : undefined,
             fontStyle: s.italic ? 'italic' : 'normal',
             textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
             whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden',

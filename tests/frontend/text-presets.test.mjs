@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { patchTextStyle, recommendedTextSpacing } from '../../src/features/editor/textSpacing.js';
 import { TEXT_PRESET_DRAG_PREFIX, textPresetKeyFromDragTypes } from '../../src/features/editor/editorImageDrop.js';
 import {
   CANVAS_WIDTH, DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset, dropUntouchedPlaceholders,
@@ -47,10 +48,10 @@ test('요소 생성 — 기본 문구+자동 폭, 이미지 기둥(x=60), 문구
     // 씨앗 폭은 공식(크기 × 8.8)을 못 박는다 — 부등식으로 두면 20배가 돼도 통과해
     // 드래그 미리보기 상자와 드롭 가둠이 조용히 어긋난다(2026-08-16 리뷰).
     assert.equal(el.w, Math.round(p.style.size * 8.8), `${p.key} w — 기본 문구 폭 씨앗값`);
-    assert.equal(el.h, p.style.lineHeight || Math.round(p.style.size * 1.4), `${p.key} h`);
+    assert.equal(el.h, recommendedTextSpacing(p.style.size).lineHeight, `${p.key} h`);
     assert.equal(el.x, 60, `${p.key} x`);
     assert.ok(el.id && el.id !== buildTextPresetElement(p.key).id, 'id는 매번 달라야 한다');
-    assert.deepEqual(el.style, { font: 'Pretendard', ...p.style });
+    assert.deepEqual(el.style, patchTextStyle({ font: 'Pretendard', ...p.style }, { spacingMode: 'auto' }));
   }
 });
 
@@ -176,7 +177,8 @@ test('드래그 미리보기 상자와 실제로 만들어지는 요소는 같�
     // 스프레드 항등식만 보면 두 경로가 갈라져도 통과한다 — 스펙 값으로도 못 박는다.
     const spec = textPresetOf(key);
     assert.equal(box.style.size, spec.style.size);
-    assert.equal(box.h, spec.style.lineHeight || Math.round(spec.style.size * 1.4));
+    assert.equal(box.h, recommendedTextSpacing(spec.style.size).lineHeight);
+    assert.equal(box.style.spacingMode, 'auto');
     assert.equal(box.text, DEFAULT_TEXT_BODY);
   }
 });

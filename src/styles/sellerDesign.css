@@ -1,0 +1,91 @@
+/* Supplemental controls only. Preserve the existing orb, glass, typography,
+   upload tile geometry, and mobile-to-PC handoff. See DESIGN.md. */
+.ds-optional { margin-left: 6px; color: var(--fg-2); font: 400 12px/1.4 var(--font-body); }
+.ds-field-status { margin-left: auto; color: var(--fg-2); font: 400 11px/1.4 var(--font-body); }
+.ds-field-status.required { color: var(--fg-1); font-weight: 600; }
+.slot-well-head:has(.ds-field-status) { gap: 8px; }
+.tile.add:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.ds-selection-summary { padding: 14px 18px; box-shadow: inset 0 -1px 0 var(--ring); }
+.ds-selection-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ds-selection-title strong { font: 600 14px/1.5 var(--font-body); }
+.ds-selection-title button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--r-pill); background: var(--bg-2); color: var(--fg-2); cursor: pointer; }
+.ds-selection-summary p { margin-top: 4px; color: var(--fg-2); font: 400 12px/1.5 var(--font-body); }
+.insp-col:has(.ds-selection-summary) { background: var(--glass-bg); border-radius: var(--r-6); box-shadow: var(--elev-card); }
+.insp-col:has(.ds-selection-summary) .inspector { box-shadow: none; }
+.text-spacing-controls { padding: 16px 0; box-shadow: inset 0 -1px 0 var(--ring); }
+.text-spacing-controls summary { display: flex; align-items: center; gap: 10px; min-height: 34px; list-style: none; cursor: pointer; font-size: 13px; font-weight: 600; }
+.text-spacing-controls summary::-webkit-details-marker { display: none; }
+.text-spacing-controls summary::after { content: '+'; font-size: 18px; color: var(--fg-2); }
+.text-spacing-controls[open] summary::after { content: '−'; }
+.text-spacing-status { margin-left: auto; color: var(--fg-2); font-size: 12px; font-weight: 400; }
+.text-spacing-controls .field-2up { margin-top: 12px; }
+.text-spacing-help { margin: 10px 0 12px; color: var(--fg-2); font-size: 12px; line-height: 1.55; }
+.text-spacing-controls .btn { border-radius: var(--r-pill); font-size: 12px; }
+
+/* Preserve the input and storyboard glass; use persistent black selection. */
+.sb-page .page-head { text-align: left; max-width: 1240px; margin-inline: auto; padding: 32px 0 24px; }
+.sb-page .page-head h1 { font-size: 28px; line-height: 1.35; text-wrap: balance; }
+.sb-page .page-head p { max-width: 760px; margin-top: 8px; font-size: 15px; line-height: 1.55; }
+.sb-page .sb-deck + .sb-deck { margin-top: 12px; }
+.sb-page .sb-deck-headrow { padding-block: 16px; }
+.sb-page .sb-cutcard:hover { transform: none; }
+.sb-page .sb-selection-ring { box-shadow: inset 0 0 0 3px var(--fg-1); }
+.sb-page .sb-selection-ring i { display: none; animation: none; }
+.sb-page .sb-cutcard.selected .sb-canvas-number,
+.sb-page .sb-frame-half.selected .sb-canvas-number { background: var(--fg-1); color: var(--bg-1); }
+.sb-page .sb-excell.sel,
+.sb-page .sb-signature-cell.sel { border-color: var(--fg-1); }
+.sb-page .sb-excell.sel .ck { background: var(--fg-1); color: var(--bg-1); }
+.sb-page .sb-canvas-shell .insp-col:has(.ds-selection-summary) { padding: 0; background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
+.sb-page .insp-col:has(.ds-selection-summary) .inspector { background: transparent; border-radius: 0; padding: 20px; }
+.sb-page .ds-selection-summary { padding: 12px 20px; }
+.fig-panel .text-quick-styles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.fig-panel .text-quick-styles .chip { min-width: 0; justify-content: center; padding: 9px 6px; white-space: nowrap; }
+.fig-panel .text-quick-styles .chip.on { box-shadow: inset 0 0 0 1.5px var(--fg-1); }
+
+/* Share the board's starting row, including when the controls wrap or an error appears. */
+.sb-page .sb-canvas-shell { row-gap: 10px; }
+.sb-page .sb-board-controls { grid-column: 1; grid-row: 1; min-width: 0; transform: translate3d(191px, 0, 0); transition: transform .3s var(--sb-ease); }
+.sb-page .inspector-open .sb-board-controls { transform: translate3d(0, 0, 0); }
+.sb-page .sb-canvas-main { grid-column: 1; grid-row: 2; }
+.sb-page .sb-canvas-shell .insp-col { grid-column: 2; grid-row: 2; }
+@media (max-width: 900px) {
+  .sb-page .sb-board-controls { transform: none; }
+  .sb-page .sb-canvas-shell .insp-col { grid-column: 1; grid-row: 3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-page .sb-board-controls { transition: none; }
+}
+
+/* Inspector identity stays visible within its own scroll container. */
+.sb-page .ds-selection-summary { position: sticky; top: 0; z-index: 5; background: var(--bg-1); border-radius: var(--r-6) var(--r-6) 0 0; }
+.ds-selection-title { align-items: center; }
+.ds-selection-thumb { display: block; flex: 0 0 36px; width: 36px; height: 48px; object-fit: cover; border-radius: var(--r-2); background: var(--bg-2); }
+.ds-selection-placeholder { display: grid; place-items: center; color: var(--fg-2); }
+.ds-selection-identity { min-width: 0; flex: 1; }
+.ds-selection-identity strong { display: block; }
+.ds-selection-identity > span { display: block; color: var(--fg-1); font-size: 12px; margin-top: 3px; }
+.ds-selection-title > button { flex-shrink: 0; }
+.ds-field-scope { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--bg-2); color: var(--fg-1); font: 400 12px/1.5 var(--font-body); white-space: nowrap; vertical-align: middle; }
+.ds-scoped-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px; }
+.ds-scope-help { margin-top: 8px; font-size: 12px; color: var(--fg-1); }
+.ds-scope-preview { margin: 0 0 20px; }
+.ds-scope-preview strong { font-size: 12px; }
+.ds-scope-thumbs { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding: 3px; }
+.ds-scope-thumbs > div { flex: 0 0 48px; text-align: center; }
+.ds-scope-thumbs .ds-selection-thumb { width: 48px; height: 64px; box-shadow: 0 0 0 2px var(--fg-1); }
+.ds-scope-thumbs span { display: block; margin-top: 5px; font-size: 12px; color: var(--fg-1); }
+
+.sb-page .insp-col:has(.ds-selection-summary) { scroll-padding-top: 92px; }
+.sb-page .ds-set-picker-head { display: block; margin-bottom: 14px; }
+.ds-inspector-back { padding: 6px 0; border: 0; background: transparent; color: var(--fg-1); font: 500 13px/1.5 var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.ds-inspector-back:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.ds-inspector-back:disabled { color: var(--fg-disabled); cursor: default; }
+.ds-set-picker-head p { margin-top: 6px; font-size: 12px; color: var(--fg-1); }
+.ds-scope-preview { padding: 10px 12px; border-radius: var(--r-3); background: var(--bg-2); }
+.ds-scope-preview > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
+.ds-scope-preview > summary::-webkit-details-marker { display: none; }
+.ds-scope-preview > summary::after { content: '+'; }
+.ds-scope-preview[open] > summary::after { content: '−'; }
+.ds-scope-preview > summary > span { margin-left: auto; color: var(--fg-1); font-size: 12px; }
+.ds-scope-preview > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
