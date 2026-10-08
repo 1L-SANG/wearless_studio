@@ -1,3 +1,4 @@
+import { clientEvents } from '../clientEvents.js';
 import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
 /* =============================================================
    lib/api/facemarket — FaceMarket 전용 API (셀러 스튜디오 api 경계와 분리).
@@ -24,7 +25,8 @@ async function _bearer() {
 }
 
 async function _authFetch(path, opts = {}) {
-  const token = await _bearer();
+  const accountGeneration = clientEvents.getAccountGeneration();
+  const token = await _bearer().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   // 관리자 기기 토큰 — http()(httpAdapter.js)와 같은 규칙으로 싣는다. 이게 빠지면
   // ADMIN_DEVICE_GATE=enforce 인 프로덕션에서 관리자 화면의 **모든 이미지 fetch 가 403** 이다
   // (admin_guard.device_token_from 은 이 헤더만 본다). 심사 화면은 신분증을 한 장도 못 보고,
@@ -38,7 +40,7 @@ async function _authFetch(path, opts = {}) {
       ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
       ...(opts.headers || {}),
     },
-  });
+  }, { accountGeneration });
 }
 
 /* 게이트 라우트에서 바이트를 받아 objectURL 로 만든다(<img src> 로는 못 건다 — 인증

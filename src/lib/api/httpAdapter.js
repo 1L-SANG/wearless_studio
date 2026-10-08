@@ -92,6 +92,7 @@ const storyboardRevisions = createStoryboardRevisionSync({
 export async function http(path, {
   method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
   requireAuth = true, suppressErrorLog = false, isCurrent = () => true,
+  accountGeneration = clientEvents.getAccountGeneration(),
 } = {}) {
   let data;
   try {
@@ -105,7 +106,7 @@ export async function http(path, {
       !suppressErrorLog,
     );
     error.requestNotSent = true;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   // 다른 탭의 계정 변경은 React에 늦게 도착할 수 있다. 이 요청의 동의 당사자를
   // 실제 Bearer 토큰을 꺼내는 같은 세션과 대조한다.
@@ -113,13 +114,13 @@ export async function http(path, {
     const error = new Error('로그인 계정이 바뀌었어요. 현재 계정에서 다시 확인해 주세요.');
     error.code = 'auth_user_changed';
     error.requestNotSent = true;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   if (!isCurrent()) {
     const error = new Error('이전 임시저장 요청이 취소됐어요.');
     error.code = 'draft_request_cancelled';
     error.requestNotSent = true;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   const token = data?.session?.access_token;
   if (!token && requireAuth) {
@@ -127,7 +128,7 @@ export async function http(path, {
     if (!suppressErrorLog) console.error(`API no-session ${path}`);
     const error = new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
     error.requestNotSent = true;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   // requireAuth:false — 서버가 인증을 요구하지 않는 **공개 엔드포인트** 전용 탈출구.
   // 위 가드는 "세션이 필요한 화면에서 무세션 호출이 401 폭탄으로 번지는 것"을 막으려고 있는데,
@@ -155,7 +156,7 @@ export async function http(path, {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       keepalive,
-    });
+    }, { blockOffline: true, accountGeneration });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -199,9 +200,9 @@ export async function http(path, {
   const result = absolutizeAssetUrls(await readClientResponse(res));
   if (/^\/v1\/jobs\//.test(path) && result && typeof result === 'object') {
     Object.defineProperty(result, 'requestId', { value: res.headers.get('X-Request-Id'), configurable: true });
-    clientEvents.updateJobPoll(path, result);
+    clientEvents.updateJobPoll(path, result, accountGeneration);
   }
-  return result;
+  return clientEvents.bindGeneration(result, accountGeneration);
 }
 
 /* 톤 에디터 전용 바이트 취득.
@@ -210,14 +211,14 @@ export async function http(path, {
    그 최종 응답에 CORS 헤더가 있어야 하는데 그건 CDN 설정이라 앱이 보장할 수 없다. 그래서
    편집 소스만 API 가 직접 실어 보내는 라우트를 쓴다 — 여기 CORS 는 우리 것이다.
    에디터를 열 때 원본 1장 + 마스크 1장이고, 슬라이더를 움직이는 동안엔 0장이다. */
-export async function httpBlob(path, { signal } = {}) {
-  const { data } = await supabase.auth.getSession();
+export async function httpBlob(path, { signal, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
+  const { data } = await supabase.auth.getSession().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   const token = data?.session?.access_token;
-  if (!token) throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+  if (!token) throw clientEvents.bindGeneration(new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.'), accountGeneration);
   const res = await clientApiFetch(`${BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
-  });
+  }, { accountGeneration });
   if (!res.ok) {
     const err = new Error('이미지를 불러오지 못했어요.');
     err.status = res.status;
@@ -228,7 +229,7 @@ export async function httpBlob(path, { signal } = {}) {
 
 // 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
 // 건너뛸 수 있게 토큰을 선호해서 붙이고, 세션 조회 실패·비로그인은 그대로 공개 경로를 쓴다.
-async function publicHttp(path, formData, { signal } = {}) {
+async function publicHttp(path, formData, { signal, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
   let token;
   try {
     const { data } = await supabase.auth.getSession();
@@ -241,7 +242,7 @@ async function publicHttp(path, formData, { signal } = {}) {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       body: formData,
       signal,
-    });
+    }, { accountGeneration });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -313,18 +314,18 @@ async function pollJob(
 export async function uploadPhoto(
   projectId,
   { filename, mime, blob, purpose = 'upload' },
-  { signal } = {},
+  { signal, accountGeneration = clientEvents.getAccountGeneration() } = {},
 ) {
-  recordClientAction('upload');
+  recordClientAction('upload', accountGeneration);
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal,
+    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal, accountGeneration,
   });
   if (isBrowserOffline()) {
-    throw networkError(
+    throw clientEvents.bindGeneration(networkError(
       'photo_upload_network',
       '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'r2_put', origin: browserOrigin() },
-    );
+    ), accountGeneration);
   }
   let put;
   try {
@@ -332,22 +333,22 @@ export async function uploadPhoto(
       method: 'PUT', headers: { 'Content-Type': mime }, body: blob, signal,
     });
   } catch (cause) {
-    if (cause?.name === 'AbortError') throw cause;
-    throw networkError(
+    if (cause?.name === 'AbortError') throw clientEvents.bindGeneration(cause, accountGeneration);
+    throw clientEvents.bindGeneration(networkError(
       'photo_upload_network',
       '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'r2_put', origin: browserOrigin() },
       cause,
-    );
+    ), accountGeneration);
   }
   if (!put.ok) {
     const error = new Error('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     error.code = 'photo_upload_failed';
     error.status = put.status;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   await http(`/v1/assets/${assetId}/complete`, {
-    method: 'POST', body: { projectId, mime, filename, purpose }, signal,
+    method: 'POST', body: { projectId, mime, filename, purpose }, signal, accountGeneration,
   });
   // complete 응답의 R2 URL은 배포 설정에 따라 만료되는 서명 URL일 수 있다. 에디터 문서에는
   // 현재 R2 위치로 매번 리다이렉트하는 앱의 안정 에셋 경로를 저장해야 재접속 후에도 보인다.

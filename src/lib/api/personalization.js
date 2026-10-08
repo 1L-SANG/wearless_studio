@@ -1,3 +1,4 @@
+import { clientEvents } from '../clientEvents.js';
 import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
 /* =============================================================
    lib/api/personalization — 개인화(사용자 얼굴·신체) 모델 API.
@@ -19,11 +20,12 @@ async function _bearer() {
 }
 
 async function _authFetch(path, opts = {}) {
-  const token = await _bearer();
+  const accountGeneration = clientEvents.getAccountGeneration();
+  const token = await _bearer().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   return clientApiFetch(`${BASE_URL}${path}`, {
     ...opts,
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
-  });
+  }, { accountGeneration });
 }
 
 // 서버 에러봉투 { error: { code, message, reasons? } } (api-spec §1.3) 를 파싱해 status·code·

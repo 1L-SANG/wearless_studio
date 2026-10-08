@@ -1,4 +1,5 @@
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
+import { clientEvents } from '@/lib/clientEvents.js';
 /* =============================================================
    features/editor/Editor.jsx — ⑦ 상세페이지 에디터 (PRD §10)
    Structure/markup/classNames ported verbatim from the prototype
@@ -2120,6 +2121,7 @@ export function Editor() {
     }
   };
   const downloadBlock = async (block, idx) => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
     const node = canvasRef.current?.querySelector(`.canvas-block[data-blockid="${block.id}"]`);
@@ -2128,12 +2130,14 @@ export function Editor() {
     try {
       finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
     } catch (e) {
-      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true });
+      clientEvents.bindGeneration(e, accountGeneration);
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true, accountGeneration });
     } finally {
       setDlBusy(false);
     }
   };
   const runDownload = async () => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
     if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
@@ -2151,6 +2155,7 @@ export function Editor() {
         ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
         : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
+      clientEvents.bindGeneration(e, accountGeneration);
       setDlOriginalError(e);
       setDlError(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     } finally {
@@ -2346,9 +2351,9 @@ export function Editor() {
   };
   // insert=false: 의류 목록에만 넣는다(여러 장 업로드). quiet: 실패를 토스트 대신 던진다 —
   // 여러 장이면 한 장마다 토스트를 띄우지 않고 끝에 한 번 모아서 알린다.
-  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false } = {}) => {
+  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
     if (!looksLikeImageFile(file)) {
-      if (quiet) throw new Error('unsupported_image');
+      if (quiet) throw clientEvents.bindGeneration(Object.assign(new Error('unsupported_image'), { code: 'unsupported_type' }), accountGeneration);
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
@@ -2357,8 +2362,8 @@ export function Editor() {
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
-      if (validation === 'file_too_large') throw new Error('사진은 25MB 이하만 업로드할 수 있어요.');
-      if (validation) throw new Error('지원하지 않는 이미지 형식이에요.');
+      if (validation === 'file_too_large') throw Object.assign(new Error('사진은 25MB 이하만 업로드할 수 있어요.'), { code: 'file_too_large' });
+      if (validation) throw Object.assign(new Error('지원하지 않는 이미지 형식이에요.'), { code: 'unsupported_type' });
       const dimensions = await readImageDimensions(prepared);
       if (importId) {
         const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === placement?.blockId);
@@ -2375,7 +2380,7 @@ export function Editor() {
         filename: prepared.name || file.name || 'editor-image.jpg',
         mime: prepared.type || 'image/jpeg',
         blob: prepared,
-      });
+      }, { accountGeneration });
       const image = {
         id: uploaded.assetId || uid('w'),
         src: uploaded.url,
@@ -2391,10 +2396,11 @@ export function Editor() {
       patchImageImport(importId, { phase: 'done' });
       finishImageImport(importId, 420);
     } catch (error) {
+      clientEvents.bindGeneration(error, accountGeneration);
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
       if (quiet) throw error;
-      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true });
+      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true, accountGeneration });
     } finally {
       if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
     }
@@ -2430,10 +2436,11 @@ export function Editor() {
   // 한 장이면 예전처럼 목록에 넣고 캔버스에도 놓는다. 여러 장이면 캔버스에 한꺼번에 쌓이지
   // 않게 의류 목록(기타)에만 넣는다 — 셀러가 목록에서 골라 끌어 쓴다.
   const pickAndInsertImage = async () => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     const picked = await pickEditorImageFile({ multiple: true });
     if (!picked.length) return;
     if (picked.length === 1) {
-      await uploadEditorImage(picked[0]);
+      await uploadEditorImage(picked[0], undefined, null, { accountGeneration });
       return;
     }
     const files = picked.slice(0, MAX_WARDROBE_UPLOADS);
@@ -2441,12 +2448,16 @@ export function Editor() {
       toast.push(`한 번에 ${MAX_WARDROBE_UPLOADS}장까지 올릴 수 있어요. 앞의 ${MAX_WARDROBE_UPLOADS}장만 올릴게요.`, { icon: 'alertTri' });
     }
     const results = await runWithConcurrency(files, WARDROBE_UPLOAD_CONCURRENCY,
-      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true }));
+      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration }));
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
+    const failures = results.filter((result) => !result.ok);
+    const error = (failures.find((result) => !['file_too_large', 'unsupported_type'].includes(result.error?.code)) || failures[0])?.error;
+    const errorOptions = { variant: 'error', error, kind: 'upload_error', actionName: 'upload',
+      messageCode: 'photo_upload_failed', blocking: done === 0, accountGeneration };
     if (!failed) toast.push(`사진 ${done}장을 의류 목록에 추가했어요`, { icon: 'check' });
-    else if (!done) toast.push('사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
-    else toast.push(`사진 ${done}장을 추가했어요. ${failed}장은 올리지 못했어요.`, { icon: 'alertTri' });
+    else if (!done) toast.push('사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', ...errorOptions });
+    else toast.push(`사진 ${done}장을 추가했어요. ${failed}장은 올리지 못했어요.`, { icon: 'alertTri', ...errorOptions });
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });

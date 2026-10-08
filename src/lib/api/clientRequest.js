@@ -16,6 +16,8 @@ export function isOwnApiRequest(target, baseUrl = BASE_URL, origin = globalThis.
 export function attachResponseError(error, response) {
   const info = responses.get(response);
   if (!info) return error;
+  clientEvents.bindGeneration(error, info.accountGeneration);
+  if (!info.request_id) return error;
   error.requestId = info.request_id;
   error.status ??= info.status;
   error.clientApi = { ...info, error_code: safeCode(error.code) };
@@ -23,16 +25,20 @@ export function attachResponseError(error, response) {
 }
 
 export async function readClientResponse(response, format = 'json') {
-  try { return await response[format](); }
+  try { return clientEvents.bindGeneration(await response[format](), responses.get(response)?.accountGeneration); }
   catch (error) { throw attachResponseError(error, response); }
 }
 
-export async function clientApiFetch(target, options = {}) {
+export async function clientApiFetch(target, options = {}, { blockOffline = false, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
   if (!isOwnApiRequest(target)) {
     const headers = new Headers(options.headers);
-    if (!headers.has('X-Client-Request-Id')) return fetch(target, options);
+    const requestOptions = headers.has('X-Client-Request-Id') ? { ...options, headers } : options;
     headers.delete('X-Client-Request-Id');
-    return fetch(target, { ...options, headers });
+    try {
+      const response = await fetch(target, requestOptions);
+      responses.set(response, { accountGeneration });
+      return response;
+    } catch (error) { throw clientEvents.bindGeneration(error, accountGeneration); }
   }
   const requestId = newRequestId();
   const method = (options.method || 'GET').toUpperCase();
@@ -42,7 +48,7 @@ export async function clientApiFetch(target, options = {}) {
   headers.set('X-Client-Request-Id', requestId);
   let response;
   try {
-    if (globalThis.navigator?.onLine === false) {
+    if (blockOffline && globalThis.navigator?.onLine === false) {
       throw Object.assign(new Error('인터넷 연결이 끊겼어요. 연결을 확인해 주세요.'), { code: 'browser_offline', requestNotSent: true });
     }
     // fetch는 리다이렉트 뒤에 임의 헤더를 유지한다. 외부 전송은 따라가기 전에 막는다.
@@ -52,10 +58,10 @@ export async function clientApiFetch(target, options = {}) {
     if (options.signal?.aborted && typeof cause !== 'object') error.name = 'AbortError';
     error.requestId = requestId;
     error.clientApi = { method, route, status: 0, duration_ms: Math.min(3600000, Date.now() - started), request_id: requestId };
-    if (error.name !== 'AbortError') clientEvents.addBreadcrumb({ type: 'api', ...error.clientApi, route: target });
-    throw error;
+    if (error.name !== 'AbortError') clientEvents.addBreadcrumb({ type: 'api', ...error.clientApi, route: target }, accountGeneration);
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
-  const info = { method, route, status: response.status, duration_ms: Math.min(3600000, Date.now() - started),
+  const info = { accountGeneration, method, route, status: response.status, duration_ms: Math.min(3600000, Date.now() - started),
     request_id: validUuid(response.headers?.get('X-Request-Id')) || requestId };
   responses.set(response, info);
   // 성공 JSON의 오류 job도 원래 생성 요청과 연결한다. 원문은 발자취에 넣지 않는다.
@@ -63,6 +69,6 @@ export async function clientApiFetch(target, options = {}) {
   if (!response.ok) {
     try { errorCode = safeCode((await response.clone().json())?.error?.code); } catch { /* 비 JSON */ }
   }
-  clientEvents.addBreadcrumb({ type: 'api', ...info, route: target, error_code: errorCode });
+  clientEvents.addBreadcrumb({ type: 'api', ...info, route: target, error_code: errorCode }, accountGeneration);
   return response;
 }

@@ -112,11 +112,11 @@ test('서버의 연결 오류 문구는 셀러 API에만 적용하고 입력, �
     ['/v1/personalization/profile', 500, '프로필 조회 실패', '프로필 조회 실패'],
   ]) {
     const http = new Function('supabase', 'isBrowserOffline', 'readDeviceToken', 'clientApiFetch', 'BASE_URL',
-      'absolutizeAssetUrls', 'jobFailureMessage', 'attachResponseError', `${source}; return http;`)(
+      'absolutizeAssetUrls', 'jobFailureMessage', 'attachResponseError', 'clientEvents', `${source}; return http;`)(
       { auth: { getSession: async () => ({ data: { session: { access_token: 'test' } } }) } },
       () => false, () => null,
       async () => ({ ok: false, status, json: async () => ({ error: { code: 'unchanged', message } }) }),
-      '', (value) => value, jobFailureMessage, (error) => error,
+      '', (value) => value, jobFailureMessage, (error) => error, { getAccountGeneration: () => 0, bindGeneration: (value) => value },
     );
     await assert.rejects(http(path, { suppressErrorLog: true }),
       { message: expected, status, code: 'unchanged' });

@@ -13,7 +13,7 @@ const memoryStorage = () => {
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
 };
 function evaluate(source, bindings, result) {
-  bindings = { recordClientAction() {}, readClientResponse: (res) => res.json(), attachResponseError: (error) => error, ...bindings };
+  bindings = { accountGeneration: 0, clientEvents: { getAccountGeneration: () => 0, bindGeneration: (value) => value }, recordClientAction() {}, readClientResponse: (res) => res.json(), attachResponseError: (error) => error, ...bindings };
   return new Function(...Object.keys(bindings), `${source}; return ${result};`)(...Object.values(bindings));
 }
 

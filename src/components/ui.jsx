@@ -291,7 +291,7 @@ export function ToastProvider({ children }) {
     if (opts.variant === 'error') {
       reportUserVisibleError({ kind: opts.kind || 'toast_error', action: opts.actionName || 'unknown',
         messageCode: opts.messageCode || 'toast_failed', blocking: opts.blocking === true,
-        error: opts.error, context: opts.context });
+        error: opts.error, context: opts.context, accountGeneration: opts.accountGeneration });
     }
     const id = Math.random().toString(36).slice(2);
     setList((l) => [...l, { id, msg, ...opts }]);

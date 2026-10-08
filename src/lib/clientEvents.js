@@ -18,33 +18,78 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
   let sessionCount = 0;
   let session;
   let identityEpoch = 0;
+  let ownerResetPending = false;
+  const operationGenerations = new WeakMap();
   let flushing = null;
   let installed = false;
   let snapshotProvider = () => ({});
   const storage = () => { try { return env.localStorage; } catch { return null; } };
   const readQueue = () => {
     try {
-      const saved = JSON.parse(storage()?.getItem(CLIENT_EVENT_QUEUE_KEY) || 'null');
+      const raw = storage()?.getItem(CLIENT_EVENT_QUEUE_KEY);
+      const saved = JSON.parse(raw || 'null');
       const items = Array.isArray(saved?.items) ? saved.items.filter((item) => (
         Number.isFinite(item?.queued_at) && now() - item.queued_at < CLIENT_EVENT_TTL_MS
         && item.queued_at <= now() && validUuid(item?.payload?.event_id)
       )).slice(-20).map((item) => ({ queued_at: item.queued_at, payload: sanitizeQueuedEvent(item.payload) }))
         .filter((item) => item.payload) : [];
-      return { owner: validUuid(saved?.owner), items };
-    } catch { return { owner: null, items: [] }; }
+      return { owner: validUuid(saved?.owner), items, exists: Boolean(raw) };
+    } catch { return { owner: null, items: [], exists: false }; }
   };
   let queue = readQueue();
-  const persist = () => {
-    try {
-      if (queue.items.length) storage()?.setItem(CLIENT_EVENT_QUEUE_KEY, JSON.stringify(queue));
-      else storage()?.removeItem(CLIENT_EVENT_QUEUE_KEY);
-    } catch { /* 수집기의 저장 실패는 사용자 오류가 아니다. */ }
+  const isCurrentGeneration = (generation) => {
+    if (generation !== identityEpoch) return false;
+    const saved = readQueue();
+    return session === undefined || ownerResetPending || !saved.exists || saved.owner === queue.owner;
   };
-  const addBreadcrumb = (raw) => {
+  const bindGeneration = (value, generation = identityEpoch) => {
+    if (value && typeof value === 'object') {
+      const previous = operationGenerations.get(value);
+      operationGenerations.set(value, previous === undefined ? generation : Math.min(previous, generation));
+    }
+    return value;
+  };
+  const generationOf = (value) => {
+    for (let i = 0; value && typeof value === 'object' && i < 5; i++, value = value.cause) {
+      if (operationGenerations.has(value)) return operationGenerations.get(value);
+    }
+  };
+  const isCurrentOperation = (value) => {
+    for (let i = 0; value && typeof value === 'object' && i < 5; i++, value = value.cause) {
+      if (operationGenerations.has(value) && !isCurrentGeneration(operationGenerations.get(value))) return false;
+    }
+    return true;
+  };
+  const persist = ({ removedIds = [], resetOwner = ownerResetPending } = {}) => {
+    const generation = identityEpoch;
+    const owner = queue.owner;
+    const write = () => {
+      if (generation !== identityEpoch) return false;
+      try {
+        const saved = readQueue();
+        if (saved.exists && saved.owner !== owner && !resetOwner) return false;
+        const byId = new Map();
+        for (const item of [...(saved.owner === owner ? saved.items : []), ...queue.items]) {
+          if (now() - item.queued_at < CLIENT_EVENT_TTL_MS && item.queued_at <= now()) byId.set(item.payload.event_id, item);
+        }
+        for (const id of removedIds) byId.delete(id);
+        queue.items = [...byId.values()].sort((a, b) => a.queued_at - b.queued_at).slice(-20);
+        // 빈 큐에도 소유자 표식을 남겨 로그아웃 전 탭이 이전 계정 기록을 되살리지 못하게 한다.
+        const encoded = JSON.stringify({ owner, items: queue.items });
+        if (storage()?.getItem(CLIENT_EVENT_QUEUE_KEY) !== encoded) storage()?.setItem(CLIENT_EVENT_QUEUE_KEY, encoded);
+        return true;
+      } catch { return false; }
+    };
+    // 지원하는 브라우저에서는 두 탭의 읽기와 쓰기도 한 번에 하나씩 실행한다.
+    const locks = env.navigator?.locks;
+    return locks?.request ? locks.request(CLIENT_EVENT_QUEUE_KEY, write).catch(() => false) : write();
+  };
+  const addBreadcrumb = (raw, generation = identityEpoch) => {
+    if (!isCurrentGeneration(generation)) return;
     const crumb = sanitizeBreadcrumb({ ...raw, at: new Date(now()).toISOString() });
     // 경로 틀이 같아도 다른 job은 합치지 않는다. 원래 경로는 메모리 키로만 사용한다.
-    const pollKey = raw.method === 'GET' && /\/v1\/jobs\/[^/?#]+\/?(?:[?#]|$)/.test(raw.route || '')
-      ? new URL(raw.route, 'https://route.invalid').pathname : null;
+    const pollKey = raw.method === 'GET' && /\/v1\/jobs\/[^/?#]+(?:\/events)?\/?(?:[?#]|$)/.test(raw.route || '')
+      ? new URL(raw.route, 'https://route.invalid').pathname.replace(/\/$/, '') : null;
     if (pollKey) crumb.action = 'poll';
     const previous = pollKey && breadcrumbs.find((entry) => entry.pollKey === pollKey);
     if (previous) {
@@ -55,11 +100,12 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
     if (breadcrumbs.length > 30) breadcrumbs.shift();
     return crumb;
   };
-  const action = (name) => {
-    if (!CLIENT_EVENT_ACTIONS.has(name) || name === 'unknown') return;
-    addBreadcrumb({ type: 'action', action: name, route: env.location?.pathname });
+  const action = (name, generation = identityEpoch) => {
+    if (CLIENT_EVENT_ACTIONS.has(name) && name !== 'unknown') addBreadcrumb({ type: 'action', action: name, route: env.location?.pathname }, generation);
+    return generation;
   };
-  const updateJobPoll = (path, job) => {
+  const updateJobPoll = (path, job, generation = generationOf(job) ?? identityEpoch) => {
+    if (!isCurrentGeneration(generation)) return;
     const previous = breadcrumbs.find((entry) => entry.pollKey === new URL(path, 'https://route.invalid').pathname);
     if (!previous) return;
     if (['pending', 'running', 'done', 'error', 'cancelled'].includes(job.status)) {
@@ -67,14 +113,14 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
     }
   };
   const enqueue = (payload, epoch) => {
-    if (epoch !== identityEpoch) return;
+    if (!isCurrentGeneration(epoch)) return;
     queue.items = queue.items.filter((item) => now() - item.queued_at < CLIENT_EVENT_TTL_MS && item.payload.event_id !== payload.event_id);
     queue.items.push({ queued_at: now(), payload });
     queue.items = queue.items.slice(-20);
     persist();
   };
   const send = async (payload, epoch) => {
-    if (epoch !== identityEpoch) return false;
+    if (!isCurrentGeneration(epoch)) return false;
     try {
       if (mock) { await acceptMockClientEvent(payload); return true; }
       const body = JSON.stringify(payload);
@@ -93,31 +139,39 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
     const epoch = identityEpoch;
     flushing = (async () => {
       queue.items = queue.items.filter((item) => now() - item.queued_at < CLIENT_EVENT_TTL_MS);
-      persist();
+      if (!await persist() || !isCurrentGeneration(epoch)) return;
       for (const item of [...queue.items]) {
-        if (epoch !== identityEpoch || !await send(item.payload, epoch)) break;
-        if (epoch !== identityEpoch) break;
-        queue.items = queue.items.filter((current) => current.payload.event_id !== item.payload.event_id);
-        persist();
+        if (!isCurrentGeneration(epoch) || !await send(item.payload, epoch)) break;
+        if (!isCurrentGeneration(epoch)) break;
+        await persist({ removedIds: [item.payload.event_id] });
       }
-    })().finally(() => { flushing = null; });
+    })().finally(() => {
+      flushing = null;
+      if (epoch !== identityEpoch && queue.items.length) void flush();
+    });
     return flushing;
   };
   const setSession = (next) => {
     const owner = validUuid(next?.user?.id);
-    if (queue.owner !== owner || (session !== undefined && validUuid(session?.user?.id) !== owner)) {
+    const changed = queue.owner !== owner || (session !== undefined && (session?.user?.id ?? null) !== (next?.user?.id ?? null));
+    session = next || null;
+    if (changed) {
       identityEpoch += 1;
       queue = { owner, items: [] };
       breadcrumbs.length = 0;
       seenErrors = new WeakSet();
-      persist();
+      ownerResetPending = true;
+      const generation = identityEpoch;
+      const complete = () => { if (generation === identityEpoch) ownerResetPending = false; };
+      const result = persist({ resetOwner: true });
+      if (result?.then) void result.then(complete); else complete();
     }
-    session = next || null;
     queue.owner = owner;
     void flush();
   };
-  const report = ({ kind = 'ui_error', action: name = 'unknown', messageCode, step, blocking = false, error, context = {} } = {}) => {
+  const report = ({ kind = 'ui_error', action: name = 'unknown', messageCode, step, blocking = false, error, context = {}, accountGeneration = generationOf(error) ?? identityEpoch } = {}) => {
     try {
+      if (!isCurrentGeneration(accountGeneration) || !isCurrentOperation(error)) return null;
       if (!CLIENT_EVENT_KINDS.has(kind) || error?.name === 'AbortError'
         || ['job_cancelled', 'job_timeout', 'draft_request_cancelled', 'validation_error', 'face_quality',
           'unsupported_type', 'file_too_large', 'quote_changed'].includes(error?.code)) return null;
@@ -168,14 +222,17 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
     // React가 오류 경계로 처리한 오류를 전역 리스너가 중복 보고하지 않게 한 턴 기다린다.
     env.addEventListener('error', (event) => {
       if (!event.error && typeof event.message !== 'string') return;
-      env.setTimeout(() => report({ kind: 'runtime_error', action: 'unknown', messageCode: 'runtime_error', blocking: true, error: event.error }), 0);
+      const accountGeneration = generationOf(event.error) ?? identityEpoch;
+      env.setTimeout(() => report({ kind: 'runtime_error', action: 'unknown', messageCode: 'runtime_error', blocking: true, error: event.error, accountGeneration }), 0);
     });
     env.addEventListener('unhandledrejection', (event) => {
+      const accountGeneration = generationOf(event.reason) ?? identityEpoch;
       env.setTimeout(() => report({ kind: 'unhandled_rejection', action: 'unknown', messageCode: 'unhandled_rejection', blocking: true,
-        error: typeof event.reason === 'object' && event.reason ? event.reason : undefined }), 0);
+        error: typeof event.reason === 'object' && event.reason ? event.reason : undefined, accountGeneration }), 0);
     });
   };
-  return { report, addBreadcrumb, updateJobPoll, action, flush, setSession, install,
+  return { report, addBreadcrumb, updateJobPoll, action, flush, setSession, install, bindGeneration, generationOf, isCurrentGeneration,
+    getAccountGeneration: () => identityEpoch,
     setSnapshotProvider: (provider) => { snapshotProvider = provider; },
     getBreadcrumbs: () => breadcrumbs.map((entry) => ({ ...entry.crumb })) };
 }
@@ -183,4 +240,4 @@ export function createClientEventCollector({ env = globalThis, now = Date.now, u
 export const clientEvents = createClientEventCollector({ baseUrl: import.meta.env?.VITE_API_BASE_URL ?? '',
   buildSha: typeof __BUILD_SHA__ === 'undefined' ? 'dev' : __BUILD_SHA__, mock: (import.meta.env?.VITE_API_MODE ?? 'mock') !== 'http' });
 export const reportUserVisibleError = (details) => clientEvents.report(details);
-export const recordClientAction = (name) => clientEvents.action(name);
+export const recordClientAction = (name, generation) => clientEvents.action(name, generation);

@@ -15,7 +15,7 @@ function harness() {
   let cursor = 0;
   let effects = [];
   const reports = [];
-  const bindings = { React, reportUserVisibleError: (details) => reports.push(details),
+  const bindings = { React, clientEvents: { getAccountGeneration: () => 0, generationOf: () => undefined }, reportUserVisibleError: (details) => reports.push(details),
     useRef: (value) => slots[cursor++] ||= { current: value },
     useEffect: (effect, deps) => {
       const index = cursor++;

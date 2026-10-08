@@ -37,7 +37,7 @@ function fixture({ offline = false, initial, fail = false, mock = false } = {}) 
   const collector = createClientEventCollector({ env, now: () => time, buildSha: 'a123bc', baseUrl: 'https://api.test', mock,
     transport: async (url, options) => { calls.push({ url, options }); if (failed) throw new Error('collector offline'); return { ok: true }; } });
   return { env, values, calls, collector, advance: (ms) => { time += ms; }, failure: (value) => { failed = value; },
-    queue: () => JSON.parse(values.get(CLIENT_EVENT_QUEUE_KEY) || 'null') };
+    queue: () => { const saved = JSON.parse(values.get(CLIENT_EVENT_QUEUE_KEY) || 'null'); return saved?.items.length ? saved : null; } };
 }
 
 const details = (overrides = {}) => ({ kind: 'save_error', action: 'save', messageCode: 'save_failed', blocking: true, ...overrides });
@@ -105,7 +105,7 @@ test('offline requests retain a UUID and API breadcrumb without calling fetch', 
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: false } });
   t.after(() => { if (prior) Object.defineProperty(globalThis, 'navigator', prior); else delete globalThis.navigator; });
   const spy = t.mock.method(globalThis, 'fetch', async () => assert.fail('offline fetch'));
-  await assert.rejects(clientApiFetch('/v1/projects'), (error) => {
+  await assert.rejects(clientApiFetch('/v1/projects', {}, { blockOffline: true }), (error) => {
     assert.equal(error.code, 'browser_offline');
     assert.equal(error.requestNotSent, true);
     assert.match(error.requestId, /^[0-9a-f-]{36}$/);

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { reportUserVisibleError } from '../lib/clientEvents.js';
+import { clientEvents, reportUserVisibleError } from '../lib/clientEvents.js';
 
 export const ERROR_CAPTURE_POINTS = {
   errorState: { kind: 'ui_error', action: 'load', messageCode: 'screen_load_failed', blocking: true },
@@ -15,16 +15,17 @@ export const ERROR_CAPTURE_POINTS = {
 export function useClientErrorCapture({ point = 'errorState', active = true, error, kind, action, messageCode,
   blocking, projectId, jobId, localBackup } = {}) {
   const reported = useRef(null);
+  const accountGeneration = clientEvents.generationOf(error) ?? clientEvents.getAccountGeneration();
   useEffect(() => {
     if (!active) { reported.current = null; return; }
     const defaults = ERROR_CAPTURE_POINTS[point];
     const key = error || `${point}:${messageCode || defaults?.messageCode}:${jobId || ''}`;
     if (reported.current === key) return;
     reported.current = key;
-    reportUserVisibleError({ ...defaults, error, ...(kind ? { kind } : {}), ...(action ? { action } : {}),
+    reportUserVisibleError({ ...defaults, error, accountGeneration, ...(kind ? { kind } : {}), ...(action ? { action } : {}),
       ...(messageCode ? { messageCode } : {}), ...(blocking !== undefined ? { blocking } : {}),
       context: { projectId, jobId, ...(localBackup !== undefined ? { local_backup: localBackup } : {}) } });
-  }, [point, active, error, kind, action, messageCode, blocking, projectId, jobId, localBackup]);
+  }, [point, active, error, kind, action, messageCode, blocking, projectId, jobId, localBackup, accountGeneration]);
 }
 
 export function ClientErrorCapture(props) {
