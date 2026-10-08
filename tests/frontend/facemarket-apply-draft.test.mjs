@@ -82,6 +82,7 @@ for (const mock of [false, true]) test(`${mock ? '모의' : '실제'} 로그아�
     createContext: () => ({ Provider: 'Provider' }),
     useState: () => [states.shift(), () => {}], useCallback: value => value, useEffect() {},
     useQueryClient: () => ({ clear() {} }), IS_FACEMARKET: true,
+    isMockMode: mock,
     supabase: { auth: { signOut: async () => { signedOut += 1; } } },
     clearApplyDraft, clearSignupConsent() {}, draftSlot: { resetIdentity() {} },
     useAppStore: { getState: () => ({ beginProject: async () => {}, setAccountIdentity: () => true }) },

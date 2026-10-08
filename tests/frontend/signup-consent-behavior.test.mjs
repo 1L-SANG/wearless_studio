@@ -147,7 +147,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
           export default { useCallback, useSyncExternalStore, useDebugValue };
         `;
         if (id === '\0signup-test-jsx') return "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment='Fragment';";
-        if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase;`;
+        if (id === '\0signup-test-supabase') return `export const supabase=${access}.supabase; export const readStoredAuthSession=()=>null;`;
         if (id === '\0signup-test-http') return `export const http=(...args)=>${access}.http(...args); export const resetAnalysisCache=()=>{};`;
         if (id === '\0signup-test-mode') return `export const isMockMode=${mockMode}; export const api=${access}.api;`;
         if (id === '\0signup-test-query') return `export const useQueryClient=()=>${access}.queryClient;`;
