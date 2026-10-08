@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -22,6 +23,20 @@ BATCH_LIMIT = 100
 IMMEDIATE_BUDGET = 10
 DIGEST_LIMIT = 30
 _INGEST_LOCK_KEY = (0x4345, 2)
+_SCREENS = {'input': '입력 화면', 'storyboard': '콘티', 'mannequin': '마네킹',
+            'generating': '생성 중', 'editor': '에디터', 'library': '보관함', 'pricing': '요금제'}
+_ACTIONS = {'upload': '사진 올리기', 'analyze': '분석', 'save': '저장', 'load': '불러오기',
+            'poll': '불러오기', 'mannequinGenerate': '마네킹 생성', 'mannequinAdjust': '마네킹 생성',
+            'generate': '이미지 생성', 'detailPageGenerate': '이미지 생성', 'editorImage': '이미지 생성',
+            'download': '다운로드', 'export': '다운로드', 'restore': '다시 열기', 'navigate': '화면 표시'}
+_BROWSERS = frozenset(('Chrome', 'Chromium', 'Edge', 'Firefox', 'Safari', 'Mobile Safari',
+                       'Samsung Internet', 'Opera', 'IE'))
+_SYSTEMS = frozenset(('Windows', 'macOS', 'Mac OS X', 'iOS', 'Android', 'Linux', 'Chrome OS'))
+# 원문과 사용자 식별자를 조회하지 않고 알림에 필요한 진단 키만 읽는다.
+_CASE_FIELDS = ("event_id::text, request_id::text, kind, route, action, status, error_code, device, "
+                "build_sha, received_at, occurred_at, jsonb_build_object("
+                "'step', payload->'step', 'browser', payload->'browser', 'os', payload->'os', "
+                "'network', payload->'network', 'breadcrumbs', payload->'breadcrumbs') as payload")
 
 
 def digest_window(day):
@@ -44,7 +59,7 @@ def summaries(events):
         groups[event["signature"]].append(event)
     return [{"signature": signature, "count": len(cases),
              "users": len({case['user_id'] for case in cases if case.get('user_id')}),
-             "cases": sorted(cases, key=lambda e: e['received_at'], reverse=True)[:3]}
+             "cases": sorted(cases, key=lambda e: (e['received_at'], e['event_id']), reverse=True)[:3]}
             for signature, cases in sorted(groups.items())]
 
 
@@ -54,19 +69,136 @@ def _case_lines(cases):
         event_id = valid_request_id(str(case.get('event_id', '')))
         request_id = valid_request_id(str(case.get('request_id', '')))
         if event_id:
-            lines.append(f"event_id={event_id} request_id={request_id or '-'}")
+            lines.append(f"  사례 event_id {event_id[:8]} · request_id {(request_id or '-')[:8]}")
     return lines
 
 
+def _diagnostics(case):
+    payload = case.get('payload')
+    return payload if isinstance(payload, dict) else {}
+
+
+def _screen(case):
+    step = _diagnostics(case).get('step')
+    if isinstance(step, str) and step in _SCREENS:
+        return _SCREENS[step]
+    route = case.get('route')
+    segments = route.split('/') if isinstance(route, str) else []
+    for segment in reversed(segments):
+        if segment in _SCREENS:
+            return _SCREENS[segment]
+        if segment in ('product-input', 'analysis', 'analyze', 'photos', 'upload'):
+            return '입력 화면'
+    return '기타'
+
+
+def _action(case):
+    action = case.get('action')
+    if action == 'save' and case.get('device') == 'mobile':
+        return '폰 저장'
+    return _ACTIONS.get(action, '기타') if isinstance(action, str) else '기타'
+
+
+def _status(case):
+    status = case.get('status')
+    return status if type(status) is int and 0 <= status <= 599 else None
+
+
+def _cause(case):
+    if case.get('kind') in ('ui_error', 'error_boundary', 'runtime_error', 'unhandled_rejection'):
+        return '화면 코드 오류'
+    code = case.get('error_code')
+    code = code if isinstance(code, str) and re.fullmatch(r'[a-z][a-z_]{0,31}', code) else 'other'
+    status = _status(case)
+    if (case.get('kind') == 'network_error' or status in (0, 408)
+            or {'network', 'connection', 'timeout'} & set(code.split('_')) or 'timed_out' in code or code == 'offline'):
+        return '연결 끊김 또는 시간 초과'
+    if status is not None and status >= 500:
+        return f'서버 오류({status}, {code})'
+    if status is not None and status >= 400:
+        return f'요청 거절({status}, {code})'
+    return '원인 미확인'
+
+
+def _description(case):
+    return f'{_screen(case)}에서 {_action(case)} 실패 · {_cause(case)}'
+
+
+def _environment(case):
+    parts = []
+    device = case.get('device')
+    if isinstance(device, str) and device in ('desktop', 'mobile', 'tablet'):
+        parts.append({'desktop': 'PC', 'mobile': '폰', 'tablet': '태블릿'}[device])
+    diagnostics = _diagnostics(case)
+    for key, families in (('browser', _BROWSERS), ('os', _SYSTEMS)):
+        platform = diagnostics.get(key)
+        if not isinstance(platform, dict):
+            continue
+        family = platform.get('family')
+        if not isinstance(family, str) or family not in families:
+            continue
+        major = platform.get('major')
+        parts.append(f'{family} {major}' if key == 'browser' and isinstance(major, str)
+                     and re.fullmatch(r'[0-9]{1,8}', major) else family)
+    network = diagnostics.get('network')
+    if isinstance(network, dict):
+        effective = network.get('effective_type')
+        effective = effective if effective in ('slow-2g', '2g', '3g', '4g') else ''
+        online = network.get('online')
+        state = ('온라인' if online else '오프라인') if type(online) is bool else ''
+        if effective or state:
+            parts.append('네트워크 ' + (f'{effective}({state})' if effective and state else effective or state))
+    return ' · '.join(parts) or '환경 정보 없음'
+
+
+def _breadcrumbs(case):
+    crumbs = _diagnostics(case).get('breadcrumbs')
+    steps = []
+    for crumb in crumbs[-5:] if isinstance(crumbs, list) else []:
+        if not isinstance(crumb, dict):
+            continue
+        if crumb.get('type') == 'navigation':
+            steps.append(_screen(crumb))
+        elif crumb.get('type') == 'api':
+            status = _status(crumb)
+            if status is not None and (status == 0 or status >= 400):
+                steps.append(f'요청 실패({status})')
+        elif crumb.get('type') == 'action':
+            steps.append(_action({**crumb, 'device': case.get('device')}))
+    return '직전 행동: ' + (' → '.join(steps) or '기록 없음')
+
+
+def immediate_payload(group, *, blocking):
+    case = group['cases'][0] if group['cases'] else {}
+    label = '🔴 진행 막힘' if blocking else '🟡 오류 몰림'
+    timestamp = case.get('occurred_at') or case.get('received_at')
+    when = timestamp.astimezone(KST).strftime('%m/%d %H:%M') if isinstance(timestamp, datetime) else '시간 미확인'
+    lookup = []
+    for key in ('event_id', 'request_id'):
+        value = valid_request_id(str(case.get(key, '')))
+        if value:
+            lookup.append(f'{key} {value[:8]}')
+    build = case.get('build_sha')
+    if isinstance(build, str) and re.fullmatch(r'[a-fA-F0-9]{7,64}', build):
+        lookup.append(f'빌드 {build[:7]}')
+    lines = [f'{label} · {_screen(case)}에서 {_action(case)} 실패',
+             f"{_cause(case)} · {group['users']}명 {group['count']}건 · {when}",
+             _environment(case), _breadcrumbs(case), ' · '.join(lookup) or '조회 정보 없음']
+    return {'text': '\n'.join(lines), 'blocks': [
+        {'type': 'section', 'text': {'type': 'plain_text', 'text': '\n'.join(lines[:4])}},
+        {'type': 'context', 'elements': [{'type': 'plain_text', 'text': lines[4]}]},
+    ]}
+
+
 def slack_payload(title, groups, *, other_signatures=0, other_events=0):
-    # 표시값은 집계 수치와 UUID만 쓴다. 화면, 동작, 문구, 사용자 ID는 DB에서 조사한다.
     ordered = sorted(groups, key=lambda group: (-group['count'], group['signature']))
     tail = ordered[DIGEST_LIMIT:]
     other_signatures += len(tail)
     other_events += sum(group['count'] for group in tail)
     lines = [title]
-    for index, group in enumerate(ordered[:DIGEST_LIMIT], 1):
-        lines.append(f"유형 {index}: 건수={group['count']} 영향 사용자={group['users']}")
+    for group in ordered[:DIGEST_LIMIT]:
+        case = group['cases'][0] if group['cases'] else {}
+        lines.append(f"{_description(case)} · {group['users']}명 {group['count']}건")
         lines.extend(_case_lines(group['cases']))
     if other_signatures:
         lines.append(f"그 외 {other_signatures}종 {other_events}건")
@@ -148,7 +280,7 @@ class ClientAlerts(_PeriodicWorker):
         async with conn.cursor() as cur:
             await cur.execute("select count(*) as count, count(distinct user_id) as users from client_error_events where " + predicate, params)
             group = await cur.fetchone()
-            await cur.execute("select event_id::text, request_id::text from client_error_events where " + predicate +
+            await cur.execute("select " + _CASE_FIELDS + " from client_error_events where " + predicate +
                               " order by received_at desc, event_id desc limit 3", params)
             group['cases'] = await cur.fetchall()
         group['signature'] = event['signature']
@@ -181,6 +313,15 @@ class ClientAlerts(_PeriodicWorker):
             await cur.execute("update client_alert_progress set suppressed_count = suppressed_count + %s, cases = %s where singleton",
                               (progress['suppressed_count'], Json(progress['cases'])))
 
+    async def _overflow_cases(self, conn, cases):
+        ids = [value for case in cases[:3] if (value := valid_request_id(str(case.get('event_id', ''))))]
+        if not ids:
+            return []
+        async with conn.cursor() as cur:
+            await cur.execute("select " + _CASE_FIELDS + " from client_error_events "
+                              "where event_id = any(%s::uuid[]) order by received_at desc, event_id desc", (ids,))
+            return await cur.fetchall()
+
     async def _flush_overflow(self, conn, now):
         progress = await self._progress(conn)
         if not progress['suppressed_count']:
@@ -188,7 +329,11 @@ class ClientAlerts(_PeriodicWorker):
         budget = await self._budget(conn, now)
         if budget['overflow'] or budget['total'] >= IMMEDIATE_BUDGET:
             return
-        payload = {'text': "\n".join(['알림이 많아 일부를 묶었어요', f"묶은 알림={progress['suppressed_count']}건", *_case_lines(progress['cases'])])}
+        cases = await self._overflow_cases(conn, progress['cases'])
+        lines = ['알림이 많아 일부를 묶었어요', f"묶은 알림={progress['suppressed_count']}건"]
+        lines.extend(_description(case) for case in cases[:3])
+        lines.extend(_case_lines(progress['cases']))
+        payload = {'text': "\n".join(lines)}
         # 예약과 함께 대기분을 비워 재시작 시 불명확한 전송을 중복하지 않는다.
         await self._clear_overflow(conn)
         await self._deliver(conn, 'overflow', 'global', now, payload, restore_on_failure=progress)
@@ -205,9 +350,9 @@ class ClientAlerts(_PeriodicWorker):
             other_events = int(groups[0]['event_total']) - sum(g['count'] for g in groups) if groups else 0
             for group in groups:
                 await cur.execute(
-                    "select event_id::text, request_id::text from client_error_events "
+                    "select " + _CASE_FIELDS + " from client_error_events "
                     "where signature = %s and received_at >= %s and received_at < %s "
-                    "order by received_at desc, event_id limit 3", (group['signature'], start, end))
+                    "order by received_at desc, event_id desc limit 3", (group['signature'], start, end))
                 group['cases'] = await cur.fetchall()
         return {'groups': groups, 'other_signatures': other_signatures, 'other_events': other_events}
 
@@ -290,7 +435,7 @@ class ClientAlerts(_PeriodicWorker):
                             await self._reserve(conn, 'burst', event['signature'], sent_at, status='suppressed')
                         else:
                             result = await self._deliver(conn, 'burst', event['signature'], sent_at,
-                                                         slack_payload('화면 오류 알림', [group]))
+                                                         immediate_payload(group, blocking=event['blocking']))
                             if result == 'failed':
                                 break
                 await self._advance_cursor(conn, event)
