@@ -430,7 +430,7 @@ test('빈 텍스트 placeholder는 다운로드 DOM에서 제거되고 export �
 
 test('내보내기 캡처는 블록 배경색을 덮어쓰지 않는다(backgroundColor 옵션 금지) — 흰 바탕은 합성으로', () => {
   const src = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
-  const call = src.slice(src.indexOf('await toCanvas(clone'), src.indexOf('await toCanvas(clone') + 400);
+  const call = src.slice(src.indexOf('await toSvg(clone'), src.indexOf('await toSvg(clone') + 400);
   assert.doesNotMatch(call, /backgroundColor/, 'html-to-image backgroundColor 는 블록 배경을 흰색으로 덮는다');
-  assert.match(src, /return \{ canvas: flattenOnWhite\(captured\), softFailed \}/);
+  assert.match(src, /return \{ canvas, softFailed \}/);
 });

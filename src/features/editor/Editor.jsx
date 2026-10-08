@@ -1036,8 +1036,9 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
-  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 — 퀵바·모달 공용 잠금
-  const [dlProg, setDlProg] = useState(null); // '3/12' — 여러 블록 내보내기 진행률
+  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 퀵바와 모달의 공용 잠금
+  const [dlProg, setDlProg] = useState(null); // 처리 단계와 현재 블록 수
+  const [dlError, setDlError] = useState('');
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -2130,9 +2131,11 @@ export function Editor() {
   const runDownload = async () => {
     if (dlBusy) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
-    if (!nodes.length) { toast.push('저장할 블록이 없어요.', { icon: 'x' }); return; }
+    if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
+    setDlError('');
     setDlBusy(true);
-    const onProgress = (done, total) => setDlProg(`${done + 1}/${total}`);
+    setDlProg({ done: 0, total: nodes.length, stage: 'capture' });
+    const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
     try {
       const result = await exportStorefrontDownload(
         nodes, productName, onProgress, dlSettings, provenanceOpts(),
@@ -2142,7 +2145,7 @@ export function Editor() {
         ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
         : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
-      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      setDlError(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setDlBusy(false);
       setDlProg(null);
@@ -3444,7 +3447,7 @@ export function Editor() {
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
           <Button variant="primary" size="sm" icon="download" disabled={genActive}
-            onClick={() => { setDlNotice(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
+            onClick={() => { setDlNotice(''); setDlError(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
         </div>
       </div>
 
@@ -3768,10 +3771,10 @@ export function Editor() {
           <EditorDownloadModal
             settings={dlSettings}
             summary={dlSummary}
-            blocks={blocks}
             notice={dlNotice}
             busy={dlBusy}
             progress={dlProg}
+            error={dlError}
             onChange={(next) => { setDlNotice(''); setDlSettings(next); }}
             onCancel={() => setDownload(false)}
             onDownload={runDownload}
