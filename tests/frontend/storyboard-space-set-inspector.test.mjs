@@ -45,7 +45,7 @@ test('a selected set member uses a compact cut header instead of the large set c
   assert.match(spaceSetHeaderSource, /세트 설정/);
   assert.match(spaceSetHeaderSource, /세트 공통/);
   assert.doesNotMatch(inspectorSource, /<HorizonBackgroundControl/);
-  assert.match(inspectorSource, /label className="lbl">방향/);
+  assert.doesNotMatch(inspectorSource, /label className="lbl">방향/);
   assert.match(inspectorSource, /label className="lbl">대상 색상/);
 });
 

@@ -42,6 +42,9 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     || !isSectionRole(b.sectionRole) || !isContentRole(b.contentRole));
   let out = blocks.map((raw) => {
     const b = { ...raw };
+    delete b.pose;
+    delete b.poseLabel;
+    delete b.poseThumb;
     let sectionRole = inferSectionRole(b);
     let contentRole = inferContentRole(b);
     const expectedSectionRole = sectionRoleForContentRole(contentRole);

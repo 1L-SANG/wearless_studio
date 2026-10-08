@@ -28,6 +28,16 @@ export function generationExampleStructuralRecipePatch(block, example) {
   return {};
 }
 
+export function directionSpecFromExample(example, { cutType = 'styling', detailTarget = null } = {}) {
+  const allowed = cutType === 'product' ? ['front', 'back'] : ['front', 'side', 'back'];
+  const source = cutType === 'product' && detailTarget ? detailTarget : example;
+  const direction = allowed.includes(source?.direction) ? source.direction : 'front';
+  return {
+    direction,
+    sideStyle: direction === 'side' ? (source?.sideStyle === 'threeQuarter' ? 'threeQuarter' : 'profile') : null,
+  };
+}
+
 /* 생성예시는 연출 설정의 새 기준이다. 컷의 구조적 역할(cutType/shot/contentRole)은
    보존하고, 사용자가 이전 예시에 맞춰 조정한 per-cut 생성 설정만 기본값으로 돌린다.
    단, 거울 예시는 위의 명시적 G-2 예외로 구조 레시피까지 바꾼다. */
@@ -37,15 +47,11 @@ export function generationExampleStructuralRecipePatch(block, example) {
    sideStyle 도 같이 옮긴다 — 방향만 side 로 두면 서버 기본값이 옆모습이라 사선 예시가
    90도 각도 교체로 새어 나간다. */
 function wornDirectionPatch(cutType, example) {
-  if (!['styling', 'horizon'].includes(cutType)) return {};
+  if (!['styling', 'horizon', 'product'].includes(cutType)) return {};
   const direction = example?.direction;
   if (!direction) return {};
-  return {
-    direction,
-    sideStyle: direction === 'side'
-      ? (example?.sideStyle === 'threeQuarter' ? 'threeQuarter' : 'profile')
-      : null,
-  };
+  if (cutType === 'product') return { direction: detailDirectionFromExample(example) };
+  return directionSpecFromExample(example, { cutType });
 }
 
 export function generationExampleSelectionPatch(block, example, {
@@ -69,7 +75,7 @@ export function generationExampleSelectionPatch(block, example, {
     exampleChoice: null,
     exampleSelectionOrigin: exampleId ? 'user' : null,
     refScope: scope,
-    ...(exampleId ? wornDirectionPatch(cutType, example) : {}),
+    ...(exampleId && !(isDetail && block.detailTargetId) ? wornDirectionPatch(cutType, example) : {}),
     ...(isDetail && !block.detailTargetId && exampleId ? { direction: detailDirectionFromExample(example) } : {}),
   };
   if (!replacing) return { patch, settingsReset: false };
@@ -85,8 +91,6 @@ export function generationExampleSelectionPatch(block, example, {
       ...(cutType === 'mirror' ? { sideStyle: null } : {}),
       colorId: isDetail && block.detailTargetId ? effectiveBlock.colorId : defaultColorId || effectiveBlock.colorId,
       colorIds: [],
-      pose: 'auto',
-      poseLabel: 'AI 자동',
       angle: 'same',
       matchIds: [],
       refImages: [],

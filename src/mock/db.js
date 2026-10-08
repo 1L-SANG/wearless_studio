@@ -180,11 +180,6 @@ const catalogs = {
     { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
     { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~30', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
-  poses: [
-    { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
-    { id: 'walk', label: '걷기', thumb: P.pose('walk') }, { id: 'sit', label: '앉기', thumb: P.pose('sit') },
-    { id: 'lean', label: '기대기', thumb: P.pose('lean') }, { id: 'turn', label: '돌아보기', thumb: P.pose('turn') },
-  ],
   // 에디터 '현재 이미지 수정' — 배경/포즈/표정은 예시 카드(탭당 1개).
   // '컷 변경' 탭의 모델 착용 이미지는 directions/shotTypes 를 그대로 재사용한다.
   varyOptions: {
@@ -198,7 +193,7 @@ const catalogs = {
     ],
     // '뒷모습'은 포즈가 아니라 방향이다 — '자리 · 방향'에 같은 게 있어 두 벌이었다(오너 8/16).
     pose: [
-      { id: 'stand', label: '정면 스탠딩', thumb: P.pose('v-stand', 240, 240) },
+      { id: 'stand', label: '서 있는 모습', thumb: P.pose('v-stand', 240, 240) },
       { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
       { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
       { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },

@@ -27,7 +27,6 @@ _PROFILE_SHAPE = {
     "direction": "front",
     "shot": ["full", "medium"],
     "refScope": "all",
-    "pose": "auto",
     "noSpaceSet": True,
 }
 
@@ -47,7 +46,7 @@ def _confirmed_profile_examples(ids: list[str]) -> list[str]:
     out = []
     for example_id in ids:
         block = {"exampleId": example_id, "cutType": "styling", "direction": "front",
-                 "shot": "full", "refScope": "all", "pose": "auto"}
+                 "shot": "full", "refScope": "all"}
         try:
             if confirmed_gpt_runtime.profile_requested(block):
                 out.append(example_id)
@@ -64,7 +63,7 @@ def _virtual_space_sets(sets: dict[str, list[dict]]) -> list[str]:
             identity_scope.shape_scope_for_block({
                 "exampleId": m.get("exampleId"), "cutType": m.get("cutType"),
                 "direction": m.get("direction"), "shot": m.get("shot"),
-                "refScope": "pose", "pose": "auto", "spaceGroupId": set_id,
+                "refScope": "pose", "spaceGroupId": set_id,
             })
             for m in members if isinstance(m, dict)
         }
@@ -78,17 +77,17 @@ def _cases(ids: list[str], sets: dict[str, list[dict]]) -> list[dict]:
     shapes = [
         # 섹션 규칙 대조 — 같은 모양이라도 섹션이 다르면 답이 달라진다.
         {"cutType": "horizon", "direction": "front", "shot": "full", "refScope": "all",
-         "pose": "auto", "sectionRole": "studio"},
+         "sectionRole": "studio"},
         {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "all",
-         "pose": "auto", "sectionRole": "styling"},
+         "sectionRole": "styling"},
         {"cutType": "product", "direction": "front", "shot": "ghost", "refScope": "all",
-         "pose": "auto", "sectionRole": "product"},
-        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "all", "pose": "auto"},
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all", "pose": "auto"},
-        {"cutType": "styling", "direction": "back", "shot": "full", "refScope": "all", "pose": "auto"},
-        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "pose", "pose": "auto"},
-        {"cutType": "horizon", "direction": "front", "shot": "full", "refScope": "all", "pose": "auto"},
-        {"cutType": "product", "direction": "front", "shot": "ghost", "refScope": "all", "pose": "auto"},
+         "sectionRole": "product"},
+        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "all"},
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
+        {"cutType": "styling", "direction": "back", "shot": "full", "refScope": "all"},
+        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "pose"},
+        {"cutType": "horizon", "direction": "front", "shot": "full", "refScope": "all"},
+        {"cutType": "product", "direction": "front", "shot": "ghost", "refScope": "all"},
     ]
     cases = []
     for example_id in ids[:40]:                      # 표본이면 충분하다(전수는 파일만 키운다)
@@ -99,7 +98,7 @@ def _cases(ids: list[str], sets: dict[str, list[dict]]) -> list[dict]:
         member = (members or [{}])[0]
         block = {"exampleId": member.get("exampleId"), "cutType": member.get("cutType"),
                  "direction": member.get("direction"), "shot": member.get("shot"),
-                 "refScope": "pose", "pose": "auto", "spaceGroupId": set_id}
+                 "refScope": "pose", "spaceGroupId": set_id}
         cases.append({"block": block, "scope": identity_scope.scope_for_block(block)})
     return cases
 

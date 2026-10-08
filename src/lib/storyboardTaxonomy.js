@@ -235,8 +235,6 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
     direction: template.direction,
     shot: template.shot,
     faceExposure: template.faceExposure,
-    pose: 'auto',
-    poseLabel: 'AI 자동',
     angle: 'same',
     exampleId: null,
     exampleSelectionOrigin: null,

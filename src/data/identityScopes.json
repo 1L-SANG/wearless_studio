@@ -34,7 +34,6 @@
      "medium"
     ],
     "refScope": "all",
-    "pose": "auto",
     "noSpaceSet": true,
     "exampleIn": [
      "ex_horizon_men_top_full_back_02",
@@ -387,7 +386,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -399,7 +397,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -411,7 +408,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -422,8 +418,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -433,8 +428,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -444,8 +438,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -455,8 +448,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -466,8 +458,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -477,8 +468,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -489,7 +479,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -501,7 +490,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -513,7 +501,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -524,8 +511,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -535,8 +521,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -546,8 +531,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -557,8 +541,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -568,8 +551,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -579,8 +561,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -591,7 +572,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -603,7 +583,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -615,7 +594,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -626,8 +604,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -637,8 +614,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -648,8 +624,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -659,8 +634,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -670,8 +644,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -681,8 +654,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -693,7 +665,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -705,7 +676,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -717,7 +687,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -728,8 +697,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -739,8 +707,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -750,8 +717,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -761,8 +727,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -772,8 +737,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -783,8 +747,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -795,7 +758,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -807,7 +769,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -819,7 +780,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -830,8 +790,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -841,8 +800,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -852,8 +810,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -863,8 +820,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -874,8 +830,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -885,8 +840,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -897,7 +851,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -909,7 +862,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -921,7 +873,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -932,8 +883,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -943,8 +893,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -954,8 +903,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -965,8 +913,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -976,8 +923,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -987,8 +933,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -999,7 +944,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1011,7 +955,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1023,7 +966,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1034,8 +976,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1045,8 +986,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1056,8 +996,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1067,8 +1006,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1078,8 +1016,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1089,8 +1026,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1101,7 +1037,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1113,7 +1048,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1125,7 +1059,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1136,8 +1069,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1147,8 +1079,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1158,8 +1089,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1169,8 +1099,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1180,8 +1109,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1191,8 +1119,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1203,7 +1130,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1215,7 +1141,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1227,7 +1152,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1238,8 +1162,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1249,8 +1172,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1260,8 +1182,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1271,8 +1192,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1282,8 +1202,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1293,8 +1212,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1305,7 +1223,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1317,7 +1234,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1329,7 +1245,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1340,8 +1255,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1351,8 +1265,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1362,8 +1275,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1373,8 +1285,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1384,8 +1295,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1395,8 +1305,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1407,7 +1316,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1419,7 +1327,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1431,7 +1338,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1442,8 +1348,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1453,8 +1358,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1464,8 +1368,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1475,8 +1378,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1486,8 +1388,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1497,8 +1398,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1509,7 +1409,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1521,7 +1420,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1533,7 +1431,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1544,8 +1441,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1555,8 +1451,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1566,8 +1461,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1577,8 +1471,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1588,8 +1481,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1599,8 +1491,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1611,7 +1502,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1623,7 +1513,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1635,7 +1524,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1646,8 +1534,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1657,8 +1544,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1668,8 +1554,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1679,8 +1564,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1690,8 +1574,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1701,8 +1584,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1713,7 +1595,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1725,7 +1606,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1737,7 +1617,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1748,8 +1627,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1759,8 +1637,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1770,8 +1647,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1781,8 +1657,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1792,8 +1667,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1803,8 +1677,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1815,7 +1688,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1827,7 +1699,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1839,7 +1710,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1850,8 +1720,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1861,8 +1730,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1872,8 +1740,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1883,8 +1750,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1894,8 +1760,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1905,8 +1770,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1917,7 +1781,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -1929,7 +1792,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -1941,7 +1803,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -1952,8 +1813,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1963,8 +1823,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -1974,8 +1833,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -1985,8 +1843,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -1996,8 +1853,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2007,8 +1863,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2019,7 +1874,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2031,7 +1885,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2043,7 +1896,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2054,8 +1906,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2065,8 +1916,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2076,8 +1926,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2087,8 +1936,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2098,8 +1946,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2109,8 +1956,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2121,7 +1967,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2133,7 +1978,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2145,7 +1989,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2156,8 +1999,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2167,8 +2009,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2178,8 +2019,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2189,8 +2029,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2200,8 +2039,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2211,8 +2049,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2223,7 +2060,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2235,7 +2071,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2247,7 +2082,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2258,8 +2092,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2269,8 +2102,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2280,8 +2112,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2291,8 +2122,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2302,8 +2132,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2313,8 +2142,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2325,7 +2153,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2337,7 +2164,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2349,7 +2175,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2360,8 +2185,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2371,8 +2195,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2382,8 +2205,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2393,8 +2215,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2404,8 +2225,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2415,8 +2235,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2427,7 +2246,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2439,7 +2257,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2451,7 +2268,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2462,8 +2278,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2473,8 +2288,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2484,8 +2298,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2495,8 +2308,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2506,8 +2318,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2517,8 +2328,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2529,7 +2339,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2541,7 +2350,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2553,7 +2361,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2564,8 +2371,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2575,8 +2381,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2586,8 +2391,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2597,8 +2401,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2608,8 +2411,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2619,8 +2421,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2631,7 +2432,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2643,7 +2443,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2655,7 +2454,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2666,8 +2464,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2677,8 +2474,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2688,8 +2484,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2699,8 +2494,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2710,8 +2504,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2721,8 +2514,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2733,7 +2525,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2745,7 +2536,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2757,7 +2547,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2768,8 +2557,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2779,8 +2567,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2790,8 +2577,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2801,8 +2587,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2812,8 +2597,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2823,8 +2607,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2835,7 +2618,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2847,7 +2629,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2859,7 +2640,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2870,8 +2650,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2881,8 +2660,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2892,8 +2670,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2903,8 +2680,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -2914,8 +2690,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2925,8 +2700,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -2937,7 +2711,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -2949,7 +2722,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -2961,7 +2733,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -2972,8 +2743,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2983,8 +2753,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -2994,8 +2763,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3005,8 +2773,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3016,8 +2783,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3027,8 +2793,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3039,7 +2804,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3051,7 +2815,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3063,7 +2826,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3074,8 +2836,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3085,8 +2846,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3096,8 +2856,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3107,8 +2866,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3118,8 +2876,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3129,8 +2886,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3141,7 +2897,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3153,7 +2908,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3165,7 +2919,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3176,8 +2929,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3187,8 +2939,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3198,8 +2949,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3209,8 +2959,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3220,8 +2969,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3231,8 +2979,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3243,7 +2990,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3255,7 +3001,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3267,7 +3012,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3278,8 +3022,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3289,8 +3032,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3300,8 +3042,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3311,8 +3052,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3322,8 +3062,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3333,8 +3072,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3345,7 +3083,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3357,7 +3094,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3369,7 +3105,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3380,8 +3115,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3391,8 +3125,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3402,8 +3135,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3413,8 +3145,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3424,8 +3155,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3435,8 +3165,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3447,7 +3176,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3459,7 +3187,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3471,7 +3198,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3482,8 +3208,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3493,8 +3218,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3504,8 +3228,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3515,8 +3238,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3526,8 +3248,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3537,8 +3258,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3549,7 +3269,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3561,7 +3280,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3573,7 +3291,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3584,8 +3301,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3595,8 +3311,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3606,8 +3321,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3617,8 +3331,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3628,8 +3341,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3639,8 +3351,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3651,7 +3362,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3663,7 +3373,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3675,7 +3384,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3686,8 +3394,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3697,8 +3404,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3708,8 +3414,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3719,8 +3424,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3730,8 +3434,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3741,8 +3444,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3753,7 +3455,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3765,7 +3466,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3777,7 +3477,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3788,8 +3487,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3799,8 +3497,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3810,8 +3507,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3821,8 +3517,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3832,8 +3527,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3843,8 +3537,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3855,7 +3548,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3867,7 +3559,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3879,7 +3570,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3890,8 +3580,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3901,8 +3590,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -3912,8 +3600,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3923,8 +3610,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -3934,8 +3620,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3945,8 +3630,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -3957,7 +3641,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -3969,7 +3652,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -3981,7 +3663,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -3992,8 +3673,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4003,8 +3683,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4014,8 +3693,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4025,8 +3703,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -4036,8 +3713,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4047,8 +3723,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4059,7 +3734,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -4071,7 +3745,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -4083,7 +3756,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -4094,8 +3766,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4105,8 +3776,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4116,8 +3786,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4127,8 +3796,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -4138,8 +3806,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4149,8 +3816,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4161,7 +3827,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -4173,7 +3838,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -4185,7 +3849,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -4196,8 +3859,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4207,8 +3869,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4218,8 +3879,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4229,8 +3889,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -4240,8 +3899,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4251,8 +3909,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4263,7 +3920,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -4275,7 +3931,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -4287,7 +3942,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -4298,8 +3952,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4309,8 +3962,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4320,8 +3972,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4331,8 +3982,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -4342,8 +3992,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4353,8 +4002,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4365,7 +4013,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "studio"
    },
    "scope": "both"
@@ -4377,7 +4024,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "styling"
    },
    "scope": "virtual"
@@ -4389,7 +4035,6 @@
     "direction": "front",
     "shot": "ghost",
     "refScope": "all",
-    "pose": "auto",
     "sectionRole": "product"
    },
    "scope": "both"
@@ -4400,8 +4045,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4411,8 +4055,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "medium",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "virtual"
   },
@@ -4422,8 +4065,7 @@
     "cutType": "styling",
     "direction": "back",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4433,8 +4075,7 @@
     "cutType": "styling",
     "direction": "front",
     "shot": "full",
-    "refScope": "pose",
-    "pose": "auto"
+    "refScope": "pose"
    },
    "scope": "both"
   },
@@ -4444,8 +4085,7 @@
     "cutType": "horizon",
     "direction": "front",
     "shot": "full",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4455,8 +4095,7 @@
     "cutType": "product",
     "direction": "front",
     "shot": "ghost",
-    "refScope": "all",
-    "pose": "auto"
+    "refScope": "all"
    },
    "scope": "both"
   },
@@ -4467,7 +4106,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s02-v2"
    },
    "scope": "virtual"
@@ -4479,7 +4117,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s05-v2"
    },
    "scope": "virtual"
@@ -4491,7 +4128,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s08-v2"
    },
    "scope": "virtual"
@@ -4503,7 +4139,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s11-v2"
    },
    "scope": "virtual"
@@ -4515,7 +4150,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s14-v2"
    },
    "scope": "virtual"
@@ -4527,7 +4161,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s18-v2"
    },
    "scope": "virtual"
@@ -4539,7 +4172,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s20-v2"
    },
    "scope": "virtual"
@@ -4551,7 +4183,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-figma-s21-v2"
    },
    "scope": "virtual"
@@ -4563,7 +4194,6 @@
     "direction": "front",
     "shot": "medium",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-06-women-top-linen-r2"
    },
    "scope": "virtual"
@@ -4575,7 +4205,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-05-women-top-draped"
    },
    "scope": "virtual"
@@ -4587,7 +4216,6 @@
     "direction": "front",
     "shot": "medium",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-06-women-top-linen"
    },
    "scope": "virtual"
@@ -4599,7 +4227,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-07-men-top-pleated"
    },
    "scope": "virtual"
@@ -4611,7 +4238,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-08-men-top-textured"
    },
    "scope": "virtual"
@@ -4623,7 +4249,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "horizon-sequence-09-women-dress-knit"
    },
    "scope": "virtual"
@@ -4635,7 +4260,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-women-bottom-rainy-storefront-kclub-140072876"
    },
    "scope": "both"
@@ -4647,7 +4271,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-women-bottom-urban-ggsing-140741411"
    },
    "scope": "both"
@@ -4659,7 +4282,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-women-bottom-home-petrichoor-162619101"
    },
    "scope": "both"
@@ -4671,7 +4293,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-women-bottom-beach-nissome-133330805"
    },
    "scope": "both"
@@ -4683,7 +4304,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-style-women-dress-botanical-attrangs-160835-root01"
    },
    "scope": "both"
@@ -4695,7 +4315,6 @@
     "direction": "front",
     "shot": "full",
     "refScope": "pose",
-    "pose": "auto",
     "spaceGroupId": "set-style-women-dress-city-ivy-modimood-2928-root02"
    },
    "scope": "both"
