@@ -14,7 +14,8 @@ import { isMobileDevice } from '@/lib/deviceClass.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { authorizeFlowContinuation } from '@/lib/flowSession.js';
 
-const STEP_LABELS = { storyboard: '콘티 단계', mannequin: '마네킹 단계', generating: '생성 중', failed: '생성 실패' };
+const STAGES = { storyboard: '콘티', mannequin: '마네킹', editor: '에디터' };
+const stageOf = (step) => ['generating', 'failed'].includes(step) ? 'editor' : step;
 const resumePath = (project) => project.status === 'done'
   || ['pending', 'running', 'error', 'cancelled', 'done'].includes(project.latestJobs?.detailPage?.status)
   ? `/editor/${project.id}` : project.selectedMannequinId ? '/create/mannequin' : '/create/storyboard';
@@ -93,6 +94,24 @@ export function Library() {
     staleTime: 0,
   });
 
+  const [selectedTab, setSelectedTab] = useState(null);
+  const [selectedStage, setSelectedStage] = useState('all');
+  const hasProgress = inProgress.length > 0;
+  const activeTab = hasProgress ? selectedTab || 'progress' : 'done';
+  const stageCounts = Object.fromEntries(Object.keys(STAGES).map((stage) =>
+    [stage, inProgress.filter((item) => stageOf(item.step) === stage).length]));
+  const activeStage = stageCounts[selectedStage] ? selectedStage : 'all';
+  const visibleProgress = inProgress.filter((item) => activeStage === 'all' || stageOf(item.step) === activeStage);
+  const onTabKeyDown = (event) => {
+    const index = activeTab === 'progress' ? 0 : 1;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1
+      : ['ArrowLeft', 'ArrowRight'].includes(event.key) ? 1 - index : null;
+    if (next === null) return;
+    event.preventDefault();
+    setSelectedTab(next === 0 ? 'progress' : 'done');
+    event.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next].focus();
+  };
+
   const statusPill = (s) => s === 'done' ? <span className="pill pill-soft st"><span className="dot dot-done" />완료</span>
     : s === 'generating' ? <span className="pill pill-soft st"><span className="dot dot-busy" />생성 중</span>
     : <span className="pill pill-soft st">초안</span>;
@@ -109,21 +128,40 @@ export function Library() {
   };
 
   return (
-    <div className="wizard wide" style={{ paddingTop: 28 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 22 }}>
-        <div><h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--fg-1)' }}>보관함</h1>
-          <p className="sec-sub" style={{ marginTop: 6 }}>지금까지 만든 상세페이지를 모아봤어요.</p></div>
+    <div className="wizard wide library">
+      <div className="lib-heading">
+        <div><h1>보관함</h1>
+          <p className="sec-sub">지금까지 만든 상세페이지를 모아봤어요.</p></div>
       </div>
 
       {progressError && <div className="sec-head"><p className="sec-sub">만드는 중인 상품을 불러오지 못했어요.</p>
         <Button variant="ghost" size="sm" onClick={refetchProgress}>다시 불러오기</Button></div>}
-      {inProgress.length > 0 && (
-        <section className="field-row" aria-labelledby="library-in-progress-title">
-          <div className="sec-head"><h2 id="library-in-progress-title" className="sec-title handoff-title">만드는 중</h2></div>
+      {hasProgress && (
+        <div className="lib-tabs" role="tablist" aria-label="보관함">
+          {[['progress', '진행 중', inProgress.length], ['done', '완료', items.length]].map(([tab, label, count]) => (
+            <button type="button" key={tab} id={`library-tab-${tab}`} role="tab"
+              className="lib-tab" aria-selected={activeTab === tab} aria-controls={`library-panel-${tab}`}
+              tabIndex={activeTab === tab ? 0 : -1} onClick={() => setSelectedTab(tab)} onKeyDown={onTabKeyDown}>
+              {label} {count}
+            </button>
+          ))}
+        </div>
+      )}
+      {hasProgress && activeTab === 'progress' && (
+        <section className="field-row" id="library-panel-progress" role="tabpanel" aria-labelledby="library-tab-progress">
+          <div className="lib-filters" aria-label="제작 단계">
+            {['all', ...Object.keys(STAGES).filter((stage) => stageCounts[stage] > 0)].map((stage) => (
+              <button type="button" key={stage} className={`lib-filter stage-${stage}`}
+                aria-pressed={activeStage === stage} onClick={() => setSelectedStage(stage)}>
+                {stage !== 'all' && <span className="lib-stage-dot" aria-hidden="true" />}
+                {stage === 'all' ? '전체' : STAGES[stage]} {stage === 'all' ? inProgress.length : stageCounts[stage]}
+              </button>
+            ))}
+          </div>
           <div className="lib-grid">
-            {inProgress.slice(0, 20).map((item) => (
+            {visibleProgress.slice(0, 20).map((item) => (
               <div className="lib-card" key={item.id} role="button" tabIndex={0}
-                aria-label={`${item.title || '새 상품'}, ${STEP_LABELS[item.step]}`}
+                aria-label={`${item.title || '새 상품'}, ${STAGES[stageOf(item.step)]} 단계`}
                 aria-busy={openingId === item.id} aria-disabled={openingId !== null}
                 onClick={() => onResume(item)} onKeyDown={(event) => {
                   if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -131,7 +169,7 @@ export function Library() {
                   void onResume(item);
                 }}>
                 <div className="lib-cover"><img src={item.cover || undefined} alt={item.title || '새 상품'} />
-                  <div className="st"><span className="pill pill-soft">{STEP_LABELS[item.step]}</span></div></div>
+                  <div className="st"><span className={`pill lib-stage stage-${stageOf(item.step)}`}>{STAGES[stageOf(item.step)]} 단계</span></div></div>
                 <div className="lib-info"><div className="t handoff-title">{item.title || '새 상품'}</div>
                   <div className="m"><span>{timeAgo(item)}</span></div></div>
               </div>
@@ -140,7 +178,8 @@ export function Library() {
         </section>
       )}
 
-      {inProgress.length > 0 && <div className="sec-head lib-done-head"><h2 className="sec-title handoff-title">완성본</h2></div>}
+      {activeTab === 'done' && <section id="library-panel-done" role={hasProgress ? 'tabpanel' : undefined}
+        aria-labelledby={hasProgress ? 'library-tab-done' : undefined}>
       {phase === 'loading' && (
         <div className="lib-grid">{Array.from({ length: 8 }).map((_, i) => <div key={i}><Skeleton h={240} r={12} /></div>)}</div>
       )}
@@ -163,6 +202,7 @@ export function Library() {
           ))}
         </div>
       )}
+      </section>}
     </div>
   );
 }

@@ -526,8 +526,8 @@ export const useAppStore = create((set, get) => ({
     const job = { ...initialDetailPageJob(), projectId: project.id, jobId: latest.id,
       status: running ? 'running' : 'error', startedAt: Date.now(),
       errorMessage: running ? '' : latest.status === 'cancelled'
-        ? '상세페이지 생성이 취소됐어요.' : '상세페이지 생성에 실패했어요.',
-      errorCode: latest.errorCode || null };
+        ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.',
+      errorCode: latest.status === 'cancelled' ? 'job_cancelled' : latest.errorCode || null };
     set({ detailPageJob: job });
     if (running) saveDetailPageJobMarker(job);
   },
@@ -616,7 +616,8 @@ export const useAppStore = create((set, get) => ({
         cuts: {},
         live: [],
         errorMessage: job.errorMessage
-          || (job.status === 'cancelled' ? '생성이 중단됐어요. 다시 시도해 주세요.' : '상세페이지 생성에 실패했어요.'),
+          || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
+        errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
         ...incompleteFailurePatch(job),
       });
       void get().loadAccount({ force: true }).catch(() => {});
@@ -630,7 +631,7 @@ export const useAppStore = create((set, get) => ({
       // 잡이 사라졌거나(404) 일시 장애가 아닌 오류 — 임시 컷을 최종 출력으로 남기지 않는다.
       patch({ status: 'error', slow: false,
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
-        cuts: {}, live: [], errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+        cuts: {}, live: [], errorMessage: e?.message || '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.' });
       void get().loadAccount({ force: true }).catch(() => {});
     } finally {
       if (alive()) detailJobLoopProjectId = null;
