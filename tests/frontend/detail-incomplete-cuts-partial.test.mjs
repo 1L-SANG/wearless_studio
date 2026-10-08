@@ -81,7 +81,7 @@ test('서버 결과 → 요약: 실패·완성·보관 블록과 콘티 지문',
   assert.equal(inc.retained.length, 19);
   assert.equal(inc.expired, false);
   assert.equal(inc.storyboardDigest, 'sb-digest-1');
-  assert.equal(incompleteSummary(inc), '19장 완성 · 1장 실패');
+  assert.equal(incompleteSummary(inc), '19장 완성 · 1장 미완성');
   assert.equal(incompleteMessage(inc, SERVER_MESSAGE), SERVER_MESSAGE, '서버 문구가 정본');
   // 다른 실패는 부분 실패가 아니다
   assert.equal(incompleteCutsOf({ ...failedJob(), result: { errorCode: 'all_cuts_failed' } }), null);
@@ -286,8 +286,8 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     let job = useAppStore.getState().detailPageJob;
     assert.equal(job.status, 'error');
     assert.equal(job.jobId, 'job-1', '보관본 미리보기가 쓸 실패 잡 id 를 지킨다');
-    assert.equal(job.errorMessage, SERVER_MESSAGE);
-    assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 실패');
+    assert.equal(job.errorMessage, '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+    assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 미완성');
     assert.deepEqual(job.failedCuts, ['sb7']);
     assert.equal(job.cuts.sb1.done, true);
     assert.equal(job.cuts.sb1.url, null);
@@ -310,6 +310,8 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     await pending;
 
     for (const [response, message, code] of [
+      [{ ...failedJob(), errorMessage: '아직 못 만든 컷이 있어요. 완성된 컷은 보관돼 있어요.' },
+        '아직 못 만든 컷이 있어요. 완성된 컷은 보관돼 있어요.', 'incomplete_cuts'],
       [{ ...failedJob(), errorMessage: '' }, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.', 'incomplete_cuts'],
       [{ status: 'error', errorMessage: '' }, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.', null],
       [{ status: 'cancelled', errorMessage: '' }, '다시 만들 수 있어요.', 'job_cancelled'],

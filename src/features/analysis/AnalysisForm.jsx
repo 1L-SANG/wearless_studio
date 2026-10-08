@@ -790,7 +790,7 @@ export function AnalysisForm({
       onChange({ washCare: t });
       toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' });
     } catch (e) {
-      toast.push(e.message || '세탁 초안 생성에 실패했어요', { icon: 'alert' });
+      toast.push(e.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally { setWashing(false); }
   };
   // ── 핏 = fitProfile.axes.fit 의 셀러 편집기 (spec §1 — '핏' 개념이 두 번 보이지 않게 단일화) ──

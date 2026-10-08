@@ -2405,7 +2405,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         const customMatchTask = getCustomMatchPromotionTask(pid);
         const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
         void customMatchReady.then(() => requestMannequinGeneration(pid)).catch((error) => {
-          if (active) setMannequinFailure(error?.message || '마네킹 생성에 실패했어요.');
+          if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
         });
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
@@ -4290,7 +4290,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           retryInitialGeneration(projectId);
           setMannequinFailure(null);
           try { await requestMannequinGeneration(projectId, { confirmed: true }); }
-          catch (error) { setMannequinFailure(error?.message || '마네킹 생성에 실패했어요.'); }
+          catch (error) { setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.'); }
           finally { mannequinRetryRef.current = false; }
         }}>마네킹 다시 만들기{mannequinQuoteConfirmation.pending(projectId)
           ? ` · ${mannequinQuoteLabel(mannequinQuoteConfirmation.pending(projectId).quote)}` : ''}</Button>
