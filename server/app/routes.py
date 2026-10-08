@@ -698,7 +698,10 @@ async def stamp_app_origin(
     summary="계정 삭제 전 생체정보 파기 시작",
 )
 async def delete_account(request: Request, user_id: str = Depends(require_user)):
+    from .client_events import delete_user_events
+
     async with get_conn(request) as conn:
+        await delete_user_events(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 """

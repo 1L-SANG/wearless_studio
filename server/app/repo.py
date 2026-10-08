@@ -12,6 +12,7 @@ from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
 from .credits import allocate_fifo
+from .request_id import job_metadata
 
 FACEMARKET_WRITER_FENCE_NAMESPACE = 0x464D4354
 FACEMARKET_WRITER_FENCE_KEY = 0
@@ -2235,7 +2236,7 @@ async def create_job(
                     returning {_JOB_COLS}
                     """,
                     (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
-                     Json(metadata)),
+                     Json(job_metadata(metadata))),
                 )
                 row = await cur.fetchone()
             except errors.UniqueViolation:
@@ -2264,7 +2265,7 @@ async def set_pending_job_pricing(
     """새로 INSERT한 미커밋 job 전용. 호출자는 같은 트랜잭션에서 크레딧도 예약한다."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "update jobs set credits_reserved = %s, metadata = %s "
+            "update jobs set credits_reserved = %s, metadata = metadata || %s::jsonb "
             "where id = %s and user_id = %s and status = 'pending' returning id",
             (credits_reserved, Json(metadata), job_id, user_id),
         )
