@@ -253,16 +253,8 @@ function StrokeWidthControl(props) {
 }
 
 /* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
-/* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
-   ① 같은 장소 이미지 생성 — 아래에서 고른 방향·포즈·표정만 바꾸고 장소는 그대로
-   ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
-
-   배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
-   가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
-   무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
-   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치".
-   거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
-   '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
+/* 착용컷은 원본과 이전 동작을 참고하는 '비슷한 컷'으로 통합한다.
+   원하는 방향·포즈·표정은 선택 사항이고, 제품컷은 기존 수정 경로를 사용한다. */
 const VARY_CATS = [
   { id: 'cut', label: '방향' },
   { id: 'pose', label: '포즈' },
@@ -303,20 +295,16 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   const cost = catalogs.creditCosts?.editorImage ?? 1;
   const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
   const clearAll = () => { setSel({}); setCutDir('keep'); };
-  /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
-     고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
-     refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
   const runGenerate = (changes) => {
     if (busyRef.current) return;
     busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
     onGenerate({
       // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
-      source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
+      source: { id: source.id, src: source.src, cutType: srcType || 'styling', wardrobeGroup: source.wardrobeGroup },
       changes,
+      ...(!isProduct ? { variationMode: 'similar' } : {}),
     });
   };
-  // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
-  // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
   // 방향 칩은 **화면 값**(정면·사선·옆모습·뒷면)이다. 서버는 front/side/back 셋만 알므로
   // 나가기 전에 컷 스펙으로 되돌린다 — 안 하면 'threeQuarter' 가 direction 으로 날아간다.
   // 제품컷은 앞/뒷면 둘뿐이라 화면 값이 곧 서버 값이다(변환하면 오히려 망가진다).
@@ -325,10 +313,10 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     const spec = specFromDirectionChoice(c.value);
     return { type: c.type, value: spec.direction, sideStyle: spec.sideStyle, label: c.label };
   }));
-  const generateAuto = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
+      {!isProduct && <p className="panel-sub">처음 사진의 인물·옷·장소를 유지해 다른 동작의 컷을 만듭니다. 아래 옵션을 고르지 않아도 바로 생성할 수 있어요.</p>}
       <div className="vary-tabs">
         <UnderlineTabs value={safeCat} onChange={setCat}
           options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
@@ -369,18 +357,9 @@ function VaryPanel({ catalogs, source, onGenerate }) {
           </div>
         </div>
       )}
-      {/* 두 버튼은 서로 배타 — 고른 게 하나도 없으면 '같은 장소 이미지 생성'만, 방향·포즈·
-          표정을 하나라도 고르면 '비슷한 컷 만들기'만 눌린다(오너 2026-08-16). 그래서 눌리는
-          쪽이 항상 지금 상태에 맞는 일을 한다: 고른 게 없으면 빈 변경, 있으면 그 변경들.
-          모양·크기·테두리는 둘이 같고 채움/글자색만 반대다 — variant 는 primary 그대로 두고
-          .btn-invert 로 색만 뒤집는다(ghost 로 두면 높이·라운드·테두리가 달라진다). */}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert"
-        disabled={n > 0} onClick={generateAuto} style={{ marginTop: 14 }}>
-        {`같은 장소 이미지 생성 · ${cost} 크레딧`}
-      </Button>
       <Button variant="primary" block icon="sparkles" className="btn-glowring"
-        disabled={n === 0} onClick={generateWithPicks} style={{ marginTop: 8 }}>
-        {`비슷한 컷 만들기 · ${cost} 크레딧`}
+        onClick={generateWithPicks}>
+        {`${isProduct ? '이미지 수정' : '비슷한 컷 생성'} · ${cost} 크레딧`}
       </Button>
     </div>
   );

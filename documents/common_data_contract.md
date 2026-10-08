@@ -532,8 +532,9 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }
-VaryRequest {                      // AI 탭 '현재 이미지 수정' — changes 빈 배열 = '비슷한 컷 만들기'
+VaryRequest {                      // AI 탭 '현재 이미지 수정'
   mode: 'vary'
+  variationMode?: 'similar'        // 새 착용컷 UI: 원본 분석 → 동작 계획 → 생성
   source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
   changes: { type: 'direction' | 'shot' | 'pose' | 'face' | 'bg', value: string }[]
   refBg?: string
@@ -541,6 +542,12 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정' — chang
 ```
 
 `현재 이미지 수정`은 디테일샷 전환을 제공하지 않는다. 디테일은 상품 전체 중 실제 `Detail` 입력을 연결하는 `새 이미지 추가`에서만 만들며, 목표 색상에 Detail이 없으면 타색 근거의 색만 전환한다. 서버는 수정 경로 우회 요청을 `detail_variation_unsupported`로 실패시킨다.
+
+`variationMode='similar'`는 현재 프로젝트 소유의 착용 사진만 받는다. `changes`는 최대 3개이며 `direction | pose | face`만 허용한다. 배경 참조와 `shot | bg`는 받지 않는다. 상품 단독·디테일 원본은 기존 수정 경로를 사용한다. `variationMode` 없는 기존 클라이언트 요청은 기존 계약으로 처리한다.
+
+최초 원본과 이력은 서버가 실제 자산에서 조회한다. 클라이언트의 `_similarCut`은 버린다. 서버 payload `_similarCut={version:1,rootAssetId,sourceAssetId}`의 root는 처음 선택한 원본, source는 이번에 선택한 사진이다. 파생 결과에서 다시 생성해도 root 이미지를 사용하며, 같은 사용자·프로젝트 소유와 삭제 여부를 접수·실행 시 재검증한다.
+
+동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
 

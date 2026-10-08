@@ -2623,15 +2623,15 @@ export function Editor() {
   };
   // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
   // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
-  const varyGenerate = async ({ source, changes, refBg, refBgAssetId }) => {
+  const varyGenerate = async ({ source, changes, variationMode, refBg, refBgAssetId }) => {
     const group = varyTarget?.group || source?.wardrobeGroup || 'misc';
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
-    toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
+    toast.push(variationMode === 'similar' ? '새로운 동작의 비슷한 컷을 준비하고 있어요' : '이미지를 수정하는 중이에요', { icon: 'sparkles' });
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, ...(variationMode ? { variationMode } : {}), refBg, refBgAssetId });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);

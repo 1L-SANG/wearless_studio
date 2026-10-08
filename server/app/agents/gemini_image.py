@@ -241,10 +241,12 @@ class GeminiImageClient:
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
         openai_preserve_input_bytes: bool = False,
+        openai_size_override: str | None = None,
     ) -> GeminiImageResult:
         # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
         # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
         if model.startswith("gpt-image"):
+            size_options = {"size_override": openai_size_override} if openai_size_override else {}
             return await self._openai_generate(
                 model,
                 prompt,
@@ -253,6 +255,7 @@ class GeminiImageClient:
                 aspect_ratio,
                 timeout,
                 preserve_input_bytes=openai_preserve_input_bytes,
+                **size_options,
             )
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")

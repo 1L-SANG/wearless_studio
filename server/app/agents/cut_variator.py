@@ -9,8 +9,8 @@
 import os
 
 from ..config import Settings
-from . import face_identity
-from .gemini_image import GeminiImageClient, InlineImage
+from . import face_identity, similar_cut
+from .gemini_image import GeminiImageClient, InlineImage, run_cpu_bound
 from .model_routing import resolve_model
 from .prompts import _sanitize
 
@@ -87,6 +87,8 @@ async def generate(
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     face_pass_outcome: dict | None = None,
     face_pass_url_provider=None,
+    similar_plan: dict | None = None,
+    similar_context: dict | None = None,
 ) -> tuple[bytes, str]:
     """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
     ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004).
@@ -96,12 +98,23 @@ async def generate(
     패스는 **착장 컷일 때만** — product/ghost 류에는 사람이 없다. 실패는 원본 폴백(예외 없음).
     """
     model = resolve_model(settings, "image_high")
-    prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
+    prompt = (
+        similar_cut.generation_prompt(similar_plan, context=similar_context or {},
+                                      cut_type=cut_type, changes=changes)
+        if similar_plan is not None else
+        build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
+    )
     images = [source_image] if ref_bg is None else [source_image, ref_bg]
+    image_size = getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size
+    size_options = {}
+    if similar_plan is not None and model.startswith("gpt-image"):
+        size_options["openai_size_override"] = await run_cpu_bound(
+            similar_cut.openai_source_size, source_image, image_size)
     res = await gemini.generate_content_image(
         model, prompt, images,
-        getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size,
-        aspect_ratio=settings.mannequin_aspect_ratio,
+        image_size,
+        aspect_ratio=None if similar_plan is not None else settings.mannequin_aspect_ratio,
+        **size_options,
     )
     image, mime = res.image, res.mime
     if (face_identity_spec is not None

@@ -974,14 +974,36 @@ export const api = {
     return true;
   },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
-  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], refBg? }  (계약 §6)
+  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], variationMode?, refBg? }  (계약 §6)
   async generateImage(_projectId, req = {}) {
     await runJob({ duration: 2400, onProgress: req.onProgress });
     const isVary = req.mode === 'vary';
-    const group = isVary ? 'misc' : (req.colorId || 'misc');
+    const images = Object.entries(DB.wardrobe).flatMap(([group, items]) => items.map((image) => ({ ...image, wardrobeGroup: group })));
+    const source = isVary ? images.find((image) => image.src === req.source?.src) : null;
+    const isSimilar = isVary && req.variationMode === 'similar' && (source?.cutType || req.source?.cutType) !== 'product';
+    if (isSimilar && !source) throw new Error('원본 이미지를 찾을 수 없어요. 이미지를 다시 선택해 주세요.');
+    const rootId = source?.similarCut?.rootAssetId || source?.id;
+    const root = isSimilar ? images.find((image) => image.id === rootId) : null;
+    if (isSimilar && !root) throw new Error('처음 원본 이미지를 찾을 수 없어요.');
+    const group = isVary ? (root?.wardrobeGroup || source?.wardrobeGroup || 'misc') : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
-    const cutType = isVary ? ((req.source && req.source.cutType) || 'styling') : (req.cutType || null);
-    const img = { id: uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
+    const cutType = isVary ? (root?.cutType || source?.cutType || req.source?.cutType || 'styling') : (req.cutType || null);
+    const id = uid('w');
+    const img = { id, src: Placeholder.any(id), ai: true, wardrobeGroup: group, ...(cutType ? { cutType } : {}) };
+    if (isSimilar) {
+      // 로컬 데모는 실제 사진 분석 없이 동작 이름만 순환한다. 원본 계보·이력 계약을 재현한다.
+      const actions = cutType === 'mirror'
+        ? [['soft-smile', '거울 구도를 유지하며 부드럽게 웃기'], ['relaxed-expression', '거울 구도를 유지하며 편안한 표정 짓기'], ['small-head-tilt', '휴대폰 위치를 유지하며 고개 살짝 기울이기']]
+        : [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
+      const previous = images.filter((image) => image.similarCut?.rootAssetId === rootId);
+      const [actionKey, actionSummary] = actions[previous.length % actions.length];
+      img.src = `${Placeholder.photo(id, cutType)}#${id}`;
+      img.similarCut = {
+        version: 1, rootAssetId: rootId, sourceAssetId: source.id,
+        plan: { actionKey, actionSummary, instructions: actionSummary,
+          preserve: ['인물', '옷', '장소'], avoid: previous.slice(-2).map((image) => image.similarCut.plan.actionSummary) },
+      };
+    }
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);
     return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage) };
   },

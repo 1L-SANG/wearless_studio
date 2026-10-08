@@ -1225,6 +1225,20 @@ async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str)
         return await cur.fetchone()
 
 
+async def get_project_asset_for_user(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_id: str,
+) -> dict | None:
+    """Similar-cut input: an owned, live asset in this product's project, never a seed."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, project_id::text as project_id, r2_bucket, r2_key, "
+            "mime_type, source, width, height, metadata from assets "
+            "where id = %s and user_id = %s and project_id = %s and deleted_at is null",
+            (asset_id, user_id, project_id),
+        )
+        return await cur.fetchone()
+
+
 async def get_asset_facemarket_provenance(
     conn: AsyncConnection, user_id: str, asset_id: str
 ) -> dict | None:
@@ -1845,6 +1859,103 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
             (job_id, user_id),
         )
         return await cur.fetchone()
+
+
+def _similar_cut_record(value: object) -> dict | None:
+    """Storage envelope only; the planner validates the plan's action fields."""
+    if (
+        isinstance(value, dict)
+        and type(value.get("version")) is int and value["version"] == 1
+        and isinstance(value.get("rootAssetId"), str) and value["rootAssetId"]
+        and isinstance(value.get("sourceAssetId"), str) and value["sourceAssetId"]
+        and isinstance(value.get("plan"), dict)
+    ):
+        return value
+    return None
+
+
+async def list_similar_cut_plans(
+    conn: AsyncConnection, user_id: str, project_id: str, root_asset_id: str,
+    exclude_job_id: str | None = None, limit: int = 12,
+) -> list[dict]:
+    """Recent completed/reserved actions; client payload and failed jobs are not history."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, metadata->'similar_cut' as similar_cut from jobs "
+            "where user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status in ('pending', 'running', 'done') "
+            "and metadata->'similar_cut'->>'rootAssetId' = %s "
+            "and metadata->'similar_cut'->'version' = '1'::jsonb "
+            "and jsonb_typeof(metadata->'similar_cut'->'plan') = 'object' "
+            "and (%s::text is null or id::text <> %s) "
+            "order by created_at desc, id desc limit %s",
+            (user_id, project_id, root_asset_id, exclude_job_id, exclude_job_id, limit),
+        )
+        rows = await cur.fetchall()
+    return [
+        {**record, "jobId": row["id"]}
+        for row in rows
+        if (record := _similar_cut_record(row.get("similar_cut"))) is not None
+    ]
+
+
+async def get_similar_cut_plan_for_job(
+    conn: AsyncConnection, user_id: str, project_id: str, job_id: str,
+) -> dict | None:
+    """A reclaimed job resumes its persisted plan instead of planning/charging it again."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'similar_cut' as similar_cut from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image'",
+            (job_id, user_id, project_id),
+        )
+        row = await cur.fetchone()
+    return _similar_cut_record((row or {}).get("similar_cut"))
+
+
+async def reserve_similar_cut_plan(
+    conn: AsyncConnection, *, user_id: str, project_id: str, job_id: str,
+    lease_token: str, metadata: dict, expected_history: list[dict], limit: int = 12,
+) -> dict:
+    """CAS a planned action before image generation; caller commits every returned status.
+
+    Plan with no open DB transaction, then reserve in a short root-scoped transaction.
+    A competing reservation changes history, so the caller replans with that action.
+    This helper never commits or calls an external service. Lost leases cannot write.
+    """
+    if _similar_cut_record(metadata) is None:
+        raise ValueError("Invalid similar-cut storage metadata")
+    root_id = metadata["rootAssetId"]
+    if not await try_advisory_lock(conn, f"similar-cut:{user_id}:{project_id}:{root_id}"):
+        return {"status": "busy"}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'similar_cut' as similar_cut from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status = 'running' and locked_by = %s for update",
+            (job_id, user_id, project_id, lease_token),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return {"status": "lease_lost"}
+    existing = _similar_cut_record(row.get("similar_cut"))
+    if existing is not None:
+        return {"status": "existing", "similar_cut": existing}
+    history = await list_similar_cut_plans(
+        conn, user_id, project_id, root_id, exclude_job_id=job_id, limit=limit,
+    )
+    if history != expected_history:
+        return {"status": "history_changed"}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status = 'running' and locked_by = %s returning id",
+            (Json({"similar_cut": metadata}), job_id, user_id, project_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return {"status": "lease_lost"}
+    return {"status": "reserved", "similar_cut": metadata}
 
 
 async def get_latest_job_generation(
