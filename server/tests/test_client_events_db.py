@@ -147,3 +147,18 @@ def test_two_database_workers_respect_lock_and_committed_ledger(local_db):
                         await cur.execute('delete from client_alert_ledger where key=%s', (key,))
                     await conn1.commit()
     asyncio.run(body())
+
+
+def test_real_diagnostic_context_is_stored_in_payload(local_db):
+    from test_client_event_context import diagnostics
+
+    event = events.sanitize_event(sample(kind='error_boundary', build_sha='a' * 40, **diagnostics()))
+
+    async def body(conn):
+        await events.store_event(conn, event, None, 'test-hmac')
+        async with conn.cursor() as cur:
+            await cur.execute('select payload, build_sha from client_error_events where event_id=%s', (event['event_id'],))
+            row = await cur.fetchone()
+            assert row['payload'] == event
+            assert row['build_sha'] == event['build_sha']
+    run(local_db, body)

@@ -1,8 +1,9 @@
-"""화면 오류 수신. 원문과 신뢰할 수 없는 필드는 저장하지 않는다."""
+"""정제한 화면 오류와 최소 진단 정보를 수신한다."""
 
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ KST = ZoneInfo("Asia/Seoul")
 KINDS = frozenset(("api_error", "ui_error", "runtime_error", "unhandled_rejection",
                    "error_boundary", "network_error", "toast_error", "save_error",
                    "upload_error", "generation_error", "analysis_error"))
+WHOLE_SCREEN_KINDS = frozenset(("ui_error", "error_boundary", "runtime_error", "unhandled_rejection"))
+STEPS = frozenset(("input", "storyboard", "mannequin", "generating", "editor", "library", "other"))
 ACTIONS = frozenset(("save", "upload", "generate", "analyze", "restore", "navigate",
                      "load", "poll", "download", "export", "login", "unknown",
                      "mannequinGenerate", "mannequinAdjust", "detailPageGenerate", "editorImage"))
@@ -64,6 +67,88 @@ def _error_code(value):
 
 def _integer(value, low, high):
     return value if type(value) is int and low <= value <= high else None
+
+
+def _number(value, low, high):
+    return value if type(value) in (int, float) and low <= value <= high and math.isfinite(value) else None
+
+
+def _platform(raw):
+    result = {}
+    for name, pattern in (("family", r"[A-Za-z][A-Za-z0-9 _-]{0,31}"),
+                          ("major", r"[A-Za-z0-9][A-Za-z0-9._-]{0,7}")):
+        value = raw.get(name)
+        if isinstance(value, str) and re.fullmatch(pattern, value):
+            result[name] = value
+    return result
+
+
+def _technical_text(value, maximum):
+    if not isinstance(value, str):
+        return None
+    # JSONB에 넣을 수 없는 제어 문자와 단독 surrogate를 먼저 없앤다.
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]", "", value)
+
+    def clean_url(match):
+        address = re.split(r"[?#]", match.group(0), maxsplit=1)[0]
+        return re.sub(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)[^/]*@", r"\1", address)
+
+    value = re.sub(r"(?:(?:https?|wss?|ftp|file|webpack):)?//[^\s<>\"'()]+|/[^\s<>\"'()]+", clean_url, value,
+                   flags=re.IGNORECASE)
+
+    def clean_email(match):
+        token = match.group(0)
+        if "@" not in token:
+            return token
+        _, _, address = token.partition("@")
+        # Firefox의 함수명@URL 프레임은 보존한다. 긴 문자열에서도 토큰당 한 번만 검사한다.
+        if "@" not in address and re.match(r"(?:blob:)?(?:[A-Za-z][A-Za-z0-9+.-]*:)?//|/", address):
+            return token
+        return "[email]"
+
+    value = re.sub(r"\S+", clean_email, value)
+    value = re.sub(r"\d{6,}", "[digits]", value)
+    # 길이를 먼저 자르면 이메일과 URL이 중간에서 끊겨 정제를 우회할 수 있다.
+    return value[:maximum]
+
+
+def _diagnostics(raw):
+    step = raw.get("step")
+    result = {"step": step if isinstance(step, str) and step in STEPS else "other",
+              "message_code": _error_code(raw.get("message_code"))}
+    for name in ("browser", "os"):
+        if isinstance(raw.get(name), dict):
+            result[name] = _platform(raw[name])
+    if isinstance(raw.get("viewport"), dict):
+        result["viewport"] = {}
+        for name in ("width", "height"):
+            value = _integer(raw["viewport"].get(name), 0, 16384)
+            if value is not None:
+                result["viewport"][name] = value
+    if isinstance(raw.get("network"), dict):
+        network = raw["network"]
+        effective_type = network.get("effective_type")
+        result["network"] = {"effective_type": effective_type if isinstance(effective_type, str) and
+                             effective_type in ("slow-2g", "2g", "3g", "4g", "unknown") else "unknown"}
+        for name, maximum in (("rtt_ms", 60000), ("downlink_mbps", 10000)):
+            value = _number(network.get(name), 0, maximum)
+            if value is not None:
+                result["network"][name] = value
+        for name in ("save_data", "online"):
+            if type(network.get(name)) is bool:
+                result["network"][name] = network[name]
+    age = _integer(raw.get("page_age_ms"), 0, 604800000)
+    if age is not None:
+        result["page_age_ms"] = age
+    if isinstance(raw.get("visibility"), str) and raw["visibility"] in ("visible", "hidden"):
+        result["visibility"] = raw["visibility"]
+    for name, maximum in (("tech_message", 500), ("stack", 2000)):
+        if name == "stack" and raw["kind"] not in WHOLE_SCREEN_KINDS:
+            continue
+        value = _technical_text(raw.get(name), maximum)
+        if value is not None:
+            result[name] = value
+    return result
 
 
 def normalize_route(value):
@@ -130,6 +215,7 @@ def sanitize_event(raw):
         "device": device if isinstance(device, str) and device in ("desktop", "mobile", "tablet") else "unknown",
         "blocking": raw.get("blocking") is True,
     }
+    result.update(_diagnostics(raw))
     context = raw.get("context")
     result["context"] = {}
     if isinstance(context, dict):

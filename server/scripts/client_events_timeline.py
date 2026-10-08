@@ -22,8 +22,13 @@ def assemble_timeline(events):
     timeline = []
     for event in events:
         public = {key: value for key, value in event.items() if key != 'payload'}
+        payload = event.get('payload') or {}
+        for key in ('step', 'message_code', 'browser', 'os', 'viewport', 'network', 'page_age_ms',
+                    'visibility', 'tech_message', 'stack', 'context'):
+            if key in payload:
+                public[key] = payload[key]
         timeline.append({'type': 'event', 'at': event['occurred_at'], **public})
-        for crumb in (event.get('payload') or {}).get('breadcrumbs', []):
+        for crumb in payload.get('breadcrumbs', []):
             timeline.append({**crumb, 'type': 'breadcrumb', 'breadcrumb_type': crumb.get('type'),
                              'at': crumb.get('at') or event['occurred_at'], 'event_id': event['event_id']})
 
@@ -46,7 +51,7 @@ def fetch_timeline(conn, *, user_id=None, request_id=None):
     with conn.cursor() as cur:
         cur.execute(
             'select event_id::text, occurred_at, received_at, user_id::text, kind, route, action, '
-            'status, error_code, request_id::text, job_id::text, project_id::text, payload '
+            'status, error_code, request_id::text, job_id::text, project_id::text, build_sha, payload '
             f'from client_error_events where {predicate} order by occurred_at, received_at, event_id', params)
         events = cur.fetchall()
         ids = {e['job_id'] for e in events if e.get('job_id')}

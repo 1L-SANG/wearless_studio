@@ -33,9 +33,31 @@
 
 필수 필드는 event_id, schema_version=1, 시간대가 있는 occurred_at, kind다. 허용 kind는 `api_error`, `ui_error`, `runtime_error`, `unhandled_rejection`, `error_boundary`, `network_error`, `toast_error`, `save_error`, `upload_error`, `generation_error`, `analysis_error`다. action은 `save`, `upload`, `generate`, `analyze`, `restore`, `navigate`, `load`, `poll`, `download`, `export`, `login`, `unknown`, `mannequinGenerate`, `mannequinAdjust`, `detailPageGenerate`, `editorImage`다. 미등록 action과 device는 unknown으로 저장한다. device는 desktop, mobile, tablet을 허용한다.
 
-선택 필드는 build_sha, status, error_code, request_id, project_id, job_id, device, blocking, context, breadcrumbs다. 프로젝트와 작업 UUID는 브라우저 주장으로 취급한다. UUID 필드는 36자다. error_code는 `[a-z][a-z_]{0,31}`인 32자 이하의 소문자와 밑줄만 허용하고, 없거나 형식이 다르면 자르지 않고 other로 저장한다. 발자취의 error_code도 같다. build_sha는 최대 64자이며 영문, 숫자, 밑줄, 점, 콜론, 하이픈만 남긴다. route는 최대 입력 512자, 최대 16개 segment이며 query, hash, origin은 제거한다. 알려진 정적 segment만 남기고 UUID와 숫자는 :id, 그 밖의 값은 :segment로 바꾼다.
+선택 필드는 build_sha, status, error_code, request_id, project_id, job_id, device, blocking, context, breadcrumbs와 아래 진단 필드다. 새 진단 필드는 정제된 payload JSONB에만 저장하며 별도 컬럼이나 migration은 추가하지 않는다. 프로젝트와 작업 UUID는 브라우저 주장으로 취급한다. UUID 필드는 36자다. error_code는 `[a-z][a-z_]{0,31}`인 32자 이하의 소문자와 밑줄만 허용하고, 없거나 형식이 다르면 자르지 않고 other로 저장한다. 발자취의 error_code도 같다. build_sha는 최대 64자이며 영문, 숫자, 밑줄, 점, 콜론, 하이픈만 남긴다. route는 최대 입력 512자, 최대 16개 segment이며 query, hash, origin은 제거한다. 알려진 정적 segment만 남기고 UUID와 숫자는 :id, 그 밖의 값은 :segment로 바꾼다.
 
-context는 online, local_backup boolean, visibility(visible 또는 hidden), draft_slot_status(owned, lost, none, unknown), photo_pending_count(0~1000)만 남긴다. breadcrumbs는 마지막 30개, at, type(api, action, navigation), method, route, action, request_id, status(0~599), error_code, count(1~10000), duration_ms(0~3600000)만 남긴다. 문구 원문, 기술 메시지, stack, 입력값, 파일명, DOM, store와 그 밖의 필드는 저장하지 않는다.
+context는 online, local_backup boolean, visibility(visible 또는 hidden), draft_slot_status(owned, lost, none, unknown), photo_pending_count(0~1000)만 남긴다. breadcrumbs는 마지막 30개, at, type(api, action, navigation), method, route, action, request_id, status(0~599), error_code, count(1~10000), duration_ms(0~3600000)만 남긴다. 사용자에게 표시한 문구 원문(message), 입력값, DOM, store와 허용하지 않은 필드는 저장하지 않는다. 기술 정보는 아래 tech_message와 stack 계약으로만 받는다.
+
+### 진단 필드 계약
+
+| 필드 | 허용 값과 상한 |
+|---|---|
+| step | input, storyboard, mannequin, generating, editor, library, other. 없거나 잘못되면 other |
+| message_code | error_code와 같은 `[a-z][a-z_]{0,31}`. 없거나 잘못되면 other |
+| browser.family, os.family | `[A-Za-z][A-Za-z0-9 _-]{0,31}`, 최대 32자. 전체 User-Agent는 받지 않음 |
+| browser.major, os.major | `[A-Za-z0-9][A-Za-z0-9._-]{0,7}`, 최대 8자의 문자열. 예: "132", "18", "unknown" |
+| viewport.width, viewport.height | 정수 0~16384 |
+| network.effective_type | slow-2g, 2g, 3g, 4g, unknown. 잘못된 값은 unknown |
+| network.rtt_ms | 유한한 숫자 0~60000, 소수 허용 |
+| network.downlink_mbps | 유한한 숫자 0~10000, 소수 허용 |
+| network.save_data, network.online | boolean |
+| page_age_ms | 정수 0~604800000, 최대 7일 |
+| visibility | visible 또는 hidden |
+| tech_message | 모든 kind에서 정제 후 최대 500자 |
+| stack | ui_error, error_boundary, runtime_error, unhandled_rejection에서만 정제 후 최대 2000자. 다른 kind는 blocking=true여도 제외 |
+
+객체 내부도 허용 필드만 남긴다. 정수 필드의 bool, 숫자 문자열, 소수는 제외하며 범위 밖 값과 NaN, Infinity도 제외한다. 선택 진단 값이 잘못되어도 나머지 이벤트는 받는다. browser와 os는 family, major 키를 쓰며 viewport와 network도 위 표의 키만 사용한다.
+
+tech_message와 stack은 서버에서도 URL query와 hash, URL 인증 정보, 이메일 모양의 토큰, 6자리 이상 연속 숫자를 제거한다. NULL 문자, 기타 제어 문자와 단독 surrogate도 제거한다. 먼저 전체 문자열을 정제한 뒤 길이를 자르므로 상한 경계에서 개인정보가 잘려 정제를 우회하지 않는다. Firefox의 함수명@URL 프레임은 보존한다. 전체 HTTP 본문은 정제 전에도 기존 32KiB 상한이 적용된다. 이 텍스트와 새 환경 정보는 Slack payload에 추가하지 않는다.
 
 서명은 정제한 `[kind, action, route, status, error_code]` 배열을 공백 없는 ASCII JSON으로 만든 뒤 SHA-256으로 계산한다. 수신 번호 헤더는 기록 업로드 요청 번호다. 본문의 request_id는 오류가 발생한 원래 API 요청 번호이므로 서로 다를 수 있다.
 
@@ -69,13 +91,14 @@ cd server
 .venv/bin/python -m scripts.client_events_timeline --request-id '<요청 UUID>'
 ```
 
-이벤트와 발자취는 발생 시간순으로 출력하고, 관련 jobs는 생성 시간순으로 함께 출력한다. request_id는 이벤트 및 발자취에서 검색한다. 관련 작업은 사용자, 원래 생성 requestId, 브라우저가 주장한 job_id로 찾는다. `client_claimed_job_ids`는 검증된 소유 관계가 아니다.
+이벤트와 발자취는 발생 시간순으로 출력하고, 관련 jobs는 생성 시간순으로 함께 출력한다. 이벤트에 build_sha, step, message_code, browser, os, viewport, network, page_age_ms, visibility, 정제된 tech_message와 허용된 stack, context를 함께 표시한다. request_id는 이벤트 및 발자취에서 검색한다. 관련 작업은 사용자, 원래 생성 requestId, 브라우저가 주장한 job_id로 찾는다. `client_claimed_job_ids`는 검증된 소유 관계가 아니다.
 
 ## 검증
 
 ```bash
 cd server
 .venv/bin/pytest -q --ignore=tests/test_personalization.py
+.venv/bin/pytest -q tests/test_client_event*.py tests/test_client_alerts.py tests/test_client_alert_limits_db.py tests/test_client_request_id.py -rs
 .venv/bin/pytest -q tests/test_client_events_db.py tests/test_client_event_salts.py tests/test_client_alert_limits_db.py -rs
 ```
 
