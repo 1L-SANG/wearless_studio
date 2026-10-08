@@ -601,7 +601,7 @@ function MineColumn({
           {waitTile === 'error' && (
             <div className="fit-ver fit-wait-slot is-error" role="img" aria-label="새 버전 오류">
               <span className="fit-wait-error-mark" aria-hidden="true">!</span>
-              <span className="fit-wait-slot-label">실패</span>
+              <span className="fit-wait-slot-label">연결이 불안정해요</span>
             </div>
           )}
         </div>
@@ -1105,7 +1105,7 @@ export function Mannequin() {
     setProgress(0);
     setBusy(false);
     submittingRef.current = false;
-    pushToast(error?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+    pushToast(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
   };
 
   const reconcileLandedVersion = async (runId) => {

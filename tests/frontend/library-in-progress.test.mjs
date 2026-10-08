@@ -19,7 +19,7 @@ const snapshot = (id, mannequin = null, detailPage = null) => ({ id, status: 'dr
   selectedMannequinId: 'saved-cut', composeMode: 'extended', copywriting: false,
   adjustCount: 2, latestJobs: { mannequin, detailPage } });
 const steps = ['storyboard', 'mannequin', 'generating', 'failed'];
-const labels = ['콘티 단계', '마네킹 단계', '생성 중', '생성 실패'];
+const labels = ['콘티 단계', '마네킹 단계', '에디터 단계'];
 const resumeSnapshot = (id) => ({ ...snapshot(id),
   selectedMannequinId: id === 'p-storyboard' ? null : 'saved-cut',
   latestJobs: { mannequin: null, detailPage: id === 'p-generating' ? { id: 'detail', status: 'running' }
@@ -37,13 +37,18 @@ function findAll(tree, predicate) {
 function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 상품', status: 'done', updatedAt: rows[0].updatedAt }], mobile = false, loading = false, error = false, getProject = async (id) => resumeSnapshot(id) } = {}) {
   const calls = [];
   const queries = [];
-  const cleanups = [], refs = [];
+  const cleanups = [], refs = [], states = [];
+  let stateIndex = 0, refIndex = 0;
   const state = { userId: 'seller', projectGeneration: 0, adoptProject: (id, options) => calls.push(['adopt', id, options]),
     confirmProductInfo: (id) => calls.push(['confirm', id]), markFlowUsed: (id) => calls.push(['used', id]),
     setResumePath: (path) => calls.push(['resumePath', path]) };
   const useAppStore = (selector) => selector(state);
   useAppStore.getState = () => state;
-  const bindings = { React, useAppStore, useRef: (value) => { const ref = { current: value }; refs.push(ref); return ref; }, useState: (value) => [value, () => {}],
+  const bindings = { React, useAppStore, useRef: (value) => { const index = refIndex++; refs[index] ||= { current: value }; return refs[index]; }, useState: (value) => {
+      const index = stateIndex++;
+      if (!(index in states)) states[index] = typeof value === 'function' ? value() : value;
+      return [states[index], (next) => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];
+    },
     useEffect: (effect) => { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); },
     useNavigate: () => (path) => calls.push(['navigate', path]), useToast: () => ({ push: (msg) => calls.push(['toast', msg]) }),
     useAuth: () => ({ session: { user: { id: 'seller' } } }), isMobileDevice: () => mobile,
@@ -56,7 +61,8 @@ function libraryHarness({ progress = rows, done = [{ id: 'done', title: '완성 
     }, Button: 'button', Skeleton: 'div', EmptyState: 'div', ErrorState: 'div',
   };
   const Library = new Function(...Object.keys(bindings), `${libraryCode}; return Library;`)(...Object.values(bindings));
-  return { tree: Library(), calls, queries, state, refs, unmount: () => cleanups.forEach((cleanup) => cleanup()) };
+  const render = () => { stateIndex = 0; refIndex = 0; return Library(); };
+  return { tree: render(), render, calls, queries, state, refs, unmount: () => cleanups.forEach((cleanup) => cleanup()) };
 }
 
 test('④ 오래된 콘티 카드는 최신 선택과 상세 잡 및 완료 상태로 재개한다', async (t) => {
@@ -80,7 +86,10 @@ for (const change of ['새 제작', '로그아웃', '계정 전환', '세션 계
     if (change === '로그아웃') h.state.userId = null;
     if (change === '계정 전환') h.state.userId = 'seller-b';
     if (change === '세션 계정 전환') h.refs.find((ref) => ref.current === 'seller').current = 'seller-b';
-    if (change === '다른 완성본 열기') findAll(h.tree, (node) => node.props?.className === 'lib-card' && !node.props.role)[0].props.onClick();
+    if (change === '다른 완성본 열기') {
+      findAll(h.tree, (node) => node.props?.role === 'tab')[1].props.onClick();
+      findAll(h.render(), (node) => node.props?.className === 'lib-card' && !node.props.role)[0].props.onClick();
+    }
     if (change === '언마운트') h.unmount();
     const before = [...h.calls];
     resolve(snapshot('p-storyboard'));
@@ -103,7 +112,7 @@ test('in-progress adapters preserve the rows and latestJobs contract', async () 
 
 test('empty in-progress rows hide the section while the done list remains visible', () => {
   const h = libraryHarness({ progress: [] });
-  assert.equal(findAll(h.tree, (node) => node.type === 'section').length, 0);
+  assert.equal(findAll(h.tree, (node) => node.props?.role === 'tablist').length, 0);
   assert.match(renderToString(h.tree), /완성 상품/);
   assert.deepEqual(h.queries.map((query) => query.queryKey), [['library'], ['library', 'in_progress']]);
 });
@@ -120,6 +129,79 @@ test('cards show all step chips and relative time, use the existing frame, and c
   assert.equal(findAll(h.tree, (node) => node.props?.role === 'button').length, 20);
   assert.equal(findAll(h.tree, (node) => node.props?.role === 'button').every((node) => node.props.className === 'lib-card'), true);
 });
+const textOf = (node) => typeof node === 'string' || typeof node === 'number' ? String(node)
+  : React.Children.toArray(node?.props?.children).map(textOf).join('');
+const tabsOf = (tree) => findAll(tree, (node) => node.props?.role === 'tab');
+const chipsOf = (tree) => findAll(tree, (node) => node.props?.['aria-pressed'] !== undefined);
+const cardsOf = (tree) => findAll(tree, (node) => node.props?.role === 'button');
+
+test('진행 중 탭이 기본이며 탭 개수와 단계 개수를 표시하고 실패 상태를 숨긴다', () => {
+  const h = libraryHarness();
+  assert.deepEqual(tabsOf(h.tree).map(textOf), ['진행 중 4', '완료 1']);
+  assert.deepEqual(tabsOf(h.tree).map((node) => node.props['aria-selected']), [true, false]);
+  assert.deepEqual(chipsOf(h.tree).map(textOf), ['전체 4', '콘티 1', '마네킹 1', '에디터 2']);
+  assert.deepEqual(cardsOf(h.tree).map((node) => node.props['aria-label']),
+    ['상품 0, 콘티 단계', '상품 1, 마네킹 단계', '상품 2, 에디터 단계', '상품 3, 에디터 단계']);
+  assert.doesNotMatch(renderToString(h.tree), /실패|생성 중|완성 상품|만드는 중|완성본/);
+});
+
+test('단계 칩 선택은 그 단계만 표시하고 전체 칩은 모든 카드를 복원한다', () => {
+  const h = libraryHarness();
+  for (const [index, ids] of [[1, ['p-storyboard']], [2, ['p-mannequin']], [3, ['p-generating', 'p-failed']],
+    [0, ['p-storyboard', 'p-mannequin', 'p-generating', 'p-failed']]]) {
+    chipsOf(h.render())[index].props.onClick();
+    const tree = h.render();
+    assert.deepEqual(cardsOf(tree).map((node) => node.key.replace(/^\.\$/, '')), ids);
+    assert.deepEqual(chipsOf(tree).map((node) => node.props['aria-pressed']), [0, 1, 2, 3].map((i) => i === index));
+  }
+});
+
+test('없는 단계 칩은 숨기고 선택된 단계가 사라지면 전체를 표시한다', () => {
+  const progress = [rows[3]];
+  const h = libraryHarness({ progress });
+  assert.deepEqual(chipsOf(h.tree).map(textOf), ['전체 1', '에디터 1']);
+  chipsOf(h.tree)[1].props.onClick();
+  progress.splice(0, 1, rows[0]);
+  const tree = h.render();
+  assert.deepEqual(chipsOf(tree).map(textOf), ['전체 1', '콘티 1']);
+  assert.equal(chipsOf(tree)[0].props['aria-pressed'], true);
+  assert.deepEqual(cardsOf(tree).map((node) => node.key.replace(/^\.\$/, '')), ['p-storyboard']);
+});
+
+test('완료 탭 선택은 완성본만 표시하고 비어 있으면 안내 한 줄을 표시한다', () => {
+  for (const done of [[], [{ id: 'done', title: '완성 상품', status: 'done' }]]) {
+    const h = libraryHarness({ done });
+    tabsOf(h.tree)[1].props.onClick();
+    const tree = h.render();
+    assert.deepEqual(tabsOf(tree).map((node) => node.props['aria-selected']), [false, true]);
+    assert.equal(chipsOf(tree).length, 0);
+    assert.equal(cardsOf(tree).length, 0);
+    assert.match(renderToString(tree), done.length ? /완성 상품/ : /완성된 상세페이지가 여기에 모여요\./);
+  }
+});
+
+test('조회 후 진행 중 항목이 도착하면 진행 중을 기본 탭으로 표시한다', () => {
+  const progress = [];
+  const h = libraryHarness({ progress });
+  assert.equal(tabsOf(h.tree).length, 0);
+  progress.push(rows[0]);
+  assert.equal(tabsOf(h.render())[0].props['aria-selected'], true);
+});
+
+test('탭 방향키와 Home, End는 탭 선택과 키보드 초점을 함께 바꾼다', () => {
+  const h = libraryHarness();
+  for (const [key, index] of [['ArrowRight', 1], ['ArrowLeft', 0], ['End', 1], ['Home', 0]]) {
+    let prevented = false, focused = null;
+    const tabs = tabsOf(h.render());
+    const selected = tabs.find((node) => node.props['aria-selected']);
+    selected.props.onKeyDown({ key, preventDefault() { prevented = true; },
+      currentTarget: { parentElement: { querySelectorAll: () => tabs.map((_, i) => ({ focus() { focused = i; } })) } } });
+    assert.equal(prevented, true);
+    assert.equal(focused, index);
+    assert.equal(tabsOf(h.render())[index].props['aria-selected'], true);
+  }
+});
+
 for (const step of steps) test(`phone/tablet ${step} card only shows the PC toast`, async () => {
   const h = libraryHarness({ mobile: true, progress: [rows.find((row) => row.step === step)] });
   await findAll(h.tree, (node) => node.props?.role === 'button')[0].props.onClick();
@@ -370,14 +452,14 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
       assert.equal(view.Blocks[0].id, status === 'done' ? 'finished' : 'waiting');
       assert.equal(polls > 0, status !== 'done');
       const bandBindings = { React, dpJob, projectId: id, genActive: view.GenActive, genFailed: dpJob.status === 'error',
-        genIncomplete: null, genFinalizeError: null, genFailureMessage: dpJob.errorMessage, genReuseHint: '', genNotif: 'denied',
+        genIncomplete: null, genFinalizeError: null, genFailureHeading: status === 'cancelled' ? '생성을 멈췄어요' : '상세페이지를 아직 만들지 못했어요', genFailureMessage: dpJob.errorMessage, genReuseHint: '', genNotif: 'denied',
         genMergedRef: { current: false }, genActiveRef: { current: false }, setGenActive() {}, useAppStore: store,
         Icon: 'svg', Button: 'button', SmoothProgressTrack: 'span', EXPECTED_MS: { detailPage: 1 }, leaveToLibrary() {} };
       const Band = new Function(...Object.keys(bandBindings), `${bandCode}; return Band;`)(...Object.values(bandBindings));
       const tree = Band(), html = renderToString(tree);
       if (status === 'error' || status === 'cancelled') {
         assert.match(html, /ed-genbar error/);
-        const retry = findAll(tree, (node) => node.type === 'button' && node.props.children === '다시 시도')[0];
+        const retry = findAll(tree, (node) => node.type === 'button' && node.props.children === '다시 만들기')[0];
         assert.ok(retry);
         retry.props.onClick();
         await new Promise(setImmediate);
@@ -430,11 +512,12 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
 });
 
 
-test('U3 library sections show matching headings and a compact completed-empty line', () => {
+test('U3 library tabs replace section headings and retain the compact completed-empty line', () => {
   const h = libraryHarness({ done: [] });
-  const html = renderToString(h.tree);
-  assert.match(html, /class="sec-title handoff-title">만드는 중/);
-  assert.match(html, /class="sec-title handoff-title">완성본/);
+  assert.deepEqual(tabsOf(h.tree).map(textOf), ['진행 중 4', '완료 0']);
+  tabsOf(h.tree)[1].props.onClick();
+  const html = renderToString(h.render());
+  assert.doesNotMatch(html, /class="sec-title handoff-title"/);
   assert.match(html, /완성된 상세페이지가 여기에 모여요\./);
   assert.doesNotMatch(html, /아직 만든 상세페이지가 없어요|첫 상세페이지 만들기/);
   assert.equal(findAll(h.tree, (n) => n.type === 'div' && n.props.icon === 'library').length, 0);
@@ -455,5 +538,8 @@ test('U3 both library grids share two equal phone columns and readable clamped t
   assert.match(phone, /\.lib-info \.m span \{ white-space: nowrap; \}/);
   assert.match(phone, /flex-wrap: wrap/);
   assert.doesNotMatch(phone, /word-break:/);
-  assert.equal(findAll(libraryHarness().tree, (n) => n.props.className?.includes('lib-grid')).length, 2);
+  const h = libraryHarness();
+  assert.equal(findAll(h.tree, (n) => n.props.className?.includes('lib-grid')).length, 1);
+  tabsOf(h.tree)[1].props.onClick();
+  assert.equal(findAll(h.render(), (n) => n.props.className?.includes('lib-grid')).length, 1);
 });

@@ -93,11 +93,13 @@ function MannequinJobRibbon() {
   if (!visible) return null;
 
   const isError = job.status === 'error';
-  const label = isError ? '마네킹컷 생성에 실패했어요' : '마네킹컷을 만들고 있어요';
+  const label = isError ? '서버 연결이 불안정해요' : '마네킹컷을 만들고 있어요';
   /* 진행 중엔 퍼센트 숫자를 쓰지 않는다. 바 폭은 시간 추정이어도 되지만 정수 퍼센트는
      검증 가능한 주장이라, 추정이 서버보다 앞서면 그대로 거짓말이 된다. 마네킹 대기화면이
      퍼센트를 걷어낸 결정(Mannequin.jsx MannequinLoading)과도 어긋난다. */
-  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : '완성되면 알려드릴게요';
+  // 오류 설명이 제목과 같은 문장으로 시작하면 겹치는 앞부분은 빼고 나머지만 보인다.
+  const detail = isError ? ((job.errorMessage || '').replace(label, '').replace(/^[.\s]+/, '').trim()
+    || '잠시 후 다시 시도해 주세요.') : '완성되면 알려드릴게요';
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">
@@ -174,7 +176,8 @@ function DetailPageJobRibbon() {
 
   const isError = job.status === 'error';
   // 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말한다(2026-09-26).
-  const label = isError ? '상세페이지 생성에 실패했어요'
+  const label = isError ? (job.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
+    : (job.incomplete?.completed.length > 0 || job.errorCode === 'incomplete_cuts') ? '아직 못 만든 컷이 있어요' : '상세페이지를 아직 만들지 못했어요')
     : job.slow ? '오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요';
   /* cutsTotal 은 첫 cut 진행 이벤트에서야 채워진다(lib/detailPageJobEvents.applyDetailJobEvents). 그 전엔
      추정값밖에 없는데, 그걸 퍼센트로 내보내면 aria-live 로 보조기기까지 추정 숫자를 사실처럼

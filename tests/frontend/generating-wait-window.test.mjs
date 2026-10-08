@@ -216,10 +216,10 @@ test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 �
   assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(source\)\)/);
 });
 
-test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
+test('미완성 후 다시 만들기는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
   const retry = editor.slice(
     editor.indexOf("useAppStore.getState().resetDetailPageJob();", editor.indexOf("genFinalizeError ?")),
-    editor.indexOf('>다시 시도</Button>'),
+    editor.indexOf('>다시 만들기</Button>', editor.indexOf('>다시 만들기</Button>') + 1),
   );
   assert.doesNotMatch(retry, /clearEditorWaitDraft/);
 

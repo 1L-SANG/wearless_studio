@@ -81,7 +81,7 @@ test('서버 결과 → 요약: 실패·완성·보관 블록과 콘티 지문',
   assert.equal(inc.retained.length, 19);
   assert.equal(inc.expired, false);
   assert.equal(inc.storyboardDigest, 'sb-digest-1');
-  assert.equal(incompleteSummary(inc), '19장 완성 · 1장 실패');
+  assert.equal(incompleteSummary(inc), '19장 완성 · 1장 미완성');
   assert.equal(incompleteMessage(inc, SERVER_MESSAGE), SERVER_MESSAGE, '서버 문구가 정본');
   // 다른 실패는 부분 실패가 아니다
   assert.equal(incompleteCutsOf({ ...failedJob(), result: { errorCode: 'all_cuts_failed' } }), null);
@@ -157,7 +157,7 @@ test('부분 실패로 끝나면 완성 컷은 "완성됐어요"로 남고 실�
   // 에디터 배선: 정리 이펙트가 완성 컷을 남기도록 keptSourceIds 를 넘기고, 실패 타일에 '실패' 꼬리표
   assert.match(editor, /keptSourceIds: new Set\(dpJob\.incomplete\?\.completed \|\| \[\]\)/);
   assert.match(editor, /clearFailedJobPreviewBlocks\(latestBlocks\.current, revokedUrls, keep\)/);
-  assert.match(editor, /el\.genPending === 'failed' && <span className="ed-genwait-tag fail">실패<\/span>/);
+  assert.match(editor, /el\.genPending === 'failed' && <span className="ed-genwait-tag fail">미완성<\/span>/);
   assert.match(css, /\.ed-genwait-tag\.fail \{/);
 });
 
@@ -216,9 +216,10 @@ test('완성 타일은 부분 실패 뒤 보관본 미리보기를 받고(주인
 
 // ── ② 리본 문구 ────────────────────────────────────────────────────────────────
 
-test('리본: "19장 완성 · 1장 실패" + 서버의 사실대로 된 문구 + 보관 안내', () => {
+test('리본: 미완성 컷 안내 + 서버의 사실대로 된 문구 + 보관 안내', () => {
   assert.match(editor, /const genIncomplete = \(dpJob\.status === 'error' && !genFinalizeError && dpJob\.incomplete\) \|\| null;/);
-  assert.match(editor, /<b>\{incompleteSummary\(genIncomplete\)\}<\/b> — \{genFailureMessage\}/);
+  assert.match(editor, /아직 못 만든 컷이 있어요/);
+  assert.match(editor, /className="ed-genbar-detail">\{genFailureMessage\}/);
   assert.match(editor, /incompleteMessage\(genIncomplete, dpJob\.errorMessage\)/);
   assert.match(editor, /콘티를 바꾸지 않았다면 보관된 \{genIncomplete\.retained\.length\}장을 그대로 써요 · 24시간 보관/);
   assert.doesNotMatch(SERVER_MESSAGE, /모두 만들지 못했어요/);
@@ -226,8 +227,8 @@ test('리본: "19장 완성 · 1장 실패" + 서버의 사실대로 된 문구 
 
 // ── ③ [실패한 컷만 다시 만들기] = 오늘의 [다시 시도]와 같은 길 ────────────────────────
 
-test('[실패한 컷만 다시 만들기]는 reset + startDetailPageGeneration(POST) 으로 새 잡을 연다', () => {
-  const at = editor.indexOf('>실패한 컷만 다시 만들기</Button>');
+test('[다시 만들기]는 보관 컷 기준을 유지하며 reset + startDetailPageGeneration(POST) 으로 새 잡을 연다', () => {
+  const at = editor.indexOf('>다시 만들기</Button>');
   assert.ok(at > 0, '버튼이 있다');
   const branch = editor.slice(editor.indexOf('genIncomplete && genIncomplete.retained.length > 0 ? ('), at);
   assert.match(branch, /const retryOf = retryOfIncomplete\(dpJob\);/);
@@ -235,13 +236,13 @@ test('[실패한 컷만 다시 만들기]는 reset + startDetailPageGeneration(P
   assert.match(branch, /setGenActive\(true\)/);
   assert.doesNotMatch(branch, /generateDetailPage|clearEditorWaitDraft/, '다른 생성 경로·작업본 삭제 없음');
   // 보관본이 없으면(기한 경과·보관 실패) "실패한 컷만"이라 말하지 않고 기존 [다시 시도]를 쓴다
-  assert.ok(editor.indexOf('>다시 시도</Button>', at) > at);
+  assert.ok(editor.indexOf('>다시 만들기</Button>', at + 1) > at);
   // store: 새 잡(POST)은 retryOf 를 들고 시작하고, 재시도 대상 표식으로 쓴다
   assert.match(store, /async startDetailPageGeneration\(projectId, \{ retryOf = null \} = \{\}\)/);
   assert.match(store, /status: 'running', projectId, startedAt: Date\.now\(\), retryOf \}/);
   assert.match(store, /running\.jobId \? \{ jobId: running\.jobId \} : await api\.startDetailPage\(projectId\)/);
   // 실패 종결: 오늘의 초기화 위에 부분 실패만 덧씌운다
-  assert.match(store, /cuts: \{\},\s*live: \[\],[\s\S]{0,200}\.\.\.incompleteFailurePatch\(job\),\s*\}\);/);
+  assert.match(store, /cuts: \{\},\s*live: \[\],[\s\S]{0,600}\.\.\.incompleteFailurePatch\(job\),\s*\}\);/);
 });
 
 test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기] → 같은 프로젝트로 POST 1번, 보관 수를 들고 시작', async () => {
@@ -285,8 +286,8 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     let job = useAppStore.getState().detailPageJob;
     assert.equal(job.status, 'error');
     assert.equal(job.jobId, 'job-1', '보관본 미리보기가 쓸 실패 잡 id 를 지킨다');
-    assert.equal(job.errorMessage, SERVER_MESSAGE);
-    assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 실패');
+    assert.equal(job.errorMessage, '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+    assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 미완성');
     assert.deepEqual(job.failedCuts, ['sb7']);
     assert.equal(job.cuts.sb1.done, true);
     assert.equal(job.cuts.sb1.url, null);
@@ -307,6 +308,35 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     assert.equal(retryReuseHint(job), '보관된 19장은 그대로 써요');
     useAppStore.getState().resetDetailPageJob();   // 폴링 루프 무효화
     await pending;
+
+    for (const [response, message, code] of [
+      [{ ...failedJob(), errorMessage: '아직 못 만든 컷이 있어요. 완성된 컷은 보관돼 있어요.' },
+        '아직 못 만든 컷이 있어요. 완성된 컷은 보관돼 있어요.', 'incomplete_cuts'],
+      [{ ...failedJob(), errorMessage: '' }, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.', 'incomplete_cuts'],
+      [{ status: 'error', errorMessage: '' }, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.', null],
+      [{ status: 'cancelled', errorMessage: '' }, '다시 만들 수 있어요.', 'job_cancelled'],
+    ]) {
+      useAppStore.getState().resetDetailPageJob();
+      globalThis.__icApi.getJob = async () => response;
+      await useAppStore.getState().startDetailPageGeneration(PID);
+      const terminal = useAppStore.getState().detailPageJob;
+      assert.equal(terminal.status, 'error');
+      assert.equal(terminal.errorMessage, message);
+      assert.equal(terminal.errorCode, code);
+    }
+    useAppStore.getState().resetDetailPageJob();
+    globalThis.__icApi.startDetailPage = async () => { throw new Error(); };
+    await useAppStore.getState().startDetailPageGeneration(PID);
+    assert.equal(useAppStore.getState().detailPageJob.errorMessage, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.');
+    for (const [status, errorCode, message] of [
+      ['error', null, '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'],
+      ['error', 'incomplete_cuts', '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'],
+      ['cancelled', null, '다시 만들 수 있어요.'],
+    ]) {
+      useAppStore.getState().resetDetailPageJob();
+      useAppStore.getState().seedDetailPageJob({ id: PID, status: 'draft', latestJobs: { detailPage: { id: JID, status, errorCode } } });
+      assert.equal(useAppStore.getState().detailPageJob.errorMessage, message);
+    }
   } finally {
     delete globalThis.__icApi;
     await server.close();

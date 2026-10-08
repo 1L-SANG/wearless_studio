@@ -14,12 +14,14 @@ import base64
 import json
 import logging
 import time
+from email.utils import parsedate_to_datetime
 
 import httpx
 
 from ..config import Settings
 from ..openai_key_fallback import (
     has_openai_api_key,
+    is_openai_terminal_account_error,
     request_with_openai_key_fallback,
 )
 from .gemini_image import InlineImage, run_cpu_bound
@@ -33,6 +35,25 @@ _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:g
 class VisionError(RuntimeError):
     """분석 LLM 호출/파싱 실패 — 워커·라우트가 한국어 error 봉투로 매핑."""
 
+    def __init__(self, message, *, unknown_cause="provider_error", retry_after_seconds=None):
+        super().__init__(message)
+        self.unknown_cause = unknown_cause
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_after_seconds(header):
+    """Only rate-limit rejudgments wait, for at most ten seconds."""
+    try:
+        value = (header or "").strip()
+        if value.isascii() and value.isdigit():
+            return min(int(value), 10)
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            raise ValueError("Retry-After date has no timezone")
+        return min(10, max(0, date.timestamp() - time.time()))
+    except (ValueError, TypeError, OverflowError):
+        return 2
+
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
@@ -44,18 +65,18 @@ def _envelope_json(res, provider: str) -> dict:
     try:
         return res.json()
     except ValueError as e:  # json.JSONDecodeError ⊂ ValueError
-        raise VisionError(f"{provider} 응답 파싱 실패: {e}") from e
+        raise VisionError(f"{provider} 응답 파싱 실패: {e}", unknown_cause="invalid_response") from e
 
 
 def _parse_json(text: str, provider: str) -> dict:
-    if not text or not text.strip():
-        raise VisionError(f"{provider} 응답이 비어 있어요.")
+    if not isinstance(text, str) or not text.strip():
+        raise VisionError(f"{provider} 응답이 비어 있어요.", unknown_cause="invalid_response")
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError) as e:
-        raise VisionError(f"{provider} JSON 파싱 실패: {e}") from e
+        raise VisionError(f"{provider} JSON 파싱 실패: {e}", unknown_cause="invalid_response") from e
     if not isinstance(parsed, dict):
-        raise VisionError(f"{provider} 응답이 객체가 아니에요.")
+        raise VisionError(f"{provider} 응답이 객체가 아니에요.", unknown_cause="invalid_response")
     return parsed
 
 
@@ -84,16 +105,25 @@ def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict,
 
 def _parse_gpt_response(res, metadata=None, requested_model=None) -> dict:
     data = _envelope_json(res, "OpenAI")
+    if not isinstance(data, dict):
+        raise VisionError("OpenAI 응답이 객체가 아니에요.", unknown_cause="invalid_response")
     choices = data.get("choices") or []
+    if not isinstance(choices, list) or any(not isinstance(choice, dict) for choice in choices):
+        raise VisionError("OpenAI 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
     choice = (choices or [{}])[0]
     msg = choice.get("message") or {}
+    if not isinstance(msg, dict):
+        raise VisionError("OpenAI 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
     if metadata is not None:
         metadata.update(requested_model=requested_model, returned_model=data.get("model"),
                         usage=data.get("usage"), finish_reason=choice.get("finish_reason"))
-        if len(choices) != 1 or choice.get("finish_reason") != "stop":
-            raise VisionError("OpenAI 검사 응답이 완결되지 않았어요.")
-    if choice.get("finish_reason") not in (None, "stop") or msg.get("refusal"):
-        raise VisionError("OpenAI 응답이 완결되지 않았거나 요청이 거절됐어요.")
+    if msg.get("refusal") or choice.get("finish_reason") == "content_filter":
+        raise VisionError("OpenAI 요청이 거절됐어요.", unknown_cause="provider_rejection")
+    if metadata is not None and (len(choices) != 1 or choice.get("finish_reason") != "stop"):
+        raise VisionError("OpenAI 검사 응답이 완결되지 않았어요.", unknown_cause="invalid_response")
+    if choice.get("finish_reason") not in (None, "stop"):
+        raise VisionError("OpenAI 응답이 완결되지 않았거나 요청이 거절됐어요.",
+                          unknown_cause="invalid_response")
     return _parse_json(msg.get("content") or "", "OpenAI")
 
 
@@ -103,7 +133,7 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
                     image_detail=None, max_completion_tokens=None, metadata=None) -> dict:
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
     if not has_openai_api_key(settings):
-        raise VisionError("OPENAI_API_KEY 미설정")
+        raise VisionError("OPENAI_API_KEY 미설정", unknown_cause="configuration")
     body = await run_cpu_bound(_gpt_body, model, prompt, images, schema,
                                reasoning_effort, image_detail, max_completion_tokens)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -115,7 +145,14 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
         selected = await request_with_openai_key_fallback(settings, send)
         res = selected.response
     if res.status_code != 200:
-        raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
+        cause = ("configuration" if is_openai_terminal_account_error(res)
+                 else "provider_error" if res.status_code in {408, 409, 429} or res.status_code >= 500
+                 else "configuration" if res.status_code in {401, 402, 403, 404}
+                 else "invalid_input")
+        retry_after = (_retry_after_seconds(getattr(res, "headers", {}).get("Retry-After"))
+                       if res.status_code == 429 and cause == "provider_error" else None)
+        raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}", unknown_cause=cause,
+                          retry_after_seconds=retry_after)
     return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
 
 

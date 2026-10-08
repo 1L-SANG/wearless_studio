@@ -2,8 +2,13 @@
 // 라이선스 확인 서비스(holder) 사정은 여기 오지 않는다 — 서버가 일반 실패로 바꿔서 보낸다.
 // 셀러는 "라이선스 확인 중"·"켜는 중" 을 몰라야 한다(2026-09-14 제품 결정).
 const PASS_THROUGH_CODES = new Set(['mannequin_quality_failed']);
-export function jobFailure(job) {
-  const error = new Error(job.errorMessage || '작업에 실패했어요.');
+export function jobFailureMessage(message, { creditsReleased = false } = {}) {
+  if (message && !/실패/.test(message)) return message;
+  return '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.'
+    + (creditsReleased ? ' 크레딧은 빠지지 않았어요.' : '');
+}
+export function jobFailure(job, options) {
+  const error = new Error(jobFailureMessage(job.errorMessage, options));
   const code = job.result?.errorCode;
   error.code = PASS_THROUGH_CODES.has(code) ? code : 'job_failed';
   return error;

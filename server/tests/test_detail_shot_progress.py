@@ -11,6 +11,7 @@ import pytest
 
 from app.agents.detail_shot_pipeline import DetailShotRejected
 from app.agents.gemini_image import InlineImage
+from app import repo
 from app.workers import detail_shot_runtime
 from app.workers.detail_shot_runtime import ProgressStore
 
@@ -260,4 +261,208 @@ def test_progress_survives_new_store_and_lost_lease():
             with pytest.raises(DetailShotRejected, match='lease_lost'):
                 await first.finish({'passed': True})
 
+    asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_retry_claim_fences_candidate_identity_concurrency_and_new_store():
+    import copy
+    state = {'phase': 'judged', 'attempts': 1, 'fingerprint': 'recipe',
+             'candidate': {'attempt': 1, 'sha256': 'candidate'},
+             'qc': {'fingerprint': 'recipe', 'attempts': 1,
+                    'judgments': [{'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'timeout'}]}}
+    original = copy.deepcopy(state)
+    async def check():
+        nonlocal state
+        lock = asyncio.Lock()
+        async def change(mutate=None):
+            nonlocal state
+            async with lock:
+                if mutate:
+                    state = copy.deepcopy(mutate(copy.deepcopy(state)))
+                return copy.deepcopy(state)
+        first, reopened = ProgressStore.__new__(ProgressStore), ProgressStore.__new__(ProgressStore)
+        for store in (first, reopened):
+            store._change = change
+            store.job = {'lease_token': 'lease'}
+        for fp, attempt, candidate_hash in [('changed', 1, 'candidate'),
+                                            ('recipe', 2, 'candidate'), ('recipe', 1, 'changed')]:
+            with pytest.raises(DetailShotRejected):
+                await first.claim_judgment_retry(fp, attempt, candidate_hash)
+            assert state == original
+        results = await asyncio.gather(
+            first.claim_judgment_retry('recipe', 1, 'candidate'),
+            reopened.claim_judgment_retry('recipe', 1, 'candidate'), return_exceptions=True)
+        assert sum(isinstance(r, DetailShotRejected) for r in results) == 1
+        assert len(state['judgmentRetries']) == 1
+        assert state['phase'] == 'rejudging'
+        with pytest.raises(DetailShotRejected):
+            await reopened.claim('recipe')
+        with pytest.raises(DetailShotRejected):
+            await reopened.record_judgment(original['qc'])
+        with pytest.raises(DetailShotRejected):
+            await reopened.recover_judgment_retry()
+        assert state['phase'] == 'rejudging'
+        reopened.job = {'lease_token': 'new-lease'}
+        recovered = await reopened.recover_judgment_retry()
+        assert recovered['phase'] == 'judged'
+        assert recovered['judgmentRetries'][0]['status'] == 'INTERRUPTED'
+        assert len(recovered['qc']['judgments']) == 1
+        with pytest.raises(DetailShotRejected):
+            await reopened.claim_judgment_retry('recipe', 1, 'candidate')
+    asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_retry_completion_replaces_only_its_candidate_and_cannot_be_written_twice():
+    import copy
+    state = {'phase': 'judged', 'attempts': 2, 'fingerprint': 'recipe',
+             'candidate': {'attempt': 2, 'sha256': 'candidate'},
+             'qc': {'fingerprint': 'recipe', 'attempts': 2,
+                    'judgments': [{'attempt': 1, 'decision': 'FAIL'},
+                                  {'attempt': 2, 'decision': 'UNKNOWN', 'unknownCause': 'timeout'}]}}
+    store = ProgressStore.__new__(ProgressStore)
+    store.job = {'lease_token': 'lease'}
+    async def change(mutate=None):
+        nonlocal state
+        if mutate:
+            state = copy.deepcopy(mutate(copy.deepcopy(state)))
+        return copy.deepcopy(state)
+    store._change = change
+    async def check():
+        await store.claim_judgment_retry('recipe', 2, 'candidate')
+        final = {'fingerprint': 'recipe', 'attempts': 2,
+                 'judgments': [{'attempt': 1, 'decision': 'FAIL'}, {'attempt': 2, 'decision': 'PASS', 'passed': True}]}
+        invalid = copy.deepcopy(final)
+        invalid['judgments'].append({'attempt': 2, 'decision': 'PASS'})
+        with pytest.raises(DetailShotRejected):
+            await store.record_judgment_retry(invalid)
+        assert state['phase'] == 'rejudging'
+        report = await store.record_judgment_retry(final)
+        assert len(state['qc']['judgments']) == 2
+        assert state['qc']['judgments'][0] == {'attempt': 1, 'decision': 'FAIL'}
+        assert state['qc']['judgments'][1]['decision'] == 'PASS'
+        assert report['judgmentRetries'][0]['status'] == 'COMPLETE'
+        with pytest.raises(DetailShotRejected):
+            await store.record_judgment_retry(final)
+        with pytest.raises(DetailShotRejected):
+            await store.claim_judgment_retry('recipe', 2, 'candidate')
+    asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_retry_claim_is_atomic_between_postgres_connections_and_survives_lease_recovery():
+    import uuid
+    from psycopg import sql
+    # Dedicated throwaway schema on the local test database only.
+    url = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+    async def check():
+        try:
+            admin = await psycopg.AsyncConnection.connect(url, row_factory=dict_row, connect_timeout=2)
+        except psycopg.OperationalError:
+            if os.getenv('CI'):
+                raise
+            pytest.skip('Local test Postgres is not running')
+        schema = 'detail_retry_test_' + uuid.uuid4().hex
+        async with admin:
+            await admin.execute(sql.SQL('create schema {}').format(sql.Identifier(schema)))
+            await admin.execute(sql.SQL('create table {}.jobs (id text, user_id text, project_id text, '
+                                        "status text, locked_by text, metadata jsonb default '{{}}'::jsonb)").format(sql.Identifier(schema)))
+            await admin.execute(sql.SQL("insert into {}.jobs values ('j','u','p','running','lease','{{}}')").format(sql.Identifier(schema)))
+            await admin.commit()
+            try:
+                @asynccontextmanager
+                async def connection():
+                    async with await psycopg.AsyncConnection.connect(
+                            url, row_factory=dict_row, connect_timeout=2,
+                            options=f'-c search_path={schema}') as conn:
+                        yield conn
+                app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=connection)))
+                job = {'id': 'j', 'user_id': 'u', 'project_id': 'p', 'lease_token': 'lease'}
+                first, other = ProgressStore(app, job, 'cut'), ProgressStore(app, job, 'cut')
+                initial = {'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'timeout'}
+                await first._change(lambda _: {'phase': 'judged', 'fingerprint': 'recipe', 'attempts': 1,
+                                               'candidate': {'attempt': 1, 'sha256': 'candidate'},
+                                               'qc': {'fingerprint': 'recipe', 'attempts': 1, 'judgments': [initial]}})
+                results = await asyncio.gather(
+                    first.claim_judgment_retry('recipe', 1, 'candidate'),
+                    other.claim_judgment_retry('recipe', 1, 'candidate'), return_exceptions=True)
+                assert sum(isinstance(result, DetailShotRejected) for result in results) == 1
+                reopened = ProgressStore(app, job, 'cut')
+                state = await reopened.read()
+                assert state['phase'] == 'rejudging'
+                assert len(state['judgmentRetries']) == 1
+                with pytest.raises(DetailShotRejected):
+                    await reopened.claim_judgment_retry('recipe', 1, 'candidate')
+                await admin.execute(sql.SQL("update {}.jobs set locked_by='new-lease' where id='j'").format(sql.Identifier(schema)))
+                await admin.commit()
+                recovered = ProgressStore(app, {**job, 'lease_token': 'new-lease'}, 'cut')
+                state = await recovered.recover_judgment_retry()
+                assert state['phase'] == 'judged'
+                assert state['qc']['judgments'] == [initial]
+                assert state['judgmentRetries'][0]['status'] == 'INTERRUPTED'
+                with pytest.raises(DetailShotRejected, match='lease_lost'):
+                    await first.record_judgment_retry({'fingerprint': 'recipe', 'attempts': 1,
+                                                       'judgments': [{'attempt': 1, 'decision': 'PASS'}]})
+                with pytest.raises(DetailShotRejected):
+                    await recovered.claim_judgment_retry('recipe', 1, 'candidate')
+            finally:
+                await admin.execute(sql.SQL('drop schema {} cascade').format(sql.Identifier(schema)))
+                await admin.commit()
+    asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_detail_failure_persists_interrupted_retry_and_preserves_other_metadata(monkeypatch):
+    from unittest.mock import AsyncMock
+    settle = AsyncMock()
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    async def check():
+        try:
+            conn = await psycopg.AsyncConnection.connect(
+                'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+                row_factory=dict_row, connect_timeout=2)
+        except psycopg.OperationalError:
+            if os.getenv('CI'):
+                raise
+            pytest.skip('Local test Postgres is not running')
+        async with conn:
+            await conn.execute('create temp table jobs (id text, user_id text, project_id text, '
+                               'status text, locked_by text, locked_at timestamptz, '
+                               "finished_at timestamptz, error_message text, result jsonb, metadata jsonb default '{}'::jsonb)")
+            await conn.execute('create temp table job_events (job_id text, event_type text, payload jsonb)')
+            await conn.execute("insert into jobs (id,user_id,project_id,status,locked_by,metadata) "
+                               "values ('j','u','p','running','lease','{\"other\":\"keep\"}')")
+            await conn.commit()
+            @asynccontextmanager
+            async def connection():
+                yield conn
+            app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=connection)))
+            job = {'id': 'j', 'user_id': 'u', 'project_id': 'p', 'lease_token': 'lease'}
+            store = ProgressStore(app, job, 'cut')
+            initial = {'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'provider_error',
+                       'retryAfterSeconds': 2}
+            await store._change(lambda _: {
+                'phase': 'judged', 'fingerprint': 'recipe', 'attempts': 1,
+                'candidate': {'attempt': 1, 'sha256': 'candidate'},
+                'qc': {'fingerprint': 'recipe', 'attempts': 1, 'judgments': [initial]}})
+            await store.claim_judgment_retry('recipe', 1, 'candidate')
+            kwargs = dict(job_id='j', lease_token='lease', user_id='u', project_id='p', reserved=38,
+                          settle_key='k', message='interrupted', metadata={'error': 'worker_shutdown'},
+                          code='worker_shutdown', result={'errorCode': 'worker_shutdown'},
+                          job_metadata={'retainedCutKeys': {'b': 'private'}})
+            assert await repo.finalize_detail_page_failure(conn, **kwargs) is True
+            await conn.commit()
+            row = await (await conn.execute("select * from jobs where id='j'")).fetchone()
+            assert row['status'] == 'error' and row['error_message'] == 'interrupted'
+            assert row['result'] == {'errorCode': 'worker_shutdown'}
+            assert row['metadata']['other'] == 'keep'
+            assert row['metadata']['retainedCutKeys'] == {'b': 'private'}
+            state = row['metadata']['detailShots'][store.key]
+            assert state['phase'] == 'held' and state['judgmentRetryLease'] is None
+            assert state['qc']['judgments'] == [initial]
+            assert state['judgmentRetries'][-1]['status'] == 'INTERRUPTED'
+            assert state['qc']['judgmentRetries'] == state['judgmentRetries']
+            event = await (await conn.execute('select * from job_events')).fetchone()
+            assert event['payload'] == {'code': 'worker_shutdown', 'message': 'interrupted'}
+            assert await repo.finalize_detail_page_failure(conn, **kwargs) is False
+            assert settle.await_count == 1
+            assert settle.await_args.kwargs['reserved'] == 38
+            assert settle.await_args.kwargs['charge'] == 0
     asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)

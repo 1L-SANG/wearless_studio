@@ -93,7 +93,7 @@ export function createMannequinGenerationRunner({
           onJobChange(projectId, {
             status: 'error',
             progress: readProgress(projectId),
-            errorMessage: error?.message || '마네킹컷 생성에 실패했어요.',
+            errorMessage: error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.',
           });
           throw error;
         },
