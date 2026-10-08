@@ -2,6 +2,7 @@
 from io import BytesIO
 import asyncio
 import hashlib
+import copy
 from functools import wraps
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -11,6 +12,7 @@ from PIL import Image
 
 from app.agents.gemini_image import GeminiError, InlineImage
 from app.agents import detail_shot_pipeline as pipeline
+from app.workers.detail_shot_runtime import ProgressStore
 
 
 def sync_test(fn):
@@ -34,9 +36,29 @@ class MemoryProgress:
         if image is not None and self.state.get('attempts'):
             self.images.setdefault(self.state['attempts'], image)
         self.claims = 0
+        self.lock = asyncio.Lock()
+        self.job = {'lease_token': 'lease'}
+        if image is not None:
+            self.state.setdefault('candidate', {'attempt': self.state.get('attempts'),
+                                               'sha256': hashlib.sha256(image.data).hexdigest()})
 
     async def read(self):
-        return dict(self.state)
+        return copy.deepcopy(self.state)
+
+    async def _change(self, mutate=None):
+        async with self.lock:
+            if mutate:
+                self.state = copy.deepcopy(mutate(copy.deepcopy(self.state)))
+            return copy.deepcopy(self.state)
+
+    async def claim_judgment_retry(self, *args):
+        return await ProgressStore.claim_judgment_retry(self, *args)
+
+    async def record_judgment_retry(self, *args):
+        return await ProgressStore.record_judgment_retry(self, *args)
+
+    async def recover_judgment_retry(self):
+        return await ProgressStore.recover_judgment_retry(self)
 
     async def claim(self, fingerprint):
         if self.state.get('phase') == 'generating' or self.state.get('attempts', 0) >= 3:
@@ -50,6 +72,7 @@ class MemoryProgress:
         self.image = image
         self.images[attempt] = image
         self.state.update(fingerprint=fingerprint, attempts=attempt, phase='candidate')
+        self.state['candidate'] = {'attempt': attempt, 'sha256': hashlib.sha256(image.data).hexdigest()}
 
     async def load_candidate(self, attempt=None):
         return self.image if attempt is None else self.images.get(attempt)
@@ -59,7 +82,7 @@ class MemoryProgress:
         self.state['phase'] = 'judging'
 
     async def record_judgment(self, metadata):
-        self.state.update(phase='judged', qc=metadata)
+        self.state.update(phase='judged', qc=copy.deepcopy(metadata))
 
     async def finish(self, metadata, *, selected_attempt=None):
         if selected_attempt is not None:
@@ -67,7 +90,7 @@ class MemoryProgress:
             if self.image is None:
                 raise pipeline.DetailShotRejected('detail_checkpoint_unavailable')
         self.state.update(phase='accepted' if metadata['passed'] or metadata.get('publishedBestEffort') else 'held',
-                          qc=metadata)
+                          qc=copy.deepcopy(metadata))
 
     async def record_retryable_failure(self, metadata):
         assert self.state['phase'] == 'generating'
@@ -609,3 +632,167 @@ async def test_cached_failed_judgment_corrects_once_without_rejudging_old_image(
     _, report = await run(setup, progress)
     assert client.generate_content_image.await_count == qc.await_count == 1
     assert report['attempts'] == 2 and len(report['judgments']) == 2
+
+
+def transient_unknown(cause='timeout'):
+    return {**verdict('UNKNOWN'), 'unknownCause': cause}
+
+
+@pytest.mark.parametrize('cause', ['timeout', 'provider_error', 'invalid_response'])
+@sync_test
+async def test_transient_unknown_rejudges_the_same_bound_candidate_once(setup, cause):
+    qc, client, settings = setup
+    qc.side_effect = [transient_unknown(cause), verdict('PASS')]
+    progress = MemoryProgress()
+    sources = [photo()]
+    target = {'kind': 'neckline', 'sourceSha256': hashlib.sha256(sources[0].data).hexdigest(),
+              'region': {'x': .1, 'y': .1, 'w': .7, 'h': .7}}
+    selected, report = await pipeline.generate_verified(
+        settings, client, sources, target=target, direction='front', progress=progress)
+    assert report['passed'] is True
+    assert len(report['judgments']) == 1
+    assert report['attempts'] == client.generate_content_image.await_count == 1
+    assert qc.await_count == 2
+    first, second = qc.await_args_list
+    assert first.args[1] is second.args[1] is sources
+    assert first.args[2] is second.args[2]
+    assert first.args[2].data == selected.data
+    assert first.kwargs['target'] is second.kwargs['target'] is target
+    assert first.kwargs['direction'] == second.kwargs['direction'] == 'front'
+    ledger = progress.state['judgmentRetries']
+    assert len(ledger) == 1 and ledger[0]['status'] == 'COMPLETE'
+    assert ledger[0]['initialJudgment']['decision'] == 'UNKNOWN'
+    assert ledger[0]['judgment']['decision'] == 'PASS'
+    assert report['judgmentRetries'] == ledger
+
+
+@pytest.mark.parametrize('cause', ['invalid_input', 'configuration', 'uncertain_evidence', None])
+@sync_test
+async def test_nontransient_unknown_keeps_the_existing_cut_failure(setup, cause):
+    qc, client, _ = setup
+    qc.return_value = {**verdict('UNKNOWN'), 'unknownCause': cause}
+    progress = MemoryProgress()
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+        await run(setup, progress)
+    assert qc.await_count == client.generate_content_image.await_count == 1
+    assert len(progress.state['qc']['judgments']) == 1
+    assert not progress.state.get('judgmentRetries')
+
+
+@sync_test
+async def test_unknown_retry_stops_without_another_judgment_or_generation(setup):
+    qc, client, _ = setup
+    qc.side_effect = [transient_unknown(), transient_unknown()]
+    progress = MemoryProgress()
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+        await run(setup, progress)
+    assert qc.await_count == 2 and client.generate_content_image.await_count == 1
+    assert len(progress.state['qc']['judgments']) == 1
+    assert progress.state['qc']['judgments'][0]['decision'] == 'UNKNOWN'
+    assert len(progress.state['judgmentRetries']) == 1
+    assert progress.state['phase'] == 'held'
+
+
+@sync_test
+async def test_rejudgments_do_not_change_the_third_generation_branch_or_three_call_cap(setup):
+    qc, client, _ = setup
+    qc.side_effect = [transient_unknown(), verdict('FAIL'),
+                      transient_unknown(), verdict('FAIL'),
+                      transient_unknown(), verdict('FAIL')]
+    progress = MemoryProgress()
+    _, report = await run(setup, progress)
+    assert report['fallbackUsed'] is True and report['publishedBestEffort'] is True
+    assert report['attempts'] == client.generate_content_image.await_count == 3
+    assert qc.await_count == 6
+    assert len(report['judgments']) == len(progress.state['judgmentRetries']) == 3
+    assert [j['attempt'] for j in report['judgments']] == [1, 2, 3]
+    assert 'Image 1 is the seller source photograph' in client.generate_content_image.await_args_list[2].args[1]
+    assert len(client.generate_content_image.await_args_list[2].args[2]) == 1
+
+
+@sync_test
+async def test_transient_unknown_on_final_candidate_still_uses_prior_fail_if_retry_is_unknown(setup):
+    qc, client, _ = setup
+    qc.side_effect = [verdict('FAIL'), verdict('FAIL'), transient_unknown(), transient_unknown()]
+    _, report = await run(setup)
+    assert report['publishedBestEffort'] is True
+    assert report['selectedAttempt'] in {1, 2}
+    assert len(report['judgments']) == 3
+    assert qc.await_count == 4 and client.generate_content_image.await_count == 3
+
+
+@pytest.mark.parametrize('checkpoint', ['before_claim', 'inflight', 'complete'])
+@sync_test
+async def test_restarting_at_retry_checkpoints_never_resends_a_claimed_judgment(setup, checkpoint):
+    qc, client, settings = setup
+    source, candidate = photo(), photo('pink')
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    initial = {**transient_unknown(), 'attempt': 1}
+    progress = MemoryProgress({'fingerprint': fp, 'attempts': 1, 'phase': 'judged',
+                               'qc': {'attempts': 1, 'fingerprint': fp, 'judgments': [initial]}}, candidate)
+    if checkpoint != 'before_claim':
+        await progress.claim_judgment_retry(fp, 1, hashlib.sha256(candidate.data).hexdigest())
+        if checkpoint == 'complete':
+            await progress.record_judgment_retry({'fingerprint': fp, 'attempts': 1,
+                                                  'judgments': [{**transient_unknown(), 'attempt': 1}]})
+        else:
+            progress.job = {'lease_token': 'restarted-lease'}
+    qc.return_value = verdict('PASS')
+    if checkpoint == 'before_claim':
+        _, report = await run(setup, progress)
+        assert report['passed'] is True
+    else:
+        with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+            await run(setup, progress)
+    assert qc.await_count == (1 if checkpoint == 'before_claim' else 0)
+    client.generate_content_image.assert_not_called()
+    assert len(progress.state['qc']['judgments']) == 1
+    assert len(progress.state['judgmentRetries']) == 1
+
+
+@sync_test
+async def test_simultaneous_retry_claims_only_authorize_one_judge_call(setup):
+    qc, client, settings = setup
+    source, candidate = photo(), photo('pink')
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'fingerprint': fp, 'attempts': 1, 'phase': 'judged',
+                               'qc': {'attempts': 1, 'fingerprint': fp,
+                                      'judgments': [{**transient_unknown(), 'attempt': 1}]}}, candidate)
+    started, release = asyncio.Event(), asyncio.Event()
+    async def retry(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return verdict('PASS')
+    qc.side_effect = retry
+    first = asyncio.create_task(run(setup, progress))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    with pytest.raises(pipeline.DetailShotRejected):
+        await run(setup, progress)
+    assert progress.state['phase'] == 'rejudging'
+    release.set()
+    _, report = await first
+    assert report['passed'] is True and len(report['judgments']) == 1
+    assert qc.await_count == 1
+    client.generate_content_image.assert_not_called()
+
+
+@sync_test
+async def test_interrupted_final_rejudgment_preserves_best_effort_without_any_provider_call(setup):
+    qc, client, settings = setup
+    source, candidate = photo(), photo('pink')
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    progress = MemoryProgress({'fingerprint': fp, 'attempts': 3, 'phase': 'judged',
+                               'qc': {'attempts': 3, 'fingerprint': fp,
+                                      'judgments': [{**verdict('FAIL'), 'attempt': 1},
+                                                    {**verdict('FAIL'), 'attempt': 2},
+                                                    {**transient_unknown(), 'attempt': 3}]}},
+                              candidate, images={1: photo('red'), 2: photo('blue')})
+    await progress.claim_judgment_retry(fp, 3, hashlib.sha256(candidate.data).hexdigest())
+    progress.job = {'lease_token': 'restarted-lease'}
+    selected, report = await run(setup, progress)
+    assert selected.data in {photo('red').data, photo('blue').data}
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] in {1, 2}
+    assert len(report['judgments']) == 3
+    assert report['judgmentRetries'][0]['status'] == 'INTERRUPTED'
+    qc.assert_not_called()
+    client.generate_content_image.assert_not_called()
