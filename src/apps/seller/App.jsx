@@ -25,6 +25,7 @@ import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { LegalRedirect } from '@/features/legal/LegalRedirect.jsx';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublication.jsx';
+import { isSummaryAnalysisEdit } from '@/features/generation-summary/summaryData.js';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -251,6 +252,7 @@ function ProductInputRoute() {
   const beginProject = useAppStore((s) => s.beginProject);
   const [entryDecision, setEntryDecision] = useState(() => {
     if (loginRequired) return 'checking';
+    if (isSummaryAnalysisEdit(locationState, useAppStore.getState())) return 'continue';
     const { projectId, projectPersisted } = useAppStore.getState();
     return getInputEntryDecision({
       slotClient: draftSlot,
@@ -293,6 +295,11 @@ function ProductInputRoute() {
     if (signingOut || loginRequired || userChanged) return;
     if (entryDecision !== 'checking') return;
     if (!isMockMode && authLoading) return;
+    if (isSummaryAnalysisEdit(locationState, useAppStore.getState())) {
+      draftSlot.resumeEntryWrites();
+      setEntryDecision('continue');
+      return;
+    }
     if (draftSlot.getToken()) draftSlot.pauseEntryWrites();
     let alive = true;
     const epoch = draftSlot.getIdentityEpoch();

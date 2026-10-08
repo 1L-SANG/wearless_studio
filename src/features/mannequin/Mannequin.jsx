@@ -55,6 +55,8 @@ import {
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
 } from './generationRunnerCore.js';
+import { GenerationSummary } from '@/features/generation-summary/GenerationSummary.jsx';
+import { buildGenerationSummary, summaryEditTarget } from '@/features/generation-summary/summaryData.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣', sleeve: '소매 기장' };
@@ -683,6 +685,8 @@ export function Mannequin() {
   const [catalogs, setCatalogs] = useState(null);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [creditShortfall, setCreditShortfall] = useState(null);
+  const [summaryProfile, setSummaryProfile] = useState(null);
+  const [storyboard, setStoryboard] = useState(null);
   const [creditQuote, setCreditQuote] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
     location.state?.creditResume?.action === 'detail-page' ? location.state.creditResume : null
@@ -694,6 +698,7 @@ export function Mannequin() {
   const regenerateProgressRef = useRef(0);
   const regenerateBaselineRef = useRef(null);
   const regenerateProfileRef = useRef(null);
+  const analysisEditsProfileRef = useRef(null);
   const knownLandedListRef = useRef(null);
   const selectionFitSaveRef = useRef(Promise.resolve());
   const exampleTrackRef = useRef(null);
@@ -710,6 +715,8 @@ export function Mannequin() {
   const selectedId = useAppStore((s) => s.selectedMannequinId);
   const selectMannequin = useAppStore((s) => s.selectMannequin);
   const syncCredits = useAppStore((s) => s.syncCredits);
+  const account = useAppStore((s) => s.account);
+  const copywriting = useAppStore((s) => s.copywriting);
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const loadRunRef = useRef(0);
@@ -792,10 +799,15 @@ export function Mannequin() {
       setCatalogs(nextCatalogs);
       setCreditQuote(nextCreditQuote);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
+      setStoryboard(nextStoryboard);
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
+      analysisEditsProfileRef.current = nextAnalysis?.fitProfile
+        || (nextAnalysis?.fitProfile === null
+          ? { ...draft, axes: Object.fromEntries(Object.keys(draft.axes || {}).map((axis) => [axis, null])) }
+          : draft);
       setStepState(initStepState(
         nextAnalysis?.subCategory === 'leggings' ? {} : axesFor(draft.category, draft.gender),
         matchingFitDefinition(nextMainMatchingItem, draft.gender) != null,
@@ -1402,7 +1414,7 @@ export function Mannequin() {
       handledRef: refreshForEditsHandledRef,
       readDirtyRevision: () => readGenerationRelevantEditsRevision(refreshProjectId),
       cutsExisted: initialCutsExistedRef.current,
-      regenerate: (onSucceeded) => regenerate(null, onSucceeded, { manual: false }),
+      regenerate: (onSucceeded) => regenerate(analysisEditsProfileRef.current, onSucceeded, { manual: false }),
       isTerminalFailure: (revision) => isGenerationRelevantEditsTerminalFailure(refreshProjectId, revision),
       clearDirty: (revision) => (
         useAppStore.getState().clearGenerationRelevantEdits(refreshProjectId, revision)
@@ -1446,7 +1458,7 @@ export function Mannequin() {
       regenerate();
       return;
     }
-    await continueWithSelectedVersion(buildFitProfile());
+    setSummaryProfile({ profile: buildFitProfile() });
   };
 
   const continueWithSelectedVersion = async (legacyProfile) => {
@@ -1478,8 +1490,27 @@ export function Mannequin() {
     }
   };
 
+  const editSummaryField = async (field) => {
+    if (busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setBusy(true);
+    const record = cutFitProfileRecord(selected);
+    const profile = record.recorded ? record.profile : summaryProfile.profile;
+    try {
+      await selectionFitSaveRef.current.catch(() => {});
+      await selectMannequin(selected.id);
+      await api.saveAnalysis(projectId, { fitProfile: profile });
+      const target = summaryEditTarget(field, projectId);
+      navigate(target.path, { state: target.state });
+    } catch {
+      submittingRef.current = false;
+      setBusy(false);
+      pushToast('선택한 버전을 저장하지 못했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+    }
+  };
+
   const onContinueCurrentVersion = () => (
-    continueWithSelectedVersion(analysis?.fitProfile ?? null)
+    setSummaryProfile({ profile: analysis?.fitProfile ?? null })
   );
 
   const regenerateActive = REGENERATE_ACTIVE_STATES.has(regenerateState);
@@ -1533,6 +1564,16 @@ export function Mannequin() {
   return (
     <div className="wizard wide fit-page">
       {doneBlocked && <DoneGuardModal />}
+      {summaryProfile && !creditShortfall && (
+        <GenerationSummary
+          summary={buildGenerationSummary({ analysis, catalogs, blocks: storyboard, aiCutCount, copywriting })}
+          availableCredits={account?.credits}
+          busy={busy}
+          onBack={() => { if (!submittingRef.current) setSummaryProfile(null); }}
+          onConfirm={() => continueWithSelectedVersion(summaryProfile.profile)}
+          onEdit={editSummaryField}
+        />
+      )}
       {creditShortfall && (
         <CreditShortfallModal
           shortfall={creditShortfall}

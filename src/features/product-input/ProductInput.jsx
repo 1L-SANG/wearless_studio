@@ -61,6 +61,7 @@ import {
 } from '@/lib/draftSlot.js';
 import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { isSummaryAnalysisEdit } from '@/features/generation-summary/summaryData.js';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
@@ -501,6 +502,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const navigate = useNavigate();
   const mobile = isMobileDevice();
   const location = useLocation();
+  const summaryEditing = !mobile && isSummaryAnalysisEdit(location.state, useAppStore.getState());
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -794,7 +796,9 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     if (opts?.expectedQuote) mannequinQuoteConfirmation.remember('draft', 'generate', opts.expectedQuote);
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
-    if (!guardMannequinCredits()) return;
+    if (!summaryEditing) {
+      if (!guardMannequinCredits()) return;
+    }
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
     // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
     if (inputConsistency && !consistencyAck && !force) {
@@ -825,6 +829,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
+      if (summaryEditing) {
+        if (isCurrentRun()) navigate('/create/storyboard');
+        return;
+      }
       latestSnapshot = {
         product: latestProductRef.current,
         analysis: latestAnalysisRef.current,
@@ -1631,6 +1639,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       {!mobile && phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
+            nextLabel={summaryEditing ? '콘티로 돌아가기' : undefined} summaryEditing={summaryEditing}
             projectId={analysisProjectId}
             onAnalysisReplace={setAnalysis}
             onChange={onAnalysisFormChange}

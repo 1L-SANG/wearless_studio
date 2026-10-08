@@ -10,6 +10,7 @@ import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppSt
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { summaryFitEditor, summaryFitPatch } from '@/features/generation-summary/summaryData.js';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
 import {
@@ -467,7 +468,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
 
 export function AnalysisForm({
   inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
-  onConfirmingChange,
+  onConfirmingChange, nextLabel, summaryEditing = false,
 }) {
   const a = analysis;
   const toast = useToast();
@@ -881,7 +882,8 @@ export function AnalysisForm({
     setMeasure(key, value);
   };
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
-  const fitOpts = fitOptsOf(a).opts;
+  const summaryFit = summaryEditing ? summaryFitEditor(a) : null;
+  const fitOpts = summaryFit?.options || fitOptsOf(a).opts;
   const genderOptions = a.clothingType === 'dress'
     ? catalogs.genders.filter((option) => option.value === 'women')
     : catalogs.genders;
@@ -940,7 +942,8 @@ export function AnalysisForm({
               }} /></div>
           {fitOpts.length > 0 && (
             <div className="field-row"><label className="lbl">핏</label>
-              <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
+              <Chips options={fitOpts} value={summaryFit ? summaryFit.value : a.fit}
+                onChange={(v) => onChange(summaryEditing ? summaryFitPatch(a, v) : withFitProfile({ fit: v }, 'seller'))} /></div>
           )}
         </div>
       </div>
@@ -1222,7 +1225,7 @@ export function AnalysisForm({
       <Button variant="primary" size="lg" iconRight="arrowRight"
         className="af-cta-confirm"
         disabled={composeModeSaving || confirming}
-        onClick={confirmAnalysis}>{mannequinGenerationCtaLabel(mannequinGenerationCost)}</Button>
+        onClick={confirmAnalysis}>{nextLabel || mannequinGenerationCtaLabel(mannequinGenerationCost)}</Button>
     </div>
   );
 

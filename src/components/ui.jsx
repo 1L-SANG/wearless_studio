@@ -222,14 +222,14 @@ function anchoredStyle(rect) {
   return style;
 }
 
-export function Modal({ children, onClose, wide, narrow, anchorRect, glass }) {
+export function Modal({ children, onClose, wide, narrow, anchorRect, glass, className = '' }) {
   useEffect(() => { const h = (e) => e.key === 'Escape' && onClose && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, [onClose]);
   // body 로 포탈한다 — 페이지 전환 애니메이션(fxPageIn)이 .app-main 의 자식들에 transform·filter 를
   // 걸어두는데, 그런 요소는 자손의 position:fixed 기준(containing block)이 되어버린다. 페이지 안에
   // 그대로 렌더하면 .overlay 의 inset:0 이 뷰포트가 아니라 그 래퍼에 맞춰져 화면 일부만 덮는다.
   return createPortal(
     <div className={`overlay${anchorRect ? ' anchored' : ''}`} onClick={onClose}>
-      <div className={`modal${wide ? ' wide' : ''}${narrow ? ' narrow' : ''}${glass ? ' glass' : ''}`}
+      <div className={`modal${wide ? ' wide' : ''}${narrow ? ' narrow' : ''}${glass ? ' glass' : ''}${className ? ` ${className}` : ''}`}
         style={anchoredStyle(anchorRect)} onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>,
     document.body,

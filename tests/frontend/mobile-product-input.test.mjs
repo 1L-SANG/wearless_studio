@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { isSummaryAnalysisEdit } from '../../src/features/generation-summary/summaryData.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { transformWithEsbuild } from 'vite';
@@ -68,6 +69,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
+    isSummaryAnalysisEdit,
     ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
     flowScreenName: () => '입력 화면', shouldWarnFlowAbandon: () => false,

@@ -112,7 +112,7 @@ for (const savedSelection of ['A-1', 'missing-from-partial']) {
       api: { getProduct: async () => ({}), getAnalysis: async () => ({}), getCatalogs: async () => ({}), getStoryboard: async () => [],
         getCreditQuote: async () => ({}), getMannequins: async () => { calls.push('cuts'); return ++reads === 1 ? full.slice(0, 2) : full; },
         getProject: async () => { calls.push('selection'); return { id: 'p', selectedMannequinId: savedSelection }; } },
-      generationProgressFor: () => 0, uniqueGenerationCutCount: () => 0, realFaceAllowedCut: () => true,
+      analysisEditsProfileRef: { current: null }, generationProgressFor: () => 0, uniqueGenerationCutCount: () => 0, realFaceAllowedCut: () => true,
       resolveMainMatchingItem: () => null, createFitProfileDraft: () => ({}), createCutFitProfileDraft: () => ({}),
       initStepState: () => ({}), axesFor: () => ({}), matchingFitDefinition: () => null,
       landedGenerationRelevantEditsAttemptRevision: () => null, cutsExistedBeforeInitialGeneration: () => true,
@@ -121,7 +121,7 @@ for (const savedSelection of ['A-1', 'missing-from-partial']) {
       requestMannequinGeneration() {}, extractCuts: (v) => v, syncCredits() {}, clearInitialGenerationRequested() {}, updateMannequinJob() {},
       selectMannequin: (id) => patches.push(id), analysisForCutFitProfile: (an) => an, pushToast() {},
     };
-    for (const key of ['Phase', 'ErrorMsg', 'Progress', 'Product', 'Analysis', 'Catalogs', 'RealModels', 'CreditQuote', 'AiCutCount', 'HorizonCutCount', 'FitProfileDraft', 'StepState', 'Cuts', 'ChangedQuote']) bindings[`set${key}`] = (value) => { view[key] = value; };
+    for (const key of ['Phase', 'ErrorMsg', 'Progress', 'Product', 'Analysis', 'Catalogs', 'RealModels', 'CreditQuote', 'AiCutCount', 'HorizonCutCount', 'Storyboard', 'FitProfileDraft', 'StepState', 'Cuts', 'ChangedQuote']) bindings[`set${key}`] = (value) => { view[key] = value; };
     await evaluate(callback, bindings, 'loadMannequins')();
     assert.equal(view.Phase, 'ready');
     assert.deepEqual(view.Cuts, full);

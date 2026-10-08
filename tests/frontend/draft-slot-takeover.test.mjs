@@ -879,7 +879,7 @@ test('logout clears slot identity and remounts input for the next user', () => {
 test('promotion happens only at confirmation and cleans the slot before flow lock and navigation', () => {
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const submit = input.slice(input.indexOf('const submit = async () =>'), input.indexOf('const nameCard ='));
-  const confirm = input.slice(input.indexOf('const goToStoryboard = async (opts) =>'), input.indexOf('const queueAnalysisPatch ='));
+  const confirm = input.slice(input.indexOf('confirm: async () => {', input.indexOf('const goToStoryboard = async (opts) =>')), input.indexOf('const queueAnalysisPatch ='));
   assert.match(submit, /api\.analyzeProduct\(null, \{ product \}\)/);
   assert.doesNotMatch(submit, /ensureProject|createProject|uploadProductPhotos|saveProduct/);
   assert.match(confirm, /promoteDraftToProject\(draft, \{/);
