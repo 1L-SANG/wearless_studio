@@ -429,13 +429,12 @@ async def run_editor_image_job(app, job: dict) -> None:
             # colorId는 목표 색상이며, 디테일만 위 정책에 따라 타색 근거가 추가될 수 있다.
             cut_spec = {
                 k: new_payload.get(k)
-                for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "pose",
+                for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "sideStyle",
                           "outerClosureState", "exampleId", "modelId", "model_id",
                           "colorId", "matchIds", "refScope", "spaceGroupId", "spaceVariation",
                           "spaceSetMemberOrder", "horizonBackgroundMode")
             }
             cut_spec["matchIds"] = matching_ids
-            cut_spec = cut_generator.clear_legacy_studio_pose(cut_spec)
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
@@ -730,9 +729,6 @@ async def run_editor_image_job(app, job: dict) -> None:
             scene_suffix_start = len(images)
             example_scope = None
             example_id = normalized.get("exampleId")
-            pose_overrides_example = (
-                normalized["pose"] != "auto" and normalized["refScope"] == "pose"
-            )
             if retry_binding is not None and cut_spec.get("cutType") == "horizon":
                 reference = retry_binding["horizonReference"]
                 try:
@@ -748,7 +744,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 cut_generator.bind_horizon_reference(cut_spec, reference)
                 example_scope = "all"
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
-            elif retry_binding is None and example_id and not pose_overrides_example:
+            elif retry_binding is None and example_id:
                 scope = normalized["refScope"]
                 if example_id.startswith("ss_"):
                     try:

@@ -393,7 +393,7 @@ def test_normalize_mirror_strips_direction_and_clamps():
     assert spec["direction"] is None          # 거울샷은 방향 개념 없음
     assert spec["shot"] == "full"             # 폐기 샷은 역할 기본값으로 복귀
     assert spec["faceExposure"] == "hide"     # 기본 '폰으로 가림'
-    assert spec["pose"] == "auto"             # 셀피 구도 자동 고정
+    assert "pose" not in spec                 # 과거 포즈 선택값은 제거
 
 
 def test_normalize_mirror_keeps_medium_and_show():
@@ -780,8 +780,9 @@ def test_side_example_must_match_the_side_sub_kind_not_just_the_direction(
     def compat(example_id, side_style):
         spec = cut.normalize_spec({
             "cutType": "horizon", "direction": "side", "sideStyle": side_style,
-            "refScope": "all", "exampleId": example_id,
+            "refScope": "all",
         })
+        spec["exampleId"] = example_id
         return cut.apply_reference_compatibility(spec)["_referenceDirectionCompatible"]
 
     try:
@@ -1250,19 +1251,6 @@ def _studio(n, **extra):
     return [{"sectionRole": "studio", "cutType": "horizon", **extra} for _ in range(n)]
 
 
-def test_the_fit_section_gets_a_profile_a_three_quarter_and_a_back():
-    """옆이 두 칸인 건 같은 "옆모습" 주문이 두 가지 다른 그림이기 때문이다.
-
-    profile      = 진짜 옆모습(각도 교체가 실사진 머리를 붙인다)
-    threeQuarter = 사선 3/4(얼굴 패스가 그린다) — 09-17 에 잘 나왔던 그 컷
-    """
-    out = content_roles.canonicalize_storyboard(_studio(6))
-    plan = [(b["direction"], b.get("sideStyle")) for b in out]
-    assert plan[0] == ("front", None), "기준 컷은 정면으로 남는다"
-    assert plan[1:4] == [("side", "profile"), ("side", "threeQuarter"), ("back", None)]
-    assert plan[4:] == [("front", None), ("front", None)]
-
-
 def test_the_side_style_is_dropped_when_the_cut_is_not_a_side():
     """방향을 바꾼 카드에 옛 값이 따라다니면 안 된다."""
     out = content_roles.canonicalize_storyboard(
@@ -1287,29 +1275,9 @@ def test_a_direction_the_storyboard_chose_always_wins():
     assert [b["direction"] for b in out] == ["front", "front", "front", "back"]
 
 
-def test_a_short_fit_section_keeps_every_cut_frontal():
-    """짧은 섹션을 옆·뒤로 채우면 정면이 사라진다. 기준 1장 + 배분 3장이 최소다."""
-    for n in (1, 2, 3):
-        out = content_roles.canonicalize_storyboard(_studio(n))
-        assert {b["direction"] for b in out} == {"front"}, n
-
-
 def test_seller_cards_are_never_reassigned():
     out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
     assert all(b.get("direction") in (None, "front") for b in out)
-
-
-def test_changing_the_direction_drops_an_auto_picked_example():
-    """정면 예시 포즈는 옆 컷에 못 쓴다(cut_generator.pose_direction_compatible)."""
-    blocks = _studio(4)
-    for b in blocks:
-        b["exampleId"] = "ex_front_1"
-        b["exampleSelectionOrigin"] = "auto"
-    out = content_roles.canonicalize_storyboard(blocks)
-    turned = [b for b in out if b["direction"] != "front"]
-    assert len(turned) == 3
-    assert all(b["exampleId"] is None for b in turned)
-    assert out[0]["exampleId"] == "ex_front_1", "안 돌린 컷의 예시는 그대로 둔다"
 
 
 def test_an_example_the_seller_picked_pins_the_direction():
@@ -1375,43 +1343,6 @@ def test_an_unknown_side_style_falls_back_to_the_swap_path():
 #
 # 운영 QA 에서 studio 7컷이 거의 같은 그림으로 나왔다. 콘티가 pose 를 안 주면
 # POSE:auto 한 줄로 가는데, 같은 상품·같은 모델·같은 프롬프트면 같은 포즈가 나온다.
-def test_the_fit_section_varies_the_pose():
-    out = content_roles.canonicalize_storyboard(_studio(6))
-    poses = [b.get("pose") for b in out]
-    assert not poses[0], "기준 컷은 POSE:auto 로 남는다"
-    assert all(poses[1:]), "나머지는 포즈가 붙는다"
-    assert len(set(poses[1:])) == len(poses[1:]), "서로 달라야 변주다"
-
-
-def test_a_pose_the_storyboard_chose_always_wins():
-    blocks = _studio(1) + [
-        {"sectionRole": "studio", "cutType": "horizon", "pose": "leaning on a wall"},
-        {"sectionRole": "studio", "cutType": "horizon"},
-        {"sectionRole": "studio", "cutType": "horizon"},
-    ]
-    out = content_roles.canonicalize_storyboard(blocks)
-    assert out[1]["pose"] == "leaning on a wall"
-
-
-def test_the_frontend_auto_default_is_not_a_choice():
-    """★ 프런트가 카드마다 pose:'auto' 를 써 넣는다(Storyboard.jsx). 그걸 선택으로 읽으면
-    셀러가 콘티보드를 한 번 저장하는 순간 변주가 통째로 사라진다."""
-    blocks = [{"sectionRole": "studio", "cutType": "horizon", "pose": "auto"} for _ in range(5)]
-    out = content_roles.canonicalize_storyboard(blocks)
-    poses = [b.get("pose") for b in out]
-    assert poses[0] in (None, "", "auto"), "기준 컷은 그대로"
-    assert all(p and p != "auto" for p in poses[1:]), poses
-    assert len(set(poses[1:])) == len(poses[1:])
-
-
-def test_horizon_set_members_keep_the_example_pose():
-    """호리존 세트 컷은 완성 예시의 포즈를 따른다(ADR-0013). 돌려 넣은 포즈가 셀러의 명시 포즈처럼
-    예시를 덮으면 2번째 컷부터 예시와 다른 자세가 나온다(2026-09-26 리뷰). 낱장 컷 변주는 그대로다."""
-    grouped = _studio(4, pose="auto", spaceGroupId="ssg1__set__one", exampleId="ss_example")
-    out = content_roles.canonicalize_storyboard(grouped)
-    assert all(b.get("pose") in (None, "", "auto") for b in out), [b.get("pose") for b in out]
-    loose = content_roles.canonicalize_storyboard(_studio(4, pose="auto"))
-    assert all(b.get("pose") not in (None, "", "auto") for b in loose[1:])
 
 
 _HZ_REGISTRY = {
@@ -1426,69 +1357,6 @@ def hz_registry(monkeypatch):
     monkeypatch.setattr(cut.space_set_assets, "load_space_set_registry", lambda: (None, {
         "set1": {"members": [{"exampleId": "ss_front", "direction": "front"}]},
     }))
-
-
-def _poses(blocks):
-    return [b.get("pose") for b in content_roles.canonicalize_storyboard(blocks)]
-
-
-def test_example_governed_horizon_cuts_keep_the_example_pose(hz_registry):
-    """완성 예시가 포즈를 정하는 낱장 호리존 컷에는 자동 포즈를 넣지 않는다(2026-09-26 오너 결정).
-    넣으면 워커가 셀러의 명시 포즈로 읽어 예시 포즈를 덮고, 컬러웨이 변주도 꺼진다."""
-    blocks = [
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto",
-         "exampleId": "hz_front_full", "refScope": "all"},
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto",
-         "exampleId": "hz_front_medium", "refScope": "pose"},
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
-    ]
-    poses = _poses(blocks)
-    assert poses[:3] == ["auto", "auto", "auto"], poses
-    assert poses[3:] == list(content_roles._STUDIO_POSE_ROTATION[:2])
-
-
-@pytest.mark.parametrize("direction", ["side", "back"])
-def test_a_front_example_on_a_side_or_back_cut_still_rotates(hz_registry, direction):
-    """방향이 안 맞는 예시는 포즈 권한이 없다. 이런 컷은 계속 자동 포즈로 변주한다."""
-    blocks = [
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
-        {"sectionRole": "studio", "cutType": "horizon", "direction": direction, "pose": "auto",
-         "exampleId": "hz_front_full", "refScope": "all"},
-    ]
-    assert _poses(blocks)[1] == content_roles._STUDIO_POSE_ROTATION[0]
-
-    # 저장본이나 클라이언트가 보낸 양립 플래그 true 로는 포즈 권한을 얻지 못한다.
-    forged = [blocks[0], {**blocks[1], "_referenceDirectionCompatible": True}]
-    assert _poses(forged)[1] == content_roles._STUDIO_POSE_ROTATION[0]
-    assert not cut.horizon_example_governs_pose(forged[1])
-
-
-def test_a_saved_auto_pose_on_a_governed_cut_resets_but_a_chosen_pose_stays(hz_registry):
-    """옛 서버가 저장한 자동 포즈는 셀러 선택이 아니라 auto 로 되돌린다. 셀러가 고른 포즈는 이긴다."""
-    governed = {"sectionRole": "studio", "cutType": "horizon", "direction": "front",
-                "exampleId": "hz_front_full", "refScope": "all"}
-    blocks = [
-        {**governed, "pose": content_roles._STUDIO_POSE_ROTATION[2]},
-        {**governed, "pose": "leaning on a wall"},
-    ]
-    assert _poses(blocks) == ["auto", "leaning on a wall"]
-
-
-def test_standalone_set_member_with_another_direction_still_rotates(hz_registry, monkeypatch):
-    base = {"sectionRole": "studio", "cutType": "horizon", "pose": "auto", "exampleId": "ss_front"}
-    blocks = [
-        {"sectionRole": "studio", "cutType": "horizon", "direction": "front", "pose": "auto"},
-        {**base, "direction": "front"},
-        {**base, "direction": "back"},
-    ]
-    assert _poses(blocks) == ["auto", "auto", content_roles._STUDIO_POSE_ROTATION[0]]
-
-    def broken():
-        raise OSError("registry unavailable")
-    monkeypatch.setattr(cut.space_set_assets, "load_space_set_registry", broken)
-    assert not cut.horizon_example_governs_pose({**base, "direction": "front"})
 
 
 def test_default_colorway_pairs_reach_the_worker_as_repeat_indexes(hz_registry):
@@ -1509,25 +1377,10 @@ def test_default_colorway_pairs_reach_the_worker_as_repeat_indexes(hz_registry):
         blocks += [card(color, "full", **pair), card(color, "medium", **pair)]
 
     out = content_roles.canonicalize_storyboard(blocks)
-    assert all(b.get("pose") == "auto" for b in out[1:]), [b.get("pose") for b in out]
+    assert all("pose" not in b for b in out)
     assert dpj._example_repeat_indexes(out, "top") == [None, 0, 0, 1, 1, 2, 2]
 
 
 def test_seller_cards_keep_their_pose():
     out = content_roles.canonicalize_storyboard(_studio(5, source="mine"))
     assert all(not b.get("pose") for b in out)
-
-
-def test_the_poses_survive_normalize_and_reach_the_prompt():
-    """★ 실제로 POSE:named 로 가는지 — 여기서 끊기면 변주가 조용히 사라진다."""
-    out = content_roles.canonicalize_storyboard(_studio(4))
-    turned = out[1]
-    spec = cut.normalize_spec({**turned, "modelId": "m1"}, clothing_type="top")
-    assert spec["pose"] == turned["pose"] != "auto"
-
-
-def test_every_pose_keeps_the_garment_visible_and_fits_the_limit():
-    """핏 확인 섹션이라 앞섶을 가리는 포즈는 안 쓴다. 문구는 40자에서 잘린다."""
-    for pose in content_roles._STUDIO_POSE_ROTATION:
-        assert len(pose) <= 40, pose
-        assert "arms crossed" not in pose and "팔짱" not in pose, pose

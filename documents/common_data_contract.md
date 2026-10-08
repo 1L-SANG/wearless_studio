@@ -180,13 +180,12 @@ StoryboardBlock {
   title?: string                   // @deprecated 전환기 표시 캐시. contentRole에서 다시 계산
   source: BlockSource              // 'ai' | 'mine'
   cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
-  direction?: Direction | ProductDirection | null   // cutType에 따라 옵션 셋이 다름. mirror는 null (ADR-0004)
+  direction?: Direction | ProductDirection | null   // 생성예시 또는 디테일 원본 대상에서 파생. 사용자 선택 아님. mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
-  pose: PoseId                     // 기본 'auto' (구 _pose)
   matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
@@ -203,7 +202,7 @@ StoryboardBlock {
   ownImages: string[]              // source='mine'의 직접 업로드 이미지
   thumb: string                    // 예시 썸네일 (서버/목 생성, 최종 이미지 아님)
 }
-// 폐기: poseThumb / poseLabel(카탈로그 파생), bgThumb / bgLabel(PRD §8.5에서 배경 제거),
+// 폐기: pose / poseThumb / poseLabel(별도 포즈 선택 제거), bgThumb / bgLabel(PRD §8.5에서 배경 제거),
 //       colorIds(미사용 잔재), kind(sectionRole/contentRole과 중복)
 ```
 
@@ -474,7 +473,7 @@ GenerationExample {
 - **아우터·원피스 개별 스타일링 보강 릴리스(2026-07-31, 이전 정본)**: 사용자 검토 52개 중 승인 43개와 수정 후 승인 2개를 합친 45개만 새 `all`로 발행하고 제외 7개는 발행하지 않았다. 기존 활성 176개를 함께 봉인한 불변 릴리스 `2026-07-31-individual-styling-01`에서 프론트·서버 활성 레지스트리는 **221개(착용 199·제품 22)**였다. R2는 `all` 221·`pose` 12·`bg` 14·결정적 WebP `thumb` 221, 총 **468개**이고 원격 key·파일 크기 전수 대조에서 누락·추가·불일치가 모두 0이었다. 신규 45개는 여성 아우터 13(풀 8·중간 5), 남성 아우터 16(풀 8·중간 8), 여성 원피스 16(풀 9·중간 7)이며, 이 여섯 스타일링 조합을 공개 조합표에 함께 열었다.
 - **상의·하의 개별 스타일링 보강 릴리스(2026-08-03, 현재 정본)**: 사용자 최종 확정 45개(여성 하의 11·여성 상의 12·남성 하의 11·남성 상의 11)를 포함한 불변 릴리스 `2026-08-03-individual-styling-01`이 현재 프론트·서버 카탈로그의 정본이다. 두 카탈로그는 같은 **254개(착용 244·제품 10)** ID를 소비한다. R2는 `all` 254·`pose` 12·`bg` 14·결정적 WebP `thumb` 254, 총 **534개**다. 2026-08-03 재검증에서 공개 R2 객체 534개를 다시 내려받아 로컬 봉인본과 SHA-256을 전수 대조했고 누락·추가·바이트 불일치가 모두 0이었다. 제작자 QC HOLD 8개는 사용자의 묶음별 최종 확정을 오너 승인으로 적용하되 원래 판정과 사유를 감사 기록에 보존한다.
 - **변경**: `subCategories`를 `{ value, label }[]`로 (현재 한국어 문자열 배열)
-- **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `poses` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. styling의 `mood`, product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞어 최대 6장을 노출한다.
+- **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. styling의 `mood`, product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞어 최대 6장을 노출한다.
 - **폐기 예정**: `backgrounds`(콘티 배경 제거 — `varyOptions.bg`가 에디터 변형용으로 대체), `extendedColorPriority`(미사용), `cutSources`
 
 ---

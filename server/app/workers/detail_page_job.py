@@ -98,7 +98,6 @@ def _example_repeat_indexes(
                 and spec.get("exampleId")
                 and not spec.get("spaceGroupId")
                 and spec.get("refScope") == "all"
-                and spec.get("pose") == "auto"
                 and spec.get("_referenceDirectionCompatible") is not False
             ):
                 section = block.get("sectionId") or block.get("section_id")
@@ -1813,8 +1812,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
                 cut_spec["refScope"] = "all" if cut_spec.get("cutType") == "horizon" else "pose"
-                if cut_spec.get("cutType") != "horizon":
-                    cut_spec["pose"] = "auto"
                 cut_spec["spaceVariation"] = space_binding["set"]["spaceVariation"]
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
@@ -2077,11 +2074,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_space_set_plate = space_set_plate is not None
                 cut_spec["_spaceSetContinuity"] = has_space_set_plate
             elif example_id:
-                # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
-                # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
-                pose_overrides_example = normalized is not None \
-                    and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
-                if normalized is not None and not pose_overrides_example:
+                if normalized is not None:
                     scope = normalized["refScope"]
                     if example_id.startswith("ss_") and not (
                         b.get("spaceGroupId") or b.get("space_group_id")

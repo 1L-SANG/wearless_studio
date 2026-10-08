@@ -17,12 +17,8 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import { hasAvailableGenerationRecipe } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
-import {
-  detailDirectionFromExample,
-  generationExampleStructuralRecipePatch,
-} from '@/lib/storyboardExampleSelection.js';
+import { directionSpecFromExample, generationExampleStructuralRecipePatch } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, lineColor, lineColorPatch, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
@@ -254,7 +250,7 @@ function StrokeWidthControl(props) {
 
 /* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
 /* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
-   ① 같은 장소 이미지 생성 — 아래에서 고른 방향·포즈·표정만 바꾸고 장소는 그대로
+   ① 같은 장소 이미지 생성 — 아래에서 고른 포즈·표정만 바꾸고 장소는 그대로
    ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
 
    배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
@@ -264,15 +260,13 @@ function StrokeWidthControl(props) {
    거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
    '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
 const VARY_CATS = [
-  { id: 'cut', label: '방향' },
   { id: 'pose', label: '포즈' },
   { id: 'face', label: '표정' },
 ];
 function VaryPanel({ catalogs, source, onGenerate }) {
   const opts = catalogs.varyOptions || {};
-  const [cat, setCat] = useState('cut');
+  const [cat, setCat] = useState('pose');
   const [sel, setSel] = useState({});
-  const [cutDir, setCutDir] = useState('keep'); // 방향 — 'keep' = 현재 유지
   const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
   if (!source) {
     return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
@@ -282,27 +276,19 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
-  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 포즈는 셀피 구도 자동이라 변형 대상 아님
   const isMirror = srcType === 'mirror';
-  const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 방향도 포즈도 못 바꾸니
-  // 표정만 남는다(거리를 뺀 뒤로 '방향' 칸이 통째로 비기 때문).
-  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut')
-    : isMirror ? VARY_CATS.filter((c) => c.id === 'face')
-    : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0].id;
+  const cats = isProduct ? [] : isMirror ? VARY_CATS.filter((c) => c.id === 'face') : VARY_CATS;
+  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0]?.id || 'pose';
   const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
-  const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
-  // 칩/payload 순서 = 적용 우선순위 계약: 방향이 기준 → 포즈 → 표정이 그 위에 얹힌다
+  // 포즈와 표정 변경만 기존 이미지 수정 요청으로 보낸다.
   const chips = [];
-  if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
   if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
   if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
   const n = chips.length;
-  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: !!cutDir && cutDir !== 'keep' };
+  const hasChange = { pose: !!sel.pose, face: !!sel.face };
   const cost = catalogs.creditCosts?.editorImage ?? 1;
   const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
-  const clearAll = () => { setSel({}); setCutDir('keep'); };
+  const clearAll = () => setSel({});
   /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
      고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
      refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
@@ -317,27 +303,16 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   };
   // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
   // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
-  // 방향 칩은 **화면 값**(정면·사선·옆모습·뒷면)이다. 서버는 front/side/back 셋만 알므로
-  // 나가기 전에 컷 스펙으로 되돌린다 — 안 하면 'threeQuarter' 가 direction 으로 날아간다.
-  // 제품컷은 앞/뒷면 둘뿐이라 화면 값이 곧 서버 값이다(변환하면 오히려 망가진다).
-  const generateWithPicks = () => runGenerate(chips.map((c) => {
-    if (c.type !== 'direction' || isProduct) return { type: c.type, value: c.value, label: c.label };
-    const spec = specFromDirectionChoice(c.value);
-    return { type: c.type, value: spec.direction, sideStyle: spec.sideStyle, label: c.label };
-  }));
+  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
   const generateAuto = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
-      <div className="vary-tabs">
+      {!isProduct && <div className="vary-tabs">
         <UnderlineTabs value={safeCat} onChange={setCat}
           options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
-      </div>
-      {safeCat === 'cut' ? (
-        /* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */
-        <div className="insp-sec"><label className="lbl">보는 방향</label>
-          <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
-      ) : (
+      </div>}
+      {!isProduct && (
         <div className="insp-sec">
           <label className="lbl">{catLabel} 고르기</label>
           <div className="vary-grid">
@@ -395,7 +370,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
-  const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
   const virtualModels = catalogs.models || [];
@@ -412,17 +386,19 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
-  const galleryDirectionOptions = galleryIsProduct ? catalogs.productDirections : catalogs.directions;
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const galleryDirectionVal = galleryDirectionOptions.some((option) => option.value === dir)
-    ? dir : galleryDirectionOptions[0].value;
+  const directionSpec = directionSpecFromExample(selectedExample, {
+    cutType: galleryCutType,
+    detailTarget: galleryIsProduct && shot === 'detail' ? selectedDetailTarget : null,
+  });
+  const galleryDirectionVal = directionSpec.direction;
   const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
     ? shot : galleryShotOptions[0].value;
   const baseRecipe = {
     source: 'ai',
     contentRole: inferContentRole({ source: 'ai', cutType: galleryCutType, shot: galleryShotVal }),
     cutType: galleryCutType,
-    direction: galleryIsProduct && galleryShotVal === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : galleryDirectionVal,
+    ...directionSpec,
     shot: galleryShotVal,
   };
   const effectiveRecipe = {
@@ -431,22 +407,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   };
   const effectiveCutType = effectiveRecipe.cutType;
   const isProduct = effectiveCutType === 'product';
-  const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
-  const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
+  const isMirror = effectiveCutType === 'mirror';
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  // 착용컷 방향 칩은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 서버 계약은 셋이다.
-  // 변환은 lib/directionChoice.js 한 곳 — 콘티보드와 같은 규칙을 써야 한 화면에서 고른 값이
-  // 다른 화면에서 다른 컷이 되지 않는다. 이 변환이 없으면 서버 값 'side' 가 칩 목록에 없어서
-  // 옆 컷이 "정면"으로 보이고, 고른 'threeQuarter' 가 그대로 direction 으로 날아간다.
-  // 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다.
-  const effectiveDirectionVal = isProduct
-    ? (effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
-      ? effectiveRecipe.direction : effectiveDirectionOptions[0].value)
-    : directionChoiceFromSpec(effectiveRecipe);
-  // 서버로 보낼 조각 — 화면 값을 컷 스펙으로 되돌린다.
-  const directionSpec = isProduct
-    ? { direction: effectiveDirectionVal, sideStyle: null }
-    : specFromDirectionChoice(effectiveDirectionVal);
   const effectiveShotVal = effectiveShotOptions.some((option) => option.value === effectiveRecipe.shot)
     ? effectiveRecipe.shot : effectiveShotOptions[0].value;
   const [modelOpen, setModelOpen] = useState(false);
@@ -501,7 +463,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
     // 원본 기반 디테일을 포함해 실제로 사용 가능한 샷을 고른다.
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
-    setCutType(value); setDir('front'); setShot(nextShot); setDetailTargetId(null);
+    setCutType(value); setShot(nextShot); setDetailTargetId(null);
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -510,12 +472,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
     setExampleId(value);
     if (!value) setRefScope('all');
     if (replacing) resetRecipeSettings();
-    // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
-    // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
-    if (isDetail && !detailTargetId) {
-      const example = (catalogs.genExamples || []).find((item) => item.id === value);
-      setDir(detailDirectionFromExample(example));
-    }
   };
   // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
   const categoryRequired = failedCutRetry
@@ -587,22 +543,18 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
-            direction={galleryDirectionVal} shot={galleryShotVal}
+            direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
               // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
-              if (isProduct) setDir('front');
             }} clothingType={clothingType} gender={modelGender}
             includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
           {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.direction) setDir(patch.direction); if (patch.colorId) setColor(patch.colorId); }} />}
-          {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
-          {/* allowDeselect=false — 재클릭이 null 을 보내면 방향이 정면으로 떨어진다(콘티보드와 같은 이유). */}
-          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline direction-chips" allowDeselect={false} options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
+            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.colorId) setColor(patch.colorId); }} />}
 
           {showOuterClosure && (
             <div className="insp-sec outer-closure-field">
