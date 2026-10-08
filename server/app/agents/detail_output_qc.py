@@ -310,7 +310,9 @@ def _failure_cause(exc):
     return "unexpected_error"
 
 
-def _unknown(out, code, cause):
+def _unknown(out, code, cause, *, retry_after_seconds=None):
+    if retry_after_seconds is not None:
+        out = {**out, "retryAfterSeconds": retry_after_seconds}
     return {**out, "passed": False, "decision": "UNKNOWN", "errorCode": code, "unknownCause": cause,
             "gates": [{"code": gate, "status": "UNKNOWN", "evidence": "QC could not establish a complete valid judgment."} for gate in GATES]}
 
@@ -395,7 +397,8 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
     except Exception as exc:
         # Do not log provider exception text: it can include sensitive request data.
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
-        return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc))
+        return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc),
+                        retry_after_seconds=getattr(exc, "retry_after_seconds", None))
     specialist = out["specialist"]
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
     if (not has_openai_api_key(settings) or not isinstance(specialist["requestedModel"], str)
@@ -432,7 +435,8 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         specialist.update(status="UNKNOWN", returnedModel=specialist_metadata.get("returned_model"),
                           usage=specialist_metadata.get("usage"), errorCode=type(exc).__name__)
         cause = "invalid_response" if isinstance(exc, (ValueError, TypeError)) else _failure_cause(exc)
-        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause)
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause,
+                                       retry_after_seconds=getattr(exc, "retry_after_seconds", None))
 
 
 def repair_instructions(verdict):

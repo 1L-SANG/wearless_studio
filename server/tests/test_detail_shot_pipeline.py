@@ -638,6 +638,73 @@ def transient_unknown(cause='timeout'):
     return {**verdict('UNKNOWN'), 'unknownCause': cause}
 
 
+@pytest.mark.parametrize('seconds', [0, 2, 7, 10])
+@sync_test
+async def test_rate_limit_waits_after_durable_claim_before_rejudging(setup, monkeypatch, seconds):
+    qc, client, _ = setup
+    progress = MemoryProgress()
+    events = []
+    async def sleep(delay):
+        assert delay == seconds
+        assert progress.state['phase'] == 'rejudging'
+        assert progress.state['judgmentRetries'][-1]['status'] == 'CLAIMED'
+        assert progress.state['judgmentRetries'][-1]['initialJudgment']['retryAfterSeconds'] == seconds
+        events.append('wait')
+    async def judge(*args, **kwargs):
+        if not events:
+            events.append('initial')
+            return {**transient_unknown('provider_error'), 'retryAfterSeconds': seconds}
+        events.append('retry')
+        return verdict('PASS')
+    qc.side_effect = judge
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', sleep)
+    _, report = await run(setup, progress)
+    assert events == ['initial', 'wait', 'retry']
+    assert report['judgmentRetries'][0]['initialJudgment']['unknownCause'] == 'provider_error'
+    assert report['passed'] is True and len(report['judgments']) == 1
+    assert qc.await_count == 2 and client.generate_content_image.await_count == 1
+
+
+@pytest.mark.parametrize('cause', ['provider_error', 'timeout', 'invalid_response'])
+@sync_test
+async def test_non_rate_limit_transient_unknown_rejudges_without_wait(setup, monkeypatch, cause):
+    qc, _, _ = setup
+    qc.side_effect = [transient_unknown(cause), verdict('PASS')]
+    sleep = AsyncMock(side_effect=AssertionError('Only rate limits may wait'))
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', sleep)
+    _, report = await run(setup)
+    assert report['passed'] is True
+    sleep.assert_not_awaited()
+
+
+@sync_test
+async def test_cancellation_during_rate_limit_wait_consumes_claim_without_provider_retry(setup, monkeypatch):
+    qc, client, _ = setup
+    qc.return_value = {**transient_unknown('provider_error'), 'retryAfterSeconds': 2}
+    progress = MemoryProgress()
+    waiting = asyncio.Event()
+    async def sleep(seconds):
+        assert seconds == 2
+        waiting.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', sleep)
+    task = asyncio.create_task(run(setup, progress))
+    try:
+        await asyncio.wait_for(waiting.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert progress.state['phase'] == 'rejudging'
+    assert progress.state['judgmentRetries'][-1]['status'] == 'CLAIMED'
+    progress.job = {'lease_token': 'new-lease'}
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+        await run(setup, progress)
+    assert progress.state['phase'] == 'held'
+    assert progress.state['judgmentRetries'][-1]['status'] == 'INTERRUPTED'
+    assert qc.await_count == client.generate_content_image.await_count == 1
+
+
 @pytest.mark.parametrize('cause', ['timeout', 'provider_error', 'invalid_response'])
 @sync_test
 async def test_transient_unknown_rejudges_the_same_bound_candidate_once(setup, cause):
@@ -796,3 +863,107 @@ async def test_interrupted_final_rejudgment_preserves_best_effort_without_any_pr
     assert report['judgmentRetries'][0]['status'] == 'INTERRUPTED'
     qc.assert_not_called()
     client.generate_content_image.assert_not_called()
+
+
+@pytest.mark.parametrize('attempt', [1, 2, 3])
+def test_completed_retry_pass_reused_after_restart_without_provider(setup, attempt):
+    qc, client, settings = setup
+    source, candidate = photo(), photo('pink')
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    judgments = [{**verdict('FAIL'), 'attempt': n} for n in range(1, attempt)]
+    judgments.append({**transient_unknown(), 'attempt': attempt})
+    progress = MemoryProgress({'fingerprint': fp, 'attempts': attempt, 'phase': 'judged',
+        'qc': {'attempts': attempt, 'fingerprint': fp, 'judgments': judgments}}, candidate)
+    async def check():
+        import hashlib
+        await progress.claim_judgment_retry(fp, attempt, hashlib.sha256(candidate.data).hexdigest())
+        judgments[-1] = {**verdict('PASS'), 'attempt': attempt}
+        await progress.record_judgment_retry({'fingerprint': fp, 'attempts': attempt, 'judgments': judgments})
+        progress.job = {'lease_token': 'new-lease'}
+        selected, report = await run(setup, progress)
+        assert selected.data == candidate.data
+        assert report['passed'] is True
+        assert report['judgmentRetries'][0]['status'] == 'COMPLETE'
+    asyncio.run(check())
+    qc.assert_not_called()
+    client.generate_content_image.assert_not_called()
+
+
+@pytest.mark.parametrize('prior', [['FAIL'], ['FAIL', 'FAIL']])
+def test_retry_pass_at_every_generation_position(setup, prior):
+    qc, client, _ = setup
+    qc.side_effect = [*(verdict(x) for x in prior), transient_unknown(), verdict('PASS')]
+    progress = MemoryProgress()
+    _, report = asyncio.run(run(setup, progress))
+    assert report['passed'] is True
+    assert report['attempts'] == len(prior) + 1
+    assert client.generate_content_image.await_count == len(prior) + 1
+    assert len(report['judgments']) == len(prior) + 1
+    assert [j['decision'] for j in report['judgments']] == [*prior, 'PASS']
+    assert report['judgmentRetries'][0]['status'] == 'COMPLETE'
+    assert not report.get('publishedBestEffort')
+
+
+def test_unexpected_verdict_exception_after_claim_is_completed_unknown(setup):
+    qc, client, _ = setup
+    qc.side_effect = [transient_unknown(), RuntimeError('unexpected')]
+    progress = MemoryProgress()
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+        asyncio.run(run(setup, progress))
+    assert progress.state['phase'] == 'held'
+    assert progress.state['judgmentRetries'][0]['status'] == 'COMPLETE'
+    assert progress.state['qc']['judgments'][0]['decision'] == 'UNKNOWN'
+    assert qc.await_count == 2
+    assert client.generate_content_image.await_count == 1
+
+
+def test_real_task_cancellation_consumes_retry_and_new_lease_does_not_resend(setup):
+    qc, client, _ = setup
+    progress = MemoryProgress()
+    async def check():
+        started = asyncio.Event()
+        calls = 0
+        async def judge(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return transient_unknown()
+            started.set()
+            await asyncio.Event().wait()
+        qc.side_effect = judge
+        task = asyncio.create_task(run(setup, progress))
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert progress.state['phase'] == 'rejudging'
+        assert progress.state['judgmentRetries'][0]['status'] == 'CLAIMED'
+        with pytest.raises(pipeline.DetailShotRejected, match='detail_judgment_retry_unavailable'):
+            await run(setup, progress)
+        progress.job = {'lease_token': 'new-lease'}
+        with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+            await run(setup, progress)
+        assert progress.state['phase'] == 'held'
+        assert progress.state['judgmentRetries'][0]['status'] == 'INTERRUPTED'
+        assert calls == 2
+    asyncio.run(check())
+    assert client.generate_content_image.await_count == 1
+
+
+def test_rejected_retry_write_is_consumed_after_new_lease(setup):
+    qc, client, _ = setup
+    qc.side_effect = [transient_unknown(), verdict('PASS')]
+    progress = MemoryProgress()
+    original = progress.record_judgment_retry
+    progress.record_judgment_retry = AsyncMock(side_effect=pipeline.DetailShotRejected('detail_job_lease_lost'))
+    with pytest.raises(pipeline.DetailShotRejected, match='lease_lost'):
+        asyncio.run(run(setup, progress))
+    assert progress.state['phase'] == 'rejudging'
+    assert progress.state['qc']['judgments'][0]['decision'] == 'UNKNOWN'
+    progress.record_judgment_retry = original
+    progress.job = {'lease_token': 'new-lease'}
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_quality_unconfirmed'):
+        asyncio.run(run(setup, progress))
+    assert progress.state['judgmentRetries'][0]['status'] == 'INTERRUPTED'
+    assert qc.await_count == 2
+    assert client.generate_content_image.await_count == 1

@@ -11,6 +11,7 @@ import pytest
 
 from app.agents.detail_shot_pipeline import DetailShotRejected
 from app.agents.gemini_image import InlineImage
+from app import repo
 from app.workers import detail_shot_runtime
 from app.workers.detail_shot_runtime import ProgressStore
 
@@ -405,4 +406,63 @@ def test_retry_claim_is_atomic_between_postgres_connections_and_survives_lease_r
             finally:
                 await admin.execute(sql.SQL('drop schema {} cascade').format(sql.Identifier(schema)))
                 await admin.commit()
+    asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_detail_failure_persists_interrupted_retry_and_preserves_other_metadata(monkeypatch):
+    from unittest.mock import AsyncMock
+    settle = AsyncMock()
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    async def check():
+        try:
+            conn = await psycopg.AsyncConnection.connect(
+                'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+                row_factory=dict_row, connect_timeout=2)
+        except psycopg.OperationalError:
+            if os.getenv('CI'):
+                raise
+            pytest.skip('Local test Postgres is not running')
+        async with conn:
+            await conn.execute('create temp table jobs (id text, user_id text, project_id text, '
+                               'status text, locked_by text, locked_at timestamptz, '
+                               "finished_at timestamptz, error_message text, result jsonb, metadata jsonb default '{}'::jsonb)")
+            await conn.execute('create temp table job_events (job_id text, event_type text, payload jsonb)')
+            await conn.execute("insert into jobs (id,user_id,project_id,status,locked_by,metadata) "
+                               "values ('j','u','p','running','lease','{\"other\":\"keep\"}')")
+            await conn.commit()
+            @asynccontextmanager
+            async def connection():
+                yield conn
+            app = SimpleNamespace(state=SimpleNamespace(pool=SimpleNamespace(connection=connection)))
+            job = {'id': 'j', 'user_id': 'u', 'project_id': 'p', 'lease_token': 'lease'}
+            store = ProgressStore(app, job, 'cut')
+            initial = {'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'provider_error',
+                       'retryAfterSeconds': 2}
+            await store._change(lambda _: {
+                'phase': 'judged', 'fingerprint': 'recipe', 'attempts': 1,
+                'candidate': {'attempt': 1, 'sha256': 'candidate'},
+                'qc': {'fingerprint': 'recipe', 'attempts': 1, 'judgments': [initial]}})
+            await store.claim_judgment_retry('recipe', 1, 'candidate')
+            kwargs = dict(job_id='j', lease_token='lease', user_id='u', project_id='p', reserved=38,
+                          settle_key='k', message='interrupted', metadata={'error': 'worker_shutdown'},
+                          code='worker_shutdown', result={'errorCode': 'worker_shutdown'},
+                          job_metadata={'retainedCutKeys': {'b': 'private'}})
+            assert await repo.finalize_detail_page_failure(conn, **kwargs) is True
+            await conn.commit()
+            row = await (await conn.execute("select * from jobs where id='j'")).fetchone()
+            assert row['status'] == 'error' and row['error_message'] == 'interrupted'
+            assert row['result'] == {'errorCode': 'worker_shutdown'}
+            assert row['metadata']['other'] == 'keep'
+            assert row['metadata']['retainedCutKeys'] == {'b': 'private'}
+            state = row['metadata']['detailShots'][store.key]
+            assert state['phase'] == 'held' and state['judgmentRetryLease'] is None
+            assert state['qc']['judgments'] == [initial]
+            assert state['judgmentRetries'][-1]['status'] == 'INTERRUPTED'
+            assert state['qc']['judgmentRetries'] == state['judgmentRetries']
+            event = await (await conn.execute('select * from job_events')).fetchone()
+            assert event['payload'] == {'code': 'worker_shutdown', 'message': 'interrupted'}
+            assert await repo.finalize_detail_page_failure(conn, **kwargs) is False
+            assert settle.await_count == 1
+            assert settle.await_args.kwargs['reserved'] == 38
+            assert settle.await_args.kwargs['charge'] == 0
     asyncio.run(check(), loop_factory=asyncio.SelectorEventLoop)

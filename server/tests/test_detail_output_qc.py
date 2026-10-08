@@ -677,6 +677,20 @@ def test_transient_unknown_has_an_explicit_retry_cause(qc, monkeypatch, stage, f
 
 
 @pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_rate_limit_wait_is_preserved_in_unknown_judgment(qc, monkeypatch, stage):
+    error = qc.vision_llm.VisionError('rate limited')
+    error.retry_after_seconds = 7
+    async def fail(*args, **kwargs):
+        raise error
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, fail)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out['unknownCause'] == 'provider_error'
+    assert out.get('retryAfterSeconds') == 7
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
 def test_malformed_response_is_retryable_without_changing_the_judge_contract(qc, monkeypatch, stage):
     async def malformed(*args, **kwargs):
         return {'gates': []}
