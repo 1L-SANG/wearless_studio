@@ -249,6 +249,56 @@ def test_retry_reuses_original_and_plan_after_child_failure_then_reuses_child_ou
     assert app.state.r2.get_bytes(third[1][1]["key"]) == b"FINISHED-CHILD"
 
 
+@pytest.mark.parametrize("later_source", ["original", "alias"])
+@pytest.mark.parametrize("changed_context", [False, True])
+def test_retry_missing_earlier_plan_uses_only_source_bound_saved_sibling_actions(
+        monkeypatch, later_source, changed_context):
+    app, seen = setup_generation(monkeypatch)
+    db = _IntentDB()
+    db.install(monkeypatch)
+    planned = []
+
+    async def next_plan(settings, image, **kwargs):
+        planned.append(copy.deepcopy(kwargs["history"]))
+        if len(planned) == 1:
+            raise similar_cut.VisionError("temporary planning failure")
+        taken = {entry["plan"]["actionKey"] for entry in kwargs["history"]}
+        return plan("shoulder_relaxed" if "hand_near_chin" in taken else "hand_near_chin")
+
+    monkeypatch.setattr(similar_cut, "plan_next", next_plan)
+    prepared = [item(source())]
+    if later_source == "alias":
+        prepared.append(item(source(id="alias")))
+    prepared.extend([item(child("first")), item(child("second", similarSourceBlockId=later_source))])
+
+    async def run(jid):
+        job = {**worker_job(), "id": jid}
+        store = await cut_checkpoints.CutCheckpointStore.open(app, job, identity="NONE")
+        context = {"name": "changed garment context"} if changed_context and jid == "j2" else {}
+        return await dpj._gen_cuts(
+            app, job, prepared, {"clothingType": "top"}, {}, cut_checkpoints=store, similar_context=context)
+
+    first = asyncio.run(run("j1"))
+    assert [r["blockId"] for r in first[0]] == (["original", "alias", "second"]
+                                              if later_source == "alias" else ["original", "second"])
+    db.error_jobs.add("j1")
+    retry = asyncio.run(run("j2"))
+    assert [r["blockId"] for r in retry[0]] == (["original", "alias", "first", "second"]
+                                              if later_source == "alias" else ["original", "first", "second"])
+    _original_asset, first_asset, second_asset = retry[1]
+    assert first_asset["metadata"]["similar_cut"]["plan"]["actionKey"] == (
+        "hand_near_chin" if changed_context else "shoulder_relaxed")
+    assert second_asset["metadata"]["similar_cut"]["plan"]["actionKey"] == (
+        "shoulder_relaxed" if changed_context else "hand_near_chin")
+    assert app.state.r2.get_bytes(second_asset["key"]) == (
+        b"CHILD-shoulder_relaxed" if changed_context else b"CHILD-hand_near_chin")
+    assert seen["generate"] == ["original"]
+    assert len(seen["vary"]) == (3 if changed_context else 2)
+    reused_second = any(p.get("blockId") == "second" and p.get("status") == "cut_checkpoint_reused"
+                        for kind, p in seen["events"])
+    assert reused_second is (not changed_context)
+
+
 @pytest.mark.parametrize("failure", [None, "source", "child"])
 def test_worker_dependency_finalization_and_credits_use_existing_policy(monkeypatch, failure):
     app, seen = setup_generation(monkeypatch, source_failure=failure == "source", child_failure=failure == "child")

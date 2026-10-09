@@ -3,7 +3,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSimilarCutBlock, inheritSimilarCutRecipes, canPlanSimilarCut, reconcileSimilarCutMutation } from '../../src/lib/storyboardSimilarCuts.js';
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
+import { createSpaceSetMembers } from '../../src/lib/storyboardSpaceSets.js';
+import { normalizeBoard } from '../../src/lib/sections.js';
 const source = { id: 'a', source: 'ai', cutType: 'horizon', contentRole: 'fit', sectionRole: 'studio', taxonomyVersion: 3, sectionId: 'studio', sectionLayout: 'stack', exampleId: 'example', shot: 'full', colorId: 'navy', modelId: 'mA', thumb: 'example.jpg', spaceGroupId: 'set', hookFrameId: 'frame' };
+
+test('new set members do not inherit a follow-up template relationship', () => {
+  const original = { ...source, spaceGroupId: undefined, hookFrameId: undefined };
+  const followup = createSimilarCutBlock(original, 'followup');
+  const set = { spaceVariation: 'fixed', members: [
+    { cutType: 'horizon', direction: 'front', shot: 'full', exampleId: 'chosen-set-example', thumb: 'set.jpg' },
+  ] };
+  const members = createSpaceSetMembers(set, followup, { spaceGroupId: 'new-set', makeId: () => 'member' });
+  const member = normalizeBoard([followup, original, ...members]).find(block => block.id === 'member');
+  assert.equal(member.similarSourceBlockId, undefined);
+  assert.equal(member.exampleId, 'chosen-set-example');
+  assert.equal(member.spaceGroupId, 'new-set');
+});
 test('similar planning uses a worn original and leaves its example unchanged', () => {
   const child = createSimilarCutBlock(source, 'b');
   assert.equal(child.similarSourceBlockId, 'a');

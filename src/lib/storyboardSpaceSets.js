@@ -206,6 +206,8 @@ export function createSpaceSetMembers(set, template, {
       refImages: [],
       refAssetIds: [],
     });
+    // A new set uses its selected examples, never a template's follow-up link.
+    delete base.similarSourceBlockId;
     return member.cutType === 'product'
       ? { ...base, matchIds: [], faceExposure: null, outerClosureState: null }
       : base;

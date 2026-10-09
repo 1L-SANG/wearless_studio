@@ -421,6 +421,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     )
     generated_images: dict[str, InlineImage] = {}
     planned_actions: dict[str, list[dict]] = {}
+    saved_similar_plans: dict[str, dict] = {}
 
     def _page_plan_item(item, output_index, product_truth_indexes) -> dict:
         block = item[0]
@@ -1036,7 +1037,23 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 garment_qc=garment_qc, cut_qc=cut_qc, garment_warnings=garment_warnings,
                 neck_repair_metadata=neck_repair_metadata, face_pass_outcome=face_pass_outcome)
 
-    async def _one_similar(item, original, previous_block_ids):
+    def _similar_fingerprint(block, image, root_asset, context, previous_block_ids):
+        return _cut_checkpoints._digest({
+            "family": "storyboard-similar-v1", "blockId": str(block["id"]),
+            "sourceBlockId": block["similarSourceBlockId"],
+            "sourceSha256": hashlib.sha256(image.data).hexdigest(), "sourceMime": image.mime,
+            "cutType": block["cutType"], "context": context, "previousBlockIds": previous_block_ids,
+            "userId": str(user_id), "projectId": str(project_id),
+            "modelId": selected_model_id, "realDerived": root_asset["metadata"].get("facemarket_real_derived") is True,
+            "sourceFaceRecipe": root_asset["metadata"].get("face_recipe"),
+            "model": resolve_detail_cut_model(s, block["cutType"]),
+            "imageSize": s.detail_cut_image_size or s.mannequin_image_size,
+            "recipe": _cut_checkpoints._final_recipe(s),
+            "prompts": {name: hashlib.sha256((similar_cut._PROMPTS / name).read_bytes()).hexdigest()
+                        for name in ("similar_cut_plan_v1.txt", "similar_cut_generate_v1.txt")},
+        })
+
+    async def _one_similar(item, original, previous_block_ids, sibling_indexes):
         block = item[0]
         if original is None or isinstance(item, _SkippedCut):
             await _emit(app.state.pool, job_id, "step", {
@@ -1052,32 +1069,45 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         history = planned_actions.setdefault(root_asset["asset_id"], [])
         async with sem:
             await _emit(app.state.pool, job_id, "step", {"blockId": block["id"], "status": "cut_start"})
-            fingerprint = _cut_checkpoints._digest({
-                "family": "storyboard-similar-v1", "blockId": str(block["id"]),
-                "sourceBlockId": block["similarSourceBlockId"],
-                "sourceSha256": hashlib.sha256(image.data).hexdigest(), "sourceMime": image.mime,
-                "cutType": block["cutType"], "context": context, "previousBlockIds": previous_block_ids,
-                "userId": str(user_id), "projectId": str(project_id),
-                "modelId": selected_model_id, "realDerived": real_derived,
-                "sourceFaceRecipe": root_asset["metadata"].get("face_recipe"),
-                "model": generation_settings.model_image_high,
-                "imageSize": s.detail_cut_image_size or s.mannequin_image_size,
-                "recipe": _cut_checkpoints._final_recipe(s),
-                "prompts": {name: hashlib.sha256((similar_cut._PROMPTS / name).read_bytes()).hexdigest()
-                            for name in ("similar_cut_plan_v1.txt", "similar_cut_generate_v1.txt")},
-            })
-            async with app.state.pool.connection() as conn:
-                saved = await repo.get_storyboard_similar_cut_plan(
-                    conn, user_id, project_id, job_id, str(block["id"]), fingerprint)
+            fingerprint = _similar_fingerprint(block, image, root_asset, context, previous_block_ids)
+            if root_asset["asset_id"] not in saved_similar_plans:
+                # A later sibling may already be complete after an earlier planning failure.
+                # Protect every source-bound saved action before filling the missing plan.
+                saved_by_block = {}
+                async with app.state.pool.connection() as conn:
+                    for sibling_index in sibling_indexes:
+                        sibling = prepared[sibling_index][0]
+                        prior_ids = [str(prepared[i][0]["id"]) for i in previous_children[sibling_index]]
+                        sibling_fingerprint = _similar_fingerprint(sibling, image, root_asset, context, prior_ids)
+                        candidate = await repo.get_storyboard_similar_cut_plan(
+                            conn, user_id, project_id, job_id, str(sibling["id"]), sibling_fingerprint)
+                        saved_by_block[str(sibling["id"])] = (
+                            sibling_fingerprint, sibling["similarSourceBlockId"], candidate)
+                saved_similar_plans[root_asset["asset_id"]] = saved_by_block
+            saved_by_block = saved_similar_plans[root_asset["asset_id"]]
+            saved = saved_by_block[str(block["id"])][2]
+            protected_history = list(history)
+            known_blocks = {str(entry["blockId"]) for entry in history} | {str(block["id"])}
+            for sibling_id, (expected_fingerprint, source_id, candidate) in saved_by_block.items():
+                if (sibling_id in known_blocks or candidate is None
+                        or candidate.get("fingerprint") != expected_fingerprint
+                        or candidate.get("sourceBlockId") != source_id):
+                    continue
+                try:
+                    sibling_plan = similar_cut.validate_plan(candidate.get("plan"))
+                except VisionError:
+                    continue
+                protected_history.append({"plan": sibling_plan, "blockId": sibling_id})
             if saved is None:
                 action = await similar_cut.plan_next(
-                    s, image, context=context, cut_type=block["cutType"], changes=[], history=list(reversed(history)))
+                    s, image, context=context, cut_type=block["cutType"], changes=[],
+                    history=list(reversed(protected_history)))
                 saved = {"fingerprint": fingerprint, "sourceBlockId": block["similarSourceBlockId"],
                          "plan": similar_cut.validate_plan(action)}
             if saved.get("fingerprint") != fingerprint or saved.get("sourceBlockId") != block["similarSourceBlockId"]:
                 raise VisionError("similar_cut_lineage_changed")
             action = similar_cut.validate_plan(saved.get("plan"))
-            if similar_cut._same_action(action, [entry["plan"] for entry in history]):
+            if similar_cut._same_action(action, [entry["plan"] for entry in protected_history]):
                 raise VisionError("similar_cut_repeated_action")
             async with app.state.pool.connection() as conn:
                 reserved = await repo.reserve_storyboard_similar_cut_plan(
@@ -1087,7 +1117,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             if reserved is None:
                 raise VisionError("similar_cut_lease_lost")
             action = similar_cut.validate_plan(reserved.get("plan"))
-            if similar_cut._same_action(action, [entry["plan"] for entry in history]):
+            if similar_cut._same_action(action, [entry["plan"] for entry in protected_history]):
                 raise VisionError("similar_cut_repeated_action")
             history.append({"plan": action, "blockId": block["id"]})
             checkpoint = (
@@ -1170,7 +1200,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 if previous:
                     # Siblings plan in storyboard order, including a prior valid plan whose image failed.
                     await tasks_by_index[previous[-1]]
-                r = await _one_similar(item, original, [str(prepared[i][0]["id"]) for i in previous])
+                r = await _one_similar(
+                    item, original, [str(prepared[i][0]["id"]) for i in previous], children_by_source[source_index])
         except Exception as e:
             log.warning("AG-06 cut crashed for job %s block %s: %r; cut marked failed",
                         job_id, item[0].get("id"), e)

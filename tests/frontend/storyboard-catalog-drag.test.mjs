@@ -6,6 +6,14 @@ const members = ['a','b'].map((id, i) => ({exampleId:id,order:i+1,cutType:'horiz
 const set = {id:'test-set',setType:'horizon-rotation',gender:'women',applicableClothingTypes:['top'],members};
 const catalog = members.map(m => ({...m,id:m.exampleId,spaceSetId:set.id,gender:'women',applicableClothingTypes:['top'],variants:['all','pose']}));
 const context = {catalog,gender:'women',clothingType:'top',sectionRole:'studio'};
+test('a new independent catalog cut does not inherit a follow-up link', () => {
+ const [created] = drag.createIndependentCatalogMembers(set, ['a'], {
+  similarSourceBlockId: 'original', colorId: 'navy',
+ }, {...context, makeId: () => 'new'});
+ assert.equal(created.similarSourceBlockId, undefined);
+ assert.equal(created.exampleId, 'a');
+ assert.equal(created.colorId, 'navy');
+});
 test('valid whole and individual selections resolve only from supplied eligible catalog', () => {
  assert.equal(typeof drag.resolveCatalogDrag,'function');
  assert.equal(drag.resolveCatalogDrag({setId:set.id,exampleId:null},[set],context).set,set);

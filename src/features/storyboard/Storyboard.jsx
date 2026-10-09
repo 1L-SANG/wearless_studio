@@ -4147,7 +4147,7 @@ export function Storyboard({ toastOverride = null } = {}) {
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId) : [];
   const similarSource = selected?.similarSourceBlockId ? blocks.find(block => block.id === selected.similarSourceBlockId) : null;
-  const inspector = selected?.similarSourceBlockId ? (
+  const inspector = selected?.similarSourceBlockId && !setPicker ? (
     <div className="surface inspector sb-similar-inspector">
       <span className="sb-similar-eyebrow"><Icon name="copy" size={14} />비슷한 컷</span>
       <h3>같은 촬영의 다른 순간</h3>
