@@ -1516,7 +1516,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       )}
       {photoFailure && (
         <Modal onClose={() => setPhotoFailure(null)}>
-          <ClientErrorCapture point="photoRestore" error={photoFailure.error} blocking={!photoFailure.canOmit} projectId={projectId} />
+          <ClientErrorCapture point="photoRestore" error={photoFailure.error} blocking={!photoFailure.canOmit} projectId={analysisProjectId} />
           <h3>사진 {photoFailure.failed}장을 불러오지 못했어요.</h3>
           <p>{photoFailure.removed
             ? `사진 ${photoFailure.failed}장이 정리돼 다시 받을 수 없어요. 휴대폰에서 다시 올려 주세요.`
