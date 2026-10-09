@@ -66,6 +66,20 @@ export function paginateGenerationGalleryItems(items, pageSize = 6) {
   return pages.length ? pages : [[]];
 }
 
+export function generationGalleryPageForExample(pages, exampleId) {
+  if (!exampleId) return 0;
+  return Math.max(0, pages.findIndex((page) => page.some((example) => example.id === exampleId)));
+}
+
+export function clampGenerationGalleryPage(page, pageCount) {
+  return Math.max(0, Math.min(page, Math.max(0, pageCount - 1)));
+}
+
+export function generationGalleryPageForKey(page, key, pageCount) {
+  const step = key === 'ArrowRight' ? 1 : key === 'ArrowLeft' ? -1 : 0;
+  return clampGenerationGalleryPage(page + step, pageCount);
+}
+
 function isPublishedAll(example) {
   return Array.isArray(example?.variants) && example.variants.includes('all');
 }

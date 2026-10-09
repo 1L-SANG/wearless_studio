@@ -47,10 +47,14 @@ import {
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
+  clampGenerationGalleryPage,
   generationExampleImageSources,
+  generationGalleryPageForExample,
+  generationGalleryPageForKey,
   hasSelectableGenerationExamples,
   hasAvailableGenerationRecipe,
   isGenerationCombinationPublic,
+  paginateGenerationGalleryItems,
   repeatedAllExampleVariationIds,
   selectGenerationExamples,
   storedExampleConditionStatus,
@@ -1242,11 +1246,65 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     && refScope === 'pose' && !selectedPoseCompatible
     ? 'changed' : conditionStatus;
   const galleryRef = useRef(null);
+  const galleryRegionRef = useRef(null);
+  const galleryScrollTimer = useRef(null);
+  const galleryPages = paginateGenerationGalleryItems(examples);
+  const galleryPageCount = galleryPages.length;
+  const [galleryPage, setGalleryPage] = useState(() => generationGalleryPageForExample(galleryPages, exampleId));
   const [mineTab, setMineTab] = useState(false);
-  // 예시 사진은 방향 분류 없이 한 갤러리에 표시한다.
+  const previousGalleryContext = useRef(null);
+  const setCurrentGalleryPage = (page) => {
+    const targetPage = clampGenerationGalleryPage(page, galleryPageCount);
+    const grid = galleryRef.current;
+    const pageElement = grid?.querySelectorAll('.sb-expage')[targetPage];
+    const focusedCell = grid?.ownerDocument.activeElement?.closest?.('.sb-excell');
+    if (focusedCell && grid.contains(focusedCell) && pageElement && !pageElement.contains(focusedCell)) {
+      galleryRegionRef.current?.focus({ preventScroll: true });
+    }
+    setGalleryPage(targetPage);
+    return targetPage;
+  };
+  const scrollToGalleryPage = (page, behavior = 'smooth') => {
+    clearTimeout(galleryScrollTimer.current);
+    const targetPage = setCurrentGalleryPage(page);
+    const element = galleryRef.current?.querySelectorAll('.sb-expage')[targetPage];
+    if (element) galleryRef.current.scrollTo?.({ left: element.offsetLeft, behavior });
+  };
+  // 예시 선택으로 바뀌는 direction·sideStyle은 페이지 초기화 조건이 아니다.
   useEffect(() => {
-    galleryRef.current?.scrollTo?.({ top: 0 });
-  }, [cut, shotVal, clothingType, gender, direction]);
+    const conditions = [cut, shotVal, clothingType, gender];
+    const previous = previousGalleryContext.current;
+    const conditionsChanged = !previous || conditions.some((value, index) => value !== previous.conditions[index]);
+    const selectedPage = generationGalleryPageForExample(galleryPages, exampleId);
+    if (conditionsChanged || (previous.mineTab && !mineTab)) {
+      scrollToGalleryPage(selectedPage, 'auto');
+    } else if (previous.exampleId !== exampleId
+      && galleryPages[selectedPage].some((example) => example.id === exampleId)
+      && selectedPage !== galleryPage) {
+      scrollToGalleryPage(selectedPage, 'auto');
+    } else if (galleryPage >= galleryPageCount) {
+      scrollToGalleryPage(galleryPageCount - 1, 'auto');
+    }
+    previousGalleryContext.current = { conditions, exampleId, mineTab };
+  }, [cut, shotVal, clothingType, gender, exampleId, galleryPage, galleryPageCount, mineTab]);
+  useEffect(() => () => clearTimeout(galleryScrollTimer.current), []);
+  useEffect(() => {
+    const grid = galleryRef.current;
+    if (!grid || typeof MutationObserver !== 'function') return;
+    // 썸네일 실패 때 나중에 붙는 '다시 시도'도 숨은 페이지의 Tab 순서에서 뺀다.
+    const syncPageTabStops = () => {
+      grid.querySelectorAll('.sb-expage').forEach((page) => {
+        const tabIndex = page.getAttribute('aria-hidden') === 'true' ? -1 : 0;
+        page.querySelectorAll('[tabindex]').forEach((element) => {
+          if (element.tabIndex !== tabIndex) element.tabIndex = tabIndex;
+        });
+      });
+    };
+    syncPageTabStops();
+    const observer = new MutationObserver(syncPageTabStops);
+    observer.observe(grid, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-hidden', 'tabindex'] });
+    return () => observer.disconnect();
+  }, [mineTab, examples.length]);
   const selectFirstAvailable = () => {
     const first = refScope === 'pose'
       ? examples.find((example) => (example.variants || []).includes('pose')
@@ -1254,7 +1312,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       : examples[0];
     if (first) onExampleChange?.(first.id, refScope);
   };
-  const renderExampleCell = (example) => {
+  const renderExampleCell = (example, pageIndex) => {
     const on = exampleId === example.id;
     const variants = Array.isArray(example.variants) ? example.variants : [];
     const poseCompatible = poseExampleDirectionCompatible(example, {
@@ -1276,6 +1334,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
         ? (refScope || 'all') : 'all';
     return (
       <button key={example.id} type="button"
+        tabIndex={pageIndex === galleryPage ? 0 : -1}
         draggable={Boolean(onExampleDrag)}
         onDragStart={(event) => {
           if (!onExampleDrag) return;
@@ -1292,12 +1351,25 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       </button>
     );
   };
-  const exampleCells = examples.map(renderExampleCell);
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
       ? onPickRef()
       : api.pickRefImage(useAppStore.getState().projectId);
+  };
+  const updateGalleryPageFromScroll = () => {
+    clearTimeout(galleryScrollTimer.current);
+    // 부드러운 이동 중간 위치가 연속 넘기기의 목표 페이지를 되돌리지 않게 한다.
+    galleryScrollTimer.current = setTimeout(() => {
+      const pages = [...(galleryRef.current?.querySelectorAll('.sb-expage') || [])];
+      if (!pages.length) return;
+      const left = galleryRef.current.scrollLeft;
+      let closest = 0;
+      pages.forEach((page, index) => {
+        if (Math.abs(page.offsetLeft - left) < Math.abs(pages[closest].offsetLeft - left)) closest = index;
+      });
+      setCurrentGalleryPage(closest);
+    }, 120);
   };
   return (
     <div className="insp-sec">
@@ -1342,13 +1414,41 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
           "왜 회색인데 눌리지?"만 남았다(2026-09-22 오너). moodOnly 는 기본 범위 판정에만 쓴다. */}
       {isSourceBasedDetailRecipe({ cutType: cut, shot: shotVal, clothingType }) && !examples.length ? (
         <p className="hint">예시 없이 내 상품 원본으로 디테일을 촬영해요. 촬영 연출 예시는 선택 사항이에요.</p>
-      ) : <div className="sb-exgallery" ref={galleryRef}
-        role="region" aria-label="생성예시 갤러리">
-        {exampleCells.length ? <div className="sb-expage-cells">{exampleCells}</div> : (
-          <div className="sb-exempty">
-            {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
-              ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
-            <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
+      ) : <div className="sb-exgallery" ref={galleryRegionRef}
+        role="region" aria-label="생성예시 갤러리" tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          scrollToGalleryPage(generationGalleryPageForKey(galleryPage, event.key, galleryPageCount));
+        }}>
+        {/* 세로 휠은 인스펙터로 이어지고, 가로 스크롤·버튼·좌우 키로만 넘긴다. */}
+        <div className="sb-exgrid" ref={galleryRef} onScroll={updateGalleryPageFromScroll}>
+          {galleryPages.map((pageItems, pageIndex) => (
+            <div className="sb-expage" key={`page:${pageIndex}`} aria-hidden={pageIndex !== galleryPage}>
+              {pageItems.map((example) => renderExampleCell(example, pageIndex))}
+              {!examples.length && (
+                <div className="sb-exempty">
+                  {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+                    ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+                  <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {galleryPageCount > 1 && (
+          <div className="sb-excontrols">
+            <button type="button" className="sb-expage-hit prev" aria-label="이전 예시 페이지"
+              disabled={galleryPage === 0} onClick={() => scrollToGalleryPage(galleryPage - 1)}>‹</button>
+            <div className="sb-expages" aria-label={`총 ${galleryPageCount}페이지 중 ${galleryPage + 1}페이지`}>
+              {galleryPages.map((_page, index) => (
+                <button type="button" key={index} className={index === galleryPage ? 'on' : ''}
+                  aria-label={`${index + 1}페이지`} aria-current={index === galleryPage ? 'page' : undefined}
+                  onClick={() => scrollToGalleryPage(index)} />
+              ))}
+            </div>
+            <button type="button" className="sb-expage-hit next" aria-label="다음 예시 페이지"
+              disabled={galleryPage === galleryPageCount - 1} onClick={() => scrollToGalleryPage(galleryPage + 1)}>›</button>
           </div>
         )}
       </div>}
