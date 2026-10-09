@@ -26,6 +26,7 @@ import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
 import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
+import { hasImageSource } from './editorImageSource.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -252,19 +253,21 @@ function StrokeWidthControl(props) {
 /* ---------- AI · 현재 이미지 수정 ---------- */
 function VaryPanel({ catalogs, source, onGenerate }) {
   const busyRef = useRef(false);
-  if (!source) {
+  if (!hasImageSource(source)) {
     return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
   }
   const isProduct = source.cutType === 'product';
   const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const generate = () => {
+  const generate = async () => {
     if (busyRef.current) return;
     busyRef.current = true;
-    onGenerate({
-      source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
-      changes: [],
-      ...(!isProduct ? { variationMode: 'similar' } : {}),
-    });
+    try {
+      await onGenerate({
+        source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
+        changes: [],
+        ...(!isProduct ? { variationMode: 'similar' } : {}),
+      });
+    } finally { busyRef.current = false; }
   };
   return (
     <div className="similar-cut-panel">
