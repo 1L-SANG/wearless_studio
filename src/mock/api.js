@@ -1,3 +1,5 @@
+import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
+import { acceptMockClientEvent } from './clientEvents.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -210,6 +212,7 @@ function checkMannequinQuote(expected, cost) {
 }
 
 export const api = {
+  reportClientEvent: acceptMockClientEvent,
   /* ---- project (계약 §2, ADR-0001) ---- */
   // 새 제작 시작 — draft 전체를 재시드해 이전 세션의 변형이 새 생성에 새지 않게 한다.
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.
@@ -833,7 +836,7 @@ export const api = {
   },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
-    DB.storyboard = clone(blocks);
+    DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
     touch();
@@ -885,15 +888,22 @@ export const api = {
         push('progress', { progress: 18, phase: 'copy' });
         for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
       }
+      const storyboardById = new Map(draft.storyboard.map(block => [block.id, block]));
+      imgs.sort((a, b) => Number(Boolean(storyboardById.get(a.sourceBlockId)?.similarSourceBlockId)) - Number(Boolean(storyboardById.get(b.sourceBlockId)?.similarSourceBlockId)));
+      const completed = new Map();
+      const completions = new Map(imgs.map(image => [image.sourceBlockId, new Promise(resolve => completed.set(image.sourceBlockId, resolve))]));
       const total = Math.max(1, imgs.length);
       let done = 0; let next = 0;
       // 3개 창구 롤링 — 순서 무작위 도착의 실감을 내되 데모 총 소요는 ~10초대
       await Promise.all(Array.from({ length: Math.min(3, total) }, () => (async () => {
         while (next < imgs.length) {
           const el = imgs[next++];
+          const sourceId = storyboardById.get(el.sourceBlockId)?.similarSourceBlockId;
+          if (sourceId) await completions.get(sourceId);
           push('step', { blockId: el.sourceBlockId, status: 'cut_start' });
           await wait(2400 + Math.random() * 2200);
           push('step', { blockId: el.sourceBlockId, status: 'cut_done', previewUrl: el.src, width: 880, height: 1320 });
+          completed.get(el.sourceBlockId)?.();
           done += 1;
           push('progress', { progress: 20 + Math.round(60 * done / total), phase: 'cut', done, total });
         }

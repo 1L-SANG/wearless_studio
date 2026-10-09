@@ -112,7 +112,8 @@ test('flush returns failed ids and IndexedDB preserves remote references for res
   } });
   queueProductDraftSave(productWith({ id: 'remote', src: remote }));
   const result = await flushProductDraftSave();
-  assert.deepEqual(result, { saved: 0, failed: 1, failedIds: ['remote'] });
+  assert.deepEqual(result, { saved: 0, failed: 1, failedIds: ['remote'], failures: [{ imageId: 'remote' }] });
+  assert.ok(result.failures[0].error instanceof Error);
   const restored = restoreDraftProduct(saved);
   assert.equal(restored.colors[0].images[0].src, remote);
   assert.deepEqual(saved.photos, []);

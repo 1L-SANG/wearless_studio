@@ -24,7 +24,7 @@ export default function HorizonBackgroundControl({ block, disabled, onChange, me
     }
   }
   return <fieldset className="sb-horizon-background" disabled={disabled || saving}>
-    <legend>이 세트의 배경</legend>
+    <legend>이 세트의 배경 <span className="ds-field-scope">세트 전체{memberCount ? ` · ${memberCount}장` : ''}</span></legend>
     <div className="sb-horizon-background-options">
       {[
         ['reference', '기존 배경'],

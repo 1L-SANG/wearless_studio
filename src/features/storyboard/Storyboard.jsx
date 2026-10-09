@@ -1,3 +1,5 @@
+import { canPlanSimilarCut, createSimilarCutBlock, inheritSimilarCutRecipes, reconcileSimilarCutMutation } from '@/lib/storyboardSimilarCuts.js';
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/storyboard — ⑤ 콘티보드 (PRD §8)
    blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
@@ -8,7 +10,7 @@
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
 import { mannequinQuoteConfirmation, mannequinQuoteLabel } from '@/features/mannequin/quoteConfirmation.js';
-import React, { useState, useEffect, useLayoutEffect, useRef, useContext } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
@@ -23,7 +25,7 @@ import { preserveDetailTargetBinding, isProductDetail, isSourceBasedDetailRecipe
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, EmptyState, Modal, ProgressBar, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, EmptyState, Modal, ProgressBar, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
@@ -43,13 +45,10 @@ import {
   sectionRoleForContentRole,
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
-import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
-import { repickExampleForDirection } from '@/lib/generationExamples.js';
 import {
   assignGenerationExamples,
   canRerollGenerationExample,
   generationExampleImageSources,
-  groupGenerationExamplesByDirection,
   hasSelectableGenerationExamples,
   hasAvailableGenerationRecipe,
   isGenerationCombinationPublic,
@@ -123,6 +122,7 @@ import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
   detailDirectionFromExample,
+  directionSpecFromExample,
   generationExampleSelectionPatch,
   generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
@@ -251,6 +251,10 @@ function referenceFeedbackPatch(block, changes, catalogs) {
   const effScope = spaceGroupId ? ((changes.cutType ?? block.cutType) === 'horizon' ? 'all' : 'pose') : refScope;
   const next = { ...preserveDetailTargetBinding(block, changes) };
   if (isProductDetail({ ...block, ...changes })) return next;
+  const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
+  if (example?.direction) Object.assign(next, directionSpecFromExample(example, {
+    cutType: changes.cutType ?? block.cutType,
+  }));
   if (exampleId && effScope === 'all') {
     if (block.baseThumb == null) next.baseThumb = block.thumb;
     next.thumb = exampleThumbFor(catalogs, exampleId, changes.cutType ?? block.cutType);
@@ -326,15 +330,10 @@ function StoryboardInsertControl({
 
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
-  // 착용컷 방향 목록은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 블록은 서버 값 셋을 든다.
-  // 그대로 찾으면 'side' 가 목록에 없어 캡션이 '—' 로 뜬다 — 그래서 화면 값으로 바꿔 찾는다.
-  const direction = isProduct
-    ? (catalogs.productDirections.find((item) => item.value === block.direction)?.label || '앞면')
-    : (catalogs.directions.find((item) => item.value === directionChoiceFromSpec(block))?.label || '—');
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
-  return { direction, shot, isProduct };
+  return { shot, isProduct };
 }
 
 /* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
@@ -343,15 +342,18 @@ function cardLabels(block, catalogs) {
    사선 카드에 정면 예시가 붙어 있는 한 무엇을 눌러도 켜져 있어 아무 정보가 없었다.
    새로 추가한 컷은 처음 본 값이 기준. 자동저장 보드라 "저장 뒤 리셋"은 없다 — 세션 안에서만 산다. */
 const LoadedRecipeContext = React.createContext(null);
+const SimilarSourceNumbersContext = React.createContext(null);
 
 function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
   const loadedRecipes = useContext(LoadedRecipeContext);
+  const sourceNumbers = useContext(SimilarSourceNumbersContext);
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
+  if (block.similarSourceBlockId) return <div className="sb-canvas-caption sb-similar-caption"><Icon name="copy" size={13} /><span>{sourceNumbers?.get(block.similarSourceBlockId) || "기준"}번 컷 기반</span></div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
     .map((id) => colorOpts.find((color) => color.id === id))
     .filter(Boolean);
-  const { direction, shot } = cardLabels(block, catalogs);
+  const { shot } = cardLabels(block, catalogs);
   /* 셀러가 방향·샷을 원래 값에서 바꿨으면 그 값을 색으로 표시한다(2026-08-16 오너).
      기준(원래 값)은 컷의 성격에 따라 다르다:
      · 장소세트 멤버 — 세트가 정해 둔 그 자리의 컷(예시는 포즈 참조라 기준이 못 된다)
@@ -380,8 +382,6 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
-        {block.cutType !== 'mirror' && <span>{direction}</span>}
-        {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
         <span>{shot}</span>
         {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
         {exampleDiffers && <span className="sb-val-changed" title="열었을 때와 다른 예시"> · 예시 변경</span>}
@@ -411,7 +411,7 @@ const MoveDotsIcon = (
    · 손잡이를 잡고 끌면 = 기존 카드 드래그 그대로(카드 전체가 draggable 이라 손잡이도 잡힌다)
    · 손잡이를 누르면 = 이동 메뉴(한 칸씩·맨 앞/뒤) — 드래그가 어려운 상황·키보드 조작용
    낱장·두 컷 구성·네 컷 구성 어디서나 같은 손잡이를 쓴다. */
-function StoryboardCardActions({ onDuplicate, onDelete, move = null, canDelete = true }) {
+function StoryboardCardActions({ onDuplicate, onDelete, move = null, canDelete = true, duplicateLabel = '컷 복제' }) {
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const moveWrapRef = useRef(null);
   // 6점 손잡이는 '낱장 컷'에만. 덩어리 안 컷은 사진 양옆 화살표(StoryboardMedia)가 담당한다.
@@ -461,7 +461,7 @@ function StoryboardCardActions({ onDuplicate, onDelete, move = null, canDelete =
           )}
         </span>
       )}
-      <button type="button" title="컷 복제" aria-label="컷 복제" onClick={onDuplicate}><Icon name="copy" size={15} /></button>
+      <button type="button" title={duplicateLabel} aria-label={duplicateLabel} onClick={onDuplicate}><Icon name="copy" size={15} /></button>
       {canDelete && (
         <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
       )}
@@ -489,6 +489,15 @@ function BundleSwapArrows({ move }) {
   );
 }
 
+function storyboardPreviewSource(block, catalogs) {
+  if (!block) return null;
+  const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
+  if (detail) return detail.src;
+  if (block.source === 'mine') return block.thumb || mineImageUrl(block.ownImages?.[0]);
+  const example = catalogs?.genExamples?.find((item) => item.id === block.exampleId);
+  return block.previewThumb || (example ? generationExampleImageSources(example).src : null) || block.thumb;
+}
+
 function StoryboardMedia({
   block, catalogs, matchClothing = null, index, total,
   showPoseVariation = false,
@@ -501,9 +510,7 @@ function StoryboardMedia({
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const image = example ? generationExampleImageSources(example) : null;
-  const src = detail ? detail.src : block.source === 'mine'
-    ? (block.thumb || block.ownImages?.[0])
-    : (block.previewThumb || image?.src || block.thumb);
+  const src = storyboardPreviewSource(block, catalogs);
   // 매칭 의류 표시는 셀러가 인스펙터에서 직접 바꾼 컷에만(자동 배정 컷은 조용히) —
   // 이미지 우측 하단 오버레이(2026-08-14 오너 확정).
   const userMatch = block.source !== 'mine' && block.cutType !== 'product'
@@ -514,6 +521,7 @@ function StoryboardMedia({
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
       {block.source === 'mine' && <span className="sb-mine-badge">내 사진</span>}
+      {block.similarSourceBlockId && <span className="sb-similar-badge"><Icon name="copy" size={13} />비슷한 컷<small>생성 예정</small></span>}
       {missing ? (
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
@@ -536,7 +544,7 @@ function StoryboardMedia({
         </span>
       )}
       <BundleSwapArrows move={move} />
-      <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} />
+      <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} duplicateLabel={block.similarSourceBlockId ? "비슷한 컷 추가" : "컷 복제"} />
     </>
   );
 }
@@ -857,7 +865,7 @@ const nextSeparatedSpaceGroupId = (setId) => spaceSetGroupId(setId, uid('sg'));
 const ensureContiguousSpaceRuns = (blocks) => (
   rekeySeparatedSpaceRuns(blocks, nextSeparatedSpaceGroupId)
 );
-const normalizeStoryboardMutation = (blocks) => ensureContiguousSpaceRuns(normalizeBoard(blocks));
+const normalizeStoryboardMutation = (blocks) => ensureContiguousSpaceRuns(inheritSimilarCutRecipes(normalizeBoard(blocks)));
 
 const SECTION_ORDER = new Map(SECTION_ROLE_OPTIONS.map((option, index) => [option.value, index]));
 
@@ -1058,27 +1066,30 @@ function SpaceSetCard({ set, interactive = true, currentCutOrdinal = null, onCho
   </div>;
 }
 
+function StoryboardSelectionThumbnail({ src }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  return src && !failed
+    ? <img className="ds-selection-thumb" src={src} alt="선택한 컷" onError={() => setFailed(true)} />
+    : <span className="ds-selection-thumb ds-selection-placeholder" aria-label="사진 미리보기 없음"><Icon name="image" size={20} /></span>;
+}
+
 function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet, backgroundAvailability }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
   const ordinal = siblingIndex >= 0 ? siblingIndex + 1 : (block.spaceSetMemberOrder || 1);
   const count = siblings.length || set?.members?.length || 1;
-  const thumb = block.previewThumb || block.thumb || set?.members?.[ordinal - 1]?.thumb;
   return (
     <div className="sb-space-inspector-context">
-      <div className="sb-space-current-cut">
-        {thumb && <img className="sb-space-current-thumb" src={thumb} alt="" />}
-        <div><strong>{ordinal}번째 컷</strong>
-          <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
-            <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
-          </div>
-        </div>
+      <div className="sb-space-affiliation"><span>{spaceSetDisplayName(set)} · {ordinal}/{count}</span>
+        <button type="button" className="sb-space-set-change" onClick={onChangeSet}>세트 설정</button>
       </div>
+      <p className="ds-scope-help">세트 변경은 이 묶음 전체에 적용돼요. 현재 {siblings.length}장</p>
       {block.cutType === 'horizon' && <p className="sb-space-background-summary">배경: {effectiveHorizonBackgroundMode(block, backgroundAvailability) === 'garment-tone' ? '옷 색에 맞춤' : '기존 배경'} · 세트 공통</p>}
     </div>
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gender, clothingType, sectionRole = null,
+function SpaceSetGallery({ previewCatalogs, mode, error, onChoose, onChooseMember, onClose, returnLabel, gender, clothingType, sectionRole = null,
   identityKind = null, busy = false, currentMembers = [], product, colorEvidence, onBackgroundChange,
   catalog = [], onCatalogDragStart, onCatalogDragEnd }) {
   const replacing = mode === 'replace';
@@ -1144,9 +1155,16 @@ function SpaceSetGallery({ mode, error, onChoose, onChooseMember, onClose, gende
   const availability = horizonBackgroundAvailability(currentMembers, product, colorEvidence, currentSet?.id);
   return <div className="surface inspector sb-set-picker" ref={pickerRef}
     onKeyDown={event => { if (event.key === 'Escape' && preview) { event.preventDefault(); event.stopPropagation(); dismissPreview(); } }}>
-    <div className="sb-set-picker-head"><div><div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
-      <p>{replacing ? '세트를 눌러서 바꾸거나 하나의 컷만 드래그해서 추가해보세요.' : '세트를 눌러서 추가하거나 하나의 컷만 드래그해서 추가해보세요.'}</p></div>
-      <button type="button" className="sb-set-picker-close" disabled={busy} onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button></div>
+    <div className="sb-set-picker-head ds-set-picker-head">
+      <button type="button" className="ds-inspector-back" disabled={busy} onClick={onClose}>{returnLabel || '콘티로 돌아가기'}</button>
+      <p>{replacing ? '세트를 눌러 바꾸거나 한 컷만 끌어서 추가하세요.' : '세트를 눌러 추가하거나 한 컷만 끌어서 추가하세요.'}</p>
+    </div>
+    {currentMembers.length > 0 && <details key={currentBlock?.spaceGroupId} className="ds-scope-preview" aria-label="세트 설정 적용 대상">
+      <summary><strong>이 세트 전체 · {currentMembers.length}장</strong><span>대상 사진 보기</span></summary>
+      <div className="ds-scope-thumbs">{currentMembers.map((member, index) => <div key={member.id}>
+        <StoryboardSelectionThumbnail src={storyboardPreviewSource(member, previewCatalogs)} /><span>세트 {index + 1}번</span>
+      </div>)}</div>
+    </details>}
     {currentBlock?.cutType === 'horizon' && <HorizonBackgroundControl block={currentBlock} memberCount={currentMembers.length}
       disabled={busy} onChange={onBackgroundChange} availability={availability} />}
     <div className="sb-set-grid">{spaceSets.map(set => <SpaceSetCard key={set.id} set={set} onChoose={choose} disabled={busy}
@@ -1206,12 +1224,11 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
       shot: shotVal,
       clothingType,
       gender,
-      direction,
-      sideStyle,
+      limit: (catalogs.genExamples || []).length,
       appendSetOnly: cut !== 'product',
       appendMirror: includeMirrorExamples && galleryCut === 'styling',
     }), identityKind,
-    { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope, pose: 'auto' },
+    { cutType: galleryCut, direction, sideStyle, shot: shotVal, refScope },
   ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, sideStyle,
     includeMirrorExamples, identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
@@ -1231,8 +1248,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     ? 'changed' : conditionStatus;
   const galleryRef = useRef(null);
   const [mineTab, setMineTab] = useState(false);
-  // 갤러리는 방향 묶음을 세로로 쌓아 한 화면에 보여준다 — 페이지 넘김을 없앴다(2026-09-22 오너:
-  // "분류했으면 여러 창 옮기게 하지 말고"). 인스펙터 세로 스크롤이 그대로 이어진다.
+  // 예시 사진은 방향 분류 없이 한 갤러리에 표시한다.
   useEffect(() => {
     galleryRef.current?.scrollTo?.({ top: 0 });
   }, [cut, shotVal, clothingType, gender, direction]);
@@ -1282,11 +1298,6 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
     );
   };
   const exampleCells = examples.map(renderExampleCell);
-  // 방향 묶음마다 최대 6장 — 페이지 넘김을 없앴으니 한 방향이 스냅 26장처럼 길어지면
-  // 다른 방향이 화면 밖으로 밀린다. 순서는 이미 rank·무드로 정렬돼 있다.
-  const gallerySections = groupGenerationExamplesByDirection(examples, { direction, sideStyle })
-    .map((section) => ({ ...section, examples: section.examples.slice(0, 6) }));
-  const labelledSections = gallerySections.length > 1;
   const pickReference = async () => {
     if (!onRefsChange) return;
     return onPickRef
@@ -1338,14 +1349,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, sideSt
         <p className="hint">예시 없이 내 상품 원본으로 디테일을 촬영해요. 촬영 연출 예시는 선택 사항이에요.</p>
       ) : <div className="sb-exgallery" ref={galleryRef}
         role="region" aria-label="생성예시 갤러리">
-        {gallerySections.length ? gallerySections.map((section) => (
-          <div className="sb-exsection" key={`sec:${section.key}`}>
-            {labelledSections && <div className="sb-expage-label">{section.label}</div>}
-            <div className="sb-expage-cells">
-              {section.examples.map((example) => exampleCells[examples.indexOf(example)])}
-            </div>
-          </div>
-        )) : (
+        {exampleCells.length ? <div className="sb-expage-cells">{exampleCells}</div> : (
           <div className="sb-exempty">
             {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
               ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
@@ -1496,8 +1500,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       source: 'ai',
       shot: recipePatch.shot,
       colorId,
-      pose: 'auto',
-      poseLabel: 'AI 자동',
       angle: 'same',
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
@@ -1561,44 +1563,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     });
     return undefined;
   };
-  // 제품컷은 사람이 없어 앞/뒷면 둘뿐이고 sideStyle 개념도 없다 — 서버 값 그대로 보낸다.
-  const onProductDirectionChange = (direction) => onChange(() => ({ direction }));
-  // 착용컷은 화면 칩이 4개(정면·사선·옆모습·뒷면)지만 서버 계약은 front/side/back 셋이다.
-  // 변환은 lib/directionChoice 한 곳에서만 한다 — 에디터도 같은 모듈을 쓴다.
-  const onDirectionChange = (choice) => onChange((current) => {
-    const patch = specFromDirectionChoice(choice);
-    const { direction, sideStyle } = patch;
-    if (!current.exampleId) return patch;
-    if (!current.spaceGroupId && current.refScope !== 'pose') {
-      // 자동배정 예시가 새 방향과 안 맞으면 같은 방향 예시로 갈아 끼운다 — 안 그러면 사선
-      // 카드에 정면 예시가 남아 캡션이 영원히 "변경됨"이고 갤러리 선택도 어긋난다.
-      // 셀러가 직접 고른 예시는 그대로 둔다(그건 "변경됨"이 맞다).
-      const repick = repickExampleForDirection(current, catalogs.genExamples, {
-        clothingType, gender: exampleGender, identityKind, direction, sideStyle,
-      });
-      return repick ? { ...patch, ...repick } : patch;
-    }
-    const example = (catalogs.genExamples || []).find((item) => item.id === current.exampleId);
-    const compatible = (current.cutType === 'horizon' || (example?.variants || []).includes('pose'))
-      && poseExampleDirectionCompatible(example, {
-        cutType: current.cutType,
-        direction,
-        sideStyle,
-      });
-    if (compatible) {
-      return {
-        ...patch,
-        ...(current.spaceGroupId ? { refScope: current.cutType === 'horizon' ? 'all' : 'pose' } : {}),
-      };
-    }
-    // 방향이 예시 포즈와 안 맞아도 생성예시는 유지한다(2026-08-15 오너 — 예시를 비워
-    // "준비하지 못했어요" 빈 카드를 만들지 않는다). 캡션의 방향 표시만 바뀌고,
-    // 서버는 방향 비호환 시 포즈 권한만 내려놓고 생성한다(reference_direction_compatible).
-    return {
-      ...patch,
-      ...(current.spaceGroupId && current.cutType !== 'horizon' ? {} : { refScope: 'all' }),
-    };
-  });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
@@ -1723,23 +1687,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             }}>다시 시도</button>
           </div>}
         </>
-      )}
-
-      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004).
-          디테일 컷도 숨김 — 방향은 셀러가 고르지 않고 선택한 생성예시의 direction 라벨이
-          내부적으로 결정한다(2026-08-07 오너 결정, generationExampleSelectionPatch). */}
-      {!isMirror && !isDetail && (
-        <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
-          {/* 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다. 착용컷만 4칩으로 갈린다. */}
-          {/* allowDeselect=false — 선택된 칩을 다시 누르면 null 이 가고, null 은 정면으로
-              떨어진다(specFromDirectionChoice). 사선에서 사선을 한 번 더 누르면 조용히 정면이
-              됐다(2026-09-22 실측). 방향은 항상 하나가 선택돼 있어야 한다. */}
-          <Chips className="direction-chips" options={isProduct ? catalogs.productDirections : catalogs.directions}
-            allowDeselect={false}
-            value={isProduct
-              ? (catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front')
-              : directionChoiceFromSpec(block)}
-            onChange={isProduct ? onProductDirectionChange : onDirectionChange} /></div>
       )}
 
       {showOuterClosure && (
@@ -2130,7 +2077,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     } : null;
   }
   const initialEntry = initialEntryRef.current?.prepared;
-  const [blocks, setBlocks] = useState(() => initialEntry?.blocks || null);
+  const [blocks, setRawBlocks] = useState(() => initialEntry?.blocks || null);
+  const setBlocks = useCallback((update) => setRawBlocks((previous) =>
+    reconcileSimilarCutMutation(previous, typeof update === 'function' ? update(previous) : update)
+  ), []);
   const [catalogs, setCatalogs] = useState(() => initialEntry?.catalogs || null);
   const [matchClothing, setMatchClothing] = useState(() => initialEntry?.matchClothing || null);
   const [customMatchPromotionPending, setCustomMatchPromotionPending] = useState(() => {
@@ -2193,6 +2143,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
+  const inspectorReturnFocus = useRef(null);
+  const setPickerReturnFocus = useRef(null);
   const defaultToast = useToast();
   const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
@@ -2518,7 +2470,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           await sbSaveNow(pid, () => kept, { restoreConflict: true });
           storyboardWorkCopies.clear(pid, copy);
           setAutosaveFailed(false);
-        } catch { setAutosaveFailed(true); }
+        } catch (error) { setAutosaveFailed(error); }
       }),
     } });
   };
@@ -2552,7 +2504,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   // 저장이 다시 성공하면 배너를 거둔다.
   const retryAutosave = () => flushLatest(projectId)
     .then(() => setAutosaveFailed(false))
-    .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
+    .catch((error) => setAutosaveFailed(error?.code === 'revision_conflict' ? false : error));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
   }, [blocks]);
@@ -2583,7 +2535,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
       flushLatest(projectId)
         .then(() => setAutosaveFailed(false))     // 다시 성공하면 배너를 거둔다(오경보 방지)
-        .catch((error) => setAutosaveFailed(error?.code !== 'revision_conflict'));
+        .catch((error) => setAutosaveFailed(error?.code === 'revision_conflict' ? false : error));
     });
   }, [blocks, projectId]);
   // hidden/pagehide/unmount 모두 같은 latest snapshot을 keepalive로 직렬 체인에 enqueue한다.
@@ -2754,6 +2706,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       return applied.source === 'mine' && oldRowId && block.layoutRowId === oldRowId ? withoutLayoutRow(block) : block;
     });
     next = ensureContiguousSpaceRuns(next);
+    next = reconcileSimilarCutMutation(previous, next);
     // 내부 생성 레시피가 복구돼 placeholder가 생성 대상이 되면 레이아웃 배타 규칙을 다시 적용한다.
     if (applied && 'cutType' in applied && applied.cutType && !current.cutType) next = normalizeStoryboardMutation(next);
     setBlocks(next);
@@ -2781,11 +2734,11 @@ export function Storyboard({ toastOverride = null } = {}) {
         staged = adoptSection(dissolved, id, move.targetSid, move.targetRole);
       }
     }
-    const next = normalizeStoryboardMutation(staged.map((block) => (
+    const next = reconcileSimilarCutMutation(previous, normalizeStoryboardMutation(staged.map((block) => (
       block.id === id
         ? detachHookSlotOnReshape(block, changes, { ...block, ...changes })
         : block
-    )));
+    ))));
     showUndo(previous, next, { blockId: id, label: undoLabel || undoLabelForPatch(changes) });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
@@ -2812,7 +2765,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     setAtomicSaving(true);
     const previous = blocks;
     const built = buildNext(previous);
-    const next = normalizeStoryboardMutation(built);
+    const next = reconcileSimilarCutMutation(previous, normalizeStoryboardMutation(built));
     showUndo(previous, next, { blockId: undoBlockId || nextSelectedId || 'multi', label: undoLabel });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
@@ -2838,12 +2791,48 @@ export function Storyboard({ toastOverride = null } = {}) {
     }
   };
   const finishEdit = () => { setPendingSectionMove(null); setSelectedId(null); };
+  const restoreInspectorFocus = (target) => requestAnimationFrame(() => {
+    const fallback = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected, .sb-board-tool');
+    (target?.isConnected && target.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
+  });
+  const closeInspector = () => {
+    if (atomicSavingRef.current) return;
+    const target = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || inspectorReturnFocus.current;
+    finishEdit();
+    setSetPicker(null);
+    setSetPickerError(null);
+    setSplitOpen(false);
+    restoreInspectorFocus(target);
+  };
+  const returnFromSetPicker = () => {
+    if (atomicSavingRef.current) return;
+    if (!selectedId) { closeInspector(); return; }
+    setSetPicker(null);
+    setSetPickerError(null);
+    requestAnimationFrame(() => {
+      const target = setPickerReturnFocus.current;
+      (target?.isConnected && target.getClientRects().length ? target : document.querySelector('.insp-col .sb-space-set-change'))?.focus({ preventScroll: true });
+    });
+  };
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
     if (selectedId === id && !setPicker) { finishEdit(); return; }      // the open picker returns to this cut's inspector
     setPendingSectionMove(null);
     setSelectedId(id); setSplitOpen(true);
+  };
+  const addSimilar = (id) => {
+    const source = blocks.find(block => block.id === id);
+    if (!canPlanSimilarCut(source) || locked) return;
+    const child = createSimilarCutBlock(source, uid('blk'));
+    const group = dragGroupFor(blocks, id);
+    const end = group?.indexes[group.indexes.length - 1] ?? blocks.findIndex(block => block.id === id);
+    const next = [...blocks];
+    next.splice(end + 1, 0, child);
+    const normalized = normalizeStoryboardMutation(next);
+    setBlocks(normalized);
+    showUndo(blocks, normalized, { blockId: child.id, label: '비슷한 컷 추가' });
+    setSelectedId(child.id); setSplitOpen(true);
   };
   const duplicate = (id) => {
     // 예비가 소진된 장소세트 멤버는 복제로도 늘릴 수 없다 — ＋ 와 예시 드롭만 막고 복제를
@@ -2876,20 +2865,21 @@ export function Storyboard({ toastOverride = null } = {}) {
     const idx = blocks.findIndex((b) => b.id === id); const removed = blocks[idx];
     const rowId = removed?.layoutRowId;
     const undoBlock = removed ? withoutLayoutRow(removed) : removed;
+    const dependentCuts = blocks.filter(block => block.similarSourceBlockId === id);
     // undo 정본 = 삭제 전 보드 통짜 스냅샷 — normalizeBoard 가 삭제 시 레이아웃을 강등하므로
     // 재삽입+재정규화만으론 원래 레이아웃·행 구성이 복원되지 않는다(addBlock 취소와 동일 패턴).
     const preDelete = blocks;
     let postDelete = null;   // 삭제 직후 상태 — identity 가 그대로일 때만 통짜 복원 유효
     setBlocks((bs) => {
-      postDelete = normalizeStoryboardMutation((bs.filter((b) => b.id !== id).map((b) => {
+      postDelete = reconcileSimilarCutMutation(bs, normalizeStoryboardMutation((bs.filter((b) => b.id !== id).map((b) => {
         // 삭제 규칙: 한 멤버가 사라지면 남은 파트너 전원의 행 id를 내려 모두 일반 단일 카드로 돌린다.
         // normalizeBoard: 컷 수가 줄어든 섹션의 레이아웃 위생(예: 3컷 threeColumn 에서 1개 삭제 → 스테일 레이아웃 해소)
         return rowId && b.layoutRowId === rowId ? withoutLayoutRow(b) : b;
-      })));
+      }))));
       return postDelete;
     });
-    if (selectedId === id) finishEdit();
-    toast.push('블록을 삭제했어요', { undo: () => setBlocks((bs) => {
+    if (selectedId === id || blocks.find(block => block.id === selectedId)?.similarSourceBlockId === id) finishEdit();
+    toast.push(blocks.some(block => block.similarSourceBlockId === id) ? '원본과 연결된 비슷한 컷을 함께 삭제했어요' : '블록을 삭제했어요', { undo: () => setBlocks((bs) => {
       if (!undoBlock) return bs;
       // "삭제 직후 그대로" 판정 = 현재 보드가 postDelete 이거나 자동 강등 effect 가 postDelete
       // 로부터 만들어 온 계보(autoDemoteTrail) 위에 있을 때만 — 사용자 조작(레이아웃 칩 포함)은
@@ -2903,7 +2893,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       if (unchanged) return preDelete;
       // 그 사이 실제 조작이 있었으면 폴백: 재삽입 후 이웃 섹션 재채택 + 공통 위생
       const restored = restoreHorizonGroupBackground(undoBlock, bs);
-      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, restored);
+      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, restored, ...dependentCuts.filter(block => !bs.some(current => current.id === block.id)));
       return normalizeStoryboardMutation(adoptSection(n, undoBlock.id));
     }) });
   };
@@ -2982,10 +2972,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 내부 역할은 현재 섹션의 안전한 기본값으로 시작하고, normalizeBoard가
     // 핵심 장점 첫 카드의 hero 여부를 실제 카드 순서에 맞춰 다시 확정한다.
     const nb = { id: uid('blk'), sectionRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION, colorId: initialColorOpts[0]?.id || 'col1',
-      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
+      matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       ...(!droppedExample ? { exampleChoice: 'manual' } : {}),
       ...insertionRecipe,
-      thumb: Placeholder.photo('new' + Date.now(), insertionRecipe.cutType === 'product' ? 'product' : insertionRecipe.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
+      thumb: Placeholder.photo('new' + Date.now(), insertionRecipe.cutType === 'product' ? 'product' : insertionRecipe.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320) };
     const m = [...blocks]; m.splice(idx, 0, nb);
       let out = adoptSection(m, nb.id, targetSid, sectionRole);             // 이웃/명시된 섹션 소속으로 삽입
       // 빈 보드 등 이웃이 없으면 기본 섹션 부여 — 무소속(unsupported state) 블록 방지
@@ -3087,8 +3077,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   const mineBlock = (src, n) => ({
     id: uid('blk'), sectionRole: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
     title: '내 이미지', source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
-    poseThumb: Placeholder.pose('stand'), poseLabel: '-',
+    ownImages: [src], thumb: src, matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
   });
   const addMineBlock = async (srcOrIndex = null) => {
     const picked = typeof srcOrIndex === 'string' ? srcOrIndex : await api.pickAnyImage(projectId);
@@ -3292,6 +3281,10 @@ export function Storyboard({ toastOverride = null } = {}) {
       : null;
     const cutAllowed = !targetRole || moving?.source === 'mine'
       || allowedCutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
+    if (moving?.similarSourceBlockId && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType) || targetSpaceGroupId)) {
+      toast.push('비슷한 컷은 기준 컷과 같은 촬영 방식으로 구성해 주세요');
+      return;
+    }
     if (moving && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType))) {
       const fallbackRole = targetContentRole || defaultContentRoleForSection(targetRole);
       const targetRecipe = renderGroupRecipe || blockPatchForContentRole(moving, fallbackRole, { clothingType });
@@ -3420,6 +3413,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     setBlocks((bs) => patchSection(bs, sec.id, { sectionLayout: v, sectionCustom: true }));
   };
   const openSetPicker = (picker) => {
+    setPickerReturnFocus.current = document.activeElement;
+    inspectorReturnFocus.current = document.querySelector('.sb-cutcard.selected, .sb-frame-half.selected') || document.activeElement;
     setPickerScrollY.current = window.scrollY;
     setSetPickerError(null);
     setSetPicker(picker);
@@ -3500,7 +3495,6 @@ export function Storyboard({ toastOverride = null } = {}) {
           colorId: colorOpts[0]?.id || 'col1',
           matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
           thumb: Placeholder.photo('new-set', 'styling', 240, 320),
-          poseThumb: Placeholder.pose('stand'),
         };
         await atomicBoardChange((current) => {
           let inserted = insertSpaceSet(current, setPicker.index, set, template, {
@@ -3629,9 +3623,6 @@ export function Storyboard({ toastOverride = null } = {}) {
       direction: slot.direction || 'front',
       shot: slot.shot,
       colorId: slot.colorId || baseColorId,
-      pose: 'auto',
-      poseLabel: 'AI 자동',
-      poseThumb: template.poseThumb,
       matchIds: [...(template.matchIds || [])],
       faceExposure: 'same',
       angle: 'same',
@@ -3658,6 +3649,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         customCategory: composeModeSeed.customCategory,
         projectId,
       }).blocks;
+      next = reconcileSimilarCutMutation(previous, next);
       directSaveSnapshots.current.add(next);
       setBlocks(next);
       const nextFrame = deriveHookFrame(next);
@@ -3720,6 +3712,7 @@ export function Storyboard({ toastOverride = null } = {}) {
      아이콘 자체를 안 보여 준다(2026-08-17 검증: 늘 무반응 + 틀린 이유 안내). */
   const canShuffleBlock = (block) => !locked
     && block.source === 'ai'
+    && !block.similarSourceBlockId
     && !block.spaceGroupId
     && !block.hookFrameId
     && !!block.exampleId
@@ -3977,10 +3970,11 @@ export function Storyboard({ toastOverride = null } = {}) {
   const allGroupKeys = boardGroups.map((group) => group.key);
   const allOpen = allGroupKeys.length > 0 && allGroupKeys.every((key) => openGroupKeys.includes(key));
 
-  const list = (
-    <div className="sb-canvas-board">
+  const boardControls = (
+    <div className="sb-board-controls">
       {autosaveFailed && (
         <div className="sb-save-error sb-autosave-error" role="alert">
+          <ClientErrorCapture point="storyboardSave" error={autosaveFailed instanceof Error ? autosaveFailed : undefined} projectId={projectId} />
           <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span>
           <button type="button" onClick={retryAutosave}>다시 저장</button>
         </div>
@@ -4007,6 +4001,11 @@ export function Storyboard({ toastOverride = null } = {}) {
           {allOpen ? '전체 접기' : '전체 펼치기'}
         </button>
       </div>
+    </div>
+  );
+
+  const list = (
+    <div className="sb-canvas-board">
       {boardGroups.map((group, groupIndex) => {
         const open = openGroupKeys.includes(group.key);
         const range = cutRangeLabel(group.items);
@@ -4147,8 +4146,20 @@ export function Storyboard({ toastOverride = null } = {}) {
      하나에서만** — 스타일은 후킹 섹션 전체 구성을 지배하는 하나의 결정이라, 슬롯마다 같은
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
   const pickerMembers = setPicker?.spaceGroupId ? blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId) : [];
-  const inspector = setPicker ? (
-    <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
+  const similarSource = selected?.similarSourceBlockId ? blocks.find(block => block.id === selected.similarSourceBlockId) : null;
+  const inspector = selected?.similarSourceBlockId ? (
+    <div className="surface inspector sb-similar-inspector">
+      <span className="sb-similar-eyebrow"><Icon name="copy" size={14} />비슷한 컷</span>
+      <h3>같은 촬영의 다른 순간</h3>
+      <p className="panel-sub">기준 사진이 완성되면 인물·옷·장소를 유지해 한 장 더 만들어요.</p>
+      {similarSource && <button type="button" className="sb-similar-source" onClick={() => selectCard(similarSource.id)}>
+        <img src={storyboardPreviewSource(similarSource, catalogs)} alt="" />
+        <span><strong>기준 컷 {cutNumber(blocks.indexOf(similarSource) + 1, blocks.length)}</strong><small>원본 설정 보기</small></span>
+        <Icon name="arrowRight" size={16} />
+      </button>}
+    </div>
+  ) : setPicker ? (
+    <SpaceSetGallery previewCatalogs={catalogs} mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet} onChooseMember={chooseCatalogMember}
       catalog={catalogContext.catalog} busy={atomicSaving || locked}
       onCatalogDragStart={(set, member) => { setCatalogDrag({ setId: set.id, exampleId: member?.exampleId || null }); setDragId(null); setDragSpaceGroupId(null); setDragExampleId(null); }}
       onCatalogDragEnd={onDragEnd}
@@ -4159,8 +4170,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       )}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       identityKind={identityKind}
-      onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory} exampleGender={exampleGender} signatureGender={signatureGenderNow} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
+      returnLabel={selectedId ? '컷 설정으로 돌아가기' : '콘티로 돌아가기'} onClose={returnFromSetPicker} />
+  ) : <><Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} subCategory={composeModeSeed.subCategory} customCategory={composeModeSeed.customCategory} exampleGender={exampleGender} signatureGender={signatureGenderNow} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     customMatchPromotionPending={customMatchPromotionPending}
@@ -4179,16 +4190,39 @@ export function Storyboard({ toastOverride = null } = {}) {
       setDragExampleId(value);
       if (value == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
     }}
-    />;
+    />
+    {canPlanSimilarCut(selected) && <div className="sb-similar-add">
+      <button type="button" className="btn btn-ghost" disabled={locked} onClick={() => addSimilar(selected.id)}><Icon name="copy" size={16} />비슷한 컷 추가</button>
+      <p>이 컷이 완성되면 같은 촬영으로 한 장 더 만들어요</p>
+    </div>}
+  </>;
 
+  const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
+  const selectedSection = selected ? deriveSections(blocks).find((section) => section.id === selected.sectionId) : null;
+  const selectedRoleLabel = selected ? sectionTitle(selectedSection?.role || selected.sectionRole || sectionRoleForContentRole(selected.contentRole)) : '';
+  const selectedThumbnail = storyboardPreviewSource(selected, catalogs);
   const cutCount = blocks.length;
   const body = (
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
+      {boardControls}
       <div className="sb-canvas-main">
         {list}
       </div>
-      {splitOpen && <div className="insp-col">{inspector}</div>}
+      {splitOpen && <div className="insp-col">
+        <div className="ds-selection-summary">
+          <div className="ds-selection-title">
+            {!setPicker && selected && <StoryboardSelectionThumbnail src={selectedThumbnail} />}
+            <div className="ds-selection-identity"><strong>{setPicker ? (setPicker.mode === 'replace' ? '장소 세트 변경' : '장소 세트 추가') : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
+              {selected && !setPicker && <span>{selected.similarSourceBlockId ? '원본 생성 후 자동으로 만들어요' : selected.source === 'mine' ? '내 상품 사진 · 이 사진에만 적용' : '아래 설정은 이 사진에만 적용'}</span>}
+              {setPicker && <span>{setPicker.mode === 'replace' ? `현재 세트 ${pickerMembers.length}장` : '새 촬영 세트 추가'}</span>}
+            </div>
+            <button type="button" disabled={atomicSaving} onClick={closeInspector} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>
+          </div>
+          {!selected && !setPicker && <p>수정할 사진을 선택해주세요.</p>}
+        </div>
+        {inspector}
+      </div>}
     </div>
   );
   // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)
@@ -4221,8 +4255,9 @@ export function Storyboard({ toastOverride = null } = {}) {
       setAtomicSaving(false);
     }
   }
-  function onComposeModeError() {
-    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
+  function onComposeModeError(error) {
+    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.', { variant: 'error', error,
+      kind: 'save_error', actionName: 'save', messageCode: 'compose_mode_save_failed', blocking: true });
   }
   // 사진 양 변경 계약: 현재 보드 flush → composeMode PATCH → 성공 시에만 reload.
   // helper가 false를 반환하면 현재 분할 선택 상태를 그대로 유지한다.
@@ -4250,7 +4285,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       setCopywriting: setCopyOn,
       restoreCopywriting: restoreCopyOn,
       selectionState: copywritingSelectionRef,
-      onFailure: () => toast.push('카피라이팅 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
+      onFailure: (error) => toast.push('카피라이팅 설정을 저장하지 못했어요. 다시 시도해 주세요.', {
+        variant: 'error', error, kind: 'save_error', actionName: 'save', messageCode: 'copywriting_save_failed', blocking: true }),
     });
   };
   const goToMannequin = async () => {
@@ -4266,7 +4302,8 @@ export function Storyboard({ toastOverride = null } = {}) {
     await continueAfterStoryboardFlush({
       flush: () => saveNow(projectId),
       navigate: () => navigate('/create/mannequin'),
-      onFailure: (message) => toast.push(message),
+      onFailure: (message, error) => toast.push(message, { variant: 'error', error,
+        kind: 'save_error', actionName: 'save', messageCode: 'storyboard_save_failed', blocking: true }),
       // 시그니처 또는 호리존 세트의 배경에 필요하면 저장된 콘티 기준으로 옷 색 확인을 맡긴다. 기다리지 않는다.
       afterFlush: () => {
         if (needsGarmentColorMeasurement(latestBlocks.current || blocks)) void api.measureGarmentColors(projectId).catch(() => {});
@@ -4275,6 +4312,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   };
   return (
     <LoadedRecipeContext.Provider value={loadedRecipes}>
+    <SimilarSourceNumbersContext.Provider value={new Map((blocks || []).map((block, index) => [block.id, index + 1]))}>
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
@@ -4346,6 +4384,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         </div>
       </div>
     </div>
+    </SimilarSourceNumbersContext.Provider>
     </LoadedRecipeContext.Provider>
   );
 }

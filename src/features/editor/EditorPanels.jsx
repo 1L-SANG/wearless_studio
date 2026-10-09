@@ -17,17 +17,14 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import { hasAvailableGenerationRecipe } from '@/lib/generationExamples.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
-import {
-  detailDirectionFromExample,
-  generationExampleStructuralRecipePatch,
-} from '@/lib/storyboardExampleSelection.js';
+import { directionSpecFromExample, generationExampleStructuralRecipePatch } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { directionChoiceFromSpec, specFromDirectionChoice } from '@/lib/directionChoice.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, lineColor, lineColorPatch, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
+import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
@@ -252,113 +249,30 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
-/* 착용컷은 원본과 이전 동작을 참고하는 '비슷한 컷'으로 통합한다.
-   원하는 방향·포즈·표정은 선택 사항이고, 제품컷은 기존 수정 경로를 사용한다. */
-const VARY_CATS = [
-  { id: 'cut', label: '방향' },
-  { id: 'pose', label: '포즈' },
-  { id: 'face', label: '표정' },
-];
+/* ---------- AI · 현재 이미지 수정 ---------- */
 function VaryPanel({ catalogs, source, onGenerate }) {
-  const opts = catalogs.varyOptions || {};
-  const [cat, setCat] = useState('cut');
-  const [sel, setSel] = useState({});
-  const [cutDir, setCutDir] = useState('keep'); // 방향 — 'keep' = 현재 유지
-  const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
+  const busyRef = useRef(false);
   if (!source) {
-    return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
+    return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
   }
-  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 안다. 직접 업로드는 미상이고,
-  // 그때는 사람컷 대표값(styling)으로 가정한다. 셀러에게 되묻지 않는다(오너 8/16):
-  // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
-  const srcType = source.cutType || null;
-  const isProduct = srcType === 'product';
-  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 포즈는 셀피 구도 자동이라 변형 대상 아님
-  const isMirror = srcType === 'mirror';
-  const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 방향도 포즈도 못 바꾸니
-  // 표정만 남는다(거리를 뺀 뒤로 '방향' 칸이 통째로 비기 때문).
-  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut')
-    : isMirror ? VARY_CATS.filter((c) => c.id === 'face')
-    : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0].id;
-  const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
-  const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
-  // 칩/payload 순서 = 적용 우선순위 계약: 방향이 기준 → 포즈 → 표정이 그 위에 얹힌다
-  const chips = [];
-  if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
-  if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
-  if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
-  const n = chips.length;
-  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: !!cutDir && cutDir !== 'keep' };
+  const isProduct = source.cutType === 'product';
   const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
-  const clearAll = () => { setSel({}); setCutDir('keep'); };
-  const runGenerate = (changes) => {
+  const generate = () => {
     if (busyRef.current) return;
-    busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
+    busyRef.current = true;
     onGenerate({
-      // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
-      source: { id: source.id, src: source.src, cutType: srcType || 'styling', wardrobeGroup: source.wardrobeGroup },
-      changes,
+      source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
+      changes: [],
       ...(!isProduct ? { variationMode: 'similar' } : {}),
     });
   };
-  // 방향 칩은 **화면 값**(정면·사선·옆모습·뒷면)이다. 서버는 front/side/back 셋만 알므로
-  // 나가기 전에 컷 스펙으로 되돌린다 — 안 하면 'threeQuarter' 가 direction 으로 날아간다.
-  // 제품컷은 앞/뒷면 둘뿐이라 화면 값이 곧 서버 값이다(변환하면 오히려 망가진다).
-  const generateWithPicks = () => runGenerate(chips.map((c) => {
-    if (c.type !== 'direction' || isProduct) return { type: c.type, value: c.value, label: c.label };
-    const spec = specFromDirectionChoice(c.value);
-    return { type: c.type, value: spec.direction, sideStyle: spec.sideStyle, label: c.label };
-  }));
-  const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
-    <div>
-      {!isProduct && <p className="panel-sub">처음 사진의 인물·옷·장소를 유지해 다른 동작의 컷을 만듭니다. 아래 옵션을 고르지 않아도 바로 생성할 수 있어요.</p>}
-      <div className="vary-tabs">
-        <UnderlineTabs value={safeCat} onChange={setCat}
-          options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
+    <div className="similar-cut-panel">
+      <div className="similar-cut-source">
+        <img src={source.src} alt="기준 사진" />
+        <div><span>기준 사진</span><p>{isProduct ? '선택한 상품 사진으로 만들어요' : '같은 촬영의 다른 순간을 만들어요'}</p></div>
       </div>
-      {safeCat === 'cut' ? (
-        /* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */
-        <div className="insp-sec"><label className="lbl">보는 방향</label>
-          <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
-      ) : (
-        <div className="insp-sec">
-          <label className="lbl">{catLabel} 고르기</label>
-          <div className="vary-grid">
-            {(opts[safeCat] || []).map((o) => {
-              const on = sel[safeCat] === o.id;
-              return (
-                <button type="button" key={o.id} className={`vary-card${on ? ' on' : ''}`} onClick={() => pickCard(o.id)}>
-                  <span className="vc-check">{on && <Icon name="check" size={12} />}</span>
-                  <img src={o.thumb} alt="" />
-                  <span className="vc-label">{o.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {n > 0 && (
-        <div className="vary-tray">
-          <div className="vt-head">
-            <span className="vt-title">변경 요약 ({n})</span>
-            <button type="button" className="vt-clear" onClick={clearAll}>전체 해제</button>
-          </div>
-          <div className="vt-chips">
-            {chips.map((c) => (
-              <span className="vt-chip" key={c.key}>{c.cat} · {c.label}
-                <button type="button" onClick={c.clear} title="해제"><Icon name="x" size={13} /></button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring"
-        onClick={generateWithPicks}>
+      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
         {`${isProduct ? '이미지 수정' : '비슷한 컷 생성'} · ${cost} 크레딧`}
       </Button>
     </div>
@@ -374,7 +288,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
-  const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
   const virtualModels = catalogs.models || [];
@@ -391,17 +304,19 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
-  const galleryDirectionOptions = galleryIsProduct ? catalogs.productDirections : catalogs.directions;
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const galleryDirectionVal = galleryDirectionOptions.some((option) => option.value === dir)
-    ? dir : galleryDirectionOptions[0].value;
+  const directionSpec = directionSpecFromExample(selectedExample, {
+    cutType: galleryCutType,
+    detailTarget: galleryIsProduct && shot === 'detail' ? selectedDetailTarget : null,
+  });
+  const galleryDirectionVal = directionSpec.direction;
   const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
     ? shot : galleryShotOptions[0].value;
   const baseRecipe = {
     source: 'ai',
     contentRole: inferContentRole({ source: 'ai', cutType: galleryCutType, shot: galleryShotVal }),
     cutType: galleryCutType,
-    direction: galleryIsProduct && galleryShotVal === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : galleryDirectionVal,
+    ...directionSpec,
     shot: galleryShotVal,
   };
   const effectiveRecipe = {
@@ -410,22 +325,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   };
   const effectiveCutType = effectiveRecipe.cutType;
   const isProduct = effectiveCutType === 'product';
-  const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
-  const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
+  const isMirror = effectiveCutType === 'mirror';
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  // 착용컷 방향 칩은 **화면 값 4개**(정면·사선·옆모습·뒷면)이고 서버 계약은 셋이다.
-  // 변환은 lib/directionChoice.js 한 곳 — 콘티보드와 같은 규칙을 써야 한 화면에서 고른 값이
-  // 다른 화면에서 다른 컷이 되지 않는다. 이 변환이 없으면 서버 값 'side' 가 칩 목록에 없어서
-  // 옆 컷이 "정면"으로 보이고, 고른 'threeQuarter' 가 그대로 direction 으로 날아간다.
-  // 제품컷은 앞/뒷면 둘뿐이라 서버 값이 곧 화면 값이다.
-  const effectiveDirectionVal = isProduct
-    ? (effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
-      ? effectiveRecipe.direction : effectiveDirectionOptions[0].value)
-    : directionChoiceFromSpec(effectiveRecipe);
-  // 서버로 보낼 조각 — 화면 값을 컷 스펙으로 되돌린다.
-  const directionSpec = isProduct
-    ? { direction: effectiveDirectionVal, sideStyle: null }
-    : specFromDirectionChoice(effectiveDirectionVal);
   const effectiveShotVal = effectiveShotOptions.some((option) => option.value === effectiveRecipe.shot)
     ? effectiveRecipe.shot : effectiveShotOptions[0].value;
   const [modelOpen, setModelOpen] = useState(false);
@@ -480,7 +381,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
     // 원본 기반 디테일을 포함해 실제로 사용 가능한 샷을 고른다.
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
-    setCutType(value); setDir('front'); setShot(nextShot); setDetailTargetId(null);
+    setCutType(value); setShot(nextShot); setDetailTargetId(null);
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -489,12 +390,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
     setExampleId(value);
     if (!value) setRefScope('all');
     if (replacing) resetRecipeSettings();
-    // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
-    // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
-    if (isDetail && !detailTargetId) {
-      const example = (catalogs.genExamples || []).find((item) => item.id === value);
-      setDir(detailDirectionFromExample(example));
-    }
   };
   // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
   const categoryRequired = failedCutRetry
@@ -566,22 +461,18 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
-            direction={galleryDirectionVal} shot={galleryShotVal}
+            direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
               // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
-              if (isProduct) setDir('front');
             }} clothingType={clothingType} gender={modelGender}
             includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
           {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.direction) setDir(patch.direction); if (patch.colorId) setColor(patch.colorId); }} />}
-          {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
-          {/* allowDeselect=false — 재클릭이 null 을 보내면 방향이 정면으로 떨어진다(콘티보드와 같은 이유). */}
-          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline direction-chips" allowDeselect={false} options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
+            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.colorId) setColor(patch.colorId); }} />}
 
           {showOuterClosure && (
             <div className="insp-sec outer-closure-field">
@@ -911,7 +802,8 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
-  const setS = (p) => onChange({ style: { ...s, ...p } });
+  const setS = (p) => onChange({ style: patchTextStyle(s, p) });
+  const spacing = resolveTextSpacing(s);
   const changeBubbleAppearance = onBubbleAppearanceChange || onChange;
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
@@ -959,7 +851,7 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               칩 시각은 앱 공용 Chips — 활성 칩 재클릭은 가드로 무시(불필요한 히스토리 방지). */}
           {!isBubble && (
             <PanelSection title="빠른 스타일" first>
-              <Chips className="quad-chips" allowDeselect={false}
+              <Chips className="text-quick-styles" allowDeselect={false}
                 options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
                 value={activePresetKey}
                 onChange={(key) => {
@@ -988,13 +880,9 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
                 disabled={weightOptions(s.font).length < 2} onChange={(v) => setS({ weight: v })} />
               <NumStepper value={s.size || 18} min={8} max={200} onChange={(v) => setS({ size: v })} />
             </div>
-            <div className="field-2up" style={{ marginTop: 8 }}>
-              <NumField icon="lineHeight" labelText="행간" value={s.lineHeight || Math.round((s.size || 18) * 1.4)} min={0} max={400} onChange={(v) => setS({ lineHeight: v })} />
-              <NumField icon="letterSpacing" labelText="자간" value={s.tracking || 0} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
-            </div>
             <div className="text-tool-row">
               <div className="seg-icons">
-                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
+                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} title={{ left: '왼쪽 정렬', center: '가운데 정렬', right: '오른쪽 정렬' }[a]} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
               </div>
               <div className="seg-icons">
                 <IconButton name="bold" size="sm" active={isBold(s.font, s.weight)} disabled={!boldToggle(s.font)}
@@ -1014,6 +902,19 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               </div>
             </div>
           </PanelSection>
+
+          <details className="text-spacing-controls">
+            <summary>
+              <span>간격</span>
+              <span className="text-spacing-status">{s.spacingMode === 'auto' ? '자동' : '현재 값 유지'} · 행간 {spacing.lineHeight}px</span>
+            </summary>
+            <div className="field-2up">
+              <NumField icon="lineHeight" labelText="행간" value={spacing.lineHeight} min={1} max={400} onChange={(v) => setS({ lineHeight: v })} />
+              <NumField icon="letterSpacing" labelText="자간" value={spacing.tracking} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
+            </div>
+            <p className="text-spacing-help">자동은 글자 크기에 맞춰 권장 간격을 적용해요. 직접 바꾼 값은 크기를 바꿔도 유지돼요.</p>
+            <Button variant="ghost" size="sm" onClick={() => setS({ spacingMode: 'auto' })}>권장 간격 자동 적용</Button>
+          </details>
 
           <PanelSection title="글자 색상">
             <SwatchField value={s.color || '#0e0d14'} opacity={Math.round((s.opacity ?? 1) * 100)} palette={TEXT_PALETTE}
@@ -1121,7 +1022,8 @@ export function FrameMini({ frame }) {
           return <div key={i} style={{
             ...base, fontFamily: fminiFont(s.font), fontSize: s.size || 20, fontWeight: s.weight || 400,
             color: s.color || '#222', textAlign: s.align || 'left',
-            lineHeight: `${s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            lineHeight: `${s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight : s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : undefined,
             fontStyle: s.italic ? 'italic' : 'normal',
             textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
             whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden',

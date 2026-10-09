@@ -65,8 +65,8 @@ def _plan(**changes):
         "referenceAllowedAttributes": ["pose", "camera", "scene", "light", "captureTone"],
         "declaredFitAxes": [],
         "conflictResolution": {
-            "storyboardDirectionOverridesReference": True,
-            "explicitStoryboardPoseOverridesReference": True,
+            "storyboardDirectionOverridesReference": False,
+            "explicitStoryboardPoseOverridesReference": False,
             "referenceCameraExcludesStoryboardDirectionAndShot": True,
         },
     }

@@ -1,3 +1,4 @@
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/analysis — ② AI 분석·세부 확인 (PRD §6)
    Ported verbatim from reference/prototype/features/analysis.jsx.
@@ -219,6 +220,7 @@ const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
 function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   const [phase, setPhase] = useState('idle');
   const [files, setFiles] = useState([]);
+  const [originalError, setOriginalError] = useState(null);
   const [error, setError] = useState('');
   const [doneItem, setDoneItem] = useState(null);
   const [dragIndex, setDragIndex] = useState(null);
@@ -284,6 +286,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         : '');
     } catch (prepareError) {
       if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(prepareError);
       setError(prepareError?.message || '사진을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.');
       setPhase('error');
     }
@@ -310,10 +313,12 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         releasePreview(entry);
         return toEntry(prepared.files[0]);
       }));
+      setOriginalError(null);
       setError('');
       setPhase('picking');
     } catch (prepareError) {
       if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(prepareError);
       setError(prepareError?.message || '사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
       setPhase('picking');
     }
@@ -341,6 +346,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
     renewController();
     files.forEach(releasePreview);
     setFiles([]);
+    setOriginalError(null);
     setError('');
     setPhase('idle');
   };
@@ -351,6 +357,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   const submit = async () => {
     if (!files.length || phase === 'uploading' || phase === 'analyzing') return;
     const controller = renewController();
+    setOriginalError(null);
     setError('');
     setPhase('uploading');
     try {
@@ -378,6 +385,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
       setTimeout(() => { if (aliveRef.current) requestClose(); }, 500);
     } catch (uploadError) {
       if (uploadError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(uploadError);
       setError(uploadError?.message || '옷을 추가하지 못했어요. 다시 시도해 주세요.');
       setPhase('error');
     }
@@ -446,7 +454,9 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         {phase === 'done' && (
           <div className="custom-match-status success"><Icon name="check" size={18} />{doneItem?.name || '내 옷'}을 추가했어요.</div>
         )}
-        {error && <div className="custom-match-error">{error}</div>}
+        {error && <div className="custom-match-error">
+          {originalError && <ClientErrorCapture point="customMatchUpload" error={originalError} projectId={projectId} />}
+          {error}</div>}
 
         {phase === 'picking' && (
           <div className="custom-match-modal-actions">
@@ -649,7 +659,7 @@ export function AnalysisForm({
       const actual = await api.refreshMatchClothing(projectId);
       applyAnalysisReplacement(actual);
     } catch (refreshError) {
-      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri' });
+      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri', variant: 'error', error: refreshError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   }, [applyAnalysisReplacement, projectId, toast]);
   const removeCustomMatch = useCallback(async () => {
@@ -660,7 +670,7 @@ export function AnalysisForm({
       const result = await api.removeCustomMatchItem(projectId);
       applyAnalysisReplacement(result.analysis);
     } catch (removeError) {
-      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri' });
+      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri', variant: 'error', error: removeError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
       try {
         applyAnalysisReplacement(await api.refreshMatchClothing(projectId));
       } catch { /* 원래 삭제 오류를 사용자에게 유지 */ }
@@ -1247,6 +1257,7 @@ export function AnalysisForm({
 
 export function Analysis({ onNext }) {
   const [phase, setPhase] = useState('loading');
+  const [analysisError, setAnalysisError] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
 
@@ -1255,12 +1266,12 @@ export function Analysis({ onNext }) {
     // 시그니처 통일 — analyzeProduct 는 projectId 를 받는다(http 모드 job 시작 대상). mock 은 무시.
     Promise.all([api.analyzeProduct(useAppStore.getState().projectId, {}), api.getCatalogs()])
       .then(([a, c]) => { setAnalysis(a); setCatalogs(c); setPhase('ready'); })
-      .catch(() => setPhase('error'));
+      .catch((error) => { setAnalysisError(error); setPhase('error'); });
   }, []);
   useEffect(() => { run(); }, [run]);
 
   if (phase === 'loading') return <div className="wizard"><PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." /><AnalysisSkeleton /></div>;
-  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
+  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState error={analysisError} kind="analysis_error" action="analyze" desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
     projectId={useAppStore.getState().projectId}

@@ -1,3 +1,5 @@
+import { attachResponseError, clientApiFetch, readClientResponse } from '../../lib/api/clientRequest.js';
+import { recordClientAction } from '../../lib/clientEvents.js';
 /* 에디터 다운로드 — 블록 DOM 을 그대로 PNG 로 캡처한다 (서버 렌더 job 없음).
  *
  * 왜 클라 캡처인가: 에디터 화면 자체가 완성된 렌더라, 헤드리스 크롬 같은 서버 인프라 없이
@@ -315,18 +317,19 @@ const CHROME_SELECTOR = [
 async function preflightImages(clone, imageCache) {
   const imgs = [...clone.querySelectorAll('img[src]')];
   let failed = 0;
+  let firstError;
   await Promise.all(imgs.map(async (img) => {
     const src = img.getAttribute('src');
     if (!src || src.startsWith('data:')) return;
     if (!imageCache.has(src)) {
       imageCache.set(src, (async () => {
-        const res = await fetch(src);
+        const res = await clientApiFetch(src);
         const type = res.headers.get('content-type') || '';
         if (!res.ok || (type && !type.startsWith('image/') && type !== 'application/octet-stream')
           || (isAssetBytesUrl(src) && !type.startsWith('image/'))) {
-          throw new Error('image unavailable');
+          throw attachResponseError(new Error('image unavailable'), res);
         }
-        const blob = await res.blob();
+        const blob = await readClientResponse(res, 'blob');
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result);
@@ -338,12 +341,19 @@ async function preflightImages(clone, imageCache) {
     try {
       img.removeAttribute('srcset');
       img.setAttribute('src', await imageCache.get(src));
-    } catch {
+    } catch (error) {
       imageCache.delete(src);
+      firstError ||= error;
       failed += 1;
     }
   }));
-  if (failed) throw new Error(`사진 ${failed}장을 불러오지 못해 다운로드를 중단했어요. 다시 시도해 주세요.`);
+  if (failed) {
+    const error = new Error(`사진 ${failed}장을 불러오지 못해 다운로드를 중단했어요. 다시 시도해 주세요.`);
+    error.cause = firstError;
+    if (firstError?.requestId) error.requestId = firstError.requestId;
+    if (firstError?.status != null) error.status = firstError.status;
+    throw error;
+  }
   return { softFailed: 0 };
 }
 
@@ -700,6 +710,7 @@ function saveBlob(blob, filename) {
 
 // ① 블록 1개 → PNG 저장
 export async function exportBlockPng(blockNode, productName, blockIndex, opts = {}) {
+  recordClientAction('download');
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
   const { canvas, softFailed } = await captureBlockCanvas(blockNode, PIXEL_RATIO, fontEmbedCSS);
   let out;
@@ -720,6 +731,7 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
 // ② 전체 블록 → 세로로 이어붙인 긴 PNG 1장.
 // 스티치 캔버스를 먼저 만들고 블록을 그리는 즉시 해제해 피크 메모리를 절반으로(리뷰 반영).
 export async function exportLongPng(blockNodes, productName, onProgress, opts = {}) {
+  recordClientAction('download');
   const heights = blockNodes.map(exportNodeHeight);
   const totalCssHeight = heights.reduce((a, b) => a + b, 0);
   const ratio = fitPixelRatio(totalCssHeight);
@@ -797,6 +809,7 @@ export async function exportStorefrontDownload(
     return { ...result, autoSwitchReason, delivery: effective.delivery };
   }
 
+  recordClientAction('download');
   const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
   const imageCache = new Map();
   let rendered;

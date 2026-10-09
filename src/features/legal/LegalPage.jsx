@@ -43,7 +43,7 @@ export function LegalPage({ slug }) {
       setState({ phase: 'ready', document, markdown });
     }).catch((error) => {
       if (error.name !== 'AbortError') {
-        setState({ phase: 'error', document: null, markdown: '' });
+        setState({ phase: 'error', error, document: null, markdown: '' });
       }
     });
 
@@ -82,7 +82,7 @@ export function LegalPage({ slug }) {
     return (
       <main className="legal-page">
         <div className="legal-state">
-          <ErrorState
+          <ErrorState error={state.error}
             desc="법적 고지 문서를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
             onRetry={() => setAttempt((value) => value + 1)}
           />

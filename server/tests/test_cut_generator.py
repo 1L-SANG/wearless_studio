@@ -338,7 +338,7 @@ def test_generate_applies_medium_crop_only_to_bottom_pose_scope(monkeypatch):
     assert calls == [(b"FULL", "image/png", "bottom")]
 
 
-def test_all_scope_explicit_pose_and_direction_override_example():
+def test_all_scope_ignores_retired_pose_and_uses_resolved_direction():
     product = {"name": "니트", "clothingType": "top", "colors": [{"isBase": True, "images": [
         {"slot": "Front", "id": "a1"},
     ]}]}
@@ -353,11 +353,11 @@ def test_all_scope_explicit_pose_and_direction_override_example():
         },
         product, manifest=manifest,
     )
-    assert "USER POSE OVERRIDE" in prompt
-    assert "explicit pose in the current CUT SPEC" in prompt
-    assert "USER DIRECTION OVERRIDE" in prompt
+    assert "USER POSE OVERRIDE" not in prompt
+    assert "explicit pose in the current CUT SPEC" not in prompt
+    assert "EXAMPLE DIRECTION" in prompt
     assert "direction (back)" in prompt
-    assert "POSE FROM EXAMPLE" not in prompt
+    assert "POSE FROM EXAMPLE" in prompt
 
 
 def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
@@ -418,7 +418,7 @@ def test_repeated_horizon_all_example_second_color_adds_micro_pose():
         ({
             "cutType": "horizon", "direction": "front", "shot": "full",
             "pose": "walking", "refScope": "all", "exampleId": "same-example",
-            "_exampleRepeatIndex": 1,
+            "_exampleRepeatIndex": 0,
         }, {"example_scope": "all"}),
         ({
             "cutType": "horizon", "direction": "front", "shot": "full",
@@ -471,7 +471,7 @@ def test_repeated_all_example_mirror_cut_uses_the_common_rule():
     assert "SAME support side" in prompt
 
 
-def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch):
+def test_all_scope_uses_example_direction_instead_of_legacy_manual_direction(monkeypatch):
     monkeypatch.setattr(
         cg,
         "load_example_asset_registry",
@@ -484,7 +484,7 @@ def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch
     }]}
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False,
-        mood_count=0, example_scope="all", reference_direction_compatible=False,
+        mood_count=0, example_scope="all", reference_direction_compatible=True,
     )
 
     prompt = cg.build_prompt(
@@ -496,17 +496,10 @@ def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch
         manifest=manifest,
     )
 
-    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" in prompt
-    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" not in prompt
-    assert "Do NOT copy or preserve the example person's pose" in prompt
-    assert "reframe the same pose" not in prompt
-    assert "which example supplied the composition, camera" not in prompt
-    assert "Face visibility is part of this scope's composition" not in prompt
-    assert "POSE FROM EXAMPLE" not in prompt
-    assert "reference: captureTone, light, scene" in prompt
-    assert "reference: camera" not in prompt
-    assert "source ONLY of scene, lighting, capture tone" in manifest
-    assert "source of background, lighting, mood, pose" not in manifest
+    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" not in prompt
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in prompt
+    assert "POSE FROM EXAMPLE" in prompt
+    assert "Camera angle: front-facing" in prompt
 
 
 def test_all_scope_hidden_reference_hides_face_when_direction_matches(monkeypatch):
@@ -565,7 +558,7 @@ def test_all_scope_explicit_show_wins_over_hidden_reference(monkeypatch):
     assert "Face handling: match the reference's hidden-face composition" not in prompt
 
 
-def test_all_scope_hidden_reference_does_not_hide_face_when_direction_changes(monkeypatch):
+def test_all_scope_keeps_hidden_reference_when_legacy_direction_is_ignored(monkeypatch):
     monkeypatch.setattr(
         cg,
         "load_example_asset_registry",
@@ -583,7 +576,7 @@ def test_all_scope_hidden_reference_does_not_hide_face_when_direction_changes(mo
         has_match=False,
         mood_count=0,
         example_scope="all",
-        reference_direction_compatible=False,
+        reference_direction_compatible=True,
     )
     prompt = cg.build_prompt(
         {
@@ -597,9 +590,8 @@ def test_all_scope_hidden_reference_does_not_hide_face_when_direction_changes(mo
         manifest=manifest,
     )
 
-    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" in prompt
-    assert "Face handling: neutral and natural; keep the face unobtrusive" in prompt
-    assert "Face handling: match the reference's hidden-face composition" not in prompt
+    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" not in prompt
+    assert "Face handling: match the reference's hidden-face composition" in prompt
 
 
 def test_horizon_changed_direction_uses_scene_only_reference_section():
@@ -1188,8 +1180,8 @@ def test_build_prompt_user_direction_and_named_pose_override_profile():
     )
 
     assert "Direction relationship: RETARGET to the requested back view" in p
-    assert "reference's visible balance" not in p
-    assert "Pose: one hand on hip" in p
+    assert "reference's visible balance" in p
+    assert "Pose: one hand on hip" not in p
 
 
 def test_generate_forwards_directing_profile_to_rendered_prompt():

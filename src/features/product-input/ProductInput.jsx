@@ -1,3 +1,4 @@
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/product-input — ① 제품 정보 입력 (PRD §5)
    Ported verbatim from reference/prototype/features/product-input.jsx.
@@ -412,7 +413,7 @@ function ColorImageGroup({ mobile = false, group, catalogs, swatchColors, onAddF
   // 2×2 angle "wells" — all four angles at a glance, images stack inside each
   const wellSlot = (s) => (
     <div className="slot-well" key={s}>
-      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{(s === 'Front' || s === 'Back') && <span className="req-star">*</span>}</span></div>
+      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}</span><span className={`ds-field-status${s === 'Front' || s === 'Back' ? ' required' : ''}`}>{s === 'Front' || s === 'Back' ? '필수' : '선택'}</span></div>
       {tiles(s, true)}
     </div>
   );
@@ -503,6 +504,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
   const location = useLocation();
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
+  const [loadOriginalError, setLoadOriginalError] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [phase, setPhase] = useState('input');   // input | analyzing | done
@@ -932,7 +934,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       }
       draftSlot.resume();
       if (latestSnapshot && isCurrentRun()) draftSlot.queue(latestSnapshot);
-      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     } finally {
       redirectingRef.current = false;
       if (isCurrentRun()) setFlowPromotionLocked(false);
@@ -966,7 +968,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           latestAnalysisPatchRef.current,
         );
         analysisSaveErrorRef.current = error;
-        toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
+        toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
       });
     registerAnalysisEditSave(analysisProjectId, analysisSaveChainRef.current);
   };
@@ -1081,7 +1083,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       setSlotLock(null);
     } catch (error) {
       if (!isCurrent()) return;
-      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'ui_error', actionName: 'restore', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1105,7 +1107,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       }
     } catch (error) {
       if (!isCurrent()) return;
-      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1132,7 +1134,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
 
@@ -1234,7 +1236,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           if (!alive) return;
           setAnalysisRunning(editingProjectId, false);
           setPhase('input');
-          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alert' });
+          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: error, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
         }
         return;
       }
@@ -1272,7 +1274,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       };
       setProduct(fresh);
     })().catch((error) => {
-      if (alive) setLoadError(error?.message || '입력 화면을 불러오지 못했어요. 다시 시도해 주세요.');
+      if (alive) { setLoadOriginalError(error); setLoadError(error?.message || '입력 화면을 불러오지 못했어요. 다시 시도해 주세요.'); }
     });
     return () => { alive = false; };
   }, [loadAttempt]);
@@ -1297,7 +1299,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       {editingRightsLock}
       {!mobile && doneBlocked && <DoneGuardModal />}
       <div className="surface">
-        <ErrorState desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
+        <ErrorState error={loadOriginalError} desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
       </div>
     </div>
   );
@@ -1404,17 +1406,17 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });
     }
   };
 
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명</div></div>
+        <div><label className="sec-title" htmlFor="product-name">상품명 <span className="ds-optional">선택</span></label></div>
       </div>
       <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
-      <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
+      <input id="product-name" className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing' || mobileEditingLocked} onChange={(e) => {
           const name = e.target.value;
           set({ name });
@@ -1514,6 +1516,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       )}
       {photoFailure && (
         <Modal onClose={() => setPhotoFailure(null)}>
+          <ClientErrorCapture point="photoRestore" error={photoFailure.error} blocking={!photoFailure.canOmit} projectId={projectId} />
           <h3>사진 {photoFailure.failed}장을 불러오지 못했어요.</h3>
           <p>{photoFailure.removed
             ? `사진 ${photoFailure.failed}장이 정리돼 다시 받을 수 없어요. 휴대폰에서 다시 올려 주세요.`

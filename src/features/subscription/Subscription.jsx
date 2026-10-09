@@ -145,7 +145,7 @@ export function SubscriptionManage() {
   const [confirming, setConfirming] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error: queryError, refetch } = useQuery({
     queryKey: ['subscription'],
     queryFn: () => api.getMySubscription(),
   });
@@ -212,7 +212,7 @@ export function SubscriptionManage() {
   if (isError) {
     return (
       <div className="wizard">
-        <div className="surface"><ErrorState desc="구독 정보를 불러오지 못했어요." onRetry={refetch} /></div>
+        <div className="surface"><ErrorState error={queryError} desc="구독 정보를 불러오지 못했어요." onRetry={refetch} /></div>
       </div>
     );
   }

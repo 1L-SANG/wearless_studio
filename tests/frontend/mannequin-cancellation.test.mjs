@@ -16,7 +16,7 @@ test('pollJob terminates a cancelled server job with the job_cancelled code', ()
   const progress = poll.indexOf("if (typeof job.progress === 'number'");
 
   assert.ok(cancelled > 0 && cancelled < progress, 'cancelled must terminate before another progress tick');
-  assert.match(poll, /error\.code = 'job_cancelled';\s*\n\s*throw error;/);
+  assert.match(poll, /error\.code = 'job_cancelled';[\s\S]*?error.jobId = jobId;\s*throw error;/);
 });
 
 test('the http adapter posts mannequin cancellation to the project-scoped route', () => {

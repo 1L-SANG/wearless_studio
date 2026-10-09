@@ -211,7 +211,7 @@ export function selectGenerationExamples(catalog, rawOptions) {
   };
   const {
     cutType, shot, clothingType, gender, includeSetOnly, appendSetOnly,
-    appendMirror, mixMoodBuckets,
+    appendMirror, mixMoodBuckets, limit = 6,
   } = options;
   const flatCombinationPublished = flatCombinationIsPublished(options);
   if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
@@ -237,13 +237,13 @@ export function selectGenerationExamples(catalog, rawOptions) {
       )).sort(byRankThenId)
       : [];
     return [
-      ...grouped(ordinary, { cutType, shot }),
+      ...grouped(ordinary, { cutType, shot, limit }),
       ...grouped(setMembers, { cutType, shot, limit: setMembers.length, groupByMood: false }),
       ...mirrorExamples,
     ];
   }
   return grouped(matched, {
-    cutType, shot, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
+    cutType, shot, limit, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
   });
 }
 
@@ -254,7 +254,7 @@ export function selectGenerationExamples(catalog, rawOptions) {
 export function repickExampleForDirection(block, catalog, {
   clothingType, gender, identityKind = null, direction, sideStyle = null,
 }) {
-  if (!block || block.source !== 'ai' || block.spaceGroupId) return null;
+  if (!block || block.source !== 'ai' || block.similarSourceBlockId || block.spaceGroupId) return null;
   if (block.hookSlotRole === 'signature' || String(block.exampleId || '').startsWith('sig_')) {
     return null;
   }
@@ -322,6 +322,7 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
     const example = examplesById.get(block?.exampleId);
     if (
       block?.source !== 'ai'
+      || block.similarSourceBlockId
       || !block.id
       || !example
       || !['styling', 'horizon', 'mirror'].includes(block.cutType)
@@ -394,7 +395,7 @@ export function assignGenerationExamples(blocks, {
   const next = blocks.map((block) => {
     if (block?.detailTargetId && block.cutType === 'product' && block.shot === 'detail'
       && !only?.has(block.id)) return block;
-    if (!block || block.source !== 'ai') return block;
+    if (!block || block.source !== 'ai' || block.similarSourceBlockId) return block;
     if (only && !only.has(block.id)) return block;
     if (block.exampleChoice === 'manual') return block;
     const colorwayKey = block.colorwayGroupId ? usageKey(block, product, gender) : null;

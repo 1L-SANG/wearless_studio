@@ -26,8 +26,10 @@ def product_settlement(monkeypatch):
     _patch_inputs(
         monkeypatch, captured, project={"copywriting": False},
         storyboard=[
-            {"id": f"b{i}", "source": "ai", "cutType": "horizon", "shot": "full",
-             "pose": f"pose-{i}"}
+            {"id": f"b{i}", "source": "ai", "cutType": "horizon",
+             "shot": "full" if i < 4 else "medium",
+             "direction": ("front", "side", "side", "back")[i % 4],
+             "sideStyle": (None, "profile", "threeQuarter", None)[i % 4]}
             for i in range(8)
         ],
     )

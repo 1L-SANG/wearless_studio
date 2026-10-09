@@ -221,8 +221,7 @@ test('분위기 예시 칸은 잠기지 않는다 — 회색 비활성·not-allo
   assert.doesNotMatch(css, /\.sb-exgallery\.moodonly/);
   assert.doesNotMatch(css, /\.sb-excell\.unavailable/);
   // 묶음 이름 자리는 있어야 한다.
-  assert.match(moodGuide, /sb-expage-label/);
-  assert.match(css, /\.sb-expage-label/);
+  assert.doesNotMatch(moodGuide, /sb-expage-label/);
 });
 
 test('스튜디오 갤러리는 같은 방향에 낱개가 있으면 세트 멤버를 빼서 같은 사진을 두 번 안 보여준다', () => {
@@ -258,16 +257,15 @@ test('스냅(스타일링)은 장소가 다 다르므로 세트 멤버를 빼지
   assert.deepEqual(shown, ['flat_front', 'set_front']);
 });
 
-test('갤러리는 방향 묶음을 한 화면에 쌓는다 — 페이지 넘김·점 네비가 없다', () => {
+test('갤러리는 방향 분류 없이 예시 사진 목록을 보여준다', () => {
   // 2026-09-22 오너: "분류했으면 여러 창 옮기게 하지 말고 하나만 있으면 되잖아".
   const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
   const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
   assert.doesNotMatch(moodGuide, /galleryPage/);
   assert.doesNotMatch(moodGuide, /sb-expage-hit/);
   assert.doesNotMatch(moodGuide, /paginateGenerationGalleryItems/);
-  assert.match(moodGuide, /sb-exsection/);
-  // 한 방향이 길어져 다른 방향을 밀어내지 않게 묶음마다 6장으로 자른다.
-  assert.match(moodGuide, /section\.examples\.slice\(0, 6\)/);
+  assert.doesNotMatch(moodGuide, /sb-exsection|sb-expage-label/);
+  assert.match(moodGuide, /examples\.map\(renderExampleCell\)/);
 });
 
 test('예시를 고르면 카드 방향이 그 예시의 방향이 된다 — 첫 선택도, 교체도', () => {

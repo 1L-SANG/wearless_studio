@@ -27,6 +27,7 @@ from ..agents import (
     copywriter,
     confirmed_gpt_runtime,
     cut_generator,
+    cut_variator,
     cut_output_qc,
     cut_plan,
     face_identity,
@@ -38,6 +39,7 @@ from ..agents import (
     page_assembler,
     page_output_qc,
     real_horizon_neck_repair,
+    similar_cut,
     space_set_assets,
 )
 from ..agents.gemini_image import InlineImage, normalize_openai_images
@@ -75,7 +77,8 @@ def _example_repeat_indexes(
     indexes: list[int | None] = []
     for block in blocks:
         repeat_index = None
-        if isinstance(block, dict) and block.get("source") == "ai":
+        if (isinstance(block, dict) and block.get("source") == "ai"
+                and block.get("similarSourceBlockId") is None):
             safe_block = dict(block)
             for runtime_field in (
                 "_exampleRepeatIndex",
@@ -98,7 +101,6 @@ def _example_repeat_indexes(
                 and spec.get("exampleId")
                 and not spec.get("spaceGroupId")
                 and spec.get("refScope") == "all"
-                and spec.get("pose") == "auto"
                 and spec.get("_referenceDirectionCompatible") is not False
             ):
                 section = block.get("sectionId") or block.get("section_id")
@@ -155,7 +157,7 @@ def _repair_signature_storyboard(
             remap["fromExampleId"],
             remap["toExampleId"],
         )
-    return repaired
+    return content_roles.inherit_similar_cut_recipes(repaired)
 
 
 def _resolve_signature_background_runtime(
@@ -219,7 +221,7 @@ def _duplicate_source_indexes(
         # 건너뛰는 컷은 원본이 될 수 없다 — 원본이 되면 같은 레시피의 뒤 컷이 "복제"로 접혀
         # 빈 슬롯을 물려받는다(2026-09-25: 실제 모델에 styling 을 열자, 막힌 hooking 이 같은
         # styling/front/full 레시피라 허용된 스타일링 컷이 cut_failed 가 됐다).
-        if index in skipped:
+        if index in skipped or (isinstance(block, dict) and block.get("similarSourceBlockId") is not None):
             sources.append(None)
             continue
         if isinstance(block, dict) and block.get("source") == "ai":
@@ -376,7 +378,7 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
-                    stored_outputs=None):
+                    stored_outputs=None, similar_context=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -390,6 +392,19 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
     stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
+    content_roles.validate_similar_cut_relationships([item[0] for item in prepared])
+    runtime_blocks = content_roles.inherit_similar_cut_recipes([item[0] for item in prepared])
+    source_items = {str(item[0].get("id")): item for item in prepared}
+    hydrated = []
+    for item, block in zip(prepared, runtime_blocks):
+        if block.get("similarSourceBlockId") is not None:
+            original = source_items[block["similarSourceBlockId"]]
+            # Product truth and the resolved model remain available to page QC without
+            # creating another ordinary generation packet for the follow-up.
+            hydrated.append((block, [], "", original[3], original[4]))
+        else:
+            hydrated.append(item)
+    prepared = hydrated
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
     # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
     # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
@@ -404,6 +419,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     clothing_type = (
         product.get("clothing_type") or product.get("clothingType") or "top"
     )
+    generated_images: dict[str, InlineImage] = {}
+    planned_actions: dict[str, list[dict]] = {}
 
     def _page_plan_item(item, output_index, product_truth_indexes) -> dict:
         block = item[0]
@@ -426,7 +443,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         }
 
     async def _store_cut(b, img, mime, chosen, *, has_face, real_identity_attached, garment_qc,
-                         cut_qc, garment_warnings, neck_repair_metadata, face_pass_outcome):
+                         cut_qc, garment_warnings, neck_repair_metadata, face_pass_outcome,
+                         similar_metadata=None):
         """채택본 1장을 R2 에 올리고 컷 결과 튜플을 만든다. 새로 그린 컷과 체크포인트에서 이어 받은
         완성 컷이 **같은 길**로 나간다 — 자산 키·정리 표식·이벤트·정산 단위(cut_assets)가 같다
         (2026-09-23 _one_impl 꼬리에서 떼어 냄, 내용은 그대로). face_pass_outcome = 채택본을 만든 호출의 결과."""
@@ -480,6 +498,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         if not real_identity_attached:
             step["previewUrl"] = r2.preview_url(key)
         await _emit(app.state.pool, job_id, "step", step)
+        generated_images[asset_id] = InlineImage(mime, img)
         return (
             # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
             # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
@@ -493,6 +512,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
+                 **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
                     if b.get("cutType") == "product" and b.get("shot") == "detail" else {}),
@@ -1016,6 +1036,92 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 garment_qc=garment_qc, cut_qc=cut_qc, garment_warnings=garment_warnings,
                 neck_repair_metadata=neck_repair_metadata, face_pass_outcome=face_pass_outcome)
 
+    async def _one_similar(item, original, previous_block_ids):
+        block = item[0]
+        if original is None or isinstance(item, _SkippedCut):
+            await _emit(app.state.pool, job_id, "step", {
+                "blockId": block.get("id"), "status": "cut_failed", "reason": "similar_cut_source_failed"})
+            return None
+        root_asset = original[1]
+        image = generated_images[root_asset["asset_id"]]
+        real_derived = root_asset["metadata"].get("facemarket_real_derived") is True
+        generation_settings = replace(s, model_image_high=resolve_detail_cut_model(s, block["cutType"]))
+        context = similar_context if similar_context is not None else similar_cut.product_context(
+            {**product, "name": ""} if cut_checkpoints is not None and cut_checkpoints.auto_named else product,
+            analysis)
+        history = planned_actions.setdefault(root_asset["asset_id"], [])
+        async with sem:
+            await _emit(app.state.pool, job_id, "step", {"blockId": block["id"], "status": "cut_start"})
+            fingerprint = _cut_checkpoints._digest({
+                "family": "storyboard-similar-v1", "blockId": str(block["id"]),
+                "sourceBlockId": block["similarSourceBlockId"],
+                "sourceSha256": hashlib.sha256(image.data).hexdigest(), "sourceMime": image.mime,
+                "cutType": block["cutType"], "context": context, "previousBlockIds": previous_block_ids,
+                "userId": str(user_id), "projectId": str(project_id),
+                "modelId": selected_model_id, "realDerived": real_derived,
+                "sourceFaceRecipe": root_asset["metadata"].get("face_recipe"),
+                "model": generation_settings.model_image_high,
+                "imageSize": s.detail_cut_image_size or s.mannequin_image_size,
+                "recipe": _cut_checkpoints._final_recipe(s),
+                "prompts": {name: hashlib.sha256((similar_cut._PROMPTS / name).read_bytes()).hexdigest()
+                            for name in ("similar_cut_plan_v1.txt", "similar_cut_generate_v1.txt")},
+            })
+            async with app.state.pool.connection() as conn:
+                saved = await repo.get_storyboard_similar_cut_plan(
+                    conn, user_id, project_id, job_id, str(block["id"]), fingerprint)
+            if saved is None:
+                action = await similar_cut.plan_next(
+                    s, image, context=context, cut_type=block["cutType"], changes=[], history=list(reversed(history)))
+                saved = {"fingerprint": fingerprint, "sourceBlockId": block["similarSourceBlockId"],
+                         "plan": similar_cut.validate_plan(action)}
+            if saved.get("fingerprint") != fingerprint or saved.get("sourceBlockId") != block["similarSourceBlockId"]:
+                raise VisionError("similar_cut_lineage_changed")
+            action = similar_cut.validate_plan(saved.get("plan"))
+            if similar_cut._same_action(action, [entry["plan"] for entry in history]):
+                raise VisionError("similar_cut_repeated_action")
+            async with app.state.pool.connection() as conn:
+                reserved = await repo.reserve_storyboard_similar_cut_plan(
+                    conn, user_id=user_id, project_id=project_id, job_id=job_id,
+                    lease_token=job["lease_token"], block_id=str(block["id"]), metadata=saved)
+                await conn.commit()
+            if reserved is None:
+                raise VisionError("similar_cut_lease_lost")
+            action = similar_cut.validate_plan(reserved.get("plan"))
+            if similar_cut._same_action(action, [entry["plan"] for entry in history]):
+                raise VisionError("similar_cut_repeated_action")
+            history.append({"plan": action, "blockId": block["id"]})
+            checkpoint = (
+                await cut_checkpoints.for_similar_cut(fingerprint, str(block["id"]), action)
+                if cut_checkpoints is not None else None)
+            lineage = {"version": 1, "rootAssetId": root_asset["asset_id"],
+                       "sourceAssetId": root_asset["asset_id"], "sourceBlockId": block["similarSourceBlockId"],
+                       "plan": action}
+            face_outcome = {}
+            if checkpoint is not None and checkpoint.final is not None:
+                await _emit(app.state.pool, job_id, "step", {
+                    "blockId": block["id"], "status": "cut_checkpoint_reused", "stage": "final"})
+                final = checkpoint.final
+                output, mime = final.image, final.mime
+                face_outcome = dict(final.meta.get("facePass") or {})
+            else:
+                kwargs = {"similar_plan": action, "similar_context": context}
+                if real_derived and face_identity_spec is not None:
+                    kwargs.update(face_identity_spec=face_identity_spec, face_pass_outcome=face_outcome)
+                    from ..agents import identity_source
+                    kwargs["face_pass_url_provider"] = (
+                        lambda: identity_source.active_face_backend_url(app.state.pool, selected_model_id))
+                output, mime = await cut_variator.generate(
+                    generation_settings, gemini, image, [], block["cutType"], **kwargs)
+                if checkpoint is not None:
+                    await checkpoint.save_final(output, mime, {
+                        "garmentQc": None, "cutQc": None, "warnings": [], "neckRepair": None,
+                        "facePass": face_outcome, "similarPlan": action})
+            return await _store_cut(
+                block, output, mime, InlineImage(mime, output), has_face=original[2],
+                real_identity_attached=real_derived, garment_qc=None, cut_qc=None,
+                garment_warnings=[], neck_repair_metadata=None, face_pass_outcome=face_outcome,
+                similar_metadata=lineage)
+
     # 같은 설정 복제 컷은 생성에서 접는다 — 원본만 생성하고 결과를 복제 위치에 복사
     # (2026-08-14 오너 확정: "같은 컷 복제는 1장만 생성"). 진행 분모도 실제 생성 수.
     dup_sources = _duplicate_source_indexes(
@@ -1030,7 +1136,20 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     _total_cuts = max(1, len(original_indexes))
     _stagger_s = max(0, getattr(s, "detail_cut_stagger_ms", 0)) / 1000
 
-    async def _one(idx, item):
+    tasks_by_index = {}
+    source_indexes = {str(item[0].get("id")): i for i, item in enumerate(prepared)}
+    previous_children = {}
+    children_by_source = {}
+    for i in original_indexes:
+        source_id = prepared[i][0].get("similarSourceBlockId")
+        if source_id is not None:
+            source_index = source_indexes[source_id]
+            source_index = dup_sources[source_index] if dup_sources[source_index] is not None else source_index
+            prior = children_by_source.setdefault(source_index, [])
+            previous_children[i] = list(prior)
+            prior.append(i)
+
+    async def _one(idx, item, item_index):
         # 제출 간격 — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다(전부 병렬의 안전판).
         if idx and _stagger_s:
             await asyncio.sleep(idx * _stagger_s)
@@ -1040,7 +1159,18 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 모양은 기존 실패 컷과 같다 — None + cut_failed 이벤트(미차감).
         # CancelledError 는 BaseException 이라 여기서 잡히지 않는다 — 워커 종료 신호는 그대로 올라간다.
         try:
-            r = await _one_impl(item)
+            source_id = item[0].get("similarSourceBlockId")
+            if source_id is None:
+                r = await _one_impl(item)
+            else:
+                source_index = source_indexes[source_id]
+                source_index = dup_sources[source_index] if dup_sources[source_index] is not None else source_index
+                original = await tasks_by_index[source_index]
+                previous = previous_children[item_index]
+                if previous:
+                    # Siblings plan in storyboard order, including a prior valid plan whose image failed.
+                    await tasks_by_index[previous[-1]]
+                r = await _one_similar(item, original, [str(prepared[i][0]["id"]) for i in previous])
         except Exception as e:
             log.warning("AG-06 cut crashed for job %s block %s: %r; cut marked failed",
                         job_id, item[0].get("id"), e)
@@ -1063,8 +1193,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # gather 는 입력 순서를 보존 — 원본 컷만 생성한 뒤 복제 컷 자리에 결과를 복사한다.
     cut_results, cut_assets, face_cuts = [], [], 0
     garment_qcs, cut_qcs, garment_warnings = [], [], []
-    cut_tasks = [asyncio.create_task(_one(pos, prepared[i]))
-                 for pos, i in enumerate(original_indexes)]
+    tasks_by_index = {i: asyncio.create_task(_one(pos, prepared[i], i))
+                      for pos, i in enumerate(original_indexes)}
+    cut_tasks = list(tasks_by_index.values())
     try:
         gathered = await asyncio.gather(*cut_tasks)
     except BaseException:
@@ -1795,6 +1926,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         _fallback_warned = False
         for b, example_repeat_index in zip(ai_blocks, example_repeat_indexes):
             cut_spec = dict(b)
+            if b.get("similarSourceBlockId") is not None:
+                # Follow-ups use the generated original, never another example/garment packet.
+                prepared.append((cut_spec, [], "", False, []))
+                continue
             cut_spec.pop("_horizonBackground", None)
             cut_spec.pop("_horizonBackgroundFallback", None)
             cut_spec.pop("_signatureBackground", None)
@@ -1813,8 +1948,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
                 cut_spec["refScope"] = "all" if cut_spec.get("cutType") == "horizon" else "pose"
-                if cut_spec.get("cutType") != "horizon":
-                    cut_spec["pose"] = "auto"
                 cut_spec["spaceVariation"] = space_binding["set"]["spaceVariation"]
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
@@ -2077,11 +2210,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_space_set_plate = space_set_plate is not None
                 cut_spec["_spaceSetContinuity"] = has_space_set_plate
             elif example_id:
-                # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
-                # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
-                pose_overrides_example = normalized is not None \
-                    and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
-                if normalized is not None and not pose_overrides_example:
+                if normalized is not None:
                     scope = normalized["refScope"]
                     if example_id.startswith("ss_") and not (
                         b.get("spaceGroupId") or b.get("space_group_id")
@@ -2294,6 +2423,11 @@ async def run_detail_page_job(app, job: dict) -> None:
         # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
         # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(A4/A5와 동일 관례).
         _gen_cuts_kwargs = {}
+        if any(block.get("similarSourceBlockId") is not None for block in ai_blocks):
+            # An automatically generated product name can change on retry. It is not
+            # source garment evidence and must not replace a saved follow-up action.
+            _gen_cuts_kwargs["similar_context"] = similar_cut.product_context(
+                {**product, "name": ""} if needs_name else product, analysis)
         if body_profile is not None:
             _gen_cuts_kwargs["body_profile"] = body_profile
         if hair_profile is not None:

@@ -508,8 +508,7 @@ def normalize_plan(plan: Any) -> dict:
     if closure_raw is not None and closure is None:
         errors.append("invalid_closure")
 
-    pose_raw = storyboard.get("pose", source.get("pose", "auto"))
-    pose_mode = "auto" if pose_raw == "auto" else "explicit"
+    pose_mode = "auto"
     model_selected = bool(storyboard.get("model", source.get("modelId")))
     matching_raw = storyboard.get("matching", source.get("matchIds", []))
     matching_count = len(matching_raw) if isinstance(matching_raw, (list, tuple)) else 0
@@ -567,7 +566,11 @@ def normalize_plan(plan: Any) -> dict:
             precedence.get("referenceCameraExcludesStoryboardDirectionAndShot") is True
         ),
     }
-    if owners_source and not all(precedence_contract.values()):
+    if owners_source and (
+        precedence.get("storyboardDirectionOverridesReference") is not False
+        or precedence.get("explicitStoryboardPoseOverridesReference") is not False
+        or precedence.get("referenceCameraExcludesStoryboardDirectionAndShot") is not True
+    ):
         errors.append("storyboard_precedence_not_enforced")
 
     continuity_raw = source.get("spaceSetContinuity")

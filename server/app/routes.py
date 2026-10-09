@@ -3035,6 +3035,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     except ValueError as exc:
         if str(exc) == "invalid_example_selection_origin":
             raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
+        if str(exc) == "invalid_similar_cut_relationship":
+            raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
         raise
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
@@ -3561,7 +3563,13 @@ async def generate_detail_page(
         product_row = await repo.get_product(conn, project_id)
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
-        ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        try:
+            generation_storyboard = content_roles.canonicalize_storyboard(storyboard)
+        except ValueError as exc:
+            if str(exc) == "invalid_similar_cut_relationship":
+                raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
+            raise
+        ai_blocks = [b for b in generation_storyboard if isinstance(b, dict) and b.get("source") == "ai"]
         # 한 컷이라도 모델 범위 밖이면 전량 완성할 수 없다. 만들 수 있는 컷만 예약하고
         # 일부 페이지를 출고하는 대신, 시작 전에 사용자가 콘티를 고치게 한다.
         allowed_blocks = [b for b in ai_blocks

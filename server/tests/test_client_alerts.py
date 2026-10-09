@@ -65,7 +65,11 @@ class MemoryWorker(alerts.ClientAlerts):
     async def _add_overflow(self, conn, event):
         progress = self.store['progress']
         progress['suppressed_count'] += 1
-        progress['cases'] = (progress['cases'] + [event])[:3]
+        progress['cases'] = (progress['cases'] + [{'event_id': event['event_id'], 'request_id': event.get('request_id')}])[:3]
+
+    async def _overflow_cases(self, conn, cases):
+        ids = {case['event_id'] for case in cases}
+        return [e for e in self.store['events'] if e['event_id'] in ids]
 
     async def _clear_overflow(self, conn):
         self.store['progress'].update(suppressed_count=0, cases=[])
@@ -151,8 +155,8 @@ def test_kst_digest_window_and_catch_up(store):
     tick(MemoryWorker(store), datetime(2026, 10, 9, 1, tzinfo=timezone.utc))
     assert len(store['sent']) == 2
     digests = store['sent']
-    assert '건수=1' in digests[0]['text'] and '영향 사용자=1' in digests[0]['text']
-    assert '영향 사용자=0' in digests[1]['text']
+    assert '1명 1건' in digests[0]['text']
+    assert '0명 ' in digests[1]['text']
 
 
 def test_two_workers_and_ledger_prevent_sending_twice(store):
@@ -178,7 +182,7 @@ def test_payload_has_only_safe_ids_and_aggregates(store):
     store['events'] = [case]
     tick(MemoryWorker(store))
     payload = str(store['sent'])
-    assert case['event_id'] in payload and case['request_id'] in payload
+    assert case['event_id'][:8] in payload and case['request_id'][:8] in payload
     for forbidden in ('private-user', 'private text', 'private-message', '/private', 'private-action'):
         assert forbidden not in payload
 
@@ -263,7 +267,7 @@ def test_cursor_does_not_lose_events_arriving_during_slow_tick(store):
 
     tick(SlowWorker(store))
     tick(MemoryWorker(store), NOW + timedelta(minutes=12))
-    assert arrived['event_id'] in str(store['sent'])
+    assert arrived['event_id'][:8] in str(store['sent'])
 
 
 def test_tick_batch_limit_and_equal_timestamp_cursor(store):
@@ -284,10 +288,30 @@ def test_digest_top_thirty_and_remainder_under_slack_limit(store):
     store['events'].append(event(signature='0499', user=None, at=NOW - timedelta(days=1)))
     tick(MemoryWorker(store))
     text = store['sent'][0]['text']
-    assert text.count('유형 ') == 30
-    assert '유형 1: 건수=2' in text
+    assert text.count('기타에서 기타 실패') == 30
+    assert '0명 2건' in text
+    assert '유형 ' not in text
     assert '그 외 470종 470건' in text
     assert len(text) < 30000
+
+
+@pytest.mark.parametrize('delivery', ['digest', 'overflow'])
+def test_summary_lookup_ids_remain_complete_for_operator_investigation(store, delivery):
+    from uuid import UUID
+
+    case = event(blocking=True, at=NOW - timedelta(
+        days=1 if delivery == 'digest' else 0, seconds=1))
+    store['events'] = [case]
+    worker = MemoryWorker(store)
+    if delivery == 'overflow':
+        store['attempts'] = [('immediate', NOW - timedelta(minutes=1))] * 9
+    tick(worker)
+    title = '하루 요약' if delivery == 'digest' else '알림이 많아 일부를 묶었어요'
+    text = next(payload['text'] for payload in store['sent'] if title in payload['text'])
+    lookup = next(line for line in text.splitlines() if '사례 event_id' in line)
+    parts = lookup.split()
+    assert str(UUID(parts[2])) == case['event_id']
+    assert str(UUID(parts[5])) == case['request_id']
 
 
 def test_overflow_failure_restored_before_failed_state_is_committed(store):
@@ -308,3 +332,251 @@ def test_overflow_failure_restored_before_failed_state_is_committed(store):
     tick(MemoryWorker(store), NOW + timedelta(hours=1, seconds=1))
     assert store['progress']['suppressed_count'] == 0
     assert store['ledger']['overflow', 'global']['status'] == 'sent'
+
+
+def readable_event(**extra):
+    return event(kind='api_error', route='/v1/projects/:id/editor', action='save', status=500,
+                 error_code='save_failed', device='desktop', build_sha='abcdef1234567890',
+                 event_id='12345678-1234-4123-8123-123456789012',
+                 request_id='87654321-1234-4123-8123-123456789012',
+                 payload={'step': 'editor', 'browser': {'family': 'Chrome', 'major': '132'},
+                          'os': {'family': 'Windows'}, 'network': {'effective_type': '4g', 'online': True},
+                          'breadcrumbs': []}, **extra)
+
+
+@pytest.mark.parametrize('blocking,label,count', [(True, '🔴 진행 막힘', 1), (False, '🟡 오류 몰림', 5)])
+def test_immediate_message_explains_screen_action_cause_environment_and_lookup(store, blocking, label, count):
+    case = readable_event(blocking=blocking, at=NOW - timedelta(seconds=1))
+    store['events'] = [case] + [dict(case, event_id=str(uuid4()), received_at=NOW - timedelta(minutes=1))
+                               for _ in range(count - 1)]
+    tick(MemoryWorker(store))
+    assert len(store['sent']) == 1
+    assert store['sent'][0]['text'].splitlines() == [
+        f'{label} · 에디터에서 저장 실패',
+        f'서버 오류(500, save_failed) · 1명 {count}건 · 10/08 09:59',
+        'PC · Chrome 132 · Windows · 네트워크 4g(온라인)',
+        '직전 행동: 기록 없음',
+        'event_id 12345678 · request_id 87654321 · 빌드 abcdef1',
+    ]
+
+
+@pytest.mark.parametrize('kind,status,code,cause', [
+    ('network_error', 0, 'other', '연결 끊김 또는 시간 초과'),
+    ('api_error', 0, 'other', '연결 끊김 또는 시간 초과'),
+    ('api_error', 408, 'other', '연결 끊김 또는 시간 초과'),
+    ('api_error', None, 'network_unavailable', '연결 끊김 또는 시간 초과'),
+    ('api_error', None, 'connection_lost', '연결 끊김 또는 시간 초과'),
+    ('api_error', None, 'timeout', '연결 끊김 또는 시간 초과'),
+    ('api_error', 504, 'request_timeout', '연결 끊김 또는 시간 초과'),
+    ('api_error', 503, 'unavailable', '서버 오류(503, unavailable)'),
+    ('api_error', 409, 'conflict', '요청 거절(409, conflict)'),
+    ('error_boundary', None, 'other', '화면 코드 오류'),
+    ('runtime_error', None, 'other', '화면 코드 오류'),
+    ('unhandled_rejection', None, 'other', '화면 코드 오류'),
+    ('ui_error', None, 'other', '화면 코드 오류'),
+    ('api_error', None, 'other', '원인 미확인'),
+])
+def test_shared_description_has_safe_causes(kind, status, code, cause):
+    case = readable_event()
+    case.update(kind=kind, status=status, error_code=code)
+    text = alerts.slack_payload('하루 요약', alerts.summaries([case]))['text']
+    assert f'에디터에서 저장 실패 · {cause}' in text
+
+
+@pytest.mark.parametrize('step,route,screen', [
+    ('input', '/unknown', '입력 화면'), ('storyboard', '/unknown', '콘티'),
+    ('mannequin', '/unknown', '마네킹'), ('generating', '/:segment/:segment', '생성 중'),
+    ('editor', '/unknown', '에디터'), ('library', '/unknown', '보관함'),
+    ('other', '/pricing', '요금제'), ('other', '/:segment/input', '입력 화면'),
+    ('other', '/v1/projects/:id/storyboard', '콘티'),
+    ('other', '/editor/:id', '에디터'), ('other', '/private-person', '기타'),
+])
+def test_screen_maps_stored_steps_and_route_templates(step, route, screen):
+    case = readable_event()
+    case['payload']['step'] = step
+    case['route'] = route
+    text = alerts.slack_payload('하루 요약', alerts.summaries([case]))['text']
+    assert f'{screen}에서 저장 실패' in text
+    assert route not in text
+
+
+@pytest.mark.parametrize('action,device,label', [
+    ('upload', 'desktop', '사진 올리기'), ('analyze', 'desktop', '분석'),
+    ('save', 'desktop', '저장'), ('save', 'mobile', '폰 저장'),
+    ('load', 'desktop', '불러오기'), ('poll', 'desktop', '불러오기'),
+    ('mannequinGenerate', 'desktop', '마네킹 생성'), ('mannequinAdjust', 'desktop', '마네킹 생성'),
+    ('generate', 'desktop', '이미지 생성'), ('detailPageGenerate', 'desktop', '이미지 생성'),
+    ('editorImage', 'desktop', '이미지 생성'), ('download', 'desktop', '다운로드'),
+    ('export', 'desktop', '다운로드'), ('restore', 'desktop', '다시 열기'),
+    ('navigate', 'desktop', '화면 표시'), ('unknown', 'desktop', '기타'),
+])
+def test_action_labels(action, device, label):
+    case = readable_event()
+    case.update(action=action, device=device)
+    assert f'에서 {label} 실패' in alerts.slack_payload('하루 요약', alerts.summaries([case]))['text']
+
+
+@pytest.mark.parametrize('device,label', [('desktop', 'PC'), ('mobile', '폰'), ('tablet', '태블릿')])
+def test_immediate_environment_uses_latest_case_and_omits_missing_parts(store, device, label):
+    old = readable_event(at=NOW - timedelta(minutes=2))
+    old['event_id'] = str(uuid4())
+    latest = readable_event(blocking=True, at=NOW - timedelta(seconds=1))
+    latest['device'] = device
+    latest['payload'] = {'step': 'editor', 'browser': {'family': 'Safari'},
+                         'network': {'online': False}}
+    store['events'] = [old, latest]
+    tick(MemoryWorker(store))
+    assert store['sent'][0]['text'].splitlines()[2] == f'{label} · Safari · 네트워크 오프라인'
+    assert 'Chrome' not in store['sent'][0]['text'] and 'Windows' not in store['sent'][0]['text']
+
+
+def test_breadcrumbs_show_only_last_five_korean_steps(store):
+    case = readable_event(blocking=True, at=NOW - timedelta(seconds=1))
+    case['payload']['breadcrumbs'] = [
+        {'type': 'action', 'action': 'upload', 'message': 'private-old'},
+        {'type': 'navigation', 'route': '/:segment/storyboard'},
+        {'type': 'action', 'action': 'mannequinGenerate'},
+        {'type': 'navigation', 'route': '/editor/:id'},
+        {'type': 'action', 'action': 'save'},
+        {'type': 'api', 'status': 500, 'route': '/private', 'error_code': 'private_code'},
+    ]
+    store['events'] = [case]
+    tick(MemoryWorker(store))
+    assert store['sent'][0]['text'].splitlines()[3] == (
+        '직전 행동: 콘티 → 마네킹 생성 → 에디터 → 저장 → 요청 실패(500)')
+    assert '사진 올리기' not in store['sent'][0]['text']
+
+
+def test_legacy_unknown_data_is_safe_and_readable(store):
+    case = event(blocking=True, at=NOW - timedelta(seconds=1),
+                 kind='private-kind', status='private-status', error_code='user@example.com',
+                 device='private-device', route='/private', action='private-action', build_sha='private-build')
+    case['payload'] = {'step': ['private'], 'browser': {'family': 'Private Person', 'major': 'private'},
+                       'os': {'family': 'user@example.com'}, 'network': {'effective_type': 'private'},
+                       'breadcrumbs': [{'type': 'action', 'action': 'private'}]}
+    store['events'] = [case]
+    tick(MemoryWorker(store))
+    text = store['sent'][0]['text']
+    assert '기타에서 기타 실패' in text and '원인 미확인' in text
+    assert '환경 정보 없음' in text and '직전 행동: 기타' in text
+    assert 'private' not in text and 'user@example.com' not in text
+
+
+@pytest.mark.parametrize('delivery', ['immediate', 'overflow', 'digest'])
+def test_all_slack_payloads_exclude_private_text(delivery, store):
+    case = readable_event(blocking=delivery != 'digest', at=NOW - timedelta(
+        days=1 if delivery == 'digest' else 0, seconds=1))
+    case.update(user_id='private-user-id', email='private@email.test', name='Private Name',
+                message='private-message', tech_message='private-tech', stack='private-stack')
+    case['payload'].update(message='private-payload', tech_message='private-tech', stack='private-stack',
+                           name='Private Name', browser={'family': 'Chrome', 'major': '132', 'name': 'Private Name'})
+    count = 12 if delivery == 'overflow' else 1
+    store['events'] = [dict(case, signature=str(i), event_id=str(uuid4())) for i in range(count)]
+    tick(MemoryWorker(store))
+    assert store['sent']
+    if delivery == 'overflow':
+        overflow = next(p['text'] for p in store['sent'] if '알림이 많아 일부를 묶었어요' in p['text'])
+        assert '에디터에서 저장 실패 · 서버 오류(500, save_failed)' in overflow
+        assert '묶은 알림=3건' in overflow
+        assert len(store['progress']['cases']) == 0
+    for payload in store['sent']:
+        text = str(payload)
+        for secret in ('private-user-id', 'private@email.test', 'Private Name', 'private-message',
+                       'private-payload', 'private-tech', 'private-stack'):
+            assert secret not in text
+        assert len(payload['text']) < 30000
+
+
+class QueryConnection:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.queries = []
+
+    def cursor(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def execute(self, sql, params=None):
+        from conftest import assert_query_binds
+        assert_query_binds(sql, params)
+        self.queries.append((sql, params))
+
+    async def fetchone(self):
+        return next(self.responses)
+
+    async def fetchall(self):
+        return next(self.responses)
+
+
+@pytest.mark.parametrize('query', ['immediate', 'digest', 'overflow'])
+def test_real_persistence_queries_hydrate_safe_fields_without_free_text(store, query):
+    case = readable_event()
+    group = {'signature': 'sig', 'count': 1, 'users': 1, 'signature_total': 1, 'event_total': 1}
+    responses = {'immediate': [dict(group), [case]], 'digest': [[dict(group)], [case]], 'overflow': [[case]]}
+    conn = QueryConnection(responses[query])
+    worker = MemoryWorker(store)
+    if query == 'immediate':
+        result = asyncio.run(alerts.ClientAlerts._cases(worker, conn, case))['cases']
+    elif query == 'digest':
+        result = asyncio.run(alerts.ClientAlerts._digest_summary(worker, conn, NOW - timedelta(days=1), NOW))['groups'][0]['cases']
+    else:
+        result = asyncio.run(alerts.ClientAlerts._overflow_cases(worker, conn, [case]))
+    assert result == [case]
+    sql = conn.queries[-1][0]
+    for column in ('kind', 'route', 'action', 'status', 'error_code', 'device', 'build_sha', 'received_at', 'occurred_at'):
+        assert column in sql
+    for key in ('step', 'browser', 'os', 'network', 'breadcrumbs'):
+        assert f"'{key}'" in sql
+    for forbidden in ('tech_message', 'stack', 'email', 'name', 'message', 'select *'):
+        assert forbidden not in sql
+    assert "payload," not in sql and 'user_id::text' not in sql
+
+
+def test_latest_case_tie_breaker_matches_database_order():
+    from uuid import UUID
+
+    first = readable_event()
+    second = readable_event()
+    first.update(event_id=str(UUID(int=1)), device='mobile')
+    second.update(event_id=str(UUID(int=2)), device='tablet')
+    group = alerts.summaries([first, second])[0]
+    assert group['cases'][0] == second
+
+
+def test_immediate_time_uses_occurred_at_and_lookup_is_small():
+    case = readable_event(occurred_at=NOW - timedelta(minutes=5))
+    payload = alerts.immediate_payload(alerts.summaries([case])[0], blocking=True)
+    assert '10/08 09:55' in payload['text']
+    assert payload['blocks'][1]['type'] == 'context'
+    assert payload['blocks'][1]['elements'][0]['text'] == payload['text'].splitlines()[4]
+
+
+def test_overflow_storage_keeps_only_three_ids(store):
+    worker = MemoryWorker(store)
+    for i in range(5):
+        asyncio.run(worker._add_overflow(None, readable_event(signature=str(i))))
+    assert store['progress']['suppressed_count'] == 5
+    assert len(store['progress']['cases']) == 3
+    assert all(set(case) == {'event_id', 'request_id'} for case in store['progress']['cases'])
+
+
+@pytest.mark.parametrize('kind', ['ui_error', 'error_boundary', 'runtime_error', 'unhandled_rejection'])
+@pytest.mark.parametrize('status', [403, 500])
+def test_whole_screen_cause_takes_priority_over_http_status(kind, status):
+    case = readable_event()
+    case.update(kind=kind, status=status)
+    assert ' · 화면 코드 오류 · ' in alerts.slack_payload('하루 요약', alerts.summaries([case]))['text']
+
+
+def test_environment_omits_missing_device_and_orphan_browser_major():
+    case = readable_event()
+    case.pop('device')
+    case['payload'] = {'browser': {'major': '132'}, 'os': {'family': 'Android'},
+                       'network': {'effective_type': '3g'}}
+    payload = alerts.immediate_payload(alerts.summaries([case])[0], blocking=True)
+    assert payload['text'].splitlines()[2] == 'Android · 네트워크 3g'

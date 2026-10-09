@@ -191,6 +191,15 @@ def test_face_pass_signature_direction_keeps_the_face_detectable():
     assert "detail-free" in lowered
 
 
+def _restore_prior_authority_sentence(prompt):
+    current = ("Storyboard color/shot/face/model/matching/closure override the example; "
+               "the selected example owns direction and pose.")
+    prior = ("Storyboard color/direction/shot/face/model/matching/closure and any explicit pose "
+             "override the example; never recover an overridden attribute from its pixels.")
+    assert prompt.count(current) == 1
+    return prompt.replace(current, prior)
+
+
 def test_signature_prompt_uses_the_face_pass_direction_only_for_face_pass_cuts():
     real = cut_generator.build_prompt(_sig_spec(), _product(), face_pass=True)
     virtual = cut_generator.build_prompt(_sig_spec(), _product(), face_pass=False)
@@ -198,10 +207,10 @@ def test_signature_prompt_uses_the_face_pass_direction_only_for_face_pass_cuts()
     assert cut_generator.SIGNATURE_DIRECTION not in real
     assert cut_generator.SIGNATURE_DIRECTION in virtual
     assert cut_generator.SIGNATURE_DIRECTION_FACE_PASS not in virtual
-    assert hashlib.sha256(real.encode()).hexdigest() == (
+    assert hashlib.sha256(_restore_prior_authority_sentence(real).encode()).hexdigest() == (
         "99b066a1ff444813ccd0bb905c185954f03aaf8f37105756a4c7b85db9d7384e"
     )
-    assert hashlib.sha256(virtual.encode()).hexdigest() == (
+    assert hashlib.sha256(_restore_prior_authority_sentence(virtual).encode()).hexdigest() == (
         "8dcacc558f0ec32eded8e0c2ec01a70f630917b869af1b4c9816334cafab4229"
     )
 
@@ -460,9 +469,10 @@ def test_dress_signature_keeps_medium_without_generic_post_crop():
     assert request.crop_pose_medium is False
 
 
-def test_non_signature_prompt_remains_byte_identical():
+def test_non_signature_prompt_changes_only_retired_authority_sentence():
     spec = {**_sig_spec(), "exampleId": "ex_horizon_men_top_full_front_02"}
     prompt = cut_generator.build_prompt(spec, _product(), face_pass=True)
+    prompt = _restore_prior_authority_sentence(prompt)
     assert len(prompt.encode()) == 5964
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
         "3e804c37cb983ee280dcf1a5c0aa705bba8a65e37371375654b786fe0e6a8851"

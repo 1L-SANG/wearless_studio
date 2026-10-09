@@ -24,6 +24,7 @@ const isRerollableFlat = (block, sectionId) => (
   !!block
   && block.sectionId === sectionId
   && block.source === 'ai'
+  && !block.similarSourceBlockId
   && !block.spaceGroupId
   && block.exampleChoice !== 'manual'
   && block.exampleSelectionOrigin === 'auto'
@@ -50,6 +51,7 @@ const isRerollableOne = (block, sectionId) => (
   !!block
   && block.sectionId === sectionId
   && block.source === 'ai'
+  && !block.similarSourceBlockId
   && !block.spaceGroupId
   && !!block.exampleId
 );

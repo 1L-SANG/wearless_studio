@@ -8,6 +8,7 @@ export function photoCollectionFailure(product, { failed = 0, failedIds = [], fa
   return {
     failed,
     failedIds,
+    ...(failures.find((failure) => failure.error)?.error ? { error: failures.find((failure) => failure.error).error } : {}),
     removed: failures.length === failed && failures.every((failure) => failure.status === 404),
     canOmit: failedIds.length === failed && !failedIds.some((id) => sources.has(id)),
   };

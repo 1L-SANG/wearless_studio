@@ -280,7 +280,7 @@ test('자동저장 실패를 삼키지 않는다 — 임시 보관 + 배너 + �
   assert.doesNotMatch(block, /catch\(\(\) => \{\}\)/, '실패를 삼키면 안 된다');
   assert.match(block, /const backedUp = backupLatestEditorDraft\(latestBlocks\.current\)/, '브라우저에 임시 보관');
   assert.match(block, /saveGuard\.current\.isCurrent\(ticket, latestBlocks\.current\)/, '오래된 성공은 최신 백업을 지우지 않음');
-  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '원인 + 보관 성공 여부를 배너로');
+  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp, error \}\)/, '원인 + 보관 성공 여부를 배너로');
   assert.match(block, /setSaveError\(null\)/, '성공하면 배너를 거둔다');
   // 배너와 복구 수단
   assert.match(editor, /className="ed-savebar"/);
@@ -380,7 +380,7 @@ test('수동 [저장] 버튼은 실패를 반드시 말한다', () => {
   assert.match(body, /try \{\s*await api\.saveEditorBlocks\(projectId, persistable\(/, 'persistable 게이트 + try');
   assert.match(body, /catch \(error\) \{/, '실패를 잡는다');
   assert.match(body, /backupLatestEditorDraft\(latestBlocks\.current\)/, '실패분을 보관');
-  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '배너로');
+  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp, error \}\)/, '배너로');
   assert.match(body, /저장하지 못했어요/, '토스트로도 즉시 알림');
 });
 

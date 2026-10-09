@@ -64,7 +64,7 @@ def test_history_is_scoped_and_only_includes_reserved_or_completed_plans():
     assert "metadata->'similar_cut'->'version' = '1'::jsonb" in sql
     assert "jsonb_typeof(metadata->'similar_cut'->'plan') = 'object'" in sql
     assert "order by created_at desc, id desc" in sql
-    assert params == ("user", "project", ROOT, "current", "current", 12)
+    assert params == ("user", "project", ROOT, "current", "current", "user", "project", ROOT, 12)
 
 
 def test_saved_job_plan_lookup_is_owner_project_scoped():

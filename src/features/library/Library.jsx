@@ -82,7 +82,7 @@ export function Library() {
   // staleTime 0 → 보관함 진입(마운트)마다 refetch. 생성/편집/완료가 다른 화면에서
   // 일어나므로 전역 staleTime(60s) 캐시를 쓰면 생성분 빠진 stale 목록이 보인다.
   // 캐시는 즉시 렌더하고 백그라운드로 갱신 → 항상 최신 + 깜빡임 없음.
-  const { data: items = [], isLoading, isError, refetch } = useQuery({
+  const { data: items = [], isLoading, isError, error: queryError, refetch } = useQuery({
     queryKey: ['library'],
     queryFn: () => api.getLibrary({}),
     staleTime: 0,
@@ -183,7 +183,7 @@ export function Library() {
       {phase === 'loading' && (
         <div className="lib-grid">{Array.from({ length: 8 }).map((_, i) => <div key={i}><Skeleton h={240} r={12} /></div>)}</div>
       )}
-      {phase === 'error' && <div className="surface"><ErrorState desc="보관함을 불러오지 못했어요." onRetry={refetch} /></div>}
+      {phase === 'error' && <div className="surface"><ErrorState error={queryError} desc="보관함을 불러오지 못했어요." onRetry={refetch} /></div>}
       {phase === 'ready' && items.length === 0 && inProgress.length > 0 && (
         <p className="sec-sub">완성된 상세페이지가 여기에 모여요.</p>
       )}
