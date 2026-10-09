@@ -218,11 +218,12 @@ function RequireEditorProject() {
    editor 는 chrome 밖 라우트라 여기(App 레벨 location 감시)서 함께 잡는다. */
 function ResumeTracker() {
   const { pathname } = useLocation();
-  const { session } = useAuth();
+  const { session, loading } = useAuth();
   const setResumePath = useAppStore((s) => s.setResumePath);
   const projectId = useAppStore((s) => s.projectId);
   const projectPersisted = useAppStore((s) => s.projectPersisted);
   useEffect(() => {
+    if (!isMockMode && loading) return;
     if (projectId && projectPersisted && (pathname.startsWith('/create/') || pathname.startsWith('/editor/'))) {
       markFlowSession(projectId, pathname);
       if (!pathname.startsWith('/create/input')) useAppStore.getState().markFlowUsed(session?.user?.id || null);
@@ -233,7 +234,7 @@ function ResumeTracker() {
         || (pathname.startsWith('/create/') && !pathname.startsWith('/create/input'))) {
       setResumePath(pathname);
     }
-  }, [pathname, projectId, projectPersisted, setResumePath, session?.user?.id]);
+  }, [pathname, projectId, projectPersisted, setResumePath, session?.user?.id, loading]);
   return null;
 }
 
@@ -252,7 +253,7 @@ function ProductInputRoute() {
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
   const [entryDecision, setEntryDecision] = useState(() => {
-    if (loginRequired) return 'checking';
+    if (loginRequired || (!isMockMode && authLoading)) return 'checking';
     const { projectId, projectPersisted } = useAppStore.getState();
     return getInputEntryDecision({
       slotClient: draftSlot,
@@ -312,6 +313,10 @@ function ProductInputRoute() {
       }
       if (!current()) return;
       setLocalSaveBlocked(false);
+      if (!slotEnabled) {
+        if (alive) setEntryDecision('continue');
+        return;
+      }
       const { projectId, projectPersisted, resumePath } = useAppStore.getState();
       const hasFlow = !mobile && Boolean(projectPersisted && projectId);
       if (hasFlow && (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId))) {
@@ -321,10 +326,6 @@ function ProductInputRoute() {
       const foreignFlow = hasFlow && project.userId && project.userId !== userId;
       const flowDecision = !foreignFlow && (!hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
         || hasFlowContinuation(projectId)) ? 'continue' : 'ask';
-      if (!slotEnabled) {
-        if (alive) setEntryDecision(flowDecision);
-        return;
-      }
       // 지연 삭제도 진입 조회가 성공한 뒤에만 재개한다. 그사이 바뀐 슬롯은 다시 카드로 권한다.
       let [slot, localDraft] = await Promise.all([
         checkDraftEntry(draftSlot, { isCurrent: current }),
@@ -630,6 +631,7 @@ function ProductInputRoute() {
       <ResumeChoiceModal
         sources={entrySources}
         onChoose={chooseSource}
+        onResume={resume}
         onNew={startNew}
         busy={entryBusy}
       />

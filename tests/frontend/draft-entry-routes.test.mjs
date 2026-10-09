@@ -24,11 +24,23 @@ const introSource = ['HangTag.jsx', 'PhoneUploadIntro.jsx'].map((file) =>
 const mobileDialogSource = read('src/features/shell/MobileDraftDialog.jsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const guardSource = app.slice(app.indexOf('function RequireProject()'), app.indexOf('/* editor 는'));
 const statusSource = ['DraftProductRow.jsx', 'HandoffStatusPage.jsx'].map((file) => read(`src/features/shell/${file}`).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')).join('\n');
-const { code } = await transformWithEsbuild(`${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}`, 'DraftEntryRoutes.jsx', { jsx: 'transform' });
+const authFile = read('src/features/auth/AuthProvider.jsx');
+// 버려진 인증 Promise의 실패도 검사하되 테스트 프로세스의 미처리 거절로 번지지 않게 관찰한다.
+const authSource = authFile.slice(authFile.indexOf('export function AuthProvider'), authFile.indexOf('export const useAuth')).replace(/^export /gm, '')
+  .replaceAll('useAppStore.getState()', 'readAuthFlow()')
+  .replace('return publication;', 'return trackPromise(publication);')
+  .replace('(async () => {', 'trackPromise((async () => {').replace('    })();', '    })());');
+const authGuardSource = read('src/apps/guards.jsx').slice(read('src/apps/guards.jsx').indexOf('export function RequireAuth()')).replace(/^export /gm, '');
+const trackerSource = app.slice(app.indexOf('function ResumeTracker()'), app.indexOf("/* '새 제작'"));
+const productSource = read('src/features/product-input/ProductInput.jsx');
+const productLoad = productSource.slice(productSource.indexOf('  useEffect(() => {\n    let alive = true;\n    (async () => {\n      setLoadError'), productSource.indexOf('  const nextMobile ='));
+const { code } = await transformWithEsbuild(`${authSource}\n${authGuardSource}\n${trackerSource}\n${statusSource}\n${mobileDialogSource}\n${guardSource}\n${hook}\n${inputSource}\n${navSource}\n${dialogSource}\n${rootSource}\n${profileSource}\n${introSource}\nfunction ProductLoad() { ${productLoad} }`, 'DraftEntryRoutes.jsx', {
+  jsx: 'transform', define: { 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_API_MODE': "'http'" },
+});
 const slot = (meta = {}) => ({ meta: { hasContent: true, deviceLabel: 'Android Chrome', photoCount: 2, updatedAt: 'v1', ...meta }, payload: { product: { name: 'remote' } } });
 
 // 실제 라우트와 훅을 실행하고 브라우저, 저장소 경계만 메모리로 대체한다.
-function harness({ remote = slot(), confirmed = true, local = null, loading = false,
+function harness({ remote = slot(), confirmed = true, local = null, loading = false, withAuth = false, authUser = 'seller', sessionResult = null, storedSession = null, resetGate = null, resetError = null,
   syncedAt = null, serverSyncedAt = null, syncedUserId = null, otherTab = false, token = null, savedFlow = {}, takeover = null, slotClient = null, mobile = false, mock = false, facemarket = false, returnIntent = '/create/storyboard' } = {}) {
   const calls = [];
   const windowEvents = new EventTarget();
@@ -42,7 +54,18 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
   let dirty = false;
   let staged = null;
   let currentRemote = remote;
+  let listener;
+  let providerKey;
+  let identityEpoch = 0;
+  let accountUserId;
+  const flowReads = [];
+  const products = [];
+  let loadError = '';
+  let entryFlush = null;
+  let publishError = null;
+  const publishedSessions = [];
   const auth = { session: { user: { id: 'seller' } }, loading, signingOut: false, openLogin: (path) => calls.push(`login:${path}`) };
+  if (withAuth) Object.assign(auth, { session: null, loading: true });
   const location = { key: 'first', pathname: '/library' };
   const state = {
     projectId: confirmed ? 'project' : null, projectPersisted: confirmed,
@@ -50,6 +73,10 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     async beginProject({ isCurrent = () => true, onStarted = () => {} } = {}) {
       if (!isCurrent()) return;
       calls.push('begin');
+      if (resetError) throw resetError;
+      if (resetGate) await resetGate;
+      if (!isCurrent()) return;
+      local = null;
       onStarted();
       state.projectId = null;
       state.projectPersisted = false;
@@ -58,6 +85,7 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       flow.clearFlowSession();
       return true;
     },
+    setAccountIdentity(id) { const changed = id !== accountUserId; accountUserId = id; return changed; },
   };
   const storage = new Map();
   globalThis.sessionStorage = { getItem: (k) => storage.get(k), setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) };
@@ -69,15 +97,21 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     async remove() { calls.push('remove'); },
     stage(value) { calls.push('stage'); staged = value; },
     hasStaged: () => Boolean(staged?.payload),
-    discard() {}, pauseEntryWrites() {}, resumeEntryWrites() {}, getIdentityEpoch: () => 0, hasOtherTabOwner: () => otherTab, getSyncedUserId: () => syncedUserId,
+    discard() {}, pauseEntryWrites() {}, resumeEntryWrites() {}, getIdentityEpoch: () => identityEpoch, hasOtherTabOwner: () => otherTab, getSyncedUserId: () => syncedUserId,
     continueWithoutSlotCheck() { if (token) return false; calls.push('continueUnchecked'); return true; },
     getToken: () => token, hasPendingRemoval: () => false, getSyncedAt: () => syncedAt, getServerSyncedAt: () => serverSyncedAt,
+    setUserId(id) { if (id !== accountUserId) identityEpoch += 1; },
+    consumeStaged: () => null,
   };
   const toastOptions = [];
   const push = (message, options) => { toasts.push(message); toastOptions.push(options); };
   const useAppStore = (select) => select(state);
-  useAppStore.getState = () => state;
+  useAppStore.getState = () => {
+    if (active?.name !== 'AuthProvider') flowReads.push({ reader: active?.name, projectId: state.projectId });
+    return withAuth ? { ...state } : state;
+  };
   state.markFlowUsed = () => {};
+  state.setResumePath = (path) => { state.resumePath = path; };
   state.adoptProject = (id) => { calls.push(`adopt:${id}`); };
   state.confirmProductInfo = () => { calls.push('confirm'); };
   const bindings = {
@@ -99,6 +133,11 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       if (!(index in active)) active[index] = { current: initial };
       return active[index];
     },
+    useCallback(value, deps) {
+      const index = cursor++;
+      if (!active[index] || !deps.every((value, i) => Object.is(value, active[index].deps[i]))) active[index] = { value, deps };
+      return active[index].value;
+    },
     useEffect(effect, deps) {
       const index = cursor++;
       const prior = active[index];
@@ -110,9 +149,28 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
       }
     },
     useAuth: () => auth, useToast: () => ({ push }), useLocation: () => location,
+    AuthCtx: { Provider: 'Provider' },
+    useQueryClient: () => queryClient,
+    clientEvents: { setSession(next) {
+      if (publishError) { const error = publishError; publishError = null; throw error; }
+      publishedSessions.push(next);
+    } }, stampAppOrigin() {}, clearApplyDraft() {}, clearSignupConsent() {},
+    trackPromise(promise) { promise.catch(() => {}); return promise; },
+    FacemarketLoginPrompt: 'FacemarketLoginPrompt', IS_ADMIN: false,
+    KAKAO_OIDC_ENABLED: false, LoginGate: 'LoginGate',
+    MOCK_FACEMARKET: false, isKakaoCallbackPath: () => false, isPaymentResultPath: () => false, rememberPostLogin() {},
+    readStoredAuthSession: () => storedSession,
+    readAuthFlow: () => withAuth ? { ...state } : state,
+    supabase: { auth: {
+      getSession: async () => {
+        if (sessionResult instanceof Error) throw sessionResult;
+        return sessionResult || { data: { session: authUser ? { user: { id: authUser } } : null }, error: null };
+      },
+      onAuthStateChange(callback) { listener = callback; return { data: { subscription: { unsubscribe() {} } } }; },
+    } },
     useNavigate: () => navigate,
     isMockMode: mock, IS_FACEMARKET: facemarket, isMobileDevice: () => mobile,
-    hasPendingDraft: () => Boolean(local), loadDraft: async () => local, flushProductDraftSave: async () => null,
+    hasPendingDraft: () => Boolean(local), loadDraft: async () => local, flushProductDraftSave: async () => entryFlush,
     Navigate: 'Navigate', Outlet: 'Outlet',
     readPostLogin: () => returnIntent, forgetPostLogin: () => calls.push('forget'),
     ensureDraftRemotePhotos: async (draft) => draft,
@@ -124,12 +182,22 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     p: new Proxy({}, { get: (_, key) => key }),
     s: new Proxy({}, { get: (_, key) => key }),
     window: windowEvents, document: documentEvents, Link: 'Link', STEPPER_STEPS: [],
+    api: {
+      async getProduct(id) { calls.push(`product:${id}`); if (id && !auth.session) throw new Error('로그인이 필요해요'); return { colors: [{}] }; },
+      async getCatalogs() { return {}; }, async getAnalysis(id) { calls.push(`analysis:${id}`); return { projectId: id }; },
+    },
+    mobile, setLoadError: (value) => { loadError = value; }, setLoadOriginalError() {}, setCatalogs() {},
+    applyDraftPayload: () => false, persistedColorsRef: {}, isAnalysisRunning: () => false,
+    setProduct: (value) => products.push(value), loadAttempt: 0,
   };
+  windowEvents.location = { search: '', pathname: '/create/input' };
+  const queryClient = { clear() {} };
   function navigate(path, options) { calls.push(`navigate:${path}`); if (options?.state) { location.state = options.state; location.key = `nav-${calls.length}`; } }
-  const components = new Function(...Object.keys(bindings), `${code}; return { HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
+  const components = new Function(...Object.keys(bindings), `${code}; return { AuthProvider, RequireAuth, ResumeTracker, ProductLoad, HandoffStatusPage, RequireProject, MobileDraftDialog, MobileDraftStatus, DraftProductRow, ProductInputRoute, TopNav, ResumeChoiceModal, DraftEntryDialog, RootRedirect, ProfileMenu, PhoneUploadIntro, HangTag };`)(...Object.values(bindings));
   function render(name, props) {
     if (!frames.has(name)) frames.set(name, []);
     active = frames.get(name);
+    active.name = name;
     cursor = 0;
     dirty = false;
     return components[name](props);
@@ -146,7 +214,30 @@ function harness({ remote = slot(), confirmed = true, local = null, loading = fa
     }
     throw new Error('route did not settle');
   }
-  return { calls, toasts, toastOptions, auth, state, windowEvents, documentEvents, draftSlot, location, components, render, settle,
+  async function settleApp(name = 'ProductInputRoute') {
+    let tree;
+    for (let i = 0; i < 25; i += 1) {
+      const provider = render('AuthProvider', { children: 'App' });
+      Object.assign(auth, provider.props.value);
+      if (providerKey !== provider.props.key) {
+        frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name);
+        providerKey = provider.props.key;
+      }
+      if (provider.props.children[0]) {
+        const guard = name === 'RequireProject' ? render('RequireAuth') : null;
+        tree = guard && guard.type !== 'Outlet' ? guard : render(name);
+      }
+      else { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); tree = null; }
+      const pending = effects; effects = []; pending.forEach((effect) => effect());
+      await new Promise(setImmediate);
+    }
+    return tree;
+  }
+  return { calls, toasts, toastOptions, auth, state, flowReads, products, publishedSessions, get loadError() { return loadError; }, windowEvents, documentEvents, draftSlot, location, components, render, settle, settleApp,
+    emit(event, next) { listener(event, next); },
+    get hasListener() { return Boolean(listener); }, setStoredSession(value) { storedSession = value; },
+    setEntryFlush(value) { entryFlush = value; },
+    failNextPublication(error) { publishError = error; }, setResetError(value) { resetError = value; },
     setRemote(value) { currentRemote = value; }, get staged() { return staged; },
     remount(name) { frames.get(name)?.forEach((record) => record?.cleanup?.()); frames.delete(name); },
   };
@@ -212,12 +303,12 @@ for (const remote of [null]) {
   });
 }
 
-test('C2 unauthenticated confirmed route preserves the auth-expiry continuation without querying', async () => {
-  const h = harness();
-  h.auth.session = null;
-  const tree = await h.settle('ProductInputRoute');
+test('C2 unauthenticated confirmed route resets the expired flow without querying', async () => {
+  const h = harness({ withAuth: true, authUser: null });
+  const tree = await h.settleApp();
   assert.equal(tree.type, 'ProductInput');
-  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.calls, ['begin']);
+  assert.equal(h.state.projectId, null);
 });
 
 test('C3 actual TopNav selects remote and input mounts directly with staged payload', async () => {
@@ -925,12 +1016,16 @@ for (const kind of ['recent', 'stale', 'other-user', 'legacy']) {
   test(`PC input auto-open policy for ${kind} persisted flow`, async () => {
     const savedFlow = { projectId: 'flow', projectPersisted: true, resumePath: '/create/storyboard',
       ...(kind !== 'legacy' ? { userId: kind === 'other-user' ? 'other' : 'seller', lastUsedAt: Date.now() - (kind === 'stale' ? 86400001 : 1000) } : {}) };
-    const h = harness({ confirmed: false, remote: null, savedFlow });
-    const tree = await h.settle('ProductInputRoute');
+    const h = harness({ confirmed: false, remote: null, savedFlow, withAuth: kind === 'other-user' });
+    const tree = kind === 'other-user' ? await h.settleApp() : await h.settle('ProductInputRoute');
     if (kind === 'recent') {
       assert.equal(tree.type, 'ProductInput');
       assert.deepEqual(h.toasts, ['이어서 열었어요']);
       assert.ok(h.calls.includes('navigate:/create/storyboard'));
+    } else if (kind === 'other-user') {
+      assert.equal(tree.type, 'ProductInput');
+      assert.equal(h.state.projectId, null);
+      assert.deepEqual(h.toasts, []);
     } else { assert.ok(choice(h, tree)); assert.deepEqual(h.toasts, []); }
   });
 }
@@ -938,14 +1033,14 @@ for (const kind of ['recent', 'stale', 'other-user', 'legacy']) {
 for (const path of ['/create/storyboard', '/create/mannequin']) {
   for (const kind of ['recent', 'stale', 'other-user', 'legacy', 'other-tab']) {
     test(`M13 guard auto-open and toast policy: ${path}, ${kind}`, async () => {
-      const h = harness({ remote: null, otherTab: kind === 'other-tab', savedFlow: kind === 'legacy' ? {} : {
+      const h = harness({ withAuth: kind === 'other-user', remote: null, otherTab: kind === 'other-tab', savedFlow: kind === 'legacy' ? {} : {
         userId: kind === 'other-user' ? 'other' : 'seller',
         lastUsedAt: Date.now() - (kind === 'stale' ? 86400001 : 1000),
       } });
       h.location.pathname = path;
-      const tree = await h.settle('RequireProject');
-      assert.equal(tree.type, kind === 'recent' ? 'Outlet' : h.components.ResumeChoiceModal);
-      assert.equal(h.calls.includes('begin'), false);
+      const tree = kind === 'other-user' ? await h.settleApp('RequireProject') : await h.settle('RequireProject');
+      assert.equal(tree.type, kind === 'recent' ? 'Outlet' : kind === 'other-user' ? 'Navigate' : h.components.ResumeChoiceModal);
+      assert.equal(h.calls.includes('begin'), kind === 'other-user');
       assert.deepEqual(h.toasts, kind === 'recent' ? ['이어서 열었어요'] : []);
       if (kind === 'recent') {
         assert.equal(h.toastOptions[0].action.label, '새로 시작');
@@ -983,4 +1078,231 @@ test('F9 pending PC-written mobile slot still hides its local copy and shows rem
   await tree.props.actions.keepMobile();
   assert.ok(find(await h.settle('ProductInputRoute'), (node) => node.type === h.components.MobileDraftStatus));
   assert.equal(h.calls.includes('takeover'), false);
+});
+
+const savedByA = (confirmed = false) => ({ projectId: 'A-project', projectPersisted: true,
+  productInfoConfirmed: confirmed, userId: 'A', lastUsedAt: Date.now() - 3600000, resumePath: '/create/mannequin' });
+
+for (const confirmed of [false, true]) {
+  test(`guest resume R${confirmed ? 2 : 1}: auth discards A flow before input entry and loads anonymous input`, async () => {
+    const h = harness({ withAuth: true, authUser: null, remote: null, confirmed: false, savedFlow: savedByA(confirmed) });
+    h.location.pathname = '/create/input';
+    const tree = await h.settleApp();
+    assert.equal(tree?.type, 'ProductInput');
+    assert.equal(choice(h, tree), null);
+    await h.settle('ProductLoad');
+    assert.equal(h.loadError, '');
+    assert.equal(h.state.projectId, null);
+    assert.deepEqual(h.calls, ['begin', 'product:null']);
+    assert.equal(h.products.length, 1);
+    assert.deepEqual(h.toasts, []);
+    assert.ok(h.flowReads.every((read) => read.projectId !== 'A-project'));
+  });
+}
+
+for (const component of ['ProductInputRoute', 'TopNav', 'RequireProject', 'ResumeTracker']) {
+  test(`B never observes A flow in ${component} after bootstrap`, async () => {
+    const h = harness({ withAuth: true, authUser: 'B', remote: null, savedFlow: savedByA(true) });
+    if (component === 'ResumeTracker' || component === 'RequireProject') h.location.pathname = '/create/mannequin';
+    const tree = await h.settleApp(component);
+    if (component === 'TopNav') {
+      find(tree, (node) => node.props.children.includes('상세페이지 제작')).props.onClick();
+      assert.equal(choice(h, await h.settleApp(component)), null);
+      assert.ok(h.calls.includes('navigate:/create/input'));
+    } else if (component === 'ProductInputRoute') assert.equal(tree?.type, 'ProductInput');
+    else if (component === 'RequireProject') assert.equal(tree?.type, 'Navigate');
+    assert.equal(h.state.projectId, null);
+    assert.ok(h.flowReads.every((read) => read.projectId !== 'A-project'));
+    assert.deepEqual(h.toasts, []);
+  });
+}
+
+for (const event of ['SIGNED_OUT', 'SIGNED_IN']) {
+  test(`later ${event} during an input entry check resets before publication and does not leave checking blank`, async () => {
+    const h = harness({ withAuth: true, authUser: 'A', confirmed: false, remote: null });
+    await h.settleApp();
+    Object.assign(h.state, savedByA());
+    h.remount('ProductInputRoute');
+    let release;
+    h.setEntryFlush(new Promise((resolve) => { release = resolve; }));
+    assert.equal(await h.settleApp(), null);
+    h.emit(event, event === 'SIGNED_OUT' ? null : { user: { id: 'B' } });
+    h.setEntryFlush(null);
+    release();
+    const tree = await h.settleApp();
+    assert.equal(tree?.type, 'ProductInput');
+    assert.equal(h.state.projectId, null);
+    assert.equal(h.auth.session?.user?.id || null, event === 'SIGNED_OUT' ? null : 'B');
+    assert.equal(h.calls.filter((call) => call === 'begin').length, 1);
+    assert.deepEqual(h.toasts, []);
+  });
+}
+
+test('bootstrap waits for asynchronous logout reset before mounting any entry reader', async () => {
+  let release;
+  const resetGate = new Promise((resolve) => { release = resolve; });
+  const h = harness({ withAuth: true, authUser: null, remote: null, savedFlow: savedByA(), resetGate });
+  assert.equal(await h.settleApp(), null);
+  assert.deepEqual(h.flowReads, []);
+  release();
+  assert.equal((await h.settleApp())?.type, 'ProductInput');
+  assert.ok(h.flowReads.every((read) => read.projectId !== 'A-project'));
+});
+
+test('same-user TOKEN_REFRESHED preserves flow and current auto-open behavior', async () => {
+  const h = harness({ withAuth: true, authUser: 'A', remote: null, savedFlow: savedByA() });
+  await h.settleApp();
+  h.emit('TOKEN_REFRESHED', { user: { id: 'A' }, access_token: 'renewed' });
+  await h.settleApp();
+  assert.equal(h.state.projectId, 'A-project');
+  assert.equal(h.calls.includes('begin'), false);
+  assert.ok(h.calls.includes('navigate:/create/mannequin'));
+  assert.deepEqual(h.toasts, ['이어서 열었어요']);
+});
+
+test('legacy flow without userId keeps the current signed-in resume choice', async () => {
+  const h = harness({ withAuth: true, authUser: 'B', remote: null, savedFlow: { userId: null } });
+  const tree = await h.settleApp();
+  assert.ok(choice(h, tree));
+  assert.equal(h.state.projectId, 'project');
+  assert.equal(h.calls.includes('begin'), false);
+});
+
+test('mock guest retains persisted resume without auth cleanup', async () => {
+  const h = harness({ withAuth: true, authUser: null, mock: true, remote: null, savedFlow: savedByA() });
+  assert.ok(choice(h, await h.settleApp()));
+  assert.equal(h.state.projectId, 'A-project');
+  assert.equal(h.calls.includes('begin'), false);
+});
+
+for (const source of ['getSession-error', 'INITIAL_SESSION-null']) {
+  test(`stored flow survives ${source} but the reported null session is published`, async () => {
+    const session = { user: { id: 'A' }, access_token: 'valid', refresh_token: 'retryable', expires_at: Date.now() / 1000 + 20 };
+    const h = harness({ withAuth: true, authUser: 'A', remote: null, savedFlow: savedByA(), storedSession: session,
+      sessionResult: source === 'getSession-error' ? { data: { session: null }, error: { name: 'AuthRetryableFetchError' } } : null });
+    await h.settleApp();
+    if (source === 'INITIAL_SESSION-null') { h.emit('INITIAL_SESSION', null); await h.settleApp(); }
+    assert.equal(h.auth.session, null);
+    assert.equal(h.publishedSessions.at(-1), null);
+    assert.equal(h.state.projectId, 'A-project');
+    assert.equal(h.calls.includes('begin'), false);
+  });
+}
+
+test('ResumeChoiceModal without onResume has no dead continue button', () => {
+  const h = harness();
+  const tree = h.render('ResumeChoiceModal', { onNew() {} });
+  assert.equal(uiButton(tree, '이어서 하기'), null);
+  assert.ok(uiButton(tree, '새로 시작하기'));
+});
+
+for (const component of ['TopNav', 'RequireProject']) {
+  test(`batched SIGNED_OUT does not retain ${component}'s old resume modal`, async () => {
+    const h = harness({ withAuth: true, authUser: 'A', remote: null,
+      savedFlow: { ...savedByA(), lastUsedAt: 1 } });
+    let tree = await h.settleApp(component);
+    if (component === 'TopNav') {
+      find(tree, (node) => node.props.children.includes('상세페이지 제작')).props.onClick();
+      tree = await h.settleApp(component);
+    }
+    assert.ok(choice(h, tree));
+    h.emit('SIGNED_OUT', null);
+    // React가 loading=true를 커밋하기 전에 초기화와 인증 발행이 모두 끝나는 경우다.
+    for (let i = 0; i < 12; i += 1) await new Promise(setImmediate);
+    tree = await h.settleApp(component);
+    assert.equal(h.state.projectId, null);
+    assert.equal(choice(h, tree), null);
+    if (component === 'RequireProject') assert.equal(tree.type, 'Navigate');
+  });
+}
+
+test('bootstrap exception publishes null, preserves stored flow and still subscribes to subsequent SIGNED_OUT', async () => {
+  const session = { user: { id: 'A' }, access_token: 'valid', refresh_token: 'stored' };
+  const h = harness({ withAuth: true, remote: null, savedFlow: savedByA(), storedSession: session, sessionResult: new Error('refresh interrupted') });
+  await h.settleApp();
+  assert.equal(h.state.projectId, 'A-project');
+  assert.equal(h.auth.session, null);
+  assert.equal(h.publishedSessions.at(-1), null);
+  assert.equal(h.hasListener, true);
+  h.setStoredSession(null);
+  h.emit('SIGNED_OUT', null);
+  assert.equal((await h.settleApp()).type, 'ProductInput');
+  assert.equal(h.state.projectId, null);
+});
+
+for (const phase of ['bootstrap', 'late-SIGNED_OUT']) {
+  test(`a newer stored same-user session survives a stale null during ${phase}`, async () => {
+    const session = { user: { id: 'A' }, access_token: 'newer', refresh_token: 'stored' };
+    const h = harness({ withAuth: true, authUser: phase === 'bootstrap' ? null : 'A', remote: null,
+      savedFlow: savedByA(), storedSession: session });
+    await h.settleApp();
+    if (phase === 'late-SIGNED_OUT') { h.emit('SIGNED_OUT', null); await h.settleApp(); }
+    assert.equal(h.auth.session, null);
+    assert.equal(h.publishedSessions.at(-1), null);
+    assert.equal(h.state.projectId, 'A-project');
+    assert.equal(h.calls.includes('begin'), false);
+  });
+}
+
+for (const facemarket of [false, true]) {
+  test(`normal http boot renders public children while authentication is pending (facemarket=${facemarket})`, async () => {
+    let release;
+    const sessionResult = new Promise((resolve) => { release = resolve; });
+    const h = harness({ withAuth: true, confirmed: false, facemarket, sessionResult });
+    const provider = h.render('AuthProvider', { children: 'App' });
+    assert.equal(provider.props.value.loading, true);
+    assert.equal(provider.props.children[0], 'App');
+    assert.equal((await h.settleApp('TopNav')).type, 'fragment');
+    assert.equal(h.auth.loading, true);
+    assert.deepEqual(h.calls, []);
+    release({ data: { session: null } });
+    await h.settleApp('TopNav');
+    assert.equal(h.auth.loading, false);
+  });
+}
+
+test('stale guest boot hides children only during the flow reset and then shows anonymous input', async () => {
+  let release;
+  const resetGate = new Promise((resolve) => { release = resolve; });
+  const h = harness({ withAuth: true, authUser: null, remote: null, savedFlow: savedByA(), resetGate });
+  const initial = h.render('AuthProvider', { children: 'App' });
+  assert.equal(initial.props.children[0], 'App');
+  assert.equal(await h.settleApp(), null);
+  assert.equal(h.render('AuthProvider', { children: 'App' }).props.children[0], false);
+  release();
+  assert.equal((await h.settleApp()).type, 'ProductInput');
+  assert.equal(h.auth.loading, false);
+  assert.equal(h.state.projectId, null);
+  assert.equal(h.render('AuthProvider', { children: 'App' }).props.children[0], 'App');
+});
+
+test('failed bootstrap reset publishes B, releases the gate and processes a later auth event', async () => {
+  const h = harness({ withAuth: true, authUser: 'B', remote: null, savedFlow: savedByA(), resetError: new Error('reset failed') });
+  await h.settleApp('TopNav');
+  assert.equal(h.auth.session?.user?.id, 'B');
+  assert.equal(h.auth.loading, false);
+  assert.equal(h.render('AuthProvider', { children: 'App' }).props.children[0], 'App');
+  assert.equal(h.hasListener, true);
+  h.setResetError(null);
+  const next = { user: { id: 'B' }, access_token: 'refreshed' };
+  h.emit('TOKEN_REFRESHED', next);
+  await h.settleApp('TopNav');
+  assert.equal(h.auth.session, next);
+  assert.equal(h.publishedSessions.at(-1), next);
+  assert.equal(h.state.projectId, null);
+});
+
+test('a publication failure after reset cannot close the gate or stop the next auth event', async () => {
+  const h = harness({ withAuth: true, authUser: 'A', remote: null, savedFlow: savedByA() });
+  await h.settleApp('TopNav');
+  h.failNextPublication(new Error('client event publication failed'));
+  h.emit('SIGNED_IN', { user: { id: 'B' } });
+  await h.settleApp('TopNav');
+  assert.equal(h.render('AuthProvider', { children: 'App' }).props.children[0], 'App');
+  assert.equal(h.auth.loading, false);
+  const next = { user: { id: 'C' } };
+  h.emit('SIGNED_IN', next);
+  await h.settleApp('TopNav');
+  assert.equal(h.auth.session, next);
+  assert.equal(h.publishedSessions.at(-1), next);
 });
