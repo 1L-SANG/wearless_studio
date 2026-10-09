@@ -98,7 +98,7 @@
 .sb-similar-badge { position:absolute; bottom:12px; left:12px; display:flex; align-items:center; gap:6px; max-width:calc(100% - 24px); padding:8px 10px; border-radius:var(--r-pill); background:var(--glass-bg); color:var(--fg-1); box-shadow:var(--elev-card); font-size:12px; font-weight:500; pointer-events:none; white-space:nowrap; }
 .sb-similar-badge svg { flex-shrink:0; }
 .sb-cutcard:has(.sb-similar-badge) { container-type:inline-size; }
-@container (max-width: 190px) { .sb-similar-badge small { display:none; } }
+@container (max-width: 159px) { .sb-similar-badge small { display:none; } }
 .sb-similar-badge small { color:var(--fg-2); font-size:11px; margin-left:2px; }
 .sb-similar-caption { gap:6px; color:var(--fg-2); }
 .sb-similar-eyebrow { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-2); }
