@@ -1,3 +1,5 @@
+import { HOOK_TITLE_LIMITS, HOOK_TITLE_METRICS } from './hookTitleMetrics.js';
+
 export const CAPTION_SIZE = 44;
 export const CAPTION_LINE_HEIGHT = 60;
 export const CAPTION_CHARS_PER_LINE = 20;
@@ -9,11 +11,6 @@ export const TAG_SHIFT = 64;
 
 export const ROW_LABEL_SIZE = 30;
 export const ROW_LABEL_HEIGHT = 42;
-
-export const HOOK_TITLE_SIZE = 60;
-export const HOOK_TITLE_LINE_HEIGHT = 72;
-export const HOOK_TITLE_CHARS_PER_LINE = 14;
-export const HOOK_TITLE_MAX_LINES = 2;
 
 export const CAPTION_STYLE = Object.freeze({
   size: CAPTION_SIZE,
@@ -52,58 +49,100 @@ export function captionHeight(value) {
 }
 
 export function hookTitleLayout(value) {
-  const title = String(value ?? '').trim().replace(/\s+/g, ' ');
-  if (characterCount(title) <= HOOK_TITLE_CHARS_PER_LINE) {
-    return { text: title, lines: 1, h: HOOK_TITLE_LINE_HEIGHT };
-  }
-
-  const words = title.split(' ');
-  let lines;
-  if (words.length > 1) {
-    let best = null;
-    for (let index = 1; index < words.length; index += 1) {
-      const left = words.slice(0, index).join(' ');
-      const right = words.slice(index).join(' ');
-      const leftLength = characterCount(left);
-      const rightLength = characterCount(right);
-      const overflow = Math.max(0, leftLength - HOOK_TITLE_CHARS_PER_LINE)
-        + Math.max(0, rightLength - HOOK_TITLE_CHARS_PER_LINE);
-      const score = overflow * 1000 + Math.abs(leftLength - rightLength);
-      if (!best || score < best.score) best = { left, right, score };
-    }
-    lines = [best.left, best.right];
-  } else {
-    const characters = Array.from(title);
-    const splitAt = Math.ceil(characters.length / 2);
-    lines = [characters.slice(0, splitAt).join(''), characters.slice(splitAt).join('')];
-  }
-
-  return {
-    text: lines.join('\n'),
-    lines: HOOK_TITLE_MAX_LINES,
-    h: HOOK_TITLE_LINE_HEIGHT * HOOK_TITLE_MAX_LINES,
+  const title = String(value ?? '').normalize('NFC')
+    .replace(/[ \t\r\n\f\v\u00a0\u3000]+/g, ' ').replace(/^ +| +$/g, '');
+  const characters = Array.from(title);
+  const { maxSize, minSize, lineBudgetPx, ellipsis } = HOOK_TITLE_LIMITS;
+  const metrics = HOOK_TITLE_METRICS;
+  const budget = lineBudgetPx * metrics.unitsPerEm;
+  const widthOf = (character) => {
+    const code = character.codePointAt(0);
+    if ((code >= 0xac00 && code <= 0xd7a3) || (code >= 0x3131 && code <= 0x318e)) return metrics.hangul;
+    return metrics.ascii[character] ?? metrics.extra[character] ?? metrics.fallback;
   };
+  const fit = (width) => Math.min(maxSize, Math.floor(budget / Math.max(1, width)));
+  const finish = (lines) => {
+    const size = fit(Math.max(...lines.map((line) => Array.from(line).reduce((sum, character) => sum + widthOf(character), 0))));
+    const lineHeight = Math.floor((size * 6 + 2) / 5);
+    return { text: lines.join('\n'), lines: lines.length, size, lineHeight, h: lines.length * lineHeight };
+  };
+  const widths = [0];
+  for (const character of characters) widths.push(widths.at(-1) + widthOf(character));
+
+  const opening = Array.from('([{【〔「『（［');
+  const closing = Array.from(')]}】〕」』）］');
+  const stack = [];
+  const inside = new Set();
+  characters.forEach((character, index) => {
+    if (opening.includes(character)) {
+      stack.push({ character, index });
+    } else {
+      const kind = closing.indexOf(character);
+      if (kind < 0) return;
+      for (let top = stack.length - 1; top >= 0; top -= 1) {
+        if (stack[top].character !== opening[kind]) continue;
+        for (let inner = stack[top].index + 1; inner < index; inner += 1) inside.add(inner);
+        stack.length = top;
+        break;
+      }
+    }
+  });
+
+  const breaks = [];
+  for (let index = 1; index < characters.length; index += 1) {
+    if (inside.has(index - 1) || inside.has(index)) continue;
+    if (characters[index] === ' ') {
+      breaks.push({ end: index, start: index + 1 });
+    } else if (characters[index - 1] !== ' '
+      && (closing.includes(characters[index - 1]) || opening.includes(characters[index])
+        || ['/', '·', ','].includes(characters[index - 1]))) {
+      breaks.push({ end: index, start: index });
+    }
+  }
+
+  const totalWidth = widths.at(-1);
+  let best = { lines: [title], size: fit(totalWidth), difference: 0, index: 0 };
+  for (const { end, start } of breaks) {
+    const leftWidth = widths[end];
+    const rightWidth = totalWidth - widths[start];
+    const size = fit(Math.max(leftWidth, rightWidth));
+    const difference = Math.abs(leftWidth - rightWidth);
+    if (size > best.size || (size === best.size && best.lines.length === 2
+      && (difference < best.difference || (difference === best.difference && end < best.index)))) {
+      best = {
+        lines: [characters.slice(0, end).join(''), characters.slice(start).join('')],
+        size, difference, index: end,
+      };
+    }
+  }
+  if (best.size >= minSize) return finish(best.lines);
+
+  const minimumBudget = Math.floor(budget / minSize);
+  const ellipsisWidth = widthOf(ellipsis);
+  const truncate = (start, end) => {
+    if (end == null) {
+      end = start;
+      while (end < characters.length && widths[end + 1] - widths[start] + ellipsisWidth <= minimumBudget) end += 1;
+    }
+    return characters.slice(start, end).join('').replace(/ +$/, '') + ellipsis;
+  };
+  const firstBreak = breaks.filter(({ end }) => widths[end] <= minimumBudget).at(-1);
+  if (!firstBreak) return finish([truncate(0)]);
+  const secondBreak = breaks.filter(({ end }) => end > firstBreak.start
+    && widths[end] - widths[firstBreak.start] + ellipsisWidth <= minimumBudget).at(-1);
+  return finish([
+    characters.slice(0, firstBreak.end).join(''),
+    truncate(firstBreak.start, secondBreak?.end),
+  ]);
 }
 
-export function hookTitleStyle(color) {
+export function hookTitleStyle(color, { size, lineHeight }) {
   return {
     font: 'Pretendard',
-    size: HOOK_TITLE_SIZE,
+    size,
     weight: 700,
     color,
     align: 'center',
-    lineHeight: HOOK_TITLE_LINE_HEIGHT,
-    maxLines: HOOK_TITLE_MAX_LINES,
-  };
-}
-
-export function textLineClampStyle(style, editing) {
-  const maxLines = Number(style?.maxLines);
-  if (editing || !Number.isFinite(maxLines) || maxLines < 1) return {};
-  return {
-    display: '-webkit-box',
-    WebkitBoxOrient: 'vertical',
-    WebkitLineClamp: maxLines,
-    overflow: 'hidden',
+    lineHeight,
   };
 }

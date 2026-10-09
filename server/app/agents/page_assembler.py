@@ -12,7 +12,11 @@ AI 호출 없음. id는 uid()(랜덤) 대신 **인덱스 기반 결정적 id**�
 컷 생성 실패(해당 블록의 cut_result 없음)는 크래시가 아니라 빈 슬롯(src=None) 렌더.
 """
 
+import re
+import unicodedata
+
 from .content_roles import CONTENT_ROLE_NAMES, resolve_content_role, resolve_section_role
+from .hook_title_metrics import HOOK_TITLE_LIMITS, HOOK_TITLE_METRICS
 
 
 def _block_id(i: int) -> str:
@@ -88,10 +92,6 @@ _TAG_H = 38
 _TAG_SHIFT = 64
 _ROW_LABEL_SIZE = 30
 _ROW_LABEL_H = 42
-_HOOK_TITLE_SIZE = 60
-_HOOK_TITLE_LINE_HEIGHT = 72
-_HOOK_TITLE_CHARS_PER_LINE = 14
-_HOOK_TITLE_MAX_LINES = 2
 _INK = "#0e0d14"
 _FAINT = "#9a9aa2"
 
@@ -141,28 +141,86 @@ def _caption_height(text) -> int:
     return line_count * _CAPTION_LINE_HEIGHT
 
 
-def _hook_title_layout(value) -> tuple[str, int]:
-    title = " ".join(str(value or "").strip().split())
-    if len(title) <= _HOOK_TITLE_CHARS_PER_LINE:
-        return title, _HOOK_TITLE_LINE_HEIGHT
+def _hook_title_layout(value) -> dict:
+    title = unicodedata.normalize("NFC", "" if value is None else str(value))
+    title = re.sub(r"[ \t\r\n\f\v\u00a0\u3000]+", " ", title).strip(" ")
+    metrics = HOOK_TITLE_METRICS
+    limits = HOOK_TITLE_LIMITS
+    budget = limits["lineBudgetPx"] * metrics["unitsPerEm"]
 
-    words = title.split(" ")
-    if len(words) > 1:
-        candidates = []
-        for index in range(1, len(words)):
-            left = " ".join(words[:index])
-            right = " ".join(words[index:])
-            overflow = max(0, len(left) - _HOOK_TITLE_CHARS_PER_LINE)
-            overflow += max(0, len(right) - _HOOK_TITLE_CHARS_PER_LINE)
-            score = overflow * 1000 + abs(len(left) - len(right))
-            candidates.append((score, index, left, right))
-        _, _, left, right = min(candidates)
-    else:
-        split_at = (len(title) + 1) // 2
-        left, right = title[:split_at], title[split_at:]
+    def width_of(character):
+        code = ord(character)
+        if 0xac00 <= code <= 0xd7a3 or 0x3131 <= code <= 0x318e:
+            return metrics["hangul"]
+        return metrics["ascii"].get(character, metrics["extra"].get(character, metrics["fallback"]))
 
-    wrapped = "\n".join((left, right))
-    return wrapped, _HOOK_TITLE_LINE_HEIGHT * _HOOK_TITLE_MAX_LINES
+    def fit(width):
+        return min(limits["maxSize"], budget // max(1, width))
+
+    def finish(lines):
+        size = fit(max(sum(width_of(character) for character in line) for line in lines))
+        line_height = (size * 6 + 2) // 5
+        return {"text": "\n".join(lines), "lines": len(lines), "size": size,
+                "lineHeight": line_height, "h": len(lines) * line_height}
+
+    widths = [0]
+    for character in title:
+        widths.append(widths[-1] + width_of(character))
+
+    opening = "([{【〔「『（［"
+    closing = ")]}】〕」』）］"
+    stack = []
+    inside = set()
+    for index, character in enumerate(title):
+        if character in opening:
+            stack.append((character, index))
+        elif character in closing:
+            matching = opening[closing.index(character)]
+            for top in range(len(stack) - 1, -1, -1):
+                if stack[top][0] != matching:
+                    continue
+                inside.update(range(stack[top][1] + 1, index))
+                del stack[top:]
+                break
+
+    breaks = []
+    for index in range(1, len(title)):
+        if index - 1 in inside or index in inside:
+            continue
+        if title[index] == " ":
+            breaks.append((index, index + 1))
+        elif title[index - 1] != " " and (title[index - 1] in closing
+                                        or title[index] in opening or title[index - 1] in "/·,"):
+            breaks.append((index, index))
+
+    total_width = widths[-1]
+    candidates = [(-fit(total_width), 1, 0, 0, [title])]
+    for end, start in breaks:
+        left_width, right_width = widths[end], total_width - widths[start]
+        candidates.append((-fit(max(left_width, right_width)), 2, abs(left_width - right_width), end,
+                           [title[:end], title[start:]]))
+    best = min(candidates)
+    if -best[0] >= limits["minSize"]:
+        return finish(best[4])
+
+    minimum_budget = budget // limits["minSize"]
+    ellipsis = limits["ellipsis"]
+    ellipsis_width = width_of(ellipsis)
+
+    def truncate(start, end=None):
+        if end is None:
+            end = start
+            while end < len(title) and widths[end + 1] - widths[start] + ellipsis_width <= minimum_budget:
+                end += 1
+        return title[start:end].rstrip(" ") + ellipsis
+
+    first_break = next((boundary for boundary in reversed(breaks) if widths[boundary[0]] <= minimum_budget), None)
+    if first_break is None:
+        return finish([truncate(0)])
+    end, start = first_break
+    second_end = next((left_end for left_end, _ in reversed(breaks) if left_end > start
+                       and widths[left_end] - widths[start] + ellipsis_width <= minimum_budget), None)
+    return finish([title[:end], truncate(start, second_end)])
 
 
 def _block_height(elements: list[dict]) -> int:
@@ -499,13 +557,13 @@ def assemble(
             title_color = meta.get("hookTitleColor")
             if title_color not in {"#111111", "#ffffff"}:
                 title_color = "#ffffff"
-            title_text, title_h = _hook_title_layout(product.get("name"))
+            title = _hook_title_layout(product.get("name"))
+            title_text, title_h = title["text"], title["h"]
             els.append(_text_el(block_i, el_j, _IMG_X, image_y + (img_h - title_h) // 2,
                                  img_w, title_h, title_text,
-                                 {"font": "Pretendard", "size": _HOOK_TITLE_SIZE, "weight": 700,
+                                 {"font": "Pretendard", "size": title["size"], "weight": 700,
                                   "color": title_color, "align": "center",
-                                  "lineHeight": _HOOK_TITLE_LINE_HEIGHT,
-                                  "maxLines": _HOOK_TITLE_MAX_LINES},
+                                  "lineHeight": title["lineHeight"]},
                                  source_block_id=b.get("id"), copy_role="hookTitle"))
             el_j += 1
 

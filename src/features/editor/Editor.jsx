@@ -57,7 +57,6 @@ import {
   writeExportSettings,
 } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
-import { textLineClampStyle } from '@/lib/editorTextSlots.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
@@ -591,8 +590,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
         fontStyle: s.italic ? 'italic' : 'normal',
-        textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
-        ...textLineClampStyle(s, editing) }}
+        textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */

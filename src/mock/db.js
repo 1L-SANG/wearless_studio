@@ -373,7 +373,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     if (signature && (product.name || '').trim()) {
       const title = hookTitleLayout(product.name);
       els.push(Object.assign(
-        T(60, imageY + (560 - title.h) / 2, 880, title.h, title.text, hookTitleStyle('#ffffff')),
+        T(60, imageY + Math.floor((560 - title.h) / 2), 880, title.h, title.text, hookTitleStyle('#ffffff', title)),
         { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
       ));
     }
