@@ -16,6 +16,15 @@ import { cookieStorage } from './authCookieStorage.js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const storageKey = `sb-${new URL(url || 'https://placeholder.supabase.co').hostname.split('.')[0]}-auth-token`;
+
+// 갱신 오류의 null 세션은 로그아웃 근거가 아니다. auth-js가 보존한 쿠키를 함께 확인한다.
+export function readStoredAuthSession() {
+  try {
+    const session = JSON.parse(cookieStorage.getItem(storageKey));
+    return session?.access_token && session?.refresh_token && session?.user?.id ? session : null;
+  } catch { return null; }
+}
 
 // 미설정 시 createClient 가 모듈 로드에서 throw → SPA 전체 화이트스크린이 된다.
 // 그걸 막기 위해 형식상 유효한 placeholder 로 생성하고, App 이 이 플래그로 설정 안내를 렌더.
@@ -37,6 +46,7 @@ export const supabase = createClient(
       detectSessionInUrl: false,
       flowType: 'pkce',
       storage: cookieStorage,
+      storageKey,
     },
   },
 );

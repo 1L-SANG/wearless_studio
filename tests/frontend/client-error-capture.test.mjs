@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { transformWithEsbuild } from 'vite';
+import { parseAst, transformWithEsbuild } from 'vite';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const clean = (source) => source.replace(/^import [\s\S]*?;\n/gm, '').replace(/^export default .*;$/gm, '').replace(/^export /gm, '');
@@ -50,7 +50,8 @@ for (const [point, path, kind, action, blocking] of points) {
     const node = source.match(new RegExp(`<ClientErrorCapture point="${point}"[\\s\\S]*?/>`))[0];
     const { code } = await transformWithEsbuild(`function View() { return (${node}); }`, 'View.jsx', { jsx: 'transform' });
     const error = Object.assign(new Error('user typed private@example.com'), { requestId: uuid });
-    const values = { ...h.bindings, projectId: uuid, autosaveFailed: error, saveError: { error, backedUp: true },
+    const projectIdName = node.match(/projectId=\{(\w+)\}/)?.[1] || 'projectId';
+    const values = { ...h.bindings, [projectIdName]: uuid, autosaveFailed: error, saveError: { error, backedUp: true },
       genFailed: true, genFinalizeError: '', genFinalizeOriginalError: error, dpJob: { error, jobId: uuid, status: 'error' },
       photoFailure: { error, canOmit: false }, originalError: error };
     const View = new Function(...Object.keys(values), `${code}; return View;`)(...Object.values(values));
@@ -63,6 +64,55 @@ for (const [point, path, kind, action, blocking] of points) {
     h.render(tree.type, { ...tree.props, active: false });
     h.render(tree.type, tree.props);
     assert.equal(h.reports.length, 2, 'a new visible failure may be reported after dismissal');
+  });
+}
+
+// 위 테스트는 projectId 값을 직접 넣어 실행하므로, 화면에 없는 이름을 넘겨도 통과했다.
+// 10/8 #492에서 입력 화면이 선언되지 않은 projectId를 넘겨 사진 실패 안내 대신 앱 전체가
+// 오류 화면이 됐다. 넘기는 이름이 그 컴포넌트나 파일 최상위에 실제로 선언돼 있는지 본다.
+function bindingNames(pattern, names) {
+  if (!pattern) return;
+  if (pattern.type === 'Identifier') names.add(pattern.name);
+  else if (pattern.type === 'ObjectPattern') pattern.properties.forEach((p) => bindingNames(p.value || p.argument, names));
+  else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((p) => bindingNames(p, names));
+  else if (pattern.type === 'AssignmentPattern') bindingNames(pattern.left, names);
+  else if (pattern.type === 'RestElement') bindingNames(pattern.argument, names);
+}
+function declaredNames(statements, names) {
+  for (const node of statements) {
+    const statement = node.declaration || node;
+    if (statement.type === 'ImportDeclaration') statement.specifiers.forEach((s) => names.add(s.local.name));
+    if (statement.type === 'FunctionDeclaration' && statement.id) names.add(statement.id.name);
+    if (statement.type === 'VariableDeclaration') statement.declarations.forEach((d) => bindingNames(d.id, names));
+  }
+}
+function findCaptureProps(node, point) {
+  if (!node || typeof node !== 'object') return null;
+  if (node.type === 'ObjectExpression'
+    && node.properties.some((p) => p.key?.name === 'point' && p.value?.value === point)) return node;
+  for (const value of Object.values(node)) {
+    const found = Array.isArray(value)
+      ? value.reduce((hit, child) => hit || findCaptureProps(child, point), null)
+      : findCaptureProps(value, point);
+    if (found) return found;
+  }
+  return null;
+}
+
+for (const [point, path] of points) {
+  test(`${point} capture passes a projectId that its component actually declares`, async () => {
+    const { code } = await transformWithEsbuild(read(path), 'Screen.jsx', { jsx: 'transform' });
+    const program = parseAst(code);
+    const props = findCaptureProps(program, point);
+    const passed = props.properties.find((p) => p.key?.name === 'projectId')?.value;
+    if (passed?.type !== 'Identifier') return;
+    const owner = program.body.map((n) => n.declaration || n)
+      .find((n) => n.type === 'FunctionDeclaration' && n.start <= props.start && props.end <= n.end);
+    const names = new Set();
+    declaredNames(program.body, names);
+    owner?.params.forEach((p) => bindingNames(p, names));
+    declaredNames(owner?.body.body || [], names);
+    assert.ok(names.has(passed.name), `${path}: projectId={${passed.name}} 이 컴포넌트 안에 선언돼 있지 않아요`);
   });
 }
 

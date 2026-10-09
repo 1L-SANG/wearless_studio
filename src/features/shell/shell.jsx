@@ -188,7 +188,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
       <p>열 상품을 골라 주세요.</p>
       <div className="modal-actions">
         <Button variant="ghost" onClick={onNew} disabled={busy}>{mobile ? '지우고 새 상품 업로드' : '새로 시작하기'}</Button>
-        <Button variant="primary" onClick={onResume} disabled={busy}>이어서 하기</Button>
+        {onResume && <Button variant="primary" onClick={onResume} disabled={busy}>이어서 하기</Button>}
       </div>
     </Modal>
   );
