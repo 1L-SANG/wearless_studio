@@ -1,5 +1,6 @@
 // Follow-up cards reference the generated original, never the example photograph.
-const RECIPE_FIELDS = ['cutType', 'shot', 'direction', 'sideStyle', 'colorId', 'colorIds', 'modelId', 'exampleId', 'exampleSelectionOrigin', 'refScope', 'refImages', 'refAssetIds', 'matchIds', 'matchIdsOrigin', 'outerClosureState', 'horizonBackgroundMode', 'faceExposure', 'angle', 'thumb', 'previewThumb', 'baseThumb'];
+const RECIPE_FIELDS = ['cutType', 'shot', 'direction', 'sideStyle', 'colorId', 'colorIds', 'modelId', 'exampleId', 'exampleSelectionOrigin', 'refScope', 'refImages', 'refAssetIds', 'matchIds', 'matchIdsOrigin', 'outerClosureState', 'horizonBackgroundMode', 'spaceGroupId', 'spaceVariation', 'faceExposure', 'angle', 'thumb', 'previewThumb', 'baseThumb'];
+const excludedOwnership = key => /^(space|hook|colorway)/.test(key) && !['spaceGroupId', 'spaceVariation'].includes(key);
 export const canPlanSimilarCut = (block) => !!block && block.source === 'ai'
   && ['styling', 'horizon', 'mirror'].includes(block.cutType)
   && !block.similarSourceBlockId && !!block.exampleId;
@@ -7,7 +8,7 @@ export function createSimilarCutBlock(source, id) {
   if (!canPlanSimilarCut(source)) throw new Error('착용 사진을 기준으로 비슷한 컷을 추가할 수 있어요.');
   const child = { ...source, id, similarSourceBlockId: source.id, sectionCustom: true };
   for (const key of Object.keys(child)) {
-    if (/^(space|hook|colorway|layoutRow)/.test(key)) delete child[key];
+    if (excludedOwnership(key) || /^layoutRow/.test(key)) delete child[key];
   }
   return child;
 }
@@ -23,7 +24,10 @@ export function inheritSimilarCutRecipes(blocks) {
     for (const key of RECIPE_FIELDS) {
       if (key in source) next[key] = source[key]; else delete next[key];
     }
-    if (RECIPE_FIELDS.every(key => JSON.stringify(next[key]) === JSON.stringify(block[key]))) return block;
+    for (const key of Object.keys(next)) {
+      if (excludedOwnership(key)) delete next[key];
+    }
+    if (JSON.stringify(next) === JSON.stringify(block)) return block;
     changed = true;
     return next;
   });

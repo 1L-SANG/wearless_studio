@@ -348,7 +348,7 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
   const loadedRecipes = useContext(LoadedRecipeContext);
   const sourceNumbers = useContext(SimilarSourceNumbersContext);
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
-  if (block.similarSourceBlockId) return <div className="sb-canvas-caption sb-similar-caption"><Icon name="copy" size={13} /><span>{sourceNumbers?.get(block.similarSourceBlockId) || "기준"}번 컷 기반</span></div>;
+  if (block.similarSourceBlockId) return <div className="sb-canvas-caption sb-similar-caption"><Icon name="copy" size={13} /><span>{sourceNumbers?.get(block.similarSourceBlockId) ? `${sourceNumbers.get(block.similarSourceBlockId)}번 컷 기반` : '비슷한 컷'}</span></div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
     .map((id) => colorOpts.find((color) => color.id === id))
@@ -2705,8 +2705,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       // 내 이미지로 전환한 컷은 행에 남을 수 없으므로 기존 행도 함께 해제한다.
       return applied.source === 'mine' && oldRowId && block.layoutRowId === oldRowId ? withoutLayoutRow(block) : block;
     });
-    next = ensureContiguousSpaceRuns(next);
     next = reconcileSimilarCutMutation(previous, next);
+    next = ensureContiguousSpaceRuns(next);
     // 내부 생성 레시피가 복구돼 placeholder가 생성 대상이 되면 레이아웃 배타 규칙을 다시 적용한다.
     if (applied && 'cutType' in applied && applied.cutType && !current.cutType) next = normalizeStoryboardMutation(next);
     setBlocks(next);
@@ -2731,7 +2731,8 @@ export function Storyboard({ toastOverride = null } = {}) {
         const dissolved = movedRowId
           ? moved.map((block) => block.layoutRowId === movedRowId ? withoutLayoutRow(block) : block)
           : moved;
-        staged = adoptSection(dissolved, id, move.targetSid, move.targetRole);
+        const movingIds = [id, ...staged.filter(block => block.similarSourceBlockId === id && staged[from].spaceGroupId).map(block => block.id)];
+        staged = adoptSection(dissolved, movingIds, move.targetSid, move.targetRole);
       }
     }
     const next = reconcileSimilarCutMutation(previous, normalizeStoryboardMutation(staged.map((block) => (
@@ -2822,11 +2823,15 @@ export function Storyboard({ toastOverride = null } = {}) {
     setSelectedId(id); setSplitOpen(true);
   };
   const addSimilar = (id) => {
-    const source = blocks.find(block => block.id === id);
+    const picked = blocks.find(block => block.id === id);
+    const source = picked?.similarSourceBlockId ? blocks.find(block => block.id === picked.similarSourceBlockId) : picked;
     if (!canPlanSimilarCut(source) || locked) return;
     const child = createSimilarCutBlock(source, uid('blk'));
-    const group = dragGroupFor(blocks, id);
-    const end = group?.indexes[group.indexes.length - 1] ?? blocks.findIndex(block => block.id === id);
+    const group = dragGroupFor(blocks, source.id);
+    let end = source.spaceGroupId ? blocks.indexOf(source) : (group?.indexes[group.indexes.length - 1] ?? blocks.indexOf(source));
+    if (source.spaceGroupId) {
+      blocks.forEach((block, index) => { if (block.similarSourceBlockId === source.id) end = Math.max(end, index); });
+    }
     const next = [...blocks];
     next.splice(end + 1, 0, child);
     const normalized = normalizeStoryboardMutation(next);
@@ -2838,6 +2843,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     // 예비가 소진된 장소세트 멤버는 복제로도 늘릴 수 없다 — ＋ 와 예시 드롭만 막고 복제를
     // 열어두면 같은 문으로 컷·크레딧이 확인 없이 늘었다(자체 리뷰 medium).
     const source = blocks.find((block) => block.id === id);
+    if (source?.similarSourceBlockId) { addSimilar(id); return; }
     if (source?.spaceGroupId) {
       const set = inferStoryboardSpaceSet(source.spaceGroupId);
       const members = blocks.filter((block) => block.spaceGroupId === source.spaceGroupId);
@@ -2871,7 +2877,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const preDelete = blocks;
     let postDelete = null;   // 삭제 직후 상태 — identity 가 그대로일 때만 통짜 복원 유효
     setBlocks((bs) => {
-      postDelete = reconcileSimilarCutMutation(bs, normalizeStoryboardMutation((bs.filter((b) => b.id !== id).map((b) => {
+      postDelete = normalizeStoryboardMutation(reconcileSimilarCutMutation(bs, (bs.filter((b) => b.id !== id).map((b) => {
         // 삭제 규칙: 한 멤버가 사라지면 남은 파트너 전원의 행 id를 내려 모두 일반 단일 카드로 돌린다.
         // normalizeBoard: 컷 수가 줄어든 섹션의 레이아웃 위생(예: 3컷 threeColumn 에서 1개 삭제 → 스테일 레이아웃 해소)
         return rowId && b.layoutRowId === rowId ? withoutLayoutRow(b) : b;
@@ -2892,9 +2898,28 @@ export function Storyboard({ toastOverride = null } = {}) {
       }
       if (unchanged) return preDelete;
       // 그 사이 실제 조작이 있었으면 폴백: 재삽입 후 이웃 섹션 재채택 + 공통 위생
-      const restored = restoreHorizonGroupBackground(undoBlock, bs);
-      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, restored, ...dependentCuts.filter(block => !bs.some(current => current.id === block.id)));
-      return normalizeStoryboardMutation(adoptSection(n, undoBlock.id));
+      const originalRun = groupConsecutiveSpaceRuns(preDelete).find(run => run.kind === 'space' && run.items.some(block => block.id === id));
+      const missingIds = new Set([id, ...dependentCuts.filter(block => !bs.some(current => current.id === block.id)).map(block => block.id)]);
+      const missing = preDelete.filter(block => missingIds.has(block.id));
+      const n = [...bs];
+      for (const block of missing) {
+        let restored = restoreHorizonGroupBackground(block.id === id ? undoBlock : block, n);
+        let insertAt = Math.min(preDelete.indexOf(block), n.length);
+        if (originalRun) {
+          const position = originalRun.items.indexOf(block);
+          const preceding = originalRun.items.slice(0, position).reverse().find(peer => n.some(current => current.id === peer.id && current.spaceGroupId));
+          const following = originalRun.items.slice(position + 1).find(peer => n.some(current => current.id === peer.id && current.spaceGroupId));
+          const anchor = n.find(peer => peer.id === (preceding || following)?.id);
+          if (anchor) {
+            restored = restoreHorizonGroupBackground({ ...restored, spaceGroupId: anchor.spaceGroupId,
+              spaceVariation: anchor.spaceVariation, sectionId: anchor.sectionId,
+              sectionRole: anchor.sectionRole, sectionLayout: anchor.sectionLayout }, n);
+            insertAt = n.indexOf(anchor) + (preceding ? 1 : 0);
+          }
+        }
+        n.splice(snapOutOfForeignBundle(n, restored, insertAt), 0, restored);
+      }
+      return normalizeStoryboardMutation(originalRun ? n : adoptSection(n, [...missingIds]));
     }) });
   };
   // 이동 후 adoptSection — 섹션 경계를 넘으면 이웃 섹션을 채택하고 대상 섹션을 '직접 구성' 처리
@@ -3281,7 +3306,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       : null;
     const cutAllowed = !targetRole || moving?.source === 'mine'
       || allowedCutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
-    if (moving?.similarSourceBlockId && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType) || targetSpaceGroupId)) {
+    if (moving?.similarSourceBlockId && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType)
+      || (moving.spaceGroupId || null) !== (targetSpaceGroupId || null))) {
       toast.push('비슷한 컷은 기준 컷과 같은 촬영 방식으로 구성해 주세요');
       return;
     }
@@ -3301,7 +3327,8 @@ export function Storyboard({ toastOverride = null } = {}) {
         targetSpaceGroupId,
         nextGroupId: nextSeparatedSpaceGroupId,
       });
-      const adopted = adoptSection(moved, id, targetSid, targetRole);
+      const movingIds = [id, ...current.filter(block => block.similarSourceBlockId === id && moving.spaceGroupId && moving.spaceGroupId !== targetSpaceGroupId).map(block => block.id)];
+      const adopted = adoptSection(moved, movingIds, targetSid, targetRole);
       return normalizeStoryboardMutation(adopted);
     });
   };
@@ -3463,9 +3490,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     if (setPicker.mode === 'replace' && inferStoryboardSpaceSet(setPicker.spaceGroupId)?.id === set.id) return;
     setSetPickerError(null);
     const groupId = spaceSetGroupId(set.id, uid('sg'));
+    let removedSimilarCount = 0;
     try {
       if (setPicker.mode === 'replace') {
-        const currentMembers = blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId);
+        const currentMembers = blocks.filter((block) => block.spaceGroupId === setPicker.spaceGroupId && !block.similarSourceBlockId);
         const newIds = set.members.map((_member, index) => currentMembers[index]?.id || uid('blk'));
         await atomicBoardChange((current) => {
           const replaced = replaceSpaceSetRun(current, setPicker.spaceGroupId, set, {
@@ -3473,6 +3501,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             makeId: (_member, index) => newIds[index],
             setSelectionOrigin: 'user',
           });
+          removedSimilarCount = current.filter(block => block.similarSourceBlockId && !replaced.some(next => next.id === block.id)).length;
           const normalized = normalizeBoard(replaced);
           const assigned = assignGenerationExamples(normalized, {
             catalog: catalogs.genExamples,
@@ -3520,6 +3549,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       }
       setSetPicker((current) => current ? { ...current, mode: 'replace', spaceGroupId: groupId } : current);
       toast.push(setPicker.mode === 'replace' ? '장소 세트를 변경했어요' : '장소 세트를 추가했어요', { icon: 'plus' });
+      if (removedSimilarCount) toast.push(`원본과 연결된 비슷한 컷 ${removedSimilarCount}장도 함께 정리했어요`);
     } catch {
       setSetPickerError('장소 세트를 저장하지 못했어요. 다시 시도해주세요.');
     }
@@ -3702,6 +3732,8 @@ export function Storyboard({ toastOverride = null } = {}) {
       blockId: section.items[0]?.b?.id || null,
       label: '예시 셔플',
     });
+    const removedSimilarCount = previous.filter(block => block.similarSourceBlockId && !normalized.some(current => current.id === block.id)).length;
+    if (removedSimilarCount) toast.push(`원본과 연결된 비슷한 컷 ${removedSimilarCount}장도 함께 정리했어요`);
   };
   const shuffleSection = (group) => runShuffle(group);
   const shuffleSpaceSet = (group, spaceGroupId) => runShuffle(group, { onlySpaceGroupId: spaceGroupId });
@@ -4192,12 +4224,13 @@ export function Storyboard({ toastOverride = null } = {}) {
     }}
     />
     {canPlanSimilarCut(selected) && <div className="sb-similar-add">
-      <button type="button" className="btn btn-ghost" disabled={locked} onClick={() => addSimilar(selected.id)}><Icon name="copy" size={16} />비슷한 컷 추가</button>
-      <p>이 컷이 완성되면 같은 촬영으로 한 장 더 만들어요</p>
+      <button type="button" className="btn btn-primary btn-glowring" disabled={locked} onClick={() => addSimilar(selected.id)}><Icon name="sparkles" size={16} />비슷한 컷 추가</button>
+      <p>상세페이지를 만들 때 함께 생성해요.</p>
     </div>}
   </>;
 
   const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
+  const selectedSimilarCount = selected ? blocks.filter(block => block.similarSourceBlockId === selected.id).length : 0;
   const selectedSection = selected ? deriveSections(blocks).find((section) => section.id === selected.sectionId) : null;
   const selectedRoleLabel = selected ? sectionTitle(selectedSection?.role || selected.sectionRole || sectionRoleForContentRole(selected.contentRole)) : '';
   const selectedThumbnail = storyboardPreviewSource(selected, catalogs);
@@ -4214,7 +4247,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           <div className="ds-selection-title">
             {!setPicker && selected && <StoryboardSelectionThumbnail src={selectedThumbnail} />}
             <div className="ds-selection-identity"><strong>{setPicker ? (setPicker.mode === 'replace' ? '장소 세트 변경' : '장소 세트 추가') : selected ? `${selectedRoleLabel || '이미지'} · ${selectedOrdinal}번 컷` : '컷 설정'}</strong>
-              {selected && !setPicker && <span>{selected.similarSourceBlockId ? '원본 생성 후 자동으로 만들어요' : selected.source === 'mine' ? '내 상품 사진 · 이 사진에만 적용' : '아래 설정은 이 사진에만 적용'}</span>}
+              {selected && !setPicker && <span>{selected.similarSourceBlockId ? '원본 생성 후 자동으로 만들어요' : selected.source === 'mine' ? '내 상품 사진 · 이 사진에만 적용' : selectedSimilarCount ? `이 사진과 비슷한 컷 ${selectedSimilarCount}장에 함께 적용` : '아래 설정은 이 사진에만 적용'}</span>}
               {setPicker && <span>{setPicker.mode === 'replace' ? `현재 세트 ${pickerMembers.length}장` : '새 촬영 세트 추가'}</span>}
             </div>
             <button type="button" disabled={atomicSaving} onClick={closeInspector} aria-label="컷 설정 닫기"><Icon name="x" size={16} /></button>

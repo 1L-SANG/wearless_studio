@@ -50,7 +50,8 @@ def test_relationship_inherits_canonical_source_and_preserves_child_layout(monke
         "styling", "side", "threeQuarter", "medium")
     assert (result["colorId"], result["exampleId"], result["matchIds"]) == ("black", "ex", ["m1"])
     assert (result["sectionId"], result["layoutRowId"], result["sectionLayout"]) == ("s2", "row2", "pair")
-    assert not result.get("spaceGroupId")
+    assert result.get("spaceGroupId") == original["spaceGroupId"]
+    assert result.get("spaceVariation") == original["spaceVariation"]
     assert not any(key in result for key in ("spaceSetId", "hookFramePosition", "colorwayMemberRole"))
     assert blocks == untouched
 

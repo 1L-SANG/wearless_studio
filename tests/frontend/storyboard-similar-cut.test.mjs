@@ -24,7 +24,7 @@ test('similar planning uses a worn original and leaves its example unchanged', (
   assert.equal(child.similarSourceBlockId, 'a');
   assert.equal(child.exampleId, source.exampleId);
   assert.equal(child.thumb, source.thumb);
-  assert.equal(child.spaceGroupId, undefined);
+  assert.equal(child.spaceGroupId, source.spaceGroupId);
   assert.equal(child.hookFrameId, undefined);
   assert.equal(canPlanSimilarCut(child), false);
   assert.equal(canPlanSimilarCut({ ...source, cutType: 'product' }), false);

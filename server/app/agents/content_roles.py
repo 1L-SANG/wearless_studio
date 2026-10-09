@@ -114,6 +114,9 @@ def inherit_similar_cut_recipes(blocks: list) -> list:
         for key in list(out):
             if key.startswith(("space", "hook", "colorway")):
                 out.pop(key, None)
+        for key in ("spaceGroupId", "spaceVariation"):
+            if key in source:
+                out[key] = source[key]
         # The section owns contentRole; the source owns the worn generation recipe.
         out["contentRole"] = (
             block["contentRole"] if block.get("sectionRole") == "hooking"
