@@ -437,7 +437,8 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
-                    stored_outputs=None, similar_context=None, failed_cuts=None):
+                    stored_outputs=None, similar_context=None, failed_cuts=None,
+                    generation_counts=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -495,6 +496,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     sem = asyncio.Semaphore(_limit)
     generated_images: dict[str, InlineImage] = {}
     invalid_contracts: list[dict] = []
+    duplicate_fallbacks: dict[str, list[dict]] = {}
     planned_actions: dict[str, list[dict]] = {}
     saved_similar_plans: dict[str, dict] = {}
     runtime_blocks_by_id = {str(item[0].get("id")): item[0] for item in prepared}
@@ -756,10 +758,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 base_metadata = getattr(ckpt.base, "meta", {})
                 saved_metadata = ckpt.final.meta if ckpt.final is not None else base_metadata
                 fallback_records = _merge_fallback_records(
-                    saved_metadata.get("fallback"), b.get("_fallback"))
+                    saved_metadata.get("fallback"), b.get("_fallback"),
+                    duplicate_fallbacks.get(str(b.get("id"))))
                 if fallback_records:
                     b = {**b, "_fallback": fallback_records}
                     ckpt.base.meta = {**base_metadata, "fallback": fallback_records}
+                    if saved_metadata.get("fallback") != fallback_records:
+                        if ckpt.final is not None:
+                            await ckpt.save_final(ckpt.final.image, ckpt.final.mime,
+                                                 {**saved_metadata, "fallback": fallback_records})
+                        elif ckpt.base_reused and ckpt.base.image is not None:
+                            await ckpt.base.keep(*ckpt.base.image)
             if ckpt is not None and ckpt.final is not None:
                 log.info("cut checkpoint reused: final job %s block %s", job_id, b.get("id"))
                 await _emit(app.state.pool, job_id, "step",
@@ -1240,6 +1249,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         analysis=analysis,
     )
     original_indexes = [i for i in range(len(prepared)) if dup_sources[i] is None]
+    for index, source_index in enumerate(dup_sources):
+        if source_index is not None:
+            source_id = str(prepared[source_index][0].get("id"))
+            duplicate_fallbacks[source_id] = _merge_fallback_records(
+                duplicate_fallbacks.get(source_id), prepared[source_index][0].get("_fallback"),
+                prepared[index][0].get("_fallback"))
+    if generation_counts is not None:
+        generation_counts["aiCount"] = len(original_indexes)
+        generation_counts["matchingMerged"] = any(
+            record.get("kind") == "matching_substituted"
+            for records in duplicate_fallbacks.values() for record in records)
 
     # 컷 1개가 끝날 때마다(성공·실패 무관) 진행 이벤트 — 대기 화면의 정직한 진행 근거.
     # 10분 잡에서 65%에 몇 분씩 멈춰 보이던 체크포인트 방식을 대체한다(editor_wait_dev_spec §2-1).
@@ -1334,6 +1354,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             outcomes.append(None)
             continue
         if base[1] is not None:
+            fallback_records = _merge_fallback_records(
+                (base[1].get("metadata") or {}).get("fallback"), block.get("_fallback"))
+            if fallback_records:
+                base[1]["metadata"] = {**(base[1].get("metadata") or {}), "fallback": fallback_records}
             # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
             await _tag_preview_block(
                 app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
@@ -2642,6 +2666,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         _gen_cuts_kwargs["stored_outputs"] = stored_outputs
         failed_cuts = {}
         _gen_cuts_kwargs["failed_cuts"] = failed_cuts
+        generation_counts = {}
+        _gen_cuts_kwargs["generation_counts"] = generation_counts
         (
             cut_results,
             cut_assets,
@@ -2720,6 +2746,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 옛 예약의 서로 다른 열림이 같은 컷으로 합쳐진 것은 생성 실패가 아니다.
             sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
             charge_metadata = {**metadata, "aiCount": sum(source is None for source in sources)}
+        if metadata.get("aiCount") is not None and generation_counts.get("matchingMerged"):
+            # 매칭 대체로 접힌 칸을 실패로 세지 않고, 대체가 없는 예약 정산은 유지한다.
+            charge_metadata = {**charge_metadata, "aiCount": min(
+                metadata["aiCount"], charge_metadata["aiCount"], generation_counts["aiCount"])}
         charge = calculate_detail_charge(
             completed=len(cut_assets), reserved=reserved, metadata=charge_metadata,
             fallback_per_cut=s.credit_cost_storyboard_per_cut,

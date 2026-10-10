@@ -25,10 +25,10 @@ def _item(item_id, category="pants", clothing_type="bottom", **kwargs):
 def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_assets=(),
          missing_bytes=(), metadata=None, analysis=None, generate_errors=None, detail_errors=None,
          settings=None, checkpoint_db=None, r2=None, lease_lost=False, job_id="j1",
-         model_id=None, checkpoint_base_error=None):
+         model_id=None, checkpoint_base_error=None, job_metadata=None, reserved=None):
     captured = {"events": [], "generated": {}, "cut_plans": [], "page_plans": [],
                 "metadata_lookups": [], "matching_lookups": [], "checkpoint_inputs": [],
-                "qc_fit_profiles": {}, "base_reused": False}
+                "qc_fit_profiles": {}, "base_reused": False, "generation_attempts": []}
     saved = deepcopy(blocks)
     analysis = deepcopy(analysis or {})
     analysis["matchClothing"] = deepcopy(list(recommendations))
@@ -67,6 +67,7 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
         return {"id": asset_id, "mime_type": "image/png", "r2_key": f"k/{asset_id}"}
     async def generate(config, gemini, spec, product, images, **kwargs):
         assert active_connections["count"] == 0
+        captured["generation_attempts"].append(spec["id"])
         base = kwargs.get("base_checkpoint")
         if base is not None:
             captured["base_reused"] = base.image is not None
@@ -120,6 +121,11 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
     monkeypatch.setattr(dpj.page_output_qc, "judge", page_qc)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj, "_emit", emit)
+    calculate = dpj.calculate_detail_charge
+    def capture_charge(**kwargs):
+        captured["charge_metadata"] = deepcopy(kwargs["metadata"])
+        return calculate(**kwargs)
+    monkeypatch.setattr(dpj, "calculate_detail_charge", capture_charge)
     if checkpoint_db is not None:
         checkpoint_db.install(monkeypatch)
         original_for_cut = cut_checkpoints.CutCheckpointStore.for_cut
@@ -138,13 +144,15 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
         detail_cut_checkpoint_enabled=checkpoint_db is not None, **(settings or {}))
     app = types.SimpleNamespace(state=types.SimpleNamespace(settings=config, pool=Pool(), r2=r2,
                                                           gemini=types.SimpleNamespace()))
-    job = worker_job(credits_reserved=19 * len(blocks))
+    job = worker_job(credits_reserved=19 * len(blocks) if reserved is None else reserved)
     if model_id is not None:
         job["payload"]["modelId"] = model_id
-    job.update(id=job_id, metadata={"perCutCost": 19})
+    job.update(id=job_id, metadata={"perCutCost": 19, **(job_metadata or {})})
+    original_job_metadata = deepcopy(job["metadata"])
     asyncio.run(dpj.run_detail_page_job(app, job))
     assert saved == blocks
     assert analysis == original_analysis
+    assert job["metadata"] == original_job_metadata
     return captured
 
 
@@ -290,6 +298,145 @@ def test_identical_effective_fit_still_folds_matching_convergence(monkeypatch, m
     assert list(result["generated"]) == ["b1"]
     assert [row["blockId"] for row in result["cut_results"]] == ["b1", "b2"]
     assert result["success"]["charge"] == 19
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_matching_convergence_keeps_minimum_charge_and_all_card_fallbacks(monkeypatch, reverse):
+    blocks = [_block("lost", matchIds=["A"]), _block("intact", matchIds=["B"])]
+    if reverse:
+        blocks.reverse()
+    result = _run(monkeypatch, blocks, [_item("A"), _item("B")], missing_rows=["A"],
+                  job_metadata={"aiCount": 2, "minCuts": 5}, reserved=95)
+    assert result["generation_attempts"] == [blocks[0]["id"]]
+    assert len(result["cut_results"]) == 2
+    assert len({cut["imageUrl"] for cut in result["cut_results"]}) == 1
+    assert len(result["success"]["cut_assets"]) == 1
+    assert result["success"]["charge"] == 95
+    assert "partial" not in result["success"]["metadata"]
+    assert result["success"]["cut_assets"][0]["metadata"]["fallback"] == [{
+        "kind": "matching_substituted", "missingMatchId": "A", "substituteMatchId": "B"}]
+
+
+@pytest.mark.parametrize("fail_other,expected_charge", [(False, 95), (True, 76)])
+def test_matching_convergence_above_minimum_subtracts_only_an_actual_failure(
+    monkeypatch, fail_other, expected_charge,
+):
+    blocks = [_block("lost", matchIds=["A"]), _block("intact", matchIds=["B"])]
+    blocks += [_block(f"other-{index}", direction=direction, shot=shot)
+               for index, (direction, shot) in enumerate([
+                   ("back", "full"), ("side", "full"), ("front", "medium"), ("back", "medium")])]
+    result = _run(monkeypatch, blocks, [_item("A"), _item("B")], missing_rows=["A"],
+        job_metadata={"aiCount": 6, "minCuts": 5}, reserved=114,
+        generate_errors={"other-3": ValueError("invalid independent cut")} if fail_other else {})
+    assert len(result["generation_attempts"]) == 5
+    assert len(result["success"]["cut_assets"]) == (4 if fail_other else 5)
+    assert len(result["cut_results"]) == (5 if fail_other else 6)
+    assert result["success"]["charge"] == expected_charge
+    assert result["charge_metadata"]["aiCount"] == 5
+    if fail_other:
+        assert result["success"]["metadata"]["partial"]["failedCuts"] == [{
+            "blockId": "other-3", "reason": "invalid_cut_spec", "retryable": True}]
+
+
+def test_existing_duplicate_keeps_minimum_charge_without_matching_substitution(monkeypatch):
+    result = _run(monkeypatch, [_block("original", matchIds=["B"]), _block("copy", matchIds=["B"])],
+                  [_item("B")], job_metadata={"aiCount": 1, "minCuts": 5}, reserved=95)
+    assert result["generation_attempts"] == ["original"]
+    assert len(result["cut_results"]) == 2
+    assert result["success"]["charge"] == 95
+    assert "fallback" not in result["success"]["cut_assets"][0]["metadata"]
+
+
+def test_generation_unit_count_never_increases_the_quote_snapshot(monkeypatch):
+    seen = []
+    calculate = dpj.calculate_detail_charge
+    def capture_charge(**kwargs):
+        seen.append(deepcopy(kwargs["metadata"]))
+        return calculate(**kwargs)
+    monkeypatch.setattr(dpj, "calculate_detail_charge", capture_charge)
+    result = _run(monkeypatch, [_block("lost", matchIds=["A"]), _block("intact", matchIds=["B"]),
+                              _block("back", direction="back")],
+                  [_item("A"), _item("B")], missing_rows=["A"],
+                  job_metadata={"aiCount": 1, "minCuts": 5}, reserved=95)
+    assert len(result["generation_attempts"]) == 2
+    assert seen == [{"perCutCost": 19, "aiCount": 1, "minCuts": 5}]
+    assert result["success"]["charge"] == 95
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_matching_convergence_checkpoint_keeps_duplicate_card_records_on_reuse(monkeypatch, reverse):
+    db, r2 = _IntentDB(), _R2()
+    blocks = [_block("lost", matchIds=["A"]), _block("intact", matchIds=["B"])]
+    if reverse:
+        blocks.reverse()
+    recommendations = [_item("A"), _item("B")]
+    expected = [{"kind": "matching_substituted", "missingMatchId": "A", "substituteMatchId": "B"}]
+    first = _run(monkeypatch, blocks, recommendations, missing_rows=["A"], checkpoint_db=db, r2=r2,
+                 lease_lost=True, job_id="old", job_metadata={"aiCount": 2, "minCuts": 5}, reserved=95)
+    assert len(first["generation_attempts"]) == 1
+    finals = [cut_checkpoints.unpack(value[0])[0] for key, value in r2.objects.items() if key.endswith("/final.bin")]
+    assert len(finals) == 1
+    assert finals[0]["meta"]["fallback"] == expected
+    db.error_jobs.add("old")
+    with monkeypatch.context() as second_patch:
+        second = _run(second_patch, blocks, recommendations, missing_rows=["A"], checkpoint_db=db, r2=r2,
+                      job_id="new", job_metadata={"aiCount": 2, "minCuts": 5}, reserved=95)
+    assert second["generation_attempts"] == []
+    assert len(second["cut_results"]) == 2
+    assert second["success"]["charge"] == 95
+    assert second["success"]["cut_assets"][0]["metadata"]["fallback"] == expected
+
+
+@pytest.mark.parametrize("stage", ["final", "base"])
+def test_duplicate_card_fallback_survives_checkpoint_when_that_card_is_removed(monkeypatch, stage):
+    db, r2 = _IntentDB(), _R2()
+    recommendations = [_item("A"), _item("B")]
+    blocks = [_block("intact", matchIds=["B"]), _block("lost", matchIds=["A"])]
+    _run(monkeypatch, blocks, recommendations, missing_rows=["A"], checkpoint_db=db, r2=r2,
+         lease_lost=True, job_id="old", job_metadata={"aiCount": 2, "minCuts": 5}, reserved=95,
+         checkpoint_base_error=dpj.face_identity.FacePassUnavailable("pod_not_ready") if stage == "base" else None)
+    db.error_jobs.add("old")
+    with monkeypatch.context() as second_patch:
+        second = _run(second_patch, blocks[:1], recommendations, checkpoint_db=db, r2=r2,
+                      job_id="new", job_metadata={"aiCount": 1, "minCuts": 5}, reserved=95)
+    assert second["success"]["charge"] == 95
+    assert second["success"]["cut_assets"][0]["metadata"]["fallback"] == [{
+        "kind": "matching_substituted", "missingMatchId": "A", "substituteMatchId": "B"}]
+    if stage == "final":
+        assert second["generation_attempts"] == []
+    else:
+        assert second["base_reused"] is True
+
+
+@pytest.mark.parametrize("stage", ["final", "base"])
+def test_reused_checkpoint_persists_new_duplicate_card_fallback_through_another_interruption(monkeypatch, stage):
+    db, r2 = _IntentDB(), _R2()
+    recommendations = [_item("A"), _item("B")]
+    original = _block("intact", matchIds=["B"])
+    interruption = dpj.face_identity.FacePassUnavailable("pod_not_ready") if stage == "base" else None
+    _run(monkeypatch, [original], recommendations, checkpoint_db=db, r2=r2,
+         lease_lost=True, job_id="seed", checkpoint_base_error=interruption,
+         job_metadata={"aiCount": 1, "minCuts": 5}, reserved=95)
+    db.error_jobs.add("seed")
+    with monkeypatch.context() as second_patch:
+        second = _run(second_patch, [original, _block("lost", matchIds=["A"])], recommendations,
+                      missing_rows=["A"], checkpoint_db=db, r2=r2, lease_lost=True, job_id="with-duplicate",
+                      checkpoint_base_error=interruption, job_metadata={"aiCount": 2, "minCuts": 5}, reserved=95)
+    if stage == "final":
+        assert second["generation_attempts"] == []
+    else:
+        assert second["base_reused"] is True
+    db.error_jobs.add("with-duplicate")
+    with monkeypatch.context() as third_patch:
+        third = _run(third_patch, [original], recommendations, checkpoint_db=db, r2=r2,
+                     job_id="last", job_metadata={"aiCount": 1, "minCuts": 5}, reserved=95)
+    assert third["success"]["cut_assets"][0]["metadata"]["fallback"] == [{
+        "kind": "matching_substituted", "missingMatchId": "A", "substituteMatchId": "B"}]
+    assert third["success"]["charge"] == 95
+    if stage == "final":
+        assert third["generation_attempts"] == []
+    else:
+        assert third["base_reused"] is True
 
 
 def test_matching_checkpoint_uses_runtime_ids_fit_and_keeps_fallback_on_final_reuse(monkeypatch):
