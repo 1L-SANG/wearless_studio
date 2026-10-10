@@ -51,6 +51,14 @@ test('컷 종류 전환·예시 교체는 매칭 의류·아우터 열림·내 �
   assert.match(selectExample, /if \(replacing\) resetRecipeSettings\(\)/);
 });
 
+test('아우터 열림은 공용 Field에 분석을 넘기고 숨김 여부와 관계없이 기존 생성값을 보낸다', () => {
+  const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
+  assert.match(aiPanel, /const showOuterClosure = clothingType === 'outer' && !isProduct;/);
+  assert.match(aiPanel, /<OuterClosureField id="outer-closure-newcut" value=\{outerClosure\}\s*onChange=\{setOuterClosure\} frontClosure=\{frontClosure\}/);
+  assert.match(editorSource, /frontClosure=\{analysis\?\.frontClosure\}/);
+  assert.match(aiPanel, /outerClosureState: showOuterClosure \? outerClosure : null/);
+});
+
 test('isDetail 은 검증된 effectiveShotVal 을 읽는다 — raw shot 은 카탈로그 폴백과 어긋난다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /const isDetail = isProduct && effectiveShotVal === 'detail'/);

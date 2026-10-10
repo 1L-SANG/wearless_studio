@@ -63,6 +63,7 @@ class Settings:
     model_horizon_cut: str = ""
     # Product-only closeups; horizon/styling and mannequin keep their own models.
     model_product_detail: str = "gpt-image-2.5-sunburst"
+    product_detail_image_quality: str = "medium"
     model_detail_core: str = "gpt-5.4-2026-03-05"
     detail_core_timeout_seconds: float = 90.0
     # Calibrated narrow label/temporary-artifact specialist; never a fallback.
@@ -815,6 +816,7 @@ def load_settings() -> Settings:
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
+        product_detail_image_quality=_flag("PRODUCT_DETAIL_IMAGE_QUALITY", "medium", {"medium", "high"}),
         model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
         detail_core_timeout_seconds=float(os.getenv("DETAIL_CORE_TIMEOUT_SECONDS", "90")),
         model_detail_specialist=(os.getenv("MODEL_DETAIL_SPECIALIST") or "").strip() or "gpt-5.4-2026-03-05",

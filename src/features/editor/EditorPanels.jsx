@@ -4,12 +4,13 @@
    Only change: ES imports/exports (was window globals).
    ============================================================= */
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
+import OuterClosureField from '@/components/OuterClosureField.jsx';
 import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
 import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
-import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
+import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
@@ -288,7 +289,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ product, detailRecommendations, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ product, detailRecommendations, frontClosure, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onVaryGenerate, onPickMoodRef }) {
   // 새 생성 접수 중 재진입해도 현재 이미지 수정에서 별도 선택을 시작하지 않는다.
   const [tab, setTab] = useState(generateSubmitting ? 'new' : 'vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
@@ -363,7 +364,6 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   // 갤러리·게이트용 성별은 고른 가상 모델을 우선하고, 못 찾으면 분석 값을 쓴다.
   const modelGender = virtualModels.find((item) => item.id === model)?.gender
     || exampleGender || null;
-  const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
   // 원본 기반 디테일은 예시 없이 제공한다. 나머지 컷은 기존 발행 예시 게이트를 따른다.
@@ -499,23 +499,8 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
             }} />}
 
           {showOuterClosure && (
-            <div className="insp-sec outer-closure-field">
-              <div className="lbl" id="outer-closure-label-newcut">아우터 열림 정도</div>
-              <div className="outer-closure-options" role="radiogroup" aria-labelledby="outer-closure-label-newcut">
-                {closureOptions.map((option) => {
-                  const on = outerClosure === option.value;
-                  return (
-                    <label key={option.value} className={`outer-closure-option${on ? ' on' : ''}`}>
-                      <input type="radio" name="outer-closure-newcut" value={option.value}
-                        checked={on} onChange={() => setOuterClosure(option.value)} />
-                      <OuterClosureIcon state={option.value} />
-                      <span>{option.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="outer-closure-hint">이 컷에서 아우터의 앞부분을 얼마나 열지 정해요.</p>
-            </div>
+            <OuterClosureField id="outer-closure-newcut" value={outerClosure}
+              onChange={setOuterClosure} frontClosure={frontClosure} />
           )}
 
           <div className="insp-divider" />

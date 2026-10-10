@@ -61,6 +61,7 @@ variables:
   # 호리존은 완성 예시의 포즈·조명·상품 구조 보존을 우선해 Sunburst로 분리한다.
   MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
+  PRODUCT_DETAIL_IMAGE_QUALITY: high # 2026-10-11 오너 결정: 디테일샷만 high, 되돌리려면 medium.
   MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
   DETAIL_CORE_TIMEOUT_SECONDS: 90
   MODEL_DETAIL_SPECIALIST: gpt-5.4-2026-03-05
