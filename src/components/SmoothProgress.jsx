@@ -2,14 +2,13 @@
    서버 보고(계단)와 경과시간(연속)을 합친 값을 requestAnimationFrame 으로 흘려보낸다. */
 import { useEffect, useRef, useState } from 'react';
 import {
-  EXPECTED_MS, advanceProgress, initialProgressState, steppedProgress, timeOr,
+  EXPECTED_MS, advanceProgress, initialProgressState,
 } from '@/lib/smoothProgress.js';
 
 /* 이 폭 이상 움직였을 때만 리렌더한다. 280px 바에서 0.14px — 눈에는 연속으로 보인다. */
 const PUSH_STEP = 0.05;
 
-/* 프레임 루프 하나로 두 모델(잡 creep · 단계 선형)을 돌린다. 두 훅이 각자 rAF·푸시 게이트를
-   복제하던 걸 여기로 모았다.
+/* 잡 진행바의 프레임 루프. 분석 대기는 AnalysisProgress에서 마운트부터 따로 계산한다.
 
    running 과 resetKey 를 반드시 구분할 것.
      · running=false  → 루프만 멈추고 값은 ref 에 남는다. 화면에서 잠깐 숨겨졌을 때 쓴다.
@@ -96,39 +95,6 @@ export function useSmoothProgress(serverProgress, {
   });
 
   return Math.min(100, Math.max(0, displayed));
-}
-
-/* 단계마다 예정 시간이 정해진 진행(분석 대기)용. 단계별로 균등한 몫을 선형으로 채우므로
-   따라잡기 이징이 필요 없다 — 계산이 이미 연속이라 그대로 흘려보내면 된다.
- * @param stepIndex     지금 진행 중인 단계(0부터)
- * @param stepStartedAt 그 단계가 시작된 시각(ms)
- * @param plannedMs     그 단계의 예정 시간. null 이면 "결과 대기"로 보고 천천히 기어간다.
- */
-export function useSteppedProgress({
-  stepIndex, stepCount, stepStartedAt, plannedMs,
-  waitExpectedMs = EXPECTED_MS.analysisWait,
-}) {
-  const [displayed, emit] = usePushedValue();
-  const argsRef = useRef(null);
-  argsRef.current = { stepIndex, stepCount, stepStartedAt, plannedMs, waitExpectedMs };
-
-  const step = (prev) => {
-    const a = argsRef.current;
-    const now = Date.now();
-    const value = Math.max(prev?.peak || 0, steppedProgress({
-      stepIndex: a.stepIndex,
-      stepCount: a.stepCount,
-      // timeOr — 시각 0 을 falsy 로 삼키면 dt 가 늘 0 이 되어 바가 통째로 멈춘다.
-      stepElapsedMs: now - timeOr(a.stepStartedAt, now),
-      plannedMs: a.plannedMs,
-      waitExpectedMs: a.waitExpectedMs,
-    }));
-    return { state: { peak: value }, value };   // 절대 후퇴하지 않는다
-  };
-
-  useProgressLoop({ running: true, resetKey: 'stepped', step, emit });
-
-  return displayed;
 }
 
 /* 큰 화면(에디터·모델 생성) 안에 박히는 진행바용 — 훅을 이 작은 컴포넌트가 소유해서

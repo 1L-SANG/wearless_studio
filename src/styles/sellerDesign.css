@@ -95,11 +95,45 @@
 .similar-cut-source img { width:56px; height:70px; object-fit:cover; border-radius:var(--r-4); }
 .similar-cut-source span { color:var(--fg-2); font-size:12px; }
 .similar-cut-source p { margin:4px 0 0; font-size:14px; color:var(--fg-1); }
-.sb-similar-badge { position:absolute; bottom:12px; left:12px; display:flex; align-items:center; gap:6px; max-width:calc(100% - 24px); padding:8px 10px; border-radius:var(--r-pill); background:var(--glass-bg); color:var(--fg-1); box-shadow:var(--elev-card); font-size:12px; font-weight:500; pointer-events:none; white-space:nowrap; }
-.sb-similar-badge svg { flex-shrink:0; }
-.sb-cutcard:has(.sb-similar-badge) { container-type:inline-size; }
-@container (max-width: 159px) { .sb-similar-badge small { display:none; } }
+.sb-similar-badge { position:absolute; z-index:4; bottom:12px; left:12px; display:flex; align-items:center; gap:6px; max-width:calc(100% - 24px); padding:8px 10px; border-radius:var(--r-pill); background:var(--glass-bg); color:var(--fg-1); box-shadow:var(--elev-card); font-size:12px; font-weight:500; line-height:1.5; pointer-events:none; white-space:nowrap; }
+.sb-similar-count-compact { display:none; }
+.sb-cutcard:has(.sb-similar-badge, .sb-similar-oncard),
+.sb-frame-half:has(.sb-similar-badge, .sb-similar-oncard) { container-type:inline-size; }
+@container (max-width: 159px) {
+  .sb-similar-badge small { display:none; }
+  .sb-similar-count-full { display:none; }
+  .sb-similar-count-compact { display:inline; }
+}
 .sb-similar-badge small { color:var(--fg-2); font-size:11px; margin-left:2px; }
+/* 사진 하단 가운데. 숨겨도 Tab 순서에 남겨 focus-within으로 드러낸다. */
+.sb-page .sb-similar-oncard { position:absolute; z-index:4; left:50%; bottom:12px; transform:translateX(-50%); height:32px; min-height:32px; padding:0 12px; border-radius:var(--r-pill); color:var(--cta-fg); font-size:12.5px; line-height:1; white-space:nowrap; opacity:0; pointer-events:none; transition:opacity var(--cta-transition); }
+.sb-cutcard:hover .sb-similar-oncard,
+.sb-cutcard.selected .sb-similar-oncard,
+.sb-cutcard:focus-within .sb-similar-oncard,
+.sb-frame-half:hover .sb-similar-oncard,
+.sb-frame-half.selected .sb-similar-oncard,
+.sb-frame-half:focus-within .sb-similar-oncard { opacity:1; pointer-events:auto; }
+.sb-page .sb-similar-oncard:focus-visible { outline:2px solid var(--focus); outline-offset:3px; }
+.sb-page .sb-similar-count ~ .sb-similar-oncard { bottom:56px; }
+/* 매칭 썸네일과 포즈 안내는 원래 하단에 유지하고 버튼을 그 위로 올린다. */
+.sb-page :is(.sb-cutcard, .sb-frame-half):has(.sb-match-overlay, .sb-pose-variation-note, .sb-out-of-scope) .sb-similar-oncard { bottom:44px; }
+.sb-page :is(.sb-cutcard, .sb-frame-half):has(.sb-match-overlay, .sb-pose-variation-note, .sb-out-of-scope) .sb-similar-badge { bottom:44px; }
+/* 원본 개수와 하단 표시가 함께 있으면 개수는 위쪽 동작 아래로 옮긴다. */
+.sb-page :is(.sb-cutcard, .sb-frame-half):has(.sb-match-overlay, .sb-pose-variation-note, .sb-out-of-scope) .sb-similar-count { top:56px; bottom:auto; }
+/* 작은 구성컷에서는 가운데 이동 화살표를 피해 개수와 버튼을 위아래에 나눈다. */
+@container (max-width: 175px) {
+  .sb-page .sb-similar-count { top:52px; bottom:auto; left:50%; transform:translateX(-50%); padding:4px 6px; font-size:11px; line-height:17px; }
+  .sb-page .sb-similar-count ~ .sb-similar-oncard { bottom:12px; }
+  .sb-page :is(.sb-cutcard, .sb-frame-half):has(.sb-match-overlay, .sb-pose-variation-note, .sb-out-of-scope) .sb-similar-count { top:52px; }
+  .sb-page :is(.sb-cutcard, .sb-frame-half):has(.sb-match-overlay, .sb-pose-variation-note, .sb-out-of-scope) .sb-similar-oncard { bottom:44px; }
+}
+/* 148px 이하의 낱장 원본은 기존 44px 조작 세 개를 번호 아래 한 줄에 둔다.
+   두 번째 조작 줄과 개수 배지가 겹치지 않도록 세로 공간을 확보한다. */
+@container (max-width: 148px) {
+  .sb-page .sb-cutcard:has(.sb-similar-count):has(.sb-move-wrap) .sb-canvas-actions { top:36px; right:0; width:136px; max-width:100%; grid-template-columns:repeat(3, 44px); }
+  .sb-page .sb-cutcard:has(.sb-similar-count):has(.sb-move-wrap) .sb-similar-count { top:82px; padding:2px 6px; }
+}
+@media (prefers-reduced-motion: reduce) { .sb-page .sb-similar-oncard { transition:none; } }
 .sb-similar-caption { gap:6px; color:var(--fg-2); }
 .sb-similar-eyebrow { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-2); }
 .sb-similar-inspector h3 { font-size:18px; margin:12px 0 8px; text-wrap:balance; }
@@ -108,7 +142,4 @@
 .sb-similar-source span { flex:1; }
 .sb-similar-source strong { display:block; font-size:14px; font-weight:500; }
 .sb-similar-source small { display:block; color:var(--fg-2); font-size:12px; margin-top:5px; }
-.sb-similar-add { padding:16px 20px 20px; }
-.sb-similar-add .btn { width:100%; height:var(--cta-height); }
-.sb-similar-add p { margin:10px 0 0; color:var(--fg-2); font-size:12px; text-align:center; }
 .sb-similar-source:focus-visible { outline:2px solid var(--focus); outline-offset:3px; }

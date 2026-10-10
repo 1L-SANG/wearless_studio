@@ -171,7 +171,7 @@
 .cta { margin-top: auto; }
 .buttonRing {
   padding: var(--sp-2); border-radius: 13px;
-  background: conic-gradient(from var(--pricing-ring-angle), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky));
+  background: conic-gradient(from var(--pricing-ring-angle), var(--ring-flow-stops));
   animation: pricingRingRotate 9s linear infinite;
 }
 .purchaseButton {
@@ -187,7 +187,7 @@
 .subscriptionButton:disabled { opacity: 1; cursor: pointer; }
 .purchaseConsent { margin: 28px 0 0; text-align: center; text-wrap: balance; word-break: keep-all; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
 .purchaseButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-/* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 무지개 링도 멈춘다. */
+/* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 더스티 블루 링도 멈춘다. */
 .purchaseButton.locked, .subscriptionButton.locked:disabled, .topupButton.locked { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }
 .buttonRing:has(.locked) { background: var(--ring-strong); animation: none; }
 @keyframes pricingRingRotate { to { --pricing-ring-angle: 360deg; } }

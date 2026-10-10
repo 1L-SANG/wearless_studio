@@ -429,12 +429,12 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 
 /* ====================== TOAST ====================== */
 .toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
-/* glow 4색을 약하게 두른 테두리 (흰 배경 위, 천천히 순환) */
+/* 랜딩 히어로 영상과 같은 더스티 블루 테두리 (흰 배경 위, 천천히 순환) */
 .toast { display: flex; align-items: center; gap: 11px; color: var(--fg-1); padding: 12px 16px;
   border-radius: var(--r-4); font-size: 14px; font-weight: 500; border: 1.5px solid transparent;
   background:
     linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--sp-ang, 0deg), var(--ring-flow-stops)) border-box;
   box-shadow: var(--elev-lift);
   animation: toastIn .28s cubic-bezier(.22,.61,.36,1), spChipSpin 14s linear infinite; max-width: 360px; }
 .toast.clickable { cursor: pointer; }

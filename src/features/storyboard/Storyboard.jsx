@@ -348,6 +348,7 @@ function cardLabels(block, catalogs) {
    새로 추가한 컷은 처음 본 값이 기준. 자동저장 보드라 "저장 뒤 리셋"은 없다 — 세션 안에서만 산다. */
 const LoadedRecipeContext = React.createContext(null);
 const SimilarSourceNumbersContext = React.createContext(null);
+const SimilarCutControlsContext = React.createContext(null);
 
 function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
   const loadedRecipes = useContext(LoadedRecipeContext);
@@ -508,6 +509,8 @@ function StoryboardMedia({
   showPoseVariation = false,
   onDuplicate, onDelete, move = null, canDelete = true,
 }) {
+  const similarControls = useContext(SimilarCutControlsContext);
+  const similarCount = similarControls?.counts.get(block.id) || 0;
   const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
   const missing = detail ? !detail.src : block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
@@ -526,7 +529,14 @@ function StoryboardMedia({
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
       {block.source === 'mine' && <span className="sb-mine-badge">내 사진</span>}
-      {block.similarSourceBlockId && <span className="sb-similar-badge"><Icon name="copy" size={13} />비슷한 컷<small>생성 예정</small></span>}
+      {block.similarSourceBlockId ? (
+        <span className="sb-similar-badge">유사 컷<small>생성 예정</small></span>
+      ) : similarCount > 0 && (
+        <span className="sb-similar-badge sb-similar-count">
+          <span className="sb-similar-count-full">{similarCount}개의 유사 컷 생성 예정</span>
+          <span className="sb-similar-count-compact">유사 컷 {similarCount}개</span>
+        </span>
+      )}
       {missing ? (
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
@@ -547,6 +557,20 @@ function StoryboardMedia({
           <img src={userMatch.thumb} alt="" loading="lazy" decoding="async" />
           <i>매칭</i>
         </span>
+      )}
+      {canPlanSimilarCut(block) && (
+        <button
+          type="button"
+          className="btn btn-primary btn-glowring sb-similar-oncard"
+          aria-label={`${index}번 컷과 비슷한 컷 추가`}
+          disabled={similarControls?.locked}
+          draggable={false}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => { event.stopPropagation(); event.preventDefault(); }}
+          onClick={(event) => { event.stopPropagation(); similarControls.addSimilar(block.id); }}
+          onDragStart={(event) => { event.stopPropagation(); event.preventDefault(); }}
+          onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+        >비슷한 컷 추가</button>
       )}
       <BundleSwapArrows move={move} />
       <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} duplicateLabel={block.similarSourceBlockId ? "비슷한 컷 추가" : "컷 복제"} />
@@ -3661,6 +3685,12 @@ export function Storyboard({ toastOverride = null } = {}) {
     }
   };
   const locked = false;
+  const similarCutCounts = blocks.reduce((counts, block) => {
+    if (block.similarSourceBlockId) {
+      counts.set(block.similarSourceBlockId, (counts.get(block.similarSourceBlockId) || 0) + 1);
+    }
+    return counts;
+  }, new Map());
   const boardGroups = renderGroups(blocks);
 
   const sections = deriveFixedSections(blocks);
@@ -4329,10 +4359,6 @@ export function Storyboard({ toastOverride = null } = {}) {
       if (value == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
     }}
     />
-    {canPlanSimilarCut(selected) && <div className="sb-similar-add">
-      <button type="button" className="btn btn-primary btn-glowring" disabled={locked} onClick={() => addSimilar(selected.id)}><Icon name="sparkles" size={16} />비슷한 컷 추가</button>
-      <p>상세페이지를 만들 때 함께 생성해요.</p>
-    </div>}
   </>;
 
   const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
@@ -4452,6 +4478,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   return (
     <LoadedRecipeContext.Provider value={loadedRecipes}>
     <SimilarSourceNumbersContext.Provider value={new Map((blocks || []).map((block, index) => [block.id, index + 1]))}>
+    <SimilarCutControlsContext.Provider value={{ addSimilar, locked, counts: similarCutCounts }}>
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
@@ -4523,6 +4550,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         </div>
       </div>
     </div>
+    </SimilarCutControlsContext.Provider>
     </SimilarSourceNumbersContext.Provider>
     </LoadedRecipeContext.Provider>
   );

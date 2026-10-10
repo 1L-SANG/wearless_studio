@@ -475,14 +475,14 @@
 /* 강조 특징 count — 제목 옆에 붙이고 4/5 타이트하게 */
 .sp-title { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
 .sp-count { font-family: var(--font-body); font-weight: 600; font-size: 11.5px; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
-/* 강조 특징 chip — 4색 glow(sky·sage·sun·mauve)가 테두리를 따라 천천히 한 바퀴 도는
+/* 강조 특징 chip, 랜딩 히어로 영상의 더스티 블루가 테두리를 따라 천천히 한 바퀴 도는
    conic 그라데이션 (흰 배경 + 검정 X). @property로 각도를 부드럽게 회전시킨다. */
 @property --sp-ang { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 .sp-chip { position: relative; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--fg-1);
   border: 2px solid transparent; border-radius: var(--r-pill); padding: 7px 7px 7px 15px;
   background:
     linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(from var(--sp-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--sp-ang), var(--ring-flow-stops)) border-box;
   animation: spChipSpin 9s linear infinite; }
 @keyframes spChipSpin { to { --sp-ang: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .sp-chip { animation: none; } }
@@ -498,7 +498,7 @@
 .sp-add { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--fg-2);
   background: transparent; border: 1px dashed var(--ring-strong); border-radius: var(--r-pill); padding: 8px 15px; cursor: pointer; transition: all .14s; }
 .sp-add:hover { color: var(--fg-1); border-color: var(--fg-3); }
-/* 눌러서 수정 — 칩 전체가 클릭 대상. 호버 틴트는 inset 그림자로 깔아 4색 glow 테두리를 덮지 않는다 */
+/* 눌러서 수정, 칩 전체가 클릭 대상. 호버 틴트는 inset 그림자로 깔아 더스티 블루 테두리를 덮지 않는다 */
 .sp-chip.editable { cursor: pointer; }
 .sp-chip.editable:hover { box-shadow: inset 0 0 0 999px rgba(34,42,53,.07); }
 .sp-chip.editable:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
@@ -1741,7 +1741,7 @@
 .ward-cell .ai-flag { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); height: 30px; padding: 2px 10px 2px 9px; border: 2px solid transparent; border-radius: 9999px;
   background:
     linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--sp-ang, 0deg), var(--ring-flow-stops)) border-box;
   box-shadow: var(--elev-soft); color: var(--fg-1); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
   font-size: 11.5px; font-weight: 600; cursor: pointer; opacity: 0; transition: opacity .14s; animation: spChipSpin 9s linear infinite; }
 .ward-cell .ai-flag:hover { filter: brightness(.99); }
@@ -2158,25 +2158,25 @@
 .adj-card-body .ap-sec .lbl { margin-bottom: 9px; }
 
 /* 크레딧 소비 버튼 공통(에디터 생성·마네킹 의류 조정·콘티 생성 CTA):
-   입력 페이지 sp-chip 과 같은 4색 glow 회전 테두리, 검정(cta) 채움 */
+   입력 페이지 sp-chip 과 같은 테두리 전용 토큰의 회전 테두리, 검정(cta) 채움 */
 @property --gen-ang { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 .btn-glowring { border: 2px solid transparent;
   background:
     linear-gradient(var(--cta-bg), var(--cta-bg)) padding-box,
-    conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--gen-ang), var(--ring-flow-stops)) border-box;
   animation: genRingSpin 9s linear infinite; }
 .btn-glowring:hover:not([disabled]) {
   background:
     linear-gradient(var(--cta-bg-hover), var(--cta-bg-hover)) padding-box,
-    conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box; }
+    conic-gradient(from var(--gen-ang), var(--ring-flow-stops)) border-box; }
 @keyframes genRingSpin { to { --gen-ang: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .btn-glowring { animation: none; } }
 /* 변형 기준(모델 착용 컷 / 제품 사진) — cutType 미상이면 질문 카드, 알면 한 줄 안내 */
 
-/* 의류 탭 — AI 생성 셀: 생성 중 진한 회색 테두리 → 완료를 확인한 시점에 4색 glow 테두리 2초 후 소멸 */
+/* 의류 탭, AI 생성 셀: 생성 중 진한 회색 테두리, 완료를 확인한 시점에 더스티 블루 테두리 2초 후 소멸 */
 .ward-cell.loading { box-shadow: 0 0 0 2px var(--fg-2); }
 .ward-cell.fresh::after { content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 2px; pointer-events: none;
-  background: conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+  background: conic-gradient(from var(--gen-ang), var(--ring-flow-stops)) border-box;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
   animation: wardFreshSpin 2s linear forwards, wardFreshFade 2s linear forwards; }
 @keyframes wardFreshSpin { to { --gen-ang: 360deg; } }
