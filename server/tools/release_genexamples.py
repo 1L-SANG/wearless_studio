@@ -415,6 +415,10 @@ def validate_manifest(
         if cut_type in _WORN_CUTS:
             if gender not in _GENDERS:
                 violations.append(f"{prefix}.gender는 착용컷에서 women|men이어야 합니다")
+            if direction is None:
+                violations.append(
+                    f"{prefix}.direction은 착용컷에서 비워 둘 수 없습니다(front|side|back, 정면으로 메우지 않음)"
+                )
         elif cut_type == "product" and gender is not None:
             violations.append(f"{prefix}.gender는 성별 공용 제품컷에서 null이어야 합니다")
         if direction is not None and direction not in _DIRECTIONS:
@@ -917,6 +921,10 @@ def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
                     f"{label} {example_id}.{field} 가 문자열이 아닙니다: {field}_invalid"
                 )
         direction = item["direction"]
+        if item["cutType"] in _WORN_CUTS and direction is None:
+            raise RuntimeError(
+                f"{label} {example_id}.direction은 착용컷에서 비워 둘 수 없습니다: direction_invalid"
+            )
         if direction is not None and (
             not isinstance(direction, str) or direction not in _DIRECTIONS
         ):
