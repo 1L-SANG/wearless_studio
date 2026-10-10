@@ -96,7 +96,7 @@ export function createIndependentCatalogMembers(set, exampleIds, template, { mak
   return choices.map(({ member, example }, index) => ({ ...base, id: makeId(member, index), source: 'ai',
     sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : member.cutType === 'mirror' ? 'realWear' : 'coordination',
     cutType: member.cutType, direction: member.direction, shot: member.shot, exampleId: example.id, exampleSelectionOrigin: 'user',
-    refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null, pose: 'auto', poseLabel: 'AI 자동',
+    refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null,
     angle: 'same', faceExposure: member.cutType === 'mirror' ? 'hide' : (base.faceExposure || 'same'), refImages: [], refAssetIds: [],
   }));
 }
