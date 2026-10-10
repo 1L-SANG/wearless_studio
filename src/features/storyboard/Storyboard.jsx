@@ -4454,6 +4454,10 @@ export function Storyboard({ toastOverride = null } = {}) {
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
+      onKeyDownCapture={atomicSaving ? (event) => {
+        if (event.key === 'Tab' || event.key === 'Escape') return;
+        event.preventDefault(); event.stopPropagation();
+      } : undefined}
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {/* 완료 가드는 게이트를 기다리지 않는다 — 기다리면 잠금 없이 보드가 활성화되는 창이 생긴다(리뷰 P1) */}
       {doneBlocked && <DoneGuardModal />}

@@ -7,6 +7,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer, transformWithEsbuild } from 'vite';
 import * as closure from '../../src/lib/outerClosure.js';
+import { clampDragDelta, getBlockRenderHeight } from '../../src/features/editor/editorGeometry.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const front = (kind = 'button', range = 'graded', extra = {}) => ({
@@ -147,7 +148,16 @@ async function controlHarness({ value = 'closed', range = 'graded', reduced = fa
     changes, frames, rail,
     stop(index) { return walk(render(), (node) => node.type === 'button' && node.props['data-index'] === index); },
     pull() { return walk(render(), (node) => node.type === 'g').props.transform; },
-    key(key) { rail().props.onKeyDown({ key, preventDefault() {} }); },
+    key(key, { capture, bubble, shiftKey = false } = {}) {
+      const event = { key, shiftKey, target: { tagName: 'DIV', isContentEditable: false },
+        defaultPrevented: false, propagationStopped: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; } };
+      capture?.(event);
+      if (!event.propagationStopped) rail().props.onKeyDown(event);
+      if (!event.propagationStopped) bubble?.(event);
+      return event;
+    },
     click(index) { walk(render(), (node) => node.type === 'button' && node.props['data-index'] === index).props.onClick(); },
     pointer(type, y, id = 1) { rail().props[type]({ button: 0, pointerType: 'mouse', pointerId: id, clientY: y, currentTarget: railNode, preventDefault() {} }); },
     advance(ms) { now += ms; const pending = [...frames.values()]; frames.clear(); pending.forEach((fn) => fn(now)); },
@@ -165,6 +175,66 @@ test('keyboard Home, End and arrows stop at endpoints and commit each change onc
   assert.deepEqual(h.changes, ['openToChest', 'partial', 'openToChest', 'open', 'closed']);
   assert.equal(h.rail().props['aria-valuenow'], 0);
   h.unmount();
+});
+
+test('closure arrows do not move the selected editor image through the global shortcut', async () => {
+  const editor = read('src/features/editor/Editor.jsx');
+  const start = editor.indexOf("      if (selEls.length && e.key.startsWith('Arrow')) {");
+  const end = editor.indexOf('\n    };\n    window.addEventListener', start);
+  let blocks = [{ id: 'block', h: 1000, elements: [
+    { id: 'photo', type: 'image', x: 100, y: 100, w: 200, h: 200 },
+  ] }];
+  const nudge = new Function('selEls', 'kb', 'setBlocks', 'clampDragDelta', 'getBlockRenderHeight',
+    `return (e) => {${editor.slice(start, end)}};`)(
+    ['photo'], { current: { croppingOn: false } }, (update) => { blocks = update(blocks); },
+    clampDragDelta, getBlockRenderHeight,
+  );
+  const h = await controlHarness();
+  try {
+    for (const [key, index, shiftKey] of [
+      ['ArrowDown', 1, false], ['ArrowRight', 2, false],
+      ['ArrowUp', 1, false], ['ArrowLeft', 0, true],
+    ]) {
+      h.key(key, { bubble: nudge, shiftKey });
+      assert.equal(h.rail().props['aria-valuenow'], index);
+      assert.deepEqual(blocks[0].elements[0],
+        { id: 'photo', type: 'image', x: 100, y: 100, w: 200, h: 200 });
+    }
+    assert.deepEqual(h.changes, ['openToChest', 'partial', 'openToChest', 'closed']);
+  } finally { h.unmount(); }
+});
+
+async function storyboardKeyboardGuard(saving) {
+  const source = read('src/features/storyboard/Storyboard.jsx');
+  const start = source.indexOf('<div className={`wizard wide sb-page');
+  const end = source.indexOf('>\n      {/* 완료 가드', start);
+  const { code } = await transformWithEsbuild(
+    `const tree = ${source.slice(start, end + 1)}null</div>;`, 'StoryboardKeyboardGuard.jsx',
+    { jsx: 'transform' },
+  );
+  return new Function('React', 'atomicSaving', 'initialBoardRevealed', `${code}; return tree;`)(
+    React, saving, true,
+  ).props.onKeyDownCapture;
+}
+
+test('atomic storyboard saving keeps closure display at the saved value until editing resumes', async () => {
+  const h = await controlHarness({ value: 'open' });
+  try {
+    const savingGuard = await storyboardKeyboardGuard(true);
+    h.key('ArrowUp', { capture: savingGuard });
+    h.key('Home', { capture: savingGuard });
+    assert.deepEqual(h.changes, []);
+    assert.equal(h.rail().props['aria-valuetext'], '전체 열림');
+    const tab = h.key('Tab', { capture: savingGuard });
+    assert.equal(tab.defaultPrevented, false, 'saving must still allow keyboard focus navigation');
+    const escape = h.key('Escape', { capture: savingGuard });
+    assert.equal(escape.defaultPrevented, false);
+    h.setValue('open');
+    assert.equal(h.rail().props['aria-valuetext'], '전체 열림');
+    h.key('ArrowUp', { capture: await storyboardKeyboardGuard(false) });
+    assert.deepEqual(h.changes, ['openToWaist']);
+    assert.equal(h.rail().props['aria-valuetext'], '배까지 열림');
+  } finally { h.unmount(); }
 });
 
 test('binary middle values are display-only until a different stop is chosen', async () => {

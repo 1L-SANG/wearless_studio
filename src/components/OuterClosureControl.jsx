@@ -132,6 +132,7 @@ export default function OuterClosureControl({ value, onChange, range = 'graded',
     else if (event.key === 'End') next = spec.values.length - 1;
     else return;
     event.preventDefault();
+    event.stopPropagation();
     select(next);
   };
   const paths = railPaths(position, spec, activeRange);
