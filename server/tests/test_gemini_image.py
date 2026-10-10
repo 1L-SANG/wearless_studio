@@ -93,7 +93,8 @@ def test_openai_reference_normalization_reuses_job_cache(monkeypatch):
     assert second == first[:1]
 
 
-def test_gemini_request_and_response_cpu_work_is_offloaded(monkeypatch):
+@pytest.mark.parametrize("quality_options", [{}, {"openai_quality": "high"}])
+def test_gemini_request_and_response_cpu_work_is_offloaded(monkeypatch, quality_options):
     calls = []
 
     async def immediate(func, *args, **kwargs):
@@ -114,7 +115,7 @@ def test_gemini_request_and_response_cpu_work_is_offloaded(monkeypatch):
 
     result = asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
         "gemini-3-pro-image", "prompt",
-        [gemini_image.InlineImage("image/jpeg", b"reference")], "2K"))
+        [gemini_image.InlineImage("image/jpeg", b"reference")], "2K", **quality_options))
 
     assert result.image == b"image-bytes"
     assert len(calls) >= 2  # request base64 + response JSON/base64
@@ -458,7 +459,12 @@ def test_openai_2k_falls_back_to_the_base_canvas_for_unmapped_ratios(ratio):
             == gemini_image.GeminiImageClient._OPENAI_SIZE[ratio])
 
 
-def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
+@pytest.mark.parametrize("quality_options, expected_quality", [
+    ({}, "medium"),
+    ({"openai_quality": None}, "medium"),
+    ({"openai_quality": "high"}, "high"),
+])
+def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch, quality_options, expected_quality):
     posted = {}
     usage = {
         "input_tokens": 9839,
@@ -499,6 +505,7 @@ def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
         [gemini_image.InlineImage("image/png", b"reference")],
         "4K",
         aspect_ratio="2:3",
+        **quality_options,
     ))
 
     assert result.image == b"gpt-image"
@@ -507,7 +514,7 @@ def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
         "model": "gpt-image-2-2026-04-21",
         "prompt": "prompt",
         "size": "2336x3504",
-        "quality": "medium",
+        "quality": expected_quality,
         "output_format": "png",
         "n": "1",
     }

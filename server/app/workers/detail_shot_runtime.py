@@ -69,7 +69,7 @@ class ProgressStore:
                     'attempts': attempts + 1, 'phase': 'generating'}
         return (await self._change(claim))['attempts']
 
-    async def save_candidate(self, image, fingerprint, attempt):
+    async def save_candidate(self, image, fingerprint, attempt, *, image_quality='medium'):
         sha = hashlib.sha256(image.data).hexdigest()
         job = self.job
         key = (f"users/{job['user_id']}/projects/{job['project_id']}/ai/{job['id']}/"
@@ -87,7 +87,8 @@ class ProgressStore:
             if (state.get('fingerprint') != fingerprint or state.get('attempts') != attempt
                     or state.get('phase') != 'generating'):
                 raise DetailShotRejected('detail_attempt_state_changed')
-            candidate = {'attempt': attempt, 'key': key, 'sha256': sha, 'mime': image.mime}
+            candidate = {'attempt': attempt, 'key': key, 'sha256': sha, 'mime': image.mime,
+                         'imageQuality': image_quality}
             return {**state, 'phase': 'candidate', 'candidate': candidate,
                     'candidates': [*(state.get('candidates') or []), candidate]}
         await self._change(save)
