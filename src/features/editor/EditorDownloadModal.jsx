@@ -11,8 +11,8 @@ const FORMAT_OPTIONS = [
 ];
 
 const DELIVERY_OPTIONS = [
-  { id: 'split', title: '나눠서 받기', desc: '블록 경계를 살려 3,000px 이하 조각을 ZIP으로 저장' },
-  { id: 'single', title: '한 장으로 받기', desc: '선택한 폭으로 전체 상세페이지를 한 장에 저장' },
+  { id: 'split', title: '한 장씩 개별로 저장', desc: '블록 경계를 살려 3,000px 이하 조각을 ZIP으로 저장' },
+  { id: 'single', title: '한 번에 묶어서 저장', desc: '선택한 폭으로 전체 상세페이지를 한 장에 저장' },
 ];
 
 const PROGRESS_TITLES = {
@@ -40,6 +40,7 @@ function RadioCard({ name, option, checked, disabled, onChange }) {
       />
       <span className={styles.optionText}>
         <span className={styles.optionTitle}>{option.title}</span>
+        {option.width && <span className={styles.optionSize}>{option.width.toLocaleString('ko-KR')}px</span>}
         {option.desc && <span className={styles.optionDesc}>{option.desc}</span>}
       </span>
     </label>

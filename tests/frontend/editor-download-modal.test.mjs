@@ -52,8 +52,8 @@ function render(settings = { preset: 'smartstore', format: 'jpeg', delivery: 'sp
 test('다운로드 모달은 폭·형식·받는 방식을 기본값과 함께 보여준다', () => {
   const html = render();
   for (const copy of [
-    '스마트스토어·통용 860px', '쿠팡 780px', '고화질 1,290px', '원본 PNG(2,000px)',
-    'JPG', '가볍게, 품질 90', 'PNG', '나눠서 받기', '한 장으로 받기',
+    '스마트스토어·통용', '860px', '쿠팡', '780px', '고화질', '1,290px', '원본 PNG', '2,000px',
+    'JPG', '가볍게, 품질 90', 'PNG', '한 장씩 개별로 저장', '한 번에 묶어서 저장',
   ]) assert.ok(html.includes(copy), copy);
   assert.match(html, /name="export-preset"[^>]*checked[^>]*value="smartstore"/);
   assert.match(html, /name="export-format"[^>]*checked[^>]*value="jpeg"/);

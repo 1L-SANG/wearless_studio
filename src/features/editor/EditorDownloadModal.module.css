@@ -114,6 +114,12 @@
   text-wrap: balance;
 }
 
+.optionSize {
+  color: var(--cta-bg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .optionDesc {
   color: var(--fg-2);
   font-size: 12px;

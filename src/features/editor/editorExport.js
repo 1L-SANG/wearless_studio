@@ -33,10 +33,10 @@ export const ORIGINAL_PNG_MAX_HEIGHT = Math.min(
 export const EXPORT_SETTINGS_KEY = 'wearless.editor.export.v1';
 
 export const EXPORT_PRESETS = Object.freeze([
-  { id: 'smartstore', width: 860, label: '스마트스토어·통용 860px' },
-  { id: 'coupang', width: 780, label: '쿠팡 780px' },
-  { id: 'high', width: 1290, label: '고화질 1,290px', desc: '휴대폰에서 더 선명, 파일이 큼' },
-  { id: 'original', width: 2000, label: '원본 PNG(2,000px)', original: true },
+  { id: 'smartstore', width: 860, label: '스마트스토어·통용' },
+  { id: 'coupang', width: 780, label: '쿠팡' },
+  { id: 'high', width: 1290, label: '고화질', desc: '휴대폰에서 더 선명, 파일이 큼' },
+  { id: 'original', width: 2000, label: '원본 PNG', original: true },
 ]);
 
 export const DEFAULT_EXPORT_SETTINGS = Object.freeze({
