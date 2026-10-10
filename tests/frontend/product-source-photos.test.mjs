@@ -155,3 +155,40 @@ test('제품 카드 캡션은 샷 이름 뒤에 고른 원본 면을 붙이고 �
   }
   assert.equal(labels({ cutType: 'styling', shot: 'full', direction: 'back' }, catalogs).shot, '풀샷');
 });
+
+test('콘티 대상 색상 변경은 디테일 대상을 먼저 풀고 새 색상의 원본 면을 고른다', async () => {
+  const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('          value={block.colorId} onChange={(colorId) => {');
+  const body = source.slice(start + '          value={block.colorId} onChange={'.length, source.indexOf('} /></div>', start));
+  const module = await loadPhotos();
+  for (const shot of ['ghost', 'detail']) {
+    let changes;
+    const block = { cutType: 'product', shot, colorId: 'base', direction: 'back', ...(shot === 'detail' ? { detailTargetId: 'back-target' } : {}) };
+    const change = evaluate(`return (${body});`, { block, catalogs: { detailProduct: product }, ...details, ...module, onChange: value => { changes = value; } });
+    change('extra');
+    assert.equal(changes.direction, 'front');
+    assert.equal(changes.colorId, 'extra');
+    if (shot === 'detail') assert.equal(changes.detailTargetId, null);
+  }
+});
+
+test('디테일 대상이 없으면 공통 원본 타일을 보여주고 대상 선택은 원본 면에 묶는다', async () => {
+  const source = readFileSync(new URL('../../src/features/storyboard/DetailTargetPicker.jsx', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('export function DetailTargetPicker')).replace('export function', 'function');
+  const { code } = await transformWithEsbuild(body + '\nreturn DetailTargetPicker;', 'detail-picker.jsx', { loader: 'jsx' });
+  const Picker = evaluate(code, { React, ...details, ProductSourcePicker: 'ProductSourcePicker' });
+  let changes;
+  const recommendations = { version: 1, status: 'ready', candidates: [{ id: 'back-target', direction: 'back', sourceSlot: 'Back', sourceIndex: 1,
+    informationGroup: 'back', photoUse: 'standalone', visibility: 'clear', label: '등판' }] };
+  const block = { id: 'detail', source: 'ai', cutType: 'product', shot: 'detail', colorId: 'base', direction: 'front' };
+  const props = { block, product, catalogs, recommendations, onChange: value => { changes = value; } };
+  const unbound = Picker(props);
+  assert.equal(nodes(unbound, node => node.type === 'ProductSourcePicker').length, 1);
+  assert.equal(nodes(unbound, node => node.type === 'img').length, 0);
+  nodes(unbound, node => node.type === 'select')[0].props.onChange({ target: { value: 'back-target' } });
+  assert.equal(changes.direction, 'back');
+  const bound = Picker({ ...props, block: { ...block, ...changes } });
+  assert.equal(nodes(bound, node => node.type === 'ProductSourcePicker').length, 0);
+  assert.equal(nodes(bound, node => node.type === 'img')[0].props.src, '/Back.jpg');
+  assert.match(JSON.stringify(bound), /등판/);
+});

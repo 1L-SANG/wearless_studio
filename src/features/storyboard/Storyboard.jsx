@@ -3096,7 +3096,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const insertionRecipe = droppedExample ? {
       ...purposePatch,
       cutType: droppedCutType || purposePatch.cutType,
-      direction: droppedExample.direction ?? purposePatch.direction,
+      direction: droppedCutType === 'product' ? purposePatch.direction : (droppedExample.direction ?? purposePatch.direction),
       shot: droppedExample.shot || purposePatch.shot,
     } : purposePatch;
     const initialColorOpts = firstPurpose === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
