@@ -144,7 +144,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   R2_PUBLIC_BASE: https://images.wearless.kr
   CLOUDFLARE_ZONE_ID: "cc7b2bd968c6eb89fe30e45333c9ebd9"  # wearless.kr zone — images.wearless.kr CDN 캐시 파기용
   MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
-  MANNEQUIN_BASE_MEN_ASSET_ID: 736ff2ab-0f15-4f9a-b2ee-c40cd0ed7ee0
+  MANNEQUIN_BASE_MEN_ASSET_ID: 2da88ae4-aa72-45d9-bb1a-7f5853224b3f
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
   # 0%(missing_lower_body 오탐 — 임계가 합성 프리셋 캘리브라 실 프레이밍/종횡비와 미스매치)라 게이팅이
   # 전 생성 차단. 워커 step emit 이 이제 metrics 도 남기니 shadow 로 실측 분포 모아 재캘리브 후 다시 true.
