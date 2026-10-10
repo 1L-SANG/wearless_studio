@@ -72,7 +72,8 @@ def test_best_effort_finish_accepts_second_provider_attempt_after_first_transien
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
-def test_failed_three_candidates_remain_private_and_held(monkeypatch):
+@pytest.mark.parametrize('quality_options, expected_quality', [({}, 'medium'), ({'image_quality': 'high'}, 'high')])
+def test_failed_three_candidates_remain_private_and_held(monkeypatch, quality_options, expected_quality):
     class R2:
         def __init__(self):
             self.objects = {}
@@ -113,9 +114,10 @@ def test_failed_three_candidates_remain_private_and_held(monkeypatch):
             if attempt > 1:
                 await store._change(lambda previous: {**previous, 'attempts': attempt,
                                                        'phase': 'generating'})
-            await store.save_candidate(InlineImage('image/png', data), 'same', attempt)
+            await store.save_candidate(InlineImage('image/png', data), 'same', attempt, **quality_options)
         assert (await store.load_candidate(attempt=1)).data == b'first'
         assert len(state['candidates']) == 3
+        assert [candidate['imageQuality'] for candidate in state['candidates']] == [expected_quality] * 3
         await store.finish({'passed': False, 'publishedBestEffort': True})
         assert state['phase'] == 'held' and state['candidate']['attempt'] == 3
         assert (await store.load_candidate()).data == b'third'

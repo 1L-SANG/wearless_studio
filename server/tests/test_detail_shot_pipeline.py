@@ -68,11 +68,12 @@ class MemoryProgress:
                           phase='generating')
         return self.state['attempts']
 
-    async def save_candidate(self, image, fingerprint, attempt):
+    async def save_candidate(self, image, fingerprint, attempt, *, image_quality='medium'):
         self.image = image
         self.images[attempt] = image
         self.state.update(fingerprint=fingerprint, attempts=attempt, phase='candidate')
-        self.state['candidate'] = {'attempt': attempt, 'sha256': hashlib.sha256(image.data).hexdigest()}
+        self.state['candidate'] = {'attempt': attempt, 'sha256': hashlib.sha256(image.data).hexdigest(),
+                                   'imageQuality': image_quality}
 
     async def load_candidate(self, attempt=None):
         return self.image if attempt is None else self.images.get(attempt)
@@ -128,6 +129,55 @@ async def run(setup, progress=None):
     return await pipeline.generate_verified(
         settings, client, [photo()], target=None, direction='front',
         progress=progress or MemoryProgress())
+
+
+@pytest.mark.parametrize('quality, expected', [(None, 'medium'), ('medium', 'medium'), ('high', 'high')])
+@sync_test
+async def test_image_quality_is_sent_and_reported_for_all_three_candidates(setup, quality, expected):
+    qc, client, settings = setup
+    if quality is not None:
+        settings.product_detail_image_quality = quality
+    qc.side_effect = [verdict('FAIL'), verdict('FAIL'), verdict('PASS')]
+
+    _, report = await run(setup)
+
+    assert report['imageQuality'] == expected
+    assert report['fallbackUsed'] is True and report['attempts'] == 3
+    assert [call.kwargs['openai_quality'] for call in client.generate_content_image.call_args_list] == [expected] * 3
+
+
+@pytest.mark.parametrize('phase', ['candidate', 'judged'])
+@pytest.mark.parametrize('previous_quality', [None, 'medium', 'high'])
+@sync_test
+async def test_resumed_candidate_reports_its_generated_quality_after_setting_changes(setup, phase, previous_quality):
+    qc, client, settings = setup
+    settings.product_detail_image_quality = 'medium' if previous_quality == 'high' else 'high'
+    qc.return_value = verdict('PASS')
+    progress = MemoryProgress({'phase': phase, 'attempts': 1,
+                               'fingerprint': pipeline.fingerprint(settings, [photo()], None, 'front'),
+                               'qc': {'judgments': [verdict('PASS')] if phase == 'judged' else []}}, photo('pink'))
+    if previous_quality is not None:
+        progress.state['candidate']['imageQuality'] = previous_quality
+
+    _, report = await run(setup, progress)
+
+    assert report['imageQuality'] == (previous_quality or 'medium')
+    client.generate_content_image.assert_not_called()
+
+
+@sync_test
+async def test_new_generation_after_resumed_medium_candidate_reports_current_high_quality(setup):
+    qc, client, settings = setup
+    settings.product_detail_image_quality = 'high'
+    qc.return_value = verdict('PASS')
+    progress = MemoryProgress({'phase': 'judged', 'attempts': 1,
+                               'fingerprint': pipeline.fingerprint(settings, [photo()], None, 'front'),
+                               'qc': {'imageQuality': 'medium', 'judgments': [verdict('FAIL')]}}, photo('red'))
+
+    _, report = await run(setup, progress)
+
+    assert client.generate_content_image.call_args.kwargs['openai_quality'] == 'high'
+    assert report['imageQuality'] == progress.state['candidate']['imageQuality'] == 'high'
 
 
 @sync_test
@@ -231,9 +281,11 @@ async def test_unknown_final_judgment_selects_a_prior_judged_candidate(setup):
 
 
 @pytest.mark.parametrize('phase', ['generating', 'judging'])
+@pytest.mark.parametrize('previous_quality', [None, 'high'])
 @sync_test
-async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_resubmitting(setup, phase):
+async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_resubmitting(setup, phase, previous_quality):
     qc, client, settings = setup
+    settings.product_detail_image_quality = 'medium' if previous_quality == 'high' else 'high'
     source = photo()
     fp = pipeline.fingerprint(settings, [source], None, 'front')
     progress = MemoryProgress({'phase': phase, 'attempts': 3, 'fingerprint': fp,
@@ -241,11 +293,14 @@ async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_res
                                                     failed_gate('constructionDesign')]}},
                               photo('pink') if phase == 'judging' else None,
                               images={1: photo('red'), 2: photo('blue')})
+    if previous_quality is not None:
+        progress.state.setdefault('candidate', {})['imageQuality'] = previous_quality
 
     selected, report = await pipeline.generate_verified(
         settings, client, [source], target=None, direction='front', progress=progress)
     assert selected.data == photo('red').data
     assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 1
+    assert report['imageQuality'] == (previous_quality or 'medium')
     client.generate_content_image.assert_not_called()
     qc.assert_not_called()
 
@@ -546,6 +601,17 @@ async def test_old_or_changed_policy_checkpoint_is_not_published(setup):
     with pytest.raises(pipeline.DetailShotRejected):
         await run(setup, progress)
     client.generate_content_image.assert_not_called()
+
+
+def test_image_quality_does_not_change_generation_fingerprint(setup):
+    _, _, settings = setup
+    sources = [photo()]
+    legacy = pipeline.fingerprint(settings, sources, None, 'front')
+    medium = SimpleNamespace(**vars(settings), product_detail_image_quality='medium')
+    high = SimpleNamespace(**vars(settings), product_detail_image_quality='high')
+
+    assert pipeline.fingerprint(medium, sources, None, 'front') == legacy
+    assert pipeline.fingerprint(high, sources, None, 'front') == legacy
 
 
 def test_subject_and_source_fingerprint_are_generation_identity(setup):
