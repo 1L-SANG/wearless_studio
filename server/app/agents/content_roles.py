@@ -334,11 +334,9 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
 
 
 def _example_direction(block: dict, cut_type: str) -> dict | None:
-    """발행된 예시의 방향만 읽는다. 디테일 원본 대상의 방향은 덮지 않는다."""
+    """착용컷의 발행된 예시 방향만 읽는다. 제품컷은 원본 사진의 면을 따른다."""
     example_id = block.get("exampleId") or block.get("example_id")
-    if not example_id or str(example_id).startswith("sig_") or (
-        cut_type == "product" and block.get("detailTargetId")
-    ):
+    if cut_type not in {"styling", "horizon"} or not example_id or str(example_id).startswith("sig_"):
         return None
     from . import cut_generator
 
@@ -350,8 +348,7 @@ def _example_direction(block: dict, cut_type: str) -> dict | None:
     else:
         _base, entries = cut_generator.load_example_asset_registry()
         entry = entries.get(str(example_id)) or {}
-    allowed = _PRODUCT_DIRECTIONS if cut_type == "product" else _WORN_DIRECTIONS
-    if entry.get("cutType", cut_type) != cut_type or entry.get("direction") not in allowed:
+    if entry.get("cutType", cut_type) != cut_type or entry.get("direction") not in _WORN_DIRECTIONS:
         return None
     return {
         "direction": entry["direction"],

@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as signatureCutPool from '../../src/lib/signatureCutPool.js';
-import { repickExampleForDirection } from '../../src/lib/generationExamples.js';
 
 const {
   SIGNATURE_CUTS,
@@ -113,39 +112,6 @@ test('뽑힌 컷은 요청한 상품 조건의 풀 안에서만 나온다', () =
     const picked = pickSignatureCut(context);
     assert.equal(signatureCutMatches(picked.id, context), true);
   }
-});
-
-test('시그니처 카드 방향 변경은 일반 생성예시로 갈아 끼우지 않는다', () => {
-  const block = {
-    id: 'dress-signature',
-    source: 'ai',
-    hookSlotRole: 'signature',
-    cutType: 'horizon',
-    shot: 'medium',
-    direction: 'front',
-    exampleId: 'sig_women_dress_01',
-    exampleSelectionOrigin: 'auto',
-  };
-  const ordinaryCatalog = [{
-    id: 'ex_horizon_women_dress_medium_profile_01',
-    cutType: 'horizon',
-    shot: 'medium',
-    direction: 'side',
-    sideStyle: 'profile',
-    gender: 'women',
-    clothingType: 'dress',
-    applicableClothingTypes: ['dress'],
-    variants: ['all'],
-    thumb: '/ordinary.webp',
-  }];
-
-  assert.equal(repickExampleForDirection(block, ordinaryCatalog, {
-    clothingType: 'dress', gender: 'women', direction: 'side', sideStyle: 'profile',
-  }), null);
-  assert.equal(repickExampleForDirection(
-    { ...block, hookSlotRole: undefined }, ordinaryCatalog,
-    { clothingType: 'dress', gender: 'women', direction: 'side', sideStyle: 'profile' },
-  ), null);
 });
 
 test('불일치 시그니처 선택만 결정적으로 보정하고 다른 셀러 편집은 보존한다', () => {

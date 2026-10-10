@@ -201,3 +201,4 @@ def test_route_invalid_similar_settings_do_not_create_job(client, make_token, mo
         **override,
     })
     assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_similar_cut"

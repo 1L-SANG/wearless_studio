@@ -211,27 +211,8 @@ async def run_editor_image_job(app, job: dict) -> None:
 
         if mode == "vary":
             source = payload.get("source") or {}
-            changes = payload.get("changes") or []
-            # AG-07에는 상품 Detail 원본이 첨부되지 않는다. 일반 제품컷 한 장을 확대해
-            # 디테일을 지어내지 않도록 '디테일로 변경'은 새 이미지 추가(AG-06)에서만 허용한다.
-            # 라우트가 raw dict를 받으므로 type 대소문자/미상값으로 우회해도, 계약상 detail을
-            # 뜻하는 값 자체를 차단한다.
-            detail_values = {"detail", "detail shot", "detailshot", "디테일", "디테일샷"}
-            wants_detail = any(
-                isinstance(change, dict)
-                and str(change.get("value") or "").strip().lower() in detail_values
-                for change in changes
-            )
-            if wants_detail:
-                await _fail(
-                    "현재 이미지 수정으로는 디테일샷을 만들 수 없어요. "
-                    "새 이미지 추가에서 디테일샷을 선택해 주세요.",
-                    {"error": "detail_variation_unsupported"},
-                )
-                return
             asset_id = _parse_source_asset_id(source.get("src"))
             src_asset = None
-            ref_bg_asset = None
             similar_envelope = None
             async with pool.connection() as conn:
                 if payload.get("variationMode") == "similar":
@@ -262,14 +243,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                     source = {**source, "cutType": trusted_type}
                     similar_envelope = {"version": 1, "rootAssetId": root_id, "sourceAssetId": selected_id}
                 elif asset_id:
-                    src_asset = await repo.get_asset_for_user(conn, user_id, asset_id)
-                # 배경 레퍼런스(refBgAssetId) — 배경·조명·무드만 반영 (소유 검증 겸함, ADR-0004)
-                rb = payload.get("refBgAssetId")
-                if rb and similar_envelope is None:
-                    ref_bg_asset = await repo.get_asset_for_user(conn, user_id, str(rb))
-            if src_asset is None:
-                await _fail("변형할 컷을 찾을 수 없어요. 다시 시도해 주세요.",
-                            {"error": "source_asset_missing", "src": source.get("src")})
+                    src_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, asset_id)
+            source_metadata = (src_asset or {}).get("metadata") or {}
+            prior_recipe = source_metadata.get("detail_recipe")
+            if similar_envelope is None and (
+                payload.get("variationMode") is not None
+                or not isinstance(prior_recipe, dict) or prior_recipe.get("version") != 1
+            ):
+                message = (
+                    "제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요."
+                    if source_metadata.get("cut_type") == "product" or source.get("cutType") == "product"
+                    else "이 사진은 비슷한 컷만 만들 수 있어요."
+                )
+                await _fail(message,
+                            {"error": "vary_unsupported"}, code="vary_unsupported")
                 return
             snapshot = payload.get("_facemarket")
             source_real_derived = (
@@ -327,46 +314,30 @@ async def run_editor_image_job(app, job: dict) -> None:
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
-            ref_bg_img = None
-            if ref_bg_asset is not None:
-                ref_bg_img = InlineImage(
-                    ref_bg_asset["mime_type"],
-                    await asyncio.to_thread(app.state.r2.get_bytes, ref_bg_asset["r2_key"]))
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
             cut_type = source.get("cutType")
-            changes = payload.get("changes") or []
             try:
-                # face_identity_spec 은 값이 있을 때만 넘긴다 — 기존 목(mock) 중 이 인자를 모르는
-                # strict-signature 스텁을 깨지 않는다(body_profile 과 같은 관례).
-                _vary_kw = {"ref_bg": ref_bg_img}
                 if similar_envelope is not None:
                     await _emit(pool, job_id, "progress", {"progress": 25, "phase": "planning"})
                     similar_cut_metadata, similar_context = await _plan_similar_cut(
                         app, job, src_img, cut_type, similar_envelope)
                     if similar_cut_metadata is None:  # Another worker owns the reclaimed job.
                         return
-                    _vary_kw["similar_plan"] = similar_cut_metadata["plan"]
-                    _vary_kw["similar_context"] = similar_context
-                if vary_lora_spec is not None:
-                    _vary_kw["face_identity_spec"] = vary_lora_spec
-                    _vary_kw["face_pass_outcome"] = face_pass_outcome
-                    # 파드 하나 = LoRA 하나다 — **이 모델의 파드**를 묻는다(남의 파드는 409 만 준다).
-                    _vary_model_id = str(snapshot["modelId"])
-                    _vary_kw["face_pass_url_provider"] = (
-                        lambda: identity_source.active_face_backend_url(pool, _vary_model_id))
-                prior_recipe = (src_asset.get("metadata") or {}).get("detail_recipe")
-                if isinstance(prior_recipe, dict) and prior_recipe.get("version") == 1:
-                    # Product UI varies only direction or requests the same view.
-                    # Provenance comes from the owned asset, never the client source.
-                    if any(change.get("type") != "direction" or change.get("value") not in {"front", "back"}
-                           for change in changes):
-                        await _fail("디테일컷은 앞면·뒷면 방향을 바꿀 수 있어요.",
-                                    {"error": "detail_variation_unsupported"})
-                        return
+                    _vary_kw = {"similar_plan": similar_cut_metadata["plan"],
+                                "similar_context": similar_context}
+                    if vary_lora_spec is not None:
+                        _vary_kw["face_identity_spec"] = vary_lora_spec
+                        _vary_kw["face_pass_outcome"] = face_pass_outcome
+                        # 파드 하나 = LoRA 하나다. 원본 모델의 파드를 다시 조회한다.
+                        _vary_model_id = str(snapshot["modelId"])
+                        _vary_kw["face_pass_url_provider"] = (
+                            lambda: identity_source.active_face_backend_url(pool, _vary_model_id))
+                    image, mime = await cut_variator.generate(
+                        editor_settings, app.state.gemini, src_img, [], cut_type, **_vary_kw)
+                else:
+                    # 소유 자산의 레시피로 같은 대상과 원본 면을 다시 촬영한다.
                     detail_spec = {**prior_recipe, "cutType": "product", "shot": "detail"}
-                    if changes and changes[-1]["value"] != detail_spec.get("direction"):
-                        detail_spec.update(direction=changes[-1]["value"], detailTargetId=None, exampleId=None)
                     async with pool.connection() as conn:
                         detail_product = await repo.get_product(conn, project_id) or {}
                         detail_analysis = await repo.get_analysis(conn, project_id) or {}
@@ -380,9 +351,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                     image, mime = chosen.data, chosen.mime
                     detail_recipe_metadata = detail_shot_runtime.recipe(detail_spec)
                     cut_type = "product"
-                else:
-                    image, mime = await cut_variator.generate(
-                        editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except (GeminiError, VisionError) as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return

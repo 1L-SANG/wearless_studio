@@ -754,6 +754,10 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         fence.append("closed")
         return False
 
+    async def fake_asset(conn, uid, pid, aid):
+        return {"id": aid, "source": "ai", "metadata": {"cut_type": "horizon"}}
+
+    monkeypatch.setattr(routes.repo, "get_project_asset_for_user", fake_asset)
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(
@@ -775,6 +779,7 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         headers=_auth(make_token),
         json={
             "mode": "vary",
+            "variationMode": "similar",
             "source": {
                 "src": f"/v1/assets/{source_asset_id}/file?e=2",
                 "cutType": "styling",
@@ -796,24 +801,20 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
 @pytest.mark.parametrize(
     ("trusted_cut_type", "body_patch"),
     [
-        (None, {}),
+        ("product", {}),
         ("horizon", {"changes": [{"type": "bg", "value": "거리"}]}),
         ("horizon", {"changes": [{"type": "other", "value": "거리 배경으로 이동"}]}),
         ("horizon", {"changes": [{"type": "pose", "value": "파리 거리에서 걷기"}]}),
         ("horizon", {"refBgAssetId": "44444444-4444-4444-4444-444444444444"}),
+        ("horizon", {}),
         ("styling", {}),
         ("mirror", {}),
     ],
 )
-def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
+def test_editor_real_vary_accepts_similar_and_detail_but_rejects_changes(
     client, make_token, monkeypatch, trusted_cut_type, body_patch
 ):
-    """실제 모델은 모든 컷·모든 변형에서 쓴다(2026-09-11 사용자 결정).
-
-    예전에는 배경을 바꾸는 변형과 스튜디오 밖 컷을 409(real_model_horizon_only)로 막았다.
-    막는 것이 사라졌어도 **출처 스냅샷·라이선스 확인·컷 종류 신뢰**는 그대로여야 한다 —
-    이 테스트가 고정하는 건 이제 그 세 가지다.
-    """
+    """두 생성 경로 모두 실제 모델 출처와 라이선스 확인을 유지한다."""
     seen = {}
     source_asset_id = "33333333-3333-3333-3333-333333333333"
     client.app.state.settings = replace(
@@ -854,6 +855,13 @@ def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
     async def fake_closed(conn):
         return False
 
+    async def fake_asset(conn, uid, pid, aid):
+        metadata = {"cut_type": trusted_cut_type}
+        if trusted_cut_type == "product":
+            metadata["detail_recipe"] = {"version": 1}
+        return {"id": aid, "source": "ai", "metadata": metadata}
+
+    monkeypatch.setattr(routes.repo, "get_project_asset_for_user", fake_asset)
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_asset_facemarket_provenance", fake_provenance)
@@ -870,6 +878,7 @@ def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
         headers=_auth(make_token),
         json={
             "mode": "vary",
+            **({} if trusted_cut_type == "product" else {"variationMode": "similar"}),
             "source": {
                 "src": f"/v1/assets/{source_asset_id}/file",
                 "cutType": "horizon",
@@ -878,6 +887,11 @@ def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
         },
     )
 
+    if body_patch:
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_similar_cut"
+        assert "payload" not in seen and "verified" not in seen
+        return
     assert response.status_code == 202, response.text
     assert seen["payload"]["_facemarket"] == {
         "modelId": MODEL_ID,
@@ -906,6 +920,10 @@ def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
     async def fake_reserve(*args, **kwargs):
         calls["reserve"] += 1
 
+    async def fake_asset(conn, uid, pid, aid):
+        return {"id": aid, "source": "ai", "metadata": {"cut_type": "horizon"}}
+
+    monkeypatch.setattr(routes.repo, "get_project_asset_for_user", fake_asset)
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(
         routes.repo,
@@ -922,6 +940,7 @@ def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
         headers=_auth(make_token),
         json={
             "mode": "vary",
+            "variationMode": "similar",
             "source": {"src": f"/v1/assets/{source_asset_id}/file"},
         },
     )
@@ -1204,6 +1223,10 @@ def test_editor_virtual_and_vary_strip_client_snapshot(
     async def fake_reserve(conn, user_id, amount):
         return 9
 
+    async def fake_asset(conn, uid, pid, aid):
+        return {"id": aid, "source": "ai", "metadata": {"cut_type": "horizon"}}
+
+    monkeypatch.setattr(routes.repo, "get_project_asset_for_user", fake_asset)
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(
@@ -1227,6 +1250,7 @@ def test_editor_virtual_and_vary_strip_client_snapshot(
         headers=_auth(make_token),
         json={
             "mode": "vary",
+            "variationMode": "similar",
             "source": {
                 "src": "/v1/assets/33333333-3333-3333-3333-333333333333/file"
             },

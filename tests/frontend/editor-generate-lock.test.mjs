@@ -13,7 +13,7 @@ const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', impo
 const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
 const handlerSource = editor.slice(editor.indexOf('  const generateImage = async ('), editor.indexOf('  const failedCutRetry ='));
-const retrySource = editor.slice(editor.indexOf('  const retryFailedCut ='), editor.indexOf('  // 현재 이미지 수정 —'));
+const retrySource = editor.slice(editor.indexOf('  const retryFailedCut ='), editor.indexOf('  const varyGenerate ='));
 const imageHelpers = editor.slice(editor.indexOf('  const placeGeneratedImage ='), editor.indexOf('  const saveBrandUseCategory ='));
 const adapterSource = adapter.slice(adapter.indexOf('  async generateImage(projectId'), adapter.lastIndexOf('\n};'));
 const pollSource = adapter.slice(adapter.indexOf('async function pollJob('), adapter.indexOf('// 사진 1장 업로드'));

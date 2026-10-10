@@ -2685,12 +2685,11 @@ export function Editor() {
     toast.push(failedCutRetry.fillImage ? '원본 사진을 빈 자리에 넣었어요'
       : '원래 콘티 설정으로 다시 만든 이미지를 빈 자리에 넣었어요', { icon: 'check' });
   };
-  // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
-  // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
-  const varyGenerate = async ({ source, changes, variationMode, refBg, refBgAssetId, retryBlockId }) => {
+  // 비슷한 컷과 같은 부위 다시 촬영은 원본의 색상 그룹을 이어 받는다.
+  const varyGenerate = async ({ source, variationMode, retryBlockId }) => {
     if (varySubmission.current?.busy || !hasImageSource(source)) return null;
-    const request = { mode: 'vary', source, changes, ...(variationMode ? { variationMode } : {}), ...(retryBlockId ? { retryBlockId } : {}), refBg, refBgAssetId };
-    const signature = JSON.stringify({ projectId, src: source.src, cutType: source.cutType, changes, variationMode, refBg, refBgAssetId, retryBlockId });
+    const request = { mode: 'vary', source, ...(variationMode ? { variationMode } : {}), ...(retryBlockId ? { retryBlockId } : {}) };
+    const signature = JSON.stringify({ projectId, src: source.src, cutType: source.cutType, variationMode, retryBlockId });
     // 접수 미확인 요청은 사진·설정별로 보존한다. 다른 사진을 작업해도 재시도 키를 잃지 않는다.
     const submission = unconfirmedVarySubmissions.current.get(signature) || {
       idempotencyKey: crypto.randomUUID(), signature, request,
@@ -2711,7 +2710,7 @@ export function Editor() {
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
-    toast.push(variationMode === 'similar' ? '새로운 동작의 비슷한 컷을 준비하고 있어요' : '이미지를 수정하는 중이에요', { icon: 'sparkles' });
+    toast.push(variationMode === 'similar' ? '새로운 동작의 비슷한 컷을 준비하고 있어요' : '같은 부위를 다시 촬영하고 있어요', { icon: 'sparkles' });
     try {
       const { data: img, credits } = await api.generateImage(projectId, { ...submission.request,
         idempotencyKey: submission.idempotencyKey, onJobStarted: releaseSubmission });
@@ -2738,12 +2737,24 @@ export function Editor() {
   };
   // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
   const varySource = (() => {
+    const images = Object.values(wardrobe || {}).flat();
+    const detailReshoot = (image) => {
+      if (!image?.sourceBlockId) return image?.detailReshoot === true;
+      return image?.detailReshoot === true
+        || (wardrobeContext.current.storyboard || []).some((block) => block.id === image.sourceBlockId
+          && block.cutType === 'product' && block.shot === 'detail');
+    };
     if (varyTarget) {
-      const im = Object.values(wardrobe || {}).flat().find((x) => x.id === varyTarget.id);
-      return hasImageSource(im) ? { id: im.id, src: im.src, cutType: im.cutType || null, wardrobeGroup: im.wardrobeGroup || varyTarget.group } : null;
+      const im = images.find((x) => x.id === varyTarget.id);
+      return hasImageSource(im) ? { id: im.id, src: im.src, cutType: im.cutType || null,
+        wardrobeGroup: im.wardrobeGroup || varyTarget.group, detailReshoot: detailReshoot(im) } : null;
     }
+    const serverImage = images.find((image) => image.src === selectedElObj?.src && !image.sourceBlockId);
     return selectedElObj?.type === 'image' && hasImageSource(selectedElObj)
-      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null, wardrobeGroup: selectedElObj.wardrobeGroup || null }
+      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null,
+        wardrobeGroup: selectedElObj.wardrobeGroup || null,
+        detailReshoot: serverImage ? serverImage.detailReshoot === true : detailReshoot({ sourceBlockId: selectedElObj.sourceBlockId })
+          || images.some((image) => image.src === selectedElObj.src && detailReshoot(image)) }
       : null;
   })();
   // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
