@@ -25,7 +25,7 @@
 | PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — 요청 스냅샷으로 재실행하고 성공 종결 때 analysis와 버전 핏을 함께 확정 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) — *구 `adjustMannequin`(AG-05)·adjustCount 흐름 폐기* |
 | PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시 `EditorBlock[]` |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
-| PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정` → `generateImage(mode:'vary')` | AG-07(라이브) | `editorImage` | `WardrobeImage` |
+| PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정`의 `generateImage(mode:'vary')` | 착용 사진은 AG-07 비슷한 컷, 레시피가 있는 디테일컷은 디테일 전용 경로(라이브) | `editorImage` | `WardrobeImage` |
 
 (세탁 안내는 파이프라인·AI 호출이 아니다 — 에디터 자동 블록을 M-02가 규칙 기반 프리셋으로 생성, ai_agent_modules §4.)
 
@@ -123,8 +123,9 @@ done     project.status='done' · { data: EditorBlock[], credits }
 
 ```
 PL-5 (mode:'new'):  NewCutRequest 검증 → AG-06 1콜 → WardrobeImage(colorId 그룹) → { data, credits }
-PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' 그룹) → { data, credits }
+PL-6 (mode:'vary'): VaryRequest 검증 → 비슷한 컷(AG-07) 또는 같은 부위 다시 촬영(디테일 전용 경로) → WardrobeImage → { data, credits }
 ```
+- PL-6은 두 요청만 받는다(2026-10-10, ADR-0016 개정). 착용 사진의 `variationMode='similar'`와, 자산에 원본 검수 레시피가 있는 디테일컷의 같은 부위 다시 촬영이다. 변경값, 배경 참조, 제품컷의 빈 변경 다시 그리기는 400 `vary_unsupported`로 거절하고 크레딧을 예약하지 않는다.
 - 단건 job(수 초). 동시 다발 호출 허용 — 에디터 UI가 로딩 셀·busy 점으로 표현(기존 동작).
 - 원본 이미지는 항상 보존, 결과는 의류 탭에 추가 (PRD §10.8).
 - 기준색 착용컷 생성처럼 선택 마네킹을 입력에 넣는 PL-5 경로는 `selectedMannequinId`의 resolved asset을 사용한다. 톤 조정본이 있으면 최신 조정본, 없으면 원본 컷이다.
