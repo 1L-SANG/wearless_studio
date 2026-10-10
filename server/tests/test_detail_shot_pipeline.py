@@ -74,6 +74,7 @@ class MemoryProgress:
         self.state.update(fingerprint=fingerprint, attempts=attempt, phase='candidate')
         self.state['candidate'] = {'attempt': attempt, 'sha256': hashlib.sha256(image.data).hexdigest(),
                                    'imageQuality': image_quality}
+        self.state['candidates'] = [*(self.state.get('candidates') or []), self.state['candidate']]
 
     async def load_candidate(self, attempt=None):
         return self.image if attempt is None else self.images.get(attempt)
@@ -295,6 +296,7 @@ async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_res
                               images={1: photo('red'), 2: photo('blue')})
     if previous_quality is not None:
         progress.state.setdefault('candidate', {})['imageQuality'] = previous_quality
+        progress.state['candidates'] = [{'attempt': n, 'imageQuality': previous_quality} for n in (1, 2)]
 
     selected, report = await pipeline.generate_verified(
         settings, client, [source], target=None, direction='front', progress=progress)
@@ -303,6 +305,30 @@ async def test_reclaimed_inflight_final_attempt_uses_prior_candidate_without_res
     assert report['imageQuality'] == (previous_quality or 'medium')
     client.generate_content_image.assert_not_called()
     qc.assert_not_called()
+
+
+@sync_test
+async def test_best_effort_reports_the_quality_of_the_selected_pre_deploy_candidate(setup):
+    qc, client, settings = setup
+    settings.product_detail_image_quality = 'high'
+    qc.return_value = failed_gate('colorMaterial')
+    source = photo()
+    fp = pipeline.fingerprint(settings, [source], None, 'front')
+    # 배포 전 medium 후보 2장(화질 기록 없음)을 이어받아 세 번째만 high로 만든다.
+    progress = MemoryProgress({'phase': 'judged', 'attempts': 2, 'fingerprint': fp,
+                               'candidates': [{'attempt': 1}, {'attempt': 2}],
+                               'qc': {'judgments': [failed_gate('photographicPreparation'),
+                                                    failed_gate('constructionDesign')]}},
+                              photo('blue'), images={1: photo('red'), 2: photo('blue')})
+
+    selected, report = await pipeline.generate_verified(
+        settings, client, [source], target=None, direction='front', progress=progress)
+
+    assert client.generate_content_image.call_args.kwargs['openai_quality'] == 'high'
+    assert [c.get('imageQuality') for c in progress.state['candidates']] == [None, None, 'high']
+    assert report['publishedBestEffort'] is True and report['selectedAttempt'] == 1
+    assert selected.data == photo('red').data
+    assert report['imageQuality'] == 'medium'
 
 
 @sync_test

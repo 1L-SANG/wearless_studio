@@ -213,6 +213,9 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
         raise DetailShotRejected('detail_checkpoint_unavailable')
 
     image_quality = getattr(settings, 'product_detail_image_quality', 'medium')
+    # 최선 후보 발행 때 고른 후보의 실제 화질을 기록한다. 화질 기록 전 후보는 medium이었다.
+    candidate_qualities = {c.get('attempt'): c.get('imageQuality', 'medium')
+                           for c in state.get('candidates') or [] if isinstance(c, dict)}
     report = {'policyVersion': detail_output_qc.POLICY_VERSION,
               'promptVersion': PROMPT_VERSION, 'fingerprint': fp,
               'requestedGenerationModel': settings.model_product_detail,
@@ -271,6 +274,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
             if selected is None:
                 continue
             report.update(publishedBestEffort=True, selectedAttempt=attempt_number,
+                          imageQuality=candidate_qualities.get(attempt_number, 'medium'),
                           selectionRankVersion='severity-v1',
                           decision=judgment.get('decision', 'UNKNOWN'))
             await progress.finish(report, selected_attempt=attempt_number)
@@ -328,6 +332,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                     openai_preserve_input_bytes=True, openai_quality=image_quality)
                 candidate = InlineImage(response.mime, response.image)
                 await progress.save_candidate(candidate, fp, attempt, image_quality=image_quality)
+                candidate_qualities[attempt] = image_quality
                 for stale_error_field in ('reason', 'errorType', 'billable'):
                     report.pop(stale_error_field, None)
             except asyncio.CancelledError:
