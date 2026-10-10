@@ -112,10 +112,25 @@ Analysis {
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
   locked: boolean
+  frontClosure?: FrontClosure       // AG-01이 사진에서 판정한 앞 여밈. 서버 소유, 클라이언트 PATCH 금지. 없으면 판단 불가로 읽는다(ADR-0018)
   garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 콘티보드 이탈 시 필요할 때만 생성하고, 없으면 상세페이지 생성이 한 번 더 잰다. 클라이언트 PATCH 금지
 }
 // fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).
 // subCategory는 원피스에서 null, targetGenders는 일반 카테고리에서 비울 수 있으나 dress는 ['women']으로 정규화.
+
+FrontClosure {                     // ADR-0018
+  version: 1
+  kind: 'zipper' | 'button' | 'snap' | 'belt' | 'none' | 'unknown'
+  range: 'graded' | 'binary' | null // graded=다섯 칸, binary=전체 닫힘·전체 열림 두 칸, null=kind none
+  secondary: 'zipper' | 'button' | 'snap' | 'belt' | null  // 함께 있는 여밈. kind와 같을 수 없음
+  evidenceSlots: AngleSlot[]        // 여밈이 보인 사진 칸. unknown이면 빈 배열
+  note: string | null               // 내부 기록용 짧은 영어 메모(≤80자). 화면과 생성 지시에 쓰지 않는다
+}
+// 서버 고정 규칙: zipper·unknown → graded, belt → binary, none → null, button·snap → 모델 판정(없으면 graded).
+// none은 양쪽 앞 가장자리가 다 보이고 여밈 부품이 전혀 없을 때만. 형식 오류·누락·예전 분석은 unknown/graded.
+// 화면: none이면 열림 항목을 설명 없이 숨김, binary면 두 칸, 그 밖에는 다섯 칸.
+// 생성 직전 서버 값 맞춤: none → open. binary → closed·openToChest·partial은 closed, openToWaist·open은 open.
+// 여밈 종류는 생성 지시 문구에 넣지 않는다. 상품 사진이 정본이다.
 
 MatchClothing {
   id: string
@@ -184,7 +199,7 @@ StoryboardBlock {
   shot?: ShotType | ProductShotType
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
-  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
+  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락·모르는 값은 open (ADR-0018)
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
@@ -402,7 +417,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | ProductDirection | `front` `back` | 앞면/뒷면 | 내부 product 레시피용 ★ 카탈로그 승격 |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
 | ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 상품 전체 중 Detail 입력 사진 필요. 목표 색상에 없으면 타색 Detail의 구조·재질을 유지하고 색만 전환 |
-| **OuterClosureState** | `open` `partial` `closed` | 전체 열림/부분 열림/전체 닫힘 | 아우터 착용컷 전용. 누락 기본 `open`, 그 외 컷·카테고리에서는 무시 |
+| **OuterClosureState** | `closed` `openToChest` `partial` `openToWaist` `open` | 전체 닫힘/가슴까지/반만 열림/배까지/전체 열림 | 아우터 착용컷 전용. 화면 위에서 아래 순서. 누락·모르는 값은 `open`, 그 외 컷·카테고리에서는 무시. `openToChest`·`openToWaist`는 2026-10-10 추가, `partial`은 "명치 아래까지"로 뜻을 좁힘. 두 칸 옷은 `closed`·`open`만 쓴다(ADR-0018) |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
 | JobStatus | `idle` `running` `done` `error` | | 화면용 4값. 서버 job row는 `pending`(화면엔 진행 중) 추가, `cancelled` 없음(error 통일) — backend plan §2·§4 |
@@ -465,7 +480,7 @@ GenerationExample {
 - `pose`·`bg`는 선택적 전용 variant다. 전용 자산이 없으면 `all`로 대체하지 않으며, UI와 서버는 실제 발행된 variant만 사용 가능하다고 판단한다. 제품 `ghost | detail` 예시는 `all`만 사용한다.
 - 사용자가 고른 매칭 의류는 `styling | horizon | mirror` 모든 착용컷의 상품 고유 의류 기준이다. 판매 상품과 매칭 의류만 고유 디자인·색·구조의 근거로 쓰며, 이 둘이 제공하지 않은 코디 영역은 무지·무브랜드의 중립 기본 의류·신발로만 채울 수 있다. 제품 단독컷에는 매칭 의류를 적용하지 않는다.
 
-- **현행 추가**: `productDirections`, `productShotTypes`, `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key → 한국어)
+- **현행 추가**: `productDirections`, `productShotTypes`, `outerClosureStates`(아우터 열림 정도 5종, 화면 위에서 아래 순서. 항목은 `{ value, label, caption }`이며 caption은 카드 표시용: 가슴까지 열림, 배까지 열림), `measurementLabels`(key → 한국어)
 - **로컬 의미 계약**: `storyboardSections`, `contentRoles`에 해당하는 값과 라벨은 `storyboardTaxonomy.js`가 제공한다. 카탈로그 응답과 중복 저장하지 않는다. `contentRoles` 라벨은 콘티보드에는 노출하지 않고 에디터의 `새 이미지 추가` 등 별도 흐름에서만 사용한다.
 - **후속**: `editorInfoTypes`는 구매 정보 UI 구현 때 카탈로그에 추가한다(`TODO.md`).
 - **컷 종류 노출 범위**: `CutType`은 생성 레시피의 정본이다. 콘티 인스펙터는 현재 섹션에서 허용된 값만 쉬운 라벨로 직접 고르게 하되, 별도 사용자 분류 enum·상단 탭·페이지 섹션으로 복제하지 않는다.
@@ -527,7 +542,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
-  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open
+  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open. 칸 수 규칙은 콘티와 같다(ADR-0018)
   matchIds?: string[]              // 매칭 의류 — UI는 최대 1개(matchClothingMax, PRD §6.8), 착용컷 전용(제품컷은 빈 배열)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
