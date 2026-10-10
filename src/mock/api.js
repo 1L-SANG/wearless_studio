@@ -530,6 +530,8 @@ export const api = {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
       const a = normalizeAnalysisFit(clone(DB.analysis));
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
+      a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
+        range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };
       a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);

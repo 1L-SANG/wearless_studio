@@ -1,5 +1,7 @@
 import { canPlanSimilarCut, createSimilarCutBlock, inheritSimilarCutRecipes, reconcileSimilarCutMutation } from '@/lib/storyboardSimilarCuts.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
+import OuterClosureField from '@/components/OuterClosureField.jsx';
+import { normalizeOuterClosureState, outerClosureCaption, outerClosureRange } from '@/lib/outerClosure.js';
 /* =============================================================
    features/storyboard — ⑤ 콘티보드 (PRD §8)
    blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
@@ -231,21 +233,6 @@ export function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
   return targets.length === 1 ? targets[0] : null;
 }
 
-export function OuterClosureIcon({ state }) {
-  const edge = state === 'closed'
-    ? <path d="M24 18v32" />
-    : state === 'partial'
-      ? <path d="M18 18l6 10 6-10M24 28v22" />
-      : <path d="M18 18l6 16 6-16M18 34l-3 16M30 34l3 16" />;
-  return (
-    <svg className="outer-closure-icon" viewBox="0 0 48 56" aria-hidden="true">
-      <path d="M17 8l-9 7 5 12 4-4-2 27h18l-2-27 4 4 5-12-9-7-7 7z" />
-      {edge}
-      {state !== 'open' && <><circle cx="24" cy="32" r="1" /><circle cx="24" cy="39" r="1" /><circle cx="24" cy="46" r="1" /></>}
-    </svg>
-  );
-}
-
 function referenceFeedbackPatch(block, changes, catalogs) {
   if (!block) return changes;
   const exampleId = Object.prototype.hasOwnProperty.call(changes, 'exampleId') ? changes.exampleId : block.exampleId;
@@ -365,8 +352,7 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
   const loaded = loadedRecipes?.get(block.id) || null;
   // 방향·샷은 표시하지 않는다. 예시만 — 열었을 때 예시가 있었고 지금 다른 예시면 "변경".
   const exampleDiffers = !!loaded && !!loaded.exampleId && (block.exampleId || null) !== loaded.exampleId;
-  const closureOptions = catalogs.outerClosureStates || [];
-  const closure = closureOptions.find((option) => option.value === block.outerClosureState)?.label || '전체 열림';
+  const closure = outerClosureCaption(block.outerClosureState, outerClosureRange(catalogs.frontClosure), catalogs.outerClosureStates);
   const showClosure = clothingType === 'outer' && WORN_CUT_TYPES.has(block.cutType);
 
   return (
@@ -387,7 +373,7 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
         <span>{shot}</span>
-        {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
+        {showClosure && closure && <span title="아우터 열림 정도"> · {closure}</span>}
         {exampleDiffers && <span className="sb-val-changed" title="열었을 때와 다른 예시"> · 예시 변경</span>}
       </span>
       {colors.map((color) => (
@@ -1502,7 +1488,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     </div>
   );
 
-  const closureOptions = catalogs.outerClosureStates || [];
   const isMine = block.source === 'mine';
   const isProduct = block.cutType === 'product';
   const isMirror = block.cutType === 'mirror';
@@ -1606,8 +1591,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       exampleSelectionOrigin: 'user',
       refScope: pendingInSpace && recipePatch.cutType !== 'horizon' ? 'pose' : 'all',
       outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(recipePatch.cutType)
-        ? (closureOptions.some((option) => option.value === current.outerClosureState)
-          ? current.outerClosureState : 'open')
+        ? normalizeOuterClosureState(current.outerClosureState)
         : null,
       ...(recipePatch.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
       // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
@@ -1664,7 +1648,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     return undefined;
   };
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
-  const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
+  const outerClosureState = normalizeOuterClosureState(block.outerClosureState);
   return (
     <div className="surface inspector">
       {isMine && !block.spaceGroupId ? (
@@ -1790,23 +1774,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       )}
 
       {showOuterClosure && (
-        <div className="insp-sec outer-closure-field">
-          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도</div>
-          <div className="outer-closure-options" role="radiogroup" aria-labelledby={`outer-closure-label-${block.id}`}>
-            {closureOptions.map((option) => {
-              const on = outerClosureState === option.value;
-              return (
-                <label key={option.value} className={`outer-closure-option${on ? ' on' : ''}`}>
-                  <input type="radio" name={`outer-closure-${block.id}`} value={option.value}
-                    checked={on} onChange={() => onChange({ outerClosureState: option.value })} />
-                  <OuterClosureIcon state={option.value} />
-                  <span>{option.label}</span>
-                </label>
-              );
-            })}
-          </div>
-          <p className="outer-closure-hint">이 컷에서 아우터의 앞부분을 얼마나 열지 정해요.</p>
-        </div>
+        <OuterClosureField id={`outer-closure-${block.id}`} value={outerClosureState}
+          onChange={(value) => onChange({ outerClosureState: value })} frontClosure={catalogs.frontClosure} />
       )}
 
       <div className="insp-sec"><label className="lbl">대상 색상</label>
@@ -1896,7 +1865,8 @@ function prepareStoryboardEntry(
   const p = product;
   const a = analysis;
   const hydratedCatalogs = { ...withStoryboardSpaceSetExamples(rawCatalogs),
-    detailProduct: p, detailRecommendations: a?.detailRecommendations, garmentColorEvidence: a?.garmentColorEvidence };
+    detailProduct: p, detailRecommendations: a?.detailRecommendations, garmentColorEvidence: a?.garmentColorEvidence,
+    frontClosure: a?.frontClosure };
   const hasDetailImage = hasDetailSource(p);
   const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
