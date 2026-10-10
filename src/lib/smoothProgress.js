@@ -30,8 +30,6 @@ export const EXPECTED_MS = {
   detailPage: 270000,
   /** 마네킹컷 생성 — 대기화면이 40초에 장기 대기 안내를 띄우는 기준(Mannequin.jsx). */
   mannequin: 45000,
-  /** 상품 분석의 마지막 "결과 대기" 단계 — 앞 4단계 10초를 뺀 꼬리(실측 12~22초 기준). */
-  analysisWait: 8000,
   /** 그 밖의 이미지 잡 — 근거 없는 곳의 보수적 기본값. */
   default: 60000,
 };
@@ -85,35 +83,27 @@ export function initialProgressState(startedAt = 0) {
   };
 }
 
-/* ── 단계형 진행 (분석 대기) ────────────────────────────────────────────────
-   위의 잡 진행바와는 다른 모델이다. 분석은 단계마다 예정 시간이 이미 정해져 있어
-   (AnalysisForm.STEP_DUR) 서버를 추측할 필요가 없다.
+/* 분석 대기: 오너 9/15·10/10 지적대로 초반 등속, 늦은 결과는 완만한 꼬리로 기다린다.
+   9/15~10/10 약 20건의 서버 실측은 중앙 7.4초, 상위 25% 10초·10% 13초, 최대 16초.
+   임시저장 0.5~1초를 더해 8초에 80%로 잡고, 결과 뒤 속도는 기본의 2.5배로 제한한다. */
+const ANALYSIS_RATE = 10 / 1000;          // %/ms, 20%씩 2초
+const ANALYSIS_FINISH_RATE = 25 / 1000;   // %/ms, 20%씩 0.8초
+const ANALYSIS_LINEAR_END = 80;
+const ANALYSIS_LINEAR_MS = ANALYSIS_LINEAR_END / ANALYSIS_RATE;
 
-   여기에 점근 곡선을 쓰면 안 된다. 곡선은 뒤로 갈수록 느려지는데 단계는 20% 씩 균등하게
-   올라오니, 단계가 끝날 때마다 생기는 따라잡기 폭이 점점 커진다(실측 +1.4 → +7 → +12.6
-   → +18.3). 바가 뒤에서 갑자기 빨라지는 것처럼 읽힌다 — 오너 피드백 2026-08-14.
-
-   그래서 단계마다 같은 몫(1/n)을 그 단계의 예정 시간 동안 **선형으로** 채운다.
-   칸 경계에서 다음 칸의 시작과 정확히 만나므로 단계가 바뀌어도 튀지 않는다. */
-export function steppedProgress({
-  stepIndex, stepCount, stepElapsedMs, plannedMs, waitExpectedMs,
-  ceiling = PROGRESS_CEILING,
-}) {
-  const count = Math.max(0, Number(stepCount) || 0);
-  if (count <= 0) return 0;
-  if (stepIndex >= count) return 100;          // 전 단계 완료
-  const segment = 100 / count;
-  const start = Math.max(0, Number(stepIndex) || 0) * segment;
-  const elapsed = Math.max(0, Number(stepElapsedMs) || 0);
-
-  // 예정 시간이 없는 단계 = 결과가 도착해야 끝나는 대기. 칸을 넘지 않으면서 계속 기어간다.
-  if (!(Number(plannedMs) > 0)) {
-    return Math.min(ceiling, creepTarget({
-      base: start, ageMs: elapsed, expectedMs: waitExpectedMs, ceiling,
-    }));
+/** elapsedMs 는 마운트부터의 시간. 결과가 오면 그 시각과 표시값을 고정해 이어간다. */
+export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue = 0 }) {
+  const elapsed = Math.max(0, elapsedMs);
+  if (resultAtMs !== null && elapsed >= resultAtMs) {
+    return Math.min(100, resultValue + (elapsed - resultAtMs) * ANALYSIS_FINISH_RATE);
   }
-  const planned = Number(plannedMs);
-  return Math.min(start + segment, start + segment * (elapsed / planned));
+  if (elapsed <= ANALYSIS_LINEAR_MS) return elapsed * ANALYSIS_RATE;
+
+  // k를 남은 폭/기본 속도로 두면 80% 경계에서도 같은 속도로 출발한다.
+  const tail = PROGRESS_CEILING - ANALYSIS_LINEAR_END;
+  const age = elapsed - ANALYSIS_LINEAR_MS;
+  const k = tail / ANALYSIS_RATE;
+  return ANALYSIS_LINEAR_END + tail * age / (age + k);
 }
 
 /* 한 프레임 진행 — 상태를 받아 다음 상태를 돌려주는 순수 리듀서. 훅은 이걸 rAF 로 돌리기만 한다. */
