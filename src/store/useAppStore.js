@@ -19,7 +19,7 @@ import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
-import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
+import { incompleteFailurePatch, incompleteMessage } from '@/lib/detailPageJobFailure.js';
 import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import { initialGenerationAttempts } from '@/features/mannequin/initialGenerationAttempts.js';
@@ -610,17 +610,20 @@ export const useAppStore = create((set, get) => ({
       // store 에서 지우고, 서버가 해제한 예약 잔액을 새로 읽는다.
       // 부분 실패(incomplete_cuts, 2026-09-28)는 그 위에 완성 컷 '완성됐어요' 표식(주소 없음 — 그림은
       // 미리보기 라우트가 보관본에서)과 실패 표식·요약을 덧씌운다. 과금·해제는 서버 그대로(#420).
+      const failurePatch = incompleteFailurePatch(job);
+      const failureMessage = (job.errorMessage ? jobFailureMessage(job.errorMessage, { code: job.result?.errorCode || job.errorCode }) : '')
+        || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.');
       patch({
         status: 'error',
         slow: false,
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
         cuts: {},
         live: [],
-        errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage, { code: job.result?.errorCode || job.errorCode }) : '')
-          || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
+        // 보관함의 공통 리본도 에디터와 같은 만료 판정과 문구를 사용한다.
+        errorMessage: incompleteMessage(failurePatch.incomplete, failureMessage),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
         error: jobFailure(job),
-        ...incompleteFailurePatch(job),
+        ...failurePatch,
       });
       void get().loadAccount({ force: true }).catch(() => {});
     } catch (e) {
