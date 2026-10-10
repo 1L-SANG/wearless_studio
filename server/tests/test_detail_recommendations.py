@@ -190,7 +190,7 @@ def test_analysis_core_persists_original_binding_and_sends_only_summary(monkeypa
     from app.workers import analyze_job
     from conftest import make_settings
 
-    async def analyze(*args):
+    async def analyze(*args, **kwargs):
         return {"product": {"clothingType": "top"}, "analysis": {}, "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini"
 
     async def extract(*args, **kwargs):
