@@ -913,7 +913,9 @@ export const api = {
       draft.editorBlocks = blocks; draft.project.status = 'done';
       draft.project.updatedAt = new Date().toISOString();
       if (DB.project.id === job.projectId) DB.editorBlocks = blocks;
-      const aiCuts = uniqueGenerationCutCount(draft.storyboard);
+      const aiCuts = uniqueGenerationCutCount(draft.storyboard, {
+        clothingType: draft.product?.clothingType, frontClosure: draft.analysis?.frontClosure,
+      });
       job.result = { data: clone(blocks), credits: spend(detailPageCreditCost(aiCuts)) };
       job.progress = 100; job.status = 'done';
       draft.project.latestJobs.detailPage.status = 'done';
@@ -960,7 +962,9 @@ export const api = {
       DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
-      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
+      const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
+        clothingType: DB.product?.clothingType, frontClosure: DB.analysis?.frontClosure,
+      });
       return { data: clone(DB.editorBlocks), credits: spend(detailPageCreditCost(aiCuts)) };
     })());
     job.listeners.push({ onProgress, onStep });

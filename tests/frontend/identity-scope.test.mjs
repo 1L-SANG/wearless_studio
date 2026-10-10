@@ -213,7 +213,7 @@ test('콘티보드가 범위를 실제로 쓴다(배선 고정)', () => {
   assert.match(board, /rejectionOfBlock\(block, identityKind\)/);
   assert.match(board, /rejectionOfSection\(sectionRole, identityKind\)/);
   // 견적도 서버 예약과 같은 수를 본다.
-  assert.match(board, /uniqueGenerationCutCount\(blocksForModel\(blocks, identityKind\)\)/);
+  assert.match(board, /uniqueGenerationCutCount\(blocksForModel\(blocks, identityKind\),\s*\{\s*clothingType, frontClosure: catalogs\?\.frontClosure/);
 
   const placement = readFileSync(new URL('../../src/lib/storyboardEntryPlacement.js', import.meta.url), 'utf8');
   assert.match(placement, /filterSpaceSetsForModel\(/);

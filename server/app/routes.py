@@ -1242,7 +1242,12 @@ async def promote_confirmed_gpt_evidence(
                 "analysis_handoff_source_drift",
                 "분석 후 상품 사진이 달라졌어요. 현재 사진으로 다시 분석해 주세요.",
             )
-        await repo.save_confirmed_gpt_product_evidence(conn, project_id, contract)
+        # 서명 전체와 원본 사진을 검증한 뒤에만 동봉된 여밈 판정을 저장한다.
+        closure = handoff.get("frontClosure")
+        await repo.save_confirmed_gpt_product_evidence(
+            conn, project_id, contract,
+            **({"front_closure": closure} if closure is not None else {}),
+        )
         await conn.commit()
     return {"promoted": True}
 
@@ -3593,7 +3598,7 @@ async def generate_detail_page(
             code, message = (identity_scope.block_rejection(rejected, selected_model_id)
                              or (identity_scope.MISMATCH_CODE, identity_scope.MISMATCH_MESSAGE))
             raise _bad_request(code, message)
-        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
+        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
         ai_count = sum(1 for source in dup_sources if source is None)
         min_cuts = s.credit_min_storyboard_cuts
         billable = max(ai_count, min_cuts) if ai_count > 0 else 0

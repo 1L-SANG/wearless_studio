@@ -112,7 +112,7 @@ Analysis {
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
   locked: boolean
-  frontClosure?: FrontClosure       // AG-01이 사진에서 판정한 앞 여밈. 서버 소유, 클라이언트 PATCH 금지. 없으면 판단 불가로 읽는다(ADR-0018)
+  frontClosure?: FrontClosure       // AG-01이 사진에서 판정한 앞 여밈. 서버 소유, 클라이언트 PATCH 금지. 공개 분석은 기존 상품 증거 인계 봉투에 함께 서명해 원본 검증 후 저장한다. 없으면 판단 불가로 읽는다(ADR-0018)
   garmentColorEvidence?: GarmentColorSummary // 서버가 사진에서 측정한 공개 요약. 콘티보드 이탈 시 필요할 때만 생성하고, 없으면 상세페이지 생성이 한 번 더 잰다. 클라이언트 PATCH 금지
 }
 // fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).

@@ -793,7 +793,9 @@ export function Mannequin() {
       setCatalogs(nextCatalogs);
       setCreditQuote(nextCreditQuote);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
-      setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
+      setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard, {
+        clothingType: nextProduct?.clothingType, frontClosure: nextAnalysis?.frontClosure,
+      }) : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);

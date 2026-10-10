@@ -1147,18 +1147,23 @@ async def save_confirmed_gpt_product_evidence(
     conn: AsyncConnection,
     project_id: str,
     contract: dict,
+    *,
+    front_closure: dict | None = None,
 ) -> dict:
     """Persist a verified public-analysis handoff without exposing a client write path."""
 
+    update = "jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)"
+    params = [Json(contract)]
+    if front_closure is not None:
+        from .agents.outer_closure import front_closure_of
+
+        update = f"jsonb_set({update}, '{{frontClosure}}', %s::jsonb, true)"
+        params.append(Json(front_closure_of({"frontClosure": front_closure})))
+    params.append(project_id)
     async with conn.cursor() as cur:
         await cur.execute(
-            """
-            update analyses
-            set payload = jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)
-            where project_id = %s
-            returning payload
-            """,
-            (Json(contract), project_id),
+            f"update analyses set payload = {update} where project_id = %s returning payload",
+            params,
         )
         row = await cur.fetchone()
     if row is None:

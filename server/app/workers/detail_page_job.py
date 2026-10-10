@@ -203,8 +203,18 @@ def _incomplete_cuts_message(requested: int, failed: int, retained: int) -> str:
     return f"{head} {credit} 다시 시도하면 컷을 새로 만들어요."
 
 
+def _runtime_outer_closure(block: dict, clothing_type: str, front_closure: dict, *,
+                           confirmed: bool = False) -> dict:
+    if (not confirmed and cut_generator._is_outer(clothing_type)
+            and block.get("cutType", "styling") in _WORN_CUT_TYPES):
+        return {**block, "outerClosureState": outer_closure.effective_state(
+            block.get("outerClosureState") or block.get("outer_closure_state"), front_closure)}
+    return block
+
+
 def _duplicate_source_indexes(
     blocks: list[dict], clothing_type: str, skipped: frozenset[int] | set[int] | None = None,
+    *, analysis: dict | None = None,
 ) -> list[int | None]:
     """생성 계약이 완전히 같은 뒤쪽 블록 → 앞쪽 원본 인덱스 매핑.
 
@@ -217,6 +227,7 @@ def _duplicate_source_indexes(
     first_by_key: dict[str, int] = {}
     sources: list[int | None] = []
     skipped = skipped or frozenset()
+    front_closure = outer_closure.front_closure_of(analysis)
     for index, block in enumerate(blocks):
         source = None
         # 건너뛰는 컷은 원본이 될 수 없다 — 원본이 되면 같은 레시피의 뒤 컷이 "복제"로 접혀
@@ -231,6 +242,10 @@ def _duplicate_source_indexes(
                     dict(block), clothing_type=clothing_type
                 )
                 spec = cut_generator.apply_reference_compatibility(spec)
+                if analysis is not None:
+                    spec = _runtime_outer_closure(
+                        spec, clothing_type, front_closure,
+                        confirmed=confirmed_gpt_runtime.profile_requested(spec))
             except ValueError:
                 spec = None
             if spec is not None and not spec.get("spaceGroupId"):
@@ -409,12 +424,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             hydrated.append((block, [], "", original[3], original[4]))
         else:
             confirmed_packet = item[8] if len(item) > 8 else None
-            if (confirmed_packet is None and not isinstance(item, _SkippedCut)
-                    and cut_generator._is_outer(clothing_type)
-                    and block.get("cutType", "styling") in _WORN_CUT_TYPES):
-                # 저장 블록 대신 이번 생성의 복사본에만 맞춘다.
-                block = {**block, "outerClosureState": outer_closure.effective_state(
-                    block.get("outerClosureState") or block.get("outer_closure_state"), front_closure)}
+            if not isinstance(item, _SkippedCut):
+                # 예약과 같은 열림 규칙을 이번 생성의 복사본에만 적용한다.
+                block = _runtime_outer_closure(
+                    block, clothing_type, front_closure, confirmed=confirmed_packet is not None)
                 item = (block, *item[1:])
             hydrated.append(item)
     prepared = hydrated
@@ -2606,12 +2619,11 @@ async def run_detail_page_job(app, job: dict) -> None:
         if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
             per_cut = s.credit_cost_storyboard_per_cut
         min_cuts = metadata.get("minCuts")
-        requested = metadata.get("aiCount")
         billable = len(cut_assets)
         # 전량 완성된 소량 요청은 최소 컷 수로 정산한다.
         # minCuts 스냅샷이 없는 기존 잡은 성공 컷 수만큼 정산한다.
-        if min_cuts is not None and requested is not None and 0 < requested < min_cuts and billable > 0:
-            billable = min_cuts
+        if min_cuts is not None and billable > 0:
+            billable = max(billable, min_cuts)
         charge = min(billable * per_cut, reserved)
         success_metadata = {
             "creditCostVersion": s.credit_cost_version,

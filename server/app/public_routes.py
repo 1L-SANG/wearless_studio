@@ -190,9 +190,11 @@ async def public_analyze(
     )
     if evidence is not None:
         try:
+            closure = (core.get("analysis_payload") or {}).get("frontClosure")
             data[product_evidence_contract.HANDOFF_KEY] = (
                 product_evidence_contract.issue_handoff(
-                    evidence, request.app.state.settings.r2_secret_access_key
+                    evidence, request.app.state.settings.r2_secret_access_key,
+                    **({"front_closure": closure} if closure is not None else {}),
                 )
             )
         except product_evidence_contract.ProductEvidenceContractError:
