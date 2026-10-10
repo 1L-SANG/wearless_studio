@@ -845,9 +845,12 @@ export function AnalysisForm({
     setMeasurementDraft({ clothingType: t, values: {} });
     const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
     const targetGenders = normalizeTargetGendersForClothingType(t, a.targetGenders);
+    const subCategory = subCategoriesFor(t, targetGenders)[0]?.value ?? null;
     onChange(withFitProfile({
       clothingType: t,
-      subCategory: subCategoriesFor(t, targetGenders)[0]?.value ?? null,
+      subCategory,
+      // 칩과 직접 입력은 배타다. 칩이 자동 선택되면 직접 입력 이름이 테두리 없이 남지 않게 비운다.
+      ...(subCategory ? { customCategory: null } : {}),
       targetGenders,
       measurements: createMeasurementFields(t),
       matchClothing,
