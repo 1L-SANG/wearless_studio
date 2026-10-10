@@ -152,8 +152,11 @@ for (const [caller, patch] of [
 
 test('M7 fresh empty projects persist a delta without needing a cached full body', async () => {
   const h = analysisAdapter({ cached: null, server: {} });
-  assert.deepEqual(await h.adapter.saveAnalysis('empty', { selectedModelId: 'new-model' }), { selectedModelId: 'new-model' });
+  assert.deepEqual(await h.adapter.saveAnalysis('empty', { selectedModelId: 'new-model' }), {
+    selectedModelId: 'new-model', frontClosure: null,
+  });
   assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.calls[0].options.body, { selectedModelId: 'new-model' });
 });
 
 test('M7 selection uses latest candidates and transmits only the resulting array; empty and null remove deliberately', async () => {

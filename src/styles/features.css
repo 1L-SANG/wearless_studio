@@ -1153,19 +1153,61 @@
 .color-dot:hover { box-shadow: 0 0 0 1px var(--ring-strong); }
 .color-dot.on { box-shadow: 0 0 0 2px var(--fg-1); }
 
-/* 아우터 열림 정도 — 선택 해제가 없는 3지선다 */
-.outer-closure-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-.outer-closure-option { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 5px; padding: 9px 5px 8px;
-  position: relative; border-radius: var(--r-4); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong);
-  color: var(--fg-2); font-size: 11.5px; font-weight: 600; cursor: pointer; transition: color .14s, box-shadow .14s, background .14s; }
-.outer-closure-option > input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
-.outer-closure-option:hover { color: var(--fg-1); background: var(--bg-2); }
-.outer-closure-option.on { color: var(--fg-1); background: var(--bg-1); box-shadow: 0 0 0 1.5px var(--fg-1); }
-.outer-closure-option:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.outer-closure-icon { width: 34px; height: 40px; overflow: visible; }
-.outer-closure-icon path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.outer-closure-icon circle { fill: currentColor; }
-.outer-closure-hint { margin: 7px 0 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.45; }
+/* 아우터 열림 정도: 콘티와 에디터가 공유하는 지퍼 레일 */
+.outer-closure-field { position: relative; }
+.outer-closure-head { display: flex; align-items: center; margin-bottom: 10px; }
+.outer-closure-head > .lbl { margin: 0; white-space: nowrap; text-wrap: balance; }
+.outer-closure-control {
+  --outer-closure-height: 140px;
+  --outer-closure-step: 28px;
+  display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px;
+}
+.outer-closure-control[data-range="binary"] { --outer-closure-height: 68px; --outer-closure-step: 40px; }
+.outer-closure-rail {
+  position: relative; width: 36px; height: var(--outer-closure-height); border-radius: var(--r-4);
+  cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
+}
+.outer-closure-control.dragging { user-select: none; -webkit-user-select: none; }
+.outer-closure-control.dragging .outer-closure-rail { cursor: grabbing; }
+.outer-closure-rail:focus { outline: none; }
+.outer-closure-rail:focus-visible { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--focus); }
+.outer-closure-rail[data-pointer]:focus-visible { box-shadow: none; }
+.outer-closure-rail svg { display: block; width: 36px; height: var(--outer-closure-height); overflow: visible; }
+.outer-closure-tape { fill: none; stroke: var(--fg-3); stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+.outer-closure-teethbase { fill: none; stroke: var(--bg-1); stroke-width: 6; }
+.outer-closure-teeth { fill: none; stroke: var(--fg-1); stroke-width: 5; stroke-dasharray: 1.5 1.6; }
+.outer-closure-teeth.open { stroke-width: 2.6; stroke: var(--fg-2); }
+.outer-closure-stopper { fill: var(--bg-1); stroke: var(--fg-2); stroke-width: 1; stroke-linejoin: round; }
+.outer-closure-pull-body { fill: var(--bg-1); stroke: var(--fg-1); stroke-width: 1.5; transition: fill 150ms; }
+.outer-closure-pull-slot { stroke: var(--fg-1); stroke-width: 1.5; stroke-linecap: round; transition: stroke 150ms; }
+.outer-closure-hit { fill: transparent; }
+.outer-closure-rail:hover .outer-closure-pull-body,
+.outer-closure-control.dragging .outer-closure-pull-body,
+.outer-closure-rail:focus-visible .outer-closure-pull-body { fill: var(--fg-1); }
+.outer-closure-rail:hover .outer-closure-pull-slot,
+.outer-closure-control.dragging .outer-closure-pull-slot,
+.outer-closure-rail:focus-visible .outer-closure-pull-slot { stroke: var(--bg-1); }
+.outer-closure-stops { position: relative; height: var(--outer-closure-height); }
+.outer-closure-stop {
+  position: absolute; left: 0; top: calc(14px + var(--outer-closure-index) * var(--outer-closure-step)); transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px;
+  border: 0; border-radius: var(--r-pill); background: transparent; color: var(--fg-2);
+  font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer;
+  transition: background 150ms, color 150ms, box-shadow 150ms;
+}
+.outer-closure-stop[data-index="0"] { --outer-closure-index: 0; }
+.outer-closure-stop[data-index="1"] { --outer-closure-index: 1; }
+.outer-closure-stop[data-index="2"] { --outer-closure-index: 2; }
+.outer-closure-stop[data-index="3"] { --outer-closure-index: 3; }
+.outer-closure-stop[data-index="4"] { --outer-closure-index: 4; }
+.outer-closure-stop::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: transparent; flex: none; margin-left: -2px; }
+.outer-closure-stop:hover { color: var(--fg-1); background: var(--bg-2); }
+.outer-closure-stop.near { box-shadow: 0 0 0 1px var(--fg-3); color: var(--fg-1); }
+.outer-closure-stop.on { color: var(--fg-1); font-weight: 700; background: color-mix(in srgb, var(--fg-1) 7%, var(--bg-1)); box-shadow: 0 0 0 1px var(--fg-1); }
+.outer-closure-stop.on::before { background: var(--fg-1); }
+@media (prefers-reduced-motion: reduce) {
+  .outer-closure-stop, .outer-closure-pull-body, .outer-closure-pull-slot { transition: none; }
+}
 
 /* mood guide — single-row horizontal scroll */
 .mood-hscroll { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
@@ -2223,7 +2265,7 @@
 .sb-pending-recipe { padding: 10px; border-radius: 10px; background: var(--bg-2); }
 
 /* 한 페이지 3×2, 6장씩 가로로 넘김, 세로 휠은 인스펙터로(2026-08-16), 2026-10-10 복원. */
-.sb-exgallery { position: relative; padding-inline: 0; outline: none; display: flex; flex-direction: column; }
+.sb-exgallery { position: relative; padding-inline: 0; outline: none; display: flex; flex-direction: column; margin-top: 2px; }
 .sb-exgallery:focus-visible { border-radius: 10px; box-shadow: 0 0 0 2px var(--link); }
 .sb-exgrid {
   display: flex; align-items: flex-start; gap: 10px; min-width: 0; transition: opacity .15s;

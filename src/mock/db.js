@@ -142,7 +142,11 @@ const catalogs = {
     { value: 'ghost', label: '고스트샷' }, { value: 'detail', label: '디테일샷' },
   ],
   outerClosureStates: [
-    { value: 'open', label: '전체 열림' }, { value: 'partial', label: '부분 열림' }, { value: 'closed', label: '전체 닫힘' },
+    { value: 'closed', label: '전체 닫힘', caption: '전체 닫힘' },
+    { value: 'openToChest', label: '가슴까지', caption: '가슴까지 열림' },
+    { value: 'partial', label: '반만 열림', caption: '반만 열림' },
+    { value: 'openToWaist', label: '배까지', caption: '배까지 열림' },
+    { value: 'open', label: '전체 열림', caption: '전체 열림' },
   ],
   // 2026-08-07 개편: Fit 폐기(실사용 0건) → 뒷면 디테일 신설. Detail 값=앞면 디테일(재해석).
   angleSlots: ['Front', 'Back', 'Detail', 'BackDetail'],
@@ -600,6 +604,8 @@ export function buildDraft() {
     // 실제 분석이 절대 내지 않는 값이라, mock 화면을 실분석으로 오인하게 만들던 흔적을 제거(2026-07-15).
     materials: [{ name: '아크릴', ratio: 100 }],
     sellingPoints: [],
+    frontClosure: { version: 1, kind: product.clothingType === 'outer' ? 'zipper' : 'unknown',
+      range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null },
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
     detailRecommendationsHandoff: null,
     aiSuggestedPoints: ['골지 짜임', '라운드넥'],
