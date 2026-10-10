@@ -367,7 +367,7 @@ def _side_style_of(source: dict) -> str:
 
     사선(threeQuarter)은 2026-09-21에 생긴 값이다. 그 전에 발행된 side 예시는 전부
     완전 옆모습이었으므로(카탈로그 전수조사: 사선 0장) 미기재를 profile 로 읽는 것이
-    실제 자산과 일치한다. 프론트 directionChoiceFromSpec 의 기본값과도 같다.
+    실제 자산과 일치한다.
     """
     value = source.get("sideStyle") or source.get("side_style")
     return value if value in SIDE_STYLES else "profile"

@@ -447,6 +447,8 @@ def validate(raw: dict, *, evidence_binding: dict | None = None,
     custom = _sanitize(raw.get("customCategory"))[:20]
     if custom and custom.lower() in SUBCATEGORIES:
         custom = ""
+    if sub_category is not None:
+        custom = ""
     # measurements 키는 어떤 경로로도 포함하지 않는다(서버 강제 부재 — PRD §6.5/§15.4).
     out = {
         "clothingType": clothing_type,

@@ -309,11 +309,6 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .chip:hover { color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
 .chip.on { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; font-weight: 600; }
 .chip.on:hover { box-shadow: var(--elev-lift), 0 0 0 1.5px #6ba8e6; }
-/* 방향 칩(정면·사선·옆모습·뒷면)만 — 미선택도 "누를 수 있다"가 보이게 흰 배경+테두리.
-   기본 칩(회색 글씨+회색 배경)은 비활성처럼 읽혀 "왜 회색이냐"가 됐다(2026-09-22 오너). */
-.chips.direction-chips .chip { color: var(--fg-1); background: #fff; box-shadow: 0 0 0 1px #dedde3; }
-.chips.direction-chips .chip:hover { box-shadow: 0 0 0 1px var(--ring-strong); }
-.chips.direction-chips .chip.on { box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
 .chip.on .chip-x { opacity: .6; }
 .chip-x { display: inline-flex; cursor: pointer; }
 /* 칩 줄 안의 '직접 입력' pill — 버튼 칩과 같은 외형의 input (분석 폼 세부 카테고리).
@@ -434,12 +429,12 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 
 /* ====================== TOAST ====================== */
 .toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
-/* glow 4색을 약하게 두른 테두리 (흰 배경 위, 천천히 순환) */
+/* 랜딩 히어로 영상과 같은 더스티 블루 테두리 (흰 배경 위, 천천히 순환) */
 .toast { display: flex; align-items: center; gap: 11px; color: var(--fg-1); padding: 12px 16px;
   border-radius: var(--r-4); font-size: 14px; font-weight: 500; border: 1.5px solid transparent;
   background:
     linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--sp-ang, 0deg), var(--ring-flow-stops)) border-box;
   box-shadow: var(--elev-lift);
   animation: toastIn .28s cubic-bezier(.22,.61,.36,1), spChipSpin 14s linear infinite; max-width: 360px; }
 .toast.clickable { cursor: pointer; }

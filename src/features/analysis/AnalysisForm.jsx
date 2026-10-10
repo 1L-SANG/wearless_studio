@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
-import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
+import { analysisWaitProgress } from '@/lib/smoothProgress.js';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
@@ -48,25 +48,43 @@ import {
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
-// 2026-07-16 prod 실측(의류 5종·사진 1~3장 7회 벤치): 클릭→완료 = 업로드 3.5~11s +
-// 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s. 기다림 초반에 진행감을 분명히 주도록
-// 앞 4단계를 3.2초 안에 채우고, 실제 결과가 늦으면 마지막 단계가 남은 시간을 흡수한다.
-//
-// 결과가 먼저 도착해도 남은 단계만 갑자기 빨라지지 않는다. 모든 단계가 같은 800ms와 같은
-// 20% 몫을 써서 처음부터 끝까지 일정한 속도로 완주한 뒤 onFinished가 화면을 전환한다.
-// 분석이 늦으면 마지막 단계 스피너로 은은히 대기(멈춘 느낌 방지).
+// 마운트부터 하나의 시간 모델로 바와 체크를 함께 그린다(analysisWaitProgress).
+// 앞 4단계는 2초씩 등속, 이후에는 서서히 감속하고 결과가 오면 현재 값부터 마무리한다.
 // 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
 const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
-const STEP_MS = 800;
 
 const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
 
 export function AnalysisProgress({ photoSrc, done, onFinished }) {
-  const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
+  const [barPercent, setBarPercent] = useState(0);
   const [slow, setSlow] = useState(false);         // 20초+ 지연 — 멈춤으로 오해받지 않게 문구만 교체
+  const startedAtRef = useRef(null);
+  const resultRef = useRef(null);
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
+
+  useEffect(() => {
+    startedAtRef.current ??= performance.now();
+    let raf = 0;
+    const tick = () => {
+      const value = analysisWaitProgress({
+        elapsedMs: performance.now() - startedAtRef.current,
+        resultAtMs: resultRef.current?.at ?? null,
+        resultValue: resultRef.current?.value ?? 0,
+      });
+      setBarPercent(value);
+      if (value < 100) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    if (!done || resultRef.current !== null) return;
+    const elapsedMs = performance.now() - startedAtRef.current;
+    resultRef.current = { at: elapsedMs, value: analysisWaitProgress({ elapsedMs }) };
+  }, [done]);
 
   useEffect(() => {
     if (done) { setSlow(false); return undefined; }
@@ -74,41 +92,17 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     return () => clearTimeout(t);
   }, [done]);
 
-  // 마지막 단계는 타이머 없이 결과를 기다린다 — 예정 시간이 없다는 뜻으로 null 을 넘긴다.
-  const waitingForResult = !done && doneCount === ANALYZE_STEPS.length - 1;
-  const plannedMs = waitingForResult ? null : STEP_MS;
-
-  /* 지금 칸의 시계가 언제 시작됐는지. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터
-     새 칸을 채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 튄다).
-
-     단계 번호뿐 아니라 **예정 시간이 바뀔 때도** 시계를 다시 건다. 마지막 단계에서
-     결과가 도착하면 무기한 대기(null)에서 800ms 완주로 바뀌므로 그때 새 시계를 시작한다. */
-  const stepRef = useRef({ key: '', at: Date.now() });
-  const stepKey = `${doneCount}:${plannedMs}`;
-  if (stepRef.current.key !== stepKey) stepRef.current = { key: stepKey, at: Date.now() };
-
   useEffect(() => {
-    if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 짧은 여운 후 전환
+    if (barPercent < 100 || finishedRef.current) return;
+    const t = setTimeout(() => {
       if (finishedRef.current) return;
       finishedRef.current = true;
-      const t = setTimeout(() => onFinishedRef.current?.(), 240);
-      return () => clearTimeout(t);
-    }
-    // 마지막 단계는 결과가 도착해야만 완료 — 그 전엔 스피너 유지 (분석 최대시간 커버)
-    if (plannedMs === null) return;
-    // 결과가 중간에 도착해 effect가 다시 돌아도 현재 단계의 시계를 되감지 않는다.
-    const elapsed = Date.now() - stepRef.current.at;
-    const remaining = Math.max(0, plannedMs - elapsed);
-    const t = setTimeout(() => setDoneCount((n) => n + 1), remaining);
+      onFinishedRef.current?.();
+    }, 240);
     return () => clearTimeout(t);
-  }, [doneCount, done, plannedMs]);
+  }, [barPercent]);
 
-  const barPercent = useSteppedProgress({
-    stepIndex: doneCount,
-    stepCount: ANALYZE_STEPS.length,
-    stepStartedAt: stepRef.current.at,
-    plannedMs,
-  });
+  const doneCount = Math.floor(barPercent / (100 / ANALYZE_STEPS.length));
 
   return (
     <div className="ap-stage surface">
@@ -122,8 +116,7 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
             <span className="ap-dot" />{s}
           </div>
         ))}
-        {/* 단계마다 같은 몫을 그 단계의 예정 시간 동안 균등하게 채운다(steppedProgress).
-            숫자는 여전히 안 쓴다 — 마네킹 대기화면과 동일 결정. */}
+        {/* 체크는 바가 20% 경계를 지날 때 함께 바뀐다. 퍼센트 숫자는 표시하지 않는다. */}
         <div className="ap-bar"><i style={{ width: `${barPercent}%` }} /></div>
       </div>
     </div>
@@ -852,9 +845,12 @@ export function AnalysisForm({
     setMeasurementDraft({ clothingType: t, values: {} });
     const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
     const targetGenders = normalizeTargetGendersForClothingType(t, a.targetGenders);
+    const subCategory = subCategoriesFor(t, targetGenders)[0]?.value ?? null;
     onChange(withFitProfile({
       clothingType: t,
-      subCategory: subCategoriesFor(t, targetGenders)[0]?.value ?? null,
+      subCategory,
+      // 칩과 직접 입력은 배타다. 칩이 자동 선택되면 직접 입력 이름이 테두리 없이 남지 않게 비운다.
+      ...(subCategory ? { customCategory: null } : {}),
       targetGenders,
       measurements: createMeasurementFields(t),
       matchClothing,

@@ -15,6 +15,8 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
+import { ProductSourcePicker } from './ProductSourcePicker.jsx';
+import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
 import { CATALOG_DRAG_MIME, catalogMemberTarget, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
@@ -125,7 +127,6 @@ import { renderGroupKey, renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
-  detailDirectionFromExample,
   directionSpecFromExample,
   generationExampleSelectionPatch,
   generationExampleStructuralRecipePatch,
@@ -256,9 +257,9 @@ function referenceFeedbackPatch(block, changes, catalogs) {
   const next = { ...preserveDetailTargetBinding(block, changes) };
   if (isProductDetail({ ...block, ...changes })) return next;
   const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
-  if (example?.direction) Object.assign(next, directionSpecFromExample(example, {
-    cutType: changes.cutType ?? block.cutType,
-  }));
+  if ((changes.cutType ?? block.cutType) !== 'product' && example?.direction) {
+    Object.assign(next, directionSpecFromExample(example));
+  }
   if (exampleId && effScope === 'all') {
     if (block.baseThumb == null) next.baseThumb = block.thumb;
     next.thumb = exampleThumbFor(catalogs, exampleId, changes.cutType ?? block.cutType);
@@ -337,7 +338,7 @@ function cardLabels(block, catalogs) {
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
-  return { shot, isProduct };
+  return { shot: isProduct && block.shot === 'ghost' ? `${shot} · ${block.direction === 'back' ? '뒷면' : '앞면'} 사진` : shot, isProduct };
 }
 
 /* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
@@ -347,6 +348,7 @@ function cardLabels(block, catalogs) {
    새로 추가한 컷은 처음 본 값이 기준. 자동저장 보드라 "저장 뒤 리셋"은 없다 — 세션 안에서만 산다. */
 const LoadedRecipeContext = React.createContext(null);
 const SimilarSourceNumbersContext = React.createContext(null);
+const SimilarCutControlsContext = React.createContext(null);
 
 function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
   const loadedRecipes = useContext(LoadedRecipeContext);
@@ -507,6 +509,8 @@ function StoryboardMedia({
   showPoseVariation = false,
   onDuplicate, onDelete, move = null, canDelete = true,
 }) {
+  const similarControls = useContext(SimilarCutControlsContext);
+  const similarCount = similarControls?.counts.get(block.id) || 0;
   const detail = detailTargetPresentation(block, catalogs?.detailProduct, catalogs?.detailRecommendations);
   const missing = detail ? !detail.src : block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
@@ -525,7 +529,14 @@ function StoryboardMedia({
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
       {block.source === 'mine' && <span className="sb-mine-badge">내 사진</span>}
-      {block.similarSourceBlockId && <span className="sb-similar-badge"><Icon name="copy" size={13} />비슷한 컷<small>생성 예정</small></span>}
+      {block.similarSourceBlockId ? (
+        <span className="sb-similar-badge">유사 컷<small>생성 예정</small></span>
+      ) : similarCount > 0 && (
+        <span className="sb-similar-badge sb-similar-count">
+          <span className="sb-similar-count-full">{similarCount}개의 유사 컷 생성 예정</span>
+          <span className="sb-similar-count-compact">유사 컷 {similarCount}개</span>
+        </span>
+      )}
       {missing ? (
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
@@ -546,6 +557,20 @@ function StoryboardMedia({
           <img src={userMatch.thumb} alt="" loading="lazy" decoding="async" />
           <i>매칭</i>
         </span>
+      )}
+      {canPlanSimilarCut(block) && (
+        <button
+          type="button"
+          className="btn btn-primary btn-glowring sb-similar-oncard"
+          aria-label={`${index}번 컷과 비슷한 컷 추가`}
+          disabled={similarControls?.locked}
+          draggable={false}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => { event.stopPropagation(); event.preventDefault(); }}
+          onClick={(event) => { event.stopPropagation(); similarControls.addSimilar(block.id); }}
+          onDragStart={(event) => { event.stopPropagation(); event.preventDefault(); }}
+          onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+        >비슷한 컷 추가</button>
       )}
       <BundleSwapArrows move={move} />
       <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} duplicateLabel={block.similarSourceBlockId ? "비슷한 컷 추가" : "컷 복제"} />
@@ -1610,10 +1635,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           ? current.outerClosureState : 'open')
         : null,
       ...(recipePatch.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
-      // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
-      // 숨은 상태로 남아 BackDetail 근거로 새어 나가는 것을 막는다(Codex 리뷰 P1).
-      ...(recipePatch.cutType === 'product' && recipePatch.shot === 'detail' && !current.detailTargetId
-        ? { direction: detailDirectionFromExample(example) } : {}),
+      ...(recipePatch.cutType === 'product'
+        ? { direction: ['front', 'back'].includes(current.direction) ? current.direction : 'front' } : {}),
     }, catalogs);
     setPendingChoice(exampleId);
     setPendingSaving(true);
@@ -1735,7 +1758,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ) : (
         <>
           {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
-            recommendations={catalogs.detailRecommendations} onChange={onChange} />}
+            catalogs={catalogs} recommendations={catalogs.detailRecommendations} onChange={onChange} />}
+          {isProduct && !isDetail && !block.spaceGroupId && <>
+            <ProductSourcePicker block={block} product={catalogs.detailProduct} catalogs={catalogs} onChange={onChange} />
+            <p className="hint">예시 사진은 연출만 참고해요.</p>
+          </>}
           {isSignatureSlot && (
             <SignatureCutGallery
               gender={signatureGender}
@@ -1811,7 +1838,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
       <div className="insp-sec"><label className="lbl">대상 색상</label>
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
-          value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
+          value={block.colorId} onChange={(colorId) => {
+            const changes = preserveDetailTargetBinding(block, { colorId });
+            onChange({ ...changes, ...productSourceColorPatch({ ...block, ...changes }, catalogs.detailProduct, colorId) });
+          }} /></div>
 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
           세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}
@@ -3090,7 +3120,7 @@ export function Storyboard({ toastOverride = null } = {}) {
     const insertionRecipe = droppedExample ? {
       ...purposePatch,
       cutType: droppedCutType || purposePatch.cutType,
-      direction: droppedExample.direction ?? purposePatch.direction,
+      direction: droppedCutType === 'product' ? purposePatch.direction : (droppedExample.direction ?? purposePatch.direction),
       shot: droppedExample.shot || purposePatch.shot,
     } : purposePatch;
     const initialColorOpts = firstPurpose === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
@@ -3655,6 +3685,12 @@ export function Storyboard({ toastOverride = null } = {}) {
     }
   };
   const locked = false;
+  const similarCutCounts = blocks.reduce((counts, block) => {
+    if (block.similarSourceBlockId) {
+      counts.set(block.similarSourceBlockId, (counts.get(block.similarSourceBlockId) || 0) + 1);
+    }
+    return counts;
+  }, new Map());
   const boardGroups = renderGroups(blocks);
 
   const sections = deriveFixedSections(blocks);
@@ -4323,10 +4359,6 @@ export function Storyboard({ toastOverride = null } = {}) {
       if (value == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
     }}
     />
-    {canPlanSimilarCut(selected) && <div className="sb-similar-add">
-      <button type="button" className="btn btn-primary btn-glowring" disabled={locked} onClick={() => addSimilar(selected.id)}><Icon name="sparkles" size={16} />비슷한 컷 추가</button>
-      <p>상세페이지를 만들 때 함께 생성해요.</p>
-    </div>}
   </>;
 
   const selectedOrdinal = selected ? blocks.findIndex((block) => block.id === selected.id) + 1 : null;
@@ -4446,6 +4478,7 @@ export function Storyboard({ toastOverride = null } = {}) {
   return (
     <LoadedRecipeContext.Provider value={loadedRecipes}>
     <SimilarSourceNumbersContext.Provider value={new Map((blocks || []).map((block, index) => [block.id, index + 1]))}>
+    <SimilarCutControlsContext.Provider value={{ addSimilar, locked, counts: similarCutCounts }}>
     <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
@@ -4517,6 +4550,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         </div>
       </div>
     </div>
+    </SimilarCutControlsContext.Provider>
     </SimilarSourceNumbersContext.Provider>
     </LoadedRecipeContext.Provider>
   );

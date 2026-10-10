@@ -279,6 +279,26 @@ def test_validate_custom_category():
     assert len(pa.validate({"customCategory": "가" * 40})["customCategory"]) == 20
 
 
+def test_validate_drops_custom_category_when_subcategory_is_valid():
+    v = pa.validate({
+        "clothingType": "bottom", "subCategory": "cotton_pants",
+        "customCategory": "카고 와이드 팬츠",
+    })
+    assert v["subCategory"] == "cotton_pants"
+    assert v["customCategory"] is None
+
+
+@pytest.mark.parametrize("category_fields", [
+    {"clothingType": "dress", "subCategory": None},
+    {"clothingType": "top", "subCategory": "cotton_pants"},
+    {"clothingType": "bottom", "subCategory": "leggings", "targetGenders": ["men"]},
+])
+def test_validate_keeps_custom_category_when_subcategory_is_null_or_dropped(category_fields):
+    v = pa.validate({**category_fields, "customCategory": "점프수트"})
+    assert v["subCategory"] is None
+    assert v["customCategory"] == "점프수트"
+
+
 def test_distribute_carries_custom_category():
     v = pa.validate({"clothingType": "top", "subCategory": None, "fit": "regular",
                      "targetGenders": [], "customCategory": "니트 베스트"})

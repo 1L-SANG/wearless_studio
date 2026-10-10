@@ -3735,9 +3735,10 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
         await cur.execute(
             """
             select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
-                   wi.ai, wi.cut_type, wi.sort_order
+                   wi.ai, wi.cut_type, wi.sort_order, a.metadata as asset_metadata
             from wardrobe_images wi
             join projects pr on pr.id = wi.project_id
+            join assets a on a.id = wi.asset_id
             where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
               and wi.deleted_at is null
             order by wi.sort_order, wi.created_at
@@ -3749,12 +3750,16 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
 
 def _wardrobe_image_api(row: dict) -> dict:
     """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
-    return {
+    image = {
         "id": row["id"],
         "src": f"/v1/assets/{row['asset_id']}/file",
         "ai": bool(row["ai"]),
         "cutType": row["cut_type"],
     }
+    recipe = (row.get("asset_metadata") or {}).get("detail_recipe")
+    if isinstance(recipe, dict) and recipe.get("version") == 1:
+        image["detailReshoot"] = True
+    return image
 
 
 async def finalize_editor_image_success(
@@ -3806,12 +3811,13 @@ async def finalize_editor_image_success(
             (project_id, group, image["asset_id"], cut_type, sort_order),
         )
         wardrobe_id = (await cur.fetchone())["id"]
-        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
+        image_api = _wardrobe_image_api({
             "id": wardrobe_id,
-            "src": f"/v1/assets/{image['asset_id']}/file",
+            "asset_id": image["asset_id"],
             "ai": True,
-            "cutType": cut_type,
-        }
+            "cut_type": cut_type,
+            "asset_metadata": image.get("metadata"),
+        })
         prov = image.get("provenance")
         if prov and image.get("sha256"):
             await insert_output_records(cur, records=[{

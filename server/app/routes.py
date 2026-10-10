@@ -3214,7 +3214,7 @@ async def generate_editor_image(
 
     - **Bearer Token**: 필수
     - **Body**: `NewCutRequest { mode:'new', colorId, contentRole, cutType, direction?, shot?, modelId? }` |
-      `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
+      `VaryRequest { mode:'vary', source:{src,cutType}, variationMode?:'similar' }`
     - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
       새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
       이 키로만 보장됩니다.
@@ -3268,19 +3268,19 @@ async def generate_editor_image(
         brand_use_category = None
         if payload.get("mode") == "vary":
             source = payload.get("source") or {}
-            if payload.get("variationMode") == "similar":
-                changes = payload.get("changes", [])
-                if (not isinstance(source, dict)
-                        or not isinstance(changes, list) or len(changes) > 3
-                        or any(not isinstance(change, dict)
-                               or change.get("type") not in {"direction", "pose", "face"}
-                               or not isinstance(change.get("value"), str)
-                               or not change["value"].strip() or len(change["value"]) > 300
-                               for change in changes)
-                        or payload.get("refBgAssetId") or payload.get("refBg")):
-                    raise _bad_request("invalid_similar_cut", "비슷한 컷은 같은 장소에서 포즈·시선·표정을 바꿀 수 있어요.")
+            is_similar = payload.get("variationMode") == "similar"
+            unsupported_message = (
+                "제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요."
+                if isinstance(source, dict) and source.get("cutType") == "product"
+                else "이 사진은 비슷한 컷만 만들 수 있어요."
+            )
+            if (not isinstance(source, dict) or payload.get("changes", []) != []
+                    or "refBgAssetId" in payload or "refBg" in payload
+                    or payload.get("variationMode") not in (None, "similar")):
+                raise _bad_request("invalid_similar_cut" if is_similar else "vary_unsupported",
+                                   unsupported_message)
             source_asset_id = _asset_id_from_file_capability(source.get("src"))
-            if payload.get("variationMode") == "similar":
+            if is_similar:
                 selected_asset = (
                     await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
                     if source_asset_id else None
@@ -3311,6 +3311,17 @@ async def generate_editor_image(
                 payload["_similarCut"] = {
                     "version": 1, "rootAssetId": source_asset_id, "sourceAssetId": selected_id,
                 }
+            else:
+                source_asset = (
+                    await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
+                    if source_asset_id else None
+                )
+                source_metadata = (source_asset or {}).get("metadata") or {}
+                detail_recipe = source_metadata.get("detail_recipe")
+                if not isinstance(detail_recipe, dict) or detail_recipe.get("version") != 1:
+                    if source_metadata.get("cut_type") == "product":
+                        unsupported_message = "제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요."
+                    raise _bad_request("vary_unsupported", unsupported_message)
             provenance = (
                 await repo.get_asset_facemarket_provenance(
                     conn, user_id, source_asset_id

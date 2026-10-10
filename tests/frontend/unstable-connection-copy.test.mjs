@@ -75,6 +75,21 @@ test('잡 오류 문구는 연결 안내로 바꾸고 기존 오류 코드와 �
   assert.equal(jobFailure({ status: 'error', errorMessage: detail }).message, detail);
 });
 
+test('상세페이지 컷 미완성은 서버 문장에 "실패"가 있어도 그대로 보여 준다', () => {
+  // 서버 _incomplete_cuts_message 의 실제 문장(detail_page_job.py). "실패한 컷만"이 들어 있다.
+  const partial = '5장 중 1장을 만들지 못했어요. 완성된 4장은 보관돼 있어 다시 시도하면 추가 비용 없이 그대로 쓰고, '
+    + '실패한 컷만 새로 만들어요. 이번 시도는 크레딧이 차감되지 않았어요.';
+  assert.equal(jobFailureMessage(partial, { code: 'incomplete_cuts' }), partial);
+  assert.equal(jobFailure({ status: 'error', errorMessage: partial, result: { errorCode: 'incomplete_cuts' } }).message, partial);
+  assert.equal(jobFailure({ status: 'error', errorMessage: partial, errorCode: 'incomplete_cuts' }).message, partial);
+  assert.equal(jobFailureMessage('이미지 생성 실패', { code: 'all_cuts_failed' }), '이미지 생성 실패');
+  // 코드가 없거나 다른 코드면 지금처럼 연결 안내로 바꾼다.
+  assert.equal(jobFailureMessage(partial), connection);
+  assert.equal(jobFailureMessage('생성 실패', { code: 'job_failed' }), connection);
+  const store = readFileSync(new URL('src/store/useAppStore.js', root), 'utf8');
+  assert.match(store, /jobFailureMessage\(job\.errorMessage, \{ code: job\.result\?\.errorCode \|\| job\.errorCode \}\)/);
+});
+
 test('유료 잡의 오류 종결을 확인한 경우에만 미차감 안내를 붙인다', () => {
   for (const status of ['error', 'cancelled', 'running']) {
     const error = jobFailure({ status, errorMessage: '생성 실패' }, { creditsReleased: status === 'error' });

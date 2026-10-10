@@ -381,16 +381,16 @@ test('추천 디테일의 색상은 분석 원본의 기본 색상을 쓴다', (
   assert.equal(detail.colorId, 'col1');
 });
 
-test('디테일 예시 선택이 방향을 내부 결정한다 — back 라벨 예시=back, 미기재=front', async () => {
+test('디테일 예시를 처음 고르거나 교체해도 원본 면을 유지한다', async () => {
   const { generationExampleSelectionPatch } = await import('../../src/lib/storyboardExampleSelection.js');
   const detailBlock = { cutType: 'product', shot: 'detail', direction: 'front' };
-  // back 라벨 예시 → 첫 선택에도 back 전송
+  // 예시의 뒷면은 고른 앞면 원본을 바꾸지 않는다.
   const picked = generationExampleSelectionPatch(detailBlock, { id: 'ex-bd', direction: 'back' });
-  assert.equal(picked.patch.direction, 'back');
-  // 미기재 예시로 교체 → 이전 back 이 남지 않고 front 로 확정
+  assert.equal(({ ...detailBlock, ...picked.patch }).direction, 'front');
+  // 방향이 없는 예시로 교체해도 고른 뒷면 원본을 유지한다.
   const backBlock = { cutType: 'product', shot: 'detail', direction: 'back', exampleId: 'ex-bd' };
   const swapped = generationExampleSelectionPatch(backBlock, { id: 'ex-fd' });
-  assert.equal(swapped.patch.direction, 'front');
+  assert.equal(swapped.patch.direction, 'back');
   // 디테일이 아닌 컷은 기존 규칙 유지(첫 선택은 방향 미변경)
   const worn = { cutType: 'styling', shot: 'full', direction: 'side' };
   assert.equal('direction' in generationExampleSelectionPatch(worn, { id: 'ex-w' }).patch, false);

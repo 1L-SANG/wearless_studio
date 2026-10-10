@@ -119,6 +119,18 @@
   --glow-sun: #e3ddf3;   /* 연보라 힌트 */
   --glow-mauve: #5fa7dd; /* 딥 블루 — 원안 #0A6DB9 를 연하게 톤 조정 */
 
+  /* 그라데이션 테두리 전용, 랜딩 히어로 영상 테두리와 같은 색,
+     배경 글로우에는 쓰지 않는다.
+     정본: landing-page-fasho/src/components/ui/gradient-border-container.tsx, tone: 'blue'.
+     채도를 45% 낮춘 더스티 블루. 처음 색을 마지막에 반복해 이음매를 없앤다. */
+  --ring-flow-1: #2E4985;
+  --ring-flow-2: #4762AE;
+  --ring-flow-3: #4297B6;
+  --ring-flow-4: #658CCC;
+  --ring-flow-5: #7480D4;
+  --ring-flow-6: #3F518E;
+  --ring-flow-stops: var(--ring-flow-1), var(--ring-flow-2), var(--ring-flow-3), var(--ring-flow-4), var(--ring-flow-5), var(--ring-flow-6), var(--ring-flow-1);
+
   /* ---- White glass plate (for text/UI over a glow zone) ---- */
   --glass-bg: rgba(255, 255, 255, 0.92);
   --glass-blur: blur(8px);

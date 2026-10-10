@@ -984,22 +984,37 @@ export const api = {
     return true;
   },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
-  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], variationMode?, refBg? }  (계약 §6)
+  //     | VaryRequest   { mode:'vary', source:{src,cutType}, variationMode?:'similar' }  (계약 §6)
   async generateImage(_projectId, req = {}) {
-    await runJob({ duration: 2400, onProgress: req.onProgress });
     const isVary = req.mode === 'vary';
     const images = Object.entries(DB.wardrobe).flatMap(([group, items]) => items.map((image) => ({ ...image, wardrobeGroup: group })));
-    const source = isVary ? images.find((image) => image.src === req.source?.src) : null;
-    const isSimilar = isVary && req.variationMode === 'similar' && (source?.cutType || req.source?.cutType) !== 'product';
+    const elements = (DB.editorBlocks || []).flatMap((block) => block.elements || []);
+    const source = isVary ? images.find((image) => image.src === req.source?.src)
+      || elements.find((element) => element.type === 'image' && element.src === req.source?.src) : null;
+    const detailReshoot = !!source?.src && (source.detailReshoot === true || elements.some((element) => (
+      element.type === 'image' && element.src === req.source?.src
+      && (DB.storyboard || []).some((block) => block.id === element.sourceBlockId
+        && block.cutType === 'product' && block.shot === 'detail')
+    )));
+    const isProduct = (source?.cutType || req.source?.cutType) === 'product';
+    const isSimilar = isVary && req.variationMode === 'similar';
+    const unsupported = () => Object.assign(new Error(isProduct
+      ? '제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.' : '이 사진은 비슷한 컷만 만들 수 있어요.'), { code: 'vary_unsupported', status: 400 });
+    if (isVary && (('changes' in req && (!Array.isArray(req.changes) || req.changes.length))
+      || ![undefined, null, 'similar'].includes(req.variationMode))) throw unsupported();
+    if (isSimilar && isProduct) throw Object.assign(new Error('비슷한 컷은 착용 사진에서 만들 수 있어요.'), { code: 'similar_source_unsupported', status: 400 });
+    if (isVary && !isSimilar && !detailReshoot) throw unsupported();
     if (isSimilar && !source) throw new Error('원본 이미지를 찾을 수 없어요. 이미지를 다시 선택해 주세요.');
     const rootId = source?.similarCut?.rootAssetId || source?.id;
     const root = isSimilar ? images.find((image) => image.id === rootId) : null;
     if (isSimilar && !root) throw new Error('처음 원본 이미지를 찾을 수 없어요.');
+    await runJob({ duration: 2400, onProgress: req.onProgress });
     const group = isVary ? (root?.wardrobeGroup || source?.wardrobeGroup || 'misc') : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
     const cutType = isVary ? (root?.cutType || source?.cutType || req.source?.cutType || 'styling') : (req.cutType || null);
     const id = uid('w');
     const img = { id, src: Placeholder.any(id), ai: true, wardrobeGroup: group, ...(cutType ? { cutType } : {}) };
+    if ((isVary && !isSimilar) || (!isVary && req.cutType === 'product' && req.shot === 'detail')) img.detailReshoot = true;
     if (isSimilar) {
       // 로컬 데모는 실제 사진 분석 없이 동작 이름만 순환한다. 원본 계보·이력 계약을 재현한다.
       const actions = cutType === 'mirror'
