@@ -278,8 +278,9 @@ test('actual AI form keeps hidden closure state in worn requests and sends null 
     ...await vite.ssrLoadModule('/src/lib/detailRecommendations.js'),
     ...await vite.ssrLoadModule('/src/lib/generationExamples.js'),
     ...await vite.ssrLoadModule('/src/features/analysis/modelSelection.js'),
+    ...await vite.ssrLoadModule('/src/lib/productSourcePhotos.js'),
   };
-  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'ColorDots', 'MoodGuide', 'VaryPanel', 'DetailTargetPicker']) context[name] = () => null;
+  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'ColorDots', 'MoodGuide', 'VaryPanel', 'DetailTargetPicker', 'ProductSourcePicker']) context[name] = () => null;
   const AIPanel = new Function(...Object.keys(context), `${code}; return AIPanel;`)(...Object.values(context));
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return null;
