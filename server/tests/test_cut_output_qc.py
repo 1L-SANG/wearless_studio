@@ -100,7 +100,7 @@ def test_schema_is_strict_complete_and_names_text_logo_gate():
 
 def test_default_qc_template_and_roles_match_pre_experiment_contract():
     template = Path(qc._PROMPT_FILE).read_text(encoding="utf-8")
-    assert hashlib.sha256(template.encode()).hexdigest() == "f0d29a9e4a127073e8a0b3311ab86b445417af1a0b60e1bf0b267f8c6dfc8e14"
+    assert hashlib.sha256(template.encode()).hexdigest() == "18609b7328d56e0cdf79a490b361cfd80803507fc718a6b1c043e486d54131b7"
     assert "horizonMaster" not in qc.REFERENCE_ROLES
     assert "horizonMasterReference" not in qc.normalize_plan(_plan(
         recipeFamily="horizon", horizonMasterReference={"shot": "full", "direction": "front"}))
@@ -941,3 +941,20 @@ def test_invalid_reference_labels_fail_before_provider_call():
             make_settings(), _plan(),
             [qc.LabeledReference("seller-note", _img())], _img(b"GENERATED"),
         ))
+
+
+@pytest.mark.parametrize("state", ["openToChest", "openToWaist"])
+def test_generic_qc_accepts_new_levels_and_explains_physical_fallback(state):
+    raw = _plan(clothingType="outer")
+    raw["storyboard"]["outerClosure"] = state
+    contract = qc.normalize_plan(raw)
+    assert not contract.get("errors")
+    assert contract["storyboard"]["outerClosure"] == state
+    prompt = qc.build_prompt(contract, [])
+    assert "closure matches the storyboard opening level, or the nearest level this exact garment can physically take" in prompt
+    assert "openToChest = open down to about the armpit line" in prompt
+    assert "openToWaist = open down to about navel height" in prompt
+    assert "Never FAIL a closure only because the garment cannot physically reach the exact level." in prompt
+    confirmed = qc.build_prompt(contract, [], authority_profile="confirmed_gpt_v1")
+    assert qc._CONFIRMED_FIT_GATE in confirmed
+    assert "storyboard.outerClosure levels" not in confirmed

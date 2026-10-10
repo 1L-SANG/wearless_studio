@@ -28,10 +28,13 @@ def test_feature_copy_route_only_saves_its_key(client, make_token, monkeypatch):
 
 def test_detail_worker_only_saves_generated_copy_key(monkeypatch):
     items = [{"point": "카라", "desc": "카라 디테일을 확인할 수 있습니다."}]
+    closure = {"version": 1, "kind": "none", "range": None, "secondary": None,
+               "evidenceSlots": ["Front"], "note": None}
     monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"copywriting": False}))
     monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"name": "상품", "colors": []}))
     monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=[]))
-    monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value={"fit": "slim", "sellingPoints": ["카라"]}))
+    monkeypatch.setattr(repo, "get_analysis", AsyncMock(return_value={
+        "fit": "slim", "sellingPoints": ["카라"], "frontClosure": closure}))
     monkeypatch.setattr(detail_page_job.feature_copy, "generate", AsyncMock(return_value=items))
     monkeypatch.setattr(detail_page_job, "_emit", AsyncMock())
     monkeypatch.setattr(detail_page_job, "_gen_cuts", AsyncMock(side_effect=RuntimeError("stop after analysis save")))
@@ -42,6 +45,7 @@ def test_detail_worker_only_saves_generated_copy_key(monkeypatch):
         fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b")), worker_job()))
     assert save.await_count == 1
     assert save.call_args.args[2] == {"featureCopy": items}
+    assert repo.get_analysis.return_value["frontClosure"] == closure
     assert repo.get_analysis.await_count == 1
 
 

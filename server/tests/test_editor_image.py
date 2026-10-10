@@ -14,6 +14,69 @@ LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
 
 
+@pytest.mark.parametrize("kind,range,requested,expected,clothing_type,cut_type", [
+    ("none", None, "closed", "open", "outer", "horizon"),
+    ("snap", "binary", "partial", "closed", "outer", "horizon"),
+    ("belt", "binary", "openToWaist", "open", "outer", "horizon"),
+    (None, None, "openToChest", "openToChest", "outer", "horizon"),
+    (None, None, "openToWaist", "openToWaist", "outer", "horizon"),
+    ("none", None, "closed", None, "top", "horizon"),
+    ("none", None, "closed", None, "outer", "product"),
+])
+def test_editor_runtime_closure_matches_prompt_and_cut_qc_without_changing_request(
+    monkeypatch, kind, range, requested, expected, clothing_type, cut_type,
+):
+    from copy import deepcopy
+    from unittest.mock import AsyncMock
+
+    captured = {}
+    analysis = {} if kind is None else {"frontClosure": {
+        "version": 1, "kind": kind, "range": range, "secondary": None,
+        "evidenceSlots": ["Front"], "note": "Internal closure note",
+    }}
+    product = {"clothingType": clothing_type, "colors": [{"id": "base", "isBase": True,
+                "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def generate(settings, gemini, spec, product, images, **kwargs):
+        captured["generated"] = eij.cut_generator.normalize_spec(
+            spec, clothing_type=clothing_type)["outerClosureState"]
+        captured["prompt"] = eij.cut_generator.build_prompt(
+            spec, product, analysis=kwargs.get("analysis"), manifest=kwargs.get("manifest"))
+        return b"OUTPUT", "image/png"
+
+    async def cut_qc(settings, plan, references, output, **kwargs):
+        captured["cutPlan"] = plan.to_dict()["storyboard"]["outerClosure"]
+        captured["cutQc"] = eij.cut_output_qc.normalize_plan(plan)["storyboard"]["outerClosure"]
+        return {"overall": "PASS"}
+
+    finalized = AsyncMock(return_value={"id": "new-output"})
+    monkeypatch.setattr(eij.repo, "get_project", AsyncMock(return_value={}))
+    monkeypatch.setattr(eij.repo, "get_product", AsyncMock(return_value=product))
+    monkeypatch.setattr(eij.repo, "get_analysis", AsyncMock(return_value=analysis))
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", AsyncMock(return_value={
+        "id": "a1", "r2_key": "product", "mime_type": "image/png"}))
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", finalized)
+    monkeypatch.setattr(eij.cut_generator, "generate", generate)
+    monkeypatch.setattr(eij.cut_output_qc, "verdict", cut_qc)
+    monkeypatch.setattr(eij, "_emit", AsyncMock())
+    request = {"mode": "new", "cutType": cut_type, "direction": "front", "colorId": "base",
+               "shot": "ghost" if cut_type == "product" else "full", "outerClosureState": requested}
+    original = deepcopy(request)
+    app = fake_worker_app(make_settings(garment_qc_mode="off", cut_output_qc_mode="shadow"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(request)))
+    assert finalized.await_count == 1
+    assert captured["generated"] == captured["cutPlan"] == expected
+    assert captured["cutQc"] == (expected if expected is not None else "none")
+    phrases = {"open": "FULLY OPEN", "closed": "FULLY CLOSED", "openToChest": "OPEN DOWN TO THE CHEST",
+               "openToWaist": "OPEN DOWN TO THE WAIST"}
+    if expected is None:
+        assert "OUTER FRONT OPENING" not in captured["prompt"]
+    else:
+        assert phrases[expected] in captured["prompt"]
+    assert "Internal closure note" not in captured["prompt"]
+    assert request == original
+
+
 @pytest.mark.parametrize("case", ["same", "back", "failed_qc", "legacy"])
 def test_editor_vary_checked_detail_uses_trusted_recipe_and_original_sources(monkeypatch, case):
     from app.agents import detail_recommendations as dr

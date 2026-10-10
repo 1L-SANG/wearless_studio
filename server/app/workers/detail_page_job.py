@@ -36,6 +36,7 @@ from ..agents import (
     image_qc,
     horizon_background,
     mannequin,
+    outer_closure,
     page_assembler,
     page_output_qc,
     real_horizon_neck_repair,
@@ -392,6 +393,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
     stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
+    clothing_type = (
+        product.get("clothing_type") or product.get("clothingType") or "top"
+    )
+    front_closure = outer_closure.front_closure_of(analysis)
     content_roles.validate_similar_cut_relationships([item[0] for item in prepared])
     runtime_blocks = content_roles.inherit_similar_cut_recipes([item[0] for item in prepared])
     source_items = {str(item[0].get("id")): item for item in prepared}
@@ -403,6 +408,14 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # creating another ordinary generation packet for the follow-up.
             hydrated.append((block, [], "", original[3], original[4]))
         else:
+            confirmed_packet = item[8] if len(item) > 8 else None
+            if (confirmed_packet is None and not isinstance(item, _SkippedCut)
+                    and cut_generator._is_outer(clothing_type)
+                    and block.get("cutType", "styling") in _WORN_CUT_TYPES):
+                # 저장 블록 대신 이번 생성의 복사본에만 맞춘다.
+                block = {**block, "outerClosureState": outer_closure.effective_state(
+                    block.get("outerClosureState") or block.get("outer_closure_state"), front_closure)}
+                item = (block, *item[1:])
             hydrated.append(item)
     prepared = hydrated
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
@@ -416,15 +429,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
     _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
     sem = asyncio.Semaphore(_limit)
-    clothing_type = (
-        product.get("clothing_type") or product.get("clothingType") or "top"
-    )
     generated_images: dict[str, InlineImage] = {}
     planned_actions: dict[str, list[dict]] = {}
     saved_similar_plans: dict[str, dict] = {}
+    runtime_blocks_by_id = {str(item[0].get("id")): item[0] for item in prepared}
 
     def _page_plan_item(item, output_index, product_truth_indexes) -> dict:
         block = item[0]
+        if block.get("similarSourceBlockId") is not None:
+            # 비슷한 컷은 원본 사진의 열림을 유지하므로 검수도 같은 값을 읽는다.
+            source = runtime_blocks_by_id[block["similarSourceBlockId"]]
+            block = {**block, "outerClosureState": source.get("outerClosureState")}
         normalized = cut_generator.normalize_spec(
             block, clothing_type=clothing_type
         )

@@ -21,6 +21,115 @@ LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
 
 
+@pytest.mark.parametrize("kind,range,requested,expected,clothing_type,cut_type", [
+    ("none", None, "closed", "open", "outer", "horizon"),
+    ("button", "binary", "partial", "closed", "outer", "horizon"),
+    ("belt", "binary", "openToWaist", "open", "outer", "horizon"),
+    (None, None, "openToChest", "openToChest", "outer", "horizon"),
+    (None, None, "openToWaist", "openToWaist", "outer", "horizon"),
+    ("none", None, "closed", None, "top", "horizon"),
+    ("none", None, "closed", None, "outer", "product"),
+])
+def test_detail_runtime_closure_matches_prompt_cut_qc_and_page_plan(
+    monkeypatch, kind, range, requested, expected, clothing_type, cut_type,
+):
+    from copy import deepcopy
+
+    captured = {}
+    analysis = {} if kind is None else {"frontClosure": {
+        "version": 1, "kind": kind, "range": range, "secondary": None,
+        "evidenceSlots": ["Front"], "note": "Internal closure note",
+    }}
+    block = {"id": "outer-1", "source": "ai", "cutType": cut_type,
+             "direction": "front", "shot": "ghost" if cut_type == "product" else "full",
+             "outerClosureState": requested}
+    original = deepcopy(block)
+    product = {"clothingType": clothing_type}
+    image = dpj.InlineImage("image/png", b"PRODUCT")
+    prepared = [(block, [image], "1. PRODUCT — front", False, [image])]
+
+    async def generate(settings, gemini, spec, product, images, **kwargs):
+        normalized = dpj.cut_generator.normalize_spec(spec, clothing_type=clothing_type)
+        captured["generated"] = normalized["outerClosureState"]
+        captured["prompt"] = dpj.cut_generator.build_prompt(
+            spec, product, analysis=kwargs.get("analysis"), manifest=kwargs.get("manifest"))
+        return b"OUTPUT", "image/png"
+
+    async def cut_qc(settings, plan, references, output, **kwargs):
+        captured["cutPlan"] = plan.to_dict()["storyboard"]["outerClosure"]
+        contract = dpj.cut_output_qc.normalize_plan(plan)
+        captured["cutQc"] = contract["storyboard"]["outerClosure"]
+        return {"overall": "PASS"}
+
+    async def page_qc(settings, plan, outputs, **kwargs):
+        captured["pagePlan"] = plan[0]["outerClosureState"]
+        assert dpj.page_output_qc.normalize_page_plan(plan)[0]["outerClosureState"] == expected
+        return {"overall": "PASS"}
+
+    async def emit(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", generate)
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", cut_qc)
+    monkeypatch.setattr(dpj.page_output_qc, "judge", page_qc)
+    monkeypatch.setattr(dpj, "_emit", emit)
+    app = fake_worker_app(make_settings(garment_qc_mode="off", cut_output_qc_mode="shadow",
+                                        page_output_qc_mode="shadow"))
+    result = asyncio.run(dpj._gen_cuts(app, worker_job(), prepared, product, analysis))
+    assert len(result[0]) == 1
+    assert captured["generated"] == captured["cutPlan"] == captured["pagePlan"] == expected
+    assert captured["cutQc"] == (expected if expected is not None else "none")
+    phrases = {"open": "FULLY OPEN", "closed": "FULLY CLOSED", "openToChest": "OPEN DOWN TO THE CHEST",
+               "openToWaist": "OPEN DOWN TO THE WAIST"}
+    if expected is None:
+        assert "OUTER FRONT OPENING" not in captured["prompt"]
+    else:
+        assert phrases[expected] in captured["prompt"]
+    assert "Internal closure note" not in captured["prompt"]
+    assert block == original and prepared[0][0] is block
+
+
+@pytest.mark.parametrize("kind,closure_range,requested,expected,child_count", [
+    ("none", None, "closed", "open", 1),
+    ("button", "binary", "partial", "closed", 2),
+])
+def test_detail_page_qc_uses_effective_source_closure_for_similar_outputs(
+    monkeypatch, kind, closure_range, requested, expected, child_count,
+):
+    from copy import deepcopy
+    from dataclasses import replace
+    from test_page_output_qc import raw_result
+    from test_storyboard_similar_cuts import child, item, setup_generation, source
+
+    app, seen = setup_generation(monkeypatch)
+    app.state.settings = replace(app.state.settings, page_output_qc_mode="shadow")
+    original = source(cutType="horizon", outerClosureState=requested)
+    children = [child(f"child-{index}") for index in range(child_count)]
+    blocks = [*children, original]
+    saved = deepcopy(blocks)
+    captured = {}
+
+    async def page_qc(settings, page_plan, outputs, **kwargs):
+        captured["closures"] = [row["outerClosureState"] for row in page_plan]
+        report = dpj.page_output_qc.validate(
+            raw_result({"outer_inner_continuity": "NOT_APPLICABLE"}), page_plan)
+        captured["gate"] = next(gate["status"] for gate in report["gates"]
+                                if gate["gate"] == "outer_inner_continuity")
+        return report
+
+    monkeypatch.setattr(dpj.page_output_qc, "judge", page_qc)
+    analysis = {"frontClosure": {"version": 1, "kind": kind, "range": closure_range, "secondary": None,
+                                  "evidenceSlots": ["Front"], "note": None}}
+    result = asyncio.run(dpj._gen_cuts(
+        app, worker_job(), [item(block) for block in blocks], {"clothingType": "outer"}, analysis))
+    assert len(result[0]) == child_count + 1
+    assert captured["closures"] == [expected] * (child_count + 1)
+    assert captured["gate"] == ("UNJUDGEABLE" if expected == "open" else "NOT_APPLICABLE")
+    assert seen["generate"] == ["original"] and len(seen["vary"]) == child_count
+    assert all(entry[0] == b"GENERATED-ORIGINAL" for entry in seen["vary"])
+    assert blocks == saved
+
+
 def _solid_png(rgb):
     out = BytesIO()
     dpj.Image.new("RGB", (120, 180), rgb).save(out, format="PNG")

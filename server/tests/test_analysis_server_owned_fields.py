@@ -70,6 +70,17 @@ def _save(stored, incoming, **options):
     return conn.saved
 
 
+@pytest.mark.parametrize("merge", [False, True])
+@pytest.mark.parametrize("incoming", [None, {"version": 1, "kind": "none", "range": None}])
+def test_front_closure_is_immutable_for_client_merge_and_replacement(merge, incoming):
+    original = {"version": 1, "kind": "zipper", "range": "graded", "secondary": None,
+                "evidenceSlots": ["Front"], "note": None}
+    assert "frontClosure" not in _save(None, {"frontClosure": incoming}, merge=merge, delete_nulls=merge)
+    assert _save({"frontClosure": original}, {"frontClosure": incoming},
+                 merge=merge, delete_nulls=merge)["frontClosure"] == original
+    assert _save({"frontClosure": original}, {"fit": "regular"}, merge=merge)["frontClosure"] == original
+
+
 def test_detail_recommendations_cannot_be_created_or_replaced_by_client():
     original = {"version": 1, "status": "ready", "candidates": [{"id": "server"}]}
     forged = {"version": 1, "status": "ready", "candidates": [{"id": "client"}]}

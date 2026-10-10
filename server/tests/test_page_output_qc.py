@@ -420,3 +420,14 @@ def test_product_truth_index_must_exist_in_attached_refs():
 def test_invalid_page_plan_fails_before_model_call(bad_plan, message):
     with pytest.raises(qc.PageOutputQCError, match=message):
         qc.normalize_page_plan(bad_plan)
+
+
+@pytest.mark.parametrize("state", ["openToChest", "openToWaist"])
+def test_new_outer_levels_keep_inner_garment_continuity_applicable(state):
+    source = plan()[:2]
+    for item in source:
+        item["outerClosureState"] = state
+    assert all(item["outerClosureState"] == state for item in qc.normalize_page_plan(source))
+    result = qc.validate(raw_result({"outer_inner_continuity": "NOT_APPLICABLE"}), source)
+    gate = next(item for item in result["gates"] if item["gate"] == "outer_inner_continuity")
+    assert gate["status"] == "UNJUDGEABLE"

@@ -1065,12 +1065,13 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",
+    "frontClosure",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
 # hash-bound server artifacts. API clients may echo them but can never create or replace
 # them; finalize_analyze_success replaces the full payload after a fresh provider call, and
 # replace_garment_color_evidence is the only other writer (lazy garment color measurement).
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence")
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,

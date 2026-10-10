@@ -79,6 +79,32 @@ def test_analyze_spike_disabled_by_default(client, make_token):
     assert res.json()["error"]["code"] == "spike_disabled"
 
 
+def test_analyze_spike_passes_only_loaded_photo_slots(client, make_token, monkeypatch):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from conftest import FakeR2
+
+    client.app.state.settings = replace(client.app.state.settings, analysis_spike="on")
+    client.app.state.r2 = FakeR2()
+    patch_route_db(monkeypatch, routes)
+    monkeypatch.setattr(routes.repo, "get_project", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(routes.repo, "get_product", AsyncMock(return_value={"colors": [{
+        "isBase": True, "images": [{"slot": slot, "id": slot} for slot in ("Front", "Back", "Detail")],
+    }]}))
+
+    async def asset(conn, user_id, asset_id):
+        return None if asset_id == "Back" else {"mime_type": "image/png", "r2_key": asset_id}
+
+    async def analyze(settings, product, images, *, slots=None):
+        assert len(images) == 2 and slots == ["Front", "Detail"]
+        return {"analysis": {}}, "gemini"
+
+    monkeypatch.setattr(routes.repo, "get_asset_for_user", asset)
+    monkeypatch.setattr(routes.product_analyst, "analyze", analyze)
+    res = client.post("/v1/projects/p1/analyze:spike", headers=auth_headers(make_token))
+    assert res.status_code == 200, res.text
+
+
 def test_run_analyze_job_success(monkeypatch):
     captured = {}
 
@@ -88,7 +114,8 @@ def test_run_analyze_job_success(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
+        assert slots == ["Front"]
         assert images and images[0].data == b"\x89PNG-bytes"  # bytes 입력 확인
         binding = product[pec.INTERNAL_BINDING_KEY]
         assert binding["images"][0]["slot"] == "FRONT"
@@ -149,7 +176,7 @@ def test_analyze_worker_persists_but_does_not_expose_server_evidence_contract(mo
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         assert pec.INTERNAL_BINDING_KEY in product
         return ({
             "product": {"clothingType": "top"},
@@ -198,8 +225,9 @@ def test_ag01_contract_binds_original_and_actual_resized_provider_bytes_in_order
     def fake_shrink(data, mime):
         return b"resized:" + data, "image/jpeg"
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         captured["binding"] = product[pec.INTERNAL_BINDING_KEY]
+        captured["slots"] = slots
         return ({
             "product": {"clothingType": "top"},
             "analysis": {
@@ -223,6 +251,7 @@ def test_ag01_contract_binds_original_and_actual_resized_provider_bytes_in_order
         persist_confirmed_evidence=True,
     ))
 
+    assert captured["slots"] == ["Front", "Back"]
     rows = captured["binding"]["images"]
     assert [row["slot"] for row in rows] == ["FRONT", "BACK"]
     assert rows[0]["source"]["sha256"] == sha256(b"front-original").hexdigest()
@@ -242,7 +271,7 @@ def test_run_analyze_job_feature_agent_failure_falls_back(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         return ({"product": {"clothingType": "top"},
                  "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": [],
                               "materials": [], "aiSuggestedPoints": ["골지 짜임"],
@@ -282,7 +311,7 @@ def test_run_analyze_job_feature_empty_keeps_ag01_points(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         return ({"product": {"clothingType": "top"},
                  "analysis": {"subCategory": None, "fit": "regular", "targetGenders": [],
                               "materials": [], "aiSuggestedPoints": ["골지 짜임"],
@@ -340,7 +369,7 @@ def test_run_analyze_job_vision_error_fails(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         raise VisionError("상품 분석에 실패했어요.")
 
     async def fake_fail(conn, **kw):
@@ -404,7 +433,7 @@ def _ic_harness(monkeypatch, verdict_payload, *, judge_raises=False):
     async def fake_get_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_analyze(settings, product, images):
+    async def fake_analyze(settings, product, images, *, slots=None):
         return ({"product": {"clothingType": "top"},
                  "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": ["women"],
                               "materials": [], "aiSuggestedPoints": [], "suggestedName": "니트"},
@@ -535,7 +564,7 @@ def test_aux_agents_cannot_stall_the_analysis_response(monkeypatch):
     """
     slow_cancelled = {"feature": False, "consistency": False}
 
-    async def fast_analyze(settings, product, images):
+    async def fast_analyze(settings, product, images, *, slots=None):
         return ({
             "product": {"clothingType": "top", "colors": []},
             "analysis": {"subCategory": "tshirt", "fit": "regular",

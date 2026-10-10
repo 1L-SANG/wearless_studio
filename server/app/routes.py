@@ -1507,10 +1507,12 @@ async def analyze_spike(
             raise _not_found()
         product = await repo.get_product(conn, project_id) or {}
         assets = []
-        for _slot, aid in mannequin.base_color_images(product):
+        slots = []
+        for slot, aid in mannequin.base_color_images(product):
             a = await repo.get_asset_for_user(conn, user_id, aid)
             if a:
                 assets.append(a)
+                slots.append(slot)
     if not assets:
         raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
     images = [
@@ -1520,7 +1522,7 @@ async def analyze_spike(
     order = [p.strip() for p in (s.analysis_model_order or "").split(",") if p.strip()]
     t0 = time.perf_counter()
     try:
-        distributed, provider = await product_analyst.analyze(s, product, images)
+        distributed, provider = await product_analyst.analyze(s, product, images, slots=slots)
     except VisionError as e:
         raise HTTPException(status_code=502, detail={"code": "analysis_failed", "message": str(e)})
     obs = product_analyst.observation(provider, order, int((time.perf_counter() - t0) * 1000), distributed)
