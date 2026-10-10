@@ -616,7 +616,7 @@ export const useAppStore = create((set, get) => ({
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
         cuts: {},
         live: [],
-        errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage) : '')
+        errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage, { code: job.result?.errorCode || job.errorCode }) : '')
           || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
         error: jobFailure(job),

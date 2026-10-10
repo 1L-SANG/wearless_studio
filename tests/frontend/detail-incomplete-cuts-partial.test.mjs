@@ -286,7 +286,9 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     let job = useAppStore.getState().detailPageJob;
     assert.equal(job.status, 'error');
     assert.equal(job.jobId, 'job-1', '보관본 미리보기가 쓸 실패 잡 id 를 지킨다');
-    assert.equal(job.errorMessage, '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+    // 서버가 사실대로 쓴 부분 실패 문장을 그대로 보여 준다(연결 불안정으로 바꾸지 않는다).
+    assert.match(job.errorMessage, /^20장 중 1장을 만들지 못했어요\./);
+    assert.match(job.errorMessage, /크레딧이 차감되지 않았어요\.$/);
     assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 미완성');
     assert.deepEqual(job.failedCuts, ['sb7']);
     assert.equal(job.cuts.sb1.done, true);
