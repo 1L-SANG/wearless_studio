@@ -71,7 +71,7 @@ test('editor renders without manual direction controls for worn and product imag
     }));
     assert.ok(!rendered.includes('보는 방향'));
     assert.ok(!rendered.includes('direction-chips'));
-    assert.ok(rendered.includes(cutType === 'product' ? '이미지 수정' : '비슷한 컷 생성'));
+    assert.ok(rendered.includes(cutType === 'product' ? '제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.' : '비슷한 컷 생성'));
     assert.ok(!rendered.includes('같은 장소 이미지 생성'));
     assert.ok(!rendered.includes('포즈 고르기'));
     assert.ok(!rendered.includes('표정 고르기'));

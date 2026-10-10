@@ -259,6 +259,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
   }
   const isProduct = source.cutType === 'product';
+  const detailReshoot = isProduct && source.detailReshoot === true;
   const cost = catalogs.creditCosts?.editorImage ?? 1;
   const generate = async () => {
     if (busyRef.current) return;
@@ -266,7 +267,6 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     try {
       await onGenerate({
         source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
-        changes: [],
         ...(!isProduct ? { variationMode: 'similar' } : {}),
       });
     } finally { busyRef.current = false; }
@@ -275,11 +275,13 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     <div className="similar-cut-panel">
       <div className="similar-cut-source">
         <img src={source.src} alt="기준 사진" />
-        <div><span>기준 사진</span><p>{isProduct ? '선택한 상품 사진으로 만들어요' : '같은 촬영의 다른 순간을 만들어요'}</p></div>
+        <div><span>기준 사진</span>{(!isProduct || detailReshoot) && <p>{detailReshoot ? '같은 부위를 원본으로 다시 촬영해요' : '같은 촬영의 다른 순간을 만들어요'}</p>}</div>
       </div>
-      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
-        {`${isProduct ? '이미지 수정' : '비슷한 컷 생성'} · ${cost} 크레딧`}
-      </Button>
+      {isProduct && !detailReshoot ? <p className="hint">제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.</p> : (
+        <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
+          {`${detailReshoot ? '같은 부위 다시 촬영' : '비슷한 컷 생성'} · ${cost} 크레딧`}
+        </Button>
+      )}
     </div>
   );
 }
