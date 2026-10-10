@@ -16,6 +16,8 @@ before(async () => {
 after(() => vite?.close());
 beforeEach(() => {
   DB.account.credits = 100;
+  DB.storyboard = [{ id: 'detail-block', cutType: 'product', shot: 'detail' }];
+  DB.editorBlocks = [{ elements: [{ id: 'detail-canvas', type: 'image', src: '/canvas-detail.jpg', cutType: 'product', sourceBlockId: 'detail-block' }] }];
   DB.wardrobe = {
     navy: [{ id: 'original', src: '/original.jpg', cutType: 'styling', ai: true }],
     ivory: [{ id: 'other', src: '/other.jpg', cutType: 'styling', ai: true }],
@@ -50,13 +52,34 @@ test('mock repeats from either a candidate or original avoid recent actions with
   assert.equal(other.similarCut.plan.actionKey, first.similarCut.plan.actionKey);
 });
 
-test('mock product edits retain the product path without a similar-cut plan', async () => {
-  const { data } = await api.generateImage('project', {
+test('mock rejects a product edit without an original detail recipe before spending credits', async () => {
+  await assert.rejects(api.generateImage('project', {
     mode: 'vary', source: { id: 'canvas-product', src: '/product.jpg', cutType: 'product' },
-    changes: [{ type: 'direction', value: 'back' }],
-  });
+  }), /제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요\./);
+  assert.equal(DB.account.credits, 100);
+});
+
+test('mock detail reshoots use stored recipe flags or original canvas detail blocks', async () => {
+  DB.wardrobe.misc.push({ id: 'detail', src: '/detail.jpg', cutType: 'product', detailReshoot: true });
+  for (const src of ['/detail.jpg', '/canvas-detail.jpg']) {
+    const { data } = await api.generateImage('project', { mode: 'vary', source: { src, cutType: 'product' } });
+    assert.equal(data.detailReshoot, true);
+    assert.equal(data.similarCut, undefined);
+  }
+});
+
+test('mock new product details keep the recipe flag for the next reshoot', async () => {
+  const { data } = await api.generateImage('project', { mode: 'new', colorId: 'navy', cutType: 'product', shot: 'detail' });
   assert.equal(data.cutType, 'product');
-  assert.equal(data.similarCut, undefined);
+  assert.equal(data.detailReshoot, true);
+  const reshot = await api.generateImage('project', { mode: 'vary', source: { src: data.src, cutType: 'product' } });
+  assert.equal(reshot.data.detailReshoot, true);
+});
+
+test('mock does not turn a product similar request or a worn request without similar mode into a paid job', async () => {
+  await assert.rejects(similar('/product.jpg'), /착용 사진/);
+  await assert.rejects(api.generateImage('project', { mode: 'vary', source: { src: '/original.jpg', cutType: 'styling' } }), /비슷한 컷만/);
+  assert.equal(DB.account.credits, 100);
 });
 
 test('mock similar requests cannot invent an image lineage or spend credits for a missing source', async () => {

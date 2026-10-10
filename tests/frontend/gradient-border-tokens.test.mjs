@@ -7,8 +7,7 @@ const tokens = read('src/styles/tokens.css');
 const files = [
   ['src/styles/app.css', ['.toast']],
   ['src/styles/features.css', ['.sp-chip', '.ward-cell .ai-flag', '.btn-glowring',
-    '.btn-glowring:hover:not([disabled])', '.btn-primary.btn-invert',
-    '.btn-primary.btn-invert:hover:not([disabled])', '.ward-cell.fresh::after']],
+    '.btn-glowring:hover:not([disabled])', '.ward-cell.fresh::after']],
   ['src/features/pricing/Pricing.module.css', ['.buttonRing']],
 ];
 

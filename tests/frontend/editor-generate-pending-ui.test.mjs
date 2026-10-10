@@ -15,7 +15,7 @@ before(async () => {
 after(() => vite?.close());
 const catalogs = {
   models: [{ id: 'mA', name: '기본 모델', gender: 'women' }], genExamples: [],
-  directions: [{ value: 'front', label: '정면' }], productDirections: [{ value: 'front', label: '정면' }],
+  productSourcePhotos: [{ value: 'front', slot: 'Front', label: '내 앞면 사진' }, { value: 'back', slot: 'Back', label: '내 뒷면 사진' }],
   shotTypes: [{ value: 'full', label: '전신' }],
   productShotTypes: [{ value: 'ghost', label: '고스트' }, { value: 'detail', label: '디테일' }],
   creditCosts: { editorImage: 1 },

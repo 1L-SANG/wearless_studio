@@ -180,7 +180,7 @@ StoryboardBlock {
   title?: string                   // @deprecated 전환기 표시 캐시. contentRole에서 다시 계산
   source: BlockSource              // 'ai' | 'mine'
   cutType: CutType | null          // 생성 레시피. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택. source='mine'이면 null
-  direction?: Direction | ProductDirection | null   // 생성예시 또는 디테일 원본 대상에서 파생. 사용자 선택 아님. mirror는 null (ADR-0004)
+  direction?: Direction | ProductDirection | null   // 착용컷은 생성예시에서 파생(ADR-0015). 제품컷은 셀러가 고른 원본 사진의 면이고 대상이 있는 디테일은 대상의 원본 면이다. 예시는 제품컷 방향을 바꾸지 않는다(ADR-0008 2026-10-10 개정). mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
   detailTargetId?: string | null   // product/detail 촬영 대상. 서버 소유 분석 후보 ID만 선택; 좌표·사실은 서버에서 원본 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 추천 생성과 수동 선택/해제 구별. 사용자 편집을 재추천으로 덮지 않음
@@ -357,7 +357,8 @@ info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 �
 
 ```ts
 Wardrobe = Record<string /* colorId | 'misc' */, WardrobeImage[]>
-WardrobeImage { id: string, src: string, ai?: boolean, cutType: CutType | null }
+WardrobeImage { id: string, src: string, ai?: boolean, cutType: CutType | null, detailReshoot?: true }
+// detailReshoot: 자산에 원본 검수 레시피(detail_recipe 버전 1)가 있는 디테일컷. 현재 이미지 수정의 '같은 부위 다시 촬영' 대상. 아니면 필드를 생략한다.
 ```
 
 ### 3.7 GenJob / Account
@@ -399,7 +400,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
 | SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 섹션 안 사진 배치 |
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
-| ProductDirection | `front` `back` | 앞면/뒷면 | 내부 product 레시피용 ★ 카탈로그 승격 |
+| ProductDirection | `front` `back` | 앞면, 뒷면 | 고른 원본 사진의 면. 화면은 `productSourcePhotos`의 사진 고르기로 보여준다(ADR-0008 2026-10-10 개정) |
 | ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
 | ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 상품 전체 중 Detail 입력 사진 필요. 목표 색상에 없으면 타색 Detail의 구조·재질을 유지하고 색만 전환 |
 | **OuterClosureState** | `open` `partial` `closed` | 전체 열림/부분 열림/전체 닫힘 | 아우터 착용컷 전용. 누락 기본 `open`, 그 외 컷·카테고리에서는 무시 |
@@ -465,7 +466,7 @@ GenerationExample {
 - `pose`·`bg`는 선택적 전용 variant다. 전용 자산이 없으면 `all`로 대체하지 않으며, UI와 서버는 실제 발행된 variant만 사용 가능하다고 판단한다. 제품 `ghost | detail` 예시는 `all`만 사용한다.
 - 사용자가 고른 매칭 의류는 `styling | horizon | mirror` 모든 착용컷의 상품 고유 의류 기준이다. 판매 상품과 매칭 의류만 고유 디자인·색·구조의 근거로 쓰며, 이 둘이 제공하지 않은 코디 영역은 무지·무브랜드의 중립 기본 의류·신발로만 채울 수 있다. 제품 단독컷에는 매칭 의류를 적용하지 않는다.
 
-- **현행 추가**: `productDirections`, `productShotTypes`, `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key → 한국어)
+- **현행 추가**: `productSourcePhotos`(제품컷 원본 사진 고르기 라벨. `{ value: 'front', slot: 'Front', label: '내 앞면 사진' }`, `{ value: 'back', slot: 'Back', label: '내 뒷면 사진' }`, 2026-10-10에 `productDirections`를 대체), `productShotTypes`, `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key를 한국어로)
 - **로컬 의미 계약**: `storyboardSections`, `contentRoles`에 해당하는 값과 라벨은 `storyboardTaxonomy.js`가 제공한다. 카탈로그 응답과 중복 저장하지 않는다. `contentRoles` 라벨은 콘티보드에는 노출하지 않고 에디터의 `새 이미지 추가` 등 별도 흐름에서만 사용한다.
 - **후속**: `editorInfoTypes`는 구매 정보 UI 구현 때 카탈로그에 추가한다(`TODO.md`).
 - **컷 종류 노출 범위**: `CutType`은 생성 레시피의 정본이다. 콘티 인스펙터는 현재 섹션에서 허용된 값만 쉬운 라벨로 직접 고르게 하되, 별도 사용자 분류 enum·상단 탭·페이지 섹션으로 복제하지 않는다.
@@ -474,8 +475,9 @@ GenerationExample {
 - **아우터·원피스 개별 스타일링 보강 릴리스(2026-07-31, 이전 정본)**: 사용자 검토 52개 중 승인 43개와 수정 후 승인 2개를 합친 45개만 새 `all`로 발행하고 제외 7개는 발행하지 않았다. 기존 활성 176개를 함께 봉인한 불변 릴리스 `2026-07-31-individual-styling-01`에서 프론트·서버 활성 레지스트리는 **221개(착용 199·제품 22)**였다. R2는 `all` 221·`pose` 12·`bg` 14·결정적 WebP `thumb` 221, 총 **468개**이고 원격 key·파일 크기 전수 대조에서 누락·추가·불일치가 모두 0이었다. 신규 45개는 여성 아우터 13(풀 8·중간 5), 남성 아우터 16(풀 8·중간 8), 여성 원피스 16(풀 9·중간 7)이며, 이 여섯 스타일링 조합을 공개 조합표에 함께 열었다.
 - **상의·하의 개별 스타일링 보강 릴리스(2026-08-03, 현재 정본)**: 사용자 최종 확정 45개(여성 하의 11·여성 상의 12·남성 하의 11·남성 상의 11)를 포함한 불변 릴리스 `2026-08-03-individual-styling-01`이 현재 프론트·서버 카탈로그의 정본이다. 두 카탈로그는 같은 **254개(착용 244·제품 10)** ID를 소비한다. R2는 `all` 254·`pose` 12·`bg` 14·결정적 WebP `thumb` 254, 총 **534개**다. 2026-08-03 재검증에서 공개 R2 객체 534개를 다시 내려받아 로컬 봉인본과 SHA-256을 전수 대조했고 누락·추가·바이트 불일치가 모두 0이었다. 제작자 QC HOLD 8개는 사용자의 묶음별 최종 확정을 오너 승인으로 적용하되 원래 판정과 사유를 감사 기록에 보존한다.
 - **변경**: `subCategories`를 `{ value, label }[]`로 (현재 한국어 문자열 배열)
-- **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞는다. styling의 `mood`는 자동 배정과 다시 뽑기 후보를 고를 때만 섞는다. 자동 배정과 다시 뽑기는 이 순서의 앞 6장에서 고르고, 갤러리는 조건에 맞는 예시 전부를 페이지당 최대 6장씩 보여 준다.
-- **폐기 예정**: `backgrounds`(콘티 배경 제거 — `varyOptions.bg`가 에디터 변형용으로 대체), `extendedColorPriority`(미사용), `cutSources`
+- **유지**: `clothingTypes` `genders` `fits` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞는다. styling의 `mood`는 자동 배정과 다시 뽑기 후보를 고를 때만 섞는다. 자동 배정과 다시 뽑기는 이 순서의 앞 6장에서 고르고, 갤러리는 조건에 맞는 예시 전부를 페이지당 최대 6장씩 보여 준다.
+- **폐기 예정**: `backgrounds`(콘티 배경 제거), `extendedColorPriority`(미사용), `cutSources`
+- **폐기됨(2026-10-10)**: `directions`(방향 칩, ADR-0015), `productDirections`(`productSourcePhotos`로 대체), `varyOptions`(현재 이미지 수정의 배경, 포즈, 표정 카드, ADR-0016 개정)
 
 ---
 
@@ -524,7 +526,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
                                     // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
   cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
-  direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
+  direction: Direction | ProductDirection | null   // mirror는 null, 방향 없음 (ADR-0004). 제품컷은 고른 원본 사진의 면 (ADR-0008 2026-10-10 개정)
   shot: ShotType | ProductShotType
   modelId: string
   outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open
@@ -534,16 +536,17 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
 }
 VaryRequest {                      // AI 탭 '현재 이미지 수정'
   mode: 'vary'
-  variationMode?: 'similar'        // 새 착용컷 UI: 원본 분석 → 동작 계획 → 생성
+  variationMode?: 'similar'        // 착용 사진의 비슷한 컷(원본 분석, 동작 계획, 생성). 없으면 같은 부위 다시 촬영
   source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
-  changes: { type: 'direction' | 'shot' | 'pose' | 'face' | 'bg', value: string }[]
-  refBg?: string
 }
 ```
 
-`현재 이미지 수정`은 디테일샷 전환을 제공하지 않는다. 디테일은 상품 전체 중 실제 `Detail` 입력을 연결하는 `새 이미지 추가`에서만 만들며, 목표 색상에 Detail이 없으면 타색 근거의 색만 전환한다. 서버는 수정 경로 우회 요청을 `detail_variation_unsupported`로 실패시킨다.
+현재 이미지 수정 요청은 두 가지만 받는다(2026-10-10, ADR-0016 개정).
 
-`variationMode='similar'`는 현재 프로젝트 소유의 착용 사진만 받는다. `changes`는 최대 3개이며 `direction | pose | face`만 허용한다. 배경 참조와 `shot | bg`는 받지 않는다. 상품 단독·디테일 원본은 기존 수정 경로를 사용한다. `variationMode` 없는 기존 클라이언트 요청은 기존 계약으로 처리한다.
+- `variationMode='similar'`: 현재 프로젝트 소유의 착용 사진만 받는다. 원본 검수 레시피가 있는 디테일컷과 제품컷은 받지 않는다.
+- `variationMode` 없음: 자산에 원본 검수 레시피(`assets.metadata.detail_recipe`, 버전 1)가 있는 디테일컷만 받는다. 같은 촬영 대상과 원본 면으로 다시 촬영한다. 고스트샷, 레시피 없는 제품컷, 착용 사진은 400 `vary_unsupported`이며 크레딧을 예약하지 않는다.
+
+변경값과 배경 참조는 없앴다. `changes`가 빈 배열이 아니거나 `refBg`, `refBgAssetId`가 있으면 400이다. 이전 클라이언트가 보내던 빈 `changes: []`는 받는다. 현재 이미지 수정은 컷 종류나 샷을 바꾸지 않으며, 디테일은 `새 이미지 추가`에서만 새로 만든다.
 
 최초 원본과 이력은 서버가 실제 자산에서 조회한다. 클라이언트의 `_similarCut`은 버린다. 서버 payload `_similarCut={version:1,rootAssetId,sourceAssetId}`의 root는 처음 선택한 원본, source는 이번에 선택한 사진이다. 파생 결과에서 다시 생성해도 root 이미지를 사용하며, 같은 사용자·프로젝트 소유와 삭제 여부를 접수·실행 시 재검증한다.
 

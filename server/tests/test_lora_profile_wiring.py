@@ -12,7 +12,7 @@ from app.agents import cut_variator, face_identity
 from app.agents.gemini_image import InlineImage
 from app.workers import detail_page_job as dpj
 from app.workers import editor_image_job as eij
-from conftest import fake_worker_app, make_settings, worker_job
+from conftest import fake_worker_app, make_settings, patch_worker_similar_source, worker_job
 
 MODEL_ID = "44444444-4444-4444-4444-444444444444"
 LICENSE_ID = "66666666-6666-6666-6666-666666666666"
@@ -107,7 +107,9 @@ def _vary(monkeypatch, *, cut_type, enabled, spec):
     settings = make_settings(gemini_api_key="x", r2_bucket="b", face_identity_enabled=enabled)
     out = asyncio.run(cut_variator.generate(
         settings, _Gemini(), InlineImage("image/png", b"SRC"), [], cut_type,
-        face_identity_spec=spec))
+        face_identity_spec=spec, similar_plan={
+            "actionKey": "hands-low", "actionSummary": "손을 내리기", "instructions": "Lower the hands.",
+            "preserve": ["garment"], "avoid": ["relocation"]}))
     return out, calls
 
 
@@ -168,11 +170,12 @@ def _run_editor_vary(monkeypatch, lora_row):
     monkeypatch.setattr(eij, "_emit", noop)
     monkeypatch.setattr(eij.identity_source, "resolve_enabled_lora", fake_lora)
 
+    similar_payload = patch_worker_similar_source(monkeypatch, eij, fake_get_asset)
     app = fake_worker_app(make_settings(
         gemini_api_key="x", r2_bucket="b", facemarket_enabled=True, face_identity_enabled=True))
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "vary",
-        "source": {"src": "/v1/assets/a1/file", "cutType": "styling"},
+        **similar_payload,
         "changes": [],
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
@@ -195,7 +198,7 @@ def test_editor_vary_omits_spec_without_enabled_row(monkeypatch):
     captured = _run_editor_vary(monkeypatch, None)
     assert captured["lookup"] == MODEL_ID
     assert "face_identity_spec" not in captured["kwargs"]
-    assert "ref_bg" in captured["kwargs"]  # 기존 인자는 그대로
+    assert captured["kwargs"]["similar_plan"]["actionKey"] == "hands-low"
 
 
 # ── 얼굴 패스 결과 기록(자산 메타 + job_events) ──
