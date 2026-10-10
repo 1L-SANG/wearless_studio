@@ -56,11 +56,12 @@ test('옛 작업의 이유 없는 실패 칸도 실제 builder에서 다시 만�
   assert.equal(retry.request.retryBlockId, 'old');
 });
 
-test('셀러 조치가 필요한 실패 칸은 버튼 대신 고치는 방법을 반환한다', () => {
+test('옛 셀러 조치 실패 칸도 저장된 false 대신 다시 만들기를 반환한다', () => {
   const result = buildFailedCutRetry([{ id: 'failed', source: 'ai', cutType: 'product' }], 'failed', null, null,
     { failure: { genFailReason: 'no_garment_photo', genFailRetryable: false } });
-  assert.equal(result.retryable, false);
-  assert.equal(result.guidance, '상품 사진이 더 필요해요');
+  assert.equal(result.retryable, true);
+  assert.equal(result.guidance, '저희 쪽에서 다시 만들 수 있어요');
+  assert.equal(result.request.retryBlockId, 'failed');
 });
 
 test('비슷한 컷 후속 칸은 원본 사진이 채워진 뒤에만 그 사진으로 변형한다', () => {
@@ -155,7 +156,7 @@ test('원본 칸 저장이 거절되면 후속 생성이나 결제를 시작하�
   assert.deepEqual(notices, ['다른 창에서 더 최근에 저장했어요']);
 });
 
-test('AI 패널은 조치 안내와 재생성 버튼을 실패 이유에 따라 구분한다', async () => {
+test('AI 패널은 독립 실패의 다시 만들기와 원본이 필요한 칸을 구분한다', async () => {
   const server = await createServer({ root: fileURLToPath(new URL('../..', import.meta.url)),
     configFile: false, esbuild: { jsx: 'automatic' }, server: { middlewareMode: true, hmr: false, watch: null },
     optimizeDeps: { noDiscovery: true, include: [] },
@@ -168,9 +169,9 @@ test('AI 패널은 조치 안내와 재생성 버튼을 실패 이유에 따라 
     const storyboard = [{ id: 'failed', source: 'ai', cutType: 'product' }];
     const render = (failure) => renderToStaticMarkup(createElement(AIPanel, { catalogs,
       failedCutRetry: buildFailedCutRetry(storyboard, 'failed', null, null, { failure }) }));
-    const blocked = render({ genFailReason: 'no_garment_photo', genFailRetryable: false });
-    assert.match(blocked, /상품 사진이 더 필요해요/);
-    assert.doesNotMatch(blocked, /<button/);
+    const oldFailure = render({ genFailReason: 'no_garment_photo', genFailRetryable: false });
+    assert.doesNotMatch(oldFailure, /상품 사진이 더 필요해요/);
+    assert.match(oldFailure, /이 컷 다시 만들기.*19 크레딧/);
     const retryable = render({ genFailReason: 'provider_error', genFailRetryable: true });
     assert.match(retryable, /<button/);
     assert.match(retryable, /이 컷 다시 만들기.*19 크레딧/);

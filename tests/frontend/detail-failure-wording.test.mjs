@@ -95,7 +95,7 @@ test('만들지 못한 컷은 미완성 태그와 기존 크레딧 안내를 표
     { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {}, hasImageSource, failedCutPresentation);
   const html = renderToStaticMarkup(React.createElement(Tile));
   assert.match(html, /class="ed-genwait-tag fail">미완성<\/span>/);
-  assert.match(html, /이 컷은 만들지 못했어요<br\/><small>이 컷 값은 받지 않았어요<br\/>눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요<\/small>/);
+  assert.match(html, /이 컷은 만들지 못했어요<br\/><small>이 컷 값은 받지 않았어요<br\/>저희 쪽에서 다시 만들 수 있어요<\/small>/);
   assert.doesNotMatch(html, /실패/);
 });
 
