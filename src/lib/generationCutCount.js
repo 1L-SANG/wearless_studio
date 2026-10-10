@@ -16,7 +16,7 @@ export function uniqueGenerationCutCount(blocks) {
   let count = 0;
   for (const block of (Array.isArray(blocks) ? blocks : [])) {
     if (!block || block.source === 'mine') continue;
-    if (block.spaceGroupId) { count += 1; continue; }
+    if (block.spaceGroupId || block.similarSourceBlockId) { count += 1; continue; }
     const key = JSON.stringify({
       cutType: block.cutType ?? null,
       shot: block.shot ?? null,

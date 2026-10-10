@@ -3035,6 +3035,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     except ValueError as exc:
         if str(exc) == "invalid_example_selection_origin":
             raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
+        if str(exc) == "invalid_similar_cut_relationship":
+            raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
         raise
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
@@ -3248,6 +3250,7 @@ async def generate_editor_image(
             raise _not_found()
         payload = dict(body or {})
         payload.pop("_facemarket", None)
+        payload.pop("_similarCut", None)
         if payload.get("mode") == "new" and payload.get("spaceGroupId"):
             from .agents import horizon_background
             try:
@@ -3263,7 +3266,49 @@ async def generate_editor_image(
         brand_use_category = None
         if payload.get("mode") == "vary":
             source = payload.get("source") or {}
+            if payload.get("variationMode") == "similar":
+                changes = payload.get("changes", [])
+                if (not isinstance(source, dict)
+                        or not isinstance(changes, list) or len(changes) > 3
+                        or any(not isinstance(change, dict)
+                               or change.get("type") not in {"direction", "pose", "face"}
+                               or not isinstance(change.get("value"), str)
+                               or not change["value"].strip() or len(change["value"]) > 300
+                               for change in changes)
+                        or payload.get("refBgAssetId") or payload.get("refBg")):
+                    raise _bad_request("invalid_similar_cut", "비슷한 컷은 같은 장소에서 포즈·시선·표정을 바꿀 수 있어요.")
             source_asset_id = _asset_id_from_file_capability(source.get("src"))
+            if payload.get("variationMode") == "similar":
+                selected_asset = (
+                    await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
+                    if source_asset_id else None
+                )
+                if selected_asset is None:
+                    raise _bad_request("similar_source_missing", "이 상품의 원본 사진을 찾을 수 없어요.")
+                selected_id = source_asset_id
+                selected_meta = selected_asset.get("metadata") or {}
+                lineage = selected_meta.get("similar_cut") if selected_asset.get("source") == "ai" else None
+                if isinstance(lineage, dict) and lineage.get("version") == 1:
+                    try:
+                        source_asset_id = str(uuid.UUID(str(lineage.get("rootAssetId"))))
+                    except ValueError:
+                        raise _bad_request("similar_source_missing", "원본 사진을 찾을 수 없어요.")
+                root_asset = selected_asset if selected_id == source_asset_id else (
+                    await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
+                )
+                if root_asset is None:
+                    raise _bad_request("similar_source_missing", "원본 사진을 찾을 수 없어요.")
+                root_meta = root_asset.get("metadata") or {}
+                trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type") or source.get("cutType")
+                if (trusted_type not in {"styling", "horizon", "mirror"}
+                        or selected_meta.get("cut_type") == "product"
+                        or selected_meta.get("detail_recipe") or root_meta.get("detail_recipe")):
+                    raise _bad_request("similar_source_unsupported", "비슷한 컷은 착용 사진에서 만들 수 있어요.")
+                source = {**source, "src": f"/v1/assets/{source_asset_id}/file", "cutType": trusted_type}
+                payload["source"] = source
+                payload["_similarCut"] = {
+                    "version": 1, "rootAssetId": source_asset_id, "sourceAssetId": selected_id,
+                }
             provenance = (
                 await repo.get_asset_facemarket_provenance(
                     conn, user_id, source_asset_id
@@ -3518,7 +3563,13 @@ async def generate_detail_page(
         product_row = await repo.get_product(conn, project_id)
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
-        ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        try:
+            generation_storyboard = content_roles.canonicalize_storyboard(storyboard)
+        except ValueError as exc:
+            if str(exc) == "invalid_similar_cut_relationship":
+                raise _bad_request("invalid_similar_cut_relationship", "비슷한 컷의 원본 사진 카드를 확인해 주세요.")
+            raise
+        ai_blocks = [b for b in generation_storyboard if isinstance(b, dict) and b.get("source") == "ai"]
         # 한 컷이라도 모델 범위 밖이면 전량 완성할 수 없다. 만들 수 있는 컷만 예약하고
         # 일부 페이지를 출고하는 대신, 시작 전에 사용자가 콘티를 고치게 한다.
         allowed_blocks = [b for b in ai_blocks

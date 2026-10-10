@@ -65,6 +65,66 @@ _FIT_ROLE_BY_CUT_TYPE = {
     "mirror": "realWear",
 }
 
+_SIMILAR_RECIPE_FIELDS = (
+    "cutType", "direction", "sideStyle", "shot", "colorId", "colorIds", "faceExposure",
+    "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refImages", "refScope",
+    "exampleId", "exampleSelectionOrigin", "outerClosureState", "horizonBackgroundMode",
+    "angle", "thumb", "previewThumb", "baseThumb",
+)
+
+
+def validate_similar_cut_relationships(blocks: list) -> None:
+    """A follow-up references exactly one ordinary worn AI card in this board."""
+    by_id = {}
+    for block in blocks or []:
+        if isinstance(block, dict) and block.get("id") is not None:
+            by_id.setdefault(str(block["id"]), []).append(block)
+    for block in blocks or []:
+        if not isinstance(block, dict) or block.get("similarSourceBlockId") is None:
+            continue
+        source_id = block["similarSourceBlockId"]
+        candidates = by_id.get(source_id, []) if isinstance(source_id, str) else []
+        source = candidates[0] if len(candidates) == 1 else {}
+        if (
+            not isinstance(source_id, str) or not source_id.strip()
+            or not block.get("id") or str(block["id"]) == source_id
+            or len(by_id.get(str(block.get("id")), [])) != 1
+            or block.get("source") != "ai" or resolve_content_role(block) == "custom"
+            or source.get("source") != "ai" or source.get("similarSourceBlockId") is not None
+            or resolve_content_role(source) in ("custom", "productOverview", "detail")
+            or (source.get("cutType") or source.get("cut_type")) not in ("styling", "horizon", "mirror")
+        ):
+            raise ValueError("invalid_similar_cut_relationship")
+
+
+def inherit_similar_cut_recipes(blocks: list) -> list:
+    """Use canonical source settings while preserving the follow-up's section and layout."""
+    by_id = {str(b.get("id")): b for b in blocks if isinstance(b, dict)}
+    result = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("similarSourceBlockId") is None:
+            result.append(block)
+            continue
+        source = by_id[block["similarSourceBlockId"]]
+        out = dict(block)
+        for key in _SIMILAR_RECIPE_FIELDS:
+            out.pop(key, None)
+            if key in source:
+                out[key] = source[key]
+        for key in list(out):
+            if key.startswith(("space", "hook", "colorway")):
+                out.pop(key, None)
+        for key in ("spaceGroupId", "spaceVariation"):
+            if key in source:
+                out[key] = source[key]
+        # The section owns contentRole; the source owns the worn generation recipe.
+        out["contentRole"] = (
+            block["contentRole"] if block.get("sectionRole") == "hooking"
+            else _FIT_ROLE_BY_CUT_TYPE[source["cutType"]]
+        )
+        result.append(out)
+    return result
+
 
 def _canonicalize_example_selection(out: dict) -> dict:
     """Normalize the persisted example selection without leaving orphan metadata."""
@@ -310,6 +370,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
     the hooking section is the only ``hero``; later hero values are demoted to
     ``benefit``. AI custom/missing roles use the section's safe default.
     """
+    validate_similar_cut_relationships(blocks)
     defaults = {
         "hooking": "hero",
         "styling": "coordination",
@@ -410,4 +471,5 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
 
         updated = canonicalize_for_storyboard({**block, "contentRole": role})
         out.append(updated)
-    return out
+    validate_similar_cut_relationships(out)
+    return inherit_similar_cut_recipes(out)

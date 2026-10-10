@@ -268,7 +268,7 @@ export function selectGenerationExamples(catalog, rawOptions) {
 export function repickExampleForDirection(block, catalog, {
   clothingType, gender, identityKind = null, direction, sideStyle = null,
 }) {
-  if (!block || block.source !== 'ai' || block.spaceGroupId) return null;
+  if (!block || block.source !== 'ai' || block.similarSourceBlockId || block.spaceGroupId) return null;
   if (block.hookSlotRole === 'signature' || String(block.exampleId || '').startsWith('sig_')) {
     return null;
   }
@@ -336,6 +336,7 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
     const example = examplesById.get(block?.exampleId);
     if (
       block?.source !== 'ai'
+      || block.similarSourceBlockId
       || !block.id
       || !example
       || !['styling', 'horizon', 'mirror'].includes(block.cutType)
@@ -408,7 +409,7 @@ export function assignGenerationExamples(blocks, {
   const next = blocks.map((block) => {
     if (block?.detailTargetId && block.cutType === 'product' && block.shot === 'detail'
       && !only?.has(block.id)) return block;
-    if (!block || block.source !== 'ai') return block;
+    if (!block || block.source !== 'ai' || block.similarSourceBlockId) return block;
     if (only && !only.has(block.id)) return block;
     if (block.exampleChoice === 'manual') return block;
     const colorwayKey = block.colorwayGroupId ? usageKey(block, product, gender) : null;

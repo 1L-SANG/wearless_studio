@@ -224,6 +224,7 @@ export function applyHookStyle(blocks, style, {
   const nextFrameId = frameId || previous?.frameId || `hookframe__${uid('hf')}`;
 
   const pool = section.filter((block) => isHookingAiBlock(block)
+    && !block.similarSourceBlockId
     && (!framedBefore || previousSlotIds.has(block.id)));
   const used = new Set();
   // 사용자가 직접 고른 예시(origin 'user')는 계약상 고정이다 — 틀이 같은 슬롯에는 그 컷을
@@ -278,7 +279,7 @@ export function applyHookStyle(blocks, style, {
   // 슬롯에 안 쓰인 '구성 컷'만 버린다(스타일 = 정확한 컷 구성).
   // 내 사진과 구성 밖 개별컷은 그대로 뒤에 남는다(2026-08-16 오너).
   const rest = section.filter((block) => !used.has(block.id)
-    && (!isHookingAiBlock(block) || (framedBefore && !previousSlotIds.has(block.id))));
+    && (block.similarSourceBlockId || !isHookingAiBlock(block) || (framedBefore && !previousSlotIds.has(block.id))));
   return [
     ...list.slice(0, start),
     ...slotBlocks,

@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { transformWithEsbuild } from 'vite';
 import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '../../src/lib/detailPageJobFailure.js';
+import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const editor = read('src/features/editor/Editor.jsx');
@@ -86,11 +87,11 @@ for (const [name, extra, heading] of [
 });
 
 test('만들지 못한 컷은 미완성 태그와 기존 크레딧 안내를 표시한다', async () => {
-  const start = editor.indexOf('    if (!el.src && el.genPending) {');
-  const tile = editor.slice(start, editor.indexOf('    if (!el.src) {', start));
+  const start = editor.indexOf('    if (!hasImageSource(el) && el.genPending) {');
+  const tile = editor.slice(start, editor.indexOf('    if (!hasImageSource(el)) {', start));
   const { code } = await transformWithEsbuild(`function Tile(){${tile}}`, 'Tile.jsx', { jsx: 'transform' });
-  const Tile = new Function('React', 'el', 'base', `${code}; return Tile;`)(React,
-    { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {});
+  const Tile = new Function('React', 'el', 'base', 'hasImageSource', `${code}; return Tile;`)(React,
+    { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {}, hasImageSource);
   const html = renderToStaticMarkup(React.createElement(Tile));
   assert.match(html, /class="ed-genwait-tag fail">미완성<\/span>/);
   assert.match(html, /이 컷은 만들지 못했어요<br\/><small>크레딧 미차감<\/small>/);

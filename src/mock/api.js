@@ -1,3 +1,4 @@
+import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
 import { acceptMockClientEvent } from './clientEvents.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
@@ -835,7 +836,7 @@ export const api = {
   },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
-    DB.storyboard = clone(blocks);
+    DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
     touch();
@@ -887,15 +888,22 @@ export const api = {
         push('progress', { progress: 18, phase: 'copy' });
         for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
       }
+      const storyboardById = new Map(draft.storyboard.map(block => [block.id, block]));
+      imgs.sort((a, b) => Number(Boolean(storyboardById.get(a.sourceBlockId)?.similarSourceBlockId)) - Number(Boolean(storyboardById.get(b.sourceBlockId)?.similarSourceBlockId)));
+      const completed = new Map();
+      const completions = new Map(imgs.map(image => [image.sourceBlockId, new Promise(resolve => completed.set(image.sourceBlockId, resolve))]));
       const total = Math.max(1, imgs.length);
       let done = 0; let next = 0;
       // 3개 창구 롤링 — 순서 무작위 도착의 실감을 내되 데모 총 소요는 ~10초대
       await Promise.all(Array.from({ length: Math.min(3, total) }, () => (async () => {
         while (next < imgs.length) {
           const el = imgs[next++];
+          const sourceId = storyboardById.get(el.sourceBlockId)?.similarSourceBlockId;
+          if (sourceId) await completions.get(sourceId);
           push('step', { blockId: el.sourceBlockId, status: 'cut_start' });
           await wait(2400 + Math.random() * 2200);
           push('step', { blockId: el.sourceBlockId, status: 'cut_done', previewUrl: el.src, width: 880, height: 1320 });
+          completed.get(el.sourceBlockId)?.();
           done += 1;
           push('progress', { progress: 20 + Math.round(60 * done / total), phase: 'cut', done, total });
         }
@@ -976,14 +984,36 @@ export const api = {
     return true;
   },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
-  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], refBg? }  (계약 §6)
+  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], variationMode?, refBg? }  (계약 §6)
   async generateImage(_projectId, req = {}) {
     await runJob({ duration: 2400, onProgress: req.onProgress });
     const isVary = req.mode === 'vary';
-    const group = isVary ? 'misc' : (req.colorId || 'misc');
+    const images = Object.entries(DB.wardrobe).flatMap(([group, items]) => items.map((image) => ({ ...image, wardrobeGroup: group })));
+    const source = isVary ? images.find((image) => image.src === req.source?.src) : null;
+    const isSimilar = isVary && req.variationMode === 'similar' && (source?.cutType || req.source?.cutType) !== 'product';
+    if (isSimilar && !source) throw new Error('원본 이미지를 찾을 수 없어요. 이미지를 다시 선택해 주세요.');
+    const rootId = source?.similarCut?.rootAssetId || source?.id;
+    const root = isSimilar ? images.find((image) => image.id === rootId) : null;
+    if (isSimilar && !root) throw new Error('처음 원본 이미지를 찾을 수 없어요.');
+    const group = isVary ? (root?.wardrobeGroup || source?.wardrobeGroup || 'misc') : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
-    const cutType = isVary ? ((req.source && req.source.cutType) || 'styling') : (req.cutType || null);
-    const img = { id: uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
+    const cutType = isVary ? (root?.cutType || source?.cutType || req.source?.cutType || 'styling') : (req.cutType || null);
+    const id = uid('w');
+    const img = { id, src: Placeholder.any(id), ai: true, wardrobeGroup: group, ...(cutType ? { cutType } : {}) };
+    if (isSimilar) {
+      // 로컬 데모는 실제 사진 분석 없이 동작 이름만 순환한다. 원본 계보·이력 계약을 재현한다.
+      const actions = cutType === 'mirror'
+        ? [['soft-smile', '거울 구도를 유지하며 부드럽게 웃기'], ['relaxed-expression', '거울 구도를 유지하며 편안한 표정 짓기'], ['small-head-tilt', '휴대폰 위치를 유지하며 고개 살짝 기울이기']]
+        : [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
+      const previous = images.filter((image) => image.similarCut?.rootAssetId === rootId);
+      const [actionKey, actionSummary] = actions[previous.length % actions.length];
+      img.src = `${Placeholder.photo(id, cutType)}#${id}`;
+      img.similarCut = {
+        version: 1, rootAssetId: rootId, sourceAssetId: source.id,
+        plan: { actionKey, actionSummary, instructions: actionSummary,
+          preserve: ['인물', '옷', '장소'], avoid: previous.slice(-2).map((image) => image.similarCut.plan.actionSummary) },
+      };
+    }
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);
     return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage) };
   },

@@ -24,6 +24,7 @@ const isRerollableFlat = (block, sectionId) => (
   !!block
   && block.sectionId === sectionId
   && block.source === 'ai'
+  && !block.similarSourceBlockId
   && !block.spaceGroupId
   && block.exampleChoice !== 'manual'
   && block.exampleSelectionOrigin === 'auto'
@@ -50,6 +51,7 @@ const isRerollableOne = (block, sectionId) => (
   !!block
   && block.sectionId === sectionId
   && block.source === 'ai'
+  && !block.similarSourceBlockId
   && !block.spaceGroupId
   && !!block.exampleId
 );
@@ -121,7 +123,7 @@ export function shuffleSectionExamples(blocks, {
     next = replaceSpaceSetRun(next, run.spaceGroupId, set, {
       spaceGroupId: newGroupId,
       setSelectionOrigin: 'auto',
-      members: replacementMembers(set, run.items.length),
+      members: replacementMembers(set, run.items.filter(block => !block.similarSourceBlockId).length),
     });
     if (set.setType.startsWith('horizon')) {
       next = reconcileHorizonGroupBackground(next, newGroupId, product, colorEvidence, set.id);

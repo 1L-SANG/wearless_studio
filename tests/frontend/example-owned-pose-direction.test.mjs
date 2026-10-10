@@ -73,8 +73,12 @@ test('editor renders without manual direction controls for worn and product imag
     }));
     assert.ok(!rendered.includes('보는 방향'));
     assert.ok(!rendered.includes('direction-chips'));
-    assert.ok(rendered.includes('같은 장소 이미지 생성'));
-    assert.equal(rendered.includes('포즈 고르기'), cutType === 'styling');
+    assert.ok(rendered.includes(cutType === 'product' ? '이미지 수정' : '비슷한 컷 생성'));
+    assert.ok(!rendered.includes('같은 장소 이미지 생성'));
+    assert.ok(!rendered.includes('포즈 고르기'));
+    assert.ok(!rendered.includes('표정 고르기'));
+    assert.ok(!rendered.includes('vary-tabs'));
+    assert.ok(rendered.includes('기준 사진'));
   }
   const gallery = renderToStaticMarkup(createElement(MoodGuide, {
     catalogs: DB.catalogs, cut: 'horizon', direction: 'side', sideStyle: 'threeQuarter',

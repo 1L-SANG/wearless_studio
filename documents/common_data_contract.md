@@ -190,6 +190,7 @@ StoryboardBlock {
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
+  similarSourceBlockId?: string    // 원본 AI 착용 카드 ID. 원본 결과로 생성하고 별도 과금한다. 원본의 세트 소속을 상속하며 예비 멤버는 쓰지 않는다 (ADR-0016)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   exampleSelectionOrigin?: 'auto' | 'user' | null  // 자동 배정인지 사용자 확정인지. source와 다른 축
   setSelectionOrigin?: 'auto' | 'user' | null      // 촬영 세트의 진입 자동 배치인지 사용자 선택인지
@@ -531,8 +532,9 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }
-VaryRequest {                      // AI 탭 '현재 이미지 수정' — changes 빈 배열 = '비슷한 컷 만들기'
+VaryRequest {                      // AI 탭 '현재 이미지 수정'
   mode: 'vary'
+  variationMode?: 'similar'        // 새 착용컷 UI: 원본 분석 → 동작 계획 → 생성
   source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
   changes: { type: 'direction' | 'shot' | 'pose' | 'face' | 'bg', value: string }[]
   refBg?: string
@@ -540,6 +542,12 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정' — chang
 ```
 
 `현재 이미지 수정`은 디테일샷 전환을 제공하지 않는다. 디테일은 상품 전체 중 실제 `Detail` 입력을 연결하는 `새 이미지 추가`에서만 만들며, 목표 색상에 Detail이 없으면 타색 근거의 색만 전환한다. 서버는 수정 경로 우회 요청을 `detail_variation_unsupported`로 실패시킨다.
+
+`variationMode='similar'`는 현재 프로젝트 소유의 착용 사진만 받는다. `changes`는 최대 3개이며 `direction | pose | face`만 허용한다. 배경 참조와 `shot | bg`는 받지 않는다. 상품 단독·디테일 원본은 기존 수정 경로를 사용한다. `variationMode` 없는 기존 클라이언트 요청은 기존 계약으로 처리한다.
+
+최초 원본과 이력은 서버가 실제 자산에서 조회한다. 클라이언트의 `_similarCut`은 버린다. 서버 payload `_similarCut={version:1,rootAssetId,sourceAssetId}`의 root는 처음 선택한 원본, source는 이번에 선택한 사진이다. 파생 결과에서 다시 생성해도 root 이미지를 사용하며, 같은 사용자·프로젝트 소유와 삭제 여부를 접수·실행 시 재검증한다.
+
+동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
 
@@ -556,3 +564,9 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정' — chang
 - Supabase 스키마 구현 완료 (9개 마이그레이션, 17테이블): `profiles`, `credit_accounts`, `credit_ledger`, `projects`, `products`, `analyses`, `assets`, `mannequin_cuts`, `wardrobe_images`, `matching_items`, `jobs`, `job_events`, `exports`, `pricing_plans`, `payment_history`, `credit_sources`, `refund_requests`. 전체 RLS 활성, 쓰기는 service-role/FastAPI 전용.
 - 생성 작업은 서버에서 job(id·status)으로 관리한다. 현재 프론트 어댑터는 `GenJob`을 폴링해 `onProgress`만 전달한다. 서버 SSE 경로는 구현돼 있으나 프론트 구독과 `onStep` 배선은 TODO다.
 - 크레딧 차감은 서버 트랜잭션이 원본이고 `{ data, credits }`의 `credits`가 그 결과다. 프론트 선차감 금지.
+
+### 콘티의 비슷한 컷 예약 (ADR-0016)
+
+후속 컷은 원본의 `spaceGroupId`와 `spaceVariation`, 배경 설정을 상속하고 같은 연속 세트의 장수에 포함한다. `spaceSetMemberOrder`는 없으며 예비 멤버를 쓰지 않는다. 원본이 세트 밖이면 후속 컷도 세트 밖이다. 세트 교체와 삭제는 원본 ID의 생존을 따르고, 원본의 세트 이탈 이동은 후속 컷을 함께 옮긴다. 후킹 프레임 슬롯 후보에서는 항상 제외한다.
+
+후속 블록의 `similarSourceBlockId`는 같은 콘티의 일반 AI 착용 블록을 가리킨다. 생성예시 사진을 편집하지 않는다. 원본을 성공적으로 생성한 뒤 그 결과 사진으로 후속 컷을 만들며, 모두 최초 원본을 기준으로 한다. 후속 카드의 위치와 ID는 유지하고 상품·예시 설정은 원본에서 상속한다. 일반 복제의 동일 사진 재사용과 달리 후속 컷마다 새로운 사진을 생성·정산한다. 사용자 방향·포즈·표정 선택은 없다. 원본 삭제 시 후속 카드를 함께 삭제하며 되돌리기가 가능하다. 서버는 존재하지 않는 원본, 후속 컷을 원본으로 삼는 관계, 제품·디테일·내 사진 원본을 거절한다. 계획과 생성 실행은 서버 작업 소유이며 에디터 마운트·새로고침으로 새 호출을 만들지 않는다.

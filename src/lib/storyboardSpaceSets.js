@@ -1,5 +1,6 @@
 import { spaceSetIdFromGroupId } from './storyboardSpaceSetCatalog.js';
 import { horizonBackgroundMode } from './horizonBackground.js';
+import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 
 const defaultBlock = (item) => item;
 
@@ -130,11 +131,16 @@ export function moveBlockWithSpaceMembership(
 ) {
   const from = blocks.findIndex((block) => block.id === blockId);
   if (from < 0) return blocks;
-  const next = [...blocks];
-  let [moving] = next.splice(from, 1);
+  let moving = blocks[from];
+  if (moving.similarSourceBlockId && (moving.spaceGroupId || null) !== (targetSpaceGroupId || null)) return blocks;
   const staysInCurrentSpace = moving.source !== 'mine'
     && !!moving.spaceGroupId
     && moving.spaceGroupId === targetSpaceGroupId;
+  const movingIds = new Set([blockId]);
+  if (moving.spaceGroupId && !staysInCurrentSpace && !moving.similarSourceBlockId) {
+    blocks.filter(block => block.similarSourceBlockId === blockId).forEach(block => movingIds.add(block.id));
+  }
+  const next = blocks.filter(block => !movingIds.has(block.id));
   if (staysInCurrentSpace) {
     moving = {
       ...clearLayoutRow(moving),
@@ -143,8 +149,10 @@ export function moveBlockWithSpaceMembership(
   } else {
     moving = detachSpaceMembership(clearLayoutRow(moving));
   }
-  const adjustedTarget = from < targetIndex ? targetIndex - 1 : targetIndex;
-  next.splice(Math.max(0, Math.min(adjustedTarget, next.length)), 0, moving);
+  const followers = blocks.filter(block => block.id !== blockId && movingIds.has(block.id))
+    .map(block => detachSpaceMembership(clearLayoutRow(block)));
+  const adjustedTarget = targetIndex - blocks.slice(0, targetIndex).filter(block => movingIds.has(block.id)).length;
+  next.splice(Math.max(0, Math.min(adjustedTarget, next.length)), 0, moving, ...followers);
   // 남은 멤버가 1개여도 세트를 풀지 않는다 — 세트 유지는 오너 확정(2026-07-29)
   return rekeySeparatedSpaceRuns(next, nextGroupId);
 }
@@ -206,6 +214,8 @@ export function createSpaceSetMembers(set, template, {
       refImages: [],
       refAssetIds: [],
     });
+    // A new set uses its selected examples, never a template's follow-up link.
+    delete base.similarSourceBlockId;
     return member.cutType === 'product'
       ? { ...base, matchIds: [], faceExposure: null, outerClosureState: null }
       : base;
@@ -216,15 +226,17 @@ export function replaceSpaceSetRun(blocks, oldSpaceGroupId, set, options = {}) {
   const run = groupConsecutiveSpaceRuns(blocks)
     .find((candidate) => candidate.kind === 'space' && candidate.spaceGroupId === oldSpaceGroupId);
   if (!run) return blocks;
-  const previousMembers = blocks.slice(run.start, run.end);
+  const previousMembers = run.items.filter(block => !block.similarSourceBlockId);
   const members = createSpaceSetMembers(set, previousMembers[0], {
     ...options,
     previousMembers,
   });
   if (!members.length) return blocks;
   const next = [...blocks];
-  next.splice(run.start, previousMembers.length, ...members);
-  return next;
+  const replacement = members.flatMap(member => [member,
+    ...run.items.filter(block => block.similarSourceBlockId === member.id)]);
+  next.splice(run.start, run.items.length, ...replacement);
+  return inheritSimilarCutRecipes(next);
 }
 
 export function insertSpaceSet(blocks, index, set, template, options = {}) {

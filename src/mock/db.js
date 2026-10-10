@@ -320,7 +320,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const preview = demoColorwayPreviewFor(product.name, product.clothingType);
     const previewAsset = preview?.template?.[b.shot];
     if (b.colorwayGroupId && previewAsset) return previewAsset;
-    const usesWholeExample = b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
+    const usesWholeExample = !b.similarSourceBlockId && b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
     return P.photo(usesWholeExample ? b.exampleId : 'gen_' + b.id, cat(b.cutType), w, h);
   };
   const arr = storyboard || [];

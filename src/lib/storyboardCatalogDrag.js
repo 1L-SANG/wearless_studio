@@ -92,6 +92,7 @@ export function createIndependentCatalogMembers(set, exampleIds, template, { mak
   const choices = independentSpaceSetChoices(set, context).filter(({ member }) => requested.has(member.exampleId));
   if (!requested.size || choices.length !== requested.size || requested.size !== exampleIds.length) throw new Error('catalog_member_unavailable');
   const { layoutRowId, layoutRowVersion, setSelectionOrigin, ownImages, exampleChoice, ...base } = stripHookFrameFields(detachSpaceMembership(template || {}));
+  delete base.similarSourceBlockId;
   return choices.map(({ member, example }, index) => ({ ...base, id: makeId(member, index), source: 'ai',
     sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : member.cutType === 'mirror' ? 'realWear' : 'coordination',
     cutType: member.cutType, direction: member.direction, shot: member.shot, exampleId: example.id, exampleSelectionOrigin: 'user',

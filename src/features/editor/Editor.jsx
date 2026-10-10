@@ -28,6 +28,7 @@ import { editorWorkCopies, restoreWorkCopyOnce } from '@/lib/conflictWorkCopy.js
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
+import { hasImageSource } from './editorImageSource.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
@@ -458,7 +459,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       boxSizing: 'border-box',
       overflow: 'hidden',
     } : {};
-    if (!el.src && el.genPending) {
+    if (!hasImageSource(el) && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
       // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
       return (
@@ -482,7 +483,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         </div>
       );
     }
-    if (!el.src) {
+    if (!hasImageSource(el)) {
       const inv = 1 / (scale || 1);
       const compactSlot = Math.min(el.w * (scale || 1), el.h * (scale || 1)) < 120;
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
@@ -1148,6 +1149,8 @@ export function Editor() {
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const generateSubmission = useRef(null);
+  const varySubmission = useRef(null);
+  const unconfirmedVarySubmissions = useRef(new Map());
   const [generateSubmitting, setGenerateSubmitting] = useState(false);
   const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
   const [frameOver, setFrameOver] = useState(null);
@@ -2641,23 +2644,48 @@ export function Editor() {
   };
   // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
   // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
-  const varyGenerate = async ({ source, changes, refBg, refBgAssetId }) => {
-    const group = varyTarget?.group || source?.wardrobeGroup || 'misc';
+  const varyGenerate = async ({ source, changes, variationMode, refBg, refBgAssetId }) => {
+    if (varySubmission.current?.busy || !hasImageSource(source)) return null;
+    const request = { mode: 'vary', source, changes, ...(variationMode ? { variationMode } : {}), refBg, refBgAssetId };
+    const signature = JSON.stringify({ projectId, src: source.src, cutType: source.cutType, changes, variationMode, refBg, refBgAssetId });
+    // 접수 미확인 요청은 사진·설정별로 보존한다. 다른 사진을 작업해도 재시도 키를 잃지 않는다.
+    const submission = unconfirmedVarySubmissions.current.get(signature) || {
+      idempotencyKey: crypto.randomUUID(), signature, request,
+      group: varyTarget?.group || source.wardrobeGroup || 'misc',
+    };
+    submission.busy = true;
+    unconfirmedVarySubmissions.current.set(signature, submission);
+    varySubmission.current = submission;
+    const releaseSubmission = () => {
+      // 늦게 끝난 이전 작업이 같은 사진의 새 요청이나 다른 사진의 미확인 요청을 지우지 않는다.
+      if (unconfirmedVarySubmissions.current.get(signature) === submission) {
+        unconfirmedVarySubmissions.current.delete(signature);
+      }
+      if (varySubmission.current === submission) varySubmission.current = null;
+    };
+    const group = submission.group;
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
-    toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
+    toast.push(variationMode === 'similar' ? '새로운 동작의 비슷한 컷을 준비하고 있어요' : '이미지를 수정하는 중이에요', { icon: 'sparkles' });
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+      const { data: img, credits } = await api.generateImage(projectId, { ...submission.request,
+        idempotencyKey: submission.idempotencyKey, onJobStarted: releaseSubmission });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);
       return img;
     } catch (e) {
+      if (e?.submissionUnknown) submission.unknown = true;
+      else if (!e?.requestNotSent) submission.unknown = false;
       handleImageJobFailure(e, group, loadingId);
       return null;
     } finally {
+      if (varySubmission.current === submission) {
+        if (submission.unknown) submission.busy = false;
+        else releaseSubmission();
+      }
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
@@ -2669,9 +2697,9 @@ export function Editor() {
   const varySource = (() => {
     if (varyTarget) {
       const im = Object.values(wardrobe || {}).flat().find((x) => x.id === varyTarget.id);
-      return im ? { id: im.id, src: im.src, cutType: im.cutType || null, wardrobeGroup: im.wardrobeGroup || varyTarget.group } : null;
+      return hasImageSource(im) ? { id: im.id, src: im.src, cutType: im.cutType || null, wardrobeGroup: im.wardrobeGroup || varyTarget.group } : null;
     }
-    return selectedElObj && selectedElObj.type === 'image'
+    return selectedElObj?.type === 'image' && hasImageSource(selectedElObj)
       ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null, wardrobeGroup: selectedElObj.wardrobeGroup || null }
       : null;
   })();

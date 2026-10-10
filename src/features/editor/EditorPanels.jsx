@@ -26,6 +26,7 @@ import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
 import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
+import { hasImageSource } from './editorImageSource.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -249,114 +250,33 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
-/* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
-   ① 같은 장소 이미지 생성 — 아래에서 고른 포즈·표정만 바꾸고 장소는 그대로
-   ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
-
-   배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
-   가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
-   무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
-   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치".
-   거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
-   '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
-const VARY_CATS = [
-  { id: 'pose', label: '포즈' },
-  { id: 'face', label: '표정' },
-];
+/* ---------- AI · 현재 이미지 수정 ---------- */
 function VaryPanel({ catalogs, source, onGenerate }) {
-  const opts = catalogs.varyOptions || {};
-  const [cat, setCat] = useState('pose');
-  const [sel, setSel] = useState({});
-  const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
-  if (!source) {
-    return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
+  const busyRef = useRef(false);
+  if (!hasImageSource(source)) {
+    return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
   }
-  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 안다. 직접 업로드는 미상이고,
-  // 그때는 사람컷 대표값(styling)으로 가정한다. 셀러에게 되묻지 않는다(오너 8/16):
-  // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
-  const srcType = source.cutType || null;
-  const isProduct = srcType === 'product';
-  const isMirror = srcType === 'mirror';
-  const cats = isProduct ? [] : isMirror ? VARY_CATS.filter((c) => c.id === 'face') : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0]?.id || 'pose';
-  const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
-  // 포즈와 표정 변경만 기존 이미지 수정 요청으로 보낸다.
-  const chips = [];
-  if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
-  if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
-  const n = chips.length;
-  const hasChange = { pose: !!sel.pose, face: !!sel.face };
+  const isProduct = source.cutType === 'product';
   const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
-  const clearAll = () => setSel({});
-  /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
-     고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
-     refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
-  const runGenerate = (changes) => {
+  const generate = async () => {
     if (busyRef.current) return;
-    busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
-    onGenerate({
-      // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
-      source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
-      changes,
-    });
+    busyRef.current = true;
+    try {
+      await onGenerate({
+        source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
+        changes: [],
+        ...(!isProduct ? { variationMode: 'similar' } : {}),
+      });
+    } finally { busyRef.current = false; }
   };
-  // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
-  // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
-  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
-  const generateAuto = () => runGenerate([]);
-  const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
-    <div>
-      {!isProduct && <div className="vary-tabs">
-        <UnderlineTabs value={safeCat} onChange={setCat}
-          options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
-      </div>}
-      {!isProduct && (
-        <div className="insp-sec">
-          <label className="lbl">{catLabel} 고르기</label>
-          <div className="vary-grid">
-            {(opts[safeCat] || []).map((o) => {
-              const on = sel[safeCat] === o.id;
-              return (
-                <button type="button" key={o.id} className={`vary-card${on ? ' on' : ''}`} onClick={() => pickCard(o.id)}>
-                  <span className="vc-check">{on && <Icon name="check" size={12} />}</span>
-                  <img src={o.thumb} alt="" />
-                  <span className="vc-label">{o.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {n > 0 && (
-        <div className="vary-tray">
-          <div className="vt-head">
-            <span className="vt-title">변경 요약 ({n})</span>
-            <button type="button" className="vt-clear" onClick={clearAll}>전체 해제</button>
-          </div>
-          <div className="vt-chips">
-            {chips.map((c) => (
-              <span className="vt-chip" key={c.key}>{c.cat} · {c.label}
-                <button type="button" onClick={c.clear} title="해제"><Icon name="x" size={13} /></button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      {/* 두 버튼은 서로 배타 — 고른 게 하나도 없으면 '같은 장소 이미지 생성'만, 방향·포즈·
-          표정을 하나라도 고르면 '비슷한 컷 만들기'만 눌린다(오너 2026-08-16). 그래서 눌리는
-          쪽이 항상 지금 상태에 맞는 일을 한다: 고른 게 없으면 빈 변경, 있으면 그 변경들.
-          모양·크기·테두리는 둘이 같고 채움/글자색만 반대다 — variant 는 primary 그대로 두고
-          .btn-invert 로 색만 뒤집는다(ghost 로 두면 높이·라운드·테두리가 달라진다). */}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert"
-        disabled={n > 0} onClick={generateAuto} style={{ marginTop: 14 }}>
-        {`같은 장소 이미지 생성 · ${cost} 크레딧`}
-      </Button>
-      <Button variant="primary" block icon="sparkles" className="btn-glowring"
-        disabled={n === 0} onClick={generateWithPicks} style={{ marginTop: 8 }}>
-        {`비슷한 컷 만들기 · ${cost} 크레딧`}
+    <div className="similar-cut-panel">
+      <div className="similar-cut-source">
+        <img src={source.src} alt="기준 사진" />
+        <div><span>기준 사진</span><p>{isProduct ? '선택한 상품 사진으로 만들어요' : '같은 촬영의 다른 순간을 만들어요'}</p></div>
+      </div>
+      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
+        {`${isProduct ? '이미지 수정' : '비슷한 컷 생성'} · ${cost} 크레딧`}
       </Button>
     </div>
   );

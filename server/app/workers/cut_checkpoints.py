@@ -441,6 +441,15 @@ class CutCheckpointStore:
             self.note_final(block_id, saved.key)
         return cut
 
+    async def for_similar_cut(self, fingerprint: str, block_id: str, plan: dict) -> CutCheckpoint:
+        """A generated follow-up is reusable only with its mandatory saved action."""
+        cut = CutCheckpoint(self, fingerprint, fingerprint, block_id)
+        saved = await self._load(fingerprint, STAGE_FINAL)
+        if saved is not None and saved.meta.get("similarPlan") == plan:
+            cut.final = saved
+            self.note_final(block_id, saved.key)
+        return cut
+
     async def _load(self, digest: str, stage: str) -> Loaded | None:
         for row in self._index.get((digest, stage), ()):
             key = row["r2_key"]

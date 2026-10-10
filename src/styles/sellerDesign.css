@@ -89,3 +89,26 @@
 .ds-scope-preview[open] > summary::after { content: '−'; }
 .ds-scope-preview > summary > span { margin-left: auto; color: var(--fg-1); font-size: 12px; }
 .ds-scope-preview > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+/* Similar-cut relationships use the existing monochrome photo-card system. */
+.similar-cut-source { display:flex; align-items:center; gap:var(--sp-12); margin-bottom:var(--sp-20); }
+.similar-cut-source img { width:56px; height:70px; object-fit:cover; border-radius:var(--r-4); }
+.similar-cut-source span { color:var(--fg-2); font-size:12px; }
+.similar-cut-source p { margin:4px 0 0; font-size:14px; color:var(--fg-1); }
+.sb-similar-badge { position:absolute; bottom:12px; left:12px; display:flex; align-items:center; gap:6px; max-width:calc(100% - 24px); padding:8px 10px; border-radius:var(--r-pill); background:var(--glass-bg); color:var(--fg-1); box-shadow:var(--elev-card); font-size:12px; font-weight:500; pointer-events:none; white-space:nowrap; }
+.sb-similar-badge svg { flex-shrink:0; }
+.sb-cutcard:has(.sb-similar-badge) { container-type:inline-size; }
+@container (max-width: 159px) { .sb-similar-badge small { display:none; } }
+.sb-similar-badge small { color:var(--fg-2); font-size:11px; margin-left:2px; }
+.sb-similar-caption { gap:6px; color:var(--fg-2); }
+.sb-similar-eyebrow { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-2); }
+.sb-similar-inspector h3 { font-size:18px; margin:12px 0 8px; text-wrap:balance; }
+.sb-similar-source { display:flex; align-items:center; gap:12px; width:100%; padding:12px; margin-top:20px; background:var(--bg-2); border:0; border-radius:var(--r-5); box-shadow:var(--elev-card); text-align:left; color:var(--fg-1); cursor:pointer; }
+.sb-similar-source img { width:48px; height:60px; object-fit:cover; border-radius:var(--r-3); }
+.sb-similar-source span { flex:1; }
+.sb-similar-source strong { display:block; font-size:14px; font-weight:500; }
+.sb-similar-source small { display:block; color:var(--fg-2); font-size:12px; margin-top:5px; }
+.sb-similar-add { padding:16px 20px 20px; }
+.sb-similar-add .btn { width:100%; height:var(--cta-height); }
+.sb-similar-add p { margin:10px 0 0; color:var(--fg-2); font-size:12px; text-align:center; }
+.sb-similar-source:focus-visible { outline:2px solid var(--focus); outline-offset:3px; }
