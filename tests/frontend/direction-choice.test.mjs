@@ -258,14 +258,14 @@ test('스냅(스타일링)은 장소가 다 다르므로 세트 멤버를 빼지
 });
 
 test('갤러리는 방향 분류 없이 예시 사진 목록을 보여준다', () => {
-  // 2026-09-22 오너: "분류했으면 여러 창 옮기게 하지 말고 하나만 있으면 되잖아".
+  // 2026-10-10 오너 결정: 방향 분류 없이 3×2 넘기기를 복원한다.
   const board = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
   const moodGuide = board.slice(board.indexOf('function MoodGuide'), board.indexOf('function Inspector'));
-  assert.doesNotMatch(moodGuide, /galleryPage/);
-  assert.doesNotMatch(moodGuide, /sb-expage-hit/);
-  assert.doesNotMatch(moodGuide, /paginateGenerationGalleryItems/);
+  assert.match(moodGuide, /galleryPage/);
+  assert.match(moodGuide, /sb-expage-hit/);
+  assert.match(moodGuide, /paginateGenerationGalleryItems/);
   assert.doesNotMatch(moodGuide, /sb-exsection|sb-expage-label/);
-  assert.match(moodGuide, /examples\.map\(renderExampleCell\)/);
+  assert.match(moodGuide, /paginateGenerationGalleryItems\(examples\)/);
 });
 
 test('예시를 고르면 카드 방향이 그 예시의 방향이 된다 — 첫 선택도, 교체도', () => {
