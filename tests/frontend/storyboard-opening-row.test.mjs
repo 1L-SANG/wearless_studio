@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 
@@ -306,6 +306,28 @@ test('long signature title stays at two centered lines in mock, skeleton, and se
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockBlock));
 });
+
+const titleFixture = JSON.parse(readFileSync(new URL('../fixtures/hook-title-layout.json', import.meta.url), 'utf8'));
+for (const caseId of ['D1', 'B2', 'A2']) {
+  test(`시그니처 ${caseId} 제목은 mock 배치 결과를 대기 화면에서도 그대로 쓴다`, () => {
+    const { input, expected } = titleFixture.cases.find(({ name }) => name.startsWith(`${caseId} `));
+    const storyboard = [{
+      id: 'signature', source: 'ai', sectionRole: 'hooking', contentRole: 'hero', cutType: 'horizon',
+      hookTitleOverlay: true,
+    }];
+    const blocks = buildEditorBlocksFromStoryboard(storyboard, { ...PRODUCT, name: input }, true);
+    const title = blocks[0].elements.find((element) => element.copyRole === 'hookTitle');
+    assert.equal(title.text, expected.text);
+    assert.equal(title.h, expected.h);
+    assert.equal(title.y, 50 + Math.floor((560 - expected.h) / 2));
+    assert.equal(title.style.size, expected.size);
+    assert.equal(title.style.lineHeight, expected.lineHeight);
+    assert.ok(!Object.hasOwn(title.style, 'maxLines'));
+    const alignedTitle = alignSkeletonToServer(blocks, true)[0].elements
+      .find((element) => element.copyRole === 'hookTitle');
+    assert.deepEqual(alignedTitle, { ...title, y: 50 + Math.floor((1320 - expected.h) / 2) });
+  });
+}
 
 test('product two-column row uses the same 30px labels in mock and server', () => {
   const storyboard = ['front', 'back'].map((direction) => ({

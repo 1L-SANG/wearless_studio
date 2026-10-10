@@ -62,3 +62,36 @@ test('간격 입력칸을 바꾸지 않고 떠나도 자동 상태가 유지된�
 test('기존 소제목의 반올림된 기본 행간도 기존 빠른 스타일로 판별한다', () => {
   assert.equal(activeTextPreset({ size: 26, weight: 600, color: '#0e0d14', lineHeight: 36, tracking: 0 }), 'subtitle');
 });
+
+for (const [size, lineHeight] of [[28, 39], [14, 20], [15, 21], [24, 34]]) {
+  test(`행간이 없는 ${size}px 글자는 기본 행간을 ${lineHeight}px 정수로 읽는다`, () => {
+    assert.deepEqual(resolveTextSpacing({ size }), { lineHeight, tracking: 0 });
+  });
+}
+
+test('반올림된 기본 행간을 그대로 입력하면 상태를 유지하고 직접 바꾸면 수동 값으로 보존한다', () => {
+  const unchanged = patchTextStyle({ size: 28 }, { lineHeight: 39 });
+  assert.equal(unchanged.spacingMode, undefined);
+  assert.equal(unchanged.lineHeight, 39);
+  const manual = patchTextStyle(unchanged, { lineHeight: 40 });
+  assert.equal(manual.spacingMode, 'manual');
+  assert.equal(manual.lineHeight, 40);
+  const enlarged = patchTextStyle(manual, { size: 40 });
+  assert.equal(enlarged.spacingMode, 'manual');
+  assert.equal(enlarged.lineHeight, 40);
+  const automatic = patchTextStyle(enlarged, { spacingMode: 'auto' });
+  assert.equal(automatic.spacingMode, 'auto');
+  assert.equal(automatic.lineHeight, 52);
+});
+
+test('저장된 기본 행간의 부동소수 결과만 반올림하고 셀러가 넣은 소수는 유지한다', () => {
+  assert.equal(resolveTextSpacing({ size: 28, lineHeight: 39.199999999999996 }).lineHeight, 39);
+  assert.equal(resolveTextSpacing({ size: 28, lineHeight: 39.5 }).lineHeight, 39.5);
+  assert.equal(resolveTextSpacing({ size: 28, lineHeight: 39.2 }).lineHeight, 39.2);
+});
+
+test('저장된 부동소수 기본 행간에 표시값을 그대로 입력해도 수동으로 바뀌지 않는다', () => {
+  const unchanged = patchTextStyle({ size: 28, lineHeight: 39.199999999999996 }, { lineHeight: 39 });
+  assert.equal(unchanged.spacingMode, undefined);
+  assert.equal(unchanged.lineHeight, 39);
+});

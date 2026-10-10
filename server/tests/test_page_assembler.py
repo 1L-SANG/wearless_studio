@@ -455,7 +455,7 @@ def test_signature_first_cut_keeps_only_contrast_aware_hook_title():
     assert (texts[0]["y"], texts[0]["h"]) == (454, 72)
     assert texts[0]["style"] == {
         "font": "Pretendard", "size": 60, "weight": 700,
-        "color": "#111111", "align": "center", "lineHeight": 72, "maxLines": 2,
+        "color": "#111111", "align": "center", "lineHeight": 72,
     }
     assert texts[0]["style"]["color"] == "#111111"
     assert all(element.get("copyRole") not in {"headline", "label"} for element in texts)

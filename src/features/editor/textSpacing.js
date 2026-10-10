@@ -15,8 +15,11 @@ export function recommendedTextSpacing(size, font = 'Pretendard') {
 
 export function resolveTextSpacing(style = {}) {
   if (style.spacingMode === 'auto') return recommendedTextSpacing(style.size, style.font);
+  const lineHeight = Number(style.lineHeight);
+  const size = Number(style.size);
+  const leakedDefault = lineHeight === size * 1.4 && !Number.isInteger(lineHeight);
   return {
-    lineHeight: Number(style.lineHeight) > 0 ? Number(style.lineHeight) : (Number(style.size) || 18) * 1.4,
+    lineHeight: lineHeight > 0 ? (leakedDefault ? Math.round(lineHeight) : lineHeight) : Math.round((size || 18) * 1.4),
     tracking: Number.isFinite(Number(style.tracking)) ? Number(style.tracking) : 0,
   };
 }

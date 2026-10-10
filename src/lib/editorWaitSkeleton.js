@@ -7,8 +7,6 @@ import {
   CAPTION_GAP,
   CAPTION_STYLE,
   captionHeight,
-  hookTitleLayout,
-  hookTitleStyle,
 } from './editorTextSlots.js';
 
 const autoBlockHeight = (elements) => Math.max(
@@ -66,13 +64,9 @@ export function alignSkeletonToServer(blocks, copywriting) {
         };
       }
       if (e.type === 'text' && e.copyRole === 'hookTitle') {
-        const title = hookTitleLayout(e.text);
         return {
           ...e,
-          text: title.text,
-          y: (img.y || 0) + (IMG_H - title.h) / 2,
-          h: title.h,
-          style: hookTitleStyle(e.style?.color || '#ffffff'),
+          y: (img.y || 0) + Math.floor((IMG_H - e.h) / 2),
         };
       }
       return e;
