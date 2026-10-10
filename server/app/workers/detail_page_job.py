@@ -37,6 +37,7 @@ from ..agents import (
     image_qc,
     horizon_background,
     mannequin,
+    outer_closure,
     page_assembler,
     page_output_qc,
     real_horizon_neck_repair,
@@ -219,8 +220,18 @@ def _incomplete_cuts_message(requested: int, failed: int, retained: int) -> str:
     return f"{head} {credit} 다시 시도하면 컷을 새로 만들어요."
 
 
+def _runtime_outer_closure(block: dict, clothing_type: str, front_closure: dict, *,
+                           confirmed: bool = False) -> dict:
+    if (not confirmed and cut_generator._is_outer(clothing_type)
+            and block.get("cutType", "styling") in _WORN_CUT_TYPES):
+        return {**block, "outerClosureState": outer_closure.effective_state(
+            block.get("outerClosureState") or block.get("outer_closure_state"), front_closure)}
+    return block
+
+
 def _duplicate_source_indexes(
     blocks: list[dict], clothing_type: str, skipped: frozenset[int] | set[int] | None = None,
+    *, analysis: dict | None = None,
 ) -> list[int | None]:
     """생성 계약이 완전히 같은 뒤쪽 블록 → 앞쪽 원본 인덱스 매핑.
 
@@ -233,6 +244,7 @@ def _duplicate_source_indexes(
     first_by_key: dict[str, int] = {}
     sources: list[int | None] = []
     skipped = skipped or frozenset()
+    front_closure = outer_closure.front_closure_of(analysis)
     for index, block in enumerate(blocks):
         source = None
         # 건너뛰는 컷은 원본이 될 수 없다 — 원본이 되면 같은 레시피의 뒤 컷이 "복제"로 접혀
@@ -247,6 +259,10 @@ def _duplicate_source_indexes(
                     dict(block), clothing_type=clothing_type
                 )
                 spec = cut_generator.apply_reference_compatibility(spec)
+                if analysis is not None:
+                    spec = _runtime_outer_closure(
+                        spec, clothing_type, front_closure,
+                        confirmed=confirmed_gpt_runtime.profile_requested(spec))
             except ValueError:
                 spec = None
             if spec is not None and not spec.get("spaceGroupId"):
@@ -417,6 +433,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         })
 
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
+    clothing_type = (
+        product.get("clothing_type") or product.get("clothingType") or "top"
+    )
+    front_closure = outer_closure.front_closure_of(analysis)
     content_roles.validate_similar_cut_relationships([item[0] for item in prepared])
     runtime_blocks = content_roles.inherit_similar_cut_recipes([item[0] for item in prepared])
     source_items = {str(item[0].get("id")): item for item in prepared}
@@ -428,6 +448,12 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # creating another ordinary generation packet for the follow-up.
             hydrated.append((block, [], "", original[3], original[4]))
         else:
+            confirmed_packet = item[8] if len(item) > 8 else None
+            if not isinstance(item, _SkippedCut):
+                # 예약과 같은 열림 규칙을 이번 생성의 복사본에만 적용한다.
+                block = _runtime_outer_closure(
+                    block, clothing_type, front_closure, confirmed=confirmed_packet is not None)
+                item = (block, *item[1:])
             hydrated.append(item)
     prepared = hydrated
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
@@ -441,15 +467,17 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
     _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
     sem = asyncio.Semaphore(_limit)
-    clothing_type = (
-        product.get("clothing_type") or product.get("clothingType") or "top"
-    )
     generated_images: dict[str, InlineImage] = {}
     planned_actions: dict[str, list[dict]] = {}
     saved_similar_plans: dict[str, dict] = {}
+    runtime_blocks_by_id = {str(item[0].get("id")): item[0] for item in prepared}
 
     def _page_plan_item(item, output_index, product_truth_indexes) -> dict:
         block = item[0]
+        if block.get("similarSourceBlockId") is not None:
+            # 비슷한 컷은 원본 사진의 열림을 유지하므로 검수도 같은 값을 읽는다.
+            source = runtime_blocks_by_id[block["similarSourceBlockId"]]
+            block = {**block, "outerClosureState": source.get("outerClosureState")}
         normalized = cut_generator.normalize_spec(
             block, clothing_type=clothing_type
         )
@@ -2555,8 +2583,15 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 콘티 재저장으로 블록이 늘면 단가가 0으로 떨어져 무과금 생성이 된다 — 둘 다 금지.
         # 스냅샷 없는 legacy 잡만 실행 시점 단가로 폴백. min 캡 = 예약 초과 차감 최종 가드.
         metadata = job.get("metadata") or {}
+        charge_metadata = metadata
+        front_closure = outer_closure.front_closure_of(analysis)
+        if (metadata.get("aiCount") is not None and cut_generator._is_outer(clothing_type)
+                and (front_closure["kind"] == "none" or front_closure["range"] == "binary")):
+            # 옛 예약의 서로 다른 열림이 같은 컷으로 합쳐진 것은 생성 실패가 아니다.
+            sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
+            charge_metadata = {**metadata, "aiCount": sum(source is None for source in sources)}
         charge = calculate_detail_charge(
-            completed=len(cut_assets), reserved=reserved, metadata=metadata,
+            completed=len(cut_assets), reserved=reserved, metadata=charge_metadata,
             fallback_per_cut=s.credit_cost_storyboard_per_cut,
         )
         success_metadata = {

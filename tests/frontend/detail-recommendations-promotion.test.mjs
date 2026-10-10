@@ -36,9 +36,16 @@ test('signed detail handoff is promoted only after source upload, product and an
       analysis: { detailRecommendations: { status: 'ready', candidates: [{ id: 'cannot-promote-unsigned' }] }, detailRecommendationsHandoff: handoff },
     });
     assert.deepEqual(events, ['create', 'upload', 'product', 'analysis', 'promote', 'project']);
-    const draft = { product: { colors: [{ images: [{ id: 'asset', src: 'https://test/photo.jpg' }] }] }, analysis: { detailRecommendationsHandoff: handoff, confirmedGptProductEvidenceHandoff: { opaque: true } } };
+    const evidence = { signature: 'opaque', contract: { server: 'bound' }, frontClosure: {
+      version: 1, kind: 'none', range: null, secondary: null, evidenceSlots: ['Front'], note: null,
+    } };
+    const draft = { product: { colors: [{ images: [{ id: 'asset', src: 'https://test/photo.jpg' }] }] }, analysis: { detailRecommendationsHandoff: handoff, confirmedGptProductEvidenceHandoff: evidence } };
     const httpError = (code, status) => Object.assign(new Error(code), { code, status });
-    api.promoteConfirmedGptEvidence = async () => { events.push('evidence'); };
+    api.promoteConfirmedGptEvidence = async (id, value) => {
+      assert.equal(id, 'p');
+      assert.deepEqual(value, evidence, '여밈 판정을 포함한 서명 봉투는 확정까지 그대로 전달한다');
+      events.push('evidence');
+    };
 
     // 서명·유효기간 검증 실패만 추천 없이 확정을 끝까지 보낸다. 뒤따르는 증거 승격·프로젝트 저장도 돈다.
     events.length = 0;

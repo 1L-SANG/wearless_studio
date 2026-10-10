@@ -27,6 +27,7 @@ from ..agents import (
     horizon_background,
     real_horizon_neck_repair,
     mannequin,
+    outer_closure,
     space_set_assets,
     similar_cut,
 )
@@ -479,6 +480,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 매칭 의류는 저장 block payload의 선택을 그대로 승계하되,
             # canonicalize_storyboard_block이 product 컷에서는 구조적으로 비운다.
             # colorId는 목표 색상이며, 디테일만 위 정책에 따라 타색 근거가 추가될 수 있다.
+            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            if cut_generator._is_outer(clothing_type) and new_payload.get("cutType") in _WORN_CUT_TYPES:
+                new_payload["outerClosureState"] = outer_closure.effective_state(
+                    new_payload.get("outerClosureState"), outer_closure.front_closure_of(analysis))
             cut_spec = {
                 k: new_payload.get(k)
                 for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "sideStyle",
@@ -489,7 +494,6 @@ async def run_editor_image_job(app, job: dict) -> None:
             cut_spec["matchIds"] = matching_ids
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
-            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
             repaired, signature_remaps = cut_generator.repair_signature_cut_selections(
                 [cut_spec],
                 project_id=project_id,

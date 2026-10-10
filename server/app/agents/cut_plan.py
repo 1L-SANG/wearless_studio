@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 from . import horizon_background
+from .outer_closure import STATES as _CLOSURES
 
 
 RecipeFamily = Literal["styling", "horizon", "product"]
@@ -41,7 +42,6 @@ _WORN_DIRECTIONS = frozenset({"front", "side", "back"})
 _PRODUCT_DIRECTIONS = frozenset({"front", "back"})
 _WORN_FACES = frozenset({"same", "show", "hide"})
 _MIRROR_FACES = frozenset({"show", "hide"})
-_CLOSURES = frozenset({"open", "partial", "closed"})
 
 _PRODUCT_TRUTH_ATTRIBUTES = (
     "construction",

@@ -10,6 +10,7 @@ from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
 from . import horizon_background
+from .outer_closure import STATES as _CLOSURES, EXPOSED as _OUTER_EXPOSED, DEFAULT
 
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -28,7 +29,6 @@ _ALWAYS = {"sku_fidelity", "target_color", "completeness"}
 _CLOTHING_TYPES = {"top", "bottom", "outer", "dress"}
 _CUT_TYPES = {"styling", "horizon", "mirror", "product"}
 _WORN_CUTS = {"styling", "horizon", "mirror"}
-_OUTER_EXPOSED = {"open", "partial"}
 
 
 class PageOutputQCError(ValueError):
@@ -94,10 +94,10 @@ def normalize_page_plan(page_plan: Sequence[Mapping[str, Any]]) -> list[dict[str
         row["clothingType"] = clothing_type
         row["cutType"] = cut_type
         closure = item.get("outerClosureState")
-        if closure is not None and closure not in {"open", "partial", "closed"}:
+        if closure is not None and closure not in _CLOSURES:
             raise PageOutputQCError("invalid_outer_closure")
         if clothing_type == "outer" and cut_type in _WORN_CUTS:
-            row["outerClosureState"] = closure or "open"
+            row["outerClosureState"] = closure or DEFAULT
         else:
             row["outerClosureState"] = None
         if cut_type == "product":

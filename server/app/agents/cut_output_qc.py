@@ -29,6 +29,7 @@ from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
 from . import horizon_background
+from .outer_closure import STATES as _CLOSURES
 
 
 GATES = (
@@ -138,8 +139,9 @@ _CONFIRMED_MATERIAL_GATE = (
     "   its owning evidence. A flat 2-D fill that erases supported surface or depth cues FAILS."
 )
 _GENERIC_FIT_GATE = (
-    "11. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared\n"
-    "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged."
+    "11. fitClosureAllowedMutation — only declared fit axes may change; closure matches the storyboard opening level, or the nearest level this exact garment can physically take; undeclared\n"
+    "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged.\n"
+    "storyboard.outerClosure levels, measured on the wearer from the neckline down: closed = fastened up to the neckline; openToChest = open down to about the armpit line, fastened below; partial = open down to about the bottom of the breastbone; openToWaist = open down to about navel height, fastened only near the hem; open = fully unfastened; none = not applicable. Never FAIL a closure only because the garment cannot physically reach the exact level."
 )
 _CONFIRMED_FIT_GATE = (
     "11. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
@@ -162,7 +164,6 @@ _SHOTS = frozenset({"full", "medium", "ghost", "detail"})
 _DIRECTIONS = frozenset({"front", "side", "back"})
 _FACES = frozenset({"same", "show", "hide"})
 _SIGNATURE_FRAMINGS = frozenset({"bottom", "dress"})
-_CLOSURES = frozenset({"open", "partial", "closed"})
 _OWNERS = frozenset({
     "productTruth", "storyboard", "fitProfile", "reference", "spaceSet", "recipe",
     "modelFace", "modelFullBody",

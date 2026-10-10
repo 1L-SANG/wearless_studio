@@ -1926,7 +1926,8 @@ function prepareStoryboardEntry(
   const p = product;
   const a = analysis;
   const hydratedCatalogs = { ...withStoryboardSpaceSetExamples(rawCatalogs),
-    detailProduct: p, detailRecommendations: a?.detailRecommendations, garmentColorEvidence: a?.garmentColorEvidence };
+    detailProduct: p, detailRecommendations: a?.detailRecommendations, garmentColorEvidence: a?.garmentColorEvidence,
+    frontClosure: a?.frontClosure };
   const hasDetailImage = hasDetailSource(p);
   const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
@@ -2280,7 +2281,9 @@ export function Storyboard({ toastOverride = null } = {}) {
   const pushToast = toast.push;
   const generationCutCount = blocks == null
     ? null
-    : uniqueGenerationCutCount(blocksForModel(blocks, identityKind));
+    : uniqueGenerationCutCount(blocksForModel(blocks, identityKind), {
+      clothingType, frontClosure: catalogs?.frontClosure,
+    });
   const unsupportedAiBlock = firstUnsupportedAiBlock(blocks, identityKind);
   const previousGenerationCutCount = useRef(null);
   useEffect(() => {

@@ -168,7 +168,7 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
   // 크레딧 견적은 실제 생성 수(복제 접기) — 실패는 여전히 null 로 구분한다(ADR-0011).
   assert.match(
     mannequinSource,
-    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? uniqueGenerationCutCount\(nextStoryboard\) : null\)/,
+    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? uniqueGenerationCutCount\(nextStoryboard,\s*\{\s*clothingType: nextProduct\?\.clothingType, frontClosure: nextAnalysis\?\.frontClosure,\s*\}\) : null\)/,
   );
   // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 최소 과금을 반영한다.
   assert.match(

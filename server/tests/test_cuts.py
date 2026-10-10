@@ -478,8 +478,8 @@ def test_normalize_model_id_accepts_camel_and_snake_and_sanitizes():
     assert cut.normalize_spec({"cutType": "mirror"})["modelId"] is None
 
 
-@pytest.mark.parametrize("value", ["open", "partial", "closed"])
-def test_normalize_outer_closure_keeps_three_valid_states(value):
+@pytest.mark.parametrize("value", ["closed", "openToChest", "partial", "openToWaist", "open"])
+def test_normalize_outer_closure_keeps_five_valid_states(value):
     spec = cut.normalize_spec(
         {"cutType": "styling", "outerClosureState": value}, clothing_type="outer")
     assert spec["outerClosureState"] == value
@@ -1114,7 +1114,9 @@ def test_slot_labels_have_backdetail_and_no_fit():
 
 @pytest.mark.parametrize("state, phrase, inner_phrase", [
     ("open", "FULLY OPEN", "naturally visible through the open front"),
-    ("partial", "PARTIALLY OPEN", "partially visible through the open portion"),
+    ("openToChest", "OPEN DOWN TO THE CHEST", "shows only as a small V below the neckline"),
+    ("partial", "HALF OPEN", "visible down to mid-torso"),
+    ("openToWaist", "OPEN DOWN TO THE WAIST", "visible through most of the front"),
     ("closed", "FULLY CLOSED", "almost entirely hidden"),
 ])
 def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phrase):
@@ -1123,6 +1125,10 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phr
         "outerClosureState": state, "exampleId": "ex_styling_outer_full_1",
     }, clothing_type="outer")
     assert phrase in p
+    for other in ("FULLY CLOSED", "OPEN DOWN TO THE CHEST", "HALF OPEN", "OPEN DOWN TO THE WAIST", "FULLY OPEN"):
+        assert (other in p) is (other == phrase)
+    assert "above\n  the level is unfastened" in p
+    assert "tie it only when the level is above the waist" in p
     assert "overrides any different open/closed styling shown in EXAMPLE or MOOD images" in p
     assert "NEVER invent, remove, relocate or redesign closure hardware" in p
     assert "garment fidelity wins" in p
@@ -1131,8 +1137,9 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phr
     assert p.index("Composition nuance") < p.index("OUTER FRONT OPENING")
 
 
-def test_render_outer_closure_defaults_open_and_applies_to_mirror():
-    p = _render({"cutType": "mirror", "shot": "full"}, clothing_type="outer")
+@pytest.mark.parametrize("state", [None, "unknown"])
+def test_render_outer_closure_defaults_open_and_applies_to_mirror(state):
+    p = _render({"cutType": "mirror", "shot": "full", "outerClosureState": state}, clothing_type="outer")
     assert "FULLY OPEN" in p
     assert "keep the inner T-shirt exactly the same as in the attached MANNEQUIN" in p
 
@@ -1167,7 +1174,7 @@ def test_build_prompt_passes_product_category_to_outer_closure_normalization(cat
         {"cutType": "horizon", "outerClosureState": "partial"},
         {category_key: "outer", "colors": []},
     )
-    assert "PARTIALLY OPEN" in p
+    assert "HALF OPEN" in p
 
 
 def test_render_space_group_line_only_when_grouped():

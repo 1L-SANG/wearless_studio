@@ -110,7 +110,7 @@ async def analyze_image_bytes(
     # isinstance(BaseException) 분기가 이미 실패를 흡수하므로 새 실패 경로는 없다.
     aux_budget = settings.analysis_aux_timeout_seconds
     analyze_res, feature_res, consistency_res = await asyncio.gather(
-        product_analyst.analyze(settings, analysis_product, images),
+        product_analyst.analyze(settings, analysis_product, images, slots=slots),
         asyncio.wait_for(
             feature_extractor.extract(settings, product, images, slots=slots),
             timeout=aux_budget),

@@ -70,6 +70,40 @@ def _save(stored, incoming, **options):
     return conn.saved
 
 
+@pytest.mark.parametrize("merge", [False, True])
+@pytest.mark.parametrize("incoming", [None, {"version": 1, "kind": "none", "range": None}])
+def test_front_closure_is_immutable_for_client_merge_and_replacement(merge, incoming):
+    original = {"version": 1, "kind": "zipper", "range": "graded", "secondary": None,
+                "evidenceSlots": ["Front"], "note": None}
+    assert "frontClosure" not in _save(None, {"frontClosure": incoming}, merge=merge, delete_nulls=merge)
+    assert _save({"frontClosure": original}, {"frontClosure": incoming},
+                 merge=merge, delete_nulls=merge)["frontClosure"] == original
+    assert _save({"frontClosure": original}, {"fit": "regular"}, merge=merge)["frontClosure"] == original
+
+
+def test_signed_closure_and_evidence_are_saved_in_one_update_without_replacing_analysis():
+    closure = {"version": 1, "kind": "none", "range": None, "secondary": None,
+               "evidenceSlots": ["Front"], "note": None}
+    conn = _Conn({"fit": "regular", "frontClosure": closure})
+    contract = {"server": "verified evidence"}
+    asyncio.run(repo.save_confirmed_gpt_product_evidence(conn, "p1", contract, front_closure=closure))
+    assert len(conn.calls) == 1
+    sql, params = conn.calls[0]
+    assert "jsonb_set(jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true), '{frontClosure}', %s::jsonb, true)" in sql
+    assert params[0].obj == contract
+    assert params[1].obj == closure
+    assert params[2] == "p1"
+
+
+def test_old_signed_evidence_does_not_clear_existing_closure():
+    conn = _Conn({"frontClosure": {"kind": "none"}})
+    asyncio.run(repo.save_confirmed_gpt_product_evidence(conn, "p1", {"server": "legacy"}))
+    sql, params = conn.calls[0]
+    assert "{frontClosure}" not in sql
+    assert params[0].obj == {"server": "legacy"}
+    assert params[1] == "p1"
+
+
 def test_detail_recommendations_cannot_be_created_or_replaced_by_client():
     original = {"version": 1, "status": "ready", "candidates": [{"id": "server"}]}
     forged = {"version": 1, "status": "ready", "candidates": [{"id": "client"}]}

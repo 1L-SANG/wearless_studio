@@ -31,6 +31,7 @@ from .confirmed_gpt_prompt import (
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
 from . import horizon_background
+from .outer_closure import STATES as _OUTER_CLOSURE_STATES, DEFAULT
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
@@ -62,7 +63,6 @@ _DIRECTIONS = ("front", "side", "back")
 #: 진짜 옆모습으로 넘어가면서 사선이 사라졌다 — 둘은 다른 컷이고 핏 섹션에는 둘 다 필요하다.
 SIDE_STYLES = ("profile", "threeQuarter")
 _WORN_CUTS = ("styling", "horizon", "mirror")
-_OUTER_CLOSURE_STATES = ("open", "partial", "closed")
 _CUT_LABELS = {  # ${cutLabel} — 프롬프트 첫 줄의 짧은 명사구 (값이지 규칙 문장이 아님)
     "styling": "lifestyle styling cut",
     "horizon": "clean studio horizon cut",
@@ -144,7 +144,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         else 0
     )
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
-        closure = closure if closure in _OUTER_CLOSURE_STATES else "open"
+        closure = closure if closure in _OUTER_CLOSURE_STATES else DEFAULT
     else:
         closure = None
     spec = {
@@ -677,7 +677,7 @@ async def load_example_image(
     return None
 
 
-_SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[a-z0-9_]+)?)\]\]", re.M)
+_SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[A-Za-z0-9_]+)?)\]\]", re.M)
 
 
 def _sections(template: str) -> dict[str, str]:
@@ -925,7 +925,7 @@ def render_cut_prompt(
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
-        closure = closure if closure in _OUTER_CLOSURE_STATES else "open"
+        closure = closure if closure in _OUTER_CLOSURE_STATES else DEFAULT
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
     detail_color_transfer_line = ""
     transfer = spec.get("_detailColorTransfer")

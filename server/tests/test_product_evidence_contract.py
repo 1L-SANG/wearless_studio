@@ -455,3 +455,62 @@ def test_public_analysis_handoff_is_signed_short_lived_and_tamper_evident():
 
     with pytest.raises(pec.ProductEvidenceContractError, match="expired_or_invalid"):
         pec.verify_handoff(handoff, secret, now=handoff["expiresAt"] + 1)
+
+
+@pytest.mark.parametrize("kind,closure_range", [("none", None), ("button", "binary"), ("zipper", "graded")])
+def test_public_closure_survives_signed_promotion_without_trusting_client_fields(
+    client, make_token, monkeypatch, kind, closure_range,
+):
+    """새 상품 확정에서도 여밈 판정이 증거와 함께 저장되고 변조는 거절된다."""
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from app import public_routes, repo, routes
+    from conftest import auth_headers, patch_route_db
+
+    client.app.state.settings = replace(client.app.state.settings,
+                                        r2_secret_access_key="test-only-closure-handoff-secret")
+    closure = {"version": 1, "kind": kind, "range": closure_range, "secondary": None,
+               "evidenceSlots": ["Front"], "note": None}
+    images = [(b"\x89PNG\r\n\x1a\nfront", "image/png"), (b"\xff\xd8\xffback", "image/jpeg")]
+    contract = pec.validate_and_bind(_raw(), pec.build_input_binding(images, images, ["Front", "Back"]))
+    async def analyze(*args, **kwargs):
+        return {"result_data": {"clothingType": "outer", "frontClosure": closure},
+                "analysis_payload": {pec.PERSISTED_KEY: contract, "frontClosure": closure}}
+    monkeypatch.setattr(public_routes, "analyze_image_bytes", analyze)
+    response = client.post("/v1/public/analyze", files=[
+        ("images", ("front.png", images[0][0], images[0][1])),
+        ("images", ("back.jpg", images[1][0], images[1][1])),
+    ], data={"slots": ["Front", "Back"]})
+    assert response.status_code == 200, response.text
+    handoff = response.json()["data"][pec.HANDOFF_KEY]
+    assert handoff.get("frontClosure") == closure
+    assert pec.verify_handoff(handoff, client.app.state.settings.r2_secret_access_key) == contract
+
+    patch_route_db(monkeypatch, routes)
+    monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={"colors": [{"isBase": True, "images": [
+        {"slot": "Front", "id": "front"}, {"slot": "Back", "id": "back"},
+    ]}]}))
+    async def get_asset(conn, uid, aid):
+        return {"r2_key": aid, "mime_type": images[0 if aid == "front" else 1][1]}
+    monkeypatch.setattr(repo, "get_asset_for_user", get_asset)
+    client.app.state.r2 = type("R2", (), {"get_bytes": staticmethod(
+        lambda key: images[0 if key == "front" else 1][0])})()
+    save = AsyncMock()
+    monkeypatch.setattr(repo, "save_confirmed_gpt_product_evidence", save)
+    route = "/v1/projects/p1/analysis/confirmed-gpt-evidence:promote"
+    response = client.post(route, headers=auth_headers(make_token), json=handoff)
+    assert response.status_code == 200, response.text
+    assert save.call_args.args[2] == contract
+    assert save.call_args.kwargs == {"front_closure": closure}
+
+    tampered = deepcopy(handoff)
+    tampered["frontClosure"]["kind"] = "belt"
+    save.reset_mock()
+    assert client.post(route, headers=auth_headers(make_token), json=tampered).status_code == 400
+    assert save.await_count == 0
+    client.app.state.r2 = type("R2", (), {"get_bytes": staticmethod(lambda key: b"changed photo")})()
+    response = client.post(route, headers=auth_headers(make_token), json=handoff)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "analysis_handoff_source_drift"
+    assert save.await_count == 0

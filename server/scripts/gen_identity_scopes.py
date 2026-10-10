@@ -19,6 +19,7 @@ from app.agents import confirmed_gpt_runtime, identity_scope  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "src/data/genExamples.json"
 SPACE_SETS = ROOT / "src/data/storyboardSpaceSets.json"
+EXAMPLE_ASSETS = ROOT / "server/app/data/example_assets.json"
 OUT = ROOT / "src/data/identityScopes.json"
 
 #: 확정 프로필을 요구하는 블록 모양(confirmed_gpt_runtime.profile_requested 의 조건).
@@ -119,6 +120,10 @@ def build() -> dict:
             "rule": "server/app/agents/identity_scope.py",
             "scopes": list(identity_scope.SCOPES),
         },
+        "confirmedGptExcludedExampleIds": sorted(
+            example_id for example_id, entry in json.loads(EXAMPLE_ASSETS.read_text(encoding="utf-8"))["assets"].items()
+            if entry.get("confirmedGptEligibleV1") is False
+        ),
         "rules": [
             # 섹션 규칙이 **먼저** 온다 — 프런트 평가기는 첫 일치 규칙을 쓴다.
             {"scope": identity_scope.VIRTUAL,

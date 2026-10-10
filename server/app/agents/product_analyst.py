@@ -21,6 +21,7 @@ from . import product_evidence_contract
 from .fit_axes import FIT_AXES
 from .gemini_image import InlineImage
 from .prompts import _sanitize
+from . import outer_closure
 from .style_tags import STYLE_TAGS, is_style_tag
 from .vision_llm import VisionError, analyze_with_fallback, complete_json
 
@@ -292,6 +293,18 @@ def analysis_schema(*, include_confirmed_evidence: bool = False) -> dict:
         },
         "required": ["colorGroupId", "swatchId", "colorName"],
     }
+    front_closure = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "kind": {"type": "string", "enum": list(outer_closure.KINDS)},
+            "range": {"type": _nullable("string")},
+            "secondary": {"type": _nullable("string")},
+            "evidenceImages": {"type": "array", "items": {"type": "integer"}},
+            "note": {"type": _nullable("string")},
+        },
+        "required": ["kind", "range", "secondary", "evidenceImages", "note"],
+    }
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -315,11 +328,12 @@ def analysis_schema(*, include_confirmed_evidence: bool = False) -> dict:
             # 원본이 거울 셀카인가 — 생성 프롬프트가 텍스트·로고를 정방향으로 되돌리게 하는 신호.
             # 셀러 거울 셀카는 흔한데, 이걸 모르면 반전된 로고가 그대로 상세페이지로 나간다.
             "sourceMirrored": {"type": "boolean"},
+            "frontClosure": front_closure,
         },
         "required": [
             "clothingType", "subCategory", "customCategory", "targetGenders", "fit", "materials",
             "materialPresetIndex", "aiSuggestedPoints", "suggestedName", "swatchSuggestions",
-            "styleTags", "sourceMirrored",
+            "styleTags", "sourceMirrored", "frontClosure",
         ],
     }
     if include_confirmed_evidence:
@@ -367,7 +381,35 @@ def _materials(raw) -> list[dict]:
     return out
 
 
-def validate(raw: dict, *, evidence_binding: dict | None = None) -> dict:
+def _front_closure(raw, slots: list[str] | None) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    kind = raw.get("kind") if _in(raw.get("kind"), outer_closure.KINDS) else "unknown"
+    if kind in ("zipper", "unknown"):
+        closure_range = "graded"
+    elif kind == "belt":
+        closure_range = "binary"
+    elif kind == "none":
+        closure_range = None
+    else:
+        closure_range = raw.get("range") if _in(raw.get("range"), ("graded", "binary")) else "graded"
+    secondary = raw.get("secondary")
+    if kind in ("none", "unknown") or not _in(secondary, outer_closure.HARDWARE) or secondary == kind:
+        secondary = None
+    images = raw.get("evidenceImages")
+    numbers = {number for number in images if type(number) is int} if isinstance(images, list) else set()
+    evidence_slots = []
+    if kind != "unknown":
+        for number, slot in enumerate(slots or [], 1):
+            if number in numbers and _in(slot, outer_closure.SLOTS) and slot not in evidence_slots:
+                evidence_slots.append(slot)
+    note = raw.get("note")
+    return {"version": 1, "kind": kind, "range": closure_range, "secondary": secondary,
+            "evidenceSlots": evidence_slots,
+            "note": (_sanitize(note)[:80].strip() or None) if isinstance(note, str) else None}
+
+
+def validate(raw: dict, *, evidence_binding: dict | None = None,
+             slots: list[str] | None = None) -> dict:
     """enum 밖 값 드롭, measurements 강제 제거, points 절단, styleTags 필터. 출력 키는 고정 집합만."""
     raw = raw or {}
     # 성별은 단일값으로 좁힌다(2026-07-31 사용자 결정). 폼의 성별 칩이 단일 선택인데 AI 는
@@ -432,6 +474,7 @@ def validate(raw: dict, *, evidence_binding: dict | None = None) -> dict:
         # bool 강제 — 모델이 문자열("true")이나 null 을 뱉어도 판정 불명은 False(미반전)로 눕힌다.
         # 반전 아님을 기본으로 두는 쪽이 안전하다: 오탐이면 정상 사진을 좌우로 뒤집게 된다.
         "sourceMirrored": raw.get("sourceMirrored") is True,
+        "frontClosure": _front_closure(raw.get("frontClosure"), slots),
     }
     if evidence_binding is not None:
         out[product_evidence_contract.PERSISTED_KEY] = (
@@ -474,6 +517,7 @@ def distribute(validated: dict) -> dict:
             "suggestedName": validated.get("suggestedName"),
             # 생성 경로가 읽어 텍스트·로고를 정방향으로 렌더하게 한다(prompts.mannequin_context).
             "sourceMirrored": validated.get("sourceMirrored", False),
+            "frontClosure": outer_closure.front_closure_of(validated),
             **(
                 {
                     product_evidence_contract.PERSISTED_KEY:
@@ -492,7 +536,8 @@ def distribute(validated: dict) -> dict:
 
 # ── 오케스트레이터 (워커가 호출) ──────────────────────────────────────────────
 
-async def analyze(settings: Settings, product: dict, images: list[InlineImage]) -> tuple[dict, str]:
+async def analyze(settings: Settings, product: dict, images: list[InlineImage], *,
+                  slots: list[str] | None = None) -> tuple[dict, str]:
     """프롬프트 → vision_llm(폴백) → 검증 → 분배. (분배 결과, provider) 반환. 실패 시 VisionError."""
     product = product or {}
     evidence_binding = product.get(product_evidence_contract.INTERNAL_BINDING_KEY)
@@ -509,7 +554,10 @@ async def analyze(settings: Settings, product: dict, images: list[InlineImage]) 
         models=models,
     )
     try:
-        validated = validate(raw, evidence_binding=evidence_binding)
+        validated = validate(
+            raw, evidence_binding=evidence_binding,
+            slots=slots if slots is not None else ["Front", *(["Detail"] * max(0, len(images) - 1))],
+        )
     except product_evidence_contract.ProductEvidenceContractError as exc:
         # The ordinary analysis must never silently persist a partial/guessed contract:
         # a missing contract later looks like permission to reconstruct evidence.

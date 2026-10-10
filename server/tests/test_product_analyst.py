@@ -238,7 +238,7 @@ def test_build_prompt_declares_source_mirrored():
     """
     p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
     assert "shot in a mirror" in p          # 판정 규칙
-    assert "styleTags, sourceMirrored." in p  # 반환 키 나열
+    assert "styleTags, sourceMirrored, frontClosure." in p  # 반환 키 나열
 
 
 def test_validate_never_includes_measurements():
