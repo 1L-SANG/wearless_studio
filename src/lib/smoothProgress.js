@@ -85,25 +85,39 @@ export function initialProgressState(startedAt = 0) {
 
 /* 분석 대기: 오너 9/15·10/10 지적대로 초반 등속, 늦은 결과는 완만한 꼬리로 기다린다.
    9/15~10/10 약 20건의 서버 실측은 중앙 7.4초, 상위 25% 10초·10% 13초, 최대 16초.
-   임시저장 0.5~1초를 더해 8초에 80%로 잡고, 결과 뒤 속도는 기본의 2.5배로 제한한다. */
+   임시저장 0.5~1초를 더해 8초에 80%로 잡는다. 9/15 "뒤에서 쫙", 10/10 "자연스럽게"
+   지적에 맞춰 결과 순간 속도를 이어 0.5초간 가속하고, 기본의 2.5배로 제한한다. */
 const ANALYSIS_RATE = 10 / 1000;          // %/ms, 20%씩 2초
-const ANALYSIS_FINISH_RATE = 25 / 1000;   // %/ms, 20%씩 0.8초
+const ANALYSIS_FINISH_MAX_RATE = 25 / 1000;
+const ANALYSIS_FINISH_TARGET_MS = 1200;
+const ANALYSIS_FINISH_RAMP_MS = 500;
 const ANALYSIS_LINEAR_END = 80;
 const ANALYSIS_LINEAR_MS = ANALYSIS_LINEAR_END / ANALYSIS_RATE;
+const ANALYSIS_TAIL = PROGRESS_CEILING - ANALYSIS_LINEAR_END;
+// k를 남은 폭/기본 속도로 두면 80% 경계에서도 같은 속도로 출발한다.
+const ANALYSIS_TAIL_K = ANALYSIS_TAIL / ANALYSIS_RATE;
 
 /** elapsedMs 는 마운트부터의 시간. 결과가 오면 그 시각과 표시값을 고정해 이어간다. */
 export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue = 0 }) {
   const elapsed = Math.max(0, elapsedMs);
   if (resultAtMs !== null && elapsed >= resultAtMs) {
-    return Math.min(100, resultValue + (elapsed - resultAtMs) * ANALYSIS_FINISH_RATE);
+    const v0 = resultAtMs <= ANALYSIS_LINEAR_MS
+      ? ANALYSIS_RATE
+      : ANALYSIS_TAIL * ANALYSIS_TAIL_K / (resultAtMs - ANALYSIS_LINEAR_MS + ANALYSIS_TAIL_K) ** 2;
+    const vf = Math.max(ANALYSIS_RATE,
+      Math.min(ANALYSIS_FINISH_MAX_RATE, (100 - resultValue) / ANALYSIS_FINISH_TARGET_MS));
+    const age = elapsed - resultAtMs;
+    const ramp = ANALYSIS_FINISH_RAMP_MS;
+    if (age <= ramp) {
+      const u = age / ramp;
+      return Math.min(100, resultValue + v0 * age + (vf - v0) * ramp * (u ** 3 - u ** 4 / 2));
+    }
+    return Math.min(100, resultValue + v0 * ramp + (vf - v0) * ramp / 2 + vf * (age - ramp));
   }
   if (elapsed <= ANALYSIS_LINEAR_MS) return elapsed * ANALYSIS_RATE;
 
-  // k를 남은 폭/기본 속도로 두면 80% 경계에서도 같은 속도로 출발한다.
-  const tail = PROGRESS_CEILING - ANALYSIS_LINEAR_END;
   const age = elapsed - ANALYSIS_LINEAR_MS;
-  const k = tail / ANALYSIS_RATE;
-  return ANALYSIS_LINEAR_END + tail * age / (age + k);
+  return ANALYSIS_LINEAR_END + ANALYSIS_TAIL * age / (age + ANALYSIS_TAIL_K);
 }
 
 /* 한 프레임 진행 — 상태를 받아 다음 상태를 돌려주는 순수 리듀서. 훅은 이걸 rAF 로 돌리기만 한다. */

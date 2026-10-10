@@ -191,28 +191,60 @@ test('25초까지 결과가 없어도 99% 미만에서 단조 증가하고 2초 
   assert.ok(longestStallMs(samples) <= MAX_STALL_MS);
 });
 
-for (const [resultAtMs, resultValue] of [
-  [3000, 30], [6000, 60], [7900, 79], [8000, 80],
-  [9000, 86.55172413793103], [11000, 91.63265306122449],
-  [15000, 94.9438202247191], [25000, 97.08994708994709],
+for (const [resultAtMs, resultValue, v0, vf] of [
+  [3000, 30, 0.01, 0.025], [6000, 60, 0.01, 0.025],
+  [7900, 79, 0.01, 0.0175], [8000, 80, 0.01, 1 / 60],
+  [9000, 86.55172413793103, 0.004292508917954816, 0.01120689655172414],
+  [11000, 91.63265306122449, 0.0015035401915868389, 0.01],
+  [15000, 94.9438202247191, 0.0004557505365484156, 0.01],
+  [25000, 97.08994708994709, 0.0001010610005319, 0.01],
 ]) {
-  test(`결과 ${resultAtMs}ms 도착: 현재 값부터 25%/초로 정지와 점프 없이 마무리한다`, () => {
+  test(`결과 ${resultAtMs}ms 도착: 같은 속도에서 0.5초간 자연스럽게 가속해 마무리한다`, () => {
     assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: resultAtMs }) - resultValue) < 1e-9);
     assert.equal(analysisWaitProgress({ elapsedMs: resultAtMs, resultAtMs, resultValue }), resultValue);
-    const deadline = resultAtMs + (100 - resultValue) / 0.025;
+    const finishAt = (ageMs) => analysisWaitProgress({
+      elapsedMs: resultAtMs + ageMs, resultAtMs, resultValue,
+    });
+    const incoming = (resultValue - analysisWaitProgress({ elapsedMs: resultAtMs - FRAME })) / FRAME * 1000;
+    const outgoing = (finishAt(FRAME) - resultValue) / FRAME * 1000;
+    assert.ok(Math.abs(outgoing - incoming) <= 0.6, `결과 순간 속도 차이 ${outgoing - incoming}%/초`);
+
+    let previousAge = 0;
+    let previousValue = resultValue;
+    let previousSpeed = outgoing;
+    for (const ageMs of [...Array.from({ length: 31 }, (_, i) => (i + 1) * FRAME), 500]) {
+      const value = finishAt(ageMs);
+      const speed = (value - previousValue) / (ageMs - previousAge) * 1000;
+      assert.ok(speed + 1e-9 >= previousSpeed, `${ageMs}ms 가속 중 속도 감소: ${previousSpeed}에서 ${speed}`);
+      previousAge = ageMs;
+      previousValue = value;
+      previousSpeed = speed;
+    }
+    // 적분한 거리도 확인해 출발 속도나 가속 모양이 달라지는 것을 잡는다.
+    assert.ok(Math.abs(finishAt(250) - (resultValue + v0 * 203.125 + vf * 46.875)) < 1e-9);
+    assert.ok(Math.abs(finishAt(500) - (resultValue + (v0 + vf) * 250)) < 1e-9);
+    const cruiseSpeed = (finishAt(500 + FRAME) - finishAt(500)) / FRAME * 1000;
+    assert.ok(Math.abs(cruiseSpeed - vf * 1000) <= 0.1, `가속 뒤 속도 ${cruiseSpeed}%/초`);
+
+    const deadline = resultAtMs + 500 + (100 - resultValue - (v0 + vf) * 250) / vf;
     const samples = runAnalysis({ ms: deadline + FRAME, resultAtMs });
     const completed = samples.at(-1);
     assert.equal(completed.value, 100);
     assert.ok(completed.t >= deadline - 1e-9 && completed.t <= deadline + FRAME);
     assert.ok(biggestFrameJump(samples) < 0.6);
+    let maxFinishSpeed = 0;
     for (let i = 1; i < samples.length; i += 1) {
       const previous = samples[i - 1];
       const current = samples[i];
       const delta = current.value - previous.value;
       assert.ok(delta >= 0, `${current.t}ms에서 후퇴`);
       if (previous.t >= resultAtMs) {
-        assert.ok(delta <= 0.025 * FRAME + 1e-9, `${current.t}ms에서 마무리 속도 초과`);
-        if (current.value < 100) assert.ok(Math.abs(delta / FRAME * 1000 - 25) < 0.1);
+        const speed = delta / FRAME * 1000;
+        maxFinishSpeed = Math.max(maxFinishSpeed, speed);
+        assert.ok(speed <= 25 + 1e-9, `${current.t}ms에서 마무리 속도 초과`);
+        if (previous.t >= resultAtMs + 500 && current.value < 100) {
+          assert.ok(Math.abs(speed - vf * 1000) <= 0.1, `${current.t}ms에서 목표 속도와 다름: ${speed}`);
+        }
       }
       for (let step = 0; step < STEPS; step += 1) {
         assert.equal(current.index > step, current.value >= (step + 1) * 20,
@@ -220,13 +252,19 @@ for (const [resultAtMs, resultValue] of [
       }
       assert.equal(current.index === STEPS, current.value === 100);
     }
-    assert.ok(longestStallMs(samples.filter(({ t }) => t >= resultAtMs - FRAME)) <= MAX_STALL_MS);
+    assert.ok(longestStallMs(samples) <= MAX_STALL_MS);
+    if (resultAtMs === 9000 || resultAtMs === 11000) {
+      assert.ok(maxFinishSpeed <= 13 + 1e-9, `보통 마무리 속도 ${maxFinishSpeed}%/초`);
+    }
   });
 }
 
 test('마무리는 기록된 표시값을 앵커로 쓰고 결과 시각 0도 처리한다', () => {
-  assert.equal(analysisWaitProgress({ elapsedMs: 11016, resultAtMs: 11000, resultValue: 90.5 }), 90.9);
-  assert.equal(analysisWaitProgress({ elapsedMs: 16, resultAtMs: 0, resultValue: 0 }), 0.4);
+  assert.equal(analysisWaitProgress({ elapsedMs: 11000, resultAtMs: 11000, resultValue: 90.5 }), 90.5);
+  assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: 11016, resultAtMs: 11000, resultValue: 90.5 })
+    - 90.52419362176694) < 1e-9);
+  assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: 16, resultAtMs: 0, resultValue: 0 })
+    - 0.16024182784) < 1e-9);
 });
 
 const analysisSource = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
