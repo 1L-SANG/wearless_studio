@@ -1,8 +1,8 @@
 """PL-4 상세페이지 생성 워커. AG-06 컷 → AG-02 카피 → AG-03 검수 → M-02 조립 → EditorBlock[].
 
 저장 콘티(projects.storyboard)의 source='ai' 블록별로 AG-06 컷 이미지를 생성하고,
-전부 완성됐을 때만 AG-02/03 카피와 M-02 조립 결과를 출고한다. 한 컷이라도 실패하면
-예약 크레딧 전액 해제. 성공한 소량 요청은 최소 5컷 값으로 정산한다. lease 펜스.
+완성된 컷으로 AG-02/03 카피와 M-02 조립 결과를 출고한다(ADR-0017).
+못 만든 컷 값은 견적에서 빼고, 전부 실패하면 예약 전액을 해제한다. lease 펜스.
 """
 
 import asyncio
@@ -19,6 +19,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, fm_fingerprint_store, repo
+from ..cut_failures import failure_info
 from ..services import fm_fingerprint
 from ..agents import identity_scope
 from ..agents import (
@@ -122,8 +123,24 @@ class _SkippedCut(tuple):
     빈 슬롯으로 끝낸다. 따로 표시하는 이유는 복제 판정 — 아래 _duplicate_source_indexes."""
 
 
-def _skipped_cut(cut_spec: dict) -> "_SkippedCut":
-    return _SkippedCut((cut_spec, [], "", False, [], None, False))
+def _skipped_cut(cut_spec: dict, reason: str) -> "_SkippedCut":
+    item = _SkippedCut((cut_spec, [], "", False, [], None, False))
+    item.failure = failure_info(reason)
+    return item
+
+
+def calculate_detail_charge(*, completed: int, reserved: int, metadata: dict,
+                            fallback_per_cut: int) -> int:
+    """ADR-0017, 견적에서 실패한 유료 생성 단위만 뺀다. 복제 칸은 과금하지 않는다."""
+    per_cut = metadata.get("perCutCost")
+    if per_cut is None:
+        per_cut = fallback_per_cut
+    requested, minimum = metadata.get("aiCount"), metadata.get("minCuts")
+    charge_cuts = completed
+    if requested is not None and minimum is not None and requested > 0:
+        failed_units = max(0, requested - completed)
+        charge_cuts = 0 if completed == 0 else max(completed, max(requested, minimum) - failed_units)
+    return min(charge_cuts * per_cut, reserved)
 
 
 def _storyboard_digest(storyboard) -> str:
@@ -378,7 +395,7 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
-                    stored_outputs=None, similar_context=None):
+                    stored_outputs=None, similar_context=None, failed_cuts=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -386,11 +403,19 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
-    실패 컷은 여기서 None 으로 남기고, 호출자가 한 컷이라도 빠졌으면 전체 작업을 실패시킨다.
+    실패 컷은 None과 이유로 남긴다. 호출자가 완성분을 내보내며 전부 실패하면 전액 해제한다.
     스펙 위반(unknown cutType)도 조용한 styling 대체 렌더는 하지 않는다(ADR-0004).
     cut_checkpoints(workers/cut_checkpoints.CutCheckpointStore)가 오면 앞선 실패 잡이 남긴
     완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
     stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
+    async def _cut_failed(block, reason):
+        info = failure_info(reason)
+        if failed_cuts is not None:
+            failed_cuts[str(block.get("id"))] = info
+        await _emit(app.state.pool, job["id"], "step", {
+            "blockId": block.get("id"), "status": "cut_failed", **info,
+        })
+
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     content_roles.validate_similar_cut_relationships([item[0] for item in prepared])
     runtime_blocks = content_roles.inherit_similar_cut_recipes([item[0] for item in prepared])
@@ -553,6 +578,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             )
         )
         async with sem:
+            if isinstance(item, _SkippedCut):
+                await _cut_failed(b, item.failure["reason"])
+                return None
             if b.get("cutType") == "product" and b.get("shot") == "detail":
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_start"})
@@ -561,27 +589,15 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         app, job, b, product, analysis,
                         **({'final_cache': cut_checkpoints} if cut_checkpoints is not None else {}))
                 except (DetailShotRejected, ValueError) as exc:
-                    await _emit(app.state.pool, job_id, "step", {
-                        "blockId": b.get("id"), "status": "cut_failed",
-                        "reason": getattr(exc, "reason", "detail_target_unavailable"),
-                    })
+                    await _cut_failed(b, getattr(exc, "reason", "detail_target_unavailable"))
                     return None
                 return await _store_cut(
                     b, chosen.data, chosen.mime, chosen, has_face=False,
                     real_identity_attached=False, garment_qc=None, cut_qc=detail_report,
                     garment_warnings=[], neck_repair_metadata=None, face_pass_outcome={})
-            if isinstance(item, _SkippedCut):
-                # 준비 단계에서 이미 건너뛴 자리(범위 밖·설정 오류 등) — 이유는 그쪽이 cut_skipped 로
-                # 남겼다. 아래 "옷 근거 없음" 로그로 떨어지면 원인을 잘못 가리킨다(2026-09-26: 막힌
-                # 첫 장면이 3번 연속 "no garment-truth references" 로 보였다). 화면이 그 자리를
-                # 닫을 수 있게 cut_failed 는 예전처럼 보낸다.
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "cut_failed"})
-                return None
-            if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
+            if not images:  # 옷 근거 없이 무드만으로 동일성을 보장할 수 없다.
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "cut_failed"})
+                await _cut_failed(b, "no_garment_photo")
                 return None
             # 대기 화면의 "지금 그리는 중" 표시 근거 — 세마포어를 잡은 뒤에 쏴야
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
@@ -657,9 +673,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             if missing_angle is not None:
                 log.warning("AG-06 cut skipped before generation (%s) job %s block %s",
                             missing_angle, job_id, b.get("id"))
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "cut_failed",
-                             "reason": missing_angle})
+                await _cut_failed(b, missing_angle)
                 return None
             # 체크포인트(2026-09-23) — 앞선 실패 잡이 같은 컷을 끝까지 만들어 뒀으면 provider·QC 를
             # 한 번도 부르지 않고 그대로 싣는다. 베이스만 있으면 베이스 값은 건너뛰고 후처리만 한다.
@@ -721,8 +735,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
                     log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
-                    await _emit(app.state.pool, job_id, "step",
-                                {"blockId": b.get("id"), "status": "cut_failed"})
+                    await _cut_failed(b, "invalid_cut_spec")
                     return None
                 except face_identity.FacePassUnavailable as e:
                     # 얼굴 파드가 상한(FACE_PASS_REAL_WAIT_SECONDS)까지 안 떴다. **원본으로는 못 낸다** —
@@ -730,8 +743,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     # 한 번 더 돌리면 Gemini 호출만 또 태우고 같은 상한을 다시 기다린다.
                     log.warning("AG-06 cut face pass unavailable for job %s block %s: %r",
                                 job_id, b.get("id"), e)
-                    await _emit(app.state.pool, job_id, "step",
-                                {"blockId": b.get("id"), "status": "cut_failed"})
+                    await _cut_failed(b, "face_pass_unavailable")
                     return None
                 except Exception as e:  # 안전한 일시 오류만 재시도, 나머지는 이 컷 실패
                     # 각도 교체의 backend_error 처럼 후처리만 실패했고 베이스가 보존됐으면
@@ -747,8 +759,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     if not transient or attempt >= max_attempts or spent >= retry_budget_s:
                         log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
                                     job_id, b.get("id"), attempt, spent, e)
-                        await _emit(app.state.pool, job_id, "step",
-                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        await _cut_failed(b, getattr(e, "reason", "provider_error"))
                         return None
                     log.info("AG-06 cut retry %d for job %s block %s: %r",
                              attempt, job_id, b.get("id"), e)
@@ -762,7 +773,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)")
             ):
                 plate = qc_images[0]
-            # 장소일치 QC 게이트. 불일치면 재생성, 상한 초과면 컷 실패로 페이지 전체를 막는다.
+            # 장소일치 QC 게이트. 불일치면 재생성, 상한 초과면 해당 컷을 비운다(ADR-0017).
             # 일반 bg 편집은 기존 fail-open, 발행 공간세트는 QC 불능도 fail-closed다.
             if plate is not None:
                 attempt = 1
@@ -779,15 +790,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                                 b.get("id"),
                                 e,
                             )
-                            await _emit(
-                                app.state.pool,
-                                job_id,
-                                "step",
-                                {
-                                    "blockId": b.get("id"),
-                                    "status": "cut_failed",
-                                },
-                            )
+                            await _cut_failed(b, "scene_qc_unavailable")
                             return None
                         log.warning(
                             "AG-06 scene QC unavailable job %s block %s: %r — fail-open",
@@ -801,8 +804,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     if attempt >= max(1, s.bg_scene_qc_attempts):
                         log.warning("AG-06 scene mismatch after %d attempts job %s block %s: %s",
                                     attempt, job_id, b.get("id"), scene_qc["mismatches"][:3])
-                        await _emit(app.state.pool, job_id, "step",
-                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        await _cut_failed(b, "scene_qc_failed")
                         return None
                     attempt += 1
                     try:
@@ -812,8 +814,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     except Exception as e:
                         log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
-                        await _emit(app.state.pool, job_id, "step",
-                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        await _cut_failed(b, "provider_error")
                         return None
             candidate_scene_warnings = []
 
@@ -1056,8 +1057,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     async def _one_similar(item, original, previous_block_ids, sibling_indexes):
         block = item[0]
         if original is None or isinstance(item, _SkippedCut):
-            await _emit(app.state.pool, job_id, "step", {
-                "blockId": block.get("id"), "status": "cut_failed", "reason": "similar_cut_source_failed"})
+            await _cut_failed(block, "similar_cut_source_failed")
             return None
         root_asset = original[1]
         image = generated_images[root_asset["asset_id"]]
@@ -1183,7 +1183,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 제출 간격 — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다(전부 병렬의 안전판).
         if idx and _stagger_s:
             await asyncio.sleep(idx * _stagger_s)
-        # 한 컷의 예상 밖 예외는 우선 그 컷만 실패로 표시하고, 최종 게이트가 페이지 전체를 막는다.
+        # 한 컷의 예상 밖 예외는 해당 컷만 실패로 표시하고, 나머지 완성분을 내보낸다.
         # 이전에는 gather 가 첫 예외로 페이지 전체를 실패시켰고, 이미 값을 치르고 끝난 다른 컷까지
         # 정리 작업이 지웠다(R2 저장 오류·DB PoolTimeout·장소 QC 의 VisionError 아닌 예외 등).
         # 모양은 기존 실패 컷과 같다 — None + cut_failed 이벤트(미차감).
@@ -1207,8 +1207,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                         job_id, item[0].get("id"), e)
             r = None
             try:
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": item[0].get("id"), "status": "cut_failed"})
+                await _cut_failed(item[0], "temporary_error")
             except Exception as emit_error:
                 log.warning("AG-06 cut_failed event lost for job %s: %r", job_id, emit_error)
         _done_counter["n"] += 1
@@ -1246,9 +1245,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         base = outcome_by_index.get(src)
         block = prepared[i][0]
         if base is None:
-            # 원본 생성 실패 → 복제 컷도 실패 처리(최종 게이트가 페이지 전체를 막는다).
-            await _emit(app.state.pool, job_id, "step",
-                        {"blockId": block.get("id"), "status": "cut_failed"})
+            # 원본 생성 실패는 복제 칸에도 이유를 남긴다. 복제 칸은 과금 단위가 아니다.
+            await _cut_failed(block, "duplicate_cut_source_failed")
             outcomes.append(None)
             continue
         if base[1] is not None:
@@ -1270,10 +1268,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         await _emit(app.state.pool, job_id, "step", step)
         outcomes.append((
             # 같은 이미지 참조를 복제 블록 자리에 그대로 — 새 asset 없음(과금 없음),
-            # 얼굴 컷 수·QC 는 원본에서 1회만 센다.
+            # 얼굴 표기는 완성 사진별로 이어받고, 자산 정산과 QC는 원본에서만 센다.
             {**base[0], "blockId": str(block.get("id"))},
             None,
-            False,
+            base[2],
             None,
             None,
             [],
@@ -2018,18 +2016,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
             # 실제 모델에 가상 전용 컷을 억지로 일반 패킷으로 만들지 않는다(2026-09-11 결정).
-            # 범위 밖 컷은 출고하지 않는다. 최종 게이트에서 페이지 전체를 실패시킨다.
+            # 범위 밖 컷은 빈 칸과 이유를 남기고 출고하지 않는다(ADR-0017).
             rejection = identity_scope.block_rejection(b, selected_model_id)
             if rejection is not None:
                 # 라우트가 예약 전에 이미 걸렀다 — 여기 걸리는 건 구 클라이언트·재시도·
-                # 콘티 재저장으로 들어온 것이다. 최종 게이트가 페이지 전체를 실패시킨다.
+                # 콘티 재저장으로 들어온 것이다. 해당 컷만 빈 칸으로 닫는다.
                 log.info("AG-06 %s job %s block %s scope=%s model=%s",
                          rejection[0], job_id, b.get("id"), identity_scope.scope_for_block(b),
                          identity_scope.identity_kind(selected_model_id))
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_skipped",
                              "reason": rejection[0]})
-                prepared.append(_skipped_cut(cut_spec))
+                prepared.append(_skipped_cut(cut_spec, rejection[0]))
                 continue
             try:
                 confirmed_requested = bool(
@@ -2050,7 +2048,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     b.get("id"),
                     e,
                 )
-                prepared.append(_skipped_cut(cut_spec))
+                prepared.append(_skipped_cut(cut_spec, str(e)))
                 continue
             is_product_cut = normalized is not None and normalized["cutType"] == "product"
             is_worn_cut = normalized is not None and normalized["cutType"] in _WORN_CUT_TYPES
@@ -2073,7 +2071,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
             if cut_mannequin_asset is None and not prods:
-                prepared.append(_skipped_cut(cut_spec))
+                prepared.append(_skipped_cut(cut_spec, "no_garment_photo"))
                 continue
             mids = normalized.get("matchIds", []) if is_worn_cut else []
             matching_assets = [match_assets.get(matching_id) for matching_id in mids]
@@ -2085,7 +2083,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     job_id,
                     b.get("id"),
                 )
-                prepared.append(_skipped_cut(cut_spec))
+                prepared.append(_skipped_cut(cut_spec, "matching_asset_unavailable"))
                 continue
             try:
                 matching_images = [await _img(asset) for asset in matching_assets]
@@ -2097,7 +2095,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     b.get("id"),
                     e,
                 )
-                prepared.append(_skipped_cut(cut_spec))
+                prepared.append(_skipped_cut(cut_spec, "matching_asset_unavailable"))
                 continue
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
@@ -2140,7 +2138,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         b.get("id"),
                         e,
                     )
-                    prepared.append(_skipped_cut(cut_spec))
+                    prepared.append(_skipped_cut(cut_spec, "confirmed_gpt_direction_sheets_unavailable"))
                     continue
                 model_has_full_body = len(model_images) == 2
                 has_identity = False
@@ -2199,7 +2197,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 except (space_set_assets.SpaceSetBindingError, OSError, ValueError) as exc:
                     log.warning("horizon all unavailable job %s block %s: %s", job_id, b.get("id"), type(exc).__name__)
-                    prepared.append(_skipped_cut(cut_spec))
+                    prepared.append(_skipped_cut(cut_spec, "example_asset_unavailable"))
                     continue
             elif space_binding is not None:
                 set_entry = space_binding["set"]
@@ -2301,7 +2299,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 "exampleId": example_id,
                                 "direction": normalized.get("direction"),
                             })
-                            prepared.append(_skipped_cut(cut_spec))
+                            prepared.append(_skipped_cut(cut_spec, "pose_direction_incompatible"))
                             continue
                         else:
                             # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
@@ -2316,7 +2314,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 # 무드 사진으로 장면이 바뀔 수 있으므로 pose/bg와 똑같이 닫는다.
                                 log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
                                             scope, job_id, b.get("id"))
-                                prepared.append(_skipped_cut(cut_spec))
+                                prepared.append(_skipped_cut(cut_spec, "example_asset_unavailable"))
                                 continue
                             if example_img is not None:
                                 # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
@@ -2369,7 +2367,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         b.get("id"),
                         e,
                     )
-                    prepared.append(_skipped_cut(cut_spec))
+                    prepared.append(_skipped_cut(cut_spec, "confirmed_gpt_packet_invalid"))
                     continue
                 imgs = list(confirmed_packet.images)
                 manifest = confirmed_packet.manifest
@@ -2484,6 +2482,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         if cut_store is not None:
             _gen_cuts_kwargs["cut_checkpoints"] = cut_store
         _gen_cuts_kwargs["stored_outputs"] = stored_outputs
+        failed_cuts = {}
+        _gen_cuts_kwargs["failed_cuts"] = failed_cuts
         (
             cut_results,
             cut_assets,
@@ -2500,7 +2500,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         )
         example_warnings.extend(garment_warnings)
         # 중복 컷은 새 자산 없이도 완성 결과에 들어간다. 결과를 블록별로 대조해
-        # 어느 AI 컷도 빠지지 않았을 때만 상세페이지를 조립·과금한다.
+        # 실패한 빈 칸을 표시하고 만든 유료 컷만 정산한다(ADR-0017).
         completed = Counter(str(c.get("blockId")) for c in cut_results)
         failed_block_ids = []
         for block in ai_blocks:
@@ -2509,55 +2509,21 @@ async def run_detail_page_job(app, job: dict) -> None:
                 completed[block_id] -= 1
             else:
                 failed_block_ids.append(block_id)
-        if failed_block_ids:
-            all_failed = len(failed_block_ids) == len(ai_blocks)
-            code = "all_cuts_failed" if all_failed else "incomplete_cuts"
-            if all_failed:
-                await _fail(
-                    "이미지를 모두 만들지 못했어요. 크레딧은 차감되지 않았어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
-                    {"error": code, "requestedCuts": len(ai_blocks)},
-                    code=code,
-                )
-            else:
-                # 부분 실패(2026-09-28, 오너 결정 B 유지 — 페이지는 내보내지 않고 전액 해제). 다만
-                # "모두 못 만들었다"는 거짓이다: 몇 장 중 몇 장이 실패했고, 완성 컷은 체크포인트(#394)로
-                # 24시간 보관돼 다음 시도가 새로 그리지 않고 싣는다는 걸 그대로 말한다. 크레딧 정산
-                # 메타(meta)는 #420 그대로다 — 이 분기가 바꾸는 것은 문구·화면용 result·서버 전용 메타뿐.
-                failed_set = set(failed_block_ids)
-                completed_block_ids = [
-                    str(b.get("id")) for b in ai_blocks if str(b.get("id")) not in failed_set]
-                retained = (cut_store.retained_final_keys(completed_block_ids)
-                            if cut_store is not None else {})
-                summary = {
-                    "requestedCuts": len(ai_blocks),
-                    "generatedCuts": len(cut_results),
-                    "failedBlockIds": failed_block_ids,
-                    "completedBlockIds": completed_block_ids,
-                    "retainedBlockIds": [b for b in completed_block_ids if b in retained],
-                }
-                await _fail(
-                    _incomplete_cuts_message(
-                        len(ai_blocks), len(failed_block_ids), len(retained)),
-                    {"error": code, "requestedCuts": len(ai_blocks),
-                     "generatedCuts": len(cut_results), "failedBlockIds": failed_block_ids},
-                    code=code,
-                    # 화면(GET /jobs/{id} 의 result)과 원장(error 이벤트)에는 블록 id·개수만 싣는다.
-                    result={"errorCode": code, **summary,
-                            "storyboardDigest": loaded_storyboard_digest,
-                            **({"retainedUntil": cut_store.retained_until()} if retained else {})},
-                    event_extra=summary,
-                    # 보관본 위치는 서버 전용(jobs.metadata — JobView 에 없다). 미리보기 라우트만 읽는다.
-                    job_metadata={"retainedCutKeys": retained} if retained else None,
-                )
-            # 성공한 다른 컷도 이 페이지에서는 발행되지 않았다. 이미 보낸 임시 프리뷰 URL이
-            # 환불 뒤 유효하지 않도록 출력 객체를 지운다. 실패하면 정리 표식이 다시 회수한다.
+        if failed_block_ids and len(failed_block_ids) == len(ai_blocks):
+            await _fail(
+                "이미지를 모두 만들지 못했어요. 크레딧은 차감되지 않았어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
+                {"error": "all_cuts_failed", "requestedCuts": len(ai_blocks)},
+                code="all_cuts_failed",
+            )
             await _delete_generated_outputs(cut_assets)
             return
+        for block_id in failed_block_ids:
+            failed_cuts.setdefault(block_id, failure_info("temporary_error"))
 
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "assemble",
                                                "generated": len(cut_assets)})
 
-        # 4) 조립(M-02) — AI 컷이 모두 완성된 경우만 진입한다.
+        # 4) 조립(M-02), 완성한 컷과 이유가 남는 빈 칸을 함께 내보낸다.
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
         # REAL 자산 주입이 실패했는데 '실제 모델'이라 쓰면 허위 고지가 된다.
         # 범위 주장 근거: totalCuts = **완성한 컷 수**(복제 컷 포함).
@@ -2568,8 +2534,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             license_notice = {"modelName": notice_ctx["model_name"],
                               "licenseId": notice_ctx["license_id"],
                               "faceCuts": face_cuts,
-                              "totalCuts": len(cut_assets)}
+                              "totalCuts": len(cut_results)}
         assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
+        if failed_cuts:
+            assemble_kwargs["failed_cuts"] = failed_cuts
         assembly_product = {
             **product,
             "_matchClothing": (
@@ -2587,21 +2555,20 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 콘티 재저장으로 블록이 늘면 단가가 0으로 떨어져 무과금 생성이 된다 — 둘 다 금지.
         # 스냅샷 없는 legacy 잡만 실행 시점 단가로 폴백. min 캡 = 예약 초과 차감 최종 가드.
         metadata = job.get("metadata") or {}
-        per_cut = metadata.get("perCutCost")
-        if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
-            per_cut = s.credit_cost_storyboard_per_cut
-        min_cuts = metadata.get("minCuts")
-        requested = metadata.get("aiCount")
-        billable = len(cut_assets)
-        # 전량 완성된 소량 요청은 최소 컷 수로 정산한다.
-        # minCuts 스냅샷이 없는 기존 잡은 성공 컷 수만큼 정산한다.
-        if min_cuts is not None and requested is not None and 0 < requested < min_cuts and billable > 0:
-            billable = min_cuts
-        charge = min(billable * per_cut, reserved)
+        charge = calculate_detail_charge(
+            completed=len(cut_assets), reserved=reserved, metadata=metadata,
+            fallback_per_cut=s.credit_cost_storyboard_per_cut,
+        )
         success_metadata = {
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),
         }
+        if failed_block_ids:
+            success_metadata["partial"] = {
+                "requestedCuts": len(ai_blocks), "completedCuts": len(cut_results),
+                "failedCuts": [{"blockId": block_id, **failed_cuts[block_id]} for block_id in failed_block_ids],
+                "quoteCredits": reserved, "creditsCharged": charge, "creditsNotCharged": reserved - charge,
+            }
         if garment_qcs:
             success_metadata["garmentQc"] = garment_qcs
         if cut_qcs:

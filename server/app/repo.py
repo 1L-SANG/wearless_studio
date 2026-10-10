@@ -2346,9 +2346,12 @@ async def create_job(
     멱등(계약 §6): ① 같은 Idempotency-Key = 같은 job(상태 무관) — 선조회로 합류 ② 진행 중 중복 =
     활성 job 합류(ON CONFLICT) ③ 실패 후 재호출(키 없음·새 키) = 새 job. **완료 job 재호출(기존
     결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님).
-    마네킹은 활성 합류 키도 저장한다. 202 응답이 유실돼도 종료된 원래 작업에 합류한다.
+    마네킹과 에디터 실패 칸 재시도는 활성 합류 키도 기억한다.
+    202 응답이 유실돼도 종료된 원래 작업을 재생하며 원래 키를 덮어쓰지 않는다.
     """
     remember_request = kind == "mannequin" and bool(idempotency_key)
+    retry_block_id = payload.get("retryBlockId") if kind == "editor_image" else None
+    remember_editor_retry = bool(retry_block_id and idempotency_key)
 
     async def _by_key(cur):
         await cur.execute(
@@ -2365,6 +2368,13 @@ async def create_job(
                 (user_id, project_id, user_id, project_id, idempotency_key),
             )
             existing = await cur.fetchone()
+        if existing is None and kind == "editor_image":
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and metadata->'editorRetryRequestKeys' @> %s::jsonb",
+                (user_id, project_id, Json([idempotency_key])),
+            )
+            existing = await cur.fetchone()
         return existing
 
     async def _remember(cur, row):
@@ -2373,6 +2383,17 @@ async def create_job(
                 "insert into mannequin_job_requests (user_id, project_id, idempotency_key, job_id) "
                 "values (%s, %s, %s, %s) on conflict do nothing",
                 (user_id, project_id, idempotency_key, row["id"]),
+            )
+        if remember_editor_retry and row.get("idempotency_key") != idempotency_key:
+            # 합류 응답이 유실되어 원래 작업 완료 뒤 재전송해도 같은 작업을 재생한다.
+            keys = Json([idempotency_key])
+            await cur.execute(
+                "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || "
+                "jsonb_build_object('editorRetryRequestKeys', "
+                "coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) || %s::jsonb) "
+                "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+                "and not (coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) @> %s::jsonb)",
+                (keys, row["id"], user_id, project_id, keys),
             )
         return row
 
@@ -2392,8 +2413,24 @@ async def create_job(
                 "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"mannequin-request:{user_id}:{project_id}",),
             )
+        if kind == "editor_image" and (retry_block_id or idempotency_key):
+            # 합류 키의 기록과 조회도 같은 프로젝트에서 직렬화한다. 원래 키는 보존한다.
+            await cur.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"editor-image-request:{user_id}:{project_id}",),
+            )
         if idempotency_key:  # ① 같은 Idempotency-Key 재시도(순차) → 같은 job
             existing = await _by_key(cur)
+            if existing is not None:
+                return await _remember(cur, existing), False
+        if retry_block_id:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and status in ('pending', 'running') "
+                "and payload->>'retryBlockId' = %s order by created_at desc limit 1",
+                (user_id, project_id, str(retry_block_id)),
+            )
+            existing = await cur.fetchone()
             if existing is not None:
                 return await _remember(cur, existing), False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
@@ -3571,7 +3608,7 @@ async def finalize_detail_page_success(
     editor_blocks: list,
     cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
     reserved: int,
-    charge: int,  # 전량 완성 시 실제 생성 컷 수 × storyboardPerCut
+    charge: int,  # ADR-0017, 예약 견적에서 실패한 유료 컷 값을 뺀 정산액
     metadata: dict,
     product_name: str | None = None,
 ) -> dict | None:
@@ -3635,6 +3672,8 @@ async def finalize_detail_page_success(
             conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
             settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})
     envelope = {"data": editor_blocks, "credits": available, "creditsCharged": charge}
+    if metadata.get("partial"):
+        envelope["partial"] = metadata["partial"]
     async with conn.cursor() as cur:
         await cur.execute(
             "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "

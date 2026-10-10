@@ -3215,7 +3215,8 @@ async def generate_editor_image(
       `VaryRequest { mode:'vary', source:{src,cutType}, variationMode?:'similar' }`
     - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
       새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
-      이 키로만 보장됩니다.
+      이 키로 보장됩니다. ADR-0017의 retryBlockId가 있으면 서버 저장 콘티에서 설정을
+      복원하며, 같은 빈 칸의 진행 중 작업에 합류해 새 크레딧을 예약하지 않습니다.
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
     _require_bg_examples_enabled(request, body)
@@ -3251,7 +3252,7 @@ async def generate_editor_image(
         payload = dict(body or {})
         payload.pop("_facemarket", None)
         payload.pop("_similarCut", None)
-        if payload.get("mode") == "new" and payload.get("spaceGroupId"):
+        if payload.get("retryBlockId"):
             from .agents import horizon_background
             try:
                 payload = horizon_background.restore_failed_retry(
@@ -3260,7 +3261,10 @@ async def generate_editor_image(
                     await repo.get_editor_blocks(conn, project_id),
                 )
             except ValueError as exc:
-                raise _bad_request("invalid_horizon_set_retry", "원래 콘티의 실패한 스튜디오 컷만 다시 만들 수 있어요.") from exc
+                code = str(exc)
+                message = ("원본 컷을 먼저 만들어 주세요." if code == "similar_source_required"
+                           else "원래 콘티의 빈 이미지 칸만 다시 만들 수 있어요.")
+                raise _bad_request(code, message) from exc
         analysis = None
         selected_model_id = None
         brand_use_category = None
@@ -3375,6 +3379,8 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
+                if payload.get("retryBlockId") and not selected_model_id:
+                    selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
                 # 콘티보드 범위 밖 조합(예: 실제 모델 + 가상 전용 예시)은 여기서 끝낸다 —
                 # 잡도 만들지 않고 크레딧도 예약하지 않는다(2026-09-11 사용자 결정).
                 rejection = identity_scope.block_rejection(payload, selected_model_id)

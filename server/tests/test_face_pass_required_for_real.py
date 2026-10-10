@@ -68,13 +68,28 @@ def test_a_cut_without_a_lora_row_never_reaches_the_face_pass():
         settings, {"cutType": "horizon", "shot": "full"}, "top", None) is None
 
 
-def test_the_detail_worker_does_not_retry_a_cut_that_cannot_get_its_face():
-    """재시도하면 Gemini 호출을 또 태우고 같은 상한을 다시 기다린다 — 그 컷을 비운다(미차감)."""
-    text = _source(dpj)
-    assert "except face_identity.FacePassUnavailable as e:" in text
-    branch = text.split("except face_identity.FacePassUnavailable as e:")[1][:600]
-    assert '"status": "cut_failed"' in branch
-    assert "return None" in branch
+def test_the_detail_worker_does_not_retry_a_cut_that_cannot_get_its_face(monkeypatch):
+    """얼굴 처리 불가 컷은 재시도와 미발행 자산 없이 이유가 있는 빈 결과로 끝난다."""
+    calls, events = [], []
+    async def no_face(settings, gemini, spec, product, images, **kwargs):
+        calls.append(spec["id"])
+        assert kwargs["has_face"] is True
+        raise face_identity.FacePassUnavailable("pod_not_ready")
+    async def emit(pool, job_id, event, payload):
+        events.append((event, payload))
+    monkeypatch.setattr(dpj.cut_generator, "generate", no_face)
+    monkeypatch.setattr(dpj, "_emit", emit)
+    image = dpj.InlineImage("image/png", b"PRODUCT")
+    block = {"id": "face", "source": "ai", "cutType": "horizon", "shot": "full"}
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b", detail_cut_max_attempts=3))
+    result = asyncio.run(dpj._gen_cuts(app, worker_job(credits_reserved=19),
+        [(block, [image], "PRODUCT", True, [image])], {}, {}))
+    assert calls == ["face"]
+    assert result[:3] == ([], [], 0)
+    assert [(payload["blockId"], payload["reason"], payload["retryable"])
+            for event, payload in events if payload.get("status") == "cut_failed"] == [
+        ("face", "face_pass_unavailable", True)]
+    assert not any(payload.get("status") == "cut_done" for event, payload in events)
 
 
 def test_the_editor_job_refunds_when_the_face_pass_cannot_run(monkeypatch):
