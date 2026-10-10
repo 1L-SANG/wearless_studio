@@ -1,7 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { filterExamplesForModel } from './identityScope.js';
 import { exampleDirectionFamilyMatches, poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
-import { detailDirectionFromExample } from './storyboardExampleSelection.js';
 import { isSourceBasedDetailRecipe } from './detailRecommendations.js';
 import {
   exampleMoodBucket,
@@ -470,9 +469,6 @@ export function assignGenerationExamples(blocks, {
       refScope: block.spaceGroupId && block.cutType !== 'horizon' ? 'pose' : 'all',
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
-      // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙
-      ...(block.cutType === 'product' && block.shot === 'detail' && !block.detailTargetId
-        ? { direction: detailDirectionFromExample(example) } : {}),
     };
   });
   return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };

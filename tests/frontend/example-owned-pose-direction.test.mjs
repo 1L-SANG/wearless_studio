@@ -22,14 +22,12 @@ test('example selection supplies side style and does not create a pose override'
   }
 });
 
-test('editor new-image requests get direction from the example or the original detail target', () => {
+test('worn new-image requests get direction and side style from the example', () => {
   assert.deepEqual(directionSpecFromExample({ direction: 'side', sideStyle: 'threeQuarter' }), {
     direction: 'side', sideStyle: 'threeQuarter',
   });
-  assert.deepEqual(directionSpecFromExample({ direction: 'back' }, {
-    cutType: 'product', detailTarget: { direction: 'front' },
-  }), { direction: 'front', sideStyle: null });
-  assert.deepEqual(directionSpecFromExample(null, { cutType: 'product' }), {
+  assert.deepEqual(directionSpecFromExample({ direction: 'back' }), { direction: 'back', sideStyle: null });
+  assert.deepEqual(directionSpecFromExample(null), {
     direction: 'front', sideStyle: null,
   });
 });
