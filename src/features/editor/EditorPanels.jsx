@@ -5,6 +5,8 @@
    ============================================================= */
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
 import OuterClosureField from '@/components/OuterClosureField.jsx';
+import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
+import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
@@ -258,6 +260,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
   }
   const isProduct = source.cutType === 'product';
+  const detailReshoot = isProduct && source.detailReshoot === true;
   const cost = catalogs.creditCosts?.editorImage ?? 1;
   const generate = async () => {
     if (busyRef.current) return;
@@ -265,7 +268,6 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     try {
       await onGenerate({
         source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
-        changes: [],
         ...(!isProduct ? { variationMode: 'similar' } : {}),
       });
     } finally { busyRef.current = false; }
@@ -274,11 +276,13 @@ function VaryPanel({ catalogs, source, onGenerate }) {
     <div className="similar-cut-panel">
       <div className="similar-cut-source">
         <img src={source.src} alt="기준 사진" />
-        <div><span>기준 사진</span><p>{isProduct ? '선택한 상품 사진으로 만들어요' : '같은 촬영의 다른 순간을 만들어요'}</p></div>
+        <div><span>기준 사진</span>{(!isProduct || detailReshoot) && <p>{detailReshoot ? '같은 부위를 원본으로 다시 촬영해요' : '같은 촬영의 다른 순간을 만들어요'}</p>}</div>
       </div>
-      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
-        {`${isProduct ? '이미지 수정' : '비슷한 컷 생성'} · ${cost} 크레딧`}
-      </Button>
+      {isProduct && !detailReshoot ? <p className="hint">제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.</p> : (
+        <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
+          {`${detailReshoot ? '같은 부위 다시 촬영' : '비슷한 컷 생성'} · ${cost} 크레딧`}
+        </Button>
+      )}
     </div>
   );
 }
@@ -291,6 +295,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
+  const [productDirection, setProductDirection] = useState('front');
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
@@ -309,10 +314,9 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const directionSpec = directionSpecFromExample(selectedExample, {
-    cutType: galleryCutType,
-    detailTarget: galleryIsProduct && shot === 'detail' ? selectedDetailTarget : null,
-  });
+  const directionSpec = galleryIsProduct
+    ? { direction: shot === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : productDirection, sideStyle: null }
+    : directionSpecFromExample(selectedExample);
   const galleryDirectionVal = directionSpec.direction;
   const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
     ? shot : galleryShotOptions[0].value;
@@ -385,6 +389,12 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
     setCutType(value); setShot(nextShot); setDetailTargetId(null);
+    if (value === 'product') {
+      const nextColors = nextShot === 'detail' ? detailColorOpts : colorOpts;
+      const nextColorId = nextColors.some((option) => option.id === color) ? color : nextColors[0]?.id;
+      const patch = productSourceColorPatch({ cutType: value, shot: nextShot, direction: 'front' }, product, nextColorId);
+      setProductDirection(patch.direction || 'front');
+    }
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -420,7 +430,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         <PanelHead title="이전 요청을 확인해 주세요" sub="접수 확인 후 새 이미지를 만들 수 있어요." />
         <p className="hint" role="status">이전 요청 · {[colorLabel, cutLabel, shotLabel].filter(Boolean).join(' · ')}</p>
         <Button variant="primary" block icon="refresh" disabled={generateSubmitting}
-          onClick={failedCutRetry ? onRetryFailedCut : () => onGenerate(previous)}>
+          onClick={() => onRetryFailedCut({ confirmPending: true })}>
           {generateSubmitting ? '확인 중…' : '이전 요청 확인하기'}
         </Button>
         <p className="ai-failed-retry-hint">중복 생성 없이 이전 요청을 다시 확인해요.</p>
@@ -440,10 +450,12 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         )}
         {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
         {brandUseCategoryControl}
-        <Button variant="primary" block icon="sparkles" className="btn-glowring"
-          disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
-          {generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
-        </Button>
+        {failedCutRetry.retryable !== false ? (
+          <Button variant="primary" block icon="sparkles" className="btn-glowring"
+            disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
+            {failedCutRetry.fillImage ? '원본 사진으로 채우기' : generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
+          </Button>
+        ) : <p className="hint" role="status">{failedCutRetry.guidance}</p>}
         <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
       </div>
     );
@@ -468,14 +480,23 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
-              // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
+              if (galleryIsProduct) {
+                const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
+                setProductDirection(patch.direction || directionSpec.direction);
+              }
             }} clothingType={clothingType} gender={modelGender}
             includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+          {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
+            catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
           {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.colorId) setColor(patch.colorId); }} />}
+            catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
+              if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
+              if (patch.direction) setProductDirection(patch.direction);
+              if (patch.colorId) setColor(patch.colorId);
+            }} />}
 
           {showOuterClosure && (
             <OuterClosureField id="outer-closure-newcut" value={outerClosure}
@@ -485,7 +506,16 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
           <div className="insp-divider" />
 
           <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => { setColor(value); if (value !== colorVal) setDetailTargetId(null); }} /></div>
+            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
+              setColor(value);
+              if (value !== colorVal) {
+                setDetailTargetId(null);
+                if (isProduct) {
+                  const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
+                  setProductDirection(patch.direction || directionSpec.direction);
+                }
+              }
+            }} /></div>
 
           {showMatchClothing && (
             <>

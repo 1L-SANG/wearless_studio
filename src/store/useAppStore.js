@@ -18,8 +18,8 @@ import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
-import { applyDetailJobEvents } from '@/lib/detailPageJobEvents.js';
-import { incompleteFailurePatch } from '@/lib/detailPageJobFailure.js';
+import { applyDetailJobEvents, detailPageDonePatch, detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
+import { incompleteFailurePatch, incompleteMessage } from '@/lib/detailPageJobFailure.js';
 import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { pollDetailPageJob } from '@/lib/detailPageJobPoll.js';
 import { initialGenerationAttempts } from '@/features/mannequin/initialGenerationAttempts.js';
@@ -131,6 +131,8 @@ const initialDetailPageJob = () => ({
   cuts: {},         // sourceBlockId → { url, width, height, done } (previewUrl=1h presigned, REAL 컷은 url 없음)
   revokedPreviewUrls: [], // 실패한 잡에서 받은 URL: 복제·의류 탭에 남은 임시 이미지도 철회
   live: [],         // 지금 생성 중인 sourceBlockId[] (cut_start~종결 사이)
+  partial: null,
+  failedCutReasons: {},
   failedCuts: [],   // 진행 중 컷별 실패 sourceBlockId[]; 잡 전체 실패는 출력 없음·예약 해제
   copy: {},         // sourceBlockId → texts[{role,text}] (AG-03 통과본)
   errorMessage: '',
@@ -160,10 +162,10 @@ let detailJobLoopProjectId = null;
 /* 완료 브라우저 알림 — 폴링과 같은 곳(store)에서 발화해야 셀러가 다른 화면·다른 탭에
    가 있어도 울린다(대기 화면 컴포넌트 수명에 묶으면 이탈 시 무음 — codex 리뷰 F7).
    권한 요청은 대기 화면의 [완료되면 알림 받기] 버튼이 담당, 여기는 발화만. */
-function notifyDetailPageDone() {
+function notifyDetailPageDone(partial = null) {
   try {
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
-      new Notification('상세페이지가 완성됐어요', { body: '돌아와서 순서와 카피를 다듬어 보세요.' });
+      new Notification('상세페이지가 완성됐어요', { body: detailPageCompletionMessage(partial) || '돌아와서 순서와 카피를 다듬어 보세요.' });
     }
   } catch { /* 알림 실패는 생성 결과에 영향 없음 */ }
 }
@@ -601,26 +603,29 @@ export const useAppStore = create((set, get) => ({
       if (!job || !alive()) return;
       if (job.status === 'done') {
         get().syncCredits(job.result?.credits);
-        patch({ status: 'done', progress: 100, slow: false });
+        patch(detailPageDonePatch(job));
         clearDetailPageJobMarker();
-        notifyDetailPageDone();
+        notifyDetailPageDone(job.result?.partial);
         return;
       }
       // error·cancelled — 전체 실패는 출력·과금이 없다. 임시 미리보기는 결과가 아니므로
       // store 에서 지우고, 서버가 해제한 예약 잔액을 새로 읽는다.
       // 부분 실패(incomplete_cuts, 2026-09-28)는 그 위에 완성 컷 '완성됐어요' 표식(주소 없음 — 그림은
       // 미리보기 라우트가 보관본에서)과 실패 표식·요약을 덧씌운다. 과금·해제는 서버 그대로(#420).
+      const failurePatch = incompleteFailurePatch(job);
+      const failureMessage = (job.errorMessage ? jobFailureMessage(job.errorMessage, { code: job.result?.errorCode || job.errorCode }) : '')
+        || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.');
       patch({
         status: 'error',
         slow: false,
         revokedPreviewUrls: Object.values(get().detailPageJob.cuts).map((cut) => cut?.url).filter(Boolean),
         cuts: {},
         live: [],
-        errorMessage: (job.errorMessage ? jobFailureMessage(job.errorMessage) : '')
-          || (job.status === 'cancelled' ? '다시 만들 수 있어요.' : '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'),
+        // 보관함의 공통 리본도 에디터와 같은 만료 판정과 문구를 사용한다.
+        errorMessage: incompleteMessage(failurePatch.incomplete, failureMessage),
         errorCode: job.status === 'cancelled' ? 'job_cancelled' : job.result?.errorCode || job.errorCode || null,
         error: jobFailure(job),
-        ...incompleteFailurePatch(job),
+        ...failurePatch,
       });
       void get().loadAccount({ force: true }).catch(() => {});
     } catch (e) {

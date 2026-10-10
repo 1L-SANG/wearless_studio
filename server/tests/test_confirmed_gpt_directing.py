@@ -91,6 +91,7 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
         and entry.get("shot") in {"full", "medium"}
         and bool(entry.get("all"))
         and bool(entry.get("applicableClothingTypes"))
+        and entry.get("confirmedGptEligibleV1") is not False
     }
     catalog = load_confirmed_gpt_directing_catalog()
 

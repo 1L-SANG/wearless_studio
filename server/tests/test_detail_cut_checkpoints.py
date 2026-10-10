@@ -185,7 +185,7 @@ def test_one_crashing_cut_does_not_fail_the_page(monkeypatch):
 
     assert [r["blockId"] for r in cut_results] == ["good"]
     assert len(cut_assets) == 1                      # 정산 단위도 성공 컷만
-    assert ("step", {"blockId": "bad", "status": "cut_failed"}) in events
+    assert ("step", {"blockId": "bad", "status": "cut_failed", "reason": "temporary_error", "retryable": True}) in events
     progress = [p for kind, p in events if kind == "progress"]
     assert progress[-1]["done"] == 2                 # 실패 컷도 진행 분모에 들어간다
 
@@ -248,7 +248,7 @@ def test_back_cut_without_back_photo_fails_before_paying_for_the_base(monkeypatc
 
     assert result[0] == [] and result[1] == []
     assert ("step", {"blockId": "b1", "status": "cut_failed",
-                     "reason": "no_angle_photo"}) in events
+                     "reason": "no_angle_photo", "retryable": False}) in events
 
 
 # ── D. generate() 의 베이스 자리 ──────────────────────────────────────────────

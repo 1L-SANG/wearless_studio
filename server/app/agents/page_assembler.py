@@ -495,6 +495,7 @@ def assemble(
     copywriting: bool,
     *,
     license_notice: dict | None = None,
+    failed_cuts: dict | None = None,
 ) -> list[dict]:
     """mock buildEditorBlocksFromStoryboard(storyboard, product, copywriting) 포팅.
 
@@ -740,6 +741,13 @@ def assemble(
                 continue
         push_single(b)
         i += 1
+
+    for block in blocks:
+        for element in block["elements"]:
+            failure = (failed_cuts or {}).get(element.get("sourceBlockId"))
+            if element["type"] == "image" and not element.get("src") and failure:
+                element.update(genFailed=True, genFailReason=failure["reason"],
+                               genFailRetryable=failure["retryable"])
 
     return blocks + build_auto_blocks(product, start_index=len(blocks),
                                       license_notice=license_notice)

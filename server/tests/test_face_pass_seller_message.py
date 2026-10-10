@@ -110,10 +110,34 @@ def test_every_unavailable_reason_reaches_the_same_seller_wording():
     assert "log.warning" in branch
 
 
-def test_the_detail_page_still_empties_the_cut_without_charging():
-    """상세페이지는 잡을 죽이지 않고 그 컷만 비운다 — 이 PR 이 그 규칙을 바꾸지 않는다."""
+def test_the_detail_page_still_empties_the_cut_without_charging(monkeypatch):
+    """실제 REAL 워커도 얼굴을 못 받은 원본을 발행하거나 모델 값을 정산하지 않는다."""
     from app.workers import detail_page_job as dpj
-
-    text = pathlib.Path(dpj.__file__).read_text(encoding="utf-8")
-    branch = text.split("except face_identity.FacePassUnavailable as e:")[1][:600]
-    assert '"status": "cut_failed"' in branch and "return None" in branch
+    from test_detail_page_license_face import (
+        _app, _license_row, _patch_inputs, _patch_snapshot_success, _snapshot_job,
+    )
+    captured = {"attempts": 0, "settlements": 0}
+    _patch_inputs(monkeypatch, captured, project={"copywriting": False})
+    row = _license_row()
+    _patch_snapshot_success(monkeypatch, row)
+    async def verified(*args, **kwargs): return None
+    async def no_face(*args, **kwargs):
+        captured["attempts"] += 1
+        assert kwargs["has_face"] is True
+        raise face_identity.FacePassUnavailable("pod_not_ready")
+    async def settlement(*args, **kwargs): captured["settlements"] += 1
+    monkeypatch.setattr(dpj.facemarket, "verify_license", verified)
+    monkeypatch.setattr(dpj.facemarket, "verify_license_local", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", settlement)
+    monkeypatch.setattr(dpj.cut_generator, "generate", no_face)
+    app, output = _app(row)
+    app.state.fm_chain = object()
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=19)))
+    assert captured["attempts"] == 1
+    assert captured["failure"]["reserved"] == 19
+    assert captured["failure"]["code"] == "all_cuts_failed"
+    assert "charge" not in captured and "editor_blocks" not in captured
+    assert captured["settlements"] == 0 and output.puts == []
+    failed = [payload for event, payload in captured["events"] if payload.get("status") == "cut_failed"]
+    assert failed == [{"blockId": "b1", "status": "cut_failed", "reason": "face_pass_unavailable", "retryable": True}]
+    assert not any(payload.get("status") == "cut_done" for event, payload in captured["events"])

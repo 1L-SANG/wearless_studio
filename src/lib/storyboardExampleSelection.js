@@ -2,10 +2,6 @@ import { CONTENT_ROLES, normalizedRecipePatch } from './storyboardTaxonomy.js';
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 
-/* 디테일 컷 방향 규칙의 단일 정본 — 예시의 direction 라벨이 결정하고, 미기재는 front.
-   선택 패치·자동 배정·에디터 패널·샷 전환 확정이 전부 이 함수를 쓴다(규칙 분산 방지). */
-export const detailDirectionFromExample = (example) => (example?.direction === 'back' ? 'back' : 'front');
-
 export function generationExampleStructuralRecipePatch(block, example) {
   // G-2의 의도적 예외: 거울 예시는 다른 촬영법을 직접 고르는 카드다.
   // 거울 탭이 있던 때부터 쓰던 normalizedRecipePatch 경로로 샷·방향·얼굴 규칙을 적용한다.
@@ -28,13 +24,11 @@ export function generationExampleStructuralRecipePatch(block, example) {
   return {};
 }
 
-export function directionSpecFromExample(example, { cutType = 'styling', detailTarget = null } = {}) {
-  const allowed = cutType === 'product' ? ['front', 'back'] : ['front', 'side', 'back'];
-  const source = cutType === 'product' && detailTarget ? detailTarget : example;
-  const direction = allowed.includes(source?.direction) ? source.direction : 'front';
+export function directionSpecFromExample(example) {
+  const direction = ['front', 'side', 'back'].includes(example?.direction) ? example.direction : 'front';
   return {
     direction,
-    sideStyle: direction === 'side' ? (source?.sideStyle === 'threeQuarter' ? 'threeQuarter' : 'profile') : null,
+    sideStyle: direction === 'side' ? (example?.sideStyle === 'threeQuarter' ? 'threeQuarter' : 'profile') : null,
   };
 }
 
@@ -47,11 +41,10 @@ export function directionSpecFromExample(example, { cutType = 'styling', detailT
    sideStyle 도 같이 옮긴다 — 방향만 side 로 두면 서버 기본값이 옆모습이라 사선 예시가
    90도 각도 교체로 새어 나간다. */
 function wornDirectionPatch(cutType, example) {
-  if (!['styling', 'horizon', 'product'].includes(cutType)) return {};
+  if (!['styling', 'horizon'].includes(cutType)) return {};
   const direction = example?.direction;
   if (!direction) return {};
-  if (cutType === 'product') return { direction: detailDirectionFromExample(example) };
-  return directionSpecFromExample(example, { cutType });
+  return directionSpecFromExample(example);
 }
 
 export function generationExampleSelectionPatch(block, example, {
@@ -64,9 +57,6 @@ export function generationExampleSelectionPatch(block, example, {
   const effectiveBlock = { ...block, ...structuralPatch };
   const replacing = !!block?.exampleId && !!exampleId && block.exampleId !== exampleId;
   const scope = block?.spaceGroupId ? (block.cutType === 'horizon' ? 'all' : 'pose') : (refScope || block?.refScope || 'all');
-  // 디테일 컷의 방향은 예시에 내재된 속성 — 셀러는 방향 UI 없이 예시만 고르고,
-  // 예시의 direction 라벨(미기재=front)이 서버의 근거 사진(Detail/BackDetail) 선택을
-  // 결정한다(2026-08-07 오너 결정). 첫 선택·교체 모두 적용.
   const isDetail = block?.cutType === 'product' && block?.shot === 'detail';
   const cutType = effectiveBlock.cutType;
   const patch = {
@@ -75,8 +65,7 @@ export function generationExampleSelectionPatch(block, example, {
     exampleChoice: null,
     exampleSelectionOrigin: exampleId ? 'user' : null,
     refScope: scope,
-    ...(exampleId && !(isDetail && block.detailTargetId) ? wornDirectionPatch(cutType, example) : {}),
-    ...(isDetail && !block.detailTargetId && exampleId ? { direction: detailDirectionFromExample(example) } : {}),
+    ...(exampleId ? wornDirectionPatch(cutType, example) : {}),
   };
   if (!replacing) return { patch, settingsReset: false };
 
@@ -84,9 +73,8 @@ export function generationExampleSelectionPatch(block, example, {
     settingsReset: true,
     patch: {
       ...patch,
-      // 디테일은 미기재 예시=front 로 확정(이전 back 잔존 방지). 그 외엔 기존 규칙 유지.
-      direction: isDetail
-        ? (block.detailTargetId ? block.direction : detailDirectionFromExample(example))
+      direction: cutType === 'product'
+        ? block.direction
         : cutType === 'mirror' ? null : (example.direction ?? effectiveBlock.direction),
       ...(cutType === 'mirror' ? { sideStyle: null } : {}),
       colorId: isDetail && block.detailTargetId ? effectiveBlock.colorId : defaultColorId || effectiveBlock.colorId,

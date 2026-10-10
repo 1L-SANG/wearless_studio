@@ -130,22 +130,14 @@ const catalogs = {
     { value: 'slim', label: '슬림핏' }, { value: 'regular', label: '정핏' },
     { value: 'semi_over', label: '세미오버' }, { value: 'over', label: '오버핏' },
   ],
-  // 서버 계약(_WORN_DIRECTIONS)은 front/side/back 셋 그대로다. 화면에서만 '사이드'를
-  // 둘로 갈라 보여준다 — 같은 side 주문이 두 가지 다른 그림이 되기 때문이다.
-  //   사선     몸만 옆, 얼굴은 카메라 쪽 3/4 → 얼굴 패스(LoRA)가 그린다
-  //   옆모습   완전 옆모습                   → 각도 교체가 등록 실사진 머리를 붙인다
-  // 화면 값 ↔ 서버 값 변환은 lib/directionChoice.js 한 곳에서만 한다.
-  directions: [
-    { value: 'front', label: '정면' },
-    { value: 'threeQuarter', label: '사선' },
-    { value: 'profile', label: '옆모습' },
-    { value: 'back', label: '뒷면' },
-  ],
   shotTypes: [
     { value: 'full', label: '풀샷' }, { value: 'medium', label: '미디움샷' },
   ],
   // 제품 이미지 전용 옵션 — 화면 하드코딩 금지 (계약 §5)
-  productDirections: [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }],
+  productSourcePhotos: [
+    { value: 'front', slot: 'Front', label: '내 앞면 사진' },
+    { value: 'back', slot: 'Back', label: '내 뒷면 사진' },
+  ],
   productShotTypes: [
     { value: 'ghost', label: '고스트샷' }, { value: 'detail', label: '디테일샷' },
   ],
@@ -184,32 +176,6 @@ const catalogs = {
     { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
     { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~30', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
-  // 에디터 '현재 이미지 수정' — 배경/포즈/표정은 예시 카드(탭당 1개).
-  // '컷 변경' 탭의 모델 착용 이미지는 directions/shotTypes 를 그대로 재사용한다.
-  varyOptions: {
-    bg: [
-      { id: 'cafe', label: '햇살 카페', thumb: P.scene('v-cafe', 240, 240) },
-      { id: 'street', label: '도심 거리', thumb: P.scene('v-street', 240, 240) },
-      { id: 'park', label: '공원 산책로', thumb: P.scene('v-park', 240, 240) },
-      { id: 'horizon', label: '화이트 호리존', thumb: P.scene('v-horizon', 240, 240) },
-      { id: 'home', label: '집 거실', thumb: P.scene('v-home', 240, 240) },
-      { id: 'night', label: '야경 거리', thumb: P.scene('v-night', 240, 240) },
-    ],
-    // '뒷모습'은 포즈가 아니라 방향이다 — '자리 · 방향'에 같은 게 있어 두 벌이었다(오너 8/16).
-    pose: [
-      { id: 'stand', label: '서 있는 모습', thumb: P.pose('v-stand', 240, 240) },
-      { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
-      { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
-      { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },
-      { id: 'turn', label: '돌아보기', thumb: P.pose('v-turn', 240, 240) },
-    ],
-    face: [
-      { id: 'smile', label: '은은한 미소', thumb: P.portrait('v-smile', 240, 240) },
-      { id: 'laugh', label: '활짝 웃음', thumb: P.portrait('v-laugh', 240, 240) },
-      { id: 'chic', label: '시크한 무표정', thumb: P.portrait('v-chic', 240, 240) },
-      { id: 'gaze', label: '먼 곳 응시', thumb: P.portrait('v-gaze', 240, 240) },
-    ],
-  },
   genExamples,
   // 프레임 = 순수 이미지 레이아웃만. 정보성 프리셋(FAQ·상품 정보 카드 등 빈 그리드만
   // 만들던 장식 항목)은 '내용' 탭(PRD §10.14 infoPresets)이 정식 대체해 제거.

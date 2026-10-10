@@ -38,7 +38,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequin({fitProfile})` | mannequinGenerate | ✅ (백엔드 라이브) |
 | AG-05 | mannequin-adjuster (마네킹 조정) | image_high | ~~`adjustMannequin`~~ | ~~mannequinAdjust~~(0) | ⛔ 폐기 — fitProfile 재생성으로 통합 |
 | AG-06 | cut-generator (사진 생성 — 내부 mirror 레시피 포함) | detail_cut(PL-4 일반 컷) / image_signature(첫 시그니처) / image_high(에디터) | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (백엔드 라이브 — detail_page_job·editor_image_job) |
-| AG-07 | cut-variator (현재 이미지 수정) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ (백엔드 라이브 — editor_image_job) |
+| AG-07 | cut-variator (비슷한 컷 계획 실행) | image_high | `generateImage(mode:'vary', variationMode:'similar')`, 콘티 비슷한 컷 | editorImage | ✅ (백엔드 라이브, editor_image_job과 detail_page_job) |
 | AG-08 | selling-point-extractor (강조 특징 발굴) | text | `analyzeProduct` 내부 — AG-01과 **병렬**(같은 job), 실패 시 AG-01 points 폴백 | — | ✅ (2026-07-13) |
 | M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (백엔드 라이브) |
 | M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (백엔드 라이브 + mock 미러) |
@@ -145,16 +145,17 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 
 ### AG-07 cut-variator — 현재 이미지 수정
 
-**2026-10-09 C 방식 통합:** 새 착용컷 UI는 `variationMode='similar'`를 보내며 `similar_cut.py`가 원본·상품 구조·이전 동작을 비전 분석해 한 동작을 계획한다. 기존 text/vision 공급자 설정을 사용하고, 생성은 기존 에디터 이미지 모델 설정을 따른다. 계획을 작업 lease와 원본별 이력 비교 아래 먼저 저장한 뒤 AG-07로 생성한다. 최초 원본을 재사용하고 최근 완료/예약 동작 12개와 다른 행동을 요청한다. 계획 실패 시 단순 변주로 전환하지 않는다. 거울 원본은 폰·반사·얼굴 가림을 유지하며, 제품·디테일과 기존 `variationMode` 없는 요청은 아래 레거시 수정 계약을 유지한다. Gemini는 원본 비율 추종을 요청하고, GPT는 원본 크기와 요청 해상도에서 유효 출력 크기를 산정한다. 실제 동일성·새로운 포즈가 항상 보장된다는 뜻은 아니다.
+**2026-10-09 C 방식 통합:** 새 착용컷 UI는 `variationMode='similar'`를 보내며 `similar_cut.py`가 원본·상품 구조·이전 동작을 비전 분석해 한 동작을 계획한다. 기존 text/vision 공급자 설정을 사용하고, 생성은 기존 에디터 이미지 모델 설정을 따른다. 계획을 작업 lease와 원본별 이력 비교 아래 먼저 저장한 뒤 AG-07로 생성한다. 최초 원본을 재사용하고 최근 완료/예약 동작 12개와 다른 행동을 요청한다. 계획 실패 시 단순 변주로 전환하지 않는다. 거울 원본은 폰·반사·얼굴 가림을 유지한다. Gemini는 원본 비율 추종을 요청하고, GPT는 원본 크기와 요청 해상도에서 유효 출력 크기를 산정한다. 실제 동일성·새로운 포즈가 항상 보장된다는 뜻은 아니다.
+
+**2026-10-10 옛 수정 경로 삭제(ADR-0016 개정):** AG-07은 비슷한 컷 계획을 실행할 때만 쓴다. 변경값(방향, 샷, 포즈, 표정, 배경)을 프롬프트로 바꿔 한 장을 다시 그리던 옛 경로(`cut_vary_v1.txt`, 빈 변경의 제품컷 `이미지 수정`, 배경 참조 `refBg`)는 삭제했다. 원본 검수 레시피가 있는 디테일컷의 `같은 부위 다시 촬영`은 AG-07이 아니라 디테일 전용 경로(`detail_shot_runtime`, ADR-0012)로 처리한다. 그 밖의 vary 요청은 라우트가 400 `vary_unsupported`로 거절한다.
 
 | | |
 |---|---|
 | tier | `image_high` |
-| 호출 시점 | 에디터 AI 탭 `현재 이미지 수정` → `generateImage(mode:'vary')` (PL-6) |
-| 입력 | VaryRequest(계약 §6): `{ source: { src, cutType }, changes: { type: 'direction'\|'shot'\|'pose'\|'face'\|'bg', value }[], refBg?: URL }` — `changes=[]`는 '비슷한 컷 만들기'. 디테일 전환은 실제 Detail 근거를 연결할 수 없어 `detail_variation_unsupported`로 차단한다. |
-| 출력 | `{ imageUrl, cutType }` → `WardrobeImage`(misc 그룹). 원본은 보존(PRD §10.8) |
-| 적용 순서 계약 | 구도(direction·shot) 기준 → 포즈·표정 → 배경(refBg 포함)이 구도를 따라감 — EditorPanels의 칩 순서와 동일 |
-| 프롬프트 핵심 제약 | 지시된 change 외 동결(인물·의류 동일성) · cutType 미상 소스는 styling으로 가정(기존 계약) |
+| 호출 시점 | 에디터 AI 탭 `현재 이미지 수정`의 `비슷한 컷 생성`(`generateImage(mode:'vary', variationMode:'similar')`, PL-6), 콘티 비슷한 컷의 상세페이지 생성(PL-4, ADR-0016) |
+| 입력 | 최초 원본 사진 한 장과 저장된 비슷한 컷 계획. VaryRequest(계약 §6)는 `{ source: { src, cutType }, variationMode: 'similar' }`이며 변경값과 배경 참조는 받지 않는다 |
+| 출력 | `{ imageUrl, cutType }`. `WardrobeImage`로 의류 탭에 추가하고 원본은 보존(PRD §10.8) |
+| 프롬프트 | `similar_cut_generate_v1.txt`(계획 실행). 인물, 옷, 장소 동일성 유지 |
 
 ---
 

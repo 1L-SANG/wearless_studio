@@ -22,14 +22,12 @@ test('example selection supplies side style and does not create a pose override'
   }
 });
 
-test('editor new-image requests get direction from the example or the original detail target', () => {
+test('worn new-image requests get direction and side style from the example', () => {
   assert.deepEqual(directionSpecFromExample({ direction: 'side', sideStyle: 'threeQuarter' }), {
     direction: 'side', sideStyle: 'threeQuarter',
   });
-  assert.deepEqual(directionSpecFromExample({ direction: 'back' }, {
-    cutType: 'product', detailTarget: { direction: 'front' },
-  }), { direction: 'front', sideStyle: null });
-  assert.deepEqual(directionSpecFromExample(null, { cutType: 'product' }), {
+  assert.deepEqual(directionSpecFromExample({ direction: 'back' }), { direction: 'back', sideStyle: null });
+  assert.deepEqual(directionSpecFromExample(null), {
     direction: 'front', sideStyle: null,
   });
 });
@@ -73,7 +71,7 @@ test('editor renders without manual direction controls for worn and product imag
     }));
     assert.ok(!rendered.includes('보는 방향'));
     assert.ok(!rendered.includes('direction-chips'));
-    assert.ok(rendered.includes(cutType === 'product' ? '이미지 수정' : '비슷한 컷 생성'));
+    assert.ok(rendered.includes(cutType === 'product' ? '제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.' : '비슷한 컷 생성'));
     assert.ok(!rendered.includes('같은 장소 이미지 생성'));
     assert.ok(!rendered.includes('포즈 고르기'));
     assert.ok(!rendered.includes('표정 고르기'));

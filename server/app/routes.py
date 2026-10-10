@@ -1242,7 +1242,12 @@ async def promote_confirmed_gpt_evidence(
                 "analysis_handoff_source_drift",
                 "분석 후 상품 사진이 달라졌어요. 현재 사진으로 다시 분석해 주세요.",
             )
-        await repo.save_confirmed_gpt_product_evidence(conn, project_id, contract)
+        # 서명 전체와 원본 사진을 검증한 뒤에만 동봉된 여밈 판정을 저장한다.
+        closure = handoff.get("frontClosure")
+        await repo.save_confirmed_gpt_product_evidence(
+            conn, project_id, contract,
+            **({"front_closure": closure} if closure is not None else {}),
+        )
         await conn.commit()
     return {"promoted": True}
 
@@ -1507,10 +1512,12 @@ async def analyze_spike(
             raise _not_found()
         product = await repo.get_product(conn, project_id) or {}
         assets = []
-        for _slot, aid in mannequin.base_color_images(product):
+        slots = []
+        for slot, aid in mannequin.base_color_images(product):
             a = await repo.get_asset_for_user(conn, user_id, aid)
             if a:
                 assets.append(a)
+                slots.append(slot)
     if not assets:
         raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
     images = [
@@ -1520,7 +1527,7 @@ async def analyze_spike(
     order = [p.strip() for p in (s.analysis_model_order or "").split(",") if p.strip()]
     t0 = time.perf_counter()
     try:
-        distributed, provider = await product_analyst.analyze(s, product, images)
+        distributed, provider = await product_analyst.analyze(s, product, images, slots=slots)
     except VisionError as e:
         raise HTTPException(status_code=502, detail={"code": "analysis_failed", "message": str(e)})
     obs = product_analyst.observation(provider, order, int((time.perf_counter() - t0) * 1000), distributed)
@@ -3212,10 +3219,11 @@ async def generate_editor_image(
 
     - **Bearer Token**: 필수
     - **Body**: `NewCutRequest { mode:'new', colorId, contentRole, cutType, direction?, shot?, modelId? }` |
-      `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
+      `VaryRequest { mode:'vary', source:{src,cutType}, variationMode?:'similar' }`
     - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
       새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
-      이 키로만 보장됩니다.
+      이 키로 보장됩니다. ADR-0017의 retryBlockId가 있으면 서버 저장 콘티에서 설정을
+      복원하며, 같은 빈 칸의 진행 중 작업에 합류해 새 크레딧을 예약하지 않습니다.
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
     _require_bg_examples_enabled(request, body)
@@ -3251,7 +3259,7 @@ async def generate_editor_image(
         payload = dict(body or {})
         payload.pop("_facemarket", None)
         payload.pop("_similarCut", None)
-        if payload.get("mode") == "new" and payload.get("spaceGroupId"):
+        if payload.get("retryBlockId"):
             from .agents import horizon_background
             try:
                 payload = horizon_background.restore_failed_retry(
@@ -3260,25 +3268,28 @@ async def generate_editor_image(
                     await repo.get_editor_blocks(conn, project_id),
                 )
             except ValueError as exc:
-                raise _bad_request("invalid_horizon_set_retry", "원래 콘티의 실패한 스튜디오 컷만 다시 만들 수 있어요.") from exc
+                code = str(exc)
+                message = ("원본 컷을 먼저 만들어 주세요." if code == "similar_source_required"
+                           else "원래 콘티의 빈 이미지 칸만 다시 만들 수 있어요.")
+                raise _bad_request(code, message) from exc
         analysis = None
         selected_model_id = None
         brand_use_category = None
         if payload.get("mode") == "vary":
             source = payload.get("source") or {}
-            if payload.get("variationMode") == "similar":
-                changes = payload.get("changes", [])
-                if (not isinstance(source, dict)
-                        or not isinstance(changes, list) or len(changes) > 3
-                        or any(not isinstance(change, dict)
-                               or change.get("type") not in {"direction", "pose", "face"}
-                               or not isinstance(change.get("value"), str)
-                               or not change["value"].strip() or len(change["value"]) > 300
-                               for change in changes)
-                        or payload.get("refBgAssetId") or payload.get("refBg")):
-                    raise _bad_request("invalid_similar_cut", "비슷한 컷은 같은 장소에서 포즈·시선·표정을 바꿀 수 있어요.")
+            is_similar = payload.get("variationMode") == "similar"
+            unsupported_message = (
+                "제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요."
+                if isinstance(source, dict) and source.get("cutType") == "product"
+                else "이 사진은 비슷한 컷만 만들 수 있어요."
+            )
+            if (not isinstance(source, dict) or payload.get("changes", []) != []
+                    or "refBgAssetId" in payload or "refBg" in payload
+                    or payload.get("variationMode") not in (None, "similar")):
+                raise _bad_request("invalid_similar_cut" if is_similar else "vary_unsupported",
+                                   unsupported_message)
             source_asset_id = _asset_id_from_file_capability(source.get("src"))
-            if payload.get("variationMode") == "similar":
+            if is_similar:
                 selected_asset = (
                     await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
                     if source_asset_id else None
@@ -3309,6 +3320,17 @@ async def generate_editor_image(
                 payload["_similarCut"] = {
                     "version": 1, "rootAssetId": source_asset_id, "sourceAssetId": selected_id,
                 }
+            else:
+                source_asset = (
+                    await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
+                    if source_asset_id else None
+                )
+                source_metadata = (source_asset or {}).get("metadata") or {}
+                detail_recipe = source_metadata.get("detail_recipe")
+                if not isinstance(detail_recipe, dict) or detail_recipe.get("version") != 1:
+                    if source_metadata.get("cut_type") == "product":
+                        unsupported_message = "제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요."
+                    raise _bad_request("vary_unsupported", unsupported_message)
             provenance = (
                 await repo.get_asset_facemarket_provenance(
                     conn, user_id, source_asset_id
@@ -3364,6 +3386,8 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
+                if payload.get("retryBlockId") and not selected_model_id:
+                    selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
                 # 콘티보드 범위 밖 조합(예: 실제 모델 + 가상 전용 예시)은 여기서 끝낸다 —
                 # 잡도 만들지 않고 크레딧도 예약하지 않는다(2026-09-11 사용자 결정).
                 rejection = identity_scope.block_rejection(payload, selected_model_id)
@@ -3580,7 +3604,7 @@ async def generate_detail_page(
             code, message = (identity_scope.block_rejection(rejected, selected_model_id)
                              or (identity_scope.MISMATCH_CODE, identity_scope.MISMATCH_MESSAGE))
             raise _bad_request(code, message)
-        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
+        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
         ai_count = sum(1 for source in dup_sources if source is None)
         min_cuts = s.credit_min_storyboard_cuts
         billable = max(ai_count, min_cuts) if ai_count > 0 else 0

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  assignGenerationExamples, directionBadgeLabel, exampleSelectionFingerprintFields,
+  assignGenerationExamples, exampleSelectionFingerprintFields,
   hasSelectableGenerationExamples, isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
   storedExampleConditionStatus, repeatedAllExampleVariationIds,
 } from '../../src/lib/generationExamples.js';
@@ -476,10 +476,6 @@ test('dress is women-only even when stale input still says men', () => {
   assert.match(httpAdapterSource, /await http\(`\/v1\/projects\/\$\{projectId\}\/analysis\?merge=1`, \{ method: 'PATCH'/);
   assert.match(httpAdapterSource, /analysisCache = \{ projectId, analysis: savedAnalysis \}/);
   assert.match(httpAdapterSource, /return savedAnalysis/);
-});
-
-test('direction badge labels are front, side and back', () => {
-  assert.deepEqual(['front', 'side', 'back'].map(directionBadgeLabel), ['정면', '사이드', '뒷면']);
 });
 
 test('storyboard preserves family-specific group references across shot changes and remains atomically retryable', () => {

@@ -78,6 +78,7 @@ def issue_handoff(
     secret: str | None,
     *,
     now: int | None = None,
+    front_closure: dict | None = None,
 ) -> dict[str, Any]:
     """Sign a short-lived public-analysis artifact for authenticated draft promotion."""
 
@@ -89,6 +90,11 @@ def issue_handoff(
         "expiresAt": issued_at + HANDOFF_TTL_SECONDS,
         "contract": contract,
     }
+    if front_closure is not None:
+        from .outer_closure import front_closure_of
+
+        # 기존 프론트도 서명 봉투를 그대로 전달한다. 상품 근거 자체는 바꾸지 않는다.
+        payload["frontClosure"] = front_closure_of({"frontClosure": front_closure})
     payload["signature"] = hmac.new(
         _handoff_secret(secret), _canonical_bytes(payload), "sha256"
     ).hexdigest()
@@ -101,9 +107,12 @@ def verify_handoff(
     *,
     now: int | None = None,
 ) -> dict[str, Any]:
+    fields = {"schemaVersion", "issuedAt", "expiresAt", "contract", "signature"}
+    if isinstance(value, dict) and "frontClosure" in value:
+        fields.add("frontClosure")
     handoff = _exact_keys(
         value,
-        {"schemaVersion", "issuedAt", "expiresAt", "contract", "signature"},
+        fields,
         "product_evidence_handoff_field_set_mismatch",
     )
     current = int(time.time()) if now is None else int(now)

@@ -1,3 +1,4 @@
+import { failedCutPresentation } from '../../src/lib/cutFailureMessages.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -90,11 +91,11 @@ test('만들지 못한 컷은 미완성 태그와 기존 크레딧 안내를 표
   const start = editor.indexOf('    if (!hasImageSource(el) && el.genPending) {');
   const tile = editor.slice(start, editor.indexOf('    if (!hasImageSource(el)) {', start));
   const { code } = await transformWithEsbuild(`function Tile(){${tile}}`, 'Tile.jsx', { jsx: 'transform' });
-  const Tile = new Function('React', 'el', 'base', 'hasImageSource', `${code}; return Tile;`)(React,
-    { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {}, hasImageSource);
+  const Tile = new Function('React', 'el', 'base', 'hasImageSource', 'failedCutPresentation', `${code}; return Tile;`)(React,
+    { id: 'cut', type: 'image', src: null, genPending: 'failed', radius: 0 }, {}, hasImageSource, failedCutPresentation);
   const html = renderToStaticMarkup(React.createElement(Tile));
   assert.match(html, /class="ed-genwait-tag fail">미완성<\/span>/);
-  assert.match(html, /이 컷은 만들지 못했어요<br\/><small>크레딧 미차감<\/small>/);
+  assert.match(html, /이 컷은 만들지 못했어요<br\/><small>이 컷 값은 받지 않았어요<br\/>눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요<\/small>/);
   assert.doesNotMatch(html, /실패/);
 });
 

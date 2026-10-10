@@ -213,7 +213,7 @@ def test_product_with_pose_is_rejected(tmp_path):
 
 @pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror", "product"))
 @pytest.mark.parametrize("direction", ("front", "back", "side", None))
-def test_direction_observation_metadata_is_cut_type_independent(
+def test_direction_is_required_for_worn_cuts_and_optional_for_product(
     tmp_path, cut_type, direction
 ):
     manifest_path, root, manifest = _fixture(tmp_path)
@@ -239,11 +239,62 @@ def test_direction_observation_metadata_is_cut_type_independent(
     # side 는 하위 갈래까지 적어야 한다 — 사선과 90도 옆모습이 같은 'side' 라서.
     example["sideStyle"] = "profile" if direction == "side" else None
 
+    if direction is None and cut_type != "product":
+        with pytest.raises(release.ReleaseValidationError) as caught:
+            release.validate_manifest(manifest, root, manifest_path=manifest_path)
+        assert any(
+            "examples[0].direction은 착용컷에서 비워 둘 수 없습니다" in item
+            for item in caught.value.violations
+        )
+        assert example["direction"] is None
+        return
+
     examples, _files, _warnings = release.validate_manifest(
         manifest, root, manifest_path=manifest_path
     )
 
     assert examples[0]["direction"] == direction
+
+
+@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+def test_validation_collects_missing_worn_direction_with_other_violations(tmp_path, cut_type):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    example = manifest["examples"][0]
+    example.update({
+        "cutType": cut_type,
+        "direction": None,
+        "mood": "daily" if cut_type == "styling" else None,
+        "serviceGroupKey": "",
+        "rank": 0,
+    })
+
+    with pytest.raises(release.ReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+
+    assert any(
+        "examples[0].direction은 착용컷에서 비워 둘 수 없습니다" in item
+        for item in caught.value.violations
+    )
+    assert any("serviceGroupKey는" in item for item in caught.value.violations)
+    assert any("rank는 1 이상의" in item for item in caught.value.violations)
+
+
+def test_repository_worn_examples_all_have_directions():
+    repo_root = Path(__file__).resolve().parents[2]
+    registry = json.loads(
+        (repo_root / "server/app/data/example_assets.json").read_text(encoding="utf-8")
+    )
+    catalog = json.loads(
+        (repo_root / "src/data/genExamples.json").read_text(encoding="utf-8")
+    )
+
+    for label, examples in (("registry", registry["assets"].values()), ("catalog", catalog)):
+        worn_examples = [
+            example for example in examples
+            if example.get("cutType") in {"styling", "horizon", "mirror"}
+        ]
+        assert worn_examples, label
+        assert all(example.get("direction") is not None for example in worn_examples), label
 
 
 def test_gender_neutral_product_is_valid_and_staged_as_null(tmp_path):
@@ -610,11 +661,23 @@ def test_validate_rejects_catalog_registry_id_mismatch():
         release._validate_release_documents(catalog, _valid_registry(), label="테스트")
 
 
-def test_validate_accepts_null_observation_direction():
-    catalog = [_catalog_item(direction=None)]
+def test_validate_accepts_null_product_direction():
+    catalog = [_catalog_item(
+        cutType="product", gender=None, shot="ghost", presentationMethod="ghost", direction=None
+    )]
     registry = _valid_registry()
     registry["assets"]["ex_a"]["direction"] = None
     release._validate_release_documents(catalog, registry, label="테스트")
+
+
+@pytest.mark.parametrize("cut_type", ("styling", "horizon", "mirror"))
+def test_validate_rejects_null_worn_direction(cut_type):
+    catalog = [_catalog_item(cutType=cut_type, direction=None)]
+    registry = _valid_registry()
+    registry["assets"]["ex_a"]["direction"] = None
+
+    with pytest.raises(RuntimeError, match="direction_invalid"):
+        release._validate_release_documents(catalog, registry, label="테스트")
 
 
 def test_validate_rejects_unknown_observation_direction():

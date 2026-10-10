@@ -242,10 +242,11 @@ test('[다시 만들기]는 보관 컷 기준을 유지하며 reset + startDetai
   assert.match(store, /status: 'running', projectId, startedAt: Date\.now\(\), retryOf \}/);
   assert.match(store, /running\.jobId \? \{ jobId: running\.jobId \} : await api\.startDetailPage\(projectId\)/);
   // 실패 종결: 오늘의 초기화 위에 부분 실패만 덧씌운다
-  assert.match(store, /cuts: \{\},\s*live: \[\],[\s\S]{0,600}\.\.\.incompleteFailurePatch\(job\),\s*\}\);/);
+  assert.match(store, /const failurePatch = incompleteFailurePatch\(job\);/);
+  assert.match(store, /cuts: \{\},\s*live: \[\],[\s\S]{0,600}\.\.\.failurePatch,\s*\}\);/);
 });
 
-test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기] → 같은 프로젝트로 POST 1번, 보관 수를 들고 시작', async () => {
+test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기] → 같은 프로젝트로 POST 1번, 보관 수를 들고 시작', async (t) => {
   const root = fileURLToPath(new URL('../..', import.meta.url));
   const calls = { start: [], getJob: [] };
   globalThis.__icApi = {
@@ -286,7 +287,9 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     let job = useAppStore.getState().detailPageJob;
     assert.equal(job.status, 'error');
     assert.equal(job.jobId, 'job-1', '보관본 미리보기가 쓸 실패 잡 id 를 지킨다');
-    assert.equal(job.errorMessage, '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
+    // 서버가 사실대로 쓴 부분 실패 문장을 그대로 보여 준다(연결 불안정으로 바꾸지 않는다).
+    assert.match(job.errorMessage, /^20장 중 1장을 만들지 못했어요\./);
+    assert.match(job.errorMessage, /크레딧이 차감되지 않았어요\.$/);
     assert.equal(incompleteSummary(job.incomplete), '19장 완성 · 1장 미완성');
     assert.deepEqual(job.failedCuts, ['sb7']);
     assert.equal(job.cuts.sb1.done, true);
@@ -308,6 +311,26 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     assert.equal(retryReuseHint(job), '보관된 19장은 그대로 써요');
     useAppStore.getState().resetDetailPageJob();   // 폴링 루프 무효화
     await pending;
+
+    for (const errorMessage of [SERVER_MESSAGE, '']) {
+      await t.test(`기한 지난 작업을 복원하면 공통 안내도 만료를 알린다, 서버 문구 있음 ${!!errorMessage}`, async () => {
+        useAppStore.getState().resetDetailPageJob();
+        const response = { ...failedJob({ retainedUntil: '2000-01-01T00:00:00Z' }), errorMessage };
+        globalThis.__icApi.getJob = async () => response;
+        useAppStore.getState().seedDetailPageJob({ id: PID, status: 'draft', latestJobs: {
+          detailPage: { id: JID, status: 'error', errorCode: 'incomplete_cuts' },
+        } });
+        const started = calls.start.length;
+        await useAppStore.getState().startDetailPageGeneration(PID);
+        const restored = useAppStore.getState().detailPageJob;
+        assert.equal(calls.start.length, started, '기존 실패 작업 조회는 새 생성 요청을 보내지 않는다');
+        assert.equal(restored.incomplete.expired, true);
+        assert.deepEqual(restored.incomplete.retained, []);
+        assert.equal(restored.errorMessage, '20장 중 1장을 만들지 못했어요. '
+          + '완성된 컷의 보관 기간(24시간)이 지나 다시 만들면 모든 컷을 새로 만들어요. 이번 시도는 크레딧이 차감되지 않았어요.');
+        assert.doesNotMatch(restored.errorMessage, /보관돼 있어|실패한 컷만/);
+      });
+    }
 
     for (const [response, message, code] of [
       [{ ...failedJob(), errorMessage: '아직 못 만든 컷이 있어요. 완성된 컷은 보관돼 있어요.' },

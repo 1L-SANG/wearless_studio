@@ -1065,12 +1065,13 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",
+    "frontClosure",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
 # hash-bound server artifacts. API clients may echo them but can never create or replace
 # them; finalize_analyze_success replaces the full payload after a fresh provider call, and
 # replace_garment_color_evidence is the only other writer (lazy garment color measurement).
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence")
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,
@@ -1146,18 +1147,23 @@ async def save_confirmed_gpt_product_evidence(
     conn: AsyncConnection,
     project_id: str,
     contract: dict,
+    *,
+    front_closure: dict | None = None,
 ) -> dict:
     """Persist a verified public-analysis handoff without exposing a client write path."""
 
+    update = "jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)"
+    params = [Json(contract)]
+    if front_closure is not None:
+        from .agents.outer_closure import front_closure_of
+
+        update = f"jsonb_set({update}, '{{frontClosure}}', %s::jsonb, true)"
+        params.append(Json(front_closure_of({"frontClosure": front_closure})))
+    params.append(project_id)
     async with conn.cursor() as cur:
         await cur.execute(
-            """
-            update analyses
-            set payload = jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)
-            where project_id = %s
-            returning payload
-            """,
-            (Json(contract), project_id),
+            f"update analyses set payload = {update} where project_id = %s returning payload",
+            params,
         )
         row = await cur.fetchone()
     if row is None:
@@ -2346,9 +2352,12 @@ async def create_job(
     멱등(계약 §6): ① 같은 Idempotency-Key = 같은 job(상태 무관) — 선조회로 합류 ② 진행 중 중복 =
     활성 job 합류(ON CONFLICT) ③ 실패 후 재호출(키 없음·새 키) = 새 job. **완료 job 재호출(기존
     결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님).
-    마네킹은 활성 합류 키도 저장한다. 202 응답이 유실돼도 종료된 원래 작업에 합류한다.
+    마네킹과 에디터 실패 칸 재시도는 활성 합류 키도 기억한다.
+    202 응답이 유실돼도 종료된 원래 작업을 재생하며 원래 키를 덮어쓰지 않는다.
     """
     remember_request = kind == "mannequin" and bool(idempotency_key)
+    retry_block_id = payload.get("retryBlockId") if kind == "editor_image" else None
+    remember_editor_retry = bool(retry_block_id and idempotency_key)
 
     async def _by_key(cur):
         await cur.execute(
@@ -2365,6 +2374,13 @@ async def create_job(
                 (user_id, project_id, user_id, project_id, idempotency_key),
             )
             existing = await cur.fetchone()
+        if existing is None and kind == "editor_image":
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and metadata->'editorRetryRequestKeys' @> %s::jsonb",
+                (user_id, project_id, Json([idempotency_key])),
+            )
+            existing = await cur.fetchone()
         return existing
 
     async def _remember(cur, row):
@@ -2373,6 +2389,17 @@ async def create_job(
                 "insert into mannequin_job_requests (user_id, project_id, idempotency_key, job_id) "
                 "values (%s, %s, %s, %s) on conflict do nothing",
                 (user_id, project_id, idempotency_key, row["id"]),
+            )
+        if remember_editor_retry and row.get("idempotency_key") != idempotency_key:
+            # 합류 응답이 유실되어 원래 작업 완료 뒤 재전송해도 같은 작업을 재생한다.
+            keys = Json([idempotency_key])
+            await cur.execute(
+                "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || "
+                "jsonb_build_object('editorRetryRequestKeys', "
+                "coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) || %s::jsonb) "
+                "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+                "and not (coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) @> %s::jsonb)",
+                (keys, row["id"], user_id, project_id, keys),
             )
         return row
 
@@ -2392,8 +2419,24 @@ async def create_job(
                 "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"mannequin-request:{user_id}:{project_id}",),
             )
+        if kind == "editor_image" and (retry_block_id or idempotency_key):
+            # 합류 키의 기록과 조회도 같은 프로젝트에서 직렬화한다. 원래 키는 보존한다.
+            await cur.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"editor-image-request:{user_id}:{project_id}",),
+            )
         if idempotency_key:  # ① 같은 Idempotency-Key 재시도(순차) → 같은 job
             existing = await _by_key(cur)
+            if existing is not None:
+                return await _remember(cur, existing), False
+        if retry_block_id:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and status in ('pending', 'running') "
+                "and payload->>'retryBlockId' = %s order by created_at desc limit 1",
+                (user_id, project_id, str(retry_block_id)),
+            )
+            existing = await cur.fetchone()
             if existing is not None:
                 return await _remember(cur, existing), False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
@@ -3571,7 +3614,7 @@ async def finalize_detail_page_success(
     editor_blocks: list,
     cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
     reserved: int,
-    charge: int,  # 전량 완성 시 실제 생성 컷 수 × storyboardPerCut
+    charge: int,  # ADR-0017, 예약 견적에서 실패한 유료 컷 값을 뺀 정산액
     metadata: dict,
     product_name: str | None = None,
 ) -> dict | None:
@@ -3635,6 +3678,8 @@ async def finalize_detail_page_success(
             conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
             settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})
     envelope = {"data": editor_blocks, "credits": available, "creditsCharged": charge}
+    if metadata.get("partial"):
+        envelope["partial"] = metadata["partial"]
     async with conn.cursor() as cur:
         await cur.execute(
             "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
@@ -3734,9 +3779,10 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
         await cur.execute(
             """
             select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
-                   wi.ai, wi.cut_type, wi.sort_order
+                   wi.ai, wi.cut_type, wi.sort_order, a.metadata as asset_metadata
             from wardrobe_images wi
             join projects pr on pr.id = wi.project_id
+            join assets a on a.id = wi.asset_id
             where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
               and wi.deleted_at is null
             order by wi.sort_order, wi.created_at
@@ -3748,12 +3794,16 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
 
 def _wardrobe_image_api(row: dict) -> dict:
     """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
-    return {
+    image = {
         "id": row["id"],
         "src": f"/v1/assets/{row['asset_id']}/file",
         "ai": bool(row["ai"]),
         "cutType": row["cut_type"],
     }
+    recipe = (row.get("asset_metadata") or {}).get("detail_recipe")
+    if isinstance(recipe, dict) and recipe.get("version") == 1:
+        image["detailReshoot"] = True
+    return image
 
 
 async def finalize_editor_image_success(
@@ -3805,12 +3855,13 @@ async def finalize_editor_image_success(
             (project_id, group, image["asset_id"], cut_type, sort_order),
         )
         wardrobe_id = (await cur.fetchone())["id"]
-        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
+        image_api = _wardrobe_image_api({
             "id": wardrobe_id,
-            "src": f"/v1/assets/{image['asset_id']}/file",
+            "asset_id": image["asset_id"],
             "ai": True,
-            "cutType": cut_type,
-        }
+            "cut_type": cut_type,
+            "asset_metadata": image.get("metadata"),
+        })
         prov = image.get("provenance")
         if prov and image.get("sha256"):
             await insert_output_records(cur, records=[{

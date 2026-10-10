@@ -45,7 +45,7 @@ def regions(sources):
 
 
 def test_analysis_never_observes_or_builds_a_color_contract(monkeypatch):
-    async def analyst(*args):
+    async def analyst(*args, **kwargs):
         return {"product": {"clothingType": "top"}, "analysis": {}, "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "fake"
     async def feature(*args, **kwargs): return [], "fake"
     async def consistency(*args, **kwargs): return None

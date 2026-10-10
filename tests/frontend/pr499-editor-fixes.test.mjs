@@ -9,7 +9,7 @@ const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', impo
 const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
 const slice = (text, start, end) => text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
-const evaluate = (body, scope) => new Function('scope', `with (scope) { ${body} }`)(scope);
+const evaluate = (body, scope) => new Function('scope', `with (scope) { ${body} }`)({ wardrobeContext: { current: { storyboard: [] } }, ...scope });
 const React = { createElement: (type, props, ...children) => ({ type, props, children }) };
 
 test('empty, pending and failed canvas slots are never vary sources', () => {
@@ -56,7 +56,7 @@ test('vary panel releases its click lock after an unknown response so the reques
   await second;
 });
 
-const request = { source: { id: 'photo', src: '/photo.png', cutType: 'styling', wardrobeGroup: 'navy' }, changes: [], variationMode: 'similar' };
+const request = { source: { id: 'photo', src: '/photo.png', cutType: 'styling', wardrobeGroup: 'navy' }, variationMode: 'similar' };
 function submissionHarness({ error = null, errors = [], hold = false, accept = true } = {}) {
   const posts = [], jobs = new Map();
   let wardrobe = {}, resolve;

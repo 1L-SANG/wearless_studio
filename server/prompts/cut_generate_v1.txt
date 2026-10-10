@@ -215,26 +215,38 @@ or physical occlusion mechanism; do not reveal a lower face beneath an umbrella,
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
 [[OUTER_CLOSURE:guard]]OUTER FRONT OPENING — USER-SELECTED REQUIREMENT:
-- This opening state overrides any different open/closed styling shown in EXAMPLE or MOOD images.
-- Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count
-  and placement of buttons, zipper teeth/pull, snaps, hooks and belt loops.
-- NEVER invent, remove, relocate or redesign closure hardware, a belt or lining. If the requested
-  state is not physically possible for this garment, garment fidelity wins over forcing the state.
+- This opening level overrides any different open/closed styling shown in EXAMPLE or MOOD images.
+- Measure the level on the wearer's body from the neckline down. Every real front closure point above
+  the level is unfastened; every real closure point from the level down to the hem is fastened. If no
+  closure point sits exactly at the level, use the nearest real one.
+- Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count and
+  placement of buttons, zipper teeth/pull, snaps, hooks, belt and belt loops.
+- NEVER invent, remove, relocate or redesign closure hardware, a belt or lining. If this garment cannot
+  physically take the requested state, show the nearest state it can take; garment fidelity wins.
+- If the garment has a belt, tie it only when the level is above the waist; otherwise leave it untied,
+  hanging from its loops. Never remove it.
 
-[[OUTER_CLOSURE:open]]Opening state: FULLY OPEN. Leave every real front closure unfastened and let
-the two front panels hang naturally. Keep all hardware unchanged; preserve only what is naturally
-visible from the requested camera angle, and never change direction or framing to expose it.
-- The inner T-shirt from the MANNEQUIN image must be naturally visible through the open front.
-
-[[OUTER_CLOSURE:partial]]Opening state: PARTIALLY OPEN. Fasten only some of the garment's real front
-closure at a natural position for its actual construction; leave the rest open. Do not invent a
-button count or zipper behavior that PRODUCT references do not support.
-- The inner T-shirt from the MANNEQUIN image must be partially visible through the open portion.
-
-[[OUTER_CLOSURE:closed]]Opening state: FULLY CLOSED. Fasten every real front closure that this exact
-garment supports. Do not turn an open-front garment into a closable garment.
+[[OUTER_CLOSURE:closed]]Opening level: FULLY CLOSED up to the neckline. Fasten every real front closure
+this exact garment supports. Do not turn an open-front garment into a closable garment.
 - The inner T-shirt from the MANNEQUIN image must be almost entirely hidden, with at most its collar
   line naturally visible.
+
+[[OUTER_CLOSURE:openToChest]]Opening level: OPEN DOWN TO THE CHEST. Unfasten only the top section, from
+the neckline down to about the armpit line; keep every real closure from there down to the hem fastened.
+- The inner T-shirt from the MANNEQUIN image shows only as a small V below the neckline.
+
+[[OUTER_CLOSURE:partial]]Opening level: HALF OPEN. Unfasten from the neckline down to about the bottom
+of the breastbone, halfway between the chest and the navel; keep every real closure below that fastened.
+- The inner T-shirt from the MANNEQUIN image is visible down to mid-torso.
+
+[[OUTER_CLOSURE:openToWaist]]Opening level: OPEN DOWN TO THE WAIST. Unfasten from the neckline down to
+about navel height; only the lowest section near the hem stays fastened.
+- The inner T-shirt from the MANNEQUIN image is visible through most of the front.
+
+[[OUTER_CLOSURE:open]]Opening level: FULLY OPEN. Leave every real front closure unfastened and let the
+two front panels hang naturally. Keep all hardware unchanged; preserve only what is naturally visible
+from the requested camera angle, and never change direction or framing to expose it.
+- The inner T-shirt from the MANNEQUIN image must be naturally visible through the open front.
 
 [[EXNUANCE:0]]Composition nuance (from the seller's chosen style example): straight-on, centered and calm — minimal body angle, balanced negative space.
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.

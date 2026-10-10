@@ -62,15 +62,35 @@ ${subcategoryLengthRules}
   Do not change gender or choose a different garment category to fit these tokens.
 - When clothingType is dress, targetGenders MUST be exactly ["women"]. There is no
   men's dress category in this service.
-- customCategory: when the garment does not fit any subCategory token exactly, or a more
-  specific common Korean name exists (e.g. "후드 집업", "니트 베스트", "점프수트",
-  "카고 팬츠"), output that short Korean noun name (2-12 characters). If a subCategory
-  token already describes it well, output null. Never output enum tokens here.
+- customCategory: only when no subCategory token fits the garment and subCategory is
+  null, output a short Korean noun name (2-12 characters, e.g. "점프수트").
+  If you select any subCategory token, customCategory MUST be null.
+  Never output enum tokens here.
 - sourceMirrored: true when the product photos were shot in a mirror, so the garment appears
   laterally flipped. The reliable signal is lettering that reads backwards on a print, label
   or logo; a phone or hand held up in frame is supporting evidence. A photo simply taken from
   the wearer's own viewpoint is NOT mirrored. Output false when unsure — a false positive
   makes the studio cut flip a correctly-oriented garment.
+- frontClosure: how the garment's center-front opening fastens. It is used for outerwear.
+  kind: zipper | button | snap | belt | none | unknown
+    zipper: a center-front zipper (teeth or a zipper pull are visible).
+    button: sewn buttons, toggles or hooks along the front edge, including double-breasted fronts.
+    snap: press studs along the front edge or on a placket, with no zipper.
+    belt: the front is held closed only by a tie belt or sash, with no other fastening.
+    none: both front edges are clearly visible and carry no fastening at all (open-front
+      cardigan, shawl, bolero).
+    unknown: the front edges are hidden, folded, cropped, blurred, covered by a concealed placket
+      or otherwise unclear. When unsure, answer unknown. Never answer none unless both front
+      edges are visible.
+  range: graded when the front can be fastened at several heights (any zipper, or several
+    buttons/snaps spread down the front); binary when it can only be fully fastened or fully
+    open (a tie belt only, or a single button, hook or toggle in one spot); null when kind is
+    none. When unsure, answer graded.
+  secondary: another closure type also present on the front (snaps or buttons on a storm flap
+    over a zipper, the belt of a buttoned trench coat). Otherwise null. Never repeat kind.
+  evidenceImages: 1-based numbers of the attached photos in which the closure is visible. Empty
+    when kind is unknown.
+  note: at most 80 English characters describing what you saw. Internal log only.
 - swatchSuggestions: one entry per visible color group, choosing the closest swatchId.
   For each entry, colorName MUST be a specific Korean shopping-mall color name of 2-10
   characters (for example 연청, 중청, 흑청, 워시드 블랙). swatchId remains the broad
@@ -93,5 +113,5 @@ ENUMS:
 Return a single JSON object with keys: clothingType, subCategory, customCategory,
 targetGenders, fit, materials (array of {name, ratio}), materialPresetIndex,
 aiSuggestedPoints, suggestedName, swatchSuggestions (array of {colorGroupId, swatchId, colorName}),
-styleTags, sourceMirrored. When a server-owned CONFIRMED GPT PRODUCT-EVIDENCE CONTRACT block
+styleTags, sourceMirrored, frontClosure. When a server-owned CONFIRMED GPT PRODUCT-EVIDENCE CONTRACT block
 follows this prompt, also return its required confirmedGptProductEvidence key in the same object.
