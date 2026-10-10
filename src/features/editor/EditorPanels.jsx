@@ -420,7 +420,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
         <PanelHead title="이전 요청을 확인해 주세요" sub="접수 확인 후 새 이미지를 만들 수 있어요." />
         <p className="hint" role="status">이전 요청 · {[colorLabel, cutLabel, shotLabel].filter(Boolean).join(' · ')}</p>
         <Button variant="primary" block icon="refresh" disabled={generateSubmitting}
-          onClick={failedCutRetry ? onRetryFailedCut : () => onGenerate(previous)}>
+          onClick={() => onRetryFailedCut({ confirmPending: true })}>
           {generateSubmitting ? '확인 중…' : '이전 요청 확인하기'}
         </Button>
         <p className="ai-failed-retry-hint">중복 생성 없이 이전 요청을 다시 확인해요.</p>
@@ -440,10 +440,12 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
         )}
         {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
         {brandUseCategoryControl}
-        <Button variant="primary" block icon="sparkles" className="btn-glowring"
-          disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
-          {generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
-        </Button>
+        {failedCutRetry.retryable !== false ? (
+          <Button variant="primary" block icon="sparkles" className="btn-glowring"
+            disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
+            {failedCutRetry.fillImage ? '원본 사진으로 채우기' : generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
+          </Button>
+        ) : <p className="hint" role="status">{failedCutRetry.guidance}</p>}
         <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
       </div>
     );
