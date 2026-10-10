@@ -413,7 +413,9 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
     async def load_image(settings, asset, *, role): return InlineImage("image/png", asset["key"].encode())
     async def emit(*args, **kwargs): return None
     async def fail(*args, **kwargs): return None
-    async def finalize(*args, **kwargs): return {"id": "result"}
+    async def finalize(*args, **kwargs):
+        captured["finalized"] = kwargs
+        return {"id": "result"}
     def capture(spec, images, manifest):
         captured.update(spec=spec, images=images, manifest=manifest)
         return b"GENERATED", "image/png"
@@ -443,6 +445,7 @@ def test_actual_worker_keeps_geometry_inputs_and_selected_color_contract(monkeyp
         asyncio.run(dpj.run_detail_page_job(app, job))
     else:
         asyncio.run(eij.run_editor_image_job(app, worker_job({**saved, "mode": "new", "retryBlockId": "cut"})))
+        assert captured["finalized"]["image"]["metadata"]["retryBlockId"] == "cut"
     assert captured, "worker must reach actual generation preparation"
     assert len(saves) == int(backstop)
     assert captured["images"][-1].data == member["all"]["key"].encode()

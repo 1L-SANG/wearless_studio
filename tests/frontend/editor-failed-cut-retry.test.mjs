@@ -19,7 +19,7 @@ test('실패한 시그니처 슬롯은 원래 콘티의 생성 정본을 그대�
   assert.equal(retry.signature, true);
   assert.equal(retry.thumb, '/assets/signature/thumb/sig_women_01.webp');
   assert.deepEqual(retry.request, {
-    mode: 'new', contentRole: 'hero', colorId: 'white', cutType: 'horizon', direction: 'front',
+    mode: 'new', retryBlockId: 'blk-signature', contentRole: 'hero', colorId: 'white', cutType: 'horizon', direction: 'front',
     shot: 'medium', faceExposure: 'same', pose: 'auto', exampleId: 'sig_women_01',
     modelId: 'model-a', matchIds: ['matching-a'], refScope: 'all', refAssetIds: ['mood-a'],
   });

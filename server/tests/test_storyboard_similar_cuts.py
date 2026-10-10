@@ -342,14 +342,22 @@ def test_worker_dependency_finalization_and_credits_use_existing_policy(monkeypa
         assert "failure" not in seen
         assert seen["success"]["charge"] == 95
         assert len(seen["success"]["cut_assets"]) == 2
-    else:
+    elif failure == "source":
         assert "success" not in seen
         assert seen["failure"]["reserved"] == 95
-        assert seen["failure"]["metadata"]["error"] == ("all_cuts_failed" if failure == "source" else "incomplete_cuts")
-        if failure == "source":
-            assert not seen["plans"] and not seen["vary"]
-        else:
-            assert seen["failure"]["job_metadata"]["retainedCutKeys"].get("original")
+        assert seen["failure"]["metadata"]["error"] == "all_cuts_failed"
+        assert not seen["plans"] and not seen["vary"]
+        child_event = next(p for et, p in seen["events"] if p.get("blockId") == "next" and p.get("status") == "cut_failed")
+        assert child_event["reason"] == "similar_cut_source_failed"
+        assert child_event["retryable"] is False
+    else:
+        assert "failure" not in seen
+        assert seen["success"]["charge"] == 76
+        partial = seen["success"]["metadata"]["partial"]
+        assert partial["completedCuts"] == 1 and partial["creditsNotCharged"] == 19
+        assert partial["failedCuts"] == [{"blockId": "next", "reason": "temporary_error", "retryable": True}]
+        child_slot = next(el for eb in seen["success"]["editor_blocks"] for el in eb["elements"] if el.get("sourceBlockId") == "next" and el["type"] == "image")
+        assert child_slot["src"] is None and child_slot["genFailed"] is True
 
 
 def test_reservation_counts_seven_followups_without_duplicate_discount(client, make_token, monkeypatch):

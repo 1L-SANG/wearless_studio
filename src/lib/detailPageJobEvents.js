@@ -15,6 +15,7 @@ import { assetFileUrl } from './assetUrl.js';
    '완성됐어요'를 말하고, 이미 받아 둔 주소가 있으면 없는 값으로 덮지 않는다. */
 export function applyDetailJobEvents(job, events) {
   const next = { ...job, cuts: { ...job.cuts }, copy: { ...job.copy } };
+  next.failedCutReasons = { ...job.failedCutReasons };
   const live = new Set(next.live);
   const failed = new Set(next.failedCuts);
   // 2026-09-28 — [실패한 컷만 다시 만들기]가 보관본을 실제로 이어 썼는지(서버 cut_checkpoint_reused)와
@@ -47,7 +48,10 @@ export function applyDetailJobEvents(job, events) {
         // 셀러 원본 재사용 — asset 행이 이미 있어 안정 /file 경로가 즉시 유효
         next.cuts[p.blockId] = { url: p.assetId ? assetFileUrl(p.assetId) : null, done: true };
       }
-      if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }
+      if (p.status === 'cut_failed') {
+        live.delete(p.blockId); failed.add(p.blockId);
+        next.failedCutReasons[p.blockId] = { reason: p.reason || null, retryable: p.retryable };
+      }
       if (p.status === 'cut_checkpoint_reused' && p.stage === 'final') reused.add(p.blockId);
       if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];
     }
@@ -56,4 +60,15 @@ export function applyDetailJobEvents(job, events) {
   next.failedCuts = [...failed];
   next.reusedCuts = [...reused];
   return next;
+}
+
+
+export function detailPageDonePatch(job) {
+  const partial = job.result?.partial || null;
+  return { status: 'done', progress: 100, slow: false, partial };
+}
+
+export function detailPageCompletionMessage(partial) {
+  if (!partial) return null;
+  return `${partial.requestedCuts}장 중 ${partial.completedCuts}장을 만들었어요. 못 만든 ${partial.failedCuts.length}장 값은 받지 않았어요.`;
 }

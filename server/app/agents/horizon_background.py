@@ -5,6 +5,7 @@ import json
 import math
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 POLICY = json.loads((Path(__file__).parents[1] / "data" / "horizon_background_policy.json").read_text(encoding="utf-8"))
 _PROMPT = (Path(__file__).parents[2] / "prompts" / "horizon_background_v1.txt").read_text(encoding="utf-8")
@@ -424,26 +425,45 @@ def signature_prompt(value) -> str:
 
 
 def restore_failed_retry(request: dict, storyboard: list, editor_blocks: list) -> dict:
-    """Only an existing empty editor slot can replay a stored horizon set member."""
+    """ADR-0017, 모든 AI 블록의 저장 설정을 실제 빈 칸에서만 복원한다."""
     retry_id = request.get("retryBlockId")
-    source = next((b for b in storyboard if isinstance(b, dict) and b.get("id") == retry_id), None)
+    source = next((b for b in (storyboard or []) if isinstance(b, dict) and b.get("id") == retry_id), None)
     empty_slot = any(
         isinstance(el, dict) and el.get("type") == "image" and not el.get("src") and el.get("sourceBlockId") == retry_id
-        for eb in editor_blocks if isinstance(eb, dict)
+        for eb in (editor_blocks or []) if isinstance(eb, dict)
         for el in (eb.get("elements") or [])
     )
-    if not source or source.get("source") != "ai" or source.get("cutType") != "horizon" or not source.get("spaceGroupId") or not empty_slot:
-        raise ValueError("invalid_horizon_set_retry")
-    for key in ("spaceGroupId", "exampleId", "colorId"):
-        if request.get(key) != source.get(key):
+    error = "invalid_horizon_set_retry" if request.get("spaceGroupId") else "invalid_failed_cut_retry"
+    if not source or source.get("source") != "ai" or not source.get("cutType") or not empty_slot:
+        raise ValueError(error)
+    if source.get("similarSourceBlockId") is not None and request.get("mode") == "new":
+        raise ValueError("similar_source_required")
+    if request.get("mode") == "vary":
+        source_id = source.get("similarSourceBlockId")
+        original = next((el for eb in (editor_blocks or []) if isinstance(eb, dict)
+                         for el in (eb.get("elements") or []) if isinstance(el, dict)
+                         and el.get("type") == "image" and el.get("sourceBlockId") == source_id
+                         and el.get("src")), None)
+        requested_source = request.get("source")
+        requested_src = requested_source.get("src") if isinstance(requested_source, dict) else None
+        if (not source_id or request.get("variationMode") != "similar" or not original
+                or not isinstance(requested_src, str)
+                or urlsplit(requested_src).path != urlsplit(original["src"]).path):
+            raise ValueError("similar_source_required")
+        return {**request, "source": {**request["source"], "cutType": source["cutType"]}}
+    if source.get("spaceGroupId"):
+        # 기존 호리존 세트 경계도 일반 복원 안에서 그대로 검증한다.
+        for key in ("spaceGroupId", "exampleId", "colorId"):
+            if key in request and request[key] != source.get(key):
+                raise ValueError("invalid_horizon_set_retry")
+        if "horizonBackgroundMode" in request and mode(request) != mode(source):
             raise ValueError("invalid_horizon_set_retry")
-    if mode(request) != mode(source):
-        raise ValueError("invalid_horizon_set_retry")
-    out = normalize_block(source)
-    out.pop("_facemarket", None)
+    from . import content_roles
+    out = content_roles.canonicalize_storyboard_block(source)
+    for key in list(out):
+        if key.startswith("_"):
+            out.pop(key)
     out.update(mode="new", retryBlockId=retry_id)
-    # The project-selected model is validated by the existing route gate.
-    out["modelId"] = request.get("modelId")
     return out
 
 

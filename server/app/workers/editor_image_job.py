@@ -1148,6 +1148,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"retryBlockId": payload["retryBlockId"]} if payload.get("retryBlockId") else {}),
                 **({"similar_cut": similar_cut_metadata} if similar_cut_metadata else {}),
                 **({"horizon_background": horizon_decision} if horizon_decision else {}),
                 **({"signature_background": signature_decision} if signature_decision else {}),

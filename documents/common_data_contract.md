@@ -295,6 +295,10 @@ Element (공통) {
 }
 Element (type='image') + {
   src: string | null               // null = 빈 슬롯 (프레임)
+  sourceBlockId?: string            // 저장 콘티의 컷 id
+  genFailed?: boolean               // ADR-0017, 생성하지 못한 빈 이미지 칸
+  genFailReason?: string            // 서버 cut_failures.py의 이유 코드
+  genFailRetryable?: boolean        // 다시 만들기 가능. false면 셀러 조치 또는 원본 컷 필요
   radius?: number
   frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
@@ -523,7 +527,7 @@ GenerationExample {
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 요청 시에는 잡 스냅샷만 남기고, 성공 종결에서 새 버전과 analysis.fitProfile을 함께 확정·자동 선택 (구 `regenerateMannequins` 대체) |
 | `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
-| `generateDetailPage(projectId, { onProgress, onStep })` | | 모든 AI 컷 자리가 채워지면 `{ data: EditorBlock[], credits }` | 생성 후보가 없는 AI 컷 자리가 하나라도 있으면 결과 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지 블록은 제외 |
+| `generateDetailPage(projectId, { onProgress, onStep })` | | 완성분과 빈 칸의 `{ data: EditorBlock[], credits, creditsCharged, partial? }` | 일부 AI 컷 자리가 비면 완성분을 발행하고 그 유료 컷 값을 견적에서 뺀다(ADR-0017). 전부 실패만 미발행·예약 전액 해제. QC 미통과 디테일의 최선 생성 후보는 표시를 남겨 제공·정상 차감한다. AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`. 내 이미지 블록은 제외 |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
 | `getWardrobe(projectId)` | | `Wardrobe` | |
@@ -534,6 +538,7 @@ GenerationExample {
 ```ts
 NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
+  retryBlockId?: string            // ADR-0017, 저장 콘티의 실제 빈 칸 복원과 활성 작업 합류
   detailTargetId?: string | null   // product/detail만. 서버 소유 detailRecommendations의 ID; 원본 해시·방향 검증 후 해석
   detailTargetOrigin?: 'auto' | 'user' // 콘티 추천/수동 선택 구별. 클라이언트 사실·좌표는 생성 권한이 없음
   colorId: string                  // 구 group('색상 1') 대체
@@ -551,6 +556,7 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
 }
 VaryRequest {                      // AI 탭 '현재 이미지 수정'
   mode: 'vary'
+  retryBlockId?: string            // ADR-0017, 비슷한 컷 후속 빈 칸의 원본 사진 변형
   variationMode?: 'similar'        // 착용 사진의 비슷한 컷(원본 분석, 동작 계획, 생성). 없으면 같은 부위 다시 촬영
   source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
 }
@@ -582,6 +588,25 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정'
 - Supabase 스키마 구현 완료 (9개 마이그레이션, 17테이블): `profiles`, `credit_accounts`, `credit_ledger`, `projects`, `products`, `analyses`, `assets`, `mannequin_cuts`, `wardrobe_images`, `matching_items`, `jobs`, `job_events`, `exports`, `pricing_plans`, `payment_history`, `credit_sources`, `refund_requests`. 전체 RLS 활성, 쓰기는 service-role/FastAPI 전용.
 - 생성 작업은 서버에서 job(id·status)으로 관리한다. 현재 프론트 어댑터는 `GenJob`을 폴링해 `onProgress`만 전달한다. 서버 SSE 경로는 구현돼 있으나 프론트 구독과 `onStep` 배선은 TODO다.
 - 크레딧 차감은 서버 트랜잭션이 원본이고 `{ data, credits }`의 `credits`가 그 결과다. 프론트 선차감 금지.
+
+### 상세페이지 부분 완성 결과와 빈 칸 다시 만들기 (ADR-0017)
+
+일부 실패로 완료된 상세페이지 작업의 `result`, `done` 이벤트와 정산 메타데이터에는 같은 `partial` 요약을 넣는다. 전부 성공이면 생략한다.
+
+```ts
+partial?: {
+  requestedCuts: number             // 요청한 이미지 칸 수. 복제 칸 포함
+  completedCuts: number             // 완성한 이미지 칸 수. 복제 칸 포함
+  failedCuts: { blockId: string, reason: string, retryable: boolean }[]
+  quoteCredits: number             // 예약 견적
+  creditsCharged: number            // 성공 확정에서 실제 차감
+  creditsNotCharged: number         // 예약 견적에서 차감하지 않은 값
+}
+```
+
+정산의 요청 수는 예약 `aiCount`, 완성 수는 새로 생성한 자산 수다. 복제 칸은 이 과금 단위에 포함하지 않는다. `chargeCuts = completed == 0 ? 0 : max(completed, max(aiCount, minCuts) - max(0, aiCount - completed))`를 예약 단가와 곱하고 예약액으로 상한을 둔다. 스냅샷이 없는 옛 작업은 완성 자산 수에 단가를 곱한다.
+
+빈 칸 다시 만들기의 `NewCutRequest`와 비슷한 컷 후속 `VaryRequest`는 `retryBlockId?: string`을 보낸다. 서버는 저장 콘티에서 설정을 복원하고 해당 `sourceBlockId`의 빈 이미지 칸이 실제로 있을 때만 받는다. 호리존 세트의 기존 검증도 유지한다. 같은 칸의 진행 중 `editor_image` 작업에는 합류하며 새 예약을 만들지 않는다. 합류한 요청 키도 기존 jobs.metadata에 보관하여 원래 작업이 끝난 뒤 접수 확인을 재전송해도 같은 작업을 돌려준다. 원래 작업의 키를 덮어쓰지 않으며 새 키의 새 요청은 구분한다. 후속 칸의 `mode:'new'`는 `similar_source_required`로 거절하고, 채워진 원본 사진의 `mode:'vary', variationMode:'similar'` 경로를 쓴다. 자산 메타데이터에 `retryBlockId`를 남긴다. 새로 만드는 컷 값은 `credit_cost_editor_image`다. 같은 사진 복제의 원본 실패 칸은 앞선 원본 칸이 채워지면 그 사진을 그대로 넣으며, 새 생성이나 추가 차감은 하지 않는다.
 
 ### 콘티의 비슷한 컷 예약 (ADR-0016)
 

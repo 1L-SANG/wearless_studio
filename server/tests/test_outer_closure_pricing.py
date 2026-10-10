@@ -6,6 +6,7 @@ import pytest
 
 from app import repo, routes
 from app.agents import content_roles
+from app.agents.gemini_image import GeminiError
 from app.workers import detail_page_job as dpj
 from app.workers import editor_image_job as eij
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
@@ -79,9 +80,24 @@ def test_reservation_counts_effective_outer_cuts_without_rejecting_affordable_bo
     assert blocks == saved
 
 
-def test_minimum_charge_survives_outer_projection_on_already_reserved_job(monkeypatch):
+@pytest.mark.parametrize("requested,failed_back,expected_charge", [
+    (5, False, 95), (5, True, 76),
+    (3, False, 95), (3, True, 76),
+    (None, False, 57), (None, True, 38),
+])
+def test_outer_projection_reuses_cuts_without_counting_them_as_failed_charge_units(
+    monkeypatch, requested, failed_back, expected_charge,
+):
     app, seen = setup_generation(monkeypatch)
     _IntentDB().install(monkeypatch)
+    generate = dpj.cut_generator.generate
+
+    async def generate_with_failure(settings, gemini, block, product, images, **kwargs):
+        if failed_back and block["id"] == "back":
+            raise GeminiError("provider failure")
+        return await generate(settings, gemini, block, product, images, **kwargs)
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", generate_with_failure)
     blocks = [_block(state, outerClosureState=state) for state in ("open", "partial", "closed")]
     blocks += [_block("medium", shot="medium"), _block("back", direction="back")]
     saved = deepcopy(blocks)
@@ -93,14 +109,47 @@ def test_minimum_charge_survives_outer_projection_on_already_reserved_job(monkey
     monkeypatch.setattr(repo, "finalize_detail_page_success", finalized)
     monkeypatch.setattr(repo, "finalize_detail_page_failure", AsyncMock())
     app.state.r2.objects["garment-input"] = (b"GARMENT-INPUT", "image/png", None)
-    job = {**worker_job(credits_reserved=95), "metadata": {"aiCount": 5, "minCuts": 5, "perCutCost": 19}}
+    metadata = {"minCuts": 5, "perCutCost": 19}
+    if requested is not None:
+        metadata["aiCount"] = requested
+    job = {**worker_job(credits_reserved=95), "metadata": metadata}
+    original_metadata = deepcopy(metadata)
     asyncio.run(dpj.run_detail_page_job(app, job))
     assert finalized.await_count == 1
     outcome = finalized.await_args.kwargs
-    assert len(outcome["cut_assets"]) == 3
-    assert len(seen["generate"]) == 3
-    assert outcome["charge"] == 95
+    assert len(outcome["cut_assets"]) == (2 if failed_back else 3)
+    assert len(seen["generate"]) == (2 if failed_back else 3)
+    assert outcome["charge"] == expected_charge
+    if failed_back:
+        assert outcome["metadata"]["partial"]["creditsNotCharged"] == 95 - expected_charge
+        assert outcome["metadata"]["partial"]["failedCuts"] == [
+            {"blockId": "back", "reason": "provider_error", "retryable": True}]
+    assert job["metadata"] == original_metadata
     assert blocks == saved
+
+
+@pytest.mark.parametrize("clothing_type,analysis", [
+    ("outer", {}), ("outer", _analysis("button", "graded")), ("top", _analysis()),
+])
+def test_unaffected_jobs_keep_the_reserved_requested_count(monkeypatch, clothing_type, analysis):
+    app, _seen = setup_generation(monkeypatch)
+    _IntentDB().install(monkeypatch)
+    blocks = [_block("front"), _block("medium", shot="medium"), _block("back", direction="back")]
+    product = {**_product(), "clothingType": clothing_type}
+    for name, value in (("get_project", {"copywriting": False}), ("get_storyboard", blocks),
+                        ("get_product", product), ("get_analysis", analysis),
+                        ("get_asset_for_user", {"mime_type": "image/png", "r2_key": "garment-input"})):
+        monkeypatch.setattr(repo, name, AsyncMock(return_value=value))
+    finalized = AsyncMock(return_value={"editor_blocks": [], "available": 0})
+    monkeypatch.setattr(repo, "finalize_detail_page_success", finalized)
+    app.state.r2.objects["garment-input"] = (b"GARMENT-INPUT", "image/png", None)
+    job = {**worker_job(credits_reserved=95), "metadata": {"aiCount": 5, "minCuts": 5, "perCutCost": 19}}
+    original_metadata = deepcopy(job["metadata"])
+    asyncio.run(dpj.run_detail_page_job(app, job))
+    assert finalized.await_count == 1
+    assert len(finalized.await_args.kwargs["cut_assets"]) == 3
+    assert finalized.await_args.kwargs["charge"] == 57
+    assert job["metadata"] == original_metadata
 
 
 def test_reservation_keeps_confirmed_gpt_requested_closures_distinct(client, make_token, monkeypatch):
