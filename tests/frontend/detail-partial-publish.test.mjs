@@ -100,7 +100,7 @@ test('같은 사진 복제의 실패 칸은 원본 칸이 채워진 뒤 다시 �
 function retryHandler(context) {
   const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
   const start = editor.indexOf('  const retryFailedCut = async (');
-  const end = editor.indexOf('\n  // 현재 이미지 수정', start);
+  const end = editor.indexOf('\n  // 비슷한 컷과 같은 부위 다시 촬영은', start);
   return new Function('context', `const { failedCutRetry, pendingSlot, generateSubmission,
     generateImage, varyGenerate, api, projectId, persistable, latestBlocks, blocks,
     setSlotImage, setPendingSlot, setTab, toast } = context;
