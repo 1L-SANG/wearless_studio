@@ -15,13 +15,14 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, fm_fingerprint_store, repo
-from ..services import fm_fingerprint
+from ..services import fm_fingerprint, matching
 from ..agents import (
     content_roles,
     cut_generator,
     cut_output_qc,
     cut_plan,
     cut_variator,
+    detail_recommendations,
     identity_source,
     image_qc,
     horizon_background,
@@ -144,6 +145,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     reserved = job.get("credits_reserved") or 0
     settle_key = f"credit:job:{job_id}:settle"
     payload = job.get("payload") or {}
+    original_payload = payload
     mode = payload.get("mode")
     if mode == "new":
         payload = content_roles.canonicalize_storyboard_block(payload)
@@ -163,6 +165,30 @@ async def run_editor_image_job(app, job: dict) -> None:
     neck_repair_metadata: dict | None = None
     detail_recipe_metadata: dict | None = None
     similar_cut_metadata: dict | None = None
+    fallback_metadata: list[dict] = []
+    contract_error_logged = False
+
+    def _log_contract_error(exc: ValueError) -> None:
+        nonlocal contract_error_logged
+        if not contract_error_logged:
+            log.critical("editor_image invalid cut spec job %s %s: %s",
+                         job_id, type(exc).__name__, str(exc)[:200])
+            contract_error_logged = True
+
+    async def _detail_failure(exc: ValueError, message: str) -> None:
+        if isinstance(exc, DetailShotRejected):
+            reason = exc.reason
+            log.warning("editor_image detail rejected job %s reason %s: %s",
+                        job_id, reason, str(exc)[:200])
+        elif isinstance(exc, detail_recommendations.DetailRecommendationError) or str(exc) == "invalid_color":
+            reason = "detail_target_unavailable"
+            log.warning("editor_image detail target unavailable job %s %s: %s",
+                        job_id, type(exc).__name__, str(exc)[:200])
+        else:
+            reason = "invalid_cut_spec"
+            _log_contract_error(exc)
+        await _fail(message, {"error": reason, "detailQc": getattr(exc, "metadata", {})},
+                    code=reason if reason == "invalid_cut_spec" else "generation_failed")
 
     async def _fail(
         message: str,
@@ -346,8 +372,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         chosen, cut_qc_metadata = await detail_shot_runtime.generate(
                             app, job, detail_spec, detail_product, detail_analysis, style_reference=src_img)
                     except (DetailShotRejected, ValueError) as exc:
-                        await _fail("상품의 디테일을 충분히 확인하지 못해 수정하지 않았어요. 크레딧은 차감되지 않았습니다.",
-                                    {"error": getattr(exc, "reason", "detail_target_unavailable")})
+                        await _detail_failure(exc, "상품의 디테일을 충분히 확인하지 못해 수정하지 않았어요. 크레딧은 차감되지 않았습니다.")
                         return
                     image, mime = chosen.data, chosen.mime
                     detail_recipe_metadata = detail_shot_runtime.recipe(detail_spec)
@@ -366,10 +391,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 chosen, cut_qc_metadata = await detail_shot_runtime.generate(
                     app, job, content_roles.canonicalize_storyboard_block(payload), product, analysis)
             except (DetailShotRejected, ValueError) as exc:
-                await _fail(
-                    "상품의 디테일을 충분히 확인하지 못해 이 컷을 만들지 못했어요. 크레딧은 차감되지 않았습니다.",
-                    {"error": getattr(exc, "reason", "detail_target_unavailable"),
-                     "detailQc": getattr(exc, "metadata", {})})
+                await _detail_failure(exc, "상품의 디테일을 충분히 확인하지 못해 이 컷을 만들지 못했어요. 크레딧은 차감되지 않았습니다.")
                 return
             image, mime = chosen.data, chosen.mime
             group, cut_type = payload.get("colorId"), "product"
@@ -391,6 +413,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # analysis 도 로드 — 프롬프트 ground truth(소재·강조특징)와 확정 fitProfile
                 # 텍스트 제약이 detail_page 경로와 동일하게 반영되도록(컷 파이프라인 계약 정합).
                 analysis = await repo.get_analysis(conn, project_id) or {}
+                if new_payload.get("retryBlockId"):
+                    storyboard = await repo.get_storyboard(conn, project_id)
+                    original_payload = next((block for block in storyboard if isinstance(block, dict)
+                                             and block.get("id") == new_payload["retryBlockId"]), original_payload)
                 mannequin_asset = None
                 selected_mannequin_id = (
                     project.get("selected_mannequin_id")
@@ -426,9 +452,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     if a:
                         a["slot"] = slot  # 매니페스트 역할 라벨용
                         assets.append(a)
-                # 저장된 storyboard block의 선택 순서를 그대로 유지한다. 카탈로그
-                # item 해결과 소유 asset 해결을 모두 통과해야 하며, 두 장 중 하나라도
-                # 없으면 일부 코디만 임의로 생성하지 않고 아래에서 단건 잡을 실패시킨다.
+                # 저장 선택 순서로 먼저 조회하고, 자산이 사라졌으면 추천 목록에서 대체한다.
                 matching_assets = []
                 for matching_id in matching_ids:
                     matching_asset_id = await repo.get_matching_item_asset(
@@ -468,12 +492,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                     # colorId가 없는 레거시 요청은 기존 기준 색상 폴백·에러 계약을 유지한다.
                     await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                                 {"error": "no_base_color_images"})
-                return
-            if any(asset is None for asset in matching_assets):
-                await _fail(
-                    "선택한 매칭 의류를 불러오지 못했어요. 다시 시도해 주세요.",
-                    {"error": "matching_asset_unavailable", "matchIds": matching_ids},
-                )
                 return
             # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
             # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
@@ -525,9 +543,25 @@ async def run_editor_image_job(app, job: dict) -> None:
                     return
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
-            except ValueError:
+            except ValueError as exc:
+                _log_contract_error(exc)
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+            # canonicalize가 같은 계열 예시의 방향을 이미 적용해도 저장된 요청과의 차이는 기록한다.
+            requested_direction = original_payload.get("direction")
+            requested_direction = requested_direction if requested_direction in ("front", "side", "back") else "front"
+            requested_side_style = original_payload.get("sideStyle") or original_payload.get("side_style")
+            requested_side_style = (requested_side_style
+                                    if requested_direction == "side" and requested_side_style in cut_generator.SIDE_STYLES
+                                    else None)
+            prepared, direction_fallback = cut_generator.pose_direction_from_example({
+                **normalized, "direction": requested_direction, "sideStyle": requested_side_style,
+            })
+            if direction_fallback:
+                normalized = prepared
+                cut_spec.update(direction=prepared["direction"], sideStyle=prepared["sideStyle"])
+                fallback_metadata.append(direction_fallback)
+                cut_spec["_fallback"] = fallback_metadata
             cut_generation_settings = replace(
                 s,
                 model_image_high=resolve_editor_cut_model(s, normalized["cutType"]),
@@ -752,27 +786,62 @@ async def run_editor_image_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             horizon_decision = horizon_background.decision(cut_spec)
             signature_decision = horizon_background.signature_decision(cut_spec)
-            try:
-                matching_images = [
-                    InlineImage(
-                        asset["mime_type"],
-                        await asyncio.to_thread(
-                            app.state.r2.get_bytes, asset["r2_key"]
-                        ),
-                    )
-                    for asset in matching_assets
-                ]
-            except Exception as e:
-                # DB row는 있어도 R2 객체 중 하나가 없으면 선택 세트 전체를 무효로 한다.
-                await _fail(
-                    "선택한 매칭 의류를 불러오지 못했어요. 다시 시도해 주세요.",
-                    {
-                        "error": "matching_asset_unavailable",
-                        "matchIds": matching_ids,
-                        "detail": repr(e)[:200],
-                    },
-                )
-                return
+            matching_images = []
+            recommendations = analysis.get("matchClothing") or []
+            matching_substituted = False
+            for index, (matching_id, asset) in enumerate(zip(matching_ids, matching_assets)):
+                matching_image = None
+                read_error = None
+                if asset is not None:
+                    try:
+                        matching_image = InlineImage(asset["mime_type"], await asyncio.to_thread(
+                            app.state.r2.get_bytes, asset["r2_key"]))
+                    except Exception as exc:
+                        read_error = exc
+                if matching_image is None:
+                    metadata = None
+                    if not any(str(row.get("id")) == matching_id for row in recommendations):
+                        async with pool.connection() as conn:
+                            metadata = await repo.get_matching_item_metadata(
+                                conn, matching_id, user_id, project_id)
+                    for candidate_id in matching.matching_fallback_candidates(
+                        recommendations, matching_id, matching_ids, metadata):
+                        async with pool.connection() as conn:
+                            candidate_asset_id = await repo.get_matching_item_asset(
+                                conn, candidate_id, user_id, project_id)
+                            candidate_asset = (await repo.get_asset_for_user(conn, user_id, candidate_asset_id)
+                                               if candidate_asset_id else None)
+                        if candidate_asset is None:
+                            continue
+                        try:
+                            matching_image = InlineImage(candidate_asset["mime_type"], await asyncio.to_thread(
+                                app.state.r2.get_bytes, candidate_asset["r2_key"]))
+                        except Exception as exc:
+                            read_error = exc
+                            continue
+                        matching_ids[index] = candidate_id
+                        matching_substituted = True
+                        fallback_metadata.append({"kind": "matching_substituted",
+                                                  "missingMatchId": matching_id,
+                                                  "substituteMatchId": candidate_id})
+                        log.info("editor_image matching_substituted job %s missing %s substitute %s",
+                                 job_id, matching_id, candidate_id)
+                        break
+                if matching_image is None:
+                    await _fail("매칭 의류를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.", {
+                        "error": "matching_asset_unavailable", "matchIds": matching_ids,
+                        **({"detail": repr(read_error)[:200]} if read_error else {}),
+                    })
+                    return
+                matching_images.append(matching_image)
+            if matching_substituted:
+                cut_spec["matchIds"] = list(matching_ids)
+                normalized["matchIds"] = list(matching_ids)
+                cut_spec["_fallback"] = fallback_metadata
+                if isinstance(analysis.get("fitProfile"), dict):
+                    analysis = {**analysis, "fitProfile": {
+                        key: value for key, value in analysis["fitProfile"].items()
+                        if key not in ("matchCut", "matchingFit")}}
             images = [
                 *mannequin_images,
                 *model_images,
@@ -854,7 +923,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         # 단건 에디터는 배치의 빈 슬롯 대신 명시적 실패로 닫는다. 이 지점은
                         # 이미지 로드와 Gemini 호출보다 앞이라 불일치 조합의 생성 호출은 0회다.
                         await _fail(
-                            "이 예시의 포즈 방향이 현재 컷 방향과 맞지 않아요. 다른 예시를 선택해 주세요.",
+                            "이 예시로 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
                             {
                                 "error": "pose_direction_incompatible",
                                 "exampleId": example_id,
@@ -971,6 +1040,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         {"error": "detail_reference_required", "colorId": requested_color_id},
                     )
                 else:
+                    _log_contract_error(e)
                     await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.",
                                 {"error": "invalid_spec"})
                 return
@@ -1009,6 +1079,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                             **generate_kwargs)
                         _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
+                        if isinstance(e, ValueError):
+                            _log_contract_error(e)
+                            await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
+                            return
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                         return
                 scene_qc_attempts = attempt
@@ -1148,6 +1222,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                **({"fallback": fallback_metadata} if fallback_metadata else {}),
                 **({"retryBlockId": payload["retryBlockId"]} if payload.get("retryBlockId") else {}),
                 **({"similar_cut": similar_cut_metadata} if similar_cut_metadata else {}),
                 **({"horizon_background": horizon_decision} if horizon_decision else {}),

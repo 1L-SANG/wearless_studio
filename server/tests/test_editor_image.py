@@ -1459,6 +1459,9 @@ def test_run_editor_image_job_new_attaches_all_matching_garments_in_order(
 def test_run_editor_image_job_new_matching_asset_metadata_missing_fails_closed(
     monkeypatch,
 ):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(eij.repo, "get_matching_item_metadata", AsyncMock(return_value=None))
     captured = {
         "matching_item_ids": [],
         "loaded_asset_ids": [],
@@ -1520,6 +1523,9 @@ def test_run_editor_image_job_new_matching_asset_metadata_missing_fails_closed(
 
 
 def test_run_editor_image_job_new_matching_r2_missing_fails_closed(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(eij.repo, "get_matching_item_metadata", AsyncMock(return_value=None))
     captured = {"generate_calls": 0}
 
     class MissingMatchingR2:

@@ -76,12 +76,12 @@ def test_assembler_marks_only_failed_empty_images_without_changing_geometry():
     import inspect
     assert "failed_cuts" in inspect.signature(page_assembler.assemble).parameters
     marked = page_assembler.assemble(storyboard, cuts, [], {}, False,
-        failed_cuts={"b2": {"reason": "no_garment_photo", "retryable": False}})
+        failed_cuts={"b2": failure_info("no_garment_photo")})
     images = [el for block in marked for el in block["elements"] if el["type"] == "image"]
     assert images[0].get("genFailed") is None
     assert images[1]["genFailed"] is True
     assert images[1]["genFailReason"] == "no_garment_photo"
-    assert images[1]["genFailRetryable"] is False
+    assert images[1]["genFailRetryable"] is True
     images[1].pop("genFailed")
     images[1].pop("genFailReason")
     images[1].pop("genFailRetryable")
@@ -139,8 +139,8 @@ def test_legacy_and_reservation_cap(metadata, reserved, expected):
                                       fallback_per_cut=19) == expected
 
 
-def test_every_published_reason_has_one_of_the_three_categories():
-    assert set(CUT_FAILURE_REASONS.values()) == {"retryable", "seller_action", "dependent"}
+def test_every_published_reason_has_one_of_the_two_categories():
+    assert set(CUT_FAILURE_REASONS.values()) == {"retryable", "dependent"}
     for reason, category in CUT_FAILURE_REASONS.items():
         assert failure_info(reason) == {"reason": reason, "retryable": category == "retryable"}
     assert failure_info("confirmed_gpt_unknown_contract") == {"reason": "confirmed_gpt_rejected", "retryable": True}
