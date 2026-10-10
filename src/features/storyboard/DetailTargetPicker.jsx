@@ -1,13 +1,16 @@
 import { detailRecommendationMessage, detailTargetPatch, detailTargetPresentation, selectableDetailTargets } from '../../lib/detailRecommendations.js';
+import { ProductSourcePicker } from './ProductSourcePicker.jsx';
 
-export function DetailTargetPicker({ block, product, recommendations, onChange }) {
+export function DetailTargetPicker({ block, product, catalogs, recommendations, onChange }) {
   const targets = selectableDetailTargets(recommendations);
   const presentation = detailTargetPresentation(block, product, recommendations);
   return (
     <div className="insp-sec detail-target-picker">
       <label className="lbl" htmlFor={`detail-target-${block.id || 'new'}`}>촬영 대상</label>
-      {presentation?.src && <img className="detail-target-image" src={presentation.src} alt={`내 상품 원본 · ${presentation.label}`} />}
-      <p className="hint">내 상품 원본 · 촬영 대상: {presentation?.label}</p>
+      {block.detailTargetId ? <>
+        {presentation?.src && <img className="detail-target-image" src={presentation.src} alt={`내 상품 원본 · ${presentation.label}`} />}
+        <p className="hint">내 상품 원본 · 촬영 대상: {presentation?.label}</p>
+      </> : <ProductSourcePicker block={block} product={product} catalogs={catalogs} onChange={onChange} />}
       <select id={`detail-target-${block.id || 'new'}`} value={block.detailTargetId || ''}
         onChange={(event) => onChange({ ...detailTargetPatch(targets.find((candidate) => candidate.id === event.target.value)),
           ...(event.target.value ? { colorId: (product?.colors?.find((color) => color.isBase) || product?.colors?.[0])?.id || block.colorId } : {}),

@@ -3559,3 +3559,14 @@
 /* 폰 주 버튼도 저장 뒤 두 버튼처럼 화면 폭을 채운다. 안내 문구는 버튼 위 한 줄. */
 .pi-handoff .wizard-cta > .btn { flex: 1 1 100%; }
 .pi-handoff .wizard-cta > .wizard-cta-reason { flex-basis: 100%; text-align: center; }
+.product-source-options { display: grid; grid-template-columns: repeat(2, minmax(0, 112px)); gap: 10px; }
+.product-source-option { position: relative; min-width: 0; cursor: pointer; }
+.product-source-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.product-source-tile { position: relative; display: grid; place-items: center; aspect-ratio: 3 / 4; overflow: hidden; border: 2px solid transparent; border-radius: var(--r-3); background: var(--bg-2); }
+.product-source-tile img { width: 100%; height: 100%; object-fit: cover; }
+.product-source-option.selected .product-source-tile { border-color: var(--fg-1); }
+.product-source-check { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--fg-1); color: var(--bg-1); }
+.product-source-option input:focus-visible + .product-source-tile { outline: 2px solid var(--link); outline-offset: 3px; }
+.product-source-label { display: block; margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--fg-1); text-wrap: balance; }
+.product-source-missing { font-size: 12px; color: var(--fg-1); }
+.product-source-option.unavailable { cursor: default; }

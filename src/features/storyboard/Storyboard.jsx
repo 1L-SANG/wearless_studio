@@ -15,6 +15,8 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DetailTargetPicker } from './DetailTargetPicker.jsx';
+import { ProductSourcePicker } from './ProductSourcePicker.jsx';
+import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import HorizonBackgroundControl from './HorizonBackgroundControl.jsx';
 import SpaceSetHoverPreview from './SpaceSetHoverPreview.jsx';
 import { CATALOG_DRAG_MIME, catalogMemberTarget, createIndependentCatalogMembers, independentSpaceSetChoices, insertCatalogBlocks, resolveCatalogDrag, setCatalogDragImage } from '@/lib/storyboardCatalogDrag.js';
@@ -336,7 +338,7 @@ function cardLabels(block, catalogs) {
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
-  return { shot, isProduct };
+  return { shot: isProduct ? `${shot} · ${block.direction === 'back' ? '뒷면' : '앞면'} 사진` : shot, isProduct };
 }
 
 /* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).
@@ -1732,7 +1734,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ) : (
         <>
           {isDetail && <DetailTargetPicker block={block} product={catalogs.detailProduct}
-            recommendations={catalogs.detailRecommendations} onChange={onChange} />}
+            catalogs={catalogs} recommendations={catalogs.detailRecommendations} onChange={onChange} />}
+          {isProduct && !isDetail && !block.spaceGroupId && <>
+            <ProductSourcePicker block={block} product={catalogs.detailProduct} catalogs={catalogs} onChange={onChange} />
+            <p className="hint">예시 사진은 연출만 참고해요.</p>
+          </>}
           {isSignatureSlot && (
             <SignatureCutGallery
               gender={signatureGender}
@@ -1808,7 +1814,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 
       <div className="insp-sec"><label className="lbl">대상 색상</label>
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
-          value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
+          value={block.colorId} onChange={(colorId) => {
+            const changes = preserveDetailTargetBinding(block, { colorId });
+            onChange({ ...changes, ...productSourceColorPatch({ ...block, ...changes }, catalogs.detailProduct, colorId) });
+          }} /></div>
 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
           세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}

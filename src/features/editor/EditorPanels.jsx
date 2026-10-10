@@ -4,6 +4,8 @@
    Only change: ES imports/exports (was window globals).
    ============================================================= */
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
+import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
+import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
@@ -290,6 +292,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
+  const [productDirection, setProductDirection] = useState('front');
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
@@ -308,10 +311,9 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const directionSpec = directionSpecFromExample(selectedExample, {
-    cutType: galleryCutType,
-    detailTarget: galleryIsProduct && shot === 'detail' ? selectedDetailTarget : null,
-  });
+  const directionSpec = galleryIsProduct
+    ? { direction: shot === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : productDirection, sideStyle: null }
+    : directionSpecFromExample(selectedExample);
   const galleryDirectionVal = directionSpec.direction;
   const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
     ? shot : galleryShotOptions[0].value;
@@ -385,6 +387,12 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
     setCutType(value); setShot(nextShot); setDetailTargetId(null);
+    if (value === 'product') {
+      const nextColors = nextShot === 'detail' ? detailColorOpts : colorOpts;
+      const nextColorId = nextColors.some((option) => option.id === color) ? color : nextColors[0]?.id;
+      const patch = productSourceColorPatch({ cutType: value, shot: nextShot, direction: 'front' }, product, nextColorId);
+      setProductDirection(patch.direction || 'front');
+    }
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -468,14 +476,21 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
-              // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
+              const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
+              setProductDirection(patch.direction || directionSpec.direction);
             }} clothingType={clothingType} gender={modelGender}
             includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+          {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
+            catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
           {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.colorId) setColor(patch.colorId); }} />}
+            catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
+              if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
+              if (patch.direction) setProductDirection(patch.direction);
+              if (patch.colorId) setColor(patch.colorId);
+            }} />}
 
           {showOuterClosure && (
             <div className="insp-sec outer-closure-field">
@@ -500,7 +515,14 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
           <div className="insp-divider" />
 
           <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => { setColor(value); if (value !== colorVal) setDetailTargetId(null); }} /></div>
+            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
+              setColor(value);
+              if (value !== colorVal) {
+                setDetailTargetId(null);
+                const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
+                setProductDirection(patch.direction || directionSpec.direction);
+              }
+            }} /></div>
 
           {showMatchClothing && (
             <>

@@ -145,7 +145,10 @@ const catalogs = {
     { value: 'full', label: '풀샷' }, { value: 'medium', label: '미디움샷' },
   ],
   // 제품 이미지 전용 옵션 — 화면 하드코딩 금지 (계약 §5)
-  productDirections: [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }],
+  productSourcePhotos: [
+    { value: 'front', slot: 'Front', label: '내 앞면 사진' },
+    { value: 'back', slot: 'Back', label: '내 뒷면 사진' },
+  ],
   productShotTypes: [
     { value: 'ghost', label: '고스트샷' }, { value: 'detail', label: '디테일샷' },
   ],
