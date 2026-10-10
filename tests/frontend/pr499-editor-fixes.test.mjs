@@ -75,7 +75,7 @@ function submissionHarness({ error = null, errors = [], hold = false, accept = t
     http, async () => ({ data: { id: 'result', src: '/result.png' }, credits: 90 }), 180000, 'wait', () => {});
   const context = {
     api: { generateImage: generateRemote }, projectId: 'project', crypto: { randomUUID },
-    varySubmission: { current: null }, varyTarget: null,
+    varySubmission: { current: null }, unconfirmedVarySubmissions: { current: new Map() }, varyTarget: null,
     hasImageSource,
     uid: () => randomUUID(), setWardrobe: update => { wardrobe = update(wardrobe); },
     setTab: () => {}, genCount: { current: 0 }, setGenDot: () => {}, toast: { push: () => {} }, syncCredits: () => {},
@@ -142,4 +142,43 @@ test('confirmed vary rejection after an unknown response ends that submission be
   const keys = h.posts.map(post => post.headers?.['Idempotency-Key']);
   assert.equal(keys[1], keys[0]);
   assert.notEqual(keys[2], keys[1]);
+});
+
+test('retrying an unknown photo after generating another photo reuses the original key and request', async () => {
+  const h = submissionHarness({ errors: [new Error('accepted but response lost')] });
+  const other = { ...request, source: { ...request.source, id: 'other', src: '/other.png' } };
+  await h.generate(request);
+  await h.generate(other);
+  await h.generate(structuredClone(request));
+  const keys = h.posts.map(post => post.headers['Idempotency-Key']);
+  assert.equal(keys[2], keys[0], '다른 사진을 만든 뒤 돌아와도 미확인 요청의 키를 유지한다');
+  assert.notEqual(keys[1], keys[0]);
+  assert.deepEqual(h.posts[2].body, h.posts[0].body);
+  assert.equal(h.jobs.size, 2, '재확인은 세 번째 생성 작업을 만들지 않는다');
+
+  // Once A is acknowledged, another deliberate click really is a new cut.
+  await h.generate(request);
+  assert.notEqual(h.posts[3].headers['Idempotency-Key'], keys[0]);
+});
+
+test('multiple unknown photos retain independent keys while alternating retries', async () => {
+  const h = submissionHarness({ error: new Error('accepted but response lost') });
+  const other = { ...request, source: { ...request.source, id: 'other', src: '/other.png' } };
+  for (const req of [request, other, request, other]) await h.generate(req);
+  const keys = h.posts.map(post => post.headers['Idempotency-Key']);
+  assert.equal(keys[2], keys[0]);
+  assert.equal(keys[3], keys[1]);
+  assert.notEqual(keys[0], keys[1]);
+  assert.equal(h.jobs.size, 2);
+});
+
+test('rejecting another photo does not discard the first unknown request', async () => {
+  const h = submissionHarness({ errors: [new Error('accepted but response lost'), Object.assign(new Error('denied'), { status: 402 })] });
+  const other = { ...request, source: { ...request.source, id: 'other', src: '/other.png' } };
+  await h.generate(request);
+  await h.generate(other);
+  await h.generate(request);
+  assert.equal(h.posts[2].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
+  await h.generate(other);
+  assert.notEqual(h.posts[3].headers['Idempotency-Key'], h.posts[1].headers['Idempotency-Key']);
 });

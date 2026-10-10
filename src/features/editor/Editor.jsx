@@ -1152,6 +1152,7 @@ export function Editor() {
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const generateSubmission = useRef(null);
   const varySubmission = useRef(null);
+  const unconfirmedVarySubmissions = useRef(new Map());
   const [generateSubmitting, setGenerateSubmitting] = useState(false);
   const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
   const [frameOver, setFrameOver] = useState(null);
@@ -2649,14 +2650,19 @@ export function Editor() {
     if (varySubmission.current?.busy || !hasImageSource(source)) return null;
     const request = { mode: 'vary', source, changes, ...(variationMode ? { variationMode } : {}), refBg, refBgAssetId };
     const signature = JSON.stringify({ projectId, src: source.src, cutType: source.cutType, changes, variationMode, refBg, refBgAssetId });
-    const previous = varySubmission.current;
-    const submission = previous?.unknown && previous.signature === signature ? previous : {
+    // 접수 미확인 요청은 사진·설정별로 보존한다. 다른 사진을 작업해도 재시도 키를 잃지 않는다.
+    const submission = unconfirmedVarySubmissions.current.get(signature) || {
       idempotencyKey: crypto.randomUUID(), signature, request,
       group: varyTarget?.group || source.wardrobeGroup || 'misc',
     };
     submission.busy = true;
+    unconfirmedVarySubmissions.current.set(signature, submission);
     varySubmission.current = submission;
     const releaseSubmission = () => {
+      // 늦게 끝난 이전 작업이 같은 사진의 새 요청이나 다른 사진의 미확인 요청을 지우지 않는다.
+      if (unconfirmedVarySubmissions.current.get(signature) === submission) {
+        unconfirmedVarySubmissions.current.delete(signature);
+      }
       if (varySubmission.current === submission) varySubmission.current = null;
     };
     const group = submission.group;
