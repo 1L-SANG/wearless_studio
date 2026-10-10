@@ -146,12 +146,13 @@ test('에디터 디테일은 대상 방향이나 직접 고른 원본 면을 쓰
   assert.equal(h.request().direction, 'front');
 });
 
-test('제품 카드 캡션은 샷 이름 뒤에 고른 원본 면을 붙이고 착용컷은 그대로다', () => {
+test('고스트 카드 캡션에만 원본 면을 붙이고 디테일과 착용컷은 짧게 유지한다', () => {
   const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('function cardLabels('), source.indexOf('\n/* 캡션'));
   const labels = evaluate(`${body}; return cardLabels;`, {});
-  for (const shot of ['ghost', 'detail']) for (const direction of ['front', 'back']) {
-    assert.equal(labels({ cutType: 'product', shot, direction }, catalogs).shot, `${shot === 'ghost' ? '고스트샷' : '디테일샷'} · ${direction === 'back' ? '뒷면' : '앞면'} 사진`);
+  for (const direction of ['front', 'back']) {
+    assert.equal(labels({ cutType: 'product', shot: 'ghost', direction }, catalogs).shot, `고스트샷 · ${direction === 'back' ? '뒷면' : '앞면'} 사진`);
+    assert.equal(labels({ cutType: 'product', shot: 'detail', direction }, catalogs).shot, '디테일샷');
   }
   assert.equal(labels({ cutType: 'styling', shot: 'full', direction: 'back' }, catalogs).shot, '풀샷');
 });

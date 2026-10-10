@@ -478,8 +478,6 @@ test('dress is women-only even when stale input still says men', () => {
   assert.match(httpAdapterSource, /return savedAnalysis/);
 });
 
-
-
 test('storyboard preserves family-specific group references across shot changes and remains atomically retryable', () => {
   const shotHandler = storyboardSource.slice(
     storyboardSource.indexOf('const onShotChange ='),

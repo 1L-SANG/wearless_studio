@@ -478,8 +478,10 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
             shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
-              const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
-              setProductDirection(patch.direction || directionSpec.direction);
+              if (galleryIsProduct) {
+                const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
+                setProductDirection(patch.direction || directionSpec.direction);
+              }
             }} clothingType={clothingType} gender={modelGender}
             includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
@@ -521,8 +523,10 @@ export function AIPanel({ product, detailRecommendations, catalogs, account, col
               setColor(value);
               if (value !== colorVal) {
                 setDetailTargetId(null);
-                const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
-                setProductDirection(patch.direction || directionSpec.direction);
+                if (isProduct) {
+                  const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
+                  setProductDirection(patch.direction || directionSpec.direction);
+                }
               }
             }} /></div>
 

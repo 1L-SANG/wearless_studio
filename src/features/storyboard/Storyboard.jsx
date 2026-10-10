@@ -338,7 +338,7 @@ function cardLabels(block, catalogs) {
   const shot = isProduct
     ? (catalogs.productShotTypes.find((item) => item.value === block.shot)?.label || '고스트샷')
     : (catalogs.shotTypes.find((item) => item.value === block.shot)?.label || '—');
-  return { shot: isProduct ? `${shot} · ${block.direction === 'back' ? '뒷면' : '앞면'} 사진` : shot, isProduct };
+  return { shot: isProduct && block.shot === 'ghost' ? `${shot} · ${block.direction === 'back' ? '뒷면' : '앞면'} 사진` : shot, isProduct };
 }
 
 /* 캡션의 "변경됨"(파란 글씨) — **예시 사진을 바꿨을 때만** 뜬다(2026-09-22 오너).

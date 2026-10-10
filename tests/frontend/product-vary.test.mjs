@@ -61,3 +61,33 @@ test('의류와 캔버스 사진의 재촬영 여부는 서버 표시 또는 원
   assert.equal(source(null, { id: 'canvas', type: 'image', src: '/canvas-only.jpg', sourceBlockId: 'detail' }).detailReshoot, true);
   assert.equal(source(null, { id: 'canvas', type: 'image', src: '/other.jpg', sourceBlockId: 'ghost' }).detailReshoot, false);
 });
+
+for (const { name, image, slots, expected } of [
+  { name: '에디터 고스트를 디테일 칸에 넣어도 다시 촬영을 제공하지 않는다',
+    image: { id: 'editor-ghost', src: '/editor-ghost.jpg', cutType: 'product' }, slots: ['detail'], expected: false },
+  { name: '서버 표시가 있는 에디터 디테일은 어느 칸에서도 다시 촬영을 제공한다',
+    image: { id: 'editor-detail', src: '/editor-detail.jpg', cutType: 'product', detailReshoot: true },
+    slots: ['detail', 'ghost', null], expected: true },
+  { name: '서버 목록에 없는 상세페이지 디테일은 원래 칸에서 다시 촬영을 제공한다',
+    image: { id: 'page-detail', src: '/page-detail.jpg', cutType: 'product', sourceBlockId: 'detail' },
+    slots: ['detail'], expected: true },
+]) test(name, async () => {
+  const storyboard = [{ id: 'detail', cutType: 'product', shot: 'detail' }, { id: 'ghost', cutType: 'product', shot: 'ghost' }];
+  const sourceFor = (varyTarget, selectedElObj) => evaluate(slice(editor, '  const varySource =', '  // setBlockFocused') + '\nreturn varySource;',
+    { wardrobe: { base: [image] }, varyTarget, selectedElObj, hasImageSource, wardrobeContext: { current: { storyboard } } });
+  const sources = slots.map(sourceBlockId => sourceFor(null, { id: 'canvas', type: 'image', src: image.src, cutType: 'product', sourceBlockId }));
+  sources.push(sourceFor({ id: image.id, group: 'base' }, null));
+  for (const source of sources) {
+    assert.equal(source.detailReshoot, expected);
+    let request;
+    const tree = Panel({ catalogs: { creditCosts: { editorImage: 2 } }, source, onGenerate: value => { request = value; } });
+    const buttons = nodes(tree, node => node.type === 'Button');
+    assert.equal(buttons.length, expected ? 1 : 0);
+    if (expected) {
+      assert.match(JSON.stringify(tree), /같은 부위 다시 촬영 · 2 크레딧/);
+      await buttons[0].props.onClick();
+      assert.equal(request.source.src, image.src);
+      assert.equal('variationMode' in request, false);
+    } else assert.match(JSON.stringify(tree), /제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요\./);
+  }
+});

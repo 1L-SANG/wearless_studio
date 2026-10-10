@@ -2695,18 +2695,22 @@ export function Editor() {
   // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
   const varySource = (() => {
     const images = Object.values(wardrobe || {}).flat();
-    const detailReshoot = (image) => image?.detailReshoot === true
-      || (wardrobeContext.current.storyboard || []).some((block) => block.id === image?.sourceBlockId
-        && block.cutType === 'product' && block.shot === 'detail');
+    const detailReshoot = (image) => {
+      if (!image?.sourceBlockId) return image?.detailReshoot === true;
+      return image?.detailReshoot === true
+        || (wardrobeContext.current.storyboard || []).some((block) => block.id === image.sourceBlockId
+          && block.cutType === 'product' && block.shot === 'detail');
+    };
     if (varyTarget) {
       const im = images.find((x) => x.id === varyTarget.id);
       return hasImageSource(im) ? { id: im.id, src: im.src, cutType: im.cutType || null,
         wardrobeGroup: im.wardrobeGroup || varyTarget.group, detailReshoot: detailReshoot(im) } : null;
     }
+    const serverImage = images.find((image) => image.src === selectedElObj?.src && !image.sourceBlockId);
     return selectedElObj?.type === 'image' && hasImageSource(selectedElObj)
       ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null,
         wardrobeGroup: selectedElObj.wardrobeGroup || null,
-        detailReshoot: detailReshoot({ sourceBlockId: selectedElObj.sourceBlockId })
+        detailReshoot: serverImage ? serverImage.detailReshoot === true : detailReshoot({ sourceBlockId: selectedElObj.sourceBlockId })
           || images.some((image) => image.src === selectedElObj.src && detailReshoot(image)) }
       : null;
   })();
