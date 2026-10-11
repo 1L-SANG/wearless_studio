@@ -111,6 +111,14 @@ def test_server_versions_match_published_manifest():
     assert by_slug["privacy-seller"]["version"] == legal_versions.SELLER_PRIVACY_VERSION
 
 
+def test_privacy_revision_does_not_force_reconsent():
+    # 처리방침 v1.2(2026-10-19 시행)는 고지 대상이라 v1.1 동의자도 그대로 통과한다.
+    assert routes._consent_payload(_row(privacy="v1.1"))["needsConsent"] is False
+    assert routes._consent_payload(_row(privacy="v1.2"))["needsConsent"] is False
+    assert routes._consent_payload(_row(privacy="v1.0"))["needsConsent"] is True
+    assert legal_versions.required_versions()["privacy"] == "v1.2"
+
+
 def test_existing_v12_consent_is_valid_until_v13_effective_date():
     assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 5)) is False
     assert legal_versions.terms_consent_required("v1.2", today=date(2026, 10, 6)) is True
