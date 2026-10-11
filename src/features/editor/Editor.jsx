@@ -68,7 +68,7 @@ import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } 
 import { CanvasAiLayer, CanvasAiProgress } from './CanvasAiLayer.jsx';
 import { useCanvasAi } from './useCanvasAi.js';
 import { canReplaceCanvasAiResult } from './canvasAiJobs.js';
-import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible, canvasAiProgressVisible } from './canvasAiApply.js';
+import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible, canvasAiProgressVisible, canvasAiResultDimensions, readCanvasAiResultDimensions } from './canvasAiApply.js';
 import { failedCutPresentation } from '@/lib/cutFailureMessages.js';
 import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
@@ -1157,6 +1157,7 @@ export function Editor() {
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const canvasAiDotRestore = useRef('none');
+  const canvasAiAdding = useRef(new Set());
   const generateSubmission = useRef(null);
   const [generateSubmitting, setGenerateSubmitting] = useState(false);
   const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
@@ -2693,13 +2694,21 @@ export function Editor() {
     setBlocks((bs) => replaceCanvasAiImage(bs, job, img));
     canvasAi.controller.dismiss(job.elementId);
   };
-  const addCanvasAiResult = (job) => {
+  const addCanvasAiResult = async (job) => {
     const img = job?.result?.data || job?.response?.data || job?.result;
-    if (!img?.src) return;
-    const idx = (latestBlocks.current || blocks).findIndex((item) => item.id === job.blockId);
-    lastPush.current = 0;
-    addImageBlock(img, idx >= 0 ? idx + 1 : undefined, { keepTab: true });
-    canvasAi.controller.dismiss(job.elementId);
+    if (!img?.src || job.dismissed || canvasAiAdding.current.has(job)) return;
+    canvasAiAdding.current.add(job);
+    try {
+      const natural = await readCanvasAiResultDimensions(img.src);
+      if (job.dismissed || canvasAi.controller.get(job.elementId) !== job) return;
+      const dimensions = canvasAiResultDimensions(img, natural);
+      const idx = (latestBlocks.current || blocks).findIndex((item) => item.id === job.blockId);
+      lastPush.current = 0;
+      addImageBlock({ ...img, ...dimensions }, idx >= 0 ? idx + 1 : undefined, { keepTab: true });
+      canvasAi.controller.dismiss(job.elementId);
+    } finally {
+      canvasAiAdding.current.delete(job);
+    }
   };
   // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
   // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.

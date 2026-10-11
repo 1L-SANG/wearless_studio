@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { buildImageBlock } from '../../src/features/editor/editorLibrary.js';
+import { createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
 
 const moduleUrl = new URL('../../src/features/editor/canvasAiApply.js', import.meta.url);
 const helpers = await import(moduleUrl).catch(() => ({}));
@@ -60,3 +62,127 @@ test('빈 칸을 다른 사진으로 채웠으면 새 컷 표시를 그 사진�
   assert.equal(helpers.canvasAiSlotArrivalVisible({ src: 'seller-photo' }, arrived), false);
   assert.equal(helpers.canvasAiSlotArrivalVisible({ src: 'generated' }, arrived), true);
 });
+
+const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+const addResultSource = editor.slice(editor.indexOf('  const addCanvasAiResult ='), editor.indexOf('  // setBlockFocused 없이'));
+function resultAdder(readDimensions) {
+  let nextId = 0;
+  const added = [];
+  const controller = createCanvasAiJobController({ schedule: () => 0, cancelSchedule() {}, createKey: () => 'key' });
+  const job = controller.start('el', { blockId: 'block', elementId: 'el', sourceWidth: 1000, sourceHeight: 1500 }, async () => null);
+  controller.patch('el', { status: 'arrived',
+    result: { id: 'result', assetId: 'result', src: 'generated', ai: true, cutType: 'styling' } });
+  const add = new Function('readCanvasAiResultDimensions', 'canvasAiResultDimensions', 'canvasAiAdding',
+    'latestBlocks', 'blocks', 'lastPush', 'addImageBlock', 'canvasAi',
+    `${addResultSource}; return addCanvasAiResult;`)(
+    readDimensions, helpers.canvasAiResultDimensions, { current: new Set() },
+    { current: blocks }, blocks, { current: 0 },
+    (image, idx, options) => added.push({ block: buildImageBlock(image, (prefix) => `${prefix}${++nextId}`), idx, options }),
+    { controller },
+  );
+  return { add, job, added, controller };
+}
+
+for (const [label, dimensions, expectedHeight] of [
+  ['정사각형', { width: 880, height: 880 }, 880],
+  ['가로형', { width: 1600, height: 1000 }, 550],
+  ['3:4', { width: 900, height: 1200 }, 1173],
+]) {
+  test(`새 블록은 원본 대신 ${label} 결과 사진의 실제 비율로 만든다`, async () => {
+    const { add, job, added } = resultAdder(async (src) => {
+      assert.equal(src, 'generated');
+      return dimensions;
+    });
+    job.result.width = 1000;
+    job.result.height = 1500;
+    await add(job);
+    assert.equal(added.length, 1);
+    assert.equal(added[0].block.elements[0].w, 880);
+    assert.equal(added[0].block.elements[0].h, expectedHeight);
+    assert.equal(added[0].block.h, expectedHeight + 100);
+    assert.equal(added[0].idx, 1);
+    assert.deepEqual(added[0].options, { keepTab: true });
+  });
+}
+
+test('결과 크기를 못 재면 응답 크기를 쓰고 없으면 기존 880×1320 기본값을 쓴다', async () => {
+  for (const [response, expectedHeight] of [
+    [{ width: 880, height: 880 }, 880],
+    [{}, 1320],
+    [{ width: 0, height: 880 }, 1320],
+    [{ width: Infinity, height: 880 }, 1320],
+  ]) {
+    const { add, job, added } = resultAdder(async () => null);
+    Object.assign(job.result, response);
+    await add(job);
+    assert.equal(added[0].block.elements[0].h, expectedHeight);
+  }
+});
+
+test('측정 중 두 번 눌러도 블록은 하나만 생기고 완료된 결과를 다시 추가하지 않는다', async () => {
+  let finish;
+  const measured = new Promise((resolve) => { finish = resolve; });
+  const { add, job, added } = resultAdder(() => measured);
+  const first = add(job);
+  const second = add(job);
+  assert.equal(added.length, 0);
+  finish({ width: 880, height: 880 });
+  await Promise.all([first, second]);
+  await add(job);
+  assert.equal(added.length, 1);
+});
+
+test('크기 측정 실패 뒤 다른 결과도 새 블록에 추가할 수 있다', async () => {
+  const { add, job, added, controller } = resultAdder(async () => null);
+  await add(job);
+  const nextJob = controller.start('el', { blockId: 'block', elementId: 'el' }, async () => null);
+  controller.patch('el', { status: 'arrived', result: { ...job.result, src: 'next-result' } });
+  await add(nextJob);
+  assert.equal(added.length, 2);
+});
+
+for (const action of ['dismiss', 'new-job']) {
+  test(`측정 중 ${action}이면 이전 결과를 추가하거나 새 작업을 닫지 않는다`, async () => {
+    let finish;
+    const measured = new Promise((resolve) => { finish = resolve; });
+    const { add, job, added, controller } = resultAdder(() => measured);
+    const pending = add(job);
+    if (action === 'dismiss') controller.dismiss('el');
+    else controller.start('el', { blockId: 'block', elementId: 'el' }, async () => null);
+    const current = controller.get('el');
+    finish({ width: 880, height: 880 });
+    await pending;
+    assert.equal(added.length, 0);
+    assert.equal(controller.get('el'), current);
+    if (action === 'new-job') assert.equal(current.dismissed, false);
+  });
+}
+
+test('크기 선택은 결과 사진의 유효한 실측값을 응답 값보다 우선한다', () => {
+  assert.equal(typeof helpers.canvasAiResultDimensions, 'function');
+  assert.deepEqual(helpers.canvasAiResultDimensions({ width: 1000, height: 1500 }, { width: 880, height: 880 }),
+    { width: 880, height: 880 });
+  assert.deepEqual(helpers.canvasAiResultDimensions({ width: 900, height: 1200 }, { width: 0, height: 0 }),
+    { width: 900, height: 1200 });
+});
+
+for (const outcome of ['load', 'cached', 'error', 'timeout', 'throw']) {
+  test(`결과 사진 측정은 ${outcome}을 처리하고 이벤트 핸들러를 정리한다`, async () => {
+    assert.equal(typeof helpers.readCanvasAiResultDimensions, 'function');
+    const image = {
+      naturalWidth: 880, naturalHeight: 880, complete: outcome === 'cached',
+      set src(value) {
+        assert.equal(value, 'generated');
+        if (outcome === 'load') queueMicrotask(() => this.onload?.());
+        if (outcome === 'error') queueMicrotask(() => this.onerror?.());
+        if (outcome === 'throw') throw new Error('cannot load');
+      },
+    };
+    const dimensions = await helpers.readCanvasAiResultDimensions('generated', {
+      createImage: () => image, timeoutMs: 5,
+    });
+    assert.deepEqual(dimensions, ['load', 'cached'].includes(outcome) ? { width: 880, height: 880 } : null);
+    assert.equal(image.onload, null);
+    assert.equal(image.onerror, null);
+  });
+}
