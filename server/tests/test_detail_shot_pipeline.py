@@ -1,3 +1,4 @@
+import json
 """Product detail publication requires source-bound QC; only safe failures get three calls."""
 from io import BytesIO
 import asyncio
@@ -666,21 +667,18 @@ def test_claude_qc_model_cannot_reuse_gpt_final_fingerprint(setup, field):
     assert pipeline.detail_output_qc.POLICY_VERSION == 'detail-output-qc-v6'
 
 
-@pytest.mark.parametrize('core,specialist,legacy', [
-    ('gpt-5.4-2026-03-05', 'gpt-5.4-2026-03-05',
-     '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615'),
-    ('claude-sonnet-5-5', 'claude-sonnet-5-5',
-     'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'),
-    ('claude-sonnet-5-5', 'gpt-5.4-2026-03-05',
-     '74f7a1044de45342e71d28afe1947553b2320136919ec8111e72b9720228ac16'),
-    ('gpt-5.4-2026-03-05', 'claude-sonnet-5-5',
-     '9d6702f277759fd031218281b65c0209f2c17e23b1402de1d0a669f541ab2465'),
+@pytest.mark.parametrize('core,specialist', [
+    ('gpt-5.4-2026-03-05', 'gpt-5.4-2026-03-05'),
+    ('claude-sonnet-5-5', 'claude-sonnet-5-5'),
+    ('claude-sonnet-5-5', 'gpt-5.4-2026-03-05'),
+    ('gpt-5.4-2026-03-05', 'claude-sonnet-5-5'),
 ])
-def test_existing_gpt_and_claude_xhigh_fingerprints_remain_byte_compatible(setup, core, specialist, legacy):
-    # PR #521 fingerprint values captured before adding effort to the recipe.
+def test_existing_gpt_and_claude_xhigh_fingerprints_remain_byte_compatible(setup, core, specialist):
+    # PR #521 recipe (before effort was added) must produce the same bytes for gpt and Claude xhigh.
     settings = SimpleNamespace(**vars(setup[2]), model_detail_core=core,
         model_detail_specialist=specialist, detail_core_timeout_seconds=90.0,
         detail_specialist_timeout_seconds=90.0, detail_qc_claude_effort='xhigh')
+    legacy = _pr521_fingerprint(settings, [photo()], None, 'front')
 
     assert pipeline.fingerprint(settings, [photo()], None, 'front') == legacy
     del settings.detail_qc_claude_effort
@@ -1151,3 +1149,17 @@ def test_rejected_retry_write_is_consumed_after_new_lease(setup):
     assert progress.state['judgmentRetries'][0]['status'] == 'INTERRUPTED'
     assert qc.await_count == 2
     assert client.generate_content_image.await_count == 1
+
+
+def _pr521_fingerprint(settings, sources, target, direction, style_reference=None, *, framing_source_index=0):
+    """PR #521 시점 지문 계산식 그대로. 사진 바이트는 Pillow·zlib 버전마다 달라 해시를 박지 않고 식으로 대조한다."""
+    value = {'prompt': pipeline.PROMPT_VERSION, 'qc': pipeline.detail_output_qc.POLICY_VERSION,
+             'model': settings.model_product_detail, 'size': settings.detail_cut_image_size,
+             'coreJudge': getattr(settings, 'model_detail_core', None),
+             'coreTimeout': getattr(settings, 'detail_core_timeout_seconds', None),
+             'specialist': getattr(settings, 'model_detail_specialist', None),
+             'specialistTimeout': getattr(settings, 'detail_specialist_timeout_seconds', None),
+             'source': [hashlib.sha256(s.data).hexdigest() for s in sources],
+             'style': hashlib.sha256(style_reference.data).hexdigest() if style_reference else None,
+             'target': target, 'direction': direction, 'framingSourceIndex': framing_source_index}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

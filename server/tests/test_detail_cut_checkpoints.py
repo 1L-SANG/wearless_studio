@@ -1,3 +1,5 @@
+import json
+import hashlib
 """상세 컷 비용 절감(2026-09-23) — 부분 실패 격리(A) · 각도 사진 사전 확인(C) · 컷 체크포인트(D).
 
 오너 원칙: "생성 비용을 최대한 아껴야 한다. 이미 만든 베이스컷이 있으면 그대로 쓴다."
@@ -379,15 +381,8 @@ def test_detail_final_reuse_requires_same_accepted_policy(monkeypatch, verdict, 
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize('model,legacy_fingerprint,legacy_digest', [
-    ('gpt-5.4-2026-03-05',
-     '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615',
-     'fa11fd7e289d12e50ed4ccaa0b5f1bbf3a3519df8d4458704aa927dd7192e97b'),
-    ('claude-sonnet-5-5',
-     'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6',
-     '3bfac1bddf5dfb57d35b396f968f10009c8b0527072d556f2d64226f83e1c9c9'),
-])
-def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects_changed_claude(monkeypatch, model, legacy_fingerprint, legacy_digest):
+@pytest.mark.parametrize('model', ['gpt-5.4-2026-03-05', 'claude-sonnet-5-5'])
+def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects_changed_claude(monkeypatch, model):
     db = _IntentDB()
     db.install(monkeypatch)
     settings = _settings(model_product_detail='gpt-image-2.5-sunburst', detail_cut_image_size='2K',
@@ -398,6 +393,9 @@ def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects
     encoded = BytesIO()
     Image.new('RGB', (160, 200), 'gray').save(encoded, format='PNG')
     source = InlineImage('image/png', encoded.getvalue())
+    legacy_fingerprint = _pr521_fingerprint(settings, [source], None, 'front')
+    legacy_digest = ckpts._digest({'family': 'verified-product-detail-v1', 'recipe': legacy_fingerprint,
+                                   'blockId': 'detail1', 'userId': USER, 'projectId': PROJECT})
 
     async def exercise():
         first = await _store(app, 'j1')
@@ -715,3 +713,17 @@ def test_retry_within_the_job_reuses_the_base_after_an_infra_failure(monkeypatch
         selected_model_id="mX", cut_checkpoints=store))
     assert gemini.calls == 1 and swaps == [b"BASE", b"BASE"]
     assert len(assets) == 1
+
+
+def _pr521_fingerprint(settings, sources, target, direction, style_reference=None, *, framing_source_index=0):
+    """PR #521 시점 지문 계산식 그대로. 사진 바이트는 Pillow·zlib 버전마다 달라 해시를 박지 않고 식으로 대조한다."""
+    value = {'prompt': detail_shot_pipeline.PROMPT_VERSION, 'qc': detail_shot_pipeline.detail_output_qc.POLICY_VERSION,
+             'model': settings.model_product_detail, 'size': settings.detail_cut_image_size,
+             'coreJudge': getattr(settings, 'model_detail_core', None),
+             'coreTimeout': getattr(settings, 'detail_core_timeout_seconds', None),
+             'specialist': getattr(settings, 'model_detail_specialist', None),
+             'specialistTimeout': getattr(settings, 'detail_specialist_timeout_seconds', None),
+             'source': [hashlib.sha256(s.data).hexdigest() for s in sources],
+             'style': hashlib.sha256(style_reference.data).hexdigest() if style_reference else None,
+             'target': target, 'direction': direction, 'framingSourceIndex': framing_source_index}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
