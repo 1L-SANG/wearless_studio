@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 SELLER_TERMS_VERSION = "v1.3"
 SELLER_PRIVACY_VERSION = "v1.2"
 # 처리방침 개정은 동의가 아니라 고지 대상이다. 예전 판에 동의한 셀러에게 재동의를 받지 않는다.
-ACCEPTED_SELLER_PRIVACY_VERSIONS = frozenset({"v1.1", SELLER_PRIVACY_VERSION})
+ACCEPTED_SELLER_PRIVACY_VERSIONS = frozenset({"v1.1", "v1.2"})  # 개정 때 이전 판을 지우지 말고 더한다
 PREVIOUS_SELLER_TERMS_VERSION = "v1.2"
 SELLER_TERMS_EFFECTIVE_DATE = date(2026, 10, 6)
 _SEOUL = ZoneInfo("Asia/Seoul")
