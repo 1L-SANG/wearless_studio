@@ -333,11 +333,12 @@ def _unknown(out, code, cause, *, retry_after_seconds=None):
 async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, *, target=None, direction="front"):
     out = {"version": 1, "policyVersion": POLICY_VERSION, "passed": False, "decision": "UNKNOWN",
            "gates": [], "markings": None, "temporaryArtifacts": None, "provider": None,
-           "requestedModel": None, "returnedModel": None, "promptHash": None,
+           "requestedModel": None, "returnedModel": None, "effort": None, "promptHash": None,
            "sourceHashes": [], "sourceHash": None, "resultHash": None, "targetHash": None,
-           "judgeImageHashes": [], "rawJudge": None, "errorCode": None, "unknownCause": None, "usage": None,
+           "judgeImageHashes": [], "sentImageHashes": [], "rawJudge": None, "errorCode": None, "unknownCause": None, "usage": None,
            "specialist": {"status": "NOT_RUN", "provider": "gpt", "requestedModel": None,
-                          "returnedModel": None, "promptHash": None, "judgeImageHashes": [],
+                          "returnedModel": None, "effort": None, "promptHash": None,
+                          "judgeImageHashes": [], "sentImageHashes": [],
                           "rawJudge": None, "usage": None, "errorCode": None}}
     try:
         if not isinstance(sources, list) or not sources:
@@ -389,12 +390,14 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         args = (settings, out["requestedModel"], prompt, images, response_schema(), min(timeout, 120.0))
         kwargs = {"metadata": metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
             _authority_context(len(sources), bound, direction, has_crop=has_crop))}
+        out["effort"] = settings.detail_qc_claude_effort if out["provider"] == "claude" else "high"
         if out["provider"] == "claude":
-            call = vision_llm._call_claude(*args, effort=settings.detail_qc_claude_effort, **kwargs)
+            call = vision_llm._call_claude(*args, effort=out["effort"], **kwargs)
         else:
-            call = vision_llm._call_gpt(*args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000, **kwargs)
+            call = vision_llm._call_gpt(*args, reasoning_effort=out["effort"], image_detail="high", max_completion_tokens=7000, **kwargs)
         raw = await asyncio.wait_for(call, timeout=min(timeout, 120.0))
-        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
+        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"),
+                   sentImageHashes=metadata.get("sent_image_hashes", []))
         out["rawJudge"] = raw  # audit-only; repair_instructions never reads this field
         if not isinstance(raw, dict) or set(raw) != {"gates"}:
             return _unknown(out, "invalid_primary_contract", "invalid_response")
@@ -414,7 +417,8 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
             core_failure = {**out, "decision": "FAIL", "gates": gates}
     except Exception as exc:
         # Do not log provider exception text: it can include sensitive request data.
-        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
+        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"),
+                   sentImageHashes=metadata.get("sent_image_hashes", []))
         return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc),
                         retry_after_seconds=getattr(exc, "retry_after_seconds", None))
     specialist = out["specialist"]
@@ -440,13 +444,14 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         args = (settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(), min(specialist_timeout, 120))
         kwargs = {"metadata": specialist_metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
             _authority_context(len(sources), bound, direction, has_crop=has_crop, specialist=True))}
+        specialist["effort"] = settings.detail_qc_claude_effort if specialist["provider"] == "claude" else "high"
         if specialist["provider"] == "claude":
-            call = vision_llm._call_claude(*args, effort=settings.detail_qc_claude_effort, **kwargs)
+            call = vision_llm._call_claude(*args, effort=specialist["effort"], **kwargs)
         else:
-            call = vision_llm._call_gpt(*args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000, **kwargs)
+            call = vision_llm._call_gpt(*args, reasoning_effort=specialist["effort"], image_detail="high", max_completion_tokens=7000, **kwargs)
         specialist_raw = await asyncio.wait_for(call, timeout=min(specialist_timeout, 120))
         specialist.update(status="COMPLETE", rawJudge=specialist_raw, returnedModel=specialist_metadata.get("returned_model"),
-                          usage=specialist_metadata.get("usage"))
+                          usage=specialist_metadata.get("usage"), sentImageHashes=specialist_metadata.get("sent_image_hashes", []))
         if not isinstance(specialist_raw, dict) or set(specialist_raw) != {"gates", "permanentMarkings", "temporaryArtifacts"}:
             raise ValueError("invalid_specialist_contract")
         _validate_gates(specialist_raw["gates"], SPECIALIST_GATES)
@@ -457,7 +462,8 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                 "unknownCause": "uncertain_evidence" if normalized["decision"] == "UNKNOWN" else None}
     except Exception as exc:
         specialist.update(status="UNKNOWN", returnedModel=specialist_metadata.get("returned_model"),
-                          usage=specialist_metadata.get("usage"), errorCode=type(exc).__name__)
+                          usage=specialist_metadata.get("usage"), sentImageHashes=specialist_metadata.get("sent_image_hashes", []),
+                          errorCode=type(exc).__name__)
         cause = "invalid_response" if isinstance(exc, (ValueError, TypeError)) else _failure_cause(exc)
         return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause,
                                        retry_after_seconds=getattr(exc, "retry_after_seconds", None))

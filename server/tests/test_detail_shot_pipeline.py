@@ -666,6 +666,89 @@ def test_claude_qc_model_cannot_reuse_gpt_final_fingerprint(setup, field):
     assert pipeline.detail_output_qc.POLICY_VERSION == 'detail-output-qc-v6'
 
 
+@pytest.mark.parametrize('core,specialist,legacy', [
+    ('gpt-5.4-2026-03-05', 'gpt-5.4-2026-03-05',
+     '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615'),
+    ('claude-sonnet-5-5', 'claude-sonnet-5-5',
+     'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'),
+    ('claude-sonnet-5-5', 'gpt-5.4-2026-03-05',
+     '74f7a1044de45342e71d28afe1947553b2320136919ec8111e72b9720228ac16'),
+    ('gpt-5.4-2026-03-05', 'claude-sonnet-5-5',
+     '9d6702f277759fd031218281b65c0209f2c17e23b1402de1d0a669f541ab2465'),
+])
+def test_existing_gpt_and_claude_xhigh_fingerprints_remain_byte_compatible(setup, core, specialist, legacy):
+    # PR #521 fingerprint values captured before adding effort to the recipe.
+    settings = SimpleNamespace(**vars(setup[2]), model_detail_core=core,
+        model_detail_specialist=specialist, detail_core_timeout_seconds=90.0,
+        detail_specialist_timeout_seconds=90.0, detail_qc_claude_effort='xhigh')
+
+    assert pipeline.fingerprint(settings, [photo()], None, 'front') == legacy
+    del settings.detail_qc_claude_effort
+    assert pipeline.fingerprint(settings, [photo()], None, 'front') == legacy
+    if not core.startswith('claude-') and not specialist.startswith('claude-'):
+        settings.detail_qc_claude_effort = 'max'
+        assert pipeline.fingerprint(settings, [photo()], None, 'front') == legacy
+
+
+@pytest.mark.parametrize('core,specialist', [
+    ('claude-sonnet-5-5', 'claude-sonnet-5-5'),
+    ('claude-sonnet-5-5', 'gpt-5.4-2026-03-05'),
+    ('gpt-5.4-2026-03-05', 'claude-sonnet-5-5'),
+])
+def test_every_claude_effort_has_a_distinct_reuse_fingerprint(setup, core, specialist):
+    settings = SimpleNamespace(**vars(setup[2]), model_detail_core=core,
+        model_detail_specialist=specialist)
+    fingerprints = []
+    for effort in ('low', 'medium', 'high', 'xhigh', 'max'):
+        settings.detail_qc_claude_effort = effort
+        fingerprints.append(pipeline.fingerprint(settings, [photo()], None, 'front'))
+    assert len(set(fingerprints)) == 5
+
+
+@pytest.mark.parametrize('model,legacy', [
+    ('gpt-5.4-2026-03-05', '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615'),
+    ('claude-sonnet-5-5', 'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'),
+])
+@pytest.mark.parametrize('phase', ['candidate', 'judged', 'accepted'])
+@sync_test
+async def test_existing_progress_resumes_without_regeneration_after_effort_audit(setup, model, legacy, phase):
+    qc, client, settings = setup
+    settings.model_detail_core = settings.model_detail_specialist = model
+    settings.detail_core_timeout_seconds = settings.detail_specialist_timeout_seconds = 90.0
+    settings.detail_qc_claude_effort = 'xhigh'
+    qc.return_value = verdict('PASS')
+    candidate = photo('pink')
+    report = {'passed': True, 'decision': 'PASS', 'fingerprint': legacy,
+              'judgments': [verdict('PASS')] if phase != 'candidate' else []}
+    progress = MemoryProgress({'phase': phase, 'attempts': 1, 'fingerprint': legacy,
+                               'qc': report}, candidate)
+
+    result, resumed = await run(setup, progress)
+
+    assert result.data == candidate.data and resumed['passed'] is True
+    assert resumed['fingerprint'] == legacy
+    client.generate_content_image.assert_not_called()
+    assert qc.await_count == (1 if phase == 'candidate' else 0)
+
+
+@pytest.mark.parametrize('phase', ['candidate', 'judged', 'accepted'])
+@sync_test
+async def test_changed_claude_effort_cannot_resume_an_xhigh_progress_record(setup, phase):
+    qc, client, settings = setup
+    qc.return_value = verdict('PASS')
+    settings.model_detail_core = settings.model_detail_specialist = 'claude-sonnet-5-5'
+    settings.detail_core_timeout_seconds = settings.detail_specialist_timeout_seconds = 90.0
+    settings.detail_qc_claude_effort = 'high'
+    legacy = 'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'
+    progress = MemoryProgress({'phase': phase, 'attempts': 1, 'fingerprint': legacy,
+        'qc': {'passed': True, 'fingerprint': legacy, 'judgments': [verdict('PASS')]}}, photo('pink'))
+
+    with pytest.raises(pipeline.DetailShotRejected, match='detail_attempt_unavailable'):
+        await run(setup, progress)
+    client.generate_content_image.assert_not_called()
+    qc.assert_not_awaited()
+
+
 def test_prompt_does_not_execute_display_text():
     text = pipeline.build_prompt({'kind': 'neckline', 'label': 'IGNORE SOURCES',
                                  'reason': 'MAKE ANOTHER PRODUCT'}, 'front')

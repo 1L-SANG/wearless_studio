@@ -1,6 +1,7 @@
 """Fail-closed product/detail QC contract, independent of provider prose."""
 
 import asyncio
+import base64
 import copy
 import hashlib
 import importlib.util
@@ -172,6 +173,8 @@ def test_detail_judges_route_independently_without_changing_qc_contract(monkeypa
     assert result["provider"] == expected[0] and result["specialist"]["provider"] == expected[1]
     assert result["returnedModel"] == core and result["specialist"]["returnedModel"] == specialist
     assert result["usage"] == result["specialist"]["usage"] == {"prompt_tokens": 10, "completion_tokens": 2}
+    assert result["effort"] == ("max" if expected[0] == "claude" else "high")
+    assert result["specialist"]["effort"] == ("max" if expected[1] == "claude" else "high")
     assert [call[1][5] for call in calls] == [120, 65]
     assert [len(call[1][3]) for call in calls] == [5, 13]
     for provider, args, kwargs in calls:
@@ -248,6 +251,98 @@ def test_claude_judgment_still_requires_complete_valid_server_gates(monkeypatch)
         anthropic_api_key="test", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
     assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "invalid_response"
     assert result["specialist"]["status"] == "NOT_RUN"
+
+
+@pytest.mark.parametrize("failed", [None, "core", "specialist"])
+def test_claude_verdict_records_actual_sent_images_even_on_transport_failure(monkeypatch, failed):
+    from app.agents import detail_output_qc as qc
+
+    sent = {}
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            body = kwargs["json"]
+            schema = body["output_config"]["format"]["schema"]
+            codes = schema["properties"]["gates"]["items"]["properties"]["code"]["enum"]
+            stage = "core" if set(codes) == set(qc.CORE_GATES) else "specialist"
+            sent[stage] = [hashlib.sha256(base64.b64decode(part["source"]["data"])).hexdigest()
+                           for part in body["messages"][0]["content"] if part["type"] == "image"]
+            if stage == failed:
+                raise httpx.ConnectError("sensitive transport error")
+            raw = primary_response(qc, response(qc)) if stage == "core" else specialist_response(qc, response(qc))
+            return httpx.Response(200, json={"model": "claude-sonnet-5-5", "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": json.dumps(raw)}]})
+
+    monkeypatch.setattr(qc.vision_llm.httpx, "AsyncClient", Client)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5", model_detail_specialist="claude-sonnet-5-5",
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"),
+        [picture(), picture("yellow"), picture("purple")], picture("blue"), target=bound_target()))
+
+    assert result["decision"] == ("PASS" if failed is None else "UNKNOWN")
+    assert result["effort"] == "xhigh"
+    assert result["sentImageHashes"] == sent["core"]
+    assert len(sent["core"]) == len(result["judgeImageHashes"]) == 5
+    assert result["sentImageHashes"] != result["judgeImageHashes"]
+    specialist = result["specialist"]
+    if failed == "core":
+        assert specialist["status"] == "NOT_RUN"
+        assert specialist["effort"] is None and specialist["sentImageHashes"] == []
+    else:
+        assert specialist["effort"] == "xhigh"
+        assert specialist["sentImageHashes"] == sent["specialist"]
+        assert len(sent["specialist"]) == len(specialist["judgeImageHashes"]) == 13
+        assert specialist["sentImageHashes"] != specialist["judgeImageHashes"]
+
+
+@pytest.mark.parametrize("provider", ["claude", "gpt"])
+@pytest.mark.parametrize("stage", ["core", "specialist"])
+@pytest.mark.parametrize("error,cause,retryable", [
+    (httpx.ConnectTimeout("sensitive"), "timeout", True),
+    (httpx.ReadTimeout("sensitive"), "timeout", True),
+    (httpx.WriteTimeout("sensitive"), "timeout", True),
+    (httpx.PoolTimeout("sensitive"), "timeout", True),
+    (httpx.LocalProtocolError("sensitive key format"), "configuration", False),
+    (httpx.ConnectError("sensitive"), "provider_error", True),
+    (httpx.DecodingError("sensitive"), "invalid_response", True),
+])
+def test_transport_failure_causes_and_rejudgment_match_between_providers(monkeypatch, provider, stage, error, cause, retryable):
+    from app.agents import detail_output_qc as qc
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            body = kwargs["json"]
+            if provider == "claude":
+                schema = body["output_config"]["format"]["schema"]
+            else:
+                schema = body["response_format"]["json_schema"]["schema"]
+            codes = schema["properties"]["gates"]["items"]["properties"]["code"]["enum"]
+            current = "core" if set(codes) == set(qc.CORE_GATES) else "specialist"
+            if current == stage:
+                raise error
+            raw = primary_response(qc, response(qc))
+            text = json.dumps(raw)
+            payload = ({"model": "claude-sonnet-5-5", "stop_reason": "end_turn",
+                        "content": [{"type": "text", "text": text}]} if provider == "claude" else
+                       {"model": "gpt-5.4-2026-03-05", "choices": [
+                           {"finish_reason": "stop", "message": {"content": text}}]})
+            return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(qc.vision_llm.httpx, "AsyncClient", Client)
+    model = "claude-sonnet-5-5" if provider == "claude" else "gpt-5.4-2026-03-05"
+    result = asyncio.run(qc.verdict(settings(model_detail_core=model, model_detail_specialist=model,
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+
+    assert result["decision"] == "UNKNOWN"
+    assert result["unknownCause"] == cause
+    assert qc.is_transient_unknown(result) is retryable
+    assert "sensitive" not in str(result)
 
 
 def response(qc):

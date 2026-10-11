@@ -160,6 +160,12 @@ def fingerprint(settings, sources, target, direction, style_reference=None, *, f
              'style': hashlib.sha256(style_reference.data).hexdigest() if style_reference else None,
              'target': target, 'direction': direction,
              'framingSourceIndex': framing_source_index}
+    # 기존 GPT와 Claude xhigh의 원장 및 최종 체크포인트 지문은 그대로 유지한다.
+    # Claude를 쓰는 경우에만 비기본 effort를 추가해 다른 검수 강도의 통과본을 구별한다.
+    effort = getattr(settings, 'detail_qc_claude_effort', 'xhigh')
+    if effort != 'xhigh' and any(isinstance(model, str) and model.startswith('claude-')
+                               for model in (value['coreJudge'], value['specialist'])):
+        value['claudeQcEffort'] = effort
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

@@ -10,13 +10,17 @@
 import asyncio
 import contextlib
 import types
+from dataclasses import replace
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from app import repo
 from app.agents import cut_generator as cg
 from app.agents import face_angle_swap as angle
 from app.agents import face_identity as fi
+from app.agents import detail_shot_pipeline
 from app.agents.gemini_image import InlineImage
 from app.r2 import PRIVATE_NO_STORE
 from app.workers import cut_checkpoints as ckpts
@@ -372,6 +376,56 @@ def test_detail_final_reuse_requires_same_accepted_policy(monkeypatch, verdict, 
         assert (await next_store.for_verified_detail('changed-policy', 'detail1')).final is None
         assert (await next_store.for_verified_detail('source-target-policy', 'different-block')).final is None
         assert same.base.image is None  # Never reuse an unjudged/rejected candidate.
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('model,legacy_fingerprint,legacy_digest', [
+    ('gpt-5.4-2026-03-05',
+     '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615',
+     'fa11fd7e289d12e50ed4ccaa0b5f1bbf3a3519df8d4458704aa927dd7192e97b'),
+    ('claude-sonnet-5-5',
+     'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6',
+     '3bfac1bddf5dfb57d35b396f968f10009c8b0527072d556f2d64226f83e1c9c9'),
+])
+def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects_changed_claude(monkeypatch, model, legacy_fingerprint, legacy_digest):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    settings = _settings(model_product_detail='gpt-image-2.5-sunburst', detail_cut_image_size='2K',
+        model_detail_core=model, model_detail_specialist=model,
+        detail_core_timeout_seconds=90.0, detail_specialist_timeout_seconds=90.0,
+        detail_qc_claude_effort='xhigh')
+    app = _app(settings, _R2())
+    encoded = BytesIO()
+    Image.new('RGB', (160, 200), 'gray').save(encoded, format='PNG')
+    source = InlineImage('image/png', encoded.getvalue())
+
+    async def exercise():
+        first = await _store(app, 'j1')
+        # The saved report predates effort and sent-image audit fields.
+        old = await first.for_verified_detail(legacy_fingerprint, 'detail1')
+        assert old.final_digest == legacy_digest
+        await old.save_final(b'CHECKED', 'image/png', {
+            'garmentQc': None, 'cutQc': {'passed': True, 'decision': 'PASS',
+                                      'fingerprint': legacy_fingerprint},
+            'warnings': [], 'neckRepair': None, 'facePass': {},
+        })
+        db.error_jobs.add('j1')
+        next_store = await _store(app, 'j2')
+        fp = detail_shot_pipeline.fingerprint(settings, [source], None, 'front')
+        same = await next_store.for_verified_detail(fp, 'detail1')
+        assert same.final_digest == legacy_digest
+        assert same.final is not None and same.final.image == b'CHECKED'
+        header, image = ckpts.unpack(app.state.r2.get_bytes(same.final.key))
+        assert header['digest'] == legacy_digest and image == b'CHECKED'
+
+        changed_settings = replace(settings, detail_qc_claude_effort='high')
+        changed_fp = detail_shot_pipeline.fingerprint(changed_settings, [source], None, 'front')
+        changed = await next_store.for_verified_detail(changed_fp, 'detail1')
+        if model.startswith('claude-'):
+            assert changed.final_digest != legacy_digest and changed.final is None
+        else:
+            assert changed.final_digest == legacy_digest and changed.final is not None
+
     asyncio.run(exercise())
 
 

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import copy
+import hashlib
 from io import BytesIO
 
 import httpx
@@ -144,6 +145,18 @@ def test_specialist_thirteen_images_remain_jpeg_at_original_dimensions(monkeypat
             assert image.size == (128 + i, 160 + i)
 
 
+def test_sent_image_metadata_hashes_the_actual_jpeg_request_bytes(monkeypatch):
+    seen = fake_client(monkeypatch)
+    images = [picture(mode="RGBA"), picture((80, 100)), picture((91, 117))]
+    metadata = {}
+    call(images=images, metadata=metadata)
+    parts = seen[0]["body"]["messages"][0]["content"][1:]
+    expected = [hashlib.sha256(base64.b64decode(part["source"]["data"])).hexdigest() for part in parts]
+    assert len(expected) == 3
+    assert metadata["sent_image_hashes"] == expected
+    assert expected != [hashlib.sha256(image.data).hexdigest() for image in images]
+
+
 def test_request_larger_than_limit_is_rejected_before_transport(monkeypatch):
     seen = fake_client(monkeypatch)
     monkeypatch.setattr(vision_llm, "_CLAUDE_MAX_REQUEST_BYTES", 100)
@@ -153,12 +166,14 @@ def test_request_larger_than_limit_is_rejected_before_transport(monkeypatch):
 
 
 def test_thinking_is_ignored_text_blocks_joined_and_usage_compatible(monkeypatch):
-    fake_client(monkeypatch, response(content=[{"type": "thinking", "thinking": "do not parse"},
+    seen = fake_client(monkeypatch, response(content=[{"type": "thinking", "thinking": "do not parse"},
                                              {"type": "text", "text": '{"gates":'},
                                              {"type": "text", "text": " []}"}]))
     metadata = {}
     assert call(metadata=metadata) == {"gates": []}
     assert metadata == {"requested_model": "claude-sonnet-5-5", "returned_model": "claude-sonnet-5-5",
+                        "sent_image_hashes": [hashlib.sha256(base64.b64decode(
+                            seen[0]["body"]["messages"][0]["content"][1]["source"]["data"])).hexdigest()],
                         "finish_reason": "end_turn", "usage": {
                             "input_tokens": 123, "output_tokens": 45, "cache_read_input_tokens": 10,
                             "prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168}}
@@ -224,13 +239,17 @@ def test_http_error_mapping_does_not_expose_response_body(monkeypatch, status, c
     assert "test-claude-key" not in str(exc.value) and "judge this" not in str(exc.value)
 
 
-@pytest.mark.parametrize("error", [httpx.ConnectError("sensitive network error"),
-                                  httpx.ReadTimeout("sensitive network error")])
-def test_network_errors_are_provider_errors_without_sensitive_text(monkeypatch, error):
+@pytest.mark.parametrize("error,cause", [
+    (httpx.ConnectError("sensitive network error"), "provider_error"),
+    (httpx.ReadTimeout("sensitive network error"), "timeout"),
+    (httpx.LocalProtocolError("sensitive key format"), "configuration"),
+    (httpx.DecodingError("sensitive response"), "invalid_response"),
+])
+def test_transport_errors_preserve_cause_without_sensitive_text(monkeypatch, error, cause):
     fake_client(monkeypatch, error=error)
     with pytest.raises(vision_llm.VisionError) as exc:
         call()
-    assert exc.value.unknown_cause == "provider_error"
+    assert exc.value.unknown_cause == cause
     assert "sensitive" not in str(exc.value)
 
 
