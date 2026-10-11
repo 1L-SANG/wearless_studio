@@ -5,25 +5,30 @@ import json
 import logging
 import time
 from collections import deque
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from hashlib import sha256
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from . import rate_limit
-from .agents import product_evidence_contract, detail_recommendations
+from .agents import product_evidence_contract, detail_recommendations, points_merge
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .client_ip import client_ip as _client_ip
 from .r2 import ext_for_mime
 from .routes import MAX_UPLOAD_BYTES
-from .workers.analyze_job import analyze_image_bytes
+from .workers.analyze_job import analyze_image_bytes, analyze_core_image_bytes, extract_image_features
 
 logger = logging.getLogger("wearless.public_analysis")
 
 MAX_PUBLIC_REQUEST_BYTES = 60 * 1024 * 1024
 PUBLIC_ANALYSIS_CONCURRENCY = 4
 _analysis_semaphore = asyncio.Semaphore(PUBLIC_ANALYSIS_CONCURRENCY)
+PUBLIC_FEATURE_CONCURRENCY = 4
+_feature_semaphore = asyncio.Semaphore(PUBLIC_FEATURE_CONCURRENCY)
 
 
 class PublicAnalysisSizeLimitRoute(APIRoute):
@@ -100,25 +105,8 @@ def _detected_image_mime(data: bytes) -> str | None:
     return None
 
 
-@router.post("/analyze", tags=["Public Analysis"], summary="비로그인 상품 사진 AI 분석")
-async def public_analyze(
-    request: Request,
-    images: list[UploadFile] = File(...),
-    slots: list[str] | None = Form(default=None),
-    productContext: str | None = Form(default=None),
-    authenticated_user: str | None = Depends(optional_user),
-):
-    """상품 사진 1~4장을 기존 AG-01 코어로 분석한다. 인증·프로젝트·DB 저장은 없다."""
-    # 비로그인은 IP, 로그인은 사용자 기준. 로그인 한도가 없으면 무료 가입 한 번으로 과금 LLM 을
-    # 끝없이 부를 수 있다(2026-10-02 보안 점검). 로그인 한도는 프로젝트 /analyze 와 나눠 쓴다.
-    if authenticated_user is None:
-        rate_limit.enforce(
-            getattr(request.app.state, "public_analysis_limiter", None), _client_ip(request))
-    else:
-        rate_limit.enforce(
-            getattr(request.app.state, "user_analysis_limiter", None),
-            rate_limit.user_key(authenticated_user))
-
+async def _read_analysis_inputs(images, slots, productContext):
+    """핵심·특징 요청이 같은 사진·슬롯·문맥 검증 규칙을 쓴다."""
     if not 1 <= len(images) <= 4:
         raise _bad_request("invalid_image_count", "상품 사진은 1장부터 4장까지 올려주세요.")
 
@@ -163,27 +151,72 @@ async def public_analyze(
         except (TypeError, ValueError):
             product = {}
 
-    if _analysis_semaphore.locked():
-        raise HTTPException(
-            status_code=429,
-            detail={"code": "analysis_busy", "message": "잠시 후 다시 시도해주세요."},
-        )
-    await _analysis_semaphore.acquire()
+    return source_images, product
+
+
+def _validate_run_id(run_id):
+    if not points_merge.valid_run_id(run_id):
+        raise _bad_request("invalid_run_id", "분석 실행 정보가 올바르지 않아요.")
+
+
+def _enforce_public_limit(request, authenticated_user, kind):
+    # 비회원은 IP, 로그인은 사용자별 한도다. 기존 분석은 프로젝트 분석과 한도를 공유한다.
+    if authenticated_user is None:
+        limiter_name, key = f"public_{kind}_limiter", _client_ip(request)
+    else:
+        limiter_name, key = f"user_{kind}_limiter", rate_limit.user_key(authenticated_user)
+    rate_limit.enforce(getattr(request.app.state, limiter_name, None), key)
+
+
+@asynccontextmanager
+async def _public_slot(request, authenticated_user, semaphore, kind):
+    # 빈 슬롯이 없으면 한도를 차감하지 않고 즉시 거절한다. 획득 뒤에는 항상 반환한다.
+    if semaphore.locked():
+        raise HTTPException(status_code=429, detail={
+            "code": "analysis_busy", "message": "잠시 후 다시 시도해주세요.",
+        })
+    await semaphore.acquire()
     try:
-        core = await analyze_image_bytes(
-            request.app.state.settings,
-            source_images,
-            product=product,
-            slots=slots,
-            persist_confirmed_evidence=True,
-        )
-    except VisionError:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "analysis_failed", "message": "상품 분석에 실패했어요. 다시 시도해 주세요."},
-        ) from None
+        _enforce_public_limit(request, authenticated_user, kind)
+        yield
     finally:
-        _analysis_semaphore.release()
+        semaphore.release()
+
+
+def _handoff_unavailable():
+    return HTTPException(status_code=503, detail={
+        "code": "analysis_handoff_unavailable",
+        "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    })
+
+
+@router.post("/analyze", tags=["Public Analysis"], summary="비로그인 상품 사진 AI 분석")
+async def public_analyze(
+    request: Request,
+    images: list[UploadFile] = File(...),
+    slots: list[str] | None = Form(default=None),
+    productContext: str | None = Form(default=None),
+    parts: str | None = Form(default=None),
+    runId: str | None = Form(default=None),
+    authenticated_user: str | None = Depends(optional_user),
+):
+    """parts가 없으면 기존 분석, core면 AG-01과 사진 일치만 기다린다."""
+    if (parts is not None and parts != "core") or (parts is None and "parts" in await request.form()):
+        raise _bad_request("invalid_parts", "분석 범위가 올바르지 않아요.")
+    if parts == "core":
+        _validate_run_id(runId)
+    async with _public_slot(request, authenticated_user, _analysis_semaphore, "analysis"):
+        source_images, product = await _read_analysis_inputs(images, slots, productContext)
+        analyze = analyze_core_image_bytes if parts == "core" else analyze_image_bytes
+        try:
+            core = await analyze(
+                request.app.state.settings, source_images, product=product, slots=slots,
+                persist_confirmed_evidence=True,
+            )
+        except VisionError:
+            raise HTTPException(status_code=502, detail={
+                "code": "analysis_failed", "message": "상품 분석에 실패했어요. 다시 시도해 주세요.",
+            }) from None
     data = dict(core["result_data"])
     evidence = (core.get("analysis_payload") or {}).get(
         product_evidence_contract.PERSISTED_KEY
@@ -219,4 +252,107 @@ async def public_analyze(
                 "code": "analysis_handoff_unavailable",
                 "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
             }) from None
+    if parts == "core":
+        try:
+            data["pointsTicket"] = points_merge.issue_ticket(
+                points_merge.POINTS_PURPOSE, runId, data.get("aiSuggestedPoints") or [],
+                request.app.state.settings.r2_secret_access_key,
+            )
+        except points_merge.PointsTicketError:
+            raise _handoff_unavailable() from None
     return JSONResponse({"data": data})
+
+
+@router.post("/analyze/features", tags=["Public Analysis"], summary="상품 강조 특징과 디테일 추천 분석")
+async def public_analyze_features(
+    request: Request,
+    images: list[UploadFile] = File(...),
+    slots: list[str] | None = Form(default=None),
+    productContext: str | None = Form(default=None),
+    runId: str | None = Form(default=None),
+    attempt: str | None = Form(default=None),
+    authenticated_user: str | None = Depends(optional_user),
+):
+    _validate_run_id(runId)
+    if attempt is not None and attempt not in ("1", "2", "3"):
+        raise _bad_request("invalid_attempt", "분석 시도 번호가 올바르지 않아요.")
+    attempt_number = int(attempt or "1")
+    started = time.perf_counter()
+    provider, model, point_status, detail_status = None, None, "empty", "unavailable"
+    point_count, candidate_count, outcome = 0, 0, "failed"
+    try:
+        async with _public_slot(request, authenticated_user, _feature_semaphore, "feature"):
+            source_images, product = await _read_analysis_inputs(images, slots, productContext)
+            settings = request.app.state.settings
+            try:
+                features = await extract_image_features(
+                    replace(settings, analysis_model_order="gemini"), source_images, product=product, slots=slots)
+            except VisionError:
+                raise HTTPException(status_code=502, detail={
+                    "code": "feature_extraction_failed", "message": "상품 특징 분석에 실패했어요. 다시 시도해 주세요.",
+                }) from None
+        points, contract, provider = features["points"], features["contract"], features["provider"]
+        model = settings.model_text if provider == "gpt" else (settings.model_text_gemini_features or settings.model_text_gemini)
+        point_status, point_count = "ready" if points else "empty", len(points)
+        detail_status, candidate_count = contract["status"], len(contract["candidates"])
+        try:
+            data = {
+                "points": {"status": point_status, "items": list(points)},
+                detail_recommendations.PERSISTED_KEY: detail_recommendations.public_summary(contract),
+                detail_recommendations.HANDOFF_KEY: detail_recommendations.issue_handoff(contract, settings.r2_secret_access_key),
+                "featureTicket": points_merge.issue_ticket(points_merge.FEATURE_PURPOSE, runId, points, settings.r2_secret_access_key),
+            }
+        except (detail_recommendations.DetailRecommendationError, points_merge.PointsTicketError):
+            raise _handoff_unavailable() from None
+        outcome = "success"
+        return JSONResponse({"data": data})
+    except HTTPException as exc:
+        outcome = exc.detail["code"]
+        raise
+    finally:
+        logger.info(
+            "public features duration_ms=%d points_status=%s points_count=%d detail_status=%s candidates=%d provider=%s model=%s attempt=%d run_hash=%s result=%s",
+            round((time.perf_counter() - started) * 1000), point_status, point_count,
+            detail_status, candidate_count, provider, model, attempt_number,
+            sha256(runId.encode()).hexdigest()[:12], outcome,
+        )
+
+
+@router.post("/analyze/points-merge", tags=["Public Analysis"], summary="같은 실행의 강조 특징 합치기 판정")
+async def public_points_merge(
+    request: Request,
+    body: object = Body(default=None),
+    authenticated_user: str | None = Depends(optional_user),
+):
+    started = time.perf_counter()
+    refine_count, new_count, outcome = 0, 0, "invalid_points_ticket"
+    try:
+        if not isinstance(body, dict):
+            raise points_merge.PointsTicketError("points_ticket_invalid")
+        run_id = body.get("runId")
+        secret = request.app.state.settings.r2_secret_access_key
+        early = points_merge.verify_ticket(body.get("pointsTicket"), secret, points_merge.POINTS_PURPOSE, run_id)
+        late = points_merge.verify_ticket(body.get("featureTicket"), secret, points_merge.FEATURE_PURPOSE, run_id)
+        _enforce_public_limit(request, authenticated_user, "merge")
+        try:
+            decisions = await points_merge.merge_points(request.app.state.settings, early, late)
+        except points_merge.PointsMergeError as exc:
+            outcome = str(exc)
+            raise HTTPException(status_code=503, detail={
+                "code": "points_merge_unavailable", "message": "상품 특징을 합치지 못했어요. 잠시 후 다시 시도해 주세요.",
+            }) from None
+        refine_count = sum(row["action"] == "refine" for row in decisions)
+        new_count = sum(row["action"] == "new" for row in decisions)
+        outcome = "success" if early and late else "model_skipped"
+        return JSONResponse({"data": {"decisions": decisions}})
+    except points_merge.PointsTicketError:
+        raise _bad_request("invalid_points_ticket", "분석 특징의 서명 정보가 올바르지 않아요.") from None
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            outcome = exc.detail["code"]
+        raise
+    finally:
+        logger.info(
+            "public points merge duration_ms=%d refine=%d new=%d result=%s",
+            round((time.perf_counter() - started) * 1000), refine_count, new_count, outcome,
+        )
