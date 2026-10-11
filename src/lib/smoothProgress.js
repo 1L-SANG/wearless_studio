@@ -98,14 +98,19 @@ const ANALYSIS_TAIL = PROGRESS_CEILING - ANALYSIS_LINEAR_END;
 const ANALYSIS_TAIL_K = ANALYSIS_TAIL / ANALYSIS_RATE;
 
 /** elapsedMs 는 마운트부터의 시간. 결과가 오면 그 시각과 표시값을 고정해 이어간다. */
-export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue = 0 }) {
+export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue = 0, fastEntry = false }) {
+  // 핵심 분석 실측 중간 5.6초와 느린 10% 6.7초에 맞춰 5.6초에 80%를 지난다.
+  const rate = fastEntry ? 80 / 5600 : ANALYSIS_RATE;
+  const linearMs = ANALYSIS_LINEAR_END / rate;
+  const tailK = ANALYSIS_TAIL / rate;
+  const finishMaxRate = fastEntry ? rate * 2.5 : ANALYSIS_FINISH_MAX_RATE;
   const elapsed = Math.max(0, elapsedMs);
   if (resultAtMs !== null && elapsed >= resultAtMs) {
-    const v0 = resultAtMs <= ANALYSIS_LINEAR_MS
-      ? ANALYSIS_RATE
-      : ANALYSIS_TAIL * ANALYSIS_TAIL_K / (resultAtMs - ANALYSIS_LINEAR_MS + ANALYSIS_TAIL_K) ** 2;
-    const vf = Math.max(ANALYSIS_RATE,
-      Math.min(ANALYSIS_FINISH_MAX_RATE, (100 - resultValue) / ANALYSIS_FINISH_TARGET_MS));
+    const v0 = resultAtMs <= linearMs
+      ? rate
+      : ANALYSIS_TAIL * tailK / (resultAtMs - linearMs + tailK) ** 2;
+    const vf = Math.max(rate,
+      Math.min(finishMaxRate, (100 - resultValue) / ANALYSIS_FINISH_TARGET_MS));
     const age = elapsed - resultAtMs;
     const ramp = ANALYSIS_FINISH_RAMP_MS;
     if (age <= ramp) {
@@ -114,10 +119,10 @@ export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue
     }
     return Math.min(100, resultValue + v0 * ramp + (vf - v0) * ramp / 2 + vf * (age - ramp));
   }
-  if (elapsed <= ANALYSIS_LINEAR_MS) return elapsed * ANALYSIS_RATE;
+  if (elapsed <= linearMs) return elapsed * rate;
 
-  const age = elapsed - ANALYSIS_LINEAR_MS;
-  return ANALYSIS_LINEAR_END + ANALYSIS_TAIL * age / (age + ANALYSIS_TAIL_K);
+  const age = elapsed - linearMs;
+  return ANALYSIS_LINEAR_END + ANALYSIS_TAIL * age / (age + tailK);
 }
 
 /* 한 프레임 진행 — 상태를 받아 다음 상태를 돌려주는 순수 리듀서. 훅은 이걸 rAF 로 돌리기만 한다. */

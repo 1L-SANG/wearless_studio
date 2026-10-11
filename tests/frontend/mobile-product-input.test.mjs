@@ -1,3 +1,4 @@
+import { isAnalysisFastEntryEnabled } from '../../src/lib/analysisFastEntry.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -68,6 +69,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
+    isAnalysisFastEntryEnabled,
     useClientErrorCapture() {}, ClientErrorCapture: () => null, recordClientAction() {},
     ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',

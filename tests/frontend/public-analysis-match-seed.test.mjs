@@ -33,3 +33,9 @@ test('첫 공개 분석 결과에 매칭 후보가 채워지고 하나가 기본
   assert.ok(out.matchClothing.every((item) => item.clothingType === 'bottom'), '상의에는 하의 후보가 와야 한다');
   assert.equal(out.matchClothing.filter((item) => item.selected).length, 1, '기본 선택 하나');
 });
+
+test('새 실행과 사진 검사가 실패하면 공개 응답을 로컬에 저장하지 않는다', async () => {
+  let writes = 0;
+  const out = await analyzePublicDraft({}, { isCurrent: () => false }, { remote: { publicAnalyze: async () => ({ sellingPoints: ['stale'] }) }, local: { saveAnalysis: async () => { writes++; } } });
+  assert.equal(writes, 0); assert.equal(out, null);
+});

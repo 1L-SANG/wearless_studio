@@ -1,3 +1,5 @@
+import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/analysis — ② AI 분석·세부 확인 (PRD §6)
@@ -69,6 +71,7 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     let raf = 0;
     const tick = () => {
       const value = analysisWaitProgress({
+        fastEntry: isAnalysisFastEntryEnabled(),
         elapsedMs: performance.now() - startedAtRef.current,
         resultAtMs: resultRef.current?.at ?? null,
         resultValue: resultRef.current?.value ?? 0,
@@ -83,7 +86,7 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
   useEffect(() => {
     if (!done || resultRef.current !== null) return;
     const elapsedMs = performance.now() - startedAtRef.current;
-    resultRef.current = { at: elapsedMs, value: analysisWaitProgress({ elapsedMs }) };
+    resultRef.current = { at: elapsedMs, value: analysisWaitProgress({ fastEntry: isAnalysisFastEntryEnabled(), elapsedMs }) };
   }, [done]);
 
   useEffect(() => {
@@ -605,6 +608,7 @@ export function AnalysisForm({
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
+    if (isAnalysisFastEntryEnabled()) return;
     const ai = a.aiSuggestedPoints || [];
     const missing = ai.filter((p) => !a.sellingPoints.includes(p));
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, SELLING_POINTS_MAX) });
@@ -694,6 +698,20 @@ export function AnalysisForm({
     return () => clearInterval(interval);
   }, [hasPendingCutout, projectId, applyMatchClothingRefresh]);
 
+  const [highlightedPoints, setHighlightedPoints] = useState([]);
+  const featureRun = isAnalysisFastEntryEnabled() ? getActiveFeatureRun() : null;
+  useEffect(() => {
+    if (!featureRun) return undefined;
+    void featureRun.setEditing(spEditIdx !== null || !!spDraft.trim());
+    return undefined;
+  }, [featureRun, spEditIdx, spDraft]);
+  useEffect(() => () => { void featureRun?.setEditing(false); }, [featureRun]);
+  useEffect(() => {
+    if (!isAnalysisFastEntryEnabled() || a.featureRun?.stage !== 'applied' || !a.featureRun.changedPoints?.length) return undefined;
+    setHighlightedPoints(a.featureRun.changedPoints);
+    const timer = setTimeout(() => setHighlightedPoints([]), 3000);
+    return () => clearTimeout(timer);
+  }, [a.featureRun?.stage, a.featureRun?.changedPoints]);
   const commitSp = () => {
     const t = spDraft.trim();
     if (!t) { setSpAdding(false); setSpDraft(''); return; }
@@ -704,7 +722,7 @@ export function AnalysisForm({
   // 편집 대상 인덱스를 ref 로도 들고 있는다 — blur 핸들러가 "지금 열린 편집이 내 것인가"를
   // 즉시(리렌더 전에) 판단해야 한다. 아래 mousedown 커밋과 짝이다.
   const spEditIdxRef = useRef(null);
-  const startEditSp = (i) => { spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
+  const startEditSp = (i) => { if (isAnalysisFastEntryEnabled()) void getActiveFeatureRun()?.setEditing(true); spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
   const cancelEditSp = () => { spEditIdxRef.current = null; setSpEditIdx(null); setSpEditDraft(''); };
   // Enter 로 확정하면 이어서 blur 도 오는데, 인덱스를 먼저 비워 두 번 반영되지 않게 한다.
   // confirmed=false(포커스 이탈)일 때 빈 문구는 삭제가 아니라 취소다: blur 로 목록이 줄면
@@ -714,6 +732,7 @@ export function AnalysisForm({
     const patch = applySellingPointEdit({
       sellingPoints: a.sellingPoints,
       aiSuggestedPoints: a.aiSuggestedPoints,
+      ...(isAnalysisFastEntryEnabled() ? { dismissedAiPoints: a.dismissedAiPoints || [] } : {}),
       index: spEditIdx,
       text: spEditDraft,
       allowDelete: confirmed,
@@ -1016,6 +1035,10 @@ export function AnalysisForm({
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
           <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
           <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
+        {isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) && (
+          <div className="sp-feature-status" role="status"><span className="sp-feature-progress" />AI가 특징을 더 자세히 보는 중</div>
+        )}
+        {highlightedPoints.length > 0 && <div className="sp-feature-status" role="status">더 정확한 특징으로 다듬었어요</div>}
         <div className="sp-chipwrap">
           {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
               포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
@@ -1038,7 +1061,7 @@ export function AnalysisForm({
                 </span>
               </span>
             ) : (
-              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}`} key={i}
+              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}${highlightedPoints.includes(p) ? ' feature-refined' : ''}`} key={i}
                 /* click 이 아니라 mousedown 에서 연다: blur 커밋이 먼저 일어나면 칩 폭이 바뀌어
                    레이아웃이 밀리고, mouseup 이 다른 요소에서 끝나 click 자체가 사라진다(실측). */
                 onMouseDown={(e) => {
@@ -1061,7 +1084,7 @@ export function AnalysisForm({
                 <button className="sp-chip-x" aria-label={`${p} 삭제`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) }); }}><Icon name="x" size={12} /></button>
+                  onClick={(e) => { e.stopPropagation(); onChange(applySellingPointEdit({ sellingPoints: a.sellingPoints, aiSuggestedPoints: a.aiSuggestedPoints, ...(isAnalysisFastEntryEnabled() ? { dismissedAiPoints: a.dismissedAiPoints || [] } : {}), index: i, text: '' })); }}><Icon name="x" size={12} /></button>
               </span>
             )
           ))}
@@ -1071,7 +1094,7 @@ export function AnalysisForm({
                 <span className="sp-draft-fit" data-value={spDraft || '특징 입력 후 Enter'}>
                   <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
                     maxLength={40} size={1} aria-label="새 특징 문구"
-                    onChange={(e) => setSpDraft(e.target.value)}
+                    onChange={(e) => { if (isAnalysisFastEntryEnabled()) void getActiveFeatureRun()?.setEditing(!!e.target.value.trim() || spEditIdxRef.current !== null); setSpDraft(e.target.value); }}
                     onKeyDown={(e) => {
                       if (isComposing(e)) return;
                       if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); }

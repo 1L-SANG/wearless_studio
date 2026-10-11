@@ -12,7 +12,7 @@ const INVISIBLE = /[\u200B-\u200D\uFEFF\u2060]/g;
 
 /** 저장·비교용 정규화. 조합형(NFD)·완성형(NFC) 한글이 섞이면 눈에 같은 글자가 다른
  *  문자열이 되어 중복 칩이 생긴다 — 둘 다 NFC 로 모은다. */
-function normalize(value) {
+export function normalizeSellingPoint(value) {
   return String(value ?? '').replace(INVISIBLE, '').normalize('NFC').trim();
 }
 
@@ -26,28 +26,32 @@ function normalize(value) {
  *    AI 제안이 아니고, 남겨두면 'AI 제안' 표식만 사라진 유령 항목이 원장에 남는다.
  */
 export function applySellingPointEdit({
-  sellingPoints, aiSuggestedPoints, index, text, allowDelete = true,
+  sellingPoints, aiSuggestedPoints, dismissedAiPoints, index, text, allowDelete = true,
 }) {
   const points = Array.isArray(sellingPoints) ? sellingPoints : [];
   if (!Number.isInteger(index) || index < 0 || index >= points.length) return null;
 
   const ai = Array.isArray(aiSuggestedPoints) ? aiSuggestedPoints : [];
   const prev = points[index];
-  const next = normalize(text);
-  if (next === normalize(prev)) return null;
+  const next = normalizeSellingPoint(text);
+  if (next === normalizeSellingPoint(prev)) return null;
 
   const withoutPrev = ai.filter((p) => p !== prev);
+  const dismissed = dismissedAiPoints && ai.some((p) => normalizeSellingPoint(p) === normalizeSellingPoint(prev))
+    ? { dismissedAiPoints: [...new Set([...dismissedAiPoints, prev])] } : {};
   if (!next) {
     if (!allowDelete) return null;
     return {
       sellingPoints: points.filter((_, i) => i !== index),
       aiSuggestedPoints: withoutPrev,
+      ...dismissed,
     };
   }
-  if (points.some((p, i) => i !== index && normalize(p) === next)) return null;
+  if (points.some((p, i) => i !== index && normalizeSellingPoint(p) === next)) return null;
 
   return {
     sellingPoints: points.map((p, i) => (i === index ? next : p)),
     aiSuggestedPoints: withoutPrev,
+    ...dismissed,
   };
 }

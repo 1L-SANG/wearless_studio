@@ -172,6 +172,25 @@ function editPlan(projectId, body) {
 
 export const mockAdapter = {
   ...base,
+  async analyzeProduct(projectId, options = {}) {
+    const result = await base.analyzeProduct(projectId, options);
+    if (options.parts !== 'core') return result;
+    const { detailRecommendations: _details, detailRecommendationsHandoff: _handoff, ...core } = result;
+    return { ...core, pointsTicket: { runId: options.runId, points: core.aiSuggestedPoints || [], signature: 'mock-points-ticket' } };
+  },
+  async analyzePublicFeatures({ runId }) {
+    const scale = Number(import.meta.env?.MOCK_API_LATENCY_SCALE ?? globalThis.process?.env?.MOCK_API_LATENCY_SCALE ?? 1);
+    await new Promise((resolve) => setTimeout(resolve, 6000 * scale));
+    const points = ['부드러운 원단과 촘촘한 짜임', '단정한 라운드넥'];
+    return { points: { status: 'ready', items: points },
+      detailRecommendations: { ...clone(DB.analysis.detailRecommendations || {}), version: 1, status: 'ready', candidates: clone(DB.analysis.detailRecommendations?.candidates || []) },
+      detailRecommendationsHandoff: { signature: 'mock-detail-handoff' },
+      featureTicket: { runId, points, signature: 'mock-feature-ticket' } };
+  },
+  async mergePublicPoints({ pointsTicket, featureTicket }) {
+    return { decisions: featureTicket.points.map((_, late) => late < pointsTicket.points.length
+      ? { late, action: 'refine', early: late } : { late, action: 'new', early: null }) };
+  },
   async getWardrobe(projectId) {
     const wardrobe = await base.getWardrobe(projectId);
     for (const images of Object.values(wardrobe)) for (const image of images) image.assetId = assetIdOf(image);

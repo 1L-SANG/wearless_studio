@@ -275,7 +275,7 @@ test('분석 컴포넌트는 마운트 시계와 최초 결과 앵커를 rAF에 
   assert.match(progressSource, /startedAtRef = useRef\(null\)/);
   assert.match(progressSource, /startedAtRef\.current \?\?= performance\.now\(\)/);
   assert.match(progressSource, /if \(!done \|\| resultRef\.current !== null\) return/);
-  assert.match(progressSource, /value: analysisWaitProgress\(\{ elapsedMs \}\)/);
+  assert.match(progressSource, /value: analysisWaitProgress\(\{ fastEntry: isAnalysisFastEntryEnabled\(\), elapsedMs \}\)/);
   assert.match(progressSource, /elapsedMs: performance\.now\(\) - startedAtRef\.current/);
   assert.match(progressSource, /resultAtMs: resultRef\.current\?\.at \?\? null/);
   assert.match(progressSource, /resultValue: resultRef\.current\?\.value \?\? 0/);
@@ -360,4 +360,12 @@ test('상태를 버리고 다시 시작하면(새 잡) 0 부터다', () => {
     serverProgress: 0, now: 20000, expectedMs: DETAIL,
   });
   assert.equal(fresh.displayed, 0, '새 잡은 0 에서 출발해야 한다');
+});
+
+
+test('빠른 분석 곡선은 5.6초에 80%를 지나고 6.7초와 긴 대기에서도 100%를 넘지 않는다', () => {
+  assert.equal(analysisWaitProgress({ elapsedMs: 5600, fastEntry: true }), 80);
+  assert.ok(analysisWaitProgress({ elapsedMs: 6700, fastEntry: true }) > 80);
+  assert.ok(analysisWaitProgress({ elapsedMs: 30000, fastEntry: true }) < 99);
+  assert.equal(analysisWaitProgress({ elapsedMs: 5600, fastEntry: false }), 56);
 });

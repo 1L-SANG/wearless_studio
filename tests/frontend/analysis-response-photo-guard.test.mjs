@@ -59,8 +59,8 @@ test('submit 과 진행 중 분석 복구 둘 다 그 패치를 쓴다', () => {
   assert.match(imports, /\banalysisResponseProductPatch\b/,
     '호출하는 가드를 ProductInput 이 실제로 import 해야 한다');
   assert.equal(
-    (src.match(/analysisResponseProductPatch\(/g) || []).length, 2,
-    '두 분석 경로(최초 submit·새로고침 복구)가 같은 가드를 지나야 한다',
+    (src.match(/analysisResponseProductPatch\(/g) || []).length, 3,
+    '최초 분석, 프로젝트 복구, 특징 실행 복원의 핵심 응답이 같은 가드를 지나야 한다',
   );
   assert.equal(src.includes('splitAnalysisEditPatch(a).productPatch'), false,
     '가드 없는 옛 경로가 남아 있으면 안 된다');
