@@ -376,8 +376,8 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
     res = client.get("/v1/projects/p1/wardrobe", headers=auth_headers(make_token))
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["col1"] == [{"id": "w1", "src": "/v1/assets/a1/file", "ai": True, "cutType": "styling"}]
-    assert body["misc"] == [{"id": "w2", "src": "/v1/assets/a2/file", "ai": False, "cutType": None}]
+    assert body["col1"] == [{"id": "w1", "assetId": "a1", "src": "/v1/assets/a1/file", "ai": True, "cutType": "styling"}]
+    assert body["misc"] == [{"id": "w2", "assetId": "a2", "src": "/v1/assets/a2/file", "ai": False, "cutType": None}]
 
 
 # ---------- 워커 ----------

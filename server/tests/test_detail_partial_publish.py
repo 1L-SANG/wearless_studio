@@ -176,14 +176,14 @@ def test_success_persists_same_partial_in_result_done_event_and_credit_metadata(
 
 def test_existing_active_retry_joins_without_creating_another_job():
     existing = {"id": "active", "status": "running"}
-    conn = Connection(None, None, existing)
+    conn = Connection(None, None, None, existing)
     assert asyncio.run(repo.create_job(conn, user_id="u", project_id="p", kind="editor_image",
         payload={"mode": "new", "retryBlockId": "b"}, idempotency_key="different-key",
         credits_reserved=19, metadata={})) == (existing, False)
     sql, args = conn.calls[0]
     assert "pg_advisory_xact_lock" in sql
     assert args == ("editor-image-request:u:p",)
-    lookup, params = conn.calls[3]
+    lookup, params = next((sql, args) for sql, args in conn.calls if "payload->>'retryBlockId' = %s" in sql)
     assert "payload->>'retryBlockId' = %s" in lookup
     assert "status in ('pending', 'running')" in lookup
     assert params == ("u", "p", "b")
@@ -191,7 +191,8 @@ def test_existing_active_retry_joins_without_creating_another_job():
 
 
 def test_same_idempotency_key_replays_its_original_job_even_after_a_later_retry_starts():
-    original = {"id": "original", "status": "done"}
+    original = {"id": "original", "status": "done", "kind": "editor_image", "project_id": "p",
+                "payload": {"mode": "new", "retryBlockId": "b"}}
     later = {"id": "later", "status": "running"}
     class RequestConnection(Connection):
         async def execute(self, sql, params):
@@ -210,7 +211,11 @@ def test_joined_request_key_replays_the_terminal_job_without_another_reservation
     class RequestsDB:
         def __init__(self):
             self.jobs = [{"id": "job-a", "status": "running", "idempotency_key": "p1:editor_image:A",
-                          "payload": {"retryBlockId": "cut"}, "metadata": {}}]
+                          "payload": {"id": "cut", "source": "ai", "cutType": "product", "taxonomyVersion": 3,
+                                      "contentRole": "productOverview", "sectionRole": "product", "direction": "front",
+                                      "shot": "ghost", "sideStyle": None, "faceExposure": None, "matchIds": [],
+                                      "outerClosureState": None, "exampleId": None, "exampleSelectionOrigin": None,
+                                      "mode": "new", "retryBlockId": "cut"}, "metadata": {}}]
             self.inserts = 0
             self.current = None
         def cursor(self): return self

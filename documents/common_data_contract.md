@@ -378,7 +378,7 @@ info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 �
 
 ```ts
 Wardrobe = Record<string /* colorId | 'misc' */, WardrobeImage[]>
-WardrobeImage { id: string, src: string, ai?: boolean, cutType: CutType | null, detailReshoot?: true }
+WardrobeImage { id: string, assetId: string, src: string, ai?: boolean, cutType: CutType | null, detailReshoot?: true }
 // detailReshoot: 자산에 원본 검수 레시피(detail_recipe 버전 1)가 있는 디테일컷. 현재 이미지 수정의 '같은 부위 다시 촬영' 대상. 아니면 필드를 생략한다.
 ```
 
@@ -557,17 +557,20 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }
-VaryRequest {                      // AI 탭 '현재 이미지 수정'
+VaryRequest {                      // 캔버스에서 고른 사진으로 새 컷 만들기
   mode: 'vary'
   retryBlockId?: string            // ADR-0017, 비슷한 컷 후속 빈 칸의 원본 사진 변형
-  variationMode?: 'similar'        // 착용 사진의 비슷한 컷(원본 분석, 동작 계획, 생성). 없으면 같은 부위 다시 촬영
-  source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
+  variationMode?: 'similar' | 'color' | 'closure' // 없으면 같은 부위 다시 촬영
+  source: { src: string, cutType?: CutType }   // 컷 종류는 서버 기록으로 확인
+  colorId?: string                // color일 때 목표 상품 색
+  outerClosureState?: OuterClosureState // closure일 때 목표 열림 정도
 }
 ```
 
-현재 이미지 수정 요청은 두 가지만 받는다(2026-10-10, ADR-0016 개정).
+현재 이미지 수정은 다음 요청을 받는다(2026-10-12, ADR-0020).
 
-- `variationMode='similar'`: 현재 프로젝트 소유의 착용 사진만 받는다. 원본 검수 레시피가 있는 디테일컷과 제품컷은 받지 않는다.
+- `variationMode='similar'`: 현재 프로젝트 소유의 착용 사진과 직접 올린 사진을 받는다. 업로드의 컷 종류를 모르면 `styling`으로 본다. 원본 검수 레시피가 있는 디테일컷과 제품컷은 받지 않는다. 사람이 없어 계획이 실패하면 차감하지 않는다.
+- `variationMode='color'`와 `variationMode='closure'`: 프로젝트의 AI 착용컷과 `assets.source='upload'` 사진을 고쳐 만든다. `Idempotency-Key`가 없으면 400 `idempotency_key_required`다. 제품컷과 디테일컷은 400 `edit_source_unsupported`이며 문구는 "이 사진에서는 색상과 열림 정도를 바꿀 수 없어요."다. 색은 상품 색 목록에 있어야 하며 400 `color_unknown`, 목표 색 사진이 없으면 409 `no_selected_color_images` "이 색 상품 사진이 없어요."다. 열림은 아우터이고 앞 여밈이 있어야 하며 아니면 400 `closure_unsupported`다. 다섯 값 중 하나를 받고 두 칸 여밈은 서버가 보정한다. 보정한 값이 현재 값과 같으면 400 `edit_same_value`다. 접수는 202 `{jobId}`이며 한 장은 `credit_cost_editor_image`(현재 19), 실패는 미차감이다. 완료는 기존 `{data, credits, creditsCharged}`이고 `data.assetId`가 포함된다.
 - `variationMode` 없음: 자산에 원본 검수 레시피(`assets.metadata.detail_recipe`, 버전 1)가 있는 디테일컷만 받는다. 같은 촬영 대상과 원본 면으로 다시 촬영한다. 고스트샷, 레시피 없는 제품컷, 착용 사진은 400 `vary_unsupported`이며 크레딧을 예약하지 않는다.
 
 변경값과 배경 참조는 없앴다. `changes`가 빈 배열이 아니거나 `refBg`, `refBgAssetId`가 있으면 400이다. 이전 클라이언트가 보내던 빈 `changes: []`는 받는다. 현재 이미지 수정은 컷 종류나 샷을 바꾸지 않으며, 디테일은 `새 이미지 추가`에서만 새로 만든다.
@@ -575,6 +578,10 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정'
 최초 원본과 이력은 서버가 실제 자산에서 조회한다. 클라이언트의 `_similarCut`은 버린다. 서버 payload `_similarCut={version:1,rootAssetId,sourceAssetId}`의 root는 처음 선택한 원본, source는 이번에 선택한 사진이다. 파생 결과에서 다시 생성해도 root 이미지를 사용하며, 같은 사용자·프로젝트 소유와 삭제 여부를 접수·실행 시 재검증한다.
 
 동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
+
+`editor_image`는 같은 중복 방지 키의 정규화한 요청 내용이 같으면 같은 작업을 돌려준다. 서버가 붙인 `_` 시작 필드는 비교에서 제외한다. 내용이 다르면 409 `idempotency_key_reused` "같은 요청 번호로 다른 내용이 왔어요. 다시 눌러 주세요."다. `mode='fill'`은 선택한 칸으로 비교하며 다른 키로 같은 칸의 진행 중 작업에 합류하는 동작을 유지한다.
+
+`POST /v1/projects/{projectId}/editor:asset-info`는 `{assetIds: string[]}`를 받는다. 최대 60개를 받고 중복을 제거하며 형식 오류는 400 `asset_ids_invalid`다. 프로젝트 소유를 확인하고 `asset_recipe.resolve_asset_recipes`로 읽어 200 `{items: Record<assetId, {kind, origin, cutType, colorId, realDerived, current, recipe}>}`를 돌려준다. `kind`는 `upload`, `worn`, `ghost`, `detail`, `product_unknown`, `unknown` 중 하나다. `current`는 `colorId`, `outerClosureState`, `direction`, `detailTargetId`를 담고 실제 값을 모르면 `null`이다. 업로드는 의류 색 그룹만 알 수 있다. `recipe`는 공용 생성 필드를 모두 담거나 `null`이다. 다른 프로젝트의 자산과 없는 자산은 `items`에서 빠진다.
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
 
@@ -681,7 +688,7 @@ generation: {
 }
 ```
 
-새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. G11은 에디터의 다섯 성공 종류를 쓰고 상세페이지의 `page`와 색상 변경, 열림 변경은 G6가 맡는다. 모든 비슷한 컷 결과는 원본 사진의 의류 색 그룹을 물려받는다.
+새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. 색상과 열림 편집은 `origin='editor_color'` 또는 `origin='editor_closure'`, `autoSelected=false`, 고른 원본의 `sourceAssetId`, `recipeFrom='anchor'`를 남긴다. 원본 레시피의 바꾼 필드만 고치며 레시피가 없으면 모든 필드를 `null`로 두고 바꾼 값만 채운다. 색상 결과의 의류 그룹은 목표 색이고 열림과 비슷한 컷은 원본의 의류 색 그룹을 물려받는다. 상세페이지의 `page` 기록은 후속 작업으로 미룬다.
 
 ---
 
