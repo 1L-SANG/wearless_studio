@@ -25,7 +25,8 @@ def _item(item_id, category="pants", clothing_type="bottom", **kwargs):
 def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_assets=(),
          missing_bytes=(), metadata=None, analysis=None, generate_errors=None, detail_errors=None,
          settings=None, checkpoint_db=None, r2=None, lease_lost=False, job_id="j1",
-         model_id=None, checkpoint_base_error=None, job_metadata=None, reserved=None):
+         model_id=None, checkpoint_base_error=None, job_metadata=None, reserved=None,
+         assemble_real=False):
     captured = {"events": [], "generated": {}, "cut_plans": [], "page_plans": [],
                 "metadata_lookups": [], "matching_lookups": [], "checkpoint_inputs": [],
                 "qc_fit_profiles": {}, "base_reused": False, "generation_attempts": []}
@@ -91,8 +92,11 @@ def _run(monkeypatch, blocks, recommendations=(), *, missing_rows=(), missing_as
     async def page_qc(config, plan, outputs, **kwargs):
         captured["page_plans"] = deepcopy(plan)
         return {"overall": "PASS"}
+    original_assemble = dpj.page_assembler.assemble
     def assemble(storyboard, cut_results, *args, **kwargs):
         captured["cut_results"] = cut_results
+        if assemble_real:
+            return original_assemble(storyboard, cut_results, *args, **kwargs)
         return [{"id": "editor", "elements": []}]
     async def finalize(conn, **kwargs):
         captured["success"] = kwargs
@@ -315,6 +319,42 @@ def test_matching_convergence_keeps_minimum_charge_and_all_card_fallbacks(monkey
     assert "partial" not in result["success"]["metadata"]
     assert result["success"]["cut_assets"][0]["metadata"]["fallback"] == [{
         "kind": "matching_substituted", "missingMatchId": "A", "substituteMatchId": "B"}]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_failed_matching_convergence_keeps_runtime_source_through_partial_publish(monkeypatch, reverse):
+    entries = {
+        "front-ref": {"cutType": "horizon", "direction": "front", "shot": "full",
+                      "all": "front.png", "pose": "front.png"},
+        "back-ref": {"cutType": "horizon", "direction": "back", "shot": "full",
+                     "all": "back.png", "pose": "back.png"},
+    }
+    monkeypatch.setattr(dpj.cut_generator, "load_example_asset_registry", lambda: (None, entries))
+    async def example(*args, **kwargs):
+        return dpj.InlineImage("image/png", b"REFERENCE")
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", example)
+    blocks = [_block("lost", matchIds=["A"], exampleId="front-ref", refScope="all"),
+              _block("intact", matchIds=["B"], exampleId="front-ref", refScope="all")]
+    if reverse:
+        blocks.reverse()
+    primary, duplicate = blocks[0]["id"], blocks[1]["id"]
+    blocks.append(_block("ok", direction="back", exampleId="back-ref", refScope="all"))
+    result = _run(monkeypatch, blocks, [_item("A"), _item("B")], missing_rows=["A"],
+                  generate_errors={primary: RuntimeError("temporary provider failure")},
+                  job_metadata={"aiCount": 3, "minCuts": 5}, reserved=95, assemble_real=True)
+    assert result["generation_attempts"] == [primary, "ok"]
+    partial = result["success"]["metadata"]["partial"]
+    failure = next(item for item in partial["failedCuts"] if item["blockId"] == duplicate)
+    assert failure == {"blockId": duplicate, "reason": "duplicate_cut_source_failed",
+                       "retryable": False, "sourceBlockId": primary}
+    event = next(payload for _, payload in result["events"]
+                 if payload.get("status") == "cut_failed" and payload.get("blockId") == duplicate)
+    assert event.get("sourceBlockId") == primary
+    image = next(element for block in result["success"]["editor_blocks"]
+                 for element in block["elements"] if element.get("sourceBlockId") == duplicate)
+    assert image.get("genFailSourceBlockId") == primary
+    assert image["genFailed"] is True and not image.get("src")
+    assert result["success"]["charge"] == 76
 
 
 @pytest.mark.parametrize("fail_other,expected_charge", [(False, 95), (True, 76)])

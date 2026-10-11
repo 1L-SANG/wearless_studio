@@ -50,7 +50,8 @@ export function applyDetailJobEvents(job, events) {
       }
       if (p.status === 'cut_failed') {
         live.delete(p.blockId); failed.add(p.blockId);
-        next.failedCutReasons[p.blockId] = { reason: p.reason || null, retryable: p.retryable };
+        next.failedCutReasons[p.blockId] = { reason: p.reason || null, retryable: p.retryable,
+          ...(p.sourceBlockId !== undefined ? { sourceBlockId: p.sourceBlockId } : {}) };
       }
       if (p.status === 'cut_checkpoint_reused' && p.stage === 'final') reused.add(p.blockId);
       if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];
@@ -63,9 +64,18 @@ export function applyDetailJobEvents(job, events) {
 }
 
 
-export function detailPageDonePatch(job) {
+export function detailPageDonePatch(job, current = {}) {
   const partial = job.result?.partial || null;
-  return { status: 'done', progress: 100, slow: false, partial };
+  const failedCuts = new Set(current.failedCuts || []);
+  const failedCutReasons = { ...current.failedCutReasons };
+  for (const cut of partial?.failedCuts || []) {
+    failedCuts.add(cut.blockId);
+    failedCutReasons[cut.blockId] = { ...failedCutReasons[cut.blockId],
+      reason: cut.reason || null, retryable: cut.retryable,
+      ...(cut.sourceBlockId !== undefined ? { sourceBlockId: cut.sourceBlockId } : {}) };
+  }
+  return { status: 'done', progress: 100, slow: false, partial,
+    failedCuts: [...failedCuts], failedCutReasons };
 }
 
 export function detailPageCompletionMessage(partial) {

@@ -190,9 +190,9 @@ test('AI 패널은 독립 실패의 다시 만들기와 원본이 필요한 칸�
   } finally { await server.close(); }
 });
 
-test('스토어의 실제 done 분기는 서버 partial과 잔액을 보관한다', async () => {
+test('스토어의 실제 done 분기는 partial과 잔액을 보관하고 이벤트의 실패 원본을 유지한다', async () => {
   const partial = { requestedCuts: 3, completedCuts: 2,
-    failedCuts: [{ blockId: 'failed', reason: 'provider_error', retryable: true }],
+    failedCuts: [{ blockId: 'failed', reason: 'duplicate_cut_source_failed', retryable: false }],
     quoteCredits: 95, creditsCharged: 76, creditsNotCharged: 19 };
   const server = await createServer({ root: fileURLToPath(new URL('../..', import.meta.url)),
     configFile: false, esbuild: { jsx: 'automatic' }, server: { middlewareMode: true, hmr: false, watch: null },
@@ -208,7 +208,8 @@ test('스토어의 실제 done 분기는 서버 partial과 잔액을 보관한�
         if (id === '\0partial-api') return `export const api = {
           startDetailPage: async () => ({jobId:'job'}),
           getJob: async () => ({status:'done', result:{credits:123, partial:${JSON.stringify(partial)}}}),
-          getJobEvents: async () => [],
+          getJobEvents: async () => ({events:[{id:1, type:'step', payload:{blockId:'failed',
+            status:'cut_failed', reason:'duplicate_cut_source_failed', retryable:false, sourceBlockId:'root'}}]}),
         };`;
       },
     }],
@@ -219,6 +220,9 @@ test('스토어의 실제 done 분기는 서버 partial과 잔액을 보관한�
     await useAppStore.getState().startDetailPageGeneration('project');
     assert.equal(useAppStore.getState().detailPageJob.status, 'done');
     assert.deepEqual(useAppStore.getState().detailPageJob.partial, partial);
+    assert.deepEqual(useAppStore.getState().detailPageJob.failedCutReasons.failed, {
+      reason: 'duplicate_cut_source_failed', retryable: false, sourceBlockId: 'root',
+    });
     assert.equal(useAppStore.getState().account.credits, 123);
   } finally { await server.close(); }
 });

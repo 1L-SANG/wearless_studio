@@ -603,7 +603,7 @@ export const useAppStore = create((set, get) => ({
       if (!job || !alive()) return;
       if (job.status === 'done') {
         get().syncCredits(job.result?.credits);
-        patch(detailPageDonePatch(job));
+        patch(detailPageDonePatch(job, get().detailPageJob));
         clearDetailPageJobMarker();
         notifyDetailPageDone(job.result?.partial);
         return;

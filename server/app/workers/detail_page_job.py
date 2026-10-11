@@ -451,8 +451,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     cut_checkpoints(workers/cut_checkpoints.CutCheckpointStore)가 오면 앞선 실패 잡이 남긴
     완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
     stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
-    async def _cut_failed(block, reason):
+    async def _cut_failed(block, reason, *, source_block_id=None):
         info = failure_info(reason)
+        if source_block_id is not None:
+            info["sourceBlockId"] = str(source_block_id)
         if failed_cuts is not None:
             failed_cuts[str(block.get("id"))] = info
         await _emit(app.state.pool, job["id"], "step", {
@@ -1350,7 +1352,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         block = prepared[i][0]
         if base is None:
             # 원본 생성 실패는 복제 칸에도 이유를 남긴다. 복제 칸은 과금 단위가 아니다.
-            await _cut_failed(block, "duplicate_cut_source_failed")
+            await _cut_failed(block, "duplicate_cut_source_failed",
+                              source_block_id=prepared[src][0].get("id"))
             outcomes.append(None)
             continue
         if base[1] is not None:
