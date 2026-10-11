@@ -3196,6 +3196,82 @@ async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends
     return wardrobe
 
 
+def _context_fill_response(payload: dict) -> dict | None:
+    record = payload.get("_contextFill")
+    if not isinstance(record, dict):
+        return None
+    source = payload.get("source") or {}
+    return {"slot": record["slot"], "label": record["label"], "path": record["path"],
+            "cutType": payload.get("cutType") or source.get("cutType"), "colorId": record.get("colorId")}
+
+
+async def _prepare_context_fill(conn, user_id: str, project_id: str, slot: dict) -> dict:
+    """저장된 칸과 사진으로 한 번 판단한다. 작업과 예약은 호출자가 만든다."""
+    from .agents import asset_recipe, context_fill
+
+    blocks = await repo.get_editor_blocks(conn, project_id)
+    block = next((b for b in blocks if b.get("id") == slot["blockId"]), None)
+    element = next((e for e in (block or {}).get("elements", []) if e.get("id") == slot["elementId"]), None)
+    if element is None:
+        raise HTTPException(status_code=409, detail={"code": "fill_slot_not_found",
+                            "message": "저장 중이에요. 잠시 뒤 다시 눌러 주세요."})
+    storyboard = await repo.get_storyboard(conn, project_id)
+    kind = context_fill.slot_kind(block, element, {b["id"]: b for b in storyboard if b.get("id")})
+    rejections = {
+        "filled": (409, "fill_slot_not_empty", "이미 사진이 들어 있는 칸이에요."),
+        "planned": (400, "fill_slot_planned", "이 칸은 원래 콘티대로 다시 만들어요."),
+        "pending": (400, "fill_slot_unsupported", "이 칸은 AI로 채울 수 없어요."),
+        "unsupported": (400, "fill_slot_unsupported", "이 칸은 AI로 채울 수 없어요."),
+    }
+    if kind in rejections:
+        status, code, message = rejections[kind]
+        raise HTTPException(status_code=status, detail={"code": code, "message": message})
+    if await repo.has_active_detail_page_job(conn, user_id, project_id):
+        raise HTTPException(status_code=409, detail={"code": "page_generation_active",
+                            "message": "상세페이지를 만드는 중이에요. 끝나면 눌러 주세요."})
+    previous_jobs = await repo.list_completed_context_fill_jobs(
+        conn, user_id, project_id, f"{slot['blockId']}:{slot['elementId']}",
+    )
+    asset_ids = {_asset_id_from_file_capability(e.get("src")) for b in blocks for e in b.get("elements", [])
+                 if e.get("type") == "image" and e.get("src")}
+    for job in previous_jobs:
+        data = (job.get("result") or {}).get("data") or {}
+        asset_ids.add(_asset_id_from_file_capability(data.get("src")))
+        source = (job.get("payload") or {}).get("source") or {}
+        asset_ids.add(_asset_id_from_file_capability(source.get("src")))
+    asset_ids.discard(None)
+    recipes = await asset_recipe.resolve_asset_recipes(conn, user_id, project_id, sorted(asset_ids))
+    ai_asset_ids = set()
+    for asset_id in sorted(asset_ids):
+        asset = await repo.get_project_asset_for_user(conn, user_id, project_id, asset_id)
+        if asset and asset.get("source") == "ai" and not (asset.get("metadata") or {}).get("detail_recipe"):
+            ai_asset_ids.add(asset_id)
+    previous_recipes = []
+    for job in previous_jobs:
+        old_payload = job.get("payload") or {}
+        data = (job.get("result") or {}).get("data") or {}
+        result_id = _asset_id_from_file_capability(data.get("src"))
+        source_id = _asset_id_from_file_capability((old_payload.get("source") or {}).get("src"))
+        recipe = (recipes.get(result_id) or {}).get("recipe")
+        if recipe is None and old_payload.get("mode") == "vary":
+            recipe = (recipes.get(source_id) or {}).get("recipe")
+        if recipe is None:
+            recipe = {key: old_payload.get(key) for key in content_roles.GENERATION_RECIPE_FIELDS}
+        previous_recipes.append({**recipe, "sourceAssetId": source_id,
+                                 "anchorAssetId": (old_payload.get("_contextFill") or {}).get("anchorAssetId")})
+    decision = context_fill.decide_context_fill(
+        project_id=project_id, slot=slot, blocks=blocks, storyboard=storyboard,
+        product=await repo.get_product(conn, project_id) or {},
+        analysis=await repo.get_analysis(conn, project_id) or {}, asset_recipes=recipes,
+        examples=cut_generator.load_example_asset_registry()[1], previous_recipes=previous_recipes,
+        attempt=len(previous_jobs), ai_asset_ids=ai_asset_ids,
+    )
+    if decision is None:
+        raise HTTPException(status_code=409, detail={"code": "fill_unavailable",
+                            "message": "이 칸에 만들 수 있는 컷이 없어요."})
+    return {**decision["payload"], "_contextFill": decision["contextFill"]}
+
+
 @router.post(
     "/projects/{project_id}/editor:generate-image",
     responses={
@@ -3226,6 +3302,14 @@ async def generate_editor_image(
       복원하며, 같은 빈 칸의 진행 중 작업에 합류해 새 크레딧을 예약하지 않습니다.
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
+    fill_requested = (body or {}).get("mode") == "fill"
+    if fill_requested:
+        slot = body.get("slot")
+        if (not idempotency_key or not idempotency_key.strip() or not isinstance(slot, dict)
+                or any(not isinstance(slot.get(key), str) or not slot[key].strip()
+                       for key in ("blockId", "elementId"))):
+            raise _bad_request("fill_slot_invalid", "이 칸을 찾지 못했어요.")
+        body = {"mode": "fill", "slot": {key: slot[key] for key in ("blockId", "elementId")}}
     _require_bg_examples_enabled(request, body)
     if (body or {}).get("mode") == "new" and (
         (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
@@ -3259,6 +3343,18 @@ async def generate_editor_image(
         payload = dict(body or {})
         payload.pop("_facemarket", None)
         payload.pop("_similarCut", None)
+        payload.pop("_contextFill", None)
+        if fill_requested:
+            slot = body["slot"]
+            existing = await repo.find_context_fill_job(
+                conn, user_id, project_id, scoped_key, f"{slot['blockId']}:{slot['elementId']}",
+            )
+            if existing is not None:
+                await conn.commit()
+                _wake_dispatcher(request)
+                return JSONResponse(status_code=202, content={"jobId": existing["id"],
+                    "contextFill": _context_fill_response(existing["payload"])})
+            payload = await _prepare_context_fill(conn, user_id, project_id, slot)
         if payload.get("retryBlockId"):
             from .agents import horizon_background
             try:
@@ -3470,7 +3566,8 @@ async def generate_editor_image(
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
             payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version})
+            metadata={"creditCostVersion": s.credit_cost_version,
+                      **({"contextFill": payload["_contextFill"]} if payload.get("_contextFill") else {})})
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -3478,7 +3575,13 @@ async def generate_editor_image(
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
     _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    if (fill_requested and s.facemarket_enabled and s.fm_real_model_generation != "off"
+            and payload.get("mode") == "new" and facemarket.is_real_model_id(selected_model_id)):
+        await facemarket.note_holder_demand(request.app, user_id=user_id, model_id=str(selected_model_id))
+    response = {"jobId": job["id"]}
+    if fill_requested:
+        response["contextFill"] = _context_fill_response(job.get("payload") or payload)
+    return JSONResponse(status_code=202, content=response)
 
 
 @router.post(

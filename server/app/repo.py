@@ -2331,6 +2331,21 @@ async def list_facemarket_scope_jobs(
     return sorted(rows, key=lambda row: (row["created_at"], row["id"]))
 
 
+async def _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key):
+    """선택한 작업이 완료되어도 새 접수 키는 그 작업을 가리킨다."""
+    if row is not None and row.get("idempotency_key") != idempotency_key:
+        keys = Json([idempotency_key])
+        await cur.execute(
+            "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || "
+            "jsonb_build_object('editorFillRequestKeys', "
+            "coalesce(metadata->'editorFillRequestKeys', '[]'::jsonb) || %s::jsonb) "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and not (coalesce(metadata->'editorFillRequestKeys', '[]'::jsonb) @> %s::jsonb)",
+            (keys, row["id"], user_id, project_id, keys),
+        )
+    return row
+
+
 async def create_job(
     conn: AsyncConnection,
     *,
@@ -2357,7 +2372,10 @@ async def create_job(
     """
     remember_request = kind == "mannequin" and bool(idempotency_key)
     retry_block_id = payload.get("retryBlockId") if kind == "editor_image" else None
+    context_fill = payload.get("_contextFill") if kind == "editor_image" else None
+    fill_slot_key = context_fill.get("slotKey") if isinstance(context_fill, dict) else None
     remember_editor_retry = bool(retry_block_id and idempotency_key)
+    remember_editor_fill = bool(fill_slot_key and idempotency_key)
 
     async def _by_key(cur):
         await cur.execute(
@@ -2381,6 +2399,13 @@ async def create_job(
                 (user_id, project_id, Json([idempotency_key])),
             )
             existing = await cur.fetchone()
+        if existing is None and remember_editor_fill:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and metadata->'editorFillRequestKeys' @> %s::jsonb",
+                (user_id, project_id, Json([idempotency_key])),
+            )
+            existing = await cur.fetchone()
         return existing
 
     async def _remember(cur, row):
@@ -2401,6 +2426,8 @@ async def create_job(
                 "and not (coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) @> %s::jsonb)",
                 (keys, row["id"], user_id, project_id, keys),
             )
+        if remember_editor_fill and row.get("idempotency_key") != idempotency_key:
+            await _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key)
         return row
 
     async def _active(cur):
@@ -2435,6 +2462,16 @@ async def create_job(
                 "and kind = 'editor_image' and status in ('pending', 'running') "
                 "and payload->>'retryBlockId' = %s order by created_at desc limit 1",
                 (user_id, project_id, str(retry_block_id)),
+            )
+            existing = await cur.fetchone()
+            if existing is not None:
+                return await _remember(cur, existing), False
+        if fill_slot_key:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and status in ('pending', 'running') "
+                "and payload->'_contextFill'->>'slotKey' = %s order by created_at desc limit 1",
+                (user_id, project_id, str(fill_slot_key)),
             )
             existing = await cur.fetchone()
             if existing is not None:
@@ -2480,6 +2517,58 @@ async def create_job(
                 return await _remember(cur, active), False
             # 합류 대상이 사라짐(충돌 job 완료) → 루프 재시도(이제 INSERT 성공)
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
+
+
+async def find_context_fill_job(
+    conn: AsyncConnection, user_id: str, project_id: str, idempotency_key: str, slot_key: str,
+) -> dict | None:
+    """판단 전에 원래 작업을 찾고 합류 키를 저장한다. 접수 트랜잭션까지 잠금을 유지한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"editor-image-request:{user_id}:{project_id}",),
+        )
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and (idempotency_key = %s "
+            "or metadata->'editorFillRequestKeys' @> %s::jsonb) order by created_at desc limit 1",
+            (user_id, project_id, idempotency_key, Json([idempotency_key])),
+        )
+        row = await cur.fetchone()
+        if row is not None:
+            return await _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key)
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and status in ('pending', 'running') "
+            "and payload->'_contextFill'->>'slotKey' = %s order by created_at desc limit 1",
+            (user_id, project_id, slot_key),
+        )
+        return await _remember_editor_fill_request(cur, await cur.fetchone(), user_id, project_id, idempotency_key)
+
+
+async def has_active_detail_page_job(conn: AsyncConnection, user_id: str, project_id: str) -> bool:
+    """최근 작업의 요약 대신 프로젝트의 모든 진행 중 상세페이지 작업을 확인한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where user_id = %s and project_id = %s "
+            "and kind = 'detail_page' and status in ('pending', 'running') limit 1",
+            (user_id, project_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def list_completed_context_fill_jobs(
+    conn: AsyncConnection, user_id: str, project_id: str, slot_key: str,
+) -> list[dict]:
+    """완료된 같은 칸의 설정과 결과를 읽어 시도 횟수와 반복 제외에 쓴다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select payload, result from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and status = 'done' "
+            "and payload->'_contextFill'->>'slotKey' = %s order by created_at, id",
+            (user_id, project_id, slot_key),
+        )
+        return await cur.fetchall()
 
 
 async def set_pending_job_pricing(
@@ -3862,6 +3951,9 @@ async def finalize_editor_image_success(
             "cut_type": cut_type,
             "asset_metadata": image.get("metadata"),
         })
+        context_fill = (image.get("metadata") or {}).get("context_fill")
+        if isinstance(context_fill, dict):
+            image_api["contextFill"] = {key: context_fill.get(key) for key in ("slot", "label", "colorId")}
         prov = image.get("provenance")
         if prov and image.get("sha256"):
             await insert_output_records(cur, records=[{

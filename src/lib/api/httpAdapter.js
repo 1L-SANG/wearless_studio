@@ -998,6 +998,43 @@ export const httpAdapter = {
   async pickRefImage(projectId) {
     return pickAndUploadImage(projectId);
   },
+  // 계획 없는 빈 칸은 위치만 보내고, 서버가 고른 한 줄을 접수 즉시 전달한다(ADR-0019).
+  async fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress } = {}) {
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+      throw Object.assign(new Error('이 칸을 찾지 못했어요.'), {
+        status: 400, code: 'fill_slot_invalid', requestNotSent: true,
+      });
+    }
+    recordClientAction('editorImage');
+    let res;
+    try {
+      res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+        method: 'POST', body: { mode: 'fill', slot },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      });
+      if (!res?.data && !res?.jobId) throw new Error('이미지 접수를 확인하지 못했어요.');
+    } catch (e) {
+      if (!e?.requestNotSent && (!e?.status || e.status >= 500)) {
+        e.submissionUnknown = true;
+        e.message = '접수를 확인하지 못했어요. 다시 누르면 같은 요청을 확인해요.';
+      }
+      throw e;
+    }
+    if (res.data) return { data: res.data, credits: res.credits, contextFill: res.contextFill ?? res.data.contextFill };
+    onJobStarted?.(res.jobId, res.contextFill);
+    try {
+      const result = await pollJob(res.jobId, {
+        onProgress,
+        timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
+        timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
+        creditsReleased: true,
+      });
+      return { data: result.data, credits: result.credits, contextFill: res.contextFill ?? result.data?.contextFill };
+    } catch (e) {
+      if (e?.code === 'job_timeout') e.jobId = res.jobId;
+      throw e;
+    }
+  },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
   async generateImage(projectId, req = {}) {
