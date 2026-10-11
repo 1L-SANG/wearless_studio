@@ -305,6 +305,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             generation_recipe = asset_recipe.project_recipe(
                 (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
             target_img = None
+            inner_reference_img = None
             if edit_mode:
                 trusted_type = garment_edit.source_cut_type(
                     src_asset, source_recipes.get(generation_source_asset_id) or {})
@@ -344,6 +345,17 @@ async def run_editor_image_job(app, job: dict) -> None:
                     group = payload["colorId"]
                     target_img = InlineImage(target_asset["mime_type"],
                         await asyncio.to_thread(app.state.r2.get_bytes, target_asset["r2_key"]))
+                elif payload["outerClosureState"] != "closed":
+                    # 참고 조회/읽기는 선택 입력이다. 원본을 못 읽어도 한 장으로 고쳐 만든다.
+                    try:
+                        async with pool.connection() as conn:
+                            inner_reference_asset = await asset_recipe.resolve_edit_origin_asset(
+                                conn, user_id, project_id, generation_source_asset_id)
+                        if inner_reference_asset is not None:
+                            inner_reference_img = InlineImage(inner_reference_asset["mime_type"],
+                                await asyncio.to_thread(app.state.r2.get_bytes, inner_reference_asset["r2_key"]))
+                    except Exception:
+                        log.warning("editor_image inner reference unavailable for job %s", job_id, exc_info=True)
             snapshot = payload.get("_facemarket")
             source_real_derived = (
                 isinstance(src_asset.get("metadata"), dict)
@@ -409,6 +421,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                     if vary_lora_spec is not None:
                         edit_kwargs = {"face_identity_spec": vary_lora_spec, "face_pass_outcome": face_pass_outcome,
                             "face_pass_url_provider": lambda: identity_source.active_face_backend_url(pool, str(snapshot["modelId"]))}
+                    if inner_reference_img is not None:
+                        edit_kwargs["inner_reference_image"] = inner_reference_img
                     image, mime = await garment_edit.generate(
                         editor_settings, app.state.gemini, src_img, target_img, cut_type,
                         mode=edit_mode, clothing_type=edit_product.get("clothingType") or edit_product.get("clothing_type") or "top",
