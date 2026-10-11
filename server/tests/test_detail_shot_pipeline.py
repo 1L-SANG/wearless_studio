@@ -703,17 +703,15 @@ def test_every_claude_effort_has_a_distinct_reuse_fingerprint(setup, core, speci
     assert len(set(fingerprints)) == 5
 
 
-@pytest.mark.parametrize('model,legacy', [
-    ('gpt-5.4-2026-03-05', '8b8a7149d496b14a56535d825a3a5eec2587815ac217e862e80181948c9d9615'),
-    ('claude-sonnet-5-5', 'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'),
-])
+@pytest.mark.parametrize('model', ['gpt-5.4-2026-03-05', 'claude-sonnet-5-5'])
 @pytest.mark.parametrize('phase', ['candidate', 'judged', 'accepted'])
 @sync_test
-async def test_existing_progress_resumes_without_regeneration_after_effort_audit(setup, model, legacy, phase):
+async def test_existing_progress_resumes_without_regeneration_after_effort_audit(setup, model, phase):
     qc, client, settings = setup
     settings.model_detail_core = settings.model_detail_specialist = model
     settings.detail_core_timeout_seconds = settings.detail_specialist_timeout_seconds = 90.0
     settings.detail_qc_claude_effort = 'xhigh'
+    legacy = _pr521_fingerprint(settings, [photo()], None, 'front')
     qc.return_value = verdict('PASS')
     candidate = photo('pink')
     report = {'passed': True, 'decision': 'PASS', 'fingerprint': legacy,
@@ -737,7 +735,7 @@ async def test_changed_claude_effort_cannot_resume_an_xhigh_progress_record(setu
     settings.model_detail_core = settings.model_detail_specialist = 'claude-sonnet-5-5'
     settings.detail_core_timeout_seconds = settings.detail_specialist_timeout_seconds = 90.0
     settings.detail_qc_claude_effort = 'high'
-    legacy = 'c59d0a1a598939cb26cd48023d52d9ffdcecd13e11068da429bcb1e68359a5e6'
+    legacy = _pr521_fingerprint(settings, [photo()], None, 'front')
     progress = MemoryProgress({'phase': phase, 'attempts': 1, 'fingerprint': legacy,
         'qc': {'passed': True, 'fingerprint': legacy, 'judgments': [verdict('PASS')]}}, photo('pink'))
 
