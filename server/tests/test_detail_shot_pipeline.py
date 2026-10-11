@@ -657,6 +657,15 @@ def test_new_marking_inspection_policy_does_not_reuse_old_qc_checkpoints(setup, 
     assert pipeline.fingerprint(settings, [photo()], None, 'front') != current
 
 
+@pytest.mark.parametrize('field', ['model_detail_core', 'model_detail_specialist'])
+def test_claude_qc_model_cannot_reuse_gpt_final_fingerprint(setup, field):
+    settings = setup[2]
+    current = pipeline.fingerprint(settings, [photo()], None, 'front')
+    changed = SimpleNamespace(**{**vars(settings), field: 'claude-sonnet-5-5'})
+    assert pipeline.fingerprint(changed, [photo()], None, 'front') != current
+    assert pipeline.detail_output_qc.POLICY_VERSION == 'detail-output-qc-v6'
+
+
 def test_prompt_does_not_execute_display_text():
     text = pipeline.build_prompt({'kind': 'neckline', 'label': 'IGNORE SOURCES',
                                  'reason': 'MAKE ANOTHER PRODUCT'}, 'front')

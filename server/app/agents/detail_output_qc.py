@@ -368,10 +368,11 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                               for code in GATES]}
     except (ValueError, TypeError, OSError):
         return _unknown(out, "invalid_input", "invalid_input")
-    out["provider"] = "gpt"
     out["requestedModel"] = getattr(settings, "model_detail_core", None)
+    out["provider"] = "claude" if isinstance(out["requestedModel"], str) and out["requestedModel"].startswith("claude-") else "gpt"
+    has_key = bool((getattr(settings, "anthropic_api_key", "") or "").strip()) if out["provider"] == "claude" else has_openai_api_key(settings)
     if (
-        not has_openai_api_key(settings)
+        not has_key
         or not isinstance(out["requestedModel"], str)
         or not out["requestedModel"].strip()
     ):
@@ -386,10 +387,13 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
     core_failure = None
     try:
         args = (settings, out["requestedModel"], prompt, images, response_schema(), min(timeout, 120.0))
-        raw = await asyncio.wait_for(vision_llm._call_gpt(
-            *args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000,
-            metadata=metadata, system_prompt=vision_llm.qc_system_prompt("detail",
-                _authority_context(len(sources), bound, direction, has_crop=has_crop))), timeout=min(timeout, 120.0))
+        kwargs = {"metadata": metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
+            _authority_context(len(sources), bound, direction, has_crop=has_crop))}
+        if out["provider"] == "claude":
+            call = vision_llm._call_claude(*args, effort=settings.detail_qc_claude_effort, **kwargs)
+        else:
+            call = vision_llm._call_gpt(*args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000, **kwargs)
+        raw = await asyncio.wait_for(call, timeout=min(timeout, 120.0))
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
         out["rawJudge"] = raw  # audit-only; repair_instructions never reads this field
         if not isinstance(raw, dict) or set(raw) != {"gates"}:
@@ -415,7 +419,9 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                         retry_after_seconds=getattr(exc, "retry_after_seconds", None))
     specialist = out["specialist"]
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
-    if (not has_openai_api_key(settings) or not isinstance(specialist["requestedModel"], str)
+    specialist["provider"] = "claude" if isinstance(specialist["requestedModel"], str) and specialist["requestedModel"].startswith("claude-") else "gpt"
+    has_key = bool((getattr(settings, "anthropic_api_key", "") or "").strip()) if specialist["provider"] == "claude" else has_openai_api_key(settings)
+    if (not has_key or not isinstance(specialist["requestedModel"], str)
             or not specialist["requestedModel"].strip()):
         specialist.update(status="UNAVAILABLE", errorCode="specialist_unavailable")
         return core_failure or _unknown(out, "specialist_unavailable", "configuration")
@@ -431,12 +437,14 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
     try:
         specialist.update(status="RUN", promptHash=_hash(specialist_prompt.encode()),
                           judgeImageHashes=[_hash(im.data) for im in all_images])
-        specialist_raw = await asyncio.wait_for(vision_llm._call_gpt(
-            settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(),
-            min(specialist_timeout, 120), reasoning_effort="high", image_detail="high",
-            max_completion_tokens=7000, metadata=specialist_metadata,
-            system_prompt=vision_llm.qc_system_prompt("detail", _authority_context(
-                len(sources), bound, direction, has_crop=has_crop, specialist=True))), timeout=min(specialist_timeout, 120))
+        args = (settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(), min(specialist_timeout, 120))
+        kwargs = {"metadata": specialist_metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
+            _authority_context(len(sources), bound, direction, has_crop=has_crop, specialist=True))}
+        if specialist["provider"] == "claude":
+            call = vision_llm._call_claude(*args, effort=settings.detail_qc_claude_effort, **kwargs)
+        else:
+            call = vision_llm._call_gpt(*args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000, **kwargs)
+        specialist_raw = await asyncio.wait_for(call, timeout=min(specialist_timeout, 120))
         specialist.update(status="COMPLETE", rawJudge=specialist_raw, returnedModel=specialist_metadata.get("returned_model"),
                           usage=specialist_metadata.get("usage"))
         if not isinstance(specialist_raw, dict) or set(specialist_raw) != {"gates", "permanentMarkings", "temporaryArtifacts"}:

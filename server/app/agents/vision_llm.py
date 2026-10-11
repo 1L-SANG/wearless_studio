@@ -11,12 +11,15 @@
 """
 
 import base64
+import copy
 import json
 import logging
 import time
 from email.utils import parsedate_to_datetime
+from io import BytesIO
 
 import httpx
+from PIL import Image
 
 from ..config import Settings
 from ..openai_key_fallback import (
@@ -29,6 +32,8 @@ from .gemini_image import InlineImage, run_cpu_bound
 logger = logging.getLogger("wearless.vision_llm")
 
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+_CLAUDE_URL = "https://api.anthropic.com/v1/messages"
+_CLAUDE_MAX_REQUEST_BYTES = 32_000_000
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 # Opt-in QC policy. Only validated routing metadata is added below this policy.
@@ -299,6 +304,110 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}", unknown_cause=cause,
                           retry_after_seconds=retry_after)
     return await run_cpu_bound(_parse_gpt_response, res, metadata, model)
+
+
+def _to_claude_schema(node: dict) -> dict:
+    """Provider constraints are relaxed on a copy; QC validates the result server-side."""
+    out = copy.deepcopy(node)
+    for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+                "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems",
+                "minProperties", "maxProperties"):
+        out.pop(key, None)
+    for key in ("properties", "$defs", "definitions"):
+        if key in out:
+            out[key] = {name: _to_claude_schema(value) for name, value in out[key].items()}
+    for key in ("items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames"):
+        if isinstance(out.get(key), dict):
+            out[key] = _to_claude_schema(out[key])
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        if key in out:
+            out[key] = [_to_claude_schema(value) for value in out[key]]
+    kind = out.get("type")
+    if kind == "object" or isinstance(kind, list) and "object" in kind or "properties" in out:
+        out["additionalProperties"] = False
+        out["required"] = list(out.get("properties", {}))
+    return out
+
+
+def _claude_body(model, prompt, images, schema, effort, system_prompt, max_tokens):
+    content = [{"type": "text", "text": prompt}]
+    for im in images:
+        with Image.open(BytesIO(im.data)) as image:
+            buf = BytesIO()
+            image.convert("RGB").save(buf, format="JPEG", quality=95)
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/jpeg", "data": _b64(buf.getvalue())}})
+    body = {"model": model, "max_tokens": max_tokens, "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort, "format": {
+                "type": "json_schema", "schema": _to_claude_schema(schema)}},
+            "messages": [{"role": "user", "content": content}]}
+    if system_prompt is not None:
+        body["system"] = system_prompt
+    if len(json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()) > _CLAUDE_MAX_REQUEST_BYTES:
+        raise VisionError("Claude 요청 크기 한도를 넘었어요.", unknown_cause="invalid_input")
+    return body
+
+
+def _parse_claude_response(res, metadata, requested_model):
+    try:
+        data = res.json()
+    except ValueError as exc:
+        raise VisionError("Claude 응답 파싱 실패", unknown_cause="invalid_response") from exc
+    if not isinstance(data, dict):
+        raise VisionError("Claude 응답이 객체가 아니에요.", unknown_cause="invalid_response")
+    usage = data.get("usage")
+    if metadata is not None:
+        metadata.update(requested_model=requested_model, returned_model=data.get("model"),
+                        usage=usage, finish_reason=data.get("stop_reason"))
+    if isinstance(usage, dict):
+        if any(type(usage.get(key, 0)) is not int or usage.get(key, 0) < 0
+               for key in ("input_tokens", "output_tokens")):
+            raise VisionError("Claude 사용량 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
+        usage = {**usage, "prompt_tokens": usage.get("input_tokens", 0),
+                 "completion_tokens": usage.get("output_tokens", 0)}
+        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+        if metadata is not None:
+            metadata["usage"] = usage
+    elif usage is not None:
+        raise VisionError("Claude 사용량 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
+    if data.get("stop_reason") == "refusal":
+        raise VisionError("Claude 요청이 거절됐어요.", unknown_cause="provider_rejection")
+    if data.get("stop_reason") != "end_turn":
+        raise VisionError("Claude 검사 응답이 완결되지 않았어요.", unknown_cause="invalid_response")
+    content = data.get("content")
+    if not isinstance(content, list) or any(not isinstance(block, dict) for block in content):
+        raise VisionError("Claude 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
+    texts = [block.get("text") for block in content if block.get("type") == "text"]
+    if any(not isinstance(text, str) for text in texts):
+        raise VisionError("Claude 응답 형식이 잘못됐어요.", unknown_cause="invalid_response")
+    return _parse_json("".join(texts), "Claude")
+
+
+async def _call_claude(settings: Settings, model: str, prompt: str,
+                       images: list[InlineImage], schema: dict, timeout: float, *, effort,
+                       metadata=None, system_prompt=None, max_tokens=32000) -> dict:
+    """QC-only Messages call; never joins the analysis provider fallback order."""
+    key = getattr(settings, "anthropic_api_key", "")
+    if not isinstance(key, str) or not key.strip():
+        raise VisionError("ANTHROPIC_API_KEY 미설정", unknown_cause="configuration")
+    try:
+        body = await run_cpu_bound(_claude_body, model, prompt, images, schema, effort, system_prompt, max_tokens)
+    except (ValueError, TypeError, OSError) as exc:
+        raise VisionError("Claude 요청 입력이 잘못됐어요.", unknown_cause="invalid_input") from exc
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.post(_CLAUDE_URL, json=body, headers={
+                "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    except httpx.RequestError as exc:
+        raise VisionError("Claude 네트워크 요청 실패", unknown_cause="provider_error") from exc
+    if res.status_code != 200:
+        cause = ("provider_error" if res.status_code in {408, 409, 429} or res.status_code >= 500
+                 else "configuration" if res.status_code in {401, 403, 404}
+                 else "invalid_input")
+        retry_after = (_retry_after_seconds(res.headers.get("Retry-After"))
+                       if res.status_code in {429, 529} else None)
+        raise VisionError(f"Claude HTTP {res.status_code}", unknown_cause=cause, retry_after_seconds=retry_after)
+    return await run_cpu_bound(_parse_claude_response, res, metadata, model)
 
 
 def _to_gemini_schema(node: dict) -> dict:
