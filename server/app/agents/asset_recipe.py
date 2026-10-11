@@ -216,3 +216,28 @@ async def resolve_asset_recipes(conn, user_id, project_id, asset_ids) -> dict[st
     anchor_records = {asset_id: resolve(all_assets[asset_id]) for asset_id in anchors if asset_id in all_assets}
     return {asset_id: resolve(row, anchor_records.get(preliminary[asset_id]["sourceAssetId"]))
             for asset_id, row in assets.items()}
+
+
+async def resolve_edit_origin_asset(conn, user_id, project_id, asset_id) -> dict | None:
+    """색/여밈 편집만 최대 10단계 거슬러 이너 근거를 찾는다. 마지막으로 확인한 소유 사진에서 멈춘다."""
+    current_id = str(asset_id)
+    visited = {current_id}
+    reference = None
+    for _ in range(10):
+        records = await resolve_asset_recipes(conn, user_id, project_id, [current_id])
+        record = records.get(current_id) or {}
+        if record.get("origin") not in ("editor_color", "editor_closure") or not record.get("sourceAssetId"):
+            break
+        try:
+            source_id = str(uuid.UUID(str(record["sourceAssetId"])))
+        except (TypeError, ValueError):
+            break
+        if source_id in visited:
+            break
+        source_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, source_id)
+        if source_asset is None:
+            break
+        reference = source_asset
+        visited.add(source_id)
+        current_id = source_id
+    return reference

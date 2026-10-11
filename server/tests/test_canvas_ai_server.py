@@ -1,5 +1,6 @@
 """ADR-0020 서버 계약. 이미지 공급자와 DB만 대역으로 둔다."""
 import asyncio
+import uuid
 from copy import deepcopy
 from io import BytesIO
 from unittest.mock import AsyncMock
@@ -24,12 +25,65 @@ FRONT = {"version": 1, "kind": "zipper", "range": "graded", "secondary": None,
          "evidenceSlots": ["Front"], "note": None}
 CREATE_JOB = repo.create_job
 
+_INNER_DEFAULT_EXPECTED = (
+    " Keep any inner top already visible in the image unchanged. "
+    "If the inner top is not visible in any image, show a plain white crew-neck T-shirt with no print or text."
+)
+_INNER_REFERENCE_EXPECTED = (
+    " The second image is a photograph of the same person before the edits. Use it only as a reference for the inner top. "
+    "If the inner top is already visible in the first image, keep that same inner top unchanged. "
+    "Otherwise, draw the newly revealed inner top as the same garment visible in the second image, with the same type, color and neckline. "
+    "If the inner top is not visible in any image, show a plain white crew-neck T-shirt with no print or text. "
+    "Do not follow the jacket color, front opening, pose, background or any other details from the second image."
+)
+
+
+# 품질 시험을 통과한 지퍼/unknown 출력의 독립된 바이트 기준.
+_ZIPPER_CLOSURE_EXPECTED = {
+    "closed": (
+        "Edit the image. Change ONLY how the jacket's front zipper is closed: zip it fully closed from the hem "
+        "all the way up to the collar, so the inner top is covered. Use the jacket's existing zipper and collar, "
+        'do not invent new hardware. Keep the jacket color exactly the same. '
+    ),
+    "openToChest": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is closed. The jacket has ONE zipper with "
+        'ONE slider. The zipper must be closed continuously from the hem up to the middle of the chest (about a '
+        'hand width below the collarbone), with the single slider sitting at the middle of the chest (about a '
+        'hand width below the collarbone). Below the slider the two front panels are joined all the way down to '
+        'the hem, with no gap and no second slider. Above the slider the front is open in a V up to the collar, '
+        "showing the inner top only inside that V. Use the jacket's existing zipper and collar. Keep the jacket "
+        'color exactly the same. '
+    ),
+    "partial": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is open. The jacket has ONE zipper with "
+        'ONE slider. Put the single zipper slider level with the bottom of the breastbone (the solar plexus), '
+        'clearly lower than the chest. Everything below the slider is zipped shut, the two front panels touching '
+        'all the way down to the hem with no gap. Above the slider the front opens in a clean V up to the collar, '
+        'and the inner top shows only inside that V. The V must be deep: it reaches about one third of the way '
+        "from the collar to the hem. Use the jacket's existing zipper and collar. Keep the jacket color exactly "
+        'the same. '
+    ),
+    "openToWaist": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is open. The jacket has ONE zipper with "
+        'ONE slider. Put the single zipper slider level with the navel, just above the tops of the side pockets. '
+        'Everything below the slider is zipped shut, the two front panels touching all the way down to the hem '
+        'with no gap. Above the slider the front opens in a clean V up to the collar, and the inner top shows '
+        'only inside that V. The V must be very deep: it reaches about two thirds of the way from the collar to '
+        "the hem, and only the lowest part near the hem stays zipped. Use the jacket's existing zipper and "
+        'collar. Keep the jacket color exactly the same. '
+    ),
+    "open": (
+        "Edit the image. Change ONLY how the jacket's front is fastened: unzip it completely from the collar down "
+        'to the hem so the two front panels hang open and the inner top is visible down the whole front. Use the '
+        "jacket's existing zipper. Keep the jacket color exactly the same. "
+    ),
+}
 
 @pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
 @pytest.mark.parametrize("mode,state", [("color", None), ("closure", "closed"),
     ("closure", "openToChest"), ("closure", "partial"),
     ("closure", "openToWaist"), ("closure", "open")])
-@pytest.mark.parametrize("kind", ["zipper", "button", "snap", "belt"])
+@pytest.mark.parametrize("kind", ["zipper", "unknown"])
 def test_outer_edit_prompt_preserves_quality_test_wording(clothing_type, mode, state, kind):
     keep = (
         "Keep everything else exactly the same as the first image: the same person, face, hair, pose, hands, body shape, "
@@ -41,11 +95,128 @@ def test_outer_edit_prompt_preserves_quality_test_wording(clothing_type, mode, s
         "color shown in the second image, which is a photo of the same jacket in the target color. Keep how open the "
         "zipper is exactly as in the first image. "
     )
-    expected = color + keep if mode == "color" else garment_edit.CLOSURE[state] + keep.replace("first image", "image")
-    if kind != "zipper":
-        expected = expected.replace("zipper", "front fastening")
-    assert garment_edit.prompt_for(mode, clothing_type=clothing_type,
-        closure_state=state, front_closure={"kind": kind}) == expected
+    expected = color + keep if mode == "color" else _ZIPPER_CLOSURE_EXPECTED[state] + keep.replace("first image", "image")
+    prompt = garment_edit.prompt_for(mode, clothing_type=clothing_type,
+        closure_state=state, front_closure={"kind": kind})
+    if mode == "closure" and state != "closed":
+        assert prompt.startswith(expected)
+        assert prompt[len(expected):] == _INNER_DEFAULT_EXPECTED
+    else:
+        assert prompt == expected
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("kind,fasteners", [("button", "buttons"), ("snap", "snap buttons")])
+@pytest.mark.parametrize("state,markers", [
+    ("closed", ["Fasten all the existing", "highest one", "below the collar"]),
+    ("openToChest", ["middle of the chest (about a hand width below the collarbone)",
+                     "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("partial", ["level with the bottom of the breastbone (the solar plexus), clearly lower than the chest",
+                 "Aim for a deep V reaching about one third of the way from the collar to the hem.",
+                 "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("openToWaist", ["level with the navel, just above the tops of the side pockets",
+                     "Aim for a very deep V reaching about two thirds of the way from the collar to the hem",
+                     "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("open", ["Unfasten all", "from the collar down to the hem", "visible down the whole front",
+              "visible along the front edges"]),
+])
+def test_button_and_snap_prompts_use_existing_fasteners_at_requested_height(clothing_type, kind, fasteners, state, markers):
+    prompt = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=state, front_closure={"kind": kind, "range": "graded"})
+    assert all(word not in prompt.lower() for word in ("zip", "slider", "front front"))
+    assert fasteners in prompt
+    hardware = f"existing {fasteners}, buttonholes and collar" if kind == "button" else "existing snap buttons and collar"
+    assert hardware in prompt
+    assert f"Keep the number, size, color and spacing of the {fasteners} unchanged." in prompt
+    assert "Do not add any other type of fastening or new hardware." in prompt
+    assert "Keep the jacket color exactly the same." in prompt
+    assert "the same person, face, hair, pose, hands, body shape" in prompt
+    assert all(marker in prompt for marker in markers)
+    if kind == "snap":
+        button = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+            closure_state=state, front_closure={"kind": "button", "range": "graded"})
+        assert "buttonhole" not in prompt.lower()
+        assert prompt == button.replace("buttons", "snap buttons").replace(", buttonholes", "")
+    if state in ("openToChest", "partial", "openToWaist"):
+        assert f"Fasten only the existing {fasteners}" in prompt
+        assert "closest to the requested height" in prompt
+        assert f"no {fasteners} at or below the requested height" in prompt
+        assert "open the entire front" in prompt
+        assert f"Do not create or move {fasteners}." in prompt
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("state,effective", [
+    ("closed", "closed"), ("openToChest", "closed"), ("partial", "closed"),
+    ("openToWaist", "open"), ("open", "open"),
+])
+def test_belt_prompts_tie_or_untie_existing_belt_including_direct_intermediate_states(clothing_type, state, effective):
+    prompt = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=state, front_closure={"kind": "belt", "range": "binary"})
+    assert "belt" in prompt
+    assert all(word not in prompt.lower() for word in ("zip", "button", "slider", "front front"))
+    assert "Use the jacket's existing belt." in prompt
+    assert "Do not add any other type of fastening or new hardware." in prompt
+    assert "Keep the jacket color exactly the same." in prompt
+    if effective == "closed":
+        assert "Tie" in prompt and "at the waist" in prompt and "front panels overlap and close" in prompt
+    else:
+        assert "Untie" in prompt and "front panels hang open" in prompt and "belt ends hang loose" in prompt
+    assert prompt == garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=effective, front_closure={"kind": "belt", "range": "binary"})
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("kind", ["button", "snap", "belt"])
+def test_non_zipper_outer_color_prompt_preserves_front_without_inventing_fastening_color(clothing_type, kind):
+    prompt = garment_edit.prompt_for("color", clothing_type=clothing_type,
+        closure_state=None, front_closure={"kind": kind})
+    assert "zipper" not in prompt and "front fastening color" not in prompt
+    assert "fabric color shown in the second image" in prompt
+    assert "Keep how open or fastened the front is exactly as in the first image." in prompt
+
+
+@pytest.mark.parametrize("kind", ["zipper", "unknown", "button", "snap", "belt", "none"])
+@pytest.mark.parametrize("mode,state", [("color", None), ("closure", "closed"),
+    ("closure", "openToChest"), ("closure", "partial"), ("closure", "openToWaist"), ("closure", "open")])
+def test_outer_prompt_never_doubles_front(kind, mode, state):
+    prompt = garment_edit.prompt_for(mode, clothing_type="outer", closure_state=state,
+        front_closure={"kind": kind, "range": "binary" if kind == "belt" else "graded"})
+    assert "front front" not in prompt
+
+
+@pytest.mark.parametrize("kind,secondary", [("zipper", "snap"), ("button", "belt"), ("snap", "zipper")])
+@pytest.mark.parametrize("state", ["closed", "openToChest", "partial", "openToWaist", "open"])
+def test_secondary_closure_instruction_only_when_present(kind, secondary, state):
+    base = garment_edit.prompt_for("closure", clothing_type="outer", closure_state=state,
+                                  front_closure={"kind": kind, "secondary": None})
+    prompt = garment_edit.prompt_for("closure", clothing_type="outer", closure_state=state,
+                                    front_closure={"kind": kind, "secondary": secondary})
+    sentence = f"Operate the existing secondary {secondary} fastening to the same height and in the same way as the main fastening. "
+    assert "secondary" not in base
+    assert prompt.replace(sentence, "") == base
+
+
+@pytest.mark.parametrize("kind", ["zipper", "unknown", "button", "snap"])
+@pytest.mark.parametrize("state", ["openToChest", "partial", "openToWaist", "open"])
+@pytest.mark.parametrize("reference", [False, True])
+def test_open_outer_prompt_preserves_visible_inner_and_defines_white_fallback(kind, state, reference):
+    prompt = garment_edit.prompt_for("closure", clothing_type="outer", closure_state=state,
+                                    front_closure={"kind": kind}, has_inner_reference=reference)
+    assert prompt.endswith(_INNER_REFERENCE_EXPECTED if reference else _INNER_DEFAULT_EXPECTED)
+    if reference:
+        assert "Keep everything else exactly the same as the first image:" in prompt
+    if kind in ("zipper", "unknown"):
+        assert prompt.startswith(_ZIPPER_CLOSURE_EXPECTED[state])
+
+
+@pytest.mark.parametrize("mode,state,clothing_type", [("color", None, "outer"), ("closure", "closed", "outer"),
+    ("closure", "open", "top"), ("closure", "open", "bottom"), ("closure", "open", "dress")])
+def test_inner_reference_has_no_effect_outside_open_outer_closure(mode, state, clothing_type):
+    kwargs = dict(clothing_type=clothing_type, closure_state=state, front_closure=FRONT)
+    prompt = garment_edit.prompt_for(mode, **kwargs)
+    assert garment_edit.prompt_for(mode, **kwargs, has_inner_reference=True) == prompt
+    assert "plain white crew-neck" not in prompt
 
 
 @pytest.mark.parametrize("clothing_type,noun,possessive,feature", [
@@ -282,6 +453,150 @@ def test_edit_worker_inputs_prompt_size_group_and_generation(recording_runtime, 
     assert state["success"]["charge"] == state["success"]["reserved"] == 19
 
 
+class EditLineageConn:
+    """자산 조회의 실제 SQL 소유 조건을 확인하고 소유한 행만 돌려준다."""
+    def __init__(self, rows):
+        self.rows = rows
+        self.row = None
+        self.read_ids = []
+
+    def cursor(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def execute(self, query, params):
+        assert "user_id = %s and project_id = %s and deleted_at is null" in query
+        aid, uid, pid = params
+        self.read_ids.append(aid)
+        candidate = self.rows.get(aid)
+        self.row = candidate if candidate and (candidate["user_id"], candidate["project_id"]) == (uid, pid) else None
+
+    async def fetchone(self):
+        return self.row
+
+
+@pytest.mark.parametrize("case,expected_id,read_ids", [
+    ("upload", None, []), ("page", None, []), ("similar", None, []),
+    ("two_closure_edits", C, [B, C]), ("color_then_closure", C, [B, C]),
+    ("other_user", None, [B]), ("other_project", None, [B]),
+    ("cycle", B, [B]), ("self_cycle", None, []), ("invalid_id", None, []),
+])
+def test_edit_origin_lineage_stops_at_non_edit_origin_and_owned_boundaries(monkeypatch, case, expected_id, read_ids):
+    records = {A: {"origin": "editor_closure", "sourceAssetId": B},
+               B: {"origin": "editor_closure", "sourceAssetId": C},
+               C: {"origin": "upload", "sourceAssetId": None}}
+    rows = {aid: {"id": aid, "user_id": "u1", "project_id": "p1", "source": "upload" if aid == C else "ai"}
+            for aid in (A, B, C)}
+    if case in ("upload", "page", "similar"):
+        records[A]["origin"] = {"upload": "upload", "page": "page", "similar": "editor_similar"}[case]
+    elif case == "color_then_closure":
+        records[A]["origin"] = "editor_color"
+    elif case == "other_user":
+        rows[B]["user_id"] = "u2"
+    elif case == "other_project":
+        rows[B]["project_id"] = "p2"
+    elif case == "cycle":
+        records[B]["sourceAssetId"] = A
+    elif case == "self_cycle":
+        records[A]["sourceAssetId"] = A
+    elif case == "invalid_id":
+        records[A]["sourceAssetId"] = "not-an-asset-id"
+
+    async def recipes(conn, uid, pid, ids):
+        assert (uid, pid) == ("u1", "p1")
+        return {aid: records[aid] for aid in ids}
+
+    monkeypatch.setattr(asset_recipe, "resolve_asset_recipes", recipes)
+    conn = EditLineageConn(rows)
+    result = asyncio.run(asset_recipe.resolve_edit_origin_asset(conn, "u1", "p1", A))
+    assert (result or {}).get("id") == expected_id
+    assert conn.read_ids == read_ids
+
+
+def test_edit_origin_lineage_limits_depth_to_ten_hops(monkeypatch):
+    ids = [str(uuid.UUID(int=i)) for i in range(1, 13)]
+    rows = {aid: {"id": aid, "user_id": "u1", "project_id": "p1"} for aid in ids}
+    records = {aid: {"origin": "editor_closure", "sourceAssetId": ids[i + 1]}
+               for i, aid in enumerate(ids[:-1])}
+    async def recipes(conn, uid, pid, requested):
+        return {aid: records[aid] for aid in requested}
+    monkeypatch.setattr(asset_recipe, "resolve_asset_recipes", recipes)
+    conn = EditLineageConn(rows)
+    result = asyncio.run(asset_recipe.resolve_edit_origin_asset(conn, "u1", "p1", ids[0]))
+    assert result["id"] == ids[10]
+    assert conn.read_ids == ids[1:11]
+
+
+@pytest.mark.parametrize("mode,state_value,reference_readable,expected_reference", [
+    ("closure", "open", True, True), ("closure", "openToChest", True, True),
+    ("closure", "closed", True, False), ("color", None, True, False),
+    ("closure", "open", False, False),
+])
+def test_edit_worker_attaches_inner_reference_only_for_open_closure(recording_runtime, monkeypatch,
+        mode, state_value, reference_readable, expected_reference):
+    state = recording_runtime
+    state["analysis"]["frontClosure"] = deepcopy(FRONT)
+    state["product"]["colors"].append({"id": "blue", "images": [{"id": C, "slot": "Front"}]})
+    state["anchor"].update(origin="editor_closure", sourceAssetId=B)
+    lookup = repo.get_project_asset_for_user
+    async def asset(conn, uid, pid, aid):
+        if aid == A:
+            return await lookup(conn, uid, pid, aid)
+        return {"id": aid, "source": "upload", "metadata": {}, "r2_key": aid, "mime_type": "image/png"}
+    async def recipes(conn, uid, pid, ids):
+        return {aid: deepcopy(state["anchor"]) if aid == A else
+                {"origin": "upload", "sourceAssetId": None} for aid in ids}
+    def read(key):
+        if key == B and not reference_readable:
+            raise OSError("reference no longer readable")
+        return key.encode()
+    calls = []
+    async def generate(settings, gemini, source, target, cut_type, **kwargs):
+        calls.append((source, target, kwargs.get("inner_reference_image")))
+        return b"GENERATED", "image/png"
+    monkeypatch.setattr(repo, "get_project_asset_for_user", asset)
+    monkeypatch.setattr(repo, "list_wardrobe_images", AsyncMock(return_value=[]))
+    monkeypatch.setattr(asset_recipe, "resolve_asset_recipes", recipes)
+    monkeypatch.setattr(garment_edit, "generate", generate)
+    state["app"].state.r2.get_bytes = read
+    asyncio.run(worker.run_editor_image_job(state["app"], worker_job({"mode": "vary", "variationMode": mode,
+        "source": {"src": SRC}, "outerClosureState": state_value, "colorId": "blue"}, credits_reserved=19)))
+    assert "failure" not in state, state.get("failure")
+    assert "success" in state
+    source, target, reference = calls[0]
+    assert source.data == b"input"
+    assert (target.data if target else None) == (C.encode() if mode == "color" else None)
+    assert (reference.data if reference else None) == (B.encode() if expected_reference else None)
+    assert state["success"]["image"]["metadata"]["generation"]["sourceAssetId"] == A
+
+
+@pytest.mark.parametrize("mode,closure_state,expected_images", [("closure", "open", [b"SOURCE", b"INNER"]),
+    ("closure", "closed", [b"SOURCE"]), ("color", None, [b"SOURCE", b"COLOR"])])
+def test_edit_generate_sends_reference_images_with_matching_prompt(mode, closure_state, expected_images):
+    from app.agents.gemini_image import InlineImage
+    from types import SimpleNamespace
+    calls = []
+    class Gemini:
+        async def generate_content_image(self, model, prompt, images, *args, **kwargs):
+            calls.append((prompt, [image.data for image in images]))
+            return SimpleNamespace(image=b"OUTPUT", mime="image/png")
+    asyncio.run(garment_edit.generate(make_settings(), Gemini(), InlineImage("image/png", b"SOURCE"),
+        InlineImage("image/png", b"COLOR") if mode == "color" else None, "horizon", mode=mode,
+        clothing_type="outer", closure_state=closure_state, front_closure=FRONT,
+        inner_reference_image=InlineImage("image/png", b"INNER")))
+    prompt, images = calls[0]
+    assert images == expected_images
+    if mode == "closure" and closure_state == "open":
+        assert prompt.endswith(_INNER_REFERENCE_EXPECTED)
+    else:
+        assert "before the edits" not in prompt and "plain white crew-neck" not in prompt
+
+
 def test_upload_edit_unknown_recipe_has_null_fields_and_failure_releases(recording_runtime, monkeypatch):
     state = recording_runtime
     state["anchor"] = {"recipe": None, "upload": True}
@@ -494,13 +809,14 @@ def test_edit_face_pass_matches_similar_rules(monkeypatch, cut_type, enabled, ex
     assert face_pass.await_count == int(expected)
 
 
-def test_prompt_adapts_garment_noun_and_only_fastening_word():
+def test_prompt_adapts_garment_noun_and_preserves_front_in_color_edit():
     prompt = garment_edit.prompt_for("color", clothing_type="dress", closure_state=None,
                                      front_closure={**FRONT, "kind": "button"})
     assert "the dress" in prompt and "jacket" not in prompt and "zipper" not in prompt
     outer = garment_edit.prompt_for("color", clothing_type="outer", closure_state=None,
                                     front_closure={**FRONT, "kind": "button"})
-    assert "front fastening" in outer and "zipper" not in outer
+    assert "Keep how open or fastened the front is exactly as in the first image." in outer
+    assert "zipper" not in outer
 
 
 def test_asset_info_omits_missing_or_foreign_assets(client, make_token, edit_route, monkeypatch):
