@@ -131,7 +131,8 @@ Idempotency-Key: <uuid>   (필수)
 | 409 | `fill_slot_not_found` | 저장된 에디터에 칸이 없음 | 저장 중이에요. 잠시 뒤 다시 눌러 주세요. |
 | 409 | `fill_slot_not_empty` | 칸에 이미 사진이 있음 | 이미 사진이 들어 있는 칸이에요. |
 | 400 | `fill_slot_planned` | 계획된 칸(다시 만들기로) | 이 칸은 원래 콘티대로 다시 만들어요. |
-| 400 | `fill_slot_unsupported` | 정보 블록, 자동 블록, 생성 중, 숨긴 칸 | 이 칸은 AI로 채울 수 없어요. |
+| 400 | `fill_slot_unsupported` | 정보 블록, 자동 블록, 숨긴 칸 | 이 칸은 AI로 채울 수 없어요. |
+| 400 | `fill_slot_unsupported` | 생성 중인 칸 | 이 칸은 지금 만들고 있어요. |
 | 409 | `page_generation_active` | 상세페이지 생성 중 | 상세페이지를 만드는 중이에요. 끝나면 눌러 주세요. |
 | 409 | `fill_unavailable` | 만들 수 있는 컷이 없음 | 이 칸에 만들 수 있는 컷이 없어요. |
 

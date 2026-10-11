@@ -80,6 +80,8 @@ def test_invalid_slot_or_missing_key_never_creates_or_reserves(client, make_toke
     ([{**EMPTY, "elements": [{**EMPTY["elements"][0], "genFailed": True}]}], [], PRODUCT, False,
      400, "fill_slot_planned", "이 칸은 원래 콘티대로 다시 만들어요."),
     ([{**EMPTY, "kind": "info"}], [], PRODUCT, False, 400, "fill_slot_unsupported", "이 칸은 AI로 채울 수 없어요."),
+    ([{**EMPTY, "elements": [{**EMPTY["elements"][0], "genPending": "live"}]}], [], PRODUCT, False,
+     400, "fill_slot_unsupported", "이 칸은 지금 만들고 있어요."),
     ([EMPTY], [], PRODUCT, True, 409, "page_generation_active", "상세페이지를 만드는 중이에요. 끝나면 눌러 주세요."),
     ([EMPTY], [], {"clothingType": "top", "colors": []}, False, 409, "fill_unavailable", "이 칸에 만들 수 있는 컷이 없어요."),
 ])

@@ -3220,7 +3220,7 @@ async def _prepare_context_fill(conn, user_id: str, project_id: str, slot: dict)
     rejections = {
         "filled": (409, "fill_slot_not_empty", "이미 사진이 들어 있는 칸이에요."),
         "planned": (400, "fill_slot_planned", "이 칸은 원래 콘티대로 다시 만들어요."),
-        "pending": (400, "fill_slot_unsupported", "이 칸은 AI로 채울 수 없어요."),
+        "pending": (400, "fill_slot_unsupported", "이 칸은 지금 만들고 있어요."),
         "unsupported": (400, "fill_slot_unsupported", "이 칸은 AI로 채울 수 없어요."),
     }
     if kind in rejections:
