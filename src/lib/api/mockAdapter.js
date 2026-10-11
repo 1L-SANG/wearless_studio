@@ -18,7 +18,7 @@ const hasKey = (key) => typeof key === 'string' && !!key.trim();
 const recipeOf = (recipe) => recipe ? Object.fromEntries(RECIPE_FIELDS.map((key) => [key, clone(recipe[key] ?? null)])) : null;
 const states = new WeakMap();
 function state() {
-  if (!states.has(DB.project)) states.set(DB.project, { assets: new Map(), jobs: new Map(), fills: new Map() });
+  if (!states.has(DB.project)) states.set(DB.project, { assets: new Map(), jobs: new Map(), fills: new Map(), details: new Map() });
   return states.get(DB.project);
 }
 const assetIdOf = (image) => image.assetId || extractEditorAssetId(image.src || image.url) || image.id || image.src || image.url;
@@ -182,10 +182,20 @@ export const mockAdapter = {
     const scale = Number(import.meta.env?.MOCK_API_LATENCY_SCALE ?? globalThis.process?.env?.MOCK_API_LATENCY_SCALE ?? 1);
     await new Promise((resolve) => setTimeout(resolve, 6000 * scale));
     const points = ['부드러운 원단과 촘촘한 짜임', '단정한 라운드넥'];
+    const details = { ...clone(DB.analysis.detailRecommendations || {}), version: 1, status: 'ready', candidates: clone(DB.analysis.detailRecommendations?.candidates || []) };
     return { points: { status: 'ready', items: points },
-      detailRecommendations: { ...clone(DB.analysis.detailRecommendations || {}), version: 1, status: 'ready', candidates: clone(DB.analysis.detailRecommendations?.candidates || []) },
-      detailRecommendationsHandoff: { signature: 'mock-detail-handoff' },
+      detailRecommendations: details,
+      detailRecommendationsHandoff: { signature: 'mock-detail-handoff', contract: details },
       featureTicket: { runId, points, signature: 'mock-feature-ticket' } };
+  },
+  async promoteDetailRecommendations(projectId, handoff) {
+    const details = handoff?.contract;
+    if (!details || handoff.signature !== 'mock-detail-handoff') throw error('invalid_analysis_handoff', '추천 내용을 확인하지 못했어요.');
+    const previous = state().details.get(projectId);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(details)) throw error('analysis_handoff_conflict', '이미 저장된 추천이 있어요.', 409);
+    state().details.set(projectId, clone(details));
+    DB.analysis.detailRecommendations = clone(details);
+    return clone(details);
   },
   async mergePublicPoints({ pointsTicket, featureTicket }) {
     return { decisions: featureTicket.points.map((_, late) => late < pointsTicket.points.length

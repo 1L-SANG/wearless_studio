@@ -55,7 +55,7 @@ function fixture(options = {}) {
   const timers = new Map(); let timerId = 0;
   const writes = [], calls = [], events = [], details = [];
   const request = options.request || (() => Promise.resolve({ points: { status: 'ready', items: late }, detailRecommendations: { status: 'ready' }, detailRecommendationsHandoff: { signature: 'detail' }, featureTicket: 'feature' }));
-  const run = createFeatureRun({ now: () => time, random: () => 0,
+  const run = createFeatureRun({ now: () => time, random: options.random || (() => 0),
     setTimer: (fn, delay) => { timers.set(++timerId, { fn, at: time + delay }); return timerId; }, clearTimer: (id) => timers.delete(id),
     readAnalysis: () => analysis, isCurrent: () => current,
     saveAnalysis: async (patch) => { analysis = { ...analysis, ...patch }; writes.push(structuredClone(patch)); },
@@ -179,4 +179,50 @@ test('적용 저장 도중 편집이 열리면 저장 전에 막고 확정 뒤 �
   assert.deepEqual(analysis.sellingPoints, early);
   analysis = { ...analysis, sellingPoints: ['셀러 핏', early[1]], aiSuggestedPoints: [early[1]] };
   await run.setEditing(false); await drain(); assert.deepEqual(analysis.sellingPoints, ['셀러 핏', early[1], late[1]]);
+});
+
+test('적용 저장 대기 중 삭제하거나 편집을 빨리 끝내도 셀러 변경을 덮지 않는다', async () => {
+  for (const sellingPoints of [[], ['셀러 핏']]) {
+    let analysis = base(); const block = deferred(); let writes = 0;
+    const run = createFeatureRun({ readAnalysis: () => analysis,
+      saveAnalysis: async (patch, { isCurrent }) => {
+        if (patch.featureRun.stage === 'applied' && writes++ === 0) await block.promise;
+        if (!isCurrent()) return false;
+        analysis = { ...analysis, ...patch };
+      }, requestFeatures: async () => ({ points: { status: 'ready', items: late }, featureTicket: 'f' }), requestMerge: async () => ({ decisions }) });
+    await run.start({ runId: 'test_run_123', photoSignature: 's' }); await run.receiveCore({ ...base(), pointsTicket: 'p' }); await drain();
+    analysis = { ...analysis, sellingPoints, aiSuggestedPoints: [], dismissedAiPoints: early };
+    block.resolve(); await drain();
+    assert.deepEqual(analysis.sellingPoints, [...sellingPoints, late[1]]);
+  }
+});
+test('고정 전에 받은 디테일도 분석 저장 성공 뒤 늦은 승격으로 한 번 보존한다', async () => {
+  const f = fixture(); f.run.setEditing(true); await start(f); await core(f); await drain();
+  assert.equal(f.run.getRecord().stage, 'decided'); f.run.freeze('project', { deadlineExceeded: true }); f.run.committed(); await drain();
+  assert.deepEqual(f.details, [['project', { signature: 'detail' }]]);
+  await f.run.setEditing(false); await drain(); assert.equal(f.details.length, 1);
+});
+
+
+test('무작위 재시도 지연이 기한을 넘으면 새 특징 요청을 보내지 않는다', async () => {
+  const response = deferred();
+  const f = fixture({ random: () => 1, request: () => response.promise });
+  await start(f); await core(f); await f.tick(28500);
+  response.reject(Object.assign(new Error(), { status: 502, code: 'feature_extraction_failed' }));
+  await f.tick(1500);
+  assert.equal(f.calls.length, 1); assert.equal(f.run.getRecord().stage, 'failed');
+});
+
+test('coreReceived는 핵심 체크포인트 쓰기가 끝나기 전에는 합치기를 시작하지 않는다', async () => {
+  let analysis = base(), mergeCalls = 0; const coreWrite = deferred(), feature = deferred();
+  const run = createFeatureRun({ readAnalysis: () => analysis,
+    saveAnalysis: async (patch) => {
+      if (patch.featureRun.coreReceived && !patch.featureRun.features) await coreWrite.promise;
+      analysis = { ...analysis, ...patch };
+    }, requestFeatures: () => feature.promise, requestMerge: async () => { mergeCalls++; return { decisions }; } });
+  await run.start({ runId: 'test_run_123', photoSignature: 's' });
+  const coreSaving = run.receiveCore({ ...base(), pointsTicket: 'p' });
+  feature.resolve({ points: { status: 'ready', items: late }, featureTicket: 'f' }); await drain();
+  assert.equal(mergeCalls, 0); assert.equal(run.getRecord().coreReceived, false);
+  coreWrite.resolve(); await coreSaving; await drain(); assert.equal(mergeCalls, 1); assert.equal(run.getRecord().stage, 'applied');
 });

@@ -51,15 +51,16 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
   isCurrent = () => true, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout,
   onLateDetails = async () => {}, onEvent = () => {} }) {
   let record = null, input = null, editing = false, invalid = false;
-  let processing = null, requesting = null, frozenAnalysis = null, projectId = null;
+  let processing = null, requesting = null, coreSaving = null, frozenAnalysis = null, projectId = null;
+  let needsLateDetails = false, latePromotion = null, promotedHandoff = null;
   const listeners = new Set();
   const valid = () => !invalid && !!record && isCurrent(record);
   const frozen = () => ['committing', 'committed'].includes(record?.stage);
   const notify = () => { for (const listener of listeners) listener(record); };
   const sleep = (ms) => new Promise((resolve) => setTimer(resolve, ms));
-  const persist = async (patch = {}, canApply = () => true) => {
+  const persist = async (patch = {}, canApply = () => true, recordPatch = {}) => {
     if (!valid() || frozen()) return false;
-    const snapshot = { ...record };
+    const snapshot = { ...record, ...recordPatch };
     const saved = await saveAnalysis({ ...patch, featureRun: snapshot }, { isCurrent: () => valid() && !frozen() && canApply() });
     return saved !== false && valid() && !frozen() && canApply();
   };
@@ -72,22 +73,30 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
   };
   const lateDetails = async () => {
     if (!valid() || !frozen() || !projectId) return;
-    onEvent('feature_result_late');
     const handoff = record.features?.detailRecommendationsHandoff;
-    if (handoff) {
+    const key = handoff ? JSON.stringify(handoff) : null;
+    if (key && key === promotedHandoff) return;
+    if (latePromotion) { await latePromotion; return lateDetails(); }
+    onEvent('feature_result_late');
+    if (!handoff) return;
+    latePromotion = Promise.resolve().then(async () => {
       try {
         await onLateDetails(projectId, handoff, { runId: record.runId, photoSignature: record.photoSignature });
         if (!valid()) return;
+        promotedHandoff = key;
         record = { ...record, lateDetailRevision: (record.lateDetailRevision || 0) + 1 };
         notify();
       } catch { onEvent('feature_detail_promotion_failed'); }
-    }
+    });
+    try { await latePromotion; } finally { latePromotion = null; }
   };
+  const chipKey = (analysis) => JSON.stringify([analysis?.sellingPoints || [], analysis?.aiSuggestedPoints || [], analysis?.dismissedAiPoints || []]);
   const apply = async () => {
     if (!valid()) return;
     if (frozen()) return lateDetails();
     if (editing || !record.coreReceived) return;
     const analysis = readAnalysis() || {};
+    const beforeKey = chipKey(analysis);
     const merged = mergeFeaturePoints({ ...analysis, early: record.early, late: record.features?.points?.items,
       decisions: record.decisions || [] });
     const { changedPoints, ...patch } = merged;
@@ -98,7 +107,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     }
     // applied를 저장하되, Promise 대기는 쓰기가 끝난 뒤 알림을 받고 정착한다.
     record = { ...record, changedPoints };
-    if (!await checkpoint('applied', patch, () => !editing) && valid() && !frozen()) record = { ...record, stage: 'decided' };
+    if (!await checkpoint('applied', patch, () => !editing && [beforeKey, chipKey(patch)].includes(chipKey(readAnalysis()))) && valid() && !frozen()) record = { ...record, stage: 'decided' };
   };
   const process = () => {
     if (processing) return processing;
@@ -112,6 +121,8 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
         else if (!record.early.length) decisions = late.map((_, index) => ({ late: index, action: 'new', early: null }));
         else {
           for (let attempt = 0; attempt < 2; attempt++) {
+            if (!valid()) return;
+            if (frozen()) return lateDetails();
             try {
               const response = await requestMerge({ runId: record.runId, pointsTicket: record.pointsTicket, featureTicket: record.features.featureTicket });
               if (!valid()) return;
@@ -135,14 +146,20 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
       if (record.stage === 'decided') await apply();
     })().catch(async () => {
       if (valid() && !frozen()) await checkpoint('failed').catch(() => {});
-    }).finally(() => { processing = null; });
+    }).finally(() => { processing = null; if (valid() && !frozen() && record.stage === 'decided' && !editing) void process(); });
     return processing;
   };
   const request = () => {
     if (requesting) return requesting;
     requesting = (async () => {
-      let busy = 0;
+      let busy = 0, firstRequest = true;
       while (valid() && record.attempts < 3) {
+        if (!firstRequest && now() >= record.deadlineAt) {
+          if (record.features) await process();
+          else if (!frozen()) await checkpoint('failed');
+          return;
+        }
+        firstRequest = false;
         record = { ...record, attempts: record.attempts + 1 };
         if (!frozen() && !await persist()) return;
         try {
@@ -153,6 +170,8 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
             ? { ...received, points: previous.points, featureTicket: previous.featureTicket }
             : received;
           record = { ...record, features };
+          if (coreSaving) await coreSaving;
+          if (!valid()) return;
           if (frozen()) return lateDetails();
           if (!await checkpoint('received')) return;
           const malformed = received.detailRecommendations?.status === 'unavailable';
@@ -195,13 +214,19 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     },
     async receiveCore(analysis) {
       if (!valid() || frozen()) return null;
-      record = { ...record, coreReceived: true, early: [...(analysis.aiSuggestedPoints || [])], pointsTicket: analysis.pointsTicket };
+      record = { ...record, early: [...(analysis.aiSuggestedPoints || [])], pointsTicket: analysis.pointsTicket };
       const { pointsTicket: _ticket, ...fields } = analysis;
       const sellingPoints = [...new Set([...(analysis.sellingPoints || []), ...record.early])].slice(0, SELLING_POINTS_MAX);
-      if (!await persist({ ...fields, sellingPoints, dismissedAiPoints: [] })) return null;
-      notify();
-      if (!requesting) void process();
-      return readAnalysis();
+      coreSaving = (async () => {
+        if (!await persist({ ...fields, sellingPoints, dismissedAiPoints: [] }, undefined, { coreReceived: true })) return null;
+        record = { ...record, coreReceived: true };
+        notify();
+        return readAnalysis();
+      })();
+      let saved;
+      try { saved = await coreSaving; } finally { coreSaving = null; }
+      if (saved && !requesting) void process();
+      return saved;
     },
     async resume(saved, options = {}, { promotion = false } = {}) {
       if (record?.runId === saved.runId) return controller;
@@ -233,6 +258,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     },
     freeze(pid, { deadlineExceeded = false } = {}) {
       if (deadlineExceeded) onEvent('feature_deadline_exceeded');
+      needsLateDetails ||= isFeatureRunPending(record) || !!processing;
       projectId = pid;
       frozenAnalysis ||= { ...readAnalysis() };
       if (deadlineExceeded) {
@@ -243,7 +269,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
       notify();
       return frozenAnalysis;
     },
-    committed() { record = { ...record, stage: 'committed' }; notify(); },
+    committed() { record = { ...record, stage: 'committed' }; notify(); if (needsLateDetails) void lateDetails(); },
     invalidate() { invalid = true; notify(); },
   };
   return controller;
@@ -251,4 +277,8 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
 
 let active = null;
 export const getActiveFeatureRun = () => active;
-export function setActiveFeatureRun(run) { active?.invalidate(); active = run; return run; }
+export function setActiveFeatureRun(run) {
+  if (!['committing', 'committed'].includes(active?.getRecord()?.stage)) active?.invalidate();
+  active = run;
+  return run;
+}

@@ -184,7 +184,7 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
 test('the storyboard loads immediately but waits for custom-match material before mannequin generation', () => {
   assert.match(storyboardSource, /import \{ requestMannequinGeneration \} from '@\/features\/mannequin\/generationRunner\.js'/);
   // 보드 GET은 승격과 병렬로 시작하되, 마네킹 재료인 내 옷만 정착한 뒤 생성한다.
-  assert.match(storyboardSource, /customMatchReady\.then\(\(\) => requestMannequinGeneration\(pid\)\)/);
+  assert.match(storyboardSource, /customMatchReady\.then\(\(\) => isAnalysisFastEntryEnabled\(\)[\s\S]*?active \? requestMannequinGeneration\(pid, \{ isActive: \(\) => active \}\)/);
   const autoRequest = storyboardSource.slice(storyboardSource.indexOf('const customMatchTask ='), storyboardSource.indexOf('await sbSaveIdle();'));
   assert.doesNotMatch(autoRequest, /await requestMannequinGeneration/);
   assert.match(storyboardSource, /마네킹 다시 만들기/);

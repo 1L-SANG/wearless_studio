@@ -1064,15 +1064,47 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     }
   };
 
+  const resumeFeatureAnalysis = async (payload) => {
+    if (!isAnalysisFastEntryEnabled() || mobile || !payload.analysis?.featureRun) return;
+    const restoredGeneration = useAppStore.getState().projectGeneration;
+    const restoredRun = await restoreDraftFeatureRun(payload, {
+      readProduct: () => latestProductRef.current, readAnalysis: () => latestAnalysisRef.current,
+      isCurrent: () => useAppStore.getState().projectGeneration === restoredGeneration,
+      onAnalysis: (next) => {
+        latestAnalysisRef.current = next; featureSavedAnalysisRef.current = next;
+        if (mountedRef.current) {
+          setAnalysis(next);
+          if (!payload.analysis.featureRun.coreReceived && next.featureRun?.coreReceived) {
+            const patch = analysisResponseProductPatch(next);
+            latestProductRef.current = { ...latestProductRef.current, ...patch };
+            setProduct(latestProductRef.current);
+          }
+        }
+      },
+    });
+    if (!mountedRef.current || useAppStore.getState().projectGeneration !== restoredGeneration) return;
+    if (restoredRun?.getRecord().coreReceived) setPhase('done');
+    else if (!restoredRun) setPhase('input');
+  };
+
   const applyDraftPayload = (payload) => {
     if (!payload?.product) return false;
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
+    latestProductRef.current = restored;
+    latestAnalysisRef.current = (mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null;
     setProduct(restored);
     setAnalysis((mobile ? payload.analysis : normalizeAnalysisFit(payload.analysis)) || null);
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
-    setPhase(payload.analysis && (mobile || hasRequiredDraftPhotos(restored)) ? 'done' : 'input');
+    const canRestoreAnalysis = payload.analysis && (mobile || hasRequiredDraftPhotos(restored));
+    const awaitingCore = isAnalysisFastEntryEnabled() && payload.analysis?.featureRun && !payload.analysis.featureRun.coreReceived;
+    setPhase(canRestoreAnalysis ? (awaitingCore ? 'analyzing' : 'done') : 'input');
+    if (canRestoreAnalysis && isAnalysisFastEntryEnabled()) {
+      void resumeFeatureAnalysis(payload).catch((error) => {
+        if (mountedRef.current) { setPhase('input'); toast.push('분석을 이어서 불러오지 못했어요. 다시 시도해 주세요.', { icon: 'alert', error }); }
+      });
+    }
     return true;
   };
 
@@ -1276,25 +1308,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           latestAnalysisRef.current = draft.analysis;
           setAnalysis(draft.analysis);
           setPhase(isAnalysisFastEntryEnabled() && draft.analysis.featureRun && !draft.analysis.featureRun.coreReceived ? 'analyzing' : 'done');
-          if (isAnalysisFastEntryEnabled() && !mobile) {
-            const restoredGeneration = useAppStore.getState().projectGeneration;
-            const restoredRun = await restoreDraftFeatureRun(draft, {
-            readProduct: () => latestProductRef.current, readAnalysis: () => latestAnalysisRef.current,
-            isCurrent: () => useAppStore.getState().projectGeneration === restoredGeneration,
-            onAnalysis: (next) => {
-              latestAnalysisRef.current = next; featureSavedAnalysisRef.current = next;
-              if (mountedRef.current) {
-                setAnalysis(next);
-                if (!draft.analysis.featureRun?.coreReceived && next.featureRun?.coreReceived) {
-                  const patch = analysisResponseProductPatch(next);
-                  latestProductRef.current = { ...latestProductRef.current, ...patch };
-                  setProduct(latestProductRef.current);
-                }
-              }
-            },
-          });
-            if (restoredRun?.getRecord().coreReceived && mountedRef.current) setPhase('done');
-          }
+          await resumeFeatureAnalysis(draft);
         }
         return;
       }
@@ -1451,7 +1465,9 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           isCurrent: () => getActiveFeatureRun() === featureRun
             && analysisPhotoKey(latestProductRef.current) === key
             && useAppStore.getState().projectGeneration === analysisGeneration });
-        if (!a || getActiveFeatureRun() !== featureRun || analysisPhotoKey(latestProductRef.current) !== key) return;
+        if (!a || !mountedRef.current || getActiveFeatureRun() !== featureRun
+          || useAppStore.getState().projectGeneration !== analysisGeneration
+          || analysisPhotoKey(latestProductRef.current) !== key) return;
       } else {
         a = await api.analyzeProduct(null, { product });
       }
@@ -1465,12 +1481,14 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
         ...analyzedProductPatch,
       }, a);
       persistedColorsRef.current = nextProduct.colors || [];
-      setProduct(nextProduct);
+      if (!featureRun) setProduct(nextProduct);
       latestProductRef.current = nextProduct;
       const coreAnalysis = mergeProductOwnedAnalysisFields(a, nextProduct);
       if (featureRun) {
         latestAnalysisRef.current = { ...latestAnalysisRef.current, ...coreAnalysis };
+        queueProductDraftSave(nextProduct, latestAnalysisRef.current, composeMode);
         await featureRun.receiveCore(coreAnalysis);
+        if (mountedRef.current) setProduct(nextProduct);
       } else setAnalysis(coreAnalysis);
       // 사진 묶음이 바뀌었을 수 있으므로 이전 판정의 확인 상태는 버린다.
       setInputConsistency(a.inputConsistency || null);

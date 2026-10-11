@@ -1,4 +1,3 @@
-import { isAnalysisFastEntryEnabled } from '../../src/lib/analysisFastEntry.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -40,13 +39,13 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
+function harness({ mobile = true, analysis = null, fastEntry = false, analyze = null, featureFactory = null, restoreFeature = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
   const calls = [];
   const content = [];
   const onContentChange = (value) => content.push(value);
   const documentEvents = new EventTarget();
   documentEvents.visibilityState = 'visible';
-  let pendingHandler, conflictHandler;
+  let pendingHandler, conflictHandler, featureController;
   const frames = new Map();
   let active, cursor, effects = [], dirty = false;
   let staged = stagedDraft ? { payload: { product: photos, analysis, composeMode: 'basic' } } : null;
@@ -69,7 +68,11 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     saveAll: async (snapshot) => { calls.push(['saveAll', snapshot]); return saveAll ? saveAll(snapshot) : { status: 'saved', photoCount: 2 }; },
   };
   const bindings = {
-    isAnalysisFastEntryEnabled,
+    isAnalysisFastEntryEnabled: () => fastEntry,
+    preparePublicAnalysis: async () => ({ photos: [], photoSignature: 'signature' }), analysisPhotoKey: () => 'photos',
+    getActiveFeatureRun: () => featureController,
+    createDraftFeatureRun: (options) => (featureController = featureFactory(options)),
+    restoreDraftFeatureRun: (draft, options) => { calls.push(['restoreFeature', draft.analysis.featureRun.stage]); return restoreFeature?.(draft, options); },
     useClientErrorCapture() {}, ClientErrorCapture: () => null, recordClientAction() {},
     ...entry, ...flow, checkDraftEntry, canAutoOpenInput, localDraftMeta,
     flowRouteSeenThisSession: false, flowDocumentEntryId: 'document',
@@ -95,7 +98,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
     useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
     api: { getProduct: async (id) => { calls.push(['getProduct', id]); return photos; },
       getAnalysis: async () => ({ projectId: 'desktop', fit: 'regular' }), getCatalogs: async () => ({ angleSlots: ['Front', 'Back'], swatchColors: [] }),
-      analyzeProduct: async () => { calls.push('analyze'); return { suggestedName: '니트' }; } },
+      analyzeProduct: async (...args) => { calls.push('analyze'); return analyze ? analyze(...args) : { suggestedName: '니트' }; } },
     createProductPhotoPreviewRegistry: previewRegistry || (() => ({ sync() {}, dispose() {}, release() {}, displayUrl: (_id, src) => src })),
     createTrailingPatchScheduler: () => ({ flush() {}, schedule() {} }),
     generationWorkWarningKind: () => 'none', restoreDraftProduct: (draft) => draft.product,
@@ -951,3 +954,33 @@ for (const token of ['owned', null]) {
     assert.equal(storage.saved.product.name, '느린 저장 중 수정');
   });
 }
+
+
+test('빠른 핵심 저장을 기다리는 동안 옛 분석으로 상품 초안을 예약하지 않는다', async () => {
+  let coreResolve, saveResolve;
+  const core = new Promise((yes) => { coreResolve = yes; });
+  const saved = new Promise((yes) => { saveResolve = yes; });
+  const snapshots = [];
+  const h = harness({ mobile: false, fastEntry: true, analyze: () => core,
+    draftStore: { queueProductDraftSave: (product, analysis) => snapshots.push({ product, analysis }) },
+    featureFactory: ({ onAnalysis }) => {
+      let record;
+      return { async start(options) { record = { runId: options.runId, photoSignature: options.photoSignature, stage: 'requested', coreReceived: false }; onAnalysis({ featureRun: record }); },
+        async receiveCore(analysis) { await saved; record = { ...record, coreReceived: true }; onAnalysis({ ...analysis, featureRun: record }); }, invalidate() {} };
+    } });
+  const tree = await h.settle(); const submitting = button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
+  await h.settle();
+  coreResolve({ suggestedName: '니트', sellingPoints: ['예비 특징'], aiSuggestedPoints: ['예비 특징'] });
+  await h.settle();
+  assert.equal(snapshots.some((snapshot) => snapshot.analysis?.featureRun?.coreReceived === false && !snapshot.analysis.sellingPoints), false);
+  saveResolve(); await submitting; await h.settle();
+  assert.ok(snapshots.some((snapshot) => snapshot.analysis?.sellingPoints?.[0] === '예비 특징')); h.cleanup();
+});
+
+test('고른 로컬 초안도 특징 실행을 복원하고 핵심 수신 전에는 분석 폼을 열지 않는다', async () => {
+  let restoreCalls = 0;
+  const h = harness({ mobile: false, fastEntry: true, analysis: { featureRun: { stage: 'requested', coreReceived: false, runId: 'restore_run_123' } },
+    restoreFeature: async () => { restoreCalls++; return { getRecord: () => ({ coreReceived: false }) }; } });
+  const tree = await h.settle();
+  assert.equal(restoreCalls, 1); assert.ok(node(tree, 'AnalysisProgress')); assert.equal(node(tree, 'AnalysisForm'), undefined); h.cleanup();
+});

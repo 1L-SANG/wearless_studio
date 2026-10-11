@@ -3688,3 +3688,4 @@
 .sp-chip.feature-refined { box-shadow: 0 0 0 3px var(--ring-strong); }
 @keyframes spFeaturePulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .sp-feature-progress { animation: none; } }
+.sb-feature-preparation { margin-block: var(--sp-3); color: var(--fg-2); font-size: 14px; text-align: center; text-wrap: balance; }

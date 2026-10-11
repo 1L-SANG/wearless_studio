@@ -9,15 +9,18 @@ import { isAnalysisFastEntryEnabled } from './analysisFastEntry.js';
 // 실행 수명은 입력 화면보다 길다. 화면이 사라져도 마지막 refs와 초안으로 저장을 마친다.
 export function createDraftFeatureRun({ product, analysis, readProduct, readAnalysis, onAnalysis, isCurrent = () => true }) {
   let latest = analysis;
-  let ownsProject = false;
+  let owner = null;
   const key = analysisPhotoKey(product);
   let run;
   run = createFeatureRun({
     readAnalysis: () => readAnalysis?.() || latest,
-    isCurrent: (record) => getActiveFeatureRun() === run && isCurrent()
-      && (ownsProject || (analysisPhotoKey(readProduct?.() || product) === key
+    isCurrent: (record) => owner
+      ? owner.runId === record.runId && owner.photoSignature === record.photoSignature
+        && owner.projectId === run.getProjectId() && owner.accountGeneration === clientEvents.getAccountGeneration()
+      : getActiveFeatureRun() === run && isCurrent()
+        && analysisPhotoKey(readProduct?.() || product) === key
         && (!latest?.featureRun || latest.featureRun.runId === record.runId)
-        && (!latest?.featureRun || latest.featureRun.photoSignature === record.photoSignature))),
+        && (!latest?.featureRun || latest.featureRun.photoSignature === record.photoSignature),
     saveAnalysis: async (patch, options) => {
       if (!options.isCurrent()) return;
       const current = readAnalysis?.() || latest || {};
@@ -40,10 +43,15 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       invalidateStoryboardEntryPrefetch(projectId);
     },
     onEvent: (code) => clientEvents.report({ kind: 'analysis_error', action: 'analyze',
-      messageCode: code, error: Object.assign(new Error(code), { code }), blocking: false }),
+      messageCode: code, context: { projectId: run?.getProjectId() }, error: Object.assign(new Error(code), { code }), blocking: false }),
   });
   const freeze = run.freeze;
-  run.freeze = (projectId, options) => { ownsProject = true; return freeze(projectId, options); };
+  run.freeze = (projectId, options) => {
+    const record = run.getRecord();
+    if (owner && owner.projectId !== projectId) throw new Error('feature_project_changed');
+    owner ||= { projectId, runId: record.runId, photoSignature: record.photoSignature, accountGeneration: clientEvents.getAccountGeneration() };
+    return freeze(projectId, options);
+  };
   return setActiveFeatureRun(run);
 }
 
@@ -52,24 +60,28 @@ export async function restoreDraftFeatureRun(draft, { promotion = false, onAnaly
   const saved = draft.analysis.featureRun;
   const existing = getActiveFeatureRun();
   if (existing?.getRecord()?.runId === saved.runId && existing.getRecord().photoSignature === saved.photoSignature) return existing;
-  const run = createDraftFeatureRun({ product: draft.product, analysis: draft.analysis, onAnalysis, readProduct, readAnalysis, isCurrent });
+  const currentProduct = readProduct?.() || draft.product;
+  const key = analysisPhotoKey(currentProduct);
   let options = {};
-  if (!promotion && (saved.stage === 'requested' || !saved.coreReceived)) {
+  if (['requested', 'received', 'decided'].includes(saved.stage) || !saved.coreReceived) {
     const colors = draft.product?.colors || [];
     const product = { ...draft.product, colors: colors.map((color) => ({ ...color, images: (color.images || []).map((photo) => ({ ...photo,
       blob: draft.photos?.find((stored) => stored.imageId === photo.id)?.blob })) })) };
-    options = await preparePublicAnalysis(product, { fetchBlob: async (src) => {
-      const photo = product.colors.flatMap((color) => color.images).find((item) => item.src === src);
-      if (photo?.blob) return photo.blob;
-      throw new Error('feature_photo_missing');
-    } });
-    if (options.photoSignature !== saved.photoSignature) { run.invalidate(); return null; }
+    try {
+      options = await preparePublicAnalysis(product, { fetchBlob: async (src) => {
+        const photo = product.colors.flatMap((color) => color.images).find((item) => item.src === src);
+        if (photo?.blob) return photo.blob;
+        throw new Error('feature_photo_missing');
+      } });
+    } catch { return null; }
+    if (options.photoSignature !== saved.photoSignature) return null;
     options.product = draft.product;
   }
+  const run = createDraftFeatureRun({ product: currentProduct, analysis: draft.analysis, onAnalysis, readProduct, readAnalysis, isCurrent });
   await run.resume(saved, options, { promotion });
   if (!promotion && !saved.coreReceived) {
     const core = await api.analyzeProduct(null, { ...options, product: draft.product, parts: 'core', runId: saved.runId,
-      isCurrent: () => getActiveFeatureRun() === run && analysisPhotoKey(readProduct?.() || draft.product) === analysisPhotoKey(draft.product) });
+      isCurrent: () => getActiveFeatureRun() === run && analysisPhotoKey(readProduct?.() || draft.product) === key });
     if (core) await run.receiveCore(core);
   }
   return run;

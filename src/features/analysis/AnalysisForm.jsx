@@ -1084,7 +1084,14 @@ export function AnalysisForm({
                 <button className="sp-chip-x" aria-label={`${p} 삭제`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onChange(applySellingPointEdit({ sellingPoints: a.sellingPoints, aiSuggestedPoints: a.aiSuggestedPoints, ...(isAnalysisFastEntryEnabled() ? { dismissedAiPoints: a.dismissedAiPoints || [] } : {}), index: i, text: '' })); }}><Icon name="x" size={12} /></button>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i),
+                      aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p),
+                      ...(isAnalysisFastEntryEnabled() && aiSet.has(p)
+                        ? { dismissedAiPoints: [...new Set([...(a.dismissedAiPoints || []), p])] } : {}),
+                    });
+                  }}><Icon name="x" size={12} /></button>
               </span>
             )
           ))}

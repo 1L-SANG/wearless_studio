@@ -42,3 +42,11 @@ test('분석 서버 저장은 실행 기록과 버린 문구 목록을 보내지
   await adapter.saveAnalysis('project', { sellingPoints: ['보존'], featureRun: { secret: 'ticket' }, dismissedAiPoints: ['버림'] });
   assert.deepEqual(JSON.parse(calls[0].body), { sellingPoints: ['보존'] });
 });
+
+test('목 특징 인계도 확정 뒤 저장되어 개발 흐름이 계속 이어진다', async () => {
+  const { mockAdapter } = await vite.ssrLoadModule('/src/lib/api/mockAdapter.js');
+  const feature = await mockAdapter.analyzePublicFeatures({ runId: 'mock_run_123' });
+  await mockAdapter.promoteDetailRecommendations('mock-project', feature.detailRecommendationsHandoff);
+  const saved = await mockAdapter.getAnalysis('mock-project');
+  assert.equal(saved.detailRecommendations.status, 'ready');
+});

@@ -1,3 +1,6 @@
+import { createLateDetailCatalog } from './storyboardLateDetails.js';
+import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
 import { canPlanSimilarCut, createSimilarCutBlock, inheritSimilarCutRecipes, reconcileSimilarCutMutation } from '@/lib/storyboardSimilarCuts.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 import OuterClosureField from '@/components/OuterClosureField.jsx';
@@ -1867,14 +1870,26 @@ function usePhotoUploadProgress(projectId) {
   return state;
 }
 
-export function StoryboardLoadingState({ photoUpload = null }) {
+function useFeaturePreparation(projectId) {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!projectId || !isAnalysisFastEntryEnabled()) return undefined;
+    const run = getActiveFeatureRun();
+    if (!run) return undefined;
+    return run.subscribe((record) => setPending(isFeatureRunPending(record)));
+  }, [projectId]);
+  return pending && getProductPhotoPromotionTask(projectId)?.status === 'pending';
+}
+
+export function StoryboardLoadingState({ photoUpload = null, featurePending = false }) {
   // 빈 div 의 aria-label 은 낭독되지 않을 수 있다 — 숨긴 텍스트 + status 로 알린다(리뷰 반영)
-  const label = photoUpload
+  const label = featurePending ? '옷 특징 정리 중' : photoUpload
     ? `사진 ${photoUpload.total}장 중 ${photoUpload.done}장 올렸어요`
     : '콘티보드를 불러오는 중이에요';
   return (
     <div role="status" aria-busy="true">
       <span className="sr-only">{label}</span>
+      {featurePending && <p className="sb-feature-preparation">옷 특징 정리 중</p>}
       {photoUpload && (
         <div className="sb-upload-progress">
           <ProgressBar
@@ -2407,6 +2422,26 @@ export function Storyboard({ toastOverride = null } = {}) {
 
   // 훅은 로딩 early-return 위에 둔다(CLAUDE.md — 훅 개수 불변).
   const photoUploadProgress = usePhotoUploadProgress(projectId);
+  const featurePreparationPending = useFeaturePreparation(projectId);
+  const lateDetailCatalogRef = useRef(null);
+  lateDetailCatalogRef.current ||= createLateDetailCatalog();
+  useEffect(() => {
+    if (!projectId || !isAnalysisFastEntryEnabled()) return undefined;
+    const run = getActiveFeatureRun();
+    if (!run) return undefined;
+    let active = true;
+    let revision = 0;
+    const unsubscribe = run.subscribe((record) => {
+      if (!active || run.getProjectId() !== projectId || !(record?.lateDetailRevision > revision)) return;
+      revision = record.lateDetailRevision;
+      void api.getAnalysis(projectId).then((analysis) => {
+        if (!active || useAppStore.getState().projectId !== projectId) return;
+        lateDetailCatalogRef.current.remember(projectId, analysis.detailRecommendations);
+        setCatalogs((current) => lateDetailCatalogRef.current.merge(projectId, current));
+      }).catch(() => {});
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [projectId]);
 
   useEffect(() => {
     // 사진 업로드 정착을 여기서 기다리므로(수십 초 가능) 언마운트 후 setState 를 막는 플래그가
@@ -2458,7 +2493,9 @@ export function Storyboard({ toastOverride = null } = {}) {
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
         const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
-        void customMatchReady.then(() => requestMannequinGeneration(pid)).catch((error) => {
+        void customMatchReady.then(() => isAnalysisFastEntryEnabled()
+          ? (active ? requestMannequinGeneration(pid, { isActive: () => active }) : null)
+          : requestMannequinGeneration(pid)).catch((error) => {
           if (active) setMannequinFailure(error?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
         });
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
@@ -2504,7 +2541,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         setOpenGroupKeys([]);
         if (!reuseInitialEntry) {
           setBlocks(initBlocks);
-          setCatalogs(prepared.catalogs);
+          setCatalogs(lateDetailCatalogRef.current.merge(pid, prepared.catalogs));
           setMatchClothing(promotedMatchClothing || prepared.matchClothing);
           setClothingType(prepared.clothingType);
           setExampleGender(prepared.exampleGender);
@@ -2718,7 +2755,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       )}
     </div></div>
   );
-  if (!blocks || !catalogs) return <StoryboardLoadingState photoUpload={photoUploadProgress} />;
+  if (!blocks || !catalogs) return <StoryboardLoadingState photoUpload={photoUploadProgress} featurePending={featurePreparationPending} />;
 
   const composeModeApplies = isDefaultStoryboardForMode(
     blocks,
