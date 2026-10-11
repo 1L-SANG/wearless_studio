@@ -129,7 +129,16 @@ def test_similar_worker_plans_and_reserves_before_generation(monkeypatch, case):
     async def failure(conn, **kwargs):
         seen["failure"].append(kwargs)
 
+    # 원본 계획과 리스의 고립 시험이며 설정 조회 원장은 별도 시험에서 다룬다.
+    async def no_recipes(*args):
+        return {}
+
+    async def no_wardrobe(*args):
+        return []
+
     monkeypatch.setattr(eij.repo, "get_project_asset_for_user", lookup)
+    monkeypatch.setattr(eij.asset_recipe, "resolve_asset_recipes", no_recipes)
+    monkeypatch.setattr(eij.repo, "list_wardrobe_images", no_wardrobe)
     monkeypatch.setattr(eij.repo, "get_product", empty)
     monkeypatch.setattr(eij.repo, "get_analysis", empty)
     monkeypatch.setattr(eij.repo, "get_similar_cut_plan_for_job", prior)

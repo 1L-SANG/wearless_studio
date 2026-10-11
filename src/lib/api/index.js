@@ -84,4 +84,7 @@ function buildHttpApi() {
 }
 
 export const api = mode === 'http' ? buildHttpApi() : mockAdapter;
+export function fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress } = {}) {
+  return api.fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress });
+}
 export default api;

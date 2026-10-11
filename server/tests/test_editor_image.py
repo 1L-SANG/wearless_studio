@@ -491,13 +491,16 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     asyncio.run(eij.run_editor_image_job(app, worker_job({**payload, **similar_payload})))
 
     assert captured["charge"] == 1  # credit_cost_editor_image 기본값
-    assert captured["group"] is None  # AG-07 결과는 misc 그룹(color_id=None)
+    assert captured["group"] is None  # 이 원본에는 의류 목록의 색 그룹이 없다.
     assert captured["cut_type"] == "styling"
     assert captured["image"]["mime"] == "image/png"
     assert captured["image"]["metadata"] == {
         "facemarket_real_derived": False,
         "cut_type": "styling",
         "similar_cut": captured["metadata"]["similar_cut"],
+        "generation": {"version": 1, "origin": "editor_similar", "autoSelected": False,
+                       "sourceAssetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                       "recipeFrom": "anchor", "recipe": None},
     }
 
 
@@ -622,6 +625,9 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
             "facemarket_real_derived": True,
             "cut_type": "horizon",
             "similar_cut": captured["finalize"]["metadata"]["similar_cut"],
+            "generation": {"version": 1, "origin": "editor_similar", "autoSelected": False,
+                           "sourceAssetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                           "recipeFrom": "anchor", "recipe": None},
         }
         assert r2.deletes == []
 

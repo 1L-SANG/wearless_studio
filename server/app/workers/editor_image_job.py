@@ -17,6 +17,7 @@ from PIL import Image
 from .. import facemarket, fm_fingerprint_store, repo
 from ..services import fm_fingerprint, matching
 from ..agents import (
+    asset_recipe,
     content_roles,
     cut_generator,
     cut_output_qc,
@@ -165,6 +166,8 @@ async def run_editor_image_job(app, job: dict) -> None:
     neck_repair_metadata: dict | None = None
     detail_recipe_metadata: dict | None = None
     similar_cut_metadata: dict | None = None
+    generation_recipe: dict | None = None
+    generation_source_asset_id: str | None = None
     fallback_metadata: list[dict] = []
     contract_error_logged = False
 
@@ -285,6 +288,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail(message,
                             {"error": "vary_unsupported"}, code="vary_unsupported")
                 return
+            # 선택한 원본의 설정은 공용 조회로 찾고, 의류 색 그룹은 원장 값을 그대로 잇는다.
+            generation_source_asset_id = (
+                similar_envelope["sourceAssetId"] if similar_envelope else asset_id)
+            async with pool.connection() as conn:
+                source_recipes = await asset_recipe.resolve_asset_recipes(
+                    conn, user_id, project_id, [generation_source_asset_id])
+                if similar_envelope:
+                    source_wardrobe = await repo.list_wardrobe_images(conn, user_id, project_id)
+                    group = next((row.get("color_id") for row in source_wardrobe
+                                  if str(row.get("asset_id")) == generation_source_asset_id), None)
+            generation_recipe = asset_recipe.project_recipe(
+                (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
             snapshot = payload.get("_facemarket")
             source_real_derived = (
                 isinstance(src_asset.get("metadata"), dict)
@@ -380,7 +395,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             except (GeminiError, VisionError) as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
-            group = detail_recipe_metadata.get("colorId") if detail_recipe_metadata else None
+            if detail_recipe_metadata:
+                group = detail_recipe_metadata.get("colorId")
             cut_type = cut_type or "styling"  # cutType 미상 소스 → styling 가정(계약 §6)
 
         elif mode == "new" and payload.get("cutType") == "product" and payload.get("shot") == "detail":
@@ -396,6 +412,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             image, mime = chosen.data, chosen.mime
             group, cut_type = payload.get("colorId"), "product"
             detail_recipe_metadata = detail_shot_runtime.recipe(payload)
+            generation_recipe = asset_recipe.project_recipe({**payload, **detail_recipe_metadata})
 
         elif mode == "new":
             new_payload = content_roles.canonicalize_storyboard_block(payload)
@@ -979,6 +996,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            # 생성기가 받는 최종 정규화 값이다. 열림 보정, 예시 재배정, 매칭 대체가 끝났다.
+            generation_recipe = asset_recipe.project_recipe({
+                **new_payload, **cut_spec,
+                **cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type),
+                # 무드 레퍼런스는 생성 입력 키 밖에서 따로 읽으므로 실제로 넘긴 값을 그대로 남긴다.
+                "refAssetIds": [str(r) for r in (new_payload.get("refAssetIds") or [])][:3],
+            })
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
@@ -1222,6 +1246,23 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                "generation": {
+                    "version": 1,
+                    "origin": (
+                        "context_fill" if isinstance(payload.get("_contextFill"), dict)
+                        else "editor_retry" if payload.get("retryBlockId")
+                        else "editor_similar" if mode == "vary" and payload.get("variationMode") == "similar"
+                        else "editor_reshoot" if mode == "vary"
+                        else "editor_new"
+                    ),
+                    "autoSelected": isinstance(payload.get("_contextFill"), dict),
+                    "sourceAssetId": generation_source_asset_id,
+                    "recipeFrom": "anchor" if mode == "vary" else "self",
+                    "recipe": generation_recipe,
+                },
+                **({"context_fill": {key: value for key, value in payload["_contextFill"].items()
+                                     if key != "attempt"}}
+                   if isinstance(payload.get("_contextFill"), dict) else {}),
                 **({"fallback": fallback_metadata} if fallback_metadata else {}),
                 **({"retryBlockId": payload["retryBlockId"]} if payload.get("retryBlockId") else {}),
                 **({"similar_cut": similar_cut_metadata} if similar_cut_metadata else {}),
@@ -1241,6 +1282,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         # 실행 시점 설정 재조회 금지 — 단가 변경이 배포 사이에 끼면 예약액과 다른 차감 발생).
         charge = reserved
         success_metadata = {"creditCostVersion": s.credit_cost_version}
+        if isinstance(payload.get("_contextFill"), dict):
+            success_metadata["contextFill"] = payload["_contextFill"]
         if similar_cut_metadata:
             success_metadata["similar_cut"] = similar_cut_metadata
         if horizon_decision:

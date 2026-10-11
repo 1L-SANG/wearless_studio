@@ -148,7 +148,17 @@ def patch_worker_similar_source(monkeypatch, worker, asset_lookup, *, cut_type="
     async def stored_plan(*args):
         return {**envelope, "plan": plan}, {}
 
+    # 이 헬퍼를 쓰는 기존 고립 시험에는 생성 기록과 의류 목록 행이 없다.
+    # 실제 레시피 조회와 색 상속은 별도 워커 계약 시험에서 확인한다.
+    async def no_recipes(*args):
+        return {}
+
+    async def no_wardrobe(*args):
+        return []
+
     monkeypatch.setattr(worker.repo, "get_project_asset_for_user", owned_asset)
+    monkeypatch.setattr(worker.asset_recipe, "resolve_asset_recipes", no_recipes)
+    monkeypatch.setattr(worker.repo, "list_wardrobe_images", no_wardrobe)
     monkeypatch.setattr(worker, "_plan_similar_cut", stored_plan)
     return {"variationMode": "similar", "_similarCut": envelope,
             "source": {"src": f"/v1/assets/{asset_id}/file", "cutType": cut_type}}

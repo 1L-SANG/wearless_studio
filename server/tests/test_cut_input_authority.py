@@ -795,6 +795,19 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": False,
         "cut_type": "product",
+        "generation": {
+            "version": 1, "origin": "editor_new", "autoSelected": False,
+            "sourceAssetId": None, "recipeFrom": "self",
+            "recipe": {
+                "sectionRole": "product", "contentRole": "productOverview", "cutType": "product",
+                "shot": "ghost", "direction": "front", "sideStyle": None, "colorId": None,
+                "faceExposure": None, "modelId": model_id, "matchIds": [], "matchIdsOrigin": None,
+                "refAssetIds": ["mood"], "refScope": "all", "exampleId": "example-all",
+                "exampleSelectionOrigin": "user", "outerClosureState": None, "detailTargetId": None,
+                "detailTargetOrigin": None, "spaceGroupId": None, "spaceVariation": "subtle",
+                "spaceSetMemberOrder": None, "horizonBackgroundMode": None,
+            },
+        },
     }
 
 
@@ -860,6 +873,19 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": True,
         "cut_type": "horizon",
+        "generation": {
+            "version": 1, "origin": "editor_new", "autoSelected": False,
+            "sourceAssetId": None, "recipeFrom": "self",
+            "recipe": {
+                "sectionRole": "studio", "contentRole": "fit", "cutType": "horizon", "shot": "full",
+                "direction": "front", "sideStyle": None, "colorId": None, "faceExposure": "show",
+                "modelId": model_id, "matchIds": [], "matchIdsOrigin": None, "refAssetIds": [],
+                "refScope": "all", "exampleId": None, "exampleSelectionOrigin": None,
+                "outerClosureState": None, "detailTargetId": None, "detailTargetOrigin": None,
+                "spaceGroupId": None, "spaceVariation": "subtle", "spaceSetMemberOrder": None,
+                "horizonBackgroundMode": None,
+            },
+        },
     }
 
 

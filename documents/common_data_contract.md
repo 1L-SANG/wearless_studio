@@ -335,6 +335,8 @@ TextStyle {
 }
 ```
 
+빈 이미지 칸은 `genFailed`가 있거나, 템플릿이 아닌 페이지 생성 블록에서 `sourceBlockId`가 저장 콘티의 AI 블록을 가리키면 계획된 칸이다. 그 밖의 빈 사진 칸은 계획 없는 칸이며 프레임 자동 채움 뒤 지운 칸도 포함한다. 정보 블록, 자동 블록, 숨긴 칸과 생성 중인 칸은 AI로 채우기 대상에서 뺀다(ADR-0019).
+
 #### 3.5.1 `info` — `내용 추가` 폼 상태 (PRD §10.14)
 
 `내용 추가`(에디터 '내용' 탭)로 만든 블록은 폼 상태를 `block.info`에 정본으로 저장하고,
@@ -532,6 +534,7 @@ GenerationExample {
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
 | `getWardrobe(projectId)` | | `Wardrobe` | |
 | `generateImage(projectId, req)` | `NewCutRequest \| VaryRequest` (아래) | `{ data: WardrobeImage, credits }` | `editorImage` |
+| `fillEmptySlot(projectId, req)` | `FillRequest`와 필수 `idempotencyKey`, `onJobStarted`, `onProgress` | `{ data: WardrobeImage, credits, contextFill }` | `editorImage`, 계획 없는 칸만 받음 |
 | `uploadAsset(file)` | `File` | `ImageAsset` | 실서비스 계약 — mock은 `pickAnyImage()`(mock 전용 헬퍼)로 대행 |
 | `download(projectId, format)` | `'long' \| 'zip'` | `{ ok }` | 실제 렌더링은 P1 |
 
@@ -574,6 +577,111 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정'
 동작 계획은 `jobs.metadata.similar_cut={version:1,rootAssetId,sourceAssetId,plan}`에 이미지 생성 전에 저장하고 결과 `assets.metadata.similar_cut`에도 보존한다. `plan`은 `actionKey, actionSummary, instructions, preserve[], avoid[]`다. 최근 12개 완료/예약 계획을 참고하고 실패·취소 작업은 제외한다. 저장 시 원본 단위 잠금과 이력 비교, 작업 lease를 확인하며 외부 AI 호출 동안 DB 연결을 잡지 않는다. 재시도는 이미 저장된 계획을 재사용한다. 계획 실패 시 B 방식으로 전환하지 않으며 기존 실패·크레딧 반환 계약을 따른다. DB 스키마 변경은 없다.
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
+
+### 계획 없는 칸 AI로 채우기 (ADR-0019)
+
+화면은 에디터 저장 뒤 `POST /v1/projects/{projectId}/editor:generate-image`를 호출한다. `Idempotency-Key` 헤더는 필수다. 서버는 `slot` 외의 클라이언트 컷 설정과 `_contextFill`을 읽지 않고, 저장된 칸과 주변 사진, 상품, 분석으로 접수 때 한 번 판단한다. 상세페이지 생성 중에는 접수하지 않는다.
+
+```ts
+FillRequest {
+  mode: 'fill'
+  slot: { blockId: string, elementId: string }
+}
+// 접수 202. onJobStarted(jobId, contextFill)에 그대로 전달한다.
+{
+  jobId: string
+  contextFill: {
+    slot: { blockId: string, elementId: string }
+    label: string                  // 공백 포함 20자 이하, 줄표 없이 생성 중 한 줄로 표시
+    path: 'new' | 'similar'
+    cutType: CutType
+    colorId: string
+  }
+}
+// 완료 작업 result와 done 이벤트는 같은 봉투다.
+{
+  data: WardrobeImage & {
+    contextFill: { slot: { blockId: string, elementId: string }, label: string, colorId: string }
+  }
+  credits: number
+  creditsCharged: number
+}
+```
+
+같은 요청 키는 같은 작업을 재생한다. 키가 달라도 같은 `blockId:elementId`의 진행 중 작업에는 합류하며 그 작업의 판단을 돌려준다. 합류한 키를 완료 뒤 재전송해도 같은 작업이다. 새 작업에만 에디터 이미지 한 장 값인 19크레딧을 예약하고 실패하면 차감하지 않는다. 작업자는 저장된 판단을 다시 하지 않는다. 서버는 에디터 블록을 수정하지 않으며 결과는 의류 탭에 저장한다. 칸에 넣기는 화면이 맡는다.
+
+다음 거절은 작업과 예약을 만들기 전에 기존 오류 봉투의 `code`, `message`로 돌려준다.
+
+| 상태 | code | 경우 | message |
+|---|---|---|---|
+| 400 | `fill_slot_invalid` | slot 형식 오류 또는 요청 키 없음 | 이 칸을 찾지 못했어요. |
+| 409 | `fill_slot_not_found` | 저장된 에디터에 칸 없음 | 저장 중이에요. 잠시 뒤 다시 눌러 주세요. |
+| 409 | `fill_slot_not_empty` | 이미 사진이 있음 | 이미 사진이 들어 있는 칸이에요. |
+| 400 | `fill_slot_planned` | 계획된 칸 | 이 칸은 원래 콘티대로 다시 만들어요. |
+| 400 | `fill_slot_unsupported` | 정보 블록, 자동 블록, 숨긴 칸 | 이 칸은 AI로 채울 수 없어요. |
+| 400 | `fill_slot_unsupported` | 생성 중인 칸 | 이 칸은 지금 만들고 있어요. |
+| 409 | `page_generation_active` | 상세페이지 생성 중 | 상세페이지를 만드는 중이에요. 끝나면 눌러 주세요. |
+| 409 | `fill_unavailable` | 만들 수 있는 컷 없음 | 이 칸에 만들 수 있는 컷이 없어요. |
+
+크레딧 부족의 402와 실제 모델 생성 닫힘의 409는 기존 규약을 따른다.
+
+판단 기록은 `jobs.payload._contextFill`, `jobs.metadata.contextFill`, `assets.metadata.context_fill`에 남긴다. 자산 기록에는 `attempt`만 뺀다.
+
+```ts
+ContextFillRecord {
+  version: 1
+  slot: { blockId: string, elementId: string }
+  slotKey: string
+  purpose: ContentRole
+  rule: 'pair_similar' | 'row_direction' | 'page_direction' | 'ghost_order' | 'ghost_other_face'
+      | 'detail_unused' | 'detail_to_ghost' | 'color_compare' | 'section_new'
+      | 'relax_other_color' | 'relax_shot' | 'section_default'
+  label: string
+  path: 'new' | 'similar'
+  colorId: string
+  anchorAssetId: string | null
+  attempt: number                 // 같은 칸의 완료된 AI로 채우기 작업 수
+}
+```
+
+모든 에디터 이미지 성공 자산은 `assets.metadata.generation`에 실제 생성 설정을 남긴다. 필드 목록은 서버의 `content_roles.GENERATION_RECIPE_FIELDS` 하나이며 아래 22키를 모두 담고 값이 없으면 `null`이다. 열림 보정, 예시 방향 적용, 시그니처 재배정이 끝난 뒤 값을 쓴다.
+
+```ts
+generation: {
+  version: 1
+  origin: 'page' | 'editor_new' | 'editor_retry' | 'editor_similar' | 'editor_reshoot'
+      | 'editor_color' | 'editor_closure' | 'context_fill' | 'upload'
+  autoSelected: boolean            // context_fill만 true
+  sourceAssetId: string | null     // 변주의 원본. 새 컷이면 null
+  recipeFrom: 'self' | 'anchor'
+  recipe: {
+    sectionRole: StoryboardSectionRole | null
+    contentRole: ContentRole | null
+    cutType: CutType | null
+    shot: ShotType | ProductShotType | null
+    direction: Direction | ProductDirection | null
+    sideStyle: string | null
+    colorId: string | null
+    faceExposure: FaceExposure | null
+    modelId: string | null
+    matchIds: string[] | null
+    matchIdsOrigin: string | null
+    refAssetIds: string[] | null
+    refScope: RefScope | null
+    exampleId: string | null
+    exampleSelectionOrigin: string | null
+    outerClosureState: OuterClosureState | null
+    detailTargetId: string | null
+    detailTargetOrigin: string | null
+    spaceGroupId: string | null
+    spaceVariation: string | null
+    spaceSetMemberOrder: number | null
+    horizonBackgroundMode: string | null
+  } | null
+}
+```
+
+새 컷은 `recipeFrom='self'`다. 비슷한 컷과 같은 부위 다시 촬영은 공용 `asset_recipe.resolve_asset_recipes`가 원본 설정을 찾으면 상속하고 `recipeFrom='anchor'`로 남기며, 못 찾으면 `recipe=null`이다. 직접 올린 자산은 `assets.source='upload'`로 판정하고 새 기록을 쓰지 않는다. G11은 에디터의 다섯 성공 종류를 쓰고 상세페이지의 `page`와 색상 변경, 열림 변경은 G6가 맡는다. 모든 비슷한 컷 결과는 원본 사진의 의류 색 그룹을 물려받는다.
 
 ---
 

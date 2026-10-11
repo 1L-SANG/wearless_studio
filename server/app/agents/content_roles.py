@@ -65,6 +65,15 @@ _FIT_ROLE_BY_CUT_TYPE = {
     "mirror": "realWear",
 }
 
+# 자산의 실제 생성 설정과 원본 설정 조회가 함께 쓰는 저장 필드다.
+GENERATION_RECIPE_FIELDS = (
+    "sectionRole", "contentRole", "cutType", "shot", "direction", "sideStyle", "colorId",
+    "faceExposure", "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refScope",
+    "exampleId", "exampleSelectionOrigin", "outerClosureState", "detailTargetId",
+    "detailTargetOrigin", "spaceGroupId", "spaceVariation", "spaceSetMemberOrder",
+    "horizonBackgroundMode",
+)
+
 _SIMILAR_RECIPE_FIELDS = (
     "cutType", "direction", "sideStyle", "shot", "colorId", "colorIds", "faceExposure",
     "modelId", "matchIds", "matchIdsOrigin", "refAssetIds", "refImages", "refScope",

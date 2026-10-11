@@ -989,6 +989,23 @@ export const api = {
     DB.project.status = 'done'; touch();
     return true;
   },
+  // 화면 연결 전에도 접수 문구와 완료 결과, 한 장 차감을 확인할 수 있는 목 계약(ADR-0019).
+  async fillEmptySlot(_projectId, { slot, idempotencyKey, onJobStarted, onProgress } = {}) {
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+      throw Object.assign(new Error('이 칸을 찾지 못했어요.'), {
+        status: 400, code: 'fill_slot_invalid', requestNotSent: true,
+      });
+    }
+    const colorId = DB.product.colors.find((color) => color.isBase)?.id || DB.product.colors[0]?.id || 'misc';
+    const contextFill = { slot, label: '스타일링 · 새 컷', path: 'new', cutType: 'styling', colorId };
+    onJobStarted?.(uid('fill'), clone(contextFill));
+    await runJob({ duration: 2400, onProgress });
+    const id = uid('w');
+    const img = { id, src: Placeholder.photo(id, 'styling'), ai: true, cutType: 'styling', wardrobeGroup: colorId,
+      contextFill: { slot, label: contextFill.label, colorId } };
+    (DB.wardrobe[colorId] ||= []).push(img);
+    return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage), contextFill: clone(contextFill) };
+  },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
   //     | VaryRequest   { mode:'vary', source:{src,cutType}, variationMode?:'similar' }  (계약 §6)
   async generateImage(_projectId, req = {}) {
