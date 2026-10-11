@@ -12,6 +12,7 @@
 
 import base64
 import copy
+import hashlib
 import json
 import logging
 import time
@@ -329,14 +330,17 @@ def _to_claude_schema(node: dict) -> dict:
     return out
 
 
-def _claude_body(model, prompt, images, schema, effort, system_prompt, max_tokens):
+def _claude_body(model, prompt, images, schema, effort, system_prompt, max_tokens, metadata=None):
     content = [{"type": "text", "text": prompt}]
+    sent_image_hashes = []
     for im in images:
         with Image.open(BytesIO(im.data)) as image:
             buf = BytesIO()
             image.convert("RGB").save(buf, format="JPEG", quality=95)
+        data = buf.getvalue()
+        sent_image_hashes.append(hashlib.sha256(data).hexdigest())
         content.append({"type": "image", "source": {
-            "type": "base64", "media_type": "image/jpeg", "data": _b64(buf.getvalue())}})
+            "type": "base64", "media_type": "image/jpeg", "data": _b64(data)}})
     body = {"model": model, "max_tokens": max_tokens, "thinking": {"type": "adaptive"},
             "output_config": {"effort": effort, "format": {
                 "type": "json_schema", "schema": _to_claude_schema(schema)}},
@@ -345,6 +349,8 @@ def _claude_body(model, prompt, images, schema, effort, system_prompt, max_token
         body["system"] = system_prompt
     if len(json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()) > _CLAUDE_MAX_REQUEST_BYTES:
         raise VisionError("Claude 요청 크기 한도를 넘었어요.", unknown_cause="invalid_input")
+    if metadata is not None:
+        metadata["sent_image_hashes"] = sent_image_hashes
     return body
 
 
@@ -391,7 +397,7 @@ async def _call_claude(settings: Settings, model: str, prompt: str,
     if not isinstance(key, str) or not key.strip():
         raise VisionError("ANTHROPIC_API_KEY 미설정", unknown_cause="configuration")
     try:
-        body = await run_cpu_bound(_claude_body, model, prompt, images, schema, effort, system_prompt, max_tokens)
+        body = await run_cpu_bound(_claude_body, model, prompt, images, schema, effort, system_prompt, max_tokens, metadata)
     except (ValueError, TypeError, OSError) as exc:
         raise VisionError("Claude 요청 입력이 잘못됐어요.", unknown_cause="invalid_input") from exc
     try:
@@ -399,7 +405,11 @@ async def _call_claude(settings: Settings, model: str, prompt: str,
             res = await client.post(_CLAUDE_URL, json=body, headers={
                 "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     except httpx.RequestError as exc:
-        raise VisionError("Claude 네트워크 요청 실패", unknown_cause="provider_error") from exc
+        cause = ("timeout" if isinstance(exc, httpx.TimeoutException)
+                 else "configuration" if isinstance(exc, httpx.LocalProtocolError)
+                 else "invalid_response" if isinstance(exc, httpx.DecodingError)
+                 else "provider_error")
+        raise VisionError("Claude 네트워크 요청 실패", unknown_cause=cause) from exc
     if res.status_code != 200:
         cause = ("provider_error" if res.status_code in {408, 409, 429} or res.status_code >= 500
                  else "configuration" if res.status_code in {401, 403, 404}

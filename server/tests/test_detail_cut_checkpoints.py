@@ -1,3 +1,5 @@
+import json
+import hashlib
 """상세 컷 비용 절감(2026-09-23) — 부분 실패 격리(A) · 각도 사진 사전 확인(C) · 컷 체크포인트(D).
 
 오너 원칙: "생성 비용을 최대한 아껴야 한다. 이미 만든 베이스컷이 있으면 그대로 쓴다."
@@ -10,13 +12,17 @@
 import asyncio
 import contextlib
 import types
+from dataclasses import replace
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from app import repo
 from app.agents import cut_generator as cg
 from app.agents import face_angle_swap as angle
 from app.agents import face_identity as fi
+from app.agents import detail_shot_pipeline
 from app.agents.gemini_image import InlineImage
 from app.r2 import PRIVATE_NO_STORE
 from app.workers import cut_checkpoints as ckpts
@@ -375,6 +381,52 @@ def test_detail_final_reuse_requires_same_accepted_policy(monkeypatch, verdict, 
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize('model', ['gpt-5.4-2026-03-05', 'claude-sonnet-5-5'])
+def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects_changed_claude(monkeypatch, model):
+    db = _IntentDB()
+    db.install(monkeypatch)
+    settings = _settings(model_product_detail='gpt-image-2.5-sunburst', detail_cut_image_size='2K',
+        model_detail_core=model, model_detail_specialist=model,
+        detail_core_timeout_seconds=90.0, detail_specialist_timeout_seconds=90.0,
+        detail_qc_claude_effort='xhigh')
+    app = _app(settings, _R2())
+    encoded = BytesIO()
+    Image.new('RGB', (160, 200), 'gray').save(encoded, format='PNG')
+    source = InlineImage('image/png', encoded.getvalue())
+    legacy_fingerprint = _pr521_fingerprint(settings, [source], None, 'front')
+    legacy_digest = ckpts._digest({'family': 'verified-product-detail-v1', 'recipe': legacy_fingerprint,
+                                   'blockId': 'detail1', 'userId': USER, 'projectId': PROJECT})
+
+    async def exercise():
+        first = await _store(app, 'j1')
+        # The saved report predates effort and sent-image audit fields.
+        old = await first.for_verified_detail(legacy_fingerprint, 'detail1')
+        assert old.final_digest == legacy_digest
+        await old.save_final(b'CHECKED', 'image/png', {
+            'garmentQc': None, 'cutQc': {'passed': True, 'decision': 'PASS',
+                                      'fingerprint': legacy_fingerprint},
+            'warnings': [], 'neckRepair': None, 'facePass': {},
+        })
+        db.error_jobs.add('j1')
+        next_store = await _store(app, 'j2')
+        fp = detail_shot_pipeline.fingerprint(settings, [source], None, 'front')
+        same = await next_store.for_verified_detail(fp, 'detail1')
+        assert same.final_digest == legacy_digest
+        assert same.final is not None and same.final.image == b'CHECKED'
+        header, image = ckpts.unpack(app.state.r2.get_bytes(same.final.key))
+        assert header['digest'] == legacy_digest and image == b'CHECKED'
+
+        changed_settings = replace(settings, detail_qc_claude_effort='high')
+        changed_fp = detail_shot_pipeline.fingerprint(changed_settings, [source], None, 'front')
+        changed = await next_store.for_verified_detail(changed_fp, 'detail1')
+        if model.startswith('claude-'):
+            assert changed.final_digest != legacy_digest and changed.final is None
+        else:
+            assert changed.final_digest == legacy_digest and changed.final is not None
+
+    asyncio.run(exercise())
+
+
 def test_store_is_off_without_the_flag_or_a_database(monkeypatch):
     app = _app(_settings(detail_cut_checkpoint_enabled=False))
     assert asyncio.run(_store(app, "j1")) is None
@@ -661,3 +713,17 @@ def test_retry_within_the_job_reuses_the_base_after_an_infra_failure(monkeypatch
         selected_model_id="mX", cut_checkpoints=store))
     assert gemini.calls == 1 and swaps == [b"BASE", b"BASE"]
     assert len(assets) == 1
+
+
+def _pr521_fingerprint(settings, sources, target, direction, style_reference=None, *, framing_source_index=0):
+    """PR #521 시점 지문 계산식 그대로. 사진 바이트는 Pillow·zlib 버전마다 달라 해시를 박지 않고 식으로 대조한다."""
+    value = {'prompt': detail_shot_pipeline.PROMPT_VERSION, 'qc': detail_shot_pipeline.detail_output_qc.POLICY_VERSION,
+             'model': settings.model_product_detail, 'size': settings.detail_cut_image_size,
+             'coreJudge': getattr(settings, 'model_detail_core', None),
+             'coreTimeout': getattr(settings, 'detail_core_timeout_seconds', None),
+             'specialist': getattr(settings, 'model_detail_specialist', None),
+             'specialistTimeout': getattr(settings, 'detail_specialist_timeout_seconds', None),
+             'source': [hashlib.sha256(s.data).hexdigest() for s in sources],
+             'style': hashlib.sha256(style_reference.data).hexdigest() if style_reference else None,
+             'target': target, 'direction': direction, 'framingSourceIndex': framing_source_index}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
