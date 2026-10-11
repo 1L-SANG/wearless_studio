@@ -476,6 +476,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 로그인 사용자의 분석(공개 분석 + 프로젝트 /analyze 합산) 한도. 30일 실측 최대가 한 IP
     # 시간당 4회라 정상 셀러는 닿지 않는다. 비로그인 IP 한도와 같은 프로세스 로컬 안전밸브다.
     app.state.user_analysis_limiter = PublicAnalysisRateLimiter(hourly_limit=20, daily_limit=60)
+    # 별도 특징 요청과 합치기 재시도는 기존 분석 한도를 소비하지 않는다.
+    app.state.public_feature_limiter = PublicAnalysisRateLimiter(hourly_limit=10, daily_limit=30)
+    app.state.user_feature_limiter = PublicAnalysisRateLimiter(hourly_limit=20, daily_limit=60)
+    app.state.public_merge_limiter = PublicAnalysisRateLimiter(hourly_limit=20, daily_limit=60)
+    app.state.user_merge_limiter = PublicAnalysisRateLimiter(hourly_limit=40, daily_limit=120)
     # 카카오 OIDC 인가코드 교환도 미인증 공개 라우트라 같은 안전밸브를 단다(IP 기준).
     # 공개 분석보다 한도를 넉넉히 둔다 — 로그인은 실패하고 다시 누르는 게 정상 행동이고,
     # 한 IP 뒤에 사무실·모바일 캐리어 NAT 가 통째로 있을 수 있다.
