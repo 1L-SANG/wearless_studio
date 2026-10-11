@@ -68,7 +68,7 @@ import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } 
 import { CanvasAiLayer, CanvasAiProgress } from './CanvasAiLayer.jsx';
 import { useCanvasAi } from './useCanvasAi.js';
 import { canReplaceCanvasAiResult } from './canvasAiJobs.js';
-import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible } from './canvasAiApply.js';
+import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible, canvasAiProgressVisible } from './canvasAiApply.js';
 import { failedCutPresentation } from '@/lib/cutFailureMessages.js';
 import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
@@ -496,7 +496,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
-          {canvasAiJob && !canvasAiJob.dismissed ? <CanvasAiProgress job={canvasAiJob} slot onCancel={onCanvasAiCancel} onDismiss={onCanvasAiDismiss} /> : (
+          {canvasAiProgressVisible(canvasAiJob) ? <CanvasAiProgress job={canvasAiJob} slot onCancel={onCanvasAiCancel} onDismiss={onCanvasAiDismiss} /> : (
           <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
             aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}

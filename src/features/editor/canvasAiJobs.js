@@ -30,7 +30,7 @@ export function createCanvasAiJobController({ schedule = setTimeout, cancelSched
     meta.action ?? null, meta.value ?? null,
   ]);
 
-  const run = async (key, job, execute) => {
+  const run = async (key, job, execute, signature, retained) => {
     timers.delete(key);
     if (get(key) !== job || job.status !== 'cancel') return;
     patch(key, { status: 'busy', startedAt: now() });
@@ -48,11 +48,15 @@ export function createCanvasAiJobController({ schedule = setTimeout, cancelSched
       });
     } catch (error) {
       if (get(key) !== job) return;
+      retained.unknown ||= error?.submissionUnknown === true;
+      if (!error?.submissionUnknown && !(error?.requestNotSent && retained.unknown)
+        && keys.get(signature) === retained) keys.delete(signature);
       patch(key, { status: 'failed', error, message: error?.message || '이미지를 생성하지 못했어요. 다시 눌러 주세요.', finishedAt: now() });
       try { onError?.(job, error); } finally { onFinished?.(job); }
       return;
     }
     if (get(key) !== job) return;
+    if (keys.get(signature) === retained) keys.delete(signature);
     patch(key, { status: 'arrived', result: response?.data ?? response, response,
       ...(response?.contextFill ? { contextFill: response.contextFill } : {}), finishedAt: now() });
     try { onResult?.(job, response); } finally { onFinished?.(job); }
@@ -69,7 +73,7 @@ export function createCanvasAiJobController({ schedule = setTimeout, cancelSched
       status: 'cancel', idempotencyKey: retained.idempotencyKey, queuedAt: now(), cancelUntil: now() + delayMs, dismissed: false };
     jobs.set(key, job);
     onQueued?.(job);
-    timers.set(key, schedule(() => { void run(key, job, execute); }, delayMs));
+    timers.set(key, schedule(() => { void run(key, job, execute, signature, retained); }, delayMs));
     emit();
     return job;
   };

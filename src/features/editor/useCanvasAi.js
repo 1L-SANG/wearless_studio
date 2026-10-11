@@ -24,6 +24,7 @@ export function useCanvasAi({ projectId, blocks, wardrobe, storyboard, selectedI
     onResult: (job, response) => {
       if (!mounted.current || latest.current.projectId !== projectId) return;
       latest.current.handlers.current.onResult?.(job, response);
+      if (job.isSlot) controller.dismiss(job.key);
       const image = response?.data;
       const id = image?.assetId || extractEditorAssetId(image?.src)
         || (isMockMode ? image?.id : null);
@@ -80,7 +81,7 @@ export function useCanvasAi({ projectId, blocks, wardrobe, storyboard, selectedI
     if (!block || !element || (element.src && (!info || assetState.loading))) return;
     const request = buildCanvasAiRequest({ action, value,
       source: { ...menu.source, wardrobeGroup: wardrobeImage?.wardrobeGroup || menu.source?.wardrobeGroup },
-      assetRecipe: info, slot: { blockId: block.id, elementId: element.id }, failedCutRetry: retry,
+      assetRecipe: info, product, slot: { blockId: block.id, elementId: element.id }, failedCutRetry: retry,
       detailRecommendations: analysis?.detailRecommendations });
     if (!request && !retry?.fillImage) return;
     const isSlot = !element.src;
@@ -95,7 +96,8 @@ export function useCanvasAi({ projectId, blocks, wardrobe, storyboard, selectedI
       let acceptedId = null;
       const accepted = (id, contextFill) => { acceptedId = id; onJobStarted(id, contextFill); };
       if (originalRequest?.mode === 'fill' || (isSlot && originalRequest?.mode === 'vary')) {
-        await latest.current.handlers.current.saveBeforeRequest?.();
+        try { await latest.current.handlers.current.saveBeforeRequest?.(); }
+        catch (error) { error.requestNotSent = true; throw error; }
       }
       if (retry?.fillImage && action === 'retry') return { data: retry.fillImage };
       return resolveCanvasAiSubmission(() => originalRequest.mode === 'fill'

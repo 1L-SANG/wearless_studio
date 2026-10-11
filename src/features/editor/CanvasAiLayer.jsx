@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CREDIT_COSTS } from '../../lib/limits.js';
 import { calculateCanvasAiPlacement } from './canvasAiPlacement.js';
-import { canvasAiProgressSize } from './canvasAiApply.js';
+import { canvasAiProgressSize, canvasAiProgressVisible } from './canvasAiApply.js';
 
 export function CanvasAiClosureGlyph({ value = 'open' }) {
   const index = ['closed', 'openToChest', 'partial', 'openToWaist', 'open'].indexOf(value);
@@ -59,7 +59,7 @@ export function CanvasAiProgress({ job, onCancel, onDismiss, slot = false }) {
     observer.observe(node);
     return () => observer.disconnect();
   }, [slot, job?.status, job?.dismissed]);
-  if (!job || job.dismissed) return null;
+  if (!canvasAiProgressVisible(job)) return null;
   const failed = job.status === 'failed';
   return <div ref={progressRef} className={`canvas-ai-progress${slot ? ' canvas-ai-slot-progress' : ''} is-${job.status}`}
     role="status" aria-live="polite" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>

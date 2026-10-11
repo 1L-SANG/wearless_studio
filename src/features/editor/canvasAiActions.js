@@ -18,6 +18,17 @@ const currentValue = (info, field, fallback) => Object.hasOwn(info?.current || {
 const resolvedColor = (info) => currentValue(info, 'colorId', resolvedRecipe(info)?.colorId ?? info?.colorId ?? info?.color_id ?? null);
 const resolvedDirection = (info) => currentValue(info, 'direction', resolvedRecipe(info)?.direction ?? null);
 
+// Server detail targets belong to the base color and must match the requested face.
+function availableDetails(info, product, recommendations) {
+  const colorId = resolvedColor(info), direction = resolvedDirection(info);
+  const colors = product?.colors || [];
+  const base = colors.find((color) => color.isBase) || colors[0];
+  const disabled = Boolean(product && colorId && String(colorId) !== String(base?.id));
+  const candidates = disabled ? [] : selectableDetailTargets(recommendations)
+    .filter((candidate) => !['front', 'back'].includes(direction) || candidate.direction === direction);
+  return { colorId, direction, disabled, candidates };
+}
+
 /** Filled images use server asset facts. Only empty slots use storyboard linkage. */
 export function canvasAiKind({ block, element, storyboard = [], assetRecipe = null } = {}) {
   const slotKind = editorSlotKind(block, element, storyboard);
@@ -75,12 +86,15 @@ export function buildCanvasAiMenu({ block, element, storyboard = [], assetRecipe
       current: isCurrent, disabled: isCurrent || (kind === 'ghost' && !photos[current.direction || 'front']), description: `${canvasAiRo(label)} 생성해요` };
   });
   const colorBranch = optionBranch('color', '색상', colors);
-  const details = selectableDetailTargets(detailRecommendations).map((candidate) => {
+  const detail = availableDetails(assetRecipe, product, detailRecommendations);
+  const details = detail.candidates.map((candidate) => {
     const isCurrent = current.detailTargetId !== null && candidate.id === current.detailTargetId;
     return { value: candidate.id, label: candidate.label, direction: candidate.direction,
       src: detailTargetPresentation({ cutType: 'product', shot: 'detail', direction: candidate.direction, detailTargetId: candidate.id }, product, detailRecommendations)?.src || null,
       current: isCurrent, disabled: isCurrent, description: `${candidate.label} 디테일을 생성해요` };
   });
+  const detailBranch = (label) => ({ ...optionBranch('detail', label, details),
+    ...(detail.disabled ? { disabled: true, description: '디테일은 기준색 사진에서만 생성해요' } : {}) });
 
   if (['worn', 'upload'].includes(kind)) {
     menu.branches = [directBranch('similar', '비슷한 컷', '지금 이미지와 비슷한 컷을 생성해요'), colorBranch];
@@ -98,10 +112,10 @@ export function buildCanvasAiMenu({ block, element, storyboard = [], assetRecipe
       const label = value === 'back' ? '뒷면' : '앞면';
       const isCurrent = current.direction !== null && value === current.direction;
       return { value, label, src: photos[value]?.src || null, current: isCurrent, disabled: isCurrent || !photos[value], description: `${label}을 생성해요` };
-    })), optionBranch('detail', '디테일', details)];
+    })), detailBranch('디테일')];
   } else if (kind === 'detail') {
-    menu.branches = [directBranch('reshoot', '같은 부위 다시', '같은 부위를 다시 생성해요'), optionBranch('detail', '다른 부위', details)];
-  } else if (kind === 'product_unknown') menu.branches = [optionBranch('detail', '디테일', details)];
+    menu.branches = [directBranch('reshoot', '같은 부위 다시', '같은 부위를 다시 생성해요'), detailBranch('다른 부위')];
+  } else if (kind === 'product_unknown') menu.branches = [detailBranch('디테일')];
   return menu;
 }
 
@@ -119,7 +133,7 @@ function productRecipe(info) {
 }
 
 /** Builds the public request only; server-owned origin and recipe records stay on the server. */
-export function buildCanvasAiRequest({ action, value, source = null, assetRecipe = null, slot = null, failedCutRetry = null, detailRecommendations = null } = {}) {
+export function buildCanvasAiRequest({ action, value, source = null, assetRecipe = null, product = null, slot = null, failedCutRetry = null, detailRecommendations = null } = {}) {
   if (action === 'upload') return null;
   if (action === 'fill') return slot?.blockId && slot?.elementId ? { mode: 'fill', slot: { blockId: slot.blockId, elementId: slot.elementId } } : null;
   if (action === 'retry') return failedCutRetry?.retryable !== false && failedCutRetry?.request ? clone(failedCutRetry.request) : null;
@@ -139,10 +153,11 @@ export function buildCanvasAiRequest({ action, value, source = null, assetRecipe
     mode: 'new', ...productRecipe(assetRecipe), cutType: 'product', shot: 'ghost', direction: value,
   };
   if (action === 'detail' && ['ghost', 'detail', 'product_unknown'].includes(kind)) {
-    const candidate = selectableDetailTargets(detailRecommendations).find((item) => item.id === value);
+    const detail = availableDetails(assetRecipe, product, detailRecommendations);
+    const candidate = detail.candidates.find((item) => item.id === value);
     if (!candidate) return null;
-    const recipe = productRecipe(assetRecipe), colorId = recipe.colorId ?? resolvedColor(assetRecipe);
-    const direction = ['front', 'back'].includes(recipe.direction) ? recipe.direction : candidate.direction;
+    const recipe = productRecipe(assetRecipe), colorId = detail.colorId;
+    const direction = ['front', 'back'].includes(detail.direction) ? detail.direction : candidate.direction;
     return { mode: 'new', ...recipe, cutType: 'product', shot: 'detail', ...(colorId !== null ? { colorId } : {}),
       direction, detailTargetId: candidate.id, detailTargetOrigin: 'user' };
   }

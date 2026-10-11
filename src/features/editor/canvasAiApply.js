@@ -1,3 +1,7 @@
+export function canvasAiProgressVisible(job) {
+  return Boolean(job && !job.dismissed && ['cancel', 'busy', 'failed'].includes(job.status));
+}
+
 export function canvasAiSlotArrivalVisible(element, job) {
   return Boolean(job?.isSlot && job.status === 'arrived' && !job.dismissed
     && element?.src && element.src === (job.result?.src || job.response?.data?.src));

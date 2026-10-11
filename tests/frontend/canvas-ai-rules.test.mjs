@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { calculateCanvasAiPlacement } from '../../src/features/editor/canvasAiPlacement.js';
 import { buildCanvasAiMenu, buildCanvasAiRequest, canvasAiKind, canvasAiRo } from '../../src/features/editor/canvasAiActions.js';
 import { canReplaceCanvasAiResult, createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
+import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
 
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
@@ -148,16 +149,22 @@ test('ghost has color, direction and observed detail choices with unavailable fa
   assert.equal(colors.find((option) => option.value === 'beige').current, true);
   assert.equal(colors.find((option) => option.value === 'black').description, '블랙으로 생성해요');
   assert.deepEqual(ghost.branches[1].options.map((option) => [option.value, option.current, option.disabled]), [['front', true, true], ['back', false, true]]);
-  assert.deepEqual(ghost.branches[2].options.map((option) => [option.value, option.src]), [['pocket', '/black-front.jpg'], ['seam', '/black-back.jpg']]);
+  assert.equal(ghost.branches[2].disabled, true);
+  assert.match(ghost.branches[2].description, /기준색/);
+  assert.deepEqual(ghost.branches[2].options, []);
 });
 
 test('detail only offers same-area reshoot and other observed targets', () => {
-  const menu = buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: { cutType: 'product', shot: 'detail', detailTargetId: 'pocket', colorId: 'black', direction: 'front' } } });
+  const recommendations = { ...detailRecommendations, candidates: [...detailRecommendations.candidates,
+    { id: 'cuff', label: '소매 끝', informationGroup: 'cuff', rank: 4, photoUse: 'standalone', visibility: 'clear', direction: 'front', sourceSlot: 'Front', sourceIndex: 0 },
+  ] };
+  const menu = buildCanvasAiMenu({ ...menuInput, detailRecommendations: recommendations,
+    assetRecipe: { cutType: 'product', recipe: { cutType: 'product', shot: 'detail', detailTargetId: 'pocket', colorId: 'black', direction: 'front' } } });
   assert.deepEqual(ids(menu), ['reshoot', 'detail']);
   assert.equal(menu.branches[0].description, '같은 부위를 다시 생성해요');
   assert.equal(menu.branches[0].ring, true);
   assert.equal(menu.branches[1].label, '다른 부위');
-  assert.deepEqual(menu.branches[1].options.map((option) => [option.value, option.current, option.disabled]), [['pocket', true, true], ['seam', false, false]]);
+  assert.deepEqual(menu.branches[1].options.map((option) => [option.value, option.current, option.disabled]), [['pocket', true, true], ['cuff', false, false]]);
   const legacy = buildCanvasAiMenu({ ...menuInput, assetRecipe: { cutType: 'product', recipe: null } });
   assert.deepEqual(ids(legacy), ['detail']);
   assert.deepEqual(legacy.branches[0].options.map((option) => option.value), ['pocket', 'seam']);
@@ -251,9 +258,57 @@ test('ghost color and face regenerate with the entire original recipe and only r
 });
 
 test('detail requests use an observed target and preserve the base recipe without invented settings', () => {
-  assert.deepEqual(buildCanvasAiRequest({ action: 'detail', value: 'seam', source: image, assetRecipe: ghostRecipe, detailRecommendations }), { mode: 'new', ...preservedRecipe, shot: 'detail', direction: 'front', detailTargetId: 'seam', detailTargetOrigin: 'user' });
+  assert.deepEqual(buildCanvasAiRequest({ action: 'detail', value: 'pocket', source: image, assetRecipe: ghostRecipe, product, detailRecommendations }), { mode: 'new', ...preservedRecipe, shot: 'detail', direction: 'front', detailTargetId: 'pocket', detailTargetOrigin: 'user' });
   assert.deepEqual(buildCanvasAiRequest({ action: 'detail', value: 'pocket', source: image, assetRecipe: { cutType: 'product', colorId: 'black', recipe: null }, detailRecommendations }), { mode: 'new', cutType: 'product', shot: 'detail', colorId: 'black', direction: 'front', detailTargetId: 'pocket', detailTargetOrigin: 'user' });
   assert.equal(buildCanvasAiRequest({ action: 'detail', value: 'hidden', source: image, assetRecipe: ghostRecipe, detailRecommendations }), null);
+});
+
+for (const direction of ['front', 'back']) {
+  test(`detail menu and request accept only the original ${direction} face`, () => {
+    const assetRecipe = { kind: 'ghost', recipe: { cutType: 'product', shot: 'ghost', colorId: 'black', direction } };
+    const input = { ...menuInput, assetRecipe };
+    const options = buildCanvasAiMenu(input).branches.find((item) => item.id === 'detail').options;
+    assert.deepEqual(options.map((item) => item.value), direction === 'front' ? ['pocket'] : ['seam']);
+    const accepted = direction === 'front' ? 'pocket' : 'seam';
+    const rejected = direction === 'front' ? 'seam' : 'pocket';
+    const requestInput = { action: 'detail', source: image, assetRecipe, product, detailRecommendations };
+    assert.equal(buildCanvasAiRequest({ ...requestInput, value: accepted }).direction, direction);
+    assert.equal(buildCanvasAiRequest({ ...requestInput, value: accepted }).colorId, 'black');
+    assert.equal(buildCanvasAiRequest({ ...requestInput, value: rejected }), null);
+  });
+}
+
+for (const kind of ['ghost', 'detail', 'product_unknown']) {
+  test(`${kind} with a non-base color disables detail with a reason and cannot submit`, () => {
+    const assetRecipe = { kind, current: { colorId: 'beige', direction: 'front' }, recipe: null };
+    const branch = buildCanvasAiMenu({ ...menuInput, assetRecipe }).branches.find((item) => item.id === 'detail');
+    assert.equal(branch.disabled, true);
+    assert.match(branch.description, /기준색/);
+    assert.deepEqual(branch.options, []);
+    assert.equal(buildCanvasAiRequest({ action: 'detail', value: 'pocket', source: image, assetRecipe, product, detailRecommendations }), null);
+  });
+}
+
+test('detail base color is the flagged color, otherwise the first color, as on the server', () => {
+  for (const colors of [
+    [product.colors[1], product.colors[0]],
+    product.colors.map(({ isBase, ...color }) => color),
+  ]) {
+    const assetRecipe = { kind: 'ghost', current: { colorId: 'black', direction: 'front' }, recipe: null };
+    const input = { ...menuInput, assetRecipe, product: { colors } };
+    const branch = buildCanvasAiMenu(input).branches.find((item) => item.id === 'detail');
+    assert.notEqual(branch.disabled, true);
+    assert.deepEqual(branch.options.map((item) => item.value), ['pocket']);
+    assert.equal(buildCanvasAiRequest({ ...input, source: image, action: 'detail', value: 'pocket' }).colorId, 'black');
+  }
+});
+
+test('unknown source face keeps each observed candidate face in both menu and request', () => {
+  const assetRecipe = { kind: 'product_unknown', colorId: 'black', recipe: null };
+  const input = { ...menuInput, assetRecipe };
+  const options = buildCanvasAiMenu(input).branches[0].options;
+  assert.deepEqual(options.map((item) => [item.value, item.direction]), [['pocket', 'front'], ['seam', 'back']]);
+  assert.equal(buildCanvasAiRequest({ ...input, source: image, action: 'detail', value: 'seam' }).direction, 'back');
 });
 
 test('ghost regeneration without recipe uses known actual direction and color', () => {
@@ -400,18 +455,73 @@ test('identical source across elements and slot identifiers get stable independe
   controller.dispose();
 });
 
-test('a completed or definitely rejected photo tuple keeps its idempotency key for the next click', async () => {
+test('a completed or definitely rejected photo tuple gets a new idempotency key for the next click', async () => {
   const scheduler = fakeScheduler(); let keys = 0;
   const controller = createCanvasAiJobController({ ...scheduler, createKey: () => `key-${++keys}` });
   const first = controller.start('b1:photo', jobMeta, async () => ({ data: { src: '/result.jpg' } }));
   await scheduler.advance(2000);
   const repeated = controller.start('b1:photo', jobMeta, async () => { throw Object.assign(new Error('크레딧이 부족해요.'), { status: 402 }); });
-  assert.equal(repeated.idempotencyKey, first.idempotencyKey);
+  assert.notEqual(repeated.idempotencyKey, first.idempotencyKey);
   await scheduler.advance(2000);
   const rejectedRetry = controller.start('b1:photo', jobMeta, async () => ({ data: { src: '/result.jpg' } }));
-  assert.equal(rejectedRetry.idempotencyKey, first.idempotencyKey);
-  assert.equal(keys, 1);
+  assert.notEqual(rejectedRetry.idempotencyKey, repeated.idempotencyKey);
+  assert.equal(keys, 3);
   controller.cancel('b1:photo');
+});
+
+for (const meta of [
+  { ...jobMeta, action: 'similar', value: undefined, request: { mode: 'vary', variationMode: 'similar', source: { src: '/selected.jpg', cutType: 'styling' } } },
+  { blockId: 'b1', elementId: 'photo', isSlot: true, action: 'fill', request: { mode: 'fill', slot: { blockId: 'b1', elementId: 'photo' } } },
+  { blockId: 'b1', elementId: 'photo', isSlot: true, action: 'retry', request: { mode: 'new', retryBlockId: 'planned' } },
+]) {
+  for (const outcome of [
+    { name: 'success', result: { data: { src: '/result.jpg' } }, nextKey: 'key-2' },
+    { name: 'job failure', error: { code: 'job_failed' }, nextKey: 'key-2' },
+    { name: '4xx rejection', error: { status: 409, code: 'fill_unavailable' }, nextKey: 'key-2' },
+    { name: 'network uncertainty', error: { code: 'api_network', submissionUnknown: true }, nextKey: 'key-1' },
+    { name: '5xx uncertainty', error: { status: 503, submissionUnknown: true }, nextKey: 'key-1' },
+    { name: 'unresolved timeout', error: { code: 'job_timeout', jobId: 'accepted', submissionUnknown: true }, nextKey: 'key-1' },
+  ]) {
+    test(`${meta.action} after ${outcome.name} uses ${outcome.nextKey}`, async () => {
+      const scheduler = fakeScheduler(); let keys = 0;
+      const controller = createCanvasAiJobController({ ...scheduler, createKey: () => `key-${++keys}` });
+      const first = controller.start('photo', meta, async () => {
+        if (outcome.error) throw Object.assign(new Error(outcome.name), outcome.error);
+        return outcome.result;
+      });
+      assert.equal(first.idempotencyKey, 'key-1');
+      await scheduler.advance(2000);
+      const next = controller.start('photo', { ...meta, request: { ...meta.request, modelId: 'later-setting' } }, async () => ({ data: { src: '/next.jpg' } }));
+      assert.equal(next.idempotencyKey, outcome.nextKey);
+      assert.deepEqual(next.request, outcome.nextKey === 'key-1' ? meta.request : { ...meta.request, modelId: 'later-setting' });
+      await scheduler.advance(2000);
+      const afterSuccess = controller.start('photo', meta, async () => ({ data: { src: '/third.jpg' } }));
+      assert.notEqual(afterSuccess.idempotencyKey, next.idempotencyKey);
+      controller.cancel('photo');
+    });
+  }
+  test(`${meta.action} repeated while pending or generating joins the active job`, async () => {
+    const scheduler = fakeScheduler(), pending = deferred(); let keys = 0;
+    const controller = createCanvasAiJobController({ ...scheduler, createKey: () => `key-${++keys}` });
+    const first = controller.start('photo', meta, () => pending.promise);
+    assert.equal(controller.start('photo', meta, () => assert.fail('duplicate submission')), first);
+    await scheduler.advance(2000);
+    assert.equal(controller.start('photo', meta, () => assert.fail('duplicate submission')), first);
+    assert.equal(keys, 1);
+    pending.resolve({ data: { src: '/result.jpg' } }); await scheduler.advance(0);
+  });
+}
+
+test('a definitive failure after an unknown submission releases that original request', async () => {
+  const scheduler = fakeScheduler(); let keys = 0;
+  const controller = createCanvasAiJobController({ ...scheduler, createKey: () => `key-${++keys}` });
+  controller.start('photo', jobMeta, async () => { throw Object.assign(new Error('network'), { submissionUnknown: true }); });
+  await scheduler.advance(2000);
+  const retry = controller.start('photo', jobMeta, async () => { throw Object.assign(new Error('failed'), { code: 'job_failed' }); });
+  assert.equal(retry.idempotencyKey, 'key-1');
+  await scheduler.advance(2000);
+  assert.equal(controller.start('photo', jobMeta, async () => ({})).idempotencyKey, 'key-2');
+  controller.cancel('photo');
 });
 
 test('unknown and preflight retries keep the original request snapshot across another photo job', async () => {
@@ -439,6 +549,38 @@ test('unknown and preflight retries keep the original request snapshot across an
   assert.equal(sent.length, 3);
   for (const request of sent) assert.deepEqual(request, { request: { mode: 'vary', variationMode: 'color', colorId: 'beige', source: { src: '/selected.jpg' } }, idempotencyKey: 'key-1' });
 });
+
+for (const failure of [
+  { name: 'save 503', fields: { status: 503 } },
+  { name: 'save network error', fields: { code: 'api_network' } },
+  { name: 'save conflict', fields: { status: 409, code: 'editor_conflict' } },
+  { name: 'active page generation', active: true },
+]) {
+  test(`unknown fill keeps its request number after ${failure.name} before resubmission`, async () => {
+    const blocks = [{ id: 'block', kind: 'twocol', elements: [{ id: 'empty', type: 'image', src: null, w: 300, h: 450 }] }];
+    const genActiveRef = { current: false }, sent = []; let saves = 0;
+    const handlers = editorCanvasAiHandlers({ blocks, latestBlocks: { current: blocks }, genActiveRef,
+      setSlotImage() {}, api: { saveEditorBlocks: async () => {
+        saves += 1;
+        if (saves === 2 && !failure.active) throw Object.assign(new Error(failure.name), failure.fields);
+      } } });
+    const harness = canvasAiHookHarness({ blocks, selectedId: 'empty', handlers,
+      api: { fillEmptySlot: async (projectId, { idempotencyKey }) => {
+        sent.push(idempotencyKey);
+        if (sent.length === 1) throw Object.assign(new Error('unknown submission'), { submissionUnknown: true });
+        return { data: { src: '/result.jpg' } };
+      } } });
+    const original = harness.start('fill'); await harness.run();
+    genActiveRef.current = Boolean(failure.active);
+    harness.start('fill'); const failedSave = await harness.run();
+    assert.equal(failedSave.status, 'failed');
+    assert.equal(sent.length, 1, 'saving did not send another image request');
+    genActiveRef.current = false;
+    const next = harness.start('fill'); await harness.run();
+    assert.equal(next.idempotencyKey, original.idempotencyKey);
+    assert.deepEqual(sent, [original.idempotencyKey, original.idempotencyKey]);
+  });
+}
 
 test('server failure message is retained and onError receives the original error once', async () => {
   const scheduler = fakeScheduler(), error = Object.assign(new Error('이 칸에 만들 수 있는 컷이 없어요.'), { code: 'fill_unavailable' }); const errors = [], finished = [];

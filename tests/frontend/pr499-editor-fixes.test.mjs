@@ -134,16 +134,16 @@ test('unknown vary submission keeps its UUID after a preflight failure, while an
   assert.notEqual(keys[3], keys[2]);
 });
 
-for (const options of [{}, { error: Object.assign(new Error('denied'), { status: 402 }), accept: false }]) test(`confirmed canvas completion or rejection retains the tuple key, rejected ${!!options.error}`, async () => {
+for (const options of [{}, { error: Object.assign(new Error('denied'), { status: 402 }), accept: false }]) test(`confirmed canvas completion or rejection releases the tuple key, rejected ${!!options.error}`, async () => {
   const h = submissionHarness(options);
   await h.generate(request);
   await h.generate(request);
   const keys = h.posts.map(post => post.headers?.['Idempotency-Key']);
   assert.ok(keys[0]);
-  assert.equal(keys[0], keys[1]);
+  assert.notEqual(keys[0], keys[1]);
 });
 
-test('confirmed rejection after an unknown response keeps the same canvas tuple for the next check', async () => {
+test('confirmed rejection after an unknown response releases the canvas tuple for a new request', async () => {
   const h = submissionHarness({ errors: [new Error('lost response'), Object.assign(new Error('denied'), { status: 402 })] });
   await h.generate(request);
   await h.generate(request);
@@ -151,7 +151,7 @@ test('confirmed rejection after an unknown response keeps the same canvas tuple 
   await h.generate(request);
   const keys = h.posts.map(post => post.headers?.['Idempotency-Key']);
   assert.equal(keys[1], keys[0]);
-  assert.equal(keys[2], keys[1]);
+  assert.notEqual(keys[2], keys[1]);
 });
 
 test('retrying an unknown photo after generating another photo reuses the original key and request', async () => {
@@ -166,9 +166,10 @@ test('retrying an unknown photo after generating another photo reuses the origin
   assert.deepEqual(h.posts[2].body, h.posts[0].body);
   assert.equal(h.jobs.size, 2, '재확인은 세 번째 생성 작업을 만들지 않는다');
 
-  // The source/action/value tuple stays stable after its response is acknowledged.
+  // Once acknowledged, another click makes a new image with a new request number.
   await h.generate(request);
-  assert.equal(h.posts[3].headers['Idempotency-Key'], keys[0]);
+  assert.notEqual(h.posts[3].headers['Idempotency-Key'], keys[0]);
+  assert.equal(h.jobs.size, 3);
 });
 
 test('multiple unknown photos retain independent keys while alternating retries', async () => {
@@ -190,7 +191,7 @@ test('rejecting another photo does not discard the first unknown request', async
   await h.generate(request);
   assert.equal(h.posts[2].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
   await h.generate(other);
-  assert.equal(h.posts[3].headers['Idempotency-Key'], h.posts[1].headers['Idempotency-Key']);
+  assert.notEqual(h.posts[3].headers['Idempotency-Key'], h.posts[1].headers['Idempotency-Key']);
 });
 
 test('an unknown canvas tuple retains its original request when other recipe fields change', async () => {
