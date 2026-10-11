@@ -311,6 +311,17 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 성별 18/18(pro 17/18 — 성별 라벨 표본은 26벌 중 18벌). thinking 승급은 이득 없음
   # 이라 ANALYSIS_THINKING_LEVEL 은 low 유지.
   MODEL_ROUTING_TEXT_GEMINI_ANALYSIS: gemini-3.8-flash
+  # AG-08 특징 뽑기 모델을 이름으로 고정한다. 코드 기본값 gemini-3.7-flash 는 구글이 3.8-flash 로
+  # 자동 연결하고 있어서, 공급사가 연결을 바꾸면 지연과 품질이 예고 없이 움직인다(2026-10-11 확인).
+  # 생각 수준은 medium 유지: 82벌 비교에서 low 로 낮추면 디테일 추천 위치 정확도가 92.5%에서 84%로
+  # 떨어졌다(.scratch/opus55-wiring-20261011/REPORT.md 11절).
+  MODEL_ROUTING_TEXT_GEMINI_FEATURES: gemini-3.8-flash
+  # 부가 분석(AG-08 특징 뽑기, 사진 일치 검사) 대기 상한. 넘기면 결과를 버리고 진행하는데, AG-08 을
+  # 버리면 디테일컷 추천이 비어 콘티보드 자동 디테일컷이 0장이 되고 다시 만드는 경로가 없다.
+  # 3.8-flash medium 실측 164회(2026-10-11): 중간 13.7초, 최대 27.5초, 12초 초과 77%, 30초 초과 0회.
+  # 사진 일치 검사는 최대 9.8초라 영향 없음. 화면 분석 폴링 상한은 180초. 늦어도 버리지 않는 구조가
+  # 들어가면 다시 낮춘다.
+  ANALYSIS_AUX_TIMEOUT_SECONDS: "30"
   # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.
   # 프론트 VITE_GENEXAMPLE_BG_ENABLED와 함께 켜야 하며, 2026-07-21부터 프로덕션 공개.
   GENEXAMPLE_BG_ENABLED: "true"
