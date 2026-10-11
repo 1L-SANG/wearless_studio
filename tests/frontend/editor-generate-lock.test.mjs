@@ -12,8 +12,8 @@ import { transformWithEsbuild } from 'vite';
 const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
-const handlerSource = editor.slice(editor.indexOf('  const generateImage = async ('), editor.indexOf('  const failedCutRetry ='));
-const retrySource = editor.slice(editor.indexOf('  const retryFailedCut ='), editor.indexOf('  const varyGenerate ='));
+const handlerSource = editor.slice(editor.indexOf('  const generateImage = async ('), editor.indexOf('  const retryFailedCut ='));
+const retrySource = editor.slice(editor.indexOf('  const retryFailedCut ='), editor.indexOf('  canvasAiHandlers.current ='));
 const imageHelpers = editor.slice(editor.indexOf('  const placeGeneratedImage ='), editor.indexOf('  const saveBrandUseCategory ='));
 const adapterSource = adapter.slice(adapter.indexOf('  async generateImage(projectId'), adapter.lastIndexOf('\n};'));
 const pollSource = adapter.slice(adapter.indexOf('async function pollJob('), adapter.indexOf('// 사진 1장 업로드'));
@@ -79,20 +79,17 @@ function harness({ holdPost = false, loseFirstResponse = false, timeout = false,
     setWardrobe: (update) => { wardrobe = update(wardrobe); }, syncCredits: () => {},
     toast: { push: (message) => notifications.push(message) },
     slowJobs: { current: new Set() }, slowJobTimers: { current: new Set() },
-    pendingSlot: null, failedCutRetry: null,
+    pendingSlot: null, latestBlocks: { current: [] }, blocks: [], lastPush: { current: 0 },
     setSlotImage: (blockId, elId, image) => placements.push({ blockId, elId, image }),
     setPendingSlot: (slot) => { context.pendingSlot = slot; }, setTab: () => {},
   };
   const generate = new Function(...Object.keys(context), `${imageHelpers}\n${handlerSource}\nreturn generateImage;`)(...Object.values(context));
-  const retryFor = (slot, cutRequest, selectedRetry = null) => {
+  const confirmFor = (slot) => {
     context.pendingSlot = slot;
-    const sourceBlockId = slot.sourceBlockId || `${slot.blockId}:${slot.elId}`;
-    context.failedCutRetry = selectedRetry || buildFailedCutRetry([
-      { id: sourceBlockId, source: 'ai', ...cutRequest },
-    ], sourceBlockId);
     return new Function(...Object.keys(context), `${imageHelpers}\n${handlerSource}\n${retrySource}\nreturn retryFailedCut;`)(...Object.values(context));
   };
-  return { generate, retryFor, placements, generateRemote, posts, jobs, polls, gate, finish, submitting, pendingRequests, notifications, context, wardrobe: () => wardrobe };
+  return { generate, confirmFor, placements, generateRemote, posts, jobs, polls, gate, finish, submitting, pendingRequests, notifications, context, wardrobe: () => wardrobe };
+
 }
 
 test('같은 틱에 세 번 누르면 요청과 로딩 타일, 크레딧 예약이 한 건이다', async () => {
@@ -110,11 +107,12 @@ test('같은 틱에 세 번 누르면 요청과 로딩 타일, 크레딧 예약�
 
 async function previousRequestButton(context, retry) {
   const start = panels.indexOf('  if (pendingGenerateRequest) {');
-  const end = panels.indexOf('  if (failedCutRetry) {', start);
+  const end = panels.indexOf('\n  return (\n    <div>', start);
   const { code } = await transformWithEsbuild(`function Pending(){${panels.slice(start, end)}}`, 'Pending.jsx', { jsx: 'transform' });
   const args = { React, pendingGenerateRequest: context.generateSubmission.current.request,
-    failedCutRetry: context.failedCutRetry, generateSubmitting: false,
-    onGenerate: () => assert.fail('현재 칸의 새 요청을 만들지 않는다'), onRetryFailedCut: retry,
+    generateSubmitting: false,
+    onGenerate: () => assert.fail('현재 칸의 새 요청을 만들지 않는다'),
+    onConfirmPendingGenerate: () => retry({ confirmPending: true }),
     colorOpts: [], detailColorOpts: [], ALL_CUT_TYPE_OPTIONS: [],
     catalogs: { productShotTypes: [], shotTypes: [] }, PanelHead: () => null, Button: () => null };
   const panel = new Function(...Object.keys(args), `${code}; return Pending;`)(...Object.values(args))();
@@ -124,7 +122,7 @@ async function previousRequestButton(context, retry) {
 for (const selected of ['seller_action', 'similar', 'duplicate']) test(`이전 요청 확인은 ${selected} 칸으로 이동해도 원래 요청과 원래 칸만 재생한다`, async () => {
   const h = harness({ loseFirstResponse: true });
   const originalSlot = { blockId: 'original-page', elId: 'original-empty', sourceBlockId: 'old', genFailed: true };
-  await h.retryFor(originalSlot, request)();
+  await h.generate(request, originalSlot);
   h.finish.resolve();
   const source = { id: 'root', source: 'ai', cutType: 'styling' };
   const storyboard = [source, { ...source, id: 'selected',
@@ -140,8 +138,8 @@ for (const selected of ['seller_action', 'similar', 'duplicate']) test(`이전 �
   const selectedSlot = { blockId: 'selected-page', elId: 'selected-empty', genFailed: true };
   h.context.latestBlocks = { current: editorBlocks };
   h.context.blocks = editorBlocks;
-  h.context.varyGenerate = async () => assert.fail('이전 접수 확인은 새 변형 요청이 아니다');
-  const retry = h.retryFor(selectedSlot, request, built);
+  assert.equal(built.retryable, true);
+  const retry = h.confirmFor(selectedSlot);
   const click = await previousRequestButton(h.context, retry);
   await click();
   assert.equal(h.posts.length, 2);
@@ -293,29 +291,26 @@ test('이전 새 생성의 접수 확인 결과로 다른 실패 슬롯을 채�
   const h = harness({ loseFirstResponse: true });
   await h.generate(request);
   const slot = { blockId: 'block-black', elId: 'slot-black', genFailed: true };
-  const cutRequest = { ...request, cutType: 'styling', colorId: 'black' };
   h.finish.resolve();
-  await h.retryFor(slot, cutRequest)();
+  await h.confirmFor(slot)({ confirmPending: true });
   assert.equal(h.posts.length, 2);
   assert.deepEqual(h.posts[1].body, h.posts[0].body);
   assert.equal(h.jobs.size, 1);
   assert.deepEqual(h.placements, [], '흰색 제품컷 결과를 검은색 스타일링 슬롯에 넣지 않는다');
   assert.deepEqual(h.context.pendingSlot, slot);
 
-  await h.retryFor(slot, cutRequest)();
-  assert.equal(h.jobs.size, 2);
-  assert.equal(h.posts[2].body.colorId, 'black');
-  assert.equal(h.placements.length, 1);
-  assert.equal(h.placements[0].image.src, '/images/job-2.png');
-  assert.equal(h.placements[0].image.wardrobeGroup, 'black');
+  await h.confirmFor(slot)({ confirmPending: true });
+  assert.equal(h.posts.length, 2, '확인 버튼은 선택한 칸의 새 요청을 시작하지 않는다');
+  assert.deepEqual(h.placements, []);
 });
 
 test('같은 실패 슬롯의 접수 응답을 다시 확인하면 같은 UUID로 원래 슬롯을 채운다', async () => {
   const h = harness({ loseFirstResponse: true });
   const slot = { blockId: 'block-white', elId: 'slot-white', genFailed: true };
-  await h.retryFor(slot, request)();
+  h.context.latestBlocks.current = [{ id: slot.blockId, elements: [{ id: slot.elId, type: 'image', src: null }] }];
+  await h.generate(request, slot);
   h.finish.resolve();
-  await h.retryFor({ ...slot }, request)();
+  await h.confirmFor({ ...slot })({ confirmPending: true });
   assert.equal(h.posts[1].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
   assert.equal(h.jobs.size, 1);
   assert.equal(h.placements.length, 1);

@@ -350,7 +350,7 @@ test('actual AI form keeps hidden closure state in worn requests and sends null 
     ...await vite.ssrLoadModule('/src/features/analysis/modelSelection.js'),
     ...await vite.ssrLoadModule('/src/lib/productSourcePhotos.js'),
   };
-  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'ColorDots', 'MoodGuide', 'VaryPanel', 'DetailTargetPicker', 'ProductSourcePicker']) context[name] = () => null;
+  for (const name of ['Button', 'Icon', 'Chips', 'UnderlineTabs', 'ColorDots', 'MoodGuide', 'PanelHead', 'DetailTargetPicker', 'ProductSourcePicker']) context[name] = () => null;
   const AIPanel = new Function(...Object.keys(context), `${code}; return AIPanel;`)(...Object.values(context));
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return null;
@@ -362,7 +362,7 @@ test('actual AI form keeps hidden closure state in worn requests and sends null 
   const props = { catalogs: DB.catalogs, clothingType: 'outer', onGenerate: (request) => requests.push(request), frontClosure: front('zipper') };
   const render = () => { cursor = 0; tree = AIPanel(props); return tree; };
   const generate = () => find(render(), (node) => node.type === context.Button && node.props.icon === 'sparkles').props.onClick();
-  render(); find(tree, (node) => node.type === 'button' && node.props.children === '새 이미지 추가').props.onClick();
+  render();
   const field = () => find(render(), (node) => node.type === Field);
   assert.deepEqual(field().props.frontClosure, front('zipper'));
   field().props.onChange('openToChest'); generate();

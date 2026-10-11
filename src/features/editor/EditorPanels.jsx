@@ -29,7 +29,6 @@ import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
 import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { hasImageSource } from './editorImageSource.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -253,45 +252,9 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 ---------- */
-function VaryPanel({ catalogs, source, onGenerate }) {
-  const busyRef = useRef(false);
-  if (!hasImageSource(source)) {
-    return <EmptyState icon="image" title="기준 사진을 골라주세요" desc="캔버스나 의류 탭에서 사진을 선택해 주세요." />;
-  }
-  const isProduct = source.cutType === 'product';
-  const detailReshoot = isProduct && source.detailReshoot === true;
-  const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const generate = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    try {
-      await onGenerate({
-        source: { id: source.id, src: source.src, cutType: source.cutType || 'styling', wardrobeGroup: source.wardrobeGroup },
-        ...(!isProduct ? { variationMode: 'similar' } : {}),
-      });
-    } finally { busyRef.current = false; }
-  };
-  return (
-    <div className="similar-cut-panel">
-      <div className="similar-cut-source">
-        <img src={source.src} alt="기준 사진" />
-        <div><span>기준 사진</span>{(!isProduct || detailReshoot) && <p>{detailReshoot ? '같은 부위를 원본으로 다시 촬영해요' : '같은 촬영의 다른 순간을 만들어요'}</p>}</div>
-      </div>
-      {isProduct && !detailReshoot ? <p className="hint">제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.</p> : (
-        <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate}>
-          {`${detailReshoot ? '같은 부위 다시 촬영' : '비슷한 컷 생성'} · ${cost} 크레딧`}
-        </Button>
-      )}
-    </div>
-  );
-}
-
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ product, detailRecommendations, frontClosure, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onVaryGenerate, onPickMoodRef }) {
-  // 새 생성 접수 중 재진입해도 현재 이미지 수정에서 별도 선택을 시작하지 않는다.
-  const [tab, setTab] = useState(generateSubmitting ? 'new' : 'vary');
+export function AIPanel({ product, detailRecommendations, frontClosure, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, onConfirmPendingGenerate, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onPickMoodRef }) {
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
@@ -405,9 +368,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
     if (replacing) resetRecipeSettings();
   };
   // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
-  const categoryRequired = failedCutRetry
-    ? isRealModelSelection(failedCutRetry.request?.modelId)
-    : isRealModelSelection(model);
+  const categoryRequired = isRealModelSelection(model);
   const brandUseCategoryBlocked = categoryRequired
     && (!brandUseCategory || brandUseCategorySaving);
   const brandUseCategoryControl = categoryRequired && (
@@ -430,156 +391,122 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         <PanelHead title="이전 요청을 확인해 주세요" sub="접수 확인 후 새 이미지를 만들 수 있어요." />
         <p className="hint" role="status">이전 요청 · {[colorLabel, cutLabel, shotLabel].filter(Boolean).join(' · ')}</p>
         <Button variant="primary" block icon="refresh" disabled={generateSubmitting}
-          onClick={() => onRetryFailedCut({ confirmPending: true })}>
+          onClick={onConfirmPendingGenerate}>
           {generateSubmitting ? '확인 중…' : '이전 요청 확인하기'}
         </Button>
         <p className="ai-failed-retry-hint">중복 생성 없이 이전 요청을 다시 확인해요.</p>
       </div>
     );
   }
-  if (failedCutRetry) {
-    return (
-      <div className="ai-failed-retry">
-        <PanelHead title="원래 콘티로 다시 만들기"
-          sub={failedCutRetry.signature
-            ? '시그니처 전용 예시와 원래 모델·색상·매칭 의류를 그대로 사용해요.'
-            : failedCutRetry.detailLabel ? '내 상품 원본과 선택한 촬영 대상을 그대로 사용해요.'
-              : '이 자리에 지정했던 예시와 생성 설정을 그대로 사용해요.'} />
-        {failedCutRetry.thumb && (
-          <img className={`ai-failed-retry-thumb${failedCutRetry.detailLabel ? ' detail-source-image' : ''}`} src={failedCutRetry.thumb} alt={failedCutRetry.detailLabel ? `내 상품 원본 · ${failedCutRetry.detailLabel}` : "원래 선택한 생성 예시"} />
-        )}
-        {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
-        {brandUseCategoryControl}
-        {failedCutRetry.retryable !== false ? (
-          <Button variant="primary" block icon="sparkles" className="btn-glowring"
-            disabled={brandUseCategoryBlocked || generateSubmitting} onClick={onRetryFailedCut}>
-            {failedCutRetry.fillImage ? '원본 사진으로 채우기' : generateSubmitting ? '접수 중…' : `${failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}
-          </Button>
-        ) : <p className="hint" role="status">{failedCutRetry.guidance}</p>}
-        <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
-      </div>
-    );
-  }
-
   return (
     <div>
-      <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
-        <button className={tab === 'new' ? 'on' : ''} disabled={generateSubmitting} onClick={() => setTab('new')}>새 이미지 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} disabled={generateSubmitting} onClick={() => setTab('vary')}>현재 이미지 수정</button>
+      <PanelHead title="새 이미지 만들기" />
+      {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
+      <div className="insp-sec"><label className="lbl">컷 종류</label>
+        <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
       </div>
-      {tab === 'new' ? (
-        <div>
-          {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
-          <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
-          </div>
 
-          {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
-          <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
-            direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
-            shotOptions={galleryIsProduct ? galleryShotOptions : null}
-            onShotChange={(v) => {
-              setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
-              if (galleryIsProduct) {
-                const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
-                setProductDirection(patch.direction || directionSpec.direction);
-              }
-            }} clothingType={clothingType} gender={modelGender}
-            includeMirrorExamples={galleryCutType === 'styling'}
-            exampleId={exampleId} onExampleChange={selectExample}
-            refScope={refScope} onRefScopeChange={setRefScope}
-            refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-          {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
-            catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
-          {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
-              if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
-              if (patch.direction) setProductDirection(patch.direction);
-              if (patch.colorId) setColor(patch.colorId);
-            }} />}
+      {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
+      <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
+        direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
+        shotOptions={galleryIsProduct ? galleryShotOptions : null}
+        onShotChange={(v) => {
+          setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
+          if (galleryIsProduct) {
+            const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
+            setProductDirection(patch.direction || directionSpec.direction);
+          }
+        }} clothingType={clothingType} gender={modelGender}
+        includeMirrorExamples={galleryCutType === 'styling'}
+        exampleId={exampleId} onExampleChange={selectExample}
+        refScope={refScope} onRefScopeChange={setRefScope}
+        refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+      {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
+        catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
+      {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
+        catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
+          if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
+          if (patch.direction) setProductDirection(patch.direction);
+          if (patch.colorId) setColor(patch.colorId);
+        }} />}
 
-          {showOuterClosure && (
-            <OuterClosureField id="outer-closure-newcut" value={outerClosure}
-              onChange={setOuterClosure} frontClosure={frontClosure} />
-          )}
-
-          <div className="insp-divider" />
-
-          <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
-              setColor(value);
-              if (value !== colorVal) {
-                setDetailTargetId(null);
-                if (isProduct) {
-                  const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
-                  setProductDirection(patch.direction || directionSpec.direction);
-                }
-              }
-            }} /></div>
-
-          {showMatchClothing && (
-            <>
-              <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
-                <Icon name="settings" size={17} />매칭 의류 바꾸기
-              </button>
-              {matchOpen && (
-                <div className="sb-match-inline">
-                  <div className="match-grid">
-                    {matchClothing.map((m) => {
-                      const on = matchIds.includes(m.id);
-                      return (
-                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
-                          setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
-                        }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
-            <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {virtualModels.map((m) => (
-                /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
-                   되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
-                <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
-                  <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
-                  <span className="ai-name">{m.name}</span>
-                </div>
-              ))}
-            </div>
-            {brandUseCategoryControl}
-          </details>}
-
-          <Button variant="primary" block icon="sparkles" className="btn-glowring"
-            disabled={brandUseCategoryBlocked || generateSubmitting} onClick={() => onGenerate({
-            contentRole: effectiveRecipe.contentRole,
-            colorId: colorVal, cutType: effectiveCutType,
-            // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
-            direction: isMirror ? null : directionSpec.direction,
-            sideStyle: isMirror ? null : directionSpec.sideStyle,
-            shot: effectiveShotVal, modelId: model, exampleId, refScope,
-            ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
-            outerClosureState: showOuterClosure ? outerClosure : null,
-            matchIds: isProduct ? [] : matchIds,
-            refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
-            refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
-          })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}</Button>
-        </div>
-      ) : (
-        /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */
-        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onGenerate={onVaryGenerate} />
+      {showOuterClosure && (
+        <OuterClosureField id="outer-closure-newcut" value={outerClosure}
+          onChange={setOuterClosure} frontClosure={frontClosure} />
       )}
+
+      <div className="insp-divider" />
+
+      <div className="insp-sec"><label className="lbl">색상</label>
+        <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
+          setColor(value);
+          if (value !== colorVal) {
+            setDetailTargetId(null);
+            if (isProduct) {
+              const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
+              setProductDirection(patch.direction || directionSpec.direction);
+            }
+          }
+        }} /></div>
+
+      {showMatchClothing && (
+        <>
+          <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
+            <Icon name="settings" size={17} />매칭 의류 바꾸기
+          </button>
+          {matchOpen && (
+            <div className="sb-match-inline">
+              <div className="match-grid">
+                {matchClothing.map((m) => {
+                  const on = matchIds.includes(m.id);
+                  return (
+                    <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
+                      setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
+                    }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
+        <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
+          {virtualModels.map((m) => (
+            /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
+               되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
+            <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
+              title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
+              <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
+              <span className="ai-name">{m.name}</span>
+            </div>
+          ))}
+        </div>
+        {brandUseCategoryControl}
+      </details>}
+
+      <Button variant="primary" block icon="sparkles" className="btn-glowring"
+        disabled={brandUseCategoryBlocked || generateSubmitting} onClick={() => onGenerate({
+        contentRole: effectiveRecipe.contentRole,
+        colorId: colorVal, cutType: effectiveCutType,
+        // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
+        direction: isMirror ? null : directionSpec.direction,
+        sideStyle: isMirror ? null : directionSpec.sideStyle,
+        shot: effectiveShotVal, modelId: model, exampleId, refScope,
+        ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
+        outerClosureState: showOuterClosure ? outerClosure : null,
+        matchIds: isProduct ? [] : matchIds,
+        refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
+        refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
+      })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}</Button>
     </div>
   );
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -651,7 +578,6 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                         onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
                         <Icon name="x" size={12} />
                       </button>
-                      <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
                     </div>
                   );
                 })}
@@ -698,8 +624,6 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
   const curDash = el.dash || 'solid';
   return (
     <div className="fig-panel">
-      {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
-          자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
       {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
           같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
           빼내기는 Delete(격자·프레임의 사진 자리는 지워지지 않고 '＋ 여기에 사진 넣기'

@@ -38,23 +38,16 @@ test('saved analysis keeps its category while the form removes the seller catego
 
 test('Editor AI panel remediates a missing persisted category in place', () => {
   const aiPanel = editorPanelsSource.slice(editorPanelsSource.indexOf('export function AIPanel'));
-  const failedRetryStart = aiPanel.indexOf('if (failedCutRetry)');
-  const failedRetryBranch = aiPanel.slice(
-    failedRetryStart,
-    aiPanel.indexOf('\n\n  return (', failedRetryStart),
-  );
   assert.match(editorPanelsSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
   assert.match(editorPanelsSource, /import \{ isRealModelSelection \} from '@\/features\/analysis\/modelSelection\.js';/);
   assert.match(aiPanel, /brandUseCategory = null/);
   assert.match(aiPanel, /brandUseCategorySaving = false/);
   assert.match(aiPanel, /onBrandUseCategoryChange/);
   // 브랜드 유형은 컷 종류와 무관하게 실제 모델이면 필요하다(2026-09-11 사용자 결정).
-  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: isRealModelSelection\(model\);/);
+  assert.match(aiPanel, /const categoryRequired = isRealModelSelection\(model\);/);
   assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
-  assert.match(failedRetryBranch, /\{brandUseCategoryControl\}/);
-  assert.match(failedRetryBranch, /disabled=\{brandUseCategoryBlocked \|\| generateSubmitting\}/);
-  assert.equal(aiPanel.match(/\{brandUseCategoryControl\}/g)?.length, 2);
+  assert.equal(aiPanel.match(/\{brandUseCategoryControl\}/g)?.length, 1);
   assert.match(aiPanel, /disabled=\{brandUseCategoryBlocked \|\| generateSubmitting\} onClick=\{\(\) => onGenerate/);
 });
 
@@ -70,7 +63,7 @@ test('Editor image generation fails closed before side effects for an unready re
   const generateImageStart = editorSource.indexOf('const generateImage = async (req');
   const generateImage = editorSource.slice(
     generateImageStart,
-    editorSource.indexOf('const failedCutRetry =', generateImageStart),
+    editorSource.indexOf('const retryFailedCut =', generateImageStart),
   );
   const beforeSideEffects = generateImage.slice(0, generateImage.indexOf('const group ='));
 
@@ -86,7 +79,7 @@ test('Editor product cuts discard retained model identity without requiring a ca
   const generateImageStart = editorSource.indexOf('const generateImage = async (req');
   const generateImage = editorSource.slice(
     generateImageStart,
-    editorSource.indexOf('const failedCutRetry =', generateImageStart),
+    editorSource.indexOf('const retryFailedCut =', generateImageStart),
   );
 
   assert.match(generateImage, /request: \{ mode: 'new', \.\.\.req, colorId: req\.colorId \|\| 'misc',\s*modelId: req\.cutType === 'product' \? null : req\.modelId,\s*brandUseCategory: analysis\?\.brandUseCategory \}/);

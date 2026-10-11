@@ -273,7 +273,7 @@ async function publicHttp(path, formData, { signal, accountGeneration = clientEv
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
 async function pollJob(
   jobId,
-  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE, creditsReleased = false } = {},
+  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE, creditsReleased = false, preserveFailureMessage = false } = {},
 ) {
   const start = Date.now();
   let last = -1;
@@ -292,7 +292,9 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') {
-      throw jobFailure(job, { creditsReleased });
+      const failure = jobFailure(job, { creditsReleased });
+      if (preserveFailureMessage && job.errorMessage) failure.message = job.errorMessage;
+      throw failure;
     }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
@@ -989,6 +991,11 @@ export const httpAdapter = {
   async getWardrobe(projectId) {
     return http(`/v1/projects/${projectId}/wardrobe`);
   },
+  async getEditorAssetInfo(projectId, assetIds) {
+    return http(`/v1/projects/${projectId}/editor:asset-info`, {
+      method: 'POST', body: { assetIds },
+    });
+  },
   // 콘티 '내 이미지' — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   async pickAnyImage(projectId) {
     return pickAndUploadImage(projectId);
@@ -999,7 +1006,7 @@ export const httpAdapter = {
     return pickAndUploadImage(projectId);
   },
   // 계획 없는 빈 칸은 위치만 보내고, 서버가 고른 한 줄을 접수 즉시 전달한다(ADR-0019).
-  async fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress } = {}) {
+  async fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress, preserveFailureMessage = false } = {}) {
     if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
       throw Object.assign(new Error('이 칸을 찾지 못했어요.'), {
         status: 400, code: 'fill_slot_invalid', requestNotSent: true,
@@ -1025,6 +1032,7 @@ export const httpAdapter = {
     try {
       const result = await pollJob(res.jobId, {
         onProgress,
+        preserveFailureMessage,
         timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
         timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
         creditsReleased: true,
@@ -1038,8 +1046,14 @@ export const httpAdapter = {
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
   async generateImage(projectId, req = {}) {
+    const { onProgress, onJobStarted, idempotencyKey, preserveFailureMessage = false, ...body } = req;
+    if (body.mode === 'vary' && ['color', 'closure'].includes(body.variationMode)
+      && (typeof idempotencyKey !== 'string' || !idempotencyKey.trim())) {
+      throw Object.assign(new Error('요청 번호가 없어요. 다시 눌러 주세요.'), {
+        status: 400, code: 'idempotency_key_required', requestNotSent: true,
+      });
+    }
     recordClientAction('editorImage');
-    const { onProgress, onJobStarted, idempotencyKey, ...body } = req;
     let res;
     try {
       res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
@@ -1055,16 +1069,19 @@ export const httpAdapter = {
       }
       throw e;
     }
-    if (res.data) return { data: res.data, credits: res.credits };
+    if (res.data) return { data: res.data, credits: res.credits,
+      ...(res.creditsCharged == null ? {} : { creditsCharged: res.creditsCharged }) };
     onJobStarted?.(res.jobId);
     try {
       const result = await pollJob(res.jobId, {
         onProgress,
+        preserveFailureMessage,
         timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
         timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
         creditsReleased: true,
       });
-      return { data: result.data, credits: result.credits };
+      return { data: result.data, credits: result.credits,
+        ...(result.creditsCharged == null ? {} : { creditsCharged: result.creditsCharged }) };
     } catch (e) {
       // 타임아웃이어도 서버 잡은 계속 돈다 — jobId 를 실어 보내 화면이 계속 추적하게 한다.
       if (e?.code === 'job_timeout') e.jobId = res.jobId;

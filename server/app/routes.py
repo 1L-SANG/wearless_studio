@@ -579,7 +579,7 @@ def _consent_payload(row: dict | None, *, today=None, signup_credits: int = 0) -
         or legal_versions.terms_consent_required(
             accepted["termsVersion"] if accepted else None, today=today,
         )
-        or accepted["privacyVersion"] != required["privacy"]
+        or accepted["privacyVersion"] not in legal_versions.ACCEPTED_SELLER_PRIVACY_VERSIONS
         or not accepted["ageAttested"]
     )
     return {"required": required, "accepted": accepted, "needsConsent": needs,
