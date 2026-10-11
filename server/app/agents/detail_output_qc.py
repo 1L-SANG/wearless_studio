@@ -149,6 +149,19 @@ def build_prompt(source_count, target, direction, *, has_crop=False, specialist=
             + "\nREQUESTED SIDE: " + direction + "\nSERVER TARGET: " + _canonical(target))
 
 
+def _authority_context(source_count, bound, direction, *, has_crop, specialist=False):
+    roles = ["SOURCE"] * source_count + (["TARGET_CROP"] if has_crop else [])
+    roles += (["SOURCE_TILE"] * 4 if specialist else []) + ["CURRENT"]
+    roles += ["CURRENT_TILE"] * 4 if specialist else []
+    context = {"sourceCount": source_count, "imageRoles": roles, "requestedSide": direction,
+               "targetBinding": "bound" if bound is not None else "unbound"}
+    if bound is not None:
+        context.update(targetKind=bound["kind"], structureSourceOrdinal=bound["sourceOrdinal"])
+        if bound.get("colorTransfer") is True:
+            context["colorSourceOrdinal"] = bound["colorSourceOrdinal"]
+    return context
+
+
 def _prepare(sources, candidate, target):
     """Decode/EXIF-normalize and downsize only; crop never creates visual evidence."""
     def decode(item):
@@ -375,7 +388,8 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         args = (settings, out["requestedModel"], prompt, images, response_schema(), min(timeout, 120.0))
         raw = await asyncio.wait_for(vision_llm._call_gpt(
             *args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000,
-            metadata=metadata), timeout=min(timeout, 120.0))
+            metadata=metadata, system_prompt=vision_llm.qc_system_prompt("detail",
+                _authority_context(len(sources), bound, direction, has_crop=has_crop))), timeout=min(timeout, 120.0))
         out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
         out["rawJudge"] = raw  # audit-only; repair_instructions never reads this field
         if not isinstance(raw, dict) or set(raw) != {"gates"}:
@@ -420,7 +434,9 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
         specialist_raw = await asyncio.wait_for(vision_llm._call_gpt(
             settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(),
             min(specialist_timeout, 120), reasoning_effort="high", image_detail="high",
-            max_completion_tokens=7000, metadata=specialist_metadata), timeout=min(specialist_timeout, 120))
+            max_completion_tokens=7000, metadata=specialist_metadata,
+            system_prompt=vision_llm.qc_system_prompt("detail", _authority_context(
+                len(sources), bound, direction, has_crop=has_crop, specialist=True))), timeout=min(specialist_timeout, 120))
         specialist.update(status="COMPLETE", rawJudge=specialist_raw, returnedModel=specialist_metadata.get("returned_model"),
                           usage=specialist_metadata.get("usage"))
         if not isinstance(specialist_raw, dict) or set(specialist_raw) != {"gates", "permanentMarkings", "temporaryArtifacts"}:

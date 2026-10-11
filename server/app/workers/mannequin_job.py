@@ -95,10 +95,10 @@ def _valid_fit_profile_snapshot(snapshot) -> bool:
     )
 
 
-def _compatible_parent_edit_depth(
+def _compatible_parent_metadata(
     parent: dict | None, profile: dict | None, match_item_id: str | None
-) -> int | None:
-    """부모 메타데이터가 현재 조정 입력과 호환되면 기존 editDepth, 아니면 None."""
+) -> dict | None:
+    """현재 조정의 category/gender/매칭과 같은 부모인지 확인한다. 깊이는 생성에만 사용한다."""
     if not parent or not isinstance(profile, dict):
         return None
     category, gender = profile.get("category"), profile.get("gender")
@@ -111,6 +111,16 @@ def _compatible_parent_edit_depth(
             or metadata.get("profileGender") != gender):
         return None
     if metadata.get("matchItemId") != match_item_id:
+        return None
+    return metadata
+
+
+def _compatible_parent_edit_depth(
+    parent: dict | None, profile: dict | None, match_item_id: str | None
+) -> int | None:
+    """같은 조정 입력이며 깊이가 두 번 미만일 때만 부모를 생성 캔버스로 쓴다."""
+    metadata = _compatible_parent_metadata(parent, profile, match_item_id)
+    if metadata is None:
         return None
     depth = metadata.get("editDepth")
     if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth >= 2:
@@ -1840,6 +1850,7 @@ async def _run_candidate(
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     cancel_check=None, canonical_refs=None, product_refs=None,
     source_mirrored=False, match_is_custom=False, draft_sink=None,
+    preservation_before_image=None, preservation_edit_goal=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -2236,17 +2247,22 @@ async def _run_candidate(
             continue
         # STYLE REFERENCE 첨부 시 오염(다른 옷 유출)을 반드시 계측 — image_qc=off 여도 최소 shadow 로
         # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
+        # 생성 캔버스와 조정 전 보존 기준은 별개다. 깊이 제한의 fresh 렌더도 같은 사용자
+        # 조정이므로 부모는 생성 입력에 넣지 않고 기존 동일 QC 안에서 비교한다.
+        adjustment_before = preservation_before_image
+        adjustment_goal = preservation_edit_goal
+        if adjustment_before is None and generation_path == "edit":
+            adjustment_before, adjustment_goal = parent_cut_img, adjust_directives
         eff_image_qc = s.image_qc if s.image_qc != "off" else (
-            "shadow" if ref_imgs or generation_path == "edit" else "off")
+            "shadow" if ref_imgs or adjustment_before is not None else "off")
         # AG-P2 동일성 + 베이스 충실도(관측 전용 — 반환값은 아래 게이트에 **넣지 않는다**,
         # 넣는 순간 shadow 가 아니게 된다). 서로 독립이라 동시에 판정한다(_observe_generation_qc).
-        adjustment_goal = adjust_directives if generation_path == "edit" else None
         p2, base_fidelity = await _observe_generation_qc(
             pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt, res=res,
             prod_imgs=prod_imgs, match_img=match_img, clothing_type=clothing_type,
             fit_profile=fit_profile, eff_image_qc=eff_image_qc,
             base_img=base_img, product=product, analysis=analysis,
-            before_image=parent_cut_img if generation_path == "edit" else None,
+            before_image=adjustment_before,
             edit_goal=adjustment_goal, source_mirrored=source_mirrored,
             match_is_custom=match_is_custom)
         offer_draft(res, merge_qc_scores(p2, None), "generated")
@@ -2263,7 +2279,7 @@ async def _run_candidate(
             for axis in bf_axes)
         # 편집 경로(조정·초안 이어 쓰기) 결과가 매칭 하드 게이트에만 걸리면 잡을 실패시키지
         # 않는다(2026-09-23) — 아래 최종 관문이 경고로 남긴다. 보존·목표·상품 판정은 그대로다.
-        if generation_path == "edit" and not image_qc.edit_accepted(p2, matching_blocks=False):
+        if adjustment_before is not None and not image_qc.edit_accepted(p2, matching_blocks=False):
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "attempt": attempt,
                 "status": "adjustment_postcheck", "outcome": "rejected"})
@@ -2742,12 +2758,14 @@ async def run_mannequin_job(app, job: dict) -> None:
             "adjustedAxes": list(adjusted_axes),
         }
 
-        # 조정 편집 자격은 전부 best-effort다. 어느 조건이든 빠지면 기존 fresh 경로로 조용히
-        # 돌아가며, 부모 조회/R2 로드 실패가 잡 실패로 번지지 않는다.
+        # 생성 편집 자격은 best-effort다. 실제 입력 불호환은 기존 fresh 경로를 유지한다.
+        # 같은 입력의 깊이 제한은 생성만 fresh로 돌리며 조정 전 부모 보존 검사는 유지한다.
         generation_path = "fresh"
         parent_cut_id = None
         parent_edit_depth = None
         parent_cut_img = None
+        preservation_before_image = None
+        preservation_edit_goal = None
         adjust_directives = ""
         payload_mode = (job.get("payload") or {}).get("mode")
         if payload_mode == "regenerate" and snap_valid and isinstance(fit_profile, dict):
@@ -2762,16 +2780,35 @@ async def run_mannequin_job(app, job: dict) -> None:
                     parent = None
                 parent_edit_depth = _compatible_parent_edit_depth(
                     parent, fit_profile, resolved_match_id)
-                if parent_edit_depth is not None:
+                compatible_metadata = _compatible_parent_metadata(
+                    parent, fit_profile, resolved_match_id)
+                depth = compatible_metadata.get("editDepth") if compatible_metadata is not None else None
+                # off는 기존 fresh/0콜을 유지한다. 켜진 QC의 같은 1콜에만 BEFORE를 추가한다.
+                fresh_preservation_required = (
+                    s.image_qc in {"enforce", "shadow"} and type(depth) is int and depth >= 2
+                )
+                if parent_edit_depth is not None or fresh_preservation_required:
                     try:
                         parent_bytes = await asyncio.to_thread(
                             app.state.r2.get_bytes, parent["r2_key"])
-                        parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                        if fresh_preservation_required and (
+                            not isinstance(parent_bytes, bytes) or not parent_bytes
+                            or parent["mime_type"] not in {"image/png", "image/jpeg", "image/webp"}
+                        ):
+                            raise ValueError("unavailable adjustment evidence")
+                        loaded_parent = InlineImage(parent["mime_type"], parent_bytes)
                     except Exception:
-                        parent_cut_img = None
-                    if parent_cut_img is not None:
-                        generation_path = "edit"
-                        parent_cut_id = parent["id"]
+                        if fresh_preservation_required:
+                            raise MannequinQualityError("adjustment_preservation_unavailable") from None
+                        loaded_parent = None
+                    if loaded_parent is not None:
+                        if fresh_preservation_required:
+                            preservation_before_image = loaded_parent
+                            preservation_edit_goal = adjust_directives
+                        else:
+                            parent_cut_img = loaded_parent
+                            generation_path = "edit"
+                            parent_cut_id = parent["id"]
 
         # 유료 초안 이어 쓰기(2026-09-23 오너 원칙: 이미 만든 결과가 있으면 그대로 쓴다).
         # 셀러가 명시한 조정 편집(위)이 우선이고, 그게 아니면 같은 입력 지문의 초안을 찾는다.
@@ -2860,7 +2897,9 @@ async def run_mannequin_job(app, job: dict) -> None:
                     adjust_directives=adjust_directives, cancel_check=_cancel_check,
                     canonical_refs=canonical_refs, product_refs=product_refs,
                     source_mirrored=source_mirrored, match_is_custom=match_is_custom,
-                    draft_sink=draft_sink)
+                    draft_sink=draft_sink,
+                    preservation_before_image=preservation_before_image,
+                    preservation_edit_goal=preservation_edit_goal)
             except _MannequinJobCancelled:
                 raise
             except MannequinQualityError:

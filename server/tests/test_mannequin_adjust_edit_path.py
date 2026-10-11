@@ -94,6 +94,9 @@ def _run_worker(
     candidate_qc=None,
     candidate_metadata=None,
     analysis_overrides=None,
+    candidate_runner=None,
+    assert_success=True,
+    settings_overrides=None,
 ):
     calls = {"run": [], "success": [], "failure": [], "emits": [], "parent_lookup": 0}
     analysis = {
@@ -136,6 +139,8 @@ def _run_worker(
 
     async def fake_run_candidate(**kwargs):
         calls["run"].append(kwargs)
+        if candidate_runner is not None:
+            return await candidate_runner(**kwargs)
         return {
             "asset_id": "asset-new",
             "bucket": "bucket",
@@ -178,12 +183,13 @@ def _run_worker(
     monkeypatch.setattr(mannequin_job, "_run_candidate", fake_run_candidate)
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
 
-    settings = make_settings(
-        base_mannequin_women_asset_id="bw",
-        base_mannequin_men_asset_id="bm",
-        r2_bucket="bucket",
-        mannequin_prompt_version="fresh_v1",
-    )
+    settings = make_settings(**{
+        "base_mannequin_women_asset_id": "bw",
+        "base_mannequin_men_asset_id": "bm",
+        "r2_bucket": "bucket",
+        "mannequin_prompt_version": "fresh_v1",
+        **(settings_overrides or {}),
+    })
     r2 = _R2()
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_Pool(), r2=r2, gemini=None))
@@ -202,8 +208,9 @@ def _run_worker(
         "payload": {"mode": mode, "fitProfileSnapshot": snapshot},
     }
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
-    assert calls["failure"] == []
-    assert len(calls["run"]) == 1 and len(calls["success"]) == 1
+    if assert_success:
+        assert calls["failure"] == []
+        assert len(calls["run"]) == 1 and len(calls["success"]) == 1
     return calls, r2
 
 
