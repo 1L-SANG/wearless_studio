@@ -283,14 +283,22 @@ def test_complete_reference_is_the_only_horizon_scene_evidence():
 
 
 def test_ordinary_plate_scene_judge_keeps_original_prompt(monkeypatch):
+    import json
     from pathlib import Path
     seen = {}
-    async def judge(settings, prompt, images, schema):
-        seen["prompt"] = prompt
+    async def judge(settings, prompt, images, schema, *, system_prompt=None,
+                    require_complete_envelope=False):
+        seen.update(prompt=prompt, policy=system_prompt, complete=require_complete_envelope)
         return {"verdict": "pass"}, "test"
     monkeypatch.setattr(image_qc, "analyze_with_fallback", judge)
     asyncio.run(image_qc.scene_verdict(make_settings(), InlineImage("image/png", b"plate"), InlineImage("image/png", b"out")))
     assert seen["prompt"] == Path(image_qc._SCENE_PROMPT_FILE).read_text(encoding="utf-8")
+    assert seen["complete"] is True
+    assert seen["prompt"] not in seen["policy"]
+    assert json.loads(seen["policy"].split("\nVALIDATED_QC_CONTEXT\n", 1)[1]) == {
+        "family": "image", "scope": "explicit_fields_only", "productCount": 0,
+        "imageRoles": ["PLATE", "CURRENT"],
+    }
 
 
 def test_retry_rehydrates_saved_cut_and_rejects_nonempty_or_mismatched_slot():

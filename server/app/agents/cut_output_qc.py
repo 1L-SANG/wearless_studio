@@ -27,7 +27,7 @@ from .confirmed_gpt_prompt import (
 )
 from .gemini_image import InlineImage
 from .prompts import clean_text
-from .vision_llm import VisionError, analyze_with_fallback
+from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
 from . import horizon_background
 from .outer_closure import STATES as _CLOSURES
 
@@ -1126,7 +1126,15 @@ async def verdict(
         contract, checked_references, authority_profile=authority_profile
     )
     images = [*(reference.image for reference in checked_references), generated_image]
-    raw, provider = await analyze_with_fallback(settings, prompt, images, qc_schema())
+    authority_context = None if contract.get("contractErrors") else {
+        "authorityProfile": authority_profile,
+        "attributeOwners": contract["attributeOwners"],
+        "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
+    }
+    raw, provider = await analyze_with_fallback(
+        settings, prompt, images, qc_schema(), require_complete_envelope=True,
+        system_prompt=qc_system_prompt("cut", authority_context)
+    )
     result = validate(raw, applicable=applicable, forced=forced)
     result.update({
         "provider": provider,

@@ -14,7 +14,7 @@ from .gemini_image import InlineImage
 from .prompts import clean_text
 from .prompts import build_mirrored_source_block
 from .mannequin_adjust import custom_match_grid_context
-from .vision_llm import VisionError, analyze_with_fallback
+from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
 from . import mannequin_quality
 
 VERDICTS = ("pass", "retry")
@@ -347,7 +347,7 @@ async def verdict(
     """상품사진들 (+ 매칭 하의) + 생성이미지(맨 뒤)를 vision LLM에 넣어 동일성 판정.
 
     scored=True(마네킹 경로)면 4축 점수를 함께 받는다. 다른 호출부(best_of 경유
-    상세페이지·에디터)는 기본값 그대로라 요청·응답이 바이트 단위로 불변이다.
+    상세페이지·에디터)는 기본 스키마 그대로이며 QC 정책만 별도 privileged 지시로 보낸다.
 
     match_image 가 있으면 상품 뒤·생성 앞에 끼워 **같은 1콜 안에서** 코디 바지 정체성을
     함께 판정한다(AI 콜 증가 0). 첨부 순서·프롬프트 블록·스키마 필드가 이 한 장을 전제한다.
@@ -366,11 +366,20 @@ async def verdict(
         len(product_images), scored=scored, fit_profile=fit_profile, matching=matching,
         paired=paired, edit_goal=edit_goal, source_mirrored=source_mirrored,
         match_is_custom=match_is_custom, main_product_category=main_product_category)
-    complete_kwargs = {"require_complete_envelope": True} if scored or paired else {}
+    complete_kwargs = {"require_complete_envelope": True}
+    authority_context = {
+        "productCount": len(product_images),
+        "imageRoles": ["PRODUCT"] * len(product_images) + (["MATCHING"] if matching else [])
+        + (["BEFORE"] if paired else []) + ["CURRENT"],
+    }
+    if scored and isinstance(fit_profile, dict) and build_declared_fit_block({**fit_profile, "matchingFit": None}):
+        authority_context.update(declaredFitOwner="fitProfile", declaredFitCategory=fit_profile["category"])
+    if scored and matching and _matching_top_length_observable(fit_profile):
+        authority_context.update(matchingFitOwner="fitProfile", matchingFitCategory="top")
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images,
         qc_schema(scored=scored, matching=matching, paired=paired, visibility_required=visibility_required),
-        **complete_kwargs)
+        system_prompt=qc_system_prompt("image", authority_context), **complete_kwargs)
     result = validate(raw, scored=scored, matching=matching, paired=paired,
                       visibility_required=visibility_required,
                       main_product_category=_main_category(main_product_category, fit_profile))
@@ -422,7 +431,11 @@ async def pick_best(
     prompt = prompt.replace("${productCount}", str(len(product_images)))
     prompt = prompt.replace("${candidateCount}", str(len(candidates)))
     raw, _provider = await analyze_with_fallback(
-        settings, prompt, [*product_images, *candidates], pick_schema(len(candidates)))
+        settings, prompt, [*product_images, *candidates], pick_schema(len(candidates)),
+        require_complete_envelope=True, system_prompt=qc_system_prompt("image", {
+            "productCount": len(product_images),
+            "imageRoles": ["PRODUCT"] * len(product_images) + ["CANDIDATE"] * len(candidates),
+        }))
     return validate_pick(raw, len(candidates))
 
 
@@ -509,5 +522,6 @@ async def scene_verdict(
     with open(_SCENE_PROMPT_FILE, encoding="utf-8") as f:
         prompt = f.read()
     raw, _provider = await analyze_with_fallback(
-        settings, prompt, [plate, generated_image], qc_schema())
+        settings, prompt, [plate, generated_image], qc_schema(),
+        require_complete_envelope=True, system_prompt=qc_system_prompt("image", {"productCount": 0, "imageRoles": ["PLATE", "CURRENT"]}))
     return validate(raw)
