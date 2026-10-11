@@ -24,6 +24,7 @@ from ..agents import (
     cut_plan,
     cut_variator,
     detail_recommendations,
+    garment_edit,
     identity_source,
     image_qc,
     horizon_background,
@@ -241,6 +242,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
         if mode == "vary":
             source = payload.get("source") or {}
+            edit_mode = payload.get("variationMode") if payload.get("variationMode") in ("color", "closure") else None
             asset_id = _parse_source_asset_id(source.get("src"))
             src_asset = None
             similar_envelope = None
@@ -266,7 +268,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                     if src_asset is None:
                         raise VisionError("similar_cut_source_missing")
                     root_meta = src_asset.get("metadata") or {}
-                    trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type") or source.get("cutType")
+                    trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type")
+                    if not trusted_type:
+                        trusted_type = "styling" if src_asset.get("source") == "upload" else source.get("cutType")
                     if (trusted_type not in _WORN_CUT_TYPES or selected_meta.get("cut_type") == "product"
                             or selected_meta.get("detail_recipe") or root_meta.get("detail_recipe")):
                         raise VisionError("similar_cut_source_unsupported")
@@ -276,7 +280,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     src_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, asset_id)
             source_metadata = (src_asset or {}).get("metadata") or {}
             prior_recipe = source_metadata.get("detail_recipe")
-            if similar_envelope is None and (
+            if similar_envelope is None and edit_mode is None and (
                 payload.get("variationMode") is not None
                 or not isinstance(prior_recipe, dict) or prior_recipe.get("version") != 1
             ):
@@ -294,12 +298,52 @@ async def run_editor_image_job(app, job: dict) -> None:
             async with pool.connection() as conn:
                 source_recipes = await asset_recipe.resolve_asset_recipes(
                     conn, user_id, project_id, [generation_source_asset_id])
-                if similar_envelope:
+                if similar_envelope or edit_mode:
                     source_wardrobe = await repo.list_wardrobe_images(conn, user_id, project_id)
                     group = next((row.get("color_id") for row in source_wardrobe
                                   if str(row.get("asset_id")) == generation_source_asset_id), None)
             generation_recipe = asset_recipe.project_recipe(
                 (source_recipes.get(generation_source_asset_id) or {}).get("recipe"))
+            target_img = None
+            if edit_mode:
+                trusted_type = garment_edit.source_cut_type(
+                    src_asset, source_recipes.get(generation_source_asset_id) or {})
+                if trusted_type is None:
+                    await _fail("이 사진에서는 색상과 열림 정도를 바꿀 수 없어요.",
+                                {"error": "edit_source_unsupported"}, code="edit_source_unsupported")
+                    return
+                source = {**source, "cutType": trusted_type}
+                async with pool.connection() as conn:
+                    edit_product = await repo.get_product(conn, project_id) or {}
+                    edit_analysis = await repo.get_analysis(conn, project_id) or {}
+                    front_closure = outer_closure.front_closure_of(edit_analysis)
+                    if edit_mode == "color":
+                        image_ids = garment_edit.target_image_ids(edit_product, payload.get("colorId"))
+                        selected_target = (payload.get("_garmentEdit") or {}).get("targetAssetId")
+                        if selected_target:
+                            image_ids = [selected_target] if selected_target in (image_ids or []) else []
+                        target_asset = None
+                        for target_id in image_ids or []:
+                            target_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, target_id)
+                            if target_asset:
+                                break
+                        if target_asset is None:
+                            raise VisionError("no_selected_color_images")
+                    else:
+                        state = payload.get("outerClosureState")
+                        if (not cut_generator._is_outer(edit_product.get("clothingType") or edit_product.get("clothing_type"))
+                                or front_closure["kind"] == "none"):
+                            raise VisionError("closure_unsupported")
+                        if not isinstance(state, str) or state not in outer_closure.STATES:
+                            raise VisionError("closure_invalid")
+                        payload = {**payload, "outerClosureState": outer_closure.effective_state(state, front_closure)}
+                generation_recipe = generation_recipe or asset_recipe.project_recipe({})
+                field = "colorId" if edit_mode == "color" else "outerClosureState"
+                generation_recipe[field] = payload[field]
+                if edit_mode == "color":
+                    group = payload["colorId"]
+                    target_img = InlineImage(target_asset["mime_type"],
+                        await asyncio.to_thread(app.state.r2.get_bytes, target_asset["r2_key"]))
             snapshot = payload.get("_facemarket")
             source_real_derived = (
                 isinstance(src_asset.get("metadata"), dict)
@@ -360,7 +404,16 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             cut_type = source.get("cutType")
             try:
-                if similar_envelope is not None:
+                if edit_mode:
+                    edit_kwargs = {}
+                    if vary_lora_spec is not None:
+                        edit_kwargs = {"face_identity_spec": vary_lora_spec, "face_pass_outcome": face_pass_outcome,
+                            "face_pass_url_provider": lambda: identity_source.active_face_backend_url(pool, str(snapshot["modelId"]))}
+                    image, mime = await garment_edit.generate(
+                        editor_settings, app.state.gemini, src_img, target_img, cut_type,
+                        mode=edit_mode, clothing_type=edit_product.get("clothingType") or edit_product.get("clothing_type") or "top",
+                        closure_state=payload.get("outerClosureState"), front_closure=front_closure, **edit_kwargs)
+                elif similar_envelope is not None:
                     await _emit(pool, job_id, "progress", {"progress": 25, "phase": "planning"})
                     similar_cut_metadata, similar_context = await _plan_similar_cut(
                         app, job, src_img, cut_type, similar_envelope)
@@ -1252,6 +1305,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                         "context_fill" if isinstance(payload.get("_contextFill"), dict)
                         else "editor_retry" if payload.get("retryBlockId")
                         else "editor_similar" if mode == "vary" and payload.get("variationMode") == "similar"
+                        else "editor_color" if mode == "vary" and payload.get("variationMode") == "color"
+                        else "editor_closure" if mode == "vary" and payload.get("variationMode") == "closure"
                         else "editor_reshoot" if mode == "vary"
                         else "editor_new"
                     ),

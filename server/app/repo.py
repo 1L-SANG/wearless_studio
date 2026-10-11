@@ -30,6 +30,33 @@ class CreditError(Exception):
         self.status = status
 
 
+class IdempotencyKeyReused(CreditError):
+    def __init__(self):
+        super().__init__("idempotency_key_reused", "같은 요청 번호로 다른 내용이 왔어요. 다시 눌러 주세요.", 409)
+
+
+def editor_request_content(payload: dict) -> dict:
+    """접수 때 정규화한 공개 내용만 비교한다. fill의 생성 판단은 비교에 넣지 않는다."""
+    fill = payload.get("_contextFill")
+    if isinstance(fill, dict):
+        return {"mode": "fill", "slot": fill.get("slot") or {"slotKey": fill.get("slotKey")}}
+    public = {key: value for key, value in payload.items() if not key.startswith("_")}
+    similar = payload.get("_similarCut")
+    if (payload.get("mode") == "vary" and payload.get("variationMode") == "similar"
+            and isinstance(similar, dict) and similar.get("sourceAssetId")):
+        # 생성 입력은 root로 바뀌지만 요청한 사진은 선택 자산이다. 내부 계획은 비교하지 않는다.
+        public["source"] = {**(public.get("source") or {}),
+                            "src": f"/v1/assets/{similar['sourceAssetId']}/file"}
+    return public
+
+
+def _check_editor_request(existing: dict, project_id: str, payload: dict) -> None:
+    if (existing.get("kind", "editor_image") != "editor_image"
+            or existing.get("project_id", project_id) != project_id
+            or editor_request_content(existing.get("payload") or {}) != editor_request_content(payload)):
+        raise IdempotencyKeyReused()
+
+
 # patchProject가 DB에 반영할 수 있는 컬럼 (계약 §6 화이트리스트). 모델이 1차,
 # 이 집합이 2차 가드 — 둘 중 하나라도 빠지면 임의 컬럼 갱신을 막는다.
 PATCHABLE_COLUMNS = ("compose_mode", "copywriting", "selected_mannequin_id")
@@ -2399,13 +2426,15 @@ async def create_job(
                 (user_id, project_id, Json([idempotency_key])),
             )
             existing = await cur.fetchone()
-        if existing is None and remember_editor_fill:
+        if existing is None and kind == "editor_image":
             await cur.execute(
                 f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
                 "and kind = 'editor_image' and metadata->'editorFillRequestKeys' @> %s::jsonb",
                 (user_id, project_id, Json([idempotency_key])),
             )
             existing = await cur.fetchone()
+        if existing is not None and kind == "editor_image":
+            _check_editor_request(existing, project_id, payload)
         return existing
 
     async def _remember(cur, row):
@@ -2531,11 +2560,15 @@ async def find_context_fill_job(
         await cur.execute(
             f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
             "and kind = 'editor_image' and (idempotency_key = %s "
-            "or metadata->'editorFillRequestKeys' @> %s::jsonb) order by created_at desc limit 1",
-            (user_id, project_id, idempotency_key, Json([idempotency_key])),
+            "or metadata->'editorFillRequestKeys' @> %s::jsonb "
+            "or metadata->'editorRetryRequestKeys' @> %s::jsonb) order by created_at desc limit 1",
+            (user_id, project_id, idempotency_key, Json([idempotency_key]), Json([idempotency_key])),
         )
         row = await cur.fetchone()
         if row is not None:
+            fill = (row.get("payload") or {}).get("_contextFill") or {}
+            if fill.get("slotKey") != slot_key:
+                raise IdempotencyKeyReused()
             return await _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key)
         await cur.execute(
             f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
@@ -3885,6 +3918,7 @@ def _wardrobe_image_api(row: dict) -> dict:
     """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
     image = {
         "id": row["id"],
+        "assetId": row["asset_id"],
         "src": f"/v1/assets/{row['asset_id']}/file",
         "ai": bool(row["ai"]),
         "cutType": row["cut_type"],

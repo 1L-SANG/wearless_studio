@@ -3196,6 +3196,58 @@ async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends
     return wardrobe
 
 
+@router.post("/projects/{project_id}/editor:asset-info", responses={**COMMON_RESPONSES},
+             tags=["Detail Page"], summary="캔버스 사진의 종류와 현재 설정 조회")
+async def get_editor_asset_info(request: Request, project_id: str, body: object = Body(None),
+                                user_id: str = Depends(require_user)):
+    from .agents import asset_recipe, garment_edit
+
+    ids = body.get("assetIds") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or len(ids) > 60:
+        raise _bad_request("asset_ids_invalid", "사진 목록을 확인해 주세요.")
+    normalized = []
+    for value in ids:
+        try:
+            if not isinstance(value, str):
+                raise ValueError()
+            asset_id = str(uuid.UUID(value))
+        except ValueError:
+            raise _bad_request("asset_ids_invalid", "사진 목록을 확인해 주세요.")
+        if asset_id not in normalized:
+            normalized.append(asset_id)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        records = await asset_recipe.resolve_asset_recipes(conn, user_id, project_id, normalized)
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        items = {}
+        for asset_id, record in records.items():
+            asset = await repo.get_project_asset_for_user(conn, user_id, project_id, asset_id)
+            if asset is None:
+                continue
+            record = {**record, "upload": asset.get("source") == "upload"}
+            metadata = asset.get("metadata") or {}
+            recipe = asset_recipe.project_recipe(record.get("recipe"))
+            cut_type = garment_edit.trusted_cut_type(asset, record)
+            if record["upload"]:
+                kind = "upload"
+            elif cut_type in garment_edit.WORN_CUT_TYPES:
+                kind = "worn"
+            elif cut_type == "product":
+                if metadata.get("detail_recipe") or (recipe or {}).get("shot") == "detail":
+                    kind = "detail"
+                elif (recipe or {}).get("shot") == "ghost":
+                    kind = "ghost"
+                else:
+                    kind = "product_unknown"
+            else:
+                kind = "unknown"
+            items[asset_id] = {"kind": kind, "origin": record.get("origin"), "cutType": cut_type,
+                               "colorId": record.get("colorId"), "realDerived": record.get("realDerived") is True,
+                               "current": garment_edit.current_values(record, analysis), "recipe": recipe}
+    return {"items": items}
+
+
 def _context_fill_response(payload: dict) -> dict | None:
     record = payload.get("_contextFill")
     if not isinstance(record, dict):
@@ -3303,6 +3355,10 @@ async def generate_editor_image(
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
     fill_requested = (body or {}).get("mode") == "fill"
+    edit_requested = ((body or {}).get("mode") == "vary"
+                      and (body or {}).get("variationMode") in ("color", "closure"))
+    if edit_requested and (not idempotency_key or not idempotency_key.strip()):
+        raise _bad_request("idempotency_key_required", "요청 번호가 필요해요. 다시 눌러 주세요.")
     if fill_requested:
         slot = body.get("slot")
         if (not idempotency_key or not idempotency_key.strip() or not isinstance(slot, dict)
@@ -3340,15 +3396,15 @@ async def generate_editor_image(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        payload = dict(body or {})
-        payload.pop("_facemarket", None)
-        payload.pop("_similarCut", None)
-        payload.pop("_contextFill", None)
+        payload = {key: value for key, value in (body or {}).items() if not key.startswith("_")}
         if fill_requested:
             slot = body["slot"]
-            existing = await repo.find_context_fill_job(
-                conn, user_id, project_id, scoped_key, f"{slot['blockId']}:{slot['elementId']}",
-            )
+            try:
+                existing = await repo.find_context_fill_job(
+                    conn, user_id, project_id, scoped_key, f"{slot['blockId']}:{slot['elementId']}",
+                )
+            except repo.IdempotencyKeyReused as exc:
+                raise _credit_error(exc) from exc
             if existing is not None:
                 await conn.commit()
                 _wake_dispatcher(request)
@@ -3381,11 +3437,53 @@ async def generate_editor_image(
             )
             if (not isinstance(source, dict) or payload.get("changes", []) != []
                     or "refBgAssetId" in payload or "refBg" in payload
-                    or payload.get("variationMode") not in (None, "similar")):
+                    or payload.get("variationMode") not in (None, "similar", "color", "closure")):
                 raise _bad_request("invalid_similar_cut" if is_similar else "vary_unsupported",
                                    unsupported_message)
             source_asset_id = _asset_id_from_file_capability(source.get("src"))
-            if is_similar:
+            if edit_requested:
+                from .agents import asset_recipe, garment_edit, outer_closure
+                source_asset = (await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
+                                if source_asset_id else None)
+                records = (await asset_recipe.resolve_asset_recipes(conn, user_id, project_id, [source_asset_id])
+                           if source_asset else {})
+                record = records.get(source_asset_id) or {}
+                trusted_type = garment_edit.source_cut_type(source_asset, record)
+                if trusted_type is None:
+                    raise _bad_request("edit_source_unsupported", "이 사진에서는 색상과 열림 정도를 바꿀 수 없어요.")
+                record = {**record, "upload": source_asset.get("source") == "upload"}
+                source = {"src": f"/v1/assets/{source_asset_id}/file", "cutType": trusted_type}
+                payload["source"] = source
+                product = await repo.get_product(conn, project_id) or {}
+                analysis = await repo.get_analysis(conn, project_id) or {}
+                current = garment_edit.current_values(record, analysis)
+                if payload["variationMode"] == "color":
+                    image_ids = garment_edit.target_image_ids(product, payload.get("colorId"))
+                    if image_ids is None:
+                        raise _bad_request("color_unknown", "상품 색상을 확인해 주세요.")
+                    if payload["colorId"] == current["colorId"]:
+                        raise _bad_request("edit_same_value", "지금 사진과 같은 값이에요.")
+                    target_asset = None
+                    for target_id in image_ids:
+                        target_asset = await repo.get_project_asset_for_user(conn, user_id, project_id, target_id)
+                        if target_asset:
+                            break
+                    if target_asset is None:
+                        raise HTTPException(status_code=409, detail={"code": "no_selected_color_images",
+                                            "message": "이 색 상품 사진이 없어요."})
+                    payload["_garmentEdit"] = {"targetAssetId": str(target_asset["id"])}
+                else:
+                    front_closure = outer_closure.front_closure_of(analysis)
+                    if not cut_generator._is_outer(product.get("clothingType") or product.get("clothing_type")) or front_closure["kind"] == "none":
+                        raise _bad_request("closure_unsupported", "이 상품은 열림 정도를 바꿀 수 없어요.")
+                    state = payload.get("outerClosureState")
+                    if not isinstance(state, str) or state not in outer_closure.STATES:
+                        raise _bad_request("closure_invalid", "열림 정도를 확인해 주세요.")
+                    state = outer_closure.effective_state(state, front_closure)
+                    if state == current["outerClosureState"]:
+                        raise _bad_request("edit_same_value", "지금 사진과 같은 값이에요.")
+                    payload["outerClosureState"] = state
+            elif is_similar:
                 selected_asset = (
                     await repo.get_project_asset_for_user(conn, user_id, project_id, source_asset_id)
                     if source_asset_id else None
@@ -3406,7 +3504,9 @@ async def generate_editor_image(
                 if root_asset is None:
                     raise _bad_request("similar_source_missing", "원본 사진을 찾을 수 없어요.")
                 root_meta = root_asset.get("metadata") or {}
-                trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type") or source.get("cutType")
+                trusted_type = root_meta.get("cut_type") or selected_meta.get("cut_type")
+                if not trusted_type:
+                    trusted_type = "styling" if root_asset.get("source") == "upload" else source.get("cutType")
                 if (trusted_type not in {"styling", "horizon", "mirror"}
                         or selected_meta.get("cut_type") == "product"
                         or selected_meta.get("detail_recipe") or root_meta.get("detail_recipe")):
@@ -3563,11 +3663,14 @@ async def generate_editor_image(
                     "modelId": str(license_row["model_id"]),
                     "licenseId": str(license_row["id"]),
                 }
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="editor_image",
-            payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version,
-                      **({"contextFill": payload["_contextFill"]} if payload.get("_contextFill") else {})})
+        try:
+            job, created = await repo.create_job(
+                conn, user_id=user_id, project_id=project_id, kind="editor_image",
+                payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
+                metadata={"creditCostVersion": s.credit_cost_version,
+                          **({"contextFill": payload["_contextFill"]} if payload.get("_contextFill") else {})})
+        except repo.IdempotencyKeyReused as exc:
+            raise _credit_error(exc) from exc
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
