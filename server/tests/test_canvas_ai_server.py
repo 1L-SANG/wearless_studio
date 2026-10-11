@@ -25,11 +25,52 @@ FRONT = {"version": 1, "kind": "zipper", "range": "graded", "secondary": None,
 CREATE_JOB = repo.create_job
 
 
+# 품질 시험을 통과한 지퍼/unknown 출력의 독립된 바이트 기준.
+_ZIPPER_CLOSURE_EXPECTED = {
+    "closed": (
+        "Edit the image. Change ONLY how the jacket's front zipper is closed: zip it fully closed from the hem "
+        "all the way up to the collar, so the inner top is covered. Use the jacket's existing zipper and collar, "
+        'do not invent new hardware. Keep the jacket color exactly the same. '
+    ),
+    "openToChest": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is closed. The jacket has ONE zipper with "
+        'ONE slider. The zipper must be closed continuously from the hem up to the middle of the chest (about a '
+        'hand width below the collarbone), with the single slider sitting at the middle of the chest (about a '
+        'hand width below the collarbone). Below the slider the two front panels are joined all the way down to '
+        'the hem, with no gap and no second slider. Above the slider the front is open in a V up to the collar, '
+        "showing the inner top only inside that V. Use the jacket's existing zipper and collar. Keep the jacket "
+        'color exactly the same. '
+    ),
+    "partial": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is open. The jacket has ONE zipper with "
+        'ONE slider. Put the single zipper slider level with the bottom of the breastbone (the solar plexus), '
+        'clearly lower than the chest. Everything below the slider is zipped shut, the two front panels touching '
+        'all the way down to the hem with no gap. Above the slider the front opens in a clean V up to the collar, '
+        'and the inner top shows only inside that V. The V must be deep: it reaches about one third of the way '
+        "from the collar to the hem. Use the jacket's existing zipper and collar. Keep the jacket color exactly "
+        'the same. '
+    ),
+    "openToWaist": (
+        "Edit the image. Change ONLY how far the jacket's front zipper is open. The jacket has ONE zipper with "
+        'ONE slider. Put the single zipper slider level with the navel, just above the tops of the side pockets. '
+        'Everything below the slider is zipped shut, the two front panels touching all the way down to the hem '
+        'with no gap. Above the slider the front opens in a clean V up to the collar, and the inner top shows '
+        'only inside that V. The V must be very deep: it reaches about two thirds of the way from the collar to '
+        "the hem, and only the lowest part near the hem stays zipped. Use the jacket's existing zipper and "
+        'collar. Keep the jacket color exactly the same. '
+    ),
+    "open": (
+        "Edit the image. Change ONLY how the jacket's front is fastened: unzip it completely from the collar down "
+        'to the hem so the two front panels hang open and the inner top is visible down the whole front. Use the '
+        "jacket's existing zipper. Keep the jacket color exactly the same. "
+    ),
+}
+
 @pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
 @pytest.mark.parametrize("mode,state", [("color", None), ("closure", "closed"),
     ("closure", "openToChest"), ("closure", "partial"),
     ("closure", "openToWaist"), ("closure", "open")])
-@pytest.mark.parametrize("kind", ["zipper", "button", "snap", "belt"])
+@pytest.mark.parametrize("kind", ["zipper", "unknown"])
 def test_outer_edit_prompt_preserves_quality_test_wording(clothing_type, mode, state, kind):
     keep = (
         "Keep everything else exactly the same as the first image: the same person, face, hair, pose, hands, body shape, "
@@ -41,11 +82,82 @@ def test_outer_edit_prompt_preserves_quality_test_wording(clothing_type, mode, s
         "color shown in the second image, which is a photo of the same jacket in the target color. Keep how open the "
         "zipper is exactly as in the first image. "
     )
-    expected = color + keep if mode == "color" else garment_edit.CLOSURE[state] + keep.replace("first image", "image")
-    if kind != "zipper":
-        expected = expected.replace("zipper", "front fastening")
+    expected = color + keep if mode == "color" else _ZIPPER_CLOSURE_EXPECTED[state] + keep.replace("first image", "image")
     assert garment_edit.prompt_for(mode, clothing_type=clothing_type,
         closure_state=state, front_closure={"kind": kind}) == expected
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("kind,fasteners", [("button", "buttons"), ("snap", "snap buttons")])
+@pytest.mark.parametrize("state,markers", [
+    ("closed", ["from the hem all the way up to the top", "inner top is covered"]),
+    ("openToChest", ["middle of the chest (about a hand width below the collarbone)",
+                     "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("partial", ["level with the bottom of the breastbone (the solar plexus), clearly lower than the chest",
+                 "The V must be deep: it reaches about one third of the way from the collar to the hem.",
+                 "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("openToWaist", ["level with the navel, just above the tops of the side pockets",
+                     "The V must be very deep: it reaches about two thirds of the way from the collar to the hem",
+                     "only the lowest part near the hem stays fastened",
+                     "Fasten", "above that height", "overlap", "no gap", "only inside that V"]),
+    ("open", ["Unfasten all", "from the collar down to the hem", "visible down the whole front",
+              "visible along the front edges"]),
+])
+def test_button_and_snap_prompts_use_existing_fasteners_at_requested_height(clothing_type, kind, fasteners, state, markers):
+    prompt = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=state, front_closure={"kind": kind, "range": "graded"})
+    assert all(word not in prompt.lower() for word in ("zip", "slider", "front front"))
+    assert fasteners in prompt
+    assert f"existing {fasteners}, buttonholes and collar" in prompt
+    assert f"Keep the number, size, color and spacing of the {fasteners} unchanged." in prompt
+    assert "Do not add any other type of fastening or new hardware." in prompt
+    assert "Keep the jacket color exactly the same." in prompt
+    assert "the same person, face, hair, pose, hands, body shape" in prompt
+    assert all(marker in prompt for marker in markers)
+    if kind == "snap":
+        button = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+            closure_state=state, front_closure={"kind": "button", "range": "graded"})
+        assert prompt == button.replace("buttons", "snap buttons")
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("state,effective", [
+    ("closed", "closed"), ("openToChest", "closed"), ("partial", "closed"),
+    ("openToWaist", "open"), ("open", "open"),
+])
+def test_belt_prompts_tie_or_untie_existing_belt_including_direct_intermediate_states(clothing_type, state, effective):
+    prompt = garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=state, front_closure={"kind": "belt", "range": "binary"})
+    assert "belt" in prompt
+    assert all(word not in prompt.lower() for word in ("zip", "button", "slider", "front front"))
+    assert "Use the jacket's existing belt." in prompt
+    assert "Do not add any other type of fastening or new hardware." in prompt
+    assert "Keep the jacket color exactly the same." in prompt
+    if effective == "closed":
+        assert "Tie" in prompt and "at the waist" in prompt and "front panels overlap and close" in prompt
+    else:
+        assert "Untie" in prompt and "front panels hang open" in prompt and "belt ends hang loose" in prompt
+    assert prompt == garment_edit.prompt_for("closure", clothing_type=clothing_type,
+        closure_state=effective, front_closure={"kind": "belt", "range": "binary"})
+
+
+@pytest.mark.parametrize("clothing_type", ["outer", "아우터"])
+@pytest.mark.parametrize("kind", ["button", "snap", "belt"])
+def test_non_zipper_outer_color_prompt_preserves_front_without_inventing_fastening_color(clothing_type, kind):
+    prompt = garment_edit.prompt_for("color", clothing_type=clothing_type,
+        closure_state=None, front_closure={"kind": kind})
+    assert "zipper" not in prompt and "front fastening color" not in prompt
+    assert "fabric color shown in the second image" in prompt
+    assert "Keep how open or fastened the front is exactly as in the first image." in prompt
+
+
+@pytest.mark.parametrize("kind", ["zipper", "unknown", "button", "snap", "belt", "none"])
+@pytest.mark.parametrize("mode,state", [("color", None), ("closure", "closed"),
+    ("closure", "openToChest"), ("closure", "partial"), ("closure", "openToWaist"), ("closure", "open")])
+def test_outer_prompt_never_doubles_front(kind, mode, state):
+    prompt = garment_edit.prompt_for(mode, clothing_type="outer", closure_state=state,
+        front_closure={"kind": kind, "range": "binary" if kind == "belt" else "graded"})
+    assert "front front" not in prompt
 
 
 @pytest.mark.parametrize("clothing_type,noun,possessive,feature", [
@@ -494,13 +606,14 @@ def test_edit_face_pass_matches_similar_rules(monkeypatch, cut_type, enabled, ex
     assert face_pass.await_count == int(expected)
 
 
-def test_prompt_adapts_garment_noun_and_only_fastening_word():
+def test_prompt_adapts_garment_noun_and_preserves_front_in_color_edit():
     prompt = garment_edit.prompt_for("color", clothing_type="dress", closure_state=None,
                                      front_closure={**FRONT, "kind": "button"})
     assert "the dress" in prompt and "jacket" not in prompt and "zipper" not in prompt
     outer = garment_edit.prompt_for("color", clothing_type="outer", closure_state=None,
                                     front_closure={**FRONT, "kind": "button"})
-    assert "front fastening" in outer and "zipper" not in outer
+    assert "Keep how open or fastened the front is exactly as in the first image." in outer
+    assert "zipper" not in outer
 
 
 def test_asset_info_omits_missing_or_foreign_assets(client, make_token, edit_route, monkeypatch):

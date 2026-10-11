@@ -31,6 +31,55 @@ CLOSURE = {
     "open": "Edit the image. Change ONLY how the jacket's front is fastened: unzip it completely from the collar down to the hem so the two front panels hang open and the inner top is visible down the whole front. Use the jacket's existing zipper. Keep the jacket color exactly the same. ",
 }
 
+_BUTTON_KEEP = (
+    "Use the jacket's existing {fasteners}, buttonholes and collar. Keep the number, size, color and spacing of the "
+    "{fasteners} unchanged. Do not add any other type of fastening or new hardware. Keep the jacket color exactly the same. "
+)
+_BUTTON_PARTIAL = (
+    "Edit the image. Change ONLY how far the jacket's front is fastened. Set the top of the fastened section {where}. "
+    "Fasten all the {fasteners} from the hem up to that height, and unfasten all the {fasteners} above that height. "
+    "In the fastened section the two front panels overlap all the way down to the hem with no gap. "
+    "Above that height the front opens in a clean V up to the collar, and the inner top shows only inside that V. {depth}"
+)
+BUTTON_CLOSURE = {
+    "closed": (
+        "Edit the image. Change ONLY how the jacket's front is fastened: fasten all the {fasteners} from the hem all the "
+        "way up to the top row at the collar, so the two front panels overlap and close with no gap and the inner top is covered. "
+    ),
+    "openToChest": _BUTTON_PARTIAL.format(fasteners="{fasteners}",
+        where="at the middle of the chest (about a hand width below the collarbone)", depth=""),
+    "partial": _BUTTON_PARTIAL.format(fasteners="{fasteners}",
+        where="level with the bottom of the breastbone (the solar plexus), clearly lower than the chest",
+        depth="The V must be deep: it reaches about one third of the way from the collar to the hem. "),
+    "openToWaist": _BUTTON_PARTIAL.format(fasteners="{fasteners}",
+        where="level with the navel, just above the tops of the side pockets",
+        depth="The V must be very deep: it reaches about two thirds of the way from the collar to the hem, and only the lowest part near the hem stays fastened. "),
+    "open": (
+        "Edit the image. Change ONLY how the jacket's front is fastened. Unfasten all the {fasteners} so the two front "
+        "panels hang open from the collar down to the hem and the inner top is visible down the whole front. "
+        "Keep the {fasteners} visible along the front edges. "
+    ),
+}
+_BELT_KEEP = (
+    "Use the jacket's existing belt. Do not add any other type of fastening or new hardware. "
+    "Keep the jacket color exactly the same. "
+)
+BELT_CLOSURE = {
+    "closed": (
+        "Edit the image. Change ONLY how the jacket's front is fastened. Tie the existing belt at the waist so the two "
+        "front panels overlap and close. "
+    ) + _BELT_KEEP,
+    "open": (
+        "Edit the image. Change ONLY how the jacket's front is fastened. Untie the existing belt so the two front panels "
+        "hang open and the belt ends hang loose. "
+    ) + _BELT_KEEP,
+}
+_FRONT_COLOR = (
+    "Edit the first image. Change ONLY the color of the jacket (the outer garment) so it matches the fabric color shown "
+    "in the second image, which is a photo of the same jacket in the target color. "
+    "Keep how open or fastened the front is exactly as in the first image. "
+)
+
 
 def trusted_cut_type(asset: dict, record: dict) -> str | None:
     """실제 생성 때 쓴 종류를 우선한다. 옛 콘티의 나중 변경은 자산 종류를 바꾸지 않는다."""
@@ -83,10 +132,23 @@ def prompt_for(mode: str, *, clothing_type: str, closure_state: str | None, fron
         keep = keep.replace(", collar", feature)
         color = color.replace("(the outer garment)", "(the product being sold)")
         color = color.replace("fabric and zipper color", "fabric color").replace("Keep how open the zipper is exactly as in the first image. ", "")
-    prompt = color + keep if mode == "color" else CLOSURE[closure_state] + keep.replace("first image", "image")
+    kind = front_closure.get("kind")
+    if mode == "color":
+        if noun == "jacket" and kind in ("button", "snap", "belt"):
+            color = _FRONT_COLOR
+        prompt = color + keep
+    else:
+        if kind in ("button", "snap"):
+            fasteners = "buttons" if kind == "button" else "snap buttons"
+            closure = (BUTTON_CLOSURE[closure_state] + _BUTTON_KEEP).format(fasteners=fasteners)
+        elif kind == "belt":
+            # 벨트 중간 값이 직접 들어와도 저장/API 계약의 두 단계 규칙을 따른다.
+            state = outer_closure.effective_state(closure_state, {**front_closure, "range": "binary"})
+            closure = BELT_CLOSURE[state]
+        else:
+            closure = CLOSURE[closure_state]
+        prompt = closure + keep.replace("first image", "image")
     prompt = prompt.replace("jacket's", possessive).replace("jacket", noun)
-    if front_closure.get("kind") in ("button", "snap", "belt"):
-        prompt = prompt.replace("zipper", "front fastening")
     return prompt
 
 
