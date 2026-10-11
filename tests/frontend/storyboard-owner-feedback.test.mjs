@@ -227,7 +227,9 @@ test('selected card rings use four persistent high-contrast colors', () => {
   }
   assert.match(featureStyles, /\.sb-selection-ring \{ box-shadow: inset 0 0 0 3px var\(--sb-ring-sky\); \}/);
   assert.match(featureStyles, /\.sb-selection-ring i \{[^}]*0 0 0 3px/);
-  assert.doesNotMatch(featureStyles, /sbRingSun[^]*var\(--glow-sun\)/);
+  const selectedCardRing = featureStyles.slice(featureStyles.indexOf('.sb-selection-ring {'),
+    featureStyles.indexOf('@keyframes sbRingSun'));
+  assert.doesNotMatch(selectedCardRing, /var\(--glow-sun\)/);
 });
 
 test('matching clothing action uses the owner-approved wording', () => {

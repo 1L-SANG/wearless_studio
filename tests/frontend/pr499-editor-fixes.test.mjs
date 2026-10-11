@@ -2,58 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { transformWithEsbuild } from 'vite';
+import { buildCanvasAiMenu, buildCanvasAiRequest } from '../../src/features/editor/canvasAiActions.js';
+import { createCanvasAiJobController } from '../../src/features/editor/canvasAiJobs.js';
 import { hasImageSource } from '../../src/features/editor/editorImageSource.js';
 
-const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
-const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
-const slice = (text, start, end) => text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
-const evaluate = (body, scope) => new Function('scope', `with (scope) { ${body} }`)({ wardrobeContext: { current: { storyboard: [] } }, ...scope });
-const React = { createElement: (type, props, ...children) => ({ type, props, children }) };
-
-test('empty, pending and failed canvas slots are never vary sources', () => {
-  const body = slice(editor, '  const varySource =', '  // setBlockFocused');
-  for (const selectedElObj of [
+test('empty, pending and failed canvas slots never supply a photo variation source', () => {
+  for (const element of [
     { id: 'empty', type: 'image', src: '' },
     { id: 'waiting', type: 'image', genPending: 'live' },
     { id: 'failed', type: 'image', src: null, genPending: 'failed' },
     { id: 'failed-blank', type: 'image', genFailed: true },
   ]) {
-    assert.equal(evaluate(`${body}; return varySource;`, { selectedElObj, varyTarget: null, wardrobe: {}, hasImageSource }), null, selectedElObj.id);
+    const menu = buildCanvasAiMenu({ block: { id: 'page', elements: [element] }, element });
+    assert.equal(menu.source, null, element.id);
+    assert.equal(buildCanvasAiRequest({ action: 'similar', source: menu.source }), null);
+    assert.equal(buildCanvasAiRequest({ action: 'reshoot', source: menu.source }), null);
   }
-  const source = evaluate(`${body}; return varySource;`, { selectedElObj: { id: 'photo', type: 'image', src: '/photo.png' }, varyTarget: null, wardrobe: {}, hasImageSource });
-  assert.equal(source.src, '/photo.png');
-  assert.equal(evaluate(`${body}; return varySource;`, { selectedElObj: null, varyTarget: { id: 'waiting' }, wardrobe: { misc: [{ id: 'waiting', loading: true }] }, hasImageSource }), null);
+  assert.equal(hasImageSource({ id: 'waiting', loading: true }), false);
+  assert.equal(hasImageSource({ id: 'photo', type: 'image', src: '/photo.png' }), true);
 });
 
-async function panel(source, onGenerate = () => {}) {
-  const { code } = await transformWithEsbuild(slice(panels, 'function VaryPanel(', '/* ---------- AI ---------- */') + '\nreturn VaryPanel;', 'vary.jsx', { loader: 'jsx' });
-  return evaluate(code, { React, useRef: value => ({ current: value }), EmptyState: 'EmptyState', Button: 'Button',
-    hasImageSource })({ source, catalogs: { creditCosts: { editorImage: 1 } }, onGenerate });
-}
-
-test('vary panel shows only the existing empty state without a source URL', async () => {
-  for (const source of [null, { id: 'empty', src: '' }, { id: 'pending', genPending: 'live' }, { id: 'failed', genFailed: true }]) {
-    const rendered = await panel(source);
-    assert.equal(rendered.type, 'EmptyState');
-    assert.equal(rendered.props.title, '기준 사진을 골라주세요');
-  }
-});
-
-test('vary panel releases its click lock after an unknown response so the request can be checked again', async () => {
-  let attempts = 0, finish;
-  const rendered = await panel({ id: 'photo', src: '/photo.png' }, () => { attempts++; return new Promise(resolve => { finish = resolve; }); });
-  const click = rendered.children.find(child => child?.type === 'Button').props.onClick;
-  const first = click();
-  click();
-  assert.equal(attempts, 1);
-  finish(null);
-  await first;
-  const second = click();
-  assert.equal(attempts, 2);
-  finish(null);
-  await second;
+test('a canvas slot without a photo exposes filling actions instead of reshooting controls', () => {
+  const element = { id: 'empty', type: 'image', src: '' };
+  const menu = buildCanvasAiMenu({ block: { id: 'page', elements: [element] }, element });
+  assert.deepEqual(menu.branches.map((branch) => branch.id), ['upload', 'fill']);
+  const pending = buildCanvasAiMenu({ block: { id: 'page', elements: [{ ...element, genPending: 'live' }] },
+    element: { ...element, genPending: 'live' } });
+  assert.deepEqual(pending.branches, []);
 });
 
 const request = { source: { id: 'photo', src: '/photo.png', cutType: 'styling', wardrobeGroup: 'navy' }, variationMode: 'similar' };
@@ -73,17 +49,51 @@ function submissionHarness({ error = null, errors = [], hold = false, accept = t
   const generateRemote = new Function('http', 'pollJob', 'EDITOR_IMAGE_JOB_TIMEOUT_MS', 'EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE', 'recordClientAction',
     `return ({${adapter.slice(adapter.indexOf('  async generateImage(projectId'), adapter.lastIndexOf('\n};'))}}).generateImage;`)(
     http, async () => ({ data: { id: 'result', src: '/result.png' }, credits: 90 }), 180000, 'wait', () => {});
-  const context = {
-    api: { generateImage: generateRemote }, projectId: 'project', crypto: { randomUUID },
-    varySubmission: { current: null }, unconfirmedVarySubmissions: { current: new Map() }, varyTarget: null,
-    hasImageSource,
-    uid: () => randomUUID(), setWardrobe: update => { wardrobe = update(wardrobe); },
-    setTab: () => {}, genCount: { current: 0 }, setGenDot: () => {}, toast: { push: () => {} }, syncCredits: () => {},
-    placeGeneratedImage: () => {}, handleImageJobFailure: () => {},
+  const schedules = new Map(), completions = new Map();
+  let scheduleId = 0;
+  const context = { api: { generateImage: generateRemote } };
+  const controller = createCanvasAiJobController({ createKey: randomUUID,
+    schedule: (callback) => { const id = ++scheduleId; schedules.set(id, callback); return id; },
+    cancelSchedule: (id) => schedules.delete(id),
+    onStarted: (job) => {
+      const group = job.request.source.wardrobeGroup;
+      wardrobe = { ...wardrobe, [group]: [...(wardrobe[group] || []), { id: job.idempotencyKey, loading: true }] };
+    },
+    onError: (job) => {
+      const group = job.request.source.wardrobeGroup;
+      wardrobe = { ...wardrobe, [group]: (wardrobe[group] || []).filter((image) => image.id !== job.idempotencyKey) };
+    },
+    onFinished: (job) => completions.get(job)?.resolve(job.response?.data || null),
+  });
+  context.controller = controller;
+  const generate = (value) => {
+    const elementKey = `${value.source.id || 'photo'}:${value.source.src}`;
+    const job = controller.start(elementKey, { sourceSrc: value.source.src,
+      action: value.variationMode || 'reshoot', value: value.colorId || value.outerClosureState || null, request: value },
+    ({ idempotencyKey, onJobStarted, request: retainedRequest }) => context.api.generateImage('project', {
+      mode: 'vary', ...retainedRequest, idempotencyKey, onJobStarted,
+    }));
+    if (!completions.has(job)) {
+      let resolve;
+      const promise = new Promise((done) => { resolve = done; });
+      completions.set(job, { promise, resolve });
+    }
+    const callbacks = [...schedules.values()]; schedules.clear();
+    callbacks.forEach((callback) => callback());
+    return completions.get(job).promise;
   };
-  const generate = evaluate(slice(editor, '  const varyGenerate =', '  const varyImage =') + '\nreturn varyGenerate;', context);
   return { generate, posts, jobs, context, resolve, wardrobe: () => wardrobe };
 }
+
+test('canvas click lock releases after an unknown response and rechecks the same request', async () => {
+  const h = submissionHarness({ errors: [new Error('lost response')] });
+  await h.generate(request);
+  await h.generate(request);
+  assert.equal(h.posts.length, 2);
+  assert.equal(h.posts[1].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
+  assert.deepEqual(h.posts[1].body, h.posts[0].body);
+  assert.equal(h.jobs.size, 1);
+});
 
 test('vary double click in the same tick submits and reserves only once', async () => {
   const h = submissionHarness({ hold: true });
@@ -124,7 +134,7 @@ test('unknown vary submission keeps its UUID after a preflight failure, while an
   assert.notEqual(keys[3], keys[2]);
 });
 
-for (const options of [{}, { error: Object.assign(new Error('denied'), { status: 402 }), accept: false }]) test(`confirmed vary completion or rejection rotates its key, rejected ${!!options.error}`, async () => {
+for (const options of [{}, { error: Object.assign(new Error('denied'), { status: 402 }), accept: false }]) test(`confirmed canvas completion or rejection releases the tuple key, rejected ${!!options.error}`, async () => {
   const h = submissionHarness(options);
   await h.generate(request);
   await h.generate(request);
@@ -133,11 +143,11 @@ for (const options of [{}, { error: Object.assign(new Error('denied'), { status:
   assert.notEqual(keys[0], keys[1]);
 });
 
-test('confirmed vary rejection after an unknown response ends that submission before the next click', async () => {
+test('confirmed rejection after an unknown response releases the canvas tuple for a new request', async () => {
   const h = submissionHarness({ errors: [new Error('lost response'), Object.assign(new Error('denied'), { status: 402 })] });
   await h.generate(request);
   await h.generate(request);
-  assert.equal(h.context.varySubmission.current, null, '확정 거절은 접수 미확인 상태를 해제한다');
+  assert.equal(h.context.controller.get('photo:/photo.png').status, 'failed');
   await h.generate(request);
   const keys = h.posts.map(post => post.headers?.['Idempotency-Key']);
   assert.equal(keys[1], keys[0]);
@@ -156,9 +166,10 @@ test('retrying an unknown photo after generating another photo reuses the origin
   assert.deepEqual(h.posts[2].body, h.posts[0].body);
   assert.equal(h.jobs.size, 2, '재확인은 세 번째 생성 작업을 만들지 않는다');
 
-  // Once A is acknowledged, another deliberate click really is a new cut.
+  // Once acknowledged, another click makes a new image with a new request number.
   await h.generate(request);
   assert.notEqual(h.posts[3].headers['Idempotency-Key'], keys[0]);
+  assert.equal(h.jobs.size, 3);
 });
 
 test('multiple unknown photos retain independent keys while alternating retries', async () => {
@@ -181,4 +192,21 @@ test('rejecting another photo does not discard the first unknown request', async
   assert.equal(h.posts[2].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
   await h.generate(other);
   assert.notEqual(h.posts[3].headers['Idempotency-Key'], h.posts[1].headers['Idempotency-Key']);
+});
+
+test('an unknown canvas tuple retains its original request when other recipe fields change', async () => {
+  const h = submissionHarness({ errors: [new Error('lost response')] });
+  await h.generate({ ...request, matchIds: ['original-match'] });
+  await h.generate({ ...request, matchIds: ['new-match'] });
+  assert.equal(h.posts[1].headers['Idempotency-Key'], h.posts[0].headers['Idempotency-Key']);
+  assert.deepEqual(h.posts[1].body, h.posts[0].body);
+  assert.deepEqual(h.posts[1].body.matchIds, ['original-match']);
+});
+
+test('different values of the same canvas action use independent keys', async () => {
+  const h = submissionHarness();
+  await h.generate({ ...request, variationMode: 'color', colorId: 'ivory' });
+  await h.generate({ ...request, variationMode: 'color', colorId: 'black' });
+  assert.notEqual(h.posts[0].headers['Idempotency-Key'], h.posts[1].headers['Idempotency-Key']);
+  assert.equal(h.jobs.size, 2);
 });
