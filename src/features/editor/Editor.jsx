@@ -65,7 +65,10 @@ import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedB
 import { imageResizeRect, lineColor, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
-import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
+import { CanvasAiLayer, CanvasAiProgress } from './CanvasAiLayer.jsx';
+import { useCanvasAi } from './useCanvasAi.js';
+import { canReplaceCanvasAiResult } from './canvasAiJobs.js';
+import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible } from './canvasAiApply.js';
 import { failedCutPresentation } from '@/lib/cutFailureMessages.js';
 import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
@@ -246,7 +249,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -493,6 +496,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
+          {canvasAiJob && !canvasAiJob.dismissed ? <CanvasAiProgress job={canvasAiJob} slot onCancel={onCanvasAiCancel} onDismiss={onCanvasAiDismiss} /> : (
           <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
             aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}
@@ -506,7 +510,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             {!compactSlot && (el.genFailed
               ? <span>이 컷은 만들지 못했어요<br /><small>이 컷 값은 받지 않았어요<br />{failedCutPresentation(el).guidance}</small></span>
               : <span>여기에 사진 넣기</span>)}
-          </button>
+          </button>)}
           {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
@@ -524,6 +528,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         ) : (
           <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
+        {canvasAiSlotArrivalVisible(el, canvasAiJob) && <span className="canvas-ai-slot-arrived">새 컷</span>}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
@@ -720,7 +725,7 @@ function DragObjectGhost({ kind, id, w, h }) {
   ));
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -843,7 +848,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
               onDropImageFiles={(files) => onDropImageFiles(block.id, files, null, el.id)}
-              onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
+              onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)}
+              canvasAiJob={canvasAiJobs?.get(el.id)} onCanvasAiCancel={() => onCanvasAiCancel?.(el.id)} onCanvasAiDismiss={() => onCanvasAiDismiss?.(el.id)} />
           )
         ))}
         <div className="editor-snap-guide vertical" data-editor-snap-guide="vertical" aria-hidden="true" />
@@ -892,6 +898,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         /* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */
         <span className="blk-resize" onPointerDown={resizeFromBottom} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
       )}
+      {canvasAi}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
         <IconButton name="chevDown" onClick={() => onMove(idx, 1)} title="아래로" />
@@ -1016,7 +1023,6 @@ export function Editor() {
   }), []);
   const [wardrobe, setWardrobe] = useState(null);
   const wardrobeContext = useRef({ storyboard: [], colorIds: [], fallbackColorId: null });
-  const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
   const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
   const [colorOpts, setColorOpts] = useState([]);
@@ -1150,9 +1156,8 @@ export function Editor() {
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
+  const canvasAiDotRestore = useRef('none');
   const generateSubmission = useRef(null);
-  const varySubmission = useRef(null);
-  const unconfirmedVarySubmissions = useRef(new Map());
   const [generateSubmitting, setGenerateSubmitting] = useState(false);
   const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
   const [frameOver, setFrameOver] = useState(null);
@@ -1202,6 +1207,7 @@ export function Editor() {
   const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const [marquee, setMarquee] = useState(null);    // wrapper 좌표계의 Figma식 드래그 다중선택 박스
   const dragSnap = useRef(null);                   // start coords during a Moveable resize/rotate gesture
+  const [canvasGesture, setCanvasGesture] = useState(false);
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
   const toast = useToast();
@@ -1217,6 +1223,11 @@ export function Editor() {
   const fromHistory = useRef(false);
   const failedCleanupJobRef = useRef(null);
   const lastPush = useRef(0);
+
+  const canvasAiHandlers = useRef({});
+  const canvasAi = useCanvasAi({ projectId, blocks, wardrobe,
+    storyboard: wardrobeContext.current.storyboard, selectedId: selEl,
+    product, analysis, clothingType, colorOpts, handlers: canvasAiHandlers });
 
   useLayoutEffect(() => {
     if (!download) return;
@@ -1952,7 +1963,6 @@ export function Editor() {
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setPendingSlot(null);         // 다른 요소를 고르면 프레임 사진 선택 모드를 끝낸다.
-    setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
     setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
@@ -1994,7 +2004,7 @@ export function Editor() {
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
   };
-  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
+  const clearSel = () => { setSelEl(null); setSelEls([]); setPendingSlot(null); };
   const copySelectedElements = () => {
     // 요소를 고르지 않고 프레임만 골랐으면 프레임을 통째로 복사한다.
     if (!selEls.length && blockFocused && selBlock) {
@@ -2215,11 +2225,11 @@ export function Editor() {
     if (next[0]) { setSelBlock(next[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
     toast.push('템플릿을 적용했어요 (남은 사진·정보는 아래에 보존)');
   };
-  const addImageBlock = (image, idx) => {
+  const addImageBlock = (image, idx, { keepTab = false } = {}) => {
     const nb = buildImageBlock(image, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     const element = nb.elements[0];
-    setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
+    setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); if (!keepTab) setTab('image');
   };
   const onCanvasInsertDrop = (e, idx) => {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false); setDragFrame(null);
@@ -2493,7 +2503,6 @@ export function Editor() {
       }
       return next;
     });
-    if (varyTarget?.id === image.id) setVaryTarget(null);
     toast.push('이미지를 의류 목록에서 삭제했어요', { icon: 'trash' });
   };
   /* ---- 단일 컷 생성의 공통 정책 — '새 이미지'와 '현재 이미지 수정'이 같은 규칙을 쓴다.
@@ -2501,10 +2510,8 @@ export function Editor() {
   // 도착한 이미지를 자리표에 넣는다. 대기 중 캔버스가 바뀌면 merge 가 src 없는 자리표를
   // 지울 수 있는데(editorWardrobe append), 그때 결과를 버리지 않고 뒤에 붙인다.
   const placeGeneratedImage = (group, loadingId, img) => setWardrobe((w) => {
-    const list = w[group] || [];
-    const next = list.some((x) => x.id === loadingId)
-      ? list.map((x) => (x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x))
-      : [...list, { ...img, wardrobeGroup: group, fresh: true }];
+    const list = (w[group] || []).filter((x) => x.id === loadingId || (x.id !== img.id && x.src !== img.src));
+    const next = [{ ...img, wardrobeGroup: group, fresh: true }, ...list.filter((x) => x.id !== loadingId)];
     return { ...w, [group]: next };
   });
   const dropLoadingTile = (group, loadingId) => setWardrobe((w) => (
@@ -2624,142 +2631,76 @@ export function Editor() {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
-  const failedCutRetry = pendingSlot?.genFailed
-    ? buildFailedCutRetry(
-      wardrobeContext.current.storyboard,
-      pendingSlot.sourceBlockId,
-      analysis,
-      product,
-      { editorBlocks: blocks || [], failure: pendingSlot },
-    )
-    : null;
   const retryFailedCut = async ({ confirmPending = false } = {}) => {
+    if (!confirmPending) return;
     const previous = generateSubmission.current;
-    if (confirmPending) {
-      if (!previous) return;
-      const target = previous.target;
-      const request = previous.request;
-      const img = await generateImage(request, target);
-      if (!img?.src || !target) return;
-      const originalSlot = (latestBlocks.current || blocks || []).find(block => block.id === target.blockId)
-        ?.elements?.find(element => element.id === target.elId && element.type === 'image');
-      // 결과를 기다리며 다른 사진으로 채웠거나 지운 원래 칸은 덮지 않는다.
-      if (!originalSlot || originalSlot.src) return;
-      setSlotImage(target.blockId, target.elId, {
-        src: img.src, cutType: img.cutType || request.cutType || null,
-        width: img.width, height: img.height, wardrobeGroup: request.colorId || 'misc',
-      });
-      if (pendingSlot?.blockId === target.blockId && pendingSlot?.elId === target.elId) {
-        setPendingSlot(null);
-        setTab('image');
-      }
-      return;
-    }
-    if (!failedCutRetry?.retryable || (!failedCutRetry.request && !failedCutRetry.fillImage) || !pendingSlot) return;
-    const target = { blockId: pendingSlot.blockId, elId: pendingSlot.elId };
-    const canFillTarget = Boolean(failedCutRetry.fillImage) || !previous || (previous.target?.blockId === target.blockId
-      && previous.target?.elId === target.elId);
-    if (failedCutRetry.request?.mode === 'vary') {
-      // 막 채운 원본도 서버의 저장 칸 검증에 반영한다. 자동 저장의 지연을 기다리지 않는다.
-      try {
-        await api.saveEditorBlocks(projectId, persistable(latestBlocks.current || blocks));
-      } catch (error) {
-        toast.push(error?.message || '원본 컷을 먼저 저장해 주세요.', { icon: 'alertTri' });
-        return;
-      }
-    }
-    const img = failedCutRetry.fillImage || (failedCutRetry.request.mode === 'vary'
-      ? await varyGenerate(failedCutRetry.request)
-      : await generateImage(failedCutRetry.request, target));
-    if (!img?.src) return;
-    if (!canFillTarget) {
-      toast.push('이전 요청을 확인했어요. 이 컷은 다시 눌러 만들어 주세요.', { icon: 'check' });
-      return;
-    }
+    if (!previous) return;
+    const target = previous.target;
+    const request = previous.request;
+    const img = await generateImage(request, target);
+    if (!img?.src || !target) return;
+    const originalSlot = (latestBlocks.current || blocks || []).find(block => block.id === target.blockId)
+      ?.elements?.find(element => element.id === target.elId && element.type === 'image');
+    // 접수 확인은 요청 당시의 빈 칸만 채운다.
+    if (!originalSlot || originalSlot.src) return;
+    lastPush.current = 0;
     setSlotImage(target.blockId, target.elId, {
-      src: img.src,
-      cutType: img.cutType || failedCutRetry.request?.cutType || null,
-      width: img.width,
-      height: img.height,
-      wardrobeGroup: failedCutRetry.request?.colorId || 'misc',
+      src: img.src, cutType: img.cutType || request.cutType || null,
+      width: img.width, height: img.height, wardrobeGroup: request.colorId || 'misc',
     });
-    setPendingSlot(null);
-    setTab('image');
-    toast.push(failedCutRetry.fillImage ? '원본 사진을 빈 자리에 넣었어요'
-      : '원래 콘티 설정으로 다시 만든 이미지를 빈 자리에 넣었어요', { icon: 'check' });
+    if (pendingSlot?.blockId === target.blockId && pendingSlot?.elId === target.elId) setPendingSlot(null);
   };
-  // 비슷한 컷과 같은 부위 다시 촬영은 원본의 색상 그룹을 이어 받는다.
-  const varyGenerate = async ({ source, variationMode, retryBlockId }) => {
-    if (varySubmission.current?.busy || !hasImageSource(source)) return null;
-    const request = { mode: 'vary', source, ...(variationMode ? { variationMode } : {}), ...(retryBlockId ? { retryBlockId } : {}) };
-    const signature = JSON.stringify({ projectId, src: source.src, cutType: source.cutType, variationMode, retryBlockId });
-    // 접수 미확인 요청은 사진·설정별로 보존한다. 다른 사진을 작업해도 재시도 키를 잃지 않는다.
-    const submission = unconfirmedVarySubmissions.current.get(signature) || {
-      idempotencyKey: crypto.randomUUID(), signature, request,
-      group: varyTarget?.group || source.wardrobeGroup || 'misc',
-    };
-    submission.busy = true;
-    unconfirmedVarySubmissions.current.set(signature, submission);
-    varySubmission.current = submission;
-    const releaseSubmission = () => {
-      // 늦게 끝난 이전 작업이 같은 사진의 새 요청이나 다른 사진의 미확인 요청을 지우지 않는다.
-      if (unconfirmedVarySubmissions.current.get(signature) === submission) {
-        unconfirmedVarySubmissions.current.delete(signature);
+  canvasAiHandlers.current = {
+    onQueued: () => {
+      if (genCount.current === 0) canvasAiDotRestore.current = genDot;
+      genCount.current += 1; setGenDot('busy');
+    },
+    onCancelled: () => {
+      genCount.current = Math.max(0, genCount.current - 1);
+      setGenDot(genCount.current > 0 ? 'busy' : canvasAiDotRestore.current);
+    },
+    saveBeforeRequest: async () => {
+      if (genActiveRef.current) throw new Error('상세페이지를 만드는 중이에요. 끝나면 눌러 주세요.');
+      await api.saveEditorBlocks(projectId, persistable(latestBlocks.current || blocks));
+    },
+    onStarted: (job) => {
+      job.loadingId = uid('w');
+      setWardrobe((w) => ({ ...w, [job.group]: [...(w[job.group] || []), { id: job.loadingId, loading: true }] }));
+    },
+    onFinished: () => {
+      canvasAiDotRestore.current = 'done';
+      genCount.current = Math.max(0, genCount.current - 1);
+      setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    },
+    onResult: (job, response) => {
+      const img = response?.data;
+      if (!img?.src) return;
+      const group = img.contextFill?.colorId || img.colorId || job.group;
+      if (group !== job.group) dropLoadingTile(job.group, job.loadingId);
+      placeGeneratedImage(group, job.loadingId, img);
+      syncCredits(response.credits);
+      if (job.isSlot && canFillCanvasAiSlot(latestBlocks.current || blocks, job)) {
+        lastPush.current = 0;
+        setSlotImage(job.blockId, job.elementId, { ...img, wardrobeGroup: group });
       }
-      if (varySubmission.current === submission) varySubmission.current = null;
-    };
-    const group = submission.group;
-    const loadingId = uid('w');
-    setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
-    setTab('wardrobe');
-    genCount.current += 1; setGenDot('busy');
-    toast.push(variationMode === 'similar' ? '새로운 동작의 비슷한 컷을 준비하고 있어요' : '같은 부위를 다시 촬영하고 있어요', { icon: 'sparkles' });
-    try {
-      const { data: img, credits } = await api.generateImage(projectId, { ...submission.request,
-        idempotencyKey: submission.idempotencyKey, onJobStarted: releaseSubmission });
-      placeGeneratedImage(group, loadingId, img);
-      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-      syncCredits(credits);
-      return img;
-    } catch (e) {
-      if (e?.submissionUnknown) submission.unknown = true;
-      else if (!e?.requestNotSent) submission.unknown = false;
-      handleImageJobFailure(e, group, loadingId);
-      return null;
-    } finally {
-      if (varySubmission.current === submission) {
-        if (submission.unknown) submission.busy = false;
-        else releaseSubmission();
-      }
-      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
-    }
+    },
+    onError: (job) => dropLoadingTile(job.group, job.loadingId),
   };
-  const varyImage = (im) => {
-    setVaryTarget(im?.id ? { id: im.id, group: im.wardrobeGroup || 'misc' } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
-    setTab('ai'); toast.push('현재 이미지 수정으로 이동했어요', { icon: 'wand' });
+  const replaceCanvasAiResult = (job) => {
+    const img = job?.result?.data || job?.response?.data || job?.result;
+    if (!canReplaceCanvasAiResult(latestBlocks.current || blocks, job)) return;
+    lastPush.current = 0;
+    setBlocks((bs) => replaceCanvasAiImage(bs, job, img));
+    canvasAi.controller.dismiss(job.elementId);
   };
-  // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
-  const varySource = (() => {
-    const images = Object.values(wardrobe || {}).flat();
-    const detailReshoot = (image) => {
-      if (!image?.sourceBlockId) return image?.detailReshoot === true;
-      return image?.detailReshoot === true
-        || (wardrobeContext.current.storyboard || []).some((block) => block.id === image.sourceBlockId
-          && block.cutType === 'product' && block.shot === 'detail');
-    };
-    if (varyTarget) {
-      const im = images.find((x) => x.id === varyTarget.id);
-      return hasImageSource(im) ? { id: im.id, src: im.src, cutType: im.cutType || null,
-        wardrobeGroup: im.wardrobeGroup || varyTarget.group, detailReshoot: detailReshoot(im) } : null;
-    }
-    const serverImage = images.find((image) => image.src === selectedElObj?.src && !image.sourceBlockId);
-    return selectedElObj?.type === 'image' && hasImageSource(selectedElObj)
-      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null,
-        wardrobeGroup: selectedElObj.wardrobeGroup || null,
-        detailReshoot: serverImage ? serverImage.detailReshoot === true : detailReshoot({ sourceBlockId: selectedElObj.sourceBlockId })
-          || images.some((image) => image.src === selectedElObj.src && detailReshoot(image)) }
-      : null;
-  })();
+  const addCanvasAiResult = (job) => {
+    const img = job?.result?.data || job?.response?.data || job?.result;
+    if (!img?.src) return;
+    const idx = (latestBlocks.current || blocks).findIndex((item) => item.id === job.blockId);
+    lastPush.current = 0;
+    addImageBlock(img, idx >= 0 ? idx + 1 : undefined, { keepTab: true });
+    canvasAi.controller.dismiss(job.elementId);
+  };
   // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
   // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
   const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
@@ -3037,13 +2978,13 @@ export function Editor() {
     }) })));
   };
   const onMvTransformStart = () => {
-    gesturing.current = true; liveRef.current = {};
+    gesturing.current = true; setCanvasGesture(true); liveRef.current = {};
     const o = {};
     selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w, h: e.h }; });
     dragSnap.current = o;
   };
-  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); };
-  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const onMvGestureEnd = () => { gesturing.current = false; setCanvasGesture(false); commitLive(); };
+  const onMvResizeStart = () => { gesturing.current = true; setCanvasGesture(true); liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
   const startPointerSelectionDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
     const blockNode = [...(wrapRef.current?.querySelectorAll('.canvas-block') || [])]
       .find((node) => node.dataset.blockid === block.id);
@@ -3110,7 +3051,7 @@ export function Editor() {
       if (!active && Math.hypot(clientDx, clientDy) < threshold) return;
       if (!active) {
         active = true;
-        gesturing.current = true;
+        gesturing.current = true; setCanvasGesture(true);
         onDragStarted?.();
         document.body.style.userSelect = 'none';
       }
@@ -3151,7 +3092,7 @@ export function Editor() {
         if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
       } catch { /* detached pointer target */ }
       document.body.style.userSelect = previousUserSelect;
-      gesturing.current = false;
+      gesturing.current = false; setCanvasGesture(false);
       hidePointerSnapGuides(block.id);
       if (pointerGroupRectFrame.current != null) {
         window.cancelAnimationFrame(pointerGroupRectFrame.current);
@@ -3305,12 +3246,12 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
+      case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} onConfirmPendingGenerate={() => retryFailedCut({ confirmPending: true })} onGenerate={generateImage} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
-        onVary={varyImage} />;
+        />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onOverwriteTemplate={overwriteDetailPageTemplate} templateSets={DETAIL_PAGE_TEMPLATE_SETS}
@@ -3764,6 +3705,23 @@ export function Editor() {
                   )}
                 </div>
                 <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
+                  canvasAiJobs={canvasAi.jobs} onCanvasAiCancel={(id) => canvasAi.controller.cancel(id)} onCanvasAiDismiss={(id) => canvasAi.controller.dismiss(id)}
+                  canvasAi={canvasAi.block?.id === b.id && canvasAi.element?.type === 'image' && selEls.length === 1
+                    && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
+                    <CanvasAiLayer block={b} element={canvasAi.element} scale={scale} wrapRef={wrapRef}
+                      menu={canvasAi.menu} loading={canvasAi.loading} assetError={canvasAi.assetError}
+                      job={canvasAi.jobs.get(canvasAi.element.id)}
+                      visible={!canvasGesture && !cropping && !marquee && !spaceDown && !editEl && !preview}
+                      cost={catalogs.creditCosts?.editorImage} onAction={canvasAi.start}
+                      onUpload={() => requestSlotImage(b.id, canvasAi.element)}
+                      onCancel={() => canvasAi.controller.cancel(canvasAi.element.id)}
+                      onDismiss={() => canvasAi.controller.dismiss(canvasAi.element.id)}
+                      onReplace={() => replaceCanvasAiResult(canvasAi.jobs.get(canvasAi.element.id))}
+                      onAdd={() => addCanvasAiResult(canvasAi.jobs.get(canvasAi.element.id))}
+                      replaceReason={canvasAi.jobs.get(canvasAi.element.id)?.status === 'arrived'
+                        && !canReplaceCanvasAiResult(blocks, canvasAi.jobs.get(canvasAi.element.id))
+                        ? '원래 사진이 바뀌어 교체할 수 없어요.' : null} />
+                  ) : null}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}

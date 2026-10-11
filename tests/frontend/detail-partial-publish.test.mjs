@@ -5,10 +5,9 @@ import { applyDetailJobEvents } from '../../src/lib/detailPageJobEvents.js';
 import { mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
 import { createServer } from 'vite';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
+import { buildCanvasAiMenu } from '../../src/features/editor/canvasAiActions.js';
 
 const failure = { id: 'image', type: 'image', sourceBlockId: 'failed', src: null,
   genFailed: true, genFailReason: 'no_garment_photo', genFailRetryable: false };
@@ -98,96 +97,79 @@ test('같은 사진 복제의 실패 칸은 원본 칸이 채워진 뒤 다시 �
   ] }).retryable, false, '다른 옆모습 설정의 사진을 복제 원본으로 쓰지 않는다');
 });
 
-function retryHandler(context) {
-  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
-  const start = editor.indexOf('  const retryFailedCut = async (');
-  const end = editor.indexOf('\n  // 비슷한 컷과 같은 부위 다시 촬영은', start);
-  return new Function('context', `const { failedCutRetry, pendingSlot, generateSubmission,
-    generateImage, varyGenerate, api, projectId, persistable, latestBlocks, blocks,
-    setSlotImage, setPendingSlot, setTab, toast } = context;
-    ${editor.slice(start, end)}; return retryFailedCut;`)(context);
+const plannedSlot = (sourceBlockId, failure = {}) => ({ id: 'empty', type: 'image', src: null, genFailed: true, sourceBlockId, ...failure });
+function plannedHarness({ blocks, storyboard, api, fill }) {
+  const handlers = editorCanvasAiHandlers({ blocks, latestBlocks: { current: blocks }, api,
+    setSlotImage: fill });
+  return canvasAiHookHarness({ blocks, storyboard, selectedId: 'empty', api, handlers });
 }
 
 test('막 채운 원본으로 후속을 다시 만들기 전에 서버에 그 칸을 저장한다', async () => {
   const calls = [];
   const source = { src: '/v1/assets/root/file', cutType: 'styling' };
-  const blocks = [{ elements: [{ type: 'image', sourceBlockId: 'root', ...source }] }];
-  await retryHandler({
-    failedCutRetry: { retryable: true, request: { mode: 'vary', variationMode: 'similar', source,
-      changes: [], retryBlockId: 'child' } },
-    pendingSlot: { blockId: 'page', elId: 'empty' }, generateSubmission: { current: null },
-    generateImage: async () => assert.fail('후속은 일반 새 이미지로 만들지 않는다'),
-    varyGenerate: async request => { calls.push(['vary', request.source.src]); return { src: '/v1/assets/child/file' }; },
-    api: { saveEditorBlocks: async (id, saved) => calls.push(['save', id, saved]) },
-    projectId: 'project', persistable: value => value, latestBlocks: { current: blocks }, blocks,
-    setSlotImage: (blockId, elId, image) => calls.push(['fill', image.src]),
-    setPendingSlot: () => {}, setTab: () => {}, toast: { push: () => {} },
-  })();
-  assert.deepEqual(calls.map(call => call[0]), ['save', 'vary', 'fill']);
+  const blocks = [{ id: 'page', elements: [{ id: 'root-image', type: 'image', sourceBlockId: 'root', ...source }, plannedSlot('child')] }];
+  const storyboard = [{ id: 'root', source: 'ai', cutType: 'styling' },
+    { id: 'child', source: 'ai', cutType: 'styling', similarSourceBlockId: 'root' }];
+  const h = plannedHarness({ blocks, storyboard, api: {
+    saveEditorBlocks: async (id, saved) => calls.push(['save', id, saved]),
+    generateImage: async (_project, request) => { calls.push(['vary', request.source.src]); return { data: { src: '/v1/assets/child/file' } }; },
+  }, fill: (_blockId, _elId, image) => calls.push(['fill', image.src]) });
+  h.start('retry'); await h.run();
+  assert.deepEqual(calls.map((call) => call[0]), ['save', 'vary', 'fill']);
   assert.equal(calls[0][2][0].elements[0].src, '/v1/assets/root/file');
   assert.equal(calls[1][1], '/v1/assets/root/file');
 });
 
 test('복제 칸의 실제 클릭 처리는 생성 호출 없이 같은 원본 사진을 넣는다', async () => {
   const fills = [];
-  await retryHandler({
-    failedCutRetry: { retryable: true, request: null, fillImage: { src: '/v1/assets/root/file', cutType: 'styling' } },
-    pendingSlot: { blockId: 'page', elId: 'empty' }, generateSubmission: { current: null },
+  const storyboard = [{ id: 'root', source: 'ai', cutType: 'styling' }, { id: 'clone', source: 'ai', cutType: 'styling' }];
+  const blocks = [{ id: 'page', elements: [{ id: 'root-image', type: 'image', sourceBlockId: 'root', src: '/v1/assets/root/file' },
+    plannedSlot('clone', { genFailReason: 'duplicate_cut_source_failed', genFailRetryable: false })] }];
+  const h = plannedHarness({ blocks, storyboard, api: {
+    saveEditorBlocks: async () => assert.fail('복제는 생성 전 저장을 요구하지 않는다'),
     generateImage: async () => assert.fail('복제는 새 생성과 결제가 없다'),
-    varyGenerate: async () => assert.fail('복제는 사진을 변형하지 않는다'),
-    setSlotImage: (blockId, elId, image) => fills.push([blockId, elId, image.src]),
-    setPendingSlot: () => {}, setTab: () => {}, toast: { push: () => {} },
-  })();
+  }, fill: (blockId, elId, image) => fills.push([blockId, elId, image.src]) });
+  h.start('retry'); await h.run();
   assert.deepEqual(fills, [['page', 'empty', '/v1/assets/root/file']]);
 });
 
 test('원본 칸 저장이 거절되면 후속 생성이나 결제를 시작하지 않는다', async () => {
-  const notices = [];
-  await retryHandler({
-    failedCutRetry: { retryable: true, request: { mode: 'vary', variationMode: 'similar' } },
-    pendingSlot: { blockId: 'page', elId: 'empty' }, generateSubmission: { current: null },
+  const blocks = [{ id: 'page', elements: [{ id: 'root-image', type: 'image', sourceBlockId: 'root', src: '/v1/assets/root/file' }, plannedSlot('child')] }];
+  const storyboard = [{ id: 'root', source: 'ai', cutType: 'styling' },
+    { id: 'child', source: 'ai', cutType: 'styling', similarSourceBlockId: 'root' }];
+  const h = plannedHarness({ blocks, storyboard, api: {
+    saveEditorBlocks: async () => { throw new Error('다른 창에서 더 최근에 저장했어요'); },
     generateImage: async () => assert.fail('저장 실패 뒤에는 생성하지 않는다'),
-    varyGenerate: async () => assert.fail('저장 실패 뒤에는 생성하지 않는다'),
-    api: { saveEditorBlocks: async () => { throw new Error('다른 창에서 더 최근에 저장했어요'); } },
-    projectId: 'project', persistable: value => value, latestBlocks: { current: [] }, blocks: [],
-    setSlotImage: () => assert.fail('저장 실패 뒤에는 빈 칸을 바꾸지 않는다'),
-    setPendingSlot: () => {}, setTab: () => {}, toast: { push: message => notices.push(message) },
-  })();
-  assert.deepEqual(notices, ['다른 창에서 더 최근에 저장했어요']);
+  }, fill: () => assert.fail('저장 실패 뒤에는 빈 칸을 바꾸지 않는다') });
+  h.start('retry'); const job = await h.run();
+  assert.equal(job.status, 'failed');
+  assert.equal(job.error.message, '다른 창에서 더 최근에 저장했어요');
 });
 
-test('AI 패널은 독립 실패의 다시 만들기와 원본이 필요한 칸을 구분한다', async () => {
-  const server = await createServer({ root: fileURLToPath(new URL('../..', import.meta.url)),
-    configFile: false, esbuild: { jsx: 'automatic' }, server: { middlewareMode: true, hmr: false, watch: null },
-    optimizeDeps: { noDiscovery: true, include: [] },
-    resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-  });
-  try {
-    const { AIPanel } = await server.ssrLoadModule('/src/features/editor/EditorPanels.jsx');
-    const catalogs = { models: [], genExamples: [], productShotTypes: [{ value: 'ghost' }],
-      shotTypes: [{ value: 'full' }], creditCosts: { editorImage: 19 } };
-    const storyboard = [{ id: 'failed', source: 'ai', cutType: 'product' }];
-    const render = (failure) => renderToStaticMarkup(createElement(AIPanel, { catalogs,
-      failedCutRetry: buildFailedCutRetry(storyboard, 'failed', null, null, { failure }) }));
-    const oldFailure = render({ genFailReason: 'no_garment_photo', genFailRetryable: false });
-    assert.doesNotMatch(oldFailure, /상품 사진이 더 필요해요/);
-    assert.match(oldFailure, /이 컷 다시 만들기.*19 크레딧/);
-    const retryable = render({ genFailReason: 'provider_error', genFailRetryable: true });
-    assert.match(retryable, /<button/);
-    assert.match(retryable, /이 컷 다시 만들기.*19 크레딧/);
-    const duplicates = [{ id: 'root', source: 'ai', cutType: 'styling' },
-      { id: 'clone', source: 'ai', cutType: 'styling' }];
-    const duplicateFailure = { genFailReason: 'duplicate_cut_source_failed', genFailRetryable: false };
-    const blockedClone = renderToStaticMarkup(createElement(AIPanel, { catalogs,
-      failedCutRetry: buildFailedCutRetry(duplicates, 'clone', null, null, { failure: duplicateFailure }) }));
-    assert.match(blockedClone, /원본 컷을 먼저 만들어 주세요/);
-    assert.doesNotMatch(blockedClone, /<button/);
-    const filledClone = renderToStaticMarkup(createElement(AIPanel, { catalogs,
-      failedCutRetry: buildFailedCutRetry(duplicates, 'clone', null, null, { failure: duplicateFailure,
-        editorBlocks: [{ elements: [{ type: 'image', sourceBlockId: 'root', src: '/v1/assets/root/file' }] }] }) }));
-    assert.match(filledClone, /원본 사진으로 채우기/);
-    assert.doesNotMatch(filledClone, /19 크레딧/);
-  } finally { await server.close(); }
+test('빈 칸 메뉴는 독립 실패의 다시 만들기와 원본이 필요한 칸을 구분한다', () => {
+  const storyboard = [{ id: 'failed', source: 'ai', cutType: 'product' }];
+  const retryMenu = (board, element, blocks = [{ id: 'page', elements: [element] }]) => {
+    const retry = buildFailedCutRetry(board, element.sourceBlockId, null, null, { failure: element, editorBlocks: blocks });
+    const menu = buildCanvasAiMenu({ block: blocks[0], element, storyboard: board, failedCutRetry: retry });
+    return { retry, branch: menu.branches.find((branch) => branch.id === 'retry') };
+  };
+  for (const reason of ['no_garment_photo', 'provider_error']) {
+    const { retry, branch } = retryMenu(storyboard, plannedSlot('failed', { genFailReason: reason, genFailRetryable: reason === 'provider_error' }));
+    assert.equal(retry.retryable, true);
+    assert.equal(branch.disabled, false);
+    assert.equal(branch.label, '원래 콘티대로 다시');
+  }
+  const duplicates = [{ id: 'root', source: 'ai', cutType: 'styling' }, { id: 'clone', source: 'ai', cutType: 'styling' }];
+  const empty = plannedSlot('clone', { genFailReason: 'duplicate_cut_source_failed', genFailRetryable: false });
+  const blocked = retryMenu(duplicates, empty);
+  assert.equal(blocked.retry.guidance, '원본 컷을 먼저 만들어 주세요');
+  assert.equal(blocked.branch.disabled, true);
+  const ready = retryMenu(duplicates, empty, [{ id: 'page', elements: [
+    { id: 'root-image', type: 'image', sourceBlockId: 'root', src: '/v1/assets/root/file' }, empty,
+  ] }]);
+  assert.equal(ready.branch.disabled, false);
+  assert.equal(ready.retry.request, null);
+  assert.equal(ready.retry.fillImage.src, '/v1/assets/root/file');
 });
 
 test('스토어의 실제 done 분기는 partial과 잔액을 보관하고 이벤트의 실패 원본을 유지한다', async () => {
@@ -195,7 +177,7 @@ test('스토어의 실제 done 분기는 partial과 잔액을 보관하고 이�
     failedCuts: [{ blockId: 'failed', reason: 'duplicate_cut_source_failed', retryable: false }],
     quoteCredits: 95, creditsCharged: 76, creditsNotCharged: 19 };
   const server = await createServer({ root: fileURLToPath(new URL('../..', import.meta.url)),
-    configFile: false, esbuild: { jsx: 'automatic' }, server: { middlewareMode: true, hmr: false, watch: null },
+    configFile: false, esbuild: { jsx: 'automatic' }, server: { middlewareMode: true, ws: false, watch: null },
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     plugins: [{ name: 'partial-job-api', enforce: 'pre',

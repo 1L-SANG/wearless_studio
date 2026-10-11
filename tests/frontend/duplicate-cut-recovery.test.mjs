@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildFailedCutRetry } from '../../src/features/editor/failedCutRetry.js';
+import { canvasAiHookHarness, editorCanvasAiHandlers } from './helpers/editorCanvasAiHarness.mjs';
 import { applyDetailJobEvents, detailPageDonePatch } from '../../src/lib/detailPageJobEvents.js';
 import { decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import { applySlotFillToInfo } from '../../src/features/editor/presets/infoPresets.js';
@@ -188,18 +189,14 @@ test('selecting a saved duplicate forwards its root and free fill clears every f
   requestSlotImage('page', blocks[0].elements[1]);
   assert.equal(pendingSlot.sourceBlockId, 'child');
   assert.equal(pendingSlot.genFailSourceBlockId, 'runtime-root');
-  const failedCutRetry = evaluate(`${source('  const failedCutRetry =', '  const retryFailedCut =')}; return failedCutRetry;`,
-    { pendingSlot, wardrobeContext: { current: { storyboard } }, analysis: null, product: null, blocks, buildFailedCutRetry });
+  const failedCutRetry = buildFailedCutRetry(storyboard, pendingSlot.sourceBlockId, null, null,
+    { failure: pendingSlot, editorBlocks: blocks });
   assert.equal(failedCutRetry.retryable, true);
   const setSlotImage = evaluate(`${source('  const setSlotImage =', '  const insertImage =')}; return setSlotImage;`, scope);
-  const retryFailedCut = evaluate(`${source('  const retryFailedCut =', '  // 비슷한 컷과 같은 부위 다시 촬영은')}; return retryFailedCut;`, {
-    ...scope, pendingSlot, failedCutRetry, setSlotImage, generateSubmission: { current: null },
-    generateImage: async () => assert.fail('free fill cannot start a paid generation'),
-    varyGenerate: async () => assert.fail('free fill cannot start a paid variation'),
-    toast: { push: () => {} },
-  });
-  await retryFailedCut();
-  assert.equal(pendingSlot, null);
+  const api = { generateImage: async () => assert.fail('free fill cannot start a paid generation') };
+  const handlers = editorCanvasAiHandlers({ blocks, latestBlocks: { current: blocks }, api, setSlotImage });
+  const h = canvasAiHookHarness({ blocks, storyboard, selectedId: blocks[0].elements[1].id, api, handlers });
+  h.start('retry'); await h.run();
   const filled = JSON.parse(JSON.stringify(persistable(blocks)))[0].elements[1];
   assert.equal(filled.src, '/v1/assets/root/file');
   assert.equal(filled.sourceBlockId, 'child');

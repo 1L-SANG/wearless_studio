@@ -101,12 +101,12 @@ async function aiHarness() {
     useRef: value => { const index = cursor++; return slots[index] ||= { current: value }; },
     isRealModelSelection: () => false, BRAND_USE_CATEGORIES: [],
   };
-  for (const name of ['UnderlineTabs', 'ColorDots', 'MoodGuide', 'ProductSourcePicker', 'DetailTargetPicker', 'PanelHead', 'Chips', 'Button', 'Icon', 'OuterClosureIcon', 'VaryPanel']) scope[name] = name;
+  for (const name of ['UnderlineTabs', 'ColorDots', 'MoodGuide', 'ProductSourcePicker', 'DetailTargetPicker', 'PanelHead', 'Chips', 'Button', 'Icon', 'OuterClosureIcon']) scope[name] = name;
   const Panel = evaluate(code, scope);
   const render = () => { cursor = 0; return Panel({ catalogs, product, colorOpts: [{ id: 'base' }, { id: 'extra' }], detailColorOpts: [{ id: 'base' }, { id: 'extra' }],
     detailRecommendations: { version: 1, status: 'ready', candidates: [{ id: 'back-target', direction: 'back' }] }, onGenerate: value => { request = value; } }); };
   const component = (name) => nodes(render(), node => node.type === name)[0];
-  nodes(render(), node => node.type === 'button' && node.props.children.includes('새 이미지 추가'))[0].props.onClick();
+  render();
   return { render, component, request: () => request, generate: () => component('Button').props.onClick() };
 }
 

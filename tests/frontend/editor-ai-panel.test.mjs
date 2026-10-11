@@ -5,7 +5,7 @@ import test from 'node:test';
 import { selectGenerationExamples } from '../../src/lib/generationExamples.js';
 import { ALL_CUT_TYPE_OPTIONS } from '../../src/lib/storyboardTaxonomy.js';
 
-// 에디터 AI 탭 '새 이미지 추가' — 콘티보드와 같은 안전장치가 빠지지 않게 고정한다(PR #123 리뷰 반영).
+// 에디터 AI 탭 '새 이미지 만들기' — 콘티보드와 같은 안전장치가 빠지지 않게 고정한다(PR #123 리뷰 반영).
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const catalog = JSON.parse(readFileSync(new URL('../../src/data/genExamples.json', import.meta.url), 'utf8'));
@@ -70,11 +70,11 @@ test('갤러리·게이트 성별은 가상 모델 또는 분석 기반 exampleG
   assert.match(editorSource, /exampleGender=\{exampleGenderFromAnalysis\(analysis, catalogs, clothingType\)\}/);
 });
 
-test('새 컷은 가상 모델만 고르고 옛 실패 컷의 실제 모델 판정은 유지한다', () => {
+test('새 컷은 가상 모델을 고르고 브랜드 유형은 현재 고른 모델로 판정한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.doesNotMatch(aiPanel, /fmList|fmModels|ModelThumb/);
   assert.match(aiPanel, /virtualModels\.map/);
-  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*isRealModelSelection\(model\);/);
+  assert.match(aiPanel, /const categoryRequired = isRealModelSelection\(model\);/);
 });
 
 test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드를 함께 전환한다', () => {
