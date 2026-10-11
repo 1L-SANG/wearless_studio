@@ -1277,9 +1277,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           setAnalysis(draft.analysis);
           setPhase(isAnalysisFastEntryEnabled() && draft.analysis.featureRun && !draft.analysis.featureRun.coreReceived ? 'analyzing' : 'done');
           if (isAnalysisFastEntryEnabled() && !mobile) {
+            const restoredGeneration = useAppStore.getState().projectGeneration;
             const restoredRun = await restoreDraftFeatureRun(draft, {
             readProduct: () => latestProductRef.current, readAnalysis: () => latestAnalysisRef.current,
-            isCurrent: () => !useAppStore.getState().productInfoConfirmed,
+            isCurrent: () => useAppStore.getState().projectGeneration === restoredGeneration,
             onAnalysis: (next) => {
               latestAnalysisRef.current = next; featureSavedAnalysisRef.current = next;
               if (mountedRef.current) {

@@ -74,7 +74,14 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     if (!valid() || !frozen() || !projectId) return;
     onEvent('feature_result_late');
     const handoff = record.features?.detailRecommendationsHandoff;
-    if (handoff) await onLateDetails(projectId, handoff, { runId: record.runId, photoSignature: record.photoSignature });
+    if (handoff) {
+      try {
+        await onLateDetails(projectId, handoff, { runId: record.runId, photoSignature: record.photoSignature });
+        if (!valid()) return;
+        record = { ...record, lateDetailRevision: (record.lateDetailRevision || 0) + 1 };
+        notify();
+      } catch { onEvent('feature_detail_promotion_failed'); }
+    }
   };
   const apply = async () => {
     if (!valid()) return;
@@ -210,8 +217,9 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
       return controller;
     },
     getRecord: () => record,
+    getProjectId: () => projectId,
     getAnalysis: () => frozenAnalysis || readAnalysis(),
-    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    subscribe(listener) { listeners.add(listener); listener(record); return () => listeners.delete(listener); },
     async setEditing(value) { editing = value; if (!value) await process(); },
     wait() {
       if (!isFeatureRunPending(record) && !processing) return Promise.resolve('settled');
@@ -223,9 +231,14 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
         listeners.add(listener);
       });
     },
-    freeze(pid) {
+    freeze(pid, { deadlineExceeded = false } = {}) {
+      if (deadlineExceeded) onEvent('feature_deadline_exceeded');
       projectId = pid;
       frozenAnalysis ||= { ...readAnalysis() };
+      if (deadlineExceeded) {
+        delete frozenAnalysis.detailRecommendations;
+        delete frozenAnalysis.detailRecommendationsHandoff;
+      }
       record = { ...record, stage: 'committing' };
       notify();
       return frozenAnalysis;

@@ -1,5 +1,5 @@
 import { api } from './api/index.js';
-import { createFeatureRun, getActiveFeatureRun, setActiveFeatureRun } from './featureRun.js';
+import { createFeatureRun, getActiveFeatureRun, setActiveFeatureRun, stripFeatureClientFields } from './featureRun.js';
 import { analysisPhotoKey, preparePublicAnalysis } from './api/publicAnalysisRequest.js';
 import { loadDraft, saveFeatureRunDraft, flushProductDraftSave } from './draftStore.js';
 import { clientEvents } from './clientEvents.js';
@@ -43,7 +43,7 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
       messageCode: code, error: Object.assign(new Error(code), { code }), blocking: false }),
   });
   const freeze = run.freeze;
-  run.freeze = (projectId) => { ownsProject = true; return freeze(projectId); };
+  run.freeze = (projectId, options) => { ownsProject = true; return freeze(projectId, options); };
   return setActiveFeatureRun(run);
 }
 
@@ -80,4 +80,19 @@ export async function waitForFeaturesBeforeLogin() {
   const run = getActiveFeatureRun();
   if (run) await run.wait();
   await flushProductDraftSave();
+}
+
+
+export async function settleDraftFeatureRun(draft, projectId, { restoreFeatures = false } = {}) {
+  if (!isAnalysisFastEntryEnabled() || !draft.analysis?.featureRun) return { analysis: draft.analysis, run: null };
+  const saved = draft.analysis.featureRun;
+  let run = getActiveFeatureRun();
+  if (run?.getRecord()?.runId !== saved.runId || run.getRecord().photoSignature !== saved.photoSignature) {
+    run = await restoreDraftFeatureRun(draft, { promotion: true });
+    restoreFeatures = true;
+  }
+  if (!run) return { analysis: stripFeatureClientFields(draft.analysis), run: null };
+  const result = restoreFeatures ? 'restored' : await run.wait();
+  const analysis = run.freeze(projectId, { deadlineExceeded: result === 'deadline' });
+  return { analysis: { ...stripFeatureClientFields(analysis) }, run };
 }

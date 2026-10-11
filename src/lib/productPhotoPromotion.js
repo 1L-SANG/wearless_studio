@@ -218,7 +218,7 @@ export async function retryProductPhotoPromotionFromDraft(projectId, io = {}) {
   if (resetRetry(projectId) === false) return false;
   clearProductPhotoPromotionTask(projectId);
   const task = startProductPhotoPromotion(projectId,
-    ({ onPhotoProgress }) => promote(draft, { projectId, onPhotoProgress }));
+    ({ onPhotoProgress }) => promote(draft, { projectId, onPhotoProgress, restoreFeatures: true }));
   try {
     await task.promise;
   } catch {
