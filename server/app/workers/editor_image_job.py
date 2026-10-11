@@ -521,7 +521,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                     new_payload.get("outerClosureState"), outer_closure.front_closure_of(analysis))
             cut_spec = {
                 k: new_payload.get(k)
-                for k in (*content_roles.GENERATION_RECIPE_FIELDS, "model_id")
+                for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "sideStyle",
+                          "outerClosureState", "exampleId", "modelId", "model_id",
+                          "colorId", "matchIds", "refScope", "spaceGroupId", "spaceVariation",
+                          "spaceSetMemberOrder", "horizonBackgroundMode")
             }
             cut_spec["matchIds"] = matching_ids
             if detail_color_transfer:
@@ -997,6 +1000,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             generation_recipe = asset_recipe.project_recipe({
                 **new_payload, **cut_spec,
                 **cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type),
+                # 무드 레퍼런스는 생성 입력 키 밖에서 따로 읽으므로 실제로 넘긴 값을 그대로 남긴다.
+                "refAssetIds": [str(r) for r in (new_payload.get("refAssetIds") or [])][:3],
             })
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.

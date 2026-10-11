@@ -138,7 +138,7 @@ def build_context(*, project_id, slot, blocks, storyboard, product, analysis, as
             "storyboard": storyboard, "product": product, "analysis": analysis, "colors": colors, "baseColorId": base.get("id"),
             "examples": deepcopy(registry), "previousRecipes": previous, "attempt": attempt,
             "aiAssetIds": set(ai_asset_ids or []), "colorCompare": target_block.get("kind") == "colorcmp" or
-            target_block.get("templateId") == "5" or target_block.get("name") in ("컬러 비교", "컬러 비교 카드")}
+            target_block.get("templateId") == "kiwi-5" or target_block.get("name") in ("컬러 비교", "컬러 비교 카드")}
 
 
 def _used_recipes(context):

@@ -193,7 +193,7 @@ def test_product_pair_prefers_other_face_before_unused_additional_color():
 def test_color_compare_copies_cut_with_missing_row_color_then_ghost_order():
     data = inputs(elements=[image("front"), image("empty", x=110, filled=False)],
                   assets={asset_id("front"): asset(recipe(cut="product", shot="ghost"))})
-    data["blocks"][0].update(templateId="5", name="컬러 비교 카드")
+    data["blocks"][0].update(templateId="kiwi-5", name="컬러 비교 카드")
     result = decide(data)
     assert (result["payload"]["colorId"], result["payload"]["direction"], result["contextFill"]["rule"]) == ("black", "front", "color_compare")
     data["blocks"][0]["elements"].append(image("black", x=220))
@@ -477,3 +477,11 @@ def test_direction_preference_reads_known_neighbor_after_unknown_photo():
     data = inputs(before=[block("above", [image("unknown"), image("known", x=110)])],
                   assets={asset_id("known"): asset(recipe(shot="medium", direction="front"))})
     assert decide(data)["payload"]["direction"] == "side"
+
+
+@pytest.mark.parametrize("template_id,expected", [("kiwi-5", "color_compare"), ("5", "ghost_other_face")])
+def test_color_compare_card_is_found_by_real_template_id(template_id, expected):
+    data = inputs(elements=[image("front"), image("empty", x=110, filled=False)],
+                  assets={asset_id("front"): asset(recipe(cut="product", shot="ghost"))})
+    data["blocks"][0].update(templateId=template_id, name="이름을 바꾼 블록")
+    assert decide(data)["contextFill"]["rule"] == expected
