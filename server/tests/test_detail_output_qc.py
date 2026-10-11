@@ -138,6 +138,118 @@ def settings(**overrides):
     })
 
 
+@pytest.mark.parametrize("core,specialist", [
+    ("claude-sonnet-5-5", "claude-sonnet-5-5"),
+    ("claude-sonnet-5-5", "gpt-5.4-2026-03-05"),
+    ("gpt-5.4-2026-03-05", "claude-sonnet-5-5"),
+    ("gpt-5.4-2026-03-05", "gpt-5.4-2026-03-05"),
+])
+def test_detail_judges_route_independently_without_changing_qc_contract(monkeypatch, core, specialist):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    def judge(provider):
+        async def call(*args, **kwargs):
+            calls.append((provider, args, kwargs))
+            kwargs["metadata"].update(returned_model=args[1], usage={"prompt_tokens": 10, "completion_tokens": 2})
+            raw = response(qc)
+            return primary_response(qc, raw) if is_core_call(qc, args) else specialist_response(qc, raw)
+        return call
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", judge("claude"))
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", judge("gpt"))
+    source = picture()
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core=core, model_detail_specialist=specialist,
+        anthropic_api_key="test-claude-key", detail_qc_claude_effort="max",
+        openai_api_key=None if core.startswith("claude-") and specialist.startswith("claude-") else "test",
+        detail_core_timeout_seconds=140, detail_specialist_timeout_seconds=65),
+        [source, picture("yellow"), picture("purple")], picture("blue"), target=bound_target()))
+    expected = ["claude" if model.startswith("claude-") else "gpt" for model in (core, specialist)]
+    assert result["decision"] == "PASS" and result["passed"] is True
+    assert [call[0] for call in calls] == expected
+    assert result["provider"] == expected[0] and result["specialist"]["provider"] == expected[1]
+    assert result["returnedModel"] == core and result["specialist"]["returnedModel"] == specialist
+    assert result["usage"] == result["specialist"]["usage"] == {"prompt_tokens": 10, "completion_tokens": 2}
+    assert [call[1][5] for call in calls] == [120, 65]
+    assert [len(call[1][3]) for call in calls] == [5, 13]
+    for provider, args, kwargs in calls:
+        assert "VALIDATED_QC_CONTEXT" in kwargs["system_prompt"]
+        if provider == "claude":
+            assert kwargs["effort"] == "max" and "reasoning_effort" not in kwargs
+        else:
+            assert kwargs["reasoning_effort"] == "high" and kwargs["image_detail"] == "high"
+            assert kwargs["max_completion_tokens"] == 7000 and "effort" not in kwargs
+
+
+@pytest.mark.parametrize("missing", ["core", "specialist"])
+def test_claude_key_absence_does_not_use_openai_key(monkeypatch, missing):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    async def gpt(*args, **kwargs):
+        calls.append("gpt")
+        return primary_response(qc, response(qc))
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("missing Claude key must not reach transport")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", gpt)
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", forbidden)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5" if missing == "core" else "gpt-5.4-2026-03-05",
+        model_detail_specialist="claude-sonnet-5-5", anthropic_api_key=""), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "configuration"
+    assert calls == ([] if missing == "core" else ["gpt"])
+    if missing == "core":
+        assert result["provider"] == "claude" and result["errorCode"] == "primary_judge_unavailable"
+    else:
+        assert result["specialist"]["provider"] == "claude"
+        assert result["specialist"]["status"] == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("failed", ["core", "specialist"])
+def test_claude_failure_never_falls_back_to_gpt(monkeypatch, failed):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    async def claude(*args, **kwargs):
+        calls.append("core" if is_core_call(qc, args) else "specialist")
+        if calls[-1] == failed:
+            raise qc.vision_llm.VisionError("unavailable", unknown_cause="provider_error", retry_after_seconds=3)
+        return primary_response(qc, response(qc))
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("cross-provider fallback is forbidden")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", claude)
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5", model_detail_specialist="claude-sonnet-5-5",
+        anthropic_api_key="test-claude-key", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "provider_error"
+    assert result["retryAfterSeconds"] == 3
+    assert calls == (["core"] if failed == "core" else ["core", "specialist"])
+
+
+def test_claude_judgment_still_requires_complete_valid_server_gates(monkeypatch):
+    from app.agents import detail_output_qc as qc
+
+    async def invalid(*args, **kwargs):
+        raw = primary_response(qc, response(qc))
+        raw["gates"].pop()
+        return raw
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", invalid)
+    result = asyncio.run(qc.verdict(settings(model_detail_core="claude-sonnet-5-5",
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "invalid_response"
+    assert result["specialist"]["status"] == "NOT_RUN"
+
+
 def response(qc):
     return {
         "gates": [{"code": code, "status": "PASS", "evidence": "Visible evidence agrees."} for code in qc.GATES],

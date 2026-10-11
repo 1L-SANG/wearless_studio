@@ -62,9 +62,12 @@ variables:
   MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
   PRODUCT_DETAIL_IMAGE_QUALITY: high # 2026-10-11 오너 결정: 디테일샷만 high, 되돌리려면 medium.
-  MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
+  # 2026-10-12 오너 결정: 디테일컷 검수를 Claude Sonnet 5.5(effort xhigh)로 전환(ADR-0012 후속 절).
+  # 되돌리려면 아래 두 모델 값만 gpt-5.4-2026-03-05 로 바꾼다. ANTHROPIC_API_KEY secret은 남겨도 된다.
+  MODEL_DETAIL_CORE: claude-sonnet-5-5
+  DETAIL_QC_CLAUDE_EFFORT: xhigh
   DETAIL_CORE_TIMEOUT_SECONDS: 90
-  MODEL_DETAIL_SPECIALIST: gpt-5.4-2026-03-05
+  MODEL_DETAIL_SPECIALIST: claude-sonnet-5-5
   DETAIL_SPECIALIST_TIMEOUT_SECONDS: 90
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   # 생성 직전 옷 색 백스톱 측정도 api 와 같은 flash 로 돌린다(비우면 위 pro 로 넘어간다).
@@ -131,6 +134,8 @@ secrets:
   R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
   GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  # ★ SSM 값 없이 배포되면 ECS 기동 실패. 머지 전 /copilot/wearless/use1/secrets/ANTHROPIC_API_KEY 등록과 태그 확인 필수.
+  ANTHROPIC_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/ANTHROPIC_API_KEY
   # SSM 값이 없으면 ECS 기동 실패, 배포 전 copilot secret init --name OPENAI_API_KEY_FALLBACK 필수
   OPENAI_API_KEY_FALLBACK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY_FALLBACK
   # ★ SSM 값 없이 배포되면 ECS 기동 실패 → 롤백. 배포 전 copilot secret init 필수.

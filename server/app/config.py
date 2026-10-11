@@ -69,6 +69,9 @@ class Settings:
     # Calibrated narrow label/temporary-artifact specialist; never a fallback.
     model_detail_specialist: str = "gpt-5.4-2026-03-05"
     detail_specialist_timeout_seconds: float = 90.0
+    # 검수 전용 Claude 경로. 기본 검수 모델과 분석 폴백 순서는 유지한다.
+    anthropic_api_key: str = ""
+    detail_qc_claude_effort: str = "xhigh"
     # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
     # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
     # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
@@ -615,6 +618,10 @@ class Settings:
     # 여기 안 적어도 된다 — 이 값은 병렬 워크트리(5174)·터널 같은 임시 QA 주소용이다.
     kakao_extra_redirect_uris: tuple[str, ...] = ()
 
+    def __post_init__(self):
+        if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("DETAIL_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
+
 
 def _image_usage_persist(app_env: str) -> bool:
     """운영 원장에 쓰는 것은 운영 배포뿐. 다른 환경은 명시적으로 켜야 한다.
@@ -823,6 +830,8 @@ def load_settings() -> Settings:
         detail_core_timeout_seconds=float(os.getenv("DETAIL_CORE_TIMEOUT_SECONDS", "90")),
         model_detail_specialist=(os.getenv("MODEL_DETAIL_SPECIALIST") or "").strip() or "gpt-5.4-2026-03-05",
         detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        detail_qc_claude_effort=os.getenv("DETAIL_QC_CLAUDE_EFFORT", "xhigh"),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
