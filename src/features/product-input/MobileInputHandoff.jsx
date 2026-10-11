@@ -98,7 +98,7 @@ export function MobileSaveStatus({ changed, photoCount }) {
   );
 }
 
-export function InputMainAction({ mobile, canDone, pending, saving, disabledReason, onSave, onAnalyze, saved, onEdit, onNext, busy }) {
+export function InputMainAction({ mobile, canDone, pending, saving, disabledReason, disabledReasonIsLink, onSave, onAnalyze, saved, onEdit, onNext, busy }) {
   if (mobile && saved) return <WizardCTA>
     <div className="handoff-actions">
       <Button variant="ghost" disabled={busy} onClick={onEdit}>사진 고치기</Button>
@@ -108,7 +108,7 @@ export function InputMainAction({ mobile, canDone, pending, saving, disabledReas
   const reason = mobile && pending ? '사진을 불러오는 중이에요' : disabledReason;
   return (
     <WizardCTA>
-      {reason && <span className="wizard-cta-reason">{reason}</span>}
+      {reason && <span className={`wizard-cta-reason${reason === disabledReason && disabledReasonIsLink ? ' is-link' : ''}`}>{reason}</span>}
       <Button variant="primary" size="lg" icon="check"
         disabled={!canDone || (mobile && (pending || saving))} onClick={mobile ? onSave : onAnalyze}>
         {mobile ? '저장하고 PC에서 이어하기' : 'AI 분석하기'}

@@ -39,7 +39,7 @@ const actionLabels = (tree) => !tree || typeof tree !== 'object' ? [] : [
   ...(tree.props?.children || []).flat(Infinity).flatMap(actionLabels),
 ];
 
-function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
+function harness({ mobile = true, analysis = null, saveAll, transcode, photos = product(), doneBlocked = false, persisted = false, stagedDraft = true, initialSavedMeta = null, session = { user: { id: 'seller' } }, authLoading = false, draftStore = null, slotClient = null, previewRegistry = null } = {}) {
   const calls = [];
   const content = [];
   const onContentChange = (value) => content.push(value);
@@ -87,7 +87,7 @@ function harness({ mobile = true, analysis = null, saveAll, transcode, photos = 
       }
     },
     useNavigate: () => (path) => calls.push(['navigate', path]), useLocation: () => location,
-    useAuth: () => ({ session, loading: false }),
+    useAuth: () => ({ session, loading: authLoading }),
     useDoneGuard: () => doneBlocked, useToast: () => ({ push: (...args) => calls.push(['toast', ...args]) }),
     useQuery: ({ queryKey }) => ({ data: queryKey.length === 1 ? [{ id: 'finished', title: '완성본' }] : [], isLoading: false }),
     useAppStore, isMobileDevice: () => mobile, isMockMode: false, draftSlot: slot, createDraftEntryActions, isMobileDraftWriter, draftSavedTime,
@@ -318,13 +318,136 @@ for (const mobile of [true, false]) {
   });
 
   test(`M2 ${mobile ? 'mobile' : 'desktop'} needs both base Front and Back photos`, async () => {
-    const photos = product();
-    photos.colors[0].images.pop();
-    const h = harness({ mobile, photos });
-    const tree = await h.settle();
-    assert.equal(node(h.expand(tree, 'InputMainAction'), 'Button').props.disabled, true);
+    for (const missingSlot of ['Front', 'Back']) {
+      const photos = product();
+      photos.colors[0].images = photos.colors[0].images.filter((image) => image.slot !== missingSlot);
+      const h = harness({ mobile, photos });
+      try {
+        const tree = await h.settle();
+        const cta = h.expand(tree, 'InputMainAction');
+        assert.equal(node(cta, 'Button').props.disabled, true);
+        assert.equal(find(cta, (value) => value.props.className?.includes('wizard-cta-reason')), undefined);
+      } finally { h.cleanup(); }
+    }
   });
 }
+
+const additionalFrontReason = '추가한 색상의 정면 사진을 올리거나 색상을 지워 주세요';
+const additionalGroup = (tree) => find(tree, (value) => value.type?.name === 'ColorImageGroup'
+  && value.props.group.id === 'extra');
+const ctaReason = (tree) => find(tree, (value) => value.props.className?.includes('wizard-cta-reason'));
+const productWithAdditionalColor = (images = []) => {
+  const photos = product();
+  photos.colors.push({ id: 'extra', isBase: false, images });
+  return photos;
+};
+
+for (const mobile of [true, false]) {
+  const device = mobile ? 'mobile' : 'desktop';
+
+  test(`G10 ${device} blocks an additional color without Front and shows the blue reason`, async () => {
+    for (const images of [[], [{ id: 'extra-back', slot: 'Back', src: '/extra-back.jpg' }]]) {
+      const h = harness({ mobile, photos: productWithAdditionalColor(images) });
+      try {
+        const cta = h.expand(await h.settle(), 'InputMainAction');
+        assert.equal(node(cta, 'Button').props.disabled, true);
+        assert.equal(text(ctaReason(cta)), additionalFrontReason);
+        assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason is-link');
+      } finally { h.cleanup(); }
+    }
+  });
+
+  test(`G10 ${device} adding the additional Front enables the main action`, async () => {
+    const h = harness({ mobile, photos: productWithAdditionalColor() });
+    try {
+      const tree = await h.settle();
+      assert.equal(node(h.expand(tree, 'InputMainAction'), 'Button').props.disabled, true);
+      additionalGroup(tree).props.onAddFiles('Front', [{ src: '/extra-front.jpg' }]);
+      const cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, false);
+      assert.equal(ctaReason(cta), undefined);
+    } finally { h.cleanup(); }
+  });
+
+  test(`G10 ${device} deleting an empty additional color enables the main action`, async () => {
+    const h = harness({ mobile, photos: productWithAdditionalColor() });
+    try {
+      const tree = await h.settle();
+      assert.equal(node(h.expand(tree, 'InputMainAction'), 'Button').props.disabled, true);
+      additionalGroup(tree).props.onRemoveGroup();
+      const cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, false);
+      assert.equal(ctaReason(cta), undefined);
+    } finally { h.cleanup(); }
+  });
+
+  test(`G10 ${device} pending additional Front blocks completion and suppresses upload instructions`, async () => {
+    const h = harness({ mobile, photos: productWithAdditionalColor() });
+    try {
+      const group = additionalGroup(await h.settle());
+      group.props.onPendingChange('extra', 'Front', 1);
+      let cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.ok(!text(cta).includes(additionalFrontReason));
+      if (mobile) {
+        assert.equal(text(ctaReason(cta)), '사진을 불러오는 중이에요');
+        assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason');
+      } else assert.equal(ctaReason(cta), undefined);
+      group.props.onPendingChange('extra', 'Front', 0);
+      cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.equal(text(ctaReason(cta)), additionalFrontReason);
+    } finally { h.cleanup(); }
+  });
+
+  test(`G10 ${device} preserves loading priority before additional-color guidance`, async () => {
+    const h = harness({ mobile, authLoading: true, photos: productWithAdditionalColor() });
+    try {
+      const tree = await h.settle();
+      let cta = h.expand(tree, 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.equal(text(ctaReason(cta)), '로그인 상태를 확인하고 있어요.');
+      assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason');
+      const group = node(tree, 'ColorImageGroup');
+      group.props.onPendingChange('base', 'Front', 1);
+      cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.equal(text(ctaReason(cta)), mobile ? '사진을 불러오는 중이에요' : '로그인 상태를 확인하고 있어요.');
+      assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason');
+      group.props.onPendingChange('base', 'Front', 0);
+      cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.equal(text(ctaReason(cta)), '로그인 상태를 확인하고 있어요.');
+      assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason');
+    } finally { h.cleanup(); }
+  });
+}
+
+test('G10 mobile keeps its photo-loading reason ahead of additional-color instructions', async () => {
+  const h = harness({ photos: productWithAdditionalColor() });
+  try {
+    node(await h.settle(), 'ColorImageGroup').props.onPendingChange('base', 'Back', 1);
+    const cta = h.expand(await h.settle(), 'InputMainAction');
+    assert.equal(node(cta, 'Button').props.disabled, true);
+    assert.equal(text(ctaReason(cta)), '사진을 불러오는 중이에요');
+    assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason');
+  } finally { h.cleanup(); }
+});
+
+test('G10 desktop only suppresses additional-color instructions for that color Front conversion', async () => {
+  const h = harness({ mobile: false, photos: productWithAdditionalColor() });
+  try {
+    const group = additionalGroup(await h.settle());
+    for (const [groupId, slot] of [['base', 'Front'], ['extra', 'Back']]) {
+      group.props.onPendingChange(groupId, slot, 1);
+      const cta = h.expand(await h.settle(), 'InputMainAction');
+      assert.equal(node(cta, 'Button').props.disabled, true);
+      assert.equal(text(ctaReason(cta)), additionalFrontReason);
+      assert.equal(ctaReason(cta).props.className, 'wizard-cta-reason is-link');
+      group.props.onPendingChange(groupId, slot, 0);
+    }
+  } finally { h.cleanup(); }
+});
 
 test('M2 actual picker reports HEIC conversion before the delayed placeholder and clears after conversion', async () => {
   let finish;

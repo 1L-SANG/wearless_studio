@@ -1498,7 +1498,8 @@ export function Editor() {
         const failedCutIds = new Set([...(finalJob.failedCuts || []),
           ...(finalJob.partial?.failedCuts || []).map(cut => cut.blockId)]);
         const failedReasons = { ...finalJob.failedCutReasons,
-          ...Object.fromEntries((finalJob.partial?.failedCuts || []).map(cut => [cut.blockId, cut])) };
+          ...Object.fromEntries((finalJob.partial?.failedCuts || []).map(cut =>
+            [cut.blockId, { ...finalJob.failedCutReasons?.[cut.blockId], ...cut }])) };
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
@@ -2280,6 +2281,7 @@ export function Editor() {
           genFailed: _genFailed,
           genFailReason: _genFailReason,
           genFailRetryable: _genFailRetryable,
+          genFailSourceBlockId: _genFailSourceBlockId,
           genPending: _genPending,
           ...rest
         } = el;
@@ -2333,6 +2335,7 @@ export function Editor() {
       genFailed: Boolean(el.genFailed),
       genFailReason: el.genFailReason,
       genFailRetryable: el.genFailRetryable,
+      genFailSourceBlockId: el.genFailSourceBlockId,
     });
     setTab('wardrobe');
   };

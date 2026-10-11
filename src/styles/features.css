@@ -41,6 +41,7 @@
 .cap-note { font-size: 12px; color: var(--fg-3); margin-top: 10px; }
 .pi-optional-label { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--fg-3); }
 .wizard-cta-reason { font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.wizard-cta-reason.is-link { color: var(--link); }
 
 /* hidden draft-slot ownership and entry choices */
 .draft-slot-lock { position: fixed; inset: 0; z-index: 75; display: grid; place-items: center; padding: 24px;

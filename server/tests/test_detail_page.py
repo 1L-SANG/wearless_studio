@@ -2213,7 +2213,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert "Composition nuance" not in captured[block_id]["prompt"]
     assert "failure" not in captured
     assert captured["success"]["metadata"]["partial"]["failedCuts"] == [
-        {"blockId": "direction-mismatch", "reason": "pose_direction_incompatible", "retryable": False}]
+        {"blockId": "direction-mismatch", "reason": "pose_direction_incompatible", "retryable": True}]
     assert captured["success"]["charge"] == 5
     assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
 
@@ -2837,7 +2837,7 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     if skipped_ids:
         partial = captured["finalize"]["metadata"]["partial"]
         assert {cut["blockId"] for cut in partial["failedCuts"]} == skipped_ids
-        assert all(cut["retryable"] is False for cut in partial["failedCuts"])
+        assert all(cut["retryable"] is True for cut in partial["failedCuts"])
         assert partial["creditsNotCharged"] == 0  # 옛 fixture는 완성분 값만 예약했다. 예약 상한을 지킨다.
     assets = captured["finalize"]["cut_assets"]
     assert len(assets) == len(real_face_ids)
@@ -2880,7 +2880,7 @@ def test_a_scope_skipped_cut_closes_its_slot_without_the_garment_truth_warning(
     assert "failure" not in captured
     assert captured["finalize"]["charge"] == 1
     assert captured["finalize"]["metadata"]["partial"]["failedCuts"] == [
-        {"blockId": "product", "reason": "real_model_studio_only", "retryable": False}]
+        {"blockId": "product", "reason": "real_model_studio_only", "retryable": True}]
     assert len(captured["settlements"]) == 1
 
 

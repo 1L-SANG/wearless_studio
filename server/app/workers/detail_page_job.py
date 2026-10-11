@@ -48,10 +48,11 @@ from ..agents.gemini_image import InlineImage, normalize_openai_images
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
-from ..services import garment_color_measure
+from ..services import garment_color_measure, matching
 from . import cut_checkpoints as _cut_checkpoints
 from . import detail_shot_runtime
 from ..agents.detail_shot_pipeline import DetailShotRejected
+from ..agents.detail_recommendations import DetailRecommendationError
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -229,6 +230,28 @@ def _runtime_outer_closure(block: dict, clothing_type: str, front_closure: dict,
     return block
 
 
+def _analysis_for_cut(block: dict, analysis: dict | None) -> dict | None:
+    """대체 매칭에 원래 매칭의 핏을 적용하지 않고 다른 컷의 분석은 보존한다."""
+    fit_profile = (analysis or {}).get("fitProfile")
+    if isinstance(fit_profile, dict) and any(
+        record.get("kind") == "matching_substituted" for record in block.get("_fallback", [])
+    ):
+        return {**analysis, "fitProfile": {
+            key: value for key, value in fit_profile.items() if key not in {"matchCut", "matchingFit"}
+        }}
+    return analysis
+
+
+def _merge_fallback_records(*sources: list[dict] | None) -> list[dict]:
+    """보관본과 현재 실행의 대체 기록을 중복 없이 보존한다."""
+    records = []
+    for source in sources:
+        for record in source or []:
+            if isinstance(record, dict) and record not in records:
+                records.append(dict(record))
+    return records
+
+
 def _duplicate_source_indexes(
     blocks: list[dict], clothing_type: str, skipped: frozenset[int] | set[int] | None = None,
     *, analysis: dict | None = None,
@@ -266,6 +289,9 @@ def _duplicate_source_indexes(
             except ValueError:
                 spec = None
             if spec is not None and not spec.get("spaceGroupId"):
+                if analysis is not None:
+                    spec["fitProfile"] = fit_axes.normalize_fit_profile(
+                        (_analysis_for_cut(block, analysis) or {}).get("fitProfile"))
                 key = json.dumps(
                     {k: v for k, v in spec.items() if k not in {"id", "blockId"}},
                     sort_keys=True, ensure_ascii=False, default=str,
@@ -411,7 +437,8 @@ async def _normalize_detail_openai_refs(prepared, model: str, horizon_model: str
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     hair_profile=None, face_shape_profile=None, face_identity_spec=None,
                     angle_photos=None, selected_model_id=None, cut_checkpoints=None,
-                    stored_outputs=None, similar_context=None, failed_cuts=None):
+                    stored_outputs=None, similar_context=None, failed_cuts=None,
+                    generation_counts=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, unused_legacy_slot, confirmed_packet,
@@ -424,8 +451,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     cut_checkpoints(workers/cut_checkpoints.CutCheckpointStore)가 오면 앞선 실패 잡이 남긴
     완성 컷·베이스컷을 이어 쓰고, 이번에 그린 것도 남긴다(2026-09-23). None 이면 기존 동작.
     stored_outputs 는 gather 반환 전 저장된 R2 키를 호출자에게 즉시 노출해 중단 시 철회한다."""
-    async def _cut_failed(block, reason):
+    async def _cut_failed(block, reason, *, source_block_id=None):
         info = failure_info(reason)
+        if source_block_id is not None:
+            info["sourceBlockId"] = str(source_block_id)
         if failed_cuts is not None:
             failed_cuts[str(block.get("id"))] = info
         await _emit(app.state.pool, job["id"], "step", {
@@ -468,6 +497,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
     sem = asyncio.Semaphore(_limit)
     generated_images: dict[str, InlineImage] = {}
+    invalid_contracts: list[dict] = []
+    duplicate_fallbacks: dict[str, list[dict]] = {}
     planned_actions: dict[str, list[dict]] = {}
     saved_similar_plans: dict[str, dict] = {}
     runtime_blocks_by_id = {str(item[0].get("id")): item[0] for item in prepared}
@@ -566,6 +597,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
              "metadata": {
                  "facemarket_real_derived": real_identity_attached,
                  "cut_type": b.get("cutType"),
+                 **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                  **({"similar_cut": similar_metadata} if similar_metadata else {}),
                  **_background_result_metadata(b),
                  **({"detail_recipe": detail_shot_runtime.recipe(b)}
@@ -596,6 +628,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         # 판정 입력은 정규화 전 원본 바이트다(_normalize_detail_openai_refs 주석 참고).
         # 정규화가 없었던 경로(Gemini·confirmed·시그니처)는 images 가 곧 원본이다.
         qc_images = item[10] if len(item) > 10 else images
+        cut_analysis = _analysis_for_cut(b, analysis)
         # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
@@ -616,8 +649,21 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     chosen, detail_report = await detail_shot_runtime.generate(
                         app, job, b, product, analysis,
                         **({'final_cache': cut_checkpoints} if cut_checkpoints is not None else {}))
-                except (DetailShotRejected, ValueError) as exc:
-                    await _cut_failed(b, getattr(exc, "reason", "detail_target_unavailable"))
+                except DetailShotRejected as exc:
+                    if exc.reason == "detail_target_unavailable":
+                        log.warning("AG-06 detail target unavailable job %s block %s: %r",
+                                    job_id, b.get("id"), exc)
+                    await _cut_failed(b, exc.reason)
+                    return None
+                except ValueError as exc:
+                    if isinstance(exc, DetailRecommendationError) or str(exc) == "invalid_color":
+                        log.warning("AG-06 detail target unavailable job %s block %s: %r",
+                                    job_id, b.get("id"), exc)
+                        await _cut_failed(b, "detail_target_unavailable")
+                    else:
+                        invalid_contracts.append({"blockId": b.get("id"),
+                            "exceptionType": type(exc).__name__, "message": str(exc)[:200]})
+                        await _cut_failed(b, "invalid_cut_spec")
                     return None
                 return await _store_cut(
                     b, chosen.data, chosen.mime, chosen, has_face=False,
@@ -648,7 +694,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     "confirmed_prompt_input": confirmed_packet.prompt_input,
                 }
             else:
-                generate_kwargs = {"analysis": analysis, "manifest": manifest}
+                generate_kwargs = {"analysis": cut_analysis, "manifest": manifest}
                 if has_face:
                     generate_kwargs["has_face"] = True
                 # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product/ghost
@@ -710,6 +756,21 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                 ckpt = await cut_checkpoints.for_cut(
                     b, generation_settings, product, qc_images, generate_kwargs,
                     real_identity_attached=real_identity_attached)
+            if ckpt is not None:
+                base_metadata = getattr(ckpt.base, "meta", {})
+                saved_metadata = ckpt.final.meta if ckpt.final is not None else base_metadata
+                fallback_records = _merge_fallback_records(
+                    saved_metadata.get("fallback"), b.get("_fallback"),
+                    duplicate_fallbacks.get(str(b.get("id"))))
+                if fallback_records:
+                    b = {**b, "_fallback": fallback_records}
+                    ckpt.base.meta = {**base_metadata, "fallback": fallback_records}
+                    if saved_metadata.get("fallback") != fallback_records:
+                        if ckpt.final is not None:
+                            await ckpt.save_final(ckpt.final.image, ckpt.final.mime,
+                                                 {**saved_metadata, "fallback": fallback_records})
+                        elif ckpt.base_reused and ckpt.base.image is not None:
+                            await ckpt.base.keep(*ckpt.base.image)
             if ckpt is not None and ckpt.final is not None:
                 log.info("cut checkpoint reused: final job %s block %s", job_id, b.get("id"))
                 await _emit(app.state.pool, job_id, "step",
@@ -761,8 +822,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     img, mime = await _primary_generate()
                     _remember_outcome(img)
                     break
-                except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
-                    log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
+                except ValueError as e:  # 입력 계약 위반은 작업당 한 번 운영 알림으로 모은다.
+                    invalid_contracts.append({"blockId": b.get("id"),
+                        "exceptionType": type(e).__name__, "message": str(e)[:200]})
                     await _cut_failed(b, "invalid_cut_spec")
                     return None
                 except face_identity.FacePassUnavailable as e:
@@ -908,7 +970,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     plan = cut_plan.compile_cut_plan(
                         normalized_spec,
                         clothing_type,
-                        fit_profile=(analysis or {}).get("fitProfile"),
+                        fit_profile=(cut_analysis or {}).get("fitProfile"),
                     )
                     qc_references = cut_output_qc.references_from_manifest(
                         manifest, qc_images
@@ -1059,6 +1121,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     "neckRepair": neck_repair_metadata,
                     "facePass": {k: face_pass_outcome[k] for k in ("face_pass", "face_recipe")
                                  if face_pass_outcome.get(k)},
+                    **({"fallback": list(b["_fallback"])} if b.get("_fallback") else {}),
                 })
             return await _store_cut(
                 b, img, mime, chosen,
@@ -1185,8 +1248,20 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
     dup_sources = _duplicate_source_indexes(
         [item[0] for item in prepared], clothing_type,
         skipped={i for i, item in enumerate(prepared) if isinstance(item, _SkippedCut)},
+        analysis=analysis,
     )
     original_indexes = [i for i in range(len(prepared)) if dup_sources[i] is None]
+    for index, source_index in enumerate(dup_sources):
+        if source_index is not None:
+            source_id = str(prepared[source_index][0].get("id"))
+            duplicate_fallbacks[source_id] = _merge_fallback_records(
+                duplicate_fallbacks.get(source_id), prepared[source_index][0].get("_fallback"),
+                prepared[index][0].get("_fallback"))
+    if generation_counts is not None:
+        generation_counts["aiCount"] = len(original_indexes)
+        generation_counts["matchingMerged"] = any(
+            record.get("kind") == "matching_substituted"
+            for records in duplicate_fallbacks.values() for record in records)
 
     # 컷 1개가 끝날 때마다(성공·실패 무관) 진행 이벤트 — 대기 화면의 정직한 진행 근거.
     # 10분 잡에서 65%에 몇 분씩 멈춰 보이던 체크포인트 방식을 대체한다(editor_wait_dev_spec §2-1).
@@ -1264,6 +1339,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         await asyncio.gather(*cut_tasks, return_exceptions=True)
         raise
     outcome_by_index = dict(zip(original_indexes, gathered))
+    if invalid_contracts:
+        log.critical("AG-06 invalid cut contracts job %s: %s", job_id,
+                     json.dumps(invalid_contracts, ensure_ascii=False))
     outcomes = []
     for i in range(len(prepared)):
         src = dup_sources[i]
@@ -1274,10 +1352,15 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
         block = prepared[i][0]
         if base is None:
             # 원본 생성 실패는 복제 칸에도 이유를 남긴다. 복제 칸은 과금 단위가 아니다.
-            await _cut_failed(block, "duplicate_cut_source_failed")
+            await _cut_failed(block, "duplicate_cut_source_failed",
+                              source_block_id=prepared[src][0].get("id"))
             outcomes.append(None)
             continue
         if base[1] is not None:
+            fallback_records = _merge_fallback_records(
+                (base[1].get("metadata") or {}).get("fallback"), block.get("_fallback"))
+            if fallback_records:
+                base[1]["metadata"] = {**(base[1].get("metadata") or {}), "fallback": fallback_records}
             # 복제 자리도 원본 출력을 미리보기로 쓴다 — 같은 정리 표식에 이 블록 id 를 더한다.
             await _tag_preview_block(
                 app, job_id, base[1].get("cleanup_intent_id"), block.get("id"))
@@ -1541,6 +1624,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
+            saved_directions = {str(block.get("id")): {
+                "direction": block.get("direction"),
+                "sideStyle": block.get("sideStyle") or block.get("side_style"),
+            } for block in storyboard if isinstance(block, dict)}
             loaded_storyboard_digest = _storyboard_digest(storyboard)
             if not getattr(s, "genexample_bg_enabled", False) and any(
                 isinstance(block, dict)
@@ -1813,6 +1900,67 @@ async def run_detail_page_job(app, job: dict) -> None:
         async def _img(a: dict) -> InlineImage:
             return await _r2_img(a["r2_key"], a["mime_type"])
 
+        matching_substitutions: dict[str, str] = {}
+        recommendations = analysis.get("matchClothing") or []
+        matching_cooccurrences: dict[str, set[str]] = {}
+        for block in ai_blocks:
+            if block.get("cutType") in _WORN_CUT_TYPES and block.get("similarSourceBlockId") is None:
+                block_matches = _matching_ids(block)
+                for identifier in block_matches:
+                    matching_cooccurrences.setdefault(identifier, set()).update(
+                        other for other in block_matches if other != identifier)
+
+        async def _matching_image(matching_id: str) -> InlineImage:
+            if matching_id not in match_assets:
+                async with pool.connection() as conn:
+                    asset_id = await repo.get_matching_item_asset(
+                        conn, matching_id, user_id, project_id)
+                    match_assets[matching_id] = (
+                        await repo.get_asset_for_user(conn, user_id, asset_id) if asset_id else None)
+            asset = match_assets[matching_id]
+            if asset is None:
+                raise LookupError("matching_asset_unavailable")
+            return await _img(asset)
+
+        async def _resolve_matching(mids: list[str]) -> tuple[list[str], list[InlineImage], list[dict]]:
+            resolved_ids, images, fallbacks = [], [], []
+            for missing_id in mids:
+                cooccurring = matching_cooccurrences.get(missing_id, set())
+                used_ids = [*cooccurring, *resolved_ids,
+                    *(matching_substitutions[identifier] for identifier in cooccurring
+                      if identifier in matching_substitutions)]
+                substitute = matching_substitutions.get(missing_id)
+                if substitute is not None:
+                    if substitute in used_ids:
+                        raise LookupError("matching_substitute_collision")
+                    image = await _matching_image(substitute)
+                else:
+                    try:
+                        image = await _matching_image(missing_id)
+                    except Exception:
+                        metadata = None
+                        if not any(str(item.get("id")) == missing_id for item in recommendations):
+                            async with pool.connection() as conn:
+                                metadata = await repo.get_matching_item_metadata(
+                                    conn, missing_id, user_id, project_id)
+                        for candidate in matching.matching_fallback_candidates(
+                            recommendations, missing_id, used_ids, metadata):
+                            try:
+                                image = await _matching_image(candidate)
+                            except Exception:
+                                continue
+                            substitute = candidate
+                            matching_substitutions[missing_id] = substitute
+                            break
+                        if substitute is None:
+                            raise LookupError("matching_asset_unavailable")
+                resolved_ids.append(substitute or missing_id)
+                images.append(image)
+                if substitute is not None:
+                    fallbacks.append({"kind": "matching_substituted", "missingMatchId": missing_id,
+                                      "substituteMatchId": substitute})
+            return resolved_ids, images, fallbacks
+
         # 가상모델 얼굴+전신은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면
         # 둘 다 빼고 기존 옷 레퍼런스로 계속 생성한다. 필수 근거가 없어 컷이 실패하면
         # 최종 완성도 게이트가 페이지 전체를 실패시킨다.
@@ -1999,6 +2147,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec.pop("_spaceSetContinuity", None)
             cut_spec.pop("_referenceDirectionCompatible", None)
             cut_spec.pop("_exampleRepeatIndex", None)
+            cut_spec.pop("_fallback", None)
             if example_repeat_index is not None:
                 cut_spec["_exampleRepeatIndex"] = example_repeat_index
             if space_binding is not None:
@@ -2040,6 +2189,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 cut_spec["modelId"] = eff_model_id
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+                # Canonicalization already follows examples, so compare the saved card for the audit record.
+                direction_input = normalized
+                saved_direction = saved_directions.get(str(b.get("id")))
+                if (saved_direction is not None and normalized.get("cutType") in ("styling", "horizon")
+                        and normalized.get("refScope") == "pose" and not normalized.get("spaceGroupId")
+                        and not str(normalized.get("exampleId") or "").startswith("ss_")):
+                    direction_input = {**normalized, **saved_direction}
+                resolved_direction, direction_fallback = cut_generator.pose_direction_from_example(direction_input)
+                if direction_fallback is not None:
+                    normalized = resolved_direction
+                    cut_spec.update(direction=normalized["direction"], sideStyle=normalized["sideStyle"])
+                    cut_spec["_fallback"] = [direction_fallback]
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
@@ -2102,29 +2263,25 @@ async def run_detail_page_job(app, job: dict) -> None:
                 prepared.append(_skipped_cut(cut_spec, "no_garment_photo"))
                 continue
             mids = normalized.get("matchIds", []) if is_worn_cut else []
-            matching_assets = [match_assets.get(matching_id) for matching_id in mids]
-            if mids and any(asset is None for asset in matching_assets):
-                # 사용자가 확정한 매칭 의류는 전부 한 벌의 진실 근거다. 일부만 붙여 생성하면
-                # 선택하지 않은 기본 의류로 나머지를 채우므로, 이 컷만 빈 슬롯으로 닫는다.
-                log.warning(
-                    "AG-06 matching asset unavailable — cut fail-closed job %s block %s",
-                    job_id,
-                    b.get("id"),
-                )
-                prepared.append(_skipped_cut(cut_spec, "matching_asset_unavailable"))
-                continue
             try:
-                matching_images = [await _img(asset) for asset in matching_assets]
+                mids, matching_images, matching_fallbacks = await _resolve_matching(mids)
             except Exception as e:
-                # 메타데이터는 있어도 실제 R2 객체가 없으면 동일하게 부분 첨부하지 않는다.
+                # 추천 대체까지 불러오지 못한 컷만 비운다. 일부 매칭만 붙이지 않는다.
                 log.warning(
-                    "AG-06 matching image unavailable — cut fail-closed job %s block %s: %r",
+                    "AG-06 matching substitution unavailable job %s block %s: %r",
                     job_id,
                     b.get("id"),
                     e,
                 )
                 prepared.append(_skipped_cut(cut_spec, "matching_asset_unavailable"))
                 continue
+            if matching_fallbacks:
+                cut_spec["matchIds"] = mids
+                normalized["matchIds"] = mids
+                cut_spec["_fallback"] = [*cut_spec.get("_fallback", []), *matching_fallbacks]
+                for fallback in matching_fallbacks:
+                    log.info("AG-06 matching substituted job %s block %s: %s -> %s", job_id, b.get("id"),
+                             fallback["missingMatchId"], fallback["substituteMatchId"])
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
@@ -2512,6 +2669,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         _gen_cuts_kwargs["stored_outputs"] = stored_outputs
         failed_cuts = {}
         _gen_cuts_kwargs["failed_cuts"] = failed_cuts
+        generation_counts = {}
+        _gen_cuts_kwargs["generation_counts"] = generation_counts
         (
             cut_results,
             cut_assets,
@@ -2590,6 +2749,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 옛 예약의 서로 다른 열림이 같은 컷으로 합쳐진 것은 생성 실패가 아니다.
             sources = _duplicate_source_indexes(ai_blocks, clothing_type, analysis=analysis)
             charge_metadata = {**metadata, "aiCount": sum(source is None for source in sources)}
+        if metadata.get("aiCount") is not None and generation_counts.get("matchingMerged"):
+            # 매칭 대체로 접힌 칸을 실패로 세지 않고, 대체가 없는 예약 정산은 유지한다.
+            charge_metadata = {**charge_metadata, "aiCount": min(
+                metadata["aiCount"], charge_metadata["aiCount"], generation_counts["aiCount"])}
         charge = calculate_detail_charge(
             completed=len(cut_assets), reserved=reserved, metadata=charge_metadata,
             fallback_per_cut=s.credit_cost_storyboard_per_cut,

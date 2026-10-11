@@ -248,7 +248,7 @@ def test_back_cut_without_back_photo_fails_before_paying_for_the_base(monkeypatc
 
     assert result[0] == [] and result[1] == []
     assert ("step", {"blockId": "b1", "status": "cut_failed",
-                     "reason": "no_angle_photo", "retryable": False}) in events
+                     "reason": "no_angle_photo", "retryable": True}) in events
 
 
 # ── D. generate() 의 베이스 자리 ──────────────────────────────────────────────

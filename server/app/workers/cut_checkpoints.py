@@ -254,15 +254,16 @@ class PersistedBase(cut_generator.BaseCheckpoint):
     """generate() 가 받는 베이스 자리 — 새 베이스를 받으면 R2 에 남긴다."""
 
     def __init__(self, cut: "CutCheckpoint", image: tuple[bytes, str] | None = None,
-                 key: str | None = None):
+                 key: str | None = None, meta: dict | None = None):
         super().__init__(image)
         self._cut = cut
         self.key = key
+        self.meta = dict(meta or {})
 
     async def keep(self, image: bytes, mime: str) -> None:
         self.image = (image, mime)
         self.key = await self._cut.store.save(
-            self._cut.base_digest, STAGE_BASE, image, mime, {}, block_id=self._cut.block_id)
+            self._cut.base_digest, STAGE_BASE, image, mime, self.meta, block_id=self._cut.block_id)
 
     async def discard(self) -> None:
         """이 베이스는 다시 쓰지 않는다 — 메모리에서 빼고 R2 에서도 지운다."""
@@ -420,7 +421,7 @@ class CutCheckpointStore:
         if cut.final is None:
             base = await self._load(base_digest, STAGE_BASE)
             if base is not None:
-                cut.base = PersistedBase(cut, image=(base.image, base.mime), key=base.key)
+                cut.base = PersistedBase(cut, image=(base.image, base.mime), key=base.key, meta=base.meta)
                 cut.base_reused = True
         return cut
 

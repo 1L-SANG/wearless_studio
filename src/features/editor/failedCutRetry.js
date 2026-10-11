@@ -72,9 +72,14 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
         { ...candidate, contentRole: null, sectionRole: null },
         { ...block, contentRole: null, sectionRole: null },
       ]) === 1;
-    const original = storyboard.slice(0, storyboard.indexOf(block)).find(sameRecipe);
+    const original = failure.genFailSourceBlockId !== undefined
+      ? storyboard.find(candidate => typeof failure.genFailSourceBlockId === 'string'
+        && candidate?.id === failure.genFailSourceBlockId
+        && candidate.id !== block.id && candidate.source === 'ai' && candidate.cutType)
+      : storyboard.slice(0, storyboard.indexOf(block)).find(sameRecipe);
     fillImage = original ? editorBlocks.flatMap(item => item.elements || []).find(element =>
-      element.type === 'image' && element.sourceBlockId === original.id && element.src) || null : null;
+      element.type === 'image' && element.sourceBlockId === original.id && element.src
+      && !element.genPending && !element.genFailed && !element.slotCleared) || null : null;
     retryable = Boolean(fillImage);
     guidance = fillImage ? '원본 사진으로 빈 칸을 채워요' : '원본 컷을 먼저 만들어 주세요';
     request = null;

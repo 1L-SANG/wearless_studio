@@ -390,6 +390,29 @@ def direction_family_matches(entry: dict, spec: dict) -> bool:
     return _side_style_of(entry) == _side_style_of(spec)
 
 
+def pose_direction_from_example(spec: dict) -> tuple[dict, dict | None]:
+    """ADR-0015와 ADR-0017 개정, 일반 포즈 예시의 방향을 실행 사본에 적용한다."""
+    resolved = dict(spec)
+    example_id = spec.get("exampleId")
+    if (spec.get("cutType") not in ("styling", "horizon") or spec.get("refScope") != "pose"
+            or spec.get("spaceGroupId") or not example_id or str(example_id).startswith("ss_")):
+        return resolved, None
+    _default_base, assets = load_example_asset_registry()
+    entry = assets.get(str(example_id)) or {}
+    if entry.get("cutType") not in ("styling", "horizon") or entry.get("direction") not in _DIRECTIONS:
+        return resolved, None
+    direction = entry["direction"]
+    side_style = _side_style_of(entry) if direction == "side" else None
+    if direction_family_matches(entry, spec):
+        return resolved, None
+    resolved.update(direction=direction, sideStyle=side_style)
+    return resolved, {
+        "kind": "direction_from_example", "exampleId": example_id,
+        "fromDirection": spec.get("direction"), "fromSideStyle": spec.get("sideStyle"),
+        "toDirection": direction, "toSideStyle": side_style,
+    }
+
+
 def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     """pose 전용 자산과 현재 카드의 방향 계열이 같은지 API 호출 전에 판정한다.
 

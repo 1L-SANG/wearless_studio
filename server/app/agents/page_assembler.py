@@ -748,6 +748,8 @@ def assemble(
             if element["type"] == "image" and not element.get("src") and failure:
                 element.update(genFailed=True, genFailReason=failure["reason"],
                                genFailRetryable=failure["retryable"])
+                if failure.get("sourceBlockId") is not None:
+                    element["genFailSourceBlockId"] = failure["sourceBlockId"]
 
     return blocks + build_auto_blocks(product, start_index=len(blocks),
                                       license_notice=license_notice)

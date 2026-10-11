@@ -1,4 +1,4 @@
-"""ADR-0017 실패 이유의 분류 정본. 이벤트와 저장 빈 칸은 같은 정보를 쓴다."""
+"""ADR-0017 2026-10-11 개정의 두 갈래 분류. 이벤트와 저장 빈 칸은 같은 정보를 쓴다."""
 
 CUT_FAILURE_REASONS = {
     **dict.fromkeys((
@@ -19,7 +19,7 @@ CUT_FAILURE_REASONS = {
         "invalid_cut_spec", "detail_target_unavailable", "invalid_detail_region",
         "detail_reference_required", "detail_color_reference_required", "detail_source_unavailable",
         "detail_target_color_changed", "detail_target_source_changed",
-    ), "seller_action"),
+    ), "retryable"),
     "similar_cut_source_failed": "dependent",
     "duplicate_cut_source_failed": "dependent",
 }

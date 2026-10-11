@@ -101,7 +101,10 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
     const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const cut = job.cuts[el.sourceBlockId];
-        if (cut?.url) return { ...el, src: cut.url, genAutoSrc: cut.url };
+        if (cut?.url) {
+          const { genPending, genExample, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = el;
+          return { ...rest, src: cut.url, genAutoSrc: cut.url };
+        }
         // src 를 반드시 비운다 — mock 빌더는 자리마다 placeholder src 를 미리 넣는데,
         // 그대로 두면 "이미 다 채워진 에디터"로 보여 생성 서사가 사라진다(2026-08-03 데모 피드백).
         // 진짜 이미지는 cut_done 이벤트가 채운다.
@@ -110,6 +113,8 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
           ...(job.failedCutReasons?.[el.sourceBlockId] ? {
             genFailReason: job.failedCutReasons[el.sourceBlockId].reason,
             genFailRetryable: job.failedCutReasons[el.sourceBlockId].retryable,
+            ...(job.failedCutReasons[el.sourceBlockId].sourceBlockId !== undefined
+              ? { genFailSourceBlockId: job.failedCutReasons[el.sourceBlockId].sourceBlockId } : {}),
           } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
@@ -140,7 +145,7 @@ export function fillGenBlocks(blocks, job) {
           && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
-          const { genPending, genExample, genFailed, genFailReason, genFailRetryable, ...rest } = el;
+          const { genPending, genExample, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = el;
           return { ...rest, src: cut.url, genAutoSrc: cut.url };
         }
         const st = cutStateOf(job, el.sourceBlockId);
@@ -150,7 +155,8 @@ export function fillGenBlocks(blocks, job) {
         }
         const info = job.failedCutReasons?.[el.sourceBlockId];
         return st === el.genPending && !info ? el : { ...el, genPending: st,
-          ...(info ? { genFailReason: info.reason, genFailRetryable: info.retryable } : {}) };
+          ...(info ? { genFailReason: info.reason, genFailRetryable: info.retryable,
+            ...(info.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}) } : {}) };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId && 'genAutoText' in el) {
         const t = (job.copy[el.sourceBlockId] || []).find((x) => x.role === el.copyRole)?.text;
@@ -239,7 +245,9 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     for (const element of block.elements || []) {
       if (element.type === 'image' && element.genFailed && !element.src) {
         failureById[element.sourceBlockId] = {
+          ...failureById[element.sourceBlockId],
           reason: element.genFailReason, retryable: element.genFailRetryable,
+          ...(element.genFailSourceBlockId !== undefined ? { sourceBlockId: element.genFailSourceBlockId } : {}),
         };
       }
     }
@@ -251,6 +259,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     return { genFailed: true,
       ...(info?.reason != null ? { genFailReason: info.reason } : {}),
       ...(typeof info?.retryable === 'boolean' ? { genFailRetryable: info.retryable } : {}),
+      ...(info?.sourceBlockId !== undefined ? { genFailSourceBlockId: info.sourceBlockId } : {}),
     };
   };
   if (!canSafelyMergeServerBlocks(blocks, serverBlocks)) return (serverBlocks || []).map(block => ({
@@ -276,7 +285,7 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
     let copyChanged = false;
     const elements = (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
-        const { genPending, genExample, genAutoSrc, genFailed, genFailReason, genFailRetryable, ...rest } = el;
+        const { genPending, genExample, genAutoSrc, genFailed, genFailReason, genFailRetryable, genFailSourceBlockId, ...rest } = el;
         // 대기 중 자동으로 채운 미리보기(1h 서명 주소)는 임시다. 완료 병합(failedSourceIds 를
         // 아는 호출)에서 서버 완성본에 그 컷이 없으면 저장본에 싣지 않는다 — 앞선 실패 잡의
         // 미리보기가 한 시간 뒤 깨진 사진으로 남지 않게. 완료 결과가 이긴다(2026-09-26).
@@ -291,7 +300,8 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds, failedR
         const failure = failurePatch({ ...el, src });
         if (failure.genFailed) return { ...rest, src: null,
           ...(genFailReason != null ? { genFailReason } : {}),
-          ...(typeof genFailRetryable === 'boolean' ? { genFailRetryable } : {}), ...failure };
+          ...(typeof genFailRetryable === 'boolean' ? { genFailRetryable } : {}),
+          ...(genFailSourceBlockId !== undefined ? { genFailSourceBlockId } : {}), ...failure };
         return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {

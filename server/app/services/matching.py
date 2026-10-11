@@ -18,6 +18,29 @@ _SKIRT_CATEGORIES = frozenset({"스커트"})
 _SHORT_CATEGORIES = frozenset({"쇼츠", "버뮤다쇼츠"})
 
 
+def matching_fallback_candidates(
+    recommendations: list[dict], missing_id: str, used_ids: list[str], metadata: dict | None = None,
+) -> list[str]:
+    """ADR-0017, 저장된 추천 순서에서 같은 세부 종류를 먼저 고른다."""
+    original = next((item for item in recommendations if str(item.get("id")) == missing_id), metadata)
+    if not original:
+        return []
+    clothing_type = original.get("clothingType") or original.get("clothing_type")
+    if not clothing_type:
+        return []
+    category = original.get("category")
+    excluded = {missing_id, *used_ids}
+    same_category, same_type = [], []
+    for item in recommendations:
+        identifier = str(item.get("id") or "")
+        if (not identifier or identifier in excluded or item.get("isCompatible") is False
+                or item.get("isCustom") is True or item.get("clothingType") != clothing_type):
+            continue
+        excluded.add(identifier)
+        (same_category if item.get("category") == category else same_type).append(identifier)
+    return same_category + same_type
+
+
 def complementary_type(clothing_type: str) -> str | None:
     """맞춰 입힐 반대편 카테고리. 매칭이 성립하지 않는 종류(원피스)는 None."""
     if clothing_type in _NO_MATCH:

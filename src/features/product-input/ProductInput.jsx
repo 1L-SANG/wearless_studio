@@ -1362,15 +1362,22 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     return colors.filter((c) => c.id !== colorId);
   });
 
-  // 필수 판정은 기준 색상 기준 — AI가 소비하는 것이 기준 색상 이미지라서(스펙 §4).
+  // 기준 색상 앞면과 뒷면, 추가 색상 정면을 필수로 받는다(ADR-0017).
   const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
   const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
+  const additionalColorsMissingFront = product.colors.filter((color) => color !== baseColor
+    && !color.isBase && !color.images.some((image) => image.slot === 'Front'));
+  const hasPendingAdditionalFront = additionalColorsMissingFront.some((color) =>
+    pendingConversions[`${color.id}:Front`]);
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && hasBack && phase === 'input' && !authLoading && !slotLock;
-  // 사진 요구 문구는 CTA 옆에 두지 않는다(2026-08-14 사용자 결정) — 필수 표시는
-  // 슬롯의 파란 별과 상단 안내문이 맡고, 버튼은 조용히 비활성. 로그인 확인만 일시 안내.
-  const disabledReason = authLoading ? '로그인 상태를 확인하고 있어요.' : '';
+  const canDone = hasFront && hasBack && !additionalColorsMissingFront.length
+    && phase === 'input' && !authLoading && !slotLock;
+  // 추가 색상 정면 안내만 CTA 사진 요구 문구의 예외다(ADR-0017 2026-10-11).
+  const disabledReasonIsLink = !authLoading && additionalColorsMissingFront.length > 0
+    && !hasPendingAdditionalFront;
+  const disabledReason = authLoading ? '로그인 상태를 확인하고 있어요.'
+    : disabledReasonIsLink ? '추가한 색상의 정면 사진을 올리거나 색상을 지워 주세요' : '';
   const locked = phase !== 'input' || mobileEditingLocked;
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
@@ -1618,7 +1625,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       {(phase === 'input' || (mobile && handoff.readOnly)) && (
         <InputMainAction mobile={mobile} canDone={canDone} pending={hasPendingConversions}
           saved={handoff.readOnly} onEdit={() => { handoff.edit(); setPhase('input'); }} onNext={nextMobile} busy={entryBusy}
-          saving={handoff.saving} disabledReason={disabledReason} onSave={saveForPC} onAnalyze={submit} />
+          saving={handoff.saving} disabledReason={disabledReason}
+          disabledReasonIsLink={disabledReasonIsLink} onSave={saveForPC} onAnalyze={submit} />
       )}
 
       <div className="af-anchor" />

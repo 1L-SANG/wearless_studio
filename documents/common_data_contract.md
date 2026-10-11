@@ -298,7 +298,7 @@ Element (type='image') + {
   sourceBlockId?: string            // 저장 콘티의 컷 id
   genFailed?: boolean               // ADR-0017, 생성하지 못한 빈 이미지 칸
   genFailReason?: string            // 서버 cut_failures.py의 이유 코드
-  genFailRetryable?: boolean        // 다시 만들기 가능. false면 셀러 조치 또는 원본 컷 필요
+  genFailRetryable?: boolean        // 다시 만들기 가능. false는 원본 컷이 먼저 필요한 칸뿐(ADR-0017 2026-10-11 개정)
   radius?: number
   frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
@@ -597,7 +597,7 @@ VaryRequest {                      // AI 탭 '현재 이미지 수정'
 partial?: {
   requestedCuts: number             // 요청한 이미지 칸 수. 복제 칸 포함
   completedCuts: number             // 완성한 이미지 칸 수. 복제 칸 포함
-  failedCuts: { blockId: string, reason: string, retryable: boolean }[]
+  failedCuts: { blockId: string, reason: string, retryable: boolean, sourceBlockId?: string }[]
   quoteCredits: number             // 예약 견적
   creditsCharged: number            // 성공 확정에서 실제 차감
   creditsNotCharged: number         // 예약 견적에서 차감하지 않은 값
@@ -606,7 +606,9 @@ partial?: {
 
 정산의 요청 수는 예약 `aiCount`, 완성 수는 새로 생성한 자산 수다. 복제 칸은 이 과금 단위에 포함하지 않는다. `chargeCuts = completed == 0 ? 0 : max(completed, max(aiCount, minCuts) - max(0, aiCount - completed))`를 예약 단가와 곱하고 예약액으로 상한을 둔다. 스냅샷이 없는 옛 작업은 완성 자산 수에 단가를 곱한다.
 
-빈 칸 다시 만들기의 `NewCutRequest`와 비슷한 컷 후속 `VaryRequest`는 `retryBlockId?: string`을 보낸다. 서버는 저장 콘티에서 설정을 복원하고 해당 `sourceBlockId`의 빈 이미지 칸이 실제로 있을 때만 받는다. 호리존 세트의 기존 검증도 유지한다. 같은 칸의 진행 중 `editor_image` 작업에는 합류하며 새 예약을 만들지 않는다. 합류한 요청 키도 기존 jobs.metadata에 보관하여 원래 작업이 끝난 뒤 접수 확인을 재전송해도 같은 작업을 돌려준다. 원래 작업의 키를 덮어쓰지 않으며 새 키의 새 요청은 구분한다. 후속 칸의 `mode:'new'`는 `similar_source_required`로 거절하고, 채워진 원본 사진의 `mode:'vary', variationMode:'similar'` 경로를 쓴다. 자산 메타데이터에 `retryBlockId`를 남긴다. 새로 만드는 컷 값은 `credit_cost_editor_image`다. 같은 사진 복제의 원본 실패 칸은 앞선 원본 칸이 채워지면 그 사진을 그대로 넣으며, 새 생성이나 추가 차감은 하지 않는다.
+빈 칸 다시 만들기의 `NewCutRequest`와 비슷한 컷 후속 `VaryRequest`는 `retryBlockId?: string`을 보낸다. 서버는 저장 콘티에서 설정을 복원하고 해당 `sourceBlockId`의 빈 이미지 칸이 실제로 있을 때만 받는다. 호리존 세트의 기존 검증도 유지한다. 같은 칸의 진행 중 `editor_image` 작업에는 합류하며 새 예약을 만들지 않는다. 합류한 요청 키도 기존 jobs.metadata에 보관하여 원래 작업이 끝난 뒤 접수 확인을 재전송해도 같은 작업을 돌려준다. 원래 작업의 키를 덮어쓰지 않으며 새 키의 새 요청은 구분한다. 후속 칸의 `mode:'new'`는 `similar_source_required`로 거절하고, 채워진 원본 사진의 `mode:'vary', variationMode:'similar'` 경로를 쓴다. 자산 메타데이터에 `retryBlockId`를 남긴다. 다시 만들기도 생성 작업과 같은 대체 규칙을 쓴다(ADR-0017 2026-10-11 개정). 대체로 채운 컷은 상세페이지와 에디터 모두 `assets.metadata.fallback: [{kind, ...}]`를 남긴다. `kind`는 `matching_substituted`(`missingMatchId`, `substituteMatchId`)와 `direction_from_example`(`exampleId`, `fromDirection`, `fromSideStyle`, `toDirection`, `toSideStyle`)이다. 새로 만드는 컷 값은 `credit_cost_editor_image`다. 같은 사진 복제의 원본 실패 칸은 앞선 원본 칸이 채워지면 그 사진을 그대로 넣으며, 새 생성이나 추가 차감은 하지 않는다.
+
+같은 사진 복제의 원본 실패에는 실제 실행에서 합친 원본 칸 번호를 `cut_failed` 이벤트와 `partial.failedCuts[].sourceBlockId`에 남긴다. 빈 이미지 요소에는 `genFailSourceBlockId`로 보존한다. 요소의 기존 `sourceBlockId`는 해당 빈 칸 자체의 콘티 번호이며 바꾸지 않는다. 에디터는 기록된 원본이 완성되면 그 사진을 재사용하고, 새 생성이나 추가 차감을 하지 않는다. 이 필드가 없는 예전 저장본은 기존 설정 비교로 원본을 찾는다.
 
 ### 콘티의 비슷한 컷 예약 (ADR-0016)
 
