@@ -55,6 +55,7 @@ test('loading a saved board removes old pose selections before saving it again',
 
 test('editor renders without manual direction controls for worn and product images', async (t) => {
   const vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent',

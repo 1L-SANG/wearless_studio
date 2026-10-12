@@ -7,7 +7,7 @@ import { createServer } from 'vite';
 let vite, AIPanel, WardrobePanel, ImagePanel;
 before(async () => {
   const root = new URL('../..', import.meta.url).pathname;
-  vite = await createServer({ configFile: false, root, logLevel: 'silent',
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, root, logLevel: 'silent',
     server: { middlewareMode: true, watch: null, ws: false }, appType: 'custom',
     resolve: { alias: { '@': `${root}/src` } }, esbuild: { jsx: 'automatic' } });
   ({ AIPanel, WardrobePanel, ImagePanel } = await vite.ssrLoadModule('/src/features/editor/EditorPanels.jsx'));

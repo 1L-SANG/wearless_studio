@@ -21,7 +21,7 @@ async function harness(api, { confirm = true, storage = new Map() } = {}) {
   const runtime = { api, slots: [], effects: [], cleanups: [], index: 0, confirm, copied: [], timers: [], cleared: [] };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
-  const server = await createServer({ configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
+  const server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null }, ssr: { noExternal: true }, esbuild: { jsx: 'automatic' }, appType: 'custom',
     plugins: [{ name: 'admin-payout-test', enforce: 'pre', resolveId(id) {
       if (id === 'react') return '\0p-react';

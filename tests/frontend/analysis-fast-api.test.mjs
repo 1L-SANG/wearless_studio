@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 let vite, adapter, supabase;
 before(async () => {
-  vite = await createServer({ configFile: false, resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ httpAdapter: adapter } = await vite.ssrLoadModule('/src/lib/api/httpAdapter.js'));
   ({ supabase } = await vite.ssrLoadModule('/src/lib/supabase.js'));

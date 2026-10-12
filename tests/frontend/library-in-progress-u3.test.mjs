@@ -22,7 +22,7 @@ const httpSource = read('src/lib/api/httpAdapter.js');
 const editorSource = read('src/features/editor/Editor.jsx');
 let vite, createStoryboardPersistence, mockApi;
 before(async () => {
-  vite = await createServer({ configFile: false, resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ createStoryboardPersistence } = await vite.ssrLoadModule('/src/features/storyboard/storyboardPersistence.js'));
   ({ api: mockApi } = await vite.ssrLoadModule('/src/mock/api.js'));

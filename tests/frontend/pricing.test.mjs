@@ -9,6 +9,7 @@ import * as limits from '../../src/lib/limits.js';
 let vite, Pricing, runtime, api, plans, tossKeys;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

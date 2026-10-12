@@ -49,6 +49,7 @@ async function stepHarness({ entry, exportName = 'default', initialStates = [], 
   const { createServer } = await import('vite');
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

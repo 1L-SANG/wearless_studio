@@ -14,7 +14,7 @@ export async function loadEarningsHarness(api = {}) {
   const runtime = { api, states: [], effects: [], index: 0, hash: '#usage', navigations: [] };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
-  const server = await createServer({ configFile: false, logLevel: 'silent',
+  const server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, logLevel: 'silent',
     root: fileURLToPath(new URL('../../..', import.meta.url)), server: { middlewareMode: true, hmr: false, watch: null },
     resolve: { alias: { '@': fileURLToPath(new URL('../../../src', import.meta.url)) } },
     ssr: { noExternal: true, external: ['lucide-react'] }, esbuild: { jsx: 'automatic' }, appType: 'custom',

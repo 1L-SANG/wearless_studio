@@ -168,6 +168,7 @@ test('완성 타일은 부분 실패 뒤 보관본 미리보기를 받고(주인
     result: { ...failedJob().result, retainedBlockIds: blockIds.filter((id) => id !== 'sb7' && id !== 'sb3') },
   });
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root,
@@ -259,6 +260,7 @@ test('store 실제 동작: 부분 실패 → [실패한 컷만 다시 만들기]
     getAccount: async () => ({ credits: 100 }),
   };
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root,

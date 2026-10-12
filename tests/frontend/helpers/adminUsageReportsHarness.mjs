@@ -17,6 +17,7 @@ export async function adminUsageReportsHarness(api = {}) {
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, logLevel: 'silent',
     root: fileURLToPath(new URL('../../..', import.meta.url)),
     server: { middlewareMode: true, hmr: false, watch: null }, ssr: { noExternal: true },

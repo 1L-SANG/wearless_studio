@@ -23,6 +23,7 @@ async function harness(t, profile) {
   const r = `globalThis[${JSON.stringify(key)}]`;
   const root = new URL('../..', import.meta.url).pathname;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root, logLevel: 'silent',
     server: { middlewareMode: true, watch: null, hmr: false }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },

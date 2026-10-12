@@ -53,6 +53,7 @@ let createStoryboardPersistence;
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },

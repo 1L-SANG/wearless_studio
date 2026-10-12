@@ -100,6 +100,7 @@ test('selecting an ordinary example after mirror restores the original styling r
 
 test('the mock API runtime migrates an HMR-stale three-member styling seed on read', async (t) => {
   const vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },

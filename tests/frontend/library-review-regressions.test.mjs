@@ -37,7 +37,7 @@ test('① 수동 핏 재생성의 불명 결과는 새 예약 없이 같은 잡�
   }, 'adapter');
   globalThis.__reviewApi = adapter;
   const root = fileURLToPath(new URL('../..', import.meta.url));
-  const vite = await createServer({ configFile: false, root, logLevel: 'silent', server: { middlewareMode: true, watch: null },
+  const vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, root, logLevel: 'silent', server: { middlewareMode: true, watch: null },
     plugins: [{ name: 'review-boundaries', enforce: 'pre',
       resolveId(id) {
         if (id.endsWith('/lib/api/index.js')) return '\0review-api';

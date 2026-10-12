@@ -97,6 +97,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false,
   const access = `globalThis[${JSON.stringify(key)}]`;
   const root = new URL('../..', import.meta.url).pathname;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root, logLevel: 'silent', appType: 'custom',
     server: { middlewareMode: true, watch: null, hmr: false }, ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },

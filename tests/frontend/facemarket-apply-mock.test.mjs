@@ -39,6 +39,7 @@ test('mock application photo deletion makes the staged photo unavailable to subm
 test('the API facade in explicit development mock mode completes the application without HTTP', async () => {
   const { createServer } = await import('vite');
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null, hmr: false, ws: false },

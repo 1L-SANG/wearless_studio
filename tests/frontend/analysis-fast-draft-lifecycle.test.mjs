@@ -7,7 +7,7 @@ import { preparePublicAnalysis } from '../../src/lib/api/publicAnalysisRequest.j
 import { analyzePublicDraft } from '../../src/lib/api/publicAnalysis.js';
 let vite, api, runtime, features, sync;
 before(async () => {
-  vite = await createServer({ configFile: false, define: { 'import.meta.env.VITE_ANALYSIS_FAST_ENTRY': '"1"' },
+  vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, define: { 'import.meta.env.VITE_ANALYSIS_FAST_ENTRY': '"1"' },
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
     server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   ({ api } = await vite.ssrLoadModule('/src/lib/api/index.js'));

@@ -12,6 +12,7 @@ import { createServer } from 'vite';
 let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys, DB;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

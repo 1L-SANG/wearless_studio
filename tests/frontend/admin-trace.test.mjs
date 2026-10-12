@@ -69,7 +69,7 @@ async function harness(api) {
   const runtime = { api, slots: [], index: 0 };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
-  const server = await createServer({ configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
+  const server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null }, ssr: { noExternal: true }, esbuild: { jsx: 'automatic' }, appType: 'custom',
     plugins: [{ name: 'admin-trace-test', enforce: 'pre', resolveId(id) {
       if (id === 'react') return '\0t-react';

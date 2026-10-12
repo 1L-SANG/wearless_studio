@@ -335,7 +335,7 @@ test('real store, shared runner, editor entry and mock rows honor server resume 
   globalThis.sessionStorage = memoryStorage();
   globalThis.__libraryU2Api = {};
   const root = fileURLToPath(new URL('../..', import.meta.url));
-  const vite = await createServer({ configFile: false, root, logLevel: 'silent',
+  const vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, root, logLevel: 'silent',
     resolve: { alias: { '@': `${root}/src` } }, server: { middlewareMode: true, watch: null },
     plugins: [{ name: 'library-u2-boundaries', enforce: 'pre',
       resolveId(id) {

@@ -11,7 +11,7 @@ test('all adapter call paths trace only own APIs, preserve request IDs, and matc
   const origin = Object.getOwnPropertyDescriptor(globalThis, 'location');
   Object.defineProperty(globalThis, 'location', { configurable: true, value: { origin: 'https://app.test', pathname: '/editor/' + PROJECT } });
   globalThis.__clientEventAuth = { auth: { getSession: async () => ({ data: { session: { user: { id: PROJECT }, access_token: 'test-token' } } }) } };
-  const vite = await createServer({ root, configFile: false, logLevel: 'silent',
+  const vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, root, configFile: false, logLevel: 'silent',
     resolve: { alias: { '@': `${root}/src` } },
     define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('https://api.test'), 'import.meta.env.VITE_API_MODE': JSON.stringify('http'),
       'import.meta.env.DEV': 'false', __BUILD_SHA__: JSON.stringify('test-vercel-sha') },

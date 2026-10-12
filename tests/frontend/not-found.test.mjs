@@ -16,6 +16,7 @@ let vite, NotFound;
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     root,
     cacheDir: join(cacheRoot, 'default'),

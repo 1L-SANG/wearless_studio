@@ -31,6 +31,7 @@ const previousWindow = globalThis.window;
 
 function createHarnessServer() {
   return createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

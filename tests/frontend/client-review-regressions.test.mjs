@@ -73,7 +73,7 @@ test('JSON request scope is pinned before the authentication lookup, and offline
   globalProperty(t, 'localStorage', memoryStorage());
   const gate = deferred();
   globalThis.__reviewAuth = { auth: { getSession: () => gate.promise } };
-  const vite = await createServer({ root, configFile: false, logLevel: 'silent', resolve: { alias: { '@': `${root}/src` } },
+  const vite = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, root, configFile: false, logLevel: 'silent', resolve: { alias: { '@': `${root}/src` } },
     define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('https://api.test'), 'import.meta.env.VITE_API_MODE': JSON.stringify('http') },
     server: { middlewareMode: true, watch: null, ws: false }, plugins: [{ name: 'review-auth', enforce: 'pre',
       resolveId(id) { if (id.endsWith('/lib/supabase.js')) return '\0review-auth'; },
