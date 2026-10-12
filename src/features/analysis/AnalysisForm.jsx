@@ -47,6 +47,8 @@ import {
   sanitizeMeasurementInput,
 } from '@/lib/measurementSchema.js';
 
+const MD_COMMENT_PLACEHOLDER = '- 가을 출근룩으로 활용할 니트예요.\n- 소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n- 나일론 소재라서 여름에도 시원하게 착용 가능해요.';
+
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
@@ -1156,9 +1158,9 @@ export function AnalysisForm({
             event.preventDefault();
             mdCommentInputRef.current?.focus();
           }}>
-          <div className="md-input" data-value={mdCommentDraft || '- 가을 출근룩으로 활용할 니트예요.\n- 소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n- 나일론 소재라서 여름에도 시원하게 착용 가능해요.'}>
+          <div className="md-input" data-value={mdCommentDraft || MD_COMMENT_PLACEHOLDER}>
             <textarea ref={mdCommentInputRef} rows={3} maxLength={300} aria-label="MD 코멘트"
-              placeholder={'- 가을 출근룩으로 활용할 니트예요.\n- 소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n- 나일론 소재라서 여름에도 시원하게 착용 가능해요.'}
+              placeholder={MD_COMMENT_PLACEHOLDER}
               value={mdCommentDraft}
               onFocus={() => { mdCommentRef.current.editing = true; }}
               onChange={(event) => {
@@ -1170,7 +1172,6 @@ export function AnalysisForm({
           </div>
           <div className="md-foot"><span className="md-count">{mdCommentDraft.length}/300</span></div>
         </div>
-        {!mdCommentDraft.trim() && <div className="hint md-hint">비워 둬도 AI가 분석한 정보로 글을 써요.</div>}
       </div>
 
       {/* 5. model select, AI 모델만 제공 */}

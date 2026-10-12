@@ -42,7 +42,8 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
   const state = source.slice(stateStart, source.indexOf('  const [ccDraft,', stateStart));
   const section = source.slice(sectionStart, source.indexOf('      {/* 5. model select', sectionStart));
   const confirm = source.slice(source.indexOf('  const confirmAnalysis ='), source.indexOf('  const [customMatchOpen,'));
-  const { code } = await transformWithEsbuild(`function render(a) { ${state}\n${confirm}\nreturn (<>${section}</>); }`, 'md-comment.jsx', { jsx: 'transform' });
+  const placeholderDeclaration = source.match(/^const MD_COMMENT_PLACEHOLDER = .+;$/m)[0];
+  const { code } = await transformWithEsbuild(`${placeholderDeclaration}\nfunction render(a) { ${state}\n${confirm}\nreturn (<>${section}</>); }`, 'md-comment.jsx', { jsx: 'transform' });
   const hooks = []; let cursor = 0, effects = [], analysis = { mdComment: initial }, tree;
   const bindings = {
     React: { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
@@ -62,7 +63,7 @@ async function form(initial = '', onChange = () => {}, onNext = async () => {}) 
   const textarea = () => nodes(tree).find((node) => node.type === 'textarea');
   show();
   // 확정 함수도 같은 초안 훅의 클로저를 사용하도록 렌더 반환값에 함께 담는다.
-  const { code: withConfirm } = await transformWithEsbuild(`function render(a) { ${state}\n${confirm}\nreturn { tree: (<>${section}</>), confirmAnalysis }; }`, 'md-confirm.jsx', { jsx: 'transform' });
+  const { code: withConfirm } = await transformWithEsbuild(`${placeholderDeclaration}\nfunction render(a) { ${state}\n${confirm}\nreturn { tree: (<>${section}</>), confirmAnalysis }; }`, 'md-confirm.jsx', { jsx: 'transform' });
   const renderConfirm = new Function(...Object.keys(bindings), `${withConfirm}; return render;`)(...Object.values(bindings));
   return { show, textarea, focus() { textarea().props.onFocus(); },
     type(value) { textarea().props.onChange({ target: { value } }); show(); },
@@ -134,14 +135,14 @@ test('포커스만 하고 쓰지 않았으면 갱신된 저장값을 되돌려 �
   h.focus(); h.show({ mdComment: '새 저장값' }); h.blur();
   assert.deepEqual(patches, []); assert.equal(h.textarea().props.value, '새 저장값');
 });
-test('빈 칸에만 힌트가 보이고 글자 수, 접근성 이름, 세 줄 예시를 제공한다', async () => {
-  const h = await form(); assert.equal(h.hint(), true); assert.equal(h.count(), '0/300');
+test('안내 문구 없이 글자 수, 접근성 이름, 세 줄 예시를 제공한다', async () => {
+  const h = await form(); assert.equal(h.hint(), false); assert.equal(h.count(), '0/300');
   assert.equal(h.textarea().props['aria-label'], 'MD 코멘트');
   assert.equal(h.textarea().props.maxLength, 300); assert.equal(h.textarea().props.rows, 3);
   assert.equal(h.textarea().props.placeholder, placeholder);
   h.focus(); h.type('가을 니트'); assert.equal(h.hint(), false); assert.equal(h.count(), '5/300');
   assert.match(h.field().props.className, /is-filled/);
-  h.type('  '); assert.equal(h.hint(), true); assert.equal(h.count(), '2/300');
+  h.type('  '); assert.equal(h.hint(), false); assert.equal(h.count(), '2/300');
 });
 test('칸 안 여백과 글자 수를 눌러도 textarea로 포커스를 옮긴다', async () => {
   const h = await form(); let focused = 0;
