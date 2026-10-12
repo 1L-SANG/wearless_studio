@@ -621,6 +621,10 @@ class Settings:
     def __post_init__(self):
         if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError("DETAIL_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
+        if any(isinstance(model, str) and model.startswith("claude-")
+               for model in (self.model_detail_core, self.model_detail_specialist)):
+            if not (self.anthropic_api_key or "").strip():
+                raise ValueError("Claude 검수 모델을 쓰려면 ANTHROPIC_API_KEY가 필요해요.")
 
 
 def _image_usage_persist(app_env: str) -> bool:
