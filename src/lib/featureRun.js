@@ -203,15 +203,26 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
           await sleep(delay + random() * 500);
         }
       }
+      if (valid() && !frozen()) {
+        if (record.features) {
+          if (deferFeatures) return lateDetails();
+          if (await checkpoint('received')) await process();
+        } else await checkpoint('failed');
+      }
     })().catch(async () => { if (valid() && !frozen()) await checkpoint('failed').catch(() => {}); })
       .finally(() => { requesting = null; if (valid() && record.coreReceived && record.stage === 'received') void process(); });
     return requesting;
   };
   const controller = {
-    async start(options) {
+    prepare(options) {
       input = options;
       record = { runId: options.runId, startedAt: options.startedAt ?? now(), deadlineAt: (options.startedAt ?? now()) + 30000,
-        photoSignature: options.photoSignature, attempts: 0, coreReceived: false, early: [], stage: 'requested' };
+        photoSignature: options.photoSignature ?? null, attempts: 0, coreReceived: false, early: [], stage: 'preparing' };
+      return record;
+    },
+    async start(options) {
+      controller.prepare(options);
+      record = { ...record, stage: 'requested' };
       if (await persist({ dismissedAiPoints: [] })) { notify(); void request(); }
       return record;
     },
@@ -247,6 +258,12 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
       return controller;
     },
     getRecord: () => record,
+    async failCore() {
+      if (!valid() || frozen()) return;
+      record = { ...record, coreFailed: true };
+      await checkpoint('failed');
+      invalid = true;
+    },
     getProjectId: () => projectId,
     claimPromotion(pid) { projectId = pid; },
     getAnalysis: () => frozenAnalysis || readAnalysis(),

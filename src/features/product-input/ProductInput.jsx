@@ -1,7 +1,7 @@
 import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
 import { createDraftFeatureRun, restoreDraftFeatureRun } from '@/lib/featureRunDraft.js';
 import { getActiveFeatureRun } from '@/lib/featureRun.js';
-import { preparePublicAnalysis, analysisPhotoKey } from '@/lib/api/publicAnalysisRequest.js';
+import { analysisPhotoKey } from '@/lib/api/publicAnalysisRequest.js';
 import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/product-input — ① 제품 정보 입력 (PRD §5)
@@ -1069,21 +1069,24 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     const restoredGeneration = useAppStore.getState().projectGeneration;
     const restoredRun = await restoreDraftFeatureRun(payload, {
       readProduct: () => latestProductRef.current, readAnalysis: () => latestAnalysisRef.current,
+      swatchColors: catalogs?.swatchColors,
       isCurrent: () => useAppStore.getState().projectGeneration === restoredGeneration,
+      onProduct: (next) => {
+        latestProductRef.current = next; persistedColorsRef.current = next.colors || [];
+        if (mountedRef.current) setProduct(next);
+      },
       onAnalysis: (next) => {
         latestAnalysisRef.current = next; featureSavedAnalysisRef.current = next;
-        if (mountedRef.current) {
-          setAnalysis(next);
-          if (!payload.analysis.featureRun.coreReceived && next.featureRun?.coreReceived) {
-            const patch = analysisResponseProductPatch(next);
-            latestProductRef.current = { ...latestProductRef.current, ...patch };
-            setProduct(latestProductRef.current);
-          }
-        }
+        if (mountedRef.current) setAnalysis(next);
       },
     });
     if (!mountedRef.current || useAppStore.getState().projectGeneration !== restoredGeneration) return;
-    if (restoredRun?.getRecord().coreReceived) setPhase('done');
+    if (restoredRun?.getRecord().coreReceived) {
+      const restoredAnalysis = restoredRun.getAnalysis?.() || latestAnalysisRef.current;
+      setInputConsistency(restoredAnalysis?.inputConsistency || null);
+      setConsistencyAck(false);
+      setPhase('done');
+    }
     else if (!restoredRun) setPhase('input');
   };
 
@@ -1438,8 +1441,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
-      queueProductDraftSave(product, analysis, composeMode);
-      await flushProductDraftSave();
+      if (!isAnalysisFastEntryEnabled()) {
+        queueProductDraftSave(product, analysis, composeMode);
+        await flushProductDraftSave();
+      }
       // 로그인 여부와 무관하게 확정 전 분석은 publicAnalyze 경로다. 로그인 세션의 Bearer는
       // optional_user 레이트리밋 우선권에만 쓰이며, 보관함 project는 아직 만들지 않는다.
       setAnalysisProjectId(null);
@@ -1447,12 +1452,15 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       let a;
       if (isAnalysisFastEntryEnabled()) {
         const key = analysisPhotoKey(product);
-        const prepared = await preparePublicAnalysis(product);
-        if (!mountedRef.current || analysisPhotoKey(latestProductRef.current) !== key) return;
         featureRun = createDraftFeatureRun({ product, analysis: null,
           readProduct: () => latestProductRef.current,
           readAnalysis: () => latestAnalysisRef.current,
+          swatchColors: catalogs?.swatchColors,
           isCurrent: () => useAppStore.getState().projectGeneration === analysisGeneration,
+          onProduct: (next) => {
+            latestProductRef.current = next; persistedColorsRef.current = next.colors || [];
+            if (mountedRef.current) setProduct(next);
+          },
           onAnalysis: (next) => {
             latestAnalysisRef.current = next;
             featureSavedAnalysisRef.current = next;
@@ -1461,14 +1469,14 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
         });
         const runId = crypto.randomUUID();
         latestAnalysisRef.current = null;
-        await featureRun.start({ ...prepared, product, runId, startedAt });
-        a = await api.analyzeProduct(null, { product, ...prepared, parts: 'core', runId,
-          isCurrent: () => getActiveFeatureRun() === featureRun
-            && analysisPhotoKey(latestProductRef.current) === key
-            && useAppStore.getState().projectGeneration === analysisGeneration });
+        a = await featureRun.startAnalysis({ runId, startedAt, composeMode });
         if (!a || !mountedRef.current || getActiveFeatureRun() !== featureRun
           || useAppStore.getState().projectGeneration !== analysisGeneration
           || analysisPhotoKey(latestProductRef.current) !== key) return;
+        setInputConsistency(a.inputConsistency || null);
+        setConsistencyAck(false);
+        setAnalysisReady(true);
+        return;
       } else {
         a = await api.analyzeProduct(null, { product });
       }
@@ -1482,15 +1490,10 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
         ...analyzedProductPatch,
       }, a);
       persistedColorsRef.current = nextProduct.colors || [];
-      if (!featureRun) setProduct(nextProduct);
+      setProduct(nextProduct);
       latestProductRef.current = nextProduct;
       const coreAnalysis = mergeProductOwnedAnalysisFields(a, nextProduct);
-      if (featureRun) {
-        latestAnalysisRef.current = { ...latestAnalysisRef.current, ...coreAnalysis };
-        queueProductDraftSave(nextProduct, latestAnalysisRef.current, composeMode);
-        await featureRun.receiveCore(coreAnalysis);
-        if (mountedRef.current) setProduct(nextProduct);
-      } else setAnalysis(coreAnalysis);
+      setAnalysis(coreAnalysis);
       // 사진 묶음이 바뀌었을 수 있으므로 이전 판정의 확인 상태는 버린다.
       setInputConsistency(a.inputConsistency || null);
       setConsistencyAck(false);
@@ -1498,6 +1501,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
       setAnalysisReady(true);
     } catch (e) {
       featureRun?.invalidate();
+      if (featureRun && (!mountedRef.current || getActiveFeatureRun() !== featureRun
+          || useAppStore.getState().projectGeneration !== analysisGeneration)) return;
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
       toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert', variant: 'error', error: e, kind: 'analysis_error', actionName: 'analyze', messageCode: 'analysis_failed', blocking: true });

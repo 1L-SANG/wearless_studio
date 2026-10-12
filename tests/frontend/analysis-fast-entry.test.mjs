@@ -156,6 +156,42 @@ test('requested 새로고침은 기한이 지난 뒤에도 남은 시도로 재�
   await f.run.resume({ runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000, attempts: 1, coreReceived: true, early, pointsTicket: 'p', stage: 'requested' }); await drain();
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0].attempt, 2); assert.equal(f.run.getRecord().deadlineAt, 30000);
 });
+for (const time of [0, 35000]) test(`3회 요청을 쓴 requested 복원은 실패를 저장하고 진행 표시와 기다림을 끝낸다 (${time}ms)`, async () => {
+  const f = fixture(); await f.tick(time);
+  const stages = [];
+  const unsubscribe = f.run.subscribe((record) => stages.push(record?.stage));
+  const saved = { runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000,
+    attempts: 3, coreReceived: true, early, pointsTicket: 'p', stage: 'requested' };
+  f.change({ featureRun: saved }); await f.run.resume(saved);
+  await drain(); unsubscribe();
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.analysis.featureRun?.stage, 'failed');
+  assert.equal(f.writes.at(-1)?.featureRun.stage, 'failed');
+  assert.equal(isFeatureRunPending(f.analysis.featureRun), false);
+  assert.equal(stages.includes('failed'), true);
+  assert.equal(await f.run.wait(), 'settled');
+  assert.deepEqual(f.analysis.sellingPoints, early);
+});
+for (const coreReceived of [false, true]) test(`3회 요청을 쓴 복원은 이미 받은 특징을 새 요청 없이 정착시킨다 (핵심 수신 ${coreReceived})`, async () => {
+  const f = fixture();
+  const saved = { runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000,
+    attempts: 3, coreReceived, early, pointsTicket: 'p', stage: 'requested',
+    features: { points: { status: 'ready', items: late }, featureTicket: 'f',
+      detailRecommendations: { status: 'ready' }, detailRecommendationsHandoff: { signature: 'detail' } } };
+  f.change({ featureRun: saved }); await f.run.resume(saved);
+  await drain();
+  if (!coreReceived) {
+    assert.equal(f.run.getRecord().stage, 'received');
+    assert.deepEqual(f.analysis.sellingPoints, early);
+    await core(f); await drain();
+  }
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.run.getRecord().stage, 'applied');
+  assert.equal(f.analysis.featureRun.stage, 'applied');
+  assert.deepEqual(f.analysis.sellingPoints, [late[0], early[1], late[1]]);
+  assert.equal(f.analysis.detailRecommendationsHandoff.signature, 'detail');
+  assert.equal(await f.run.wait(), 'settled');
+});
 test('기한까지 10초 미만이면 형식 실패를 재요청하지 않고 문구만 적용한다', async () => {
   const response = deferred(); const f = fixture({ request: () => response.promise }); await start(f); await core(f); await f.tick(21000);
   response.resolve({ points: { status: 'ready', items: late }, featureTicket: 'f', detailRecommendations: { status: 'unavailable' }, detailRecommendationsHandoff: 'bad' }); await drain();
@@ -239,6 +275,22 @@ for (const attempts of [2, 3]) test(`로그인 복귀 requested 재요청은 기
   assert.equal(f.run.getRecord().attempts, 3);
   assert.equal(f.run.getRecord().deadlineAt, 30000);
   if (attempts === 2) assert.equal(f.calls[0].attempt, 3);
+});
+test('로그인 복귀의 소진된 requested 기록에 특징이 있어도 칩은 고정하고 늦은 디테일만 승격한다', async () => {
+  const f = fixture();
+  await f.run.resume({ runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000,
+    attempts: 3, coreReceived: true, early, pointsTicket: 'p', stage: 'requested',
+    features: { points: { status: 'ready', items: late }, featureTicket: 'f',
+      detailRecommendations: { status: 'ready' }, detailRecommendationsHandoff: { signature: 'detail' } } }, {}, { promotion: true });
+  await drain();
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.analysis.sellingPoints, early);
+  f.run.freeze('project'); await drain();
+  assert.equal(f.run.getRecord().stage, 'committing'); assert.deepEqual(f.details, []);
+  f.run.committed(); await drain();
+  assert.deepEqual(f.details, [['project', { signature: 'detail' }]]);
+  assert.deepEqual(f.run.getAnalysis().sellingPoints, early);
+  f.run.committed(); await f.run.setEditing(false); await drain(); assert.equal(f.details.length, 1);
 });
 
 

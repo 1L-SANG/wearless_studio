@@ -112,6 +112,166 @@ test('핵심 저장 뒤 받은 특징 기록이 저장된 coreReceived를 되돌
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes; }); return { promise, resolve }; };
 const readyFeatures = (point) => ({ points: { status: 'ready', items: [point] }, featureTicket: 'f' });
 
+for (const phase of ['flush', 'hash', 'prepared']) test(`분석 준비 ${phase} 중 재진입은 같은 실행에 합류하고 원본을 보존한다`, async (t) => {
+  const draft = await savedDraft(); draft.analysis = null;
+  const originalSrc = URL.createObjectURL(draft.photos[0].blob);
+  const returnedSrc = URL.createObjectURL(draft.photos[0].blob);
+  t.after(() => { URL.revokeObjectURL(originalSrc); URL.revokeObjectURL(returnedSrc); });
+  draft.product = product(originalSrc);
+  const storage = draftStoreFixture(t, draft), hashing = deferred(), core = deferred(); let coreCalls = 0, featureCalls = 0;
+  if (phase === 'flush') storage.pauseWrites();
+  else {
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    t.mock.method(crypto.subtle, 'digest', async (...args) => { await hashing.promise; return digest(...args); });
+  }
+  replace(t, { analyzePublicFeatures: () => { featureCalls++; return new Promise(() => {}); },
+    analyzeProduct: () => { coreCalls++; return core.promise; } });
+  let currentProduct = draft.product, analysis = null;
+  const bindings = () => ({ readProduct: () => currentProduct, readAnalysis: () => analysis,
+    onAnalysis: (next) => { analysis = next; }, onProduct: (next) => { currentProduct = next; } });
+  const run = runtime.createDraftFeatureRun({ product: currentProduct, analysis, ...bindings() });
+  const startedAt = Date.now();
+  const requesting = run.startAnalysis({ runId: 'preparing_run_123', startedAt, composeMode: 'basic' });
+  await drainDraftTasks();
+  assert.equal(run.getRecord().stage, 'preparing'); assert.equal(coreCalls, 0);
+  storage.releaseWrites();
+  const store = await vite.ssrLoadModule('/src/lib/draftStore.js');
+  await store.flushProductDraftSave();
+  const snapshot = await store.loadDraft();
+  assert.equal(snapshot.analysis.featureRun.stage, 'preparing');
+  if (phase === 'prepared') { hashing.resolve(); await drainDraftTasks(); assert.equal(coreCalls, 1); }
+  URL.revokeObjectURL(originalSrc); currentProduct = product(returnedSrc); analysis = snapshot.analysis;
+  const returning = runtime.restoreDraftFeatureRun(snapshot, bindings()); await drainDraftTasks();
+  hashing.resolve(); await drainDraftTasks();
+  assert.equal(coreCalls, 1); assert.equal(featureCalls, 1); assert.equal(features.getActiveFeatureRun(), run);
+  core.resolve({ suggestedName: '준비를 이어간 상품', sellingPoints: ['특징'], aiSuggestedPoints: ['특징'], pointsTicket: 'p' });
+  await requesting; assert.equal(await returning, run);
+  assert.equal(currentProduct.colors[0].images[0].src, returnedSrc);
+  assert.equal(storage.saved.analysis.featureRun.coreReceived, true);
+  assert.equal(storage.saved.analysis.featureRun.runId, 'preparing_run_123');
+  assert.equal(storage.saved.analysis.featureRun.deadlineAt, startedAt + 30000);
+  assert.deepEqual(await storage.saved.photos[0].blob.arrayBuffer(), await draft.photos[0].blob.arrayBuffer());
+});
+
+for (const returnBeforeCore of [false, true]) test(`다른 화면에 머물러도 핵심 분석과 상품 저장을 마치고 같은 요청에 합류한다 (응답 전 복귀 ${returnBeforeCore})`, async (t) => {
+  const draft = await savedDraft(); draft.analysis.featureRun.coreReceived = false;
+  draft.analysis.featureRun.early = []; draft.analysis.sellingPoints = []; draft.analysis.aiSuggestedPoints = [];
+  const storage = draftStoreFixture(t, draft), core = deferred(); let calls = 0;
+  replace(t, { analyzePublicFeatures: () => new Promise(() => {}), analyzeProduct: () => { calls++; return core.promise; } });
+  let currentProduct = draft.product, analysis = draft.analysis, visible = true, uiUpdates = 0;
+  const bindings = () => ({ readProduct: () => currentProduct, readAnalysis: () => analysis,
+    onProduct: (next) => { currentProduct = next; if (visible) uiUpdates++; },
+    onAnalysis: (next) => { analysis = next; if (visible) uiUpdates++; } });
+  const run = runtime.createDraftFeatureRun({ product: currentProduct, analysis, ...bindings() });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] }); await drainDraftTasks();
+  const requesting = run.requestCore({ product: draft.product, photos: [] });
+  const joined = run.requestCore();
+  visible = false; const previousUpdates = uiUpdates;
+  let returning;
+  if (returnBeforeCore) returning = runtime.restoreDraftFeatureRun(storage.saved, bindings());
+  await drainDraftTasks(); assert.equal(calls, 1);
+  const inputConsistency = { offending: [{ slot: 'Back', reason: '다른 의류' }] };
+  core.resolve({ suggestedName: '분석한 니트', clothingType: 'knit', sellingPoints: ['핵심 특징'], aiSuggestedPoints: ['핵심 특징'], inputConsistency,
+    swatchSuggestions: [{ colorGroupId: 'base', swatchId: 'ivory', colorName: '크림' }], pointsTicket: 'p' });
+  assert.deepEqual((await requesting).inputConsistency, inputConsistency);
+  assert.deepEqual((await joined).inputConsistency, inputConsistency);
+  await drainDraftTasks();
+  assert.equal(uiUpdates, previousUpdates);
+  assert.equal(storage.saved.analysis.featureRun.coreReceived, true);
+  assert.deepEqual(storage.saved.analysis.inputConsistency, inputConsistency);
+  assert.deepEqual(storage.saved.analysis.sellingPoints, ['핵심 특징']);
+  assert.equal(storage.saved.product.name, '분석한 니트'); assert.equal(storage.saved.product.clothingType, 'knit');
+  assert.equal(storage.saved.product.colors[0].name, '크림'); assert.equal(storage.saved.product.colors[0].swatchId, 'ivory');
+  assert.equal(storage.saved.photos[0].blob, draft.photos[0].blob);
+  if (!returning) {
+    analysis = draft.analysis; currentProduct = product('blob:returned');
+    returning = runtime.restoreDraftFeatureRun(draft, bindings());
+  }
+  assert.equal(await returning, run); assert.equal(calls, 1);
+  assert.equal(analysis.featureRun.coreReceived, true); assert.deepEqual(analysis.sellingPoints, ['핵심 특징']);
+  assert.equal(currentProduct.name, '분석한 니트');
+  if (!returnBeforeCore) assert.equal(currentProduct.colors[0].images[0].src, 'blob:returned');
+});
+
+for (const change of ['photo', 'run']) test(`화면 밖 핵심 응답도 다른 ${change}에는 저장하지 않는다`, async (t) => {
+  const draft = await savedDraft(); draft.analysis.featureRun.coreReceived = false;
+  const storage = draftStoreFixture(t, draft), core = deferred(); let currentProduct = draft.product;
+  replace(t, { analyzePublicFeatures: () => new Promise(() => {}), analyzeProduct: () => core.promise });
+  const run = runtime.createDraftFeatureRun({ product: currentProduct, analysis: draft.analysis, readProduct: () => currentProduct });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] }); await drainDraftTasks();
+  const requesting = run.requestCore({ product: draft.product, photos: [] }); await drainDraftTasks();
+  if (change === 'photo') currentProduct = product('blob:replacement');
+  else runtime.createDraftFeatureRun({ product: product('blob:new-run'), analysis: null });
+  const writes = storage.writes.length;
+  core.resolve({ suggestedName: '옛 상품', sellingPoints: ['옛 특징'], aiSuggestedPoints: ['옛 특징'] });
+  assert.equal(await requesting, null); await drainDraftTasks();
+  assert.equal(storage.writes.length, writes); assert.equal(storage.saved.analysis.featureRun.coreReceived, false);
+});
+test('핵심 상품 저장 중 재진입해도 새 사진 주소를 폐기된 이전 주소로 되돌리지 않는다', async (t) => {
+  const draft = await savedDraft(); draft.analysis.featureRun.coreReceived = false;
+  const storage = draftStoreFixture(t, draft); let currentProduct = draft.product, analysis = draft.analysis;
+  replace(t, { analyzePublicFeatures: () => new Promise(() => {}), analyzeProduct: async () => ({
+    suggestedName: '저장 중인 상품', sellingPoints: ['핵심 특징'], aiSuggestedPoints: ['핵심 특징'], pointsTicket: 'p' }) });
+  const bindings = () => ({ readProduct: () => currentProduct, readAnalysis: () => analysis,
+    onProduct: (next) => { currentProduct = next; }, onAnalysis: (next) => { analysis = next; } });
+  const run = runtime.createDraftFeatureRun({ product: currentProduct, analysis, ...bindings() });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] }); await drainDraftTasks();
+  storage.pauseWrites();
+  const requesting = run.requestCore({ product: draft.product, photos: [] }); await drainDraftTasks();
+  assert.equal(storage.waitingWrites, 1);
+  currentProduct = product('blob:returned');
+  const returning = runtime.restoreDraftFeatureRun(storage.saved, bindings()); await drainDraftTasks();
+  storage.releaseWrites(); await requesting; assert.equal(await returning, run);
+  assert.equal(currentProduct.colors[0].images[0].src, 'blob:returned');
+  assert.equal(currentProduct.name, '저장 중인 상품');
+  assert.equal(storage.saved.photos[0].blob, draft.photos[0].blob);
+  assert.equal(storage.saved.analysis.featureRun.coreReceived, true);
+});
+
+test('화면 밖 핵심 분석 실패를 저장하고 재진입은 대기를 끝내 새 분석으로 재시도한다', async (t) => {
+  const draft = await savedDraft(); draft.analysis.featureRun.coreReceived = false;
+  const storage = draftStoreFixture(t, draft); let calls = 0;
+  replace(t, { analyzePublicFeatures: () => new Promise(() => {}), analyzeProduct: async () => {
+    if (++calls === 1) throw new Error('core failed');
+    return { suggestedName: '다시 분석한 상품', sellingPoints: ['재시도 특징'], aiSuggestedPoints: ['재시도 특징'], pointsTicket: 'p' };
+  } });
+  const run = runtime.createDraftFeatureRun({ product: draft.product, analysis: draft.analysis });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] });
+  await assert.rejects(run.requestCore({ product: draft.product, photos: [] }), /core failed/);
+  assert.equal(storage.saved.analysis.featureRun.coreFailed, true); assert.equal(storage.saved.analysis.featureRun.stage, 'failed');
+  assert.equal(await runtime.restoreDraftFeatureRun(storage.saved), null); assert.equal(calls, 1);
+  const retry = runtime.createDraftFeatureRun({ product: draft.product, analysis: null });
+  await retry.start({ runId: 'retry_core_run', photoSignature: draft.analysis.featureRun.photoSignature, product: draft.product, photos: [] });
+  await retry.requestCore({ product: draft.product, photos: [] });
+  assert.equal(calls, 2); assert.equal(storage.saved.analysis.featureRun.coreReceived, true);
+  assert.deepEqual(storage.saved.analysis.sellingPoints, ['재시도 특징']);
+});
+for (const changed of ['account', 'identity']) test(`계정 ${changed} 세대가 바뀌면 옛 핵심 저장을 막고 새 실행으로 초안을 복원한다`, async (t) => {
+  const draft = await savedDraft(); draft.analysis.featureRun.coreReceived = false;
+  const storage = draftStoreFixture(t, draft), response = deferred(); let requests = 0, accountGeneration = 1;
+  const { clientEvents } = await vite.ssrLoadModule('/src/lib/clientEvents.js');
+  const { draftSlot } = await vite.ssrLoadModule('/src/lib/draftSlot.js');
+  t.mock.method(clientEvents, 'getAccountGeneration', () => accountGeneration);
+  draftSlot.setUserId('account-a'); t.after(() => draftSlot.resetIdentity());
+  replace(t, { analyzePublicFeatures: () => new Promise(() => {}), analyzeProduct: () => ++requests === 1 ? response.promise
+    : Promise.resolve({ suggestedName: '새 계정 상품', sellingPoints: ['새 계정 특징'], aiSuggestedPoints: ['새 계정 특징'], pointsTicket: 'p' }) });
+  const run = runtime.createDraftFeatureRun({ product: draft.product, analysis: draft.analysis });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] }); await drainDraftTasks();
+  const requesting = run.requestCore({ product: draft.product, photos: [] }); await drainDraftTasks();
+  const writes = storage.writes.length;
+  if (changed === 'account') accountGeneration++;
+  else draftSlot.setUserId('account-b');
+  response.resolve({ suggestedName: '이전 계정 상품', sellingPoints: ['이전 계정 특징'], aiSuggestedPoints: ['이전 계정 특징'] });
+  assert.equal(await requesting, null); assert.equal(storage.writes.length, writes);
+  assert.equal(runtime.getDraftFeatureRun(storage.saved), null);
+  const restored = await runtime.restoreDraftFeatureRun(storage.saved); await drainDraftTasks();
+  assert.notEqual(restored, run); assert.equal(requests, 2);
+  assert.equal(storage.saved.analysis.featureRun.coreReceived, true);
+  assert.deepEqual(storage.saved.analysis.sellingPoints, ['새 계정 특징']);
+  assert.equal('accountGeneration' in storage.saved.analysis.featureRun, false);
+  assert.equal('identityEpoch' in storage.saved.analysis.featureRun, false);
+});
+
 for (const sellerEdited of [false, true]) for (const coreFirst of [false, true]) test(`A 사진 승격 중 B 분석은 실행을 유지하고 각 상품 결과를 저장한다, B 핵심 먼저 ${coreFirst}, 셀러 편집 ${sellerEdited}`, { timeout: 5000 }, async (t) => {
   const draft = await savedDraft(sellerEdited ? 'applied' : 'requested'); const storage = draftStoreFixture(t, draft);
   const upload = deferred(), aFeatures = deferred(), bFeatures = deferred(), bCore = deferred();
