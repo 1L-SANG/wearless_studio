@@ -2210,7 +2210,7 @@ export function Editor() {
   // 컷풀 = wardrobe(생성컷) ⨝ wardrobeContext.storyboard(블록 contentRole). 컷 없으면 no-op(빈 슬롯).
   const roledCutsNow = () => buildRoledCutPool(wardrobe || {}, wardrobeContext.current.storyboard);
   const addFrame = (f, idx) => {
-    const nb = autofillBlocks([buildFrameBlock(f, uid)], roledCutsNow())[0];
+    const nb = autofillBlocks([buildFrameBlock(f, uid, product)], roledCutsNow())[0];
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
   };
@@ -2219,7 +2219,7 @@ export function Editor() {
   //  ③ 정보·업로드 등 컷 아닌 원본 블록은 그대로 보존. 컷-섹션 블록만 드롭(사진은 슬롯/뒤에 남아 손실 0).
   const overwriteDetailPageTemplate = (setId) => {
     const pool = roledCutsNow();
-    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), pool);
+    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid, product), pool);
     if (!built.length) return;
     const originals = latestBlocks.current || blocks;
     const placed = filledSrcSet(built);

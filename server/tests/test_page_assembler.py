@@ -2,6 +2,7 @@
 (블록 매핑, 자동 블록, 카피라이팅 on/off, 빈 슬롯 폴백, 결정적 id)."""
 
 from app.agents.page_assembler import assemble, build_auto_blocks
+import pytest
 
 PRODUCT = {
     "name": "소프트 골지 라운드 니트",
@@ -12,6 +13,75 @@ PRODUCT = {
         {"key": "sleeveLength", "value": None, "unit": "cm"},
     ],
 }
+
+
+def _ghost_storyboard(direction="front", color_id="navy"):
+    return [
+        {"id": "hero", "sectionRole": "hooking", "contentRole": "hero", "source": "ai", "cutType": "styling"},
+        {"id": "ghost", "sectionRole": "product", "contentRole": "productOverview", "source": "ai", "cutType": "product", "direction": direction, "colorId": color_id},
+    ]
+
+
+@pytest.mark.parametrize("direction,tag", [("front", "FRONT"), ("back", "BACK")])
+@pytest.mark.parametrize("color,suffix", [
+    ({"id": "navy", "name": "네이비", "label": "다른 이름", "swatchId": "black"}, " · 네이비"),
+    ({"id": "navy", "label": "워시드 블랙", "swatchId": "navy"}, " · 워시드 블랙"),
+    ({"id": "navy", "swatchId": "navy"}, " · 네이비"),
+    ({"id": "navy", "name": "긴 색상 이름 " * 30}, " · " + ("긴 색상 이름 " * 30).strip()),
+    ({"id": "navy", "name": "", "swatchId": None}, ""),
+    ({"id": "other", "name": "다른 색"}, ""),
+])
+def test_ghost_tags_resolve_color_names_and_keep_wide_box_clear_of_photo(direction, tag, color, suffix):
+    product = {**PRODUCT, "colors": [color, {"id": "base", "name": "아이보리"}]}
+    block = assemble(_ghost_storyboard(direction), [], [], product, False)[1]
+    label = next(el for el in block["elements"] if el.get("copyRole") == "label")
+    photo = next(el for el in block["elements"] if el["type"] == "image")
+    assert label["text"] == tag + suffix
+    assert (label["x"], label["y"], label["w"], label["h"]) == (60, 44, 880 if suffix else 400, 38)
+    assert label["y"] + label["h"] <= photo["y"]
+    if suffix:
+        assert len(label["text"]) * (label["style"]["size"] + label["style"].get("tracking", 0)) <= 880
+
+
+@pytest.mark.parametrize("direction,tag", [("front", "FRONT"), ("back", "BACK")])
+def test_single_color_ghost_tags_keep_original_text_and_geometry(direction, tag):
+    block = assemble(_ghost_storyboard(direction), [], [], {**PRODUCT, "colors": [{"id": "navy", "name": "네이비"}]}, False)[1]
+    label = next(el for el in block["elements"] if el.get("copyRole") == "label")
+    assert label["text"] == tag
+    assert (label["x"], label["y"], label["w"], label["h"]) == (60, 44, 400, 38)
+
+
+@pytest.mark.parametrize("layout,directions", [("twoColumn", ["front", "back"]), ("threeColumn", ["front", "back", "front"])])
+@pytest.mark.parametrize("color_name", ["네이비", ("워시드 네이비 " * 12).strip()])
+def test_row_color_labels_stay_below_their_own_photo_and_fit_the_column(layout, directions, color_name):
+    storyboard = [{**_ghost_storyboard(direction)[1], "id": f"ghost-{i}", "sectionId": "ghosts",
+                   "sectionLayout": layout, "layoutRowId": "ghost-row", "layoutRowVersion": 1}
+                  for i, direction in enumerate(directions)]
+    product = {**PRODUCT, "colors": [{"id": "navy", "name": color_name}, {"id": "base", "name": "아이보리"}]}
+    block = assemble(storyboard, [], [], product, False)[0]
+    labels = [el for el in block["elements"] if el.get("copyRole") == "label"]
+    photos = [el for el in block["elements"] if el["type"] == "image"]
+    assert [el["text"] for el in labels] == [("BACK" if direction == "back" else "FRONT") + " · " + color_name for direction in directions]
+    positions, width = ([60, 510], 430) if layout == "twoColumn" else ([60, 360, 660], 280)
+    assert [(el["x"], el["y"], el["w"]) for el in labels] == [(x, 566, width) for x in positions]
+    for label, photo in zip(labels, photos):
+        assert label["sourceBlockId"] == photo["sourceBlockId"]
+        assert (label["x"], label["w"]) == (photo["x"], photo["w"])
+        assert label["y"] >= photo["y"] + photo["h"]
+        assert len(label["text"]) * (label["style"]["size"] + label["style"].get("tracking", 0)) <= label["w"]
+    assert labels[-1]["y"] + labels[-1]["h"] <= block["h"]
+
+
+def test_mixed_row_keeps_unresolved_label_position_and_width():
+    storyboard = [{**_ghost_storyboard(direction, color_id)[1], "id": f"ghost-{i}", "sectionId": "ghosts",
+                   "sectionLayout": "twoColumn", "layoutRowId": "ghost-row", "layoutRowVersion": 1}
+                  for i, (direction, color_id) in enumerate([("front", "navy"), ("back", "missing")])]
+    product = {**PRODUCT, "colors": [{"id": "navy", "name": "네이비"}, {"id": "base", "name": "아이보리"}]}
+    labels = [el for el in assemble(storyboard, [], [], product, False)[0]["elements"] if el.get("copyRole") == "label"]
+    assert labels[0]["text"] == "FRONT · 네이비"
+    assert labels[1]["text"] == "BACK"
+    assert (labels[1]["x"], labels[1]["y"], labels[1]["w"], labels[1]["h"]) == (510, 566, 430, 42)
+    assert (labels[0]["x"], labels[0]["y"], labels[0]["w"], labels[0]["h"]) == (60, 566, 430, 42)
 
 
 def _storyboard():

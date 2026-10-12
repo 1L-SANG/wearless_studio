@@ -106,7 +106,6 @@ export const POLICY_DEFAULT_SECTIONS = [
   { title: '구매 전 확인해주세요', body: '모니터 해상도와 촬영 환경에 따라 실제 색상과 다소 차이가 있을 수 있어요.\n측정 위치에 따라 실측 치수는 1~3cm 오차가 있을 수 있어요.' },
 ];
 
-const DEFAULT_MATRIX_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
 const DEFAULT_MATRIX_HEIGHTS = ['~160cm', '160~170cm', '170~180cm', '180cm~'];
 const DEFAULT_MATRIX_WEIGHTS = ['~55kg', '55~65kg', '65~75kg', '75~85kg', '85kg~'];
 
@@ -194,8 +193,7 @@ export function defaultInfoFor(type, ctx = {}) {
     case 'fit_guide':
       return { fits: ['slim', 'regular', 'semi_over', 'over'], current: ctx.fit || null };
     case 'size_matrix': {
-      const cells = DEFAULT_MATRIX_HEIGHTS.map((_, hi) => DEFAULT_MATRIX_WEIGHTS.map((_w, wi) =>
-        DEFAULT_MATRIX_SIZES[Math.min(DEFAULT_MATRIX_SIZES.length - 1, Math.max(0, Math.round((hi + wi) / 2)))]));
+      const cells = DEFAULT_MATRIX_HEIGHTS.map(() => DEFAULT_MATRIX_WEIGHTS.map(() => ''));
       return { heights: [...DEFAULT_MATRIX_HEIGHTS], weights: [...DEFAULT_MATRIX_WEIGHTS], cells,
         note: '체형에 따라 다를 수 있어요 · 상세 실측 치수 확인을 권장드려요' };
     }

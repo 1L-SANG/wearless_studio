@@ -442,7 +442,7 @@ function SizeMatrixForm({ info, setInfo }) {
   const setWeight = (c, v) => setInfo((f) => ({ ...f, weights: f.weights.map((x, i) => (i === c ? v : x)) }));
   return (
     <>
-      <Field label="키 × 몸무게 추천 사이즈" hint="칸에 추천 사이즈(S/M/L…)를 적어요. 기본값은 일반적인 상의 기준이에요.">
+      <Field label="키 × 몸무게 추천 사이즈" hint="칸마다 추천 사이즈를 적어 주세요.">
         <div style={{ overflowX: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: `90px repeat(${info.weights.length}, 1fr)`, gap: 4, minWidth: 480 }}>
             <span style={{ fontSize: 12, color: '#898989', alignSelf: 'center' }}>cm / kg</span>
