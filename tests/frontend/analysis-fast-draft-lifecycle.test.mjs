@@ -32,6 +32,29 @@ function replace(t, methods) {
   t.after(() => { for (const [name, fn] of Object.entries(old)) api[name] = fn; sync.resetDraftSyncSingleFlight(); features.setActiveFeatureRun(null); });
 }
 
+test('실행 조정자의 핵심 응답에 이전 상품 사진이 섞여도 현재 원본과 Blob을 보존한다', async (t) => {
+  const draft = await savedDraft();
+  draft.analysis.featureRun.coreReceived = false;
+  const storage = draftStoreFixture(t, draft);
+  const colors = structuredClone(draft.product.colors);
+  const originalBlob = draft.photos[0].blob;
+  replace(t, {
+    analyzePublicFeatures: () => new Promise(() => {}),
+    analyzeProduct: async () => ({ suggestedName: '새 상품 분석', clothingType: 'top',
+      sellingPoints: ['이번 상품 특징'], aiSuggestedPoints: ['이번 상품 특징'], pointsTicket: 'p',
+      colors: [{ id: 'base', images: [{ id: 'old-product-photo', slot: 'Front', src: '/old-product-photo' }] }] }),
+  });
+  let updatedProduct;
+  const run = runtime.createDraftFeatureRun({ product: draft.product, analysis: draft.analysis,
+    onProduct: (next) => { updatedProduct = next; } });
+  await run.resume(draft.analysis.featureRun, { product: draft.product, photos: [] });
+  await run.requestCore({ product: draft.product, photos: [] });
+  assert.deepEqual(updatedProduct.colors, colors);
+  assert.deepEqual(storage.saved.product.colors, colors);
+  assert.equal(storage.saved.photos[0].blob, originalBlob);
+  assert.deepEqual(storage.saved.analysis.sellingPoints, ['이번 상품 특징']);
+});
+
 test('로그인 복귀 requested 승격은 기한 뒤 재요청을 기다리지 않고 끝내고 늦은 디테일만 한 번 승격한다', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 35000 });
   const draft = await savedDraft(); draft.analysis.featureRun.startedAt = 0; draft.analysis.featureRun.deadlineAt = 30000;

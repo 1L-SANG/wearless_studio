@@ -53,15 +53,19 @@ test('분석 응답에서 유도한 상품 패치에는 colors 가 없다', () =
   assert.equal('fit' in patch, false, 'fit 은 분석 소유 필드다');
 });
 
-test('submit 과 진행 중 분석 복구 둘 다 그 패치를 쓴다', () => {
+test('최초 분석과 프로젝트 복구, 실행 조정자가 모두 사진 보호 패치를 쓴다', () => {
   const src = read('../../src/features/product-input/ProductInput.jsx');
+  const coordinator = read('../../src/lib/featureRunDraft.js');
   const imports = src.slice(0, src.indexOf('draftSlot.configure'));
   assert.match(imports, /\banalysisResponseProductPatch\b/,
     '호출하는 가드를 ProductInput 이 실제로 import 해야 한다');
   assert.equal(
-    (src.match(/analysisResponseProductPatch\(/g) || []).length, 3,
-    '최초 분석, 프로젝트 복구, 특징 실행 복원의 핵심 응답이 같은 가드를 지나야 한다',
+    (src.match(/analysisResponseProductPatch\(/g) || []).length, 2,
+    '기존 최초 분석과 프로젝트 복구의 응답은 화면의 가드를 지나야 한다',
   );
+  assert.match(coordinator, /\banalysisResponseProductPatch\b/);
+  assert.match(coordinator, /\.\.\.analysisResponseProductPatch\(core\)/,
+    '화면 밖에서 끝난 핵심 분석도 조정자에서 같은 사진 보호 가드를 지나야 한다');
   assert.equal(src.includes('splitAnalysisEditPatch(a).productPatch'), false,
     '가드 없는 옛 경로가 남아 있으면 안 된다');
 });
