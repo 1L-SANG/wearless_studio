@@ -173,8 +173,8 @@ test('mock asset-info checks list format and maximum request size', async () => 
 
 test('mock color edit inherits scene recipe, moves to selected color group, and records result identity', async () => {
   const result = await mock.generateImage('project', edit('color', 'ivory', 'mock-color'));
-  assert.equal(result.credits, 181);
-  assert.equal(result.creditsCharged, 19);
+  assert.equal(result.credits, 195);
+  assert.equal(result.creditsCharged, 5);
   assert.equal(result.data.assetId, result.data.id);
   assert.equal(result.data.wardrobeGroup, 'ivory');
   const info = (await mock.getEditorAssetInfo('project', [result.data.assetId])).items[result.data.assetId];
@@ -191,6 +191,8 @@ test('mock closure applies binary normalization and preserves its source color g
   DB.analysis.frontClosure = { version: 1, kind: 'button', range: 'binary' };
   const result = await mock.generateImage('project', edit('closure', 'partial', 'mock-binary'));
   const info = (await mock.getEditorAssetInfo('project', [result.data.assetId])).items[result.data.assetId];
+  assert.equal(result.credits, 195);
+  assert.equal(result.creditsCharged, 5);
   assert.equal(info.origin, 'editor_closure');
   assert.equal(info.current.outerClosureState, 'closed');
   assert.equal(result.data.wardrobeGroup, 'navy');
@@ -223,6 +225,8 @@ test('mock upload supports similar and garment edits without inventing current r
     assert.equal(info.kind, 'upload');
     assert.deepEqual(info.current, { colorId: null, outerClosureState: null, direction: null, detailTargetId: null });
     const similar = await mock.generateImage('project', { mode: 'vary', variationMode: 'similar', source: { src: upload.url }, idempotencyKey: 'upload-similar' });
+    assert.equal(similar.creditsCharged, 8);
+    assert.equal(similar.credits, 192);
     assert.equal(similar.data.cutType, 'styling');
     assert.equal(similar.data.similarCut.sourceAssetId, upload.assetId);
     const next = await mock.generateImage('project', { mode: 'vary', variationMode: 'similar', source: { src: similar.data.src }, idempotencyKey: 'upload-similar-again' });
@@ -315,10 +319,10 @@ test('mock same-key joins reuse one job and charge while payload changes are rej
   assert.equal(one.data.id, two.data.id);
   assert.equal(jobs.length, 2);
   assert.equal(jobs[0], jobs[1]);
-  assert.equal(DB.account.credits, 181);
+  assert.equal(DB.account.credits, 195);
   assert.equal(DB.wardrobe.ivory.length, 1);
   assert.equal((await mock.generateImage('project', request)).data.id, one.data.id);
-  assert.equal(DB.account.credits, 181);
+  assert.equal(DB.account.credits, 195);
 });
 
 test('mock empty-slot joins preserve the same-slot operation across different keys', async () => {

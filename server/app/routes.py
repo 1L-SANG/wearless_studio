@@ -2324,6 +2324,8 @@ async def get_credit_quote(
         },
         "storyboardPerCut": settings.credit_cost_storyboard_per_cut,
         "editorImage": settings.credit_cost_editor_image,
+        "editorEdit": settings.credit_cost_editor_edit,
+        "editorSimilar": settings.credit_cost_editor_similar,
     }
 
 
@@ -3352,7 +3354,7 @@ async def generate_editor_image(
       새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
       이 키로 보장됩니다. ADR-0017의 retryBlockId가 있으면 서버 저장 콘티에서 설정을
       복원하며, 같은 빈 칸의 진행 중 작업에 합류해 새 크레딧을 예약하지 않습니다.
-    - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
+    - **에지 케이스**: `402 Payment Required` — 행동별 크레딧(기본 5/8/19)이 없으면 발생
     """
     fill_requested = (body or {}).get("mode") == "fill"
     edit_requested = ((body or {}).get("mode") == "vary"
@@ -3375,7 +3377,6 @@ async def generate_editor_image(
             "촬영 세트는 콘티보드에서만 사용할 수 있어요.",
         )
     s = request.app.state.settings
-    cost = s.credit_cost_editor_image
     scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
     # holder 수요는 **커넥션을 잡기 전에** 남긴다 — 라우트 커넥션을 쥔 채로 풀에서 하나 더 잡으면
     # 동시 요청이 풀 크기만큼 올 때 서로의 두 번째 커넥션을 기다린다(2026-09-08 풀 고갈 계열).
@@ -3663,6 +3664,14 @@ async def generate_editor_image(
                     "modelId": str(license_row["model_id"]),
                     "licenseId": str(license_row["id"]),
                 }
+        # 검증·복원한 요청으로 단가를 고른다. 빈 칸은 내부 vary/similar여도 이미지 생성값이다.
+        # 워커는 이 예약액을 확정·해제하므로 배포 도중 단가가 바뀌어도 다시 계산하지 않는다.
+        cost = s.credit_cost_editor_image
+        if not fill_requested and not payload.get("retryBlockId") and payload.get("mode") == "vary":
+            if payload.get("variationMode") in ("color", "closure"):
+                cost = s.credit_cost_editor_edit
+            elif payload.get("variationMode") == "similar":
+                cost = s.credit_cost_editor_similar
         try:
             job, created = await repo.create_job(
                 conn, user_id=user_id, project_id=project_id, kind="editor_image",

@@ -296,7 +296,7 @@ def post_edit(client, make_token, mode="color", key="edit", **extra):
 
 @pytest.mark.parametrize("mode", ["color", "closure"])
 @pytest.mark.parametrize("source", ["ai", "upload"])
-def test_edit_accepts_worn_and_upload_with_19_reserved(client, make_token, edit_route, mode, source):
+def test_edit_accepts_worn_and_upload_with_5_reserved(client, make_token, edit_route, mode, source):
     edit_route["asset"]["source"] = source
     if source == "upload":
         edit_route["asset"]["metadata"] = {}
@@ -304,7 +304,7 @@ def test_edit_accepts_worn_and_upload_with_19_reserved(client, make_token, edit_
     response = post_edit(client, make_token, mode)
     assert response.status_code == 202, response.text
     assert response.json() == {"jobId": "j1"}
-    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == 19
+    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == 5
     assert edit_route["job"]["payload"]["source"]["cutType"] == ("styling" if source == "upload" else "horizon")
 
 
@@ -392,6 +392,50 @@ def test_upload_similar_without_cut_type(client, make_token, edit_route, client_
     response = post_edit(client, make_token, "similar", source={"src": SRC, "cutType": client_cut_type})
     assert response.status_code == 202, response.text
     assert edit_route["job"]["payload"]["source"]["cutType"] == "styling"
+    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == 8
+
+
+@pytest.mark.parametrize("mode,cost", [("color", 7), ("closure", 7), ("similar", 11)])
+def test_editor_reserves_server_price_and_ignores_client_price(client, make_token, edit_route, mode, cost):
+    client.app.state.settings = make_settings(credit_cost_editor_edit=7, credit_cost_editor_similar=11)
+    response = post_edit(client, make_token, mode, creditCost=1, creditsCharged=1)
+    assert response.status_code == 202, response.text
+    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == cost
+
+
+@pytest.mark.parametrize("body", [
+    {"mode": "new", "cutType": "styling"},
+    {"mode": "new", "cutType": "product", "shot": "ghost", "colorId": "blue", "variationMode": "color"},
+    {"mode": "new", "cutType": "product", "shot": "ghost", "direction": "back"},
+    {"mode": "new", "cutType": "product", "shot": "detail", "detailTargetId": "pocket"},
+    {"mode": "vary", "source": {"src": SRC}},
+])
+def test_other_editor_requests_keep_image_price(client, make_token, edit_route, body):
+    edit_route["asset"]["metadata"]["detail_recipe"] = {"version": 1}
+    response = client.post("/v1/projects/p1/editor:generate-image", headers=auth_headers(make_token), json=body)
+    assert response.status_code == 202, response.text
+    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == 19
+
+
+@pytest.mark.parametrize("fill", [False, True])
+def test_empty_slot_similar_keeps_image_price(client, make_token, edit_route, monkeypatch, fill):
+    payload = {"mode": "vary", "variationMode": "similar", "source": {"src": SRC}}
+    if fill:
+        monkeypatch.setattr(repo, "find_context_fill_job", AsyncMock(return_value=None))
+        monkeypatch.setattr(routes, "_prepare_context_fill", AsyncMock(return_value={
+            **payload, "_contextFill": {"slot": {"blockId": "b", "elementId": "e"}, "slotKey": "b:e",
+                "label": "스타일링 · 비슷한 컷", "path": "similar", "cutType": "horizon", "colorId": "base"}}))
+        request = {"mode": "fill", "slot": {"blockId": "b", "elementId": "e"}}
+    else:
+        from app.agents import horizon_background
+        monkeypatch.setattr(repo, "get_storyboard", AsyncMock(return_value=[]))
+        monkeypatch.setattr(repo, "get_editor_blocks", AsyncMock(return_value=[]))
+        monkeypatch.setattr(horizon_background, "restore_failed_retry", lambda body, *_: body)
+        request = {**payload, "retryBlockId": "blank"}
+    headers = {**auth_headers(make_token), "Idempotency-Key": "empty"}
+    response = client.post("/v1/projects/p1/editor:generate-image", headers=headers, json=request)
+    assert response.status_code == 202, response.text
+    assert edit_route["reserved"] == edit_route["job"]["credits_reserved"] == 19
 
 
 def png():
@@ -404,7 +448,8 @@ def png():
     ("closure", "closed", "fully closed"), ("closure", "openToChest", "hand width below"),
     ("closure", "partial", "solar plexus"), ("closure", "openToWaist", "navel"),
     ("closure", "open", "unzip it completely")])
-def test_edit_worker_inputs_prompt_size_group_and_generation(recording_runtime, monkeypatch, mode, value, marker):
+@pytest.mark.parametrize("reserved", [5, 19])
+def test_edit_worker_inputs_prompt_size_group_and_generation(recording_runtime, monkeypatch, mode, value, marker, reserved):
     state = recording_runtime
     state["product"]["colors"].append({"id": "blue", "images": [
         {"id": B, "slot": "Back"}, {"id": C, "slot": "Front"}]})
@@ -432,7 +477,7 @@ def test_edit_worker_inputs_prompt_size_group_and_generation(recording_runtime, 
     state["app"].state.gemini = Gemini()
     field = "colorId" if mode == "color" else "outerClosureState"
     request = {"mode": "vary", "variationMode": mode, "source": {"src": SRC, "cutType": "horizon"}, field: value}
-    asyncio.run(worker.run_editor_image_job(state["app"], worker_job(request, credits_reserved=19)))
+    asyncio.run(worker.run_editor_image_job(state["app"], worker_job(request, credits_reserved=reserved)))
     assert "failure" not in state, state.get("failure")
     model, prompt, images, size, options = calls[0]
     assert model == "gpt-image-2.5-flare" and marker in prompt
@@ -450,7 +495,7 @@ def test_edit_worker_inputs_prompt_size_group_and_generation(recording_runtime, 
     expected[field] = value
     assert record == {"version": 1, "origin": "editor_" + mode, "autoSelected": False,
                       "sourceAssetId": A, "recipeFrom": "anchor", "recipe": expected}
-    assert state["success"]["charge"] == state["success"]["reserved"] == 19
+    assert state["success"]["charge"] == state["success"]["reserved"] == reserved
 
 
 class EditLineageConn:
@@ -705,21 +750,24 @@ def test_fill_same_key_different_slot_rejected():
     assert caught.value.status == 409
 
 
-def test_editor_key_conflict_is_409_and_same_request_reserves_once(client, make_token, edit_route, monkeypatch):
+@pytest.mark.parametrize("mode,cost", [("color", 5), ("closure", 5), ("similar", 8)])
+def test_editor_key_conflict_is_409_and_same_request_reserves_once(client, make_token, edit_route, monkeypatch, mode, cost):
     db = JobsDB([])
     async def create(conn, **kw):
         return await CREATE_JOB(db, **kw)
     monkeypatch.setattr(repo, "create_job", create)
     reserve = AsyncMock(return_value=81)
     monkeypatch.setattr(repo, "reserve_credits", reserve)
-    first = post_edit(client, make_token)
-    repeated = post_edit(client, make_token, source={"src": SRC, "cutType": "forged"}, _garmentEdit={"targetAssetId": "forged"})
+    first = post_edit(client, make_token, mode)
+    client.app.state.settings = make_settings(credit_cost_editor_edit=7, credit_cost_editor_similar=11)
+    repeated = post_edit(client, make_token, mode, source={"src": SRC, "cutType": "forged"}, _garmentEdit={"targetAssetId": "forged"})
     assert first.status_code == repeated.status_code == 202
     assert first.json() == repeated.json()
-    conflict = post_edit(client, make_token, "closure")
+    conflict = post_edit(client, make_token, "closure" if mode == "color" else "color")
     assert conflict.status_code == 409
     assert conflict.json()["error"] == {"code": "idempotency_key_reused", "message": "같은 요청 번호로 다른 내용이 왔어요. 다시 눌러 주세요."}
     assert reserve.await_count == db.inserts == 1
+    assert reserve.await_args.args[-1] == cost
 
 
 @pytest.mark.parametrize("slot", ["Back", "Detail"])
@@ -746,7 +794,8 @@ def test_color_worker_falls_back_to_first_target_photo(recording_runtime, monkey
 
 
 @pytest.mark.parametrize("mode", ["color", "closure"])
-def test_edit_provider_failure_never_charges_or_publishes(recording_runtime, monkeypatch, mode):
+@pytest.mark.parametrize("reserved", [5, 19])
+def test_edit_provider_failure_never_charges_or_publishes(recording_runtime, monkeypatch, mode, reserved):
     state = recording_runtime
     state["product"]["colors"].append({"id": "blue", "images": [{"id": B, "slot": "Front"}]})
     monkeypatch.setattr(repo, "list_wardrobe_images", AsyncMock(return_value=[]))
@@ -754,13 +803,14 @@ def test_edit_provider_failure_never_charges_or_publishes(recording_runtime, mon
         raise GeminiError("provider failed")
     monkeypatch.setattr(garment_edit, "generate", generate)
     asyncio.run(worker.run_editor_image_job(state["app"], worker_job({"mode": "vary", "variationMode": mode,
-        "source": {"src": SRC}, "colorId": "blue", "outerClosureState": "closed"}, credits_reserved=19)))
-    assert "success" not in state and state["failure"]["reserved"] == 19
+        "source": {"src": SRC}, "colorId": "blue", "outerClosureState": "closed"}, credits_reserved=reserved)))
+    assert "success" not in state and state["failure"]["reserved"] == reserved
     assert "charge" not in state["failure"]
 
 
 @pytest.mark.parametrize("success", [False, True])
-def test_upload_similar_planning_failure_releases_19(recording_runtime, monkeypatch, success):
+@pytest.mark.parametrize("reserved", [8, 19])
+def test_upload_similar_settles_saved_reservation(recording_runtime, monkeypatch, success, reserved):
     state = recording_runtime
     monkeypatch.setattr(repo, "get_project_asset_for_user", AsyncMock(return_value={
         "id": A, "source": "upload", "metadata": {}, "r2_key": "upload", "mime_type": "image/png"}))
@@ -782,11 +832,11 @@ def test_upload_similar_planning_failure_releases_19(recording_runtime, monkeypa
         return b"OUTPUT", "image/png"
     monkeypatch.setattr(worker.cut_variator, "generate", generate)
     asyncio.run(worker.run_editor_image_job(state["app"], worker_job({"mode": "vary", "variationMode": "similar",
-        "source": {"src": SRC, "cutType": "product"}, "_similarCut": envelope}, credits_reserved=19)))
+        "source": {"src": SRC, "cutType": "product"}, "_similarCut": envelope}, credits_reserved=reserved)))
     if success:
-        assert state["success"]["charge"] == 19 and "failure" not in state
+        assert state["success"]["charge"] == reserved and "failure" not in state
     else:
-        assert "success" not in state and state["failure"]["reserved"] == 19
+        assert "success" not in state and state["failure"]["reserved"] == reserved
         assert "charge" not in state["failure"]
         assert "No person" in state["failure"]["metadata"]["error"]
 
@@ -835,18 +885,20 @@ def test_asset_info_accepts_empty_and_60_ids(client, make_token, edit_route, ids
     assert asset_recipe.resolve_asset_recipes.await_args.args[-1] == list(dict.fromkeys(ids))
 
 
-def test_success_wardrobe_result_and_event_include_asset_id(monkeypatch):
+@pytest.mark.parametrize("reserved", [5, 8, 19])
+def test_success_wardrobe_result_and_event_include_asset_id(monkeypatch, reserved):
     from test_asset_privacy_metadata import _Conn
     conn = _Conn()
     monkeypatch.setattr(repo, "_consume_buckets", AsyncMock(return_value=81))
     result = asyncio.run(repo.finalize_editor_image_success(conn, job_id="j", lease_token="l", user_id="u", project_id="p",
         image={"asset_id": A, "bucket": "r2", "key": "out.png", "mime": "image/png"}, group="blue", cut_type="styling",
-        reserved=19, charge=19, metadata={}))
+        reserved=reserved, charge=reserved, metadata={}))
     assert result["assetId"] == A
     envelope = next(params[0].obj for sql, params in conn.statements if sql.startswith("update jobs set status = 'done'"))
     event = next(params[1].obj for sql, params in conn.statements if sql.startswith("insert into job_events"))
     assert event == envelope and envelope["data"]["assetId"] == A
-    assert envelope["creditsCharged"] == 19 and envelope["credits"] == 81
+    assert envelope["creditsCharged"] == reserved and envelope["credits"] == 81
+    assert repo._consume_buckets.await_args.kwargs["action_key"] == "editorImage"
 
 
 @pytest.mark.parametrize("mode", ["color", "closure"])

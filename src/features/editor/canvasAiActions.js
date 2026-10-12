@@ -3,6 +3,12 @@ import { classifyEditorAssetInfo } from '../../lib/editorAssetInfo.js';
 import { OUTER_CLOSURE_VALUES, outerClosureRange, outerClosureDisplayValue, outerClosureCaption } from '../../lib/outerClosure.js';
 import { productSourcePhotos } from '../../lib/productSourcePhotos.js';
 import { selectableDetailTargets, detailTargetPresentation } from '../../lib/detailRecommendations.js';
+import { editorImageCreditCost } from '../../lib/limits.js';
+
+export function canvasAiActionCreditCost(kind, action, creditCosts) {
+  return editorImageCreditCost({ mode: ['worn', 'upload'].includes(kind) ? 'vary' : 'new',
+    variationMode: action }, creditCosts);
+}
 
 const RECIPE_FIELDS = Object.freeze([
   'sectionRole', 'contentRole', 'cutType', 'shot', 'direction', 'sideStyle', 'colorId',

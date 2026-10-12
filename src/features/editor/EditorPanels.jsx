@@ -500,7 +500,7 @@ export function AIPanel({ product, detailRecommendations, frontClosure, catalogs
         matchIds: isProduct ? [] : matchIds,
         refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
         refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
-      })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 1} 크레딧`}</Button>
+      })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 19} 크레딧`}</Button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CREDIT_COSTS } from '../../lib/limits.js';
+import { CREDIT_COSTS, editorImageCreditCost } from '../../lib/limits.js';
+import { canvasAiActionCreditCost } from './canvasAiActions.js';
 import { calculateCanvasAiPlacement } from './canvasAiPlacement.js';
 import { canvasAiProgressSize, canvasAiProgressVisible } from './canvasAiApply.js';
 
@@ -77,7 +78,7 @@ export function CanvasAiProgress({ job, onCancel, onDismiss, slot = false }) {
 }
 
 export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, assetError,
-  job, visible, cost = CREDIT_COSTS.editorImage, onAction, onCancel, onDismiss, onUpload,
+  job, visible, creditCosts = { editorImage: CREDIT_COSTS.editorImage }, onAction, onCancel, onDismiss, onUpload,
   onReplace, onAdd, replaceReason }) {
   const layerRef = useRef(null);
   const menuRef = useRef(null);
@@ -163,8 +164,10 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
       : (current + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
     items[index].focus();
   };
-  const describe = (item) => setHover(item?.description ? { description: busy ? '지금 만들고 있어요' : item.description,
-    price: busy ? null : item.price || `${cost} 크레딧` } : busy ? { description: '지금 만들고 있어요' } : null);
+  const describe = (item, actionId = item?.id) => setHover(item?.description ? { description: busy ? '지금 만들고 있어요' : item.description,
+    price: busy ? null : item.price || `${canvasAiActionCreditCost(menu.kind, actionId, creditCosts)} 크레딧` } : busy ? { description: '지금 만들고 있어요' } : null);
+  const resultCost = job?.response?.creditsCharged ?? job?.result?.creditsCharged
+    ?? editorImageCreditCost(job?.request, creditCosts);
   const action = (id, value) => {
     if (busy) return;
     const node = [...(layerRef.current?.closest('.canvas-block')?.querySelectorAll('[data-elid]') || [])]
@@ -211,7 +214,9 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
               : menu.branches.map(branchButton)}
     </div>}
     {showResult && !open && <div className="canvas-ai-result">
-      <div className="canvas-ai-frame">
+      <div className="canvas-ai-frame" onMouseEnter={() => describe({ description: 'AI로 생성한 새 컷', price: `${resultCost} 크레딧` })}
+        onMouseLeave={() => setHover(null)} onFocus={() => describe({ description: 'AI로 생성한 새 컷', price: `${resultCost} 크레딧` })}
+        onBlur={() => setHover(null)}>
         {job.status === 'arrived' ? <><img src={result?.src} alt="AI로 생성한 새 컷" draggable={false} /><span className="canvas-ai-new">새 컷</span>
           <button type="button" className="canvas-ai-close" aria-label="결과 자리 닫기" onClick={onDismiss}>×</button></>
           : <CanvasAiProgress job={job} onCancel={onCancel} onDismiss={onDismiss} />}
@@ -230,7 +235,7 @@ export function CanvasAiLayer({ block, element, scale, wrapRef, menu, loading, a
       return <button type="button" role="menuitem" key={option.value} aria-disabled={disabled ? 'true' : 'false'}
         aria-label={`${option.label}${option.current ? ', 지금 값' : ''}`}
         className={`canvas-ai-option${selectedBranch.id === 'color' ? ' is-color' : ' canvas-ai-pill'}${option.current ? ' is-current' : ''}`}
-        onMouseEnter={() => describe(option)} onMouseLeave={() => setHover(null)} onFocus={() => describe(option)} onBlur={() => setHover(null)}
+        onMouseEnter={() => describe(option, selectedBranch.id)} onMouseLeave={() => setHover(null)} onFocus={() => describe(option, selectedBranch.id)} onBlur={() => setHover(null)}
         onClick={() => { if (!disabled) action(selectedBranch.id, option.value); }}>
         {selectedBranch.id === 'color' ? <><span>{option.label}</span><span className="canvas-ai-color-dot"><ProductColor hex={option.hex} />{option.current && <Check />}</span></>
           : <>{selectedBranch.id === 'closure' ? <CanvasAiClosureGlyph value={option.value} /> : option.src && <span className="canvas-ai-source-picture"><img src={option.src} alt="" /></span>}

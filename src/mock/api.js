@@ -323,6 +323,8 @@ export const api = {
       mannequinRegenerate: mannequinRegenerationQuote(plan, DB.mannequins.length),
       storyboardPerCut: CREDIT_COSTS.storyboardPerCut,
       editorImage: CREDIT_COSTS.editorImage,
+      editorEdit: CREDIT_COSTS.editorEdit,
+      editorSimilar: CREDIT_COSTS.editorSimilar,
     };
   },
   async getPricingPlans() {
@@ -1009,7 +1011,7 @@ export const api = {
   },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
   //     | VaryRequest   { mode:'vary', source:{src,cutType}, variationMode?:'similar' }  (계약 §6)
-  async generateImage(_projectId, req = {}) {
+  async generateImage(_projectId, req = {}, { creditCost } = {}) {
     const isVary = req.mode === 'vary';
     const images = Object.entries(DB.wardrobe).flatMap(([group, items]) => items.map((image) => ({ ...image, wardrobeGroup: group })));
     const elements = (DB.editorBlocks || []).flatMap((block) => block.elements || []);
@@ -1054,7 +1056,8 @@ export const api = {
       };
     }
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);
-    return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage) };
+    const cost = creditCost ?? (isSimilar && !req.retryBlockId ? CREDIT_COSTS.editorSimilar : CREDIT_COSTS.editorImage);
+    return { data: clone(img), credits: spend(cost), creditsCharged: cost };
   },
   // a fresh "any image" — mock 전용 헬퍼 (실서비스 계약은 uploadAsset(file))
   async pickAnyImage() { await wait(120); return Placeholder.any('pick' + Date.now()); },

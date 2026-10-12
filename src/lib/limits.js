@@ -14,8 +14,27 @@ export const CREDIT_COSTS = Object.freeze({
   mannequinAdjust: 0, // @deprecated P2: 핏 프로필 재생성으로 대체
   storyboardPerCut: 19, // 콘티에서 상세페이지 생성: 컷 1개당
   storyboardMinCuts: 5, // 백엔드 고정 정책 credit_min_storyboard_cuts 미러
-  editorImage: 19, // 에디터에서 이미지 1장 생성/변형
+  editorImage: 19, // 에디터 새 이미지·고스트·디테일·빈 칸
+  editorEdit: 5, // 착용컷·업로드 색상/열림 고쳐 만들기
+  editorSimilar: 8, // 비슷한 컷
 });
+
+/** 서버가 새 키를 주기 전에는 기존 이미지 단가로 표시한다. 로컬 5/8을 섞지 않는다. */
+export function editorCreditCostsFromQuote(quote, fallbackImage = CREDIT_COSTS.editorImage) {
+  return {
+    editorImage: quote?.editorImage ?? fallbackImage,
+    ...(quote?.editorEdit != null ? { editorEdit: quote.editorEdit } : {}),
+    ...(quote?.editorSimilar != null ? { editorSimilar: quote.editorSimilar } : {}),
+  };
+}
+
+export function editorImageCreditCost(request, costs = CREDIT_COSTS) {
+  const image = costs?.editorImage ?? CREDIT_COSTS.editorImage;
+  if (request?.mode !== 'vary' || request.retryBlockId || request._contextFill) return image;
+  if (['color', 'closure'].includes(request.variationMode)) return costs?.editorEdit ?? image;
+  if (request.variationMode === 'similar') return costs?.editorSimilar ?? image;
+  return image;
+}
 
 export function detailPageCreditCost(aiCutCount) {
   if (aiCutCount == null) return null;

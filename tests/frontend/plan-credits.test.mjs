@@ -93,6 +93,8 @@ test('mock credit quote matches the server read contract', async (t) => {
     },
     storyboardPerCut: 19,
     editorImage: 19,
+    editorEdit: 5,
+    editorSimilar: 8,
   });
 });
 
