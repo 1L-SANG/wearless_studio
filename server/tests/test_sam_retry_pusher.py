@@ -1,11 +1,12 @@
 """재시도를 밀어줄 사람 — 톤 마스크는 셀러 폴링이 밀지만 이 둘은 보는 화면이 없다.
 
 디스패처 스윕에 얹지 않는다: 디스패처는 워커를 await 한 뒤 다음 반복으로 가므로
-(dispatcher.py), detail_page(평균 563초)가 도는 동안 스윕이 멈춘다 — 285초 예산의 타이머로
+(dispatcher.py), detail_page(평균 563초)가 도는 동안 스윕이 멈춘다. 165초 대기 예산의 타이머로
 쓸 수 없다.
 """
 
 import asyncio
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -81,6 +82,26 @@ def test_it_asks_the_repo_for_the_shared_budget():
     assert rec.list_calls[0]["min_age_seconds"] == min(sam_retry.BACKOFF_SECONDS)
 
 
+@pytest.mark.parametrize("mode", ["on", "full"])
+def test_direct_matching_never_probes_sam_or_creates_a_paid_retry(mode):
+    class Endpoint:
+        asked = 0
+
+        async def ready(self):
+            self.asked += 1
+            return True
+
+    endpoint = Endpoint()
+    app = SimpleNamespace(state=SimpleNamespace(
+        settings=SimpleNamespace(matching_flatlay=mode), sam_endpoint=endpoint))
+    recent = datetime.now(timezone.utc) - timedelta(seconds=5)
+    rec = _Recorder([_job(finished_at=recent)])
+    assert asyncio.run(SamRetryPusher(app)._push_once(rec, None)) == 0
+    assert rec.list_calls[0]["kinds"] == ("sam_preprocess",)
+    assert endpoint.asked == 0
+    assert rec.created == []
+
+
 def test_it_does_not_retry_an_input_verdict():
     rec = _Recorder([_job(result={"state": "failed", "reason": "no_cutout"})])
     assert _push(rec) == 0
@@ -93,11 +114,13 @@ def test_it_waits_for_the_backoff():
     assert _push(rec) == 0
 
 
-def test_it_stops_at_the_budget():
-    spent = _job(payload={"matchingItemId": "i1", "retry": sam_retry.MAX_RETRIES},
-                 idempotency_key=f"p:matching_cutout:i1:v1:r{sam_retry.MAX_RETRIES}")
+@pytest.mark.parametrize("kind", ["matching_cutout", "sam_preprocess"])
+def test_it_stops_after_three_retries(kind):
+    spent = _job(kind=kind, payload={"retry": 3},
+                 idempotency_key=f"p:{kind}:i1:v1:r3")
     rec = _Recorder([spent])
     assert _push(rec) == 0
+    assert rec.created == []
 
 
 def test_it_ignores_a_stale_generation():
@@ -150,7 +173,7 @@ def test_poll_interval_follows_the_shortest_backoff():
 #
 # 백오프 사다리(15/60/90/120)는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다.
 # 실측(2026-08-27): sam2 가 +146.7초에 준비됐는데 다음 시도는 사다리 격자에 걸려 있었다.
-# 살아난 걸 확인했으면 더 기다릴 이유가 없다. 예산(MAX_RETRIES=4)은 그대로 지킨다.
+# 살아난 걸 확인했으면 더 기다릴 이유가 없다. 공유 재시도 예산은 그대로 지킨다.
 
 class _State:
     def __init__(self, resolver):
@@ -237,7 +260,7 @@ def test_no_resolver_behaves_exactly_as_before():
 
 
 def test_the_budget_still_wins_over_a_live_sam():
-    """살아 있다고 예산을 넘겨 쓰면 안 된다 — 285초/4회는 오너 결정이다."""
+    """살아 있다고 예산을 넘겨 쓰면 안 된다. 165초 대기와 3회 재시도는 오너 결정이다."""
     rec = _Recorder([_fresh(payload={"retry": sam_retry.MAX_RETRIES})])
     assert _push_with(rec, _Resolver(ready=True)) == 0
 

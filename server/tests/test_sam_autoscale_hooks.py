@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+from dataclasses import replace
 
 import pytest
 
@@ -36,7 +37,7 @@ class _Conn:
         return None
 
 
-def _issue(client, make_token, monkeypatch):
+def _issue(client, make_token, monkeypatch, *, purpose="draft_slot"):
     """draft_slot 용도 — 프로젝트 조회를 건너뛰므로 DB 대역이 가장 작다."""
     client.app.state.r2 = _R2()
 
@@ -44,11 +45,14 @@ def _issue(client, make_token, monkeypatch):
     async def fake_conn(_request):
         yield _Conn()
     monkeypatch.setattr(routes, "get_conn", fake_conn)
+    async def project(*args):
+        return {"id": "p1"}
+    monkeypatch.setattr(routes.repo, "get_project", project)
     return client.post(
         "/v1/assets/upload-url",
         headers={"Authorization": f"Bearer {make_token()}"},
         json={"filename": "a.jpg", "mime": "image/jpeg", "size": 10,
-              "projectId": None, "purpose": "draft_slot"})
+              "projectId": None if purpose == "draft_slot" else "p1", "purpose": purpose})
 
 
 # ── 업로드 라우트 ──
@@ -72,6 +76,18 @@ def test_upload_url_works_without_a_scaler_on_state(client, make_token, monkeypa
         del client.app.state.sam_autoscaler
     r = _issue(client, make_token, monkeypatch)
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("mode", ["on", "full", "off"])
+@pytest.mark.parametrize("purpose", ["custom_match_source", "upload", "draft_slot"])
+def test_direct_matching_upload_does_not_wake_sam_but_product_photos_do(
+        client, make_token, monkeypatch, mode, purpose):
+    client.app.state.settings = replace(client.app.state.settings, matching_flatlay=mode)
+    sc = _Scaler()
+    client.app.state.sam_autoscaler = sc
+    result = _issue(client, make_token, monkeypatch, purpose=purpose)
+    assert result.status_code == 200, result.text
+    assert sc.soon_calls == (0 if mode in ("on", "full") and purpose == "custom_match_source" else 1)
 
 
 # ── SamUnavailable 중앙 훅 ──

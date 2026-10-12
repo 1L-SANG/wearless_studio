@@ -38,6 +38,26 @@ _ctx: contextvars.ContextVar[JobContext] = contextvars.ContextVar(
     "image_usage_ctx", default=JobContext())
 
 
+@dataclass
+class _CallRecording:
+    recorded: bool = False
+
+
+_call_recording: contextvars.ContextVar[_CallRecording | None] = contextvars.ContextVar(
+    "image_usage_call_recording", default=None)
+
+
+@contextmanager
+def observe_recording():
+    """이번 호출의 기록 시도 여부를 자식 태스크와 공유해 취소 때 중복 기록을 막는다."""
+    state = _CallRecording()
+    token = _call_recording.set(state)
+    try:
+        yield state
+    finally:
+        _call_recording.reset(token)
+
+
 def configure(pool=None, persist: bool = True) -> None:
     global _pool, _persist
     _pool = pool
@@ -68,6 +88,9 @@ def job_scope(job_id: str | None = None, user_id: str | None = None, stage: str 
 def record(*, model: str, image_size: str, usage: dict | None, latency_ms: int,
            has_image: bool = True, openai_account: str | None = None) -> None:
     """호출 1건 기록. 동기 함수 — 호출자를 절대 기다리게 하지 않는다."""
+    observed = _call_recording.get()
+    if observed is not None:
+        observed.recorded = True
     try:
         cost = estimate_cost(model, image_size, usage, has_image=has_image)
         ctx = _ctx.get()

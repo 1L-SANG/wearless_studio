@@ -18,6 +18,7 @@ import logging
 
 from app import repo as _repo
 from app.services import sam_retry
+from app.services import sam_autoscale
 
 log = logging.getLogger("wearless.sam_retry")
 
@@ -73,8 +74,10 @@ class SamRetryPusher:
         한 후보가 깨져 있어도 나머지는 민다 — best-effort 다. 세대가 두 갈래로 갈라지는 것만은
         막는다: base 키의 **최신** 세대가 바로 이 잡일 때만 다음 세대를 건다.
         """
+        settings = getattr(getattr(self.app, "state", None), "settings", None)
+        kinds = tuple(kind for kind in PUSH_KINDS if kind in sam_autoscale.sam_kinds_for(settings))
         candidates = await repo.list_retryable_sam_jobs(
-            conn, PUSH_KINDS, max_retries=sam_retry.MAX_RETRIES,
+            conn, kinds, max_retries=sam_retry.MAX_RETRIES,
             min_age_seconds=min(sam_retry.BACKOFF_SECONDS))
         pushed = 0
         ready_cache: list[bool] = []
@@ -106,6 +109,9 @@ class SamRetryPusher:
             return False
 
     async def _push_one(self, repo, conn, job: dict, sam_ready=None) -> bool:
+        settings = getattr(getattr(self.app, "state", None), "settings", None)
+        if job.get("kind") not in sam_autoscale.sam_kinds_for(settings):
+            return False
         if not sam_retry.job_is_retryable(job):
             return False                       # 판정 실패 — 다시 돌려도 같은 답이다
         if not sam_retry.within_revive_window(job):

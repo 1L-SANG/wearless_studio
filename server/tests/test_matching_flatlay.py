@@ -85,7 +85,7 @@ def test_derived_identity_is_deterministic_and_never_collides_with_the_cutout_th
 def test_fingerprint_mixes_in_the_flatlay_algorithm_version(monkeypatch):
     import hashlib
 
-    assert mf.ALGORITHM_VERSION == "matching-flatlay-v2"
+    assert mf.ALGORITHM_VERSION == "matching-flatlay-v3-original"
     assert mf.flatlay_fingerprint("h1") == mf.flatlay_fingerprint("h1")
     assert mf.flatlay_fingerprint("h1") != mf.flatlay_fingerprint("h2")
     # 소스 지문을 그대로 다시 해싱한 값이면 안 된다 — 버전이 섞여 있어야 한다.
@@ -150,14 +150,14 @@ def test_enabled_reads_the_flag_defensively():
     assert mf.enabled(types.SimpleNamespace()) is False, "미설정이면 off"
 
 
-def test_algorithm_version_bumped_for_strategy_b():
-    """v1 프롬프트로 구운 flat-lay 와 파생 신원이 섞이면 안 된다."""
-    assert mf.ALGORITHM_VERSION == "matching-flatlay-v2"
+def test_original_photo_generation_has_a_new_algorithm_identity():
+    """SAM 누끼를 입력한 v2와 원본을 직접 넣는 v3의 결과가 섞이지 않는다."""
+    assert mf.ALGORITHM_VERSION == "matching-flatlay-v3-original"
 
 
 
-def test_default_tier_is_pro_per_spike_report():
-    """리포트 추천 조합은 전략 B × Gemini 3 Pro Image — 기본값이 그것이어야 한다."""
+def test_default_tier_keeps_the_owners_pro_choice():
+    """디테일을 우선한 8/15 오너의 Pro 기본값은 이번 처리 방식 변경에서도 유지한다."""
     from conftest import make_settings
     from app.agents.model_routing import resolve_model
     s = make_settings()

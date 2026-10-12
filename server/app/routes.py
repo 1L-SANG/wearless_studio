@@ -1598,7 +1598,8 @@ async def match_candidates(
         if any(item.get("is_custom") for item in items):
             try:
                 has_active_cutout_job = await repo.has_active_matching_cutout_job(
-                    conn, project_id
+                    conn, project_id,
+                    **({"allow_sam_retry": False} if settings.matching_flatlay in ("on", "full") else {}),
                 )
             except Exception:  # noqa: BLE001 - 잡 상태 조회 실패가 매칭 응답을 막지 않는다
                 logger.warning("matching_cutout active-job lookup failed project=%s",
@@ -2165,7 +2166,9 @@ async def create_upload_url(
     # 무해 — reconciler 가 60초 안에 덮고, 어댑터가 off 면 즉시 return 한다. 동기 호출이라
     # 발급 응답을 기다리게 하지 않는다(task 생성·참조 보관은 SamAutoscaler.prewarm_soon 이 한다).
     scaler = getattr(request.app.state, "sam_autoscaler", None)
-    if scaler is not None:
+    if scaler is not None and not (
+            body.purpose == "custom_match_source"
+            and request.app.state.settings.matching_flatlay in ("on", "full")):
         with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
             scaler.prewarm_soon()
 

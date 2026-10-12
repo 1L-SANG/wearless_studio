@@ -12,6 +12,7 @@ import os
 import time
 
 from .. import image_usage, repo
+from ..services import matching_flatlay
 from .analyze_job import run_analyze_job
 from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
@@ -236,7 +237,8 @@ class JobDispatcher:
     async def _recover_stale(self, s, pool):
         async with pool.connection() as conn:
             await repo.recover_stale_leases(
-                conn, s.job_lease_timeout_seconds, self.kinds
+                conn, s.job_lease_timeout_seconds, self.kinds,
+                **({"no_requeue_kinds": ("matching_cutout",)} if matching_flatlay.enabled(s) else {}),
             )
             await conn.commit()
         # 예약 크레딧 미정산 error job 해제 — 이번 복구분 + 과거 해제 실패분까지 재시도.

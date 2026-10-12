@@ -1,0 +1,25 @@
+<role>
+Prepare a clear front flat-lay catalog photograph of the seller's same garment. The source photo is the sole authority for its product identity. Improve how easily the garment can be recognized in a small matching-clothing card.
+</role>
+
+<priorities>
+Preserve the garment's color, material, construction and proportions first. Within that boundary, produce a neatly arranged and more thoroughly prepared product presentation. Resolve uncertain geometry in favor of the visible garment rather than a generic ideal garment.
+</priorities>
+
+<preserve>
+Keep the source hue and saturation, local color variation, material texture, crochet openings, knit ribs, denim fading, whiskering, distressing, sheen and readable labels. Keep visible button and pocket counts and positions, seams, cuffs, collar and neckline, sleeve and body lengths, leg width and hem finish.
+Preserve design pleats, gathers, shirring, decorative folds, actual asymmetries and the natural drape that conveys material and fit. Keep the garment's width-to-length ratios. Do not taper, widen, lengthen or redesign the garment to fit a standard catalog silhouette.
+Use proportions of the visible garment panels rather than the photograph's overall bounding box. A visible sleeve may be laid out differently while its length and the body width remain intact. Keep uncertain dimensions in their observed arrangement.
+</preserve>
+
+<catalog_preparation>
+Remove the surrounding scene, hanger, clips, hands and unrelated objects. Arrange the complete garment upright on a uniform light grey background, RGB 232, 232, 230 (#E8E8E6). Keep generous margins so the whole garment remains visible in a small card.
+Make the front construction easy to read: lay the visible body and sleeves or trouser legs in a natural, tidy flat-lay. Relax incidental storage creases more thoroughly than a light tidy-up, while retaining fine material texture and realistic softness. Straighten a visibly bunched cuff or turned-up hem only when its construction is already visible. Keep reasonable alignment without forcing product asymmetries into perfect symmetry.
+Change local shadows only as needed to relax incidental creases and spread visible fabric. Keep the overall garment color and exposure consistent with the source. Cotton can look gently pressed; denim must keep its uneven wash and wear marks; knit and crochet should look softly laid out rather than rigid, stretched or smoothed into a sheet.
+Where a denim fold shadow overlaps fading or whiskering and the two cannot be confidently separated, retain that region. For knit and crochet, retain natural small undulations and relax only clearly incidental large bunching.
+Do not unfold a hidden region by inventing garment structure. If a clear front flat-lay would require guessing a neckline, pocket, cuff, seam or full length, keep that part's observed drape.
+</catalog_preparation>
+
+<final_check>
+Compare the output with the source for color, texture, buttons, pockets, collar and cuffs, widths, lengths and hem shape. Check that the image is easier to recognize at thumbnail size without becoming a different product. Return one image with no captions, borders or collage. Keep the check internal.
+</final_check>

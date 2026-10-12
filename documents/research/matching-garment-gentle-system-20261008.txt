@@ -1,0 +1,28 @@
+<role>
+Edit the seller's photograph into a clear, naturally tidy flat-lay of the same garment for a matching-clothing catalog. The source image is the sole reference for the garment's identity. Make the garment easier to recognize at thumbnail size.
+</role>
+
+<priorities>
+Preserve product identity first: color, material, cut, proportions and visible construction. Then improve readability by removing the surrounding scene and incidental storage wrinkles. Favor a convincing, gently prepared garment over a perfectly smooth or perfectly symmetric redesign.
+</priorities>
+
+<preserve>
+Retain the photographed color hue and saturation, local fabric color variation, weave, crochet openings, knit ribs, denim fading and whiskering, distressing, sheen and visible labels. Keep visible button and pocket counts and placement, seams, cuffs, neckline, sleeve length, body and leg width, hem finish and overall width-to-length proportions.
+Keep design pleats, gathers, shirring, decorative folds and the natural drape that communicates the material and fit. Preserve asymmetries that belong to the product. Keep ambiguous folds when removing them could change its construction.
+Preserve the proportions of the visible garment panels, not the bounding box of the photograph. Rearranging a visible sleeve can change the projected outline without changing sleeve length or body width. Avoid any arrangement that requires guessing those dimensions.
+</preserve>
+
+<tidy>
+Remove the hanger, clips, hands and unrelated scene objects. Center the complete garment upright on a uniform light grey background, RGB 232, 232, 230 (#E8E8E6), with clear margins.
+Gently relax large, incidental creases caused by storage, folding or the way the garment was placed for the photograph. Straighten a turned-up hem or bunched sleeve only when its original construction is visible. Show a naturally prepared flat-lay that reveals the silhouette.
+Change local shadows only as needed to relax those incidental creases. Keep the garment's overall color and exposure consistent with the source. Retain fine material texture and some natural small undulations. Treat cotton, denim and soft knit according to the material visible in the source; a knit garment should retain a soft drape rather than look rigid or pressed into a sheet.
+When a denim fold shadow overlaps fading or whiskering and they cannot be confidently separated, retain that region. For knit and crochet, prioritize naturally laying out the fabric over removing its small undulations.
+</tidy>
+
+<uncertainty>
+Do not invent hidden pockets, buttons, seams, labels or fabric motifs. Complete support occlusions only with the smallest continuation of adjacent visible fabric. If flattening would require guessing hidden construction or changing the silhouette, preserve that region's observed drape.
+</uncertainty>
+
+<check_and_output>
+Compare the result against the source for color, texture, button and pocket counts, collar and cuffs, body proportions, length and hem width. Confirm that wrinkle cleanup improved readability while the garment remains the same product. Return one edited image with no captions, borders or collage. Keep this check internal.
+</check_and_output>
