@@ -604,7 +604,7 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
 
   useEffect(() => {
     if (!product || mobileReadOnly || (mobile && (entryBusy || slotLock || handoff.gone))) return;
-    if (isAnalysisFastEntryEnabled() && featureSavedAnalysisRef.current === analysis) {
+    if (isAnalysisFastEntryEnabled() && featureSavedAnalysisRef.current !== null && featureSavedAnalysisRef.current === analysis) {
       featureSavedAnalysisRef.current = null;
       return;
     }
@@ -1098,8 +1098,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
     const canRestoreAnalysis = payload.analysis && (mobile || hasRequiredDraftPhotos(restored));
-    const awaitingCore = isAnalysisFastEntryEnabled() && payload.analysis?.featureRun && !payload.analysis.featureRun.coreReceived;
-    setPhase(canRestoreAnalysis ? (awaitingCore ? 'analyzing' : 'done') : 'input');
+    const awaitingCore = payload.analysis?.featureRun?.coreReceived === false;
+    setPhase(canRestoreAnalysis ? (awaitingCore ? (isAnalysisFastEntryEnabled() ? 'analyzing' : 'input') : 'done') : 'input');
     if (canRestoreAnalysis && isAnalysisFastEntryEnabled()) {
       void resumeFeatureAnalysis(payload).catch((error) => {
         if (mountedRef.current) { setPhase('input'); toast.push('분석을 이어서 불러오지 못했어요. 다시 시도해 주세요.', { icon: 'alert', error }); }
@@ -1307,7 +1307,8 @@ export function ProductInput({ onContentChange, initialSavedMeta, onFreshStart }
           latestProductRef.current = restored;
           latestAnalysisRef.current = draft.analysis;
           setAnalysis(draft.analysis);
-          setPhase(isAnalysisFastEntryEnabled() && draft.analysis.featureRun && !draft.analysis.featureRun.coreReceived ? 'analyzing' : 'done');
+          const awaitingCore = draft.analysis.featureRun?.coreReceived === false;
+          setPhase(awaitingCore ? (isAnalysisFastEntryEnabled() ? 'analyzing' : 'input') : 'done');
           await resumeFeatureAnalysis(draft);
         }
         return;

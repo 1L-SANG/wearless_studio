@@ -248,6 +248,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     },
     getRecord: () => record,
     getProjectId: () => projectId,
+    claimPromotion(pid) { projectId = pid; },
     getAnalysis: () => frozenAnalysis || readAnalysis(),
     subscribe(listener) { listeners.add(listener); listener(record); return () => listeners.delete(listener); },
     async setEditing(value) { editing = value; if (!value) await process(); },
@@ -283,7 +284,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
 let active = null;
 export const getActiveFeatureRun = () => active;
 export function setActiveFeatureRun(run) {
-  if (!['committing', 'committed'].includes(active?.getRecord()?.stage)) active?.invalidate();
+  if (!active?.getProjectId() && !['committing', 'committed'].includes(active?.getRecord()?.stage)) active?.invalidate();
   active = run;
   return run;
 }

@@ -699,6 +699,7 @@ export function AnalysisForm({
   }, [hasPendingCutout, projectId, applyMatchClothingRefresh]);
 
   const [highlightedPoints, setHighlightedPoints] = useState([]);
+  const previousFeatureRecordRef = useRef(a.featureRun);
   const featureRun = isAnalysisFastEntryEnabled() ? getActiveFeatureRun() : null;
   useEffect(() => {
     if (!featureRun) return undefined;
@@ -707,11 +708,14 @@ export function AnalysisForm({
   }, [featureRun, spEditIdx, spDraft]);
   useEffect(() => () => { void featureRun?.setEditing(false); }, [featureRun]);
   useEffect(() => {
-    if (!isAnalysisFastEntryEnabled() || a.featureRun?.stage !== 'applied' || !a.featureRun.changedPoints?.length) return undefined;
+    const previous = previousFeatureRecordRef.current;
+    previousFeatureRecordRef.current = a.featureRun;
+    if (!isAnalysisFastEntryEnabled() || previous?.runId !== a.featureRun?.runId || previous?.stage === 'applied'
+        || a.featureRun?.stage !== 'applied' || !a.featureRun.changedPoints?.length) return undefined;
     setHighlightedPoints(a.featureRun.changedPoints);
     const timer = setTimeout(() => setHighlightedPoints([]), 3000);
     return () => clearTimeout(timer);
-  }, [a.featureRun?.stage, a.featureRun?.changedPoints]);
+  }, [a.featureRun?.runId, a.featureRun?.stage]);
   const commitSp = () => {
     const t = spDraft.trim();
     if (!t) { setSpAdding(false); setSpDraft(''); return; }

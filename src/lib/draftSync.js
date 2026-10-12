@@ -1,4 +1,4 @@
-import { settleDraftFeatureRun } from './featureRunDraft.js';
+import { claimDraftFeatureRun, settleDraftFeatureRun } from './featureRunDraft.js';
 /* =============================================================
    draftSync — 비로그인 공개 입력 → 로그인 후 실서버 동기화 (Phase 2, 해결책 A).
 
@@ -33,6 +33,7 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
   draft = await ensureDraftRemotePhotos(draft);
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
+  if (draft.analysis?.featureRun) claimDraftFeatureRun(draft, projectId);
   draftPromotionSession.rememberProject(projectId);
   const seenQuote = mannequinQuoteConfirmation.seen('draft', 'generate');
   if (seenQuote) {

@@ -984,3 +984,62 @@ test('고른 로컬 초안도 특징 실행을 복원하고 핵심 수신 전에
   const tree = await h.settle();
   assert.equal(restoreCalls, 1); assert.ok(node(tree, 'AnalysisProgress')); assert.equal(node(tree, 'AnalysisForm'), undefined); h.cleanup();
 });
+
+for (const mobile of [false, true]) test(`빠른 진입 분석 전 사진 추가는 로컬과 서버 초안 저장을 예약한다, 휴대폰 ${mobile}`, async (t) => {
+  const storage = draftStoreFixture(t);
+  const photo = new Blob(['added photo'], { type: 'image/jpeg' });
+  const src = URL.createObjectURL(photo);
+  t.after(() => URL.revokeObjectURL(src));
+  const photos = { name: '', colors: [{ id: 'base', isBase: true, images: [] }] };
+  const h = harness({ mobile, fastEntry: true, photos, draftStore: localStore });
+  t.after(() => h.cleanup());
+  const tree = await h.settle();
+  node(tree, 'ColorImageGroup').props.onAddFiles('Front', [{ id: 'new-photo', src, type: 'image/jpeg' }]);
+  await h.settle();
+  await localStore.flushProductDraftSave();
+  assert.equal(storage.saved?.photos.length, 1);
+  assert.equal(await storage.saved.photos[0].blob.text(), 'added photo');
+  assert.equal(storage.saved.analysis, null);
+  const queued = h.calls.filter((call) => call[0] === 'queue').at(-1)?.[1];
+  assert.equal(queued?.product.colors[0].images[0].id, 'new-photo');
+  assert.equal(queued.analysis, null);
+});
+
+test('특징 실행이 저장한 같은 분석 객체는 자동저장이 다시 예약하지 않는다', async (t) => {
+  const local = [];
+  const h = harness({ mobile: false, fastEntry: true,
+    draftStore: { queueProductDraftSave: (...args) => local.push(args) },
+    featureFactory: ({ onAnalysis }) => ({
+      async start(options) { onAnalysis({ featureRun: { runId: options.runId, photoSignature: options.photoSignature, coreReceived: false, stage: 'requested' } }); },
+      async receiveCore(analysis) { onAnalysis({ ...analysis, featureRun: { coreReceived: true, stage: 'applied' } }); }, invalidate() {},
+    }) });
+  t.after(() => h.cleanup());
+  const tree = await h.settle();
+  const before = h.calls.filter((call) => call[0] === 'queue').length;
+  await button(h.expand(tree, 'InputMainAction'), 'AI 분석하기').props.onClick();
+  await h.settle();
+  assert.equal(h.calls.filter((call) => call[0] === 'queue').length, before);
+  assert.equal(local.some(([, analysis]) => analysis?.featureRun?.stage === 'applied'), false);
+});
+
+for (const stagedDraft of [true, false]) for (const coreReceived of [false, true]) {
+  test(`스위치 꺼짐 초안 복원은 핵심 수신 여부로 입력과 분석을 구분한다, staged ${stagedDraft}, core ${coreReceived}`, async (t) => {
+    const analysis = { featureRun: { stage: 'requested', coreReceived, runId: 'restore_run_123' },
+      ...(coreReceived ? { sellingPoints: ['완료 특징'], aiSuggestedPoints: ['완료 특징'] } : {}) };
+    const photos = product();
+    const h = harness({ mobile: false, fastEntry: false, analysis, stagedDraft,
+      draftStore: { hasPendingDraft: () => true, loadDraft: async () => ({ product: photos, analysis, photos: [
+        { colorId: 'base', slot: 'Front' }, { colorId: 'base', slot: 'Back' },
+      ] }) } });
+    t.after(() => h.cleanup());
+    const tree = await h.settle();
+    assert.equal(Boolean(node(tree, 'AnalysisForm')), coreReceived);
+    assert.equal(node(tree, 'AnalysisProgress'), undefined);
+    if (coreReceived) assert.deepEqual(node(tree, 'AnalysisForm').props.analysis.sellingPoints, ['완료 특징']);
+    else {
+      assert.equal(node(tree, 'ColorImageGroup').props.group.images.length, 2);
+      assert.ok(button(h.expand(tree, 'InputMainAction'), 'AI 분석하기'));
+    }
+    assert.equal(h.calls.some((call) => call[0] === 'restoreFeature'), false);
+  });
+}

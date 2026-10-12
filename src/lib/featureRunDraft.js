@@ -6,32 +6,48 @@ import { clientEvents } from './clientEvents.js';
 import { invalidateStoryboardEntryPrefetch } from '../features/storyboard/storyboardEntryPrefetch.js';
 import { isAnalysisFastEntryEnabled } from './analysisFastEntry.js';
 
+const promotionRuns = new Map();
+const runKey = (record) => JSON.stringify([record?.runId, record?.photoSignature]);
+const sameRun = (run, record) => !!run && runKey(run.getRecord()) === runKey(record);
+export function getDraftFeatureRun(draft) {
+  const record = draft?.analysis?.featureRun;
+  if (!record) return null;
+  const active = getActiveFeatureRun();
+  return sameRun(active, record) ? active : promotionRuns.get(runKey(record)) || null;
+}
+export function claimDraftFeatureRun(draft, projectId) {
+  if (isAnalysisFastEntryEnabled()) getDraftFeatureRun(draft)?.claimPromotion(projectId);
+}
+
 // 실행 수명은 입력 화면보다 길다. 화면이 사라져도 마지막 refs와 초안으로 저장을 마친다.
-export function createDraftFeatureRun({ product, analysis, readProduct, readAnalysis, onAnalysis, isCurrent = () => true }) {
+export function createDraftFeatureRun({ product, analysis, readProduct, readAnalysis, onAnalysis, isCurrent = () => true, promotion = false }) {
   let latest = analysis;
   let owner = null;
-  const key = analysisPhotoKey(product);
+  let key = analysisPhotoKey(product);
+  const currentAnalysis = () => readAnalysis?.() || latest;
   let run;
   run = createFeatureRun({
-    readAnalysis: () => readAnalysis?.() || latest,
+    readAnalysis: currentAnalysis,
     isCurrent: (record) => owner
       ? owner.runId === record.runId && owner.photoSignature === record.photoSignature
         && owner.projectId === run.getProjectId() && owner.accountGeneration === clientEvents.getAccountGeneration()
-      : getActiveFeatureRun() === run && isCurrent()
+      : (promotion || getActiveFeatureRun() === run) && isCurrent()
         && analysisPhotoKey(readProduct?.() || product) === key
         && (!latest?.featureRun || latest.featureRun.runId === record.runId)
         && (!latest?.featureRun || latest.featureRun.photoSignature === record.photoSignature),
     saveAnalysis: async (patch, options) => {
       if (!options.isCurrent()) return;
-      const current = readAnalysis?.() || latest || {};
+      const current = currentAnalysis() || {};
       latest = { ...current, ...patch };
-      const saved = await saveFeatureRunDraft(patch, options);
+      const saved = await saveFeatureRunDraft(patch, { ...options,
+        matchesDraft: (draft) => (!owner && !promotion) || sameRun(run, draft.analysis?.featureRun),
+      });
       if (!saved) {
         if (!options.isCurrent()) return false;
-        throw new Error('feature_draft_save_failed');
+        if (!owner && !promotion) throw new Error('feature_draft_save_failed');
       }
       if (!options.isCurrent()) return false;
-      latest = { ...(readAnalysis?.() || latest), ...patch };
+      latest = { ...currentAnalysis(), ...patch };
       onAnalysis?.(latest);
       return true;
     },
@@ -45,22 +61,36 @@ export function createDraftFeatureRun({ product, analysis, readProduct, readAnal
     onEvent: (code) => clientEvents.report({ kind: 'analysis_error', action: 'analyze',
       messageCode: code, context: { projectId: run?.getProjectId() }, error: Object.assign(new Error(code), { code }), blocking: false }),
   });
-  const freeze = run.freeze;
-  run.freeze = (projectId, options) => {
+  run.rebind = (options) => {
+    ({ product, analysis: latest, readProduct, readAnalysis, onAnalysis, isCurrent = () => true } = options);
+    key = analysisPhotoKey(product);
+  };
+  const claim = run.claimPromotion;
+  run.claimPromotion = (projectId) => {
     const record = run.getRecord();
     if (owner && owner.projectId !== projectId) throw new Error('feature_project_changed');
     owner ||= { projectId, runId: record.runId, photoSignature: record.photoSignature, accountGeneration: clientEvents.getAccountGeneration() };
+    claim(projectId);
+    promotionRuns.set(runKey(record), run);
+  };
+  const freeze = run.freeze;
+  run.freeze = (projectId, options) => {
+    run.claimPromotion(projectId);
     return freeze(projectId, options);
   };
-  return setActiveFeatureRun(run);
+  return promotion ? run : setActiveFeatureRun(run);
 }
 
-export async function restoreDraftFeatureRun(draft, { promotion = false, onAnalysis, readProduct, readAnalysis, isCurrent } = {}) {
+export async function restoreDraftFeatureRun(draft, { promotion = false, projectId, onAnalysis, readProduct, readAnalysis, isCurrent } = {}) {
   if (!isAnalysisFastEntryEnabled() || !draft?.analysis?.featureRun) return null;
   const saved = draft.analysis.featureRun;
-  const existing = getActiveFeatureRun();
-  if (existing?.getRecord()?.runId === saved.runId && existing.getRecord().photoSignature === saved.photoSignature) return existing;
   const currentProduct = readProduct?.() || draft.product;
+  const existing = getDraftFeatureRun(draft);
+  if (existing) {
+    if (!promotion) existing.rebind?.({ product: currentProduct, analysis: draft.analysis, onAnalysis, readProduct, readAnalysis, isCurrent });
+    if (projectId) existing.claimPromotion(projectId);
+    return existing;
+  }
   const key = analysisPhotoKey(currentProduct);
   let options = {};
   if (['requested', 'received', 'decided'].includes(saved.stage) || !saved.coreReceived) {
@@ -77,8 +107,9 @@ export async function restoreDraftFeatureRun(draft, { promotion = false, onAnaly
     if (options.photoSignature !== saved.photoSignature) return null;
     options.product = draft.product;
   }
-  const run = createDraftFeatureRun({ product: currentProduct, analysis: draft.analysis, onAnalysis, readProduct, readAnalysis, isCurrent });
+  const run = createDraftFeatureRun({ product: currentProduct, analysis: draft.analysis, onAnalysis, readProduct, readAnalysis, isCurrent, promotion });
   await run.resume(saved, options, { promotion });
+  if (projectId) run.claimPromotion(projectId);
   if (!promotion && !saved.coreReceived) {
     const core = await api.analyzeProduct(null, { ...options, product: draft.product, parts: 'core', runId: saved.runId,
       isCurrent: () => getActiveFeatureRun() === run && analysisPhotoKey(readProduct?.() || draft.product) === key });
@@ -97,10 +128,9 @@ export async function waitForFeaturesBeforeLogin() {
 
 export async function settleDraftFeatureRun(draft, projectId, { restoreFeatures = false } = {}) {
   if (!isAnalysisFastEntryEnabled() || !draft.analysis?.featureRun) return { analysis: draft.analysis, run: null };
-  const saved = draft.analysis.featureRun;
-  let run = getActiveFeatureRun();
-  if (run?.getRecord()?.runId !== saved.runId || run.getRecord().photoSignature !== saved.photoSignature) {
-    run = await restoreDraftFeatureRun(draft, { promotion: true });
+  let run = getDraftFeatureRun(draft);
+  if (!run) {
+    run = await restoreDraftFeatureRun(draft, { promotion: true, projectId });
     restoreFeatures = true;
   }
   if (!run) return { analysis: stripFeatureClientFields(draft.analysis), run: null };
