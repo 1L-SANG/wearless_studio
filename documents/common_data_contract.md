@@ -108,6 +108,7 @@ Analysis {
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
   aiSuggestedPoints: string[]      // max LIMITS.aiSuggestedPointMax(2)
+  mdComment: string                // 셀러 직접 입력 선택 메모. 기본값 ''. 앞뒤 공백 제거 후 최대 300자
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
@@ -143,6 +144,9 @@ MatchClothing {
 //       Analysis.models (catalogs.models 참조), MatchClothing.selected / selOrder (matchSelections로 분리),
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
+
+`mdComment`는 지금은 저장만 하고 AI 입력에는 쓰지 않는다. 템플릿이 확정된 뒤 연결한다.
+문자열이 아닌 값은 저장할 수 없다. `merge=1`에서 `null`은 기존 병합 규칙에 따라 키를 삭제한다.
 
 `garmentColorEvidence`는 기존 13개 색상 계열/색상명을 HEX로 바꾸는 값이 아니다. 사진 분석은 이 값을 만들지 않는다. 셀러가 콘티보드에서 마네킹컷으로 넘어갈 때 서버가 필요할 때만 만든다. 필요 조건은 `horizonBackgroundMode='garment-tone'`인 호리존 세트 멤버가 있고 그 대상 색상의 측정 결과가 없는 경우다. 해당 색상의 첫 Front와 첫 Back 원본에서 관찰기는 판매 의류 안쪽 영역만 제안하고, 서버가 사진을 먼저 줄인 뒤 sRGB로 변환한 픽셀에서 색을 측정한다. 측정이 실패해도 이동은 막지 않는다. 생성이 시작될 때 필요한 색의 측정 결과가 아직 없으면(이동 때 측정이 끝나지 않았거나 실패했거나 측정 없이 넘어간 경우) 상세페이지 생성이 한 번 더 측정한다. 끝내 근거가 없으면 배경은 기존 예시를 유지한다. 사진의 관찰색이며 실물색 보정/인증 값은 아니다.
 

@@ -513,6 +513,27 @@
 .sp-draft-fit > .sp-draft-input { grid-area: 1 / 1; width: 100%; min-width: 4ch; }
 .sp-chip.draft .sp-draft-input { border: 0; outline: 0; background: transparent; font-size: 14px; font-weight: 500; color: var(--fg-1); }
 .sp-chip.draft .sp-draft-input::placeholder { color: var(--fg-3); font-weight: 400; }
+.md-title { display: inline-flex; align-items: center; gap: 9px; text-wrap: balance; }
+/* Cal Sans는 한 굵기뿐이라 MD를 400으로 두어 영문에만 합성 볼드가 걸리지 않게 한다. */
+.md-title .md-latin { font-weight: 400; }
+.md-title .pill { font-family: var(--font-body); font-weight: 500; letter-spacing: 0; color: var(--fg-2); padding: 3px 10px; }
+.md-title + .sec-sub { text-wrap: balance; }
+.md-field { position: relative; border-radius: var(--r-5); background: var(--bg-2); box-shadow: var(--elev-inset), 0 0 0 1px var(--ring);
+  transition: box-shadow .14s, background .14s; cursor: text; }
+.md-field:hover { box-shadow: var(--elev-inset), 0 0 0 1px var(--ring-strong); }
+/* 같은 폭과 서체의 숨은 글자가 높이를 정해 인라인 스타일 없이 내용만큼 늘어난다. */
+.md-input { display: grid; grid-template-columns: minmax(0, 1fr); }
+.md-input::after, .md-field textarea { box-sizing: border-box; grid-area: 1 / 1; width: 100%; min-height: 90px;
+  font-family: var(--font-body); font-size: 15px; line-height: 1.6; padding: 14px 16px 4px; }
+.md-input::after { content: attr(data-value) ' '; white-space: pre-wrap; visibility: hidden; }
+.md-field textarea { display: block; height: 100%; border: 0; outline: 0; resize: none; background: transparent; overflow: hidden; color: var(--fg-1); }
+.md-field textarea::placeholder { color: var(--fg-3); }
+.md-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 2px 12px 10px 16px; min-height: 38px; }
+.md-count { font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.md-hint { margin-top: 9px; }
+.md-field:focus-within { background: var(--bg-1); box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
+.md-field.is-filled { background: var(--bg-1); box-shadow: var(--elev-card); }
+.md-field.is-filled:focus-within { box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
 .model-grid { display: flex; gap: 12px; flex-wrap: wrap; }
 .ai-model-groups { display: grid; gap: 18px; }
 .ai-model-group-title { margin-bottom: 9px; color: var(--fg-2); font-size: 12.5px; font-weight: 650; }
