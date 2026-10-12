@@ -47,6 +47,24 @@ test('기한 초과는 예비 문구를 고정하고 늦은 특징은 디테일�
   const f = setup(t); await begin(f); const saving = sync.promoteDraftToProject(f.draft()); await drain(); f.deadline(); await saving;
   assert.equal(f.saved[1].sellingPoints[0], '예비 핏'); assert.equal(f.events.includes('feature_deadline_exceeded'), true);
   f.response.resolve(ready()); await drain(); assert.deepEqual(f.details, [['project', 'detail']]); assert.equal(f.analysis.sellingPoints[0], '예비 핏');
+  f.run.committed(); await f.run.setEditing(false); await drain(); assert.equal(f.details.length, 1);
+});
+test('기한 초과 고정 뒤 분석 저장 중 받은 디테일은 저장 성공 뒤 한 번만 승격한다', async (t) => {
+  const f = setup(t); await begin(f); const analysisSaved = deferred();
+  api.saveAnalysis = async (_pid, data) => { f.saved.push(data); await analysisSaved.promise; };
+  const saving = sync.promoteDraftToProject(f.draft()); await drain(); f.deadline(); await drain();
+  try {
+    assert.equal(f.run.getRecord().stage, 'committing');
+    f.response.resolve(ready()); await drain();
+    assert.equal(f.run.getRecord().features.detailRecommendationsHandoff, 'detail');
+    assert.deepEqual(f.details, []);
+    await f.run.setEditing(false); await drain(); assert.deepEqual(f.details, []);
+  } finally { analysisSaved.resolve(); await saving; await drain(); }
+  assert.equal(f.run.getRecord().stage, 'committed');
+  assert.deepEqual(f.details, [['project', 'detail']]);
+  assert.deepEqual(f.saved[1].sellingPoints, ['예비 핏']);
+  assert.deepEqual(f.analysis.sellingPoints, ['예비 핏']);
+  f.run.committed(); await f.run.setEditing(false); await drain(); assert.equal(f.details.length, 1);
 });
 
 test('분석 저장 뒤 단계 실패와 재시도는 고정 사본을 그대로 사용한다', async (t) => {
@@ -59,7 +77,7 @@ test('분석 저장 뒤 단계 실패와 재시도는 고정 사본을 그대로
   const savedAnalyses = f.saved.filter((value) => value && typeof value === 'object' && !Array.isArray(value));
   assert.equal(savedAnalyses.length, 2); assert.deepEqual(savedAnalyses[0], savedAnalyses[1]);
 });
-for (const stage of ['requested', 'received', 'decided']) test(`로그인 복귀 ${stage} 복원은 새 네트워크 대기를 추가하지 않는다`, async () => {
+for (const stage of ['received', 'decided']) test(`로그인 복귀 ${stage} 복원은 새 네트워크 대기를 추가하지 않는다`, async () => {
   let analysis = { sellingPoints: ['예비 핏'], aiSuggestedPoints: ['예비 핏'] }, requested = 0;
   const run = features.createFeatureRun({ readAnalysis: () => analysis, saveAnalysis: async (patch) => { analysis = { ...analysis, ...patch }; },
     requestFeatures: async () => { requested++; throw new Error('must not call'); }, requestMerge: async () => { requested++; throw new Error('must not call'); } });

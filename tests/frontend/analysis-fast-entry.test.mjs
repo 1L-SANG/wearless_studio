@@ -203,6 +203,44 @@ test('고정 전에 받은 디테일도 분석 저장 성공 뒤 늦은 승격�
   await f.run.setEditing(false); await drain(); assert.equal(f.details.length, 1);
 });
 
+test('고정 뒤 끝난 합치기는 분석 저장 성공 전 디테일을 승격하지 않는다', async () => {
+  const merged = deferred(); const f = fixture({ merge: () => merged.promise });
+  await start(f); await core(f); await drain();
+  const waiting = f.run.wait(); await f.tick(30000); assert.equal(await waiting, 'deadline');
+  f.run.freeze('project', { deadlineExceeded: true });
+  merged.resolve({ decisions }); await drain();
+  assert.deepEqual(f.details, []);
+  f.run.committed(); await drain();
+  assert.deepEqual(f.details, [['project', { signature: 'detail' }]]);
+  assert.deepEqual(f.analysis.sellingPoints, early);
+});
+
+test('로그인 복귀 재요청이 고정 전에 바로 끝나도 칩은 보존하고 저장 성공 뒤 디테일만 승격한다', async () => {
+  const f = fixture();
+  await f.run.resume({ runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000,
+    attempts: 1, coreReceived: true, early, pointsTicket: 'core', stage: 'requested' }, {}, { promotion: true });
+  await drain();
+  assert.equal(f.calls.length, 1); assert.equal(f.calls[0].attempt, 2);
+  assert.deepEqual(f.analysis.sellingPoints, early);
+  assert.equal(f.analysis.detailRecommendationsHandoff, undefined);
+  assert.deepEqual(f.details, []);
+  f.run.freeze('project'); await f.run.setEditing(false); await drain(); assert.deepEqual(f.details, []);
+  f.run.committed(); await drain();
+  assert.deepEqual(f.details, [['project', { signature: 'detail' }]]);
+  assert.deepEqual(f.analysis.sellingPoints, early);
+});
+
+for (const attempts of [2, 3]) test(`로그인 복귀 requested 재요청은 기한 뒤에도 3회 상한을 지킨다 (${attempts}회 사용)`, async () => {
+  const response = deferred(); const f = fixture({ request: () => response.promise }); await f.tick(35000);
+  await f.run.resume({ runId: 'restore_run_123', photoSignature: 'sha256', startedAt: 0, deadlineAt: 30000,
+    attempts, coreReceived: true, early, pointsTicket: 'core', stage: 'requested' }, {}, { promotion: true });
+  await drain();
+  assert.equal(f.calls.length, attempts === 2 ? 1 : 0);
+  assert.equal(f.run.getRecord().attempts, 3);
+  assert.equal(f.run.getRecord().deadlineAt, 30000);
+  if (attempts === 2) assert.equal(f.calls[0].attempt, 3);
+});
+
 
 test('무작위 재시도 지연이 기한을 넘으면 새 특징 요청을 보내지 않는다', async () => {
   const response = deferred();

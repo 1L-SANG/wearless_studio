@@ -50,7 +50,7 @@ function sanitizeFeatures(result) {
 export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, requestMerge,
   isCurrent = () => true, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout,
   onLateDetails = async () => {}, onEvent = () => {} }) {
-  let record = null, input = null, editing = false, invalid = false;
+  let record = null, input = null, editing = false, invalid = false, deferFeatures = false;
   let processing = null, requesting = null, coreSaving = null, frozenAnalysis = null, projectId = null;
   let needsLateDetails = false, latePromotion = null, promotedHandoff = null;
   const listeners = new Set();
@@ -72,7 +72,9 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     return saved;
   };
   const lateDetails = async () => {
-    if (!valid() || !frozen() || !projectId) return;
+    if (!valid()) return;
+    if (record.stage !== 'committed') { needsLateDetails = true; return; }
+    if (!projectId) return;
     const handoff = record.features?.detailRecommendationsHandoff;
     const key = handoff ? JSON.stringify(handoff) : null;
     if (key && key === promotedHandoff) return;
@@ -161,7 +163,8 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
         }
         firstRequest = false;
         record = { ...record, attempts: record.attempts + 1 };
-        if (!frozen() && !await persist()) return;
+        if (!frozen() && !await persist() && (!deferFeatures || !frozen())) return;
+        if (!valid()) return;
         try {
           const received = sanitizeFeatures(await requestFeatures({ ...input, runId: record.runId, attempt: record.attempts }));
           if (!valid()) return;
@@ -172,7 +175,7 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
           record = { ...record, features };
           if (coreSaving) await coreSaving;
           if (!valid()) return;
-          if (frozen()) return lateDetails();
+          if (frozen() || deferFeatures) return lateDetails();
           if (!await checkpoint('received')) return;
           const malformed = received.detailRecommendations?.status === 'unavailable';
           if (malformed && !record.formatRetried && record.deadlineAt - now() >= 10000 && record.attempts < 3) {
@@ -231,8 +234,10 @@ export function createFeatureRun({ readAnalysis, saveAnalysis, requestFeatures, 
     async resume(saved, options = {}, { promotion = false } = {}) {
       if (record?.runId === saved.runId) return controller;
       record = { ...saved }; input = options;
+      deferFeatures = promotion && record.stage === 'requested';
       if (promotion) {
-        if (record.stage === 'decided') await apply();
+        if (record.stage === 'requested') void request();
+        else if (record.stage === 'decided') await apply();
         else if (record.stage === 'received') { record = { ...record, decisions: [] }; await checkpoint('decided'); await apply(); }
         return controller;
       }
