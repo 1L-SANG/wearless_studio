@@ -291,7 +291,7 @@ export function defaultAnalysisShape(clothingType = 'top') {
     // 있는데 여기 없어서 http 경로에서만 유실됐다 — AI 가 "후드 집업" 을 추측해도 폼에 안 떴다.
     customCategory: null,
     fit: null, suggestedName: '',
-    materials: [], sellingPoints: [], aiSuggestedPoints: [],
+    materials: [], sellingPoints: [], aiSuggestedPoints: [], mdComment: '',
     styleTags: [], swatchSuggestions: [],
     selectedModelId: null, stylingModelId: null, brandUseCategory: null, models: [],
     matchClothing: [],

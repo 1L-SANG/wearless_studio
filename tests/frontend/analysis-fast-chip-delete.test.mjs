@@ -6,7 +6,7 @@ import { applySellingPointEdit, SELLING_POINTS_MAX } from '../../src/features/an
 import { isFeatureRunPending } from '../../src/lib/featureRun.js';
 const source = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
 const title = source.indexOf('className="sec-title">강조하고 싶은 특징');
-const fragment = source.slice(source.lastIndexOf('<div className="surface">', title), source.indexOf('{/* 5. model select', title)).trim();
+const fragment = source.slice(source.lastIndexOf('<div className="surface">', title), source.indexOf('{/* MD 코멘트 */}', title)).trim();
 const { code } = await transformWithEsbuild(`const chips = () => (${fragment});`, 'Chips.jsx', { jsx: 'transform' });
 const find = (tree, predicate) => !tree || typeof tree !== 'object' ? null : predicate(tree) ? tree
   : (tree.props?.children || []).flat(Infinity).map((child) => find(child, predicate)).find(Boolean);

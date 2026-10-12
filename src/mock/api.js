@@ -530,7 +530,7 @@ export const api = {
       onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-      const a = normalizeAnalysisFit(clone(DB.analysis));
+      const a = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
       a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
         range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };
@@ -544,7 +544,7 @@ export const api = {
   },
   async getAnalysis(/* projectId */) {
     await wait(120);
-    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    const analysis = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
   // 의류색 측정은 서버 전용이라 목에서는 측정할 것이 없다고 답한다(http 와 같은 shape).

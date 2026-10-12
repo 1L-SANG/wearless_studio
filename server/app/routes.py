@@ -1151,6 +1151,20 @@ async def save_analysis(
     # 지금 analysis.colors 를 읽는 코드는 없지만, 2026-08-17 사고의 플레이스홀더가 실제로 여기
     # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
     analysis = product_photos.sanitize_analysis_colors(analysis)
+    if "mdComment" in analysis and not (merge and analysis["mdComment"] is None):
+        comment = analysis["mdComment"]
+        if not isinstance(comment, str):
+            raise _bad_request(
+                "invalid_md_comment",
+                "MD 코멘트를 다시 확인해 주세요.",
+            )
+        comment = comment.strip()
+        if len(comment) > 300:
+            raise _bad_request(
+                "md_comment_too_long",
+                "MD 코멘트는 300자까지 쓸 수 있어요.",
+            )
+        analysis = {**analysis, "mdComment": comment}
     if "brandUseCategory" in analysis:
         category = analysis.get("brandUseCategory")
         if category is not None and not isinstance(category, str):
