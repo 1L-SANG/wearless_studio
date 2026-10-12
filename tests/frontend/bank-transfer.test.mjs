@@ -9,15 +9,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { createServer } from 'vite';
 
-let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys;
+let vite, Pricing, SubscriptionManage, AdminBankTransfers, BankTransferModal, runtime, api, plans, tossKeys, DB;
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null, ws: false },
     appType: 'custom',
     esbuild: { jsx: 'automatic' },
+    ssr: { noExternal: ['react-dom'] },
     plugins: [{
       name: 'bank-transfer-test-harness',
       enforce: 'pre',
@@ -26,6 +28,7 @@ before(async () => {
         if (id === '@/store/useAppStore.js') return '\0bt-store';
         if (id === '@/features/auth/AuthProvider.jsx') return '\0bt-auth';
         if (id === '@/lib/api/facemarket.js') return '\0bt-admin-api';
+        if (id === 'react-dom') return '\0bt-portals';
         if (id.startsWith('@/')) return new URL(`../../src/${id.slice(2)}`, import.meta.url).pathname;
         return null;
       },
@@ -44,6 +47,7 @@ before(async () => {
           export const adminConfirmBankTransfer = async () => ({});
           export const adminRejectBankTransfer = async () => ({});
         `;
+        if (id === '\0bt-portals') return 'export const createPortal = (children) => children;';
         return null;
       },
     }],
@@ -54,6 +58,7 @@ before(async () => {
   ({ SubscriptionManage } = await vite.ssrLoadModule('/src/features/subscription/Subscription.jsx'));
   ({ AdminBankTransfers } = await vite.ssrLoadModule('/src/features/admin/AdminBankTransfers.jsx'));
   ({ api } = await vite.ssrLoadModule('/src/mock/api.js'));
+  ({ DB } = await vite.ssrLoadModule('/src/mock/db.js'));
   tossKeys = await vite.ssrLoadModule('/src/lib/tossKeys.js');
   plans = await api.getPricingPlans();
 });
@@ -65,12 +70,12 @@ const OPEN_SUB = {
   status: 'requested', expiresAt: '2026-09-25T12:00:00+09:00',
 };
 
-function renderPricing({ loggedIn = true, currentPlan = 'free', info = INFO, open = [] } = {}) {
+function renderPricing({ loggedIn = true, currentPlan = 'free', info = INFO, open = [], topupBonusEnabled } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], plans);
   client.setQueryData(['bankTransferInfo'], info);
   client.setQueryData(['bankTransferOpen'], { open, recent: null });
-  runtime.account = loggedIn ? { plan: currentPlan } : null;
+  runtime.account = loggedIn ? { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) } : null;
   runtime.session = loggedIn ? { user: { id: 'u1', email: 'seller@example.com' } } : null;
   try {
     return renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(Pricing)));
@@ -102,6 +107,16 @@ test('로그인 사용자에게 구독 카드는 계좌이체 CTA 를, 아래에
   assert.doesNotMatch(html, /입금 확인 중/);
 });
 
+test('계좌이체 모드의 결제 조건은 구석의 회색 링크 하나로 둔다(오너 10/5)', async () => {
+  const html = renderPricing();
+  assert.match(html, /<a href="https:\/\/wearless\.kr\/refund">결제·환불 조건<\/a>/);
+  // 신청 창은 포탈이라 SSR 로 못 그린다 — 소스에서 신청 버튼보다 앞에 같은 링크가 있는지 본다.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../../src/features/pricing/BankTransferModal.jsx', import.meta.url), 'utf8');
+  const link = src.indexOf('결제·환불 조건</a>');
+  assert.ok(link > 0 && link < src.indexOf('<button type="submit"'));
+});
+
 test('현재 플랜과 같은 카드는 1개월 연장 신청이다', () => {
   const html = renderPricing({ currentPlan: 'seller' });
   assert.equal((html.match(/1개월 연장 신청/g) || []).length, 1);
@@ -114,7 +129,7 @@ test('열린 구독 신청이 있으면 띠를 보여주고 구독 CTA 를 잠�
   assert.match(html, /Seller 1개월 이용권/);
   assert.match(html, /₩<\/span>69,900/);
   assert.match(html, /홍길동/);
-  assert.match(html, /9\/25\(금\) 12:00까지/);
+  assert.match(html, /<span[^>]*>9\/25\(금\)<\/span> <span[^>]*>12:00까지<\/span>/);
   assert.match(html, /신청 취소/);
   // 신청 창을 닫은 뒤에도 계좌를 다시 볼 수 있어야 한다(리뷰 368F-2). 금액·계좌는 복사 버튼과 함께.
   assert.match(html, /국민은행 123-456-789/);
@@ -137,10 +152,117 @@ test('계좌가 설정되지 않았으면 CTA 를 잠그고 이유를 알려준�
   assert.doesNotMatch(html, /영업시간 10분 안에 크레딧 지급/);
 });
 
-test('계좌이체 모드에서는 지급 코드가 없는 충전 보너스 약속을 카드에 적지 않는다', () => {
-  const html = renderPricing();
-  assert.doesNotMatch(html, /충전할 때마다 크레딧/);
+test('계좌이체 모드에서도 Seller와 Pro의 충전 보너스를 안내한다', () => {
+  const html = renderPricing({ topupBonusEnabled: true });
+  assert.match(html, /충전할 때마다 크레딧 5% 보너스/);
+  assert.match(html, /충전할 때마다 크레딧 10% 보너스/);
   assert.doesNotMatch(html, /갱신 결제 실패 시 3일의 유예기간|이월분을 포함해 모두 소멸/);
+});
+
+test('입금 확인 중 머리는 신청 당시 보너스를 보여주고 격자는 입금 정보 네 칸만 담는다', () => {
+  const html = renderPricing({ currentPlan: 'pro', open: [{
+    ...OPEN_SUB, kind: 'topup', planCode: 'topup_500', credits: 500, bonusCredits: 25, totalCredits: 525,
+  }] });
+  const status = html.match(/<section[^>]*aria-label="입금 확인 중인 신청"[^>]*>(.*?)<\/section>/s)[1];
+  assert.match(status, /<span[^>]*>500 크레딧 1회 충전 · 보너스 25 포함<\/span>/);
+  assert.deepEqual([...status.matchAll(/<dt>(.*?)<\/dt>/g)].map(match => match[1]),
+    ['입금 금액', '입금 계좌', '입금자명', '입금 기한']);
+  assert.doesNotMatch(status, /525 크레딧|550 크레딧/);
+});
+
+test('보너스가 없는 신청은 머리에 상품과 이용 종류만 표시한다', () => {
+  const html = renderPricing({ open: [{
+    ...OPEN_SUB, kind: 'topup', planCode: 'topup_500', credits: 500, bonusCredits: 0, totalCredits: 500,
+  }] });
+  assert.match(html, /<span[^>]*>500 크레딧 1회 충전<\/span>/);
+  assert.doesNotMatch(html, /보너스 \d+ 포함|<dt>지급 크레딧<\/dt>/);
+});
+
+test('계좌이체 신청 미리보기는 현재 플랜의 보너스를 포함한다', () => {
+  const previous = globalThis.document;
+  globalThis.document = { body: {} };
+  try {
+    const plan = plans.find((p) => p.code === 'topup_500');
+    for (const [currentPlan, total, bonus] of [['seller', 525, 25], ['pro', 550, 50]]) {
+      runtime.account = { plan: currentPlan, topupBonusEnabled: true };
+      const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
+      assert.match(html, new RegExp(`${total} 크레딧`));
+      assert.match(html, new RegExp(`보너스 ${bonus} 포함`));
+    }
+    runtime.account = { plan: 'starter', topupBonusEnabled: true };
+    const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
+    assert.match(html, /500 크레딧/);
+    assert.doesNotMatch(html, /보너스 \d+ 포함/);
+  } finally {
+    if (previous === undefined) delete globalThis.document; else globalThis.document = previous;
+  }
+});
+
+test('계좌이체 신청 전 미리보기는 충전 보너스가 명시적으로 켜져야 추가 수량을 표시한다', () => {
+  const previous = globalThis.document;
+  globalThis.document = { body: {} };
+  try {
+    const plan = plans.find((p) => p.code === 'topup_500');
+    for (const currentPlan of ['seller', 'pro']) {
+      for (const topupBonusEnabled of [undefined, false, null, 0, 1, 'true']) {
+        runtime.account = { plan: currentPlan, ...(topupBonusEnabled === undefined ? {} : { topupBonusEnabled }) };
+        const html = renderToStaticMarkup(React.createElement(BankTransferModal, { plan, info: INFO, onClose() {} }));
+        assert.match(html, /500 크레딧/);
+        assert.doesNotMatch(html, /525 크레딧|550 크레딧|보너스 \d+ 포함/);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete globalThis.document; else globalThis.document = previous;
+  }
+});
+
+test('목 계좌이체 신청은 보너스가 꺼져 있거나 누락되면 현재 Pro도 기본 수량만 저장한다', async () => {
+  const original = { ...DB.account };
+  try {
+    for (const enabled of [undefined, false, 'true']) {
+      DB.account.plan = 'pro';
+      if (enabled === undefined) delete DB.account.topupBonusEnabled;
+      else DB.account.topupBonusEnabled = enabled;
+      const { request } = await api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' });
+      assert.equal(request.bonusCredits, 0);
+      assert.equal(request.totalCredits, 500);
+      assert.equal(request.bonusPercent, 0);
+      await api.cancelBankTransferRequest(request.id);
+    }
+  } finally {
+    for (const request of (await api.getOpenBankTransferRequests()).open) await api.cancelBankTransferRequest(request.id);
+    Object.assign(DB.account, original);
+  }
+});
+
+test('목 충전 신청은 신청 시점 보너스를 저장하고 변경된 플랜과 무관하게 한번 지급한다', async () => {
+  const original = { ...DB.account };
+  try {
+    for (const [plan, bonus, total] of [['seller', 25, 525], ['pro', 50, 550], ['free', 0, 500]]) {
+      DB.account.plan = plan;
+      DB.account.topupBonusEnabled = true;
+      const start = DB.account.credits;
+      const { request } = await api.createBankTransferRequest({ planCode: 'topup_500', payerName: '홍길동' });
+      assert.equal(request.credits, 500);
+      assert.equal(request.bonusCredits, bonus);
+      assert.equal(request.totalCredits, total);
+      assert.equal(request.planAtOrder, plan);
+      assert.equal(request.bonusPercent, plan === 'seller' ? 5 : plan === 'pro' ? 10 : 0);
+      DB.account.plan = 'starter';
+      DB.account.topupBonusEnabled = false;
+      const result = await api.adminConfirmBankTransfer(request.id, { paidAt: '2026-10-06' });
+      assert.equal(result.credits, total);
+      assert.equal(result.baseCredits, 500);
+      assert.equal(result.bonusCredits, bonus);
+      assert.equal(result.totalCredits, total);
+      assert.equal(DB.account.credits, start + total);
+      assert.equal((await api.adminConfirmBankTransfer(request.id, { paidAt: '2026-10-06' })).idempotent, true);
+      assert.equal(DB.account.credits, start + total);
+    }
+  } finally {
+    for (const request of (await api.getOpenBankTransferRequests()).open) await api.cancelBankTransferRequest(request.id);
+    Object.assign(DB.account, original);
+  }
 });
 
 test('비로그인 방문자는 지금처럼 로그인 버튼만 본다', () => {
@@ -199,6 +321,22 @@ test('충전 신청은 목 저장소에서도 종류당 한 건만 열린다', a
   assert.equal(open.open.length, 1);
   await api.cancelBankTransferRequest(res.request.id);
   assert.equal((await api.getOpenBankTransferRequests()).open.length, 0);
+});
+
+test('목 구독 신청에는 현재 Pro여도 충전 보너스가 붙지 않는다', async () => {
+  const original = { ...DB.account };
+  let request;
+  try {
+    DB.account.plan = 'pro';
+    ({ request } = await api.createBankTransferRequest({ planCode: 'seller', payerName: '홍길동' }));
+    assert.equal(request.credits, 1600);
+    assert.equal(request.bonusCredits, 0);
+    assert.equal(request.totalCredits, 1600);
+    assert.equal(request.bonusPercent, 0);
+  } finally {
+    if (request) await api.cancelBankTransferRequest(request.id);
+    Object.assign(DB.account, original);
+  }
 });
 
 test('신청 창은 상품·금액·계좌와 필수 입력을 보여준다', () => {

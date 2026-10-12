@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { ALL_CUT_TYPE_OPTIONS } from '../../src/lib/storyboardTaxonomy.js';
 
-// 에디터 AI 탭 '새 이미지 추가' — 콘티보드와 같은 안전장치가 빠지지 않게 고정한다(PR #123 리뷰 반영).
+// 에디터 AI 탭 '새 이미지 만들기' — 콘티보드와 같은 안전장치가 빠지지 않게 고정한다(PR #123 리뷰 반영).
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 
@@ -44,30 +44,42 @@ test('컷 종류 전환·예시 교체는 매칭 의류·아우터 열림·내 �
   assert.match(selectExample, /if \(replacing\) resetRecipeSettings\(\)/);
 });
 
+test('아우터 열림은 공용 Field에 분석을 넘기고 숨김 여부와 관계없이 기존 생성값을 보낸다', () => {
+  const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
+  assert.match(aiPanel, /const showOuterClosure = clothingType === 'outer' && !isProduct;/);
+  assert.match(aiPanel, /<OuterClosureField id="outer-closure-newcut" value=\{outerClosure\}\s*onChange=\{setOuterClosure\} frontClosure=\{frontClosure\}/);
+  assert.match(editorSource, /frontClosure=\{analysis\?\.frontClosure\}/);
+  assert.match(aiPanel, /outerClosureState: showOuterClosure \? outerClosure : null/);
+});
+
 test('isDetail 은 검증된 effectiveShotVal 을 읽는다 — raw shot 은 카탈로그 폴백과 어긋난다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /const isDetail = isProduct && effectiveShotVal === 'detail'/);
 });
 
-test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않는다 — 분석 기반 exampleGender 폴백', () => {
+test('갤러리·게이트 성별은 가상 모델 또는 분석 기반 exampleGender를 쓴다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.match(aiPanel, /\[\.\.\.virtualModels, \.\.\.fmList\]\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
+  assert.match(aiPanel, /virtualModels\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
   assert.match(editorSource, /exampleGender=\{exampleGenderFromAnalysis\(analysis, catalogs, clothingType\)\}/);
 });
 
-test('실제 모델은 모든 컷에서 고를 수 있다', () => {
-  // 2026-09-11 사용자 결정 — 컷 종류로 모델 카드를 비활성화하거나, 컷을 바꿨다고
-  // 가상 모델로 되돌리지 않는다. 되살아나면 셀러가 고른 얼굴이 조용히 바뀐다.
+test('새 컷은 가상 모델을 고르고 브랜드 유형은 현재 고른 모델로 판정한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.doesNotMatch(aiPanel, /const disabled = effectiveCutType !== 'horizon'/);
-  assert.doesNotMatch(aiPanel, /실제 모델은 스튜디오 컷에만 쓸 수 있어요/);
-  assert.doesNotMatch(aiPanel, /if \(effectiveCutType === 'horizon' \|\| !isRealModelSelection\(model\)\) return/);
-  // 브랜드 유형은 컷 종류와 무관하게 실제 모델이면 요구한다.
-  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*isRealModelSelection\(model\);/);
+  assert.doesNotMatch(aiPanel, /fmList|fmModels|ModelThumb/);
+  assert.match(aiPanel, /virtualModels\.map/);
+  assert.match(aiPanel, /const categoryRequired = isRealModelSelection\(model\);/);
 });
 
 test('생성 요청은 선택한 컷 종류와 서버 방향 값을 사용한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
+  assert.match(aiPanel, /const effectiveRecipe = baseRecipe;/);
+  assert.match(aiPanel, /const galleryCutType = cutType/);
+  assert.match(aiPanel, /const galleryShotVal = galleryShotOptions\.some/);
+  assert.match(aiPanel, /contentRole: inferContentRole\(\{ source: 'ai', cutType: galleryCutType, shot: galleryShotVal \}\)/);
+  assert.match(aiPanel, /<MoodGuide catalogs=\{catalogs\} cut=\{galleryCutType\}/);
+  assert.match(aiPanel, /direction=\{galleryDirectionVal\} sideStyle=\{directionSpec\.sideStyle\} shot=\{galleryShotVal\}/);
+  assert.match(aiPanel, /contentRole: effectiveRecipe\.contentRole/);
+  // 착용컷은 예시의 서버 방향 값과 사선 표현을 함께 보낸다.
   assert.match(aiPanel, /cutType: effectiveCutType,/);
   assert.match(aiPanel, /direction: directionSpec\.direction,/);
   assert.match(aiPanel, /sideStyle: directionSpec\.sideStyle,/);

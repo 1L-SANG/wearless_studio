@@ -2,6 +2,7 @@ import asyncio
 import json
 from copy import deepcopy
 from dataclasses import replace
+from hashlib import sha256
 from io import BytesIO
 
 import pytest
@@ -34,6 +35,137 @@ def test_empty_ready_differs_from_missing_or_invalid_model_evidence():
     assert contract([])["status"] == "ready"
     assert dr.build_contract(None, SOURCES, SLOTS)["status"] == "unavailable"
     assert contract([candidate(region={"x": 0, "y": 0, "w": 2, "h": .5})])["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("region,expected", [
+    ({"x": 200, "y": 100, "w": 500, "h": 600}, {"x": .2, "y": .1, "w": .5, "h": .6}),
+    ({"x": 0, "y": 500, "w": 1000, "h": 500}, {"x": 0.0, "y": .5, "w": 1.0, "h": .5}),
+    ({"x": 0.0, "y": 0.0, "w": 1000.0, "h": 1000.0}, {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}),
+    ({"x": 2, "y": 2, "w": 998, "h": 998}, {"x": .002, "y": .002, "w": .998, "h": .998}),
+])
+def test_thousand_unit_regions_are_normalized_without_mutating_input(region, expected):
+    raw = candidate(region=region)
+    original = deepcopy(raw)
+    value = contract([raw])
+    assert value["status"] == "ready"
+    assert value["candidates"][0]["region"] == expected
+    assert raw == original
+
+
+@pytest.mark.parametrize("region,error", [
+    ({"x": 0, "y": 0, "w": 1001, "h": 500}, "detail_region_out_of_bounds"),
+    ({"x": .007, "y": 230, "w": .985, "h": .764}, "detail_region_out_of_bounds"),
+    ({"x": 1, "y": 100, "w": 500, "h": 600}, "detail_region_out_of_bounds"),
+    ({"x": -2, "y": 100, "w": 500, "h": 600}, "detail_region_out_of_bounds"),
+    ({"x": 600, "y": 100, "w": 500, "h": 600}, "detail_region_out_of_bounds"),
+    ({"x": 100, "y": 600, "w": 500, "h": 500}, "detail_region_out_of_bounds"),
+    ({"x": False, "y": 100, "w": 500, "h": 600}, "detail_region_invalid"),
+    ({"x": 200, "y": 100, "w": "500", "h": 600}, "detail_region_invalid"),
+    ({"x": 200, "y": 100, "w": float("inf"), "h": 600}, "detail_region_invalid"),
+])
+def test_invalid_thousand_unit_regions_are_rejected(region, error):
+    with pytest.raises(dr.DetailRecommendationError, match=error):
+        dr._candidate(candidate(region=region), contract([])["binding"])
+    value = contract([candidate(region=region)])
+    assert value["status"] == "unavailable"
+    assert value["candidates"] == []
+
+
+def test_normalized_regions_are_unchanged():
+    value = contract()
+    assert value["candidates"][0]["region"] == {"x": .2, "y": .1, "w": .5, "h": .6}
+
+
+@pytest.mark.parametrize("region", [
+    {"x": 0, "y": 0, "w": 2, "h": 2},
+    {"x": 0, "y": 0, "w": 19, "h": 500},
+    {"x": 0, "y": 0, "w": 500, "h": 19},
+    {"x": 0, "y": 0, "w": .019, "h": .5},
+    {"x": 0, "y": 0, "w": .5, "h": .019},
+])
+def test_new_regions_below_minimum_size_are_dropped_after_normalization(region):
+    value = contract([candidate(region=region)])
+    assert value["status"] == "unavailable"
+    assert value["candidates"] == []
+
+
+def test_new_small_regions_are_dropped_without_discarding_valid_candidates():
+    value = contract([candidate(region={"x": 0, "y": 0, "w": .01, "h": .5}), candidate()])
+    assert value["status"] == "ready"
+    assert len(value["candidates"]) == 1
+    assert value["candidates"][0]["region"] == {"x": .2, "y": .1, "w": .5, "h": .6}
+
+
+@pytest.fixture(params=[
+    {"x": .2, "y": .1, "w": .01, "h": .6},
+    {"x": .2, "y": .1, "w": .5, "h": .01},
+])
+def legacy_small_contract(request):
+    binding = [{"sourceIndex": index, "sourceSlot": slot,
+                "sourceSha256": sha256(data).hexdigest(), "byteLength": len(data)}
+               for index, ((data, _mime), slot) in enumerate(zip(SOURCES, SLOTS))]
+    item = {**candidate(region=request.param), "sourceSlot": "Front",
+            "sourceSha256": binding[0]["sourceSha256"], "direction": "front"}
+    encoded = json.dumps(item, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":"), allow_nan=False).encode()
+    item["id"] = "dt1_" + sha256(encoded).hexdigest()[:24]
+    return {"version": 1, "status": "ready", "candidates": [item], "binding": binding}
+
+
+def test_legacy_small_regions_pass_persisted_validation(legacy_small_contract):
+    assert dr.validate_persisted(legacy_small_contract) == legacy_small_contract
+
+
+def test_legacy_small_regions_can_be_resolved(legacy_small_contract):
+    target = legacy_small_contract["candidates"][0]
+    assert dr.resolve_target({dr.PERSISTED_KEY: legacy_small_contract}, target["id"],
+                             source_images=SOURCES, slots=SLOTS, direction="front") == target
+
+
+def test_legacy_small_regions_survive_signed_handoff(legacy_small_contract):
+    signed = dr.issue_handoff(legacy_small_contract, SECRET, now=1000)
+    assert dr.verify_handoff(json.loads(json.dumps(signed)), SECRET, now=1001) == legacy_small_contract
+
+
+@pytest.mark.parametrize("region,expected", [
+    ({"x": 0, "y": 0, "w": .02, "h": .5}, {"x": 0, "y": 0, "w": .02, "h": .5}),
+    ({"x": 0, "y": 0, "w": .5, "h": .02}, {"x": 0, "y": 0, "w": .5, "h": .02}),
+    ({"x": 0, "y": 0, "w": .02, "h": .02}, {"x": 0, "y": 0, "w": .02, "h": .02}),
+    ({"x": 0, "y": 0, "w": 20, "h": 20}, {"x": 0, "y": 0, "w": .02, "h": .02}),
+])
+def test_regions_at_minimum_size_are_accepted(region, expected):
+    value = contract([candidate(region=region)])
+    assert value["status"] == "ready"
+    assert value["candidates"][0]["region"] == expected
+
+
+def test_all_thousand_unit_candidates_produce_ready_contract():
+    value = contract([
+        candidate(region={"x": 200, "y": 100, "w": 500, "h": 600}),
+        candidate(sourceIndex=1, rank=2, region={"x": 0, "y": 500, "w": 1000, "h": 500}),
+    ])
+    assert value["status"] == "ready"
+    assert [row["region"] for row in value["candidates"]] == [
+        {"x": .2, "y": .1, "w": .5, "h": .6},
+        {"x": 0.0, "y": .5, "w": 1.0, "h": .5},
+    ]
+
+
+def test_thousand_unit_candidate_ids_are_deterministic_and_bind_normalized_region():
+    raw = candidate(region={"x": 200, "y": 100, "w": 500, "h": 600})
+    first = contract([raw])["candidates"][0]["id"]
+    assert first.startswith("dt1_")
+    assert first == contract([deepcopy(raw)])["candidates"][0]["id"]
+    assert first == contract()["candidates"][0]["id"]
+
+
+def test_resolve_target_uses_normalized_region_and_remaps_source():
+    value = contract([candidate(sourceIndex=1, region={"x": 200, "y": 100, "w": 500, "h": 600})])
+    target = value["candidates"][0]
+    resolved = dr.resolve_target({dr.PERSISTED_KEY: value}, target["id"],
+                                 source_images=SOURCES[::-1], slots=SLOTS[::-1], direction="back")
+    assert resolved == {**target, "sourceIndex": 0}
+    assert resolved["region"] == {"x": .2, "y": .1, "w": .5, "h": .6}
 
 
 def test_source_bound_stable_ids_and_back_direction():
@@ -100,6 +232,29 @@ def _through_browser(value):
             return [js(x) for x in v]
         return v
     return js(json.loads(json.dumps(value)))
+
+
+@pytest.mark.parametrize("region", [
+    {"x": 200, "y": 100, "w": 500, "h": 600},
+    {"x": 0, "y": 500, "w": 1000, "h": 500},
+    {"x": 0, "y": 0, "w": 1000, "h": 1000},
+])
+@pytest.mark.parametrize("browser", [False, True])
+def test_thousand_unit_handoff_survives_json_and_browser_round_trips(region, browser):
+    value = contract([candidate(region=region)])
+    assert value["status"] == "ready"
+    assert len(value["candidates"]) == 1
+    signed = dr.issue_handoff(value, SECRET, now=1000)
+    wire = json.dumps(signed)
+    returned = _through_browser(signed) if browser else json.loads(wire)
+    if region["w"] == 1000:
+        assert '"x": 0.0' in wire and '"w": 1.0' in wire
+        if browser:
+            coordinates = returned["contract"]["candidates"][0]["region"]
+            assert type(coordinates["x"]) is int and type(coordinates["w"]) is int
+    assert dr._canonical(returned) == dr._canonical(signed)
+    assert dr.verify_handoff(returned, SECRET, now=1001) == value
+    assert dr.issue_handoff(returned["contract"], SECRET, now=1000)["signature"] == signed["signature"]
 
 
 @pytest.mark.parametrize("region", [
@@ -190,7 +345,7 @@ def test_analysis_core_persists_original_binding_and_sends_only_summary(monkeypa
     from app.workers import analyze_job
     from conftest import make_settings
 
-    async def analyze(*args):
+    async def analyze(*args, **kwargs):
         return {"product": {"clothingType": "top"}, "analysis": {}, "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini"
 
     async def extract(*args, **kwargs):

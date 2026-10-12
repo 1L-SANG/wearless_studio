@@ -188,7 +188,17 @@ reject_refund(admin, req):
 
 ## 5. 단가 구현 상태와 미해결 항목
 
-**구현 상태(2026-09-11):** 1cr=50원, `credit_cost_version="v6"`. 마네킹 기본 생성과 무료 횟수 초과 재생성 45cr, 폐기된 조정 0cr, 상세페이지 AI 컷 19cr, 에디터 이미지 19cr을 기존 예약·확정·해제 경로에 배선했다. 서버 `config.credit_cost_*`와 프론트 `CREDIT_COSTS`가 같은 값을 사용한다. 플랜 지급량 8종과 실모델 원화 표준가 14,900원·49,900원도 코드에 반영했다. 프로덕션 배포와 DB 적용은 이 문단의 완료 주장에 포함하지 않는다.
+**구현 상태(2026-10-12):** 1cr=50원, `credit_cost_version="v6"`. 마네킹 기본 생성과 무료 횟수 초과 재생성 45cr, 폐기된 조정 0cr, 상세페이지 AI 컷 19cr, 에디터 색상·열림 고쳐 만들기 5cr, 비슷한 컷 8cr, 그 밖의 에디터 이미지 19cr을 기존 예약·확정·해제 경로에 배선했다. 서버 `config.credit_cost_*`와 프론트 `CREDIT_COSTS`가 같은 값을 사용한다. 플랜 지급량 8종과 실모델 원화 표준가 14,900원·49,900원도 코드에 반영했다. 프로덕션 배포와 DB 적용은 이 문단의 완료 주장에 포함하지 않는다.
+
+| 에디터 행동 | 카탈로그 키 | 기본 크레딧 | 서버 설정 / 환경변수 |
+|---|---|---:|---|
+| 착용컷·직접 올린 사진의 색상·열림 정도 (`vary` + `color`/`closure`) | `editorEdit` | 5 | `credit_cost_editor_edit` / `CREDIT_COST_EDITOR_EDIT` |
+| 비슷한 컷 (`vary` + `similar`) | `editorSimilar` | 8 | `credit_cost_editor_similar` / `CREDIT_COST_EDITOR_SIMILAR` |
+| 새 이미지·고스트·디테일·빈 칸 다시 만들기·AI로 채우기·그 밖의 vary | `editorImage` | 19 | `credit_cost_editor_image` / `CREDIT_COST_EDITOR_IMAGE` |
+
+서버는 원본과 변경값 검증, 콘티·fill 복원을 마친 요청으로 단가를 고른다. 빈 칸의 내부 요청이 `vary/similar`여도 19cr이다. 클라이언트 가격은 차감 근거가 아니다. 작업의 `credits_reserved`를 성공 확정과 실패 해제에 그대로 쓰며 원장 `action_key=editorImage`(해제는 기존 `editorImage.release`)를 유지한다. 같은 키 재요청은 추가 예약 없이 합류하고 다른 내용은 409 `idempotency_key_reused`다. DB 마이그레이션은 필요 없다.
+
+독립 배포 시 화면은 서버 견적에 `editorEdit` 또는 `editorSimilar`가 없으면 서버 `editorImage`로 표시한다. HTTP 모드의 정적 카탈로그에 있는 로컬 5·8 기본값을 서버 응답에 섞지 않는다. 서버가 먼저 배포되면 옛 화면은 19로 표시해도 실제 차감은 5·8이다. 상세페이지 생성은 장소세트 컷을 포함한 장당 19cr, 최소 5컷을 유지한다.
 
 컷아웃 10cr은 설계값이며 현재 무과금 경로에는 예약·확정 원장 처리가 없어 별도 트랙이다. 실모델 라이선스 크레딧 차감 298/998/158, 월권 10건 캡도 별도 트랙이다. 개인화 생성은 기존 3cr을 유지하며 오너 결정이 필요하다.
 
@@ -206,7 +216,7 @@ reject_refund(admin, req):
 - 확장 가상모델 mC부터 mN까지는 상품당 첫 마네킹 생성 예약에 Free와 Starter 19cr, Seller 10cr, Pro 0cr을 더한다. Mia(mA)와 Leo(mB), 실모델 UUID, 미선택은 추가 요금이 없다. `jobs.metadata`와 성공 정산 원장에 `extensionModelFee`, `plan`, `selectedModelId`를 남긴다. 완료 컷 캐시 반환과 활성 잡 합류에는 새 예약이 없다.
 - 무료 수정은 상품당 Free와 Starter와 Seller 1회, Pro 2회다. `kind='mannequin'`, `status='done'`인 잡 수 N을 읽고 `mannequin_regenerate_cost(plan, N, base_cost)`에서 N이 무료 횟수 이하면 0cr, 초과하면 45cr로 계산한다. 첫 생성이 N=1이며 실패와 취소, 진행 중 잡은 집계하지 않는다. 재생성에는 확장 모델 요금이 없다.
 - `reserve_credits`는 0 예약을 허용한다. 무료 수정은 같은 예약 트랜잭션에서 `record_free_mannequin_adjust`가 기존 `_settle_credits`를 이용해 `delta=0` 행을 남긴다. `freeAdjust=true`, `adjustIndex=N`, `plan`을 기록하고, 멱등키는 `credit:job:{id}:free-adjust`로 성공과 실패의 정산키와 분리한다. 버킷과 잔액은 바뀌지 않는다.
-- `GET /v1/projects/{id}/credit-quote`는 인증과 소유 확인을 거쳐 `plan`, `mannequinGenerate`, `mannequinRegenerate`, `storyboardPerCut`, `editorImage`를 반환한다. `selectedModelId` 쿼리가 있으면 저장된 선택보다 우선한다. 조회는 비소모 API이므로 읽기 응답 객체를 직접 반환한다. `usedAdjusts=max(N-1,0)`이며 재생성 라우트와 같은 계산 함수를 호출한다.
+- `GET /v1/projects/{id}/credit-quote`는 인증과 소유 확인을 거쳐 `plan`, `mannequinGenerate`, `mannequinRegenerate`, `storyboardPerCut`, `editorImage`, `editorEdit`, `editorSimilar`를 반환한다. `selectedModelId` 쿼리가 있으면 저장된 선택보다 우선한다. 조회는 비소모 API이므로 읽기 응답 객체를 직접 반환한다. `usedAdjusts=max(N-1,0)`이며 재생성 라우트와 같은 계산 함수를 호출한다.
 - `extensionFeeAlreadyPaid`는 성공한 잡의 확장 요금 기록 유무를 알리는 값이다. 분석 확정 후 같은 프로젝트의 모델을 바꿔 첫 생성을 다시 시작하는 UI 경로는 차단되어 있어 추가 면제 분기를 구현하지 않는다. 생성 견적은 기본 단가와 현재 선택의 확장 요금 합계이고, 완료 캐시 반환은 기존처럼 실제 차감이 없다.
 
 ---
@@ -232,3 +242,16 @@ reject_refund(admin, req):
 2. ✅ 백엔드: `recompute_balance`/reserve·confirm·release 버킷화 + 마네킹 job confirm 연결. *(크레딧 모델 LIVE, 2026-06-29)* 충전·환불 HTTP 엔드포인트는 결제(PG) 단계로 분리(미구현).
 3. pytest(돈 로직 — 불변식 4개·FIFO·멱등·동시성 시나리오).
 4. 프론트(nav·/pricing·/credits/history·환불 모달)는 **auth 에이전트 조율 후 별도**.
+
+## 8. 가입 무료 크레딧과 충전 보너스 계약 (2026-10-06)
+
+이 절은 앞선 출처 종류와 소비 순서, 충전 지급량 설명을 확장한다.
+
+- **A. 가입 지급:** 셀러 약관에 처음 동의하면 `SIGNUP_CREDITS` 설정값을 한 번 지급하며 기본값은 0cr로 운영에서 꺼져 있다(2026-10-07). 충전 보너스를 먼저 배포하며, 가입 무료 크레딧은 가입 뒤 설문과 휴대폰 인증을 마치면 받는 방식으로 바뀔 예정이다. `credit_accounts` 행 잠금과 고유 원장키 `signup:{user_id}`로 중복 지급을 막는다. 출처는 `free`, 원장 action은 `grant_signup`이며 만료와 현금 환불이 없다. 지급 실패는 SAVEPOINT 안에서 되돌려 동의 저장은 유지한다.
+- **B. 소비와 잔액:** 활성 버킷을 구독, 무료, 충전 순서로 쓰며 같은 종류에서는 생성 시각이 오래된 것부터 소비한다. 무료 잔액도 총 잔액과 가용 잔액에 포함한다. `subscription`은 `period_end`가 필수이고 `free`와 `topup`은 `period_end=null`이다. 무료 버킷은 충전 환불 대상에 포함하지 않는다.
+- **C. 충전 보너스:** `TOPUP_BONUS_ENABLED`는 기본 false이며 명시적으로 true일 때만 새 충전에 보너스를 붙인다. 켜진 상태에서는 주문 생성 당시 Seller는 기본 구매량의 5%, Pro는 10%, 나머지 플랜은 0%를 추가한다. 보너스는 `floor(baseCredits * bonusPercent / 100)`으로 계산한다. 계좌이체와 토스 주문은 기본량 `credits`, 추가량 `bonus_credits`, 비율 `bonus_percent`, 당시 플랜 `plan_at_order`를 저장한다. 꺼진 상태의 새 주문은 보너스량과 비율을 0으로 저장한다. 결제 확인 때는 설정이나 플랜 변경과 관계없이 이 스냅샷을 그대로 지급하며 다시 계산하지 않는다. 과거 주문은 보너스 0과 플랜 null을 유지한다. 기본량과 보너스 합계를 하나의 `topup` 버킷으로 지급하고, 전액 환불 때도 합계를 함께 회수한다. 부분 환불은 고객센터가 `baseCredits`를 기준으로 수동 처리한다. 지급 원장 metadata에는 `baseCredits`, `bonusCredits`, `bonusPercent`, `planAtOrder`와 기존 결제 식별 필드를 남긴다.
+- **가입 경계:** 재동의와 셀러 동의를 하지 않는 FaceMarket 지원자는 지급 대상이 아니다. `handle_new_user`는 바꾸지 않는다. 무료 버킷의 `initial=remaining=SIGNUP_CREDITS`, `plan_id=payment_id=period_end=null`이며 원장 metadata는 `{"reason":"signup"}`이다. 응답 `signupCredits`는 이번 호출의 실제 지급량이며 실패와 미지급은 0이다.
+- **지급과 환불:** 관리자 수동 충전도 `TOPUP_BONUS_ENABLED=true`일 때만 지급 시점 플랜으로 보너스를 계산한다. 같은 지급의 멱등 재시도는 설정을 꺼도 최초 지급량을 유지한다. 개발용 `topups:purchase`는 보너스를 주지 않는다. 첫 결제 보너스는 없다. 보너스를 포함한 버킷 전체가 미사용이고 7일 안인 경우 기존 전액 환불 규칙을 적용하며, 한 크레딧이라도 사용하면 자동 환불할 수 없다. 구독을 먼저 쓰는 이유는 해지 시 소멸하기 때문이고, 무료를 충전보다 먼저 쓰는 이유는 유료 충전의 미사용 환불 가능성을 보존하기 위해서다.
+- **화면과 알림:** 동의 응답의 지급량이 양수일 때만 가입 토스트를 한 번 띄우고 잔액을 다시 읽는다. `GET /v1/me/account`의 불리언 `topupBonusEnabled`는 서버 설정을 그대로 전달한다. 충전 카드는 이 값이 true인 로그인한 Seller와 Pro에만 보너스를 표시하며, 필드가 없거나 false면 표시하지 않는다. 신청 전 미리보기는 서버 정책의 프론트 미러를 쓰고, 신청 뒤 화면과 관리자 확인, 메일과 슬랙은 현재 설정 대신 저장된 합계와 보너스 포함량을 표시한다. 목 어댑터도 같은 지급과 스냅샷 규칙을 따른다.
+
+배포와 활성화 순서는 [충전 보너스 운영 절차](../docs/runbooks/topup-bonus-rollout.md)를 따른다. 마이그레이션과 모든 지급 서버를 먼저 배포하고 구버전 태스크가 모두 종료된 뒤에만 설정을 켠다.

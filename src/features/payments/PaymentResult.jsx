@@ -51,7 +51,7 @@ export function PaymentSuccess() {
           authorizeFlowContinuation(resume.projectId, resume.path);
         }
         if (!mounted.current || currentPath.current !== '/payments/success') return;
-        setState({ status: 'done', credits: res.credits, available: res.available });
+        setState({ status: 'done', credits: res.credits, bonusCredits: res.bonusCredits, totalCredits: res.totalCredits, available: res.available });
         if (resume) {
           navigate(resume.path, {
             replace: true,
@@ -80,7 +80,8 @@ export function PaymentSuccess() {
     <Shell
       icon="coins"
       title="충전이 완료됐어요"
-      desc={`크레딧 ${Number(state.credits || 0).toLocaleString('ko-KR')}이 추가됐어요.`
+      desc={`크레딧 ${Number(state.totalCredits ?? state.credits ?? 0).toLocaleString('ko-KR')}이 추가됐어요.`
+        + (state.bonusCredits > 0 ? ` 보너스 ${Number(state.bonusCredits).toLocaleString('ko-KR')} 포함.` : '')
         + (state.available != null ? ` 현재 잔액 ${Number(state.available).toLocaleString('ko-KR')}.` : '')}
     >
       <Link to="/credits/history"><Button variant="ghost">사용 내역 보기</Button></Link>

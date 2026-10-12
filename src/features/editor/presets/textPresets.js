@@ -11,6 +11,7 @@
    ============================================================= */
 import { uid } from '../../../lib/ids.js';
 import { nearestWeight } from '../fontWeights.js';
+import { patchTextStyle, resolveTextSpacing } from '../textSpacing.js';
 
 /* 위계를 만드는 속성만 프리셋이 소유한다. 폰트·정렬·기울임 등은 셀러 몫이라
    빠른 스타일 전환에서도 건드리지 않는다. */
@@ -65,8 +66,8 @@ const seedTextWidth = (size) => Math.round(size * 8.8);
     미리보기가 같은 값을 봐야 "끌 때 본 상자"와 "놓인 상자"가 같다. */
 export function textPresetBox(key) {
   const p = textPresetOf(key);
-  const h = p.style.lineHeight || Math.round(p.style.size * 1.4);
-  return { w: seedTextWidth(p.style.size), h, text: DEFAULT_TEXT_BODY, style: { font: 'Pretendard', ...p.style } };
+  const style = patchTextStyle({ font: 'Pretendard', ...p.style }, { spacingMode: 'auto' });
+  return { w: seedTextWidth(p.style.size), h: style.lineHeight, text: DEFAULT_TEXT_BODY, style };
 }
 
 /** 프리셋 키 → 새 텍스트 요소. x=60 은 이미지 기둥 왼끝 정렬(캔버스 1000px 기준). */
@@ -94,7 +95,7 @@ export function textPresetDropPlacement({ x, y, w = 12, h = 24, blockW = CANVAS_
     문서에서 구분 불가능해지고, JSON 직렬화는 undefined를 자연스럽게 떨군다. */
 export function quickStylePatch(key) {
   const p = textPresetOf(key);
-  return Object.fromEntries(HIERARCHY_PROPS.map((prop) => [prop, p.style[prop]]));
+  return { ...Object.fromEntries(HIERARCHY_PROPS.map((prop) => [prop, p.style[prop]])), spacingMode: 'auto' };
 }
 
 /* 실효값 비교 — 렌더러(Editor.jsx)의 기본값과 색상 UI의 대문자 저장
@@ -105,8 +106,8 @@ const effectiveOf = (style, prop, font) => {
   // 패널이 400 으로 붙여 저장하는데, 프리셋의 600 과 날것으로 비교하면 칩이 영원히 안 켜진다.
   if (prop === 'weight') return nearestWeight(font, style.weight || 400);
   if (prop === 'color') return String(style.color || TEXT_INK).toLowerCase();
-  if (prop === 'lineHeight') return style.lineHeight || Math.round((style.size || 18) * 1.4);
-  if (prop === 'tracking') return style.tracking || 0;
+  if (prop === 'lineHeight') return style.spacingMode === 'auto' ? resolveTextSpacing(style).lineHeight : style.lineHeight || Math.round((style.size || 18) * 1.4);
+  if (prop === 'tracking') return style.spacingMode === 'auto' ? resolveTextSpacing(style).tracking : style.tracking || 0;
   return style[prop];
 };
 
@@ -115,7 +116,7 @@ const effectiveOf = (style, prop, font) => {
 export function activeTextPreset(style) {
   if (!style) return null;
   const found = TEXT_PRESETS.find((p) => HIERARCHY_PROPS.every(
-    (prop) => effectiveOf(p.style, prop, style.font) === effectiveOf(style, prop, style.font)));
+    (prop) => effectiveOf(style.spacingMode === 'auto' ? { ...p.style, font: style.font, spacingMode: 'auto' } : p.style, prop, style.font) === effectiveOf(style, prop, style.font)));
   return found ? found.key : null;
 }
 

@@ -17,7 +17,7 @@ def test_preview_route_exists(keypair, make_token):
     assert client_for(keypair).get(BASE, headers=auth(make_token)).status_code == 503
 
 
-@pytest.mark.parametrize("kind", ["long_png", "block_png"])
+@pytest.mark.parametrize("kind", ["long_png", "block_png", "jpeg"])
 @pytest.mark.parametrize("revoked", [None, "2026-09-10"])
 def test_owner_can_preview_even_revoked_with_ten_minute_signature(kind, revoked, keypair, make_token, monkeypatch):
     conn = Conn([{"kind": kind, "r2_key": "private-signed-object", "revoked_at": revoked}])
@@ -75,6 +75,6 @@ def test_settlements_link_latest_owned_publication_without_private_fields(keypai
     assert "left join lateral" in sql
     assert "pub.project_id = j.project_id" in sql
     assert "pub.model_id = m.id" in sql
-    assert "pub.kind = 'long_png'" in sql and "pub.revoked_at is null" in sql
+    assert "pub.kind in ('long_png', 'jpeg')" in sql and "pub.revoked_at is null" in sql
     assert "pub.r2_key is not null" in sql
     assert "order by pub.created_at desc, pub.id desc limit 1" in sql

@@ -264,7 +264,7 @@ test('pose example direction gate matches worn directions', () => {
   ), false);
 });
 
-test('디테일 자동 예시 배정도 예시 라벨로 방향을 결정한다', async () => {
+test('디테일 자동 예시 배정은 고른 원본 면을 유지한다', async () => {
   const { assignGenerationExamples } = await import('../../src/lib/generationExamples.js');
   const catalog = [{
     id: 'ex-auto-bd', cutType: 'product', shot: 'detail', direction: 'back',
@@ -276,5 +276,5 @@ test('디테일 자동 예시 배정도 예시 라벨로 방향을 결정한다'
   });
   assert.equal(out.changed, true, '배정 자체가 안 되면 이 테스트는 아무것도 검증하지 못한다');
   assert.equal(out.blocks[0].exampleId, 'ex-auto-bd');
-  assert.equal(out.blocks[0].direction, 'back'); // back 라벨 예시가 배정되면 방향도 back
+  assert.equal(out.blocks[0].direction, 'front');
 });

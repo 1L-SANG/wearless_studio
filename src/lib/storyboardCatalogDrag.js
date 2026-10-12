@@ -92,10 +92,11 @@ export function createIndependentCatalogMembers(set, exampleIds, template, { mak
   const choices = independentSpaceSetChoices(set, context).filter(({ member }) => requested.has(member.exampleId));
   if (!requested.size || choices.length !== requested.size || requested.size !== exampleIds.length) throw new Error('catalog_member_unavailable');
   const { layoutRowId, layoutRowVersion, setSelectionOrigin, ownImages, exampleChoice, ...base } = stripHookFrameFields(detachSpaceMembership(template || {}));
+  delete base.similarSourceBlockId;
   return choices.map(({ member, example }, index) => ({ ...base, id: makeId(member, index), source: 'ai',
     sectionRole: context.sectionRole, contentRole: context.sectionRole === 'studio' ? 'fit' : 'coordination',
     cutType: member.cutType, direction: member.direction, shot: member.shot, exampleId: example.id, exampleSelectionOrigin: 'user',
-    refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null, pose: 'auto', poseLabel: 'AI 자동',
+    refScope: 'all', thumb: example.thumb || example.assetUrl, baseThumb: null,
     angle: 'same', faceExposure: base.faceExposure || 'same', refImages: [], refAssetIds: [],
   }));
 }

@@ -149,6 +149,7 @@ def provider_reference(image):
 
 
 def fingerprint(settings, sources, target, direction, style_reference=None, *, framing_source_index=0):
+    # 화질은 같은 요청의 렌더링 강도라 섞여도 계약이 유지되므로 제외해 배포 중 detail_attempt_unavailable을 막는다.
     value = {'prompt': PROMPT_VERSION, 'qc': detail_output_qc.POLICY_VERSION,
              'model': settings.model_product_detail, 'size': settings.detail_cut_image_size,
              'coreJudge': getattr(settings, 'model_detail_core', None),
@@ -159,6 +160,12 @@ def fingerprint(settings, sources, target, direction, style_reference=None, *, f
              'style': hashlib.sha256(style_reference.data).hexdigest() if style_reference else None,
              'target': target, 'direction': direction,
              'framingSourceIndex': framing_source_index}
+    # 기존 GPT와 Claude xhigh의 원장 및 최종 체크포인트 지문은 그대로 유지한다.
+    # Claude를 쓰는 경우에만 비기본 effort를 추가해 다른 검수 강도의 통과본을 구별한다.
+    effort = getattr(settings, 'detail_qc_claude_effort', 'xhigh')
+    if effort != 'xhigh' and any(isinstance(model, str) and model.startswith('claude-')
+                               for model in (value['coreJudge'], value['specialist'])):
+        value['claudeQcEffort'] = effort
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -188,6 +195,10 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
     fp = fingerprint(settings, sources, target, direction, style_reference,
                      framing_source_index=framing_source_index)
     state = await progress.read()
+    if state.get('phase') == 'rejudging':
+        if state.get('fingerprint') != fp:
+            raise DetailShotRejected('detail_attempt_unavailable', state.get('qc'))
+        state = await progress.recover_judgment_retry()
     prior_judgments = list((state.get('qc') or {}).get('judgments') or [])
     recover_final = (state.get('attempts') == 3
                      and state.get('phase') in {'generating', 'judging', 'judged'}
@@ -207,11 +218,18 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
     if state and candidate is None and not recover_final and state.get('phase') != 'retryable':
         raise DetailShotRejected('detail_checkpoint_unavailable')
 
+    image_quality = getattr(settings, 'product_detail_image_quality', 'medium')
+    # 최선 후보 발행 때 고른 후보의 실제 화질을 기록한다. 화질 기록 전 후보는 medium이었다.
+    candidate_qualities = {c.get('attempt'): c.get('imageQuality', 'medium')
+                           for c in state.get('candidates') or [] if isinstance(c, dict)}
     report = {'policyVersion': detail_output_qc.POLICY_VERSION,
               'promptVersion': PROMPT_VERSION, 'fingerprint': fp,
               'requestedGenerationModel': settings.model_product_detail,
+              'imageQuality': ((state.get('candidate') or {}).get('imageQuality', 'medium')
+                               if candidate is not None or recover_final else image_quality),
               'passed': False, 'attempts': state.get('attempts', 0),
               'judgments': prior_judgments,
+              'judgmentRetries': list(state.get('judgmentRetries') or []),
               'fallbackUsed': (state.get('attempts', 0) >= 3
                                and [j.get('decision') for j in prior_judgments[:2]] == ['FAIL', 'FAIL'])}
     resumed_judgment = report['judgments'][-1] if state.get('phase') == 'judged' and report['judgments'] else None
@@ -262,6 +280,7 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
             if selected is None:
                 continue
             report.update(publishedBestEffort=True, selectedAttempt=attempt_number,
+                          imageQuality=candidate_qualities.get(attempt_number, 'medium'),
                           selectionRankVersion='severity-v1',
                           decision=judgment.get('decision', 'UNKNOWN'))
             await progress.finish(report, selected_attempt=attempt_number)
@@ -312,12 +331,14 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                            'Other-color closeup(s) explain the SAME construction only. '
                            'Keep their geometry, seams and visible texture, applying the target color.\n')
             try:
+                report['imageQuality'] = image_quality
                 response = await client.generate_content_image(
                     settings.model_product_detail, prompt, generation_sources,
                     settings.detail_cut_image_size, aspect_ratio='2:3',
-                    openai_preserve_input_bytes=True)
+                    openai_preserve_input_bytes=True, openai_quality=image_quality)
                 candidate = InlineImage(response.mime, response.image)
-                await progress.save_candidate(candidate, fp, attempt)
+                await progress.save_candidate(candidate, fp, attempt, image_quality=image_quality)
+                candidate_qualities[attempt] = image_quality
                 for stale_error_field in ('reason', 'errorType', 'billable'):
                     report.pop(stale_error_field, None)
             except asyncio.CancelledError:
@@ -347,8 +368,28 @@ async def generate_verified(settings, client, sources, *, target, direction, pro
                 judgment = {'passed': False, 'decision': 'UNKNOWN', 'reason': 'judge_unavailable'}
             judgment = {**judgment, 'attempt': report['attempts']}
             report['judgments'].append(judgment)
+            report['decision'] = judgment.get('decision', 'UNKNOWN')
+            await progress.record_judgment(report)
+        if (detail_output_qc.is_transient_unknown(judgment)
+                and not any(row.get('attempt') == report['attempts'] for row in report['judgmentRetries'])):
+            # Commit a separate claim before the call. This is the same candidate,
+            # not a new generation or a second entry in the candidate judgments.
+            report['judgmentRetries'] = await progress.claim_judgment_retry(
+                fp, report['attempts'], hashlib.sha256(candidate.data).hexdigest())
+            try:
+                if judgment.get('retryAfterSeconds') is not None:
+                    await asyncio.sleep(judgment['retryAfterSeconds'])
+                judgment = await detail_output_qc.verdict(
+                    settings, sources, candidate, target=target, direction=direction)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                judgment = {'passed': False, 'decision': 'UNKNOWN', 'reason': 'judge_unavailable'}
+            judgment = {**judgment, 'attempt': report['attempts']}
+            report['judgments'][-1] = judgment
+            report['decision'] = judgment.get('decision', 'UNKNOWN')
+            report = await progress.record_judgment_retry(report)
         report['decision'] = judgment.get('decision', 'UNKNOWN')
-        await progress.record_judgment(report)
         if judgment.get('passed') is True and judgment.get('decision') == 'PASS':
             report['passed'] = True
             await progress.finish(report)

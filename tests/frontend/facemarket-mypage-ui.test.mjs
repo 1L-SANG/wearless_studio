@@ -8,7 +8,16 @@ const props = { journey: { mode: 'active', flag: 'none' }, model: { id: 'm1', di
 const button = (tree, label) => findTree(tree, node => node.type === 'button' && node.props.children === label);
 const component = (tree, name) => findTree(tree, node => node.type?.name === name);
 const textContent = node => node == null || typeof node === 'boolean' ? '' : Array.isArray(node) ? node.map(textContent).join(' ') : typeof node === 'object' ? textContent(node.props?.children) : String(node);
-const settle = async (render, ready) => { let value; for (let i = 0; i < 20; i += 1) { await new Promise(resolve => setImmediate(resolve)); value = render(); if (ready(value)) return value; } return value; };
+const settle = async (render, ready) => {
+  const deadline = Date.now() + 5_000;
+  let value = render();
+  while (!ready(value)) {
+    if (Date.now() >= deadline) assert.fail('비동기 상태가 5초 안에 준비되지 않았어요.');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    value = render();
+  }
+  return value;
+};
 
 test('대화상자 내용이 바뀌면 제목으로 초점을 옮기고 마지막에는 지정된 열기 버튼으로 돌아가요', async () => {
   const harness = await loadEarningsHarness();

@@ -78,8 +78,9 @@ HARD GATES — return each exactly once in this order:
 10. matchingGarmentIdentity — when MATCHING is selected, its visible construction, color, material, pattern,
    hardware, fit, lettering, numbers, graphics, embroidery and logos match the MATCHING reference exactly.
    Missing, garbled, simplified, invented, reversed or example-derived details FAIL. NA only when matchingCount=0.
-11. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared
+11. fitClosureAllowedMutation — only declared fit axes may change; closure matches the storyboard opening level, or the nearest level this exact garment can physically take; undeclared
    fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged.
+storyboard.outerClosure levels, measured on the wearer from the neckline down: closed = fastened up to the neckline; openToChest = open down to about the armpit line, fastened below; partial = open down to about the bottom of the breastbone; openToWaist = open down to about navel height, fastened only near the hem; open = fully unfastened; none = not applicable. Never FAIL a closure only because the garment cannot physically reach the exact level.
 12. modelIdentity — when applicable, the visible face is the selected MODEL FACE identity, not a similar
     person or the EXAMPLE person. MODEL FULL BODY cannot substitute for missing facial evidence. Ambiguity
     is UNJUDGEABLE. Hidden/back-facing/product cuts are NA per applicability.

@@ -1,0 +1,122 @@
+[
+  {
+    "caseId": "top-1", "category": "상의",
+    "product": {"name": "라운드 골지 니트", "clothingType": "top", "colors": [{"id": "base", "name": "아이보리", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["라운드넥", "골지 짜임"], "materials": [{"name": "코튼"}], "detailRecommendations": {"candidates": [{"id": "dt-neck", "label": "라운드넥 마감"}]}},
+    "blocks": [{"id": "top-1-sig", "source": "ai", "exampleId": "sig_top_01", "contentRole": "hero", "cutType": "styling", "shot": "full"}, {"id": "top-1-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "base"}, {"id": "top-1-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "base", "detailTargetId": "dt-neck"}]
+  },
+  {
+    "caseId": "top-2", "category": "상의",
+    "product": {"name": "오버핏 후드 티셔츠", "clothingType": "top", "colors": [{"id": "gray", "name": "멜란지 그레이", "isBase": true}]},
+    "analysis": {"fit": "over", "sellingPoints": ["후드 스트링", "캥거루 포켓"], "materials": [{"name": "코튼"}], "matchClothing": [{"id": "match-pants", "name": "블랙 와이드 팬츠", "colorName": "블랙"}]},
+    "blocks": [{"id": "top-2-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "gray", "matchIds": ["match-pants"]}, {"id": "top-2-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "medium", "direction": "side", "colorId": "gray"}]
+  },
+  {
+    "caseId": "top-3", "category": "상의",
+    "product": {"name": "핀턱 퍼프 블라우스", "clothingType": "top", "colors": [{"id": "white", "name": "오프화이트", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["퍼프 소매", "앞 핀턱"], "materials": [{"name": "레이온"}]},
+    "blocks": [{"id": "top-3-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "white"}, {"id": "top-3-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "white"}]
+  },
+  {
+    "caseId": "top-4", "category": "상의",
+    "product": {"name": "스트라이프 셔츠", "clothingType": "top", "colors": [{"id": "blue", "name": "스카이 블루", "isBase": true}]},
+    "analysis": {"fit": "semi_over", "sellingPoints": ["소매 단추", "세로 스트라이프"], "materials": [{"name": "코튼"}], "detailRecommendations": {"candidates": [{"id": "dt-cuff", "label": "소맷단 단추"}]}},
+    "blocks": [{"id": "top-4-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "back", "colorId": "blue"}, {"id": "top-4-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "blue", "detailTargetId": "dt-cuff"}]
+  },
+  {
+    "caseId": "top-5", "category": "상의",
+    "product": {"name": "브이넥 린넨 셔츠", "clothingType": "top", "colors": [{"id": "beige", "name": "샌드 베이지", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["브이넥", "롤업 소매"], "materials": [{"name": "린넨"}], "matchCandidates": [{"id": "match-skirt", "name": "크림 롱 스커트", "colorName": "크림"}]},
+    "blocks": [{"id": "top-5-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "beige", "matchIds": ["match-skirt"]}, {"id": "top-5-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "beige"}]
+  },
+  {
+    "caseId": "bottom-1", "category": "하의",
+    "product": {"name": "핀턱 와이드 슬랙스", "clothingType": "bottom", "colors": [{"id": "black", "name": "차콜 블랙", "isBase": true}]},
+    "analysis": {"fit": "over", "sellingPoints": ["허리 핀턱", "와이드 밑단"], "materials": [{"name": "폴리에스터"}], "detailRecommendations": {"candidates": [{"id": "dt-waist", "label": "허리 핀턱"}]}},
+    "blocks": [{"id": "bottom-1-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "black"}, {"id": "bottom-1-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "black", "detailTargetId": "dt-waist"}]
+  },
+  {
+    "caseId": "bottom-2", "category": "하의",
+    "product": {"name": "밴딩 조거 팬츠", "clothingType": "bottom", "colors": [{"id": "gray", "name": "스톤 그레이", "isBase": true}]},
+    "analysis": {"fit": "semi_over", "sellingPoints": ["허리 밴딩", "밑단 밴딩"], "materials": [{"name": "코튼"}], "matchClothing": [{"id": "match-hood", "name": "오프화이트 후드", "colorName": "오프화이트"}]},
+    "blocks": [{"id": "bottom-2-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "gray", "matchIds": ["match-hood"]}, {"id": "bottom-2-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "side", "colorId": "gray"}]
+  },
+  {
+    "caseId": "bottom-3", "category": "하의",
+    "product": {"name": "크롭 스트레이트 데님", "clothingType": "bottom", "colors": [{"id": "denim", "name": "미드 블루", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["크롭 팬츠", "뒤 포켓"], "materials": [{"name": "데님"}]},
+    "blocks": [{"id": "bottom-3-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "denim"}, {"id": "bottom-3-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "back", "colorId": "denim"}]
+  },
+  {
+    "caseId": "bottom-4", "category": "하의",
+    "product": {"name": "플리츠 미디 스커트", "clothingType": "bottom", "colors": [{"id": "navy", "name": "딥 네이비", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["플리츠", "옆 지퍼"], "materials": [{"name": "폴리에스터"}], "detailRecommendations": {"candidates": [{"id": "dt-pleats", "label": "플리츠 주름"}]}},
+    "blocks": [{"id": "bottom-4-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "navy"}, {"id": "bottom-4-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "navy", "detailTargetId": "dt-pleats"}]
+  },
+  {
+    "caseId": "bottom-5", "category": "하의",
+    "product": {"name": "카고 롱 스커트", "clothingType": "bottom", "colors": [{"id": "khaki", "name": "카키", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["카고 포켓", "뒤 트임"], "materials": [{"name": "코튼"}], "matchCandidates": [{"id": "match-knit", "name": "블랙 슬림 니트", "colorName": "블랙"}]},
+    "blocks": [{"id": "bottom-5-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "khaki", "matchIds": ["match-knit"]}, {"id": "bottom-5-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "khaki"}]
+  },
+  {
+    "caseId": "outer-1", "category": "아우터",
+    "product": {"name": "투웨이 후드 집업", "clothingType": "outer", "colors": [{"id": "black", "name": "블랙", "isBase": true}]},
+    "analysis": {"fit": "semi_over", "sellingPoints": ["투웨이 지퍼", "후드 스트링"], "materials": [{"name": "코튼"}], "detailRecommendations": {"candidates": [{"id": "dt-zip", "label": "투웨이 지퍼"}]}},
+    "blocks": [{"id": "outer-1-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "black"}, {"id": "outer-1-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "black", "detailTargetId": "dt-zip"}]
+  },
+  {
+    "caseId": "outer-2", "category": "아우터",
+    "product": {"name": "오버핏 싱글 재킷", "clothingType": "outer", "colors": [{"id": "beige", "name": "웜 베이지", "isBase": true}]},
+    "analysis": {"fit": "over", "sellingPoints": ["싱글 버튼", "플랩 포켓"], "materials": [{"name": "울"}], "matchClothing": [{"id": "match-denim", "name": "인디고 스트레이트 데님", "colorName": "인디고"}]},
+    "blocks": [{"id": "outer-2-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "beige", "matchIds": ["match-denim"]}, {"id": "outer-2-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "side", "colorId": "beige"}]
+  },
+  {
+    "caseId": "outer-3", "category": "아우터",
+    "product": {"name": "크롭 데님 재킷", "clothingType": "outer", "colors": [{"id": "blue", "name": "라이트 블루", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["크롭 기장", "가슴 포켓"], "materials": [{"name": "데님"}]},
+    "blocks": [{"id": "outer-3-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "blue"}, {"id": "outer-3-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "medium", "direction": "front", "colorId": "blue"}]
+  },
+  {
+    "caseId": "outer-4", "category": "아우터",
+    "product": {"name": "더블 버튼 롱 코트", "clothingType": "outer", "colors": [{"id": "brown", "name": "초콜릿 브라운", "isBase": true}]},
+    "analysis": {"fit": "semi_over", "sellingPoints": ["더블 버튼", "뒤 트임"], "materials": [{"name": "울"}], "detailRecommendations": {"candidates": [{"id": "dt-button", "label": "더블 버튼 여밈"}]}},
+    "blocks": [{"id": "outer-4-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "full", "direction": "front", "colorId": "brown"}, {"id": "outer-4-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "brown", "detailTargetId": "dt-button"}]
+  },
+  {
+    "caseId": "outer-5", "category": "아우터",
+    "product": {"name": "노카라 퀼팅 재킷", "clothingType": "outer", "colors": [{"id": "ivory", "name": "크림 아이보리", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["노카라", "스냅 버튼"], "materials": [{"name": "나일론"}], "matchCandidates": [{"id": "match-slacks", "name": "브라운 세미와이드 슬랙스", "colorName": "브라운"}]},
+    "blocks": [{"id": "outer-5-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "ivory", "matchIds": ["match-slacks"]}, {"id": "outer-5-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "ivory"}]
+  },
+  {
+    "caseId": "dress-1", "category": "원피스",
+    "product": {"name": "핀턱 셔츠 원피스", "clothingType": "dress", "colors": [{"id": "navy", "name": "네이비", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["허리 핀턱", "앞 단추"], "materials": [{"name": "코튼"}], "detailRecommendations": {"candidates": [{"id": "dt-pintuck", "label": "허리 핀턱"}]}},
+    "blocks": [{"id": "dress-1-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "full", "direction": "front", "colorId": "navy"}, {"id": "dress-1-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "navy", "detailTargetId": "dt-pintuck"}]
+  },
+  {
+    "caseId": "dress-2", "category": "원피스",
+    "product": {"name": "플리츠 롱 원피스", "clothingType": "dress", "colors": [{"id": "pink", "name": "더스티 핑크", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["플리츠", "라운드넥"], "materials": [{"name": "폴리에스터"}], "matchClothing": [{"id": "match-cardigan", "name": "아이보리 크롭 가디건", "colorName": "아이보리"}]},
+    "blocks": [{"id": "dress-2-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "pink", "matchIds": ["match-cardigan"]}, {"id": "dress-2-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "side", "colorId": "pink"}]
+  },
+  {
+    "caseId": "dress-3", "category": "원피스",
+    "product": {"name": "랩 미디 원피스", "clothingType": "dress", "colors": [{"id": "green", "name": "포레스트 그린", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["랩 여밈", "사이드 스트랩"], "materials": [{"name": "레이온"}]},
+    "blocks": [{"id": "dress-3-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "green"}, {"id": "dress-3-fit", "source": "ai", "contentRole": "fit", "cutType": "horizon", "shot": "full", "direction": "front", "colorId": "green"}]
+  },
+  {
+    "caseId": "dress-4", "category": "원피스",
+    "product": {"name": "퍼프 미니 원피스", "clothingType": "dress", "colors": [{"id": "black", "name": "블랙", "isBase": true}]},
+    "analysis": {"fit": "slim", "sellingPoints": ["퍼프 소매", "뒤 지퍼"], "materials": [{"name": "코튼"}], "detailRecommendations": {"candidates": [{"id": "dt-sleeve", "label": "퍼프 소매"}]}},
+    "blocks": [{"id": "dress-4-benefit", "source": "ai", "contentRole": "benefit", "cutType": "horizon", "shot": "full", "direction": "front", "colorId": "black"}, {"id": "dress-4-detail", "source": "ai", "contentRole": "detail", "cutType": "product", "shot": "detail", "direction": "front", "colorId": "black", "detailTargetId": "dt-sleeve"}]
+  },
+  {
+    "caseId": "dress-5", "category": "원피스",
+    "product": {"name": "뷔스티에 레이어드 원피스", "clothingType": "dress", "colors": [{"id": "gray", "name": "차콜 그레이", "isBase": true}]},
+    "analysis": {"fit": "regular", "sellingPoints": ["어깨 스트랩", "옆선 지퍼"], "materials": [{"name": "폴리에스터"}], "matchCandidates": [{"id": "match-tee", "name": "화이트 슬림 티셔츠", "colorName": "화이트"}]},
+    "blocks": [{"id": "dress-5-coord", "source": "ai", "contentRole": "coordination", "cutType": "styling", "shot": "full", "direction": "front", "colorId": "gray", "matchIds": ["match-tee"]}, {"id": "dress-5-overview", "source": "ai", "contentRole": "productOverview", "cutType": "product", "shot": "ghost", "direction": "front", "colorId": "gray"}]
+  }
+]

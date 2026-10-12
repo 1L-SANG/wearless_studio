@@ -1,3 +1,5 @@
+import { clientEvents } from '../clientEvents.js';
+import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
 /* =============================================================
    lib/api/facemarket — FaceMarket 전용 API (셀러 스튜디오 api 경계와 분리).
    프로덕션은 실서버 전용이고 명시적인 개발 mock 모드만 로컬 자료를 쓴다. http() 헬퍼를 재사용해 Supabase 세션 Bearer 를 주입한다.
@@ -23,21 +25,22 @@ async function _bearer() {
 }
 
 async function _authFetch(path, opts = {}) {
-  const token = await _bearer();
+  const accountGeneration = clientEvents.getAccountGeneration();
+  const token = await _bearer().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   // 관리자 기기 토큰 — http()(httpAdapter.js)와 같은 규칙으로 싣는다. 이게 빠지면
   // ADMIN_DEVICE_GATE=enforce 인 프로덕션에서 관리자 화면의 **모든 이미지 fetch 가 403** 이다
   // (admin_guard.device_token_from 은 이 헤더만 본다). 심사 화면은 신분증을 한 장도 못 보고,
   // 실패를 "파기됨"으로 오해하게 만든다(최종리뷰 C4). 스토리지가 오리진으로 갈라져 있어
   // 관리자 문서 밖에서는 토큰 자체가 없으므로 무조건 싣는다(IS_ADMIN 을 보지 않는다).
   const deviceToken = readDeviceToken();
-  return fetch(`${BASE_URL}${path}`, {
+  return clientApiFetch(`${BASE_URL}${path}`, {
     ...opts,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
       ...(opts.headers || {}),
     },
-  });
+  }, { accountGeneration });
 }
 
 /* 게이트 라우트에서 바이트를 받아 objectURL 로 만든다(<img src> 로는 못 건다 — 인증
@@ -59,14 +62,14 @@ async function _gatedImageUrl(path, fallbackMessage) {
     const error = new Error(fallbackMessage);
     error.status = res.status;
     if (code) error.code = code;
-    throw error;
+    throw attachResponseError(error, res);
   }
-  const blob = await res.blob();
+  const blob = await readClientResponse(res, 'blob');
   return URL.createObjectURL(blob);
 }
 
 async function checkedJson(res, fallback = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.') {
-  if (res.ok) return res.status === 204 ? null : res.json();
+  if (res.ok) return res.status === 204 ? null : readClientResponse(res);
   let message = fallback;
   let code;
   let reasons;
@@ -80,7 +83,7 @@ async function checkedJson(res, fallback = '요청을 처리하지 못했어요.
   error.status = res.status;
   if (code) error.code = code;
   if (Array.isArray(reasons)) error.reasons = reasons;
-  throw error;
+  throw attachResponseError(error, res);
 }
 
 // POST /v1/facemarket/identity/verify → { verified, modelId, status, nameMasked }.
@@ -618,7 +621,7 @@ export function adminBuildModelTestCuts(modelId) {
 export async function adminFetchModelTestCutUrl(imageUri) {
   const res = await _authFetch(imageUri);
   if (!res.ok) throw new Error('테스트컷을 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }
 
 // ── 모델 본인: 테스트컷 확인 게이트 ────────────────────────────────────────
@@ -630,7 +633,7 @@ export function getMyModelTestCuts() {
 export async function fetchMyModelTestCutUrl(imageUri) {
   const res = await _authFetch(imageUri);
   if (!res.ok) throw new Error('테스트컷을 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }
 
 export function confirmMyModelTestCuts({ closeupCutId, fullbodyCutId }) {
@@ -669,7 +672,7 @@ export function completeEnrollment(enrollmentId, { sessionId } = {}, { signal } 
 export async function fetchEnrollmentPhotoUrl(enrollmentId, slot, { signal } = {}) {
   const res = await _authFetch(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos/${encodeURIComponent(slot)}`, { signal });
   if (!res.ok) await checkedJson(res, '사진을 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }
 
 export function cancelEnrollment(enrollmentId) {
@@ -762,7 +765,7 @@ export function listModelUsage(modelId) {
 // 얼굴·digest·CI·생년월일·user_id·model_id 는 서버가 애초에 싣지 않는다(무인증 = 노출 시 영구 유출).
 // 해지가 즉시 반영돼야 하므로 캐시 금지(서버 Cache-Control: no-store + 요청 측 cache:'no-store').
 export async function verifyLicensePublic(licenseId) {
-  const res = await fetch(`${BASE_URL}/v1/facemarket/verify/${encodeURIComponent(licenseId)}`, {
+  const res = await clientApiFetch(`${BASE_URL}/v1/facemarket/verify/${encodeURIComponent(licenseId)}`, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   });
@@ -773,9 +776,9 @@ export async function verifyLicensePublic(licenseId) {
     try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
     const err = new Error(message);
     err.status = res.status;
-    throw err;
+    throw attachResponseError(err, res);
   }
-  return res.json();
+  return readClientResponse(res);
 }
 
 // GET /v1/facemarket/publications/verify/{id} — 배포본 공개 검증. **무인증**.
@@ -786,7 +789,7 @@ export async function verifyLicensePublic(licenseId) {
 // 얼굴·CI·생년월일·user_id·model_id·seller_id·내부 R2 키·전체 image_sha256 은 서버가
 // 애초에 싣지 않는다. 해지가 즉시 반영돼야 하므로 캐시 금지(위 verifyLicensePublic 과 동일 패턴).
 export async function verifyPublicationPublic(publicationId) {
-  const res = await fetch(
+  const res = await clientApiFetch(
     `${BASE_URL}/v1/facemarket/publications/verify/${encodeURIComponent(publicationId)}`,
     { headers: { Accept: 'application/json' }, cache: 'no-store' },
   );
@@ -797,9 +800,9 @@ export async function verifyPublicationPublic(publicationId) {
     try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
     const err = new Error(message);
     err.status = res.status;
-    throw err;
+    throw attachResponseError(err, res);
   }
-  return res.json();
+  return readClientResponse(res);
 }
 
 // POST /v1/facemarket/publications/presign — 배포본 업로드 URL. 행은 아직 안 만든다.
@@ -821,8 +824,8 @@ export function signPublication({ uploadToken }) {
 // 호출부는 표시 후 URL.revokeObjectURL 로 해제할 것.
 export async function fetchLicenseFaceUrl(faceImageUri) {
   const res = await _authFetch(faceImageUri);
-  if (!res.ok) throw new Error('얼굴 이미지를 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  if (!res.ok) throw attachResponseError(new Error('얼굴 이미지를 불러오지 못했어요.'), res);
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }
 
 // 모델 제보 — "내 얼굴 찾기 신고"(2026-09-27). 서버가 배포본과 대조해 관리자에게 알린다.

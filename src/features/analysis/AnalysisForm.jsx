@@ -1,3 +1,6 @@
+import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
 /* =============================================================
    features/analysis — ② AI 분석·세부 확인 (PRD §6)
    Ported verbatim from reference/prototype/features/analysis.jsx.
@@ -6,17 +9,9 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
-import {
-  listModels,
-  fetchLicenseFaceUrl,
-  verifyLicensePublic,
-  warmFaceRender,
-} from '@/lib/api/facemarket.js';
-import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
-import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
+import { analysisWaitProgress } from '@/lib/smoothProgress.js';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
@@ -30,114 +25,14 @@ import {
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
 import { mergeMatchClothing, reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
-import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import {
   isRealModelSelection,
   resolveSelectedModelId,
 } from './modelSelection.js';
-import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
-import { SecondaryUseBadge } from '@/features/model/SecondaryUseBadge.jsx';
-
-// 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
-// Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
-// export: 에디터 AI 탭 실존 모델 피커(EditorPanels.AIPanel)도 같은 게이트 썸네일을 쓴다.
-export function ModelThumb({ uri, alt }) {
-  const [url, setUrl] = useState(null);
-  useEffect(() => {
-    if (!uri) return undefined;
-    let objUrl = null, alive = true;
-    fetchLicenseFaceUrl(uri).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => {});
-    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
-  }, [uri]);
-  if (url) return <img src={url} alt={alt} />;
-  return <div className="fm-empty"><Icon name="person" size={24} /></div>;
-}
-
-const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
-const _fmtDate = (iso) => (iso ? seoulDate(iso, iso) : null);
-
-// 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
-// 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
-// PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
-function ModelDetailModal({ model, onClose, onSelect, selectable }) {
-  const [data, setData] = useState(null);
-  const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
-  const [qr, setQr] = useState(null);
-
-  useEffect(() => {
-    if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
-    let alive = true;
-    verifyLicensePublic(model.licenseId)
-      .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
-      .catch(() => { if (alive) setPhase('error'); });
-    const verifyUrl = `${window.location.origin}/verify/${model.licenseId}`;
-    QRCode.toDataURL(verifyUrl, { width: 160, margin: 0, errorCorrectionLevel: 'M' })
-      .then((u) => { if (alive) setQr(u); }).catch(() => {});
-    return () => { alive = false; };
-  }, [model]);
-
-  const age = data?.model?.age;
-  return (
-    <Modal onClose={onClose}>
-      <div className="lic-card-wrap">
-        <div className="lic-card">
-          {/* 얼굴 밴드 */}
-          <div className="lic-card-face">
-            <ModelThumb uri={model.faceThumbUri} alt={model.displayName} />
-            <span className="lic-card-brand">FACE&nbsp;LICENSE</span>
-            {model.status === 'verified' && (
-              <span className="lic-card-badge"><Icon name="check" size={11} />검증</span>
-            )}
-            <div className="lic-card-who">
-              <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
-              {model.vcId
-                ? <div className="lic-card-vc"><Icon name="check" size={10} />라이선스 검증서 발급 완료</div>
-                : <div className="lic-card-vc off">라이선스 검증서 발급 전</div>}
-            </div>
-          </div>
-
-          {/* 본문 */}
-          <div className="lic-card-body">
-            {phase === 'loading' && <div className="hint" style={{ padding: '8px 0' }}>불러오는 중…</div>}
-            {phase === 'nolicense' && <div className="hint" style={{ padding: '8px 0' }}>활성 라이선스가 없어 조건을 볼 수 없어요.</div>}
-            {phase === 'error' && <div className="hint" style={{ padding: '8px 0' }}>상세 정보를 불러오지 못했어요.</div>}
-            {phase === 'ready' && data && (
-              <>
-                {data.allowedUse?.length > 0 && (
-                  <div className="lic-row"><span className="lic-k">허용 용도</span>
-                    <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
-                  </div>
-                )}
-                <div className="lic-foot">
-                  <div className="lic-foot-info">
-                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 상세페이지 1건당</em></div>
-                    <div className="lic-valid">{data.validUntil ? `${_fmtDate(data.validUntil)}까지` : '철회 시까지'}</div>
-                    {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
-                  </div>
-                  {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="lic-actions">
-          <Button variant="ghost" onClick={onClose}>닫기</Button>
-          {selectable && (
-            <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>
-              이 모델로 선택
-            </Button>
-          )}
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
@@ -146,35 +41,55 @@ import {
   mannequinGenerationCtaLabel,
   mannequinGenerationTotal,
 } from '@/lib/limits.js';
-import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
   normalizeMeasurementValue,
   sanitizeMeasurementInput,
 } from '@/lib/measurementSchema.js';
 
+const MD_COMMENT_PLACEHOLDER = '- 가을 출근룩으로 활용할 니트예요.\n- 소매가 길어서 키 작은 분은 접어 입으면 예뻐요.\n- 나일론 소재라서 여름에도 시원하게 착용 가능해요.';
+
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
-// 2026-07-16 prod 실측(의류 5종·사진 1~3장 7회 벤치): 클릭→완료 = 업로드 3.5~11s +
-// 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s. 기다림 초반에 진행감을 분명히 주도록
-// 앞 4단계를 3.2초 안에 채우고, 실제 결과가 늦으면 마지막 단계가 남은 시간을 흡수한다.
-//
-// 결과가 먼저 도착해도 남은 단계만 갑자기 빨라지지 않는다. 모든 단계가 같은 800ms와 같은
-// 20% 몫을 써서 처음부터 끝까지 일정한 속도로 완주한 뒤 onFinished가 화면을 전환한다.
-// 분석이 늦으면 마지막 단계 스피너로 은은히 대기(멈춘 느낌 방지).
+// 마운트부터 하나의 시간 모델로 바와 체크를 함께 그린다(analysisWaitProgress).
+// 앞 4단계는 2초씩 등속, 이후에는 서서히 감속하고 결과가 오면 현재 값부터 마무리한다.
 // 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
 const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
-const STEP_MS = 800;
 
 const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
 
 export function AnalysisProgress({ photoSrc, done, onFinished }) {
-  const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
+  const [barPercent, setBarPercent] = useState(0);
   const [slow, setSlow] = useState(false);         // 20초+ 지연 — 멈춤으로 오해받지 않게 문구만 교체
+  const startedAtRef = useRef(null);
+  const resultRef = useRef(null);
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
+
+  useEffect(() => {
+    startedAtRef.current ??= performance.now();
+    let raf = 0;
+    const tick = () => {
+      const value = analysisWaitProgress({
+        fastEntry: isAnalysisFastEntryEnabled(),
+        elapsedMs: performance.now() - startedAtRef.current,
+        resultAtMs: resultRef.current?.at ?? null,
+        resultValue: resultRef.current?.value ?? 0,
+      });
+      setBarPercent(value);
+      if (value < 100) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    if (!done || resultRef.current !== null) return;
+    const elapsedMs = performance.now() - startedAtRef.current;
+    resultRef.current = { at: elapsedMs, value: analysisWaitProgress({ fastEntry: isAnalysisFastEntryEnabled(), elapsedMs }) };
+  }, [done]);
 
   useEffect(() => {
     if (done) { setSlow(false); return undefined; }
@@ -182,41 +97,17 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     return () => clearTimeout(t);
   }, [done]);
 
-  // 마지막 단계는 타이머 없이 결과를 기다린다 — 예정 시간이 없다는 뜻으로 null 을 넘긴다.
-  const waitingForResult = !done && doneCount === ANALYZE_STEPS.length - 1;
-  const plannedMs = waitingForResult ? null : STEP_MS;
-
-  /* 지금 칸의 시계가 언제 시작됐는지. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터
-     새 칸을 채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 튄다).
-
-     단계 번호뿐 아니라 **예정 시간이 바뀔 때도** 시계를 다시 건다. 마지막 단계에서
-     결과가 도착하면 무기한 대기(null)에서 800ms 완주로 바뀌므로 그때 새 시계를 시작한다. */
-  const stepRef = useRef({ key: '', at: Date.now() });
-  const stepKey = `${doneCount}:${plannedMs}`;
-  if (stepRef.current.key !== stepKey) stepRef.current = { key: stepKey, at: Date.now() };
-
   useEffect(() => {
-    if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 짧은 여운 후 전환
+    if (barPercent < 100 || finishedRef.current) return;
+    const t = setTimeout(() => {
       if (finishedRef.current) return;
       finishedRef.current = true;
-      const t = setTimeout(() => onFinishedRef.current?.(), 240);
-      return () => clearTimeout(t);
-    }
-    // 마지막 단계는 결과가 도착해야만 완료 — 그 전엔 스피너 유지 (분석 최대시간 커버)
-    if (plannedMs === null) return;
-    // 결과가 중간에 도착해 effect가 다시 돌아도 현재 단계의 시계를 되감지 않는다.
-    const elapsed = Date.now() - stepRef.current.at;
-    const remaining = Math.max(0, plannedMs - elapsed);
-    const t = setTimeout(() => setDoneCount((n) => n + 1), remaining);
+      onFinishedRef.current?.();
+    }, 240);
     return () => clearTimeout(t);
-  }, [doneCount, done, plannedMs]);
+  }, [barPercent]);
 
-  const barPercent = useSteppedProgress({
-    stepIndex: doneCount,
-    stepCount: ANALYZE_STEPS.length,
-    stepStartedAt: stepRef.current.at,
-    plannedMs,
-  });
+  const doneCount = Math.floor(barPercent / (100 / ANALYZE_STEPS.length));
 
   return (
     <div className="ap-stage surface">
@@ -230,8 +121,7 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
             <span className="ap-dot" />{s}
           </div>
         ))}
-        {/* 단계마다 같은 몫을 그 단계의 예정 시간 동안 균등하게 채운다(steppedProgress).
-            숫자는 여전히 안 쓴다 — 마네킹 대기화면과 동일 결정. */}
+        {/* 체크는 바가 20% 경계를 지날 때 함께 바뀐다. 퍼센트 숫자는 표시하지 않는다. */}
         <div className="ap-bar"><i style={{ width: `${barPercent}%` }} /></div>
       </div>
     </div>
@@ -328,6 +218,7 @@ const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
 function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   const [phase, setPhase] = useState('idle');
   const [files, setFiles] = useState([]);
+  const [originalError, setOriginalError] = useState(null);
   const [error, setError] = useState('');
   const [doneItem, setDoneItem] = useState(null);
   const [dragIndex, setDragIndex] = useState(null);
@@ -393,6 +284,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         : '');
     } catch (prepareError) {
       if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(prepareError);
       setError(prepareError?.message || '사진을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.');
       setPhase('error');
     }
@@ -419,10 +311,12 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         releasePreview(entry);
         return toEntry(prepared.files[0]);
       }));
+      setOriginalError(null);
       setError('');
       setPhase('picking');
     } catch (prepareError) {
       if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(prepareError);
       setError(prepareError?.message || '사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
       setPhase('picking');
     }
@@ -450,6 +344,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
     renewController();
     files.forEach(releasePreview);
     setFiles([]);
+    setOriginalError(null);
     setError('');
     setPhase('idle');
   };
@@ -460,6 +355,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
   const submit = async () => {
     if (!files.length || phase === 'uploading' || phase === 'analyzing') return;
     const controller = renewController();
+    setOriginalError(null);
     setError('');
     setPhase('uploading');
     try {
@@ -487,6 +383,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
       setTimeout(() => { if (aliveRef.current) requestClose(); }, 500);
     } catch (uploadError) {
       if (uploadError?.name === 'AbortError' || !aliveRef.current) return;
+      setOriginalError(uploadError);
       setError(uploadError?.message || '옷을 추가하지 못했어요. 다시 시도해 주세요.');
       setPhase('error');
     }
@@ -555,7 +452,9 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
         {phase === 'done' && (
           <div className="custom-match-status success"><Icon name="check" size={18} />{doneItem?.name || '내 옷'}을 추가했어요.</div>
         )}
-        {error && <div className="custom-match-error">{error}</div>}
+        {error && <div className="custom-match-error">
+          {originalError && <ClientErrorCapture point="customMatchUpload" error={originalError} projectId={projectId} />}
+          {error}</div>}
 
         {phase === 'picking' && (
           <div className="custom-match-modal-actions">
@@ -580,7 +479,6 @@ export function AnalysisForm({
 }) {
   const a = analysis;
   const toast = useToast();
-  const { session, loading: authLoading } = useAuth();
   const composeMode = useAppStore((s) => s.composeMode);
   const account = useAppStore((s) => s.account);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
@@ -642,6 +540,29 @@ export function AnalysisForm({
   }, [a.selectedModelId, projectId]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
+  const [mdCommentDraft, setMdCommentDraft] = useState(a.mdComment || '');
+  const mdCommentInputRef = useRef(null);
+  const mdCommentRef = useRef({ draft: a.mdComment || '', committed: a.mdComment || '', editing: false, dirty: false });
+  useEffect(() => {
+    const current = mdCommentRef.current;
+    current.committed = a.mdComment || '';
+    if (!current.editing) {
+      current.draft = current.committed;
+      current.dirty = false;
+      setMdCommentDraft(current.draft);
+    }
+  }, [a.mdComment]);
+  const commitMdComment = () => {
+    const current = mdCommentRef.current;
+    const value = current.dirty ? current.draft.trim() : current.committed;
+    current.draft = value;
+    current.dirty = false;
+    setMdCommentDraft(value);
+    if (value === current.committed) return;
+    // blur와 바로 뒤 확정이 같은 렌더에서 실행돼도 한 번만 저장한다.
+    current.committed = value;
+    return onChange({ mdComment: value });
+  };
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
   const [measurementDraft, setMeasurementDraft] = useState(() => ({
     clothingType: a.clothingType,
@@ -684,76 +605,23 @@ export function AnalysisForm({
       if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
     });
   };
-  // 모델을 **고르는 순간** 파드를 미리 켠다. 확인 버튼까지 기다리면 그만큼 콜드스타트가
-  // 첫 컷 앞에 그대로 남는다. 같은 id 로 다시 렌더링될 때는 보내지 않는다(서버도 60초 중복을
-  // 무시하지만, 안 보내는 게 낫다). 실패는 조용히 무시 — 생성 흐름과 무관한 부가 신호다.
-  const warmedModelRef = useRef(null);
-  useEffect(() => {
-    const modelId = a.selectedModelId;
-    if (!isRealModelSelection(modelId)) { warmedModelRef.current = null; return; }
-    if (warmedModelRef.current === modelId) return;
-    warmedModelRef.current = modelId;
-    void warmFaceRender(modelId);
-  }, [a.selectedModelId]);
-
   const confirmAnalysis = async () => {
-    // 실제 모델은 모든 컷에 그대로 들어간다 — 대역(가상 모델)을 고르게 하지 않는다.
-    // 얼굴 렌더 파드를 미리 켠다 — 여기서 확정한 모델의 첫 컷이 콜드스타트를 통째로 기다리지
-    // 않게 하려는 것이다. 실패는 무시한다(생성 흐름과 무관한 부가 신호).
-    if (isRealModelSelection(a.selectedModelId)) void warmFaceRender(a.selectedModelId);
-    if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
-      toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
-        icon: 'alertCircle',
-      });
-      return;
-    }
     if (confirming) return;
     setConfirming(true);
     onConfirmingChange?.(true);
     try {
+      await commitMdComment();
       await composeModeSaveRef.current;
-      await onNext();
+      await onNext({ expectedQuote: { free: mannequinGenerationCost === 0, credits: mannequinGenerationCost } });
     } finally {
       setConfirming(false);
       onConfirmingChange?.(false);
     }
   };
-  // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
-  // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
-  const [models, setModels] = useState([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelsError, setModelsError] = useState('');
-  const [modelsAttempt, setModelsAttempt] = useState(0);
-  const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   const [customMatchOpen, setCustomMatchOpen] = useState(false);
   // 누른 '의류 추가하기' 타일의 화면상 위치 — 모달을 그 바로 위에 띄운다(Modal anchorRect).
   const [customMatchAnchor, setCustomMatchAnchor] = useState(null);
   const [customMatchDeleting, setCustomMatchDeleting] = useState(false);
-  // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
-  const [modelTab, setModelTab] = useState(() =>
-    isRealModelSelection(a.selectedModelId) ? 'real' : 'ai');
-  useEffect(() => {
-    if (authLoading) return undefined;
-    if (!session) {
-      setModels([]);
-      setModelsError('');
-      setModelsLoading(false);
-      return undefined;
-    }
-    let alive = true;
-    setModelsLoading(true);
-    setModelsError('');
-    listModels()
-      .then((list) => { if (alive) setModels(Array.isArray(list) ? list : []); })
-      .catch((error) => {
-        if (!alive) return;
-        setModels([]);
-        setModelsError(error?.message || '검증 모델을 불러오지 못했어요.');
-      })
-      .finally(() => { if (alive) setModelsLoading(false); });
-    return () => { alive = false; };
-  }, [authLoading, modelsAttempt, session]);
-
   useEffect(() => {
     const normalized = normalizeTargetGendersForClothingType(
       a.clothingType,
@@ -766,40 +634,43 @@ export function AnalysisForm({
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
+    if (isAnalysisFastEntryEnabled()) return;
     const ai = a.aiSuggestedPoints || [];
     const missing = ai.filter((p) => !a.sellingPoints.includes(p));
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, SELLING_POINTS_MAX) });
   }, []);
 
-  // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
-  // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
-  // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
+  const visibleAiModels = AI_MODELS.filter(
+    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
+  );
+  // 옛 프로젝트의 실제 모델 선택은 이 화면에 들어오면 기본 AI 모델로 한 번 바꾼다.
+  const realModelReplacedRef = useRef(false);
   useEffect(() => {
-    const nextSelectedModelId = resolveSelectedModelId({
+    const realSelected = isRealModelSelection(a.selectedModelId);
+    if (realSelected && realModelReplacedRef.current) return;
+    const defaultAiModel = visibleAiModels.find((model) => model.recommended)
+      || visibleAiModels.find((model) => model.tier === 'basic')
+      || visibleAiModels[0] || AI_MODELS[0];
+    const nextSelectedModelId = realSelected ? defaultAiModel?.id : resolveSelectedModelId({
       selectedModelId: a.selectedModelId,
       targetGenders: a.targetGenders,
-      models,
-      modelsLoading,
+      models: [],
+      modelsLoading: false,
       aiModels: AI_MODELS,
     });
-    const patch = {};
     if (nextSelectedModelId !== a.selectedModelId) {
-      patch.selectedModelId = nextSelectedModelId;
+      if (realSelected) realModelReplacedRef.current = true;
+      onChange({ selectedModelId: nextSelectedModelId });
+      if (realSelected) toast.push('실제 모델은 지금 제공하지 않아 AI 모델로 바꿨어요.');
     }
-    if (Object.keys(patch).length) onChange(patch);
-  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
+  }, [a.selectedModelId, a.targetGenders, onChange, toast]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
-  const selectableModels = models.filter((model) => model.hasActiveLicense);
-  const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
   const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === a.selectedModelId
     ? creditQuote
     : null;
   const quotePlan = currentQuote?.plan || account?.plan;
   const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
     ?? mannequinGenerationTotal(account?.plan, a.selectedModelId);
-  const visibleAiModels = AI_MODELS.filter(
-    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
-  );
   const applyAnalysisReplacement = useCallback((nextAnalysis) => {
     if (!nextAnalysis) return;
     if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
@@ -811,7 +682,7 @@ export function AnalysisForm({
       const actual = await api.refreshMatchClothing(projectId);
       applyAnalysisReplacement(actual);
     } catch (refreshError) {
-      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri' });
+      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri', variant: 'error', error: refreshError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   }, [applyAnalysisReplacement, projectId, toast]);
   const removeCustomMatch = useCallback(async () => {
@@ -822,7 +693,7 @@ export function AnalysisForm({
       const result = await api.removeCustomMatchItem(projectId);
       applyAnalysisReplacement(result.analysis);
     } catch (removeError) {
-      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri' });
+      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri', variant: 'error', error: removeError, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
       try {
         applyAnalysisReplacement(await api.refreshMatchClothing(projectId));
       } catch { /* 원래 삭제 오류를 사용자에게 유지 */ }
@@ -853,6 +724,24 @@ export function AnalysisForm({
     return () => clearInterval(interval);
   }, [hasPendingCutout, projectId, applyMatchClothingRefresh]);
 
+  const [highlightedPoints, setHighlightedPoints] = useState([]);
+  const previousFeatureRecordRef = useRef(a.featureRun);
+  const featureRun = isAnalysisFastEntryEnabled() ? getActiveFeatureRun() : null;
+  useEffect(() => {
+    if (!featureRun) return undefined;
+    void featureRun.setEditing(spEditIdx !== null || !!spDraft.trim());
+    return undefined;
+  }, [featureRun, spEditIdx, spDraft]);
+  useEffect(() => () => { void featureRun?.setEditing(false); }, [featureRun]);
+  useEffect(() => {
+    const previous = previousFeatureRecordRef.current;
+    previousFeatureRecordRef.current = a.featureRun;
+    if (!isAnalysisFastEntryEnabled() || previous?.runId !== a.featureRun?.runId || previous?.stage === 'applied'
+        || a.featureRun?.stage !== 'applied' || !a.featureRun.changedPoints?.length) return undefined;
+    setHighlightedPoints(a.featureRun.changedPoints);
+    const timer = setTimeout(() => setHighlightedPoints([]), 3000);
+    return () => clearTimeout(timer);
+  }, [a.featureRun?.runId, a.featureRun?.stage]);
   const commitSp = () => {
     const t = spDraft.trim();
     if (!t) { setSpAdding(false); setSpDraft(''); return; }
@@ -863,7 +752,7 @@ export function AnalysisForm({
   // 편집 대상 인덱스를 ref 로도 들고 있는다 — blur 핸들러가 "지금 열린 편집이 내 것인가"를
   // 즉시(리렌더 전에) 판단해야 한다. 아래 mousedown 커밋과 짝이다.
   const spEditIdxRef = useRef(null);
-  const startEditSp = (i) => { spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
+  const startEditSp = (i) => { if (isAnalysisFastEntryEnabled()) void getActiveFeatureRun()?.setEditing(true); spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
   const cancelEditSp = () => { spEditIdxRef.current = null; setSpEditIdx(null); setSpEditDraft(''); };
   // Enter 로 확정하면 이어서 blur 도 오는데, 인덱스를 먼저 비워 두 번 반영되지 않게 한다.
   // confirmed=false(포커스 이탈)일 때 빈 문구는 삭제가 아니라 취소다: blur 로 목록이 줄면
@@ -873,6 +762,7 @@ export function AnalysisForm({
     const patch = applySellingPointEdit({
       sellingPoints: a.sellingPoints,
       aiSuggestedPoints: a.aiSuggestedPoints,
+      ...(isAnalysisFastEntryEnabled() ? { dismissedAiPoints: a.dismissedAiPoints || [] } : {}),
       index: spEditIdx,
       text: spEditDraft,
       allowDelete: confirmed,
@@ -952,7 +842,7 @@ export function AnalysisForm({
       onChange({ washCare: t });
       toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' });
     } catch (e) {
-      toast.push(e.message || '세탁 초안 생성에 실패했어요', { icon: 'alert' });
+      toast.push(e.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally { setWashing(false); }
   };
   // ── 핏 = fitProfile.axes.fit 의 셀러 편집기 (spec §1 — '핏' 개념이 두 번 보이지 않게 단일화) ──
@@ -1004,9 +894,12 @@ export function AnalysisForm({
     setMeasurementDraft({ clothingType: t, values: {} });
     const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
     const targetGenders = normalizeTargetGendersForClothingType(t, a.targetGenders);
+    const subCategory = subCategoriesFor(t, targetGenders)[0]?.value ?? null;
     onChange(withFitProfile({
       clothingType: t,
-      subCategory: subCategoriesFor(t, targetGenders)[0]?.value ?? null,
+      subCategory,
+      // 칩과 직접 입력은 배타다. 칩이 자동 선택되면 직접 입력 이름이 테두리 없이 남지 않게 비운다.
+      ...(subCategory ? { customCategory: null } : {}),
       targetGenders,
       measurements: createMeasurementFields(t),
       matchClothing,
@@ -1172,6 +1065,10 @@ export function AnalysisForm({
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
           <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
           <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
+        {isAnalysisFastEntryEnabled() && isFeatureRunPending(a.featureRun) && (
+          <div className="sp-feature-status" role="status"><span className="sp-feature-progress" />AI가 특징을 더 자세히 보는 중</div>
+        )}
+        {highlightedPoints.length > 0 && <div className="sp-feature-status" role="status">더 정확한 특징으로 다듬었어요</div>}
         <div className="sp-chipwrap">
           {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
               포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
@@ -1194,7 +1091,7 @@ export function AnalysisForm({
                 </span>
               </span>
             ) : (
-              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}`} key={i}
+              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}${highlightedPoints.includes(p) ? ' feature-refined' : ''}`} key={i}
                 /* click 이 아니라 mousedown 에서 연다: blur 커밋이 먼저 일어나면 칩 폭이 바뀌어
                    레이아웃이 밀리고, mouseup 이 다른 요소에서 끝나 click 자체가 사라진다(실측). */
                 onMouseDown={(e) => {
@@ -1217,7 +1114,14 @@ export function AnalysisForm({
                 <button className="sp-chip-x" aria-label={`${p} 삭제`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) }); }}><Icon name="x" size={12} /></button>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i),
+                      aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p),
+                      ...(isAnalysisFastEntryEnabled() && aiSet.has(p)
+                        ? { dismissedAiPoints: [...new Set([...(a.dismissedAiPoints || []), p])] } : {}),
+                    });
+                  }}><Icon name="x" size={12} /></button>
               </span>
             )
           ))}
@@ -1227,7 +1131,7 @@ export function AnalysisForm({
                 <span className="sp-draft-fit" data-value={spDraft || '특징 입력 후 Enter'}>
                   <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
                     maxLength={40} size={1} aria-label="새 특징 문구"
-                    onChange={(e) => setSpDraft(e.target.value)}
+                    onChange={(e) => { if (isAnalysisFastEntryEnabled()) void getActiveFeatureRun()?.setEditing(!!e.target.value.trim() || spEditIdxRef.current !== null); setSpDraft(e.target.value); }}
                     onKeyDown={(e) => {
                       if (isComposing(e)) return;
                       if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); }
@@ -1242,131 +1146,67 @@ export function AnalysisForm({
         </div>
       </div>
 
-      {/* 5. model select — AI(가상) 모델 / 실제(FaceMarket 라이선스) 모델 탭 구분 (2026-07-21) */}
+      {/* MD 코멘트 */}
+      <div className="surface">
+        <div className="sec-head"><div>
+          <div className="sec-title md-title"><span><span className="md-latin">MD</span> 코멘트</span><span className="pill pill-soft">선택</span></div>
+          <div className="sec-sub">외주 디자이너에게 맡기듯 이 옷의 포인트를 적어 주세요.</div>
+        </div></div>
+        <div className={`md-field${mdCommentDraft.trim() ? ' is-filled' : ''}`}
+          onMouseDown={(event) => {
+            if (event.target === mdCommentInputRef.current) return;
+            event.preventDefault();
+            mdCommentInputRef.current?.focus();
+          }}>
+          <div className="md-input" data-value={mdCommentDraft || MD_COMMENT_PLACEHOLDER}>
+            <textarea ref={mdCommentInputRef} rows={3} maxLength={300} aria-label="MD 코멘트"
+              placeholder={MD_COMMENT_PLACEHOLDER}
+              value={mdCommentDraft}
+              onFocus={() => { mdCommentRef.current.editing = true; }}
+              onChange={(event) => {
+                mdCommentRef.current.draft = event.target.value;
+                mdCommentRef.current.dirty = true;
+                setMdCommentDraft(event.target.value);
+              }}
+              onBlur={() => { mdCommentRef.current.editing = false; commitMdComment(); }} />
+          </div>
+          <div className="md-foot"><span className="md-count">{mdCommentDraft.length}/300</span></div>
+        </div>
+      </div>
+
+      {/* 5. model select, AI 모델만 제공 */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <Chips className="model-tabs" options={[{ value: 'ai', label: 'AI 모델' }, { value: 'real', label: '실제 모델' }]}
-          value={modelTab} onChange={(v) => v && setModelTab(v)} />
         <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
-          {modelTab === 'ai'
-            ? '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'
-            : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
+          가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.
         </div>
-        {modelTab === 'ai' ? (
-          /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
-             이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
-          <div className="ai-model-groups">
-            {['basic', 'extension'].map((tier) => {
-              const group = visibleAiModels.filter((model) => model.tier === tier);
-              if (!group.length) return null;
-              return (
-                <div className="ai-model-group" key={tier}>
-                  <div className="ai-model-group-title">
-                    {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
-                  </div>
-                  <div className="model-grid">
-                    {group.map((m) => {
-                      const on = a.selectedModelId === m.id;
-                      return (
-                        <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                          onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                          <img src={m.thumb} alt={m.displayName} />
-                          <span className="ai-name">
-                            {m.displayName}{on && <Icon name="check" size={12} />}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+        <div className="ai-model-groups">
+          {['basic', 'extension'].map((tier) => {
+            const group = visibleAiModels.filter((model) => model.tier === tier);
+            if (!group.length) return null;
+            return (
+              <div className="ai-model-group" key={tier}>
+                <div className="ai-model-group-title">
+                  {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
                 </div>
-              );
-            })}
-          </div>
-        ) : authLoading || modelsLoading ? (
-          <div className="hint">검증 모델을 불러오는 중이에요…</div>
-        ) : !session ? (
-          <div className="hint">로그인하면 실제 모델을 선택할 수 있어요</div>
-        ) : modelsError ? (
-          <div className="fm-model-state">
-            <div className="hint">{modelsError}</div>
-            <Button variant="quiet" size="sm" onClick={() => setModelsAttempt((attempt) => attempt + 1)}>다시 시도</Button>
-          </div>
-        ) : models.length === 0 ? (
-          <div className="hint">아직 등록된 검증 모델이 없어요.</div>
-        ) : (
-          <>
-            <div className="model-grid">
-            {selectableModels.map((m) => {
-              const on = a.selectedModelId === m.id;
-              return (
-                <div key={m.id}
-                  className={`model-card fm-model${on ? ' on' : ''}`}
-                  onClick={() => setDetailFor(m)}
-                  title="눌러서 상세 정보 보기">
-                  {m.coverImageUrl
-                    ? <img src={m.coverImageUrl} alt={m.displayName} />
-                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                  <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
-                  <span className="fm-studio-only">스튜디오 컷 전용</span>
-                  <div className="fm-meta">
-                    <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
-                    <div className="fm-price">
-                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 상세페이지 1건당`}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            </div>
-            {pendingLicenseModels.length > 0 && (
-              <details className="fm-license-pending">
-                <summary>라이선스 준비 중 <span>{pendingLicenseModels.length}</span><Icon name="chevDown" size={15} /></summary>
                 <div className="model-grid">
-                  {pendingLicenseModels.map((m) => (
-                    <div key={m.id} className="model-card fm-model disabled"
-                      onClick={() => setDetailFor(m)} title="눌러서 상세 정보 보기">
-                      {m.coverImageUrl
-                        ? <img src={m.coverImageUrl} alt={m.displayName} />
-                        : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                      {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                      <SecondaryUseBadge enabled={m.secondaryUseEnabled === true} className="fm-secondary-use" />
-                      <span className="fm-studio-only">스튜디오 컷 전용</span>
-                      <div className="fm-meta">
-                        <div className="fm-name">{m.displayName}</div>
-                        <div className="fm-price">라이선스 없음</div>
+                  {group.map((m) => {
+                    const on = a.selectedModelId === m.id;
+                    return (
+                      <div key={m.id} className={`model-card ai-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                        <img src={m.thumb} alt={m.displayName} />
+                        <span className="ai-name">
+                          {m.displayName}{on && <Icon name="check" size={12} />}
+                        </span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              </details>
-            )}
-          </>
-        )}
-        {detailFor && (
-          <ModelDetailModal
-            model={detailFor}
-            selectable={!!detailFor.hasActiveLicense}
-            onSelect={(id) => onChange({
-              selectedModelId: id,
-            })}
-            onClose={() => setDetailFor(null)}
-          />
-        )}
-        {isRealModelSelection(a.selectedModelId) && (
-          <>
-            <div className="fm-use-category">
-              <div className="sec-title">사용 브랜드 유형</div>
-              <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
-              <Chips
-                options={BRAND_USE_CATEGORIES}
-                value={a.brandUseCategory}
-                allowDeselect={false}
-                onChange={(value) => onChange({ brandUseCategory: value })}
-              />
-            </div>
-          </>
-        )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* 6. match clothing — full width */}
@@ -1501,6 +1341,7 @@ export function AnalysisForm({
 
 export function Analysis({ onNext }) {
   const [phase, setPhase] = useState('loading');
+  const [analysisError, setAnalysisError] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
 
@@ -1509,12 +1350,12 @@ export function Analysis({ onNext }) {
     // 시그니처 통일 — analyzeProduct 는 projectId 를 받는다(http 모드 job 시작 대상). mock 은 무시.
     Promise.all([api.analyzeProduct(useAppStore.getState().projectId, {}), api.getCatalogs()])
       .then(([a, c]) => { setAnalysis(a); setCatalogs(c); setPhase('ready'); })
-      .catch(() => setPhase('error'));
+      .catch((error) => { setAnalysisError(error); setPhase('error'); });
   }, []);
   useEffect(() => { run(); }, [run]);
 
   if (phase === 'loading') return <div className="wizard"><PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." /><AnalysisSkeleton /></div>;
-  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
+  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState error={analysisError} kind="analysis_error" action="analyze" desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
     projectId={useAppStore.getState().projectId}
@@ -1525,7 +1366,7 @@ export function Analysis({ onNext }) {
         useAppStore.getState().markGenerationRelevantEdits();
       }
       setAnalysis((a) => ({ ...a, ...patch }));
-      api.saveAnalysis(null, patch).then((saved) => {
+      return api.saveAnalysis(null, patch).then((saved) => {
         if (refreshMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
       });
     }} onNext={onNext} />;

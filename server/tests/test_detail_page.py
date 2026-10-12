@@ -6,6 +6,7 @@ import json
 import logging
 import types
 from dataclasses import replace
+from io import BytesIO
 
 import app.routes as routes
 import pytest
@@ -20,8 +21,149 @@ LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 CATEGORY = "상의"
 
 
+@pytest.mark.parametrize("kind,range,requested,expected,clothing_type,cut_type", [
+    ("none", None, "closed", "open", "outer", "horizon"),
+    ("button", "binary", "partial", "closed", "outer", "horizon"),
+    ("belt", "binary", "openToWaist", "open", "outer", "horizon"),
+    (None, None, "openToChest", "openToChest", "outer", "horizon"),
+    (None, None, "openToWaist", "openToWaist", "outer", "horizon"),
+    ("none", None, "closed", None, "top", "horizon"),
+    ("none", None, "closed", None, "outer", "product"),
+])
+def test_detail_runtime_closure_matches_prompt_cut_qc_and_page_plan(
+    monkeypatch, kind, range, requested, expected, clothing_type, cut_type,
+):
+    from copy import deepcopy
+
+    captured = {}
+    analysis = {} if kind is None else {"frontClosure": {
+        "version": 1, "kind": kind, "range": range, "secondary": None,
+        "evidenceSlots": ["Front"], "note": "Internal closure note",
+    }}
+    block = {"id": "outer-1", "source": "ai", "cutType": cut_type,
+             "direction": "front", "shot": "ghost" if cut_type == "product" else "full",
+             "outerClosureState": requested}
+    original = deepcopy(block)
+    product = {"clothingType": clothing_type}
+    image = dpj.InlineImage("image/png", b"PRODUCT")
+    prepared = [(block, [image], "1. PRODUCT — front", False, [image])]
+
+    async def generate(settings, gemini, spec, product, images, **kwargs):
+        normalized = dpj.cut_generator.normalize_spec(spec, clothing_type=clothing_type)
+        captured["generated"] = normalized["outerClosureState"]
+        captured["prompt"] = dpj.cut_generator.build_prompt(
+            spec, product, analysis=kwargs.get("analysis"), manifest=kwargs.get("manifest"))
+        return b"OUTPUT", "image/png"
+
+    async def cut_qc(settings, plan, references, output, **kwargs):
+        captured["cutPlan"] = plan.to_dict()["storyboard"]["outerClosure"]
+        contract = dpj.cut_output_qc.normalize_plan(plan)
+        captured["cutQc"] = contract["storyboard"]["outerClosure"]
+        return {"overall": "PASS"}
+
+    async def page_qc(settings, plan, outputs, **kwargs):
+        captured["pagePlan"] = plan[0]["outerClosureState"]
+        assert dpj.page_output_qc.normalize_page_plan(plan)[0]["outerClosureState"] == expected
+        return {"overall": "PASS"}
+
+    async def emit(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", generate)
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", cut_qc)
+    monkeypatch.setattr(dpj.page_output_qc, "judge", page_qc)
+    monkeypatch.setattr(dpj, "_emit", emit)
+    app = fake_worker_app(make_settings(cut_output_qc_mode="shadow",
+                                        page_output_qc_mode="shadow"))
+    result = asyncio.run(dpj._gen_cuts(app, worker_job(), prepared, product, analysis))
+    assert len(result[0]) == 1
+    assert captured["generated"] == captured["cutPlan"] == captured["pagePlan"] == expected
+    assert captured["cutQc"] == (expected if expected is not None else "none")
+    phrases = {"open": "FULLY OPEN", "closed": "FULLY CLOSED", "openToChest": "OPEN DOWN TO THE CHEST",
+               "openToWaist": "OPEN DOWN TO THE WAIST"}
+    if expected is None:
+        assert "OUTER FRONT OPENING" not in captured["prompt"]
+    else:
+        assert phrases[expected] in captured["prompt"]
+    assert "Internal closure note" not in captured["prompt"]
+    assert block == original and prepared[0][0] is block
+
+
+@pytest.mark.parametrize("kind,closure_range,requested,expected,child_count", [
+    ("none", None, "closed", "open", 1),
+    ("button", "binary", "partial", "closed", 2),
+])
+def test_detail_page_qc_uses_effective_source_closure_for_similar_outputs(
+    monkeypatch, kind, closure_range, requested, expected, child_count,
+):
+    from copy import deepcopy
+    from dataclasses import replace
+    from test_page_output_qc import raw_result
+    from test_storyboard_similar_cuts import child, item, setup_generation, source
+
+    app, seen = setup_generation(monkeypatch)
+    app.state.settings = replace(app.state.settings, page_output_qc_mode="shadow")
+    original = source(cutType="horizon", outerClosureState=requested)
+    children = [child(f"child-{index}") for index in range(child_count)]
+    blocks = [*children, original]
+    saved = deepcopy(blocks)
+    captured = {}
+
+    async def page_qc(settings, page_plan, outputs, **kwargs):
+        captured["closures"] = [row["outerClosureState"] for row in page_plan]
+        report = dpj.page_output_qc.validate(
+            raw_result({"outer_inner_continuity": "NOT_APPLICABLE"}), page_plan)
+        captured["gate"] = next(gate["status"] for gate in report["gates"]
+                                if gate["gate"] == "outer_inner_continuity")
+        return report
+
+    monkeypatch.setattr(dpj.page_output_qc, "judge", page_qc)
+    analysis = {"frontClosure": {"version": 1, "kind": kind, "range": closure_range, "secondary": None,
+                                  "evidenceSlots": ["Front"], "note": None}}
+    result = asyncio.run(dpj._gen_cuts(
+        app, worker_job(), [item(block) for block in blocks], {"clothingType": "outer"}, analysis))
+    assert len(result[0]) == child_count + 1
+    assert captured["closures"] == [expected] * (child_count + 1)
+    assert captured["gate"] == ("UNJUDGEABLE" if expected == "open" else "NOT_APPLICABLE")
+    assert seen["generate"] == ["original"] and len(seen["vary"]) == child_count
+    assert all(entry[0] == b"GENERATED-ORIGINAL" for entry in seen["vary"])
+    assert blocks == saved
+
+
+def _solid_png(rgb):
+    out = BytesIO()
+    dpj.Image.new("RGB", (120, 180), rgb).save(out, format="PNG")
+    return out.getvalue()
+
+
+def _center_band_png(outside, center):
+    image = dpj.Image.new("RGB", (120, 180), outside)
+    image.paste(center, (0, 72, 120, 108))
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_signature_title_color_uses_center_band_luminance_once_for_cut_metadata():
+    signature = {"id": "sig", "hookTitleOverlay": True}
+    assert dpj._image_metrics(_solid_png((245, 245, 245)), signature) == (
+        120, 180, {"hookTitleColor": "#111111"},
+    )
+    assert dpj._image_metrics(_solid_png((12, 12, 12)), signature) == (
+        120, 180, {"hookTitleColor": "#ffffff"},
+    )
+    assert dpj._image_metrics(_solid_png((245, 245, 245)), {"id": "ordinary"}) == (120, 180, {})
+    assert dpj._image_metrics(b"not-an-image", signature) == (None, None, {})
+    assert dpj._image_metrics(_center_band_png((12, 12, 12), (245, 245, 245)), signature)[2] == {
+        "hookTitleColor": "#111111",
+    }
+    assert dpj._image_metrics(_center_band_png((245, 245, 245), (12, 12, 12)), signature)[2] == {
+        "hookTitleColor": "#ffffff",
+    }
+
+
 @pytest.mark.parametrize("reason", ["detail_qc_failed", "detail_qc_unknown"])
-def test_detail_rejection_refunds_entire_page_without_publishing(monkeypatch, reason):
+def test_detail_rejection_publishes_other_cuts_and_excludes_failed_cut_charge(monkeypatch, reason):
     captured = {"writes": [], "deleted": [], "events": []}
 
     async def project(*args):
@@ -48,10 +190,13 @@ def test_detail_rejection_refunds_entire_page_without_publishing(monkeypatch, re
         return dpj.InlineImage("image/png", b"PASSED-IMAGE"), {"passed": True}
 
     def assemble(storyboard, cuts, *args, **kwargs):
-        raise AssertionError("incomplete page must not be assembled")
+        captured["cuts"] = cuts
+        captured["failed_cuts"] = kwargs["failed_cuts"]
+        return []
 
     async def finalize(conn, **kwargs):
-        raise AssertionError("incomplete page must not be published")
+        captured["success"] = kwargs
+        return {"editor_blocks": kwargs["editor_blocks"], "available": 99}
 
     async def fail(conn, **kwargs):
         captured["failure"] = kwargs
@@ -76,10 +221,13 @@ def test_detail_rejection_refunds_entire_page_without_publishing(monkeypatch, re
     app.state.r2.head = lambda key: None
     asyncio.run(dpj.run_detail_page_job(app, _job(reserved=2, per_cut=1)))
 
-    assert captured["failure"]["code"] == "incomplete_cuts"
-    assert captured["failure"]["reserved"] == 2
+    assert "failure" not in captured
+    assert captured["success"]["reserved"] == 2
+    assert captured["success"]["charge"] == 1
+    assert captured["failed_cuts"]["rejected"] == {"reason": reason, "retryable": True}
+    assert [cut["blockId"] for cut in captured["cuts"]] == ["accepted"]
     assert captured["writes"] == [b"PASSED-IMAGE"]
-    assert len(captured["deleted"]) == 1, "환불된 페이지의 임시 미리보기 파일도 지운다"
+    assert captured["deleted"] == [], "완성한 컷의 발행 파일은 남긴다"
     done = [payload for event, payload in captured["events"] if payload.get("status") == "cut_done"]
     assert [payload["blockId"] for payload in done] == ["accepted"]
     failed = [payload for event, payload in captured["events"] if payload.get("status") == "cut_failed"]
@@ -1301,7 +1449,7 @@ def test_production_space_set_scene_qc_outage_fails_cut_closed(monkeypatch):
     # 실패 컷에도 둘러싼다 — 대기 화면이 "그리다 실패"를 정직하게 그리는 근거.
     assert events == [
         ("step", {"blockId": "set-cut", "status": "cut_start"}),
-        ("step", {"blockId": "set-cut", "status": "cut_failed"}),
+        ("step", {"blockId": "set-cut", "status": "cut_failed", "reason": "scene_qc_unavailable", "retryable": True}),
         ("progress", {"progress": 80, "phase": "cut", "done": 1, "total": 1}),
     ]
 
@@ -1372,7 +1520,7 @@ def test_gen_cuts_detail_publishes_selected_generated_output_once(monkeypatch, q
     assert cut_qcs == [{"blockId": "detail-1", **qc_report}]
 
 
-def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypatch):
+def test_run_detail_page_job_partial_failure_publishes_and_charges_completed_cuts(monkeypatch):
     captured = {}
     from app.agents.gemini_image import GeminiError
 
@@ -1403,10 +1551,12 @@ def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypa
         raise GeminiError("temporary rejection", transient=True)
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
-        raise AssertionError("incomplete page must not be assembled")
+        captured["cut_results"] = cut_results
+        return []
 
     async def fake_finalize(conn, **kw):
-        raise AssertionError("incomplete page must not be published")
+        captured["success"] = kw
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
 
     async def fake_failure(conn, **kw):
         captured["failure"] = kw
@@ -1430,19 +1580,25 @@ def test_run_detail_page_job_partial_failure_refunds_without_publishing(monkeypa
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
     assert call["b2"] == 3
-    assert captured["failure"]["reserved"] == 38
-    assert captured["failure"]["code"] == "incomplete_cuts"
-    assert captured["failure"]["metadata"] == {
-        "error": "incomplete_cuts", "requestedCuts": 2,
-        "generatedCuts": 1, "failedBlockIds": ["b2"],
+    assert "failure" not in captured
+    assert captured["success"]["reserved"] == 38
+    assert captured["success"]["charge"] == 19
+    assert captured["success"]["metadata"]["partial"] == {
+        "requestedCuts": 2, "completedCuts": 1,
+        "failedCuts": [{"blockId": "b2", "reason": "provider_error", "retryable": True}],
+        "quoteCredits": 38, "creditsCharged": 19, "creditsNotCharged": 19,
     }
-    assert "cut_results" not in captured
+    assert [cut["blockId"] for cut in captured["cut_results"]] == ["b1"]
 
 
 @pytest.mark.parametrize("requested,completed,legacy,expected_charge", [
     (3, 3, False, 95),
     (7, 7, False, 133),
     (3, 3, True, 57),
+    (3, 2, False, 76),
+    (14, 13, False, 247),
+    (6, 4, False, 76),
+    (5, 3, False, 57),
 ])
 def test_detail_success_settles_from_requested_minimum_snapshot(
     monkeypatch, requested, completed, legacy, expected_charge,
@@ -2004,11 +2160,12 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         }
         return b"IMG", "image/png"
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **kwargs):
         return []
 
     async def fake_finalize(conn, **kw):
-        raise AssertionError("incomplete page must not be published")
+        captured["success"] = kw
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
 
     async def fake_failure(conn, **kw):
         captured["failure"] = kw
@@ -2052,8 +2209,10 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert captured[block_id]["cut_spec"]["exampleId"] is None
         assert "EXAMPLE REFERENCE" not in captured[block_id]["manifest"]
         assert "Composition nuance" not in captured[block_id]["prompt"]
-    assert captured["failure"]["code"] == "incomplete_cuts"
-    assert captured["failure"]["metadata"]["failedBlockIds"] == ["direction-mismatch"]
+    assert "failure" not in captured
+    assert captured["success"]["metadata"]["partial"]["failedCuts"] == [
+        {"blockId": "direction-mismatch", "reason": "pose_direction_incompatible", "retryable": True}]
+    assert captured["success"]["charge"] == 5
     assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
 
 
@@ -2531,6 +2690,7 @@ def _run_real_detail_job(monkeypatch, storyboard, *, credits_reserved, failing_i
         return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **kwargs):
+        captured["assembly"] = kwargs
         return []
 
     async def fake_finalize(conn, **kwargs):
@@ -2666,13 +2826,17 @@ def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
         assert "styling" in done_events
     # 범위 밖 컷은 완료 이벤트가 없고 작업 전체를 실패시킨다.
     assert not skipped_ids & set(done_events)
-    if real_cuts_fail or skipped_ids:
-        # 전체 AI 컷 중 하나라도 미완성이면 출고·과금·모델 정산이 없다.
+    if real_cuts_fail:
+        # 완성된 REAL 컷이 없고 전부 실패하면 출고와 모델 정산이 없다.
         assert "finalize" not in captured
         assert captured["settlements"] == []
-        assert captured["failure"]["code"] == (
-            "all_cuts_failed" if real_cuts_fail else "incomplete_cuts")
+        assert captured["failure"]["code"] == "all_cuts_failed"
         return
+    if skipped_ids:
+        partial = captured["finalize"]["metadata"]["partial"]
+        assert {cut["blockId"] for cut in partial["failedCuts"]} == skipped_ids
+        assert all(cut["retryable"] is True for cut in partial["failedCuts"])
+        assert partial["creditsNotCharged"] == 0  # 옛 fixture는 완성분 값만 예약했다. 예약 상한을 지킨다.
     assets = captured["finalize"]["cut_assets"]
     assert len(assets) == len(real_face_ids)
     assert all(a.get("block_id") not in skipped_ids for a in assets)
@@ -2704,17 +2868,18 @@ def test_a_scope_skipped_cut_closes_its_slot_without_the_garment_truth_warning(
     steps = [(payload.get("status"), payload.get("reason"))
              for event_type, payload in captured["events"]
              if event_type == "step" and payload.get("blockId") == "product"]
-    assert steps == [("cut_skipped", "real_model_studio_only"), ("cut_failed", None)]
+    assert steps == [("cut_skipped", "real_model_studio_only"), ("cut_failed", "real_model_studio_only")]
     assert "product" not in captured["cuts"]
     # 이 로거를 실제로 잡고 있다는 증거(건너뛴 사유 로그) — 아래 부재 확인이 헛돌지 않게.
     assert "AG-06 real_model_studio_only" in caplog.text
     assert "no garment-truth references" not in caplog.text
     # 옆의 허용된 컷은 그대로 실제 얼굴로 나온다.
     assert captured["cuts"]["styling"]["modelId"] == MODEL_ID
-    assert "finalize" not in captured
-    assert captured["failure"]["code"] == "incomplete_cuts"
-    assert captured["failure"]["reserved"] == 1
-    assert captured["settlements"] == []
+    assert "failure" not in captured
+    assert captured["finalize"]["charge"] == 1
+    assert captured["finalize"]["metadata"]["partial"]["failedCuts"] == [
+        {"blockId": "product", "reason": "real_model_studio_only", "retryable": True}]
+    assert len(captured["settlements"]) == 1
 
 
 def test_run_detail_page_job_full_charge_uses_reservation_time_price(monkeypatch):
@@ -2909,7 +3074,8 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
         ]}]}
 
     async def fake_analysis(conn, pid):
-        return {"sellingPoints": ["촉감"], "materials": []}
+        return {"sellingPoints": ["촉감"], "materials": [],
+                "suggestedName": "골지 데일리 니트"}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -2920,13 +3086,16 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
 
     async def fake_copy(settings, **kw):
         captured["copy_kwargs"] = kw
-        return {
-            "texts": [{"role": "body", "text": "원본 카피"}],
-            "productName": "골지 데일리 니트",
-        }
+        return [{"blockId": "b1", "texts": [
+            {"role": "headline", "text": "원본 카피"},
+        ]}]
 
     async def fake_review(settings, items, confirmed):
         raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
+
+    async def fake_feature(settings, points, product_row, analysis_row):
+        captured["feature_points"] = points
+        return []
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["storyboard"] = storyboard
@@ -2954,24 +3123,26 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
     monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
+    monkeypatch.setattr(dpj.feature_copy, "generate", fake_feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))  # ai 블록 1개 × 단가 1
     assert captured["charge"] == 1
-    assert captured["copy_kwargs"]["content_role"] == "detail"
-    assert captured["copy_kwargs"]["section_role"] == "product"
-    assert "block_kind" not in captured["copy_kwargs"]
-    assert captured["copy_kwargs"]["include_product_name"] is True
+    assert [block["id"] for block in captured["copy_kwargs"]["blocks"]] == ["b1"]
+    assert set(captured["copy_kwargs"]) == {"blocks", "product", "analysis"}
     assert captured["product_name"] == "골지 데일리 니트"
     assert captured["assembled_product_name"] == "골지 데일리 니트"
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
+    assert captured["feature_points"] == ["촉감"]
     assert captured["storyboard"][0]["sectionRole"] == "product"
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
-    assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "body", "text": "원본 카피"}]}]
+    assert captured["copy_results"] == [{"blockId": "b1", "texts": [
+        {"role": "headline", "text": "원본 카피"},
+    ]}]
 
 
 def test_copywriting_off_uses_analysis_name_without_another_llm_call():
@@ -3057,7 +3228,7 @@ def test_fine_pattern_detail_generates_checked_new_cut_instead_of_original(monke
 
 
 def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
-    captured = {"detail_calls": 0, "events": [], "uploaded": []}
+    captured = {"detail_calls": 0, "events": [], "uploaded": [], "feature_calls": []}
 
     async def project(conn, user_id, project_id):
         return {"copywriting": False}
@@ -3083,6 +3254,10 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
         captured["detail_calls"] += 1
         return dpj.InlineImage("image/png", b"POLISHED-DETAIL"), {"passed": True}
 
+    async def feature(settings, points, product_row, analysis_row):
+        captured["feature_calls"].append((points, product_row.get("name")))
+        return []
+
     def assemble(storyboard_rows, cut_results, *args, **kwargs):
         captured["cut_results"] = cut_results
         return []
@@ -3100,6 +3275,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     monkeypatch.setattr(dpj.repo, "get_analysis", analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", asset)
     monkeypatch.setattr(dpj.detail_shot_runtime, "generate", detail)
+    monkeypatch.setattr(dpj.feature_copy, "generate", feature)
     monkeypatch.setattr(dpj.page_assembler, "assemble", assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", finalize)
     monkeypatch.setattr(dpj, "_emit", emit)
@@ -3115,6 +3291,7 @@ def test_striped_detail_page_never_publishes_uploaded_detail_photo(monkeypatch):
     assert captured["cut_results"][0]["imageUrl"] != "/v1/assets/source-detail/file"
     assert len(captured["finalize"]["cut_assets"]) == 1
     assert captured["finalize"]["charge"] == 95
+    assert captured["feature_calls"] == [([], "잔스트라이프 셔츠")]
     assert all(payload.get("status") != "cut_passthrough" for _, payload in captured["events"])
 
 
@@ -3153,8 +3330,10 @@ def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
         return b"IMGDATA", "image/png"
 
     async def fake_copy(settings, **kw):
-        return [{"role": "headline" if kw.get("content_role") == "hero" else "body",
-                 "text": "카피"}]
+        return [
+            {"blockId": block["id"], "texts": [{"role": "headline", "text": "카피"}]}
+            for block in kw["blocks"]
+        ]
 
     async def fake_review(settings, items, confirmed):
         return []  # 전건 pass

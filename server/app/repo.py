@@ -12,6 +12,7 @@ from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
 from .credits import allocate_fifo
+from .request_id import job_metadata
 
 FACEMARKET_WRITER_FENCE_NAMESPACE = 0x464D4354
 FACEMARKET_WRITER_FENCE_KEY = 0
@@ -27,6 +28,33 @@ class CreditError(Exception):
         self.code = code
         self.message = message
         self.status = status
+
+
+class IdempotencyKeyReused(CreditError):
+    def __init__(self):
+        super().__init__("idempotency_key_reused", "같은 요청 번호로 다른 내용이 왔어요. 다시 눌러 주세요.", 409)
+
+
+def editor_request_content(payload: dict) -> dict:
+    """접수 때 정규화한 공개 내용만 비교한다. fill의 생성 판단은 비교에 넣지 않는다."""
+    fill = payload.get("_contextFill")
+    if isinstance(fill, dict):
+        return {"mode": "fill", "slot": fill.get("slot") or {"slotKey": fill.get("slotKey")}}
+    public = {key: value for key, value in payload.items() if not key.startswith("_")}
+    similar = payload.get("_similarCut")
+    if (payload.get("mode") == "vary" and payload.get("variationMode") == "similar"
+            and isinstance(similar, dict) and similar.get("sourceAssetId")):
+        # 생성 입력은 root로 바뀌지만 요청한 사진은 선택 자산이다. 내부 계획은 비교하지 않는다.
+        public["source"] = {**(public.get("source") or {}),
+                            "src": f"/v1/assets/{similar['sourceAssetId']}/file"}
+    return public
+
+
+def _check_editor_request(existing: dict, project_id: str, payload: dict) -> None:
+    if (existing.get("kind", "editor_image") != "editor_image"
+            or existing.get("project_id", project_id) != project_id
+            or editor_request_content(existing.get("payload") or {}) != editor_request_content(payload)):
+        raise IdempotencyKeyReused()
 
 
 # patchProject가 DB에 반영할 수 있는 컬럼 (계약 §6 화이트리스트). 모델이 1차,
@@ -96,7 +124,7 @@ async def upsert_seller_consent(
                    privacy_version = excluded.privacy_version,
                    age_attested = excluded.age_attested,
                    accepted_at = now()
-            returning terms_version, privacy_version, age_attested, accepted_at
+            returning terms_version, privacy_version, age_attested, accepted_at, (xmax = 0) as inserted
             """,
             (user_id, terms_version, privacy_version, age_attested),
         )
@@ -249,7 +277,7 @@ async def update_draft_slot(
 
 
 async def takeover_draft_slot(
-    conn: AsyncConnection, user_id: str, active_token: str
+    conn: AsyncConnection, user_id: str, active_token: str, device_label: str | None = None
 ) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -258,13 +286,13 @@ async def takeover_draft_slot(
             # 이어받은 슬롯을 '오래된 것'으로 보고 지우지 않게 막는 근거가 된다.
             """
             update draft_slots
-            set active_token = %s, updated_at = now()
+            set active_token = %s, device_label = coalesce(%s, device_label), updated_at = now()
             where user_id = %s
             returning user_id::text as user_id, payload,
                       active_token::text as active_token, device_label,
                       photos_pending, updated_at, expires_at
             """,
-            (active_token, user_id),
+            (active_token, device_label, user_id),
         )
         return await cur.fetchone()
 
@@ -778,6 +806,111 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
         return await cur.fetchall()
 
 
+async def list_in_progress(conn: AsyncConnection, user_id: str) -> list[dict]:
+    # DB 접근 없는 U1에서는 EXPLAIN을 실행하지 않는다. 후속 확인은 이 쿼리에
+    # EXPLAIN (ANALYZE, BUFFERS)를 붙여 사용자별 프로젝트 수와 잡 이력 정렬 비용을 본다.
+    # projects_user_updated_idx와 jobs_project_kind_status_idx로 사용자/프로젝트를 좁힌다.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select pr.id::text as id,
+                coalesce(nullif(btrim(prod.name), ''), '새 상품') as title,
+                case when cutc.aid is not null then '/v1/assets/' || cutc.aid || '/file'
+                     else '/v1/assets/' || front.id::text || '/file' end as cover,
+                cova.r2_key as cover_r2_key, cova.source as cover_source,
+                cova.metadata as cover_metadata,
+                greatest(pr.updated_at, activity.updated_at) as updated_at,
+                case when dj.status in ('pending', 'running') then 'generating'
+                     when dj.status in ('error', 'cancelled') and
+                          jsonb_array_length(case when jsonb_typeof(pr.editor_blocks) = 'array'
+                              then pr.editor_blocks else '[]'::jsonb end) = 0 then 'failed'
+                     when selected.valid then 'mannequin'
+                     else 'storyboard' end as step,
+                mj.summary as latest_mannequin_job, dj.summary as latest_detail_page_job
+            from projects pr
+            join products prod on prod.project_id = pr.id
+            join lateral (
+                select col.value as color
+                from jsonb_array_elements(case when jsonb_typeof(prod.colors) = 'array'
+                    then prod.colors else '[]'::jsonb end) with ordinality col(value, position)
+                order by coalesce(col.value->'isBase' = 'true'::jsonb, false) desc, col.position
+                limit 1
+            ) base on true
+            join lateral (
+                select a.id
+                from jsonb_array_elements(case when jsonb_typeof(base.color->'images') = 'array'
+                    then base.color->'images' else '[]'::jsonb end) im
+                join assets a on a.id = case when im->>'id' ~*
+                    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    then (im->>'id')::uuid end and a.deleted_at is null
+                where im->>'slot' = 'Front'
+                limit 1
+            ) front on true
+            left join lateral (
+                select mc.asset_id as aid_uuid, mc.asset_id::text as aid
+                from mannequin_cuts mc where mc.project_id = pr.id
+                order by mc.version desc, mc.candidate limit 1
+            ) cutc on true
+            left join lateral (
+                select a.r2_key, a.source, a.metadata from assets a
+                where a.id = cutc.aid_uuid and a.deleted_at is null
+            ) cova on true
+            left join lateral (
+                select jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.project_id = pr.id and j.user_id = pr.user_id
+                    and j.kind = 'mannequin'
+                order by j.created_at desc, j.id desc limit 1
+            ) mj on true
+            left join lateral (
+                select j.status, jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.project_id = pr.id and j.user_id = pr.user_id
+                    and j.kind = 'detail_page'
+                order by j.created_at desc, j.id desc limit 1
+            ) dj on true
+            left join lateral (
+                select max(j.updated_at) as updated_at from jobs j
+                where j.project_id = pr.id and j.user_id = pr.user_id
+            ) activity on true
+            left join lateral (
+                select true as valid from mannequin_cuts mc
+                where mc.project_id = pr.id
+                    and mc.candidate || '-' || mc.version::text = pr.selected_mannequin_id
+                limit 1
+            ) selected on true
+            where pr.user_id = %s and pr.deleted_at is null and pr.status <> 'done'
+                and (jsonb_array_length(case when jsonb_typeof(pr.storyboard) = 'array'
+                         then pr.storyboard else '[]'::jsonb end) > 0
+                     or mj.summary is not null or cutc.aid is not null or dj.summary is not null)
+            order by updated_at desc, pr.id desc limit 20
+            """,
+            (user_id,),
+        )
+        return await cur.fetchall()
+
+
+async def get_latest_project_jobs(conn: AsyncConnection, user_id: str, project_id: str) -> dict:
+    """소유 확인 뒤 호출. 오래된 잡의 갱신이 새 생성 시도를 가리지 않도록 created_at 순."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select kinds.kind, latest.summary
+            from (values ('mannequin'), ('detail_page')) kinds(kind)
+            left join lateral (
+                select jsonb_build_object('id', j.id::text, 'status', j.status,
+                    'errorCode', j.result->>'errorCode') as summary
+                from jobs j where j.user_id = %s and j.project_id = %s and j.kind = kinds.kind
+                order by j.created_at desc, j.id desc limit 1
+            ) latest on true
+            """,
+            (user_id, project_id),
+        )
+        rows = await cur.fetchall()
+    summaries = {row['kind']: row['summary'] for row in rows}
+    return {"mannequin": summaries.get("mannequin"), "detailPage": summaries.get("detail_page")}
+
+
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
         # 동시 요청(더블클릭·재시도·타임아웃 후 재호출)에서 아래 select-then-insert 가
@@ -949,11 +1082,9 @@ def garment_color_input_identity(product: dict) -> tuple:
     return (product.get("clothing_type") or product.get("clothingType"), tuple(sorted(colors)))
 
 
-# AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
-# 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
-# inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
-# 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
-# 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
+# AG-01이 파생하는 서버 소유 필드. 부분 병합은 클라이언트가 모르는 키도 보존한다.
+# sourceMirrored·inputConsistency·featureCopy의 명시적 수정은 기존 계약대로 허용한다.
+# 재분석 때는 finalize가 전문을 교체하므로 낡은 판정이 남지 않는다.
 _SERVER_OWNED_ANALYSIS_KEYS = (
     "sourceMirrored",
     "inputConsistency",
@@ -961,54 +1092,49 @@ _SERVER_OWNED_ANALYSIS_KEYS = (
     "confirmedGptProductEvidence",
     "detailRecommendations",
     "garmentColorEvidence",
+    "frontClosure",
 )
 # Unlike sourceMirrored (which the analysis form may explicitly edit), these values are
 # hash-bound server artifacts. API clients may echo them but can never create or replace
 # them; finalize_analyze_success replaces the full payload after a fresh provider call, and
 # replace_garment_color_evidence is the only other writer (lazy garment color measurement).
-_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence")
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence", "detailRecommendations", "garmentColorEvidence", "frontClosure")
 
 
-async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증.
+async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict, *,
+                        merge: bool = True, delete_nulls: bool = False) -> dict:
+    """내부 저장은 담당 키만 병합한다. 클라이언트는 merge=1일 때만 같은 계약을 쓴다.
 
-    REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
-    는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
-    신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
-    해시로 봉인된 confirmedGptProductEvidence 는 클라이언트가 보내도 기존 서버 값을 유지한다.
+    배열과 fitProfile은 통째로 교체한다. 클라이언트 병합의 null은 최상위 키 삭제다.
+    옛 클라이언트의 전문 교체도 누락된 서버 키와 잠금을 보존하고 불변 근거를 보호한다.
+    소유권은 라우트 선검증. 재분석 성공만 보호된 서버 근거까지 새 전문으로 교체한다.
     """
-    missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
-    immutable_supplied = any(k in analysis for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
-    if missing or immutable_supplied:
-        # 행을 잠그고 읽는다. 지연 옷 색 측정이 읽기와 upsert 사이에 쓰면 이월이 옛 값을
-        # 덮어 새 측정이 사라진다.
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select payload from analyses where project_id = %s for update", (project_id,)
-            )
-            prev = ((await cur.fetchone()) or {}).get("payload") or {}
-        carried = {k: prev[k] for k in missing if k in prev}
-        immutable = {
-            k: prev[k]
-            for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
-            if k in prev
-        }
-        if immutable_supplied:
-            analysis = {
-                k: value
-                for k, value in analysis.items()
-                if k not in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
-            }
-        if carried or immutable:
-            analysis = {**analysis, **carried, **immutable}
-    locked = bool(analysis.get("locked", False))
+    analysis = {k: value for k, value in analysis.items()
+                if k not in ("locked", *_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
+                and not (merge and delete_nulls and value is None and k in _SERVER_OWNED_ANALYSIS_KEYS)}
+    params = [project_id]
+    if merge:
+        removed = [k for k, value in analysis.items() if value is None] if delete_nulls else []
+        payload = {k: value for k, value in analysis.items() if k not in removed}
+        params.append(Json(payload))
+        update = "analyses.payload || excluded.payload"
+        if delete_nulls:
+            update = "(analyses.payload || excluded.payload) - %s::text[]"
+            params.append(removed)
+    else:
+        params.extend([Json(analysis), [*_SERVER_OWNED_ANALYSIS_KEYS, "locked"]])
+        # 전문에서 빠진 일반 키는 삭제한다. 서버 키 이월도 UPDATE 안에서 읽어 경합을 막는다.
+        update = """excluded.payload || (
+            select coalesce(jsonb_object_agg(previous.key, previous.value), '{}'::jsonb)
+            from jsonb_each(analyses.payload) previous
+            where previous.key = any(%s::text[]) and not (excluded.payload ? previous.key)
+        )"""
     async with conn.cursor() as cur:
         await cur.execute(
-            "insert into analyses (project_id, payload, locked) values (%s, %s, %s) "
-            "on conflict (project_id) do update set payload = excluded.payload, "
-            "locked = excluded.locked "
+            "insert into analyses (project_id, payload) values (%s, %s) "
+            f"on conflict (project_id) do update set payload = {update} "
             "returning project_id::text as project_id, payload, locked",
-            (project_id, Json(analysis), locked),
+            tuple(params),
         )
         return await cur.fetchone()
 
@@ -1048,18 +1174,23 @@ async def save_confirmed_gpt_product_evidence(
     conn: AsyncConnection,
     project_id: str,
     contract: dict,
+    *,
+    front_closure: dict | None = None,
 ) -> dict:
     """Persist a verified public-analysis handoff without exposing a client write path."""
 
+    update = "jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)"
+    params = [Json(contract)]
+    if front_closure is not None:
+        from .agents.outer_closure import front_closure_of
+
+        update = f"jsonb_set({update}, '{{frontClosure}}', %s::jsonb, true)"
+        params.append(Json(front_closure_of({"frontClosure": front_closure})))
+    params.append(project_id)
     async with conn.cursor() as cur:
         await cur.execute(
-            """
-            update analyses
-            set payload = jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)
-            where project_id = %s
-            returning payload
-            """,
-            (Json(contract), project_id),
+            f"update analyses set payload = {update} where project_id = %s returning payload",
+            params,
         )
         row = await cur.fetchone()
     if row is None:
@@ -1123,6 +1254,20 @@ async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str)
             "from assets where id = %s and deleted_at is null "
             "and (user_id = %s or source = 'seed')",
             (asset_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def get_project_asset_for_user(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_id: str,
+) -> dict | None:
+    """Similar-cut input: an owned, live asset in this product's project, never a seed."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, project_id::text as project_id, r2_bucket, r2_key, "
+            "mime_type, source, width, height, metadata from assets "
+            "where id = %s and user_id = %s and project_id = %s and deleted_at is null",
+            (asset_id, user_id, project_id),
         )
         return await cur.fetchone()
 
@@ -1577,6 +1722,7 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
                    mc.length_adjust, mc.match_adjust, mc.qc_scores,
+                   a.metadata->'fitProfileSnapshot' as fit_profile_snapshot,
                    a.id::text as asset_id, a.r2_key,
                    tone.id::text as active_asset_id, tone.r2_key as active_r2_key
             from mannequin_cuts mc
@@ -1748,6 +1894,173 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
         return await cur.fetchone()
 
 
+def _similar_cut_record(value: object) -> dict | None:
+    """Storage envelope only; the planner validates the plan's action fields."""
+    if (
+        isinstance(value, dict)
+        and type(value.get("version")) is int and value["version"] == 1
+        and isinstance(value.get("rootAssetId"), str) and value["rootAssetId"]
+        and isinstance(value.get("sourceAssetId"), str) and value["sourceAssetId"]
+        and isinstance(value.get("plan"), dict)
+    ):
+        return value
+    return None
+
+
+async def list_similar_cut_plans(
+    conn: AsyncConnection, user_id: str, project_id: str, root_asset_id: str,
+    exclude_job_id: str | None = None, limit: int = 12,
+) -> list[dict]:
+    """Recent completed/reserved actions; client payload and failed jobs are not history."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id, similar_cut from ("
+            "select id::text as id, metadata->'similar_cut' as similar_cut, created_at from jobs "
+            "where user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status in ('pending', 'running', 'done') "
+            "and metadata->'similar_cut'->>'rootAssetId' = %s "
+            "and metadata->'similar_cut'->'version' = '1'::jsonb "
+            "and jsonb_typeof(metadata->'similar_cut'->'plan') = 'object' "
+            "and (%s::text is null or id::text <> %s) "
+            "union all "
+            "select 'asset:' || id::text as id, metadata->'similar_cut' as similar_cut, created_at from assets "
+            "where user_id = %s and project_id = %s and source = 'ai' and deleted_at is null "
+            "and metadata->'similar_cut'->>'rootAssetId' = %s "
+            "and metadata->'similar_cut'->'version' = '1'::jsonb "
+            "and jsonb_typeof(metadata->'similar_cut'->'plan') = 'object' "
+            "and metadata->'similar_cut'->>'sourceBlockId' is not null"
+            ") actions order by created_at desc, id desc limit %s",
+            (user_id, project_id, root_asset_id, exclude_job_id, exclude_job_id,
+             user_id, project_id, root_asset_id, limit),
+        )
+        rows = await cur.fetchall()
+    return [
+        {**record, "jobId": row["id"]}
+        for row in rows
+        if (record := _similar_cut_record(row.get("similar_cut"))) is not None
+    ]
+
+
+def _storyboard_similar_plan(value: object) -> dict | None:
+    if (isinstance(value, dict) and isinstance(value.get("fingerprint"), str)
+            and len(value["fingerprint"]) == 64
+            and isinstance(value.get("sourceBlockId"), str) and value["sourceBlockId"]
+            and isinstance(value.get("plan"), dict)):
+        return value
+    return None
+
+
+async def get_storyboard_similar_cut_plan(
+    conn: AsyncConnection, user_id: str, project_id: str, job_id: str,
+    block_id: str, fingerprint: str,
+) -> dict | None:
+    """Resume this lease's saved action or the same source-bound action from a failed job."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'storyboardSimilarPlans'->%s::text as saved from jobs "
+            "where user_id = %s and project_id = %s and kind = 'detail_page' "
+            "and (id::text = %s or status = 'error') "
+            "and metadata->'storyboardSimilarPlans'->%s::text->>'fingerprint' = %s "
+            "order by (id::text = %s) desc, created_at desc, id desc limit 1",
+            (block_id, user_id, project_id, job_id, block_id, fingerprint, job_id),
+        )
+        row = await cur.fetchone()
+    return _storyboard_similar_plan((row or {}).get("saved"))
+
+
+async def reserve_storyboard_similar_cut_plan(
+    conn: AsyncConnection, *, user_id: str, project_id: str, job_id: str,
+    lease_token: str, block_id: str, metadata: dict,
+) -> dict | None:
+    """Lease-fence one child action; atomic JSON merge preserves independent roots' plans."""
+    if _storyboard_similar_plan(metadata) is None:
+        raise ValueError("Invalid storyboard similar-cut plan")
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'storyboardSimilarPlans'->%s::text as saved from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'detail_page' "
+            "and status = 'running' and locked_by = %s for update",
+            (block_id, job_id, user_id, project_id, lease_token),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        existing = _storyboard_similar_plan(row.get("saved"))
+        if existing is not None:
+            if any(existing.get(key) != metadata.get(key) for key in ("fingerprint", "sourceBlockId")):
+                raise ValueError("similar_cut_lineage_changed")
+            return existing
+        await cur.execute(
+            "update jobs set metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), "
+            "'{storyboardSimilarPlans}', coalesce(metadata->'storyboardSimilarPlans', '{}'::jsonb) || %s::jsonb) "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'detail_page' "
+            "and status = 'running' and locked_by = %s "
+            "returning metadata->'storyboardSimilarPlans'->%s::text as saved",
+            (Json({block_id: metadata}), job_id, user_id, project_id, lease_token, block_id),
+        )
+        updated = await cur.fetchone()
+    return _storyboard_similar_plan((updated or {}).get("saved"))
+
+
+async def get_similar_cut_plan_for_job(
+    conn: AsyncConnection, user_id: str, project_id: str, job_id: str,
+) -> dict | None:
+    """A reclaimed job resumes its persisted plan instead of planning/charging it again."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'similar_cut' as similar_cut from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image'",
+            (job_id, user_id, project_id),
+        )
+        row = await cur.fetchone()
+    return _similar_cut_record((row or {}).get("similar_cut"))
+
+
+async def reserve_similar_cut_plan(
+    conn: AsyncConnection, *, user_id: str, project_id: str, job_id: str,
+    lease_token: str, metadata: dict, expected_history: list[dict], limit: int = 12,
+) -> dict:
+    """CAS a planned action before image generation; caller commits every returned status.
+
+    Plan with no open DB transaction, then reserve in a short root-scoped transaction.
+    A competing reservation changes history, so the caller replans with that action.
+    This helper never commits or calls an external service. Lost leases cannot write.
+    """
+    if _similar_cut_record(metadata) is None:
+        raise ValueError("Invalid similar-cut storage metadata")
+    root_id = metadata["rootAssetId"]
+    if not await try_advisory_lock(conn, f"similar-cut:{user_id}:{project_id}:{root_id}"):
+        return {"status": "busy"}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->'similar_cut' as similar_cut from jobs "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status = 'running' and locked_by = %s for update",
+            (job_id, user_id, project_id, lease_token),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return {"status": "lease_lost"}
+    existing = _similar_cut_record(row.get("similar_cut"))
+    if existing is not None:
+        return {"status": "existing", "similar_cut": existing}
+    history = await list_similar_cut_plans(
+        conn, user_id, project_id, root_id, exclude_job_id=job_id, limit=limit,
+    )
+    if history != expected_history:
+        return {"status": "history_changed"}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and status = 'running' and locked_by = %s returning id",
+            (Json({"similar_cut": metadata}), job_id, user_id, project_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return {"status": "lease_lost"}
+    return {"status": "reserved", "similar_cut": metadata}
+
+
 async def get_latest_job_generation(
     conn: AsyncConnection, user_id: str, base_idempotency_key: str,
 ) -> dict | None:
@@ -1778,16 +2091,47 @@ async def list_retryable_sam_jobs(
     `idempotency_key` 를 함께 돌려주는 이유는 푸셔가 base 키를 되찾아야 하기 때문이다.
     조회는 `jobs_sam_retry_idx`(partial) 가 받친다.
     """
+    from app.services import sam_retry
+
+    # 종료 시각 하한으로 오래된 잡의 되살림을 막고 jobs_sam_retry_idx의 범위 스캔을 제한한다.
+    # state의 거짓값도 job_is_retryable의 `state or ""`와 맞춘다.
+    # 세대 비교는 get_latest_job_generation의 사용자, LIKE, payload 순서를 보존한다.
+    # 동률은 여기서 제외하지 않고 푸셔의 최신 행 재확인과 create_job의 멱등성에 맡긴다.
+    # kind와 status 목록을 글자로 적은 것은 jobs_sam_retry_idx의 partial 조건과 같아야 인덱스를 타기 때문이다.
     async with conn.cursor() as cur:
         await cur.execute(
-            f"select {_JOB_COLS}, idempotency_key from jobs "
-            "where kind = any(%s) and status = any(%s) "
-            "and finished_at is not null "
-            "and finished_at < now() - make_interval(secs => %s) "
-            "and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s "
-            "order by finished_at desc limit %s",
-            (list(kinds), ["done", "error"], float(min_age_seconds),
-             int(max_retries), int(limit)),
+            """
+            select id::text as id, user_id::text as user_id, project_id::text as project_id,
+                   kind, status, payload, result, finished_at, idempotency_key
+            from jobs
+            where kind = any(%s)
+              and kind in ('sam_preprocess', 'matching_cutout', 'editor_garment_mask')
+              and status in ('done', 'error')
+              and finished_at is not null
+              and finished_at > now() - make_interval(secs => %s)
+              and finished_at < now() - make_interval(secs => %s)
+              and (case when payload->>'retry' ~ '^[0-9]+$'
+                        then (payload->>'retry')::int else 0 end) < %s
+              and (result->>'state' = any(%s)
+                   or (status = 'error' and coalesce(result->'state', 'null'::jsonb)
+                       in ('null'::jsonb, '""'::jsonb, 'false'::jsonb,
+                           '0'::jsonb, '[]'::jsonb, '{}'::jsonb)))
+              and idempotency_key is not null and idempotency_key <> ''
+              and not exists (
+                  select 1 from jobs newer
+                  where newer.user_id = jobs.user_id
+                    and (newer.idempotency_key = regexp_replace(jobs.idempotency_key, ':r[0-9]+$', '')
+                         or newer.idempotency_key like
+                            regexp_replace(jobs.idempotency_key, ':r[0-9]+$', '') || ':r%%')
+                    and (case when newer.payload->>'retry' ~ '^[0-9]+$'
+                              then (newer.payload->>'retry')::int else 0 end)
+                        > (case when jobs.payload->>'retry' ~ '^[0-9]+$'
+                                then (jobs.payload->>'retry')::int else 0 end)
+              )
+            order by finished_at desc limit %s
+            """,
+            (list(kinds), sam_retry.REVIVE_WINDOW_SECONDS, float(min_age_seconds), int(max_retries),
+             list(sam_retry.RETRYABLE_STATES), int(limit)),
         )
         return await cur.fetchall()
 
@@ -2014,6 +2358,21 @@ async def list_facemarket_scope_jobs(
     return sorted(rows, key=lambda row: (row["created_at"], row["id"]))
 
 
+async def _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key):
+    """선택한 작업이 완료되어도 새 접수 키는 그 작업을 가리킨다."""
+    if row is not None and row.get("idempotency_key") != idempotency_key:
+        keys = Json([idempotency_key])
+        await cur.execute(
+            "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || "
+            "jsonb_build_object('editorFillRequestKeys', "
+            "coalesce(metadata->'editorFillRequestKeys', '[]'::jsonb) || %s::jsonb) "
+            "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+            "and not (coalesce(metadata->'editorFillRequestKeys', '[]'::jsonb) @> %s::jsonb)",
+            (keys, row["id"], user_id, project_id, keys),
+        )
+    return row
+
+
 async def create_job(
     conn: AsyncConnection,
     *,
@@ -2035,9 +2394,15 @@ async def create_job(
     멱등(계약 §6): ① 같은 Idempotency-Key = 같은 job(상태 무관) — 선조회로 합류 ② 진행 중 중복 =
     활성 job 합류(ON CONFLICT) ③ 실패 후 재호출(키 없음·새 키) = 새 job. **완료 job 재호출(기존
     결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님).
-    마네킹은 활성 합류 키도 저장한다. 202 응답이 유실돼도 종료된 원래 작업에 합류한다.
+    마네킹과 에디터 실패 칸 재시도는 활성 합류 키도 기억한다.
+    202 응답이 유실돼도 종료된 원래 작업을 재생하며 원래 키를 덮어쓰지 않는다.
     """
     remember_request = kind == "mannequin" and bool(idempotency_key)
+    retry_block_id = payload.get("retryBlockId") if kind == "editor_image" else None
+    context_fill = payload.get("_contextFill") if kind == "editor_image" else None
+    fill_slot_key = context_fill.get("slotKey") if isinstance(context_fill, dict) else None
+    remember_editor_retry = bool(retry_block_id and idempotency_key)
+    remember_editor_fill = bool(fill_slot_key and idempotency_key)
 
     async def _by_key(cur):
         await cur.execute(
@@ -2054,6 +2419,22 @@ async def create_job(
                 (user_id, project_id, user_id, project_id, idempotency_key),
             )
             existing = await cur.fetchone()
+        if existing is None and kind == "editor_image":
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and metadata->'editorRetryRequestKeys' @> %s::jsonb",
+                (user_id, project_id, Json([idempotency_key])),
+            )
+            existing = await cur.fetchone()
+        if existing is None and kind == "editor_image":
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and metadata->'editorFillRequestKeys' @> %s::jsonb",
+                (user_id, project_id, Json([idempotency_key])),
+            )
+            existing = await cur.fetchone()
+        if existing is not None and kind == "editor_image":
+            _check_editor_request(existing, project_id, payload)
         return existing
 
     async def _remember(cur, row):
@@ -2063,6 +2444,19 @@ async def create_job(
                 "values (%s, %s, %s, %s) on conflict do nothing",
                 (user_id, project_id, idempotency_key, row["id"]),
             )
+        if remember_editor_retry and row.get("idempotency_key") != idempotency_key:
+            # 합류 응답이 유실되어 원래 작업 완료 뒤 재전송해도 같은 작업을 재생한다.
+            keys = Json([idempotency_key])
+            await cur.execute(
+                "update jobs set metadata = coalesce(metadata, '{}'::jsonb) || "
+                "jsonb_build_object('editorRetryRequestKeys', "
+                "coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) || %s::jsonb) "
+                "where id = %s and user_id = %s and project_id = %s and kind = 'editor_image' "
+                "and not (coalesce(metadata->'editorRetryRequestKeys', '[]'::jsonb) @> %s::jsonb)",
+                (keys, row["id"], user_id, project_id, keys),
+            )
+        if remember_editor_fill and row.get("idempotency_key") != idempotency_key:
+            await _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key)
         return row
 
     async def _active(cur):
@@ -2081,8 +2475,34 @@ async def create_job(
                 "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"mannequin-request:{user_id}:{project_id}",),
             )
+        if kind == "editor_image" and (retry_block_id or idempotency_key):
+            # 합류 키의 기록과 조회도 같은 프로젝트에서 직렬화한다. 원래 키는 보존한다.
+            await cur.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"editor-image-request:{user_id}:{project_id}",),
+            )
         if idempotency_key:  # ① 같은 Idempotency-Key 재시도(순차) → 같은 job
             existing = await _by_key(cur)
+            if existing is not None:
+                return await _remember(cur, existing), False
+        if retry_block_id:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and status in ('pending', 'running') "
+                "and payload->>'retryBlockId' = %s order by created_at desc limit 1",
+                (user_id, project_id, str(retry_block_id)),
+            )
+            existing = await cur.fetchone()
+            if existing is not None:
+                return await _remember(cur, existing), False
+        if fill_slot_key:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'editor_image' and status in ('pending', 'running') "
+                "and payload->'_contextFill'->>'slotKey' = %s order by created_at desc limit 1",
+                (user_id, project_id, str(fill_slot_key)),
+            )
+            existing = await cur.fetchone()
             if existing is not None:
                 return await _remember(cur, existing), False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
@@ -2106,7 +2526,7 @@ async def create_job(
                     returning {_JOB_COLS}
                     """,
                     (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
-                     Json(metadata)),
+                     Json(job_metadata(metadata))),
                 )
                 row = await cur.fetchone()
             except errors.UniqueViolation:
@@ -2128,6 +2548,62 @@ async def create_job(
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
+async def find_context_fill_job(
+    conn: AsyncConnection, user_id: str, project_id: str, idempotency_key: str, slot_key: str,
+) -> dict | None:
+    """판단 전에 원래 작업을 찾고 합류 키를 저장한다. 접수 트랜잭션까지 잠금을 유지한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"editor-image-request:{user_id}:{project_id}",),
+        )
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and (idempotency_key = %s "
+            "or metadata->'editorFillRequestKeys' @> %s::jsonb "
+            "or metadata->'editorRetryRequestKeys' @> %s::jsonb) order by created_at desc limit 1",
+            (user_id, project_id, idempotency_key, Json([idempotency_key]), Json([idempotency_key])),
+        )
+        row = await cur.fetchone()
+        if row is not None:
+            fill = (row.get("payload") or {}).get("_contextFill") or {}
+            if fill.get("slotKey") != slot_key:
+                raise IdempotencyKeyReused()
+            return await _remember_editor_fill_request(cur, row, user_id, project_id, idempotency_key)
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and status in ('pending', 'running') "
+            "and payload->'_contextFill'->>'slotKey' = %s order by created_at desc limit 1",
+            (user_id, project_id, slot_key),
+        )
+        return await _remember_editor_fill_request(cur, await cur.fetchone(), user_id, project_id, idempotency_key)
+
+
+async def has_active_detail_page_job(conn: AsyncConnection, user_id: str, project_id: str) -> bool:
+    """최근 작업의 요약 대신 프로젝트의 모든 진행 중 상세페이지 작업을 확인한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where user_id = %s and project_id = %s "
+            "and kind = 'detail_page' and status in ('pending', 'running') limit 1",
+            (user_id, project_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def list_completed_context_fill_jobs(
+    conn: AsyncConnection, user_id: str, project_id: str, slot_key: str,
+) -> list[dict]:
+    """완료된 같은 칸의 설정과 결과를 읽어 시도 횟수와 반복 제외에 쓴다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select payload, result from jobs where user_id = %s and project_id = %s "
+            "and kind = 'editor_image' and status = 'done' "
+            "and payload->'_contextFill'->>'slotKey' = %s order by created_at, id",
+            (user_id, project_id, slot_key),
+        )
+        return await cur.fetchall()
+
+
 async def set_pending_job_pricing(
     conn: AsyncConnection, *, user_id: str, job_id: str,
     credits_reserved: int, metadata: dict,
@@ -2135,7 +2611,7 @@ async def set_pending_job_pricing(
     """새로 INSERT한 미커밋 job 전용. 호출자는 같은 트랜잭션에서 크레딧도 예약한다."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "update jobs set credits_reserved = %s, metadata = %s "
+            "update jobs set credits_reserved = %s, metadata = metadata || %s::jsonb "
             "where id = %s and user_id = %s and status = 'pending' returning id",
             (credits_reserved, Json(metadata), job_id, user_id),
         )
@@ -2656,7 +3132,9 @@ async def _consume_buckets(
         await cur.execute(
             "select id::text as id, remaining_credits from credit_sources "
             "where user_id = %s and status = 'active' and remaining_credits > 0 "
-            "order by source_type, created_at for update",  # 'subscription' < 'topup' → 구독 먼저
+            # 해지 시 소멸하는 구독부터 쓰고, 무료를 먼저 써 유료 충전의 환불 가능성을 보존한다.
+            "order by case source_type when 'subscription' then 0 when 'free' then 1 else 2 end, "
+            "created_at for update",
             (user_id,),
         )
         buckets = await cur.fetchall()
@@ -2815,7 +3293,7 @@ def _mannequin_asset_metadata(generation_metadata: dict | None) -> dict:
     그러면 이미지가 Cloudflare 엣지 대신 API(us-east-1)를 거치고 브라우저 캐시도 못 탄다 —
     보관함 커버(= 최신 마네킹컷)가 진입할 때마다 한 장당 수백 KB를 다시 받던 회귀의 원인이다.
 
-    마네킹 파이프라인은 FaceMarket 신원을 아예 쓰지 않는다(mannequin_job·mannequin_adjust_job
+    마네킹 파이프라인은 FaceMarket 신원을 아예 쓰지 않는다(mannequin_job
     어디에도 얼굴 합성 경로가 없다). 산출물은 얼굴 없는 마네킹 착장컷이라 생체 파생일 수가
     없고, 그래서 여기서는 폴백에 맡기지 말고 False 를 명시한다.
     """
@@ -2841,6 +3319,7 @@ async def finalize_mannequin_success(
     reserved: int,
     charge: int,
     metadata: dict,
+    fit_profile_snapshot: dict | None = None,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
     async with conn.cursor() as cur:
@@ -2852,13 +3331,16 @@ async def finalize_mannequin_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         cuts = []
         for c in candidates:
+            generation_metadata = dict(c.get("generation_metadata") or {})
+            if fit_profile_snapshot is not None:
+                generation_metadata["fitProfileSnapshot"] = fit_profile_snapshot
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
                 "r2_key, mime_type, byte_size, width, height, metadata) "
                 "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
                  c.get("size"), c.get("width"), c.get("height"),
-                 Json(_mannequin_asset_metadata(c.get("generation_metadata")))),
+                 Json(_mannequin_asset_metadata(generation_metadata))),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
@@ -2881,7 +3363,23 @@ async def finalize_mannequin_success(
                 # 재생성 경로는 이 봉투를 버리고 GET /mannequins 를 재조회하므로, 컬럼(위)과
                 # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
                 "qcScores": qc_scores,
+                "fitProfile": (
+                    fit_profile_snapshot.get("profile")
+                    if fit_profile_snapshot is not None else None
+                ),
+                "fitProfileRecorded": fit_profile_snapshot is not None,
             })
+        if fit_profile_snapshot is not None:
+            # 컷 생성과 같은 트랜잭션에서만 확정한다. 요청 시점에는 analysis 를 건드리지
+            # 않으므로 실패한 조정이 상세페이지 핏으로 새는 일이 없다. JSON null은
+            # "사진 그대로"인 유효한 기록이며, 다른 analysis 필드는 그대로 보존한다.
+            await cur.execute(
+                "insert into analyses (project_id, payload, locked) "
+                "values (%s, jsonb_build_object('fitProfile', %s::jsonb), false) "
+                "on conflict (project_id) do update set payload = "
+                "jsonb_set(analyses.payload, '{fitProfile}', excluded.payload->'fitProfile', true)",
+                (project_id, Json(fit_profile_snapshot.get("profile"))),
+            )
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
     available = await _consume_buckets(
@@ -3085,16 +3583,27 @@ async def get_storyboard(conn: AsyncConnection, project_id: str) -> list:
     return sb if isinstance(sb, list) else []
 
 
-async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
-    """콘티 저장 (owner 스코프). 반환 = 저장된 블록."""
+async def get_storyboard_state(conn: AsyncConnection, project_id: str) -> tuple[list, int]:
+    """콘티와 공유 리비전을 같은 스냅샷에서 읽는다. 소유권은 라우트 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select storyboard, editor_revision from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    sb = (row or {}).get("storyboard")
+    return (sb if isinstance(sb, list) else []), int((row or {}).get("editor_revision") or 0)
+
+
+async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list,
+                          base_revision: int | None = None) -> int | None:
+    # 에디터 저장과 상세페이지 성공도 editor_revision을 올리므로 콘티 저장이 충돌할 수 있다.
     async with conn.cursor() as cur:
         await cur.execute(
-            "update projects set storyboard = %s where id = %s and user_id = %s "
-            "and deleted_at is null returning storyboard",
-            (Json(blocks), project_id, user_id),
+            "update projects set storyboard = %s, editor_revision = editor_revision + 1 "
+            "where id = %s and user_id = %s and deleted_at is null "
+            "and (%s::integer is null or editor_revision = %s::integer) returning editor_revision",
+            (Json(blocks), project_id, user_id, base_revision, base_revision),
         )
         row = await cur.fetchone()
-    return (row or {}).get("storyboard") or []
+    return None if row is None else int(row["editor_revision"])
 
 
 async def get_editor_blocks(conn: AsyncConnection, project_id: str) -> list:
@@ -3154,7 +3663,7 @@ async def finalize_detail_page_success(
     editor_blocks: list,
     cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
     reserved: int,
-    charge: int,  # 전량 완성 시 실제 생성 컷 수 × storyboardPerCut
+    charge: int,  # ADR-0017, 예약 견적에서 실패한 유료 컷 값을 뺀 정산액
     metadata: dict,
     product_name: str | None = None,
 ) -> dict | None:
@@ -3218,6 +3727,8 @@ async def finalize_detail_page_success(
             conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
             settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})
     envelope = {"data": editor_blocks, "credits": available, "creditsCharged": charge}
+    if metadata.get("partial"):
+        envelope["partial"] = metadata["partial"]
     async with conn.cursor() as cur:
         await cur.execute(
             "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
@@ -3270,6 +3781,39 @@ async def finalize_detail_page_failure(
                 (Json(result) if result is not None else None,
                  Json(job_metadata or {}), job_id),
             )
+    if finalized:
+        # The failure finalizer still holds the job lock. Rejudgments remain
+        # consumed; only their audit state changes, in the terminal transaction.
+        async with conn.cursor() as cur:
+            await cur.execute("select metadata from jobs where id = %s", (job_id,))
+            row = await cur.fetchone()
+            shots = dict(((row or {}).get('metadata') or {}).get('detailShots') or {})
+            changed = False
+            for key, state in shots.items():
+                # Audit cleanup must never abort the credit release above.
+                if not isinstance(state, dict) or not isinstance(state.get('judgmentRetries') or [], list):
+                    continue
+                retries = list(state.get('judgmentRetries') or [])
+                interrupted = bool(retries and isinstance(retries[-1], dict)
+                                   and retries[-1].get('status') == 'CLAIMED')
+                rejudging = state.get('phase') == 'rejudging'
+                if not interrupted and not rejudging:
+                    continue
+                state = {**state, 'judgmentRetryLease': None}
+                if interrupted:
+                    retries[-1] = {**retries[-1], 'status': 'INTERRUPTED'}
+                    state.update(judgmentRetries=retries,
+                                 qc={**(state.get('qc') or {}), 'judgmentRetries': retries})
+                if rejudging:
+                    state['phase'] = 'held'
+                shots[key] = state
+                changed = True
+            if changed:
+                await cur.execute(
+                    "update jobs set metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), "
+                    "'{detailShots}', %s::jsonb) where id = %s",
+                    (Json(shots), job_id),
+                )
     return finalized
 
 
@@ -3284,9 +3828,10 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
         await cur.execute(
             """
             select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
-                   wi.ai, wi.cut_type, wi.sort_order
+                   wi.ai, wi.cut_type, wi.sort_order, a.metadata as asset_metadata
             from wardrobe_images wi
             join projects pr on pr.id = wi.project_id
+            join assets a on a.id = wi.asset_id
             where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
               and wi.deleted_at is null
             order by wi.sort_order, wi.created_at
@@ -3298,12 +3843,17 @@ async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: 
 
 def _wardrobe_image_api(row: dict) -> dict:
     """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
-    return {
+    image = {
         "id": row["id"],
+        "assetId": row["asset_id"],
         "src": f"/v1/assets/{row['asset_id']}/file",
         "ai": bool(row["ai"]),
         "cutType": row["cut_type"],
     }
+    recipe = (row.get("asset_metadata") or {}).get("detail_recipe")
+    if isinstance(recipe, dict) and recipe.get("version") == 1:
+        image["detailReshoot"] = True
+    return image
 
 
 async def finalize_editor_image_success(
@@ -3355,12 +3905,16 @@ async def finalize_editor_image_success(
             (project_id, group, image["asset_id"], cut_type, sort_order),
         )
         wardrobe_id = (await cur.fetchone())["id"]
-        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
+        image_api = _wardrobe_image_api({
             "id": wardrobe_id,
-            "src": f"/v1/assets/{image['asset_id']}/file",
+            "asset_id": image["asset_id"],
             "ai": True,
-            "cutType": cut_type,
-        }
+            "cut_type": cut_type,
+            "asset_metadata": image.get("metadata"),
+        })
+        context_fill = (image.get("metadata") or {}).get("context_fill")
+        if isinstance(context_fill, dict):
+            image_api["contextFill"] = {key: context_fill.get(key) for key in ("slot", "label", "colorId")}
         prov = image.get("provenance")
         if prov and image.get("sha256"):
             await insert_output_records(cur, records=[{
@@ -3471,7 +4025,7 @@ async def grant_subscription(
 
     2026-09-09 정책 변경: 예전에는 갱신 때 기존 구독 버킷을 만료시키고 새로 줬다(소멸).
     이제 소멸은 해지·유예만료라는 사건에서만 일어난다(expire_subscription_buckets).
-    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (source_type, created_at) 이라
+    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (종류별 소진 우선순위, created_at) 이라
     이월분이 자연히 먼저 소진된다 — 오래된 크레딧부터 쓰는 게 사용자에게 유리하다.
 
     credits: 지급량 override(업그레이드 비례분). None 이면 요금제 정가.
@@ -3575,11 +4129,48 @@ async def subscription_bucket_summary(conn: AsyncConnection, user_id: str) -> di
     return {"credits": int(row.get("credits") or 0), "expiresAt": row.get("expires_at")}
 
 
+async def grant_signup_credits(
+    conn: AsyncConnection, *, user_id: str, credits: int,
+) -> int:
+    """최초 셀러 동의 또는 소급 지급. 계정 잠금과 원장 키로 한 번만 지급한다."""
+    if credits <= 0:
+        return 0
+    key = f"signup:{user_id}"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        await cur.execute("select id from credit_ledger where idempotency_key = %s", (key,))
+        if await cur.fetchone() is not None:
+            return 0
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, initial_credits, remaining_credits, "
+            "status, period_end, plan_id, payment_id) "
+            "values (%s, 'free', %s, %s, 'active', null, null, null) returning id::text as id",
+            (user_id, credits, credits),
+        )
+        source_id = (await cur.fetchone())["id"]
+        running = acct["balance"] + credits
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, idempotency_key, metadata) "
+            "values (%s,%s,'grant_signup',%s,%s,%s,%s,%s)",
+            (user_id, source_id, credits, running, running - acct["reserved"], key, Json({"reason": "signup"})),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return credits
+
+
 async def purchase_topup(
     conn: AsyncConnection, *, user_id: str, plan_code: str,
     idempotency_key: str | None = None, metadata: dict | None = None,
     provider: str = "test", provider_ref: str | None = None,
-    snapshot: dict | None = None,   # {"credits": int, "price": int} — 결제 시점 확정값
+    snapshot: dict | None = None,   # credits, price, 선택 bonusCredits: 주문 시점 확정값
 ) -> dict:
     """추가구매(§3.2, 테스트용 provider='test'): payment + topup 버킷 + grant 원장.
     멱등: Idempotency-Key 주면 중복 지급 방지(더블클릭/재시도) — account FOR UPDATE가 동시
@@ -3628,6 +4219,12 @@ async def purchase_topup(
             plan = await cur.fetchone()
             if plan is None:
                 raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
+        base_credits = plan["credits"]
+        bonus_credits = (snapshot or {}).get("bonusCredits", 0)
+        granted_credits = base_credits + bonus_credits
+        metadata = {**metadata, "baseCredits": base_credits, "bonusCredits": bonus_credits,
+                    "bonusPercent": (snapshot or {}).get("bonusPercent", 0),
+                    "planAtOrder": (snapshot or {}).get("planAtOrder")}
         await cur.execute(
             # provider/provider_ref 는 PG 연동(토스)에서 채운다. 기본값 'test' 는 기존 테스트
             # 구매 경로 그대로 — 실 결제는 provider='toss', provider_ref=paymentKey.
@@ -3640,21 +4237,21 @@ async def purchase_topup(
             "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
             "remaining_credits, status, payment_id) "
             "values (%s, 'topup', %s, %s, %s, 'active', %s) returning id::text as id",
-            (user_id, plan["id"], plan["credits"], plan["credits"], pay_id),
+            (user_id, plan["id"], granted_credits, granted_credits, pay_id),
         )
         src_id = (await cur.fetchone())["id"]
-        running = acct["balance"] + plan["credits"]
+        running = acct["balance"] + granted_credits
         await cur.execute(
             "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
             "balance_after, available_after, idempotency_key, metadata) "
             "values (%s,%s,'grant_topup',%s,%s,%s,%s,%s)",
-            (user_id, src_id, plan["credits"], running, running - acct["reserved"],
+            (user_id, src_id, granted_credits, running, running - acct["reserved"],
              scoped_key, Json(metadata)),
         )
         await cur.execute(
             "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
         )
-    return {"creditSourceId": src_id, "paymentId": pay_id, "credits": plan["credits"],
+    return {"creditSourceId": src_id, "paymentId": pay_id, "credits": granted_credits,
             "available": running - acct["reserved"]}
 
 
@@ -3679,6 +4276,8 @@ async def request_refund(
         b = await cur.fetchone()
         if b is None:
             raise CreditError("refund_not_found", "구매 내역을 찾을 수 없어요.", 404)
+        if b["source_type"] == "free":
+            raise CreditError("free_not_refundable", "무료 크레딧은 환불 대상이 아니에요.", 400)
         if b["source_type"] != "topup":
             raise CreditError("subscription_not_refundable", "구독 크레딧은 환불 대상이 아니에요.", 400)
         if b["status"] != "active":

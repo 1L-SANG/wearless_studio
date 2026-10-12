@@ -10,6 +10,41 @@ from conftest import make_settings
 RAW = {"clothingType": "top", "fit": "regular", "styleTags": ["basic"]}
 
 
+@pytest.mark.parametrize('header,expected', [
+    ('7', 7), ('10', 10), ('60', 10), ('0', 0), (' 3 ', 3),
+    (None, 2), ('', 2), ('bad', 2), ('1.5', 2), ('-1', 2),
+    ('Thu, 08 Oct 2026 00:00:06 GMT', 6),
+    ('Thu, 08 Oct 2026 00:01:00 GMT', 10),
+    ('Wed, 07 Oct 2026 23:59:59 GMT', 0),
+])
+def test_rate_limit_retains_bounded_retry_after(monkeypatch, header, expected):
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(vision_llm.time, 'time', lambda: now)
+    response = httpx.Response(429, headers={'Retry-After': header} if header is not None else {},
+                              json={'error': {'code': 'rate_limit_exceeded'}})
+    monkeypatch.setattr(vision_llm.httpx, 'AsyncClient', fake_client_factory(lambda url: response))
+    with pytest.raises(vision_llm.VisionError) as result:
+        run(vision_llm._call_gpt(make_settings(openai_api_key='test'), 'judge', 'inspect', [], {}, 5))
+    assert result.value.unknown_cause == 'provider_error'
+    assert getattr(result.value, 'retry_after_seconds', None) == expected
+
+
+@pytest.mark.parametrize('status,code,cause', [
+    (500, None, 'provider_error'), (503, None, 'provider_error'),
+    (429, 'insufficient_quota', 'configuration'),
+    (429, 'credit_balance_exhausted', 'configuration'),
+    (429, 'billing_hard_limit_reached', 'configuration'),
+])
+def test_other_provider_failures_have_no_rate_limit_wait(monkeypatch, status, code, cause):
+    response = httpx.Response(status, headers={'Retry-After': '8'}, json={'error': {'code': code}})
+    monkeypatch.setattr(vision_llm.httpx, 'AsyncClient', fake_client_factory(lambda url: response))
+    with pytest.raises(vision_llm.VisionError) as result:
+        run(vision_llm._call_gpt(make_settings(openai_api_key='test'), 'judge', 'inspect', [], {}, 5))
+    assert result.value.unknown_cause == cause
+    assert getattr(result.value, 'retry_after_seconds', None) is None
+
+
 def test_specialist_options_and_usage_are_opt_in(monkeypatch):
     seen = []
     payload = {"model": "gpt-6-astra", "usage": {"prompt_tokens": 10, "completion_tokens": 4},
@@ -96,6 +131,13 @@ async def _run(settings, handler):
 def run(coro):
     import asyncio
     return asyncio.run(coro)
+
+
+def _reset_openai_fallback(monkeypatch):
+    from app import openai_key_fallback
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
 
 
 def test_gpt_success(monkeypatch):
@@ -231,6 +273,129 @@ def test_complete_json_text_only_gemini_fallback(monkeypatch):
     raw, provider = run(vision_llm.complete_json(s, "review copy", {"type": "object"}))
     assert provider == "gemini"
     assert raw["results"][0]["verdict"] == "pass"
+
+
+def test_gpt_quota_switches_to_fallback_and_later_starts_there(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            if authorization == "Bearer school-key":
+                return FakeResp(429, {"error": {"code": "insufficient_quota"}})
+            return _gpt_ok()
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    settings = make_settings(
+        openai_api_key="school-key", openai_api_key_fallback="owner-key")
+    args = (settings, "gpt-test", "prompt", _images(), {"type": "object"}, 30)
+
+    assert run(vision_llm._call_gpt(*args)) == RAW
+    assert run(vision_llm._call_gpt(*args)) == RAW
+    assert seen == ["Bearer school-key", "Bearer owner-key", "Bearer owner-key"]
+
+
+def test_gpt_rate_limit_does_not_switch(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            return FakeResp(429, {"error": {"code": "rate_limit_exceeded"}})
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    settings = make_settings(
+        openai_api_key="school-key", openai_api_key_fallback="owner-key")
+    args = (settings, "gpt-test", "prompt", _images(), {"type": "object"}, 30)
+
+    with pytest.raises(vision_llm.VisionError, match="rate_limit_exceeded"):
+        run(vision_llm._call_gpt(*args))
+    with pytest.raises(vision_llm.VisionError, match="rate_limit_exceeded"):
+        run(vision_llm._call_gpt(*args))
+    assert seen == ["Bearer school-key", "Bearer school-key"]
+
+
+def test_gpt_without_fallback_raises_original_quota_error(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            return FakeResp(429, {"error": {"code": "insufficient_quota"}})
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    settings = make_settings(openai_api_key="school-key", openai_api_key_fallback=None)
+
+    with pytest.raises(vision_llm.VisionError, match="insufficient_quota"):
+        run(vision_llm._call_gpt(
+            settings, "gpt-test", "prompt", _images(), {"type": "object"}, 30))
+    assert seen == ["Bearer school-key"]
+
+
+def test_gpt_both_accounts_exhausted_raises_fallback_error_without_key_leak(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            code = "insufficient_quota" if authorization == "Bearer school-key" else "credit_balance_exhausted"
+            return FakeResp(429, {"error": {"code": code}})
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    settings = make_settings(
+        openai_api_key="school-key", openai_api_key_fallback="owner-key")
+
+    with pytest.raises(vision_llm.VisionError, match="credit_balance_exhausted") as raised:
+        run(vision_llm._call_gpt(
+            settings, "gpt-test", "prompt", _images(), {"type": "object"}, 30))
+    assert seen == ["Bearer school-key", "Bearer owner-key"]
+    assert "school-key" not in str(raised.value)
+    assert "owner-key" not in str(raised.value)
+
+
+def test_gpt_provider_gate_accepts_fallback_only_configuration(monkeypatch):
+    _reset_openai_fallback(monkeypatch)
+    seen = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            return _gpt_ok()
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", Client)
+    settings = make_settings(
+        openai_api_key=None,
+        openai_api_key_fallback="owner-key",
+        gemini_api_key=None,
+        analysis_model_order="gpt,gemini",
+    )
+
+    raw, provider = run(_run(settings, None))
+
+    assert raw == RAW
+    assert provider == "gpt"
+    assert seen == ["Bearer owner-key"]
 
 
 def test_gemini_schema_conversion():

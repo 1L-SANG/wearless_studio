@@ -25,6 +25,8 @@ import {
 } from '../../src/features/editor/presets/infoPresets.js';
 import { SELLING_POINTS_MAX } from '../../src/features/analysis/sellingPoints.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
+import { getBlockRenderHeight } from '../../src/features/editor/editorGeometry.js';
+import { buildExportSummary } from '../../src/features/editor/editorExport.js';
 
 const seqId = () => { let n = 0; return (p) => `${p}${(n += 1)}`; };
 
@@ -176,6 +178,35 @@ test('needsDefaultTemplate gates auto-apply to untouched assembler docs only', (
   // 빈 문서/size·care 없는 문서 → 금지
   assert.equal(needsDefaultTemplate([]), false);
   assert.equal(needsDefaultTemplate([baseDoc()[0], baseDoc()[3]]), false);
+});
+
+test('새 기본 문서의 특징 블록은 큰 빈 사진 세 칸 없이 compact 높이로 내보낸다', () => {
+  const ctx = { ...CTX, sellingPoints: ['부드러운 소재', '편안한 착용감', '깔끔한 마감'] };
+  const { blocks } = applyInfoTemplate(baseDoc(), ctx, seqId());
+  const feature = blocks.find((block) => block.infoType === 'benefit_copy');
+  assert.equal(feature.info.layout, 'compact');
+  assert.equal(getBlockRenderHeight(feature, { forExport: true }), 290);
+  assert.equal(feature.elements.filter((el) => el.type === 'image' && el.h === 560).length, 0);
+  // 실제 캔버스의 위아래 padding 100px를 포함해도 원본 출력은 780px다.
+  const summary = buildExportSummary([getBlockRenderHeight(feature, { forExport: true }) + 100],
+    { preset: 'original', format: 'png', delivery: 'split' });
+  assert.equal(summary.height, 780);
+  assert.equal(summary.fileCount, 1);
+  assert.ok(ctx.sellingPoints.every((point) => feature.elements.some((el) => el.text === point)));
+});
+
+test('저장된 stack 특징 블록과 셀러가 늘린 여백은 기본값 변경 후에도 그대로 둔다', () => {
+  const saved = buildInfoBlock('feature_icons', {
+    layout: 'stack', items: ['A', 'B', 'C'].map((title) => ({ title, desc: '', src: null })),
+  }, CTX, seqId());
+  assert.equal(saved.h, 2188);
+  saved.h += 120;
+  const before = structuredClone(saved);
+  const doc = [saved, ...baseDoc()];
+  assert.equal(needsDefaultTemplate(doc), false);
+  assert.equal(applyInfoTemplate(doc, CTX, seqId()).blocks.find((b) => b.infoType === 'benefit_copy'), saved);
+  assert.deepEqual(saved, before);
+  assert.equal(getBlockRenderHeight(saved, { forExport: true }), 2308);
 });
 
 test('a partially templated saved document still gets the required shipping/returns frame at the bottom', () => {
@@ -524,7 +555,7 @@ test('feature point defaults pull descriptions from the analysis feature copy', 
     ],
   };
   const info = defaultInfoFor('feature_icons', ctx);
-  assert.equal(info.layout, 'stack', 'new blocks default to the stacked layout');
+  assert.equal(info.layout, 'compact', 'new blocks must not reserve three large empty photos');
   assert.deepEqual(info.items.map((it) => it.title), ['하이웨이스트 디자인', '카고 포켓', '직접 쓴 특징']);
   assert.deepEqual(info.items.map((it) => it.desc), [
     '허리선이 높아 다리가 더 길어 보입니다.',
@@ -535,7 +566,7 @@ test('feature point defaults pull descriptions from the analysis feature copy', 
 
 test('feature point defaults survive a missing feature copy', () => {
   const info = defaultInfoFor('feature_icons', { ...CTX, sellingPoints: ['A'], featureCopy: undefined });
-  assert.equal(info.layout, 'stack');
+  assert.equal(info.layout, 'compact');
   assert.deepEqual(info.items.map((it) => it.desc), ['', '', '']);
 });
 

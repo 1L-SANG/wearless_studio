@@ -58,6 +58,7 @@ export async function modelComponentHarness({
   const { createServer } = await import('vite');
   const access = `globalThis[${JSON.stringify(key)}]`;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: fileURLToPath(new URL('../../..', import.meta.url)),

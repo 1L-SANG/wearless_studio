@@ -15,6 +15,9 @@ html, body { height: 100%; }
 body {
   font-family: var(--font-body); color: var(--fg-1); background: #fff;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  /* 한국어는 단어(어절) 단위로만 줄을 바꾼다. 기본값은 글자 단위라 폰에서 "이|어서"처럼 끊긴다.
+     공백 없는 긴 주소·파일명은 칸을 넘칠 때만 끊어 레이아웃을 뚫지 않게 한다. */
+  word-break: keep-all; overflow-wrap: break-word;
 }
 #root { min-height: 100%; }
 button { font-family: inherit; }
@@ -93,6 +96,25 @@ input, textarea, select { font-family: inherit; }
 .nav-link:hover { background: var(--bg-2); color: var(--fg-1); }
 .nav-link.active { color: var(--fg-1); background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.topnav-handoff { gap: var(--sp-12); padding-inline: var(--sp-16); }
+.topnav-handoff .nav-stepper,
+.topnav-handoff .nav-links,
+.topnav-handoff .credit-badge,
+.topnav-handoff .plan-badge { display: none; }
+.topnav-handoff .profile-btn { min-width: var(--cta-height); min-height: var(--cta-height); }
+@media (max-width: 720px) {
+  .topnav .nav-stepper { display: none; }
+}
+@media (max-width: 520px) {
+  .topnav { gap: var(--sp-12); padding-inline: var(--sp-16); }
+  .topnav .nav-links, .topnav .credit-badge, .topnav .plan-badge { display: none; }
+  .topnav .nav-right { flex-shrink: 0; }
+}
+
+.handoff-panel { display: flex; flex-direction: column; align-items: center; gap: var(--sp-24);
+  padding: var(--sp-28) var(--sp-20); color: var(--fg-1); text-align: center; }
+.handoff-panel p { margin: 0; line-height: 1.6; }
+.handoff-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-12); }
 .credit-badge { display: inline-flex; align-items: center; gap: 7px; height: 32px; font-size: 13px; font-weight: 500;
   color: var(--fg-1); padding: 0 12px; border-radius: var(--r-pill); background: #fff; box-shadow: var(--elev-card);
   border: 0; font-family: inherit; cursor: pointer; transition: box-shadow .15s, transform .15s; }
@@ -252,7 +274,7 @@ input, textarea, select { font-family: inherit; }
 /* 모달·선택지처럼 버튼이 짝으로 놓이는 곳은 모양을 통일한다 — 색(주=검정 채움, 보조=흰색)만
    다르고 형태는 같은 알약. 기본 .btn(8px 라운드)과 primary(pill)가 나란히 서면
    '하나는 네모, 하나는 동그라미'로 보여 짝 선택지가 아니라 다른 종류의 버튼처럼 읽힌다. */
-.modal-actions .btn, .draft-source-options .btn {
+.modal-actions .btn, .draft-source-options .btn, .handoff-actions .btn {
   border-radius: var(--cta-radius); min-height: var(--cta-height); justify-content: center; }
 
 .iconbtn { width: 34px; height: 34px; border-radius: var(--r-4); background: #fff; border: 0;
@@ -287,11 +309,6 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .chip:hover { color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
 .chip.on { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; font-weight: 600; }
 .chip.on:hover { box-shadow: var(--elev-lift), 0 0 0 1.5px #6ba8e6; }
-/* 방향 칩(정면·사선·옆모습·뒷면)만 — 미선택도 "누를 수 있다"가 보이게 흰 배경+테두리.
-   기본 칩(회색 글씨+회색 배경)은 비활성처럼 읽혀 "왜 회색이냐"가 됐다(2026-09-22 오너). */
-.chips.direction-chips .chip { color: var(--fg-1); background: #fff; box-shadow: 0 0 0 1px #dedde3; }
-.chips.direction-chips .chip:hover { box-shadow: 0 0 0 1px var(--ring-strong); }
-.chips.direction-chips .chip.on { box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
 .chip.on .chip-x { opacity: .6; }
 .chip-x { display: inline-flex; cursor: pointer; }
 /* 칩 줄 안의 '직접 입력' pill — 버튼 칩과 같은 외형의 input (분석 폼 세부 카테고리).
@@ -410,36 +427,14 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .modal p { font-size: 14.5px; color: var(--fg-2); margin-top: 10px; line-height: 1.55; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 
-/* ---- download modal (심플·고급) ---- */
-.dl-head { text-align: left; }
-.dl-eyebrow { font-family: var(--font-display); font-size: 12px; letter-spacing: .4px; color: var(--link); margin-bottom: 8px; }
-.dl-title { font-family: var(--font-display); font-size: 22px; letter-spacing: .2px; color: var(--fg-1); }
-.dl-sub { font-size: 14px; color: var(--fg-2); margin-top: 7px; }
-.dl-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
-.dl-opt { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; cursor: pointer;
-  background: #fff; border: 0; border-radius: var(--r-4); padding: 14px 16px; box-shadow: 0 0 0 1px var(--ring); transition: box-shadow .14s, transform .06s; }
-.dl-opt:hover { box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-soft); }
-.dl-opt:active { transform: translateY(.5px); }
-.dl-opt.on { box-shadow: inset 0 0 0 1.5px var(--link), var(--elev-soft); }
-.dl-opt-ico { width: 42px; height: 42px; border-radius: var(--r-3); display: grid; place-items: center; flex: none;
-  background: var(--bg-2); color: var(--fg-1); }
-.dl-opt.on .dl-opt-ico { background: var(--accent-tint); color: var(--link); }
-.dl-opt-meta { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
-.dl-opt-title { font-size: 14.5px; font-weight: 600; color: var(--fg-1); }
-.dl-opt-desc { font-size: 12.5px; color: var(--fg-3); line-height: 1.45; }
-.dl-radio { width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center;
-  box-shadow: inset 0 0 0 1.5px var(--ring-strong); color: #fff; }
-.dl-radio.on { background: var(--link); box-shadow: none; }
-.dl-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
-
 /* ====================== TOAST ====================== */
 .toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
-/* glow 4색을 약하게 두른 테두리 (흰 배경 위, 천천히 순환) */
+/* 랜딩 히어로 영상과 같은 더스티 블루 테두리 (흰 배경 위, 천천히 순환) */
 .toast { display: flex; align-items: center; gap: 11px; color: var(--fg-1); padding: 12px 16px;
   border-radius: var(--r-4); font-size: 14px; font-weight: 500; border: 1.5px solid transparent;
   background:
     linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+    conic-gradient(from var(--sp-ang, 0deg), var(--ring-flow-stops)) border-box;
   box-shadow: var(--elev-lift);
   animation: toastIn .28s cubic-bezier(.22,.61,.36,1), spChipSpin 14s linear infinite; max-width: 360px; }
 .toast.clickable { cursor: pointer; }
@@ -503,7 +498,7 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 /* 3) 페이지 전환 — 라우트 이동 시 아래에서 올라오며 블러 해제, 상단 블록부터 스태거.
    ChromeLayout 에서 .app-main 에 page-enter + key(pathname) 리마운트로 재생. */
 .fx-pagefade .app-main.page-enter > * {
-  animation: fxPageIn .52s cubic-bezier(.16, 1, .3, 1) both;
+  animation: fxPageIn .52s cubic-bezier(.16, 1, .3, 1) backwards;
 }
 .fx-pagefade .app-main.page-enter > *:nth-child(2)   { animation-delay: .07s; }
 .fx-pagefade .app-main.page-enter > *:nth-child(3)   { animation-delay: .13s; }
@@ -521,3 +516,11 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
   .fx-lift .ward-cell:hover { transform: none; }
   .fx-pagefade .app-main.page-enter > * { animation: none; }
 }
+
+@media (max-width: 560px) {
+  .pi-handoff .page-head { padding: var(--sp-28) 0 var(--sp-24); }
+  .pi-handoff .page-head h1 { font-size: var(--sp-24); }
+}
+
+.toast-action { border: 0; background: none; color: var(--fg-1); font: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.toast-host:has(.toast-action) { top: auto; bottom: var(--sp-24); }

@@ -29,12 +29,19 @@ def _product_label(req: dict) -> str:
     return f"{req.get('plan_code')} {unit}"
 
 
+def _credit_label(req: dict) -> str:
+    bonus = req.get("bonus_credits", req.get("bonusCredits", 0)) or 0
+    total = req.get("baseCredits", req["credits"]) + bonus
+    return f"크레딧 {total:,}" + (f" (보너스 {bonus:,} 포함)" if bonus else "")
+
+
 async def notify_admin_new_request(settings, req: dict, *, user_email: str | None) -> None:
     # 슬랙(FM_SLACK_WEBHOOK_URL, 지원서 알림과 같은 채널). 메일과 별개로 best-effort.
     if getattr(settings, "fm_slack_webhook_url", None):
         await _post_slack(settings, _slack_escape(
             f":bank: 계좌이체 신청 · {_product_label(req)} · {_won(req['amount'])} · 입금자 {req['payer_name']}"
-            f" · {user_email or '-'}" + (" · 세금계산서 필요" if req.get("tax_invoice") else "")
+            f" · {user_email or '-'}" + (f" · {_credit_label(req)}" if req.get("kind") == "topup" else "")
+            + (" · 세금계산서 필요" if req.get("tax_invoice") else "")
         ))
     to = getattr(settings, "bank_transfer_notify_email", None)
     if not to or not getattr(settings, "resend_api_key", None):
@@ -42,7 +49,7 @@ async def notify_admin_new_request(settings, req: dict, *, user_email: str | Non
     subject = f"[Wearless] 계좌이체 신청 · {_product_label(req)} · {_won(req['amount'])} · {req['payer_name']}"
     lines = [
         f"상품: {_product_label(req)}",
-        f"금액: {_won(req['amount'])} / 크레딧 {req['credits']:,}",
+        f"금액: {_won(req['amount'])} / {_credit_label(req)}",
         f"입금자명: {req['payer_name']}",
         f"연락처: {req.get('phone') or '-'}",
         f"가입 이메일: {user_email or '-'}",
@@ -65,7 +72,7 @@ async def notify_user_confirmed(settings, *, to: str | None, req: dict, ends_at)
     if not to or not getattr(settings, "resend_api_key", None):
         return
     subject = f"[Wearless] 크레딧이 지급됐어요 · {_product_label(req)}"
-    lines = [f"{_product_label(req)} 입금이 확인돼 크레딧 {req['credits']:,}이 지급됐어요."]
+    lines = [f"{_product_label(req)} 입금이 확인돼 {_credit_label(req)}이 지급됐어요."]
     if ends_at is not None:
         lines.append(f"이용권 종료일: {str(ends_at)[:10]} (자동 갱신 없음)")
     try:

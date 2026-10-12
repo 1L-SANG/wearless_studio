@@ -211,7 +211,7 @@ test('empty template frames always label the exact place where a photo goes', ()
   assert.match(editorSource, /<span>여기에 사진 넣기<\/span>/);
   // 못 만든 컷은 같은 자리를 쓰되 빈 슬롯과 구분돼야 한다 — 이유·미차감·다음 행동까지.
   assert.match(editorSource, /el\.genFailed\s*\n?\s*\? <span>이 컷은 만들지 못했어요/);
-  assert.match(editorSource, /크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요/);
+  assert.match(editorSource, /이 컷 값은 받지 않았어요<br \/>\{failedCutPresentation\(el\)\.guidance\}/);
   assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
   assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*sourceBlockId: el\.sourceBlockId \|\| null,[\s\S]*genFailed: Boolean\(el\.genFailed\),[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);

@@ -94,6 +94,9 @@ def _run_worker(
     candidate_qc=None,
     candidate_metadata=None,
     analysis_overrides=None,
+    candidate_runner=None,
+    assert_success=True,
+    settings_overrides=None,
 ):
     calls = {"run": [], "success": [], "failure": [], "emits": [], "parent_lookup": 0}
     analysis = {
@@ -136,6 +139,8 @@ def _run_worker(
 
     async def fake_run_candidate(**kwargs):
         calls["run"].append(kwargs)
+        if candidate_runner is not None:
+            return await candidate_runner(**kwargs)
         return {
             "asset_id": "asset-new",
             "bucket": "bucket",
@@ -178,12 +183,13 @@ def _run_worker(
     monkeypatch.setattr(mannequin_job, "_run_candidate", fake_run_candidate)
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
 
-    settings = make_settings(
-        base_mannequin_women_asset_id="bw",
-        base_mannequin_men_asset_id="bm",
-        r2_bucket="bucket",
-        mannequin_prompt_version="fresh_v1",
-    )
+    settings = make_settings(**{
+        "base_mannequin_women_asset_id": "bw",
+        "base_mannequin_men_asset_id": "bm",
+        "r2_bucket": "bucket",
+        "mannequin_prompt_version": "fresh_v1",
+        **(settings_overrides or {}),
+    })
     r2 = _R2()
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_Pool(), r2=r2, gemini=None))
@@ -202,8 +208,9 @@ def _run_worker(
         "payload": {"mode": mode, "fitProfileSnapshot": snapshot},
     }
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
-    assert calls["failure"] == []
-    assert len(calls["run"]) == 1 and len(calls["success"]) == 1
+    if assert_success:
+        assert calls["failure"] == []
+        assert len(calls["run"]) == 1 and len(calls["success"]) == 1
     return calls, r2
 
 
@@ -475,6 +482,11 @@ def test_finalize_persists_generation_metadata_in_asset_jsonb(monkeypatch):
         "matchItemId": None,
         "promptVersion": ADJUST_PROMPT_VERSION,
     }
+    fit_profile_snapshot = {
+        "version": 1,
+        "profile": PROFILE,
+        "adjustedAxes": ["fit"],
+    }
     result = asyncio.run(repo.finalize_mannequin_success(
         _RepoConn(),
         job_id="j1",
@@ -489,6 +501,7 @@ def test_finalize_persists_generation_metadata_in_asset_jsonb(monkeypatch):
         reserved=2,
         charge=2,
         metadata={},
+        fit_profile_snapshot=fit_profile_snapshot,
     ))
     assert result is not None
     asset_insert = next((query, params) for query, params in executed if "insert into assets" in query)
@@ -496,6 +509,16 @@ def test_finalize_persists_generation_metadata_in_asset_jsonb(monkeypatch):
     written = asset_insert[1][-1].obj
     # 계보는 한 키도 빠지거나 바뀌지 않아야 한다.
     assert {k: written[k] for k in metadata} == metadata
-    # 서버가 덧붙이는 건 실인물 파생 아님 마커뿐이다(보관함 커버를 R2 공개 경로로 돌려보낸다).
-    assert set(written) - set(metadata) == {"facemarket_real_derived"}
+    assert written["fitProfileSnapshot"] == fit_profile_snapshot
+    # 서버가 덧붙이는 건 버전 핏과 실인물 파생 아님 마커다.
+    assert set(written) - set(metadata) == {
+        "fitProfileSnapshot", "facemarket_real_derived",
+    }
     assert written["facemarket_real_derived"] is False
+    analysis_upsert = next(
+        (query, params) for query, params in executed
+        if "insert into analyses" in query
+    )
+    assert analysis_upsert[1][1].obj == PROFILE
+    assert result["cuts"][0]["fitProfile"] == PROFILE
+    assert result["cuts"][0]["fitProfileRecorded"] is True

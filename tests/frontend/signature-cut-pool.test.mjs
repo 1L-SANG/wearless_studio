@@ -1,44 +1,178 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import {
-  SIGNATURE_CUTS, isSignatureExampleId, signatureCutsFor, signatureCutById, pickSignatureCut,
-} from '../../src/lib/signatureCutPool.js';
+import * as signatureCutPool from '../../src/lib/signatureCutPool.js';
+
+const {
+  SIGNATURE_CUTS,
+  isSignatureExampleId,
+  signatureCutsFor,
+  signatureCutById,
+  signatureCutMatches,
+  signatureGenderFor,
+  pickSignatureCut,
+  repairSignatureCutSelections,
+} = signatureCutPool;
 
 /* 시그니처 컷은 생성예시 카탈로그와 분리된 전용 풀이다(오너 확정 2026-08-17).
    정본 규칙: documents/genexamples_release_contract.md 와 별개 — 갤러리 나열·자동 배정·
    발행 게이트 어디에도 이 풀이 섞이면 안 된다. */
 
-test('풀은 성별로 나뉘고 id 는 sig_ 접두를 쓴다', () => {
-  assert.ok(SIGNATURE_CUTS.length >= 8);
+test('풀은 성별과 적용 의류로 나뉘고 id 는 sig_ 접두를 쓴다', () => {
+  assert.equal(SIGNATURE_CUTS.length, 17);
   for (const cut of SIGNATURE_CUTS) {
     assert.ok(isSignatureExampleId(cut.id), `${cut.id} 는 sig_ 접두여야 한다`);
     assert.ok(['men', 'women'].includes(cut.gender));
+    assert.ok(Array.isArray(cut.applicableClothingTypes));
     assert.match(cut.thumb, /^\/assets\/signature\/thumb\//);
     assert.match(cut.url, /^\/assets\/signature\//);
   }
-  assert.ok(signatureCutsFor('men').every((cut) => cut.gender === 'men'));
-  assert.ok(signatureCutsFor('women').every((cut) => cut.gender === 'women'));
 });
 
-test('성별 불명이면 women 풀로 떨어진다', () => {
-  assert.deepEqual(signatureCutsFor(undefined), signatureCutsFor('women'));
-  assert.deepEqual(signatureCutsFor('unknown'), signatureCutsFor('women'));
+test('상품 조건별로 정확한 시그니처 풀만 돌려준다', () => {
+  const ids = (context) => signatureCutsFor(context).map((cut) => cut.id);
+
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'bottom', subCategory: 'slacks' }), [
+    'sig_women_bottom_pants_01',
+    'sig_women_bottom_pants_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'bottom', subCategory: 'mini_skirt' }), [
+    'sig_women_bottom_skirt_01',
+    'sig_women_bottom_skirt_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'bottom', customCategory: '플리츠 치마' }), [
+    'sig_women_bottom_skirt_01',
+    'sig_women_bottom_skirt_02',
+  ]);
+  assert.deepEqual(ids({
+    gender: 'women', clothingType: 'bottom', subCategory: 'slacks', customCategory: '플리츠 치마',
+  }), [
+    'sig_women_bottom_skirt_01',
+    'sig_women_bottom_skirt_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'bottom' }), [
+    'sig_women_bottom_pants_01',
+    'sig_women_bottom_pants_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'men', clothingType: 'bottom', subCategory: 'mini_skirt' }), [
+    'sig_men_bottom_pants_01',
+    'sig_men_bottom_pants_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'top' }), [
+    'sig_women_01', 'sig_women_02', 'sig_women_03', 'sig_women_04',
+  ]);
+  assert.deepEqual(ids({ gender: 'men', clothingType: 'outer' }), [
+    'sig_men_01', 'sig_men_02', 'sig_men_03', 'sig_men_04', 'sig_men_05',
+  ]);
+  assert.deepEqual(ids({ gender: 'women', clothingType: 'dress' }), [
+    'sig_women_dress_01', 'sig_women_dress_02',
+  ]);
+  assert.deepEqual(ids({ gender: 'men', clothingType: 'dress' }), [
+    'sig_men_01', 'sig_men_02', 'sig_men_03', 'sig_men_04', 'sig_men_05',
+  ]);
+});
+
+test('시그니처 성별은 서버와 같이 대상 성별 첫 값만 정본으로 쓴다', () => {
+  assert.equal(signatureGenderFor({ clothingType: 'bottom', targetGenders: ['men', 'women'] }), 'men');
+  assert.equal(signatureGenderFor({ clothingType: 'bottom', targetGenders: ['women', 'men'] }), 'women');
+  assert.equal(signatureGenderFor({ clothingType: 'bottom', targetGenders: [] }), 'women');
+  assert.equal(signatureGenderFor({ clothingType: 'dress', targetGenders: ['men'] }), 'women');
+});
+
+test('성별 불명이면 women 풀, 하의 세부 분류가 없으면 바지 풀로 떨어진다', () => {
+  assert.deepEqual(
+    signatureCutsFor({ clothingType: 'bottom' }),
+    signatureCutsFor({ gender: 'women', clothingType: 'bottom', subCategory: 'slacks' }),
+  );
+  assert.deepEqual(
+    signatureCutsFor({ gender: 'unknown', clothingType: 'top' }),
+    signatureCutsFor({ gender: 'women', clothingType: 'top' }),
+  );
 });
 
 test('같은 프로젝트는 항상 같은 컷을 받는다(진입할 때마다 바뀌면 안 된다)', () => {
-  const first = pickSignatureCut({ gender: 'women', projectId: 'proj-A' });
+  const context = {
+    gender: 'women', clothingType: 'bottom', subCategory: 'mini_skirt', projectId: 'proj-A',
+  };
+  const first = pickSignatureCut(context);
   for (let i = 0; i < 5; i += 1) {
-    assert.equal(pickSignatureCut({ gender: 'women', projectId: 'proj-A' })?.id, first?.id);
+    assert.equal(pickSignatureCut(context)?.id, first?.id);
   }
-  assert.equal(first?.gender, 'women');
+  assert.equal(first?.id, 'sig_women_bottom_skirt_02');
+
+  const dressContext = {
+    gender: 'women', clothingType: 'dress', projectId: 'dress-project',
+  };
+  assert.equal(pickSignatureCut(dressContext)?.id, 'sig_women_dress_01');
 });
 
-test('뽑힌 컷은 요청한 성별 풀 안에서만 나온다', () => {
+test('뽑힌 컷은 요청한 상품 조건의 풀 안에서만 나온다', () => {
   for (const projectId of ['p1', 'p2', 'p3', 'p4', 'p5', 'p6']) {
-    assert.equal(pickSignatureCut({ gender: 'men', projectId })?.gender, 'men');
-    assert.equal(pickSignatureCut({ gender: 'women', projectId })?.gender, 'women');
+    const context = { gender: 'women', clothingType: 'bottom', subCategory: 'midi_skirt', projectId };
+    const picked = pickSignatureCut(context);
+    assert.equal(signatureCutMatches(picked.id, context), true);
   }
+});
+
+test('불일치 시그니처 선택만 결정적으로 보정하고 다른 셀러 편집은 보존한다', () => {
+  assert.equal(typeof repairSignatureCutSelections, 'function');
+  const context = {
+    gender: 'women', clothingType: 'bottom', subCategory: 'long_skirt', projectId: 'repair-project',
+  };
+  const mismatched = {
+    id: 'signature',
+    exampleId: 'sig_women_01',
+    exampleSelectionOrigin: 'user',
+    colorId: 'seller-color',
+    matchIds: ['seller-match'],
+    pose: 'seller-pose',
+  };
+  const compatible = {
+    ...mismatched,
+    id: 'compatible',
+    exampleId: 'sig_women_bottom_skirt_01',
+  };
+  const wrongShape = {
+    ...mismatched,
+    id: 'wrong-shape',
+    exampleId: 'sig_women_bottom_pants_02',
+  };
+  const ordinary = { id: 'ordinary', exampleId: 'ex_horizon_women_bottom_medium_01' };
+
+  const repaired = repairSignatureCutSelections(
+    [mismatched, wrongShape, compatible, ordinary],
+    context,
+  );
+  const expected = pickSignatureCut(context);
+
+  assert.equal(repaired.changed, true);
+  assert.deepEqual(repaired.repairedIds, ['signature', 'wrong-shape']);
+  assert.equal(repaired.blocks[0].exampleId, expected.id);
+  assert.equal(repaired.blocks[0].thumb, expected.thumb);
+  assert.equal(repaired.blocks[0].exampleSelectionOrigin, 'user');
+  assert.equal(repaired.blocks[0].colorId, 'seller-color');
+  assert.deepEqual(repaired.blocks[0].matchIds, ['seller-match']);
+  assert.equal(repaired.blocks[0].pose, 'seller-pose');
+  assert.equal(repaired.blocks[1].exampleId, expected.id);
+  assert.equal(repaired.blocks[2], compatible);
+  assert.equal(repaired.blocks[3], ordinary);
+
+  const upper = repairSignatureCutSelections(
+    [{ ...mismatched, exampleId: 'sig_women_bottom_pants_01' }],
+    { gender: 'women', clothingType: 'top', projectId: 'repair-project' },
+  );
+  assert.match(upper.blocks[0].exampleId, /^sig_women_0[1-4]$/);
+
+  const dressContext = {
+    gender: 'women', clothingType: 'dress', projectId: 'dress-repair-project',
+  };
+  const dress = repairSignatureCutSelections(
+    [{ ...mismatched, id: 'dress', exampleId: 'sig_women_02' }],
+    dressContext,
+  );
+  assert.equal(dress.changed, true);
+  assert.match(dress.blocks[0].exampleId, /^sig_women_dress_0[12]$/);
+  assert.equal(signatureCutMatches(dress.blocks[0].exampleId, dressContext), true);
 });
 
 test('생성예시 카탈로그에 sig_ 항목이 섞여 있지 않다', () => {
@@ -55,8 +189,16 @@ test('썸네일 조회는 카탈로그 없이도 풀에서 해결된다', () => 
 
 test('보드는 시그니처 슬롯에만 풀을 배정하고 사용자 선택은 보존한다', () => {
   const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
-  assert.match(source, /block\.hookSlotRole !== 'signature'/);
-  assert.match(source, /exampleSelectionOrigin === 'user' && signatureCutById\(block\.exampleId\)/);
+  assert.match(source, /repairSignatureCutSelections\(assignment\.blocks/);
+  assert.match(source, /const signatureGender = signatureGenderFor\(\{\s*clothingType,\s*targetGenders: a\?\.targetGenders/);
+  assert.match(source, /gender: signatureGender,\s*clothingType,\s*subCategory: a\?\.subCategory/);
+  assert.match(source, /prepareStoryboardEntry\(prefetched, undefined, initialProjectId\)/);
+  assert.match(source, /prepareStoryboardEntry\(entry, usePending \? pending : board, pid\)/);
+  assert.match(source, /const normalized = sbStable\(normalizedBlocks\) !== sbStable\(sourceBlocks\)/);
+  assert.match(source, /normalized,\s*assignment,\s*signatureRepair,/);
+  assert.match(source, /prepared\.signatureRepair\.changed/);
+  assert.match(source, /signatureGender=\{signatureGenderNow\}/);
+  assert.match(source, /<SignatureCutGallery[\s\S]*clothingType=\{clothingType\}/);
   // 썸네일 관문이 카탈로그보다 풀을 먼저 본다 — 이 순서가 깨지면 자리표시자가 뜬다.
   assert.match(source, /signatureCutById\(exampleId\)\?\.thumb\s*\n\s*\|\| \(catalogs\?\.genExamples/);
 });

@@ -6,7 +6,7 @@ test('선택 미리보기 실패만 네트워크와 HTTP 오류를 콘솔에 남
   const key = `__previewSilent${Math.random().toString(36).slice(2)}`;
   globalThis[key] = { mode: 'http' };
   const access = `globalThis[${JSON.stringify(key)}]`;
-  const server = await createServer({ configFile: false, envDir: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
+  const server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, envDir: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null }, resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
     ssr: { noExternal: true }, appType: 'custom', plugins: [{ name: 'preview-silent-http', enforce: 'pre', resolveId(id) {
       // Vite's alias plugin can resolve @ before this plugin sees the import.

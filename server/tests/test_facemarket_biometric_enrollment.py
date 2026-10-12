@@ -1288,7 +1288,7 @@ class FakeCursor:
             )
             row.setdefault("provider_versions", {}).update(_json_value(provider_versions))
         elif query.startswith("insert into jobs"):
-            _user_id, payload = params
+            _user_id, payload, _metadata = params
             self.store.jobs.append(
                 {"kind": "fm_model_asset_build", "payload": _json_value(payload)}
             )

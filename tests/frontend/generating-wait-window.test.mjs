@@ -15,7 +15,13 @@ import {
   bindEditorExitBackup,
   createLatestEditorSaveGuard,
 } from '../../src/lib/editorSaveLifecycle.js';
-import { canSafelyMergeServerBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import {
+  alignSkeletonToServer,
+  canSafelyMergeServerBlocks,
+  decorateGenBlocks,
+  fillGenBlocks,
+  mergeServerBlocks,
+} from '../../src/lib/editorWaitSkeleton.js';
 
 const httpAdapter = readFileSync(
   new URL('../../src/lib/api/httpAdapter.js', import.meta.url),
@@ -103,6 +109,66 @@ test('재수신한 생성 이벤트는 자동 이미지 URL만 갱신하고 사�
   assert.equal(fillGenBlocks(replaced, job)[0].elements[0].src, 'seller-image');
 });
 
+test('대기 캡션은 서버 사진 높이에 맞고 셀러 편집이 완료 병합에서도 이긴다', () => {
+  const base = [{ id: 'b1', contentRole: 'fit', elements: [
+    { id: 'i1', type: 'image', sourceBlockId: 'sb1', src: '/mock.jpg', x: 60, y: 50, w: 880, h: 560 },
+    { id: 't1', type: 'text', sourceBlockId: 'sb1', copyRole: 'headline', text: '',
+      placeholder: '사진을 설명하는 소제목 (17자 내외)', x: 60, y: 642, w: 880, h: 60,
+      style: { size: 44, weight: 600, color: '#0e0d14', lineHeight: 60 } },
+  ] }];
+  const [aligned] = alignSkeletonToServer(base, true);
+  const image = aligned.elements.find((element) => element.type === 'image');
+  const caption = aligned.elements.find((element) => element.copyRole === 'headline');
+  assert.equal(image.h, 1320);
+  assert.equal(caption.y, image.y + image.h + 32);
+  assert.equal(caption.h, 60);
+  assert.equal(aligned.h, caption.y + caption.h + 50);
+
+  const initialJob = { cuts: {}, copy: {}, live: [], failedCuts: [] };
+  const decorated = decorateGenBlocks([aligned], initialJob, {});
+  const sellerEdited = [{ ...decorated[0], elements: decorated[0].elements.map((element) => (
+    element.copyRole === 'headline' ? { ...element, text: '셀러가 고친 소제목' } : element
+  )) }];
+  const copyJob = { ...initialJob, copy: { sb1: [{ role: 'headline', text: 'AI 소제목' }] } };
+  assert.equal(
+    fillGenBlocks(sellerEdited, copyJob)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '셀러가 고친 소제목',
+  );
+  assert.equal(
+    fillGenBlocks(decorated, copyJob)[0].elements.find((element) => element.copyRole === 'headline').text,
+    'AI 소제목',
+  );
+
+  const longCopyJob = { ...initialJob, copy: { sb1: [{ role: 'headline', text: '가'.repeat(21) }] } };
+  const longFilled = fillGenBlocks(decorated, longCopyJob)[0];
+  const longCaption = longFilled.elements.find((element) => element.copyRole === 'headline');
+  assert.equal(longCaption.h, 120, '21자 카피는 두 줄 높이를 즉시 확보한다');
+  assert.equal(longFilled.h, longCaption.y + longCaption.h + 50);
+
+  const server = [{ id: 'server', elements: [
+    { id: 'si', type: 'image', sourceBlockId: 'sb1', src: '/stable.jpg' },
+    { id: 'st', type: 'text', sourceBlockId: 'sb1', copyRole: 'headline', text: '가'.repeat(21), h: 120,
+      style: { size: 44, weight: 600, color: '#0e0d14', lineHeight: 60 } },
+  ] }];
+  assert.equal(
+    mergeServerBlocks(sellerEdited, server)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '셀러가 고친 소제목',
+  );
+  assert.equal(
+    mergeServerBlocks(decorated, server)[0].elements.find((element) => element.copyRole === 'headline').text,
+    '가'.repeat(21),
+  );
+  assert.equal(
+    mergeServerBlocks(decorated, server)[0].elements.find((element) => element.copyRole === 'headline').h,
+    120,
+  );
+  assert.equal(
+    mergeServerBlocks([{ ...decorated[0], h: 2000 }], server)[0].h,
+    2000,
+    '카피 높이를 맞춰도 셀러가 늘린 블록 높이는 줄이지 않는다',
+  );
+});
+
 test('로컬 스켈레톤에 없는 서버 컷이 있으면 서버 완성본 전체를 보존한다', () => {
   const local = [{ id: 'local-1', elements: [
     { id: 'i1', type: 'image', sourceBlockId: 'sb1', src: 'preview-1' },
@@ -150,10 +216,10 @@ test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 �
   assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(source\)\)/);
 });
 
-test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
+test('미완성 후 다시 만들기는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
   const retry = editor.slice(
     editor.indexOf("useAppStore.getState().resetDetailPageJob();", editor.indexOf("genFinalizeError ?")),
-    editor.indexOf('>다시 시도</Button>'),
+    editor.indexOf('>다시 만들기</Button>', editor.indexOf('>다시 만들기</Button>') + 1),
   );
   assert.doesNotMatch(retry, /clearEditorWaitDraft/);
 
@@ -214,7 +280,7 @@ test('자동저장 실패를 삼키지 않는다 — 임시 보관 + 배너 + �
   assert.doesNotMatch(block, /catch\(\(\) => \{\}\)/, '실패를 삼키면 안 된다');
   assert.match(block, /const backedUp = backupLatestEditorDraft\(latestBlocks\.current\)/, '브라우저에 임시 보관');
   assert.match(block, /saveGuard\.current\.isCurrent\(ticket, latestBlocks\.current\)/, '오래된 성공은 최신 백업을 지우지 않음');
-  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '원인 + 보관 성공 여부를 배너로');
+  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp, error \}\)/, '원인 + 보관 성공 여부를 배너로');
   assert.match(block, /setSaveError\(null\)/, '성공하면 배너를 거둔다');
   // 배너와 복구 수단
   assert.match(editor, /className="ed-savebar"/);
@@ -314,7 +380,7 @@ test('수동 [저장] 버튼은 실패를 반드시 말한다', () => {
   assert.match(body, /try \{\s*await api\.saveEditorBlocks\(projectId, persistable\(/, 'persistable 게이트 + try');
   assert.match(body, /catch \(error\) \{/, '실패를 잡는다');
   assert.match(body, /backupLatestEditorDraft\(latestBlocks\.current\)/, '실패분을 보관');
-  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '배너로');
+  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp, error \}\)/, '배너로');
   assert.match(body, /저장하지 못했어요/, '토스트로도 즉시 알림');
 });
 

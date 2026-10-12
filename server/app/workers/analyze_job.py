@@ -67,7 +67,15 @@ def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
         return data, mime
 
 
-async def analyze_image_bytes(
+async def _prepare_analysis_images(source_images):
+    loaded = await asyncio.gather(*(
+        asyncio.to_thread(shrink_for_vision, data, mime)
+        for data, mime in source_images
+    ))
+    return loaded, [InlineImage(mime, data) for data, mime in loaded]
+
+
+async def analyze_core_image_bytes(
     settings,
     source_images: list[tuple[bytes, str]],
     *,
@@ -75,20 +83,13 @@ async def analyze_image_bytes(
     slots: list[str] | None = None,
     on_prepared=None,
     persist_confirmed_evidence: bool = False,
+    _prepared=None,
 ) -> dict:
-    """DB·R2 없이 이미지 바이트를 분석하는 AG-01 공용 코어.
-
-    로그인 job과 공개 체험 라우트가 같은 축소·분석·특징 발굴·입력 일관성 경로와
-    반환 shape를 공유한다. 호출자는 영속화 여부만 결정한다.
-    """
+    """AG-01과 사진 일치만 실행한다. 사진 일치에만 기존 보조 예산을 적용한다."""
     product = product or {}
     slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
 
-    loaded = await asyncio.gather(*(
-        asyncio.to_thread(shrink_for_vision, data, mime)
-        for data, mime in source_images
-    ))
-    images = [InlineImage(mime, data) for data, mime in loaded]
+    loaded, images = _prepared if _prepared is not None else await _prepare_analysis_images(source_images)
     analysis_product = product
     if persist_confirmed_evidence:
         evidence_binding = product_evidence_contract.build_input_binding(
@@ -100,38 +101,17 @@ async def analyze_image_bytes(
         }
     if on_prepared is not None:
         await on_prepared(sum(len(image.data) for image in images))
-    # 셋은 동시에 돌지만 **응답 시간은 그중 제일 느린 하나가 정한다**. AG-01(analyze)만
-    # 필수고 나머지 둘은 부가 정보다 — 특징 후보가 없으면 칩이 덜 뜨고, 일관성 판정이
-    # 없으면 경고가 안 뜰 뿐 분석 자체는 성립한다. 그런데 실측(2026-08-26, 프로드 태스크)
-    # 에서 input_consistency 가 3회 중 2회 가장 느려 전체를 끌었다:
-    #   analyst 6.6s  feature 4.6s  consist 9.8s → 전체 9.8s
-    #   analyst 3.5s  feature 3.3s  consist 7.7s → 전체 7.7s
-    # 그래서 부가 둘에만 짧은 예산을 준다. 넘기면 그 둘만 버리고 진행한다 — 아래
-    # isinstance(BaseException) 분기가 이미 실패를 흡수하므로 새 실패 경로는 없다.
-    aux_budget = settings.analysis_aux_timeout_seconds
-    analyze_res, feature_res, consistency_res = await asyncio.gather(
-        product_analyst.analyze(settings, analysis_product, images),
+    analyze_res, consistency_res = await asyncio.gather(
+        product_analyst.analyze(settings, analysis_product, images, slots=slots),
         asyncio.wait_for(
-            feature_extractor.extract(settings, product, images, slots=slots),
-            timeout=aux_budget),
-        asyncio.wait_for(
-            _judge_input_consistency(settings, images, slots), timeout=aux_budget),
+            _judge_input_consistency(settings, images, slots),
+            timeout=settings.analysis_aux_timeout_seconds),
         return_exceptions=True,
     )
     if isinstance(analyze_res, BaseException):
         raise analyze_res
 
     distributed, provider = analyze_res
-    feature_provider = None
-    raw_details = None
-    if isinstance(feature_res, BaseException):
-        log.warning("AG-08 feature extract failed: %r", feature_res)
-    else:
-        points, feature_provider = feature_res
-        raw_details = getattr(points, "detail_candidates", None)
-        if points:
-            distributed["analysis"]["aiSuggestedPoints"] = points
-
     consistency = None
     if isinstance(consistency_res, BaseException):
         log.warning("AG-IC input consistency failed: %r", consistency_res)
@@ -139,9 +119,6 @@ async def analyze_image_bytes(
         consistency = consistency_res
 
     analysis_payload = distributed["analysis"]
-    analysis_payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.build_contract(
-        raw_details, source_images, slots
-    )
     # tags·swatch 기본 랭킹은 분석 완료 직후 match-candidates 요청과 재진입/새로고침 후
     # GET /analysis에서도 같은 값을 읽어야 한다. AG-01 distribute 단계에서는
     # intermediate이지만 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
@@ -161,9 +138,6 @@ async def analyze_image_bytes(
         for key, value in analysis_payload.items()
         if key != product_evidence_contract.PERSISTED_KEY
     }
-    public_analysis_payload[detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(
-        analysis_payload[detail_recommendations.PERSISTED_KEY]
-    )
     result_data = {
         **public_analysis_payload,
         "clothingType": clothing_type,
@@ -176,10 +150,64 @@ async def analyze_image_bytes(
         "analysis_payload": analysis_payload,
         "clothing_type": clothing_type,
         "provider": provider,
-        "feature_provider": feature_provider,
+        "feature_provider": None,
         "consistency": consistency,
         "bytes_out": sum(len(image.data) for image in images),
     }
+
+
+async def extract_image_features(settings, source_images, *, product=None, slots=None, _prepared=None):
+    """AG-08과 원본에 묶인 디테일 계약. 공급자 상한 외의 시간 제한은 두지 않는다."""
+    slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
+    _loaded, images = _prepared if _prepared is not None else await _prepare_analysis_images(source_images)
+    points, provider = await feature_extractor.extract(settings, product or {}, images, slots=slots)
+    contract = detail_recommendations.build_contract(
+        getattr(points, "detail_candidates", None), source_images, slots
+    )
+    return {"points": points, "contract": contract, "provider": provider}
+
+
+async def analyze_image_bytes(
+    settings,
+    source_images: list[tuple[bytes, str]],
+    *,
+    product: dict | None = None,
+    slots: list[str] | None = None,
+    on_prepared=None,
+    persist_confirmed_evidence: bool = False,
+) -> dict:
+    """로그인 job과 이전 공개 분석의 병렬 실행·보조 예산·반환 계약을 유지한다."""
+    product = product or {}
+    slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
+    prepared = await _prepare_analysis_images(source_images)
+    if on_prepared is not None:
+        await on_prepared(sum(len(image.data) for image in prepared[1]))
+    # 기존 경로는 AG-08도 부가 분석 예산으로 자른다. 축소 입력은 두 함수가 공유한다.
+    core, feature_res = await asyncio.gather(
+        analyze_core_image_bytes(
+            settings, source_images, product=product, slots=slots,
+            persist_confirmed_evidence=persist_confirmed_evidence, _prepared=prepared,
+        ),
+        asyncio.wait_for(
+            extract_image_features(settings, source_images, product=product, slots=slots, _prepared=prepared),
+            timeout=settings.analysis_aux_timeout_seconds,
+        ),
+        return_exceptions=True,
+    )
+    if isinstance(core, BaseException):
+        raise core
+    if isinstance(feature_res, BaseException):
+        log.warning("AG-08 feature extract failed: %r", feature_res)
+        contract = detail_recommendations.build_contract(None, source_images, slots)
+    else:
+        core["feature_provider"] = feature_res["provider"]
+        if feature_res["points"]:
+            core["analysis_payload"]["aiSuggestedPoints"] = feature_res["points"]
+            core["result_data"]["aiSuggestedPoints"] = feature_res["points"]
+        contract = feature_res["contract"]
+    core["analysis_payload"][detail_recommendations.PERSISTED_KEY] = contract
+    core["result_data"][detail_recommendations.PERSISTED_KEY] = detail_recommendations.public_summary(contract)
+    return core
 
 
 async def run_analyze_job(app, job: dict) -> None:

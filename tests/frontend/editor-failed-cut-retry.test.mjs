@@ -19,7 +19,7 @@ test('실패한 시그니처 슬롯은 원래 콘티의 생성 정본을 그대�
   assert.equal(retry.signature, true);
   assert.equal(retry.thumb, '/assets/signature/thumb/sig_women_01.webp');
   assert.deepEqual(retry.request, {
-    mode: 'new', contentRole: 'hero', colorId: 'white', cutType: 'horizon', direction: 'front',
+    mode: 'new', retryBlockId: 'blk-signature', contentRole: 'hero', colorId: 'white', cutType: 'horizon', direction: 'front',
     shot: 'medium', faceExposure: 'same', pose: 'auto', exampleId: 'sig_women_01',
     modelId: 'model-a', matchIds: ['matching-a'], refScope: 'all', refAssetIds: ['mood-a'],
   });
@@ -54,11 +54,13 @@ test('컷별 재시도는 선택 모델 하나를 모든 착용 컷에 복원한
   }).request.modelId, 'mB');
 });
 
-test('에디터는 실패 슬롯에서 일반 새 이미지 폼 대신 전용 재시도를 노출한다', () => {
+test('에디터는 실패 슬롯 재시도를 캔버스 메뉴로 옮기고 이전 접수 확인을 AI 패널에 유지한다', () => {
   const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
   const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
-  assert.match(editor, /buildFailedCutRetry\([\s\S]*wardrobeContext\.current\.storyboard,[\s\S]*pendingSlot\.sourceBlockId,[\s\S]*analysis,[\s\S]*\)/);
-  assert.match(editor, /onRetryFailedCut=\{retryFailedCut\}/);
-  assert.match(panels, /if \(failedCutRetry\)/);
-  assert.match(panels, /시그니처 컷 다시 만들기/);
+  const hook = readFileSync(new URL('../../src/features/editor/useCanvasAi.js', import.meta.url), 'utf8');
+  assert.match(hook, /buildFailedCutRetry\(storyboard \|\| \[\],[\s\S]*element\.sourceBlockId, analysis, product/);
+  assert.match(hook, /failedCutRetry: retry/);
+  assert.match(editor, /onConfirmPendingGenerate=\{\(\) => retryFailedCut\(\{ confirmPending: true \}\)\}/);
+  assert.match(panels, /onClick=\{onConfirmPendingGenerate\}/);
+  assert.doesNotMatch(panels, /if \(failedCutRetry\)|시그니처 컷 다시 만들기/);
 });

@@ -22,10 +22,10 @@
 |---|---|---|---|---|
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(라이브) → M-01(라이브) | — | `Analysis` (실측 null) |
 | PL-2 마네킹 생성 | 마네킹 최초 진입 시 **자동** → `generateMannequins` | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
-| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — fitProfile을 analysis에 영속 후 같은 파이프라인 재실행 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) |
-| PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시 `EditorBlock[]` |
+| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — 요청 스냅샷으로 재실행하고 성공 종결 때 analysis와 버전 핏을 함께 확정 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) |
+| PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(라이브) ×N → AG-02(라이브) → AG-03(라이브) → M-02(라이브) | AI 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 완성 컷과 이유가 남는 빈 칸의 `EditorBlock[]` (ADR-0017) |
 | PL-5 에디터 새 이미지 | AI 탭 `새 이미지 추가` → `generateImage(mode:'new')` | AG-06(라이브) | `editorImage` | `WardrobeImage` |
-| PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정` → `generateImage(mode:'vary')` | AG-07(라이브) | `editorImage` | `WardrobeImage` |
+| PL-6 현재 이미지 수정 | AI 탭 `현재 이미지 수정`의 `generateImage(mode:'vary')` | 착용 사진은 AG-07 비슷한 컷, 레시피가 있는 디테일컷은 디테일 전용 경로(라이브) | `editorImage` | `WardrobeImage` |
 
 (세탁 안내는 파이프라인·AI 호출이 아니다 — 에디터 자동 블록을 M-02가 규칙 기반 프리셋으로 생성, ai_agent_modules §4.)
 
@@ -64,11 +64,13 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 ### PL-3 마네킹 재생성 — `regenerateMannequin(projectId, { fitProfile })`
 
 ```
-핏 확인 스텝에서 확정한 fitProfile(축 + matchCut)을 analysis에 영속(garment_ref)
-  → AG-04 재실행(같은 파이프라인, 프로필만 갱신)
-  → 새 버전 MannequinCut 저장 → 자동 선택·스텝 리셋 → { data, credits }
+핏 확인 스텝에서 확정한 fitProfile(축 + matchCut)을 잡 입력에 스냅샷
+  → AG-04 재실행(같은 파이프라인, 스냅샷 프로필 사용)
+  → 성공 종결에서 새 버전 MannequinCut의 fitProfile과 analysis.fitProfile을 함께 저장
+  → 자동 선택·스텝 리셋 → { data, credits }
 ```
 - 크레딧: `mannequinGenerate`(=45). **횟수 제한 없음** — 크레딧이 자연 제한.
+- 실패: 새 버전과 analysis.fitProfile 모두 바꾸지 않는다.
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
@@ -91,8 +93,8 @@ assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 �
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
 - **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `후킹 / 스타일링 / 스튜디오 / 의류 확인`의 공식 네 섹션을 따른다. HTTP의 단계 체크리스트 실배선은 TODO다.
-- **크레딧**: 시작 시 AI 생성 컷을 예약한다. 1~4 생성 컷은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`으로 전량 완성 시에만 확정한다(내 이미지 제외, 계약 §6).
-- **완성 정책**: 요청한 AI 컷 중 생성 결과가 없는 자리가 하나라도 있으면 부분 상세페이지를 조립·출고하지 않는다. 전부 미완성은 `all_cuts_failed`, 일부 미완성은 `incomplete_cuts`로 작업을 실패시키며 예약 크레딧을 전액 해제한다. 일반 컷의 확인된 미과금 일시 오류는 첫 호출 뒤 최대 2회 재시도하며, 입력 오류·미확정 과금 응답은 재시도하지 않는다. 제품 디테일컷은 명확한 두 번의 QC 실패 뒤 원본 모양을 지키는 마지막 후보를 한 번 더 만든다. 끝내 QC를 통과하지 못해도 저장된 생성 후보 중 상품 사실 오류가 가장 덜 중대한 한 장을 미통과로 표시해 제공하고 정상 차감한다. 원본 픽셀 복사본과 읽을 수 없는 후보는 제외한다.
+- **크레딧**: 시작 시 AI 생성 컷을 예약한다. 1~4 생성 컷은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `storyboardPerCut`으로 예약하고, 성공 시 견적에서 못 만든 유료 컷 값을 뺀다(내 이미지와 복제 컷 제외, ADR-0017, 계약 §6).
+- **완성 정책**: 일부 AI 컷이 미완성이면 완성분으로 페이지를 조립·출고하고 작업과 프로젝트를 완료로 저장한다. 실패한 이미지 칸에는 이유와 다시 만들기 가능 여부가 남는다. 재료가 없거나 조건이 맞지 않으면 셀러에게 묻지 않고 대체 경로로 채우며, 빈 칸 문구는 셀러에게 사진을 요구하지 않는다(ADR-0017 2026-10-11 개정). 정산은 예약 견적에서 못 만든 유료 컷 값을 뺀다. 전부 미완성만 `all_cuts_failed`로 실패시키고 예약 전액을 해제한다(ADR-0017). 배포 전 `incomplete_cuts` 보관본 화면과 오류 종료의 이어 쓰기는 유지한다. 일반 컷의 확인된 미과금 일시 오류는 첫 호출 뒤 최대 2회 재시도하며, 입력 오류·미확정 과금 응답은 재시도하지 않는다. 제품 디테일컷은 명확한 두 번의 QC 실패 뒤 원본 모양을 지키는 마지막 후보를 한 번 더 만든다. 끝내 QC를 통과하지 못해도 저장된 생성 후보 중 상품 사실 오류가 가장 덜 중대한 한 장을 미통과로 표시해 제공하고 정상 차감한다. 원본 픽셀 복사본과 읽을 수 없는 후보는 제외한다.
 - **확정 GPT exact 적용 범위와 입력 게이트**: `styling/direct`, front, full/medium,
   `refScope='all'`, `pose='auto'`, `spaceGroupId` 없음, 예시 방향 호환이며 서비스 예시를
   선택한 블록은 exact 프로필을 요청한 것이다. 실행에는 기준 색상, 선택 resolved 마네킹,
@@ -120,8 +122,9 @@ done     project.status='done' · { data: EditorBlock[], credits }
 
 ```
 PL-5 (mode:'new'):  NewCutRequest 검증 → AG-06 1콜 → WardrobeImage(colorId 그룹) → { data, credits }
-PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' 그룹) → { data, credits }
+PL-6 (mode:'vary'): VaryRequest 검증 → 비슷한 컷(AG-07) 또는 같은 부위 다시 촬영(디테일 전용 경로) → WardrobeImage → { data, credits }
 ```
+- PL-6은 두 요청만 받는다(2026-10-10, ADR-0016 개정). 착용 사진의 `variationMode='similar'`와, 자산에 원본 검수 레시피가 있는 디테일컷의 같은 부위 다시 촬영이다. 변경값, 배경 참조, 제품컷의 빈 변경 다시 그리기는 400 `vary_unsupported`로 거절하고 크레딧을 예약하지 않는다.
 - 단건 job(수 초). 동시 다발 호출 허용 — 에디터 UI가 로딩 셀·busy 점으로 표현(기존 동작).
 - 원본 이미지는 항상 보존, 결과는 의류 탭에 추가 (PRD §10.8).
 - 기준색 착용컷 생성처럼 선택 마네킹을 입력에 넣는 PL-5 경로는 `selectedMannequinId`의 resolved asset을 사용한다. 톤 조정본이 있으면 최신 조정본, 없으면 원본 컷이다.
@@ -158,7 +161,7 @@ Job {
 | 파이프라인 | 단가 키(`lib/limits.js`) | 차감 시점 | 실패 시 |
 |---|---|---|---|
 | PL-2 / PL-3 재생성 | `mannequinGenerate` | job 성공 확정 시 | 미차감 |
-| PL-4 | 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 전량 성공 시에만 확정 | 한 컷이라도 실패하면 예약 전액 해제 |
+| PL-4 | 1~4 생성 컷은 최소 5컷 값, 5컷 이상은 실제 생성 컷 × `storyboardPerCut` | 견적에서 못 만든 유료 컷 값을 빼고 확정 (ADR-0017) | 전부 실패하면 예약 전액 해제 |
 | PL-5 / PL-6 | `editorImage` | job 성공 확정 시 | 미차감 |
 
 - **reserve-then-confirm**(backend plan §6): 시작 tx에서 예상 최대 비용을 **예약**(available=balance−reserved 검증, 부족 시 402) → 성공 시 실제 성공분만 **확정**(balance 차감, ledger append) → 실패 시 예약 **해제**(미차감). 응답 `credits`(잔액=balance−reserved)로 프론트 `syncCredits` (계약 §6, frontend_state_model §6). 선검증만으로는 동시 job이 같은 잔액을 통과할 수 있어 예약이 필요.

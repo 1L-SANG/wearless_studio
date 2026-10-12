@@ -1,3 +1,4 @@
+import { claimDraftFeatureRun, settleDraftFeatureRun } from './featureRunDraft.js';
 /* =============================================================
    draftSync — 비로그인 공개 입력 → 로그인 후 실서버 동기화 (Phase 2, 해결책 A).
 
@@ -16,6 +17,7 @@
    멱등: 확보한 projectId와 사진별 asset 매핑을 localStorage에 즉시 기록한다. 같은 페이지의
    재시도뿐 아니라 새로고침 뒤에도 같은 프로젝트·업로드에 합류한다.
    ============================================================= */
+import { ensureDraftRemotePhotos } from './draftStore.js';
 import { api } from '@/lib/api/index.js';
 import { isUploadablePhotoMime } from '@/lib/imageTranscode.js';
 import { withUploadedSrcs } from '@/lib/draftPromotionProduct.js';
@@ -23,13 +25,21 @@ import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
+import { mannequinQuoteConfirmation } from '@/features/mannequin/quoteConfirmation.js';
 
-async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress } = {}) {
+async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress, restoreFeatures = false } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
   // localStorage 에 기록해 새로고침 뒤에도 같은 행으로 합류한다.
+  draft = await ensureDraftRemotePhotos(draft);
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
+  if (draft.analysis?.featureRun) claimDraftFeatureRun(draft, projectId);
   draftPromotionSession.rememberProject(projectId);
+  const seenQuote = mannequinQuoteConfirmation.seen('draft', 'generate');
+  if (seenQuote) {
+    mannequinQuoteConfirmation.remember(projectId, 'generate', seenQuote);
+    mannequinQuoteConfirmation.clear('draft');
+  }
   // 프로젝트 신원이 생긴 순간 알린다 — CTA 는 여기까지만 기다리고 화면을 넘긴다. 남은 업로드·
   // 저장은 콘티보드가 구독하는 프라미스로 이어진다(2026-08-18: 업로드 대기 44~211초 제거).
   onProjectReady?.(projectId);
@@ -71,15 +81,16 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
     let analysis = draft.analysis;
     const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
-    const detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
+    let detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
+    let featureRun = null;
     if (analysis) {
       analysis = { ...analysis };
-      delete analysis.confirmedGptProductEvidenceHandoff;
-      delete analysis.detailRecommendationsHandoff;
+      analysis.confirmedGptProductEvidenceHandoff = null;
+      analysis.detailRecommendationsHandoff = null;
       delete analysis.detailRecommendations;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
-        delete analysis[k];
+        analysis[k] = null;
       }
     }
 
@@ -92,8 +103,22 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     if (analysis) analysis = stripLocalCustomMatch(analysis);
 
     await api.saveProduct(projectId, product);
+    if (draft.analysis?.featureRun) {
+      const settled = await settleDraftFeatureRun(draft, projectId, { restoreFeatures });
+      featureRun = settled.run;
+      analysis = settled.analysis;
+      detailHandoff = analysis?.detailRecommendations?.status === 'unavailable' ? null : analysis?.detailRecommendationsHandoff ?? null;
+      if (analysis) {
+        analysis = stripLocalCustomMatch({ ...analysis });
+        analysis.confirmedGptProductEvidenceHandoff = null;
+        analysis.detailRecommendationsHandoff = null;
+        delete analysis.detailRecommendations;
+        for (const key of ['clothingType', 'measurements', 'measurementsUnknown']) analysis[key] = null;
+      }
+    }
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
+      featureRun?.committed();
       if (detailHandoff) {
         // 디테일 추천은 부가 자료라 서명·유효기간 검증 실패(invalid_analysis_handoff)는 확정을 막지
         // 않는다. 추천 없이 넘어가면 콘티는 "디테일 추천을 준비하지 못했어요" 안내와 수동 추가로

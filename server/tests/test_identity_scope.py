@@ -27,7 +27,7 @@ def _block(**over):
 # ── 규칙 ──
 def test_confirmed_gpt_example_is_virtual_only():
     """확정 GPT 프로필의 근거는 가상 모델 확정 시트다 — 실제 등록자에게는 존재할 수 없다."""
-    spec = _block(exampleId="ex_styling_men_top_full_snapshot_03")
+    spec = _block(exampleId="ex_styling_women_top_full_snapshot_01")
     assert identity_scope.scope_for_block(spec) == identity_scope.VIRTUAL
 
 

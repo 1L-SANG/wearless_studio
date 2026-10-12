@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from app.agents import face_identity as fi
-from conftest import make_settings
+from conftest import make_settings, patch_worker_similar_source
 
 SPEC = fi.FaceIdentitySpec("facemarket/loras/m/v1.safetensors", "ohwx man",
                            backend_url="https://pod-8000.proxy.runpod.net/render")
@@ -147,7 +147,7 @@ def _editor_lora_row():
 
 def test_editor_new_cut_attaches_reference_embeddings(monkeypatch):
     from app.workers import editor_image_job as eij
-    from conftest import fake_worker_app, make_settings, worker_job
+    from conftest import fake_worker_app, make_settings, patch_worker_similar_source, worker_job
     from test_cut_input_authority import (
         REAL_CATEGORY, REAL_ENROLLMENT_ID, REAL_LICENSE_ID, REAL_MODEL_ID, _TrackingR2, _patch_editor_common,
     )
@@ -266,12 +266,13 @@ def test_editor_vary_attaches_reference_embeddings(monkeypatch):
     monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
     monkeypatch.setattr(fi, "reference_embeddings", fake_embed)
 
+    similar_payload = patch_worker_similar_source(monkeypatch, eij, fake_get_asset)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True,
                                         face_identity_enabled=True))
     face_r2 = _FaceR2()
     app.state.r2_face = face_r2
     asyncio.run(eij.run_editor_image_job(app, worker_job({
-        "mode": "vary", "source": {"src": "/v1/assets/a1/file", "cutType": "styling"}, "changes": [],
+        "mode": "vary", **similar_payload, "changes": [],
         "brandUseCategory": CATEGORY, "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     })))
     assert captured["assets_lookup"] == ("33333333-3333-4333-8333-333333333333", "policy-v1")

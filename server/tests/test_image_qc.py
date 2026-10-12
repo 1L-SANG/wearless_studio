@@ -90,7 +90,7 @@ def test_paired_validation_is_fail_closed_and_score_cannot_override_regression()
 def test_paired_verdict_orders_source_match_before_and_after(monkeypatch):
     captured = {}
 
-    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+    async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
         captured.update(prompt=prompt, images=[image.data for image in images], schema=schema)
         assert kwargs["require_complete_envelope"] is True
         return ({
@@ -382,8 +382,8 @@ def test_validate_out_of_enum_defaults_pass():
 
 
 def test_verdict_orchestrates(monkeypatch):
-    async def fake_fallback(settings, prompt, images, schema, **kwargs):
-        assert kwargs == {}
+    async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
+        assert kwargs == {"require_complete_envelope": True}
         assert len(images) == 3            # 상품 2 + 생성 1
         assert images[-1].data == b"GEN"   # 마지막이 생성 이미지
         return ({"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "블랙 유지"}, "gemini")
@@ -457,7 +457,7 @@ def test_verdict_inserts_match_between_products_and_generated(monkeypatch):
     """첨부 순서 계약: [상품…, 매칭 하의, 생성]. 스키마·validate 도 matching 경로여야 한다."""
     captured = {}
 
-    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+    async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
         assert kwargs["require_complete_envelope"] is True
         captured["images"] = [i.data for i in images]
         captured["schema"] = schema
@@ -484,7 +484,7 @@ def test_verdict_without_match_is_byte_identical_to_baseline(monkeypatch):
     """match_image 없으면 요청(이미지 수·프롬프트)·응답 shape 이 기존과 완전히 같다."""
     captured = {}
 
-    async def fake_fallback(settings, prompt, images, schema, **kwargs):
+    async def fake_fallback(settings, prompt, images, schema, *, system_prompt=None, **kwargs):
         assert kwargs["require_complete_envelope"] is True
         captured["n"] = len(images)
         captured["matching_in_prompt"] = "MATCHING BOTTOM" in prompt

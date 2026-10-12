@@ -67,6 +67,7 @@ test('generation and regeneration labels expose the exact next charge', () => {
 
 test('mock credit quote matches the server read contract', async (t) => {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
@@ -92,11 +93,14 @@ test('mock credit quote matches the server read contract', async (t) => {
     },
     storyboardPerCut: 19,
     editorImage: 19,
+    editorEdit: 5,
+    editorSimilar: 8,
   });
 });
 
 test('mock mannequin execution charges the snapshotted quote and preserves a free adjustment', async (t) => {
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,

@@ -1,9 +1,13 @@
+import { publicAnalysisForm } from './publicAnalysisRequest.js';
+import { stripFeatureClientFields } from '../featureRun.js';
 /* =============================================================
    httpAdapter — FastAPI 실서버 구현 (plan §8, Phase 1+에서 함수
    단위로 채운다). 여기 구현된 함수만 http 모드에서 mock 을 대체하고,
    나머지는 mock 이 계속 담당한다 (부분 스왑).
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
+import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
+import { clientEvents, recordClientAction } from '../clientEvents.js';
 import { supabase } from '@/lib/supabase.js';
 import { identityKindOf } from '../identityScope.js';
 import { isRealModelSelection } from '../../features/analysis/modelSelection.js';
@@ -13,14 +17,18 @@ import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matching
 import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { fetchPhotoBytes } from '../photoBytes.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
-import { jobFailure } from './jobFailure.js';
+import { jobFailure, jobFailureMessage } from './jobFailure.js';
 import { pollDetailPageJob } from '../detailPageJobPoll.js';
 import { detailCutPreviewPath } from '../detailCutPreview.js';
 import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 import { createEditorRevisionSync } from '@/lib/editorRevisionSync.js';
+import { createStoryboardRevisionSync } from '@/lib/storyboardRevisionSync.js';
+import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
+import { isSupportedCutType } from '../storyboardTaxonomy.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -47,6 +55,9 @@ function networkError(code, message, context, cause, logError = true) {
   const error = new Error(finalMessage);
   error.code = finalCode;
   error.cause = cause;
+  if (cause?.requestId) error.requestId = cause.requestId;
+  if (cause?.clientApi) error.clientApi = cause.clientApi;
+  if (cause?.requestNotSent) error.requestNotSent = true;
   return error;
 }
 
@@ -71,36 +82,55 @@ const editorRevisions = createEditorRevisionSync({
   normalize: relativizeAssetUrls,
 });
 
+const storyboardRevisions = createStoryboardRevisionSync({
+  load: (id) => http(`/v1/projects/${id}/storyboard?withRevision=1`),
+  put: (id, body, revision, options) => http(`/v1/projects/${id}/storyboard?baseRevision=${revision}`, {
+    ...options, method: 'PUT', body: relativizeAssetUrls(body),
+  }),
+});
+
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
   method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
-  requireAuth = true, suppressErrorLog = false,
+  requireAuth = true, suppressErrorLog = false, isCurrent = () => true,
+  accountGeneration = clientEvents.getAccountGeneration(),
 } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
   } catch (cause) {
-    throw networkError(
+    const error = networkError(
       'auth_session_network',
       '로그인 상태를 확인하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'auth_session', path, origin: browserOrigin() },
       cause,
       !suppressErrorLog,
     );
+    error.requestNotSent = true;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   // 다른 탭의 계정 변경은 React에 늦게 도착할 수 있다. 이 요청의 동의 당사자를
   // 실제 Bearer 토큰을 꺼내는 같은 세션과 대조한다.
   if (expectedUserId !== undefined && data?.session?.user?.id !== expectedUserId) {
     const error = new Error('로그인 계정이 바뀌었어요. 현재 계정에서 다시 확인해 주세요.');
     error.code = 'auth_user_changed';
-    throw error;
+    error.requestNotSent = true;
+    throw clientEvents.bindGeneration(error, accountGeneration);
+  }
+  if (!isCurrent()) {
+    const error = new Error('이전 임시저장 요청이 취소됐어요.');
+    error.code = 'draft_request_cancelled';
+    error.requestNotSent = true;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   const token = data?.session?.access_token;
   if (!token && requireAuth) {
     // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
     if (!suppressErrorLog) console.error(`API no-session ${path}`);
-    throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+    const error = new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+    error.requestNotSent = true;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   // requireAuth:false — 서버가 인증을 요구하지 않는 **공개 엔드포인트** 전용 탈출구.
   // 위 가드는 "세션이 필요한 화면에서 무세션 호출이 401 폭탄으로 번지는 것"을 막으려고 있는데,
@@ -111,25 +141,13 @@ export async function http(path, {
   // 올라와 사용자에게 "요청을 처리하지 못했어요" 만 남는다.
   // 세션이 있으면 토큰은 그대로 실어 보낸다 — 서버가 무시할 뿐 거부하지 않는다.
 
-  // Chrome DevTools의 Offline 에뮬레이션을 포함해 브라우저가 오프라인이면 요청 자체를 보내지
-  // 않는다. 응답이 아예 없을 때 뒤따르는 가짜 CORS 메시지를 서버 장애로 오진하지 않게 한다.
-  if (isBrowserOffline()) {
-    throw networkError(
-      'api_network',
-      '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
-      { stage: 'api', method, path, origin: browserOrigin() },
-      undefined,
-      !suppressErrorLog,
-    );
-  }
-
   // 관리자 기기 토큰. 토큰이 있으면 싣는다 — IS_ADMIN 을 보지 않는다. 스토리지가 이미 오리진으로
   // 갈라져 있어 admin 문서 밖에서는 토큰 자체가 없고, 로컬 ?admin=1 오버라이드 오리진에서도
   // 그 오리진의 토큰으로 동작해야 한다. 서버는 관리자 라우트에서만 이 헤더를 본다.
   const deviceToken = readDeviceToken();
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await clientApiFetch(`${BASE_URL}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -140,7 +158,7 @@ export async function http(path, {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       keepalive,
-    });
+    }, { blockOffline: true, accountGeneration });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -161,7 +179,7 @@ export async function http(path, {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
-      if (payload?.error?.meta) meta = payload.error.meta;
+      if (payload?.error?.meta) meta = absolutizeAssetUrls(payload.error.meta);
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     if (!suppressErrorLog) console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
@@ -173,14 +191,20 @@ export async function http(path, {
     }
     // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
     // 404 무효 상태 vs 일시 장애 구분). message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
-    const err = new Error(message);
+    const err = new Error(res.status >= 500 && /^\/v1\/projects(?:[/?]|$)/.test(path)
+      ? jobFailureMessage(message) : message);
     err.status = res.status;
     if (code) err.code = code;
     if (meta) err.meta = meta;
-    throw err;
+    throw attachResponseError(err, res);
   }
   if (res.status === 204) return null;
-  return absolutizeAssetUrls(await res.json());
+  const result = absolutizeAssetUrls(await readClientResponse(res));
+  if (/^\/v1\/jobs\//.test(path) && result && typeof result === 'object') {
+    Object.defineProperty(result, 'requestId', { value: res.headers.get('X-Request-Id'), configurable: true });
+    clientEvents.updateJobPoll(path, result, accountGeneration);
+  }
+  return clientEvents.bindGeneration(result, accountGeneration);
 }
 
 /* 톤 에디터 전용 바이트 취득.
@@ -189,25 +213,25 @@ export async function http(path, {
    그 최종 응답에 CORS 헤더가 있어야 하는데 그건 CDN 설정이라 앱이 보장할 수 없다. 그래서
    편집 소스만 API 가 직접 실어 보내는 라우트를 쓴다 — 여기 CORS 는 우리 것이다.
    에디터를 열 때 원본 1장 + 마스크 1장이고, 슬라이더를 움직이는 동안엔 0장이다. */
-export async function httpBlob(path, { signal } = {}) {
-  const { data } = await supabase.auth.getSession();
+export async function httpBlob(path, { signal, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
+  const { data } = await supabase.auth.getSession().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
   const token = data?.session?.access_token;
-  if (!token) throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
-  const res = await fetch(`${BASE_URL}${path}`, {
+  if (!token) throw clientEvents.bindGeneration(new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.'), accountGeneration);
+  const res = await clientApiFetch(`${BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
-  });
+  }, { accountGeneration });
   if (!res.ok) {
     const err = new Error('이미지를 불러오지 못했어요.');
     err.status = res.status;
-    throw err;
+    throw attachResponseError(err, res);
   }
-  return res.blob();
+  return readClientResponse(res, 'blob');
 }
 
 // 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
 // 건너뛸 수 있게 토큰을 선호해서 붙이고, 세션 조회 실패·비로그인은 그대로 공개 경로를 쓴다.
-async function publicHttp(path, formData, { signal } = {}) {
+async function publicHttp(path, formData, { signal, accountGeneration = clientEvents.getAccountGeneration() } = {}) {
   let token;
   try {
     const { data } = await supabase.auth.getSession();
@@ -215,12 +239,12 @@ async function publicHttp(path, formData, { signal } = {}) {
   } catch { /* 공개 분석은 인증 bootstrap 실패에도 익명으로 계속 가능 */ }
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await clientApiFetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       body: formData,
       signal,
-    });
+    }, { accountGeneration });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -231,19 +255,19 @@ async function publicHttp(path, formData, { signal } = {}) {
     );
   }
   if (!res.ok) {
-    let message = '상품 분석에 실패했어요. 잠시 후 다시 시도해 주세요.';
+    let message = '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.';
     let code;
     try {
       const payload = await res.json();
       message = payload?.error?.message || message;
       code = payload?.error?.code;
     } catch { /* 기본 메시지 유지 */ }
-    const error = new Error(message);
+    const error = new Error(res.status >= 500 ? jobFailureMessage(message) : message);
     error.status = res.status;
     if (code) error.code = code;
-    throw error;
+    throw attachResponseError(error, res);
   }
-  return res.json();
+  return readClientResponse(res);
 }
 
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
@@ -251,7 +275,7 @@ async function publicHttp(path, formData, { signal } = {}) {
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
 async function pollJob(
   jobId,
-  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE } = {},
+  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE, creditsReleased = false, preserveFailureMessage = false } = {},
 ) {
   const start = Date.now();
   let last = -1;
@@ -260,6 +284,8 @@ async function pollJob(
     if (job.status === 'cancelled') {
       const error = new Error('마네킹컷 생성이 취소됐어요.');
       error.code = 'job_cancelled';
+      if (job.requestId) error.requestId = job.requestId;
+      error.jobId = jobId;
       throw error;
     }
     if (typeof job.progress === 'number' && job.progress !== last) {
@@ -268,7 +294,9 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') {
-      throw jobFailure(job);
+      const failure = jobFailure(job, { creditsReleased });
+      if (preserveFailureMessage && job.errorMessage) failure.message = job.errorMessage;
+      throw failure;
     }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
@@ -276,6 +304,8 @@ async function pollJob(
       // 정상 진행 중인 생성이 실패 토스트 + 콘티보드 복귀로 처리됐다).
       const err = new Error(timeoutMessage);
       err.code = 'job_timeout';
+      if (job.requestId) err.requestId = job.requestId;
+      err.jobId = jobId;
       throw err;
     }
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -288,17 +318,18 @@ async function pollJob(
 export async function uploadPhoto(
   projectId,
   { filename, mime, blob, purpose = 'upload' },
-  { signal } = {},
+  { signal, accountGeneration = clientEvents.getAccountGeneration() } = {},
 ) {
+  recordClientAction('upload', accountGeneration);
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal,
+    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal, accountGeneration,
   });
   if (isBrowserOffline()) {
-    throw networkError(
+    throw clientEvents.bindGeneration(networkError(
       'photo_upload_network',
       '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'r2_put', origin: browserOrigin() },
-    );
+    ), accountGeneration);
   }
   let put;
   try {
@@ -306,22 +337,22 @@ export async function uploadPhoto(
       method: 'PUT', headers: { 'Content-Type': mime }, body: blob, signal,
     });
   } catch (cause) {
-    if (cause?.name === 'AbortError') throw cause;
-    throw networkError(
+    if (cause?.name === 'AbortError') throw clientEvents.bindGeneration(cause, accountGeneration);
+    throw clientEvents.bindGeneration(networkError(
       'photo_upload_network',
       '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
       { stage: 'r2_put', origin: browserOrigin() },
       cause,
-    );
+    ), accountGeneration);
   }
   if (!put.ok) {
-    const error = new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+    const error = new Error('서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     error.code = 'photo_upload_failed';
     error.status = put.status;
-    throw error;
+    throw clientEvents.bindGeneration(error, accountGeneration);
   }
   await http(`/v1/assets/${assetId}/complete`, {
-    method: 'POST', body: { projectId, mime, filename, purpose }, signal,
+    method: 'POST', body: { projectId, mime, filename, purpose }, signal, accountGeneration,
   });
   // complete 응답의 R2 URL은 배포 설정에 따라 만료되는 서명 URL일 수 있다. 에디터 문서에는
   // 현재 R2 위치로 매번 리다이렉트하는 앱의 안정 에셋 경로를 저장해야 재접속 후에도 보인다.
@@ -349,8 +380,7 @@ async function pickAndUploadImage(projectId) {
 }
 
 // ---- 매칭 의류 / analysis (US-4) --------------------------------------------
-// 서버는 GET /analysis 라우트가 없고 PATCH 가 REPLACE(payload=excluded.payload) 라, 전체 analysis 를
-// 이 모듈에 캐시해 delta 를 머지한 full payload 로 저장한다(delta 만 보내면 다른 필드가 유실됨).
+// 캐시는 화면 복원과 추천 문맥만 담당한다. 저장은 바뀐 최상위 키만 merge=1로 보낸다.
 // analyzeProduct 가 seed, saveAnalysis 가 갱신. 페이지 세션 동안 유지(하드 새로고침 시 리셋 → 재분석).
 // getMatchClothing 도 이 캐시를 읽어 화면 전환(분석→마네킹) 간 매칭 선택을 이월한다.
 // projectId 로 스코프 — 보관함에서 다른 프로젝트를 열어도 이전 프로젝트의 매칭이 새지 않게 한다.
@@ -365,7 +395,7 @@ export function resetAnalysisCache() {
 }
 
 const isMatchRefresh = (patch) =>
-  ['clothingType', 'targetGenders', 'styleTags'].some((k) => k in patch);
+  ['clothingType', 'targetGenders', 'styleTags'].some((k) => patch[k] != null);
 
 function mergeAnalysisResult(ai) {
   const base = defaultAnalysisShape(ai.clothingType || 'top');
@@ -379,10 +409,12 @@ function mergeAnalysisResult(ai) {
       ? ai.materials
       : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
     aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
+    ...(ai.pointsTicket ? { pointsTicket: ai.pointsTicket } : {}),
     suggestedName: ai.suggestedName ?? base.suggestedName,
     styleTags: ai.styleTags ?? [],
     swatchSuggestions: ai.swatchSuggestions ?? [],
     sourceMirrored: ai.sourceMirrored === true,
+    frontClosure: ai.frontClosure ?? null,
     confirmedGptProductEvidenceHandoff: ai.confirmedGptProductEvidenceHandoff ?? null,
     detailRecommendations: ai.detailRecommendations ?? base.detailRecommendations,
     detailRecommendationsHandoff: ai.detailRecommendationsHandoff ?? null,
@@ -432,19 +464,21 @@ export const httpAdapter = {
   async uploadDraftSlotPhoto(photo, options) {
     return uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
   },
-  async getDraftSlot(token, { full = false } = {}) {
+  async getDraftSlot(token, { full = false, ...options } = {}) {
     return http(`/v1/draft-slot${full ? '?full=1' : ''}`, {
+      ...options,
       headers: token ? { 'X-Draft-Token': token } : undefined,
     });
   },
-  async putDraftSlot(body) {
-    return http('/v1/draft-slot', { method: 'PUT', body });
+  async putDraftSlot(body, options) {
+    return http('/v1/draft-slot', { ...options, method: 'PUT', body });
   },
-  async takeoverDraftSlot() {
-    return http('/v1/draft-slot:takeover', { method: 'POST' });
+  async takeoverDraftSlot(body = {}, options) {
+    return http('/v1/draft-slot:takeover', { ...options, method: 'POST', body });
   },
-  async deleteDraftSlot(token) {
+  async deleteDraftSlot(token, options) {
     return http('/v1/draft-slot', {
+      ...options,
       method: 'DELETE',
       headers: token ? { 'X-Draft-Token': token } : undefined,
     });
@@ -452,7 +486,12 @@ export const httpAdapter = {
   async discardDraftSlotPhoto(assetId) {
     return http(`/v1/draft-slot/assets/${assetId}`, { method: 'DELETE' });
   },
-  async publicAnalyze(product, { onProgress, signal } = {}) {
+  async publicAnalyze(product, { onProgress, signal, photos: preparedPhotos, parts, runId } = {}) {
+    if (preparedPhotos) {
+      const result = await publicHttp('/v1/public/analyze', publicAnalysisForm(product, preparedPhotos, { parts, runId }), { signal });
+      onProgress?.(100);
+      return mergeAnalysisResult(result?.data || {});
+    }
     const colors = product?.colors || [];
     const baseColor = colors.find((color) => color.isBase) || colors[0];
     const photos = selectPublicAnalysisPhotos(baseColor?.images || []);
@@ -460,7 +499,7 @@ export const httpAdapter = {
     const form = new FormData();
     onProgress?.(10);
     for (const [index, photo] of photos.entries()) {
-      const blob = await fetch(photo.src, { signal }).then((response) => response.blob());
+      const blob = await fetchPhotoBytes(photo.src, { signal });
       form.append('images', blob, photo.name || `product-${index + 1}`);
       form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
     }
@@ -480,6 +519,14 @@ export const httpAdapter = {
     onProgress?.(100);
     return mergeAnalysisResult(result?.data || {});
   },
+  async analyzePublicFeatures({ product, photos, runId, attempt, signal }) {
+    const response = await publicHttp('/v1/public/analyze/features', publicAnalysisForm(product, photos, { runId, attempt }), { signal });
+    return response.data;
+  },
+  async mergePublicPoints({ runId, pointsTicket, featureTicket }) {
+    const response = await http('/v1/public/analyze/points-merge', { requireAuth: false, method: 'POST', body: { runId, pointsTicket, featureTicket } });
+    return response.data;
+  },
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
   // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
@@ -488,7 +535,7 @@ export const httpAdapter = {
     const colors = await Promise.all((product.colors ?? []).map(async (c) => {
       const images = await Promise.all((c.images ?? []).map(async (im) => {
         if (!im.src || !im.src.startsWith('blob:')) return im;
-        const blob = await fetch(im.src).then((r) => r.blob());
+        const blob = await clientApiFetch(im.src).then((r) => readClientResponse(r, 'blob'));
         // im.type 은 파일 감지 실패 시 'image'(잘못된 MIME)일 수 있다(filesToMetas 폴백) —
         // '/' 가 있는 진짜 MIME 일 때만 쓰고, 아니면 blob.type / jpeg 로. (upload-url 400 방지)
         const mime = (im.type && im.type.includes('/')) ? im.type : (blob.type || 'image/jpeg');
@@ -521,6 +568,7 @@ export const httpAdapter = {
   // 기본 shape(shapes.defaultAnalysisShape)를 베이스로 두고 AI 산출 필드만 덮어써 shape 를 보존한다.
   // (과거엔 mock db.js 의 DB.analysis 를 베이스로 썼으나 mock 결합을 끊고 클라 상수로 대체.)
   async analyzeProduct(projectId, { onProgress } = {}) {
+    recordClientAction('analyze');
     const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
     // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
     // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
@@ -538,13 +586,13 @@ export const httpAdapter = {
     try {
       merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
     } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
-    analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
+    analysisCache = { projectId, analysis: merged };   // 화면 복원과 매칭 추천 문맥의 프로젝트별 캐시
     return merged;
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
     const [saved, product, project, analysis] = await Promise.all([
-      http(`/v1/projects/${projectId}/storyboard`),
+      storyboardRevisions.load(projectId),
       http(`/v1/projects/${projectId}/product`),
       http(`/v1/projects/${projectId}`),
       http(`/v1/projects/${projectId}/analysis`),
@@ -555,6 +603,8 @@ export const httpAdapter = {
       projectId,
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
+      subCategory: analysis?.subCategory || null,
+      customCategory: analysis?.customCategory || null,
       matchClothing: analysis?.matchClothing || [],
       detailRecommendations: analysis?.detailRecommendations,
       sellingPoints: analysis?.sellingPoints || [],
@@ -579,7 +629,8 @@ export const httpAdapter = {
     return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, options = {}) {
-    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: relativizeAssetUrls(blocks), ...options });
+    recordClientAction('save');
+    return storyboardRevisions.save(projectId, blocks, options);
   },
   async getEditorBlocks(projectId) {
     return editorRevisions.load(projectId);
@@ -590,6 +641,7 @@ export const httpAdapter = {
   },
   // 리비전 동기화(editorRevisionSync) — 다른 탭이 먼저 저장했으면 409 editor_conflict 로 던진다.
   async saveEditorBlocks(projectId, blocks) {
+    recordClientAction('save');
     await editorRevisions.save(projectId, relativizeAssetUrls(blocks));
   },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
@@ -622,6 +674,7 @@ export const httpAdapter = {
      같이 소비해야 하므로 시작만 하는 start + 잡/이벤트 폴링을 분리한다. 폴링 주기·수명은
      store(startDetailPageGeneration)가 소유 — 화면을 떠나도 생성 추적이 살아있게. */
   async startDetailPage(projectId) {
+    recordClientAction('detailPageGenerate');
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     // 완료 재호출(202 아님) — 새 잡 없이 기존 결과 반환(무차감·멱등)
     if (res.data) return { data: res.data, credits: res.credits };
@@ -641,7 +694,7 @@ export const httpAdapter = {
     return httpBlob(detailCutPreviewPath(projectId, jobId, blockId), opts);
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
-  // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
+  // selectedMannequinId,adjustCount,createdAt,updatedAt,latestJobs}. projectId 필수:
   // store.loadProject 가 argless 로 부르던 과거 경로(mock 가짜 project 오염 → 404)는
   // useAppStore 에서 제거됐다. 방어적으로 pid 없으면 서버 호출 없이 null.
   async getProject(projectId) {
@@ -654,54 +707,38 @@ export const httpAdapter = {
   async getProduct(projectId) {
     return http(`/v1/projects/${projectId}/product`);
   },
-  // 분석 저장 (계약 §3.2) — 서버 PATCH 는 REPLACE 라 캐시에 delta 를 머지한 full payload 를 보낸다
-  // (delta 만 보내면 다른 analysis 필드가 유실). 매칭 추천 갱신·선택 토글을 반영해 반환 matchClothing 을
-  // 콜러(AnalysisForm)가 읽는다. projectId 없는 공개 분석은 api/index가 mock에 위임한다.
+  // 분석 저장은 바뀐 키만 병합한다. 매칭 선택에는 최신 후보를 읽어 선택 상태만 적용한다.
   async saveAnalysis(projectId, patch) {
-    const { matchClothing: matchPatch, ...rest } = patch;
+    patch = stripFeatureClientFields(patch);
+    const body = { ...patch };
     let cached = cachedAnalysisFor(projectId);
-    let serverEmpty = false;   // 하이드레이션이 "서버 저장분 없음"을 증명 — delta PATCH 로 유실될 게 없다
-    if (!cached && projectId) {   // 하드 새로고침 후에도 persist 되도록 저장분 1회 하이드레이션(getMatchClothing 동일)
-      const saved = await http(`/v1/projects/${projectId}/analysis`);
-      if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
-        analysisCache = { projectId, analysis: saved };
-        cached = saved;
-      } else {
-        serverEmpty = true;
-      }
+    if (projectId && (isMatchRefresh(patch) || Array.isArray(patch.matchClothing))) {
+      cached = await http(`/v1/projects/${projectId}/analysis`);
     }
-    const base = cached ? { ...cached } : {};
-    Object.assign(base, rest);
+    const base = mergeAnalysisPatch(cached, patch);
     if (isMatchRefresh(patch)) {
-      base.matchClothing = await recommendMatchHttp(projectId, base, base.matchClothing);
+      body.matchClothing = await recommendMatchHttp(projectId, base, cached?.matchClothing);
     }
-    if (Array.isArray(matchPatch)) {
-      base.matchClothing = mergeMatchSelection(
-        base.matchClothing || [], matchPatch, base.clothingType,
+    if (Array.isArray(patch.matchClothing)) {
+      body.matchClothing = patch.matchClothing.length === 0 ? [] : mergeMatchSelection(
+        body.matchClothing || cached?.matchClothing || [], patch.matchClothing, base.clothingType,
       );
     }
-    // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
-    // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
-    // — 분석 실패로 빈 프로젝트에 재진입해 모델만 고른 케이스(F3)에서 selectedModelId 무음 유실 방지.
-    // 캐시도 없고 하이드레이션도 안 뛴(비정상) 상태만 계속 스킵.
-    let savedAnalysis = base;
-    if (projectId && (cached || serverEmpty)) {
-      savedAnalysis = await http(`/v1/projects/${projectId}/analysis`, {
-        method: 'PATCH',
-        body: base,
-      });
-    }
+    const saved = projectId
+      ? await http(`/v1/projects/${projectId}/analysis?merge=1`, { method: 'PATCH', body })
+      : mergeAnalysisPatch(base, body);
+    const savedAnalysis = { ...saved, frontClosure: saved?.frontClosure ?? null };
     analysisCache = { projectId, analysis: savedAnalysis };
     return savedAnalysis;
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
     const analysis = normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
-    const normalized = { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
+    const normalized = { ...analysis, frontClosure: analysis.frontClosure ?? null, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
     analysisCache = { projectId, analysis: normalized };
     return normalized;
   },
-  // 호리존 세트 벽 색 '옷 색에 맞춤'용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
+  // 시그니처와 호리존 세트 배경용 의류색 측정 (콘티보드를 떠날 때, 필요할 때만). 서버가 저장된
   // 콘티·원본 사진을 읽어 필요한 색만 재고 analysis 에 저장한다. {status, garmentColorEvidence(요약|null)}.
   async measureGarmentColors(projectId) {
     return http(`/v1/projects/${projectId}/analysis/garment-colors:measure`, { method: 'POST' });
@@ -727,7 +764,7 @@ export const httpAdapter = {
     if (!cached && projectId) {
       const saved = await http(`/v1/projects/${projectId}/analysis`);
       if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
-        cached = { ...saved, matchClothing: normalizeMatchClothingSelection(saved.matchClothing) };
+        cached = { ...saved, frontClosure: saved.frontClosure ?? null, matchClothing: normalizeMatchClothingSelection(saved.matchClothing) };
         analysisCache = { projectId, analysis: cached };
       }
     }
@@ -748,6 +785,7 @@ export const httpAdapter = {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const analysis = {
       ...result.analysis,
+      frontClosure: result.analysis?.frontClosure ?? null,
       matchClothing: normalizeMatchClothingSelection(result.analysis?.matchClothing),
     };
     analysisCache = { projectId, analysis };
@@ -758,6 +796,7 @@ export const httpAdapter = {
     const saved = await http(`/v1/projects/${projectId}/analysis`);
     const analysis = {
       ...saved,
+      frontClosure: saved.frontClosure ?? null,
       matchClothing: normalizeMatchClothingSelection(saved.matchClothing),
     };
     analysisCache = { projectId, analysis };
@@ -765,8 +804,8 @@ export const httpAdapter = {
   },
   // 이 함수가 새로 아는 건 matchClothing 뿐이다. 왕복 두 번(GET /analysis → match-candidates)
   // 뒤에 착지하므로, 서버 응답을 통째로 캐시 베이스로 쓰면 그 사이 저장된 편집이 캐시에서
-  // 사라진다 — 그리고 saveAnalysis 는 이 캐시로 full REPLACE payload 를 만들기 때문에
-  // 다음 저장이 서버 값을 옛것으로 되돌린다(2026-08-14 재리뷰 I-A). 베이스는 항상
+  // 사라진다(2026-08-14 재리뷰 I-A). 부분 저장과 별개로 화면의 최신 문맥도 유지해야 하므로
+  // 베이스는 항상
   // "지금 캐시"(없을 때만 서버 응답)로 잡고, 캐시는 왕복이 끝난 뒤에 읽는다.
   async refreshMatchClothing(projectId) {
     const saved = await http(`/v1/projects/${projectId}/analysis`);
@@ -774,7 +813,7 @@ export const httpAdapter = {
       projectId, saved, saved.matchClothing || [], { defaultSelection: false },
     );
     const prev = cachedAnalysisFor(projectId);
-    const analysis = { ...(prev || saved), matchClothing };
+    const analysis = { ...(prev || saved), frontClosure: (prev || saved).frontClosure ?? null, matchClothing };
     analysisCache = { projectId, analysis };
     return analysis;
   },
@@ -787,6 +826,9 @@ export const httpAdapter = {
   async getLibrary() {
     // mock 의 { forceEmpty, forceError } 옵션은 실서버에선 무의미 — 무시.
     return http('/v1/projects?view=library');
+  },
+  async getInProgressLibrary() {
+    return http('/v1/projects?view=in_progress');
   },
   async createProject() {
     return http('/v1/projects', { method: 'POST' });
@@ -805,6 +847,15 @@ export const httpAdapter = {
   },
   async getCreditSources() {
     return http('/v1/credits/sources');
+  },
+  async getSellerConsent({ signal, expectedUserId } = {}) {
+    return http('/v1/me/consents', { signal, expectedUserId });
+  },
+  async acceptSellerConsent({ termsVersion, privacyVersion, signal, expectedUserId }) {
+    return http('/v1/me/consents', {
+      method: 'POST', signal, expectedUserId,
+      body: { termsVersion, privacyVersion, ageAttested: true },
+    });
   },
   // ---- 토스 추가구매 (WS3) — 금액은 서버가 정한다. 클라이언트는 planCode 만 보낸다. ----
   // checkout 이 돌려준 orderId/amount 를 그대로 결제창에 넘기고, 승인도 그 값으로만 한다.
@@ -885,11 +936,13 @@ export const httpAdapter = {
   // 폴링이 끝난 뒤라 늦다), 호출부는 이 신호로만 "생성이 시작됐다" 를 판단해야 한다 —
   // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
   // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
-  async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId } = {}) {
+  async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId, expectedQuote } = {}) {
+    recordClientAction('mannequinGenerate');
     let jobId = resumeJobId;
     if (!jobId) {
       const res = await http(`/v1/projects/${projectId}/mannequins:generate`, {
         method: 'POST',
+        body: { expectedQuote },
         headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
       });
       if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
@@ -901,6 +954,7 @@ export const httpAdapter = {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+      creditsReleased: true,
     });
     return { data: result.data, credits: result.credits };
   },
@@ -911,18 +965,26 @@ export const httpAdapter = {
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 마네킹 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
-  async regenerateMannequin(projectId, { fitProfile, onProgress, idempotencyKey } = {}) {
-    const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
-      method: 'POST',
-      body: { fitProfile },
-      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
-    });
-    if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, {
+  async regenerateMannequin(projectId, { fitProfile, onProgress, onJobStarted, onJobSucceeded, idempotencyKey, resumeJobId, expectedQuote } = {}) {
+    recordClientAction('mannequinAdjust');
+    let jobId = resumeJobId;
+    if (!jobId) {
+      const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
+        method: 'POST',
+        body: { fitProfile, expectedQuote },
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      });
+      if (res.data) return { data: res.data, credits: res.credits };
+      jobId = res.jobId;
+    }
+    onJobStarted?.(jobId);
+    const result = await pollJob(jobId, {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+      creditsReleased: true,
     });
+    onJobSucceeded?.(jobId);
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
     // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
     const cuts = await http(`/v1/projects/${projectId}/mannequins`);
@@ -931,6 +993,11 @@ export const httpAdapter = {
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
   async getWardrobe(projectId) {
     return http(`/v1/projects/${projectId}/wardrobe`);
+  },
+  async getEditorAssetInfo(projectId, assetIds) {
+    return http(`/v1/projects/${projectId}/editor:asset-info`, {
+      method: 'POST', body: { assetIds },
+    });
   },
   // 콘티 '내 이미지' — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   async pickAnyImage(projectId) {
@@ -941,21 +1008,89 @@ export const httpAdapter = {
   async pickRefImage(projectId) {
     return pickAndUploadImage(projectId);
   },
-  // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
-  // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
-  async generateImage(projectId, req = {}) {
-    const { onProgress, ...body } = req;
-    const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
-      method: 'POST', body,
-    });
-    if (res.data) return { data: res.data, credits: res.credits };
+  // 계획 없는 빈 칸은 위치만 보내고, 서버가 고른 한 줄을 접수 즉시 전달한다(ADR-0019).
+  async fillEmptySlot(projectId, { slot, idempotencyKey, onJobStarted, onProgress, preserveFailureMessage = false } = {}) {
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+      throw Object.assign(new Error('이 칸을 찾지 못했어요.'), {
+        status: 400, code: 'fill_slot_invalid', requestNotSent: true,
+      });
+    }
+    recordClientAction('editorImage');
+    let res;
+    try {
+      res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+        method: 'POST', body: { mode: 'fill', slot },
+        headers: { 'Idempotency-Key': idempotencyKey },
+      });
+      if (!res?.data && !res?.jobId) throw new Error('이미지 접수를 확인하지 못했어요.');
+    } catch (e) {
+      if (!e?.requestNotSent && (!e?.status || e.status >= 500)) {
+        e.submissionUnknown = true;
+        e.message = '접수를 확인하지 못했어요. 다시 누르면 같은 요청을 확인해요.';
+      }
+      throw e;
+    }
+    if (res.data) return { data: res.data, credits: res.credits, contextFill: res.contextFill ?? res.data.contextFill };
+    onJobStarted?.(res.jobId, res.contextFill);
     try {
       const result = await pollJob(res.jobId, {
         onProgress,
+        preserveFailureMessage,
         timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
         timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
+        creditsReleased: true,
       });
-      return { data: result.data, credits: result.credits };
+      return { data: result.data, credits: result.credits, contextFill: res.contextFill ?? result.data?.contextFill };
+    } catch (e) {
+      if (e?.code === 'job_timeout') e.jobId = res.jobId;
+      throw e;
+    }
+  },
+  // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
+  // 생성 의도의 UUID는 헤더에 싣고, 접수 신호는 폴링 전에 전달한다.
+  async generateImage(projectId, req = {}) {
+    const { onProgress, onJobStarted, idempotencyKey, preserveFailureMessage = false, ...body } = req;
+    const cutType = body.mode === 'vary' ? body.source?.cutType : body.cutType;
+    if (cutType != null && !isSupportedCutType(cutType)) {
+      throw Object.assign(new Error('지원하지 않는 컷 종류예요. 새 이미지를 선택해 주세요.'), {
+        status: 400, code: 'unknown_cut_type', requestNotSent: true,
+      });
+    }
+    if (body.mode === 'vary' && ['color', 'closure'].includes(body.variationMode)
+      && (typeof idempotencyKey !== 'string' || !idempotencyKey.trim())) {
+      throw Object.assign(new Error('요청 번호가 없어요. 다시 눌러 주세요.'), {
+        status: 400, code: 'idempotency_key_required', requestNotSent: true,
+      });
+    }
+    recordClientAction('editorImage');
+    let res;
+    try {
+      res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+        method: 'POST', body,
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      });
+      if (!res?.data && !res?.jobId) throw new Error('이미지 접수를 확인하지 못했어요.');
+    } catch (e) {
+      // 통신 오류와 5xx는 서버 접수 여부를 모른다. 같은 키로 다시 확인해야 한다.
+      if (idempotencyKey && !e?.requestNotSent && (!e?.status || e.status >= 500)) {
+        e.submissionUnknown = true;
+        e.message = '접수를 확인하지 못했어요. 다시 누르면 같은 요청을 확인해요.';
+      }
+      throw e;
+    }
+    if (res.data) return { data: res.data, credits: res.credits,
+      ...(res.creditsCharged == null ? {} : { creditsCharged: res.creditsCharged }) };
+    onJobStarted?.(res.jobId);
+    try {
+      const result = await pollJob(res.jobId, {
+        onProgress,
+        preserveFailureMessage,
+        timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
+        timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
+        creditsReleased: true,
+      });
+      return { data: result.data, credits: result.credits,
+        ...(result.creditsCharged == null ? {} : { creditsCharged: result.creditsCharged }) };
     } catch (e) {
       // 타임아웃이어도 서버 잡은 계속 돈다 — jobId 를 실어 보내 화면이 계속 추적하게 한다.
       if (e?.code === 'job_timeout') e.jobId = res.jobId;

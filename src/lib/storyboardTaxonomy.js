@@ -35,6 +35,18 @@ const CUT_TYPE_OPTIONS = Object.freeze([
   Object.freeze({ value: 'product', label: '제품컷' }),
 ]);
 
+export const isSupportedCutType = (cutType) => CUT_TYPE_OPTIONS.some((option) => option.value === cutType);
+
+export function filterSupportedStoryboardBlocks(blocks) {
+  if (!Array.isArray(blocks)) return blocks;
+  const unsupported = (block) => block && block.source !== 'mine'
+    && block.cutType != null && !isSupportedCutType(block.cutType);
+  const ignored = blocks.filter(unsupported);
+  if (!ignored.length) return blocks;
+  const ignoredIds = new Set(ignored.map((block) => block.id).filter(Boolean));
+  return blocks.filter((block) => !unsupported(block) && !ignoredIds.has(block?.similarSourceBlockId));
+}
+
 const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
   [SECTION_ROLES.HOOKING]: CUT_TYPE_OPTIONS,
   [SECTION_ROLES.STYLING]: CUT_TYPE_OPTIONS,
@@ -299,9 +311,10 @@ export function normalizedRecipePatch(block, role) {
    조건이 어긋나므로 선택을 해제하고, 예시 적용 전 썸네일이 있으면 복원한다. */
 export function assignInternalContentRoles(blocks) {
   if (!Array.isArray(blocks)) return blocks;
+  const supportedBlocks = filterSupportedStoryboardBlocks(blocks);
   let heroAssigned = false;
-  let changed = false;
-  const next = blocks.map((block) => {
+  let changed = supportedBlocks !== blocks;
+  const next = supportedBlocks.map((block) => {
     if (!block || block.source === 'mine') return block;
 
     const sectionRole = inferSectionRole(block) || SECTION_ROLES.HOOKING;

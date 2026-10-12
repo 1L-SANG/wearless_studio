@@ -117,6 +117,8 @@ def _candidate(raw, binding):
     if (not isinstance(region, dict) or set(region) != {"x", "y", "w", "h"}
             or any(type(n) not in (int, float) or not math.isfinite(n) for n in region.values())):
         raise DetailRecommendationError("detail_region_invalid")
+    if all(n == 0 or n > 1 for n in region.values()) and max(region.values()) <= 1000:
+        region = {k: n / 1000 for k, n in region.items()}
     x, y, w, h = (region[k] for k in ("x", "y", "w", "h"))
     if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1
             and x + w <= 1 and y + h <= 1):
@@ -147,6 +149,8 @@ def build_contract(raw, source_images, slots):
         try:
             parsed = _candidate(item, binding)
         except DetailRecommendationError:
+            continue
+        if parsed["region"]["w"] < .02 or parsed["region"]["h"] < .02:
             continue
         if parsed["id"] not in {c["id"] for c in candidates}:
             candidates.append(parsed)

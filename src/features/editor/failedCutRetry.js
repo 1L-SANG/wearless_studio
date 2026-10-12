@@ -1,11 +1,14 @@
 import { detailTargetPresentation } from '../../lib/detailRecommendations.js';
-import { isRealModelSelection } from '../analysis/modelSelection.js';
+import { failedCutPresentation } from '../../lib/cutFailureMessages.js';
+import { uniqueGenerationCutCount } from '../../lib/generationCutCount.js';
+import { isSupportedCutType } from '../../lib/storyboardTaxonomy.js';
 
 const RETRY_FIELDS = Object.freeze([
   'contentRole',
   'colorId',
   'cutType',
   'direction',
+  'sideStyle',
   'shot',
   'detailTargetId',
   'detailTargetOrigin',
@@ -23,17 +26,18 @@ const RETRY_FIELDS = Object.freeze([
  * 일반 AI 패널의 기본값으로 재구성하면 시그니처 exampleId, 매칭 의류, 모델 같은
  * 생성 정본이 유실되므로 sourceBlockId로 원본 블록을 찾아 필요한 필드만 복사한다.
  */
-export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null, product = null) {
+export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null, product = null, { editorBlocks = [], failure = {} } = {}) {
   if (!sourceBlockId || !Array.isArray(storyboard)) return null;
   const block = storyboard.find((item) => item?.id === sourceBlockId);
-  if (!block || block.source !== 'ai' || !block.cutType) return null;
+  if (!block || block.source !== 'ai' || !isSupportedCutType(block.cutType)) return null;
 
-  const request = { mode: 'new' };
+  let request = { mode: 'new', retryBlockId: block.id };
+  let { retryable, guidance } = failedCutPresentation(failure);
+  let fillImage = null;
   for (const field of RETRY_FIELDS) {
     if (block[field] !== undefined) request[field] = block[field];
   }
   if (block.cutType === 'horizon' && block.spaceGroupId) {
-    request.retryBlockId = block.id;
     for (const field of ['spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'horizonBackgroundMode']) {
       if (block[field] !== undefined) request[field] = block[field];
     }
@@ -52,8 +56,38 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
     .filter(Boolean);
   if (refAssetIds.length) request.refAssetIds = refAssetIds;
 
+  if (block.similarSourceBlockId) {
+    const original = editorBlocks.flatMap(item => item.elements || []).find(element =>
+      element.type === 'image' && element.sourceBlockId === block.similarSourceBlockId && element.src);
+    retryable = Boolean(original);
+    guidance = original ? '원본 사진으로 비슷한 컷을 만들어요' : '원본 컷을 먼저 만들어 주세요';
+    request = original ? { mode: 'vary', variationMode: 'similar', changes: [], retryBlockId: block.id,
+      source: { src: original.src, cutType: original.cutType || block.cutType } } : null;
+  }
+
+  if (failure.genFailReason === 'duplicate_cut_source_failed') {
+    const sameRecipe = candidate => candidate.source === 'ai'
+      && ['sideStyle', 'modelId', 'matchIds'].every(field =>
+        JSON.stringify(candidate[field] ?? null) === JSON.stringify(block[field] ?? null))
+      && uniqueGenerationCutCount([
+        { ...candidate, contentRole: null, sectionRole: null },
+        { ...block, contentRole: null, sectionRole: null },
+      ]) === 1;
+    const original = failure.genFailSourceBlockId !== undefined
+      ? storyboard.find(candidate => typeof failure.genFailSourceBlockId === 'string'
+        && candidate?.id === failure.genFailSourceBlockId
+        && candidate.id !== block.id && candidate.source === 'ai' && candidate.cutType)
+      : storyboard.slice(0, storyboard.indexOf(block)).find(sameRecipe);
+    fillImage = original ? editorBlocks.flatMap(item => item.elements || []).find(element =>
+      element.type === 'image' && element.sourceBlockId === original.id && element.src
+      && !element.genPending && !element.genFailed && !element.slotCleared) || null : null;
+    retryable = Boolean(fillImage);
+    guidance = fillImage ? '원본 사진으로 빈 칸을 채워요' : '원본 컷을 먼저 만들어 주세요';
+    request = null;
+  }
+
   return {
-    request,
+    request, retryable, guidance, fillImage,
     sourceBlockId,
     title: block.title || '이 컷',
     thumb: detailTargetPresentation(block, product, modelSelection?.detailRecommendations)?.src || (block.shot === 'detail' ? null : block.thumb) || null,

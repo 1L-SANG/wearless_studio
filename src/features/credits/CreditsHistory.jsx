@@ -18,6 +18,7 @@ const ACTION_LABEL = {
   'mannequinGenerate.reserve': '마네킹 무료 수정',
   'mannequinGenerate.release': '예약 해제',
   grant_subscription: '구독 크레딧 충전',
+  grant_signup: '가입 크레딧',
   grant_topup: '추가 구매',
   expire_subscription: '구독 크레딧 만료',
   refund_request: '환불 요청',
@@ -31,7 +32,7 @@ const fmtDate = (iso) => seoulDateTime(iso);
 export function CreditsHistory() {
   const account = useAppStore((a) => a.account);
 
-  const { data: history = [], isLoading, isError, refetch } = useQuery({
+  const { data: history = [], isLoading, isError, error: queryError, refetch } = useQuery({
     queryKey: ['creditHistory'],
     queryFn: () => api.getCreditHistory(),
     staleTime: 0,
@@ -57,7 +58,7 @@ export function CreditsHistory() {
       {isLoading && (
         <div className={s.list}>{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} h={60} r={12} />)}</div>
       )}
-      {isError && <div className="surface"><ErrorState desc="사용 내역을 불러오지 못했어요." onRetry={refetch} /></div>}
+      {isError && <div className="surface"><ErrorState error={queryError} desc="사용 내역을 불러오지 못했어요." onRetry={refetch} /></div>}
       {!isLoading && !isError && rows.length === 0 && (
         <div className="surface"><EmptyState icon="image" title="아직 사용 내역이 없어요" desc="마네킹·상세페이지를 만들면 크레딧 사용 내역이 여기에 쌓여요." /></div>
       )}

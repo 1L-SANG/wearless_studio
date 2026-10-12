@@ -62,6 +62,6 @@ test('http flow persistence restores the confirmed flag and project resets clear
   assert.match(storeSource, /productInfoConfirmed: false/);
   assert.match(storeSource, /confirmProductInfo\(projectId = get\(\)\.projectId\)/);
   assert.match(appSource, /productInfoConfirmed \|\| isProductInfoConfirmed\(projectId\)/);
-  assert.match(appSource, /if \(!isProductInfoConfirmed\(projectId\)\) markProductInfoConfirmed\(projectId\)/);
+  assert.match(appSource, /setEntrySources\(\[\{[^]*id: 'flow'[^]*setEntryDecision\('ask'\)/);
   assert.match(appSource, /if \(!isMockMode && !session\) \{[^]*countAsUserEntry: false/);
 });

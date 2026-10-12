@@ -1,19 +1,20 @@
 """analysis 저장이 AI 파생 필드를 이월하는지 (codex 리뷰 2026-07-31 CRITICAL 반영).
 
-`save_analysis` 는 REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 프론트는
-`defaultAnalysisShape()` 기반 full payload 를 PATCH 하므로, shape 에 없는 서버 파생 키는
-셀러가 소재·핏을 **한 번만 수정해도** 사라진다. sourceMirrored 가 사라지면 거울 셀카의
-반전된 로고가 그대로 생성 컷에 남는다 — 조용한 회귀라 더 위험하다.
+`save_analysis` 는 최상위 키를 원자 병합한다. 누락된 서버 파생 키는 보존하고,
+해시로 봉인된 근거는 클라이언트가 보내도 바꾸지 않는다.
 
 프론트 shape 에도 필드를 넣었지만(shapes.js), 구버전 클라·부분 payload·직접 API 호출까지
 막으려면 서버가 최종 방어선이어야 한다.
 """
 import asyncio
+import contextlib
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app import repo, routes
 from conftest import auth_headers, patch_route_db
+from conftest import assert_query_binds
 
 
 class _Cur:
@@ -27,29 +28,80 @@ class _Cur:
         return False
 
     async def execute(self, sql, params=None):
+        assert_query_binds(sql, params)
         self.owner.calls.append((sql, params))
         self._sql = sql
 
     async def fetchone(self):
         if "insert into analyses" in self._sql:
-            _pid, payload, locked = self.owner.calls[-1][1]
-            self.owner.saved = payload.obj  # psycopg Json 래퍼
-            return {"project_id": "p1", "payload": payload.obj, "locked": locked}
+            _pid, payload, *options = self.owner.calls[-1][1]
+            previous = self.owner.stored or {}
+            if "jsonb_each(analyses.payload)" in self._sql:
+                assert "previous.key = any(%s::text[]) and not (excluded.payload ? previous.key)" in self._sql
+                self.owner.saved = {**payload.obj, **{k: v for k, v in previous.items()
+                                                     if k in options[0] and k not in payload.obj}}
+            else:
+                assert "analyses.payload || excluded.payload" in self._sql
+                self.owner.saved = {**previous, **payload.obj}
+                if options:
+                    assert "- %s::text[]" in self._sql
+                    for key in options[0]:
+                        self.owner.saved.pop(key, None)
+            self.owner.stored = self.owner.saved
+            return {"project_id": "p1", "payload": self.owner.saved, "locked": self.owner.locked}
         return {"payload": self.owner.stored} if self.owner.stored is not None else None
 
 
 class _Conn:
-    def __init__(self, stored=None):
+    def __init__(self, stored=None, locked=False):
         self.stored, self.calls, self.saved = stored, [], None
+        self.locked = locked
 
     def cursor(self):
         return _Cur(self)
 
+    async def commit(self):
+        pass
 
-def _save(stored, incoming):
+
+def _save(stored, incoming, **options):
     conn = _Conn(stored)
-    asyncio.run(repo.save_analysis(conn, "p1", incoming))
+    asyncio.run(repo.save_analysis(conn, "p1", incoming, **options))
     return conn.saved
+
+
+@pytest.mark.parametrize("merge", [False, True])
+@pytest.mark.parametrize("incoming", [None, {"version": 1, "kind": "none", "range": None}])
+def test_front_closure_is_immutable_for_client_merge_and_replacement(merge, incoming):
+    original = {"version": 1, "kind": "zipper", "range": "graded", "secondary": None,
+                "evidenceSlots": ["Front"], "note": None}
+    assert "frontClosure" not in _save(None, {"frontClosure": incoming}, merge=merge, delete_nulls=merge)
+    assert _save({"frontClosure": original}, {"frontClosure": incoming},
+                 merge=merge, delete_nulls=merge)["frontClosure"] == original
+    assert _save({"frontClosure": original}, {"fit": "regular"}, merge=merge)["frontClosure"] == original
+
+
+def test_signed_closure_and_evidence_are_saved_in_one_update_without_replacing_analysis():
+    closure = {"version": 1, "kind": "none", "range": None, "secondary": None,
+               "evidenceSlots": ["Front"], "note": None}
+    conn = _Conn({"fit": "regular", "frontClosure": closure})
+    contract = {"server": "verified evidence"}
+    asyncio.run(repo.save_confirmed_gpt_product_evidence(conn, "p1", contract, front_closure=closure))
+    assert len(conn.calls) == 1
+    sql, params = conn.calls[0]
+    assert "jsonb_set(jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true), '{frontClosure}', %s::jsonb, true)" in sql
+    assert params[0].obj == contract
+    assert params[1].obj == closure
+    assert params[2] == "p1"
+
+
+def test_old_signed_evidence_does_not_clear_existing_closure():
+    conn = _Conn({"frontClosure": {"kind": "none"}})
+    asyncio.run(repo.save_confirmed_gpt_product_evidence(conn, "p1", {"server": "legacy"}))
+    sql, params = conn.calls[0]
+    assert "{frontClosure}" not in sql
+    assert params[0].obj == {"server": "legacy"}
+    assert params[1] == "p1"
 
 
 def test_detail_recommendations_cannot_be_created_or_replaced_by_client():
@@ -68,12 +120,11 @@ def test_garment_color_evidence_is_server_owned_and_cannot_be_forged():
     assert _save({"garmentColorEvidence": original}, {"fit": "regular"})["garmentColorEvidence"] == original
 
 
-def test_carry_forward_locks_the_row_so_a_lazy_color_write_is_not_lost():
-    """지연 옷 색 측정이 동시에 쓰면, 잠그지 않은 읽기는 옛 값을 이월해 새 측정을 지운다."""
+def test_atomic_merge_preserves_lazy_color_without_a_stale_read():
     conn = _Conn({"garmentColorEvidence": {"version": 1, "measured": "lazy"}})
     asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
-    select_sql = next(sql for sql, _ in conn.calls if sql.lower().startswith("select"))
-    assert "for update" in select_sql.lower()
+    assert len(conn.calls) == 1
+    assert "analyses.payload || excluded.payload" in conn.calls[0][0]
     assert conn.saved["garmentColorEvidence"] == {"version": 1, "measured": "lazy"}
 
 
@@ -104,19 +155,107 @@ def test_no_carry_when_no_previous_analysis():
     assert "sourceMirrored" not in saved
 
 
-def test_immutable_contract_forces_previous_lookup_even_when_all_keys_are_supplied():
-    """클라가 전문을 보내도 해시 계약은 서버의 기존 값을 확인해야 한다."""
+def test_immutable_contract_is_filtered_even_when_all_keys_are_supplied():
     full = {k: None for k in repo._SERVER_OWNED_ANALYSIS_KEYS}
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", full))
-    assert any("select" in sql.lower() for sql, _ in conn.calls)
+    assert len(conn.calls) == 1
+    assert not set(repo._IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS) & conn.calls[0][1][1].obj.keys()
 
 
-def test_previous_lookup_happens_when_a_key_is_missing():
-    """반대 방향 — 키가 빠졌으면 반드시 이전 payload 를 읽어 이월해야 한다."""
+def test_missing_keys_are_preserved_without_a_previous_lookup():
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
-    assert any("select" in sql.lower() for sql, _ in conn.calls)
+    assert len(conn.calls) == 1
+    assert conn.saved == {"sourceMirrored": True, "fit": "regular"}
+
+
+def test_stale_writer_of_one_key_keeps_another_writers_change():
+    conn = _Conn({"fit": "slim", "brandUseCategory": "old"})
+    asyncio.run(repo.save_analysis(conn, "p1", {"brandUseCategory": "new"}))
+    asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
+    assert conn.saved == {"fit": "regular", "brandUseCategory": "new"}
+
+
+def test_arrays_and_fit_profile_are_replaced_whole_and_null_is_saved():
+    saved = _save({"matchClothing": [{"id": "old"}], "fitProfile": {"axes": {}, "matchingFit": {}},
+                   "brandUseCategory": "old"},
+                  {"matchClothing": [], "fitProfile": {"axes": {"fit": "regular"}},
+                   "brandUseCategory": None})
+    assert saved == {"matchClothing": [], "fitProfile": {"axes": {"fit": "regular"}},
+                     "brandUseCategory": None}
+
+
+@pytest.mark.parametrize("merge", [False, True])
+def test_locked_column_and_payload_cannot_be_changed_by_analysis_patch(merge):
+    conn = _Conn({"locked": True, "fit": "slim"}, locked=True)
+    row = asyncio.run(repo.save_analysis(conn, "p1", {"locked": False, "fit": "regular"},
+                                         merge=merge, delete_nulls=merge))
+    assert row["locked"] is True and row["payload"]["locked"] is True
+    assert "locked =" not in conn.calls[0][0]
+    assert "locked" not in _save(None, {"locked": True}, merge=merge, delete_nulls=merge)
+
+
+@pytest.mark.parametrize("merge", [False, True])
+@pytest.mark.parametrize("key", repo._IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
+@pytest.mark.parametrize("incoming", [None, {"forged": True}])
+def test_client_cannot_remove_or_replace_server_evidence_in_either_mode(merge, key, incoming):
+    original = {"server": True}
+    assert _save({key: original}, {key: incoming}, merge=merge, delete_nulls=merge)[key] == original
+    assert key not in _save(None, {key: incoming}, merge=merge, delete_nulls=merge)
+
+
+def test_legacy_replace_drops_omitted_user_keys_keeps_server_keys_and_stores_null():
+    original = {"obsolete": "remove", "fit": "slim", **{k: {"server": True} for k in repo._SERVER_OWNED_ANALYSIS_KEYS}}
+    saved = _save(original, {"fit": "regular", "brandUseCategory": None}, merge=False)
+    assert saved == {"fit": "regular", "brandUseCategory": None,
+                     **{k: {"server": True} for k in repo._SERVER_OWNED_ANALYSIS_KEYS}}
+    assert _save({"sourceMirrored": True}, {"sourceMirrored": False}, merge=False) == {"sourceMirrored": False}
+    assert _save({"sourceMirrored": True}, {"sourceMirrored": None}, merge=False) == {"sourceMirrored": None}
+
+
+def test_client_merge_null_deletes_only_top_level_keys_and_replaces_arrays_and_profile():
+    saved = _save({"fit": "slim", "brandUseCategory": "old", "measurementsUnknown": False,
+                   "matchClothing": [{"id": "old"}], "fitProfile": {"matchingFit": {}}},
+                  {"brandUseCategory": None, "measurementsUnknown": None, "matchClothing": [],
+                   "fitProfile": {"axes": {"fit": None}}}, merge=True, delete_nulls=True)
+    assert saved == {"fit": "slim", "matchClothing": [], "fitProfile": {"axes": {"fit": None}}}
+    assert _save({"fitProfile": {}}, {"fitProfile": None}, merge=True, delete_nulls=True) == {}
+    assert _save(None, {"brandUseCategory": None}, merge=True, delete_nulls=True) == {}
+
+
+@pytest.mark.parametrize("key", repo._SERVER_OWNED_ANALYSIS_KEYS)
+def test_client_merge_null_cannot_remove_server_owned_keys(key):
+    assert _save({key: {"server": True}}, {key: None}, merge=True, delete_nulls=True) == {key: {"server": True}}
+
+
+@pytest.mark.parametrize("query,keeps_other", [("", False), ("?merge=0", False), ("?merge=1", True)])
+def test_client_route_defaults_to_replace_and_requires_opt_in_to_merge(
+    client, make_token, monkeypatch, query, keeps_other,
+):
+    conn = _Conn({"fit": "slim", "other": "keep only in merge", "sourceMirrored": True})
+    @contextlib.asynccontextmanager
+    async def connection(_request):
+        yield conn
+    monkeypatch.setattr(routes, "get_conn", connection)
+    monkeypatch.setattr(repo, "get_project", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(repo, "get_product", AsyncMock(return_value={}))
+    response = client.patch(f"/v1/projects/p1/analysis{query}", headers=auth_headers(make_token),
+                            json={"fit": "tight", "brandUseCategory": None})
+    assert response.status_code == 200, response.text
+    expected = {"projectId": "p1", "fit": "slim", "sourceMirrored": True}
+    expected.update({"other": "keep only in merge"} if keeps_other else {"brandUseCategory": None})
+    assert response.json() == expected
+
+
+def test_merge_route_keeps_existing_validation_before_the_write(client, make_token, monkeypatch):
+    save = AsyncMock()
+    monkeypatch.setattr(repo, "save_analysis", save)
+    response = client.patch("/v1/projects/p1/analysis?merge=1", headers=auth_headers(make_token),
+                            json={"brandUseCategory": "invalid"})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_brand_use_category"
+    save.assert_not_awaited()
 
 
 def test_confirmed_gpt_product_evidence_is_carried_when_client_omits_it():

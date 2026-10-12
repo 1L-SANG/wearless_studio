@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { readFileSync } from 'node:fs';
+import * as smoothProgress from '../../src/lib/smoothProgress.js';
+const {
   EXPECTED_MS, PROGRESS_CEILING, advanceProgress, creepAge, creepTarget,
-  initialProgressState, nextDisplayProgress, steppedProgress,
-} from '../../src/lib/smoothProgress.js';
+  initialProgressState, nextDisplayProgress, analysisWaitProgress,
+} = smoothProgress;
 
 const DETAIL = EXPECTED_MS.detailPage;
 const FRAME = 16;
@@ -93,9 +95,9 @@ test('서버 보고가 하나도 없어도 계속 차오른다', () => {
 const valueAt = (samples, t) => samples.filter((s) => s.t <= t).pop().value;
 
 test('서버가 뒤늦게 앞서 보고해도 바가 멈추지 않는다 (앵커 이동)', () => {
-  // 150초간 조용하다 40% 가 도착 — 그 사이 기어온 표시값이 이미 40 을 넘겨 있다.
-  const { samples } = run({ ms: 260000, serverAt: (t) => (t < 150000 ? 0 : 40) });
-  const atReport = valueAt(samples, 150000);
+  // 230초간 조용하다 40% 가 도착. 완료 몫을 남긴 새 곡선도 이미 40을 넘는다.
+  const { samples } = run({ ms: 340000, serverAt: (t) => (t < 230000 ? 0 : 40) });
+  const atReport = valueAt(samples, 230000);
   assert.ok(atReport > 40, `전제 확인: 보고 시점 표시값이 서버값보다 앞서야 한다 (${atReport})`);
   assert.ok(longestStallMs(samples) <= MAX_STALL_MS,
     `뒤늦은 보고 뒤 ${longestStallMs(samples)}ms 붙박이 — 앵커 이동이 곡선을 끊었다`);
@@ -117,6 +119,100 @@ test('완료 전에는 100을 보여주지 않고, 완료 신호에만 100이 �
   assert.equal(finished.state.displayed, 100);
 });
 
+test('완료 마무리는 현재 표시값에서 출발해 700ms에 정확히 100으로 가속한다', () => {
+  const { state: waiting } = run({ ms: 10000, serverAt: () => 85 });
+  const start = advanceProgress(waiting, { serverProgress: 100, now: 10000, expectedMs: DETAIL, done: true });
+  assert.equal(start.displayed, waiting.displayed, '완료 첫 프레임에서 표시값이 튀면 안 된다');
+  let state = start;
+  let previousSpeed = 0;
+  let previousAge = 0;
+  for (const age of [...Array.from({ length: 43 }, (_, i) => (i + 1) * FRAME), 700]) {
+    const next = advanceProgress(state, { serverProgress: 100, now: 10000 + age, expectedMs: DETAIL, done: true });
+    const speed = (next.displayed - state.displayed) / (age - previousAge);
+    assert.ok(next.displayed >= state.displayed && next.displayed <= 100);
+    assert.ok(speed + 1e-9 >= previousSpeed, `${age}ms에서 감속`);
+    if (age < 700) assert.ok(next.displayed < 100);
+    previousSpeed = speed;
+    previousAge = age;
+    state = next;
+  }
+  const half = advanceProgress(start, { serverProgress: 100, now: 10350, expectedMs: DETAIL, done: true }).displayed;
+  assert.ok(100 - half > half - start.displayed, '뒤쪽 절반이 더 빨라야 한다');
+  assert.equal(state.displayed, 100);
+});
+
+test('완료 마무리는 직전 프레임 속도를 이어가고 음수 속도는 0으로 본다', () => {
+  for (const previous of [60, 60.32]) {
+    const prev = { ...initialProgressState(), base: 60, baseAt: 0, displayed: previous, at: 0 };
+    const waiting = advanceProgress(prev, { serverProgress: 60, now: FRAME, expectedMs: DETAIL });
+    const speed = Math.max(0, (waiting.displayed - previous) / FRAME);
+    const start = advanceProgress(waiting, { serverProgress: 100, now: 32, expectedMs: DETAIL, done: true });
+    const first = advanceProgress(start, { serverProgress: 100, now: 32.001, expectedMs: DETAIL, done: true });
+    assert.ok(Math.abs((first.displayed - start.displayed) / 0.001 - speed) < 0.001);
+    if (previous === 60.32) assert.equal(speed, 0);
+    else assert.ok(speed > 0);
+  }
+  const negative = { ...initialProgressState(), displayed: 60, at: 0, velocity: -1 };
+  const start = advanceProgress(negative, { serverProgress: 100, now: 0, expectedMs: DETAIL, done: true });
+  const first = advanceProgress(start, { serverProgress: 100, now: 1, expectedMs: DETAIL, done: true });
+  assert.ok(first.displayed >= 60 && first.displayed < 60.001);
+});
+
+test('완료 마무리는 불규칙한 프레임과 시각 0에서도 700ms에 정확히 닿고 넘치지 않는다', () => {
+  let state = advanceProgress({ ...initialProgressState(), displayed: 85 }, {
+    serverProgress: 100, now: 0, expectedMs: DETAIL, done: true,
+  });
+  assert.equal(state.displayed, 85);
+  for (const now of [16, 66, 266, 282, 332, 532, 548, 598, 700, 900]) {
+    const next = advanceProgress(state, { serverProgress: 100, now, expectedMs: DETAIL, done: true });
+    assert.ok(next.displayed >= state.displayed && next.displayed <= 100);
+    if (now >= 700) assert.equal(next.displayed, 100);
+    state = next;
+  }
+});
+
+test('이미 100인 완료 바는 그대로이고 출발 속도가 높아도 감속 없이 700ms 안에 마친다', () => {
+  const full = advanceProgress({ ...initialProgressState(), displayed: 100 }, {
+    serverProgress: 100, now: 0, expectedMs: DETAIL, done: true,
+  });
+  assert.equal(full.displayed, 100);
+  let state = advanceProgress({ ...initialProgressState(), displayed: 98, velocity: 0.02 }, {
+    serverProgress: 100, now: 0, expectedMs: DETAIL, done: true,
+  });
+  let previousSpeed = 0.02;
+  for (let now = 1; now <= 700; now++) {
+    const next = advanceProgress(state, { serverProgress: 100, now, expectedMs: DETAIL, done: true });
+    if (next.displayed < 100) {
+      const speed = next.displayed - state.displayed;
+      assert.ok(speed + 1e-9 >= previousSpeed);
+      previousSpeed = speed;
+    }
+    assert.ok(next.displayed >= state.displayed && next.displayed <= 100);
+    state = next;
+  }
+  assert.equal(state.displayed, 100);
+});
+
+test('서버가 85에서 예상시간의 3배를 기다려도 94.1 이하에서 계속 오른다', () => {
+  const { state, samples } = run({ ms: DETAIL * 3, serverAt: () => 85 });
+  assert.ok(state.displayed <= 94.1, `완료 몫을 침범했다: ${state.displayed}`);
+  assert.ok(state.displayed > 85);
+  assert.ok(longestStallMs(samples) <= MAX_STALL_MS);
+  assert.ok(samples.at(-1).value > samples.at(-2).value);
+});
+
+test('기어오름은 남은 거리의 65%만 쓰고 새 한계에서도 역함수 왕복이 맞는다', () => {
+  for (const [base, ceiling, limit] of [[0, 99, 64.35], [30, 99, 74.85], [85, 99, 94.1], [50, 90, 76]]) {
+    let previous = base;
+    for (const age of [0, 500, 5000, 50000, DETAIL, DETAIL * 3]) {
+      const value = creepTarget({ base, ageMs: age, expectedMs: DETAIL, ceiling });
+      assert.ok(value >= previous && value < limit);
+      assert.ok(Math.abs(creepAge({ base, value, expectedMs: DETAIL, ceiling }) - age) < 1e-6);
+      previous = value;
+    }
+  }
+});
+
 test('새로고침 복원 — startedAt 이 있으면 처음부터 다시 기지 않는다', () => {
   // 3분 전에 시작된 잡을 복원한 직후(서버 첫 응답 전)
   const restored = advanceProgress(initialProgressState(-180000), {
@@ -127,38 +223,23 @@ test('새로고침 복원 — startedAt 이 있으면 처음부터 다시 기지
   assert.ok(second.displayed > 0, '이미 3분 경과한 잡이면 0 에서 출발하지 않는다');
 });
 
-/* ── 단계형 진행 (분석 대기) ─────────────────────────────────────────────── */
+/* ── 분석 대기: 마운트부터 하나의 시간 모델 ─────────────────────────────── */
 
 const STEPS = 5;
-const STEP_MS = 800;   // AnalysisForm 과 같은 값
-
-/* 분석 화면 타임라인을 프레임 단위로 재현한다 — AnalysisProgress 의 단계 진행 규칙
-   (마지막 단계는 결과가 와야 넘어가고, 결과가 와도 모든 단계를 800ms로 유지) 그대로. */
-/* AnalysisProgress 의 규칙을 그대로 모사한다.
-   - 각 단계와 바는 같은 800ms 시계를 쓴다.
-   - 마지막 단계에서 결과를 기다릴 때만 시계를 멈추고, 결과가 오면 새로 시작한다. */
-const plannedFor = (index, done) => ((!done && index === STEPS - 1) ? null : STEP_MS);
+const STEP_MS = 2000;
 
 function runAnalysis({ ms, resultAtMs = Infinity }) {
-  let index = 0;
-  let stepKey = '';
-  let stepAt = 0;
-  let peak = 0;
+  let result = null;
   const samples = [];
   for (let t = 0; t <= ms; t += FRAME) {
-    const done = t >= resultAtMs;
-    for (;;) {
-      const planned = plannedFor(index, done);
-      const key = `${index}:${planned}`;
-      if (key !== stepKey) { stepKey = key; stepAt = t; }   // 타이머·칸 시계 동시 재장전
-      if (index < STEPS && planned !== null && t - stepAt >= planned) { index += 1; continue; }
-      break;
+    if (result === null && t >= resultAtMs) {
+      result = { at: resultAtMs, value: analysisWaitProgress({ elapsedMs: resultAtMs }) };
     }
-    peak = Math.max(peak, steppedProgress({
-      stepIndex: index, stepCount: STEPS, stepElapsedMs: t - stepAt,
-      plannedMs: plannedFor(index, done), waitExpectedMs: EXPECTED_MS.analysisWait,
-    }));
-    samples.push({ t, value: peak, index });
+    const value = analysisWaitProgress({
+      elapsedMs: t, resultAtMs: result?.at ?? null, resultValue: result?.value ?? 0,
+    });
+    samples.push({ t, value, index: Math.floor(value / (100 / STEPS)) });
+    if (value === 100) break;
   }
   return samples;
 }
@@ -167,93 +248,169 @@ const biggestFrameJump = (samples) => samples
   .slice(1)
   .reduce((worst, s, i) => Math.max(worst, s.value - samples[i].value), 0);
 
-test('단계마다 같은 몫(20%)을 차지한다', () => {
-  for (let i = 0; i < STEPS; i += 1) {
-    const startOfStep = steppedProgress({
-      stepIndex: i, stepCount: STEPS, stepElapsedMs: 0, plannedMs: STEP_MS,
-    });
-    assert.equal(startOfStep, i * 20, `${i}단계는 ${i * 20}% 에서 시작해야 한다`);
+test('분석 대기 0~8초는 모든 단계 안에서 10%/초이고 체크는 2초 간격이다', () => {
+  const samples = runAnalysis({ ms: 8000 });
+  assert.equal(samples[0].value, 0);
+  assert.equal(samples.at(-1).value, 80);
+  for (let step = 0; step < 4; step += 1) {
+    const inside = samples.filter(({ t }) => t > step * STEP_MS && t < (step + 1) * STEP_MS);
+    for (let i = 1; i < inside.length; i += 1) {
+      const speed = (inside[i].value - inside[i - 1].value) / FRAME * 1000;
+      assert.ok(Math.abs(speed - 10) <= 0.1, `${step}단계 속도 ${speed}%/초`);
+    }
+    const completed = samples.find(({ index }) => index >= step + 1);
+    assert.ok(Math.abs(completed.t - (step + 1) * STEP_MS) <= FRAME);
   }
 });
 
-test('한 단계 안에서는 선형으로 찬다 (뒤에서 빨라지지 않는다)', () => {
-  const at = (frac) => steppedProgress({
-    stepIndex: 1, stepCount: STEPS, stepElapsedMs: STEP_MS * frac, plannedMs: STEP_MS,
-  });
-  const quarter = at(0.25) - at(0);
-  const mid = at(0.75) - at(0.5);
-  assert.ok(Math.abs(quarter - mid) < 1e-9, `구간마다 이동량이 달라진다: ${quarter} vs ${mid}`);
-  assert.equal(at(1), 40, '단계가 끝나면 다음 칸 시작점과 정확히 만난다');
+test('80% 뒤 0.3초 평균 속도는 직전 속도의 85% 이상이다', () => {
+  const samples = runAnalysis({ ms: 8320 });
+  const before = samples.findLast(({ t }) => t <= 7700);
+  const boundary = samples.find(({ t }) => t === 8000);
+  const after = samples.findLast(({ t }) => t <= 8300);
+  const incoming = (boundary.value - before.value) / (boundary.t - before.t);
+  const outgoing = (after.value - boundary.value) / (after.t - boundary.t);
+  assert.ok(outgoing >= incoming * 0.85, `경계 속도 비율 ${outgoing / incoming}`);
 });
 
-test('칸 경계에서 튀지 않는다 (앞 칸 끝 = 다음 칸 시작)', () => {
-  for (let i = 0; i < STEPS - 1; i += 1) {
-    const end = steppedProgress({
-      stepIndex: i, stepCount: STEPS, stepElapsedMs: STEP_MS, plannedMs: STEP_MS,
-    });
-    const next = steppedProgress({
-      stepIndex: i + 1, stepCount: STEPS, stepElapsedMs: 0, plannedMs: STEP_MS,
-    });
-    assert.equal(end, next, `${i}→${i + 1} 경계가 어긋난다`);
-  }
-});
-
-test('단계가 넘어갈 때 따라잡기 점프가 없다 — 오너 피드백의 핵심', () => {
-  const biggestJump = biggestFrameJump(runAnalysis({ ms: 4000 }));
-  // 한 프레임(16ms)에 이동할 수 있는 최대치는 20% × 16/800 = 0.4%
-  assert.ok(biggestJump < 0.6, `프레임 하나에 ${biggestJump.toFixed(2)}% 점프 — 계단이 남아 있다`);
-});
-
-test('앞 4단계 속도가 전부 빠르고 같다 (0.8초 균등)', () => {
-  const samples = runAnalysis({ ms: 4000 });
-  const speedOver = (fromMs, toMs) => {
-    const a = samples.filter((s) => s.t <= fromMs).pop().value;
-    const b = samples.filter((s) => s.t <= toMs).pop().value;
-    return ((b - a) / (toMs - fromMs)) * 1000;   // %/초
-  };
-  // 경계 프레임의 양자화 오차를 피해 각 단계 안쪽만 잰다.
-  const speeds = [0, 1, 2, 3].map((i) => speedOver(i * STEP_MS + 80, i * STEP_MS + 720));
-  const fastest = Math.max(...speeds);
-  const slowest = Math.min(...speeds);
-  assert.ok(fastest - slowest < 0.1,
-    `단계별 속도가 갈린다: ${speeds.map((s) => s.toFixed(2)).join(' / ')} %/s`);
-  assert.ok(Math.abs(slowest - 25) < 0.1, `20% ÷ 0.8초 = 25%/s 여야 한다: ${slowest.toFixed(2)}`);
-});
-
-test('결과가 늦으면 마지막 칸 안에서 천천히 계속 기어간다', () => {
-  const samples = runAnalysis({ ms: 40000 });
-  const afterFourSteps = samples.filter((s) => s.t <= 3200).pop().value;
-  const laterInWait = samples.filter((s) => s.t <= 25000).pop().value;
-  // 16ms 프레임이 3200ms 에 정확히 떨어지지 않아 한 프레임분 못 미칠 수 있다.
-  assert.ok(afterFourSteps > 79.5, `4단계까지 끝나면 80% 언저리여야 한다: ${afterFourSteps}`);
-  assert.ok(laterInWait > afterFourSteps, '결과를 기다리는 동안 멈춰 있다');
-  assert.ok(laterInWait < PROGRESS_CEILING, '완료 전에 천장에 닿으면 안 된다');
-  assert.ok(longestStallMs(samples) <= MAX_STALL_MS, `${longestStallMs(samples)}ms 붙박이`);
-});
-
-test('전 단계 완료면 100%', () => {
-  assert.equal(steppedProgress({
-    stepIndex: STEPS, stepCount: STEPS, stepElapsedMs: 0, plannedMs: STEP_MS,
-  }), 100);
-});
-
-test('결과가 일찍 도착해도 끝에서 가속하거나 튀지 않는다', () => {
-  for (const resultAtMs of [500, 1500, 2800, 13000]) {
-    const samples = runAnalysis({ ms: 20000, resultAtMs });
-    const jump = biggestFrameJump(samples);
-    // 전체 구간의 한 프레임 최대치 = 20% × 16/800 = 0.4%
-    assert.ok(jump < 0.6,
-      `결과 ${resultAtMs / 1000}초 도착 시 한 프레임에 ${jump.toFixed(1)}%p 튄다`);
-    assert.equal(samples[samples.length - 1].value, 100, '훑기가 끝나면 100% 여야 한다');
-  }
-});
-
-test('결과가 일찍 와도 바는 후퇴하지 않는다', () => {
-  const samples = runAnalysis({ ms: 20000, resultAtMs: 3000 });
+test('25초까지 결과가 없어도 99% 미만에서 단조 증가하고 2초 창마다 움직인다', () => {
+  const samples = runAnalysis({ ms: 25000, resultAtMs: 25000 });
+  assert.ok(samples.every(({ value }) => value < PROGRESS_CEILING));
   for (let i = 1; i < samples.length; i += 1) {
-    assert.ok(samples[i].value >= samples[i - 1].value,
-      `${samples[i].t}ms 에서 ${samples[i - 1].value} → ${samples[i].value} 로 되돌아갔다`);
+    assert.ok(samples[i].value > samples[i - 1].value, `${samples[i].t}ms에서 정지 또는 후퇴`);
   }
+  for (const { t, value } of samples.filter(({ t }) => t >= 2000)) {
+    assert.ok(value > valueAt(samples, t - 2000), `${t}ms까지 2초간 제자리`);
+  }
+  assert.ok(longestStallMs(samples) <= MAX_STALL_MS);
+});
+
+for (const [resultAtMs, resultValue, v0, vf] of [
+  [3000, 30, 0.01, 0.025], [6000, 60, 0.01, 0.025],
+  [7900, 79, 0.01, 0.0175], [8000, 80, 0.01, 1 / 60],
+  [9000, 86.55172413793103, 0.004292508917954816, 0.01120689655172414],
+  [11000, 91.63265306122449, 0.0015035401915868389, 0.01],
+  [15000, 94.9438202247191, 0.0004557505365484156, 0.01],
+  [25000, 97.08994708994709, 0.0001010610005319, 0.01],
+]) {
+  test(`결과 ${resultAtMs}ms 도착: 같은 속도에서 0.5초간 자연스럽게 가속해 마무리한다`, () => {
+    assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: resultAtMs }) - resultValue) < 1e-9);
+    assert.equal(analysisWaitProgress({ elapsedMs: resultAtMs, resultAtMs, resultValue }), resultValue);
+    const finishAt = (ageMs) => analysisWaitProgress({
+      elapsedMs: resultAtMs + ageMs, resultAtMs, resultValue,
+    });
+    const incoming = (resultValue - analysisWaitProgress({ elapsedMs: resultAtMs - FRAME })) / FRAME * 1000;
+    const outgoing = (finishAt(FRAME) - resultValue) / FRAME * 1000;
+    assert.ok(Math.abs(outgoing - incoming) <= 0.6, `결과 순간 속도 차이 ${outgoing - incoming}%/초`);
+
+    let previousAge = 0;
+    let previousValue = resultValue;
+    let previousSpeed = outgoing;
+    for (const ageMs of [...Array.from({ length: 31 }, (_, i) => (i + 1) * FRAME), 500]) {
+      const value = finishAt(ageMs);
+      const speed = (value - previousValue) / (ageMs - previousAge) * 1000;
+      assert.ok(speed + 1e-9 >= previousSpeed, `${ageMs}ms 가속 중 속도 감소: ${previousSpeed}에서 ${speed}`);
+      previousAge = ageMs;
+      previousValue = value;
+      previousSpeed = speed;
+    }
+    // 적분한 거리도 확인해 출발 속도나 가속 모양이 달라지는 것을 잡는다.
+    assert.ok(Math.abs(finishAt(250) - (resultValue + v0 * 203.125 + vf * 46.875)) < 1e-9);
+    assert.ok(Math.abs(finishAt(500) - (resultValue + (v0 + vf) * 250)) < 1e-9);
+    const cruiseSpeed = (finishAt(500 + FRAME) - finishAt(500)) / FRAME * 1000;
+    assert.ok(Math.abs(cruiseSpeed - vf * 1000) <= 0.1, `가속 뒤 속도 ${cruiseSpeed}%/초`);
+
+    const deadline = resultAtMs + 500 + (100 - resultValue - (v0 + vf) * 250) / vf;
+    const samples = runAnalysis({ ms: deadline + FRAME, resultAtMs });
+    const completed = samples.at(-1);
+    assert.equal(completed.value, 100);
+    assert.ok(completed.t >= deadline - 1e-9 && completed.t <= deadline + FRAME);
+    assert.ok(biggestFrameJump(samples) < 0.6);
+    let maxFinishSpeed = 0;
+    for (let i = 1; i < samples.length; i += 1) {
+      const previous = samples[i - 1];
+      const current = samples[i];
+      const delta = current.value - previous.value;
+      assert.ok(delta >= 0, `${current.t}ms에서 후퇴`);
+      if (previous.t >= resultAtMs) {
+        const speed = delta / FRAME * 1000;
+        maxFinishSpeed = Math.max(maxFinishSpeed, speed);
+        assert.ok(speed <= 25 + 1e-9, `${current.t}ms에서 마무리 속도 초과`);
+        if (previous.t >= resultAtMs + 500 && current.value < 100) {
+          assert.ok(Math.abs(speed - vf * 1000) <= 0.1, `${current.t}ms에서 목표 속도와 다름: ${speed}`);
+        }
+      }
+      for (let step = 0; step < STEPS; step += 1) {
+        assert.equal(current.index > step, current.value >= (step + 1) * 20,
+          `${current.t}ms에서 ${step}단계 체크가 바와 어긋남`);
+      }
+      assert.equal(current.index === STEPS, current.value === 100);
+    }
+    assert.ok(longestStallMs(samples) <= MAX_STALL_MS);
+    if (resultAtMs === 9000 || resultAtMs === 11000) {
+      assert.ok(maxFinishSpeed <= 13 + 1e-9, `보통 마무리 속도 ${maxFinishSpeed}%/초`);
+    }
+  });
+}
+
+test('마무리는 기록된 표시값을 앵커로 쓰고 결과 시각 0도 처리한다', () => {
+  assert.equal(analysisWaitProgress({ elapsedMs: 11000, resultAtMs: 11000, resultValue: 90.5 }), 90.5);
+  assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: 11016, resultAtMs: 11000, resultValue: 90.5 })
+    - 90.52419362176694) < 1e-9);
+  assert.ok(Math.abs(analysisWaitProgress({ elapsedMs: 16, resultAtMs: 0, resultValue: 0 })
+    - 0.16024182784) < 1e-9);
+});
+
+const analysisSource = readFileSync(new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8');
+const progressSource = analysisSource.slice(analysisSource.indexOf('export function AnalysisProgress'),
+  analysisSource.indexOf('export function AnalysisSkeleton'));
+
+test('분석 컴포넌트는 마운트 시계와 최초 결과 앵커를 rAF에 넘기고 체크를 바에서 계산한다', () => {
+  assert.match(progressSource, /startedAtRef = useRef\(null\)/);
+  assert.match(progressSource, /startedAtRef\.current \?\?= performance\.now\(\)/);
+  assert.match(progressSource, /if \(!done \|\| resultRef\.current !== null\) return/);
+  assert.match(progressSource, /value: analysisWaitProgress\(\{ fastEntry: isAnalysisFastEntryEnabled\(\), elapsedMs \}\)/);
+  assert.match(progressSource, /elapsedMs: performance\.now\(\) - startedAtRef\.current/);
+  assert.match(progressSource, /resultAtMs: resultRef\.current\?\.at \?\? null/);
+  assert.match(progressSource, /resultValue: resultRef\.current\?\.value \?\? 0/);
+  assert.match(progressSource, /setBarPercent\(value\)/);
+  assert.match(progressSource, /cancelAnimationFrame\(raf\)/);
+  assert.match(progressSource, /doneCount = Math\.floor\(barPercent \/ \(100 \/ ANALYZE_STEPS\.length\)\)/);
+  assert.match(progressSource, /const t = setTimeout\(\(\) => setSlow\(true\), SLOW_NOTICE_MS\)/);
+  assert.match(progressSource, /if \(done\) \{ setSlow\(false\)/);
+});
+
+test('100%가 된 뒤 240ms 전환은 재실행해도 최신 콜백을 한 번만 호출한다', () => {
+  const body = progressSource.match(/useEffect\(\(\) => \{(\s*if \(barPercent < 100[\s\S]*?)\n  \}, \[barPercent\]\);/)?.[1];
+  assert.ok(body, '100% 완료 effect가 있어야 한다');
+  const finish = new Function('barPercent', 'finishedRef', 'onFinishedRef', 'setTimeout', 'clearTimeout', body);
+  const timers = new Map();
+  let timerId = 0;
+  const schedule = (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; };
+  const cancel = (id) => timers.delete(id);
+  const finishedRef = { current: false };
+  let oldCalls = 0, latestCalls = 0;
+  const onFinishedRef = { current: () => { oldCalls++; } };
+  const effect = (value) => finish(value, finishedRef, onFinishedRef, schedule, cancel);
+  effect(99);
+  assert.equal(timers.size, 0);
+  const cleanup = effect(100);
+  assert.equal(timers.size, 1);
+  assert.equal([...timers.values()][0].delay, 240);
+  assert.equal(oldCalls, 0);
+  cleanup();
+  assert.equal(timers.size, 0);
+  effect(100); // 개발 모드의 effect 정리 후 재실행
+  onFinishedRef.current = () => { latestCalls++; };
+  for (const { callback } of timers.values()) {
+    callback();
+    callback();
+  }
+  timers.clear();
+  effect(100);
+  assert.equal(timers.size, 0);
+  assert.equal(oldCalls, 0);
+  assert.equal(latestCalls, 1);
 });
 
 /* ── 숨김/재표시 (Codex 리뷰 2026-08-15 Major 1) ───────────────────────────
@@ -297,4 +454,12 @@ test('상태를 버리고 다시 시작하면(새 잡) 0 부터다', () => {
     serverProgress: 0, now: 20000, expectedMs: DETAIL,
   });
   assert.equal(fresh.displayed, 0, '새 잡은 0 에서 출발해야 한다');
+});
+
+
+test('빠른 분석 곡선은 5.6초에 80%를 지나고 6.7초와 긴 대기에서도 100%를 넘지 않는다', () => {
+  assert.equal(analysisWaitProgress({ elapsedMs: 5600, fastEntry: true }), 80);
+  assert.ok(analysisWaitProgress({ elapsedMs: 6700, fastEntry: true }) > 80);
+  assert.ok(analysisWaitProgress({ elapsedMs: 30000, fastEntry: true }) < 99);
+  assert.equal(analysisWaitProgress({ elapsedMs: 5600, fastEntry: false }), 56);
 });

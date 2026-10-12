@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from app import repo
 from app.agents import feature_copy as fc
 from conftest import make_settings
@@ -9,14 +11,64 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_feature_copy_uses_the_selected_fit_and_omits_photo_as_is_claims():
+    product = {"name": "티셔츠", "clothingType": "top"}
+    selected = {"fit": "slim", "fitProfile": {"axes": {"fit": "over"}}}
+    facts = fc._facts_block(product, selected)
+    assert '- fit: over' in facts
+    assert '- fit: slim' not in facts
+    assert '- fit:' not in fc._facts_block(product, {"fit": "slim", "fitProfile": None})
+
+
 def test_lookup_exact_alias():
-    assert fc.lookup("하이웨이스트") == "허리선이 높아 다리가 더 길어 보입니다."
+    assert fc.lookup("하이웨이스트") == "하이웨이스트 디테일을 확인할 수 있습니다."
 
 
 def test_lookup_substring_prefers_longer_alias():
     # '언밸런스 햄라인' 은 '햄라인' 도 포함하지만 더 긴 alias 가 이긴다
-    assert fc.lookup("언밸런스 햄라인") == "앞뒤 기장이 달라 옆에서 볼 때 리듬이 생깁니다."
-    assert fc.lookup("둥근 햄라인") == "밑단 곡선을 살려 하의 위에 자연스럽게 떨어집니다."
+    assert fc.lookup("언밸런스 햄라인") == "앞뒤 길이가 다른 밑단을 확인할 수 있습니다."
+    assert fc.lookup("둥근 햄라인") == "밑단 마감 디테일을 확인할 수 있습니다."
+
+
+@pytest.mark.parametrize(("point", "expected"), [
+    ("앞 지퍼 여밈", "지퍼 여밈 디테일을 확인할 수 있습니다."),
+    ("크롭 팬츠", "짧은 팬츠 기장을 확인할 수 있습니다."),
+    ("롤업 밑단", "접어 올린 밑단 마감을 확인할 수 있습니다."),
+    ("소매 밴딩", "밴딩으로 마감한 소맷단을 확인할 수 있습니다."),
+    ("밑단 밴딩", "밴딩으로 마감한 밑단을 확인할 수 있습니다."),
+    ("투버튼 카라", "두 단추가 더해진 카라를 확인할 수 있습니다."),
+    ("투웨이 지퍼", "양방향 지퍼 여밈을 확인할 수 있습니다."),
+    ("후드 스트링", "후드의 스트링 디테일을 확인할 수 있습니다."),
+    ("와이드 밑단", "여유 있게 넓은 밑단을 확인할 수 있습니다."),
+    ("소매 단추", "소매의 단추 디테일을 확인할 수 있습니다."),
+    ("옆선 이중 스티치", "옆선의 이중 스티치를 확인할 수 있습니다."),
+])
+def test_lookup_regression_does_not_misdescribe_specific_details(point, expected):
+    assert fc.lookup(point) == expected
+
+
+@pytest.mark.parametrize(("point", "expected"), [
+    ("옆 포켓", "옆 포켓 디테일을 확인할 수 있습니다."),
+    ("스트랩", "스트랩 디테일을 확인할 수 있습니다."),
+    ("단추", "단추 디테일을 확인할 수 있습니다."),
+    ("와펜", "와펜 디테일을 확인할 수 있습니다."),
+    ("밴딩", "밴딩 마감을 확인할 수 있습니다."),
+    ("롤업", "접어 올린 마감을 확인할 수 있습니다."),
+    ("스티치", "스티치 마감을 확인할 수 있습니다."),
+    ("앞주머니", "앞쪽 포켓 디테일을 확인할 수 있습니다."),
+])
+def test_lookup_generic_aliases_do_not_invent_narrower_details(point, expected):
+    assert fc.lookup(point) == expected
+
+
+@pytest.mark.parametrize(("point", "expected"), [
+    ("길이 조절 스트랩 디테일", "길이를 조절하는 스트랩을 확인할 수 있습니다."),
+    ("롤업 소매 디테일", "접어 올린 소매 마감을 확인할 수 있습니다."),
+    ("배색 스티치 마감", "배색 스티치 마감을 확인할 수 있습니다."),
+    ("소매 단추 디테일", "소매의 단추 디테일을 확인할 수 있습니다."),
+])
+def test_lookup_extended_specific_alias_ignores_nested_generic_alias(point, expected):
+    assert fc.lookup(point) == expected
 
 
 def test_lookup_rejects_negated_phrases():
@@ -35,10 +87,10 @@ def test_lookup_does_not_match_the_colour_homograph():
 
 def test_negation_guard_does_not_over_fire():
     # '안감' 의 '안' 은 부정어가 아니고, 부정어가 없는 부분일치는 그대로 살아 있어야 한다
-    assert fc.lookup("안감 마감") == "안감을 덧대 겉감의 라인이 곱게 잡힙니다."
-    assert fc.lookup("사이드 트임") == "옆선에 트임이 있어 걸을 때 다리가 편하게 움직입니다."
-    assert fc.lookup("부드러운 안감 처리") == "안감을 덧대 겉감의 라인이 곱게 잡힙니다."
-    assert fc.lookup("옆선 트임 디테일") == "옆선에 트임이 있어 걸을 때 다리가 편하게 움직입니다."
+    assert fc.lookup("안감 마감") == "안감을 덧댄 마감을 확인할 수 있습니다."
+    assert fc.lookup("사이드 트임") == "옆선의 트임 디테일을 확인할 수 있습니다."
+    assert fc.lookup("부드러운 안감 처리") == "안감을 덧댄 마감을 확인할 수 있습니다."
+    assert fc.lookup("옆선 트임 디테일") == "옆선의 트임 디테일을 확인할 수 있습니다."
 
 
 def test_lookup_is_case_and_space_insensitive():
@@ -49,6 +101,10 @@ def test_lookup_misses_return_none():
     assert fc.lookup("전에 없던 표현") is None
     assert fc.lookup("") is None
     assert fc.lookup(None) is None
+
+
+def test_lookup_does_not_guess_when_partial_match_names_multiple_details():
+    assert fc.lookup("지퍼와 카고 포켓을 더한 디자인") is None
 
 
 def test_dictionary_entries_are_well_formed():
@@ -104,7 +160,7 @@ def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
     assert "빈티지한 워싱감" in highlights
     assert "하이웨이스트" not in highlights
     assert out == [
-        {"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."},
+        {"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."},
         {"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."},
     ]
 
@@ -132,6 +188,18 @@ def test_validate_drops_unverified_functional_claims():
     assert fc.validate({"items": [{"point": "메쉬 소재", "desc": "땀을 잘 흡수합니다."}]}, ["메쉬 소재"]) == {}
 
 
+@pytest.mark.parametrize("desc", [
+    "바람을 막아 주는 방풍 기능입니다.",
+    "UV 차단 기능이 있습니다.",
+    "보풀이 생기지 않습니다.",
+    "체형 교정에 도움을 줍니다.",
+    "유일한 1위 디자인입니다.",
+    "100% 만족할 디테일입니다.",
+])
+def test_validate_drops_all_page_copy_banned_claims(desc):
+    assert fc.validate({"items": [{"point": "테스트", "desc": desc}]}, ["테스트"]) == {}
+
+
 def test_validate_drops_hype_and_overlong_desc():
     raw = {"items": [
         {"point": "a", "desc": "완벽한 마감입니다."},
@@ -151,7 +219,7 @@ def test_generate_uses_dictionary_without_calling_the_model(monkeypatch):
 
     monkeypatch.setattr(fc, "complete_json", spy)
     out = run(fc.generate(make_settings(), ["하이웨이스트"], {}, {}))
-    assert out == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+    assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
     assert called == [], "사전 히트만 있으면 LLM 을 부르지 않는다"
 
 
@@ -161,20 +229,20 @@ def test_generate_survives_model_failure(monkeypatch):
 
     monkeypatch.setattr(fc, "complete_json", boom)
     out = run(fc.generate(make_settings(), ["하이웨이스트", "설명 못 만들 표현"], {}, {}))
-    assert out == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+    assert out == [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
 
 
-def test_feature_copy_is_carried_across_analysis_replaces():
-    # save_analysis 는 REPLACE 라, 셀러 클라가 안 보낸 서버 소유 키는 이월돼야 한다
+def test_feature_copy_is_preserved_across_analysis_merges():
+    # 부분 병합에서 셀러 클라이언트가 생략한 생성 카피도 보존한다.
     assert "featureCopy" in repo._SERVER_OWNED_ANALYSIS_KEYS
 
 
 def test_merge_stored_lets_fresh_copy_win_for_the_same_point():
     stored = [{"point": "하이웨이스트", "desc": "옛 문구입니다."},
               {"point": "카고 포켓", "desc": "측면 카고 포켓이 밋밋함을 덜어냅니다."}]
-    fresh = [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+    fresh = [{"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."}]
     assert fc.merge_stored(stored, fresh) == [
-        {"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."},
+        {"point": "하이웨이스트", "desc": "하이웨이스트 디테일을 확인할 수 있습니다."},
         {"point": "카고 포켓", "desc": "측면 카고 포켓이 밋밋함을 덜어냅니다."},
     ]
 

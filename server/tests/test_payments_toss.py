@@ -5,6 +5,7 @@
 키가 없으면 조용히 목 성공을 주지 않는다. DB·네트워크 없이 검증한다."""
 
 import contextlib
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -28,13 +29,14 @@ class _Cur:
     async def execute(self, sql, params=None):
         q = " ".join(sql.split())
         if "from pricing_plans" in q:
-            self._row = dict(PLAN) if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+            self._row = {**PLAN, "credits": self.s["sku_credits"]} if params[0] == PLAN["code"] and self.s["plan_ok"] else None
+        elif q.startswith("select plan from profiles"):
+            self.s["profile_reads"] += 1
+            self._row = {"plan": self.s["profile_plan"]}
         elif "insert into toss_payment_orders" in q:
-            order_id, user_id, plan_code, amount, credits = params
-            self.s["orders"][order_id] = {
-                "order_id": order_id, "user_id": user_id, "plan_code": plan_code,
-                "amount": amount, "credits": credits, "status": "pending", "payment_key": None,
-            }
+            columns = [col.strip() for col in q.split("(", 1)[1].split(")", 1)[0].split(",")]
+            self.s["orders"][params[0]] = {
+                **dict(zip(columns, params)), "status": "pending", "payment_key": None}
             self._row = None
         elif "from toss_payment_orders" in q:
             self._row = self.s["orders"].get(params[0])
@@ -75,6 +77,7 @@ def pay(monkeypatch, keypair):
     """결제 라우터 + 스텁 DB/토스/적립. state 로 호출 흔적을 관찰한다."""
     private_key, public_key = keypair
     state = {"orders": {}, "plan_ok": True, "commits": 0,
+             "profile_plan": "free", "profile_reads": 0, "sku_credits": PLAN["credits"],
              "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000,
              # 실제 승인 함수 — 에러 처리(타임아웃→재시도 유지)를 검증할 때 되살려 쓴다
              "real_confirm": payments._confirm_with_toss}
@@ -97,7 +100,7 @@ def pay(monkeypatch, keypair):
         for g in state["grants"]:      # 원장 멱등 — 같은 키면 재적립 없이 기존 결과
             if g["idempotency_key"] == idempotency_key:
                 return {**g["result"], "idempotent": True}
-        credits = (snapshot or {}).get("credits", PLAN["credits"])
+        credits = (snapshot or {}).get("credits", PLAN["credits"]) + (snapshot or {}).get("bonusCredits", 0)
         state["balance"] += credits
         result = {"credits": credits, "available": state["balance"]}
         state["grants"].append({"idempotency_key": idempotency_key, "provider": provider,
@@ -139,6 +142,34 @@ def test_checkout_snapshots_server_side_price(pay, make_token):
     # 금액의 정본은 서버가 저장한 이 값 — 승인 때 이것과만 대조한다
     assert (order["amount"], order["status"]) == (PLAN["price"], "pending")
     assert 6 <= len(body["orderId"]) <= 64          # 토스 orderId 계약
+
+
+@pytest.mark.parametrize("profile_plan,base,bonus,percent,total", [
+    ("seller", 100, 5, 5, 105), ("pro", 500, 50, 10, 550),
+    ("starter", 100, 0, 0, 100), ("free", 100, 0, 0, 100),
+    ("unknown", 100, 0, 0, 100),
+])
+def test_checkout_stores_plan_bonus_snapshot(pay, make_token, profile_plan, base, bonus, percent, total):
+    client, state = pay
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
+    state.update(profile_plan=profile_plan, sku_credits=base)
+    checkout = _checkout(client, make_token)
+    assert (checkout["credits"], checkout["bonusCredits"], checkout["totalCredits"]) == (base, bonus, total)
+    order = state["orders"][checkout["orderId"]]
+    assert (order["bonus_credits"], order["bonus_percent"], order["plan_at_order"]) == (
+        bonus, percent, profile_plan if profile_plan != "unknown" else "free")
+
+
+@pytest.mark.parametrize("profile_plan", ["seller", "pro"])
+def test_checkout_defaults_to_zero_bonus_during_rollout(pay, make_token, profile_plan):
+    client, state = pay
+    state.update(profile_plan=profile_plan, sku_credits=500)
+    checkout = _checkout(client, make_token)
+
+    assert (checkout["credits"], checkout["bonusCredits"], checkout["totalCredits"]) == (500, 0, 500)
+    order = state["orders"][checkout["orderId"]]
+    assert order["bonus_credits"] == order["bonus_percent"] == 0
+    assert order["plan_at_order"] == profile_plan
 
 
 def test_checkout_unknown_plan_is_404(pay, make_token):
@@ -274,7 +305,50 @@ def test_confirm_grants_using_order_snapshot_not_current_catalog(pay, make_token
                 json={"paymentKey": "pk_1", "orderId": order["orderId"],
                       "amount": order["amount"]})
     snap = state["grants"][0]["snapshot"]
-    assert snap == {"credits": order["credits"], "price": order["amount"]}
+    assert snap == {"credits": order["credits"], "price": order["amount"],
+                    "bonusCredits": 0, "bonusPercent": 0, "planAtOrder": "free"}
+
+
+def test_confirm_preserves_pro_bonus_after_downgrade_once(pay, make_token):
+    client, state = pay
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
+    state.update(profile_plan="pro", sku_credits=500)
+    order = _checkout(client, make_token)
+    reads_at_checkout = state["profile_reads"]
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=False)
+    state.update(profile_plan="starter", sku_credits=1, plan_ok=False)
+    payload = {"paymentKey": "pk_1", "orderId": order["orderId"], "amount": order["amount"]}
+    first = client.post("/v1/payments/toss/confirm", headers=_auth(make_token), json=payload)
+    second = client.post("/v1/payments/toss/confirm", headers=_auth(make_token), json=payload)
+    assert first.status_code == second.status_code == 200
+    assert first.json()["credits"] == second.json()["credits"] == 550
+    for response in (first, second):
+        assert response.json()["baseCredits"] == 500
+        assert response.json()["bonusCredits"] == 50
+        assert response.json()["totalCredits"] == 550
+    assert first.json()["available"] == second.json()["available"] == 1550
+    assert state["grants"][0]["snapshot"] == {
+        "credits": 500, "price": 19900, "bonusCredits": 50, "bonusPercent": 10, "planAtOrder": "pro"}
+    assert state["profile_reads"] == reads_at_checkout
+    assert len(state["grants"]) == len(state["toss_calls"]) == 1
+    assert second.json()["idempotent"] is True
+
+
+def test_legacy_confirmation_has_zero_bonus_snapshot(pay, make_token):
+    client, state = pay
+    order = _checkout(client, make_token)
+    for key in ("bonus_credits", "bonus_percent", "plan_at_order"):
+        state["orders"][order["orderId"]].pop(key, None)
+    client.app.state.settings = replace(client.app.state.settings, topup_bonus_enabled=True)
+    state["profile_plan"] = "pro"
+    result = client.post("/v1/payments/toss/confirm", headers=_auth(make_token), json={
+        "paymentKey": "pk_1", "orderId": order["orderId"], "amount": order["amount"]})
+    assert result.status_code == 200, result.text
+    assert result.json()["credits"] == 200
+    assert result.json()["bonusCredits"] == 0
+    assert result.json()["totalCredits"] == 200
+    assert state["grants"][0]["snapshot"] == {
+        "credits": 200, "price": 19900, "bonusCredits": 0, "bonusPercent": 0, "planAtOrder": None}
 
 
 def test_transport_failure_keeps_order_retryable(monkeypatch, pay, make_token):

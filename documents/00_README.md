@@ -9,6 +9,7 @@ Wearless는 패션 셀러가 상품 사진으로 상세페이지를 만들고 �
 | [PRD.md](PRD.md) | 화면·생성 흐름·정책·제품 요구사항 |
 | [common_data_contract.md](common_data_contract.md) | 엔티티·enum·API·크레딧·멱등 계약 |
 | [CONTEXT.md](../CONTEXT.md) | 도메인 용어집 |
+| [DESIGN.md](../DESIGN.md) | 셀러 디자인·모바일 입력 정책·AI 캡션과 수동 텍스트 기준 |
 | [현재 ADR](../docs/adr/) | 기능별 결정과 이유. 대체된 결정 대신 현행 본문을 적용 |
 | [frontend_state_model.md](frontend_state_model.md) | 서버 상태·전역 선택값·화면 로컬 상태의 소유권 |
 | [backend_integration_plan.md](backend_integration_plan.md) | 저장·API·작업 실행·크레딧 트랜잭션의 경계 |
@@ -26,6 +27,7 @@ Wearless는 패션 셀러가 상품 사진으로 상세페이지를 만들고 �
 - 제품·기획: PRD, CONTEXT, 해당 기능의 현행 ADR.
 - 프론트: 공통 데이터 계약, 프론트 상태 모델, 해당 PRD 화면. 실제 API 경계는 `src/lib/api/`다.
 - 백엔드: 공통 데이터 계약, 저장·API·작업 실행 계약, AI 파이프라인. 실제 검증은 `server/app/schemas.py`와 해당 라우트·워커를 확인한다.
+- 디자인: DESIGN, PRD §14, `src/styles/tokens.css`와 실제 앱 화면.
 - 콘티·생성예시: PRD §8, ADR-0004~0011, 생성예시·촬영 세트 릴리스 계약. 디테일은 ADR-0012·0014, 호리존 배경 맞춤은 ADR-0013도 읽는다.
 - 에디터 텍스트: PRD §10.11, editor_text_presets.md, 현재 프리셋과 조립 코드.
 

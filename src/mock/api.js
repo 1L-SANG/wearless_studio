@@ -1,3 +1,5 @@
+import { inheritSimilarCutRecipes } from '@/lib/storyboardSimilarCuts.js';
+import { acceptMockClientEvent } from './clientEvents.js';
 /* =============================================================
    mock/api.js — the ONLY data access screens are allowed to use.
    Signatures/shapes follow documents/common_data_contract.md §6.
@@ -12,7 +14,8 @@
    를 반환한다. credits = 차감 후 잔액 — 화면은 store.syncCredits 로
    반영한다. 차감은 여기(서버 역할)가 책임지고, 프론트 선차감 금지.
    ============================================================= */
-import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
+import { expectedMannequinQuote } from '@/features/mannequin/quoteConfirmation.js';
+import { DB, reseedDraft, buildDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
 import {
   rememberCustomMatchDraft,
   clearCustomMatchDraft as forgetCustomMatchDraft,
@@ -29,11 +32,13 @@ import {
 import {
   CREDIT_COSTS,
   LIMITS,
+  TOPUP_BONUS_PERCENT,
   detailPageCreditCost,
   extensionModelFee,
   mannequinGenerationTotal,
   mannequinRegenerationQuote,
   normalizePlanTier,
+  topupBonusCredits,
 } from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
@@ -41,10 +46,12 @@ import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { mergeAnalysisPatch } from '@/lib/analysisPatch.js';
 import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { applySeededHookStyle } from '@/lib/api/shapes.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
+import { isSupportedCutType } from '@/lib/storyboardTaxonomy.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -56,6 +63,13 @@ const LATENCY_SCALE = Number(globalThis.process?.env?.MOCK_API_LATENCY_SCALE ?? 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms * LATENCY_SCALE));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+const unsupportedCutError = () => Object.assign(new Error('지원하지 않는 컷 종류예요. 새 이미지를 선택해 주세요.'), {
+  status: 400, code: 'unknown_cut_type', requestNotSent: true,
+});
+const assertSupportedStoryboardCuts = () => {
+  if (DB.storyboard.some((block) => block.source === 'ai' && block.cutType != null
+    && !isSupportedCutType(block.cutType))) throw unsupportedCutError();
+};
 const jobCancelledError = () => {
   const error = new Error('마네킹컷 생성이 취소됐어요.');
   error.code = 'job_cancelled';
@@ -70,8 +84,9 @@ const settleMockMannequinCharge = (job) => {
 };
 // 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
 let ewSim = null;
+const detailJobs = new Map();
 const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
-const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => patch[key] != null);
 const mockSwatchSuggestions = (product) => {
   const palette = ['black', 'ivory', 'blue'];
   const labels = Object.fromEntries((DB.catalogs.swatchColors || []).map((swatch) => [swatch.id, swatch.label]));
@@ -87,6 +102,10 @@ const mockSwatchSuggestions = (product) => {
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
 const mockBankTransfer = { requests: [] };
+const mockSellerConsents = new Map();
+const mockCreditHistory = [];
+const mockCreditSources = [];
+const mockConsentRequired = { terms: 'v1.0', privacy: 'v1.0' };
 const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
 const saveMockCheckout = (order) => {
   try { sessionStorage.setItem(MOCK_CHECKOUT_KEY, JSON.stringify(order)); } catch { /* same-page Map fallback */ }
@@ -98,28 +117,55 @@ const loadMockCheckout = (orderId) => {
     return order?.orderId === orderId ? order : null;
   } catch { return null; }
 };
-const clearMockCheckout = () => {
-  try { sessionStorage.removeItem(MOCK_CHECKOUT_KEY); } catch { /* noop */ }
-};
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
+// 데모도 프로젝트별 작업을 보관해 카드 전환 뒤 원래 작업을 다시 열 수 있다.
+const projectDrafts = new Map();
+const draftKeys = Object.keys(buildDraft());
+const rememberProject = () => projectDrafts.set(DB.project.id,
+  Object.fromEntries(draftKeys.map((key) => [key, DB[key]])));
+for (const [index, step] of ['storyboard', 'mannequin', 'generating', 'failed'].entries()) {
+  const draft = buildDraft();
+  const id = `in-progress-${step}`;
+  draft.project = { ...draft.project, id, title: ['골지 니트 구성', '셔츠 마네킹 확인', '코트 상세페이지', '원피스 다시 만들기'][index],
+    composeMode: index % 2 ? 'extended' : 'basic', copywriting: index !== 1,
+    updatedAt: new Date(Date.now() - (index + 1) * 3600000).toISOString() };
+  draft.editorBlocks = [];
+  if (step !== 'storyboard') {
+    draft.mannequins = [makeMannequinCut(0, draft.analysis.fitProfile)];
+    draft.project.selectedMannequinId = draft.mannequins[0].id;
+    draft.project.latestJobs.mannequin = { id: `${id}-mannequin`, status: 'done', errorCode: null };
+  }
+  if (step === 'generating' || step === 'failed') {
+    draft.project.latestJobs.detailPage = { id: `${id}-detail`, status: step === 'generating' ? 'running' : 'error', errorCode: null };
+  }
+  projectDrafts.set(id, draft);
+}
+for (const row of DB.library) {
+  const draft = buildDraft();
+  draft.project = { ...draft.project, id: row.id, title: row.title, status: 'done' };
+  projectDrafts.set(row.id, draft);
+}
 const syncSelectedCut = (cutId) => {
   const selected = DB.mannequins.find((m) => m.id === cutId) || DB.mannequins[0] || null;
   DB.project.selectedMannequinId = selected?.id || null;
   DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: !!selected && m.id === selected.id }));
   return selected;
 };
-const makeMannequinCut = (version) => ({
+function makeMannequinCut(version, fitProfile) { return {
   id: uid('mq'),
   version,
   imageUrl: Placeholder.photo(`mq${version}_${Date.now()}`, 'mannequin'),
   isSelected: true,
+  fitProfile: fitProfile ? clone(fitProfile) : null,
+  fitProfileRecorded: true,
   createdAt: new Date().toISOString(),
-});
+}; }
 
 /* 진행 중인 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
    1회만 차감되게 한다. 실서버의 job 레코드 dedup 에 대응 (계약 §6). */
 const inflight = { analyze: null, mannequins: null, detailPage: null };
+const mannequinJobs = new Map();
 function joinable(slot, start) {
   if (!inflight[slot]) {
     const listeners = [];
@@ -164,11 +210,22 @@ function runJob({ duration = 2600, onProgress, result, stall = false, cancellabl
   });
 }
 
+function checkMannequinQuote(expected, cost) {
+  const quote = expectedMannequinQuote(cost);
+  if (expected && (expected.free !== quote.free || expected.credits !== quote.credits)) {
+    throw Object.assign(new Error('마네킹 생성 견적이 바뀌었어요. 현재 견적을 확인해 주세요.'), {
+      status: 409, code: 'quote_changed', meta: { quote },
+    });
+  }
+}
+
 export const api = {
+  reportClientEvent: acceptMockClientEvent,
   /* ---- project (계약 §2, ADR-0001) ---- */
   // 새 제작 시작 — draft 전체를 재시드해 이전 세션의 변형이 새 생성에 새지 않게 한다.
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.
   async createProject() {
+    rememberProject();
     reseedDraft();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
@@ -178,7 +235,16 @@ export const api = {
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(20);
   },
-  async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
+  async getProject(projectId) {
+    await wait(60);
+    if (projectId && projectId !== DB.project.id) {
+      const draft = projectDrafts.get(projectId);
+      if (!draft) throw Object.assign(new Error('상품을 찾지 못했어요.'), { status: 404 });
+      rememberProject();
+      Object.assign(DB, draft);
+    }
+    return clone(DB.project);
+  },
   async patchProject(_projectId, patch) {
     await wait(60);
     if ('composeMode' in patch && !['basic', 'extended'].includes(patch.composeMode)) {
@@ -195,6 +261,8 @@ export const api = {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
+        subCategory: DB.analysis.subCategory,
+        customCategory: DB.analysis.customCategory,
         matchClothing: DB.analysis.matchClothing,
         detailRecommendations: DB.analysis.detailRecommendations,
         sellingPoints: DB.analysis.sellingPoints,
@@ -208,6 +276,42 @@ export const api = {
   /* ---- reference / catalogs ---- */
   async getAccount() { await wait(120); return clone(DB.account); },
   async getCatalogs() { await wait(80); return clone(DB.catalogs); },
+  async getSellerConsent({ expectedUserId } = {}) {
+    await wait(40);
+    const accepted = mockSellerConsents.get(expectedUserId || 'mock-user') || null;
+    return { required: clone(mockConsentRequired), accepted: clone(accepted), needsConsent: !accepted, signupCredits: 0 };
+  },
+  async acceptSellerConsent({ termsVersion, privacyVersion, expectedUserId }) {
+    await wait(60);
+    if (termsVersion !== mockConsentRequired.terms || privacyVersion !== mockConsentRequired.privacy) {
+      const error = new Error('약관이 갱신됐어요.');
+      error.status = 409;
+      throw error;
+    }
+    const userId = expectedUserId || 'mock-user';
+    let signupCredits = 0;
+    if (!mockSellerConsents.has(userId)) {
+      mockSellerConsents.set(userId, { termsVersion, privacyVersion, ageAttested: true, acceptedAt: new Date().toISOString() });
+      signupCredits = Math.max(0, Math.floor(Number(DB.config.signupCredits) || 0));
+      if (signupCredits > 0) {
+        DB.account.credits += signupCredits;
+        const createdAt = new Date().toISOString();
+        const creditSourceId = uid('source');
+        mockCreditHistory.unshift({
+          id: uid('ledger'), actionKey: 'grant_signup', delta: signupCredits,
+          idempotencyKey: `signup:${userId}`, projectId: null, jobId: null,
+          balanceAfter: DB.account.credits, availableAfter: DB.account.credits, createdAt,
+          creditSourceId, metadata: { reason: 'signup' },
+        });
+        mockCreditSources.unshift({
+          id: creditSourceId, sourceType: 'free', status: 'active', initialCredits: signupCredits,
+          remainingCredits: signupCredits, periodEnd: null, planId: null, createdAt,
+          paymentId: null, metadata: { reason: 'signup' },
+        });
+      }
+    }
+    return { ...(await api.getSellerConsent({ expectedUserId: userId })), signupCredits };
+  },
 
   /* ---- credits (표시 전용; 실서버는 httpAdapter. 계약 §6) ---- */
   async getCreditQuote(_projectId, { selectedModelId } = {}) {
@@ -227,6 +331,8 @@ export const api = {
       mannequinRegenerate: mannequinRegenerationQuote(plan, DB.mannequins.length),
       storyboardPerCut: CREDIT_COSTS.storyboardPerCut,
       editorImage: CREDIT_COSTS.editorImage,
+      editorEdit: CREDIT_COSTS.editorEdit,
+      editorSimilar: CREDIT_COSTS.editorSimilar,
     };
   },
   async getPricingPlans() {
@@ -244,6 +350,7 @@ export const api = {
     const now = Date.now();
     // 정합 시나리오: 600 지급 후 마네킹 생성 2회(각 -45), 잔액 510 (account.credits 와 일치)
     return [
+      ...clone(mockCreditHistory),
       { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 510, availableAfter: 510, createdAt: new Date(now - 32e5).toISOString() },
       { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 555, availableAfter: 555, createdAt: new Date(now - 36e5).toISOString() },
       { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 600, balanceAfter: 600, availableAfter: 600, createdAt: new Date(now - 40e5).toISOString() },
@@ -252,6 +359,7 @@ export const api = {
   async getCreditSources() {
     await wait(100);
     return [
+      ...clone(mockCreditSources),
       { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 600, remainingCredits: 510, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-starter', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
@@ -259,10 +367,16 @@ export const api = {
     const plan = (await api.getPricingPlans()).find((p) => p.kind === 'topup' && p.code === planCode);
     if (!plan) throw new Error('존재하지 않는 충전 상품이에요.');
     const orderId = uid('order');
+    const planAtOrder = normalizePlanTier(DB.account.plan);
+    const topupBonusEnabled = DB.account.topupBonusEnabled === true;
+    const bonusCredits = topupBonusEnabled ? topupBonusCredits(planAtOrder, plan.credits) : 0;
     const order = {
       orderId,
       amount: plan.price,
       credits: plan.credits,
+      bonusCredits,
+      totalCredits: plan.credits + bonusCredits,
+      planAtOrder, bonusPercent: topupBonusEnabled ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
       orderName: `크레딧 ${plan.credits}`,
       customerKey: 'mock-customer',
     };
@@ -270,7 +384,7 @@ export const api = {
     saveMockCheckout(order);
     return clone(order);
   },
-  // ---- 계좌이체(무통장입금) 신청 — 메모리 저장. 관리자 확인은 실서버에서만 한다. ----
+  // ---- 계좌이체(무통장입금) 신청과 확인, 메모리 저장. ----
   async getBankTransferInfo() {
     await wait(40);
     return { enabled: true, bank: '목은행', account: '000-0000-0000', holder: '데일리모먼트', expiresInDays: 3 };
@@ -282,8 +396,13 @@ export const api = {
     if (mockBankTransfer.requests.some((r) => r.kind === plan.kind && r.status === 'requested')) {
       throw new Error('확인 중인 신청이 있어요.');
     }
+    const planAtOrder = normalizePlanTier(DB.account.plan);
+    const topupBonusEnabled = plan.kind === 'topup' && DB.account.topupBonusEnabled === true;
+    const bonusCredits = topupBonusEnabled ? topupBonusCredits(planAtOrder, plan.credits) : 0;
     const request = {
       id: uid('btr'), planCode: plan.code, kind: plan.kind, amount: plan.price, credits: plan.credits,
+      bonusCredits, totalCredits: plan.credits + bonusCredits,
+      planAtOrder, bonusPercent: topupBonusEnabled ? TOPUP_BONUS_PERCENT[planAtOrder] : 0,
       payerName: body.payerName, phone: body.phone || null, taxInvoice: Boolean(body.taxInvoice),
       note: body.note || null, status: 'requested',
       expiresAt: new Date(Date.now() + 3 * 864e5).toISOString(), createdAt: new Date().toISOString(),
@@ -302,6 +421,24 @@ export const api = {
     request.status = 'canceled';
     return clone(request);
   },
+  async adminConfirmBankTransfer(requestId, { paidAt, adminNote } = {}) {
+    await wait(60);
+    const request = mockBankTransfer.requests.find((r) => r.id === requestId);
+    if (!request) throw new Error('신청을 찾지 못했어요.');
+    if (request.status === 'paid') return { ...clone(request.result), idempotent: true };
+    if (!['requested', 'expired'].includes(request.status)) throw new Error('지급할 수 없는 신청이에요.');
+    DB.account.credits += request.totalCredits;
+    if (request.kind === 'subscription') DB.account.plan = request.planCode;
+    request.status = 'paid';
+    request.paidAt = paidAt;
+    request.adminNote = adminNote || null;
+    request.confirmedAt = new Date().toISOString();
+    request.result = {
+      credits: request.totalCredits, baseCredits: request.credits, bonusCredits: request.bonusCredits, totalCredits: request.totalCredits,
+      available: DB.account.credits, idempotent: false,
+    };
+    return clone(request.result);
+  },
   async getManualEntitlement() {
     await wait(40);
     return { active: false };
@@ -311,10 +448,18 @@ export const api = {
     const order = loadMockCheckout(orderId);
     if (!order) throw new Error('결제 주문을 찾지 못했어요. 다시 충전을 시작해 주세요.');
     if (order.amount !== amount) throw new Error('결제 금액이 주문과 일치하지 않아요.');
-    DB.account.credits += order.credits;
-    mockCheckoutOrders.delete(orderId);
-    clearMockCheckout();
-    return { credits: order.credits, available: DB.account.credits };
+    if (order.status === 'paid') return { ...clone(order.result), idempotent: true, available: DB.account.credits };
+    const bonusCredits = order.bonusCredits || 0;
+    const totalCredits = order.totalCredits ?? order.credits + bonusCredits;
+    DB.account.credits += totalCredits;
+    order.status = 'paid';
+    order.result = {
+      credits: totalCredits, baseCredits: order.credits, bonusCredits, totalCredits,
+      available: DB.account.credits, idempotent: false,
+    };
+    mockCheckoutOrders.set(orderId, order);
+    saveMockCheckout(order);
+    return clone(order.result);
   },
 
   // store.loadProject 전용 '현재 프로젝트' (pl1 spec §7 — http 어댑터가 최근/생성 의미를
@@ -368,9 +513,9 @@ export const api = {
     await wait(20);
     return mockDraftSlot.put(body);
   },
-  async takeoverDraftSlot() {
+  async takeoverDraftSlot(body = {}) {
     await wait(20);
-    return mockDraftSlot.takeover();
+    return mockDraftSlot.takeover(body);
   },
   async deleteDraftSlot(token) {
     await wait(20);
@@ -393,8 +538,10 @@ export const api = {
       onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-      const a = normalizeAnalysisFit(clone(DB.analysis));
+      const a = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
       a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
+      a.frontClosure = { version: 1, kind: (product || DB.product).clothingType === 'outer' ? 'zipper' : 'unknown',
+        range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null };
       a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);
@@ -405,32 +552,44 @@ export const api = {
   },
   async getAnalysis(/* projectId */) {
     await wait(120);
-    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    const analysis = normalizeAnalysisFit({ mdComment: '', ...clone(DB.analysis) });
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
   // 의류색 측정은 서버 전용이라 목에서는 측정할 것이 없다고 답한다(http 와 같은 shape).
   async measureGarmentColors(/* projectId */) {
     return { status: 'skipped', garmentColorEvidence: null };
   },
-  async saveAnalysis(_projectId, patch) {
+  async saveAnalysis(_projectId, patch, { isCurrent } = {}) {
     await wait(180);
+    if (isCurrent && !await isCurrent()) return null;
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
     // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
-    const { matchClothing: matchPatch, ...rest } = normalizeAnalysisFit(patch);
-    Object.assign(DB.analysis, rest);
+    const normalized = normalizeAnalysisFit(patch);
+    const changed = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === null ? null : normalized[key]]));
+    if (_projectId) {
+      for (const key of ['locked', 'confirmedGptProductEvidence', 'detailRecommendations', 'garmentColorEvidence']) delete changed[key];
+      for (const key of ['sourceMirrored', 'inputConsistency', 'featureCopy']) {
+        if (changed[key] === null) delete changed[key];
+      }
+    }
+    const { matchClothing: matchPatch, ...rest } = changed;
+    DB.analysis = mergeAnalysisPatch(DB.analysis, rest);
+    if (matchPatch === null) delete DB.analysis.matchClothing;
     if (!DB.storyboardDirty && ('detailRecommendations' in rest || 'sellingPoints' in rest)) {
       DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id, clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders, matchClothing: DB.analysis.matchClothing,
+        subCategory: DB.analysis.subCategory, customCategory: DB.analysis.customCategory,
         detailRecommendations: DB.analysis.detailRecommendations, sellingPoints: DB.analysis.sellingPoints,
         previewProductName: DB.product.name,
       });
     }
-    DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
-      DB.product.clothingType,
-      DB.analysis.targetGenders,
-    );
+    if ('targetGenders' in rest && rest.targetGenders !== null) {
+      DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
+        DB.product.clothingType, DB.analysis.targetGenders,
+      );
+    }
     if ('fitProfile' in rest) DB.project.fitProfile = clone(rest.fitProfile);
     if (shouldRefreshMatchClothing(patch)) {
       DB.analysis.matchClothing = recommendLegacyMatchClothing({
@@ -442,6 +601,7 @@ export const api = {
       });
     }
     if (Array.isArray(matchPatch)) {
+      if (matchPatch.length === 0) DB.analysis.matchClothing = [];
       const patchById = new Map(matchPatch.map((m) => [m.id, m]));
       const merged = (DB.analysis.matchClothing || []).map((m) => {
         const p = patchById.get(m.id);
@@ -464,7 +624,7 @@ export const api = {
     // Product 소유 필드(계약 §3.1)는 product 에도 반영 — 사이즈 안내 등
     // 하위 단계는 product 를 읽는다. (소유권 일원화 전까지의 동기화 규칙)
     const owned = {};
-    ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (k in patch) owned[k] = patch[k]; });
+    ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (patch[k] != null) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
     const analysis = normalizeAnalysisFit(clone(DB.analysis));
     return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
@@ -593,15 +753,32 @@ export const api = {
   // 최초 진입 시 단일 v0 컷을 생성한다. 크레딧: mannequinGenerate (계약 §6).
   // 진행 중에 다시 호출되면(이중 mount·재진입) 기존 job 에 합류한다 — 1회만 차감.
   // 이미 컷이 있으면(완료 후 재호출) 재실행·재차감 없이 기존 결과를 반환한다.
-  async generateMannequins(_projectId, { onProgress } = {}) {
+  async generateMannequins(_projectId, { onProgress, onJobStarted, resumeJobId, expectedQuote } = {}) {
+    if (resumeJobId) {
+      const existing = mannequinJobs.get(resumeJobId);
+      onJobStarted?.(resumeJobId);
+      if (existing) {
+        if (onProgress) existing.listeners.push(onProgress);
+        return existing.promise;
+      }
+      if (DB.project.latestJobs.mannequin?.id !== resumeJobId) {
+        throw Object.assign(new Error('마네킹 작업을 찾지 못했어요.'), { code: 'job_failed' });
+      }
+      return { data: cutsEnvelope(), credits: DB.account.credits };
+    }
     if (DB.mannequins.length) {
       await wait(140);
       onProgress && onProgress(100);
       syncSelectedCut(DB.project.selectedMannequinId);
       return { data: cutsEnvelope(), credits: DB.account.credits };
     }
+    if (!inflight.mannequins) checkMannequinQuote(expectedQuote, mannequinGenerationTotal(DB.account.plan, DB.analysis.selectedModelId));
     const job = joinable('mannequins', (listeners, activeJob) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
+      activeJob.jobId = uid('job');
+      const summary = { id: activeJob.jobId, status: 'running', errorCode: null };
+      DB.project.latestJobs.mannequin = summary;
+      activeJob.summary = summary;
       // 시작 순간 견적을 job에 고정한다. 생성 중 모델이나 플랜을 바꿔도 취소와 성공이
       // 서로 다른 금액을 정산하지 않게 하는 실서버 credits_reserved 스냅샷의 mock 대응이다.
       activeJob.extensionModelFee = extensionModelFee(DB.account.plan, DB.analysis.selectedModelId);
@@ -616,15 +793,18 @@ export const api = {
       if (activeJob.cancelled) throw jobCancelledError();
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
-        DB.mannequins.push(makeMannequinCut(0));
+        DB.mannequins.push(makeMannequinCut(0, DB.analysis.fitProfile));
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
       const credits = settleMockMannequinCharge(activeJob);
       if (activeJob.extensionModelFee > 0) DB.mannequinExtensionFeePaid = true;
+      summary.status = 'done';
       return { data: cutsEnvelope(), credits };
     })());
     if (onProgress) job.listeners.push(onProgress);
+    mannequinJobs.set(job.jobId, job);
+    onJobStarted?.(job.jobId);
     return job.promise;
   },
   async cancelMannequinGeneration(/* projectId */) {
@@ -633,21 +813,26 @@ export const api = {
       return { cancelled: false, credits: DB.account.credits };
     }
     job.cancelled = true;
+    if (job.summary) job.summary.status = 'cancelled';
     const credits = settleMockMannequinCharge(job);
     job.cancel?.();
     return { cancelled: true, credits };
   },
-  async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
+  async regenerateMannequin(_projectId, { fitProfile, onProgress, expectedQuote } = {}) {
     // 완료 컷 1개가 첫 생성 done job 1개다. 이후 컷은 성공한 재생성마다 하나씩 늘어나므로
     // 현재 mock에서는 cuts.length가 서버 done_count와 같은 근거다.
     const creditCost = mannequinRegenerationQuote(DB.account.plan, DB.mannequins.length).nextCost;
+    checkMannequinQuote(expectedQuote, creditCost);
+    const summary = { id: uid('job'), status: 'running', errorCode: null };
+    DB.project.latestJobs.mannequin = summary;
     await runJob({ duration: 2200, onProgress });
+    summary.status = 'done';
     if (fitProfile) {
       DB.project.fitProfile = clone(fitProfile);
       DB.analysis.fitProfile = clone(fitProfile);
     }
     const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, cut.version ?? -1), -1);
-    const next = makeMannequinCut(prevMax + 1);
+    const next = makeMannequinCut(prevMax + 1, fitProfile ?? DB.analysis.fitProfile);
     DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
     DB.mannequins.push(next);
     syncSelectedCut(next.id);
@@ -664,7 +849,7 @@ export const api = {
   },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
-    DB.storyboard = clone(blocks);
+    DB.storyboard = clone(inheritSimilarCutRecipes(blocks));
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
     if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
     touch();
@@ -684,15 +869,21 @@ export const api = {
     if (DB.project.status === 'done') {
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
     }
-    if (ewSim && ewSim.status === 'running') return { jobId: ewSim.jobId };  // 중복 시작 합류
+    if (ewSim?.status === 'running' && ewSim.projectId === DB.project.id) return { jobId: ewSim.jobId };
+    assertSupportedStoryboardCuts();
     DB.project.status = 'generating'; touch();
-    ewSim = { jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
+    const job = { projectId: DB.project.id, jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
+    ewSim = job;
+    detailJobs.set(job.jobId, job);
+    DB.project.latestJobs.detailPage = { id: job.jobId, status: 'running', errorCode: null };
+    rememberProject();
+    const draft = projectDrafts.get(job.projectId);
     const push = (type, payload) => {
-      ewSim.events.push({ id: ewSim.nextId++, type, payload });
-      if (type === 'progress') ewSim.progress = payload.progress;
+      job.events.push({ id: job.nextId++, type, payload });
+      if (type === 'progress') job.progress = payload.progress;
     };
     (async () => {
-      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
+      const blocks = buildEditorBlocksFromStoryboard(draft.storyboard, draft.product, draft.project.copywriting, draft.analysis);
       const imgs = []; const copies = new Map();
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
@@ -707,38 +898,60 @@ export const api = {
       push('progress', { progress: 15, phase: 'inputs_loaded' });
       await wait(2000);   // 빈 뼈대(회색+로고 슬롯)를 충분히 보여준다 — "여기가 채워질 자리"
 
-      if (DB.project.copywriting && copies.size) {
+      if (draft.project.copywriting && copies.size) {
         push('progress', { progress: 18, phase: 'copy' });
         for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
       }
+      const storyboardById = new Map(draft.storyboard.map(block => [block.id, block]));
+      imgs.sort((a, b) => Number(Boolean(storyboardById.get(a.sourceBlockId)?.similarSourceBlockId)) - Number(Boolean(storyboardById.get(b.sourceBlockId)?.similarSourceBlockId)));
+      const completed = new Map();
+      const completions = new Map(imgs.map(image => [image.sourceBlockId, new Promise(resolve => completed.set(image.sourceBlockId, resolve))]));
       const total = Math.max(1, imgs.length);
       let done = 0; let next = 0;
       // 3개 창구 롤링 — 순서 무작위 도착의 실감을 내되 데모 총 소요는 ~10초대
       await Promise.all(Array.from({ length: Math.min(3, total) }, () => (async () => {
         while (next < imgs.length) {
           const el = imgs[next++];
+          const sourceId = storyboardById.get(el.sourceBlockId)?.similarSourceBlockId;
+          if (sourceId) await completions.get(sourceId);
           push('step', { blockId: el.sourceBlockId, status: 'cut_start' });
           await wait(2400 + Math.random() * 2200);
           push('step', { blockId: el.sourceBlockId, status: 'cut_done', previewUrl: el.src, width: 880, height: 1320 });
+          completed.get(el.sourceBlockId)?.();
           done += 1;
           push('progress', { progress: 20 + Math.round(60 * done / total), phase: 'cut', done, total });
         }
       })()));
       push('progress', { progress: 85, phase: 'assemble' });
       await wait(700);
-      DB.editorBlocks = blocks; DB.project.status = 'done'; touch();
-      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
-      ewSim.result = { data: clone(blocks), credits: spend(detailPageCreditCost(aiCuts)) };
-      ewSim.progress = 100; ewSim.status = 'done';
+      draft.editorBlocks = blocks; draft.project.status = 'done';
+      draft.project.updatedAt = new Date().toISOString();
+      if (DB.project.id === job.projectId) DB.editorBlocks = blocks;
+      const aiCuts = uniqueGenerationCutCount(draft.storyboard, {
+        clothingType: draft.product?.clothingType, frontClosure: draft.analysis?.frontClosure,
+      });
+      job.result = { data: clone(blocks), credits: spend(detailPageCreditCost(aiCuts)) };
+      job.progress = 100; job.status = 'done';
+      draft.project.latestJobs.detailPage.status = 'done';
     })();
-    return { jobId: ewSim.jobId };
+    return { jobId: job.jobId };
   },
   async getJob(jobId) {
+    const job = detailJobs.get(jobId);
+    if (job) return { id: jobId, status: job.status, progress: job.progress, result: job.result, errorMessage: null };
+    for (const draft of projectDrafts.values()) {
+      const latest = draft.project.latestJobs.detailPage;
+      if (latest?.id === jobId && ewSim?.jobId !== jobId) return {
+        id: jobId, status: latest.status, progress: latest.status === 'running' ? 36 : 0,
+        result: null, errorMessage: latest.status === 'error' ? '크레딧은 차감되지 않았어요. 다시 만들 수 있어요.'
+          : latest.status === 'cancelled' ? '다시 만들 수 있어요.' : null,
+      };
+    }
     return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
       result: ewSim?.result || null, errorMessage: null };
   },
-  async getJobEvents(_jobId, after = 0) {
-    return { events: (ewSim?.events || []).filter((e) => e.id > after) };
+  async getJobEvents(jobId, after = 0) {
+    return { events: (detailJobs.get(jobId)?.events || []).filter((e) => e.id > after) };
   },
   async generateDetailPage(_projectId, { onProgress, onStep } = {}) {
     if (DB.project.status === 'done') {
@@ -746,6 +959,7 @@ export const api = {
       onProgress && onProgress(100);
       return { data: clone(DB.editorBlocks), credits: DB.account.credits };
     }
+    assertSupportedStoryboardCuts();
     const job = joinable('detailPage', (listeners) => (async () => {
       const ownerId = DB.project.id;
       const emitStep = (steps) => listeners.forEach((l) => l.onStep && l.onStep(clone(steps)));
@@ -763,7 +977,9 @@ export const api = {
       DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       DB.project.status = 'done'; touch();
       // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
-      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
+      const aiCuts = uniqueGenerationCutCount(DB.storyboard, {
+        clothingType: DB.product?.clothingType, frontClosure: DB.analysis?.frontClosure,
+      });
       return { data: clone(DB.editorBlocks), credits: spend(detailPageCreditCost(aiCuts)) };
     })());
     job.listeners.push({ onProgress, onStep });
@@ -786,17 +1002,73 @@ export const api = {
     DB.project.status = 'done'; touch();
     return true;
   },
+  // 화면 연결 전에도 접수 문구와 완료 결과, 한 장 차감을 확인할 수 있는 목 계약(ADR-0019).
+  async fillEmptySlot(_projectId, { slot, idempotencyKey, onJobStarted, onProgress } = {}) {
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+      throw Object.assign(new Error('이 칸을 찾지 못했어요.'), {
+        status: 400, code: 'fill_slot_invalid', requestNotSent: true,
+      });
+    }
+    const colorId = DB.product.colors.find((color) => color.isBase)?.id || DB.product.colors[0]?.id || 'misc';
+    const contextFill = { slot, label: '스타일링 · 새 컷', path: 'new', cutType: 'styling', colorId };
+    onJobStarted?.(uid('fill'), clone(contextFill));
+    await runJob({ duration: 2400, onProgress });
+    const id = uid('w');
+    const img = { id, src: Placeholder.photo(id, 'styling'), ai: true, cutType: 'styling', wardrobeGroup: colorId,
+      contextFill: { slot, label: contextFill.label, colorId } };
+    (DB.wardrobe[colorId] ||= []).push(img);
+    return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage), contextFill: clone(contextFill) };
+  },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
-  //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], refBg? }  (계약 §6)
-  async generateImage(_projectId, req = {}) {
-    await runJob({ duration: 2400, onProgress: req.onProgress });
+  //     | VaryRequest   { mode:'vary', source:{src,cutType}, variationMode?:'similar' }  (계약 §6)
+  async generateImage(_projectId, req = {}, { creditCost } = {}) {
     const isVary = req.mode === 'vary';
-    const group = isVary ? 'misc' : (req.colorId || 'misc');
+    const images = Object.entries(DB.wardrobe).flatMap(([group, items]) => items.map((image) => ({ ...image, wardrobeGroup: group })));
+    const elements = (DB.editorBlocks || []).flatMap((block) => block.elements || []);
+    const source = isVary ? images.find((image) => image.src === req.source?.src)
+      || elements.find((element) => element.type === 'image' && element.src === req.source?.src) : null;
+    const requestedCutType = isVary ? source?.cutType || req.source?.cutType : req.cutType;
+    if (requestedCutType != null && !isSupportedCutType(requestedCutType)) throw unsupportedCutError();
+    const detailReshoot = !!source?.src && (source.detailReshoot === true || elements.some((element) => (
+      element.type === 'image' && element.src === req.source?.src
+      && (DB.storyboard || []).some((block) => block.id === element.sourceBlockId
+        && block.cutType === 'product' && block.shot === 'detail')
+    )));
+    const isProduct = (source?.cutType || req.source?.cutType) === 'product';
+    const isSimilar = isVary && req.variationMode === 'similar';
+    const unsupported = () => Object.assign(new Error(isProduct
+      ? '제품컷은 새 이미지 추가에서 원본 사진을 골라 만들어요.' : '이 사진은 비슷한 컷만 만들 수 있어요.'), { code: 'vary_unsupported', status: 400 });
+    if (isVary && (('changes' in req && (!Array.isArray(req.changes) || req.changes.length))
+      || ![undefined, null, 'similar'].includes(req.variationMode))) throw unsupported();
+    if (isSimilar && isProduct) throw Object.assign(new Error('비슷한 컷은 착용 사진에서 만들 수 있어요.'), { code: 'similar_source_unsupported', status: 400 });
+    if (isVary && !isSimilar && !detailReshoot) throw unsupported();
+    if (isSimilar && !source) throw new Error('원본 이미지를 찾을 수 없어요. 이미지를 다시 선택해 주세요.');
+    const rootId = source?.similarCut?.rootAssetId || source?.id;
+    const root = isSimilar ? images.find((image) => image.id === rootId) : null;
+    if (isSimilar && !root) throw new Error('처음 원본 이미지를 찾을 수 없어요.');
+    if (root?.cutType != null && !isSupportedCutType(root.cutType)) throw unsupportedCutError();
+    await runJob({ duration: 2400, onProgress: req.onProgress });
+    const group = isVary ? (root?.wardrobeGroup || source?.wardrobeGroup || 'misc') : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
-    const cutType = isVary ? ((req.source && req.source.cutType) || 'styling') : (req.cutType || null);
-    const img = { id: uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
+    const cutType = isVary ? (root?.cutType || source?.cutType || req.source?.cutType || 'styling') : (req.cutType || null);
+    const id = uid('w');
+    const img = { id, src: Placeholder.any(id), ai: true, wardrobeGroup: group, ...(cutType ? { cutType } : {}) };
+    if ((isVary && !isSimilar) || (!isVary && req.cutType === 'product' && req.shot === 'detail')) img.detailReshoot = true;
+    if (isSimilar) {
+      // 로컬 데모는 실제 사진 분석 없이 동작 이름만 순환한다. 원본 계보·이력 계약을 재현한다.
+      const actions = [['relax-arms', '팔의 힘을 풀고 자연스럽게 서기'], ['glance-side', '시선을 살짝 옆으로 옮기기'], ['soft-smile', '고개를 살짝 기울이며 부드럽게 웃기']];
+      const previous = images.filter((image) => image.similarCut?.rootAssetId === rootId);
+      const [actionKey, actionSummary] = actions[previous.length % actions.length];
+      img.src = `${Placeholder.photo(id, cutType)}#${id}`;
+      img.similarCut = {
+        version: 1, rootAssetId: rootId, sourceAssetId: source.id,
+        plan: { actionKey, actionSummary, instructions: actionSummary,
+          preserve: ['인물', '옷', '장소'], avoid: previous.slice(-2).map((image) => image.similarCut.plan.actionSummary) },
+      };
+    }
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);
-    return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage) };
+    const cost = creditCost ?? (isSimilar && !req.retryBlockId ? CREDIT_COSTS.editorSimilar : CREDIT_COSTS.editorImage);
+    return { data: clone(img), credits: spend(cost), creditsCharged: cost };
   },
   // a fresh "any image" — mock 전용 헬퍼 (실서비스 계약은 uploadAsset(file))
   async pickAnyImage() { await wait(120); return Placeholder.any('pick' + Date.now()); },
@@ -809,6 +1081,24 @@ export const api = {
     await wait(420);
     if (forceError) throw new Error('보관함을 불러오지 못했어요.');
     return forceEmpty ? [] : clone(DB.library);
+  },
+  async getInProgressLibrary({ forceEmpty = false, forceError = false } = {}) {
+    await wait(140);
+    if (forceError) throw new Error('만드는 중인 상품을 불러오지 못했어요.');
+    if (forceEmpty) return [];
+    rememberProject();
+    return [...projectDrafts.values()].filter((draft) => draft.project.status !== 'done'
+      && (draft.storyboardDirty || draft.project.id.startsWith('in-progress-') || draft.project.latestJobs.mannequin))
+      .map(({ project, product, mannequins }) => {
+        const detail = project.latestJobs.detailPage;
+        const step = ['pending', 'running'].includes(detail?.status) ? 'generating'
+          : ['error', 'cancelled'].includes(detail?.status) ? 'failed'
+            : project.selectedMannequinId ? 'mannequin' : 'storyboard';
+        return { id: project.id, title: project.title || product.name || '새 상품',
+          cover: mannequins[0]?.imageUrl || product.colors[0]?.images?.find((image) => image.slot === 'Front')?.src || null,
+          updatedAt: project.updatedAt, step, latestMannequinJob: project.latestJobs.mannequin,
+          latestDetailPageJob: detail };
+      }).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 20);
   },
 };
 

@@ -53,6 +53,7 @@ let createStoryboardPersistence;
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
@@ -293,7 +294,7 @@ test('HTTP saveStoryboard forwards keepalive to the actual fetch request and moc
   supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-token' } } });
   globalThis.fetch = async (url, options) => {
     request = { url, options };
-    return { ok: true, status: 204 };
+    return { ok: true, status: 200, json: async () => ({ blocks: [], revision: options?.method === 'PUT' ? 1 : 0 }) };
   };
   try {
     await httpAdapter.saveStoryboard('keepalive-project', [{ id: 'latest' }], { keepalive: true });
@@ -321,7 +322,7 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.equal(moved, false);
   assert.deepEqual(navigations, []);
   assert.deepEqual(toasts, ['세트 저장에 실패했어요']);
-  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?onFailure: \(message\) => toast\.push\(message\)/);
+  assert.match(storyboardSource, /continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?onFailure: \(message, error\) => toast\.push\(message, \{ variant: \'error\', error/);
   assert.doesNotMatch(storyboardSource, /\{saveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /pickerSaveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);

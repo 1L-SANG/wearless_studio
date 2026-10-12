@@ -46,6 +46,7 @@ class _TrackingR2(FakeR2):
 def _patch_detail_terminal(monkeypatch, captured):
     async def fake_gen_cuts(app, job, prepared, product, analysis, **kwargs):
         captured["prepared"] = prepared
+        captured["analysis"] = analysis
         results = [
             {"blockId": item[0]["id"], "imageUrl": f"/{item[0]['id']}"}
             for item in prepared
@@ -191,10 +192,22 @@ def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypat
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
 
     async def fake_analysis(conn, pid):
-        return {"selectedModelId": "mA"}
+        return {
+            "selectedModelId": "mA",
+            "fitProfile": {"category": "top", "axes": {"fit": "over"}},
+        }
 
     async def fake_mannequins(conn, uid, pid):
-        return [{"candidate": "candidate", "version": "1", "asset_id": "mannequin"}]
+        return [{
+            "candidate": "candidate",
+            "version": "1",
+            "asset_id": "mannequin",
+            "fit_profile_snapshot": {
+                "version": 1,
+                "profile": {"category": "top", "axes": {"fit": "regular"}},
+                "adjustedAxes": [],
+            },
+        }]
 
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
@@ -244,6 +257,14 @@ def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypat
         "hip width, or limb proportions",
     ]
     assert r2.reads == ["k/product"]
+    assert captured["analysis"]["fitProfile"]["axes"]["fit"] == "regular"
+
+
+def test_detail_legacy_cut_without_fit_record_keeps_analysis_fallback():
+    analysis = {"fitProfile": {"category": "top", "axes": {"fit": "over"}}}
+    selected_cut = {"candidate": "A", "version": 1, "asset_id": "old"}
+
+    assert dpj._analysis_for_selected_mannequin(analysis, selected_cut) is analysis
 
 
 def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
@@ -770,6 +791,19 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": False,
         "cut_type": "product",
+        "generation": {
+            "version": 1, "origin": "editor_new", "autoSelected": False,
+            "sourceAssetId": None, "recipeFrom": "self",
+            "recipe": {
+                "sectionRole": "product", "contentRole": "productOverview", "cutType": "product",
+                "shot": "ghost", "direction": "front", "sideStyle": None, "colorId": None,
+                "faceExposure": None, "modelId": model_id, "matchIds": [], "matchIdsOrigin": None,
+                "refAssetIds": ["mood"], "refScope": "all", "exampleId": "example-all",
+                "exampleSelectionOrigin": "user", "outerClosureState": None, "detailTargetId": None,
+                "detailTargetOrigin": None, "spaceGroupId": None, "spaceVariation": "subtle",
+                "spaceSetMemberOrder": None, "horizonBackgroundMode": None,
+            },
+        },
     }
 
 
@@ -835,6 +869,19 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": True,
         "cut_type": "horizon",
+        "generation": {
+            "version": 1, "origin": "editor_new", "autoSelected": False,
+            "sourceAssetId": None, "recipeFrom": "self",
+            "recipe": {
+                "sectionRole": "studio", "contentRole": "fit", "cutType": "horizon", "shot": "full",
+                "direction": "front", "sideStyle": None, "colorId": None, "faceExposure": "show",
+                "modelId": model_id, "matchIds": [], "matchIdsOrigin": None, "refAssetIds": [],
+                "refScope": "all", "exampleId": None, "exampleSelectionOrigin": None,
+                "outerClosureState": None, "detailTargetId": None, "detailTargetOrigin": None,
+                "spaceGroupId": None, "spaceVariation": "subtle", "spaceSetMemberOrder": None,
+                "horizonBackgroundMode": None,
+            },
+        },
     }
 
 
@@ -1350,7 +1397,7 @@ def test_editor_active_job_cleanup_claim_does_not_delete_published_output(monkey
     captured = {}
     _patch_editor_common(monkeypatch, captured)
 
-    async def reclaim_drafts(conn):
+    async def reclaim_drafts(conn, *, older_than_minutes):
         return []
 
     async def active_job_claim(conn):

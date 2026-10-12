@@ -1,10 +1,16 @@
+import { isAnalysisFastEntryEnabled } from '../../lib/analysisFastEntry.js';
+import { getProductPhotoPromotionTask, productPhotosReady } from '../../lib/productPhotoPromotion.js';
+import { clientEvents } from '../../lib/clientEvents.js';
+import { waitForInitialMannequinPreparation } from './generationPreparation.js';
 /* 배선 래퍼 — 순수 코어에 실제 api·store·sessionStorage 를 연결한 앱 싱글턴.
    콘티(진입 시 발사)와 마네킹(컷이 없으면 발사)이 이 모듈 하나를 공유한다. */
 import { api } from '../../lib/api/index.js';
 import { useAppStore } from '../../store/useAppStore.js';
 import { markInitialGenerationRequested } from './initialGenerationSession.js';
 import { createMannequinGenerationRunner } from './generationRunnerCore.js';
-import { initialGenerationAttempts, runInitialGenerationAttempt } from './initialGenerationAttempts.js';
+import { createInitialGenerationAttempts, initialGenerationAttempts, runInitialGenerationAttempt } from './initialGenerationAttempts.js';
+import { CREDIT_COSTS } from '../../lib/limits.js';
+import { mannequinQuoteConfirmation, expectedMannequinQuote } from './quoteConfirmation.js';
 
 export function updateMannequinJob(pid, patch) {
   const { projectId, setMannequinJob } = useAppStore.getState();
@@ -31,7 +37,10 @@ export function generationProgressFor(pid) {
 }
 
 const runner = createMannequinGenerationRunner({
-  generate: (pid, options) => runInitialGenerationAttempt(initialGenerationAttempts, api.generateMannequins, pid, options),
+  generate: (pid, options) => mannequinQuoteConfirmation.request(pid, 'generate',
+    (confirmedOptions) => runInitialGenerationAttempt(initialGenerationAttempts, api.generateMannequins, pid, confirmedOptions),
+    { ...options, expectedQuote: options.expectedQuote || mannequinQuoteConfirmation.seen(pid, 'generate')
+      || expectedMannequinQuote(CREDIT_COSTS.mannequinGenerate) }),
   readProgress: generationProgressFor,
   onJobChange: updateMannequinJob,
   // "최초 생성은 우리가 요청했다" 는 주장은 **실제로 job 이 생겼을 때만** 해야 한다.
@@ -40,7 +49,77 @@ const runner = createMannequinGenerationRunner({
   onJobStarted: markInitialGenerationRequested,
 });
 
-export const requestMannequinGeneration = (pid) => runner.request(pid);
+export async function requestMannequinGeneration(pid, options = {}) {
+  if (isAnalysisFastEntryEnabled()) {
+    const ready = await waitForInitialMannequinPreparation(pid, {
+      readAttempt: initialGenerationAttempts.read,
+      getPromotionTask: getProductPhotoPromotionTask,
+      photosReady: productPhotosReady,
+      readProject: () => useAppStore.getState().projectId,
+      readSession: clientEvents.getAccountGeneration,
+      isScreenActive: () => (options.isActive?.() ?? true)
+        && ['/create/storyboard', '/create/mannequin'].includes(globalThis.location?.pathname),
+    });
+    if (!ready) return null;
+  }
+  const attempt = regenerationAttempts.read(pid);
+  const joiningAttempt = attempt?.jobId && attempt.jobId === initialGenerationAttempts.read(pid)?.jobId;
+  try {
+    const result = await runner.request(pid, options);
+    if (joiningAttempt) regenerationAttempts.complete(pid, attempt.idempotencyKey);
+    return result;
+  } catch (error) {
+    if (joiningAttempt && ['mannequin_quality_failed', 'job_failed', 'job_cancelled'].includes(error?.code)) {
+      regenerationAttempts.fail(pid, attempt.idempotencyKey, error.message, error.code);
+    }
+    throw error;
+  }
+}
+export const hasActiveMannequinGeneration = (pid) => initialGenerationAttempts.read(pid)?.serverStatus === 'running';
+// 자동 재생성도 최초 생성과 같은 서버 상태를 따른다. 재시도 클릭만 차단을 해제한다.
+export function automaticMannequinGenerationError(pid) {
+  const attempt = initialGenerationAttempts.read(pid);
+  if (!attempt?.terminalFailure && attempt?.serverStatus !== 'running') return null;
+  return Object.assign(new Error(attempt.message || '진행 중인 마네킹을 먼저 기다려 주세요.'), {
+    code: attempt.code || 'mannequin_job_running',
+  });
+}
+const regenerationAttempts = createInitialGenerationAttempts({ keyPrefix: 'wl_regenerate_mannequin_attempt:' });
+export async function requestMannequinRegeneration(pid, { retry = false, ...options } = {}) {
+  if (retry) initialGenerationAttempts.retry(pid);
+  const existing = regenerationAttempts.read(pid);
+  const blocked = automaticMannequinGenerationError(pid);
+  if (blocked && (!existing?.jobId || existing.jobId !== initialGenerationAttempts.read(pid)?.jobId)) throw blocked;
+  if (retry) regenerationAttempts.retry(pid);
+  const attempt = regenerationAttempts.begin(pid, options.idempotencyKey);
+  if (attempt.terminalFailure) {
+    throw Object.assign(new Error(attempt.message), { code: attempt.code });
+  }
+  try {
+    const result = await mannequinQuoteConfirmation.request(pid, 'regenerate',
+      (confirmedOptions) => api.regenerateMannequin(pid, {
+        ...confirmedOptions, idempotencyKey: attempt.idempotencyKey, resumeJobId: attempt.jobId,
+        onJobStarted: (jobId) => {
+          regenerationAttempts.started(pid, attempt.idempotencyKey, jobId);
+          options.onJobStarted?.(jobId);
+        },
+        onJobSucceeded: (jobId) => {
+          regenerationAttempts.complete(pid, attempt.idempotencyKey);
+          options.onJobSucceeded?.(jobId);
+        },
+      }), options);
+    regenerationAttempts.complete(pid, attempt.idempotencyKey);
+    return result;
+  }
+  catch (error) {
+    if (['mannequin_quality_failed', 'job_failed', 'job_cancelled'].includes(error?.code)) {
+      regenerationAttempts.fail(pid, attempt.idempotencyKey, error.message, error.code);
+      const initial = initialGenerationAttempts.begin(pid);
+      initialGenerationAttempts.fail(pid, initial.idempotencyKey, error.message, error.code);
+    }
+    throw error;
+  }
+}
 export const acknowledgeMannequinGenerationCancellation = (pid) => (
   runner.acknowledgeCancellation(pid)
 );

@@ -85,7 +85,8 @@ def _run_detail(monkeypatch, *, qc_mode="off", scene_verdicts=(), cached_meta=No
     checkpoint_store = None
     if cached_meta is not None:
         async def for_cut(*args, **kwargs):
-            return SimpleNamespace(final=SimpleNamespace(image=b"CACHED", mime="image/png", meta=cached_meta))
+            return SimpleNamespace(base=SimpleNamespace(meta={}),
+                                   final=SimpleNamespace(image=b"CACHED", mime="image/png", meta=cached_meta))
 
         checkpoint_store = SimpleNamespace(for_cut=for_cut)
     r2 = _CapturingR2()

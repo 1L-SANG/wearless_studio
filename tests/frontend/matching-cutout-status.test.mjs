@@ -49,7 +49,7 @@ test('폴링 갱신은 캐시를 베이스로 삼아 저장된 편집을 지운�
     adapter.indexOf('async getAccount'),
   );
   assert.match(fn, /const prev = cachedAnalysisFor\(projectId\)/);
-  assert.match(fn, /const analysis = \{ \.\.\.\(prev \|\| saved\), matchClothing \}/);
+  assert.match(fn, /const analysis = \{ \.\.\.\(prev \|\| saved\), frontClosure: \(prev \|\| saved\)\.frontClosure \?\? null, matchClothing \}/);
   // 서버 응답을 통째로 캐시 베이스로 쓰던 형태가 되살아나지 않게
   assert.doesNotMatch(fn, /const analysis = \{ \.\.\.saved, matchClothing \}/);
   // 캐시는 두 왕복이 끝난 뒤에 읽어야 한다 — 먼저 읽으면 같은 창이 다시 열린다

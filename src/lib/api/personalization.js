@@ -1,3 +1,5 @@
+import { clientEvents } from '../clientEvents.js';
+import { attachResponseError, clientApiFetch, readClientResponse } from './clientRequest.js';
 /* =============================================================
    lib/api/personalization — 개인화(사용자 얼굴·신체) 모델 API.
    계약: docs/personalization/api-spec.md. facemarket.js 와 동일 패턴 —
@@ -18,11 +20,12 @@ async function _bearer() {
 }
 
 async function _authFetch(path, opts = {}) {
-  const token = await _bearer();
-  return fetch(`${BASE_URL}${path}`, {
+  const accountGeneration = clientEvents.getAccountGeneration();
+  const token = await _bearer().catch((error) => { throw clientEvents.bindGeneration(error, accountGeneration); });
+  return clientApiFetch(`${BASE_URL}${path}`, {
     ...opts,
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
-  });
+  }, { accountGeneration });
 }
 
 // 서버 에러봉투 { error: { code, message, reasons? } } (api-spec §1.3) 를 파싱해 status·code·
@@ -42,7 +45,7 @@ async function _throwEnvelope(res, fallback) {
   err.status = res.status;
   if (code) err.code = code;
   if (reasons) err.reasons = reasons;
-  throw err;
+  throw attachResponseError(err, res);
 }
 
 // ---- 본인확인(성인 인증, T2-1) — FaceMarket 인증창으로 흡수됨 -------------
@@ -77,7 +80,7 @@ export async function uploadFacePhoto({ angle, fileBlob, filename }) {
   fd.append('angle', angle);
   const res = await _authFetch('/v1/personalization/face-photos', { method: 'POST', body: fd });
   if (!res.ok) await _throwEnvelope(res, '얼굴 사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
-  return res.json();
+  return readClientResponse(res);
 }
 
 // [{ angle, qcStatus:'none'|'passed', qcReasons:[], imageUri, uploadedAt }], complete:boolean.
@@ -88,8 +91,8 @@ export function listFacePhotos() {
 // 게이트 얼굴 바이트 → objectURL(Bearer 필수, §1.4). 호출부는 표시 후 URL.revokeObjectURL 로 해제할 것.
 export async function fetchFacePhotoUrl(imageUri) {
   const res = await _authFetch(imageUri);
-  if (!res.ok) throw new Error('얼굴 사진을 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  if (!res.ok) throw attachResponseError(new Error('얼굴 사진을 불러오지 못했어요.'), res);
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }
 
 // 슬롯 삭제 — 204 No Content(빈 슬롯 삭제도 204, 멱등). http() 의 res.json() 파싱을 못 쓴다.
@@ -132,8 +135,18 @@ async function _pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 3000
       onProgress && onProgress(job.progress);
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
-    if (job.status === 'error') throw new Error(job.errorMessage || '생성에 실패했어요.');
-    if (Date.now() - start > timeoutMs) throw new Error('생성이 지연되고 있어요. 잠시 후 다시 확인해 주세요.');
+    if (job.status === 'error') {
+      const error = new Error(job.errorMessage || '생성에 실패했어요.');
+      error.requestId = job.requestId;
+      error.jobId = jobId;
+      error.code = job.result?.errorCode || job.errorCode || 'job_failed';
+      throw error;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw Object.assign(new Error('생성이 지연되고 있어요. 잠시 후 다시 확인해 주세요.'), {
+        requestId: job.requestId, jobId,
+      });
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
@@ -154,6 +167,6 @@ export async function startGeneration({ productImageAssetIds, projectId, options
 // 개인화 생성 결과 게이트 바이트 → objectURL(§1.4). uri 는 서버가 준 상대경로(게이트 URI) 그대로 사용.
 export async function fetchGenerationResultUrl(uri) {
   const res = await _authFetch(uri);
-  if (!res.ok) throw new Error('생성 결과 이미지를 불러오지 못했어요.');
-  return URL.createObjectURL(await res.blob());
+  if (!res.ok) throw attachResponseError(new Error('생성 결과 이미지를 불러오지 못했어요.'), res);
+  return URL.createObjectURL(await readClientResponse(res, 'blob'));
 }

@@ -36,6 +36,14 @@ _SIGNATURE_IDS = {
     "sig_women_02",
     "sig_women_03",
     "sig_women_04",
+    "sig_women_bottom_pants_01",
+    "sig_women_bottom_pants_02",
+    "sig_women_bottom_skirt_01",
+    "sig_women_bottom_skirt_02",
+    "sig_women_dress_01",
+    "sig_women_dress_02",
+    "sig_men_bottom_pants_01",
+    "sig_men_bottom_pants_02",
 }
 
 
@@ -83,6 +91,7 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
         and entry.get("shot") in {"full", "medium"}
         and bool(entry.get("all"))
         and bool(entry.get("applicableClothingTypes"))
+        and entry.get("confirmedGptEligibleV1") is not False
     }
     catalog = load_confirmed_gpt_directing_catalog()
 

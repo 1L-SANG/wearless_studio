@@ -4,11 +4,13 @@
    Only change: ES imports/exports (was window globals).
    ============================================================= */
 import { DetailTargetPicker } from '../storyboard/DetailTargetPicker.jsx';
+import OuterClosureField from '@/components/OuterClosureField.jsx';
+import { ProductSourcePicker } from '../storyboard/ProductSourcePicker.jsx';
+import { productSourceColorPatch } from '../../lib/productSourcePhotos.js';
 import { detailTargetById } from '../../lib/detailRecommendations.js';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
-import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
-import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
+import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
 import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
@@ -25,6 +27,7 @@ import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, li
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
+import { patchTextStyle, resolveTextSpacing } from './textSpacing.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
@@ -249,134 +252,18 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
-/* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
-   ① 같은 장소 이미지 생성 — 아래에서 고른 포즈·표정만 바꾸고 장소는 그대로
-   ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
-
-   배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
-   가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
-   무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
-   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치".
-   거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
-   '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
-const VARY_CATS = [
-  { id: 'pose', label: '포즈' },
-  { id: 'face', label: '표정' },
-];
-function VaryPanel({ catalogs, source, onGenerate }) {
-  const opts = catalogs.varyOptions || {};
-  const [cat, setCat] = useState('pose');
-  const [sel, setSel] = useState({});
-  const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
-  if (!source) {
-    return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
-  }
-  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 안다. 직접 업로드는 미상이고,
-  // 그때는 사람컷 대표값(styling)으로 가정한다. 셀러에게 되묻지 않는다(오너 8/16):
-  // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
-  const srcType = source.cutType || null;
-  const isProduct = srcType === 'product';
-  // 제품컷에는 사람이 없어 포즈와 표정을 바꾸지 않는다.
-  const cats = isProduct ? [] : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0]?.id || 'pose';
-  const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
-  // 포즈와 표정 변경만 기존 이미지 수정 요청으로 보낸다.
-  const chips = [];
-  if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
-  if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
-  const n = chips.length;
-  const hasChange = { pose: !!sel.pose, face: !!sel.face };
-  const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
-  const clearAll = () => setSel({});
-  /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
-     고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
-     refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
-  const runGenerate = (changes) => {
-    if (busyRef.current) return;
-    busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
-    onGenerate({
-      // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
-      source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
-      changes,
-    });
-  };
-  // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
-  // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
-  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
-  const generateAuto = () => runGenerate([]);
-  const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
-  return (
-    <div>
-      {!isProduct && <div className="vary-tabs">
-        <UnderlineTabs value={safeCat} onChange={setCat}
-          options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
-      </div>}
-      {!isProduct && (
-        <div className="insp-sec">
-          <label className="lbl">{catLabel} 고르기</label>
-          <div className="vary-grid">
-            {(opts[safeCat] || []).map((o) => {
-              const on = sel[safeCat] === o.id;
-              return (
-                <button type="button" key={o.id} className={`vary-card${on ? ' on' : ''}`} onClick={() => pickCard(o.id)}>
-                  <span className="vc-check">{on && <Icon name="check" size={12} />}</span>
-                  <img src={o.thumb} alt="" />
-                  <span className="vc-label">{o.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {n > 0 && (
-        <div className="vary-tray">
-          <div className="vt-head">
-            <span className="vt-title">변경 요약 ({n})</span>
-            <button type="button" className="vt-clear" onClick={clearAll}>전체 해제</button>
-          </div>
-          <div className="vt-chips">
-            {chips.map((c) => (
-              <span className="vt-chip" key={c.key}>{c.cat} · {c.label}
-                <button type="button" onClick={c.clear} title="해제"><Icon name="x" size={13} /></button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      {/* 두 버튼은 서로 배타 — 고른 게 하나도 없으면 '같은 장소 이미지 생성'만, 방향·포즈·
-          표정을 하나라도 고르면 '비슷한 컷 만들기'만 눌린다(오너 2026-08-16). 그래서 눌리는
-          쪽이 항상 지금 상태에 맞는 일을 한다: 고른 게 없으면 빈 변경, 있으면 그 변경들.
-          모양·크기·테두리는 둘이 같고 채움/글자색만 반대다 — variant 는 primary 그대로 두고
-          .btn-invert 로 색만 뒤집는다(ghost 로 두면 높이·라운드·테두리가 달라진다). */}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert"
-        disabled={n > 0} onClick={generateAuto} style={{ marginTop: 14 }}>
-        {`같은 장소 이미지 생성 · ${cost} 크레딧`}
-      </Button>
-      <Button variant="primary" block icon="sparkles" className="btn-glowring"
-        disabled={n === 0} onClick={generateWithPicks} style={{ marginTop: 8 }}>
-        {`비슷한 컷 만들기 · ${cost} 크레딧`}
-      </Button>
-    </div>
-  );
-}
-
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', product: 'ghost' };
-export function AIPanel({ product, detailRecommendations, catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
-  const [tab, setTab] = useState('vary');
+export function AIPanel({ product, detailRecommendations, frontClosure, catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, onConfirmPendingGenerate, generateSubmitting = false, pendingGenerateRequest = null, onGenerate, onPickMoodRef }) {
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
   const [detailTargetId, setDetailTargetId] = useState(null);
+  const [productDirection, setProductDirection] = useState('front');
   const selectedDetailTarget = detailTargetById(detailRecommendations, detailTargetId);
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
-  // 실존(FaceMarket) 검증 모델 — 활성 라이선스 + 그리드 자산(assetsReady)까지 갖춰야 컷 생성 가능.
-  // 장소·스타일링 컷에서도 가상모델을 고를 수 있어야 하므로 실존/가상 목록을 함께 보여준다.
-  const fmList = (fmModels || []).filter((m) => m.hasActiveLicense && m.assetsReady);
   const virtualModels = catalogs.models || [];
-  const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0] || fmList[0];
+  const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
@@ -384,14 +271,13 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
   const [outerClosure, setOuterClosure] = useState('open');
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
+  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const galleryCutType = cutType;
   const galleryIsProduct = galleryCutType === 'product';
   const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId);
-  const directionSpec = directionSpecFromExample(selectedExample, {
-    cutType: galleryCutType,
-    detailTarget: galleryIsProduct && shot === 'detail' ? selectedDetailTarget : null,
-  });
+  const directionSpec = galleryIsProduct
+    ? { direction: shot === 'detail' && selectedDetailTarget ? selectedDetailTarget.direction : productDirection, sideStyle: null }
+    : directionSpecFromExample(selectedExample);
   const galleryDirectionVal = directionSpec.direction;
   const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
     ? shot : galleryShotOptions[0].value;
@@ -432,11 +318,9 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
   const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
   const colorVal = activeColorOpts.some((option) => option.id === color)
     ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
-  // 갤러리·게이트용 성별 — 고른 모델(가상·실존)의 성별 우선, 못 찾으면 분석 기반(콘티보드 exampleGender 규칙).
-  // 실존 모델은 catalogs.models 에 없어서 이 폴백이 없으면 null 이 되고, null 이면 착용컷 예시가 전부 닫힌다.
-  const modelGender = [...virtualModels, ...fmList].find((item) => item.id === model)?.gender
+  // 갤러리·게이트용 성별은 고른 가상 모델을 우선하고, 못 찾으면 분석 값을 쓴다.
+  const modelGender = virtualModels.find((item) => item.id === model)?.gender
     || exampleGender || null;
-  const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
   // 원본 기반 디테일은 예시 없이 제공한다. 나머지 컷은 기존 발행 예시 게이트를 따른다.
@@ -461,6 +345,12 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
     const nextShot = hasSelectableExamples(value, preferred) ? preferred
       : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
     setCutType(value); setShot(nextShot); setDetailTargetId(null);
+    if (value === 'product') {
+      const nextColors = nextShot === 'detail' ? detailColorOpts : colorOpts;
+      const nextColorId = nextColors.some((option) => option.id === color) ? color : nextColors[0]?.id;
+      const patch = productSourceColorPatch({ cutType: value, shot: nextShot, direction: 'front' }, product, nextColorId);
+      setProductDirection(patch.direction || 'front');
+    }
     setExampleId(null); setRefScope('all');
     resetRecipeSettings();
   };
@@ -471,9 +361,7 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
     if (replacing) resetRecipeSettings();
   };
   // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
-  const categoryRequired = failedCutRetry
-    ? isRealModelSelection(failedCutRetry.request?.modelId)
-    : isRealModelSelection(model);
+  const categoryRequired = isRealModelSelection(model);
   const brandUseCategoryBlocked = categoryRequired
     && (!brandUseCategory || brandUseCategorySaving);
   const brandUseCategoryControl = categoryRequired && (
@@ -484,154 +372,133 @@ export function AIPanel({ product, detailRecommendations, catalogs, fmModels, ac
       <div className="hint">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
     </div>
   );
-  if (failedCutRetry) {
+  if (pendingGenerateRequest) {
+    const previous = pendingGenerateRequest;
+    const colorLabel = [...colorOpts, ...detailColorOpts].find((option) => option.id === previous.colorId)?.label || '선택한 색상';
+    const cutLabel = ALL_CUT_TYPE_OPTIONS.find((option) => option.value === previous.cutType)?.label
+      || '이미지';
+    const shots = previous.cutType === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
+    const shotLabel = shots.find((option) => option.value === previous.shot)?.label;
     return (
       <div className="ai-failed-retry">
-        <PanelHead title="원래 콘티로 다시 만들기"
-          sub={failedCutRetry.signature
-            ? '시그니처 전용 예시와 원래 모델·색상·매칭 의류를 그대로 사용해요.'
-            : failedCutRetry.detailLabel ? '내 상품 원본과 선택한 촬영 대상을 그대로 사용해요.'
-              : '이 자리에 지정했던 예시와 생성 설정을 그대로 사용해요.'} />
-        {failedCutRetry.thumb && (
-          <img className={`ai-failed-retry-thumb${failedCutRetry.detailLabel ? ' detail-source-image' : ''}`} src={failedCutRetry.thumb} alt={failedCutRetry.detailLabel ? `내 상품 원본 · ${failedCutRetry.detailLabel}` : "원래 선택한 생성 예시"} />
-        )}
-        {failedCutRetry.detailLabel && <p className="hint">촬영 대상 · {failedCutRetry.detailLabel}</p>}
-        {brandUseCategoryControl}
-        <Button variant="primary" block icon="sparkles" className="btn-glowring"
-          disabled={brandUseCategoryBlocked} onClick={onRetryFailedCut}>
-          {failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · {catalogs.creditCosts?.editorImage ?? 1} 크레딧
+        <PanelHead title="이전 요청을 확인해 주세요" sub="접수 확인 후 새 이미지를 만들 수 있어요." />
+        <p className="hint" role="status">이전 요청 · {[colorLabel, cutLabel, shotLabel].filter(Boolean).join(' · ')}</p>
+        <Button variant="primary" block icon="refresh" disabled={generateSubmitting}
+          onClick={onConfirmPendingGenerate}>
+          {generateSubmitting ? '확인 중…' : '이전 요청 확인하기'}
         </Button>
-        <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
+        <p className="ai-failed-retry-hint">중복 생성 없이 이전 요청을 다시 확인해요.</p>
       </div>
     );
   }
-
   return (
     <div>
-      <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
-        <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 이미지 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>현재 이미지 수정</button>
+      <PanelHead title="새 이미지 만들기" />
+      {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
+      <div className="insp-sec"><label className="lbl">컷 종류</label>
+        <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
       </div>
-      {tab === 'new' ? (
-        <div>
-          {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
-          <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
-          </div>
 
-          {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
-          <MoodGuide catalogs={catalogs} cut={galleryCutType}
-            direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
-            shotOptions={galleryIsProduct ? galleryShotOptions : null}
-            onShotChange={(v) => {
-              setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
-              // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
-            }} clothingType={clothingType} gender={modelGender}
-            exampleId={exampleId} onExampleChange={selectExample}
-            refScope={refScope} onRefScopeChange={setRefScope}
-            refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-          {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
-            recommendations={detailRecommendations} onChange={(patch) => { setDetailTargetId(patch.detailTargetId); if (patch.colorId) setColor(patch.colorId); }} />}
+      {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
+      <MoodGuide catalogs={catalogs} cut={galleryCutType}
+        direction={galleryDirectionVal} sideStyle={directionSpec.sideStyle} shot={galleryShotVal}
+        shotOptions={galleryIsProduct ? galleryShotOptions : null}
+        onShotChange={(v) => {
+          setShot(v); setExampleId(null); setRefScope('all'); setDetailTargetId(null);
+          if (galleryIsProduct) {
+            const patch = productSourceColorPatch({ cutType: galleryCutType, shot: v, direction: directionSpec.direction }, product, colorVal);
+            setProductDirection(patch.direction || directionSpec.direction);
+          }
+        }} clothingType={clothingType} gender={modelGender}
+        exampleId={exampleId} onExampleChange={selectExample}
+        refScope={refScope} onRefScopeChange={setRefScope}
+        refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+      {isProduct && !isDetail && <ProductSourcePicker block={{ ...effectiveRecipe, colorId: colorVal }} product={product}
+        catalogs={catalogs} onChange={({ direction }) => setProductDirection(direction)} />}
+      {isDetail && <DetailTargetPicker block={{ ...effectiveRecipe, detailTargetId, colorId: colorVal }} product={product}
+        catalogs={catalogs} recommendations={detailRecommendations} onChange={(patch) => {
+          if ('detailTargetId' in patch) setDetailTargetId(patch.detailTargetId);
+          if (patch.direction) setProductDirection(patch.direction);
+          if (patch.colorId) setColor(patch.colorId);
+        }} />}
 
-          {showOuterClosure && (
-            <div className="insp-sec outer-closure-field">
-              <div className="lbl" id="outer-closure-label-newcut">아우터 열림 정도</div>
-              <div className="outer-closure-options" role="radiogroup" aria-labelledby="outer-closure-label-newcut">
-                {closureOptions.map((option) => {
-                  const on = outerClosure === option.value;
+      {showOuterClosure && (
+        <OuterClosureField id="outer-closure-newcut" value={outerClosure}
+          onChange={setOuterClosure} frontClosure={frontClosure} />
+      )}
+
+      <div className="insp-divider" />
+
+      <div className="insp-sec"><label className="lbl">색상</label>
+        <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => {
+          setColor(value);
+          if (value !== colorVal) {
+            setDetailTargetId(null);
+            if (isProduct) {
+              const patch = productSourceColorPatch({ ...effectiveRecipe, detailTargetId: null }, product, value);
+              setProductDirection(patch.direction || directionSpec.direction);
+            }
+          }
+        }} /></div>
+
+      {showMatchClothing && (
+        <>
+          <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
+            <Icon name="settings" size={17} />매칭 의류 바꾸기
+          </button>
+          {matchOpen && (
+            <div className="sb-match-inline">
+              <div className="match-grid">
+                {matchClothing.map((m) => {
+                  const on = matchIds.includes(m.id);
                   return (
-                    <label key={option.value} className={`outer-closure-option${on ? ' on' : ''}`}>
-                      <input type="radio" name="outer-closure-newcut" value={option.value}
-                        checked={on} onChange={() => setOuterClosure(option.value)} />
-                      <OuterClosureIcon state={option.value} />
-                      <span>{option.label}</span>
-                    </label>
+                    <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
+                      setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
+                    }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
                   );
                 })}
               </div>
-              <p className="outer-closure-hint">이 컷에서 아우터의 앞부분을 얼마나 열지 정해요.</p>
             </div>
           )}
-
-          <div className="insp-divider" />
-
-          <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={(value) => { setColor(value); if (value !== colorVal) setDetailTargetId(null); }} /></div>
-
-          {showMatchClothing && (
-            <>
-              <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
-                <Icon name="settings" size={17} />매칭 의류 바꾸기
-              </button>
-              {matchOpen && (
-                <div className="sb-match-inline">
-                  <div className="match-grid">
-                    {matchClothing.map((m) => {
-                      const on = matchIds.includes(m.id);
-                      return (
-                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
-                          setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
-                        }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
-            <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {fmList.map((m) => (
-                /* 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 비활성화하지 않는다. */
-                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
-                  title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
-                  {m.coverImageUrl
-                    ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
-                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
-                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
-                </div>
-              ))}
-              {virtualModels.map((m) => (
-                /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
-                   되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
-                <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
-                  <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
-                  <span className="ai-name">{m.name}</span>
-                </div>
-              ))}
-            </div>
-            {brandUseCategoryControl}
-          </details>}
-
-          <Button variant="primary" block icon="sparkles" className="btn-glowring"
-            disabled={brandUseCategoryBlocked} onClick={() => onGenerate({
-            contentRole: effectiveRecipe.contentRole,
-            colorId: colorVal, cutType: effectiveCutType,
-            // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
-            direction: directionSpec.direction,
-            sideStyle: directionSpec.sideStyle,
-            shot: effectiveShotVal, modelId: model, exampleId, refScope,
-            ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
-            outerClosureState: showOuterClosure ? outerClosure : null,
-            matchIds: isProduct ? [] : matchIds,
-            refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
-            refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
-          })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
-        </div>
-      ) : (
-        /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */
-        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onGenerate={onVaryGenerate} />
+        </>
       )}
+
+      {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
+        <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
+          {virtualModels.map((m) => (
+            /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
+               되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
+            <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
+              title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
+              <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
+              <span className="ai-name">{m.name}</span>
+            </div>
+          ))}
+        </div>
+        {brandUseCategoryControl}
+      </details>}
+
+      <Button variant="primary" block icon="sparkles" className="btn-glowring"
+        disabled={brandUseCategoryBlocked || generateSubmitting} onClick={() => onGenerate({
+        contentRole: effectiveRecipe.contentRole,
+        colorId: colorVal, cutType: effectiveCutType,
+        // 화면 값이 아니라 **컷 스펙**을 보낸다 — 'threeQuarter' 는 서버가 모르는 값이다.
+        direction: directionSpec.direction,
+        sideStyle: directionSpec.sideStyle,
+        shot: effectiveShotVal, modelId: model, exampleId, refScope,
+        ...(isDetail ? { detailTargetId, detailTargetOrigin: 'user' } : {}),
+        outerClosureState: showOuterClosure ? outerClosure : null,
+        matchIds: isProduct ? [] : matchIds,
+        refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
+        refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
+      })}>{generateSubmitting ? '접수 중…' : `새 이미지 생성 · ${catalogs.creditCosts?.editorImage ?? 19} 크레딧`}</Button>
     </div>
   );
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = 0, onInsert, onUpload, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -703,7 +570,6 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                         onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
                         <Icon name="x" size={12} />
                       </button>
-                      <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
                     </div>
                   );
                 })}
@@ -750,8 +616,6 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
   const curDash = el.dash || 'solid';
   return (
     <div className="fig-panel">
-      {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
-          자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
       {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
           같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
           빼내기는 Delete(격자·프레임의 사진 자리는 지워지지 않고 '＋ 여기에 사진 넣기'
@@ -872,7 +736,8 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
-  const setS = (p) => onChange({ style: { ...s, ...p } });
+  const setS = (p) => onChange({ style: patchTextStyle(s, p) });
+  const spacing = resolveTextSpacing(s);
   const changeBubbleAppearance = onBubbleAppearanceChange || onChange;
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
@@ -920,7 +785,7 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               칩 시각은 앱 공용 Chips — 활성 칩 재클릭은 가드로 무시(불필요한 히스토리 방지). */}
           {!isBubble && (
             <PanelSection title="빠른 스타일" first>
-              <Chips className="quad-chips" allowDeselect={false}
+              <Chips className="text-quick-styles" allowDeselect={false}
                 options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
                 value={activePresetKey}
                 onChange={(key) => {
@@ -949,13 +814,9 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
                 disabled={weightOptions(s.font).length < 2} onChange={(v) => setS({ weight: v })} />
               <NumStepper value={s.size || 18} min={8} max={200} onChange={(v) => setS({ size: v })} />
             </div>
-            <div className="field-2up" style={{ marginTop: 8 }}>
-              <NumField icon="lineHeight" labelText="행간" value={s.lineHeight || Math.round((s.size || 18) * 1.4)} min={0} max={400} onChange={(v) => setS({ lineHeight: v })} />
-              <NumField icon="letterSpacing" labelText="자간" value={s.tracking || 0} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
-            </div>
             <div className="text-tool-row">
               <div className="seg-icons">
-                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
+                {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} title={{ left: '왼쪽 정렬', center: '가운데 정렬', right: '오른쪽 정렬' }[a]} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
               </div>
               <div className="seg-icons">
                 <IconButton name="bold" size="sm" active={isBold(s.font, s.weight)} disabled={!boldToggle(s.font)}
@@ -975,6 +836,19 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               </div>
             </div>
           </PanelSection>
+
+          <details className="text-spacing-controls">
+            <summary>
+              <span>간격</span>
+              <span className="text-spacing-status">{s.spacingMode === 'auto' ? '자동' : '현재 값 유지'} · 행간 {spacing.lineHeight}px</span>
+            </summary>
+            <div className="field-2up">
+              <NumField icon="lineHeight" labelText="행간" value={spacing.lineHeight} min={1} max={400} onChange={(v) => setS({ lineHeight: v })} />
+              <NumField icon="letterSpacing" labelText="자간" value={spacing.tracking} min={-5} max={20} onChange={(v) => setS({ tracking: v })} />
+            </div>
+            <p className="text-spacing-help">자동은 글자 크기에 맞춰 권장 간격을 적용해요. 직접 바꾼 값은 크기를 바꿔도 유지돼요.</p>
+            <Button variant="ghost" size="sm" onClick={() => setS({ spacingMode: 'auto' })}>권장 간격 자동 적용</Button>
+          </details>
 
           <PanelSection title="글자 색상">
             <SwatchField value={s.color || '#0e0d14'} opacity={Math.round((s.opacity ?? 1) * 100)} palette={TEXT_PALETTE}
@@ -1082,7 +956,8 @@ export function FrameMini({ frame }) {
           return <div key={i} style={{
             ...base, fontFamily: fminiFont(s.font), fontSize: s.size || 20, fontWeight: s.weight || 400,
             color: s.color || '#222', textAlign: s.align || 'left',
-            lineHeight: `${s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            lineHeight: `${s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight : s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : undefined,
             fontStyle: s.italic ? 'italic' : 'normal',
             textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
             whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden',

@@ -23,6 +23,12 @@ export const PROGRESS_CEILING = 99;
 /** 기어오름 시상수 = expectedMs × 이 값. 클수록 느리고 완만하게 기어간다. */
 const CREEP_RATIO = 0.8;
 
+/** 대기 중에는 남은 거리의 65%만 쓰고 나머지는 완료 마무리에 남긴다. */
+export const CREEP_SHARE = 0.65;
+
+/** 완료 신호 뒤 100%까지 채우는 최대 시간. */
+export const FINISH_MS = 700;
+
 /* 예상 소요시간 — 전부 코드에 근거가 남아 있는 실측값이다.
    임의로 늘리면 바가 실제보다 느리게 기고, 줄이면 일찍 천장에 붙어 멈춘 것처럼 보인다. */
 export const EXPECTED_MS = {
@@ -30,8 +36,6 @@ export const EXPECTED_MS = {
   detailPage: 270000,
   /** 마네킹컷 생성 — 대기화면이 40초에 장기 대기 안내를 띄우는 기준(Mannequin.jsx). */
   mannequin: 45000,
-  /** 상품 분석의 마지막 "결과 대기" 단계 — 앞 4단계 10초를 뺀 꼬리(실측 12~22초 기준). */
-  analysisWait: 8000,
   /** 그 밖의 이미지 잡 — 근거 없는 곳의 보수적 기본값. */
   default: 60000,
 };
@@ -40,19 +44,20 @@ const clampPercent = (v) => Math.max(0, Math.min(100, Number(v) || 0));
 
 const creepTau = (expectedMs) => Math.max(1, (Number(expectedMs) || 1) * CREEP_RATIO);
 
-/** 앵커(base)에서 ageMs 만큼 기어오른 값. 천장에 점근할 뿐 닿지는 않는다. */
+/** 앵커(base)에서 ageMs 만큼 기어오른 값. 완료 몫을 남긴 한계에 점근한다. */
 export function creepTarget({ base, ageMs, expectedMs, ceiling = PROGRESS_CEILING }) {
   const from = clampPercent(base);
   if (from >= ceiling) return from;
   const age = Math.max(0, Number(ageMs) || 0);
-  return from + (ceiling - from) * (1 - Math.exp(-age / creepTau(expectedMs)));
+  return from + (ceiling - from) * CREEP_SHARE * (1 - Math.exp(-age / creepTau(expectedMs)));
 }
 
 /** creepTarget 의 역함수 — value 가 base 기준 곡선 위 몇 ms 지점인지. 앵커를 옮길 때 쓴다. */
 export function creepAge({ base, value, expectedMs, ceiling = PROGRESS_CEILING }) {
   const from = clampPercent(base);
   if (from >= ceiling) return 0;
-  const frac = (Math.min(Number(value) || 0, ceiling) - from) / (ceiling - from);
+  const room = (ceiling - from) * CREEP_SHARE;
+  const frac = (Math.min(Number(value) || 0, from + room) - from) / room;
   if (!(frac > 0)) return 0;
   return -Math.log(1 - Math.min(frac, 0.999999)) * creepTau(expectedMs);
 }
@@ -82,38 +87,53 @@ export function initialProgressState(startedAt = 0) {
     baseAt: Number.isFinite(started) && started !== 0 ? started : null,
     displayed: 0,
     at: null,
+    velocity: 0,
+    finishAt: null,
+    finishFrom: 0,
+    finishVelocity: 0,
   };
 }
 
-/* ── 단계형 진행 (분석 대기) ────────────────────────────────────────────────
-   위의 잡 진행바와는 다른 모델이다. 분석은 단계마다 예정 시간이 이미 정해져 있어
-   (AnalysisForm.STEP_DUR) 서버를 추측할 필요가 없다.
+/* 분석 대기: 오너 9/15·10/10 지적대로 초반 등속, 늦은 결과는 완만한 꼬리로 기다린다.
+   9/15~10/10 약 20건의 서버 실측은 중앙 7.4초, 상위 25% 10초·10% 13초, 최대 16초.
+   임시저장 0.5~1초를 더해 8초에 80%로 잡는다. 9/15 "뒤에서 쫙", 10/10 "자연스럽게"
+   지적에 맞춰 결과 순간 속도를 이어 0.5초간 가속하고, 기본의 2.5배로 제한한다. */
+const ANALYSIS_RATE = 10 / 1000;          // %/ms, 20%씩 2초
+const ANALYSIS_FINISH_MAX_RATE = 25 / 1000;
+const ANALYSIS_FINISH_TARGET_MS = 1200;
+const ANALYSIS_FINISH_RAMP_MS = 500;
+const ANALYSIS_LINEAR_END = 80;
+const ANALYSIS_LINEAR_MS = ANALYSIS_LINEAR_END / ANALYSIS_RATE;
+const ANALYSIS_TAIL = PROGRESS_CEILING - ANALYSIS_LINEAR_END;
+// k를 남은 폭/기본 속도로 두면 80% 경계에서도 같은 속도로 출발한다.
+const ANALYSIS_TAIL_K = ANALYSIS_TAIL / ANALYSIS_RATE;
 
-   여기에 점근 곡선을 쓰면 안 된다. 곡선은 뒤로 갈수록 느려지는데 단계는 20% 씩 균등하게
-   올라오니, 단계가 끝날 때마다 생기는 따라잡기 폭이 점점 커진다(실측 +1.4 → +7 → +12.6
-   → +18.3). 바가 뒤에서 갑자기 빨라지는 것처럼 읽힌다 — 오너 피드백 2026-08-14.
-
-   그래서 단계마다 같은 몫(1/n)을 그 단계의 예정 시간 동안 **선형으로** 채운다.
-   칸 경계에서 다음 칸의 시작과 정확히 만나므로 단계가 바뀌어도 튀지 않는다. */
-export function steppedProgress({
-  stepIndex, stepCount, stepElapsedMs, plannedMs, waitExpectedMs,
-  ceiling = PROGRESS_CEILING,
-}) {
-  const count = Math.max(0, Number(stepCount) || 0);
-  if (count <= 0) return 0;
-  if (stepIndex >= count) return 100;          // 전 단계 완료
-  const segment = 100 / count;
-  const start = Math.max(0, Number(stepIndex) || 0) * segment;
-  const elapsed = Math.max(0, Number(stepElapsedMs) || 0);
-
-  // 예정 시간이 없는 단계 = 결과가 도착해야 끝나는 대기. 칸을 넘지 않으면서 계속 기어간다.
-  if (!(Number(plannedMs) > 0)) {
-    return Math.min(ceiling, creepTarget({
-      base: start, ageMs: elapsed, expectedMs: waitExpectedMs, ceiling,
-    }));
+/** elapsedMs 는 마운트부터의 시간. 결과가 오면 그 시각과 표시값을 고정해 이어간다. */
+export function analysisWaitProgress({ elapsedMs, resultAtMs = null, resultValue = 0, fastEntry = false }) {
+  // 핵심 분석 실측 중간 5.6초와 느린 10% 6.7초에 맞춰 5.6초에 80%를 지난다.
+  const rate = fastEntry ? 80 / 5600 : ANALYSIS_RATE;
+  const linearMs = ANALYSIS_LINEAR_END / rate;
+  const tailK = ANALYSIS_TAIL / rate;
+  const finishMaxRate = fastEntry ? rate * 2.5 : ANALYSIS_FINISH_MAX_RATE;
+  const elapsed = Math.max(0, elapsedMs);
+  if (resultAtMs !== null && elapsed >= resultAtMs) {
+    const v0 = resultAtMs <= linearMs
+      ? rate
+      : ANALYSIS_TAIL * tailK / (resultAtMs - linearMs + tailK) ** 2;
+    const vf = Math.max(rate,
+      Math.min(finishMaxRate, (100 - resultValue) / ANALYSIS_FINISH_TARGET_MS));
+    const age = elapsed - resultAtMs;
+    const ramp = ANALYSIS_FINISH_RAMP_MS;
+    if (age <= ramp) {
+      const u = age / ramp;
+      return Math.min(100, resultValue + v0 * age + (vf - v0) * ramp * (u ** 3 - u ** 4 / 2));
+    }
+    return Math.min(100, resultValue + v0 * ramp + (vf - v0) * ramp / 2 + vf * (age - ramp));
   }
-  const planned = Number(plannedMs);
-  return Math.min(start + segment, start + segment * (elapsed / planned));
+  if (elapsed <= linearMs) return elapsed * rate;
+
+  const age = elapsed - linearMs;
+  return ANALYSIS_LINEAR_END + ANALYSIS_TAIL * age / (age + tailK);
 }
 
 /* 한 프레임 진행 — 상태를 받아 다음 상태를 돌려주는 순수 리듀서. 훅은 이걸 rAF 로 돌리기만 한다. */
@@ -123,6 +143,25 @@ export function advanceProgress(state, {
 }) {
   const prev = state || initialProgressState();
   const at = timeOr(prev.at, now);
+  const dt = Math.max(0, now - at);
+
+  if (done || prev.finishAt != null) {
+    const finishAt = timeOr(prev.finishAt, now);
+    const finishFrom = prev.finishAt == null ? prev.displayed : prev.finishFrom;
+    const finishVelocity = prev.finishAt == null
+      ? Math.max(0, Number(prev.velocity) || 0) : prev.finishVelocity;
+    const remaining = 100 - finishFrom;
+    // 출발 속도가 높으면 시간을 줄인다. 감속 없이 700ms 이내에 끝나야 한다.
+    const duration = finishVelocity > 0
+      ? Math.min(FINISH_MS, remaining / (2 * finishVelocity)) : FINISH_MS;
+    const age = Math.max(0, now - finishAt);
+    const displayed = remaining <= 0 || age >= duration ? 100
+      : Math.max(prev.displayed, Math.min(100, finishFrom + finishVelocity * age
+        + (remaining - finishVelocity * duration) * (age / duration) ** 2));
+    return { ...prev, displayed, at: now, finishAt, finishFrom, finishVelocity,
+      velocity: dt > 0 ? (displayed - prev.displayed) / dt : finishVelocity };
+  }
+
   let base = prev.base;
   let baseAt = timeOr(prev.baseAt, now);
 
@@ -138,11 +177,10 @@ export function advanceProgress(state, {
     baseAt = now - ahead;
   }
 
-  const target = done
-    ? 100
-    : Math.min(ceiling, creepTarget({ base, ageMs: now - baseAt, expectedMs, ceiling }));
+  const target = Math.min(ceiling, creepTarget({ base, ageMs: now - baseAt, expectedMs, ceiling }));
   const displayed = nextDisplayProgress({
-    displayed: prev.displayed, target, dtMs: now - at, catchUpMs,
+    displayed: prev.displayed, target, dtMs: dt, catchUpMs,
   });
-  return { base, baseAt, displayed, at: now };
+  return { ...prev, base, baseAt, displayed, at: now,
+    velocity: dt > 0 ? (displayed - prev.displayed) / dt : prev.velocity };
 }

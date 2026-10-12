@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from app.config import Settings, load_settings
+from app.agents import image_qc
 
 
 def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
@@ -139,3 +141,31 @@ def test_detail_cut_image_size_inherits_mannequin_size_when_unset(monkeypatch):
 
     assert settings.mannequin_image_size == "2K"
     assert settings.detail_cut_image_size == "2K"
+
+
+@pytest.mark.parametrize("service", ["api", "detail-worker"])
+def test_openai_fallback_secret_uses_the_current_copilot_environment(service):
+    manifest_path = (
+        Path(__file__).resolve().parents[2] / "copilot" / service / "manifest.yml"
+    )
+    secrets = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["secrets"]
+
+    assert secrets["OPENAI_API_KEY_FALLBACK"] == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}"
+        "/secrets/OPENAI_API_KEY_FALLBACK"
+    )
+
+
+@pytest.mark.parametrize("retired_mode", [None, "bestof", "shadow", "off"])
+def test_retired_candidate_mode_cannot_reappear_from_environment(monkeypatch, retired_mode):
+    if retired_mode is None:
+        monkeypatch.delenv("GARMENT_QC_MODE", raising=False)
+    else:
+        monkeypatch.setenv("GARMENT_QC_MODE", retired_mode)
+    monkeypatch.delenv("GARMENT_QC_EXTRA_CANDIDATES", raising=False)
+    settings = load_settings()
+    for name in ("garment_qc_mode", "garment_qc_extra_candidates"):
+        assert name not in Settings.__dataclass_fields__
+        assert not hasattr(settings, name)
+    for name in ("best_of", "pick_best", "pick_schema", "validate_pick"):
+        assert not hasattr(image_qc, name)

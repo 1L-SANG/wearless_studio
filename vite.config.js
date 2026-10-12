@@ -1,7 +1,8 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
+import { assertProductionEnv } from './scripts/ci/assert-production-env.mjs';
 
 /* 문서 진입점 두 벌 — 같은 앱(src/main.jsx)을 물지만 head 가 다르다.
    공유 미리보기(og:*)와 <title> 은 정적 head 가 전부이고 크롤러는 JS 를 실행하지 않아서,
@@ -50,7 +51,8 @@ const facemarketDevDocument = {
 
 // Vite handles .ts/.tsx out of the box, so TS can be adopted incrementally
 // (contracts → store → api) without a full migration. JS/JSX stays default.
-export default defineConfig({
+const config = {
+  define: { __BUILD_SHA__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA || 'dev') },
   // Tailwind 는 CSS 를 import 하는 진입(admin.html → admin.css)에만 실린다.
   // 플러그인 등록 자체는 전역이지만, 셀러·facemarket 은 admin.css 를 물지 않으므로
   // 산출 CSS 에 유틸리티가 한 줄도 들어가지 않는다.
@@ -111,4 +113,13 @@ export default defineConfig({
     allowedHosts: ['facemarket.wearless.kr'],
     proxy: { '/v1': process.env.VITE_DEV_API_PROXY || 'http://localhost:8000' },
   },
+};
+
+export default defineConfig(({ command, mode }) => {
+  if (command === 'build' && process.env.VERCEL_ENV === 'production') {
+    const root = fileURLToPath(new URL('.', import.meta.url));
+    // 파일 값보다 실제 빌드 프로세스의 환경변수가 우선한다(vercel build 포함).
+    assertProductionEnv({ ...loadEnv(mode, root, 'VITE_'), ...process.env });
+  }
+  return config;
 });

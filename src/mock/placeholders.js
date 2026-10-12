@@ -68,15 +68,6 @@ export const Placeholder = {
   swatch(seed = 's', w = 400, h = 400) {
     return svg(w, h, garment(w / 2, h * 0.5, w / 720, INK2), tone(seed + 's'));
   },
-  // tiny pose icon tile
-  pose(seed = 'pose', w = 120, h = 120) {
-    return svg(w, h, figure(w / 2, h * 0.1, w / 320, '#c4c2ca'), '#f1f0f2');
-  },
-  // tiny background scene swatch (horizon / studio / outdoor)
-  scene(seed = 'bg', w = 120, h = 120) {
-    const bg = tone(seed + 'bg');
-    return svg(w, h, `<rect y='${h * 0.62}' width='${w}' height='${h * 0.38}' fill='#c8c6ce'/><circle cx='${w * 0.72}' cy='${h * 0.28}' r='${w * 0.12}' fill='#d6d4dc'/>`, bg);
-  },
   // generic 'any image' for the editor + canvas
   any(seed) {
     const kinds = ['styling', 'horizon', 'product', 'detail'];

@@ -14,7 +14,9 @@ from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageOps
+import httpx
 
+from ..openai_key_fallback import has_openai_api_key
 from . import vision_llm
 from .gemini_image import InlineImage
 
@@ -145,6 +147,19 @@ def build_prompt(source_count, target, direction, *, has_crop=False, specialist=
         raise ValueError("specialist_prompt_missing")
     return ((specialist_template if specialist else primary_template) + "\n\nIMAGE MANIFEST\n" + "\n".join(manifest)
             + "\nREQUESTED SIDE: " + direction + "\nSERVER TARGET: " + _canonical(target))
+
+
+def _authority_context(source_count, bound, direction, *, has_crop, specialist=False):
+    roles = ["SOURCE"] * source_count + (["TARGET_CROP"] if has_crop else [])
+    roles += (["SOURCE_TILE"] * 4 if specialist else []) + ["CURRENT"]
+    roles += ["CURRENT_TILE"] * 4 if specialist else []
+    context = {"sourceCount": source_count, "imageRoles": roles, "requestedSide": direction,
+               "targetBinding": "bound" if bound is not None else "unbound"}
+    if bound is not None:
+        context.update(targetKind=bound["kind"], structureSourceOrdinal=bound["sourceOrdinal"])
+        if bound.get("colorTransfer") is True:
+            context["colorSourceOrdinal"] = bound["colorSourceOrdinal"]
+    return context
 
 
 def _prepare(sources, candidate, target):
@@ -289,19 +304,41 @@ def _normalize(raw):
             "temporaryArtifacts": dict(artifacts)}
 
 
-def _unknown(out, code):
-    return {**out, "passed": False, "decision": "UNKNOWN", "errorCode": code,
+def is_transient_unknown(judgment):
+    return (judgment.get("decision") == "UNKNOWN"
+            and judgment.get("unknownCause") in {"provider_error", "timeout", "invalid_response"})
+
+
+def _failure_cause(exc):
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return "timeout"
+    if isinstance(exc, httpx.LocalProtocolError):
+        return "configuration"
+    if isinstance(exc, httpx.DecodingError):
+        return "invalid_response"
+    if isinstance(exc, httpx.TransportError):
+        return "provider_error"
+    if isinstance(exc, vision_llm.VisionError):
+        return exc.unknown_cause
+    return "unexpected_error"
+
+
+def _unknown(out, code, cause, *, retry_after_seconds=None):
+    if retry_after_seconds is not None:
+        out = {**out, "retryAfterSeconds": retry_after_seconds}
+    return {**out, "passed": False, "decision": "UNKNOWN", "errorCode": code, "unknownCause": cause,
             "gates": [{"code": gate, "status": "UNKNOWN", "evidence": "QC could not establish a complete valid judgment."} for gate in GATES]}
 
 
 async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, *, target=None, direction="front"):
     out = {"version": 1, "policyVersion": POLICY_VERSION, "passed": False, "decision": "UNKNOWN",
            "gates": [], "markings": None, "temporaryArtifacts": None, "provider": None,
-           "requestedModel": None, "returnedModel": None, "promptHash": None,
+           "requestedModel": None, "returnedModel": None, "effort": None, "promptHash": None,
            "sourceHashes": [], "sourceHash": None, "resultHash": None, "targetHash": None,
-           "judgeImageHashes": [], "rawJudge": None, "errorCode": None, "usage": None,
+           "judgeImageHashes": [], "sentImageHashes": [], "rawJudge": None, "errorCode": None, "unknownCause": None, "usage": None,
            "specialist": {"status": "NOT_RUN", "provider": "gpt", "requestedModel": None,
-                          "returnedModel": None, "promptHash": None, "judgeImageHashes": [],
+                          "returnedModel": None, "effort": None, "promptHash": None,
+                          "judgeImageHashes": [], "sentImageHashes": [],
                           "rawJudge": None, "usage": None, "errorCode": None}}
     try:
         if not isinstance(sources, list) or not sources:
@@ -331,74 +368,105 @@ async def verdict(settings, sources: list[InlineImage], candidate: InlineImage, 
                                else "Not evaluated after source-photo copy detection."}
                               for code in GATES]}
     except (ValueError, TypeError, OSError):
-        return _unknown(out, "invalid_input")
-    out["provider"] = "gpt"
+        return _unknown(out, "invalid_input", "invalid_input")
     out["requestedModel"] = getattr(settings, "model_detail_core", None)
-    key = getattr(settings, "openai_api_key", None)
-    if not key or not isinstance(out["requestedModel"], str) or not out["requestedModel"].strip():
-        return _unknown(out, "primary_judge_unavailable")
-    metadata = {}
-    core_failure = None
+    out["provider"] = "claude" if isinstance(out["requestedModel"], str) and out["requestedModel"].startswith("claude-") else "gpt"
+    has_key = bool((getattr(settings, "anthropic_api_key", "") or "").strip()) if out["provider"] == "claude" else has_openai_api_key(settings)
+    if (
+        not has_key
+        or not isinstance(out["requestedModel"], str)
+        or not out["requestedModel"].strip()
+    ):
+        return _unknown(out, "primary_judge_unavailable", "configuration")
     try:
         timeout = float(getattr(settings, "detail_core_timeout_seconds", 90))
         if not math.isfinite(timeout) or timeout <= 0:
-            return _unknown(out, "invalid_judge_timeout")
+            raise ValueError("invalid_judge_timeout")
+    except (TypeError, ValueError, OverflowError):
+        return _unknown(out, "invalid_judge_timeout", "configuration")
+    metadata = {}
+    core_failure = None
+    try:
         args = (settings, out["requestedModel"], prompt, images, response_schema(), min(timeout, 120.0))
-        raw = await asyncio.wait_for(vision_llm._call_gpt(
-            *args, reasoning_effort="high", image_detail="high", max_completion_tokens=7000,
-            metadata=metadata), timeout=min(timeout, 120.0))
-        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
+        kwargs = {"metadata": metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
+            _authority_context(len(sources), bound, direction, has_crop=has_crop))}
+        out["effort"] = settings.detail_qc_claude_effort if out["provider"] == "claude" else "high"
+        if out["provider"] == "claude":
+            call = vision_llm._call_claude(*args, effort=out["effort"], **kwargs)
+        else:
+            call = vision_llm._call_gpt(*args, reasoning_effort=out["effort"], image_detail="high", max_completion_tokens=7000, **kwargs)
+        raw = await asyncio.wait_for(call, timeout=min(timeout, 120.0))
+        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"),
+                   sentImageHashes=metadata.get("sent_image_hashes", []))
         out["rawJudge"] = raw  # audit-only; repair_instructions never reads this field
         if not isinstance(raw, dict) or set(raw) != {"gates"}:
-            return _unknown(out, "invalid_primary_contract")
+            return _unknown(out, "invalid_primary_contract", "invalid_response")
         try:
             primary = _validate_gates(raw["gates"], CORE_GATES)
         except ValueError as exc:
-            return _unknown(out, str(exc))
+            return _unknown(out, str(exc), "invalid_response")
         states = {gate["status"] for gate in primary.values()}
         if states != {"PASS"}:
             decision = "UNKNOWN" if "UNKNOWN" in states else "FAIL"
             gates = [primary.get(code, {"code": code, "status": "UNKNOWN", "evidence": "NOT_RUN: primary core did not pass; no specialist call spent."}) for code in GATES]
             if decision == "UNKNOWN":
-                return {**out, "decision": decision, "gates": gates}
+                return {**out, "decision": decision, "gates": gates, "unknownCause": "uncertain_evidence"}
             # Known core failure still needs marking evidence to choose the least
             # harmful candidate if all three attempts fail. Keep the core FAIL even
             # when the specialist is unavailable or uncertain.
             core_failure = {**out, "decision": "FAIL", "gates": gates}
-    except Exception:
+    except Exception as exc:
         # Do not log provider exception text: it can include sensitive request data.
-        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"))
-        return _unknown(out, "judge_unavailable_or_invalid")
+        out.update(returnedModel=metadata.get("returned_model"), usage=metadata.get("usage"),
+                   sentImageHashes=metadata.get("sent_image_hashes", []))
+        return _unknown(out, "judge_unavailable_or_invalid", _failure_cause(exc),
+                        retry_after_seconds=getattr(exc, "retry_after_seconds", None))
     specialist = out["specialist"]
     specialist["requestedModel"] = getattr(settings, "model_detail_specialist", None)
-    if not getattr(settings, "openai_api_key", None) or not specialist["requestedModel"]:
+    specialist["provider"] = "claude" if isinstance(specialist["requestedModel"], str) and specialist["requestedModel"].startswith("claude-") else "gpt"
+    has_key = bool((getattr(settings, "anthropic_api_key", "") or "").strip()) if specialist["provider"] == "claude" else has_openai_api_key(settings)
+    if (not has_key or not isinstance(specialist["requestedModel"], str)
+            or not specialist["requestedModel"].strip()):
         specialist.update(status="UNAVAILABLE", errorCode="specialist_unavailable")
-        return core_failure or _unknown(out, "specialist_unavailable")
+        return core_failure or _unknown(out, "specialist_unavailable", "configuration")
     specialist_metadata = {}
     try:
         specialist_timeout = float(getattr(settings, "detail_specialist_timeout_seconds", 90))
         if not math.isfinite(specialist_timeout) or specialist_timeout <= 0:
             raise ValueError("invalid_specialist_timeout")
         specialist_prompt = build_prompt(len(sources), bound, direction, has_crop=has_crop, specialist=True)
+    except (TypeError, ValueError, OverflowError, OSError) as exc:
+        specialist.update(status="UNKNOWN", errorCode=type(exc).__name__)
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", "configuration")
+    try:
         specialist.update(status="RUN", promptHash=_hash(specialist_prompt.encode()),
                           judgeImageHashes=[_hash(im.data) for im in all_images])
-        specialist_raw = await asyncio.wait_for(vision_llm._call_gpt(
-            settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(),
-            min(specialist_timeout, 120), reasoning_effort="high", image_detail="high",
-            max_completion_tokens=7000, metadata=specialist_metadata), timeout=min(specialist_timeout, 120))
+        args = (settings, specialist["requestedModel"], specialist_prompt, all_images, specialist_schema(), min(specialist_timeout, 120))
+        kwargs = {"metadata": specialist_metadata, "system_prompt": vision_llm.qc_system_prompt("detail",
+            _authority_context(len(sources), bound, direction, has_crop=has_crop, specialist=True))}
+        specialist["effort"] = settings.detail_qc_claude_effort if specialist["provider"] == "claude" else "high"
+        if specialist["provider"] == "claude":
+            call = vision_llm._call_claude(*args, effort=specialist["effort"], **kwargs)
+        else:
+            call = vision_llm._call_gpt(*args, reasoning_effort=specialist["effort"], image_detail="high", max_completion_tokens=7000, **kwargs)
+        specialist_raw = await asyncio.wait_for(call, timeout=min(specialist_timeout, 120))
         specialist.update(status="COMPLETE", rawJudge=specialist_raw, returnedModel=specialist_metadata.get("returned_model"),
-                          usage=specialist_metadata.get("usage"))
+                          usage=specialist_metadata.get("usage"), sentImageHashes=specialist_metadata.get("sent_image_hashes", []))
         if not isinstance(specialist_raw, dict) or set(specialist_raw) != {"gates", "permanentMarkings", "temporaryArtifacts"}:
             raise ValueError("invalid_specialist_contract")
         _validate_gates(specialist_raw["gates"], SPECIALIST_GATES)
         normalized = _normalize({**specialist_raw, "gates": [*primary.values(), *specialist_raw["gates"]]})
         if core_failure is not None:
             normalized.update(passed=False, decision="FAIL")
-        return {**out, **normalized}
+        return {**out, **normalized,
+                "unknownCause": "uncertain_evidence" if normalized["decision"] == "UNKNOWN" else None}
     except Exception as exc:
         specialist.update(status="UNKNOWN", returnedModel=specialist_metadata.get("returned_model"),
-                          usage=specialist_metadata.get("usage"), errorCode=type(exc).__name__)
-        return core_failure or _unknown(out, "specialist_unavailable_or_invalid")
+                          usage=specialist_metadata.get("usage"), sentImageHashes=specialist_metadata.get("sent_image_hashes", []),
+                          errorCode=type(exc).__name__)
+        cause = "invalid_response" if isinstance(exc, (ValueError, TypeError)) else _failure_cause(exc)
+        return core_failure or _unknown(out, "specialist_unavailable_or_invalid", cause,
+                                       retry_after_seconds=getattr(exc, "retry_after_seconds", None))
 
 
 def repair_instructions(verdict):

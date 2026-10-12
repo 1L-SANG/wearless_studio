@@ -18,6 +18,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from . import repo
+from .plan_pricing import TOPUP_BONUS_PERCENT, plan_of, topup_bonus_credits
 from .repo import CreditError
 
 log = logging.getLogger("wearless.bank_transfer")
@@ -30,7 +31,8 @@ TOSS_BLOCKING_STATUSES = ("active", "past_due", "canceled")
 _EXPIRE_BATCH = 50
 
 _REQUEST_COLUMNS = (
-    "id::text as id, user_id::text as user_id, plan_code, kind, amount, credits, payer_name, phone, "
+    "id::text as id, user_id::text as user_id, plan_code, kind, amount, credits, "
+    "bonus_credits, bonus_percent, plan_at_order, payer_name, phone, "
     "tax_invoice, business_no, business_name, representative_name, invoice_email, note, status, "
     "expires_at, paid_at, confirmed_at, admin_note, payment_id::text as payment_id, "
     "credit_source_id::text as credit_source_id, manual_plan_grant_id::text as manual_plan_grant_id, "
@@ -52,6 +54,8 @@ def request_to_json(row: dict, *, admin: bool = False) -> dict:
         "kind": row["kind"],
         "amount": row["amount"],
         "credits": row["credits"],
+        "bonusCredits": row.get("bonus_credits") or 0,
+        "totalCredits": row["credits"] + (row.get("bonus_credits") or 0),
         "payerName": row["payer_name"],
         "phone": row.get("phone"),
         "taxInvoice": bool(row.get("tax_invoice")),
@@ -120,6 +124,7 @@ async def create_request(
     conn, *, user_id: str, plan_code: str, payer_name: str, phone: str | None,
     tax_invoice: bool, business_no: str | None, business_name: str | None,
     representative_name: str | None, invoice_email: str | None, note: str | None,
+    topup_bonus_enabled: bool = False,
 ) -> dict:
     """신청 생성. 같은 종류의 기한 지난 requested 는 먼저 expired 로 닫는다.
 
@@ -159,14 +164,24 @@ async def create_request(
         )
         if await cur.fetchone() is not None:
             raise CreditError("request_already_open", "확인 중인 신청이 있어요.", 409)
+        bonus_credits, bonus_percent, plan_at_order = 0, 0, None
+        if plan["kind"] == "topup":
+            await cur.execute("select plan from profiles where user_id = %s", (user_id,))
+            profile = await cur.fetchone()
+            plan_at_order = plan_of((profile or {}).get("plan"))
+            if topup_bonus_enabled:
+                bonus_percent = TOPUP_BONUS_PERCENT[plan_at_order]
+                bonus_credits = topup_bonus_credits(plan_at_order, plan["credits"])
         await cur.execute(
             "insert into bank_transfer_requests (user_id, plan_code, kind, amount, credits, "
+            "bonus_credits, bonus_percent, plan_at_order, "
             "payer_name, phone, tax_invoice, business_no, business_name, representative_name, "
             "invoice_email, note, expires_at) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
             f"now() + interval '{REQUEST_TTL_DAYS} days') "
             f"returning {_REQUEST_COLUMNS}",
-            (user_id, plan_code, plan["kind"], plan["price"], plan["credits"], payer_name, phone,
+            (user_id, plan_code, plan["kind"], plan["price"], plan["credits"],
+             bonus_credits, bonus_percent, plan_at_order, payer_name, phone,
              tax_invoice, business_no, business_name, representative_name, invoice_email, note),
         )
         return await cur.fetchone()
@@ -232,7 +247,8 @@ async def list_requests_admin(conn, *, status: str, limit: int) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
             "select r.id::text as id, r.user_id::text as user_id, u.email, p.display_name, "
-            "pp.name as plan_name, r.plan_code, r.kind, r.amount, r.credits, r.payer_name, r.phone, "
+            "pp.name as plan_name, r.plan_code, r.kind, r.amount, r.credits, "
+            "r.bonus_credits, r.bonus_percent, r.plan_at_order, r.payer_name, r.phone, "
             "r.tax_invoice, r.business_no, r.business_name, r.representative_name, r.invoice_email, "
             "r.note, r.status, r.expires_at, r.paid_at, r.confirmed_at, r.admin_note, "
             "r.payment_id::text as payment_id, r.credit_source_id::text as credit_source_id, "
@@ -256,6 +272,8 @@ def _confirm_result(req: dict, *, credits: int, available: int, ends_at=None,
         "kind": req["kind"],
         "planCode": req["plan_code"],
         "credits": credits,
+        "baseCredits": req["credits"],
+        "bonusCredits": req.get("bonus_credits") or 0,
         "available": available,
         "paymentId": req.get("payment_id"),
         "creditSourceId": req.get("credit_source_id"),
@@ -366,7 +384,8 @@ async def confirm_request(
                 row = await cur.fetchone()
                 ends_at = row["ends_at"] if row else None
             return _confirm_result(
-                req, credits=req["credits"], available=acct["balance"] - acct["reserved"],
+                req, credits=req["credits"] + (req.get("bonus_credits") or 0),
+                available=acct["balance"] - acct["reserved"],
                 ends_at=ends_at, idempotent=True,
             )
         if req["status"] in ("rejected", "canceled"):
@@ -389,7 +408,10 @@ async def confirm_request(
             metadata={"request_id": req["id"], "granted_by": actor_user_id,
                       "payer_name": req["payer_name"], "amount_krw": req["amount"],
                       "paid_at": paid_at},
-            snapshot={"credits": req["credits"], "price": req["amount"]},
+            snapshot={"credits": req["credits"], "price": req["amount"],
+                      "bonusCredits": req.get("bonus_credits") or 0,
+                      "bonusPercent": req.get("bonus_percent") or 0,
+                      "planAtOrder": req.get("plan_at_order")},
         )
         result = {
             "paymentId": granted.get("paymentId"), "creditSourceId": granted["creditSourceId"],

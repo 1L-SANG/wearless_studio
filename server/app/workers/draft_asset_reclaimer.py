@@ -7,6 +7,8 @@ from .. import repo
 
 log = logging.getLogger("wearless.draft_asset_reclaimer")
 _INTERVAL_SECONDS = 3600
+# 임시저장 칸의 7일 TTL에 맞춘 정리 유예 시간.
+_DRAFT_ASSET_GRACE_MINUTES = 7 * 24 * 60
 
 
 class DraftAssetReclaimer:
@@ -42,7 +44,9 @@ class DraftAssetReclaimer:
 
     async def _sweep_once(self):
         async with self.app.state.pool.connection() as conn:
-            assets = await repo.reclaim_stale_unreferenced_draft_assets(conn)
+            assets = await repo.reclaim_stale_unreferenced_draft_assets(
+                conn, older_than_minutes=_DRAFT_ASSET_GRACE_MINUTES
+            )
             outputs = await repo.claim_unpublished_ai_output_cleanup_intents(conn)
             await conn.commit()
         for asset in assets:

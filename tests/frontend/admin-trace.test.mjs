@@ -42,6 +42,7 @@ test('근거 문구 — 워터마크·구간·컷을 구분한다', () => {
   assert.equal(evidenceText({ watermark: true, phashDistance: null }), '워터마크');
   assert.equal(licenseStatusLabel('deleted'), '삭제됨');
   assert.equal(targetLabel({ target: 'publication', publicationKind: 'zip' }), '배포본 · ZIP');
+  assert.equal(targetLabel({ target: 'publication', publicationKind: 'jpeg' }), '배포본 · JPG');
   assert.equal(targetLabel({ target: 'cut' }), '생성 컷');
 });
 
@@ -68,7 +69,7 @@ async function harness(api) {
   const runtime = { api, slots: [], index: 0 };
   globalThis[key] = runtime;
   const access = `globalThis[${JSON.stringify(key)}]`;
-  const server = await createServer({ configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
+  const server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, configFile: false, logLevel: 'silent', root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true, watch: null }, ssr: { noExternal: true }, esbuild: { jsx: 'automatic' }, appType: 'custom',
     plugins: [{ name: 'admin-trace-test', enforce: 'pre', resolveId(id) {
       if (id === 'react') return '\0t-react';

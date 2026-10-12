@@ -21,7 +21,7 @@ CATEGORY = "상의"
 #: 확정 GPT 프로필을 요구하는 조합 = 가상 전용
 VIRTUAL_ONLY = {"id": "v1", "source": "ai", "cutType": "styling", "direction": "front",
                 "shot": "full", "refScope": "all", "pose": "auto",
-                "exampleId": "ex_styling_men_top_full_snapshot_03"}
+                "exampleId": "ex_styling_women_top_full_snapshot_01"}
 BOTH_BLOCK = {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full",
               "direction": "front"}
 

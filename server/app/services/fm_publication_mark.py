@@ -23,6 +23,7 @@ from . import fm_fingerprint, fm_watermark
 logger = logging.getLogger("facemarket.publication_mark")
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
 _ZIP_MAX_ENTRIES = 300
 _ZIP_MAX_UNCOMPRESSED = 600 * 1024 * 1024   # 선언 크기 합 상한 — 압축 폭탄 방어
 _PNG_COMPRESS_LEVEL = 6
@@ -48,13 +49,26 @@ def _encode_png(img: Image.Image, src_info: dict) -> bytes:
     return buf.getvalue()
 
 
-def _mark_one(raw: bytes, code: int | None) -> tuple[bytes | None, Image.Image]:
-    """PNG 1장 → (워터마크 PNG 바이트 | None(코드 없음), 지문용 정규화 이미지). 실패는 raise."""
+def _encode_jpeg(img: Image.Image, src_info: dict) -> bytes:
+    buf = io.BytesIO()
+    kw = {"quality": 90, "optimize": True}
+    if src_info.get("icc_profile"):
+        kw["icc_profile"] = src_info["icc_profile"]
+    if src_info.get("dpi"):
+        kw["dpi"] = src_info["dpi"]
+    img.convert("RGB").save(buf, "JPEG", **kw)
+    return buf.getvalue()
+
+
+def _mark_one(
+    raw: bytes, code: int | None, *, encode=_encode_png
+) -> tuple[bytes | None, Image.Image]:
+    """이미지 1장 → (워터마크 바이트 | None(코드 없음), 지문용 정규화 이미지)."""
     img = fm_fingerprint.open_image(raw)
     if code is None:
         return None, fm_fingerprint.normalize(img)
     marked = fm_watermark.embed_image(img, code)
-    out = _encode_png(marked, img.info)
+    out = encode(marked, img.info)
     return out, fm_fingerprint.normalize(marked)
 
 
@@ -84,6 +98,24 @@ def _mark_png(data: bytes, code: int | None) -> MarkResult:
     return MarkResult(out, "embedded", _fingerprints([norm]), elapsed)
 
 
+def _mark_jpeg(data: bytes, code: int | None) -> MarkResult:
+    t0 = time.monotonic()
+    try:
+        out, norm = _mark_one(data, code, encode=_encode_jpeg)
+    except Exception as e:
+        logger.warning("publication watermark failed (jpeg)", exc_info=True)
+        try:
+            norm = fm_fingerprint.normalize(fm_fingerprint.open_image(data))
+        except Exception:
+            norm = None
+        return MarkResult(data, "failed", _fingerprints([norm] if norm else []),
+                          error=type(e).__name__)
+    elapsed = int((time.monotonic() - t0) * 1000)
+    if out is None:
+        return MarkResult(data, "failed", _fingerprints([norm]), elapsed, "no_code")
+    return MarkResult(out, "embedded", _fingerprints([norm]), elapsed)
+
+
 def _mark_zip(data: bytes, code: int | None) -> MarkResult:
     """ZIP 속 PNG 마다 워터마크. 하나라도 실패하면 **원본 ZIP 전체**를 돌려준다(부분 표식 금지 —
     어느 블록은 되고 어느 블록은 안 된 파일은 추적 결과를 헷갈리게 한다)."""
@@ -103,7 +135,20 @@ def _mark_zip(data: bytes, code: int | None) -> MarkResult:
     pngs = 0
     for info in infos:
         raw = zin.read(info)
-        if info.is_dir() or raw[:8] != _PNG_MAGIC:
+        if info.is_dir():
+            entries.append((info, raw))
+            continue
+        if raw[:3] == _JPEG_MAGIC:
+            # 쇼핑몰용 기본 ZIP은 JPG다. 파일을 재인코딩하면 3MB 상한을 다시 넘을 수 있어
+            # 바이트와 파일 수는 그대로 두고, 추적용 지문만 남긴다. ZIP 자체의 원장·앵커
+            # 해시는 아래 호출부가 형식과 무관하게 기록한다.
+            entries.append((info, raw))
+            try:
+                normalized.append(fm_fingerprint.normalize(fm_fingerprint.open_image(raw)))
+            except Exception:
+                pass
+            continue
+        if raw[:8] != _PNG_MAGIC:
             entries.append((info, raw))
             continue
         pngs += 1
@@ -122,7 +167,8 @@ def _mark_zip(data: bytes, code: int | None) -> MarkResult:
         except Exception:
             pass
     if pngs == 0:
-        return MarkResult(data, "skipped", [])
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return MarkResult(data, "skipped", _fingerprints(normalized), elapsed)
     if failed is not None:
         # 이미 표식된 블록의 정규화본이 섞여 있어도 지문 거리는 같다(워터마크는 pHash 를 안 움직인다).
         return MarkResult(data, "failed", _fingerprints(normalized), error=failed)
@@ -143,6 +189,8 @@ def mark_publication(data: bytes, kind: str, code: int | None) -> MarkResult:
     try:
         if kind == "zip":
             return _mark_zip(data, code)
+        if kind == "jpeg":
+            return _mark_jpeg(data, code)
         return _mark_png(data, code)
     except Exception as e:   # 방어선 — 위 함수들이 이미 잡지만 셀러 다운로드는 무조건 지킨다
         logger.exception("publication mark crashed")

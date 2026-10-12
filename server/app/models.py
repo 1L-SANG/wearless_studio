@@ -32,6 +32,7 @@ class Account(CamelModel):
     avatar: str
     credits: int  # = balance - reserved (§6)
     plan: PlanTier
+    topup_bonus_enabled: bool = False
 
 
 class MannequinGenerateQuote(CamelModel):
@@ -54,6 +55,8 @@ class CreditQuote(CamelModel):
     mannequin_regenerate: MannequinRegenerateQuote
     storyboard_per_cut: int
     editor_image: int
+    editor_edit: int
+    editor_similar: int
 
 
 class AppOriginRequest(CamelModel):
@@ -90,6 +93,43 @@ class ProjectSummary(CamelModel):
     block_count: int
     status: ProjectStatus
     updated_at: datetime
+
+
+class LatestJobSummary(CamelModel):
+    """재개용 최신 잡. 최신 여부는 생성 시각으로 정하고 오류 코드는 result에서 읽는다."""
+
+    id: str
+    status: Literal["pending", "running", "done", "error", "cancelled"]
+    error_code: str | None
+
+
+class LatestProjectJobs(CamelModel):
+    mannequin: LatestJobSummary | None
+    detail_page: LatestJobSummary | None
+
+
+class ProjectDetail(Project):
+    latest_jobs: LatestProjectJobs
+
+
+class InProgressProjectSummary(CamelModel):
+    """GET /projects?view=in_progress. updatedAt은 프로젝트와 잡의 최근 활동 시각이다.
+
+    진행 중 상세페이지 잡, 블록 없는 실패, 유효한 선택 컷, 콘티 순으로 step을 판정한다.
+    """
+
+    id: str
+    title: str
+    cover: str
+    updated_at: datetime
+    step: Literal["storyboard", "mannequin", "generating", "failed"]
+    latest_mannequin_job: LatestJobSummary | None
+    latest_detail_page_job: LatestJobSummary | None
+
+
+class ExpectedMannequinQuote(CamelModel):
+    free: bool = Field(strict=True)
+    credits: int = Field(strict=True, ge=0)
 
 
 class UploadUrlRequest(CamelModel):
@@ -134,6 +174,10 @@ class DraftSlotPutRequest(CamelModel):
     token: UUID | None = None
     device_label: str | None
     photos_pending: bool
+
+
+class DraftSlotTakeoverRequest(CamelModel):
+    device_label: str | None = None
 
 
 class CustomMatchItemRequest(CamelModel):
@@ -225,6 +269,10 @@ class MannequinCut(CamelModel):
     # AG-P2 4축 점수 스냅샷. None = 판정 없음(QC off·판정 실패·구 행). response_model 이
     # 미선언 필드를 걸러내므로 여기 없으면 라우트가 실어도 클라에 안 나간다.
     qc_scores: dict | None = None
+    # 컷을 실제로 만든 fitProfile. 기록 여부를 별도로 내려 null(사진 그대로)과
+    # 이 필드가 없던 구버전 컷을 구분한다.
+    fit_profile: dict | None = None
+    fit_profile_recorded: bool = False
 
 
 class ToneAdjustment(CamelModel):
@@ -296,7 +344,7 @@ class CreditSource(CamelModel):
     """GET /v1/credits/sources (구매건별 버킷). 환불 가능 여부는 프론트가 status·미사용으로 판단."""
 
     id: str
-    source_type: str  # subscription | topup
+    source_type: str  # subscription | free | topup
     status: str  # active | pending_refund | refunded | expired
     initial_credits: int
     remaining_credits: int
@@ -337,6 +385,20 @@ class SellerConsentIn(CamelModel):
     terms_version: str
     privacy_version: str
     age_attested: bool
+
+
+class SellerConsentAccepted(CamelModel):
+    terms_version: str
+    privacy_version: str
+    age_attested: bool
+    accepted_at: datetime
+
+
+class SellerConsentResponse(CamelModel):
+    required: dict[str, str]
+    accepted: SellerConsentAccepted | None = None
+    needs_consent: bool
+    signup_credits: int = 0
 
 
 class ErrorDetail(CamelModel):

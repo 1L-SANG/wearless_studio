@@ -80,8 +80,8 @@ test('분석 확정은 가상 대역 없이 통과한다', () => {
   assert.doesNotMatch(form, /실제 모델은 스튜디오\(호리존\) 컷에만 나와요/);
   assert.doesNotMatch(form, /needsStylingStandIn/);
   assert.doesNotMatch(form, /장소·스타일링 컷에 쓸 가상 모델을 골라 주세요/);
-  // 실제 모델에 남는 필수 입력은 브랜드 유형 하나뿐이다.
-  assert.match(form, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
+  // 셀러 분석 화면에는 실제 모델 전용 입력이 없다.
+  assert.doesNotMatch(form, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
 });
 
 test('가상 모델 동작은 그대로다', async () => {

@@ -12,6 +12,11 @@ import {
 const storyboardSource = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const featureStyles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
 
+test('카피라이팅 토글은 사진별 소제목을 만드는 실제 동작을 설명한다', () => {
+  assert.match(storyboardSource, /AI가 사진마다 소제목을 써 넣어요/);
+  assert.doesNotMatch(storyboardSource, /AI가 카피를 자동으로 넣어요/);
+});
+
 test('replacing a generation example resets per-cut settings but preserves its structural recipe', () => {
   const block = {
     id: 'cut-1', sectionRole: 'styling', contentRole: 'coordination',
@@ -44,6 +49,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
 
 test('the mock API runtime migrates an HMR-stale three-member styling seed on read', async (t) => {
   const vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false,
     plugins: [react()],
     resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
@@ -164,7 +170,9 @@ test('selected card rings use four persistent high-contrast colors', () => {
   }
   assert.match(featureStyles, /\.sb-selection-ring \{ box-shadow: inset 0 0 0 3px var\(--sb-ring-sky\); \}/);
   assert.match(featureStyles, /\.sb-selection-ring i \{[^}]*0 0 0 3px/);
-  assert.doesNotMatch(featureStyles, /sbRingSun[^]*var\(--glow-sun\)/);
+  const selectedCardRing = featureStyles.slice(featureStyles.indexOf('.sb-selection-ring {'),
+    featureStyles.indexOf('@keyframes sbRingSun'));
+  assert.doesNotMatch(selectedCardRing, /var\(--glow-sun\)/);
 });
 
 test('matching clothing action uses the owner-approved wording', () => {

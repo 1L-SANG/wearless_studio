@@ -24,10 +24,11 @@ import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import { BANK_TRANSFER_ENABLED, SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED,
   TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import { BankTransferModal } from './BankTransferModal.jsx';
-import { CopyButton, PIcon, num, seoulShort, won } from './bankTransferParts.jsx';
+import { topupBonusCredits } from '@/lib/limits.js';
+import { CopyButton, PIcon, TransferDeadline, num, won } from './bankTransferParts.jsx';
 import s from './Pricing.module.css';
 
-// 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 수정 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
+// 요금 정본 documents/research/2026-09-07-credit-pricing-plans.md v8 기준 상세페이지(마네킹컷 45 + 무료 수정 1회 0 + AI 컷 10장 190 + 에디터 새 이미지 1회 19). 랜딩 pricing-section.tsx 와 같은 값.
 const STANDARD_PAGE_CREDITS = 254;
 
 // 충전 팩 크레딧당 가격 — 가격표와 같은 원 단위 한 자리.
@@ -55,8 +56,6 @@ const PLAN_DETAILS = {
     baseCredits: 1400,
     bonusNote: '200 크레딧 추가 증정',
     features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능'],
-    // 충전 보너스는 아직 지급 코드가 없다. 토스 경로에서는 충전 탭이 닫혀 있어 약속이 깨질 일이
-    // 없지만, 계좌이체 모드는 충전을 실제로 팔므로 그 동안은 이 줄을 숨긴다(2026-09-23 리뷰 368F-6).
     topupBonus: '충전할 때마다 크레딧 5% 보너스',
   },
   pro: {
@@ -75,6 +74,7 @@ export function Pricing() {
   const account = useAppStore((a) => a.account);
   const loadAccount = useAppStore((a) => a.loadAccount);
   const currentPlan = (account?.plan || '').toLowerCase();
+  const topupBonusEnabled = account?.topupBonusEnabled === true;
   const { session, openLogin } = useAuth();
   const qc = useQueryClient();
   // 계좌이체(무통장입금) — PG 심사 전 결제 경로(lib/tossKeys.js BANK_TRANSFER_ENABLED).
@@ -168,7 +168,7 @@ export function Pricing() {
     }
   }
 
-  const { data: plans = [], isLoading, isError, refetch } = useQuery({
+  const { data: plans = [], isLoading, isError, error: queryError, refetch } = useQuery({
     queryKey: ['pricingPlans'],
     queryFn: () => api.getPricingPlans(),
     staleTime: 5 * 60 * 1000,
@@ -222,6 +222,7 @@ export function Pricing() {
             <span className={s.statusProduct}>
               {plans.find((p) => p.code === r.planCode)?.name || r.planCode}
               {r.kind === 'subscription' ? ' 1개월 이용권' : ' 1회 충전'}
+              {r.bonusCredits > 0 && ` · 보너스 ${num(r.bonusCredits)} 포함`}
             </span>
             <button type="button" className={s.textBtn} onClick={() => cancelTransfer.mutate(r.id)}
               disabled={cancelTransfer.isPending}>신청 취소</button>
@@ -247,28 +248,20 @@ export function Pricing() {
               </div>
             )}
             <div className={s.sg}><dt>입금자명</dt><dd>{r.payerName}</dd></div>
-            <div className={s.sg}><dt>입금 기한</dt><dd>{seoulShort(r.expiresAt)}까지</dd></div>
+            <div className={s.sg}><dt>입금 기한</dt><dd><TransferDeadline iso={r.expiresAt} className={s.deadlinePart} /></dd></div>
           </dl>
         </section>
       ))}
 
-      {/* 정기결제 고지문(자동 갱신·이월·환불)은 토스 결제 모드에서만 그린다. 계좌이체 모드는 배지 한 줄이 전부다. */}
-      {!bankTransfer && (
-        <p className={s.tabDesc}>
-          월간 정기결제 상품입니다. 결제 완료 즉시 이용을 시작하며, 1회 결제에 따른 구독 이용기간은 1개월입니다. 해지하지 않으면 매월 자동 갱신 및 결제됩니다. 구독 관리에서 해지하면 다음 갱신부터 결제되지 않으며, 이미 결제한 기간의 종료일까지 이용할 수 있습니다. 표시 금액은 부가가치세를 포함합니다.
-        </p>
-      )}
-      {!bankTransfer && (
-        <div className={s.billingNotice} aria-label="구독 크레딧 및 환불 안내">
-          <p>미사용 구독 크레딧은 구독 유지 중 다음 달로 이월됩니다. 해지 후 이미 결제한 이용기간이 끝나면 이월분을 포함해 모두 소멸합니다. 갱신 결제 실패 시 3일의 유예기간이 있으며, 그 안에 결제가 완료되지 않으면 구독이 종료되고 구독 크레딧이 소멸합니다.</p>
-          <p>결제일부터 7일 이내에 해당 결제로 지급된 크레딧을 사용하지 않았다면 전액 환불을 신청할 수 있습니다. 사용한 부분의 청약철회는 제한될 수 있지만, 미제공 부분의 법령상 환불 권리는 제한하지 않습니다. 환불 및 중도해지는 <a href="mailto:contact@wearless.kr">contact@wearless.kr</a>로 신청해 주세요. <a href={WEARLESS_LEGAL_URLS.refund}>환불정책 보기</a></p>
-        </div>
+      {/* 계좌이체 모드의 결제 조건은 구석의 가벼운 링크 하나로 둔다(오너 10/5). */}
+      {bankTransfer && (
+        <p className={s.bankTermsLink}><a href={WEARLESS_LEGAL_URLS.refund}>결제·환불 조건</a></p>
       )}
 
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
       )}
-      {isError && <div className="surface"><ErrorState desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
+      {isError && <div className="surface"><ErrorState error={queryError} desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
       {ready && subs.length === 0 && topups.length === 0 && (
         <div className="surface"><EmptyState icon="coins" title="요금제를 준비 중이에요" desc="잠시 후 다시 확인해 주세요." /></div>
       )}
@@ -304,7 +297,7 @@ export function Pricing() {
                   <p className={s.pageEstimate}>상세페이지 약 <strong>{Math.floor(Number(p.credits) / STANDARD_PAGE_CREDITS)}개</strong></p>
                 </div>
                 {details && <ul className={s.features}>
-                  {[...details.features, ...(details.topupBonus && !bankTransfer ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
+                  {[...details.features, ...(topupBonusEnabled && details.topupBonus ? [details.topupBonus] : [])].map((feature) => <li key={feature}>
                     <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
                     <span>{feature}</span>
                   </li>)}
@@ -362,14 +355,6 @@ export function Pricing() {
         </div>
       )}
 
-      {ready && subs.length > 0 && (
-        <p className={s.usageNote}>
-          상세페이지 1개의 제작을 처음부터 끝까지 진행했을 때 평균적으로 <span className={s.noWrap}>약&nbsp;250크레딧이</span> 소모됩니다.
-          <br />
-          컷수에 따라 소모되는 비용은 상이합니다.
-        </p>
-      )}
-
       {/* 크레딧 충전 — 구독 카드보다 한 단계 가벼운 가로형 카드 두 장(구독이 주인공, 충전은 보조). */}
       {ready && topups.length > 0 && (
         <section id="topup" ref={topupRef} className={s.topupSection} aria-labelledby="topup-title">
@@ -377,19 +362,24 @@ export function Pricing() {
             <h2 id="topup-title" className={s.topupTitle}>크레딧 충전</h2>
             <span className={s.topupMeta}>1회 결제 · 소멸 없음</span>
           </div>
+          {topupBonusEnabled && <p className={`${s.topupMeta} ${s.topupBonusNotice}`}>Seller는 충전할 때마다 <span className={s.bonusRate}>5%,</span> Pro는 10%를 더 드려요.</p>}
           {entry.need > 0 && (
             <p className={s.needLine}><PIcon name="alert" size={16} />지금 {num(entry.need)} 크레딧이 부족해요</p>
           )}
           <div className={s.topupList}>
             {topups.map((p) => {
               const locked = session && bankTransfer && (!bankReady || Boolean(openByKind('topup')));
+              const bonusCredits = session && topupBonusEnabled ? topupBonusCredits(currentPlan, p.credits) : 0;
               return (
                 <div key={p.id} className={`${s.topupRow}${p.code === recommendedCode ? ' ' + s.recommended : ''}`}>
                   {p.code === recommendedCode && <span className={s.recommendPill}>추천</span>}
                   <div className={s.topupInfo}>
-                    <h3 className={s.topupCredits} aria-label={p.name}>
-                      <span className={s.plus}>+</span>{num(p.credits)}<span className={s.creditUnit}>크레딧</span>
-                    </h3>
+                    <div className={s.topupCreditLine}>
+                      <h3 className={s.topupCredits} aria-label={p.name}>
+                        <span className={s.plus}>+</span>{num(p.credits)}<span className={s.creditUnit}>크레딧</span>
+                      </h3>
+                      {bonusCredits > 0 && <span className={s.topupBonus}>+{num(bonusCredits)} 보너스</span>}
+                    </div>
                     <p className={s.topupPrice}>
                       <strong>{won(p.price)}</strong>
                       <span>크레딧당 {perCredit(p)}원</span>
@@ -423,9 +413,16 @@ export function Pricing() {
       )}
 
       {ready && (subs.length > 0 || topups.length > 0) && (
-        <p className={s.purchaseConsent}>
-          결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
-        </p>
+        <>
+          {!bankTransfer && (
+            <p className={s.purchaseConsent}>
+              매월 자동 결제되고 언제든 해지할 수 있어요. 해지해도 결제한 기간까지 쓸 수 있어요. 부가세 포함.
+            </p>
+          )}
+          <p className={s.purchaseConsent}>
+            결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
+          </p>
+        </>
       )}
 
       {transferPlan && (

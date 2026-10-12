@@ -27,8 +27,9 @@ from .confirmed_gpt_prompt import (
 )
 from .gemini_image import InlineImage
 from .prompts import clean_text
-from .vision_llm import VisionError, analyze_with_fallback
+from .vision_llm import VisionError, analyze_with_fallback, qc_system_prompt
 from . import horizon_background
+from .outer_closure import STATES as _CLOSURES
 
 
 GATES = (
@@ -85,6 +86,15 @@ The attached EXAMPLE ALL supplies its allowed studio/pose/framing evidence. The 
 exception never gives its garment or person identity authority, and does not require a separate
 PLATE, pose mask or layout image. Current storyboard overrides remain authoritative.
 """
+_SIGNATURE_BACKGROUND_EXCEPTION = """SIGNATURE BACKGROUND CONTRACT:
+Do not fail for any background hue difference from the EXAMPLE or demand that the EXAMPLE's
+background color be reproduced. The reference photo's background color has no authority.
+Judge the signature background only on whether it is a soft plain surface and the PRODUCT
+garment silhouette remains clearly separated from the background. Do not require exact RGB,
+HEX, brightness, or saturation equality. Fail a background-related aspect only when the garment
+outline visibly sinks into the backdrop or the background adds distracting texture, props, text,
+or scenery. Keep PRODUCT garment color fidelity under the garmentColor gate.
+"""
 _AUTHORITY_PROFILES = frozenset({"generic_v1", "confirmed_gpt_v1"})
 _GENERIC_MANNEQUIN_AUTHORITY = (
     "- PRODUCT images alone own the target garment's construction, material, pattern, hardware and garment\n"
@@ -129,8 +139,9 @@ _CONFIRMED_MATERIAL_GATE = (
     "   its owning evidence. A flat 2-D fill that erases supported surface or depth cues FAILS."
 )
 _GENERIC_FIT_GATE = (
-    "11. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared\n"
-    "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged."
+    "11. fitClosureAllowedMutation — only declared fit axes may change; closure matches the storyboard opening level, or the nearest level this exact garment can physically take; undeclared\n"
+    "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged.\n"
+    "storyboard.outerClosure levels, measured on the wearer from the neckline down: closed = fastened up to the neckline; openToChest = open down to about the armpit line, fastened below; partial = open down to about the bottom of the breastbone; openToWaist = open down to about navel height, fastened only near the hem; open = fully unfastened; none = not applicable. Never FAIL a closure only because the garment cannot physically reach the exact level."
 )
 _CONFIRMED_FIT_GATE = (
     "11. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
@@ -152,7 +163,7 @@ _REFERENCE_MODES = frozenset({"none", "all", "pose", "bg"})
 _SHOTS = frozenset({"full", "medium", "ghost", "detail"})
 _DIRECTIONS = frozenset({"front", "side", "back"})
 _FACES = frozenset({"same", "show", "hide"})
-_CLOSURES = frozenset({"open", "partial", "closed"})
+_SIGNATURE_FRAMINGS = frozenset({"bottom", "dress"})
 _OWNERS = frozenset({
     "productTruth", "storyboard", "fitProfile", "reference", "spaceSet", "recipe",
     "modelFace", "modelFullBody",
@@ -235,6 +246,29 @@ _CORRECTIONS = MappingProxyType({
         "reflection, contact, and cast shadows under the owned scene light."
     ),
 })
+_SIGNATURE_FRAMING_GUIDANCE = MappingProxyType({
+    "bottom": (
+        "SIGNATURE FRAMING: crop from just above the waistband to about mid-thigh; for short "
+        "skirts or shorts include the garment hem and stop there. Keep face and hair out of frame."
+    ),
+    "dress": (
+        "SIGNATURE FRAMING: crop from just below the collarbone to mid-thigh or the knee. "
+        "Keep the waistline, closure, skirt drape and silhouette dominant, with face and hair "
+        "out of frame."
+    ),
+})
+_SIGNATURE_FRAMING_CORRECTIONS = MappingProxyType({
+    "bottom": (
+        "Reframe to the bottom-signature crop from just above the waistband to "
+        "mid-thigh; for short skirts or shorts include the garment hem and stop there. Keep "
+        "face and hair out of frame and preserve every other pixel fact."
+    ),
+    "dress": (
+        "Reframe to the dress-signature crop from just below the collarbone to mid-thigh "
+        "or the knee. Keep the waistline, closure, skirt drape and silhouette dominant, keep "
+        "face and hair out of frame, and preserve every other pixel fact."
+    ),
+})
 _HORIZON_TONE_CORRECTIONS = MappingProxyType({
     **_CORRECTIONS,
     "referenceScopeCaptureClass": (
@@ -265,6 +299,26 @@ _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
         "MANNEQUIN visibly judgeable worn drape."
     ),
 })
+
+
+def _correction_map_for(
+    contract: Mapping[str, Any], authority_profile: str,
+) -> Mapping[str, str]:
+    if authority_profile == "confirmed_gpt_v1":
+        return _CONFIRMED_GPT_CORRECTIONS
+    base = (
+        _HORIZON_TONE_CORRECTIONS
+        if contract.get("recipeFamily") == "horizon"
+        and horizon_background.normalize_runtime(contract.get("horizonBackground"))
+        else _CORRECTIONS
+    )
+    signature_framing = contract.get("signatureFraming")
+    if signature_framing in _SIGNATURE_FRAMING_CORRECTIONS:
+        return {
+            **base,
+            "framingCrop": _SIGNATURE_FRAMING_CORRECTIONS[signature_framing],
+        }
+    return base
 
 # 아래 허용 축만 1차 이미지를 직접 편집한다. 의류·모델 정체성·장소·레시피처럼 원본
 # 근거를 다시 봐야 하는 실패는 scratch 재생성으로 보낸다. confirmed 프로필은 프레이밍
@@ -410,6 +464,15 @@ def normalize_plan(plan: Any) -> dict:
     clothing_type = _enum(source.get("clothingType"), _CLOTHING_TYPES)
     if clothing_type is None:
         errors.append("unknown_clothing_type")
+    signature_framing_raw = source.get("signatureFraming")
+    signature_framing = _enum(signature_framing_raw, _SIGNATURE_FRAMINGS)
+    if signature_framing_raw is not None and signature_framing is None:
+        errors.append("unknown_signature_framing")
+    signature_background_raw = source.get("signatureBackground")
+    signature_background = horizon_background.normalize_signature_decision(
+        signature_background_raw)
+    if signature_background_raw is not None and signature_background is None:
+        errors.append("invalid_signature_background")
 
     capture = source.get("captureMode") or recipe_block.get("captureMode")
     capture = _enum(capture, _CAPTURE_MODES)
@@ -433,7 +496,9 @@ def normalize_plan(plan: Any) -> dict:
         reference_face_visibility = None
         errors.append("invalid_reference_face_visibility")
     effective_face = face
-    if face == "same" and reference_face_visibility == "hidden":
+    if signature_framing is not None:
+        effective_face = None
+    elif face == "same" and reference_face_visibility == "hidden":
         effective_face = "hide"
     elif face == "same" and reference_face_visibility == "visible":
         effective_face = "show"
@@ -543,6 +608,9 @@ def normalize_plan(plan: Any) -> dict:
            and (background := horizon_background.normalize_runtime(source.get("horizonBackground"))) else {}),
         "precedence": precedence_contract,
         "contractErrors": sorted(set(errors)),
+        **({"signatureFraming": signature_framing} if signature_framing else {}),
+        **({"signatureBackground": signature_background}
+           if signature_background is not None else {}),
     }
 
 
@@ -555,6 +623,7 @@ def gate_applicability(contract: Mapping[str, Any]) -> dict[str, bool]:
     selected_model = worn and storyboard.get("modelSelected") is True
     face_can_identify = (
         selected_model
+        and contract.get("signatureFraming") not in _SIGNATURE_FRAMINGS
         and storyboard.get("face") != "hide"
         and storyboard.get("direction") != "back"
         and not (
@@ -638,6 +707,11 @@ def build_prompt(
     if (contract.get("recipeFamily") == "horizon"
             and horizon_background.normalize_runtime(contract.get("horizonBackground"))):
         prompt += "\n\n" + _HORIZON_WALL_EXCEPTION
+    signature_framing = contract.get("signatureFraming")
+    if signature_framing in _SIGNATURE_FRAMING_GUIDANCE:
+        prompt += "\n\n" + _SIGNATURE_FRAMING_GUIDANCE[signature_framing]
+    if contract.get("signatureBackground") is not None:
+        prompt += "\n\n" + _SIGNATURE_BACKGROUND_EXCEPTION
     return prompt
 
 
@@ -753,13 +827,7 @@ def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
     if authority_profile not in _AUTHORITY_PROFILES:
         raise VisionError("cut_output_qc: unknown authority profile")
     contract = _mapping(result.get("contract"))
-    correction_map = (
-        _CONFIRMED_GPT_CORRECTIONS if authority_profile == "confirmed_gpt_v1"
-        else _HORIZON_TONE_CORRECTIONS
-        if contract.get("recipeFamily") == "horizon"
-        and horizon_background.normalize_runtime(contract.get("horizonBackground"))
-        else _CORRECTIONS
-    )
+    correction_map = _correction_map_for(contract, authority_profile)
     if not isinstance(operations, list) or not operations:
         raise VisionError("cut_output_qc: empty correction operations")
     instructions = []
@@ -1053,21 +1121,24 @@ async def verdict(
         contract, checked_references, authority_profile=authority_profile
     )
     images = [*(reference.image for reference in checked_references), generated_image]
-    raw, provider = await analyze_with_fallback(settings, prompt, images, qc_schema())
+    authority_context = None if contract.get("contractErrors") else {
+        "authorityProfile": authority_profile,
+        "attributeOwners": contract["attributeOwners"],
+        "referenceAllowedAttributes": contract["referenceAllowedAttributes"],
+    }
+    raw, provider = await analyze_with_fallback(
+        settings, prompt, images, qc_schema(), require_complete_envelope=True,
+        system_prompt=qc_system_prompt("cut", authority_context)
+    )
     result = validate(raw, applicable=applicable, forced=forced)
     result.update({
         "provider": provider,
         "contract": contract,
         "authorityProfile": authority_profile,
     })
-    if authority_profile == "generic_v1" and contract.get("recipeFamily") == "horizon" \
-            and horizon_background.normalize_runtime(contract.get("horizonBackground")) \
-            and result.get("correctionPatch"):
+    if result.get("correctionPatch"):
         result["correctionPatch"] = _correction_patch(
-            result["gates"], corrections=_HORIZON_TONE_CORRECTIONS
-        )
-    if authority_profile == "confirmed_gpt_v1" and result.get("correctionPatch"):
-        result["correctionPatch"] = _correction_patch(
-            result["gates"], corrections=_CONFIRMED_GPT_CORRECTIONS
+            result["gates"],
+            corrections=_correction_map_for(contract, authority_profile),
         )
     return result

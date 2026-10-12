@@ -1,3 +1,5 @@
+import { ClientErrorCapture } from '@/components/ClientErrorCapture.jsx';
+import { clientEvents } from '@/lib/clientEvents.js';
 /* =============================================================
    features/editor/Editor.jsx — ⑦ 상세페이지 에디터 (PRD §10)
    Structure/markup/classNames ported verbatim from the prototype
@@ -8,21 +10,25 @@
    layers, undo/redo, frames, download/preview) keeps prototype logic.
    ============================================================= */
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
+import { jobFailure, jobFailureMessage } from '@/lib/api/jobFailure.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { SettlementReceiptChain } from '@/features/editor/SettlementReceiptChain.jsx';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, clearFailedJobPreviewBlocks, decorateGenBlocks, failedJobPreviewUrls, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
-import { incompleteMessage, incompleteSummary, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
+import { incompleteMessage, retryOfIncomplete, retryReuseHint } from '@/lib/detailPageJobFailure.js';
 import {
   clearEditorWaitDraft, editorWaitDraftDecision, loadEditorWaitDraftEntry, saveEditorWaitDraft,
 } from '@/lib/editorWaitDraft.js';
+import { editorWorkCopies, restoreWorkCopyOnce } from '@/lib/conflictWorkCopy.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels, warmFaceRender } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
+import { hasImageSource } from './editorImageSource.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
@@ -42,8 +48,15 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { MAX_WARDROBE_UPLOADS, WARDROBE_UPLOAD_CONCURRENCY, runWithConcurrency } from '@/features/editor/editorUpload.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
-import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, isEmptyTextElement, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import {
+  buildExportSummary,
+  exportBlockPng,
+  exportNodeHeight,
+  exportStorefrontDownload,
+  readExportSettings,
+  writeExportSettings,
+} from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorBlock, copyEditorElements, pasteEditorBlock, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
@@ -52,13 +65,21 @@ import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedB
 import { imageResizeRect, lineColor, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe, removeWardrobeImagesBySrc } from '@/features/editor/editorWardrobe.js';
 import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
-import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
+import { CanvasAiLayer, CanvasAiProgress } from './CanvasAiLayer.jsx';
+import { useEditorCreditCosts } from './useEditorCreditCosts.js';
+import { useCanvasAi } from './useCanvasAi.js';
+import { canReplaceCanvasAiResult } from './canvasAiJobs.js';
+import { canFillCanvasAiSlot, replaceCanvasAiImage, canvasAiSlotArrivalVisible, canvasAiProgressVisible, canvasAiResultDimensions, readCanvasAiResultDimensions } from './canvasAiApply.js';
+import { failedCutPresentation } from '@/lib/cutFailureMessages.js';
+import { detailPageCompletionMessage } from '@/lib/detailPageJobEvents.js';
 import { GenDonePreview } from '@/features/editor/GenDonePreview.jsx';
+import { EditorDownloadModal } from '@/features/editor/EditorDownloadModal.jsx';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 import { cssWeight } from '@/features/editor/fontWeights.js';
+import { resolveTextSpacing } from './textSpacing.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
 
@@ -229,7 +250,7 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null, canvasAiJob, onCanvasAiCancel, onCanvasAiDismiss }) {
   /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
      곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
      원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
@@ -386,7 +407,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     const h = Math.max(1, Math.ceil(node.offsetHeight));
     if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.font, s0.list, editing, preview, el.hidden]);
+  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.spacingMode, s0.font, s0.list, editing, preview, el.hidden]);
   // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
   // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
   // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
@@ -444,7 +465,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       boxSizing: 'border-box',
       overflow: 'hidden',
     } : {};
-    if (!el.src && el.genPending) {
+    if (!hasImageSource(el) && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
       // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
       return (
@@ -456,9 +477,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           {el.genPending === 'live' && <span className="ed-genwait-shim" aria-hidden="true" />}
           {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
           {/* 부분 실패(2026-09-28) — 완성 컷 사이에서 어느 자리가 실패했는지 한눈에 보이게. */}
-          {el.genPending === 'failed' && <span className="ed-genwait-tag fail">실패</span>}
+          {el.genPending === 'failed' && <span className="ed-genwait-tag fail">미완성</span>}
           {el.genPending === 'failed'
-            ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
+            ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>이 컷 값은 받지 않았어요<br />{failedCutPresentation(el).guidance}</small></span>
             : el.genPending === 'done'
               /* 다 만든 컷인데 이벤트에 주소가 없다(REAL 얼굴 컷 — 최종 확인 전 비공개, 492cbc64).
                  서버 미리보기 라우트가 요청마다 소유·라이선스를 다시 확인해 주면 그 그림을, 거절되면
@@ -468,7 +489,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         </div>
       );
     }
-    if (!el.src) {
+    if (!hasImageSource(el)) {
       const inv = 1 / (scale || 1);
       const compactSlot = Math.min(el.w * (scale || 1), el.h * (scale || 1)) < 120;
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
@@ -476,6 +497,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
+          {canvasAiProgressVisible(canvasAiJob) ? <CanvasAiProgress job={canvasAiJob} slot onCancel={onCanvasAiCancel} onDismiss={onCanvasAiDismiss} /> : (
           <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
             aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}
@@ -487,9 +509,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             {/* 못 만든 컷은 완료 후에도 "그냥 빈 칸"이 아니어야 한다 — 무엇이 왜 비었고
                 돈이 나갔는지, 어떻게 채우는지까지 이 자리에서 말한다(오너: 상업 서비스). */}
             {!compactSlot && (el.genFailed
-              ? <span>이 컷은 만들지 못했어요<br /><small>크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요</small></span>
+              ? <span>이 컷은 만들지 못했어요<br /><small>이 컷 값은 받지 않았어요<br />{failedCutPresentation(el).guidance}</small></span>
               : <span>여기에 사진 넣기</span>)}
-          </button>
+          </button>)}
           {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
@@ -507,6 +529,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         ) : (
           <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
+        {canvasAiSlotArrivalVisible(el, canvasAiJob) && <span className="canvas-ai-slot-arrived">새 컷</span>}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
@@ -514,9 +537,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   if (el.type === 'text') {
     const s = el.style || {};
     const isBubbleText = isSpeechBubbleElement(el);
+    const emptyText = isEmptyTextElement(el);
+    if (preview && emptyText) return null;
     const lines = (el.text || '').split('\n');
-    const display = (!s.list || s.list === 'none') ? el.text
-      : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
+    const display = emptyText ? (el.placeholder || '')
+      : (!s.list || s.list === 'none') ? el.text
+        : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
     const hasBg = s.bg && s.bg !== 'none';
     if (isBubbleText) {
       const fit = speechBubbleFitOptions(el);
@@ -526,7 +552,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       const radius = el.radius ?? DEFAULT_BUBBLE_RADIUS;
       const bubblePath = speechBubblePath({ width: el.w, height: el.h, radius });
       return (
-        <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}`)} style={{ ...base, overflow: 'visible' }}
+        <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, overflow: 'visible' }}
           onDoubleClick={preview ? undefined : (e) => {
             e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id);
           }}>
@@ -539,8 +565,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             position: 'absolute', left: fit.padX, top: fit.padTop,
             width: Math.max(1, el.w - fit.padX * 2), height: 'auto',
             fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
-            color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
-            lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
+            color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
+            lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere', opacity: s.opacity ?? 1,
             background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined,
             borderRadius: hasBg ? 4 : undefined, fontStyle: s.italic ? 'italic' : 'normal',
@@ -567,10 +593,10 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return (
       /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}${emptyText ? ' el-empty-text' : ''}${emptyText && el.placeholder ? ' el-placeholder' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
-        color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
-        lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
+        color: s.color || '#0e0d14', letterSpacing: s.spacingMode === 'auto' ? resolveTextSpacing(s).tracking : s.tracking, textAlign: s.align || 'left',
+        lineHeight: s.spacingMode === 'auto' ? resolveTextSpacing(s).lineHeight + 'px' : s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
@@ -590,7 +616,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
-        {editing ? el.text : display}</div>
+        {editing ? el.text : (emptyText ? el.placeholder : display)}</div>
     );
   }
   if (el.type === 'license-verify') {
@@ -651,7 +677,7 @@ function ImageImportWait({ item, scale }) {
     uploading: '업로드 중',
     placing: '프레임 적용 중',
     done: '완료',
-    error: '불러오기 실패',
+    error: '연결이 불안정해요',
   }[phase];
   const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
 
@@ -700,7 +726,7 @@ function DragObjectGhost({ kind, id, w, h }) {
   ));
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx, canvasAi, canvasAiJobs, onCanvasAiCancel, onCanvasAiDismiss }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -749,6 +775,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   return (
     <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
+      data-export-height={getBlockRenderHeight(block, { forExport: true })}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
       onClick={(e) => {
@@ -801,7 +828,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
           left: textGhost.x, top: textGhost.y, width: textGhost.box.w, minHeight: textGhost.box.h,
           fontSize: textGhost.box.style.size, fontWeight: cssWeight(textGhost.box.style.font, textGhost.box.style.weight),
           color: textGhost.box.style.color,
-          lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
+          lineHeight: `${resolveTextSpacing(textGhost.box.style).lineHeight}px`,
+          letterSpacing: resolveTextSpacing(textGhost.box.style).tracking,
         }}>{textGhost.box.text}</div>
       )}
       {objGhost && (
@@ -821,7 +849,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
               onDropImageFiles={(files) => onDropImageFiles(block.id, files, null, el.id)}
-              onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
+              onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)}
+              canvasAiJob={canvasAiJobs?.get(el.id)} onCanvasAiCancel={() => onCanvasAiCancel?.(el.id)} onCanvasAiDismiss={() => onCanvasAiDismiss?.(el.id)} />
           )
         ))}
         <div className="editor-snap-guide vertical" data-editor-snap-guide="vertical" aria-hidden="true" />
@@ -870,6 +899,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         /* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */
         <span className="blk-resize" onPointerDown={resizeFromBottom} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
       )}
+      {canvasAi}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
         <IconButton name="chevDown" onClick={() => onMove(idx, 1)} title="아래로" />
@@ -898,7 +928,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
     <div className="ed-right">
       <div className="mini-head">상세페이지 · 드래그로 순서 변경</div>
       {blocks.map((b, i) => {
-        const blockH = getBlockRenderHeight(b);
+        const blockH = getBlockRenderHeight(b, { forExport: true });
         return (
         <div key={b.id} style={{ display: 'contents' }}>
           <div className={`mini-dropline${lineAt === i ? ' on' : ''}`} />
@@ -994,8 +1024,12 @@ export function Editor() {
   }), []);
   const [wardrobe, setWardrobe] = useState(null);
   const wardrobeContext = useRef({ storyboard: [], colorIds: [], fallbackColorId: null });
-  const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
-  const [catalogs, setCatalogs] = useState(null);
+  const [catalogData, setCatalogs] = useState(null);
+  const editorCreditCosts = useEditorCreditCosts(projectId, catalogData?.creditCosts);
+  const catalogs = useMemo(() => catalogData && { ...catalogData, creditCosts: {
+    ...catalogData.creditCosts, ...editorCreditCosts,
+    editorEdit: editorCreditCosts.editorEdit, editorSimilar: editorCreditCosts.editorSimilar,
+  } }, [catalogData, editorCreditCosts.editorImage, editorCreditCosts.editorEdit, editorCreditCosts.editorSimilar]);
   const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
   const [colorOpts, setColorOpts] = useState([]);
   const [detailColorOpts, setDetailColorOpts] = useState([]);
@@ -1019,8 +1053,10 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
-  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 — 퀵바·모달 공용 잠금
-  const [dlProg, setDlProg] = useState(null); // '3/12' — 여러 블록 내보내기 진행률
+  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 퀵바와 모달의 공용 잠금
+  const [dlProg, setDlProg] = useState(null); // 처리 단계와 현재 블록 수
+  const [dlError, setDlError] = useState('');
+  const [dlOriginalError, setDlOriginalError] = useState(null);
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -1087,15 +1123,22 @@ export function Editor() {
     slowJobTimers.current.clear();
   }, []);
   const genMergedRef = useRef(false);
+  const [genFinalizeOriginalError, setGenFinalizeOriginalError] = useState(null);
   const [genFinalizeError, setGenFinalizeError] = useState('');
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
   const { openLogin } = useAuth();
+  const editorConflictPending = useRef(false);
   const backupLatestEditorDraft = useCallback((source = latestBlocks.current, { reportFailure = true } = {}) => {
     if (!Array.isArray(source)) return false;
+    if (editorConflictPending.current) {
+      editorWorkCopies.keep(projectId, { blocks: source, history: {
+        past: [...hist.current.past], future: [...hist.current.future],
+      } });
+    }
     // 기준 리비전을 함께 남겨, 그새 다른 탭·기기가 저장했으면 다음 진입 때 이 작업본이 덮지 않게 한다.
     const backedUp = saveEditorWaitDraft(projectId, persistable(source), undefined,
-      { baseRevision: api.editorRevisionOf?.(projectId) ?? null });
+      { baseRevision: api.editorRevisionOf?.(projectId) ?? null, conflictPending: editorConflictPending.current });
     pendingGenerationDraft.current = backedUp;
     if (!backedUp && reportFailure) {
       setSaveError({
@@ -1110,10 +1153,20 @@ export function Editor() {
   const [genReceipt, setGenReceipt] = useState(null);
   const [genNotif, setGenNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
-  const [dlFormat, setDlFormat] = useState('long');
+  const [dlSettings, setDlSettings] = useState(() => readExportSettings());
+  const [dlNotice, setDlNotice] = useState('');
+  const [dlBlockHeights, setDlBlockHeights] = useState([]);
+  useEffect(() => {
+    writeExportSettings(undefined, dlSettings);
+  }, [dlSettings]);
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
+  const canvasAiDotRestore = useRef('none');
+  const canvasAiAdding = useRef(new Set());
+  const generateSubmission = useRef(null);
+  const [generateSubmitting, setGenerateSubmitting] = useState(false);
+  const [pendingGenerateRequest, setPendingGenerateRequest] = useState(null);
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
   // 드래그 중인 프레임(패널→캔버스) — 삽입 갭에 미니 미리보기를 그린다. 저장 대상 아님.
@@ -1161,6 +1214,7 @@ export function Editor() {
   const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const [marquee, setMarquee] = useState(null);    // wrapper 좌표계의 Figma식 드래그 다중선택 박스
   const dragSnap = useRef(null);                   // start coords during a Moveable resize/rotate gesture
+  const [canvasGesture, setCanvasGesture] = useState(false);
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
   const toast = useToast();
@@ -1176,6 +1230,31 @@ export function Editor() {
   const fromHistory = useRef(false);
   const failedCleanupJobRef = useRef(null);
   const lastPush = useRef(0);
+
+  const canvasAiHandlers = useRef({});
+  const canvasAi = useCanvasAi({ projectId, blocks, wardrobe,
+    storyboard: wardrobeContext.current.storyboard, selectedId: selEl,
+    product, analysis, clothingType, colorOpts, handlers: canvasAiHandlers });
+
+  useLayoutEffect(() => {
+    if (!download) return;
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    setDlBlockHeights(nodes.map(exportNodeHeight));
+  }, [download, blocks]);
+  const dlEstimatedHeights = useMemo(() => {
+    if (dlBlockHeights.length) return dlBlockHeights;
+    // .canvas-block 은 세로 padding 50px씩을 갖는다. DOM 측정 전 첫 모달 프레임의 폴백이다.
+    return (blocks || []).map((block) => getBlockRenderHeight(block, { forExport: true }) + 100);
+  }, [blocks, dlBlockHeights]);
+  const dlSummary = useMemo(
+    () => buildExportSummary(dlEstimatedHeights, dlSettings),
+    [dlEstimatedHeights, dlSettings],
+  );
+  useEffect(() => {
+    if (!download || dlBusy || dlSettings.delivery !== 'single' || !dlSummary.fallbackReason) return;
+    setDlSettings((current) => ({ ...current, delivery: 'split' }));
+    setDlNotice(dlSummary.fallbackReason);
+  }, [download, dlBusy, dlSettings.delivery, dlSummary.fallbackReason]);
 
   useEffect(() => {
     if (
@@ -1237,11 +1316,14 @@ export function Editor() {
     const enteringJob = useAppStore.getState().detailPageJob;
     // 내용과 기준 리비전을 지금 한 번에 읽는다 — 서버 응답 뒤에 기준만 다시 읽으면 그새 다른
     // 탭이 공유 키를 지워 짝이 어긋난다(loadEditorWaitDraftEntry 주석).
-    const savedDraftEntry = loadEditorWaitDraftEntry(projectId);
+    const conflictCopy = editorWorkCopies.read(projectId);
+    const storedDraftEntry = loadEditorWaitDraftEntry(projectId);
+    // 충돌 중 보관한 편집은 명시적 복원만 허용한다. 충돌 해결 뒤의 새 임시본은 따로 판정한다.
+    const savedDraftEntry = storedDraftEntry?.conflictPending ? null : storedDraftEntry;
     const savedDraft = savedDraftEntry?.blocks ?? null;
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
       && (enteringJob.status === 'running'
-        || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
+        || (enteringJob.status === 'error' && enteringJob.jobId)));
     // 이 진입이 '생성 대기'인지 — 콘티 재시도 여부를 여기서 가른다(일반 편집은 재시도 없음).
     const enteringGeneration = resumingGeneration
       || (enteringJob.status === 'running' && enteringJob.projectId === projectId);
@@ -1267,6 +1349,7 @@ export function Editor() {
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
+        let restoredSavedDraft = false;
         // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
         const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexForCol);
         const opts = visibleColorOpts(allColorOpts, p.colors);
@@ -1314,6 +1397,7 @@ export function Editor() {
           // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
           // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
           withH = savedDraft || skeleton;
+          restoredSavedDraft = Boolean(savedDraft);
           genActiveRef.current = true;
           setGenActive(true);
         } else {
@@ -1330,7 +1414,10 @@ export function Editor() {
             server: b,
             serverRevision: api.editorRevisionOf?.(projectId) ?? null,
           });
-          if (draftDecision === 'apply') withH = mergeServerBlocks(savedDraft, withH);
+          if (draftDecision === 'apply') {
+            withH = mergeServerBlocks(savedDraft, withH);
+            restoredSavedDraft = true;
+          }
           else if (draftDecision !== 'none') {
             clearEditorWaitDraft(projectId);
             pendingGenerationDraft.current = false;
@@ -1341,6 +1428,30 @@ export function Editor() {
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
         withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
+        if (conflictCopy && (editorConflictPending.current || !restoredSavedDraft)) {
+          // 최신본을 기다리며 입력한 내용과 이력도 응답 적용 직전에 다시 보관한다.
+          if (loadAttempt > 0) flushSync(() => document.activeElement?.blur());
+          const restoreCopy = loadAttempt > 0 && Array.isArray(latestBlocks.current)
+            ? editorWorkCopies.keep(projectId, { blocks: latestBlocks.current, history: {
+              past: [...hist.current.past], future: [...hist.current.future],
+            } }) : conflictCopy;
+          fromHistory.current = true;
+          prevBlocks.current = withH;
+          toast.push('다른 곳에서 먼저 저장해서 최신 내용을 불러왔어요.', { action: {
+            label: '이 화면 내용으로 되돌리기',
+            onClick: restoreWorkCopyOnce(() => {
+              if (useAppStore.getState().projectId !== projectId) return;
+              hist.current = restoreCopy.history || { past: [], future: [] };
+              prevBlocks.current = restoreCopy.blocks;
+              fromHistory.current = true;
+              latestBlocks.current = restoreCopy.blocks;
+              setBlocks(restoreCopy.blocks);
+              backupLatestEditorDraft(restoreCopy.blocks);
+              editorWorkCopies.clear(projectId, restoreCopy);
+            }),
+          } });
+        }
+        editorConflictPending.current = false;
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
@@ -1354,9 +1465,9 @@ export function Editor() {
       // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
       // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
       // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
-      .catch((error) => setLoadError(classifyEditorLoadError(
+      .catch((error) => setLoadError({ error, ...classifyEditorLoadError(
         fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
-      )));
+      ) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAttempt]);
 
@@ -1401,14 +1512,19 @@ export function Editor() {
         if (freshAnalysis) setAnalysis(freshAnalysis);
         // 전체 잡 성공에서만 서버 완성본이 있다. 혹시 서버가 실패 목록을 함께 보냈다면
         // 병합 헬퍼가 그 표식을 유지한다.
-        const failedCutIds = new Set(useAppStore.getState().detailPageJob.failedCuts || []);
+        const finalJob = useAppStore.getState().detailPageJob;
+        const failedCutIds = new Set([...(finalJob.failedCuts || []),
+          ...(finalJob.partial?.failedCuts || []).map(cut => cut.blockId)]);
+        const failedReasons = { ...finalJob.failedCutReasons,
+          ...Object.fromEntries((finalJob.partial?.failedCuts || []).map(cut =>
+            [cut.blockId, { ...finalJob.failedCutReasons?.[cut.blockId], ...cut }])) };
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
         for (;;) {
           const current = latestBlocks.current || [];
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
-          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server, failedCutIds));
+          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server, failedCutIds, failedReasons));
           // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
           const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
           if (needsDefaultTemplate(merged)) {
@@ -1428,9 +1544,9 @@ export function Editor() {
         pendingGenerationDraft.current = false;
         genActiveRef.current = false;
         setGenActive(false);
-        toast.push(restoredServerLayout
+        toast.push(detailPageCompletionMessage(finalJob.partial) || (restoredServerLayout
           ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
-          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요',
+          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요'),
         { icon: 'check' });
         if (dpJob.jobId) {
           const r = await tryGetReceipt(dpJob.jobId);
@@ -1439,6 +1555,7 @@ export function Editor() {
       } catch (error) {
         if (cancelled) return;
         genMergedRef.current = false;
+        setGenFinalizeOriginalError(error);
         setGenFinalizeError(error?.message || '완성본을 불러오지 못했어요.');
       }
     })();
@@ -1497,14 +1614,17 @@ export function Editor() {
     saveGuard.current.invalidate();
     if (Date.now() - conflictReloadAt.current < 3000) return;
     conflictReloadAt.current = Date.now();
-    clearEditorWaitDraft(projectId);
-    pendingGenerationDraft.current = false;
-    hist.current = { past: [], future: [] };
-    prevBlocks.current = null;
+    editorConflictPending.current = true;
+    const source = latestBlocks.current;
+    if (Array.isArray(source)) {
+      editorWorkCopies.keep(projectId, { blocks: source, history: {
+        past: [...hist.current.past], future: [...hist.current.future],
+      } });
+      backupLatestEditorDraft(source);
+    }
     setSaveError(null);
-    toast.push('다른 창에서 더 최근에 저장된 내용이 있어 최신 내용으로 다시 불러왔어요', { icon: 'alertTri' });
     setLoadAttempt((n) => n + 1);
-  }, [projectId, toast]);
+  }, [projectId, backupLatestEditorDraft]);
   // 자동 저장 — 생성 중에는 브라우저 임시 작업본, 완료 뒤에는 서버 완성본으로 분리한다.
   // 이 구분이 서버 조립 완료와 미완성 스켈레톤 PUT의 덮어쓰기 경합을 막는다.
   useEffect(() => {
@@ -1542,7 +1662,7 @@ export function Editor() {
            ② 배너로 알리고 ③ 다음 편집 때 자동으로 다시 시도한다(전체 문서 PUT 이라
            여러 번 보내도 안전하다). */
         const backedUp = backupLatestEditorDraft(latestBlocks.current);
-        setSaveError({ ...classifyEditorLoadError(error), backedUp });
+        setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
       });
     }, 1500);
   }, [blocks, genActive, projectId, backupLatestEditorDraft, reloadAfterEditorConflict]);
@@ -1573,7 +1693,7 @@ export function Editor() {
       if (isEditorConflict(error)) { reloadAfterEditorConflict(); return; }
       if (!saveGuard.current.isNewest(ticket)) return;
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
-      setSaveError({ ...classifyEditorLoadError(error), backedUp });
+      setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
     });
   };
   // 탭 닫기·새로고침에서는 React 언마운트 정리가 실행된다는 보장이 없다. 브라우저가
@@ -1811,6 +1931,7 @@ export function Editor() {
   if (loadError) return (
     <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
       <ErrorState
+        error={loadError.error}
         desc={loadError.message}
         /* 없는 작업·조립 실패는 다시 시도해도 결과가 같다 — 버튼을 주면 무한 왕복이 된다.
            로그인이 풀린 경우도 마찬가지다: 다시 시도해 봐야 토큰이 없어 똑같이 실패하므로
@@ -1849,7 +1970,6 @@ export function Editor() {
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setPendingSlot(null);         // 다른 요소를 고르면 프레임 사진 선택 모드를 끝낸다.
-    setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
     setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
@@ -1891,7 +2011,7 @@ export function Editor() {
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
   };
-  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
+  const clearSel = () => { setSelEl(null); setSelEls([]); setPendingSlot(null); };
   const copySelectedElements = () => {
     // 요소를 고르지 않고 프레임만 골랐으면 프레임을 통째로 복사한다.
     if (!selEls.length && blockFocused && selBlock) {
@@ -2008,18 +2128,27 @@ export function Editor() {
   // 소스 내보내기 한 번에 둘 다 날 수 있다(외부 썸네일도 못 불러오고 공증 서버도 응답 없는
   // 경우 등). 각자 자기 토스트를 낸다 — 하나를 감추면 셀러가 그 실패를 영영 모른다.
   // 성공 토스트는 정말 보고할 게 없을 때만 — 둘 중 하나라도 있으면 자리를 내준다.
-  const finishExport = (successMsg, { softFailed, notarizeWarning }) => {
+  const finishExport = (successMsg, {
+    softFailed, notarizeWarning, sizeWarning, autoSwitchReason,
+  }) => {
     if (softFailed > 0) {
       toast.push(`저장했지만 외부 이미지 ${softFailed}장은 불러오지 못해 빈 자리로 남았어요`, { icon: 'x' });
     }
     if (notarizeWarning) {
       toast.push(notarizeWarning, { icon: 'alertTri' });
     }
-    if (softFailed <= 0 && !notarizeWarning) {
+    if (autoSwitchReason) {
+      toast.push(autoSwitchReason, { icon: 'alertTri' });
+    }
+    if (sizeWarning) {
+      toast.push(sizeWarning, { icon: 'alertTri' });
+    }
+    if (softFailed <= 0 && !notarizeWarning && !autoSwitchReason && !sizeWarning) {
       toast.push(successMsg, { icon: 'download' });
     }
   };
   const downloadBlock = async (block, idx) => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
     const node = canvasRef.current?.querySelector(`.canvas-block[data-blockid="${block.id}"]`);
@@ -2028,24 +2157,34 @@ export function Editor() {
     try {
       finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
     } catch (e) {
-      toast.push(e?.message || '블록 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+      clientEvents.bindGeneration(e, accountGeneration);
+      toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'download', messageCode: 'action_failed', blocking: true, accountGeneration });
     } finally {
       setDlBusy(false);
     }
   };
   const runDownload = async () => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     if (dlBusy) return;
     const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
-    if (!nodes.length) { toast.push('저장할 블록이 없어요.', { icon: 'x' }); return; }
+    if (!nodes.length) { setDlError('저장할 블록이 없어요. 상세페이지에 블록을 추가해 주세요.'); return; }
+    setDlError('');
+    setDlOriginalError(null);
     setDlBusy(true);
-    const onProgress = (done, total) => setDlProg(`${done + 1}/${total}`);
+    setDlProg({ done: 0, total: nodes.length, stage: 'capture' });
+    const onProgress = (done, total, stage = 'capture') => setDlProg({ done: done + 1, total, stage });
     try {
-      const run = dlFormat === 'zip' ? exportBlocksZip : exportLongPng;
-      const result = await run(nodes, productName, onProgress, provenanceOpts());
+      const result = await exportStorefrontDownload(
+        nodes, productName, onProgress, dlSettings, provenanceOpts(),
+      );
       setDownload(false);
-      finishExport(dlFormat === 'zip' ? '블록별 PNG를 ZIP으로 저장했어요' : '전체 상세페이지를 PNG로 저장했어요', result);
+      finishExport(result.delivery === 'split'
+        ? `${result.fileCount}개 파일을 ZIP으로 저장했어요`
+        : '전체 상세페이지를 한 장으로 저장했어요', result);
     } catch (e) {
-      toast.push(e?.message || '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      clientEvents.bindGeneration(e, accountGeneration);
+      setDlOriginalError(e);
+      setDlError(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setDlBusy(false);
       setDlProg(null);
@@ -2093,11 +2232,11 @@ export function Editor() {
     if (next[0]) { setSelBlock(next[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
     toast.push('템플릿을 적용했어요 (남은 사진·정보는 아래에 보존)');
   };
-  const addImageBlock = (image, idx) => {
+  const addImageBlock = (image, idx, { keepTab = false } = {}) => {
     const nb = buildImageBlock(image, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     const element = nb.elements[0];
-    setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
+    setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); if (!keepTab) setTab('image');
   };
   const onCanvasInsertDrop = (e, idx) => {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false); setDragFrame(null);
@@ -2157,6 +2296,9 @@ export function Editor() {
         const {
           slotCleared: _cleared,
           genFailed: _genFailed,
+          genFailReason: _genFailReason,
+          genFailRetryable: _genFailRetryable,
+          genFailSourceBlockId: _genFailSourceBlockId,
           genPending: _genPending,
           ...rest
         } = el;
@@ -2208,6 +2350,9 @@ export function Editor() {
       elId: el.id,
       sourceBlockId: el.sourceBlockId || null,
       genFailed: Boolean(el.genFailed),
+      genFailReason: el.genFailReason,
+      genFailRetryable: el.genFailRetryable,
+      genFailSourceBlockId: el.genFailSourceBlockId,
     });
     setTab('wardrobe');
   };
@@ -2239,9 +2384,9 @@ export function Editor() {
   };
   // insert=false: 의류 목록에만 넣는다(여러 장 업로드). quiet: 실패를 토스트 대신 던진다 —
   // 여러 장이면 한 장마다 토스트를 띄우지 않고 끝에 한 번 모아서 알린다.
-  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false } = {}) => {
+  const uploadEditorImage = async (file, placement, importId = null, { insert = true, quiet = false, accountGeneration = clientEvents.getAccountGeneration() } = {}) => {
     if (!looksLikeImageFile(file)) {
-      if (quiet) throw new Error('unsupported_image');
+      if (quiet) throw clientEvents.bindGeneration(Object.assign(new Error('unsupported_image'), { code: 'unsupported_type' }), accountGeneration);
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
@@ -2250,8 +2395,8 @@ export function Editor() {
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
-      if (validation === 'file_too_large') throw new Error('사진은 25MB 이하만 업로드할 수 있어요.');
-      if (validation) throw new Error('지원하지 않는 이미지 형식이에요.');
+      if (validation === 'file_too_large') throw Object.assign(new Error('사진은 25MB 이하만 업로드할 수 있어요.'), { code: 'file_too_large' });
+      if (validation) throw Object.assign(new Error('지원하지 않는 이미지 형식이에요.'), { code: 'unsupported_type' });
       const dimensions = await readImageDimensions(prepared);
       if (importId) {
         const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === placement?.blockId);
@@ -2268,7 +2413,7 @@ export function Editor() {
         filename: prepared.name || file.name || 'editor-image.jpg',
         mime: prepared.type || 'image/jpeg',
         blob: prepared,
-      });
+      }, { accountGeneration });
       const image = {
         id: uploaded.assetId || uid('w'),
         src: uploaded.url,
@@ -2284,10 +2429,11 @@ export function Editor() {
       patchImageImport(importId, { phase: 'done' });
       finishImageImport(importId, 420);
     } catch (error) {
+      clientEvents.bindGeneration(error, accountGeneration);
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
       if (quiet) throw error;
-      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: error, kind: 'upload_error', actionName: 'upload', messageCode: 'photo_upload_failed', blocking: true, accountGeneration });
     } finally {
       if (isWardrobeUpload) setWardrobeUploadLoading((n) => Math.max(0, n - 1));
     }
@@ -2323,10 +2469,11 @@ export function Editor() {
   // 한 장이면 예전처럼 목록에 넣고 캔버스에도 놓는다. 여러 장이면 캔버스에 한꺼번에 쌓이지
   // 않게 의류 목록(기타)에만 넣는다 — 셀러가 목록에서 골라 끌어 쓴다.
   const pickAndInsertImage = async () => {
+    const accountGeneration = clientEvents.getAccountGeneration();
     const picked = await pickEditorImageFile({ multiple: true });
     if (!picked.length) return;
     if (picked.length === 1) {
-      await uploadEditorImage(picked[0]);
+      await uploadEditorImage(picked[0], undefined, null, { accountGeneration });
       return;
     }
     const files = picked.slice(0, MAX_WARDROBE_UPLOADS);
@@ -2334,12 +2481,16 @@ export function Editor() {
       toast.push(`한 번에 ${MAX_WARDROBE_UPLOADS}장까지 올릴 수 있어요. 앞의 ${MAX_WARDROBE_UPLOADS}장만 올릴게요.`, { icon: 'alertTri' });
     }
     const results = await runWithConcurrency(files, WARDROBE_UPLOAD_CONCURRENCY,
-      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true }));
+      (file) => uploadEditorImage(file, undefined, null, { insert: false, quiet: true, accountGeneration }));
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
+    const failures = results.filter((result) => !result.ok);
+    const error = (failures.find((result) => !['file_too_large', 'unsupported_type'].includes(result.error?.code)) || failures[0])?.error;
+    const errorOptions = { variant: 'error', error, kind: 'upload_error', actionName: 'upload',
+      messageCode: 'photo_upload_failed', blocking: done === 0, accountGeneration };
     if (!failed) toast.push(`사진 ${done}장을 의류 목록에 추가했어요`, { icon: 'check' });
-    else if (!done) toast.push('사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
-    else toast.push(`사진 ${done}장을 추가했어요. ${failed}장은 올리지 못했어요.`, { icon: 'alertTri' });
+    else if (!done) toast.push('사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x', ...errorOptions });
+    else toast.push(`사진 ${done}장을 추가했어요. ${failed}장은 올리지 못했어요.`, { icon: 'alertTri', ...errorOptions });
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
@@ -2359,7 +2510,6 @@ export function Editor() {
       }
       return next;
     });
-    if (varyTarget?.id === image.id) setVaryTarget(null);
     toast.push('이미지를 의류 목록에서 삭제했어요', { icon: 'trash' });
   };
   /* ---- 단일 컷 생성의 공통 정책 — '새 이미지'와 '현재 이미지 수정'이 같은 규칙을 쓴다.
@@ -2367,10 +2517,8 @@ export function Editor() {
   // 도착한 이미지를 자리표에 넣는다. 대기 중 캔버스가 바뀌면 merge 가 src 없는 자리표를
   // 지울 수 있는데(editorWardrobe append), 그때 결과를 버리지 않고 뒤에 붙인다.
   const placeGeneratedImage = (group, loadingId, img) => setWardrobe((w) => {
-    const list = w[group] || [];
-    const next = list.some((x) => x.id === loadingId)
-      ? list.map((x) => (x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x))
-      : [...list, { ...img, wardrobeGroup: group, fresh: true }];
+    const list = (w[group] || []).filter((x) => x.id === loadingId || (x.id !== img.id && x.src !== img.src));
+    const next = [{ ...img, wardrobeGroup: group, fresh: true }, ...list.filter((x) => x.id !== loadingId)];
     return { ...w, [group]: next };
   });
   const dropLoadingTile = (group, loadingId) => setWardrobe((w) => (
@@ -2397,7 +2545,7 @@ export function Editor() {
         if (job?.status === 'error' || job?.status === 'cancelled') {
           slowJobs.current.delete(jobId);
           dropLoadingTile(group, loadingId);
-          toast.push(job.errorMessage || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+          toast.push(jobFailureMessage(job.errorMessage, { creditsReleased: job.status === 'error' }), { icon: 'x', variant: 'error', kind: 'generation_error', actionName: 'editorImage', blocking: true, error: jobFailure(job) });
           return;
         }
       } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
@@ -2420,7 +2568,7 @@ export function Editor() {
     }
     // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
     dropLoadingTile(group, loadingId);
-    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    toast.push(e?.message || '서버 연결이 불안정해요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'generation_error', actionName: 'editorImage', messageCode: 'editor_image_failed', blocking: true });
     return false;
   };
   const saveBrandUseCategory = async (value) => {
@@ -2438,92 +2586,136 @@ export function Editor() {
     }
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
-  const generateImage = async (req) => {
+  const generateImage = async (req, target = null) => {
+    if (generateSubmission.current?.busy) return null;
     // 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 막지 않는다.
-    if (isRealModelSelection(req.modelId)
+    if (!generateSubmission.current && isRealModelSelection(req.modelId)
       && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
       toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
       return null;
     }
-    const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
+    // 접수 응답을 잃으면 설정과 UUID를 보존해 다음 클릭도 같은 요청을 확인한다.
+    const submission = generateSubmission.current || {
+      idempotencyKey: crypto.randomUUID(),
+      target,
+      request: { mode: 'new', ...req, colorId: req.colorId || 'misc',
+        modelId: req.cutType === 'product' ? null : req.modelId,
+        brandUseCategory: analysis?.brandUseCategory },
+    };
+    submission.busy = true;
+    generateSubmission.current = submission;
+    setGenerateSubmitting(true);
+    const releaseSubmission = () => {
+      // 앞선 이미지가 완성돼도 다음 요청의 접수 잠금은 풀지 않는다.
+      if (generateSubmission.current !== submission) return;
+      generateSubmission.current = null;
+      setGenerateSubmitting(false);
+      setPendingGenerateRequest(null);
+    };
+    const group = submission.request.colorId;
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group,
-        modelId: req.cutType === 'product' ? null : req.modelId,
-        brandUseCategory: analysis?.brandUseCategory });
+      const { data: img, credits } = await api.generateImage(projectId, { ...submission.request,
+        idempotencyKey: submission.idempotencyKey, onJobStarted: releaseSubmission });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
       return img;
     } catch (e) {
+      submission.unknown ||= e?.submissionUnknown === true;
       handleImageJobFailure(e, group, loadingId);
       return null;
     } finally {
+      if (generateSubmission.current === submission) {
+        if (submission.unknown) {
+          submission.busy = false;
+          setGenerateSubmitting(false);
+          setPendingGenerateRequest(submission.request);
+        } else releaseSubmission();
+      }
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
-  const failedCutRetry = pendingSlot?.genFailed
-    ? buildFailedCutRetry(
-      wardrobeContext.current.storyboard,
-      pendingSlot.sourceBlockId,
-      analysis,
-      product,
-    )
-    : null;
-  const retryFailedCut = async () => {
-    if (!failedCutRetry || !pendingSlot) return;
-    const target = { blockId: pendingSlot.blockId, elId: pendingSlot.elId };
-    const img = await generateImage(failedCutRetry.request);
-    if (!img?.src) return;
+  const retryFailedCut = async ({ confirmPending = false } = {}) => {
+    if (!confirmPending) return;
+    const previous = generateSubmission.current;
+    if (!previous) return;
+    const target = previous.target;
+    const request = previous.request;
+    const img = await generateImage(request, target);
+    if (!img?.src || !target) return;
+    const originalSlot = (latestBlocks.current || blocks || []).find(block => block.id === target.blockId)
+      ?.elements?.find(element => element.id === target.elId && element.type === 'image');
+    // 접수 확인은 요청 당시의 빈 칸만 채운다.
+    if (!originalSlot || originalSlot.src) return;
+    lastPush.current = 0;
     setSlotImage(target.blockId, target.elId, {
-      src: img.src,
-      cutType: img.cutType || failedCutRetry.request.cutType || null,
-      width: img.width,
-      height: img.height,
-      wardrobeGroup: failedCutRetry.request.colorId || 'misc',
+      src: img.src, cutType: img.cutType || request.cutType || null,
+      width: img.width, height: img.height, wardrobeGroup: request.colorId || 'misc',
     });
-    setPendingSlot(null);
-    setTab('image');
-    toast.push('원래 콘티 설정으로 다시 만든 이미지를 빈 자리에 넣었어요', { icon: 'check' });
+    if (pendingSlot?.blockId === target.blockId && pendingSlot?.elId === target.elId) setPendingSlot(null);
   };
-  // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
-  // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
-  const varyGenerate = async ({ source, changes, refBg, refBgAssetId }) => {
-    const group = varyTarget?.group || source?.wardrobeGroup || 'misc';
-    const loadingId = uid('w');
-    setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
-    setTab('wardrobe');
-    genCount.current += 1; setGenDot('busy');
-    toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
+  canvasAiHandlers.current = {
+    onQueued: () => {
+      if (genCount.current === 0) canvasAiDotRestore.current = genDot;
+      genCount.current += 1; setGenDot('busy');
+    },
+    onCancelled: () => {
+      genCount.current = Math.max(0, genCount.current - 1);
+      setGenDot(genCount.current > 0 ? 'busy' : canvasAiDotRestore.current);
+    },
+    saveBeforeRequest: async () => {
+      if (genActiveRef.current) throw new Error('상세페이지를 만드는 중이에요. 끝나면 눌러 주세요.');
+      await api.saveEditorBlocks(projectId, persistable(latestBlocks.current || blocks));
+    },
+    onStarted: (job) => {
+      job.loadingId = uid('w');
+      setWardrobe((w) => ({ ...w, [job.group]: [...(w[job.group] || []), { id: job.loadingId, loading: true }] }));
+    },
+    onFinished: () => {
+      canvasAiDotRestore.current = 'done';
+      genCount.current = Math.max(0, genCount.current - 1);
+      setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    },
+    onResult: (job, response) => {
+      const img = response?.data;
+      if (!img?.src) return;
+      const group = img.contextFill?.colorId || img.colorId || job.group;
+      if (group !== job.group) dropLoadingTile(job.group, job.loadingId);
+      placeGeneratedImage(group, job.loadingId, img);
+      syncCredits(response.credits);
+      if (job.isSlot && canFillCanvasAiSlot(latestBlocks.current || blocks, job)) {
+        lastPush.current = 0;
+        setSlotImage(job.blockId, job.elementId, { ...img, wardrobeGroup: group });
+      }
+    },
+    onError: (job) => dropLoadingTile(job.group, job.loadingId),
+  };
+  const replaceCanvasAiResult = (job) => {
+    const img = job?.result?.data || job?.response?.data || job?.result;
+    if (!canReplaceCanvasAiResult(latestBlocks.current || blocks, job)) return;
+    lastPush.current = 0;
+    setBlocks((bs) => replaceCanvasAiImage(bs, job, img));
+    canvasAi.controller.dismiss(job.elementId);
+  };
+  const addCanvasAiResult = async (job) => {
+    const img = job?.result?.data || job?.response?.data || job?.result;
+    if (!img?.src || job.dismissed || canvasAiAdding.current.has(job)) return;
+    canvasAiAdding.current.add(job);
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-      placeGeneratedImage(group, loadingId, img);
-      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-      syncCredits(credits);
-      return img;
-    } catch (e) {
-      handleImageJobFailure(e, group, loadingId);
-      return null;
+      const natural = await readCanvasAiResultDimensions(img.src);
+      if (job.dismissed || canvasAi.controller.get(job.elementId) !== job) return;
+      const dimensions = canvasAiResultDimensions(img, natural);
+      const idx = (latestBlocks.current || blocks).findIndex((item) => item.id === job.blockId);
+      lastPush.current = 0;
+      addImageBlock({ ...img, ...dimensions }, idx >= 0 ? idx + 1 : undefined, { keepTab: true });
+      canvasAi.controller.dismiss(job.elementId);
     } finally {
-      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
+      canvasAiAdding.current.delete(job);
     }
   };
-  const varyImage = (im) => {
-    setVaryTarget(im?.id ? { id: im.id, group: im.wardrobeGroup || 'misc' } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
-    setTab('ai'); toast.push('현재 이미지 수정으로 이동했어요', { icon: 'wand' });
-  };
-  // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
-  const varySource = (() => {
-    if (varyTarget) {
-      const im = Object.values(wardrobe || {}).flat().find((x) => x.id === varyTarget.id);
-      return im ? { id: im.id, src: im.src, cutType: im.cutType || null, wardrobeGroup: im.wardrobeGroup || varyTarget.group } : null;
-    }
-    return selectedElObj && selectedElObj.type === 'image'
-      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null, wardrobeGroup: selectedElObj.wardrobeGroup || null }
-      : null;
-  })();
   // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
   // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
   const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
@@ -2694,7 +2886,7 @@ export function Editor() {
       if (!saveGuard.current.isNewest(ticket)) return;
       // 눌렀는데 아무 반응이 없으면 저장된 줄 안다 — 실패는 반드시 말한다.
       const backedUp = backupLatestEditorDraft(latestBlocks.current);
-      setSaveError({ ...classifyEditorLoadError(error), backedUp });
+      setSaveError({ ...classifyEditorLoadError(error), backedUp, error });
       toast.push(backedUp
         ? '저장하지 못했어요 — 편집 내용은 이 브라우저에 보관해 뒀어요'
         : '저장하지 못했어요 — 창을 닫지 말고 다시 시도해 주세요', { icon: 'x' });
@@ -2773,7 +2965,7 @@ export function Editor() {
       genActiveRef.current = true;
       setGenActive(true);
     } catch (e) {
-      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x', variant: 'error', error: e, kind: 'toast_error', actionName: 'save', messageCode: 'action_failed', blocking: true });
     }
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
@@ -2801,13 +2993,13 @@ export function Editor() {
     }) })));
   };
   const onMvTransformStart = () => {
-    gesturing.current = true; liveRef.current = {};
+    gesturing.current = true; setCanvasGesture(true); liveRef.current = {};
     const o = {};
     selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w, h: e.h }; });
     dragSnap.current = o;
   };
-  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); };
-  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const onMvGestureEnd = () => { gesturing.current = false; setCanvasGesture(false); commitLive(); };
+  const onMvResizeStart = () => { gesturing.current = true; setCanvasGesture(true); liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
   const startPointerSelectionDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
     const blockNode = [...(wrapRef.current?.querySelectorAll('.canvas-block') || [])]
       .find((node) => node.dataset.blockid === block.id);
@@ -2874,7 +3066,7 @@ export function Editor() {
       if (!active && Math.hypot(clientDx, clientDy) < threshold) return;
       if (!active) {
         active = true;
-        gesturing.current = true;
+        gesturing.current = true; setCanvasGesture(true);
         onDragStarted?.();
         document.body.style.userSelect = 'none';
       }
@@ -2915,7 +3107,7 @@ export function Editor() {
         if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
       } catch { /* detached pointer target */ }
       document.body.style.userSelect = previousUserSelect;
-      gesturing.current = false;
+      gesturing.current = false; setCanvasGesture(false);
       hidePointerSnapGuides(block.id);
       if (pointerGroupRectFrame.current != null) {
         window.cancelAnimationFrame(pointerGroupRectFrame.current);
@@ -3069,12 +3261,12 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel product={product} detailRecommendations={analysis?.detailRecommendations} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
+      case 'ai': return <AIPanel pendingGenerateRequest={pendingGenerateRequest} generateSubmitting={generateSubmitting} product={product} detailRecommendations={analysis?.detailRecommendations} frontClosure={analysis?.frontClosure} catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} onConfirmPendingGenerate={() => retryFailedCut({ confirmPending: true })} onGenerate={generateImage} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)}
-        onVary={varyImage} />;
+        />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onOverwriteTemplate={overwriteDetailPageTemplate} templateSets={DETAIL_PAGE_TEMPLATE_SETS}
@@ -3241,9 +3433,12 @@ export function Editor() {
   const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
   // 부분 실패(incomplete_cuts, 2026-09-28) — "모두 못 만들었다"가 아니라 몇 장 완성·몇 장 실패인지.
   const genIncomplete = (dpJob.status === 'error' && !genFinalizeError && dpJob.incomplete) || null;
+  const genFailureHeading = genFinalizeError ? '생성은 완료됐어요. 완성본을 다시 불러와 주세요.'
+    : dpJob.errorCode === 'job_cancelled' ? '생성을 멈췄어요'
+    : (genIncomplete?.completed.length > 0 || dpJob.errorCode === 'incomplete_cuts') ? '아직 못 만든 컷이 있어요' : '상세페이지를 아직 만들지 못했어요';
   const genFailureMessage = genFinalizeError
     || (genIncomplete ? incompleteMessage(genIncomplete, dpJob.errorMessage) : dpJob.errorMessage)
-    || '생성을 끝내지 못했어요';
+    || '';
   // [실패한 컷만 다시 만들기]로 시작한 잡의 진행 중 한 줄 — "보관된 N장은 그대로 써요"(콘티가 바뀌었으면 사실대로).
   const genReuseHint = dpJob.status === 'running' ? retryReuseHint(dpJob) : '';
 
@@ -3254,6 +3449,7 @@ export function Editor() {
           할 수 있는 행동(로그인 / 새로고침 / 다시 저장)을 하나만 준다(2026-08-19 오너 신고). */}
       {saveError && (
         <div className="ed-savebar" role="status">
+          <ClientErrorCapture point="editorSave" error={saveError.error} projectId={projectId} localBackup={saveError.backedUp} />
           <Icon name="alertTri" size={15} />
           <span className="esb-msg">
             {saveError.kind === 'auth' ? '로그인이 풀려서 저장되지 않고 있어요' : '저장되지 않고 있어요'}
@@ -3311,7 +3507,7 @@ export function Editor() {
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
           <Button variant="primary" size="sm" icon="download" disabled={genActive}
-            onClick={() => setDownload(true)}>{genActive ? '생성 중…' : '다운로드'}</Button>
+            onClick={() => { setDlNotice(''); setDlError(''); setDownload(true); }}>{genActive && !genFailed ? '생성 중…' : '다운로드'}</Button>
         </div>
       </div>
 
@@ -3319,15 +3515,18 @@ export function Editor() {
       {((genActive && dpJob.status !== 'blocked')
           || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
         <div className={`ed-genbar${genFailed ? ' error' : ''}`} role="status" aria-live="polite">
+          <ClientErrorCapture point="editorGeneration" active={genFailed && dpJob.errorCode !== 'job_cancelled'} error={genFinalizeError ? genFinalizeOriginalError : dpJob.error}
+            projectId={projectId} jobId={dpJob.jobId} />
           <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
             className={genFailed ? '' : 'spin'} />
           <span className="ed-genbar-msg">
             {/* 15분을 넘겨도 서버 잡이 살아 있으면 실패가 아니다 — 계속 만들고 있다고 말하고
                 진행(몇 장 중 몇 장)을 그대로 보여 준다(2026-09-26). 실패는 서버가 error 라고
                 답했을 때만 뜬다(store.startDetailPageGeneration). */}
-            {genFailed ? (genIncomplete
-              ? <><b>{incompleteSummary(genIncomplete)}</b> — {genFailureMessage}</>
-              : genFailureMessage)
+            {genFailed ? <><b>{genFailureHeading}</b>
+              {genFailureMessage && genFailureMessage !== genFailureHeading && (
+                <span className="ed-genbar-detail">{genFailureMessage}</span>
+              )}</>
               : dpJob.cutsTotal
                 ? <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '사진을 만들어 채우는 중'} · <b>{dpJob.cutsTotal}장 중 {dpJob.cutsDone}장</b> 완료{genReuseHint ? ` · ${genReuseHint}` : ''}</>
                 : <>{dpJob.slow ? '예상보다 오래 걸리지만 계속 만들고 있어요' : '상세페이지를 만들고 있어요'}{genReuseHint ? ` · ${genReuseHint}` : ''}</>}
@@ -3369,7 +3568,7 @@ export function Editor() {
                       useAppStore.getState().startDetailPageGeneration(projectId, { retryOf });
                       genActiveRef.current = true;
                       setGenActive(true);
-                    }}>실패한 컷만 다시 만들기</Button>
+                    }}>다시 만들기</Button>
                   </>
                 ) : (
                   /* 다시 시도 = POST detail-page:generate. 중복 과금이 없는 근거는 서버 멱등이다
@@ -3384,7 +3583,7 @@ export function Editor() {
                     useAppStore.getState().startDetailPageGeneration(projectId);
                     genActiveRef.current = true;
                     setGenActive(true);
-                  }}>다시 시도</Button>
+                  }}>다시 만들기</Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
               </>
@@ -3410,6 +3609,7 @@ export function Editor() {
       {/* FaceMarket 차단(409) — 생성이 라이선스 게이트에서 멈춤 */}
       {dpJob.projectId === projectId && dpJob.status === 'blocked' && (
         <div className="ed-genoverlay">
+          <ClientErrorCapture point="editorGeneration" error={dpJob.error} projectId={projectId} jobId={dpJob.jobId} />
           <div className="surface fm-blocked">
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
@@ -3520,6 +3720,23 @@ export function Editor() {
                   )}
                 </div>
                 <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
+                  canvasAiJobs={canvasAi.jobs} onCanvasAiCancel={(id) => canvasAi.controller.cancel(id)} onCanvasAiDismiss={(id) => canvasAi.controller.dismiss(id)}
+                  canvasAi={canvasAi.block?.id === b.id && canvasAi.element?.type === 'image' && selEls.length === 1
+                    && !canvasAi.element.hidden && !['pending', 'unsupported'].includes(canvasAi.menu.kind) ? (
+                    <CanvasAiLayer block={b} element={canvasAi.element} scale={scale} wrapRef={wrapRef}
+                      menu={canvasAi.menu} loading={canvasAi.loading} assetError={canvasAi.assetError}
+                      job={canvasAi.jobs.get(canvasAi.element.id)}
+                      visible={!canvasGesture && !cropping && !marquee && !spaceDown && !editEl && !preview}
+                      creditCosts={editorCreditCosts} onAction={canvasAi.start}
+                      onUpload={() => requestSlotImage(b.id, canvasAi.element)}
+                      onCancel={() => canvasAi.controller.cancel(canvasAi.element.id)}
+                      onDismiss={() => canvasAi.controller.dismiss(canvasAi.element.id)}
+                      onReplace={() => replaceCanvasAiResult(canvasAi.jobs.get(canvasAi.element.id))}
+                      onAdd={() => addCanvasAiResult(canvasAi.jobs.get(canvasAi.element.id))}
+                      replaceReason={canvasAi.jobs.get(canvasAi.element.id)?.status === 'arrived'
+                        && !canReplaceCanvasAiResult(blocks, canvasAi.jobs.get(canvasAi.element.id))
+                        ? '원래 사진이 바뀌어 교체할 수 없어요.' : null} />
+                  ) : null}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
@@ -3619,7 +3836,7 @@ export function Editor() {
           <div className="preview-close"><IconButton name="x" onClick={() => setPreview(false)} /></div>
           <div className="preview-sheet">
             {blocks.map((b) => (
-              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
+              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b, { forExport: true }), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
                 {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}
@@ -3631,32 +3848,19 @@ export function Editor() {
       {/* onClose 도 dlBusy 게이트 — ESC·배경클릭으로 닫혀도 내보내기는 계속 돌아 유령 완료가 된다(리뷰 반영) */}
       {download && (
         <Modal onClose={() => { if (!dlBusy) setDownload(false); }} wide>
-          <div className="dl-modal">
-            <div className="dl-head">
-              <div className="dl-eyebrow">다운로드</div>
-              <h3 className="dl-title">상세페이지를 내보내기</h3>
-              <p className="dl-sub">형식과 해상도를 고르면 바로 저장돼요.</p>
-            </div>
-            <div className="dl-opts">
-              {catalogs.downloadOptions.map((o) => {
-                const on = dlFormat === o.id;
-                return (
-                  <button key={o.id} className={`dl-opt${on ? ' on' : ''}`} onClick={() => setDlFormat(o.id)}>
-                    <span className="dl-opt-ico"><Icon name={o.id === 'zip' ? 'layers' : 'image'} size={20} /></span>
-                    <span className="dl-opt-meta">
-                      <span className="dl-opt-title">{o.title}</span>
-                      <span className="dl-opt-desc">{o.desc}</span>
-                    </span>
-                    <span className={`dl-radio${on ? ' on' : ''}`}>{on && <Icon name="check" size={13} />}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="dl-foot">
-              <Button variant="quiet" onClick={() => setDownload(false)} disabled={dlBusy}>취소</Button>
-              <Button variant="primary" icon="download" onClick={runDownload} disabled={dlBusy}>{dlBusy ? `만드는 중…${dlProg ? ` ${dlProg}` : ''}` : '다운로드'}</Button>
-            </div>
-          </div>
+          <ClientErrorCapture point="errorState" action="download" messageCode="download_failed"
+            active={Boolean(dlError && dlOriginalError)} error={dlOriginalError} projectId={projectId} />
+          <EditorDownloadModal
+            settings={dlSettings}
+            summary={dlSummary}
+            notice={dlNotice}
+            busy={dlBusy}
+            progress={dlProg}
+            error={dlError}
+            onChange={(next) => { setDlNotice(''); setDlSettings(next); }}
+            onCancel={() => setDownload(false)}
+            onDownload={runDownload}
+          />
         </Modal>
       )}
 

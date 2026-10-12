@@ -319,10 +319,10 @@ test('에디터 리본: 오래 걸리면 "계속 만들고 있어요" + 진행 +
   assert.match(editor, /const genFailed = dpJob\.status === 'error' \|\| Boolean\(genFinalizeError\);/);
 });
 
-test('[다시 시도]는 서버 멱등 POST 로만 간다 — 활성 잡 합류·완성본 반환(중복 과금 없음)', () => {
+test('[다시 만들기]는 서버 멱등 POST 로만 간다, 활성 잡 합류·완성본 반환(중복 과금 없음)', () => {
   const retry = editor.slice(
     editor.indexOf('useAppStore.getState().resetDetailPageJob();', editor.indexOf('genFinalizeError ?')),
-    editor.indexOf('>다시 시도</Button>'),
+    editor.indexOf('>다시 만들기</Button>', editor.indexOf('>다시 만들기</Button>') + 1),
   );
   assert.match(retry, /useAppStore\.getState\(\)\.startDetailPageGeneration\(projectId\)/);
   assert.doesNotMatch(retry, /generateDetailPage|clearEditorWaitDraft/);

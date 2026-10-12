@@ -30,6 +30,13 @@ def tone_block(**changes):
             "horizonBackgroundMode": "garment-tone", "colorId": "base", **changes}
 
 
+def signature_block(**changes):
+    return {"id": "signature", "source": "ai", "cutType": "horizon",
+            "sectionRole": "hooking", "contentRole": "hero", "direction": "front",
+            "shot": "medium", "pose": "auto", "exampleId": "sig_women_01",
+            "hookTitleOverlay": True, "colorId": "base", **changes}
+
+
 def regions(sources):
     return [{"sourceIndex": s["sourceIndex"], "clothingType": "top", "certainty": "high",
              "colorStructure": "solid", "lighting": "neutral", "material": "matte",
@@ -38,7 +45,7 @@ def regions(sources):
 
 
 def test_analysis_never_observes_or_builds_a_color_contract(monkeypatch):
-    async def analyst(*args):
+    async def analyst(*args, **kwargs):
         return {"product": {"clothingType": "top"}, "analysis": {}, "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "fake"
     async def feature(*args, **kwargs): return [], "fake"
     async def consistency(*args, **kwargs): return None
@@ -130,6 +137,23 @@ def test_garment_tone_color_ids_follow_generation_gate():
         if block.get("source") != "mine" and hb.mode(block) == "garment-tone":
             assert supported is (block.get("spaceGroupId") == GROUP)
     assert hb.garment_tone_color_ids([], product) == []
+
+
+def test_measurement_colors_include_signature_and_keep_non_signature_behavior():
+    product = {"colors": [
+        {"id": "base", "isBase": True,
+         "images": [{"id": "base-front", "slot": "Front"}, {"id": "base-back", "slot": "Back"}]},
+        {"id": "navy", "images": [{"id": "navy-front", "slot": "Front"}]},
+    ]}
+
+    assert measure.measurable_color_ids([signature_block(colorId=None)], product) == ["base"]
+    assert measure.measurable_color_ids([
+        tone_block(colorId="navy"), signature_block(colorId=None),
+    ], product) == ["navy", "base"]
+    assert measure.measurable_color_ids([
+        {**signature_block(), "exampleId": "ex_horizon_women_top_medium_01"},
+    ], product) == []
+    assert measure.measurable_color_ids([], product) == []
 
 
 def test_replace_refuses_when_product_photos_changed_since_measurement():

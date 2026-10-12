@@ -63,11 +63,15 @@ class Settings:
     model_horizon_cut: str = ""
     # Product-only closeups; horizon/styling and mannequin keep their own models.
     model_product_detail: str = "gpt-image-2.5-sunburst"
+    product_detail_image_quality: str = "medium"
     model_detail_core: str = "gpt-5.4-2026-03-05"
     detail_core_timeout_seconds: float = 90.0
     # Calibrated narrow label/temporary-artifact specialist; never a fallback.
     model_detail_specialist: str = "gpt-5.4-2026-03-05"
     detail_specialist_timeout_seconds: float = 90.0
+    # 검수 전용 Claude 경로. 기본 검수 모델과 분석 폴백 순서는 유지한다.
+    anthropic_api_key: str = ""
+    detail_qc_claude_effort: str = "xhigh"
     # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
     # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
     # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
@@ -75,7 +79,8 @@ class Settings:
     # GPT로 생성하고 Qwen 얼굴 교체까지 성공한 REAL 호리존 최종본만 한 번 보정한다.
     real_horizon_neck_repair_enabled: bool = True
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
-    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
+    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 주 키
+    openai_api_key_fallback: str | None = None  # 주 키 영구 실패 때 쓰는 오너 계정 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
     # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
@@ -83,6 +88,8 @@ class Settings:
     # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
     # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
     model_text_gemini_features: str = "gemini-3.7-flash"
+    # AG-01과 AG-08 문구의 같은 특징 여부만 판정하는 텍스트 전용 모델.
+    model_text_gemini_merge: str = "gemini-3.8-flash"
     # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
     # (IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)까지 같이 쓰는 값이라, 분석만
     # 내리려면 축이 따로 있어야 한다 — AG-08 분기와 같은 패턴. 미설정이면 model_text_gemini 폴백.
@@ -282,11 +289,14 @@ class Settings:
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
     # 2026-09-11 v6: 1cr=50원 기준 행동별 단가, 정본 documents/research/2026-09-07-credit-pricing-plans.md §5·§5-1
+    signup_credits: int = 0
     credit_cost_version: str = "v6"
     credit_cost_mannequin_generate: int = 45
     credit_cost_storyboard_per_cut: int = 19  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
     credit_min_storyboard_cuts: int = 5  # PL-4 상세페이지: AI 생성이 있으면 최소 청구 컷 수
     credit_cost_editor_image: int = 19  # PL-5 에디터 이미지 1장
+    credit_cost_editor_edit: int = 5  # ADR-0020 착용컷·업로드 색상/열림 고쳐 만들기
+    credit_cost_editor_similar: int = 8  # ADR-0020 비슷한 컷
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
@@ -308,6 +318,8 @@ class Settings:
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    # 셀러 생성 입구만 제어한다. 모델 등록과 관리, 정산은 그대로 유지한다.
+    fm_real_model_generation: str = "on"  # on | off
     #: 모델 사용 조건 화면의 **선택 동의 항목**(장소 컷·룩북 인물 교체) 노출 여부.
     #: 법률 검토 전에는 모델에게 보이면 안 된다 — 꺼져 있으면 요청에 값이 와도 저장하지 않는다.
     facemarket_opt_uses_enabled: bool = False
@@ -329,6 +341,7 @@ class Settings:
     fm_usage_report_to_email: str | None = None
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
+    slack_alert_webhook_url: str | None = None
     # 관리자 콘솔 기기 게이트(admin_guard). off=검사 안 함 / shadow=검사하고 실패해도 통과·
     # 로그만 / enforce=실패 시 403. 코드 기본 shadow — 배포 직후 아무도 잠기지 않고, 두 관리자가
     # 콘솔에서 서로 기기를 승인한 뒤 env 로 enforce 를 올린다(런북 docs/runbooks/admin-device-gate.md).
@@ -397,6 +410,9 @@ class Settings:
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
     detailpage_fallback_model_id: str = "mB"
+    # 새 보너스 주문은 모든 지급 서버가 스냅샷을 읽는 버전으로 교체된 뒤에만 켠다.
+    # 꺼도 이미 저장된 주문의 보너스 지급은 유지한다.
+    topup_bonus_enabled: bool = False
     # ---- 토스페이먼츠 크레딧 추가구매(WS3) — 시크릿 키가 있어야만 활성 ----
     # 시크릿 키는 **서버 전용**(결제 승인 API Basic auth). 없으면 checkout 이 503 으로 거절한다
     # — 키 없이 조용히 '목 성공'을 돌려주면 결제 안 하고 크레딧이 늘어나는 구멍이 된다.
@@ -598,6 +614,14 @@ class Settings:
     # 화이트리스트 **추가분**. 기본 4개(프로덕션 3호스트 + localhost:5173)는 코드 상수라
     # 여기 안 적어도 된다 — 이 값은 병렬 워크트리(5174)·터널 같은 임시 QA 주소용이다.
     kakao_extra_redirect_uris: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if self.detail_qc_claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("DETAIL_QC_CLAUDE_EFFORT 설정이 잘못됐어요.")
+        if any(isinstance(model, str) and model.startswith("claude-")
+               for model in (self.model_detail_core, self.model_detail_specialist)):
+            if not (self.anthropic_api_key or "").strip():
+                raise ValueError("Claude 검수 모델을 쓰려면 ANTHROPIC_API_KEY가 필요해요.")
 
 
 def _image_usage_persist(app_env: str) -> bool:
@@ -802,16 +826,21 @@ def load_settings() -> Settings:
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         model_horizon_cut=os.getenv("MODEL_ROUTING_HORIZON_CUT", ""),
         model_product_detail=(os.getenv("MODEL_ROUTING_PRODUCT_DETAIL") or "").strip() or "gpt-image-2.5-sunburst",
+        product_detail_image_quality=_flag("PRODUCT_DETAIL_IMAGE_QUALITY", "medium", {"medium", "high"}),
         model_detail_core=(os.getenv("MODEL_DETAIL_CORE") or "").strip() or "gpt-5.4-2026-03-05",
         detail_core_timeout_seconds=float(os.getenv("DETAIL_CORE_TIMEOUT_SECONDS", "90")),
         model_detail_specialist=(os.getenv("MODEL_DETAIL_SPECIALIST") or "").strip() or "gpt-5.4-2026-03-05",
         detail_specialist_timeout_seconds=float(os.getenv("DETAIL_SPECIALIST_TIMEOUT_SECONDS", "90")),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        detail_qc_claude_effort=os.getenv("DETAIL_QC_CLAUDE_EFFORT", "xhigh"),
         model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_api_key_fallback=os.getenv("OPENAI_API_KEY_FALLBACK") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
             "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
+        model_text_gemini_merge=os.getenv("MODEL_ROUTING_TEXT_GEMINI_MERGE", "gemini-3.8-flash"),
         # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
@@ -852,11 +881,14 @@ def load_settings() -> Settings:
         job_concurrency=_int_env("JOB_CONCURRENCY", 1),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
+        signup_credits=int(os.getenv("SIGNUP_CREDITS", "0")),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v6"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "19")),
         credit_min_storyboard_cuts=5,
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "19")),
+        credit_cost_editor_edit=int(os.getenv("CREDIT_COST_EDITOR_EDIT", "5")),
+        credit_cost_editor_similar=int(os.getenv("CREDIT_COST_EDITOR_SIMILAR", "8")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
@@ -898,6 +930,7 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        fm_real_model_generation=_flag("FM_REAL_MODEL_GENERATION", "on", {"off", "on"}),
         facemarket_opt_uses_enabled=(
             os.getenv("FACEMARKET_OPT_USES_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
@@ -918,6 +951,7 @@ def load_settings() -> Settings:
         ).rstrip("/"),
         fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
+        slack_alert_webhook_url=os.getenv("SLACK_ALERT_WEBHOOK_URL") or None,
         admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
         admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
@@ -962,6 +996,7 @@ def load_settings() -> Settings:
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
         fm_payout_account_key=os.getenv("FM_PAYOUT_ACCOUNT_KEY") or None,
         fm_payout_provider=os.getenv("FM_PAYOUT_PROVIDER", "manual"),
+        topup_bonus_enabled=(os.getenv("TOPUP_BONUS_ENABLED", "false").lower() == "true"),
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),

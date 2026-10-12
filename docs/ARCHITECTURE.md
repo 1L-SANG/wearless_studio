@@ -287,7 +287,7 @@ sequenceDiagram
 | `mannequin` | 과금 | AG-04 마네킹컷 생성 + QC 체인 |
 | `detail_page` | 컷당 과금 | PL-4 상세페이지 (AG-06→02→03→M-02) |
 | `editor_image` | 과금 | AG-06/07 에디터 이미지 (`new`/`vary`) |
-| `mannequin_adjust` | — | @deprecated 툼스톤(legacy 드레인 전용, AI 미호출) |
+| `mannequin_adjust` | — | 과거 큐 작업 거부·예약 크레딧 해제 전용. 새 작업 생성과 AI 호출 없음 |
 | `personalization_generation` | — | 개인화 생성 경로 α |
 | `personalization_purge` | — | 개인화 파기 캐스케이드 |
 | `sam_preprocess` | 무과금 | 캐노니컬 컷아웃 전처리 |
@@ -507,7 +507,7 @@ graph LR
 ```
 
 - 예약(`credits_reserved`) → 확정(`credits_charged`) 2단계. lease 복구가 error 처리한 잡은 예약 자동 해제.
-- `detail_page` 는 **전량 완성 시에만 출고·과금**: AI 생성 컷 1~4장은 최소 5컷 값, 5장 이상은 실제 생성 컷 수 × `CREDIT_COST_STORYBOARD_PER_CUT`. 한 컷이라도 미완성이면 실패 종결하고 예약 전액 해제.
+- `detail_page`는 **완성분을 출고하고 못 만든 유료 컷 값을 견적에서 뺀다**(ADR-0017). 예약은 최소 5컷이며 예약 시점 `aiCount`, `minCuts`, `perCutCost` 스냅샷으로 정산한다. 전부 실패만 `all_cuts_failed`로 종결하고 예약 전액을 해제한다. 부분 완성의 `genFailed`, `genFailReason`, `genFailRetryable`은 이미지 요소에 저장하며 result와 done 이벤트에 `partial` 요약을 싣는다. 성공 커밋 뒤 체크포인트는 정리하고, 리스 상실과 오류 종료의 보관 및 옛 `incomplete_cuts` 미리보기는 유지한다.
 - 단가는 `CREDIT_COST_*` env + `CREDIT_COST_VERSION` 으로 버저닝, 잡 `metadata` 에 스냅샷.
 
 ---

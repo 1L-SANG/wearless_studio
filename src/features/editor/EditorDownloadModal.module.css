@@ -1,0 +1,350 @@
+.modal {
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--fg-1);
+}
+
+.header {
+  text-align: left;
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: var(--sp-8);
+  color: var(--fg-2);
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.2px;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.modal .subtitle {
+  margin-top: var(--sp-8);
+  color: var(--fg-2);
+  font-size: 14px;
+  text-wrap: balance;
+}
+
+.groups {
+  display: grid;
+  gap: var(--sp-16);
+  margin-top: var(--sp-16);
+}
+
+.group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.group legend {
+  margin-bottom: var(--sp-8);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.optionGrid,
+.inlineOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-8);
+}
+
+.option {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  padding: var(--sp-8);
+  border-radius: var(--r-5);
+  background: var(--bg-1);
+  box-shadow: 0 0 0 1px var(--ring);
+  cursor: pointer;
+  transition: box-shadow 0.14s, background-color 0.14s;
+}
+
+.option:hover {
+  box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-soft);
+}
+
+.option:has(input:focus-visible) {
+  outline: 2px solid var(--fg-1);
+  outline-offset: 2px;
+}
+
+.option input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin: 1px 0 0;
+  accent-color: var(--cta-bg);
+}
+
+.selected {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1.5px var(--cta-bg);
+}
+
+.disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.optionText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.optionTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.optionSize {
+  color: var(--cta-bg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.optionDesc {
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.helper,
+.notice,
+.guidance {
+  color: var(--fg-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.modal .helper {
+  margin-top: var(--sp-8);
+  font-size: 12.5px;
+}
+
+.modal .notice {
+  margin-top: var(--sp-16);
+  padding: var(--sp-12);
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-size: 12.5px;
+}
+
+.summary {
+  margin-top: var(--sp-16);
+  padding: var(--sp-16);
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+}
+
+.summary h4 {
+  margin: 0 0 var(--sp-12);
+  font-size: 13.5px;
+}
+
+.summary dl {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+}
+
+.summary dl > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--sp-12);
+}
+
+.summary dt {
+  color: var(--fg-2);
+  font-size: 12.5px;
+}
+
+.summary dd {
+  margin: 0;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.guidance {
+  display: grid;
+  gap: var(--sp-6);
+  margin-top: var(--sp-12);
+}
+
+.modal .guidance p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: var(--sp-16);
+  margin-top: var(--sp-20);
+  padding-top: var(--sp-16);
+  background: var(--bg-1);
+  box-shadow: 0 -1px 0 var(--ring);
+}
+
+.footer .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  margin-top: 0;
+}
+
+.actions .cancel {
+  min-width: 88px;
+  box-shadow: 0 0 0 1px var(--ring-strong);
+}
+
+.actions .cancel:hover:not([disabled]) {
+  background: var(--bg-2);
+  box-shadow: 0 0 0 1px var(--fg-2);
+}
+
+.actions .cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--cta-focus-ring);
+}
+
+.processing,
+.error {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-12);
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.progressLabel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4) var(--sp-12);
+}
+
+.processing strong,
+.error strong {
+  font-weight: 600;
+}
+
+.progressLabel span {
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress {
+  display: block;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--ring);
+  color: var(--cta-bg);
+  accent-color: var(--cta-bg);
+  appearance: none;
+}
+
+.progress::-webkit-progress-bar {
+  background: var(--ring);
+  border-radius: var(--r-pill);
+}
+
+.progress::-webkit-progress-value {
+  background: var(--cta-bg);
+  border-radius: var(--r-pill);
+  transition: width var(--cta-transition);
+}
+
+.progress::-moz-progress-bar {
+  background: var(--cta-bg);
+  border-radius: var(--r-pill);
+}
+
+.progress:indeterminate {
+  background-image: linear-gradient(90deg, transparent 0 30%, var(--cta-bg) 30% 70%, transparent 70%);
+  background-size: 200% 100%;
+  animation: progressSlide 1.8s ease-in-out infinite;
+}
+
+.progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+
+.modal .processing p,
+.modal .error p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.error {
+  box-shadow: inset 0 0 0 1px var(--accent-error-ring);
+}
+
+.error strong {
+  color: var(--accent-error);
+}
+
+@keyframes progressSlide {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress:indeterminate { animation: none; }
+  .progress::-webkit-progress-value { transition: none; }
+}
+
+@media (max-width: 560px) {
+  .optionGrid,
+  .inlineOptions {
+    grid-template-columns: 1fr;
+  }
+
+  .summary dl > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .summary dd {
+    text-align: left;
+  }
+
+  .actions :global(.btn-primary) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .actions .cancel {
+    min-width: 80px;
+  }
+}

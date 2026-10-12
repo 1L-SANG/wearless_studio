@@ -1137,7 +1137,7 @@ class AdminFakeCursor:
             return
 
         if query.startswith("insert into jobs"):
-            user_id, payload = params
+            user_id, payload, _metadata = params
             store.jobs.append(
                 {"user_id": user_id, "kind": "fm_model_asset_build", "payload": _json_value(payload)}
             )

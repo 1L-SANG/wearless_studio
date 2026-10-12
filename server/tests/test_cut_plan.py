@@ -355,3 +355,9 @@ def test_invalid_clothing_type_and_space_continuity_fail_closed():
             worn_spec(spaceGroupId="ssg1__set__instance", _spaceSetContinuity="yes"),
             "top",
         )
+
+
+@pytest.mark.parametrize("state", ["closed", "openToChest", "partial", "openToWaist", "open"])
+def test_outer_closure_accepts_all_five_storyboard_levels(state):
+    plan = compile_cut_plan(worn_spec("horizon", outerClosureState=state), "outer")
+    assert plan.storyboard_values["outerClosure"] == state

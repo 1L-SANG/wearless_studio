@@ -8,6 +8,41 @@
    "both"
   ]
  },
+ "confirmedGptExcludedExampleIds": [
+  "ex_styling_men_bottom_full_snapshot_01",
+  "ex_styling_men_bottom_full_snapshot_03",
+  "ex_styling_men_bottom_full_snapshot_04",
+  "ex_styling_men_bottom_full_snapshot_05",
+  "ex_styling_men_bottom_medium_snapshot_01",
+  "ex_styling_men_bottom_medium_snapshot_02",
+  "ex_styling_men_bottom_medium_snapshot_04",
+  "ex_styling_men_bottom_medium_snapshot_06",
+  "ex_styling_men_top_full_snapshot_04",
+  "ex_styling_men_top_full_snapshot_06",
+  "ex_styling_men_top_medium_snapshot_01",
+  "ex_styling_men_top_medium_snapshot_02",
+  "ex_styling_men_top_medium_snapshot_03",
+  "ex_styling_men_top_medium_snapshot_04",
+  "ex_styling_men_top_medium_snapshot_05",
+  "ex_styling_men_top_medium_snapshot_06",
+  "sig_men_01",
+  "sig_men_02",
+  "sig_men_03",
+  "sig_men_04",
+  "sig_men_05",
+  "sig_men_bottom_pants_01",
+  "sig_men_bottom_pants_02",
+  "sig_women_01",
+  "sig_women_02",
+  "sig_women_03",
+  "sig_women_04",
+  "sig_women_bottom_pants_01",
+  "sig_women_bottom_pants_02",
+  "sig_women_bottom_skirt_01",
+  "sig_women_bottom_skirt_02",
+  "sig_women_dress_01",
+  "sig_women_dress_02"
+ ],
  "rules": [
   {
    "scope": "virtual",
@@ -79,17 +114,9 @@
      "ex_product_top_detail_polo_collar_buttoned_01",
      "ex_product_top_detail_polo_collar_open_two_01",
      "ex_product_top_ghost_01",
-     "ex_styling_men_bottom_full_snapshot_01",
      "ex_styling_men_bottom_full_snapshot_02",
-     "ex_styling_men_bottom_full_snapshot_03",
-     "ex_styling_men_bottom_full_snapshot_04",
-     "ex_styling_men_bottom_full_snapshot_05",
-     "ex_styling_men_bottom_medium_snapshot_01",
-     "ex_styling_men_bottom_medium_snapshot_02",
      "ex_styling_men_bottom_medium_snapshot_03",
-     "ex_styling_men_bottom_medium_snapshot_04",
      "ex_styling_men_bottom_medium_snapshot_05",
-     "ex_styling_men_bottom_medium_snapshot_06",
      "ex_styling_men_outer_full_01",
      "ex_styling_men_outer_full_02",
      "ex_styling_men_outer_full_03",
@@ -109,14 +136,6 @@
      "ex_styling_men_top_full_snapshot_01",
      "ex_styling_men_top_full_snapshot_02",
      "ex_styling_men_top_full_snapshot_03",
-     "ex_styling_men_top_full_snapshot_04",
-     "ex_styling_men_top_full_snapshot_06",
-     "ex_styling_men_top_medium_snapshot_01",
-     "ex_styling_men_top_medium_snapshot_02",
-     "ex_styling_men_top_medium_snapshot_03",
-     "ex_styling_men_top_medium_snapshot_04",
-     "ex_styling_men_top_medium_snapshot_05",
-     "ex_styling_men_top_medium_snapshot_06",
      "ex_styling_women_bottom_full_snapshot_01",
      "ex_styling_women_bottom_full_snapshot_03",
      "ex_styling_women_bottom_full_snapshot_04",
@@ -1608,7 +1627,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1629,7 +1648,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1639,7 +1658,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1794,7 +1813,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1815,7 +1834,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1825,7 +1844,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1887,7 +1906,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1908,7 +1927,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1918,7 +1937,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -1980,7 +1999,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2001,7 +2020,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2011,7 +2030,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2073,7 +2092,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2094,7 +2113,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2104,7 +2123,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2166,7 +2185,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2187,7 +2206,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2197,7 +2216,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2352,7 +2371,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2373,7 +2392,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2383,7 +2402,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2538,7 +2557,7 @@
     "refScope": "all",
     "sectionRole": "styling"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2559,7 +2578,7 @@
     "shot": "full",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {
@@ -2569,7 +2588,7 @@
     "shot": "medium",
     "refScope": "all"
    },
-   "scope": "virtual"
+   "scope": "both"
   },
   {
    "block": {

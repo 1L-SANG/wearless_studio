@@ -131,6 +131,39 @@ def worker_job(payload=None, *, credits_reserved=1):
     }
 
 
+def patch_worker_similar_source(monkeypatch, worker, asset_lookup, *, cut_type="styling", lookup_id="a1"):
+    """얼굴·정산 단위 테스트에 유효한 비슷한 컷 원본과 저장된 계획을 제공한다.
+
+    계획 저장과 최초 원본 검증은 test_similar_cut_editor에서 별도로 검증한다.
+    """
+    asset_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    envelope = {"version": 1, "rootAssetId": asset_id, "sourceAssetId": asset_id}
+    plan = {"actionKey": "hands-low", "actionSummary": "손을 내리기", "instructions": "Lower the hands.",
+            "preserve": ["garment"], "avoid": ["relocation"]}
+
+    async def owned_asset(conn, uid, pid, aid):
+        assert aid == asset_id
+        return await asset_lookup(conn, uid, lookup_id)
+
+    async def stored_plan(*args):
+        return {**envelope, "plan": plan}, {}
+
+    # 이 헬퍼를 쓰는 기존 고립 시험에는 생성 기록과 의류 목록 행이 없다.
+    # 실제 레시피 조회와 색 상속은 별도 워커 계약 시험에서 확인한다.
+    async def no_recipes(*args):
+        return {}
+
+    async def no_wardrobe(*args):
+        return []
+
+    monkeypatch.setattr(worker.repo, "get_project_asset_for_user", owned_asset)
+    monkeypatch.setattr(worker.asset_recipe, "resolve_asset_recipes", no_recipes)
+    monkeypatch.setattr(worker.repo, "list_wardrobe_images", no_wardrobe)
+    monkeypatch.setattr(worker, "_plan_similar_cut", stored_plan)
+    return {"variationMode": "similar", "_similarCut": envelope,
+            "source": {"src": f"/v1/assets/{asset_id}/file", "cutType": cut_type}}
+
+
 @pytest.fixture(scope="session")
 def keypair():
     private_key = ec.generate_private_key(ec.SECP256R1())

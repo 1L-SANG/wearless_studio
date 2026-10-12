@@ -35,6 +35,18 @@ import {
   inferContentRole,
   inferSectionRole,
 } from '@/lib/storyboardTaxonomy.js';
+import {
+  CAPTION_GAP,
+  CAPTION_STYLE,
+  ROW_LABEL_HEIGHT,
+  ROW_LABEL_STYLE,
+  TAG_HEIGHT,
+  TAG_SHIFT,
+  TAG_STYLE,
+  captionHeight,
+  hookTitleLayout,
+  hookTitleStyle,
+} from '@/lib/editorTextSlots.js';
 
 const nowIso = () => new Date().toISOString();
 const copyFitProfile = (profile) => ({
@@ -55,7 +67,7 @@ const defaultFitProfile = (product, analysis) => {
 };
 
 /* ---- Account (stable) ---- */
-const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 510, plan: 'free' };
+const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 510, plan: 'free', topupBonusEnabled: false };
 
 // 추가 색상 모두가 같은 풀샷/중간샷 촬영 예시 템플릿을 공유한다. 색상마다 별도 예시를
 // 만들지 않고, 실제 생성에서 현재 colorId의 셀러 사진과 자연스러운 미세 포즈 변주를 쓴다.
@@ -118,27 +130,23 @@ const catalogs = {
     { value: 'slim', label: '슬림핏' }, { value: 'regular', label: '정핏' },
     { value: 'semi_over', label: '세미오버' }, { value: 'over', label: '오버핏' },
   ],
-  // 서버 계약(_WORN_DIRECTIONS)은 front/side/back 셋 그대로다. 화면에서만 '사이드'를
-  // 둘로 갈라 보여준다 — 같은 side 주문이 두 가지 다른 그림이 되기 때문이다.
-  //   사선     몸만 옆, 얼굴은 카메라 쪽 3/4 → 얼굴 패스(LoRA)가 그린다
-  //   옆모습   완전 옆모습                   → 각도 교체가 등록 실사진 머리를 붙인다
-  // 화면 값 ↔ 서버 값 변환은 lib/directionChoice.js 한 곳에서만 한다.
-  directions: [
-    { value: 'front', label: '정면' },
-    { value: 'threeQuarter', label: '사선' },
-    { value: 'profile', label: '옆모습' },
-    { value: 'back', label: '뒷면' },
-  ],
   shotTypes: [
     { value: 'full', label: '풀샷' }, { value: 'medium', label: '미디움샷' },
   ],
   // 제품 이미지 전용 옵션 — 화면 하드코딩 금지 (계약 §5)
-  productDirections: [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }],
+  productSourcePhotos: [
+    { value: 'front', slot: 'Front', label: '내 앞면 사진' },
+    { value: 'back', slot: 'Back', label: '내 뒷면 사진' },
+  ],
   productShotTypes: [
     { value: 'ghost', label: '고스트샷' }, { value: 'detail', label: '디테일샷' },
   ],
   outerClosureStates: [
-    { value: 'open', label: '전체 열림' }, { value: 'partial', label: '부분 열림' }, { value: 'closed', label: '전체 닫힘' },
+    { value: 'closed', label: '전체 닫힘', caption: '전체 닫힘' },
+    { value: 'openToChest', label: '가슴까지', caption: '가슴까지 열림' },
+    { value: 'partial', label: '반만 열림', caption: '반만 열림' },
+    { value: 'openToWaist', label: '배까지', caption: '배까지 열림' },
+    { value: 'open', label: '전체 열림', caption: '전체 열림' },
   ],
   // 2026-08-07 개편: Fit 폐기(실사용 0건) → 뒷면 디테일 신설. Detail 값=앞면 디테일(재해석).
   angleSlots: ['Front', 'Back', 'Detail', 'BackDetail'],
@@ -168,32 +176,6 @@ const catalogs = {
     { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
     { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~30', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
-  // 에디터 '현재 이미지 수정' — 배경/포즈/표정은 예시 카드(탭당 1개).
-  // '컷 변경' 탭의 모델 착용 이미지는 directions/shotTypes 를 그대로 재사용한다.
-  varyOptions: {
-    bg: [
-      { id: 'cafe', label: '햇살 카페', thumb: P.scene('v-cafe', 240, 240) },
-      { id: 'street', label: '도심 거리', thumb: P.scene('v-street', 240, 240) },
-      { id: 'park', label: '공원 산책로', thumb: P.scene('v-park', 240, 240) },
-      { id: 'horizon', label: '화이트 호리존', thumb: P.scene('v-horizon', 240, 240) },
-      { id: 'home', label: '집 거실', thumb: P.scene('v-home', 240, 240) },
-      { id: 'night', label: '야경 거리', thumb: P.scene('v-night', 240, 240) },
-    ],
-    // '뒷모습'은 포즈가 아니라 방향이다 — '자리 · 방향'에 같은 게 있어 두 벌이었다(오너 8/16).
-    pose: [
-      { id: 'stand', label: '서 있는 모습', thumb: P.pose('v-stand', 240, 240) },
-      { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
-      { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
-      { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },
-      { id: 'turn', label: '돌아보기', thumb: P.pose('v-turn', 240, 240) },
-    ],
-    face: [
-      { id: 'smile', label: '은은한 미소', thumb: P.portrait('v-smile', 240, 240) },
-      { id: 'laugh', label: '활짝 웃음', thumb: P.portrait('v-laugh', 240, 240) },
-      { id: 'chic', label: '시크한 무표정', thumb: P.portrait('v-chic', 240, 240) },
-      { id: 'gaze', label: '먼 곳 응시', thumb: P.portrait('v-gaze', 240, 240) },
-    ],
-  },
   genExamples,
   // 프레임 = 순수 이미지 레이아웃만. 정보성 프리셋(FAQ·상품 정보 카드 등 빈 그리드만
   // 만들던 장식 항목)은 '내용' 탭(PRD §10.14 infoPresets)이 정식 대체해 제거.
@@ -308,11 +290,34 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const preview = demoColorwayPreviewFor(product.name, product.clothingType);
     const previewAsset = preview?.template?.[b.shot];
     if (b.colorwayGroupId && previewAsset) return previewAsset;
-    const usesWholeExample = b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
+    const usesWholeExample = !b.similarSourceBlockId && b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
     return P.photo(usesWholeExample ? b.exampleId : 'gen_' + b.id, cat(b.cutType), w, h);
   };
   const arr = storyboard || [];
   const blocks = [];
+  const CAPTION_PLACEHOLDER = '사진을 설명하는 소제목 (17자 내외)';
+  const ROW_LABEL_PLACEHOLDER = '짧은 라벨 (선택)';
+  const captionText = (contentRole) => !copywriting ? ''
+    : contentRole === CONTENT_ROLES.HERO ? `${product.name || '상품'}와 함께하는 하루`
+      : '강조 포인트를 살린 소제목이 들어가는 자리예요.';
+  const blockHeight = (elements) => Math.max(
+    0, ...elements.map((element) => (element.y || 0) + (element.h || 0)),
+  ) + 50;
+  let aiCutCount = 0;
+  let pointLabelCount = 0;
+  const singleTag = (contentRole, direction) => {
+    if (contentRole === CONTENT_ROLES.HERO || contentRole === CONTENT_ROLES.BENEFIT) {
+      pointLabelCount += 1;
+      return `POINT ${String(pointLabelCount).padStart(2, '0')}`;
+    }
+    if (contentRole === CONTENT_ROLES.FIT) return 'FIT';
+    if (contentRole === CONTENT_ROLES.PRODUCT_OVERVIEW) return direction === 'back' ? 'BACK' : 'FRONT';
+    if (contentRole === CONTENT_ROLES.DETAIL) return 'DETAIL';
+    if (contentRole === CONTENT_ROLES.COORDINATION || contentRole === CONTENT_ROLES.REAL_WEAR) return 'STYLING';
+    return null;
+  };
+  const rowLabel = (rowBlock) => inferContentRole(rowBlock) === CONTENT_ROLES.PRODUCT_OVERVIEW
+    ? (rowBlock.direction === 'back' ? 'BACK' : 'FRONT') : '';
   const persistentRowSections = new Set(arr
     .filter((b) => b.source !== 'mine' && (b.layoutRowId || b.layoutRowVersion))
     .map((b) => b.sectionId));
@@ -328,22 +333,34 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const name = contentTitle(contentRole);
     // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
     // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
-    const els = [Object.assign(IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
-    // 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 — 카피 토글과 무관.
-    if (b.hookTitleOverlay && (product.name || '').trim()) {
+    const firstCut = aiCutCount === 0;
+    aiCutCount += 1;
+    const signature = Boolean(b.hookTitleOverlay);
+    const tag = !firstCut && !signature ? singleTag(contentRole, b.direction) : null;
+    const imageY = firstCut || signature || !tag ? 50 : 50 + TAG_SHIFT;
+    const els = [Object.assign(IMG(60, imageY, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
+    // mock에는 생성 픽셀이 없으므로 시그니처 제목은 서버의 측정 실패 폴백과 같은 흰색이다.
+    if (signature && (product.name || '').trim()) {
+      const title = hookTitleLayout(product.name);
       els.push(Object.assign(
-        T(60, 275, 880, 110, product.name.trim(),
-          { font: 'Pretendard', size: 34, weight: 700, color: '#ffffff', align: 'center' }),
-        { sourceBlockId: b.id, copyRole: 'hookTitle' },
+        T(60, imageY + Math.floor((560 - title.h) / 2), 880, title.h, title.text, hookTitleStyle('#ffffff', title)),
+        { sourceBlockId: b.id, copyRole: 'hookTitle', textSlotVersion: 1 },
       ));
     }
-    if (copywriting && contentRole === CONTENT_ROLES.HERO) {
-      els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
+    if (tag) {
+      els.push(Object.assign(
+        T(60, 44, 400, TAG_HEIGHT, tag, TAG_STYLE),
+        { sourceBlockId: b.id, copyRole: 'label', textSlotVersion: 1 },
+      ));
     }
-    if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 17, color: '#6b6b73', lineHeight: 26 }), { sourceBlockId: b.id, copyRole: 'body' }));
+    if (!signature) {
+      const text = captionText(contentRole);
+      els.push(Object.assign(
+        T(60, imageY + 560 + CAPTION_GAP, 880, captionHeight(text), text, CAPTION_STYLE),
+        { sourceBlockId: b.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
+      ));
     }
-    blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
+    blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: blockHeight(els), elements: els });
   };
   const pushRow = (chunk, layout) => {
     const rowLayout = ROW_LAYOUTS[layout];
@@ -354,8 +371,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
     const h = grid ? 560 : 500;
     const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
-    const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
-    const hasCopy = Boolean(copywriting && hero);
+    aiCutCount += n;
     // 사진 시작 y 는 어느 배치든 같다. 격자만 카피를 위로 올려 자리를 비워 뒀더니,
     // 에디터가 사진 행의 카피를 통째로 걷어내는 규칙(stripPhotoBlockTextElements —
     // grid2x2 도 PHOTO_ROW_KINDS 다) 때문에 격자 위에 190px 빈 띠만 남았다.
@@ -367,20 +383,25 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
         : IMG(60 + c * (w + 20), imgTop, w, h, generatedImageFor(rb, w, h), 12, rb.cutType || undefined),
       { sourceBlockId: rb.id },
     ));
-    if (hasCopy) {
-      const copyTop = imgTop + (grid ? h * 2 : h) + 32;
-      els.push(Object.assign(T(60, copyTop, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
-        size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
-      }), { sourceBlockId: hero.id, copyRole: 'headline' }));
-      if (subtitle) {
-        els.push(Object.assign(T(60, copyTop + 68, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
-          size: 17, color: '#6b6b73', lineHeight: 26,
-        }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
-      }
+    if (hero) {
+      const copyTop = imgTop + (grid ? h * 2 : h) + CAPTION_GAP;
+      const text = captionText(CONTENT_ROLES.HERO);
+      els.push(Object.assign(
+        T(60, copyTop, 880, captionHeight(text), text, CAPTION_STYLE),
+        { sourceBlockId: hero.id, copyRole: 'headline', textSlotVersion: 1, placeholder: CAPTION_PLACEHOLDER },
+      ));
+    } else if (layout === 'twoColumn' || layout === 'threeColumn') {
+      const labelY = imgTop + h + 16;
+      chunk.forEach((rowBlock, column) => {
+        els.push(Object.assign(
+          T(60 + column * (w + 20), labelY, w, ROW_LABEL_HEIGHT, rowLabel(rowBlock), ROW_LABEL_STYLE),
+          { sourceBlockId: rowBlock.id, copyRole: 'label', textSlotVersion: 1, placeholder: ROW_LABEL_PLACEHOLDER },
+        ));
+      });
     }
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', elements: els,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: blockHeight(els), elements: els,
     });
   };
 
@@ -424,6 +445,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     return [productLabel, colorName ? `${name} [${colorName}]` : name];
   };
   const pushColorwayPair = (pair) => {
+    aiCutCount += pair.length;
     const ordered = pair.slice().sort((left, right) => (left.shot === 'full' ? -1 : 1) - (right.shot === 'full' ? -1 : 1));
     const width = 430;
     const height = 645;
@@ -522,12 +544,13 @@ export function buildStoryboard(mode, colors, context = {}) {
    and by api.createProject() so a new creation never inherits the
    prior session's mutations (mannequin variants, saved storyboard…).
    ============================================================= */
-function buildDraft() {
+export function buildDraft() {
   /* ---- Project — 플로우 최상위 엔티티 (ADR-0001) ---- */
   const project = {
     id: uid('prj'), status: 'draft', title: '',
     composeMode: 'basic', copywriting: true,
     selectedMannequinId: null, adjustCount: 0, fitProfile: null,
+    latestJobs: { mannequin: null, detailPage: null },
     createdAt: nowIso(), updatedAt: nowIso(),
   };
 
@@ -581,6 +604,9 @@ function buildDraft() {
     // 실제 분석이 절대 내지 않는 값이라, mock 화면을 실분석으로 오인하게 만들던 흔적을 제거(2026-07-15).
     materials: [{ name: '아크릴', ratio: 100 }],
     sellingPoints: [],
+    mdComment: '',
+    frontClosure: { version: 1, kind: product.clothingType === 'outer' ? 'zipper' : 'unknown',
+      range: 'graded', secondary: null, evidenceSlots: ['Front'], note: null },
     detailRecommendations: { version: 1, status: 'unavailable', candidates: [] },
     detailRecommendationsHandoff: null,
     aiSuggestedPoints: ['골지 짜임', '라운드넥'],
@@ -606,6 +632,8 @@ function buildDraft() {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
+    subCategory: analysis.subCategory,
+    customCategory: analysis.customCategory,
     matchClothing: analysis.matchClothing,
     detailRecommendations: analysis.detailRecommendations,
     sellingPoints: analysis.sellingPoints,
@@ -674,6 +702,7 @@ function buildDraft() {
 }
 
 export const DB = {
+  config: { signupCredits: 0 },
   account, catalogs, models, matchClothing, genSteps, library,
   ...buildDraft(),
 };

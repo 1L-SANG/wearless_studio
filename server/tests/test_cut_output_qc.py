@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 
 from app.agents import cut_output_qc as qc
+from app.agents import cut_plan
+from app.agents import cut_generator
+from app.agents import horizon_background
 from app.agents.gemini_image import InlineImage
 from app.agents.vision_llm import VisionError
 from conftest import make_settings
@@ -97,7 +100,7 @@ def test_schema_is_strict_complete_and_names_text_logo_gate():
 
 def test_default_qc_template_and_roles_match_pre_experiment_contract():
     template = Path(qc._PROMPT_FILE).read_text(encoding="utf-8")
-    assert hashlib.sha256(template.encode()).hexdigest() == "1ed580baa51f4a429867773631de093d320571f3a23464bb48158e9da6d73ae3"
+    assert hashlib.sha256(template.encode()).hexdigest() == "d0e664292c78629be81e94b973cb3cd594dfa4596390c64219122536d16e332e"
     assert "horizonMaster" not in qc.REFERENCE_ROLES
     assert "horizonMasterReference" not in qc.normalize_plan(_plan(
         recipeFamily="horizon", horizonMasterReference={"shot": "full", "direction": "front"}))
@@ -382,6 +385,115 @@ def test_hidden_back_or_headless_worn_cut_still_requires_model_body_gate(
     assert applicability["modelBodyProportions"] is True
 
 
+@pytest.mark.parametrize(
+    ("clothing_type", "example_id", "expected_framing", "prompt_fragment"),
+    [
+        ("bottom", "sig_women_bottom_pants_01", "bottom", "just above the waistband"),
+        ("dress", "sig_women_dress_01", "dress", "just below the collarbone"),
+    ],
+)
+def test_signature_qc_contract_is_headless_and_carries_exact_framing(
+    clothing_type, example_id, expected_framing, prompt_fragment,
+):
+    spec = {
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": example_id,
+        "modelId": "real-model",
+    }
+    contract = qc.normalize_plan(cut_plan.compile_cut_plan(spec, clothing_type))
+
+    assert contract["signatureFraming"] == expected_framing
+    assert contract["storyboard"]["face"] == "none"
+    assert qc.gate_applicability(contract)["modelIdentity"] is False
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("modelBody", _img(b"MODEL-BODY")),
+    ])
+    assert prompt_fragment in prompt
+
+
+def test_signature_qc_ignores_reference_background_color_and_checks_only_separation():
+    palette = horizon_background.signature_palette_for_observed("#2a5db0")
+    spec = horizon_background.apply_signature_runtime({
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_women_01",
+        "modelId": "real-model",
+        "colorId": "base",
+    }, palette)
+    contract = qc.normalize_plan(cut_plan.compile_cut_plan(spec, "top"))
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ])
+
+    assert contract["signatureBackground"]["backgroundHex"] == palette["backgroundHex"]
+    assert "Do not fail for any background hue difference from the EXAMPLE" in prompt
+    assert "garment silhouette remains clearly separated from the background" in prompt
+
+
+def test_dress_signature_qc_failure_routes_exact_crop_correction(monkeypatch):
+    raw = _raw()
+    raw["gates"][qc.GATES.index("framingCrop")]["status"] = "FAIL"
+    raw["gates"][qc.GATES.index("modelIdentity")]["status"] = "FAIL"
+
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
+        assert "just below the collarbone" in prompt
+        return raw, "gemini"
+
+    monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
+    plan = cut_plan.compile_cut_plan({
+        "cutType": "horizon",
+        "shot": "medium",
+        "direction": "front",
+        "faceExposure": "same",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_women_dress_01",
+        "modelId": "real-model",
+    }, "dress")
+    references = [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("modelFace", _img(b"MODEL-FACE")),
+        qc.LabeledReference("modelBody", _img(b"MODEL-BODY")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ]
+
+    result = asyncio.run(qc.verdict(
+        make_settings(), plan, references, _img(b"GENERATED"),
+    ))
+
+    assert result["contract"]["signatureFraming"] == "dress"
+    assert result["gates"]["modelIdentity"]["status"] == "NA"
+    assert qc.repair_route(result) == "EDIT_STAGE1"
+    instructions = qc.repair_instructions(result)
+    assert len(instructions) == 1
+    assert "just below the collarbone" in instructions[0]
+    assert "mid-thigh or the knee" in instructions[0]
+    assert "face and hair out of frame" in instructions[0]
+    repair_prompt = cut_generator.build_qc_repair_prompt(
+        {
+            "cutType": "horizon",
+            "shot": "medium",
+            "direction": "front",
+            "exampleId": "sig_women_dress_01",
+        },
+        {"clothingType": "dress"},
+        instructions,
+    )
+    assert cut_generator.SIGNATURE_DIRECTION_DRESS in repair_prompt
+
+
 def test_model_body_gate_requires_a_selected_model_and_a_worn_recipe():
     no_model = qc.normalize_plan(_plan(
         storyboard={**_plan()["storyboard"], "model": None},
@@ -632,7 +744,8 @@ def test_compare_repair_accepts_improvement_without_regression_only():
 def test_verdict_orchestrates_labeled_references_then_generated(monkeypatch):
     captured = {}
 
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         captured.update(prompt=prompt, images=images, schema=schema)
         return _raw(), "gemini"
 
@@ -654,7 +767,8 @@ def test_verdict_orchestrates_labeled_references_then_generated(monkeypatch):
 
 
 def test_verdict_missing_required_reference_overrides_provider_pass(monkeypatch):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -668,7 +782,8 @@ def test_verdict_missing_required_reference_overrides_provider_pass(monkeypatch)
 
 
 def test_face_only_reference_cannot_satisfy_hidden_face_body_gate(monkeypatch):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -690,7 +805,8 @@ def test_face_only_reference_cannot_satisfy_hidden_face_body_gate(monkeypatch):
 
 
 def test_body_only_reference_cannot_satisfy_visible_face_identity_gate(monkeypatch):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -708,7 +824,8 @@ def test_body_only_reference_cannot_satisfy_visible_face_identity_gate(monkeypat
 
 
 def test_verdict_missing_selected_matching_reference_fails_matching_identity(monkeypatch):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -735,7 +852,8 @@ def test_verdict_missing_selected_matching_reference_fails_matching_identity(mon
 def test_verdict_requires_exact_matching_reference_count(
     monkeypatch, selected_count, reference_count,
 ):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -765,7 +883,8 @@ def test_verdict_requires_exact_matching_reference_count(
 
 
 def test_verdict_accepts_two_selected_matching_references(monkeypatch):
-    async def fake_analyze(settings, prompt, images, schema):
+    async def fake_analyze(settings, prompt, images, schema, *,
+                           require_complete_envelope=False, system_prompt=None):
         return _raw(), "gemini"
 
     monkeypatch.setattr(qc, "analyze_with_fallback", fake_analyze)
@@ -810,3 +929,20 @@ def test_invalid_reference_labels_fail_before_provider_call():
             make_settings(), _plan(),
             [qc.LabeledReference("seller-note", _img())], _img(b"GENERATED"),
         ))
+
+
+@pytest.mark.parametrize("state", ["openToChest", "openToWaist"])
+def test_generic_qc_accepts_new_levels_and_explains_physical_fallback(state):
+    raw = _plan(clothingType="outer")
+    raw["storyboard"]["outerClosure"] = state
+    contract = qc.normalize_plan(raw)
+    assert not contract.get("errors")
+    assert contract["storyboard"]["outerClosure"] == state
+    prompt = qc.build_prompt(contract, [])
+    assert "closure matches the storyboard opening level, or the nearest level this exact garment can physically take" in prompt
+    assert "openToChest = open down to about the armpit line" in prompt
+    assert "openToWaist = open down to about navel height" in prompt
+    assert "Never FAIL a closure only because the garment cannot physically reach the exact level." in prompt
+    confirmed = qc.build_prompt(contract, [], authority_profile="confirmed_gpt_v1")
+    assert qc._CONFIRMED_FIT_GATE in confirmed
+    assert "storyboard.outerClosure levels" not in confirmed

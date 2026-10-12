@@ -35,7 +35,6 @@
 .dotOff { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); flex: none; }
 @keyframes pricingPing { 0% { transform: scale(.45); opacity: .9; } 75%, 100% { transform: scale(1.5); opacity: 0; } }
 
-.tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 .payError { margin-bottom: var(--sp-12); }
 
 /* 입금 확인 중 카드(시안 C) */
@@ -61,6 +60,7 @@
 .sg:first-child { border-left: 0; }
 .sg dt { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--fg-2); }
 .sg dd { margin: 0; font-size: 16px; font-weight: 700; color: var(--fg-1); font-variant-numeric: tabular-nums; word-break: keep-all; }
+.deadlinePart { white-space: nowrap; }
 .valLine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .money { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cur { font-weight: 800; }
@@ -79,10 +79,9 @@
 .copied svg { color: var(--accent-success); }
 .copyOnInk { background: transparent; }
 
-.billingNotice { margin-bottom: var(--sp-24); font-size: 13px; line-height: 1.7; color: var(--fg-1); }
-.billingNotice p + p { margin-top: var(--sp-8); }
-.billingNotice a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
-.billingNotice a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.bankTermsLink { margin: var(--sp-8) 0 var(--sp-16); text-align: right; font-size: 12px; }
+.bankTermsLink a { color: var(--fg-2); text-decoration: underline; text-underline-offset: 2px; }
+.bankTermsLink a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
 
 .purchaseConsent a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .purchaseConsent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
@@ -118,8 +117,6 @@
 .creditLine { display: flex; align-items: baseline; gap: var(--sp-8); font-size: 24px; font-weight: 800; line-height: 1.5; letter-spacing: -0.02em; color: var(--fg-1); white-space: nowrap; }
 .pageEstimate { margin: var(--sp-8) 0 0; font-size: 15px; font-weight: 500; color: var(--fg-2); }
 .pageEstimate strong { font-weight: 700; color: var(--fg-1); }
-.usageNote { margin: var(--sp-20) 0 0; text-align: center; font-size: 14px; line-height: 1.5; color: var(--fg-2); }
-.noWrap { white-space: nowrap; }
 .baseCredits { font-size: 18px; font-weight: 600; color: var(--fg-3); text-decoration-thickness: 2px; }
 .creditArrow { font-size: 18px; font-weight: 500; color: var(--fg-3); }
 .creditAmount { display: inline-block; }
@@ -141,6 +138,8 @@
 .topupHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 16px; }
 .topupTitle { margin: 0; font-family: var(--font-body); font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
 .topupMeta { font-size: 14px; color: var(--fg-2); }
+.topupBonusNotice { margin: 0 0 var(--sp-16); text-wrap: balance; }
+.bonusRate { white-space: nowrap; } /* WebKit이 '5%' 뒤에서 줄을 바꿔 쉼표가 다음 줄 앞에 오던 문제 */
 .needLine { display: flex; align-items: center; gap: 8px; margin: -4px 0 20px; font-size: 15px; font-weight: 600; color: var(--fg-1); }
 .needLine svg { color: var(--accent-error); }
 .topupList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-24); }
@@ -154,6 +153,8 @@
   background: var(--fg-1); color: var(--cta-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap;
 }
 .topupInfo { min-width: 0; }
+.topupCreditLine { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-8); }
+.topupBonus { padding: var(--sp-4) var(--sp-8); border-radius: var(--r-pill); background: var(--accent-success-ring); color: var(--accent-success); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .topupCredits { display: flex; align-items: baseline; gap: 6px; margin: 0; font-family: var(--font-body); font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
 .plus { font-weight: 500; color: var(--fg-3); margin-right: -4px; }
 .topupPrice { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
@@ -170,7 +171,7 @@
 .cta { margin-top: auto; }
 .buttonRing {
   padding: var(--sp-2); border-radius: 13px;
-  background: conic-gradient(from var(--pricing-ring-angle), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky));
+  background: conic-gradient(from var(--pricing-ring-angle), var(--ring-flow-stops));
   animation: pricingRingRotate 9s linear infinite;
 }
 .purchaseButton {
@@ -184,9 +185,9 @@
 .purchaseButton:disabled { cursor: not-allowed; }
 /* 구독 준비 상태도 랜딩의 검정 버튼과 손가락 커서를 유지한다. */
 .subscriptionButton:disabled { opacity: 1; cursor: pointer; }
-.purchaseConsent { margin: 28px 0 0; text-align: center; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
+.purchaseConsent { margin: 28px 0 0; text-align: center; text-wrap: balance; word-break: keep-all; color: var(--fg-2); font-size: 13px; line-height: 1.45; letter-spacing: 0.01em; }
 .purchaseButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-/* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 무지개 링도 멈춘다. */
+/* 잠긴 버튼(확인 중인 신청·계좌 미설정): 회색 면, 더스티 블루 링도 멈춘다. */
 .purchaseButton.locked, .subscriptionButton.locked:disabled, .topupButton.locked { background: var(--bg-2); color: var(--fg-2); cursor: not-allowed; }
 .buttonRing:has(.locked) { background: var(--ring-strong); animation: none; }
 @keyframes pricingRingRotate { to { --pricing-ring-angle: 360deg; } }
@@ -209,7 +210,7 @@
   .money { font-size: 26px; }
   .topupSection { margin-top: 40px; }
   .topupList { grid-template-columns: 1fr; gap: 16px; }
-  .topupRow { padding: 20px; }
+  .topupRow { padding: 20px; flex-wrap: wrap; }
   .topupCredits { font-size: 26px; }
   .topupButton { padding: 0 16px; font-size: 14px; }
   .needLine { margin: 0 0 16px; font-size: 14px; }

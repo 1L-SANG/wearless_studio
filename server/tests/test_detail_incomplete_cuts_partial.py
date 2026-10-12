@@ -17,6 +17,8 @@ import types
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import app.routes as routes
 from app import detail_cut_preview, facemarket, repo
 from app.agents.gemini_image import GeminiError
@@ -106,7 +108,7 @@ STORYBOARD = [
 ]
 
 
-def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls):
+def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls, lease_lost=False, reserved=38):
     """같은 프로젝트·같은 콘티로 상세 잡 1개를 돌린다. fail_blocks 의 컷은 provider 가 거절한다."""
     captured: dict = {"events": []}
 
@@ -138,7 +140,7 @@ def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls):
 
     async def fake_finalize(conn, **kw):
         captured["success"] = kw
-        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+        return None if lease_lost else {"editor_blocks": kw["editor_blocks"], "available": 99}
 
     async def fake_failure(conn, **kw):
         captured["failure"] = kw
@@ -165,7 +167,7 @@ def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls):
                                detail_cut_checkpoint_enabled=True),
         pool=_Pool(), r2=r2, gemini=types.SimpleNamespace())
     job = {"id": job_id, "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok",
-           "credits_reserved": 38, "payload": {}, "metadata": {"perCutCost": 19}}
+           "credits_reserved": reserved, "payload": {}, "metadata": {"perCutCost": 19}}
     asyncio.run(dpj.run_detail_page_job(types.SimpleNamespace(state=state), job))
     return captured
 
@@ -173,67 +175,25 @@ def _run_job(monkeypatch, *, job_id, r2, fail_blocks, calls):
 # ── ①② 문구·결과·이벤트 + ④ 다시 시도가 보관본을 이어 쓴다 ──────────────────────
 
 
-def test_incomplete_failure_tells_the_truth_and_the_retry_reuses_retained_cuts(monkeypatch):
+def test_partial_success_publishes_and_clears_retained_cuts(monkeypatch):
+    """새 작업은 ADR-0017 성공이다. 아래 옛 incomplete_cuts 미리보기 검사는 유지한다."""
     db = _IntentDB()
     db.install(monkeypatch)
     r2 = _R2()
-    calls: list = []
-
+    calls = []
     first = _run_job(monkeypatch, job_id="j1", r2=r2, fail_blocks={"b2"}, calls=calls)
-
-    failure = first["failure"]
-    # 정산은 #420 그대로 — 같은 코드·같은 예약 전액 해제·같은 정산 메타
-    assert failure["code"] == "incomplete_cuts"
-    assert failure["reserved"] == 38
-    assert failure["metadata"] == {"error": "incomplete_cuts", "requestedCuts": 2,
-                                   "generatedCuts": 1, "failedBlockIds": ["b2"]}
-    # 문구는 사실대로 — 몇 장 중 몇 장, 완성분은 보관, 이번 시도는 미차감
-    assert failure["message"] == (
-        "2장 중 1장을 만들지 못했어요. 완성된 1장은 보관돼 있어 다시 시도하면 추가 비용 없이 "
-        "그대로 쓰고, 실패한 컷만 새로 만들어요. 이번 시도는 크레딧이 차감되지 않았어요.")
-    assert "모두 만들지 못했어요" not in failure["message"]
-    # 폴링 응답(result) — 블록 id·개수·콘티 지문뿐
-    result = failure["result"]
-    assert result["errorCode"] == "incomplete_cuts"
-    assert result["requestedCuts"] == 2 and result["generatedCuts"] == 1
-    assert result["failedBlockIds"] == ["b2"]
-    assert result["completedBlockIds"] == ["b1"]
-    assert result["retainedBlockIds"] == ["b1"]
-    assert result["storyboardDigest"] == dpj._storyboard_digest(STORYBOARD)
-    # 보관 기한 — 이 잡이 창구를 연 뒤 24시간(모든 보관본의 TTL 은 그보다 늦게 끝난다)
-    until = datetime.fromisoformat(result["retainedUntil"])
-    assert timedelta(hours=23, minutes=59) < until - datetime.now(timezone.utc) <= timedelta(hours=24)
-    assert failure["event_extra"]["completedBlockIds"] == ["b1"]
-    assert failure["event_extra"]["failedBlockIds"] == ["b2"]
-    # 보관본 위치는 서버 전용 메타에만 — 화면·원장에는 저장소 키가 없다
-    retained = failure["job_metadata"]["retainedCutKeys"]
-    assert list(retained) == ["b1"]
-    key = retained["b1"]
-    assert key.startswith("users/u1/projects/p1/ai/j1/ckpt/") and key.endswith("/final.bin")
-    assert "users/" not in repr(result) and "users/" not in repr(failure["event_extra"])
-    # 출력 객체(임시 미리보기)는 지웠지만 보관본은 남아 있다(TTL 24시간)
-    assert key in r2.objects and db.rows[key]["live"]
-    assert key not in r2.deleted
-    assert ckpts.read_final_image(
-        r2.objects[key][0], user_id="u1", project_id="p1",
-        digest=ckpts.parse_final_key(key, user_id="u1", project_id="p1")[1],
-    ) == (b"IMG-b1", "image/png")
-    # 이 잡의 inputs_loaded 도 같은 콘티 지문을 싣는다(화면이 다시 시도의 콘티를 대조한다)
-    loaded = [p for et, p in first["events"] if p.get("phase") == "inputs_loaded"]
-    assert loaded and loaded[0]["storyboardDigest"] == result["storyboardDigest"]
-
-    # ④ 셀러가 [실패한 컷만 다시 만들기] → 같은 콘티의 새 잡. j1 은 error 로 끝났다.
-    db.error_jobs.add("j1")
-    calls.clear()
+    assert "failure" not in first
+    assert first["success"]["charge"] == 19
+    partial = first["success"]["metadata"]["partial"]
+    assert partial["requestedCuts"] == 2 and partial["completedCuts"] == 1
+    assert partial["failedCuts"] == [{"blockId": "b2", "reason": "provider_error", "retryable": True}]
+    assert partial["creditsNotCharged"] == 19
+    assert not any("/ckpt/" in key for key in r2.objects)
+    assert all(not row["live"] for row in db.rows.values())
     second = _run_job(monkeypatch, job_id="j2", r2=r2, fail_blocks=set(), calls=calls)
-
-    assert calls == [("j2", "b2")], "보관된 b1 은 provider 를 부르지 않고, 실패한 b2 만 새로 그린다"
-    assert ("step", {"blockId": "b1", "status": "cut_checkpoint_reused", "stage": "final"}) \
-        in second["events"]
-    assert "failure" not in second and "success" in second
-    assert {c["blockId"] for c in second["cut_results"]} == {"b1", "b2"}
-    # 성공 — 보관본은 이미 셀러에게 나갔으니 지운다(같은 그림을 두 번 싣지 않는다)
-    assert key in r2.deleted and not db.rows[key]["live"]
+    assert calls == [("j1", "b1"), ("j1", "b2"), ("j2", "b1"), ("j2", "b2")]
+    assert second["success"]["charge"] == 38
+    assert "partial" not in second["success"]["metadata"]
 
 
 def test_all_cuts_failed_keeps_the_old_message_and_payload(monkeypatch):
@@ -329,6 +289,61 @@ def test_repo_failure_without_extras_is_unchanged(monkeypatch):
     assert not any(sql.startswith("update jobs set result") for sql, _ in conn.log)
     event = next(params for sql, params in conn.log if "insert into job_events" in sql)
     assert event[1].obj == {"code": "generation_failed", "message": "m"}
+
+
+@pytest.mark.parametrize('code', ['generation_failed', 'worker_shutdown', 'incomplete_cuts'])
+def test_detail_failure_interrupts_claims_without_changing_credit_release(monkeypatch, code):
+    import copy
+    initial = {'attempt': 1, 'decision': 'UNKNOWN', 'unknownCause': 'timeout'}
+    claimed = {'attempt': 1, 'status': 'CLAIMED', 'initialJudgment': initial}
+    complete = {'attempt': 1, 'status': 'COMPLETE', 'judgment': {'decision': 'PASS'}}
+    shots = {
+        'inflight': {'phase': 'rejudging', 'judgmentRetryLease': 't',
+                     'judgmentRetries': [complete, claimed], 'qc': {'judgments': [initial]}},
+        'held': {'phase': 'held', 'judgmentRetries': [claimed], 'qc': {'passed': False}},
+        'done': {'phase': 'accepted', 'judgmentRetries': [complete], 'qc': {'passed': True}},
+        'phase-only': {'phase': 'rejudging', 'judgmentRetryLease': 't'},
+    }
+    before = copy.deepcopy(shots)
+    conn = _SqlConn(rows=[{'id': 'j1'}, {'metadata': {'detailShots': shots, 'other': 'keep'}}])
+    settled = []
+    async def settle(conn, **kw):
+        settled.append(kw)
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    assert asyncio.run(repo.finalize_detail_page_failure(
+        conn, job_id='j1', lease_token='t', user_id='u1', project_id='p1', reserved=38,
+        settle_key='k', message='m', metadata={'error': code}, code=code,
+        result={'errorCode': code}, job_metadata={'retainedCutKeys': {'b': 'private'}},
+        event_extra={'failedBlockIds': ['b']})) is True
+    updates = [params for sql, params in conn.log if sql.startswith('update jobs set metadata = jsonb_set')]
+    assert len(updates) == 1, 'Terminal detail retries must be cleaned in the same transaction'
+    cleaned = updates[0][0].obj
+    assert cleaned['inflight']['phase'] == 'held'
+    assert cleaned['inflight']['judgmentRetryLease'] is None
+    assert [row['status'] for row in cleaned['inflight']['judgmentRetries']] == ['COMPLETE', 'INTERRUPTED']
+    assert cleaned['inflight']['qc']['judgments'] == [initial]
+    assert cleaned['inflight']['qc']['judgmentRetries'] == cleaned['inflight']['judgmentRetries']
+    assert cleaned['held']['phase'] == 'held'
+    assert cleaned['held']['judgmentRetries'][-1]['status'] == 'INTERRUPTED'
+    assert cleaned['done'] == before['done']
+    assert cleaned['phase-only']['phase'] == 'held'
+    assert cleaned['phase-only']['judgmentRetryLease'] is None
+    assert settled == [{'user_id': 'u1', 'project_id': 'p1', 'job_id': 'j1', 'reserved': 38,
+                        'charge': 0, 'action_key': 'detailPageGenerate.release',
+                        'settle_key': 'k', 'metadata': {'error': code}}]
+    event = next(params[1].obj for sql, params in conn.log if 'insert into job_events' in sql)
+    assert event == {'failedBlockIds': ['b'], 'code': code, 'message': 'm'}
+
+
+def test_detail_failure_with_lost_lease_does_not_clean_or_release(monkeypatch):
+    async def settle(*args, **kwargs):
+        pytest.fail('A lost lease cannot release credits')
+    monkeypatch.setattr(repo, '_settle_credits', settle)
+    conn = _SqlConn()
+    assert asyncio.run(repo.finalize_detail_page_failure(
+        conn, job_id='j1', lease_token='lost', user_id='u1', project_id='p1', reserved=38,
+        settle_key='k', message='m', metadata={})) is False
+    assert len(conn.log) == 1
 
 
 def test_repo_retention_lookup_matches_the_reuse_conditions():

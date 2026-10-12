@@ -45,8 +45,13 @@ router = APIRouter(prefix="/v1/facemarket/publications", tags=["FaceMarket"])
 _UPLOAD_TTL = 300           # presigned PUT 유효 5분
 _DOWNLOAD_TTL = 600         # 서명본 GET 10분
 _MAX_UPLOAD_BYTES = 200 * 1024 * 1024   # 긴 PNG 상한. 넘으면 presign 거부
-_KINDS = {"long_png", "block_png", "zip"}
-_MIME = {"long_png": "image/png", "block_png": "image/png", "zip": "application/zip"}
+_KINDS = {"long_png", "block_png", "zip", "jpeg"}
+_MIME = {
+    "long_png": "image/png",
+    "block_png": "image/png",
+    "zip": "application/zip",
+    "jpeg": "image/jpeg",
+}
 
 
 class TokenInvalid(Exception):
@@ -445,7 +450,8 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
         signed, c2pa_status = await asyncio.to_thread(
             sign_bytes, signer, data, mime, manifest
         )
-        signed_key = f"publications/{user_id}/{publication_id}/signed.png"
+        extension = "jpg" if kind == "jpeg" else "png"
+        signed_key = f"publications/{user_id}/{publication_id}/signed.{extension}"
         await asyncio.to_thread(r2.put_bytes, signed_key, signed, mime)
         async with get_conn(request) as conn:
             async with conn.cursor() as cur:

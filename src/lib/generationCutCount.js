@@ -6,17 +6,58 @@
    수를 봐야 한다 — 복제가 많은 보드에서 "크레딧 부족"으로 잘못 막히거나
    (마네킹 CTA), 목 모드가 과다 청구하는 것을 막는다(Codex PR#142 리뷰).
 
-   키는 서버 정규화 스펙의 근사다: 여기 비교 필드가 서버보다 엄격해도
-   '컷 복제' 직후의 완전 동일 복제는 확실히 접히고, 필드가 하나라도 다른
-   컷은 서버도 따로 생성하므로 어긋나지 않는다. 세트 멤버는 접지 않는다.
+   아우터 열림은 서버가 생성 직전에 맞추는 값으로 비교한다. 저장 블록은
+   바꾸지 않으며 확정 GPT 요청과 세트 멤버, 비슷한 컷의 예외를 유지한다.
    ============================================================= */
 
-export function uniqueGenerationCutCount(blocks) {
+import scopes from '../data/identityScopes.json' with { type: 'json' };
+import { filterSupportedStoryboardBlocks } from './storyboardTaxonomy.js';
+
+const CLOSURES = ['closed', 'openToChest', 'partial', 'openToWaist', 'open'];
+const WORN_CUTS = new Set(['styling', 'horizon']);
+const EXCLUDED_EXAMPLES = new Set(scopes.confirmedGptExcludedExampleIds || []);
+
+function closureRange(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !['version', 'kind', 'range', 'secondary', 'evidenceSlots', 'note'].every(key => key in value)
+      || value.version !== 1) return 'graded';
+  const ranges = { zipper: ['graded'], unknown: ['graded'], belt: ['binary'], none: [null],
+    button: ['graded', 'binary'], snap: ['graded', 'binary'] };
+  if (!Object.hasOwn(ranges, value.kind) || !ranges[value.kind].includes(value.range)) return 'graded';
+  if (value.secondary !== null && (!['zipper', 'button', 'snap', 'belt'].includes(value.secondary)
+      || value.secondary === value.kind || ['none', 'unknown'].includes(value.kind))) return 'graded';
+  if (!Array.isArray(value.evidenceSlots)
+      || value.evidenceSlots.some(slot => !['Front', 'Back', 'Detail', 'BackDetail'].includes(slot))
+      || (value.kind === 'unknown' && value.evidenceSlots.length)) return 'graded';
+  if (value.note !== null && (typeof value.note !== 'string' || value.note.length > 80)) return 'graded';
+  return value.kind === 'none' ? 'none' : value.range;
+}
+
+function confirmedProfileRequested(block) {
+  return block.cutType === 'styling' && (block.direction || 'front') === 'front'
+    && (!block.shot || ['full', 'medium'].includes(block.shot))
+    && (!block.refScope || block.refScope === 'all') && !block.spaceGroupId
+    && block._referenceDirectionCompatible !== false && Boolean(block.exampleId)
+    && !EXCLUDED_EXAMPLES.has(block.exampleId);
+}
+
+function effectiveClosure(block, clothingType, frontClosure) {
+  if (clothingType == null) return block.outerClosureState ?? null;
+  if (clothingType !== 'outer' || !WORN_CUTS.has(block.cutType)) return null;
+  const state = CLOSURES.includes(block.outerClosureState) ? block.outerClosureState : 'open';
+  if (confirmedProfileRequested(block)) return state;
+  const range = closureRange(frontClosure);
+  if (range === 'none') return 'open';
+  if (range === 'binary') return CLOSURES.indexOf(state) <= 2 ? 'closed' : 'open';
+  return state;
+}
+
+export function uniqueGenerationCutCount(blocks, { clothingType, frontClosure } = {}) {
   const seen = new Set();
   let count = 0;
-  for (const block of (Array.isArray(blocks) ? blocks : [])) {
+  for (const block of filterSupportedStoryboardBlocks(Array.isArray(blocks) ? blocks : [])) {
     if (!block || block.source === 'mine') continue;
-    if (block.spaceGroupId) { count += 1; continue; }
+    if (block.spaceGroupId || block.similarSourceBlockId) { count += 1; continue; }
     const key = JSON.stringify({
       cutType: block.cutType ?? null,
       shot: block.shot ?? null,
@@ -30,7 +71,7 @@ export function uniqueGenerationCutCount(blocks) {
       matchIds: [...(block.matchIds || [])].sort(),
       faceExposure: block.faceExposure ?? null,
       angle: block.angle ?? null,
-      outerClosureState: block.outerClosureState ?? null,
+      outerClosureState: effectiveClosure(block, clothingType, frontClosure),
       refAssetIds: block.refAssetIds || [],
       refImages: block.refImages || [],
       contentRole: block.contentRole ?? null,

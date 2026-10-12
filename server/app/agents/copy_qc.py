@@ -28,12 +28,12 @@ def review_schema() -> dict:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "blockId": {"type": "string"},
+                        "textId": {"type": "string"},
                         "verdict": {"type": "string", "enum": list(VERDICTS)},
                         "revisedText": {"type": ["string", "null"]},
                         "reason": {"type": ["string", "null"]},
                     },
-                    "required": ["blockId", "verdict", "revisedText", "reason"],
+                    "required": ["textId", "verdict", "revisedText", "reason"],
                 },
             },
         },
@@ -61,11 +61,11 @@ def build_prompt(items: list[dict], confirmed_facts: dict) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
     item_lines = []
-    for it in items or []:
-        bid = _sanitize(it.get("blockId"))
+    for index, it in enumerate(items or []):
+        text_id = _sanitize(it.get("textId") or f"{it.get('blockId')}:{index}")
         txt = _sanitize(it.get("text"))
-        if bid:
-            item_lines.append(f"- blockId={bid}: {txt}")
+        if text_id:
+            item_lines.append(f"- textId={text_id}: {txt}")
     return (
         f"{template}\n\n{_facts_block(confirmed_facts)}\n\n"
         f"ITEMS:\n" + "\n".join(item_lines)
@@ -73,22 +73,24 @@ def build_prompt(items: list[dict], confirmed_facts: dict) -> str:
 
 
 def validate(raw: dict, items: list[dict]) -> list[dict]:
-    """입력 item 마다 1개 결과 보장(모델 누락 시 pass 원문). verdict∈enum, revise면 revisedText 정리."""
+    """입력 텍스트마다 1개 결과를 보장하고 고유 ``textId``로 판정을 연결한다."""
     by_id = {}
     for r in (raw or {}).get("results") or []:
-        if isinstance(r, dict) and r.get("blockId"):
-            by_id[str(r["blockId"])] = r
+        if isinstance(r, dict) and r.get("textId"):
+            by_id.setdefault(str(r["textId"]), r)
     out = []
-    for it in items or []:
+    for index, it in enumerate(items or []):
         bid = str(it.get("blockId"))
-        r = by_id.get(bid)
+        text_id = str(it.get("textId") or f"{bid}:{index}")
+        r = by_id.get(text_id)
         verdict = r.get("verdict") if r and r.get("verdict") in VERDICTS else "pass"
         revised = clean_text(r.get("revisedText")) if r else ""
         if verdict == "revise" and revised:
-            out.append({"blockId": bid, "verdict": "revise", "revisedText": revised,
+            out.append({"textId": text_id, "blockId": bid, "verdict": "revise", "revisedText": revised,
                         "reason": clean_text(r.get("reason"), 200) or None})
         else:  # pass (또는 revise인데 수정안 없음 → 원문 유지)
-            out.append({"blockId": bid, "verdict": "pass", "revisedText": None, "reason": None})
+            out.append({"textId": text_id, "blockId": bid, "verdict": "pass",
+                        "revisedText": None, "reason": None})
     return out
 
 

@@ -106,7 +106,8 @@ def _patch_post(
     events = []
     state = {"item": _custom_row() if existing else None, "delete_applied": False, "metadata": None, "payload": {
         "matchClothing": [{"id": "curated-1", "selected": True, "selOrder": 1}],
-    }, "jobs": []}
+        "fit": "regular",
+    }, "jobs": [], "analysis_writes": []}
     source_bytes = source_bytes or {f"source/{asset_id}.png": _png() for asset_id in asset_ids}
     r2 = _R2(source_bytes, read_error=read_error, put_error=put_error)
 
@@ -170,8 +171,9 @@ def _patch_post(
 
     async def save_analysis(conn, project_id, payload):
         events.append("save-analysis")
-        state["payload"] = payload
-        return {"project_id": project_id, "payload": payload}
+        state["analysis_writes"].append(payload)
+        state["payload"] = {**state["payload"], **payload}
+        return {"project_id": project_id, "payload": state["payload"]}
 
     # 실 repo.create_job 은 커넥션의 cursor 가 필요하다. 가짜로 잡지 않으면 enqueue 가
     # AttributeError 로 터지고 라우트의 광의 except 가 그걸 삼켜, "잡이 없는데 processing"
@@ -220,6 +222,8 @@ def test_custom_match_post_accepts_one_to_four_images(
     assert body["item"]["selected"] is False
     assert body["item"]["thumb"].endswith(f"source/{asset_ids[0]}.png")
     assert state["payload"]["matchClothing"][0]["id"] == "custom_test_item"
+    assert state["payload"]["fit"] == "regular"
+    assert all(set(patch) == {"matchClothing"} for patch in state["analysis_writes"])
     assert events.index("lock") < events.index("source-order")
     assert events.index("lock") < events.index("insert-grid")
     assert events.index("insert-grid") < events.index("insert-item")
@@ -289,6 +293,9 @@ def test_custom_match_post_does_not_claim_processing_when_the_queue_is_down(
     assert response.json()["item"]["cutoutStatus"] == "failed"
     assert state["payload"]["matchClothing"][0]["cutoutStatus"] == "failed"
     assert response.json()["analysis"]["matchClothing"][0]["cutoutStatus"] == "failed"
+    assert len(state["analysis_writes"]) == 2
+    assert all(set(patch) == {"matchClothing"} for patch in state["analysis_writes"])
+    assert response.json()["analysis"]["fit"] == "regular"
 
 
 def test_custom_match_post_runs_mandatory_qc_in_parallel_threads(
@@ -464,8 +471,9 @@ def test_custom_match_delete_is_locked_atomic_and_idempotent(
 
     async def save_analysis(conn, project_id, payload):
         events.append("save-analysis")
-        state["payload"] = payload
-        return {"project_id": project_id, "payload": payload}
+        assert set(payload) == {"matchClothing", "fitProfile"}
+        state["payload"] = {**state["payload"], **payload}
+        return {"project_id": project_id, "payload": state["payload"]}
 
     async def soft_delete(conn, user_id, project_id, asset_ids):
         events.append("soft-delete-assets")

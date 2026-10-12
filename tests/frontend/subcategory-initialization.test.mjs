@@ -52,6 +52,7 @@ test('legacy skirt remains usable without inventing a length', () => {
 test('public AI responses are normalized before the input form receives them', async t => {
   const root = new URL('../..', import.meta.url).pathname;
   const server = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     configFile: false, root, logLevel: 'silent',
     resolve: { alias: { '@': new URL('../../src', import.meta.url).pathname } },
     server: { middlewareMode: true, watch: null, hmr: false },

@@ -132,7 +132,7 @@ def test_the_two_reasons_stay_apart():
     # styling 섹션이 열린 뒤(2026-09-25)에도 확정 GPT 프로필 예시는 가상 전용이다 — mismatch 코드
     profile_block = {"source": "ai", "sectionRole": "styling", "cutType": "styling",
                      "direction": "front", "shot": "full", "refScope": "all", "pose": "auto",
-                     "exampleId": "ex_styling_men_top_full_snapshot_03"}
+                     "exampleId": "ex_styling_women_top_full_snapshot_01"}
     rejection = identity_scope.block_rejection(profile_block, REAL_MODEL)
     assert rejection is not None and rejection[0] == identity_scope.MISMATCH_CODE
     # hooking 이 열린 뒤(2026-09-26)에도 같다 — 섹션은 열렸어도 예시가 가상 전용이다.

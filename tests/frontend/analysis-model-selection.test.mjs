@@ -7,6 +7,34 @@ import {
   resolveSelectedModelId,
 } from '../../src/features/analysis/modelSelection.js';
 import { AI_MODELS } from '../../src/features/analysis/aiModels.js';
+import { modelSection, selectionEffect } from './helpers/analysis-model-entry.mjs';
+
+test('analysis offers only AI models with no real-model tab or brand category', async () => {
+  const { nodes, changes } = await modelSection({ selectedModelId: 'mA', targetGenders: ['women'] });
+  assert.equal(nodes.some((node) => node.type === 'chips'), false);
+  assert.equal(nodes.some((node) => node.props?.className === 'fm-use-category'), false);
+  const cards = nodes.filter((node) => node.props?.onClick);
+  assert.equal(cards.length, 10);
+  for (const card of cards) card.props.onClick();
+  assert.deepEqual(changes.map((patch) => patch.selectedModelId), AI_MODELS.filter((m) => m.gender === 'women').map((m) => m.id));
+  assert.ok(nodes.some((node) => node.props?.children === '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'));
+});
+
+for (const [gender, expected] of [['women', 'mA'], ['men', 'mB'], ['unisex', 'mA']]) {
+  test(`saved real model becomes a basic AI model once for ${gender}`, () => {
+    const a = { selectedModelId: '11111111-1111-1111-1111-111111111111', targetGenders: [gender] };
+    const patches = [], messages = [];
+    const run = selectionEffect(a, (patch) => patches.push(patch), { push: (message) => messages.push(message) });
+    run();
+    run(); // StrictMode can replay the mount effect before the parent updates.
+    assert.deepEqual(patches, [{ selectedModelId: expected }]);
+    assert.deepEqual(messages, ['실제 모델은 지금 제공하지 않아 AI 모델로 바꿨어요.']);
+    Object.assign(a, patches[0]);
+    run();
+    assert.equal(patches.length, 1);
+    assert.equal(messages.length, 1);
+  });
+}
 
 const aiModels = [
   { id: 'mA', gender: 'women' },

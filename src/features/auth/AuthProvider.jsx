@@ -16,9 +16,11 @@
    토큰을 컴포넌트로 흘리지 않는다 — API 호출은 httpAdapter 가 supabase 에서 직접 읽는다.
    ============================================================= */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { clientEvents } from '@/lib/clientEvents.js';
 import { useQueryClient } from '@tanstack/react-query';
 import { IS_FACEMARKET } from '@/lib/host.js';
-import { supabase } from '@/lib/supabase.js';
+import { supabase, readStoredAuthSession } from '@/lib/supabase.js';
+import { isMockMode } from '@/lib/api/index.js';
 import { LoginGate } from './Login.jsx';
 import { draftSlot } from '@/lib/draftSlot.js';
 import { stampAppOrigin } from '@/lib/appOrigin.js';
@@ -116,19 +118,48 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [flowResetRevision, setFlowResetRevision] = useState(0);
+  const [resettingFlow, setResettingFlow] = useState(false);
 
-  const publishSession = useCallback((next) => {
-    // 새 세션이 화면에 보이기 전에 이전 계정 정보와 진행 중 조회를 버린다.
-    // 같은 사용자의 토큰 갱신은 캐시를 유지한다.
-    if (useAppStore.getState().setAccountIdentity(next?.user?.id ?? null)) {
-      queryClient.clear();
+  const publishSession = useCallback(async (next, { isCurrent = () => true } = {}) => {
+    if (!isCurrent()) return;
+    const flow = useAppStore.getState();
+    const nextUserId = next?.user?.id ?? null;
+    const dropFlow = !isMockMode && flow.projectPersisted && flow.projectId
+      && (nextUserId ? flow.userId && flow.userId !== nextUserId : !readStoredAuthSession());
+    try {
+      draftSlot.setUserId?.(nextUserId);
+      if (dropFlow) {
+        // 인증 대기는 기존 화면을 유지하고, 실제 플로우 초기화 동안에만 진입을 막는다.
+        setResettingFlow(true);
+        try { await flow.beginProject({ isCurrent }); }
+        catch (error) { console.error('[auth] flow reset failed', error); }
+        finally {
+          if (isCurrent()) setFlowResetRevision((value) => value + 1);
+        }
+      }
+      if (!isCurrent()) return;
+      clientEvents.setSession(next);
+      // 새 세션이 화면에 보이기 전에 이전 계정 정보와 진행 중 조회를 버린다.
+      // 같은 사용자의 토큰 갱신은 캐시를 유지한다.
+      if (useAppStore.getState().setAccountIdentity(nextUserId)) queryClient.clear();
+    } finally {
+      if (isCurrent()) {
+        setSession(next);
+        setResettingFlow(false);
+      }
     }
-    setSession(next);
   }, [queryClient]);
 
   useEffect(() => {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
     let subscription = null;
+    let publication = Promise.resolve();
+    const acceptSession = (next) => {
+      publication = publication.then(() => publishSession(next, { isCurrent: () => alive }))
+        .catch((error) => { console.error('[auth] session publish failed', error); });
+      return publication;
+    };
     if (MOCK_FACEMARKET) {
       import('../../mock/facemarket.js').then(({ getMockSession }) => {
         if (!alive) return;
@@ -162,19 +193,20 @@ export function AuthProvider({ children }) {
         }
         const { data } = await supabase.auth.getSession();
         if (!alive) return;
-        publishSession(data.session);
-        const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
-          if (!alive) return;
-          publishSession(next);
-        });
-        subscription = sub.subscription;
+        await acceptSession(data.session);
       } catch (error) {
         console.error('[auth] bootstrap failed', error);
         if (!alive) return;
-        publishSession(null);
+        await acceptSession(null);
       } finally {
         if (alive) setLoading(false);
       }
+      if (!alive) return;
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+        if (!alive) return;
+        void acceptSession(next);
+      });
+      subscription = sub.subscription;
     })();
     return () => {
       alive = false;
@@ -221,6 +253,7 @@ export function AuthProvider({ children }) {
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
+    clientEvents.setSession(null);
     clearApplyDraft(userId);
     if (MOCK_FACEMARKET) { publishSession(null); return; }
     clearSignupConsent();
@@ -274,8 +307,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin }}>
-      {children}
+    <AuthCtx.Provider key={flowResetRevision} value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signInWithPassword, signInWithKakaoIdToken, signOut, openLogin, closeLogin }}>
+      {!resettingFlow && children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>
   );

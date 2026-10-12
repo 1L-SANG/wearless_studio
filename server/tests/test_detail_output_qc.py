@@ -1,6 +1,7 @@
 """Fail-closed product/detail QC contract, independent of provider prose."""
 
 import asyncio
+import base64
 import copy
 import hashlib
 import importlib.util
@@ -9,6 +10,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
@@ -129,11 +131,218 @@ def settings(**overrides):
     return SimpleNamespace(**{
         "analysis_model_order": "gemini,gpt", "model_text_gemini": "gemini-3.1-pro-preview",
         "model_text": "gpt-5.4-mini", "gemini_api_key": "test", "openai_api_key": "test",
+        "openai_api_key_fallback": None,
         "analysis_timeout_seconds": 30, "analysis_thinking_level": "low",
         "model_detail_specialist": "gpt-5.4-2026-03-05", "detail_specialist_timeout_seconds": 90,
         "model_detail_core": "gpt-5.4-2026-03-05", "detail_core_timeout_seconds": 90,
         **overrides,
     })
+
+
+@pytest.mark.parametrize("core,specialist", [
+    ("claude-sonnet-5-5", "claude-sonnet-5-5"),
+    ("claude-sonnet-5-5", "gpt-5.4-2026-03-05"),
+    ("gpt-5.4-2026-03-05", "claude-sonnet-5-5"),
+    ("gpt-5.4-2026-03-05", "gpt-5.4-2026-03-05"),
+])
+def test_detail_judges_route_independently_without_changing_qc_contract(monkeypatch, core, specialist):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    def judge(provider):
+        async def call(*args, **kwargs):
+            calls.append((provider, args, kwargs))
+            kwargs["metadata"].update(returned_model=args[1], usage={"prompt_tokens": 10, "completion_tokens": 2})
+            raw = response(qc)
+            return primary_response(qc, raw) if is_core_call(qc, args) else specialist_response(qc, raw)
+        return call
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", judge("claude"))
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", judge("gpt"))
+    source = picture()
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core=core, model_detail_specialist=specialist,
+        anthropic_api_key="test-claude-key", detail_qc_claude_effort="max",
+        openai_api_key=None if core.startswith("claude-") and specialist.startswith("claude-") else "test",
+        detail_core_timeout_seconds=140, detail_specialist_timeout_seconds=65),
+        [source, picture("yellow"), picture("purple")], picture("blue"), target=bound_target()))
+    expected = ["claude" if model.startswith("claude-") else "gpt" for model in (core, specialist)]
+    assert result["decision"] == "PASS" and result["passed"] is True
+    assert [call[0] for call in calls] == expected
+    assert result["provider"] == expected[0] and result["specialist"]["provider"] == expected[1]
+    assert result["returnedModel"] == core and result["specialist"]["returnedModel"] == specialist
+    assert result["usage"] == result["specialist"]["usage"] == {"prompt_tokens": 10, "completion_tokens": 2}
+    assert result["effort"] == ("max" if expected[0] == "claude" else "high")
+    assert result["specialist"]["effort"] == ("max" if expected[1] == "claude" else "high")
+    assert [call[1][5] for call in calls] == [120, 65]
+    assert [len(call[1][3]) for call in calls] == [5, 13]
+    for provider, args, kwargs in calls:
+        assert "VALIDATED_QC_CONTEXT" in kwargs["system_prompt"]
+        if provider == "claude":
+            assert kwargs["effort"] == "max" and "reasoning_effort" not in kwargs
+        else:
+            assert kwargs["reasoning_effort"] == "high" and kwargs["image_detail"] == "high"
+            assert kwargs["max_completion_tokens"] == 7000 and "effort" not in kwargs
+
+
+@pytest.mark.parametrize("missing", ["core", "specialist"])
+def test_claude_key_absence_does_not_use_openai_key(monkeypatch, missing):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    async def gpt(*args, **kwargs):
+        calls.append("gpt")
+        return primary_response(qc, response(qc))
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("missing Claude key must not reach transport")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", gpt)
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", forbidden)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5" if missing == "core" else "gpt-5.4-2026-03-05",
+        model_detail_specialist="claude-sonnet-5-5", anthropic_api_key=""), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "configuration"
+    assert calls == ([] if missing == "core" else ["gpt"])
+    if missing == "core":
+        assert result["provider"] == "claude" and result["errorCode"] == "primary_judge_unavailable"
+    else:
+        assert result["specialist"]["provider"] == "claude"
+        assert result["specialist"]["status"] == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("failed", ["core", "specialist"])
+def test_claude_failure_never_falls_back_to_gpt(monkeypatch, failed):
+    from app.agents import detail_output_qc as qc
+
+    calls = []
+
+    async def claude(*args, **kwargs):
+        calls.append("core" if is_core_call(qc, args) else "specialist")
+        if calls[-1] == failed:
+            raise qc.vision_llm.VisionError("unavailable", unknown_cause="provider_error", retry_after_seconds=3)
+        return primary_response(qc, response(qc))
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("cross-provider fallback is forbidden")
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", claude)
+    monkeypatch.setattr(qc.vision_llm, "_call_gpt", forbidden)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5", model_detail_specialist="claude-sonnet-5-5",
+        anthropic_api_key="test-claude-key", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "provider_error"
+    assert result["retryAfterSeconds"] == 3
+    assert calls == (["core"] if failed == "core" else ["core", "specialist"])
+
+
+def test_claude_judgment_still_requires_complete_valid_server_gates(monkeypatch):
+    from app.agents import detail_output_qc as qc
+
+    async def invalid(*args, **kwargs):
+        raw = primary_response(qc, response(qc))
+        raw["gates"].pop()
+        return raw
+
+    monkeypatch.setattr(qc.vision_llm, "_call_claude", invalid)
+    result = asyncio.run(qc.verdict(settings(model_detail_core="claude-sonnet-5-5",
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+    assert result["decision"] == "UNKNOWN" and result["unknownCause"] == "invalid_response"
+    assert result["specialist"]["status"] == "NOT_RUN"
+
+
+@pytest.mark.parametrize("failed", [None, "core", "specialist"])
+def test_claude_verdict_records_actual_sent_images_even_on_transport_failure(monkeypatch, failed):
+    from app.agents import detail_output_qc as qc
+
+    sent = {}
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            body = kwargs["json"]
+            schema = body["output_config"]["format"]["schema"]
+            codes = schema["properties"]["gates"]["items"]["properties"]["code"]["enum"]
+            stage = "core" if set(codes) == set(qc.CORE_GATES) else "specialist"
+            sent[stage] = [hashlib.sha256(base64.b64decode(part["source"]["data"])).hexdigest()
+                           for part in body["messages"][0]["content"] if part["type"] == "image"]
+            if stage == failed:
+                raise httpx.ConnectError("sensitive transport error")
+            raw = primary_response(qc, response(qc)) if stage == "core" else specialist_response(qc, response(qc))
+            return httpx.Response(200, json={"model": "claude-sonnet-5-5", "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": json.dumps(raw)}]})
+
+    monkeypatch.setattr(qc.vision_llm.httpx, "AsyncClient", Client)
+    result = asyncio.run(qc.verdict(settings(
+        model_detail_core="claude-sonnet-5-5", model_detail_specialist="claude-sonnet-5-5",
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"),
+        [picture(), picture("yellow"), picture("purple")], picture("blue"), target=bound_target()))
+
+    assert result["decision"] == ("PASS" if failed is None else "UNKNOWN")
+    assert result["effort"] == "xhigh"
+    assert result["sentImageHashes"] == sent["core"]
+    assert len(sent["core"]) == len(result["judgeImageHashes"]) == 5
+    assert result["sentImageHashes"] != result["judgeImageHashes"]
+    specialist = result["specialist"]
+    if failed == "core":
+        assert specialist["status"] == "NOT_RUN"
+        assert specialist["effort"] is None and specialist["sentImageHashes"] == []
+    else:
+        assert specialist["effort"] == "xhigh"
+        assert specialist["sentImageHashes"] == sent["specialist"]
+        assert len(sent["specialist"]) == len(specialist["judgeImageHashes"]) == 13
+        assert specialist["sentImageHashes"] != specialist["judgeImageHashes"]
+
+
+@pytest.mark.parametrize("provider", ["claude", "gpt"])
+@pytest.mark.parametrize("stage", ["core", "specialist"])
+@pytest.mark.parametrize("error,cause,retryable", [
+    (httpx.ConnectTimeout("sensitive"), "timeout", True),
+    (httpx.ReadTimeout("sensitive"), "timeout", True),
+    (httpx.WriteTimeout("sensitive"), "timeout", True),
+    (httpx.PoolTimeout("sensitive"), "timeout", True),
+    (httpx.LocalProtocolError("sensitive key format"), "configuration", False),
+    (httpx.ConnectError("sensitive"), "provider_error", True),
+    (httpx.DecodingError("sensitive"), "invalid_response", True),
+])
+def test_transport_failure_causes_and_rejudgment_match_between_providers(monkeypatch, provider, stage, error, cause, retryable):
+    from app.agents import detail_output_qc as qc
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            body = kwargs["json"]
+            if provider == "claude":
+                schema = body["output_config"]["format"]["schema"]
+            else:
+                schema = body["response_format"]["json_schema"]["schema"]
+            codes = schema["properties"]["gates"]["items"]["properties"]["code"]["enum"]
+            current = "core" if set(codes) == set(qc.CORE_GATES) else "specialist"
+            if current == stage:
+                raise error
+            raw = primary_response(qc, response(qc))
+            text = json.dumps(raw)
+            payload = ({"model": "claude-sonnet-5-5", "stop_reason": "end_turn",
+                        "content": [{"type": "text", "text": text}]} if provider == "claude" else
+                       {"model": "gpt-5.4-2026-03-05", "choices": [
+                           {"finish_reason": "stop", "message": {"content": text}}]})
+            return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(qc.vision_llm.httpx, "AsyncClient", Client)
+    model = "claude-sonnet-5-5" if provider == "claude" else "gpt-5.4-2026-03-05"
+    result = asyncio.run(qc.verdict(settings(model_detail_core=model, model_detail_specialist=model,
+        anthropic_api_key="test", detail_qc_claude_effort="xhigh"), [picture()], picture("blue")))
+
+    assert result["decision"] == "UNKNOWN"
+    assert result["unknownCause"] == cause
+    assert qc.is_transient_unknown(result) is retryable
+    assert "sensitive" not in str(result)
 
 
 def response(qc):
@@ -326,6 +535,122 @@ def test_only_configured_primary_is_called_no_pass_from_fallback(qc, monkeypatch
     calls.clear()
     out = asyncio.run(qc.verdict(settings(openai_api_key=None), [picture()], picture("red")))
     assert out["decision"] == "UNKNOWN" and calls == []
+
+
+def test_fallback_only_key_keeps_detail_qc_available(qc, monkeypatch):
+    out = asyncio.run(qc.verdict(
+        settings(openai_api_key=None, openai_api_key_fallback="owner-key"),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "PASS"
+    assert out["specialist"]["status"] == "COMPLETE"
+
+
+def test_detail_qc_quota_switches_core_and_specialist_to_fallback(monkeypatch):
+    from app import openai_key_fallback
+    from app.agents import detail_output_qc as detail_qc
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
+    seen = []
+
+    class ProviderResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            if authorization == "Bearer school-key":
+                return ProviderResponse(429, {"error": {"code": "insufficient_quota"}})
+            schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
+            codes = set(schema["properties"]["gates"]["items"]["properties"]["code"]["enum"])
+            raw = response(detail_qc)
+            raw = primary_response(detail_qc, raw) if codes == set(detail_qc.CORE_GATES) else specialist_response(detail_qc, raw)
+            return ProviderResponse(200, {
+                "model": "gpt-5.4-2026-03-05",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(raw)}}],
+            })
+
+    monkeypatch.setattr(detail_qc.vision_llm.httpx, "AsyncClient", Client)
+
+    out = asyncio.run(detail_qc.verdict(
+        settings(openai_api_key="school-key", openai_api_key_fallback="owner-key"),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "PASS"
+    assert out["specialist"]["status"] == "COMPLETE"
+    assert seen == ["Bearer school-key", "Bearer owner-key", "Bearer owner-key"]
+
+
+@pytest.mark.parametrize(
+    "fallback_key,primary_code,owner_code,expected",
+    [
+        ("owner-key", "rate_limit_exceeded", None, ["Bearer school-key"]),
+        (None, "insufficient_quota", None, ["Bearer school-key"]),
+        (
+            "owner-key",
+            "insufficient_quota",
+            "credit_balance_exhausted",
+            ["Bearer school-key", "Bearer owner-key"],
+        ),
+    ],
+)
+def test_detail_qc_nonrecovering_openai_errors_keep_existing_unknown_result(
+    monkeypatch, fallback_key, primary_code, owner_code, expected,
+):
+    from app import openai_key_fallback
+    from app.agents import detail_output_qc as detail_qc
+
+    monkeypatch.setattr(openai_key_fallback, "_primary_unavailable", False)
+    monkeypatch.setattr(openai_key_fallback, "_switch_alerted", False)
+    seen = []
+
+    class ProviderResponse:
+        status_code = 429
+
+        def __init__(self, code):
+            self.payload = {"error": {"code": code}}
+            self.text = json.dumps(self.payload)
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, _url, **kwargs):
+            authorization = kwargs["headers"]["Authorization"]
+            seen.append(authorization)
+            code = primary_code if authorization == "Bearer school-key" else owner_code
+            return ProviderResponse(code)
+
+    monkeypatch.setattr(detail_qc.vision_llm.httpx, "AsyncClient", Client)
+
+    out = asyncio.run(detail_qc.verdict(
+        settings(
+            openai_api_key="school-key",
+            openai_api_key_fallback=fallback_key,
+        ),
+        [picture()], picture("red"),
+    ))
+
+    assert out["decision"] == "UNKNOWN"
+    assert out["errorCode"] == "judge_unavailable_or_invalid"
+    assert seen == expected
 
 
 def test_model_and_complete_envelope_options_are_explicit(qc, monkeypatch):
@@ -541,3 +866,172 @@ def test_absent_no_text_is_absence_not_an_ambiguous_judgment(qc, monkeypatch, ch
     assert out["decision"] == expected
     assert out["specialist"]["rawJudge"]["permanentMarkings"]["candidateReadability"] == "no_text"
     assert out["markings"]["candidateReadability"] == "not_applicable"
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+@pytest.mark.parametrize('failure,cause', [
+    (TimeoutError('temporary'), 'timeout'),
+    (httpx.ConnectError('temporary'), 'provider_error'),
+])
+def test_transient_unknown_has_an_explicit_retry_cause(qc, monkeypatch, stage, failure, cause):
+    async def fail(*args, **kwargs):
+        raise failure
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, fail)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_rate_limit_wait_is_preserved_in_unknown_judgment(qc, monkeypatch, stage):
+    error = qc.vision_llm.VisionError('rate limited')
+    error.retry_after_seconds = 7
+    async def fail(*args, **kwargs):
+        raise error
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, fail)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out['unknownCause'] == 'provider_error'
+    assert out.get('retryAfterSeconds') == 7
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_malformed_response_is_retryable_without_changing_the_judge_contract(qc, monkeypatch, stage):
+    async def malformed(*args, **kwargs):
+        return {'gates': []}
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, malformed)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'invalid_response'
+    assert qc.is_transient_unknown(out) is True
+
+
+@pytest.mark.parametrize('changes,cause', [
+    ({'model_detail_core': None}, 'configuration'),
+    ({'model_detail_specialist': None}, 'configuration'),
+    ({'model_detail_specialist': '  '}, 'configuration'),
+    ({'openai_api_key': None}, 'configuration'),
+    ({'detail_core_timeout_seconds': 'bad'}, 'configuration'),
+    ({'detail_core_timeout_seconds': 0}, 'configuration'),
+    ({'detail_specialist_timeout_seconds': 'bad'}, 'configuration'),
+    ({'detail_specialist_timeout_seconds': float('nan')}, 'configuration'),
+])
+def test_configuration_unknown_is_never_retried(qc, changes, cause):
+    out = asyncio.run(qc.verdict(settings(**changes), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is False
+
+
+def test_input_and_visual_uncertainty_are_not_transient(qc, monkeypatch):
+    invalid = asyncio.run(qc.verdict(settings(), [], picture('red')))
+    assert invalid.get('unknownCause') == 'invalid_input'
+    assert qc.is_transient_unknown(invalid) is False
+    raw = response(qc)
+    raw['gates'][0]['status'] = 'UNKNOWN'
+    uncertain = evaluate(qc, monkeypatch, raw)
+    assert uncertain.get('unknownCause') == 'uncertain_evidence'
+    assert qc.is_transient_unknown(uncertain) is False
+    raw = response(qc)
+    raw['temporaryArtifacts'].update(candidatePresence='uncertain', candidateKind='uncertain')
+    uncertain = evaluate(qc, monkeypatch, raw)
+    assert uncertain.get('unknownCause') == 'uncertain_evidence'
+    assert qc.is_transient_unknown(uncertain) is False
+
+
+@pytest.mark.parametrize('status,cause,retryable', [
+    (400, 'invalid_input', False), (401, 'configuration', False),
+    (403, 'configuration', False), (404, 'configuration', False),
+    (429, 'provider_error', True), (500, 'provider_error', True),
+    (503, 'provider_error', True),
+    (200, 'invalid_response', True),
+])
+def test_real_provider_boundary_classifies_unknown_without_exception_text(monkeypatch, status, cause, retryable):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(status, json={'choices': 'malformed'}, request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == cause
+    assert qc.is_transient_unknown(out) is retryable
+    assert 'malformed' not in str(out)
+
+
+@pytest.mark.parametrize('payload', [
+    {'error': {'code': 'insufficient_quota'}},
+    {'error': {'code': 'credit_balance_exhausted'}},
+])
+def test_account_quota_unknown_is_not_a_transient_provider_error(monkeypatch, payload):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(429, json=payload, request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'configuration'
+    assert qc.is_transient_unknown(out) is False
+
+
+@pytest.mark.parametrize('finish,refusal', [('stop', 'refused'), ('content_filter', None)])
+def test_provider_refusal_unknown_is_not_a_response_format_retry(monkeypatch, finish, refusal):
+    from app.agents import detail_output_qc as qc
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json={'model': 'judge-returned', 'usage': {'total_tokens': 10},
+                                            'choices': [{'finish_reason': finish,
+                                                        'message': {'refusal': refusal}}]},
+                                  request=httpx.Request('POST', url))
+    monkeypatch.setattr(qc.vision_llm.httpx, 'AsyncClient', Client)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'provider_rejection'
+    assert qc.is_transient_unknown(out) is False
+    assert out['returnedModel'] == 'judge-returned'
+    assert out['usage'] == {'total_tokens': 10}
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_local_header_configuration_error_is_not_transient(qc, monkeypatch, stage):
+    import h11
+    calls = []
+    async def invalid_header(*args, **kwargs):
+        calls.append(stage)
+        try:
+            h11.Request(method=b'POST', target=b'/', headers=[
+                (b'host', b'api.openai.com'), (b'authorization', b'Bearer test\n')])
+        except h11.LocalProtocolError as exc:
+            # httpcore/httpx maps the local h11 validation error to this type.
+            raise httpx.LocalProtocolError('invalid local header') from exc
+        pytest.fail('the malformed API key must fail local header validation')
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, invalid_header)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert calls == [stage]
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'configuration'
+    assert qc.is_transient_unknown(out) is False
+
+
+@pytest.mark.parametrize('stage', ['core', 'specialist'])
+def test_corrupt_compressed_provider_response_is_a_retryable_format_error(qc, monkeypatch, stage):
+    async def broken_response(*args, **kwargs):
+        # httpx decodes provider responses during client.post, before JSON parsing.
+        return httpx.Response(200, headers={'content-encoding': 'gzip'}, content=b'not-gzip')
+    (patch_core if stage == 'core' else patch_specialist)(qc, monkeypatch, broken_response)
+    out = asyncio.run(qc.verdict(settings(), [picture()], picture('red')))
+    assert out['decision'] == 'UNKNOWN'
+    assert out.get('unknownCause') == 'invalid_response'
+    assert qc.is_transient_unknown(out) is True

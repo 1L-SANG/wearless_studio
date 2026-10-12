@@ -210,7 +210,7 @@ test("'새 제작'은 도는 승격을 끊지 않으면서 신원만 끊는다 �
   const src = await readFile(new URL('../../src/store/useAppStore.js', import.meta.url), 'utf8');
   // beginProject 는 localStorage 세션(clearDraftPromotionSession)만 지우고 메모리 안의
   // single-flight project 기억은 남겨, 다음 상품이 앞 프로젝트에 덮어쓰던 사고가 났다.
-  const begin = src.slice(src.indexOf('async beginProject()'), src.indexOf('async ensureProject()'));
+  const begin = src.slice(src.indexOf('async beginProject('), src.indexOf('async ensureProject()'));
   assert.match(begin, /forgetDraftSyncProject\(\)/);
   assert.match(src, /import[\s\S]*forgetDraftSyncProject[\s\S]*from '@\/lib\/draftSync\.js'/);
 });

@@ -602,7 +602,7 @@ test('generateMannequins signals the job start only after the 200 cache branch h
     source.indexOf('async generateMannequins'),
     source.indexOf('async cancelMannequinGeneration'),
   );
-  assert.match(body, /\{ onProgress, onJobStarted, idempotencyKey, resumeJobId \} = \{\}/);
+  assert.match(body, /\{ onProgress, onJobStarted, idempotencyKey, resumeJobId, expectedQuote \} = \{\}/);
   assert.match(body, /'Idempotency-Key': idempotencyKey/);
   const cacheReturn = body.indexOf('return { data: res.data, credits: res.credits };');
   const signal = body.indexOf('onJobStarted?.(jobId)');
@@ -612,16 +612,17 @@ test('generateMannequins signals the job start only after the 200 cache branch h
   assert.ok(cacheReturn < signal, '200 early-return must precede the onJobStarted signal');
 });
 
-test('regenerateMannequin forwards the stable edit-attempt idempotency key', () => {
+test('regenerateMannequin keeps a stable key and requires a click after terminal failure', () => {
   const source = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
   const body = source.slice(
     source.indexOf('async regenerateMannequin'),
     source.indexOf('// 에디터 Wardrobe'),
   );
-  assert.match(body, /\{ fitProfile, onProgress, idempotencyKey \}/);
+  assert.match(body, /\{ fitProfile, onProgress, onJobStarted, onJobSucceeded, idempotencyKey, resumeJobId, expectedQuote \}/);
   assert.match(body, /'Idempotency-Key': idempotencyKey/);
 
   const mannequinSource = readFileSync(new URL('../../src/features/mannequin/Mannequin.jsx', import.meta.url), 'utf8');
   assert.match(mannequinSource, /idempotencyKey: generationAttempt\.idempotencyKey/);
-  assert.match(mannequinSource, /error\?\.code === 'job_failed'/);
+  assert.match(mannequinSource, /\['job_failed', 'job_cancelled'\]\.includes\(error\?\.code\)[\s\S]*?failGeneration\(runId\);\s*return false;/);
+  assert.doesNotMatch(mannequinSource, /clearGenerationRelevantEditsAttempt/);
 });

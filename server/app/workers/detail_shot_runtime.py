@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 from PIL import Image, ImageOps
 
 from .. import repo
-from ..agents import cut_generator, detail_recommendations, mannequin
+from ..agents import cut_generator, detail_output_qc, detail_recommendations, mannequin
 from ..agents.detail_shot_pipeline import DetailShotRejected, generate_verified, fingerprint
 from ..agents.gemini_image import InlineImage
 from ..r2 import PRIVATE_NO_STORE
@@ -60,7 +60,7 @@ class ProgressStore:
                                  and qc.get('attempts') == 2
                                  and [j.get('decision') for j in judgments]
                                  in (['FAIL'], ['FAIL', 'FAIL'])))
-            if (state.get('phase') in {'generating', 'judging', 'accepted', 'held'}
+            if (state.get('phase') in {'generating', 'judging', 'rejudging', 'accepted', 'held'}
                     or attempts >= 3
                     or (attempts == 2 and not third_allowed)
                     or state and state.get('fingerprint') != fingerprint):
@@ -69,7 +69,7 @@ class ProgressStore:
                     'attempts': attempts + 1, 'phase': 'generating'}
         return (await self._change(claim))['attempts']
 
-    async def save_candidate(self, image, fingerprint, attempt):
+    async def save_candidate(self, image, fingerprint, attempt, *, image_quality='medium'):
         sha = hashlib.sha256(image.data).hexdigest()
         job = self.job
         key = (f"users/{job['user_id']}/projects/{job['project_id']}/ai/{job['id']}/"
@@ -87,7 +87,8 @@ class ProgressStore:
             if (state.get('fingerprint') != fingerprint or state.get('attempts') != attempt
                     or state.get('phase') != 'generating'):
                 raise DetailShotRejected('detail_attempt_state_changed')
-            candidate = {'attempt': attempt, 'key': key, 'sha256': sha, 'mime': image.mime}
+            candidate = {'attempt': attempt, 'key': key, 'sha256': sha, 'mime': image.mime,
+                         'imageQuality': image_quality}
             return {**state, 'phase': 'candidate', 'candidate': candidate,
                     'candidates': [*(state.get('candidates') or []), candidate]}
         await self._change(save)
@@ -122,6 +123,65 @@ class ProgressStore:
                 raise DetailShotRejected('detail_judgment_state_changed')
             return {**state, 'phase': 'judged', 'qc': metadata}
         await self._change(record)
+
+    async def claim_judgment_retry(self, fingerprint, attempt, candidate_hash):
+        def claim(state):
+            qc = state.get('qc') or {}
+            judgments = qc.get('judgments') or []
+            candidate = state.get('candidate') or {}
+            retries = state.get('judgmentRetries') or []
+            if (state.get('phase') != 'judged'
+                    or state.get('fingerprint') != fingerprint
+                    or state.get('attempts') != attempt
+                    or qc.get('fingerprint') != fingerprint or qc.get('attempts') != attempt
+                    or candidate.get('attempt') != attempt or candidate.get('sha256') != candidate_hash
+                    or not judgments or judgments[-1].get('attempt') != attempt
+                    or not detail_output_qc.is_transient_unknown(judgments[-1])
+                    or any(row.get('attempt') == attempt for row in retries)):
+                raise DetailShotRejected('detail_judgment_retry_unavailable')
+            entry = {'attempt': attempt, 'fingerprint': fingerprint, 'candidateHash': candidate_hash,
+                     'sourceHash': judgments[-1].get('sourceHash'),
+                     'targetHash': judgments[-1].get('targetHash'),
+                     'status': 'CLAIMED', 'initialJudgment': judgments[-1]}
+            return {**state, 'phase': 'rejudging', 'judgmentRetries': [*retries, entry],
+                    'judgmentRetryLease': self.job['lease_token']}
+        return (await self._change(claim))['judgmentRetries']
+
+    async def record_judgment_retry(self, metadata):
+        def record(state):
+            retries = list(state.get('judgmentRetries') or [])
+            judgments = metadata.get('judgments') or []
+            previous = (state.get('qc') or {}).get('judgments') or []
+            candidate = state.get('candidate') or {}
+            if (state.get('phase') != 'rejudging'
+                    or state.get('judgmentRetryLease') != self.job['lease_token']
+                    or metadata.get('fingerprint') != state.get('fingerprint')
+                    or metadata.get('attempts') != state.get('attempts')
+                    or not retries or retries[-1].get('status') != 'CLAIMED'
+                    or retries[-1].get('attempt') != state.get('attempts')
+                    or retries[-1].get('candidateHash') != candidate.get('sha256')
+                    or len(judgments) != len(previous) or not judgments
+                    or judgments[:-1] != previous[:-1]
+                    or judgments[-1].get('attempt') != state.get('attempts')):
+                raise DetailShotRejected('detail_judgment_retry_state_changed')
+            retries[-1] = {**retries[-1], 'status': 'COMPLETE', 'judgment': judgments[-1]}
+            return {**state, 'phase': 'judged', 'judgmentRetryLease': None,
+                    'judgmentRetries': retries, 'qc': {**metadata, 'judgmentRetries': retries}}
+        return (await self._change(record))['qc']
+
+    async def recover_judgment_retry(self):
+        def recover(state):
+            retries = list(state.get('judgmentRetries') or [])
+            if (state.get('phase') != 'rejudging'
+                    or state.get('judgmentRetryLease') == self.job['lease_token']
+                    or not retries or retries[-1].get('status') != 'CLAIMED'):
+                raise DetailShotRejected('detail_judgment_retry_unavailable')
+            # A lost response is consumed, even when the provider may not have received it.
+            retries[-1] = {**retries[-1], 'status': 'INTERRUPTED'}
+            return {**state, 'phase': 'judged', 'judgmentRetryLease': None,
+                    'judgmentRetries': retries,
+                    'qc': {**(state.get('qc') or {}), 'judgmentRetries': retries}}
+        return await self._change(recover)
 
     async def record_retryable_failure(self, metadata):
         def record(state):

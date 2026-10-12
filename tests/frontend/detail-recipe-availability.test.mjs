@@ -51,6 +51,8 @@ test('real editor product-tab handler chooses source detail when dress has no ex
     hasAvailableGenerationRecipe: generation.hasAvailableGenerationRecipe, ALL_CUT_TYPE_OPTIONS,
     catalogs: { genExamples: [], productShotTypes: shots, shotTypes: [{ value: 'full' }, { value: 'medium' }] },
     clothingType: 'dress', modelGender: 'women', cutType: 'styling', NEW_CUT_DEFAULT_SHOT: { product: 'ghost' },
+    detailColorOpts: [], colorOpts: [], color: null, product: null,
+    productSourceColorPatch: () => ({}), setProductDirection() {},
     setCutType: (value) => { chosen.cutType = value; }, setShot: (value) => { chosen.shot = value; },
     setDir() {}, setDetailTargetId() {}, setExampleId() {}, setRefScope() {}, resetRecipeSettings() {},
   };

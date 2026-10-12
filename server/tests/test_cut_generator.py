@@ -19,6 +19,25 @@ def test_cut_types_constant_lists_supported_recipes():
     assert cg.CUT_TYPES == ("styling", "horizon", "product")
 
 
+@pytest.mark.parametrize("state,phrase", [("closed", "FULLY CLOSED"), ("openToChest", "OPEN DOWN TO THE CHEST"),
+                                         ("partial", "HALF OPEN"), ("openToWaist", "OPEN DOWN TO THE WAIST"),
+                                         ("open", "FULLY OPEN"), ("unknown", "FULLY OPEN")])
+def test_generate_sends_selected_outer_opening_block_to_provider(state, phrase):
+    class FakeGemini:
+        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
+            assert phrase in prompt
+            for other in ("FULLY CLOSED", "OPEN DOWN TO THE CHEST", "HALF OPEN", "OPEN DOWN TO THE WAIST", "FULLY OPEN"):
+                assert (other in prompt) is (other == phrase)
+            assert "[[OUTER_CLOSURE" not in prompt
+            return SimpleNamespace(image=b"OUTER", mime="image/png")
+
+    result = asyncio.run(cg.generate(
+        make_settings(gemini_api_key="x"), FakeGemini(),
+        {"cutType": "horizon", "outerClosureState": state}, {"clothingType": "outer"}, [],
+    ))
+    assert result == (b"OUTER", "image/png")
+
+
 def test_build_prompt_substitutes_image_manifest():
     # ${imageManifest} 리터럴 토큰이 모델로 유출되면 안 됨 (architect DEFECT 1 회귀 방지)
     product = {"name": "니트", "colors": [{"isBase": True, "images": [

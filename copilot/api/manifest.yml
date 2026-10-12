@@ -89,6 +89,9 @@ network:
 #    SSM 을 안 바꿈)면 새 태스크의 cloudflared 가 못 붙어 터널 요청이 끊기고, 재시도 끝에 죽으면
 #    essential 이라 태스크째 죽는다 — 배포 밖이면 교체가 반복된다. 교체 절차는 런북 "토큰 교체".
 #      AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
+#  · 프로토콜은 기본(auto, QUIC)이다. 2026-10-12 한국발 느림(2MB 업로드 중간 17~25초, 상태 확인 중간 2~3초)을
+#    QUIC 수신 버퍼 경고 탓으로 보고 --protocol http2 로 바꿔 쟀지만 나아지지 않아 되돌렸다(#533).
+#    원인은 터널 프로토콜이 아니다. 측정은 .scratch/tunnel-protocol-20261012/(로컬).
 sidecars:
   cloudflared:
     image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
@@ -113,6 +116,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   BANK_TRANSFER_BANK: "농축협"
   BANK_TRANSFER_ACCOUNT: "352-2407-2408-13"
   BANK_TRANSFER_HOLDER: "정일상(데일리모먼트)"
+  # 충전 보너스(Seller 5%, Pro 10%). 켜는 조건과 끄는 법은 docs/runbooks/topup-bonus-rollout.md.
+  # 10/7 확인: 마이그레이션 20261006120000 물리 적용, api 태스크는 5250a7f3 한 대뿐, 보너스 주문 0건.
+  TOPUP_BONUS_ENABLED: "true"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -141,7 +147,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   R2_PUBLIC_BASE: https://images.wearless.kr
   CLOUDFLARE_ZONE_ID: "cc7b2bd968c6eb89fe30e45333c9ebd9"  # wearless.kr zone — images.wearless.kr CDN 캐시 파기용
   MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
-  MANNEQUIN_BASE_MEN_ASSET_ID: 736ff2ab-0f15-4f9a-b2ee-c40cd0ed7ee0
+  MANNEQUIN_BASE_MEN_ASSET_ID: 2da88ae4-aa72-45d9-bb1a-7f5853224b3f
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
   # 0%(missing_lower_body 오탐 — 임계가 합성 프리셋 캘리브라 실 프레이밍/종횡비와 미스매치)라 게이팅이
   # 전 생성 차단. 워커 step emit 이 이제 metrics 도 남기니 shadow 로 실측 분포 모아 재캘리브 후 다시 true.
@@ -266,9 +272,13 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 완성 예시의 포즈·조명·상품 구조를 함께 지키는 호리존만 정밀 편집 모델로 분리한다.
   MODEL_ROUTING_HORIZON_CUT: gpt-image-2.5-sunburst
   MODEL_ROUTING_PRODUCT_DETAIL: gpt-image-2.5-sunburst
-  MODEL_DETAIL_CORE: gpt-5.4-2026-03-05
+  PRODUCT_DETAIL_IMAGE_QUALITY: high # 2026-10-11 오너 결정: 디테일샷만 high, 되돌리려면 medium.
+  # 2026-10-12 오너 결정: 디테일컷 검수를 Claude Sonnet 5.5(effort xhigh)로 전환(ADR-0012 후속 절).
+  # 되돌리려면 아래 두 모델 값만 gpt-5.4-2026-03-05 로 바꾼다. ANTHROPIC_API_KEY secret은 남겨도 된다.
+  MODEL_DETAIL_CORE: claude-sonnet-5-5
+  DETAIL_QC_CLAUDE_EFFORT: xhigh
   DETAIL_CORE_TIMEOUT_SECONDS: 90
-  MODEL_DETAIL_SPECIALIST: gpt-5.4-2026-03-05
+  MODEL_DETAIL_SPECIALIST: claude-sonnet-5-5
   DETAIL_SPECIALIST_TIMEOUT_SECONDS: 90
   # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 그래서 여기에만 둔다.
   MODEL_ROUTING_EDITOR_CUT: gpt-image-2.5-flare
@@ -302,12 +312,25 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 성별 18/18(pro 17/18 — 성별 라벨 표본은 26벌 중 18벌). thinking 승급은 이득 없음
   # 이라 ANALYSIS_THINKING_LEVEL 은 low 유지.
   MODEL_ROUTING_TEXT_GEMINI_ANALYSIS: gemini-3.8-flash
+  # AG-08 특징 뽑기 모델을 이름으로 고정한다. 코드 기본값 gemini-3.7-flash 는 구글이 3.8-flash 로
+  # 자동 연결하고 있어서, 공급사가 연결을 바꾸면 지연과 품질이 예고 없이 움직인다(2026-10-11 확인).
+  # 생각 수준은 medium 유지: 82벌 비교에서 low 로 낮추면 디테일 추천 위치 정확도가 92.5%에서 84%로
+  # 떨어졌다(.scratch/opus55-wiring-20261011/REPORT.md 11절).
+  MODEL_ROUTING_TEXT_GEMINI_FEATURES: gemini-3.8-flash
+  # 부가 분석(AG-08 특징 뽑기, 사진 일치 검사) 대기 상한. 넘기면 결과를 버리고 진행하는데, AG-08 을
+  # 버리면 디테일컷 추천이 비어 콘티보드 자동 디테일컷이 0장이 되고 다시 만드는 경로가 없다.
+  # 3.8-flash medium 실측 164회(2026-10-11): 중간 13.7초, 최대 27.5초, 12초 초과 77%, 30초 초과 0회.
+  # 사진 일치 검사는 최대 9.8초라 영향 없음. 화면 분석 폴링 상한은 180초. 늦어도 버리지 않는 구조가
+  # 들어가면 다시 낮춘다.
+  ANALYSIS_AUX_TIMEOUT_SECONDS: "30"
   # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.
   # 프론트 VITE_GENEXAMPLE_BG_ENABLED와 함께 켜야 하며, 2026-07-21부터 프로덕션 공개.
   GENEXAMPLE_BG_ENABLED: "true"
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
+  # 2026-10-07 셀러 앱 실제 모델 입구 닫음, 되돌리기는 on
+  FM_REAL_MODEL_GENERATION: "off"
   # production+FaceMarket 이면 VC 발급이 필수다(main.py _validate_facemarket_vc_settings 기동검사).
   # holder(opendid) 배포·배선을 마쳤으므로 이제 켠다 — 안 켜면 api 가 기동 실패(RuntimeError).
   # 이게 켜지면 revoke/cutover 리컨실러도 함께 활성(mandatory VC 폐기 큐).
@@ -598,6 +621,10 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  # ★ SSM 값 없이 배포되면 ECS 기동 실패. 머지 전 /copilot/wearless/use1/secrets/ANTHROPIC_API_KEY 등록과 태그 확인 필수.
+  ANTHROPIC_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/ANTHROPIC_API_KEY
+  # SSM 값이 없으면 ECS 기동 실패, 배포 전 copilot secret init --name OPENAI_API_KEY_FALLBACK 필수
+  OPENAI_API_KEY_FALLBACK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY_FALLBACK
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CI_PEPPER
@@ -646,6 +673,8 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 크리티컬 로그 알림(addons/log-slack-alerts.yml)의 SLACK_ALERT_WEBHOOK_URL 과 **다른 파라미터**다.
   # 운영 장애 알림과 지원서 접수 알림이 한 채널에 섞이면 둘 다 안 보게 된다.
   FM_SLACK_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_SLACK_WEBHOOK_URL
+  # 화면 오류는 기존 운영 알림 채널로 보낸다. SSM의 copilot 태그를 먼저 붙인다.
+  SLACK_ALERT_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SLACK_ALERT_WEBHOOK_URL
   # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name RESEND_API_KEY (프로드 SSM). 없으면 배포가
   #   "secret not found" 로 실패한다(앱은 키가 없어도 뜨지만 — 메일은 원장에 failed 로 남고 "메일 미발송"
   #   뱃지·재발송으로 복구 — copilot 이 참조를 먼저 검사한다).

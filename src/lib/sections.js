@@ -1,3 +1,4 @@
+import { inheritSimilarCutRecipes } from './storyboardSimilarCuts.js';
 /* =============================================================
    lib/sections — 콘티보드 섹션 파생 유틸 (2026-07 역할 중심 개편)
    섹션은 별도 엔티티가 아니라 블록 필드(sectionId/Title/Layout)의
@@ -10,6 +11,7 @@ import {
   STORYBOARD_TAXONOMY_VERSION,
   SECTION_ROLES,
   assignInternalContentRoles,
+  filterSupportedStoryboardBlocks,
   defaultContentRoleForSection,
   contentTitle,
   isContentRole,
@@ -38,6 +40,7 @@ export const titleForKey = (key) => sectionTitle(key);
    충돌 가능한 섹션 행/레이아웃은 stack으로 초기화한다. */
 export function ensureSections(blocks, { hasDetailImage = null } = {}) {
   if (!Array.isArray(blocks)) return blocks;
+  blocks = filterSupportedStoryboardBlocks(blocks);
   const needsNormalization = blocks.some((b) => b.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION
     || !isSectionRole(b.sectionRole) || !isContentRole(b.contentRole));
   let out = blocks.map((raw) => {
@@ -124,7 +127,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     b.sectionLayout = b.sectionLayout || 'stack';
     prevKey = key;
   }
-  return out;
+  return inheritSimilarCutRecipes(out);
 }
 
 /* deriveSections(blocks) — 연속 run 파생. 메타는 run 첫 블록 기준.
