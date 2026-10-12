@@ -39,6 +39,7 @@ import {
   isRealModelSelection,
 } from '@/features/analysis/modelSelection.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
+import { GifThumbnailPanel } from '@/features/editor/GifThumbnailPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
@@ -3249,6 +3250,7 @@ export function Editor() {
     { id: 'frame', icon: 'layout', label: '프레임' },
     { id: 'text', icon: 'type', label: '텍스트' },
     { id: 'shape', icon: 'shapes', label: '오브젝트' },
+    { id: 'gif', icon: 'layers', label: 'GIF' },
   ];
   const panelTitle = (() => {
     if (tab === 'image' && selectedElObj) {
@@ -3274,6 +3276,7 @@ export function Editor() {
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
+      case 'gif': return <GifThumbnailPanel wardrobe={wardrobe} detailColorOpts={detailColorOpts} />;
       default: return null;
     }
   };
