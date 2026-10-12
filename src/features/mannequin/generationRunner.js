@@ -1,3 +1,7 @@
+import { isAnalysisFastEntryEnabled } from '../../lib/analysisFastEntry.js';
+import { getProductPhotoPromotionTask, productPhotosReady } from '../../lib/productPhotoPromotion.js';
+import { clientEvents } from '../../lib/clientEvents.js';
+import { waitForInitialMannequinPreparation } from './generationPreparation.js';
 /* 배선 래퍼 — 순수 코어에 실제 api·store·sessionStorage 를 연결한 앱 싱글턴.
    콘티(진입 시 발사)와 마네킹(컷이 없으면 발사)이 이 모듈 하나를 공유한다. */
 import { api } from '../../lib/api/index.js';
@@ -46,6 +50,18 @@ const runner = createMannequinGenerationRunner({
 });
 
 export async function requestMannequinGeneration(pid, options = {}) {
+  if (isAnalysisFastEntryEnabled()) {
+    const ready = await waitForInitialMannequinPreparation(pid, {
+      readAttempt: initialGenerationAttempts.read,
+      getPromotionTask: getProductPhotoPromotionTask,
+      photosReady: productPhotosReady,
+      readProject: () => useAppStore.getState().projectId,
+      readSession: clientEvents.getAccountGeneration,
+      isScreenActive: () => (options.isActive?.() ?? true)
+        && ['/create/storyboard', '/create/mannequin'].includes(globalThis.location?.pathname),
+    });
+    if (!ready) return null;
+  }
   const attempt = regenerationAttempts.read(pid);
   const joiningAttempt = attempt?.jobId && attempt.jobId === initialGenerationAttempts.read(pid)?.jobId;
   try {

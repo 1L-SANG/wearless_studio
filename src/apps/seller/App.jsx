@@ -746,7 +746,7 @@ function RootRedirect() {
         draft = await ensureDraftRemotePhotos(draft);
         await draftSlot.remove();
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
-        const { projectId, customMatchPromotion } = await Promise.race([promoteDraftToProject(draft), timeout]);
+        const { projectId, customMatchPromotion } = await Promise.race([promoteDraftToProject(draft, { restoreFeatures: true }), timeout]);
         promotedProjectId = projectId;
         if (!alive) return;
         // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.

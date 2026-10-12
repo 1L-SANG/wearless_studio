@@ -549,8 +549,9 @@ export const api = {
   async measureGarmentColors(/* projectId */) {
     return { status: 'skipped', garmentColorEvidence: null };
   },
-  async saveAnalysis(_projectId, patch) {
+  async saveAnalysis(_projectId, patch, { isCurrent } = {}) {
     await wait(180);
+    if (isCurrent && !await isCurrent()) return null;
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
     // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).

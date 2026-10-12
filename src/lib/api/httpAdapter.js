@@ -1,3 +1,5 @@
+import { publicAnalysisForm } from './publicAnalysisRequest.js';
+import { stripFeatureClientFields } from '../featureRun.js';
 /* =============================================================
    httpAdapter — FastAPI 실서버 구현 (plan §8, Phase 1+에서 함수
    단위로 채운다). 여기 구현된 함수만 http 모드에서 mock 을 대체하고,
@@ -407,6 +409,7 @@ function mergeAnalysisResult(ai) {
       ? ai.materials
       : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
     aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
+    ...(ai.pointsTicket ? { pointsTicket: ai.pointsTicket } : {}),
     suggestedName: ai.suggestedName ?? base.suggestedName,
     styleTags: ai.styleTags ?? [],
     swatchSuggestions: ai.swatchSuggestions ?? [],
@@ -483,7 +486,12 @@ export const httpAdapter = {
   async discardDraftSlotPhoto(assetId) {
     return http(`/v1/draft-slot/assets/${assetId}`, { method: 'DELETE' });
   },
-  async publicAnalyze(product, { onProgress, signal } = {}) {
+  async publicAnalyze(product, { onProgress, signal, photos: preparedPhotos, parts, runId } = {}) {
+    if (preparedPhotos) {
+      const result = await publicHttp('/v1/public/analyze', publicAnalysisForm(product, preparedPhotos, { parts, runId }), { signal });
+      onProgress?.(100);
+      return mergeAnalysisResult(result?.data || {});
+    }
     const colors = product?.colors || [];
     const baseColor = colors.find((color) => color.isBase) || colors[0];
     const photos = selectPublicAnalysisPhotos(baseColor?.images || []);
@@ -510,6 +518,14 @@ export const httpAdapter = {
     const result = await publicHttp('/v1/public/analyze', form, { signal });
     onProgress?.(100);
     return mergeAnalysisResult(result?.data || {});
+  },
+  async analyzePublicFeatures({ product, photos, runId, attempt, signal }) {
+    const response = await publicHttp('/v1/public/analyze/features', publicAnalysisForm(product, photos, { runId, attempt }), { signal });
+    return response.data;
+  },
+  async mergePublicPoints({ runId, pointsTicket, featureTicket }) {
+    const response = await http('/v1/public/analyze/points-merge', { requireAuth: false, method: 'POST', body: { runId, pointsTicket, featureTicket } });
+    return response.data;
   },
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
@@ -693,6 +709,7 @@ export const httpAdapter = {
   },
   // 분석 저장은 바뀐 키만 병합한다. 매칭 선택에는 최신 후보를 읽어 선택 상태만 적용한다.
   async saveAnalysis(projectId, patch) {
+    patch = stripFeatureClientFields(patch);
     const body = { ...patch };
     let cached = cachedAnalysisFor(projectId);
     if (projectId && (isMatchRefresh(patch) || Array.isArray(patch.matchClothing))) {

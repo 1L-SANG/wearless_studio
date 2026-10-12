@@ -1,3 +1,4 @@
+import { stripFeatureClientFields } from '../../src/lib/featureRun.js';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -127,8 +128,8 @@ function analysisAdapter({ cached = { selectedModelId: 'old', brandUseCategory: 
     if (options) saved = mergeAnalysisPatch(saved, options.body);
     return saved;
   };
-  const adapter = new Function('http', 'cachedAnalysisFor', 'mergeAnalysisPatch', 'isMatchRefresh', 'recommendMatchHttp', 'mergeMatchSelection',
-    `let analysisCache; return ({ ${body} });`)(http, () => cached, mergeAnalysisPatch,
+  const adapter = new Function('stripFeatureClientFields', 'http', 'cachedAnalysisFor', 'mergeAnalysisPatch', 'isMatchRefresh', 'recommendMatchHttp', 'mergeMatchSelection',
+    `let analysisCache; return ({ ${body} });`)(stripFeatureClientFields, http, () => cached, mergeAnalysisPatch,
     (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((k) => patch[k] != null),
     async () => [{ id: 'fresh', selected: false }], mergeMatchSelection);
   return { adapter, calls, saved: () => saved };

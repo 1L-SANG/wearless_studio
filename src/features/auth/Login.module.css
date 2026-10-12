@@ -268,3 +268,5 @@
 .emailSubmit:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .emailSubmit { background: var(--fg-1); color: var(--bg-1); }
 .emailError { margin: 0; color: var(--fg-1); line-height: 1.5; }
+
+.featureWait { color: var(--fg-2); font-family: var(--font-body); font-size: 14px; text-align: center; text-wrap: balance; }

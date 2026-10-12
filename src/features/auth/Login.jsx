@@ -1,3 +1,6 @@
+import { isAnalysisFastEntryEnabled } from '@/lib/analysisFastEntry.js';
+import { getActiveFeatureRun, isFeatureRunPending } from '@/lib/featureRun.js';
+import { waitForFeaturesBeforeLogin } from '@/lib/featureRunDraft.js';
 /* =============================================================
    LoginGate — 구글·카카오 로그인과 토스 심사용 임시 이메일 로그인.
    이메일 로그인은 토글이 아니라 '이메일로 로그인하기' 링크 문구를 누르면 그 자리에 폼이
@@ -75,6 +78,7 @@ function KakaoIcon() {
 
 export function LoginGate() {
   const { session, signIn, signInWithPassword, closeLogin } = useAuth();
+  const [featureWaitLong, setFeatureWaitLong] = useState(false);
   const [pending, setPending] = useState(null); // 'google' | 'kakao' | 'email' | null
   const [email, setEmail] = useState(IS_LOCAL_SUPABASE ? 'qa@local.test' : '');
   const [password, setPassword] = useState('');
@@ -188,6 +192,16 @@ export function LoginGate() {
   const isSignup = IS_SELLER && mode === 'signup';
   const blocked = isSignup && !signupConsent;
 
+  useEffect(() => {
+    setFeatureWaitLong(false);
+    if (!pending || !IS_SELLER || !isAnalysisFastEntryEnabled() || !isFeatureRunPending(getActiveFeatureRun()?.getRecord())) return undefined;
+    const timer = setTimeout(() => setFeatureWaitLong(true), 3000);
+    const unsubscribe = getActiveFeatureRun()?.subscribe((record) => {
+      if (!isFeatureRunPending(record)) { clearTimeout(timer); setFeatureWaitLong(false); }
+    });
+    return () => { clearTimeout(timer); unsubscribe?.(); };
+  }, [pending]);
+
   const handle = async (provider) => {
     if (blocked || pending !== null) return;
     // 가입 동의는 OAuth 왕복 뒤에 서버로 기록된다 — 지금은 계정이 없어서 남길 곳이 없다.
@@ -198,6 +212,10 @@ export function LoginGate() {
     oauthAttempt.current = attempt;
     setPending(provider);
     try {
+      if (IS_SELLER && isAnalysisFastEntryEnabled()) {
+        await waitForFeaturesBeforeLogin();
+        if (oauthAttempt.current !== attempt) return;
+      }
       const { error } = await signIn(provider);
       if (!error) return; // 성공 시엔 리다이렉트되어 언마운트됨
     } catch { /* OAuth 시작 실패도 이번 가입 동의를 버린다. */ }
@@ -230,6 +248,7 @@ export function LoginGate() {
       disabled={pending !== null || blocked}
     >
       <span className={styles.icon}><GoogleIcon /></span>
+      {pending === 'google' && IS_SELLER && isAnalysisFastEntryEnabled() && <Icon name="loader" className="spin" size={16} />}
       {pending === 'google' ? '이동 중…' : isSignup ? 'Google로 가입하기' : 'Google로 계속하기'}
     </button>
   );
@@ -242,6 +261,7 @@ export function LoginGate() {
       disabled={pending !== null || blocked}
     >
       <span className={styles.icon}><KakaoIcon /></span>
+      {pending === 'kakao' && IS_SELLER && isAnalysisFastEntryEnabled() && <Icon name="loader" className="spin" size={16} />}
       {pending === 'kakao' ? '이동 중…' : isSignup ? '카카오로 가입하기' : '카카오로 계속하기'}
     </button>
   );
@@ -317,6 +337,7 @@ export function LoginGate() {
 
         <div className={styles.buttons}>
           {inApp ? [kakaoButton, googleButton] : [googleButton, kakaoButton]}
+          {featureWaitLong && <div className={styles.featureWait} role="status">옷 특징 정리 중</div>}
         </div>
 
         {inApp && (

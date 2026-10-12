@@ -823,7 +823,7 @@ export function Mannequin() {
         const resolved = await resolveInitialGenerationCuts({
           projectId: pid,
           initialCuts: joiningGeneration ? [] : list,
-          requestGeneration: (id) => requestMannequinGeneration(id, generationOptions),
+          requestGeneration: (id) => requestMannequinGeneration(id, { ...generationOptions, isActive: () => loadRunRef.current === runId }),
           extractCuts,
           classifyCuts: cutsExistedBeforeInitialGeneration,
         });

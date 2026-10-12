@@ -3682,3 +3682,10 @@
   .canvas-ai-progress.is-busy .canvas-ai-logo-fill { animation: none; clip-path: inset(50% 0 0 0); }
   .canvas-ai-chevron, .canvas-ai-option { transition: none; }
 }
+
+.sp-feature-status { display: flex; align-items: center; gap: var(--sp-2); margin-block: var(--sp-3); color: var(--fg-2); font-size: 14px; text-wrap: balance; }
+.sp-feature-progress { flex: none; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--fg-2); animation: spFeaturePulse 1.5s ease-in-out infinite; }
+.sp-chip.feature-refined { box-shadow: 0 0 0 3px var(--ring-strong); }
+@keyframes spFeaturePulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .sp-feature-progress { animation: none; } }
+.sb-feature-preparation { margin-block: var(--sp-3); color: var(--fg-2); font-size: 14px; text-align: center; text-wrap: balance; }

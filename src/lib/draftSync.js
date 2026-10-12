@@ -1,3 +1,4 @@
+import { claimDraftFeatureRun, settleDraftFeatureRun } from './featureRunDraft.js';
 /* =============================================================
    draftSync — 비로그인 공개 입력 → 로그인 후 실서버 동기화 (Phase 2, 해결책 A).
 
@@ -26,12 +27,13 @@ import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMa
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { mannequinQuoteConfirmation } from '@/features/mannequin/quoteConfirmation.js';
 
-async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress } = {}) {
+async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress, restoreFeatures = false } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
   // localStorage 에 기록해 새로고침 뒤에도 같은 행으로 합류한다.
   draft = await ensureDraftRemotePhotos(draft);
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
+  if (draft.analysis?.featureRun) claimDraftFeatureRun(draft, projectId);
   draftPromotionSession.rememberProject(projectId);
   const seenQuote = mannequinQuoteConfirmation.seen('draft', 'generate');
   if (seenQuote) {
@@ -79,7 +81,8 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
     let analysis = draft.analysis;
     const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
-    const detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
+    let detailHandoff = analysis?.detailRecommendationsHandoff ?? null;
+    let featureRun = null;
     if (analysis) {
       analysis = { ...analysis };
       analysis.confirmedGptProductEvidenceHandoff = null;
@@ -100,8 +103,22 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
     if (analysis) analysis = stripLocalCustomMatch(analysis);
 
     await api.saveProduct(projectId, product);
+    if (draft.analysis?.featureRun) {
+      const settled = await settleDraftFeatureRun(draft, projectId, { restoreFeatures });
+      featureRun = settled.run;
+      analysis = settled.analysis;
+      detailHandoff = analysis?.detailRecommendations?.status === 'unavailable' ? null : analysis?.detailRecommendationsHandoff ?? null;
+      if (analysis) {
+        analysis = stripLocalCustomMatch({ ...analysis });
+        analysis.confirmedGptProductEvidenceHandoff = null;
+        analysis.detailRecommendationsHandoff = null;
+        delete analysis.detailRecommendations;
+        for (const key of ['clothingType', 'measurements', 'measurementsUnknown']) analysis[key] = null;
+      }
+    }
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
+      featureRun?.committed();
       if (detailHandoff) {
         // 디테일 추천은 부가 자료라 서명·유효기간 검증 실패(invalid_analysis_handoff)는 확정을 막지
         // 않는다. 추천 없이 넘어가면 콘티는 "디테일 추천을 준비하지 못했어요" 안내와 수동 추가로

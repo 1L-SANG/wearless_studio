@@ -1,3 +1,4 @@
+import { stripFeatureClientFields } from './featureRun.js';
 import { clientApiFetch, readClientResponse } from './api/clientRequest.js';
 import { isPlaceholderPhotoSrc } from './imageTranscode.js';
 import { seoulClock } from './datetime.js';
@@ -458,7 +459,7 @@ export function createDraftSlotSync({
     return {
       payload: {
         product,
-        analysis: snapshot.analysis || null,
+        analysis: stripFeatureClientFields(snapshot.analysis) || null,
         composeMode: snapshot.composeMode === 'extended' ? 'extended' : 'basic',
       },
       photosPending,

@@ -542,3 +542,11 @@ test('visible retry restarts failed uploads before the retry timer fires', async
   assert.equal(h.timers.delays().includes(2000), false);
   assert.equal(payloadImages(h.puts.at(-1))[0].id, 'fresh');
 });
+
+test('서버 임시저장 슬롯에는 특징 실행 기록과 버린 AI 칩이 새지 않는다', async (t) => {
+  const { sync, puts } = setup(t);
+  sync.setUserId('seller');
+  sync.queue({ ...snapshot(), analysis: { sellingPoints: ['보존'], featureRun: { pointsTicket: 'secret' }, dismissedAiPoints: ['버림'] } });
+  await sync.flush();
+  assert.deepEqual(puts.at(-1).payload.analysis, { sellingPoints: ['보존'] });
+});

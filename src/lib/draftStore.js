@@ -286,3 +286,17 @@ export async function clearDraftIfCurrent(expectedUpdatedAt, {
 export function hasPendingDraft() {
   return sessionStorage.getItem(PENDING_KEY) === '1';
 }
+
+/** 사진을 다시 읽지 않고 특징 실행 체크포인트만 같은 로컬 저장 큐에 기록한다. */
+export function saveFeatureRunDraft(patch, { isCurrent = () => true, matchesDraft = () => true, product } = {}) {
+  commitPendingSnapshot();
+  saveChain = saveChain.catch(() => null).then(async () => {
+    if (!isCurrent()) return false;
+    const draft = await loadDraft();
+    if (!draft || !isCurrent() || !matchesDraft(draft)) return false;
+    await withStore('readwrite', (store) => isCurrent()
+      ? store.put({ ...draft, ...(product ? { product } : {}), analysis: { ...draft.analysis, ...patch } }, KEY) : null);
+    return isCurrent();
+  });
+  return saveChain;
+}
