@@ -3250,7 +3250,7 @@ export function Editor() {
     { id: 'frame', icon: 'layout', label: '프레임' },
     { id: 'text', icon: 'type', label: '텍스트' },
     { id: 'shape', icon: 'shapes', label: '오브젝트' },
-    { id: 'gif', icon: 'layers', label: 'GIF' },
+    { id: 'gif', icon: 'film', label: 'GIF' },
   ];
   const panelTitle = (() => {
     if (tab === 'image' && selectedElObj) {

@@ -1,5 +1,5 @@
 import { toBytesUrl } from '../../features/editor/editorExport.js';
-import { coverCrop, planLadder, presetSize, shouldStopLadder } from './gifLadder.js';
+import { coverCrop, planLadder, presetSize, shouldStopLadder, GIF_HARD_BYTES, GIF_SOFT_BYTES } from './gifLadder.js';
 
 export const VIDEO_FORMAT_MESSAGE = 'MP4(H.264)로 바꿔 올려 주세요';
 
@@ -78,13 +78,18 @@ export async function seekGifVideo(video, time, { signal } = {}) {
 
 export async function runLadder(mode, encodeAttempt, { signal } = {}) {
   const steps = planLadder(mode);
+  let firstHardResult;
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
     checkAbort(signal);
     const step = steps[stepIndex];
     const encoded = await encodeAttempt(step, stepIndex);
     checkAbort(signal);
     const result = { ...encoded, bytes: encoded.blob.size, colors: step.colors, scale: step.scale, stepIndex };
-    if (shouldStopLadder(mode, stepIndex, result.bytes)) return result;
+    if (!firstHardResult && result.bytes <= GIF_HARD_BYTES) firstHardResult = result;
+    // Soft attempts end before 128-color or reduced-size steps in both modes.
+    if (shouldStopLadder(mode, stepIndex, result.bytes) || (stepIndex === 1 && firstHardResult)) {
+      return result.bytes <= GIF_SOFT_BYTES ? result : firstHardResult || result;
+    }
   }
 }
 

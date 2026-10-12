@@ -11,7 +11,6 @@ export function planLadder(mode) {
   if (mode === 'photo') return [
     { colors: 256, scale: 1 },
     { colors: 192, scale: 1 },
-    { colors: 128, scale: 1 },
     { colors: 256, scale: 0.8 },
     { colors: 128, scale: 0.8 },
     { colors: 128, scale: 0.64 },
@@ -23,6 +22,9 @@ export function planLadder(mode) {
     { colors: 128, scale: 1, fps: 6 },
     { colors: 128, scale: 0.8, fps: 8 },
     { colors: 128, scale: 1, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.8, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.64, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.64, fps: 6, duration: 2 },
   ];
   throw new Error('Unknown GIF mode');
 }

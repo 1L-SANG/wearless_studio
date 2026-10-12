@@ -9,13 +9,16 @@ const source = (path) => readFileSync(new URL(path, root), 'utf8');
 
 test('사진·영상 사다리는 설계서의 단계와 순서를 그대로 따른다', () => {
   assert.deepEqual(planLadder('photo'), [
-    { colors: 256, scale: 1 }, { colors: 192, scale: 1 }, { colors: 128, scale: 1 },
+    { colors: 256, scale: 1 }, { colors: 192, scale: 1 },
     { colors: 256, scale: 0.8 }, { colors: 128, scale: 0.8 }, { colors: 128, scale: 0.64 },
   ]);
   assert.deepEqual(planLadder('video'), [
     { colors: 256, scale: 1, fps: 10 }, { colors: 256, scale: 1, fps: 8 },
     { colors: 128, scale: 1, fps: 8 }, { colors: 128, scale: 1, fps: 6 },
     { colors: 128, scale: 0.8, fps: 8 }, { colors: 128, scale: 1, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.8, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.64, fps: 8, duration: 2 },
+    { colors: 128, scale: 0.64, fps: 6, duration: 2 },
   ]);
   assert.throws(() => planLadder('other'), /mode/);
   const steps = planLadder('photo');
@@ -27,14 +30,16 @@ test('소프트 목표는 축소 전에 멈추고 하드 상한 실패는 마지
   assert.equal(GIF_SOFT_BYTES, 1_500_000);
   assert.equal(GIF_HARD_BYTES, 4_700_000);
   for (const mode of ['photo', 'video']) {
-    const lastFullSize = mode === 'photo' ? 2 : 3;
+    const hardStart = mode === 'photo' ? 2 : 3;
+    const last = planLadder(mode).length - 1;
     assert.equal(shouldStopLadder(mode, 0, GIF_SOFT_BYTES), true);
     assert.equal(shouldStopLadder(mode, 0, GIF_SOFT_BYTES + 1), false);
-    assert.equal(shouldStopLadder(mode, lastFullSize, GIF_HARD_BYTES), true);
-    assert.equal(shouldStopLadder(mode, lastFullSize, GIF_HARD_BYTES + 1), false);
-    assert.equal(shouldStopLadder(mode, 4, GIF_HARD_BYTES), true);
-    assert.equal(shouldStopLadder(mode, 4, GIF_HARD_BYTES + 1), false);
-    assert.equal(shouldStopLadder(mode, 5, GIF_HARD_BYTES + 1), true);
+    for (let index = 0; index < last; index += 1) {
+      assert.equal(shouldStopLadder(mode, index, GIF_HARD_BYTES), index >= hardStart);
+      assert.equal(shouldStopLadder(mode, index, GIF_HARD_BYTES + 1), false);
+    }
+    assert.equal(shouldStopLadder(mode, last, GIF_HARD_BYTES), true);
+    assert.equal(shouldStopLadder(mode, last, GIF_HARD_BYTES + 1), true);
   }
 });
 
@@ -233,20 +238,20 @@ test('실제 blob 바이트로 사다리를 실행하고 최초 통과 설정을
   const calls = [];
   const result = await runLadder('photo', async (step, index) => {
     calls.push(index);
-    return { blob: new Blob([new Uint8Array(index < 2 ? 2_000_000 : 1_400_000)]), bytes: 1, width: 640, height: 768, frames: 6, delayMs: 1500 };
+    return { blob: new Blob([new Uint8Array(index === 0 ? 2_000_000 : 1_400_000)]), bytes: 1, width: 640, height: 768, frames: 6, delayMs: 1500 };
   });
-  assert.deepEqual(calls, [0, 1, 2]);
+  assert.deepEqual(calls, [0, 1]);
   assert.equal(result.bytes, 1_400_000, '호출자가 보고한 숫자가 아닌 실제 용량');
-  assert.equal(result.colors, 128);
+  assert.equal(result.colors, 192);
   assert.equal(result.scale, 1);
-  assert.equal(result.stepIndex, 2);
+  assert.equal(result.stepIndex, 1);
   const overflowCalls = [];
   const overflow = await runLadder('video', async (_step, index) => {
     overflowCalls.push(index);
     return { blob: new Blob([new Uint8Array(GIF_HARD_BYTES + 1)]) };
   });
-  assert.deepEqual(overflowCalls, [0, 1, 2, 3, 4, 5]);
-  assert.equal(overflow.stepIndex, 5);
+  assert.deepEqual(overflowCalls, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(overflow.stepIndex, 8);
   assert.equal(overflow.bytes, GIF_HARD_BYTES + 1);
 });
 
@@ -332,7 +337,7 @@ async function panelHarness() {
   const { createServer } = await import('vite');
   const key = `__gifPanel${Math.random().toString(36).slice(2)}`;
   const runtime = { hooks: [], cursor: 0, effects: [], dirty: false,
-    encodeCalls: [], released: [], result: { blob: new Blob(['GIF89a'], { type: 'image/gif' }), jpgBlob: new Blob(['jpg'], { type: 'image/jpeg' }), width: 640, height: 768, frames: 2, bytes: 6 },
+    encodeCalls: [], thumbnails: [], released: [], result: { blob: new Blob(['GIF89a'], { type: 'image/gif' }), jpgBlob: new Blob(['jpg'], { type: 'image/jpeg' }), width: 640, height: 768, frames: 2, bytes: 6 },
   };
   runtime.encodeGif = async (options) => { runtime.encodeCalls.push(options); options.onProgress(42); return runtime.result; };
   runtime.loadGifVideo = async () => ({ duration: 5, videoWidth: 800, videoHeight: 1000 });
@@ -349,11 +354,13 @@ async function panelHarness() {
         if (id === 'react/jsx-runtime' || id === 'react/jsx-dev-runtime') return '\0gif-jsx';
         if (id.endsWith('/components/ui.jsx')) return '\0gif-ui';
         if (id.endsWith('/gif/encodeGif.js')) return '\0gif-encode';
+        if (id.endsWith('/lib/imageCdn.js')) return '\0gif-thumbnails';
       },
       load(id) {
         if (id === '\0gif-jsx') return `export const Fragment = 'fragment'; export function jsx(type, props) { return typeof type === 'function' ? type(props) : { type, props }; } export const jsxs = jsx; export const jsxDEV = jsx;`;
         if (id === '\0gif-ui') return `import { jsx } from 'react/jsx-runtime'; export function Button({ children, variant = 'ghost', block, ...props }) { return jsx('button', { ...props, className: 'btn btn-' + variant + (block ? ' btn-block' : ''), children }); } export function Icon() { return null; }`;
         if (id === '\0gif-encode') return `const r = ${access}; export const VIDEO_FORMAT_MESSAGE = 'MP4(H.264)로 바꿔 올려 주세요'; export const encodeGif = o => r.encodeGif(o); export const loadGifVideo = (...a) => r.loadGifVideo(...a); export const releaseGifVideo = video => r.released.push(video);`;
+        if (id === '\0gif-thumbnails') return `const r = ${access}; export const thumbUrl = (src, width) => { r.thumbnails.push({ src, width }); return /^https?:/.test(src) ? 'https://images.test/width=' + width + '/' + src : src; };`;
         if (id === '\0gif-react') return `const r = ${access};
           const same = (a,b) => a && b && a.length === b.length && a.every((v,i) => Object.is(v,b[i]));
           export function useState(initial) { const index = r.cursor++; const slot = r.hooks[index] ||= { value: typeof initial === 'function' ? initial() : initial }; return [slot.value, value => { const next = typeof value === 'function' ? value(slot.value) : value; if (!Object.is(next, slot.value)) { slot.value = next; r.dirty = true; } }]; }
@@ -490,7 +497,10 @@ test('영상 업로드는 구간 설정과 사진 모드 복귀를 연결하고 
 
 test('GIF 탭은 맨 뒤에서 보관함·색상 정보를 전달하고 패널은 문구·스타일 규칙을 지킨다', () => {
   const editor = source('src/features/editor/Editor.jsx');
-  assert.match(editor, /\{ id: 'shape'[^\n]+\n\s*\{ id: 'gif', icon: '[^']+', label: 'GIF' \}/);
+  const tools = editor.slice(editor.indexOf('const TOOLS = ['), editor.indexOf('const panelTitle ='));
+  assert.match(tools, /\{ id: 'shape'[^\n]+\n\s*\{ id: 'gif', icon: 'film', label: 'GIF' \}/);
+  const film = '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>';
+  assert.ok(source('src/components/ui.jsx').includes(`film: '${film}'`), '지정한 film 경로를 공유 아이콘에 등록한다');
   assert.match(editor, /case 'gif': return <GifThumbnailPanel wardrobe=\{wardrobe\} detailColorOpts=\{detailColorOpts\}/);
   const panel = source('src/features/editor/GifThumbnailPanel.jsx');
   const css = source('src/features/editor/GifThumbnailPanel.module.css');
@@ -553,7 +563,7 @@ test('축소한 최종 GIF와 첫 컷 JPG는 같은 크기와 선택 선두 사�
     postMessage(data) {
       if (data.type === 'start') settings.push(data.settings);
       const response = data.type === 'finish'
-        ? { type: 'result', buffer: new ArrayBuffer(settings.length <= 3 ? GIF_HARD_BYTES + 1 : 1000) }
+        ? { type: 'result', buffer: new ArrayBuffer(settings.length <= 2 ? GIF_HARD_BYTES + 1 : 1000) }
         : { type: 'ready' };
       queueMicrotask(() => this.onmessage({ data: response }));
     }
@@ -562,7 +572,8 @@ test('축소한 최종 GIF와 첫 컷 JPG는 같은 크기와 선택 선두 사�
   try {
     const progress = [];
     const result = await encodeGif({ sources: ['/assets/first.jpg', '/assets/second.jpg'], preset: 'cafe24', onProgress: (value) => progress.push(value) });
-    assert.equal(result.stepIndex, 3);
+    assert.equal(result.stepIndex, 2);
+    assert.equal(result.colors, 256);
     assert.equal(result.width, 640);
     assert.equal(result.height, 854);
     assert.equal(result.bytes, 1000);
@@ -660,4 +671,97 @@ test('패널을 닫으면 진행 중 영상 읽기를 취소하고 임시 URL을
     if (!closed) await harness.close();
     URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke;
   }
+});
+
+test('소프트 미달이면 첫 하드 통과본의 GIF·JPG·설정을 보존하고 128색을 시도하지 않는다', async () => {
+  const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
+  for (const mode of ['photo', 'video']) {
+    const first = { blob: new Blob([new Uint8Array(2_000_000)]), jpgBlob: new Blob(['first JPG']), width: 800, height: 1067, frames: mode === 'photo' ? 6 : 30, delayMs: mode === 'photo' ? 1500 : 100 };
+    const calls = [];
+    const result = await runLadder(mode, async (step, index) => {
+      calls.push({ index, ...step });
+      return index === 0 ? first : { ...first, blob: new Blob([new Uint8Array(1_800_000)]), jpgBlob: new Blob(['second JPG']), frames: 24, delayMs: 125 };
+    });
+    assert.deepEqual(calls.map(({ index }) => index), [0, 1]);
+    assert.ok(calls.every(({ colors, scale }) => colors > 128 && scale === 1));
+    assert.equal(result.stepIndex, 0);
+    assert.equal(result.blob, first.blob);
+    assert.equal(result.jpgBlob, first.jpgBlob);
+    assert.equal(result.bytes, 2_000_000);
+    assert.equal(result.width, first.width);
+    assert.equal(result.height, first.height);
+    assert.equal(result.frames, first.frames);
+    assert.equal(result.delayMs, first.delayMs);
+    assert.equal(result.colors, 256);
+    assert.equal(result.scale, 1);
+  }
+});
+
+test('색 보정본이 상한을 넘거나 두 번째 단계가 첫 통과본이어도 하드 통과 결과를 보존한다', async () => {
+  const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
+  for (const [sizes, winner] of [[[4_700_000, 5_200_000], 0], [[5_200_000, 2_000_000], 1]]) {
+    const calls = [];
+    const result = await runLadder('photo', async (_step, index) => {
+      calls.push(index);
+      return { blob: new Blob([new Uint8Array(sizes[index])]) };
+    });
+    assert.deepEqual(calls, [0, 1]);
+    assert.equal(result.stepIndex, winner);
+    assert.equal(result.bytes, sizes[winner]);
+    assert.equal(result.colors, winner ? 192 : 256);
+  }
+});
+
+test('영상 5.2MB 초과 사례는 추가한 2초 폭 축소 단계를 순서대로 시도하고 처음 통과하면 멈춘다', async () => {
+  const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
+  const tooLarge = new Blob([new Uint8Array(5_200_000)]);
+  const fits = new Blob([new Uint8Array(4_600_000)]);
+  for (const winner of [6, 7, 8]) {
+    const calls = [];
+    const result = await runLadder('video', async (step, index) => {
+      calls.push({ index, ...step });
+      const { width, height } = presetSize('cafe24', step.scale);
+      return { blob: index === winner ? fits : tooLarge, width, height, frames: (step.duration || 3) * step.fps, delayMs: 1000 / step.fps };
+    });
+    assert.deepEqual(calls.map(({ index }) => index), Array.from({ length: winner + 1 }, (_, index) => index));
+    assert.equal(result.stepIndex, winner);
+    assert.equal(result.bytes, 4_600_000);
+    assert.equal(result.colors, 128);
+    assert.equal(result.scale, winner === 6 ? 0.8 : 0.64);
+    assert.equal(result.width, winner === 6 ? 640 : 512);
+    assert.equal(result.height, winner === 6 ? 854 : 683);
+    assert.equal(result.frames, winner === 8 ? 12 : 16);
+    assert.equal(result.delayMs, 1000 / (winner === 8 ? 6 : 8));
+    assert.ok(calls.slice(6).every(({ duration }) => duration === 2));
+  }
+});
+
+test('영상의 하드 판정 시작 전 통과본도 뒤 단계보다 먼저 기억한다', async () => {
+  const { runLadder } = await import('../../src/lib/gif/encodeGif.js');
+  const calls = [];
+  const result = await runLadder('video', async (_step, index) => {
+    calls.push(index);
+    return { blob: new Blob([new Uint8Array(index < 2 ? 5_200_000 : index === 2 ? 3_000_000 : 2_800_000)]) };
+  });
+  assert.deepEqual(calls, [0, 1, 2, 3]);
+  assert.equal(result.stepIndex, 2);
+  assert.equal(result.bytes, 3_000_000);
+});
+
+test('사진 타일은 240px 썸네일을 쓰고 GIF 인코더에는 원본 사진을 보낸다', async () => {
+  const harness = await panelHarness();
+  const original = 'https://cdn.example.com/styling.jpg';
+  harness.props.wardrobe = { navy: harness.props.wardrobe.navy.map((photo) => photo.id === 'style' ? { ...photo, src: original } : photo) };
+  try {
+    let tree = harness.render();
+    const image = nodes(photoButtons(tree)[0], (node) => node.type === 'img')[0];
+    assert.equal(image.props.src, `https://images.test/width=240/${original}`);
+    assert.ok(harness.runtime.thumbnails.some(({ src, width }) => src === original && width === 240));
+    photoButtons(tree)[0].props.onClick();
+    tree = harness.render();
+    photoButtons(tree)[1].props.onClick();
+    tree = harness.render();
+    await buttonNamed(tree, 'GIF 만들기').props.onClick();
+    assert.deepEqual(harness.runtime.encodeCalls[0].sources, [original, '/assets/flat.jpg']);
+  } finally { await harness.close(); }
 });

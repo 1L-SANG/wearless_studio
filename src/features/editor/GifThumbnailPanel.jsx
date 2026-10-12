@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui.jsx';
+import { thumbUrl } from '@/lib/imageCdn.js';
 import { GIF_PRESETS, GIF_HARD_BYTES, GIF_SOFT_BYTES } from '@/lib/gif/gifLadder.js';
 import { encodeGif, loadGifVideo, releaseGifVideo, VIDEO_FORMAT_MESSAGE } from '@/lib/gif/encodeGif.js';
 import styles from './GifThumbnailPanel.module.css';
@@ -145,7 +146,7 @@ export function GifThumbnailPanel({ wardrobe, detailColorOpts = [] }) {
                   <button type="button" key={photo.id} className={`ward-cell ${styles.tile}${order >= 0 ? ` ${styles.selected}` : ''}`}
                     aria-pressed={order >= 0} aria-label={`${photo.groupLabel} 사진 ${index + 1}${order >= 0 ? `, 선택 순서 ${order + 1}` : ''}`}
                     disabled={locked || (order < 0 && selectedIds.length >= 8)} onClick={() => selectPhoto(photo.id)}>
-                    <img src={photo.src} alt="" loading="lazy" decoding="async" />
+                    <img src={thumbUrl(photo.src, 240)} alt="" loading="lazy" decoding="async" />
                     {order >= 0 && <span className={styles.order}>{order + 1}</span>}
                   </button>
                 );
