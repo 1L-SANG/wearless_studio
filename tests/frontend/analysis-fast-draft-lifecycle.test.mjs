@@ -135,20 +135,20 @@ test('핵심 저장 뒤 받은 특징 기록이 저장된 coreReceived를 되돌
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes; }); return { promise, resolve }; };
 const readyFeatures = (point) => ({ points: { status: 'ready', items: [point] }, featureTicket: 'f' });
 
-for (const phase of ['flush', 'hash', 'prepared']) test(`분석 준비 ${phase} 중 재진입은 같은 실행에 합류하고 원본을 보존한다`, async (t) => {
+for (const phase of ['flush', 'hash', 'prepared']) test(`분석 준비 ${phase} 중 재진입은 같은 실행에 합류하고 원본을 보존한다`, { timeout: 5000 }, async (t) => {
   const draft = await savedDraft(); draft.analysis = null;
   const originalSrc = URL.createObjectURL(draft.photos[0].blob);
   const returnedSrc = URL.createObjectURL(draft.photos[0].blob);
   t.after(() => { URL.revokeObjectURL(originalSrc); URL.revokeObjectURL(returnedSrc); });
   draft.product = product(originalSrc);
-  const storage = draftStoreFixture(t, draft), hashing = deferred(), core = deferred(); let coreCalls = 0, featureCalls = 0;
+  const storage = draftStoreFixture(t, draft), hashing = deferred(), core = deferred(), coreStarted = deferred(), featureStarted = deferred(); let coreCalls = 0, featureCalls = 0;
   if (phase === 'flush') storage.pauseWrites();
   else {
     const digest = crypto.subtle.digest.bind(crypto.subtle);
     t.mock.method(crypto.subtle, 'digest', async (...args) => { await hashing.promise; return digest(...args); });
   }
-  replace(t, { analyzePublicFeatures: () => { featureCalls++; return new Promise(() => {}); },
-    analyzeProduct: () => { coreCalls++; return core.promise; } });
+  replace(t, { analyzePublicFeatures: () => { featureCalls++; featureStarted.resolve(); return new Promise(() => {}); },
+    analyzeProduct: () => { coreCalls++; coreStarted.resolve(); return core.promise; } });
   let currentProduct = draft.product, analysis = null;
   const bindings = () => ({ readProduct: () => currentProduct, readAnalysis: () => analysis,
     onAnalysis: (next) => { analysis = next; }, onProduct: (next) => { currentProduct = next; } });
@@ -162,10 +162,10 @@ for (const phase of ['flush', 'hash', 'prepared']) test(`분석 준비 ${phase} 
   await store.flushProductDraftSave();
   const snapshot = await store.loadDraft();
   assert.equal(snapshot.analysis.featureRun.stage, 'preparing');
-  if (phase === 'prepared') { hashing.resolve(); await drainDraftTasks(); assert.equal(coreCalls, 1); }
+  if (phase === 'prepared') { hashing.resolve(); await coreStarted.promise; assert.equal(coreCalls, 1); }
   URL.revokeObjectURL(originalSrc); currentProduct = product(returnedSrc); analysis = snapshot.analysis;
   const returning = runtime.restoreDraftFeatureRun(snapshot, bindings()); await drainDraftTasks();
-  hashing.resolve(); await drainDraftTasks();
+  hashing.resolve(); await Promise.all([coreStarted.promise, featureStarted.promise]);
   assert.equal(coreCalls, 1); assert.equal(featureCalls, 1); assert.equal(features.getActiveFeatureRun(), run);
   core.resolve({ suggestedName: '준비를 이어간 상품', sellingPoints: ['특징'], aiSuggestedPoints: ['특징'], pointsTicket: 'p' });
   await requesting; assert.equal(await returning, run);
