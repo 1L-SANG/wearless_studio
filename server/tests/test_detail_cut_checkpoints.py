@@ -388,7 +388,7 @@ def test_verified_detail_checkpoint_envelope_preserves_legacy_effort_and_rejects
     settings = _settings(model_product_detail='gpt-image-2.5-sunburst', detail_cut_image_size='2K',
         model_detail_core=model, model_detail_specialist=model,
         detail_core_timeout_seconds=90.0, detail_specialist_timeout_seconds=90.0,
-        detail_qc_claude_effort='xhigh')
+        detail_qc_claude_effort='xhigh', anthropic_api_key='test-claude-key')
     app = _app(settings, _R2())
     encoded = BytesIO()
     Image.new('RGB', (160, 200), 'gray').save(encoded, format='PNG')
