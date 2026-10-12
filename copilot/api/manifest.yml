@@ -89,11 +89,15 @@ network:
 #    SSM 을 안 바꿈)면 새 태스크의 cloudflared 가 못 붙어 터널 요청이 끊기고, 재시도 끝에 죽으면
 #    essential 이라 태스크째 죽는다 — 배포 밖이면 교체가 반복된다. 교체 절차는 런북 "토큰 교체".
 #      AWS_PROFILE=wearless AWS_REGION=ap-northeast-2 copilot-aws secret init --name CLOUDFLARE_TUNNEL_TOKEN
+#  · --protocol http2(2026-10-12): Fargate 는 UDP 수신 버퍼를 못 키워(QUIC 은 7MB 를 원하는데 416KB)
+#    한국에서 2MB 업로드가 중간 17초, 상태 확인도 중간 2초 걸렸다. 우리는 HTTP 만 넘기므로
+#    QUIC 전용 기능(UDP·ICMP 프록시)을 쓰지 않는다. 대가는 터널 구간의 양자내성 키 합의가 빠지는 것.
+#    측정과 판단은 .scratch/tunnel-protocol-20261012/(로컬), 되돌릴 때는 이 플래그만 지운다.
 sidecars:
   cloudflared:
     image: cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     essential: true
-    command: ["tunnel", "--grace-period", "55s", "run"]
+    command: ["tunnel", "--grace-period", "55s", "--protocol", "http2", "run"]
     depends_on:
       api: healthy
     secrets:
